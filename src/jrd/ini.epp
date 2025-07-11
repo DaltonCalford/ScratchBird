@@ -1,0 +1,2164 @@
+/*
+ *	PROGRAM:	JRD Access Method
+ *	MODULE:		ini.epp
+ *	DESCRIPTION:	Metadata initialization / population
+ *
+ * The contents of this file are subject to the Interbase Public
+ * License Version 1.0 (the "License"); you may not use this file
+ * except in compliance with the License. You may obtain a copy
+ * of the License at http://www.Inprise.com/IPL.html
+ *
+ * Software distributed under the License is distributed on an
+ * "AS IS" basis, WITHOUT WARRANTY OF ANY KIND, either express
+ * or implied. See the License for the specific language governing
+ * rights and limitations under the License.
+ *
+ * The Original Code was created by Inprise Corporation
+ * and its predecessors. Portions created by Inprise Corporation are
+ * Copyright (C) Inprise Corporation.
+ *
+ * All Rights Reserved.
+ * Contributor(s): ______________________________________.
+ */
+
+#include "firebird.h"
+#include <stdio.h>
+#include <string.h>
+#include "../jrd/flags.h"
+#include "../jrd/jrd.h"
+#include "../jrd/val.h"
+#include "../jrd/ods.h"
+#include "../jrd/btr.h"
+#include "../jrd/ids.h"
+#include "../jrd/intl.h"
+#include "../jrd/tra.h"
+#include "../jrd/trig.h"
+#include "../jrd/intl.h"
+#include "../jrd/dflt.h"
+#include "../jrd/ini.h"
+#include "../jrd/idx.h"
+#include "../common/gdsassert.h"
+#include "../dsql/dsql.h"
+#include "../jrd/blb_proto.h"
+#include "../jrd/cch_proto.h"
+#include "../jrd/cmp_proto.h"
+#include "../jrd/dfw_proto.h"
+#include "../jrd/dpm_proto.h"
+#include "../jrd/err_proto.h"
+#include "../jrd/exe_proto.h"
+#include "../yvalve/gds_proto.h"
+#include "../jrd/idx_proto.h"
+#include "../jrd/ini_proto.h"
+#include "../jrd/jrd_proto.h"
+#include "../jrd/met_proto.h"
+#include "../jrd/scl_proto.h"
+#include "../jrd/tra_proto.h"
+#include "../jrd/obj.h"
+#include "../jrd/acl.h"
+#include "../jrd/dyn.h"
+#include "../jrd/irq.h"
+#include "../jrd/IntlManager.h"
+#include "../jrd/PreparedStatement.h"
+#include "../jrd/constants.h"
+#include "../jrd/grant_proto.h"
+#include "../jrd/SystemPackages.h"
+
+using namespace Firebird;
+using namespace Jrd;
+
+DATABASE DB = FILENAME "ODS.RDB";
+
+namespace
+{
+	template <size_t N> void PAD(const char* string, char (&field)[N])
+	{
+		jrd_vtof(string, field, sizeof(field));
+	}
+
+	template <size_t N> void PAD(const MetaName& name, char (&field)[N])
+	{
+		jrd_vtof(name.c_str(), field, sizeof(field));
+	}
+
+	unsigned getLatestFormat(thread_db* tdbb, int relId, int maxFieldId)
+	{
+		const auto relation = MET_relation(tdbb, relId);
+		fb_assert(relation && relation->rel_formats);
+		fb_assert(relation->rel_formats->count());
+
+		const auto formatNumber = relation->rel_formats->count() - 1;
+		fb_assert(formatNumber < MAX_TABLE_VERSIONS);
+
+		const auto format = (*relation->rel_formats)[formatNumber];
+		fb_assert(format->fmt_count == maxFieldId);
+		fb_assert(format->fmt_version == formatNumber);
+
+		return formatNumber;
+	}
+
+	template <typename T>
+	bool getCharsetByTextType(T& charSet, const SSHORT subType) noexcept
+	{
+		switch (subType)
+		{
+		case dsc_text_type_metadata:
+			charSet = CS_METADATA;
+			break;
+
+		case dsc_text_type_ascii:
+			charSet = CS_ASCII;
+			break;
+
+		case dsc_text_type_fixed:
+			charSet = CS_BINARY;
+			break;
+
+		default:
+			return false;
+		}
+
+		return true;
+	}
+
+	SLONG lookupGenerator(const MetaName& name)
+	{
+		for (const gen* generator = generators; generator->gen_name; generator++)
+		{
+			if (name == generator->gen_name)
+				return generator->gen_id;
+		}
+
+		fb_assert(false);
+		return -1;
+	}
+
+	void storeGrant(thread_db* tdbb, const char* user, USHORT user_type,
+		const QualifiedName& object, USHORT object_type, const char* prvl, bool useOwnerGrantor = false)
+	{
+		const auto attachment = tdbb->getAttachment();
+		const auto transaction = tdbb->getTransaction();
+
+		AutoRequest handle;
+
+		while (*prvl)
+		{
+			STORE(REQUEST_HANDLE handle TRANSACTION_HANDLE transaction)
+				PRIV IN RDB$USER_PRIVILEGES
+			{
+				PAD(user, PRIV.RDB$USER);
+
+				if (object.schema.hasData())
+				{
+					PAD(object.schema.c_str(), PRIV.RDB$RELATION_SCHEMA_NAME);
+					PRIV.RDB$RELATION_SCHEMA_NAME.NULL = FALSE;
+				}
+				else
+					PRIV.RDB$RELATION_SCHEMA_NAME.NULL = TRUE;
+
+				PAD(object.object.c_str(), PRIV.RDB$RELATION_NAME);
+				PRIV.RDB$FIELD_NAME.NULL = TRUE;
+				PRIV.RDB$PRIVILEGE[0] = *prvl++;
+				PRIV.RDB$PRIVILEGE[1] = 0;
+				PRIV.RDB$GRANT_OPTION = 0;
+				PRIV.RDB$USER_TYPE = user_type;
+				PRIV.RDB$OBJECT_TYPE = object_type;
+
+				if (useOwnerGrantor)
+				{
+					PAD(attachment->getUserName().c_str(), PRIV.RDB$GRANTOR);
+					PRIV.RDB$GRANTOR.NULL = FALSE;
+				}
+				else
+					PRIV.RDB$GRANTOR.NULL = TRUE;
+			}
+			END_STORE
+		}
+	}
+
+	class SecurityHelper
+	{
+		static inline constexpr unsigned FB_MAX_ACL_SIZE = 4096;
+
+	public:
+		SecurityHelper(const MetaName& ownerName, AutoRequest& handle)
+			: userName(ownerName), reqAddSC(handle)
+		{}
+
+		const char* getOwnerName() const
+		{
+			return userName.c_str();
+		}
+
+		void addSecurityClass(thread_db* tdbb, const MetaName& className)
+		{
+			const auto attachment = tdbb->getAttachment();
+			const auto transaction = tdbb->getTransaction();
+
+			bid blobId;
+			attachment->storeBinaryBlob(tdbb, transaction, &blobId, ByteChunk(buffer, length));
+
+			STORE(REQUEST_HANDLE reqAddSC TRANSACTION_HANDLE transaction)
+				CLS IN RDB$SECURITY_CLASSES
+			{
+				PAD(className, CLS.RDB$SECURITY_CLASS);
+				CLS.RDB$ACL = blobId;
+			}
+			END_STORE
+		}
+
+	protected:
+		UCHAR buffer[FB_MAX_ACL_SIZE]{};
+		ULONG length = 0;
+
+	protected:
+		const MetaName userName;
+
+	private:
+		AutoRequest& reqAddSC;
+	};
+
+	class RelationSecurity : public SecurityHelper
+	{
+	public:
+		RelationSecurity(const MetaName& ownerName, AutoRequest& handle)
+			: SecurityHelper(ownerName, handle)
+		{
+			const size_t ownerNameLength = ownerName.length();
+			fb_assert(ownerNameLength <= MAX_UCHAR);
+
+			const UCHAR REL_OWNER_ACL[] =
+				{ACL_priv_list, priv_control, priv_alter, priv_drop,
+				 priv_select, priv_insert, priv_update, priv_delete, ACL_end};
+
+			const UCHAR REL_PUBLIC_ACL[] =
+				{ACL_priv_list, priv_select, ACL_end};
+
+			fb_assert(sizeof(buffer) >= 8 + ownerNameLength +
+					  sizeof(REL_OWNER_ACL) + sizeof(REL_PUBLIC_ACL));
+
+			UCHAR* acl = buffer;
+			*acl++ = ACL_version;
+			*acl++ = ACL_id_list;
+
+			*acl++ = id_person;
+
+			*acl++ = (UCHAR) ownerNameLength;
+			memcpy(acl, ownerName.c_str(), ownerNameLength);
+			acl += ownerNameLength;
+
+			*acl++ = ACL_end;
+
+			memcpy(acl, REL_OWNER_ACL, sizeof(REL_OWNER_ACL));
+			acl += sizeof(REL_OWNER_ACL);
+
+			*acl++ = ACL_id_list;
+			*acl++ = ACL_end;
+
+			memcpy(acl, REL_PUBLIC_ACL, sizeof(REL_PUBLIC_ACL));
+			acl += sizeof(REL_PUBLIC_ACL);
+
+			*acl++ = ACL_end; // Extra terminator to avoid scl.epp:walk_acl() missing the end
+
+			length = acl - buffer;
+		}
+
+		void storeSecurityClass(thread_db* tdbb, MetaName& securityClass, MetaName& defaultClass)
+		{
+			securityClass.printf("%s%" SQUADFORMAT, SQL_SECCLASS_PREFIX,
+				DPM_gen_id(tdbb, lookupGenerator(SQL_SECCLASS_GENERATOR), false, 1));
+
+			defaultClass.printf("%s%" SQUADFORMAT, DEFAULT_CLASS,
+				DPM_gen_id(tdbb, lookupGenerator(DEFAULT_CLASS), false, 1));
+
+			addSecurityClass(tdbb, securityClass);
+			addSecurityClass(tdbb, defaultClass);
+		}
+
+		void storePrivileges(thread_db* tdbb, const char* relName)
+		{
+			// Only the owner of the database has SELECT/INSERT/UPDATE/DELETE privileges
+			// on any system relations. Any other users only has SELECT privilege.
+
+			const auto attachment = tdbb->getAttachment();
+			const auto transaction = tdbb->getTransaction();
+
+			const auto userName = getOwnerName();
+
+			for (auto privilege = ALL_PRIVILEGES; *privilege; ++privilege)
+			{
+				for (int i = 0; i <= (*privilege == 'S' ? 1 : 0); ++i)
+				{
+					STORE(REQUEST_HANDLE handle TRANSACTION_HANDLE transaction)
+						PRIV IN RDB$USER_PRIVILEGES
+					{
+						PRIV.RDB$PRIVILEGE[0] = *privilege;
+						PRIV.RDB$PRIVILEGE[1] = 0;
+
+						strcpy(PRIV.RDB$RELATION_SCHEMA_NAME, SYSTEM_SCHEMA);
+						strcpy(PRIV.RDB$RELATION_NAME, relName);
+						PRIV.RDB$USER_TYPE = obj_user;
+						PRIV.RDB$OBJECT_TYPE = obj_relation;
+
+						if (i == 0)
+						{
+							strcpy(PRIV.RDB$USER, userName);
+							PRIV.RDB$GRANT_OPTION = WITH_GRANT_OPTION;
+						}
+						else
+						{
+							strcpy(PRIV.RDB$USER, "PUBLIC");
+							PRIV.RDB$GRANT_OPTION = 0;
+						}
+					}
+				}
+				END_STORE
+			}
+		}
+
+	private:
+		AutoRequest handle;
+	};
+
+	class NonRelationSecurity : public SecurityHelper
+	{
+	public:
+		NonRelationSecurity(const MetaName& ownerName, AutoRequest& handle, bool package)
+			: SecurityHelper(ownerName, handle)
+		{
+			const size_t ownerNameLength = ownerName.length();
+			fb_assert(ownerNameLength <= MAX_UCHAR);
+
+			const UCHAR privilege = package ? priv_execute : priv_usage;
+
+			const UCHAR NON_REL_OWNER_ACL[] =
+				{ACL_priv_list, priv_control, priv_alter, priv_drop, privilege, ACL_end};
+
+			const UCHAR NON_REL_PUBLIC_ACL[] =
+				{ACL_priv_list, privilege, ACL_end};
+
+			fb_assert(sizeof(buffer) >= 8 + ownerNameLength +
+					  sizeof(NON_REL_OWNER_ACL) + sizeof(NON_REL_PUBLIC_ACL));
+
+			UCHAR* acl = buffer;
+			*acl++ = ACL_version;
+			*acl++ = ACL_id_list;
+			*acl++ = id_person;
+
+			*acl++ = (UCHAR) ownerNameLength;
+			memcpy(acl, ownerName.c_str(), ownerNameLength);
+			acl += ownerNameLength;
+
+			*acl++ = ACL_end;
+
+			memcpy(acl, NON_REL_OWNER_ACL, sizeof(NON_REL_OWNER_ACL));
+			acl += sizeof(NON_REL_OWNER_ACL);
+
+			*acl++ = ACL_id_list;
+			*acl++ = ACL_end;
+
+			memcpy(acl, NON_REL_PUBLIC_ACL, sizeof(NON_REL_PUBLIC_ACL));
+			acl += sizeof(NON_REL_PUBLIC_ACL);
+
+			*acl++ = ACL_end; // Extra terminator to avoid scl.epp:walk_acl() missing the end
+
+			length = acl - buffer;
+		}
+
+		MetaName storeSecurityClass(thread_db* tdbb)
+		{
+			MetaName securityClass;
+			securityClass.printf("%s%" SQUADFORMAT, SQL_SECCLASS_PREFIX,
+				DPM_gen_id(tdbb, lookupGenerator(SQL_SECCLASS_GENERATOR), false, 1));
+
+			addSecurityClass(tdbb, securityClass);
+
+			return securityClass;
+		}
+
+		void storePrivileges(thread_db* tdbb, const char* objName, ObjectType objType)
+		{
+			// Add security to system objects
+
+			const auto attachment = tdbb->getAttachment();
+			const auto transaction = tdbb->getTransaction();
+
+			const char* privileges = nullptr;
+
+			switch (objType)
+			{
+			case obj_field:
+			case obj_charset:
+			case obj_collation:
+			case obj_exception:
+			case obj_generator:
+				privileges = USAGE_PRIVILEGES;
+				break;
+
+			case obj_package_header:
+				privileges = EXEC_PRIVILEGES;
+				break;
+
+			default:
+				fb_assert(false);
+			}
+
+			fb_assert(privileges && privileges[0] && !privileges[1]);
+
+			const auto userName = getOwnerName();
+			fb_assert(userName && *userName);
+			fb_assert(objName);
+
+			const char* users[] = {userName, "PUBLIC"};
+			int grantOptions[] = {WITH_GRANT_OPTION, 0};
+
+			for (unsigned i = 0; i < FB_NELEM(users); i++)
+			{
+				STORE(REQUEST_HANDLE handle TRANSACTION_HANDLE transaction)
+					PRIV IN RDB$USER_PRIVILEGES
+				{
+					PAD(users[i], PRIV.RDB$USER);
+					PAD(SYSTEM_SCHEMA, PRIV.RDB$RELATION_SCHEMA_NAME);
+					PAD(objName, PRIV.RDB$RELATION_NAME);
+					PRIV.RDB$PRIVILEGE[0] = *privileges;
+					PRIV.RDB$PRIVILEGE[1] = 0;
+					PRIV.RDB$GRANT_OPTION = grantOptions[i];
+					PRIV.RDB$USER_TYPE = obj_user;
+					PRIV.RDB$OBJECT_TYPE = objType;
+					PRIV.RDB$GRANTOR.NULL = TRUE;
+				}
+				END_STORE
+			}
+		}
+
+	private:
+		AutoRequest handle;
+	};
+
+	class RoleSecurity : public SecurityHelper
+	{
+	public:
+		RoleSecurity(const MetaName& ownerName, AutoRequest& handle)
+			: SecurityHelper(ownerName, handle)
+		{
+			const size_t ownerNameLength = ownerName.length();
+			fb_assert(ownerNameLength <= MAX_UCHAR);
+
+			const UCHAR ROLE_OWNER_ACL[] =
+				{ACL_priv_list, priv_control, priv_alter, priv_drop, priv_usage, ACL_end};
+
+			fb_assert(sizeof(buffer) >= 6 + ownerNameLength + sizeof(ROLE_OWNER_ACL));
+
+			UCHAR* acl = buffer;
+			*acl++ = ACL_version;
+			*acl++ = ACL_id_list;
+			*acl++ = id_person;
+
+			*acl++ = (UCHAR) ownerNameLength;
+			memcpy(acl, ownerName.c_str(), ownerNameLength);
+			acl += ownerNameLength;
+
+			*acl++ = ACL_end;
+
+			memcpy(acl, ROLE_OWNER_ACL, sizeof(ROLE_OWNER_ACL));
+			acl += sizeof(ROLE_OWNER_ACL);
+
+			*acl++ = ACL_end; // Extra terminator to avoid scl.epp:walk_acl() missing the end
+
+			length = acl - buffer;
+		}
+
+		MetaName storeSecurityClass(thread_db* tdbb)
+		{
+			MetaName securityClass;
+			securityClass.printf("%s%" SQUADFORMAT, SQL_SECCLASS_PREFIX,
+				DPM_gen_id(tdbb, lookupGenerator(SQL_SECCLASS_GENERATOR), false, 1));
+
+			addSecurityClass(tdbb, securityClass);
+
+			return securityClass;
+		}
+
+		void storePrivileges(thread_db* tdbb, const char* objName)
+		{
+			// Add security to system roles
+
+			const auto attachment = tdbb->getAttachment();
+			const auto transaction = tdbb->getTransaction();
+
+			const auto userName = getOwnerName();
+			fb_assert(userName && *userName);
+			fb_assert(objName);
+
+			const char* users[] = {DBA_USER_NAME, userName};
+			const unsigned usersCount = (MetaName(userName) != DBA_USER_NAME) ? 2 : 1;
+
+			const char* privilege = "M";
+
+			for (unsigned i = 0; i < usersCount; i++)
+			{
+				STORE(REQUEST_HANDLE handle TRANSACTION_HANDLE transaction)
+					PRIV IN RDB$USER_PRIVILEGES
+				{
+					PAD(users[i], PRIV.RDB$USER);
+					PAD(objName, PRIV.RDB$RELATION_NAME);
+					PRIV.RDB$PRIVILEGE[0] = *privilege;
+					PRIV.RDB$PRIVILEGE[1] = 0;
+					PRIV.RDB$GRANT_OPTION = WITH_ADMIN_OPTION;
+					PRIV.RDB$USER_TYPE = obj_user;
+					PRIV.RDB$OBJECT_TYPE = obj_sql_role;
+					PRIV.RDB$GRANTOR.NULL = TRUE;
+
+					// Grant role as default
+					PRIV.RDB$FIELD_NAME[0] = 'D';
+					PRIV.RDB$FIELD_NAME[1] = 0;
+					PRIV.RDB$FIELD_NAME.NULL = FALSE;
+				}
+				END_STORE
+			}
+		}
+
+	private:
+		AutoRequest handle;
+	};
+
+	class DdlSecurity : public SecurityHelper
+	{
+	public:
+		DdlSecurity(const MetaName& ownerName, AutoRequest& handle)
+			: SecurityHelper(ownerName, handle)
+		{
+			const size_t ownerNameLength = ownerName.length();
+			fb_assert(ownerNameLength <= MAX_UCHAR);
+
+			const UCHAR DDL_OWNER_ACL[] =
+				{ACL_priv_list, priv_control, priv_alter, priv_drop, ACL_end};
+
+			fb_assert(sizeof(buffer) >= 6 + ownerNameLength + sizeof(DDL_OWNER_ACL));
+
+			UCHAR* acl = buffer;
+			*acl++ = ACL_version;
+			*acl++ = ACL_id_list;
+			*acl++ = id_person;
+
+			*acl++ = (UCHAR) ownerNameLength;
+			memcpy(acl, ownerName.c_str(), ownerNameLength);
+			acl += ownerNameLength;
+
+			*acl++ = ACL_end;
+
+			memcpy(acl, DDL_OWNER_ACL, sizeof(DDL_OWNER_ACL));
+			acl += sizeof(DDL_OWNER_ACL);
+
+			*acl++ = ACL_end; // Extra terminator to avoid scl.epp:walk_acl() missing the end
+
+			length = acl - buffer;
+		}
+
+		void store(thread_db* tdbb)
+		{
+			const auto attachment = tdbb->getAttachment();
+			const auto transaction = tdbb->getTransaction();
+
+			for (int obj = obj_database + 1; obj < obj_type_MAX; obj++)
+			{
+				if (bool useSchema; isDdlObject(obj, &useSchema))
+				{
+					if (useSchema)
+					{
+						if (!attachment->isGbak() || !(attachment->att_flags & ATT_gbak_restore_has_schema))
+						{
+							storeGrant(tdbb, userName.c_str(), obj_user,
+								QualifiedName(getDllSecurityName(obj), PUBLIC_SCHEMA),
+								obj, ALL_DDL_PRIVILEGES, true);
+
+							addSecurityClass(tdbb, SCL_getDdlSecurityClassName(obj, PUBLIC_SCHEMA));
+						}
+
+						addSecurityClass(tdbb, SCL_getDdlSecurityClassName(obj, SYSTEM_SCHEMA));
+					}
+					else
+					{
+						storeGrant(tdbb, userName.c_str(), obj_user,
+							QualifiedName(getDllSecurityName(obj)),
+							obj, ALL_DDL_PRIVILEGES, false);
+
+						addSecurityClass(tdbb, SCL_getDdlSecurityClassName(obj, {}));
+					}
+				}
+			}
+
+			MetaName securityClass;
+			securityClass.printf("%s%" SQUADFORMAT, SQL_SECCLASS_PREFIX,
+				DPM_gen_id(tdbb, lookupGenerator(SQL_SECCLASS_GENERATOR), false, 1));
+
+			addSecurityClass(tdbb, securityClass);
+
+			handle.reset();
+
+			FOR(REQUEST_HANDLE handle TRANSACTION_HANDLE transaction)
+				DB IN RDB$DATABASE
+			{
+				MODIFY DB USING
+					DB.RDB$SECURITY_CLASS.NULL = FALSE;
+					PAD(securityClass, DB.RDB$SECURITY_CLASS);
+				END_MODIFY
+			}
+			END_FOR
+		}
+
+	private:
+		AutoRequest handle;
+	};
+}; // namespace
+
+static void store_admin_role(thread_db*, const MetaName&, RoleSecurity&);
+static void store_default_pub(thread_db*, const MetaName&);
+static void store_generator(thread_db*, const gen*, AutoRequest&, NonRelationSecurity&);
+static void store_global_field(thread_db*, const gfld*, AutoRequest&, NonRelationSecurity&);
+static void store_indices(thread_db*, USHORT = 0);
+static void store_intlnames(thread_db*, NonRelationSecurity&);
+static void store_relation(thread_db*, int, const char*, int, int, AutoRequest&, RelationSecurity&);
+static void store_relation_field(thread_db*, int, const char*, const char*, const char*, int, AutoRequest&);
+static void store_packages(thread_db*, NonRelationSecurity&, USHORT = 0);
+
+
+//
+// Initialize system relations in the database.
+// The full complement of metadata should be stored here.
+//
+
+void INI_format(thread_db* tdbb, const string& charset)
+{
+	const auto dbb = tdbb->getDatabase();
+	const auto attachment = tdbb->getAttachment();
+
+	const auto transaction = attachment->getSysTransaction();
+	tdbb->setTransaction(transaction);
+
+	// Uppercase owner name
+	const auto ownerName = attachment->getUserName();
+	fb_assert(ownerName.hasData());
+
+	AutoRequest handle, reqAddSC;
+
+	{ // scope for system relations
+
+		RelationSecurity relSec(ownerName, reqAddSC);
+
+		const int* fld;
+
+		// Make sure relations exist already
+
+		for (const int* relfld = relfields; relfld[RFLD_R_NAME]; relfld = fld + 1)
+		{
+			if (relfld[RFLD_R_TYPE] == rel_persistent)
+				DPM_create_relation(tdbb, MET_relation(tdbb, relfld[RFLD_R_ID]));
+
+			for (fld = relfld + RFLD_RPT; fld[RFLD_F_NAME]; fld += RFLD_F_LENGTH)
+				;
+		}
+
+		// Store RELATIONS and RELATION_FIELDS
+
+		dsc schemaDesc;
+		schemaDesc.makeText(static_cast<USHORT>(strlen(SYSTEM_SCHEMA)), CS_METADATA,
+			(UCHAR*) SYSTEM_SCHEMA);
+
+		AutoRequest handle2;
+
+		for (const int* relfld = relfields; relfld[RFLD_R_NAME]; relfld = fld + 1)
+		{
+			const bool isVirtual = (relfld[RFLD_R_TYPE] == rel_virtual);
+			bool needsRdbRuntime = false;
+			int fieldId = 0;
+
+			for (fld = relfld + RFLD_RPT; fld[RFLD_F_NAME]; fld += RFLD_F_LENGTH)
+			{
+				const gfld* gfield = &gfields[fld[RFLD_F_ID]];
+				const auto relId = relfld[RFLD_R_ID];
+				const auto relName = names[relfld[RFLD_R_NAME]];
+				const auto fieldName = names[fld[RFLD_F_NAME]];
+				const auto globalName = names[gfield->gfld_name];
+				const auto updateFlag = fld[RFLD_F_UPDATE];
+
+				if (!isVirtual && (gfield->gfld_dflt_blr || !gfield->gfld_nullable))
+					needsRdbRuntime = true;
+
+				store_relation_field(tdbb, fieldId, relName, fieldName, globalName,
+									 updateFlag, handle2);
+				++fieldId;
+			}
+
+			const auto relId = relfld[RFLD_R_ID];
+			const auto relName = names[relfld[RFLD_R_NAME]];
+			const auto relType = relfld[RFLD_R_TYPE];
+
+			store_relation(tdbb, relId, relName, fieldId, relType, handle, relSec);
+
+			if (needsRdbRuntime)
+			{
+				dsc desc;
+				desc.makeText(static_cast<USHORT>(strlen(relName)), CS_METADATA, (UCHAR*) relName);
+				DFW_post_work(transaction, dfw_update_format, &desc, &schemaDesc, 0);
+			}
+		}
+	}
+
+	NonRelationSecurity nonRelSec(ownerName, reqAddSC, false);
+
+	// Store global FIELDS
+
+	handle.reset();
+
+	for (const gfld* gfield = gfields; gfield->gfld_name; gfield++)
+		store_global_field(tdbb, gfield, handle, nonRelSec);
+
+	// Store DATABASE record
+
+	handle.reset();
+
+	// Uppercase charset name
+	auto charSetName = QualifiedMetaString::parseSchemaObject(
+		charset.hasData() ? charset.c_str() : DEFAULT_DB_CHARACTER_SET_NAME);
+
+	if (charSetName.schema.isEmpty())
+		charSetName.schema = SYSTEM_SCHEMA;
+
+	STORE(REQUEST_HANDLE handle) X IN RDB$DATABASE
+	{
+		X.RDB$RELATION_ID = (int) USER_DEF_REL_INIT_ID;
+		PAD(charSetName.object.c_str(), X.RDB$CHARACTER_SET_NAME);
+		PAD(charSetName.schema.c_str(), X.RDB$CHARACTER_SET_SCHEMA_NAME);
+	}
+	END_STORE
+
+	// Store SYSTEM schema
+
+	handle.reset();
+
+	STORE(REQUEST_HANDLE handle) SCH IN RDB$SCHEMAS
+	{
+		PAD(SYSTEM_SCHEMA, SCH.RDB$SCHEMA_NAME);
+		PAD(ownerName, SCH.RDB$OWNER_NAME);
+		SCH.RDB$SYSTEM_FLAG = RDB_system;
+		PAD(SYSTEM_SCHEMA, SCH.RDB$CHARACTER_SET_SCHEMA_NAME);
+		PAD("UTF8", SCH.RDB$CHARACTER_SET_NAME);
+
+		const auto securityClass = nonRelSec.storeSecurityClass(tdbb);
+		PAD(securityClass, SCH.RDB$SECURITY_CLASS);
+	}
+	END_STORE
+
+	storeGrant(tdbb, attachment->getUserName().c_str(), obj_user, QualifiedName(SYSTEM_SCHEMA),
+		obj_schema, USAGE_PRIVILEGES, false);
+
+	storeGrant(tdbb, "PUBLIC", obj_user, QualifiedName(SYSTEM_SCHEMA),
+		obj_schema, USAGE_PRIVILEGES, false);
+
+	GRANT_privileges(tdbb, QualifiedName(SYSTEM_SCHEMA), obj_schema, transaction);
+
+	if (!attachment->isGbak() || !(attachment->att_flags & ATT_gbak_restore_has_schema))
+	{
+		// Store PUBLIC schema
+
+		handle.reset();
+
+		STORE(REQUEST_HANDLE handle) SCH IN RDB$SCHEMAS
+		{
+			PAD(PUBLIC_SCHEMA, SCH.RDB$SCHEMA_NAME);
+			PAD(ownerName, SCH.RDB$OWNER_NAME);
+			SCH.RDB$SYSTEM_FLAG = 0;
+
+			const auto securityClass = nonRelSec.storeSecurityClass(tdbb);
+			PAD(securityClass, SCH.RDB$SECURITY_CLASS);
+		}
+		END_STORE
+
+		storeGrant(tdbb, attachment->getUserName().c_str(), obj_user, QualifiedName(PUBLIC_SCHEMA),
+			obj_schema, USAGE_PRIVILEGES, true);
+
+		storeGrant(tdbb, "PUBLIC", obj_user, QualifiedName(PUBLIC_SCHEMA),
+			obj_schema, USAGE_PRIVILEGES, true);
+
+		GRANT_privileges(tdbb, QualifiedName(PUBLIC_SCHEMA), obj_schema, transaction);
+	}
+
+	// Create indices for system relations
+
+	store_indices(tdbb);
+
+	// Create parameter types
+
+	handle.reset();
+
+	for (const rtyp* type = types; type->rtyp_name; ++type)
+	{
+		// this STORE should be compatible with two below,
+		// as they use the same compiled request
+		STORE(REQUEST_HANDLE handle) X IN RDB$TYPES
+		{
+			PAD(names[type->rtyp_field], X.RDB$FIELD_NAME);
+			PAD(type->rtyp_name, X.RDB$TYPE_NAME);
+			X.RDB$TYPE = type->rtyp_value;
+			X.RDB$SYSTEM_FLAG = RDB_system;
+			X.RDB$SYSTEM_FLAG.NULL = FALSE;
+		}
+		END_STORE
+	}
+
+	for (const IntlManager::CharSetDefinition* charSet = IntlManager::defaultCharSets;
+		 charSet->name; ++charSet)
+	{
+		// this STORE should be compatible with one above and below,
+		// as they use the same compiled request
+		STORE(REQUEST_HANDLE handle) X IN RDB$TYPES
+		{
+			PAD(names[nam_charset_name], X.RDB$FIELD_NAME);
+			PAD(charSet->name, X.RDB$TYPE_NAME);
+			X.RDB$TYPE = charSet->id;
+			X.RDB$SYSTEM_FLAG = RDB_system;
+			X.RDB$SYSTEM_FLAG.NULL = FALSE;
+		}
+		END_STORE;
+	}
+
+	for (const IntlManager::CharSetAliasDefinition* alias = IntlManager::defaultCharSetAliases;
+		alias->name; ++alias)
+	{
+		// this STORE should be compatible with two above,
+		// as they use the same compiled request
+		STORE(REQUEST_HANDLE handle) X IN RDB$TYPES
+		{
+			PAD(names[nam_charset_name], X.RDB$FIELD_NAME);
+			PAD(alias->name, X.RDB$TYPE_NAME);
+			X.RDB$TYPE = alias->charSetId;
+			X.RDB$SYSTEM_FLAG = RDB_system;
+			X.RDB$SYSTEM_FLAG.NULL = FALSE;
+		}
+		END_STORE;
+	}
+
+	// Store symbols for international character sets & collations
+
+	store_intlnames(tdbb, nonRelSec);
+
+	// Create system generators
+
+	handle.reset();
+
+	for (const gen* generator = generators; generator->gen_name; generator++)
+		store_generator(tdbb, generator, handle, nonRelSec);
+
+	// Adjust the value of the hidden generator RDB$GENERATORS
+	DPM_gen_id(tdbb, 0, true, FB_NELEM(generators) - 1);
+
+	// Create system packages
+
+	// Reset nonRelSec for package permissions, it should be its last usage in this function
+	new(&nonRelSec) NonRelationSecurity(ownerName, reqAddSC, true);
+
+	store_packages(tdbb, nonRelSec);
+
+	// Store default publication
+
+	store_default_pub(tdbb, ownerName);
+
+	// Store system role
+
+	RoleSecurity roleSec(ownerName, reqAddSC);
+	store_admin_role(tdbb, ADMIN_ROLE, roleSec);
+
+	// Add default DDL security
+
+	DdlSecurity(ownerName, reqAddSC).store(tdbb);
+
+	// Add additional grants
+
+	MetaName buf;
+
+	buf.printf("%d", USE_NBACKUP_UTILITY);
+	storeGrant(tdbb, buf.c_str(), obj_privilege, QualifiedName("RDB$BACKUP_HISTORY", SYSTEM_SCHEMA),
+		obj_relation, ALL_PRIVILEGES);
+	GRANT_privileges(tdbb, QualifiedName("RDB$BACKUP_HISTORY", SYSTEM_SCHEMA), obj_relation, transaction);
+
+	buf.printf("%d", CREATE_USER_TYPES);
+	storeGrant(tdbb, buf.c_str(), obj_privilege, QualifiedName("RDB$TYPES", SYSTEM_SCHEMA),
+		obj_relation, ALL_PRIVILEGES);
+	GRANT_privileges(tdbb, QualifiedName("RDB$TYPES", SYSTEM_SCHEMA), obj_relation, transaction);
+
+	buf.printf("%d", GRANT_REVOKE_ANY_DDL_RIGHT);
+	storeGrant(tdbb, buf.c_str(), obj_privilege, QualifiedName("RDB$DB_CREATORS", SYSTEM_SCHEMA),
+		obj_relation, ALL_PRIVILEGES);
+	GRANT_privileges(tdbb, QualifiedName("RDB$DB_CREATORS", SYSTEM_SCHEMA), obj_relation, transaction);
+
+	DFW_perform_work(tdbb, transaction);
+
+	tdbb->setTransaction(nullptr);
+}
+
+
+//
+// Initialize in-memory meta data
+//
+
+void INI_init(thread_db* tdbb)
+{
+	const auto dbb = tdbb->getDatabase();
+	const auto attachment = tdbb->getAttachment();
+
+	const auto pool = attachment->att_pool;
+
+	const int* fld;
+	for (const int* relfld = relfields; relfld[RFLD_R_NAME]; relfld = fld + 1)
+	{
+		const bool isPersistent = (relfld[RFLD_R_TYPE] == rel_persistent);
+
+		jrd_rel* relation = MET_relation(tdbb, relfld[RFLD_R_ID]);
+		relation->rel_flags |= REL_system;
+		relation->rel_flags |= MET_get_rel_flags_from_TYPE(relfld[RFLD_R_TYPE]);
+		relation->rel_name = QualifiedName(names[relfld[RFLD_R_NAME]], SYSTEM_SCHEMA);
+
+		HalfStaticArray<const char*, 64> fieldNames;
+		for (fld = relfld + RFLD_RPT; fld[RFLD_F_NAME]; fld += RFLD_F_LENGTH)
+		{
+			fieldNames.add(names[fld[RFLD_F_NAME]]);
+		}
+
+		const auto fields = vec<jrd_fld*>::newVector(*pool, fieldNames.getCount());
+		relation->rel_fields = fields;
+
+		ULONG fieldPos = 0;
+		for (auto iter = fields->begin(); iter != fields->end(); ++iter)
+		{
+			const auto field = FB_NEW_POOL(*pool) jrd_fld(*pool);
+			field->fld_name = fieldNames[fieldPos++];
+			*iter = field;
+		}
+
+		relation->rel_formats = vec<Format*>::newVector(*pool, 1);
+
+		constexpr auto majorVersion = ODS_VERSION;
+		const auto dbMinorVersion = dbb->dbb_ods_version ? dbb->dbb_minor_version : ODS_CURRENT;
+		// We need only the latest format for virtual tables
+		auto minorVersion = isPersistent ? ODS_RELEASED : ODS_CURRENT;
+		unsigned formatNumber = 0, currentFormat = 0;
+
+		while (minorVersion <= ODS_CURRENT)
+		{
+			bool newFormat = false;
+			unsigned fieldCount = 0;
+
+			for (fld = relfld + RFLD_RPT; fld[RFLD_F_NAME]; fld += RFLD_F_LENGTH)
+			{
+				if (fld[RFLD_F_ODS] > ENCODE_ODS(majorVersion, minorVersion))
+					continue;
+
+				if (!formatNumber || fld[RFLD_F_ODS] == ENCODE_ODS(majorVersion, minorVersion))
+					newFormat = true;
+
+				fieldCount++;
+			}
+
+			if (!newFormat)
+			{
+				minorVersion++;
+				continue;
+			}
+
+			const auto format = Format::newFormat(*pool, fieldCount);
+			format->fmt_version = formatNumber;
+			format->fmt_length = FLAG_BYTES(format->fmt_count);
+
+			relation->rel_formats->resize(formatNumber + 1);
+			(*relation->rel_formats)[formatNumber] = format;
+
+			auto desc = format->fmt_desc.begin();
+
+			for (fld = relfld + RFLD_RPT; fld[RFLD_F_NAME]; fld += RFLD_F_LENGTH, ++desc)
+			{
+				if (fld[RFLD_F_ODS] > ENCODE_ODS(majorVersion, minorVersion))
+					continue;
+
+				const gfld* gfield = &gfields[fld[RFLD_F_ID]];
+
+				desc->dsc_length = gfield->gfld_length;
+				if (gfield->gfld_dtype == dtype_varying)
+				{
+					fb_assert(desc->dsc_length <= MAX_USHORT - sizeof(USHORT));
+					desc->dsc_length += sizeof(USHORT);
+				}
+
+				desc->dsc_dtype = gfield->gfld_dtype;
+
+				if (desc->isText())
+				{
+					if (!getCharsetByTextType(desc->dsc_sub_type, gfield->gfld_sub_type))
+						desc->dsc_sub_type = CS_NONE;
+				}
+				else
+					desc->dsc_sub_type = gfield->gfld_sub_type;
+
+				if (desc->dsc_dtype == dtype_blob && desc->dsc_sub_type == isc_blob_text)
+					desc->dsc_scale = CS_METADATA;	// blob charset
+
+				format->fmt_length = MET_align(&(*desc), format->fmt_length);
+				desc->dsc_address = (UCHAR*)(IPTR) format->fmt_length;
+				format->fmt_length += desc->dsc_length;
+			}
+
+			if (minorVersion == dbMinorVersion)
+				currentFormat = formatNumber;
+
+			minorVersion++;
+			formatNumber++;
+		}
+
+		fb_assert(currentFormat < relation->rel_formats->count());
+		relation->rel_current_fmt = currentFormat;
+		relation->rel_current_format = (*relation->rel_formats)[currentFormat];
+	}
+}
+
+
+// Rescan system relations that have fields with default values.
+void INI_init_sys_relations(thread_db* tdbb)
+{
+	const int* fld;
+
+	for (const int* relfld = relfields; relfld[RFLD_R_NAME]; relfld = fld + 1)
+	{
+		jrd_rel* relation = MET_relation(tdbb, relfld[RFLD_R_ID]);
+		bool needsRdbRuntime = false;
+
+		for (fld = relfld + RFLD_RPT; fld[RFLD_F_NAME]; fld += RFLD_F_LENGTH)
+		{
+			const auto* const gfield = &gfields[fld[RFLD_F_ID]];
+
+			if (!relation->isVirtual() && (gfield->gfld_dflt_blr || !gfield->gfld_nullable))
+				needsRdbRuntime = true;
+		}
+
+		if (needsRdbRuntime)
+			MET_scan_relation(tdbb, relation);
+	}
+}
+
+
+//
+// Load system objects into DSQL metadata cache
+//
+
+void INI_init_dsql(thread_db* tdbb, dsql_dbb* database)
+{
+	const auto dbb = tdbb->getDatabase();
+
+	const auto majorVersion = dbb->dbb_ods_version;
+	const auto minorVersion = dbb->dbb_minor_version;
+
+	// Load relation and fields.
+
+	const int* fld;
+	for (const int* relfld = relfields; relfld[RFLD_R_NAME]; relfld = fld + 1)
+	{
+		if (relfld[RFLD_R_ODS] > ENCODE_ODS(majorVersion, minorVersion))
+		{
+			for (fld = relfld + RFLD_RPT; fld[RFLD_F_NAME]; fld += RFLD_F_LENGTH)
+				;
+
+			continue;
+		}
+
+		dsql_rel* relation = FB_NEW_POOL(database->dbb_pool) dsql_rel(database->dbb_pool);
+
+		relation->rel_id = relfld[RFLD_R_ID];
+		relation->rel_name = QualifiedName(names[relfld[RFLD_R_NAME]], SYSTEM_SCHEMA);
+		relation->rel_owner = DBA_USER_NAME;
+		relation->rel_dbkey_length = 8;
+
+		dsql_fld** ptr = &relation->rel_fields;
+		int n = 0;
+
+		for (fld = relfld + RFLD_RPT; fld[RFLD_F_NAME]; fld += RFLD_F_LENGTH)
+		{
+			if (fld[RFLD_F_ODS] > ENCODE_ODS(majorVersion, minorVersion))
+				continue;
+
+			dsql_fld* field = FB_NEW_POOL(database->dbb_pool) dsql_fld(database->dbb_pool);
+			field->fld_id = n++;
+
+			*ptr = field;
+			ptr = &field->fld_next;
+
+			// get field information
+
+			const gfld* gfield = &gfields[fld[RFLD_F_ID]];
+
+			field->fld_name = names[fld[RFLD_F_NAME]];
+			field->fieldSource = QualifiedName(names[gfield->gfld_name], SYSTEM_SCHEMA);
+			field->length = gfield->gfld_length;
+			field->scale = 0;
+			field->subType = gfield->gfld_sub_type;
+			field->fld_relation = relation;
+
+			field->dtype = gfield->gfld_dtype;
+
+			if (field->dtype == dtype_varying)
+				field->length += sizeof(USHORT);
+			else if (field->dtype == dtype_blob)
+			{
+				field->segLength = 80;
+				if (gfield->gfld_sub_type == isc_blob_text)
+					field->charSetId = CS_METADATA;
+			}
+
+			if (DTYPE_IS_TEXT(gfield->gfld_dtype))
+				getCharsetByTextType(field->charSetId, gfield->gfld_sub_type);
+
+			if (gfield->gfld_nullable)
+				field->flags |= FLD_nullable;
+
+			field->flags |= FLD_system;
+		}
+
+		database->dbb_relations.put(relation->rel_name, relation);
+		MET_dsql_cache_use(tdbb, SYM_relation, relation->rel_name);
+	}
+
+	// Load internal character sets and collations, necessary for engine operation.
+
+	for (const IntlManager::CharSetDefinition* csDef = IntlManager::defaultCharSets;
+		 csDef->name; ++csDef)
+	{
+		if (csDef->id > ttype_last_internal)
+			continue;
+
+		dsql_intlsym* csSymbol = FB_NEW_POOL(database->dbb_pool) dsql_intlsym(database->dbb_pool);
+		const QualifiedName csName(csDef->name, SYSTEM_SCHEMA);
+		csSymbol->intlsym_name = csName;
+		csSymbol->intlsym_charset_id = csDef->id;
+		csSymbol->intlsym_collate_id = 0;
+		csSymbol->intlsym_ttype =
+			INTL_CS_COLL_TO_TTYPE(csSymbol->intlsym_charset_id, csSymbol->intlsym_collate_id);
+		csSymbol->intlsym_bytes_per_char = csDef->maxBytes;
+
+		// Mark the charset as invalid to reload it ASAP. This is done because we cannot know here
+		// if the user has altered its default collation.
+		csSymbol->intlsym_flags = INTLSYM_dropped;
+
+		database->dbb_charsets.put(csName, csSymbol);
+		database->dbb_charsets_by_id.put(csSymbol->intlsym_charset_id, csSymbol);
+		MET_dsql_cache_use(tdbb, SYM_intlsym_charset, csName);
+
+		for (const IntlManager::CollationDefinition* colDef = IntlManager::defaultCollations;
+			 colDef->name; ++colDef)
+		{
+			if (colDef->charSetId != csDef->id)
+				continue;
+
+			dsql_intlsym* colSymbol = FB_NEW_POOL(database->dbb_pool) dsql_intlsym(database->dbb_pool);
+			const QualifiedName colName(colDef->name, SYSTEM_SCHEMA);
+			colSymbol->intlsym_name = colName;
+			colSymbol->intlsym_flags = 0;
+			colSymbol->intlsym_charset_id = csDef->id;
+			colSymbol->intlsym_collate_id = colDef->collationId;
+			colSymbol->intlsym_ttype =
+				INTL_CS_COLL_TO_TTYPE(colSymbol->intlsym_charset_id, colSymbol->intlsym_collate_id);
+			colSymbol->intlsym_bytes_per_char = csDef->maxBytes;
+
+			database->dbb_collations.put(colName, colSymbol);
+			MET_dsql_cache_use(tdbb, SYM_intlsym_collation, colName);
+		}
+	}
+}
+
+
+string INI_owner_privileges()
+{
+	return string(gfields[fld_system_privileges].gfld_length, '\xff');
+}
+
+
+//
+// Upgrade database to the current minor ODS version
+//
+
+void INI_upgrade(thread_db* tdbb)
+{
+	const auto dbb = tdbb->getDatabase();
+	const auto attachment = tdbb->getAttachment();
+
+	// If database is read-only, punt
+
+	if (dbb->dbb_flags & DBB_read_only)
+		Arg::Gds(isc_read_only).raise();
+
+	// Check current ODS version to see if we have work to do
+
+	const auto majorVersion = dbb->dbb_ods_version;
+	fb_assert(majorVersion == ODS_VERSION);
+
+	const auto minorVersion = dbb->dbb_minor_version;
+	if (minorVersion == ODS_CURRENT)
+		return;
+
+	const auto odsVersion = ENCODE_ODS(majorVersion, minorVersion);
+
+	const auto transaction = TRA_start(tdbb, TRA_no_auto_undo, 0);
+	tdbb->setTransaction(transaction);
+
+	const int* fld;
+	const char* context = nullptr;
+
+	dsc schemaDesc;
+	schemaDesc.makeText(static_cast<USHORT>(strlen(SYSTEM_SCHEMA)), CS_METADATA,
+		(UCHAR*) SYSTEM_SCHEMA);
+
+	try {
+
+	// Disable most of the deferred work processing,
+	// as we do all the underlying work ourselves
+
+	AutoSetRestoreFlag<ULONG> noDfw(&tdbb->tdbb_flags, TDBB_dont_post_dfw, true);
+
+	// Get the database owner
+
+	const auto ownerName = dbb->dbb_owner;
+
+	AutoRequest handle, reqAddSC;
+
+	// Create new system relations and new relation fields
+
+	context = "relations";
+	handle.reset();
+
+	{ // scope for system relations
+
+		RelationSecurity relSec(ownerName, reqAddSC);
+
+		// Make sure relations exist already
+
+		for (const int* relfld = relfields; relfld[RFLD_R_NAME]; relfld = fld + 1)
+		{
+			if (relfld[RFLD_R_TYPE] == rel_persistent && relfld[RFLD_R_ODS] > odsVersion)
+				DPM_create_relation(tdbb, MET_relation(tdbb, relfld[RFLD_R_ID]));
+
+			for (fld = relfld + RFLD_RPT; fld[RFLD_F_NAME]; fld += RFLD_F_LENGTH)
+				;
+		}
+
+		AutoRequest handle2, handle3;
+
+		for (const int* relfld = relfields; relfld[RFLD_R_NAME]; relfld = fld + 1)
+		{
+			const auto relId = relfld[RFLD_R_ID];
+			const auto relName = names[relfld[RFLD_R_NAME]];
+			const auto relType = relfld[RFLD_R_TYPE];
+
+			int fieldId = 0;
+			bool newFormat = false;
+
+			for (fld = relfld + RFLD_RPT; fld[RFLD_F_NAME]; fld += RFLD_F_LENGTH)
+			{
+				if (fld[RFLD_F_ODS] > odsVersion)
+				{
+					const gfld* gfield = &gfields[fld[RFLD_F_ID]];
+					const auto fieldName = names[fld[RFLD_F_NAME]];
+					const auto globalName = names[gfield->gfld_name];
+					const auto updateFlag = fld[RFLD_F_UPDATE];
+
+					store_relation_field(tdbb, fieldId, relName, fieldName, globalName,
+										 updateFlag, handle2);
+
+					newFormat = true;
+				}
+
+				++fieldId;
+			}
+
+			if (relfld[RFLD_R_ODS] > odsVersion)
+			{
+				store_relation(tdbb, relId, relName, fieldId, relType, handle, relSec);
+			}
+			else if (newFormat)
+			{
+				// New format number is the latest we're aware of
+
+				FOR(REQUEST_HANDLE handle3 TRANSACTION_HANDLE transaction)
+					REL IN RDB$RELATIONS
+					WITH REL.RDB$RELATION_ID = relId
+				{
+					MODIFY REL USING
+						REL.RDB$FORMAT = getLatestFormat(tdbb, relId, fieldId);
+					END_MODIFY
+				}
+				END_FOR
+
+				// Schedule metadata cache to be updated at the commit time
+
+				dsc desc;
+				desc.makeText(static_cast<USHORT>(strlen(relName)), CS_METADATA,
+							  (UCHAR*) relName);
+				DFW_post_work(transaction, dfw_update_format, &desc, &schemaDesc, 0);
+			}
+		}
+	}
+
+	NonRelationSecurity nonRelSec(ownerName, reqAddSC, false);
+
+	// Create global fields added after the original minor ODS
+
+	context = "domains";
+	handle.reset();
+
+	for (const gfld* gfield = gfields; gfield->gfld_name; gfield++)
+	{
+		if (gfield->gfld_ods_version > odsVersion)
+			store_global_field(tdbb, gfield, handle, nonRelSec);
+	}
+
+	// Create new system indexes
+
+	context = "indices";
+	store_indices(tdbb, odsVersion);
+
+	// Create new system generators
+
+	context = "generators";
+	handle.reset();
+
+	for (const gen* generator = generators; generator->gen_name; generator++)
+	{
+		if (generator->gen_ods_version > odsVersion)
+			store_generator(tdbb, generator, handle, nonRelSec);
+	}
+
+	// Create new system packages
+
+	// Reset nonRelSec for package permissions, it should be its last usage in this function
+	new(&nonRelSec) NonRelationSecurity(ownerName, reqAddSC, true);
+
+	context = "packages";
+	store_packages(tdbb, nonRelSec, odsVersion);
+
+	// There are no new built-in charsets and collations introduced in ODS 13.1.
+	// But if it happens in some future minor ODS, the corresponding INTL structures
+	// should have the ODS field added and here we need code that conditionally adds
+	// the missing charsets/collations.
+	//
+	// The same about the new types being introduced in minor ODS versions.
+
+	TRA_commit(tdbb, transaction, false);
+
+	}
+	catch (const Exception& ex)
+	{
+		TRA_rollback(tdbb, transaction, false, true);
+
+		// Delete relations we've just created
+
+		for (const int* relfld = relfields; relfld[RFLD_R_NAME]; relfld = fld + 1)
+		{
+			if (relfld[RFLD_R_TYPE] == rel_persistent && relfld[RFLD_R_ODS] > odsVersion)
+			{
+				const auto relation = MET_relation(tdbb, relfld[RFLD_R_ID]);
+				if (relation && relation->getBasePages()->rel_pages)
+					DPM_delete_relation(tdbb, relation);
+			}
+
+			for (fld = relfld + RFLD_RPT; fld[RFLD_F_NAME]; fld += RFLD_F_LENGTH)
+				;
+		}
+
+		string msg;
+		msg.printf("Database: %s\n\t"
+				   "Failed upgrading ODS from version %u.%u to version %u.%u",
+				   attachment->att_filename.c_str(),
+				   majorVersion, minorVersion, majorVersion, ODS_CURRENT);
+		iscLogException(msg.c_str(), ex);
+
+		if (context)
+		{
+			Arg::StatusVector error(ex);
+			error.prepend(Arg::Gds(isc_ods_upgrade_err) << Arg::Str(context));
+			error.raise();
+		}
+
+		throw;
+	}
+
+	// If the database was successfully updated, mark it with the current minor ODS
+
+	win window(HEADER_PAGE_NUMBER);
+	auto header = (Ods::header_page*) CCH_FETCH(tdbb, &window, LCK_write, pag_header);
+	CCH_MARK(tdbb, &window);
+
+	dbb->dbb_minor_version = header->hdr_ods_minor = ODS_CURRENT;
+	CCH_RELEASE(tdbb, &window);
+
+	string msg;
+	msg.printf("Database: %s\n\t"
+			   "Successfully upgraded ODS from version %u.%u to version %u.%u",
+			   attachment->att_filename.c_str(),
+			   majorVersion, minorVersion, majorVersion, ODS_CURRENT);
+	gds__log(msg.c_str());
+
+	// Invalidate new/modified relations in the DSQL metadata cache,
+	// thus forcing them to be reloaded on demand
+
+	if (const auto dbb = attachment->att_dsql_instance)
+	{
+		for (const int* relfld = relfields; relfld[RFLD_R_NAME]; relfld = fld + 1)
+		{
+			bool invalidate = false;
+
+			if (relfld[RFLD_R_ODS] > odsVersion)
+				invalidate = true;
+
+			for (fld = relfld + RFLD_RPT; fld[RFLD_F_NAME]; fld += RFLD_F_LENGTH)
+			{
+				if (fld[RFLD_F_ODS] > odsVersion)
+					invalidate = true;
+			}
+
+			// Code below is the same as METD_drop_relation() but without a transaction
+
+			const QualifiedName relName(names[relfld[RFLD_R_NAME]], SYSTEM_SCHEMA);
+			dsql_rel* relation;
+
+			if (invalidate && dbb->dbb_relations.get(relName, relation))
+			{
+				MET_dsql_cache_use(tdbb, SYM_relation, relName);
+				relation->rel_flags |= REL_dropped;
+				dbb->dbb_relations.remove(relName);
+			}
+		}
+	}
+}
+
+
+static void store_admin_role(thread_db* tdbb, const MetaName& roleName,
+							 RoleSecurity& security)
+{
+	const MetaName ownerName = security.getOwnerName();
+	const string p = INI_owner_privileges();
+
+	const auto securityClass = security.storeSecurityClass(tdbb);
+
+	PreparedStatement::Builder sql;
+	sql << "insert into system.rdb$roles(rdb$role_name, rdb$owner_name, rdb$security_class, rdb$system_flag, rdb$system_privileges)"
+		<< "values (" << roleName << "," << ownerName << "," << securityClass << ", 1," << p << ")";
+
+	const auto attachment = tdbb->getAttachment();
+	const auto transaction = tdbb->getTransaction();
+
+	AutoPreparedStatement ps(attachment->prepareStatement(tdbb, transaction, sql));
+	ps->execute(tdbb, transaction);
+
+	security.storePrivileges(tdbb, roleName.c_str());
+}
+
+
+static void store_default_pub(thread_db* tdbb, const MetaName& ownerName)
+{
+	const auto attachment = tdbb->getAttachment();
+	const auto transaction = tdbb->getTransaction();
+
+	AutoRequest handle;
+
+	STORE(REQUEST_HANDLE handle TRANSACTION_HANDLE transaction)
+		PUB IN RDB$PUBLICATIONS
+	{
+		PAD(DEFAULT_PUBLICATION, PUB.RDB$PUBLICATION_NAME);
+		PUB.RDB$PUBLICATION_NAME.NULL = FALSE;
+
+		PAD(ownerName, PUB.RDB$OWNER_NAME);
+		PUB.RDB$OWNER_NAME.NULL = FALSE;
+
+		PUB.RDB$SYSTEM_FLAG = RDB_system;
+		PUB.RDB$SYSTEM_FLAG.NULL = FALSE;
+
+		PUB.RDB$ACTIVE_FLAG = 0;
+		PUB.RDB$ACTIVE_FLAG.NULL = FALSE;
+
+		PUB.RDB$AUTO_ENABLE = 0;
+		PUB.RDB$AUTO_ENABLE.NULL = FALSE;
+	}
+	END_STORE
+}
+
+
+static void store_generator(thread_db* tdbb, const gen* generator,
+							AutoRequest& handle, NonRelationSecurity& security)
+{
+	const auto attachment = tdbb->getAttachment();
+	const auto transaction = tdbb->getTransaction();
+
+	const auto ownerName = security.getOwnerName();
+	const auto securityClass = security.storeSecurityClass(tdbb);
+
+	STORE(REQUEST_HANDLE handle TRANSACTION_HANDLE transaction)
+		X IN RDB$GENERATORS
+	{
+		PAD(SYSTEM_SCHEMA, X.RDB$SCHEMA_NAME);
+
+		PAD(generator->gen_name, X.RDB$GENERATOR_NAME);
+		X.RDB$GENERATOR_ID = generator->gen_id;
+
+		X.RDB$SYSTEM_FLAG = RDB_system;
+		X.RDB$SYSTEM_FLAG.NULL = FALSE;
+
+		PAD(ownerName, X.RDB$OWNER_NAME);
+		X.RDB$OWNER_NAME.NULL = FALSE;
+
+		PAD(securityClass, X.RDB$SECURITY_CLASS);
+		X.RDB$SECURITY_CLASS.NULL = FALSE;
+
+		X.RDB$INITIAL_VALUE = 0;
+		X.RDB$INITIAL_VALUE.NULL = FALSE;
+
+		if (generator->gen_description)
+		{
+		    attachment->storeMetaDataBlob(tdbb, transaction, &X.RDB$DESCRIPTION,
+				generator->gen_description);
+			X.RDB$DESCRIPTION.NULL = FALSE;
+		}
+		else
+			X.RDB$DESCRIPTION.NULL = TRUE;
+
+		X.RDB$GENERATOR_INCREMENT = 0; // only sys gens have zero default increment
+	}
+	END_STORE
+
+	security.storePrivileges(tdbb, generator->gen_name, obj_generator);
+}
+
+
+static void store_global_field(thread_db* tdbb, const gfld* gfield,
+							   AutoRequest& handle, NonRelationSecurity& security)
+{
+	const auto attachment = tdbb->getAttachment();
+	const auto transaction = tdbb->getTransaction();
+
+	const auto objName = names[(USHORT)gfield->gfld_name];
+	const auto ownerName = security.getOwnerName();
+
+	const auto securityClass = security.storeSecurityClass(tdbb);
+
+	STORE(REQUEST_HANDLE handle TRANSACTION_HANDLE transaction)
+		X IN RDB$FIELDS
+	{
+		PAD(SYSTEM_SCHEMA, X.RDB$SCHEMA_NAME);
+
+		PAD(objName, X.RDB$FIELD_NAME);
+
+		X.RDB$FIELD_LENGTH = gfield->gfld_length;
+		X.RDB$FIELD_SCALE = 0;
+
+		X.RDB$SYSTEM_FLAG = RDB_system;
+		X.RDB$SYSTEM_FLAG.NULL = FALSE;
+
+		PAD(ownerName, X.RDB$OWNER_NAME);
+		X.RDB$OWNER_NAME.NULL = FALSE;
+
+		PAD(securityClass, X.RDB$SECURITY_CLASS);
+		X.RDB$SECURITY_CLASS.NULL = FALSE;
+
+		X.RDB$FIELD_SUB_TYPE.NULL = TRUE;
+		X.RDB$CHARACTER_SET_ID.NULL = TRUE;
+		X.RDB$COLLATION_ID.NULL = TRUE;
+		X.RDB$SEGMENT_LENGTH.NULL = TRUE;
+		X.RDB$CHARACTER_LENGTH.NULL = TRUE;
+
+		if (gfield->gfld_dflt_blr)
+		{
+		    attachment->storeBinaryBlob(tdbb, transaction, &X.RDB$DEFAULT_VALUE,
+				ByteChunk(gfield->gfld_dflt_blr, gfield->gfld_dflt_len));
+			X.RDB$DEFAULT_VALUE.NULL = FALSE;
+		}
+		else
+			X.RDB$DEFAULT_VALUE.NULL = TRUE;
+
+		switch (gfield->gfld_dtype)
+		{
+		case dtype_timestamp:
+			X.RDB$FIELD_TYPE = (int) blr_timestamp;
+			break;
+
+		case dtype_timestamp_tz:
+			X.RDB$FIELD_TYPE = (int) blr_timestamp_tz;
+			break;
+
+		case dtype_sql_time:
+			X.RDB$FIELD_TYPE = (int) blr_sql_time;
+			break;
+
+		case dtype_sql_date:
+			X.RDB$FIELD_TYPE = (int) blr_sql_date;
+			break;
+
+		case dtype_short:
+		case dtype_long:
+		case dtype_int64:
+			if (gfield->gfld_dtype == dtype_short)
+				X.RDB$FIELD_TYPE = (int) blr_short;
+			else if (gfield->gfld_dtype == dtype_long)
+				X.RDB$FIELD_TYPE = (int) blr_long;
+			else
+				X.RDB$FIELD_TYPE = (int) blr_int64;
+
+			if ((gfield->gfld_sub_type == dsc_num_type_numeric) ||
+				(gfield->gfld_sub_type == dsc_num_type_decimal))
+			{
+				X.RDB$FIELD_SUB_TYPE.NULL = FALSE;
+				X.RDB$FIELD_SUB_TYPE = gfield->gfld_sub_type;
+			}
+			break;
+
+		case dtype_double:
+			X.RDB$FIELD_TYPE = (int) blr_double;
+			break;
+
+		case dtype_text:
+		case dtype_varying:
+			if (gfield->gfld_dtype == dtype_text)
+			{
+				X.RDB$FIELD_TYPE = (int) blr_text;
+			}
+			else
+			{
+				X.RDB$FIELD_TYPE = (int) blr_varying;
+			}
+			switch (gfield->gfld_sub_type)
+			{
+			case dsc_text_type_metadata:
+				X.RDB$CHARACTER_SET_ID.NULL = FALSE;
+				X.RDB$CHARACTER_SET_ID = CS_METADATA;
+				X.RDB$COLLATION_ID.NULL = FALSE;
+				X.RDB$COLLATION_ID = COLLATE_NONE;
+				X.RDB$FIELD_SUB_TYPE.NULL = FALSE;
+				X.RDB$FIELD_SUB_TYPE = gfield->gfld_sub_type;
+				X.RDB$CHARACTER_LENGTH.NULL = FALSE;
+				X.RDB$CHARACTER_LENGTH = X.RDB$FIELD_LENGTH / METADATA_BYTES_PER_CHAR;
+				break;
+			case dsc_text_type_ascii:
+				X.RDB$CHARACTER_SET_ID.NULL = FALSE;
+				X.RDB$CHARACTER_SET_ID = CS_ASCII;
+				X.RDB$COLLATION_ID.NULL = FALSE;
+				X.RDB$COLLATION_ID = COLLATE_NONE;
+				X.RDB$FIELD_SUB_TYPE.NULL = FALSE;
+				X.RDB$FIELD_SUB_TYPE = gfield->gfld_sub_type;
+				break;
+			case dsc_text_type_fixed:
+				X.RDB$CHARACTER_SET_ID.NULL = FALSE;
+				X.RDB$CHARACTER_SET_ID = CS_BINARY;
+				X.RDB$COLLATION_ID.NULL = FALSE;
+				X.RDB$COLLATION_ID = COLLATE_NONE;
+				X.RDB$FIELD_SUB_TYPE.NULL = FALSE;
+				X.RDB$FIELD_SUB_TYPE = gfield->gfld_sub_type;
+				break;
+			default:
+				X.RDB$CHARACTER_SET_ID.NULL = FALSE;
+				X.RDB$CHARACTER_SET_ID = CS_NONE;
+				X.RDB$COLLATION_ID.NULL = FALSE;
+				X.RDB$COLLATION_ID = COLLATE_NONE;
+				break;
+			}
+			break;
+
+		case dtype_blob:
+			X.RDB$FIELD_TYPE = (int) blr_blob;
+			X.RDB$FIELD_SUB_TYPE.NULL = FALSE;
+			X.RDB$SEGMENT_LENGTH.NULL = FALSE;
+			X.RDB$FIELD_SUB_TYPE = gfield->gfld_sub_type;
+			X.RDB$SEGMENT_LENGTH = 80;
+			if (gfield->gfld_sub_type == isc_blob_text)
+			{
+				X.RDB$CHARACTER_SET_ID.NULL = FALSE;
+				X.RDB$CHARACTER_SET_ID = CS_METADATA;
+			}
+			break;
+
+		case dtype_boolean:
+			X.RDB$FIELD_TYPE = (int) blr_bool;
+			break;
+
+		default:
+			fb_assert(FALSE);
+			break;
+		}
+
+		// Acknowledge not NULL sys fields
+		X.RDB$NULL_FLAG.NULL = FALSE;
+		X.RDB$NULL_FLAG = !gfield->gfld_nullable;
+	}
+	END_STORE
+
+	security.storePrivileges(tdbb, objName, obj_field);
+}
+
+
+static void store_indices(thread_db* tdbb, USHORT odsVersion)
+{
+	const auto attachment = tdbb->getAttachment();
+	const auto transaction = tdbb->getTransaction();
+
+	index_desc idx;
+
+	AutoRequest handle1, handle2, handle3;
+
+	for (FB_SIZE_T n = 0; n < SYSTEM_INDEX_COUNT; n++)
+	{
+		const ini_idx_t* index = &indices[n];
+		const auto relation = MET_relation(tdbb, index->ini_idx_relid);
+
+		if (odsVersion && index->ini_idx_ods <= odsVersion)
+			continue;
+
+		QualifiedName indexName;
+		indexName.schema = SYSTEM_SCHEMA;
+		indexName.object.printf("RDB$INDEX_%d", index->ini_idx_index_id);
+
+		STORE(REQUEST_HANDLE handle1 TRANSACTION_HANDLE transaction)
+			X IN RDB$INDICES
+		{
+			PAD(indexName.schema, X.RDB$SCHEMA_NAME);
+
+			PAD(relation->rel_name.object, X.RDB$RELATION_NAME);
+			PAD(indexName.object, X.RDB$INDEX_NAME);
+
+			X.RDB$UNIQUE_FLAG = (index->ini_idx_flags & idx_unique) ? 1 : 0;
+			X.RDB$SEGMENT_COUNT = index->ini_idx_segment_count;
+
+			if (index->ini_idx_flags & idx_descending)
+			{
+				X.RDB$INDEX_TYPE.NULL = FALSE;
+				X.RDB$INDEX_TYPE = 1;
+			}
+			else
+				X.RDB$INDEX_TYPE.NULL = TRUE;
+
+			X.RDB$SYSTEM_FLAG = RDB_system;
+			X.RDB$SYSTEM_FLAG.NULL = FALSE;
+
+			X.RDB$INDEX_INACTIVE = 0;
+
+			// Store each segment for the index
+			index_desc::idx_repeat* tail = idx.idx_rpt;
+			for (USHORT position = 0; position < index->ini_idx_segment_count; position++, tail++)
+			{
+				const auto segment = &index->ini_idx_segment[position];
+
+				STORE(REQUEST_HANDLE handle2 TRANSACTION_HANDLE transaction)
+					Y IN RDB$INDEX_SEGMENTS
+				{
+					jrd_fld* field = (*relation->rel_fields)[segment->ini_idx_rfld_id];
+
+					Y.RDB$FIELD_POSITION = position;
+					PAD(SYSTEM_SCHEMA, Y.RDB$SCHEMA_NAME);
+					PAD(X.RDB$INDEX_NAME, Y.RDB$INDEX_NAME);
+					PAD(field->fld_name, Y.RDB$FIELD_NAME);
+					tail->idx_field = segment->ini_idx_rfld_id;
+					tail->idx_itype = segment->ini_idx_type;
+				    tail->idx_selectivity = 0;
+				}
+				END_STORE
+			}
+
+			idx.idx_count = index->ini_idx_segment_count;
+			idx.idx_flags = index->ini_idx_flags;
+			SelectivityList selectivity(*tdbb->getDefaultPool());
+
+			IDX_create_index(tdbb, relation, &idx, indexName, NULL,
+				transaction, selectivity);
+
+			X.RDB$INDEX_ID = idx.idx_id + 1;
+		}
+		END_STORE
+
+		if (index->ini_idx_flags & idx_unique)
+		{
+			STORE(REQUEST_HANDLE handle3 TRANSACTION_HANDLE transaction)
+				RC IN RDB$RELATION_CONSTRAINTS
+			{
+				PAD(SYSTEM_SCHEMA, RC.RDB$SCHEMA_NAME);
+				PAD(indexName.object, RC.RDB$CONSTRAINT_NAME);
+				PAD(indexName.object, RC.RDB$INDEX_NAME);
+				PAD(relation->rel_name.object, RC.RDB$RELATION_NAME);
+				strcpy(RC.RDB$CONSTRAINT_TYPE, UNIQUE_CNSTRT);
+				strcpy(RC.RDB$DEFERRABLE, "NO");
+				strcpy(RC.RDB$INITIALLY_DEFERRED, "NO");
+			}
+			END_STORE
+		}
+	}
+}
+
+
+static void store_intlnames(thread_db* tdbb, NonRelationSecurity& security)
+{
+	const auto attachment = tdbb->getAttachment();
+	const auto transaction = tdbb->getTransaction();
+
+	const auto ownerName = security.getOwnerName();
+
+	AutoRequest handle;
+
+	for (const IntlManager::CharSetDefinition* charSet = IntlManager::defaultCharSets;
+		 charSet->name; ++charSet)
+	{
+		const auto securityClass = security.storeSecurityClass(tdbb);
+
+		STORE(REQUEST_HANDLE handle TRANSACTION_HANDLE transaction)
+			X IN RDB$CHARACTER_SETS USING
+		{
+			PAD(SYSTEM_SCHEMA, X.RDB$SCHEMA_NAME);
+			PAD(charSet->name, X.RDB$CHARACTER_SET_NAME);
+			PAD(SYSTEM_SCHEMA, X.RDB$DEFAULT_COLLATE_SCHEMA_NAME);
+			PAD(charSet->name, X.RDB$DEFAULT_COLLATE_NAME);
+			X.RDB$CHARACTER_SET_ID = charSet->id;
+
+			X.RDB$BYTES_PER_CHARACTER = charSet->maxBytes;
+
+			X.RDB$SYSTEM_FLAG = RDB_system;
+			X.RDB$SYSTEM_FLAG.NULL = FALSE;
+
+			PAD(ownerName, X.RDB$OWNER_NAME);
+			X.RDB$OWNER_NAME.NULL = FALSE;
+
+			PAD(securityClass, X.RDB$SECURITY_CLASS);
+			X.RDB$SECURITY_CLASS.NULL = FALSE;
+		}
+		END_STORE
+
+		security.storePrivileges(tdbb, charSet->name, obj_charset);
+	}
+
+	handle.reset();
+
+	for (const IntlManager::CollationDefinition* collation = IntlManager::defaultCollations;
+		collation->name; ++collation)
+	{
+		const auto securityClass = security.storeSecurityClass(tdbb);
+
+		STORE(REQUEST_HANDLE handle TRANSACTION_HANDLE transaction)
+			X IN RDB$COLLATIONS USING
+		{
+			PAD(SYSTEM_SCHEMA, X.RDB$SCHEMA_NAME);
+			PAD(collation->name, X.RDB$COLLATION_NAME);
+
+			if (collation->baseName)
+			{
+				X.RDB$BASE_COLLATION_NAME.NULL = false;
+				PAD(collation->baseName, X.RDB$BASE_COLLATION_NAME);
+			}
+			else
+				X.RDB$BASE_COLLATION_NAME.NULL = true;
+
+			X.RDB$CHARACTER_SET_ID = collation->charSetId;
+			X.RDB$COLLATION_ID = collation->collationId;
+
+			X.RDB$SYSTEM_FLAG = RDB_system;
+			X.RDB$SYSTEM_FLAG.NULL = FALSE;
+
+			PAD(ownerName, X.RDB$OWNER_NAME);
+			X.RDB$OWNER_NAME.NULL = FALSE;
+
+			PAD(securityClass, X.RDB$SECURITY_CLASS);
+			X.RDB$SECURITY_CLASS.NULL = FALSE;
+
+			X.RDB$COLLATION_ATTRIBUTES = collation->attributes;
+
+			if (collation->specificAttributes)
+			{
+				attachment->storeMetaDataBlob(tdbb, transaction,
+					&X.RDB$SPECIFIC_ATTRIBUTES, collation->specificAttributes);
+				X.RDB$SPECIFIC_ATTRIBUTES.NULL = FALSE;
+			}
+			else
+				X.RDB$SPECIFIC_ATTRIBUTES.NULL = TRUE;
+		}
+		END_STORE
+
+		security.storePrivileges(tdbb, collation->name, obj_collation);
+	}
+}
+
+
+static void store_relation(thread_db* tdbb,
+						   int relId,
+						   const char* relName,
+						   int fieldId,
+						   int relType,
+						   AutoRequest& handle,
+						   RelationSecurity& security)
+{
+	const auto attachment = tdbb->getAttachment();
+	const auto transaction = tdbb->getTransaction();
+
+	const auto ownerName = security.getOwnerName();
+
+	MetaName securityClass, defaultClass;
+	security.storeSecurityClass(tdbb, securityClass, defaultClass);
+
+	STORE(REQUEST_HANDLE handle TRANSACTION_HANDLE transaction)
+		X IN RDB$RELATIONS
+	{
+		X.RDB$RELATION_ID = relId;
+		PAD(SYSTEM_SCHEMA, X.RDB$SCHEMA_NAME);
+		PAD(relName, X.RDB$RELATION_NAME);
+
+		X.RDB$RELATION_TYPE = relType;
+		X.RDB$RELATION_TYPE.NULL = FALSE;
+
+		PAD(ownerName, X.RDB$OWNER_NAME);
+		X.RDB$OWNER_NAME.NULL = FALSE;
+
+		PAD(securityClass, X.RDB$SECURITY_CLASS);
+		X.RDB$SECURITY_CLASS.NULL = FALSE;
+
+		PAD(defaultClass, X.RDB$DEFAULT_CLASS);
+		X.RDB$DEFAULT_CLASS.NULL = FALSE;
+
+		X.RDB$FIELD_ID = fieldId;
+		X.RDB$FORMAT = getLatestFormat(tdbb, relId, fieldId);
+		X.RDB$SYSTEM_FLAG = RDB_system;
+		X.RDB$DBKEY_LENGTH = 8;
+	}
+	END_STORE;
+
+	security.storePrivileges(tdbb, relName);
+}
+
+static void store_relation_field(thread_db* tdbb,
+								 int fieldId,
+								 const char* relName,
+								 const char* fieldName,
+								 const char* globalName,
+								 int updateFlag,
+								 AutoRequest& handle)
+{
+	const auto attachment = tdbb->getAttachment();
+	const auto transaction = tdbb->getTransaction();
+
+	STORE(REQUEST_HANDLE handle TRANSACTION_HANDLE transaction)
+		X IN RDB$RELATION_FIELDS
+	{
+		PAD(SYSTEM_SCHEMA, X.RDB$SCHEMA_NAME);
+		PAD(relName, X.RDB$RELATION_NAME);
+		PAD(fieldName, X.RDB$FIELD_NAME);
+		PAD(SYSTEM_SCHEMA, X.RDB$FIELD_SOURCE_SCHEMA_NAME);
+		PAD(globalName, X.RDB$FIELD_SOURCE);
+		X.RDB$FIELD_POSITION = fieldId;
+		X.RDB$FIELD_ID = fieldId;
+		X.RDB$SYSTEM_FLAG = RDB_system;
+		X.RDB$SYSTEM_FLAG.NULL = FALSE;
+		X.RDB$UPDATE_FLAG = updateFlag;
+	}
+	END_STORE
+}
+
+
+static void store_packages(thread_db* tdbb, NonRelationSecurity& security, USHORT odsVersion)
+{
+	const auto dbb = tdbb->getDatabase();
+	const auto attachment = tdbb->getAttachment();
+	const auto transaction = tdbb->getTransaction();
+
+	const auto ownerName = security.getOwnerName();
+
+	AutoRequest packageHandle, procedureHandle, procedureParameterHandle;
+	AutoRequest functionHandle, functionReturnHandle, functionArgumentHandle;
+	const SLONG procGen = lookupGenerator(PROCEDURES_GENERATOR);
+	const SLONG funcGen = lookupGenerator(FUNCTIONS_GENERATOR);
+
+	for (const auto& systemPackage : SystemPackage::get())
+	{
+		if (odsVersion && systemPackage.odsVersion <= odsVersion)
+			continue;
+
+		const auto securityClass = security.storeSecurityClass(tdbb);
+
+		STORE (REQUEST_HANDLE packageHandle TRANSACTION_HANDLE transaction)
+			PKG IN RDB$PACKAGES
+		{
+			PAD(SYSTEM_SCHEMA, PKG.RDB$SCHEMA_NAME);
+			PAD(systemPackage.name, PKG.RDB$PACKAGE_NAME);
+
+			PAD(ownerName, PKG.RDB$OWNER_NAME);
+			PKG.RDB$OWNER_NAME.NULL = FALSE;
+
+			PAD(securityClass, PKG.RDB$SECURITY_CLASS);
+			PKG.RDB$SECURITY_CLASS.NULL = FALSE;
+
+			PKG.RDB$SYSTEM_FLAG = RDB_system;
+			PKG.RDB$VALID_BODY_FLAG = TRUE;
+		}
+		END_STORE
+
+		security.storePrivileges(tdbb, systemPackage.name, obj_package_header);
+
+		for (const auto& procedure : systemPackage.procedures)
+		{
+			STORE (REQUEST_HANDLE procedureHandle TRANSACTION_HANDLE transaction)
+				PRC IN RDB$PROCEDURES
+			{
+				PAD(SYSTEM_SCHEMA, PRC.RDB$SCHEMA_NAME);
+				PAD(systemPackage.name, PRC.RDB$PACKAGE_NAME);
+				PAD(procedure.name, PRC.RDB$PROCEDURE_NAME);
+
+				PAD(ownerName, PRC.RDB$OWNER_NAME);
+				PRC.RDB$SYSTEM_FLAG = RDB_system;
+
+				PRC.RDB$PROCEDURE_ID = DPM_gen_id(tdbb, procGen, false, 1);
+
+				PRC.RDB$PROCEDURE_INPUTS = (SSHORT) procedure.inputParameters.getCount();
+				PRC.RDB$PROCEDURE_OUTPUTS = (SSHORT) procedure.outputParameters.getCount();
+				PRC.RDB$PROCEDURE_TYPE = (SSHORT) procedure.type;
+				PRC.RDB$PRIVATE_FLAG = FALSE;
+				PRC.RDB$VALID_BLR = TRUE;
+				PAD("SYSTEM", PRC.RDB$ENGINE_NAME);
+			}
+			END_STORE
+
+			for (SSHORT parameterType = 0; parameterType <= 1; ++parameterType)
+			{
+				SSHORT paramNumber = -1;
+
+				for (const auto& parameter : parameterType == 0 ? procedure.inputParameters : procedure.outputParameters)
+				{
+					++paramNumber;
+
+					STORE (REQUEST_HANDLE procedureParameterHandle TRANSACTION_HANDLE transaction)
+						PP IN RDB$PROCEDURE_PARAMETERS
+					{
+						PAD(SYSTEM_SCHEMA, PP.RDB$SCHEMA_NAME);
+						PAD(systemPackage.name, PP.RDB$PACKAGE_NAME);
+						PAD(procedure.name, PP.RDB$PROCEDURE_NAME);
+						PAD(parameter.name, PP.RDB$PARAMETER_NAME);
+
+						PP.RDB$SYSTEM_FLAG = RDB_system;
+
+						PP.RDB$PARAMETER_NUMBER = paramNumber;
+						PP.RDB$PARAMETER_TYPE = parameterType;
+						PP.RDB$PARAMETER_MECHANISM = (SSHORT) prm_mech_normal;
+						PP.RDB$NULL_FLAG = !parameter.nullable;
+
+						PAD(SYSTEM_SCHEMA, PP.RDB$FIELD_SOURCE_SCHEMA_NAME);
+						PAD(names[gfields[parameter.fieldId].gfld_name], PP.RDB$FIELD_SOURCE);
+
+						fb_assert(parameter.defaultBlr.isEmpty() == !parameter.defaultText);
+
+						if (parameter.defaultBlr.hasData())
+						{
+							attachment->storeMetaDataBlob(tdbb, transaction, &PP.RDB$DEFAULT_SOURCE,
+								string("default ") + parameter.defaultText);
+							PP.RDB$DEFAULT_SOURCE.NULL = FALSE;
+
+							Array<UCHAR> blrData(1 + parameter.defaultBlr.getCount() + 1);
+							blrData.push(blr_version5);
+							blrData.append(parameter.defaultBlr);
+							blrData.push(blr_eoc);
+
+							attachment->storeBinaryBlob(tdbb, transaction, &PP.RDB$DEFAULT_VALUE,
+								blrData);
+							PP.RDB$DEFAULT_VALUE.NULL = FALSE;
+						}
+						else
+						{
+							PP.RDB$DEFAULT_SOURCE.NULL = TRUE;
+							PP.RDB$DEFAULT_VALUE.NULL = TRUE;
+						}
+					}
+					END_STORE
+				}
+			}
+		}
+
+		for (const auto& function : systemPackage.functions)
+		{
+			STORE (REQUEST_HANDLE functionHandle TRANSACTION_HANDLE transaction)
+				FUN IN RDB$FUNCTIONS
+			{
+				PAD(SYSTEM_SCHEMA, FUN.RDB$SCHEMA_NAME);
+				PAD(systemPackage.name, FUN.RDB$PACKAGE_NAME);
+				PAD(function.name, FUN.RDB$FUNCTION_NAME);
+
+				PAD(ownerName, FUN.RDB$OWNER_NAME);
+				FUN.RDB$SYSTEM_FLAG = RDB_system;
+
+				FUN.RDB$FUNCTION_ID = DPM_gen_id(tdbb, funcGen, false, 1);
+
+				FUN.RDB$RETURN_ARGUMENT = 0;
+				FUN.RDB$PRIVATE_FLAG = FALSE;
+				FUN.RDB$VALID_BLR = TRUE;
+				PAD("SYSTEM", FUN.RDB$ENGINE_NAME);
+			}
+			END_STORE
+
+			SSHORT paramNumber = 0;
+
+			STORE (REQUEST_HANDLE functionReturnHandle TRANSACTION_HANDLE transaction)
+				ARG IN RDB$FUNCTION_ARGUMENTS
+			{
+				PAD(SYSTEM_SCHEMA, ARG.RDB$SCHEMA_NAME);
+				PAD(systemPackage.name, ARG.RDB$PACKAGE_NAME);
+				PAD(function.name, ARG.RDB$FUNCTION_NAME);
+
+				ARG.RDB$SYSTEM_FLAG = RDB_system;
+
+				ARG.RDB$ARGUMENT_POSITION = paramNumber;
+				ARG.RDB$NULL_FLAG = !function.returnType.nullable;
+
+				PAD(SYSTEM_SCHEMA, ARG.RDB$FIELD_SOURCE_SCHEMA_NAME);
+				PAD(names[gfields[function.returnType.fieldId].gfld_name], ARG.RDB$FIELD_SOURCE);
+			}
+			END_STORE
+
+			for (const auto& parameter : function.parameters)
+			{
+				++paramNumber;
+
+				STORE (REQUEST_HANDLE functionArgumentHandle TRANSACTION_HANDLE transaction)
+					ARG IN RDB$FUNCTION_ARGUMENTS
+				{
+					PAD(SYSTEM_SCHEMA, ARG.RDB$SCHEMA_NAME);
+					PAD(systemPackage.name, ARG.RDB$PACKAGE_NAME);
+					PAD(function.name, ARG.RDB$FUNCTION_NAME);
+					PAD(parameter.name, ARG.RDB$ARGUMENT_NAME);
+
+					ARG.RDB$SYSTEM_FLAG = RDB_system;
+
+					ARG.RDB$ARGUMENT_POSITION = paramNumber;
+					ARG.RDB$NULL_FLAG = !parameter.nullable;
+
+					PAD(SYSTEM_SCHEMA, ARG.RDB$FIELD_SOURCE_SCHEMA_NAME);
+					PAD(names[gfields[parameter.fieldId].gfld_name], ARG.RDB$FIELD_SOURCE);
+
+					fb_assert(parameter.defaultBlr.isEmpty() == !parameter.defaultText);
+
+					if (parameter.defaultBlr.hasData())
+					{
+						attachment->storeMetaDataBlob(tdbb, transaction, &ARG.RDB$DEFAULT_SOURCE,
+							string("default ") + parameter.defaultText);
+						ARG.RDB$DEFAULT_SOURCE.NULL = FALSE;
+
+						Array<UCHAR> blrData(1 + parameter.defaultBlr.getCount() + 1);
+						blrData.push(blr_version5);
+						blrData.append(parameter.defaultBlr);
+						blrData.push(blr_eoc);
+
+						attachment->storeBinaryBlob(tdbb, transaction, &ARG.RDB$DEFAULT_VALUE,
+							blrData);
+						ARG.RDB$DEFAULT_VALUE.NULL = FALSE;
+					}
+					else
+					{
+						ARG.RDB$DEFAULT_SOURCE.NULL = TRUE;
+						ARG.RDB$DEFAULT_VALUE.NULL = TRUE;
+					}
+				}
+				END_STORE
+			}
+		}
+	}
+}

@@ -1,0 +1,88 @@
+# The contents of this file are subject to the Interbase Public
+
+# License Version 1.0 (the "License"); you may not use this file
+# except in compliance with the License. You may obtain a copy
+# of the License at http://www.Inprise.com/IPL.html
+#
+# Software distributed under the License is distributed on an
+# "AS IS" basis, WITHOUT WARRANTY OF ANY KIND, either express
+# or implied. See the License for the specific language governing
+# rights and limitations under the License.
+#
+# The Original Code was created by Inprise Corporation
+# and its predecessors. Portions created by Inprise Corporation are
+#
+# Copyright (C) 2000 Inprise Corporation
+# All Rights Reserved.
+# Contributor(s): ______________________________________.
+# Start of file prefix.darwin:	$(VERSION)	DARWIN
+# 2 Oct 2002, Nickolay Samofatov - Major Cleanup
+
+TARGET ?= Release
+FB_FW = ../gen/$(TARGET)/frameworks/Firebird6.framework
+
+all: framework
+
+framework:
+	-$(RM) -rf $(FB_FW)
+	mkdir -p $(FB_FW)/Versions/A/Libraries
+
+	ln -s Versions/Current/Libraries/libfbclient.dylib $(FB_FW)/Firebird
+	ln -s Versions/Current/Headers $(FB_FW)/Headers
+	ln -s Versions/Current/Resources $(FB_FW)/Resources
+	ln -s Versions/Current/Libraries $(FB_FW)/Libraries
+	ln -s A $(FB_FW)/Versions/Current
+	cp -r ../gen/$(TARGET)/firebird/include $(FB_FW)/Versions/A/Headers
+
+	mkdir -p $(FB_FW)/Versions/A/Resources/lib
+	cp ../gen/$(TARGET)/firebird/lib/libtommath.dylib $(FB_FW)/Versions/A/Resources/lib/
+	cp ../gen/$(TARGET)/firebird/lib/libtomcrypt.dylib $(FB_FW)/Versions/A/Resources/lib/
+	cp ../gen/$(TARGET)/firebird/lib/libfbclient.dylib $(FB_FW)/Versions/A/Resources/lib/
+	cp -R ../gen/$(TARGET)/firebird/lib/libicu{data,i18n,uc}.*dylib $(FB_FW)/Versions/A/Resources/lib/
+	cp ../gen/$(TARGET)/firebird/lib/libib_util.dylib $(FB_FW)/Versions/A/Resources/lib/
+	ln -s ../Resources/lib/libfbclient.dylib $(FB_FW)/Versions/A/Libraries/libfbclient.dylib
+	ln -s ../Resources/lib/libib_util.dylib $(FB_FW)/Versions/A/Libraries/libib_util.dylib
+
+	mkdir -p $(FB_FW)/Versions/A/Resources/English.lproj
+	mkdir -p $(FB_FW)/Versions/A/Resources/intl
+	cp -r ../gen/$(TARGET)/firebird/intl/libfbintl.dylib $(FB_FW)/Versions/A/Resources/intl/libfbintl.dylib
+	cp ../gen/$(TARGET)/firebird/intl/fbintl.conf $(FB_FW)/Versions/A/Resources/intl/fbintl.conf
+	#chmod a+rx $(FB_FW)/Versions/A/Resources/intl/fbintl
+	cp -r ../gen/$(TARGET)/firebird/plugins $(FB_FW)/Versions/A/Resources/plugins
+	cp ../gen/$(TARGET)/firebird/security6.fdb $(FB_FW)/Versions/A/Resources/security6.fdb
+	cp ../gen/$(TARGET)/firebird/firebird.msg $(FB_FW)/Versions/A/Resources/firebird.msg
+	cp -r ../gen/$(TARGET)/firebird/tzdata $(FB_FW)/Versions/A/Resources/tzdata
+	mkdir -p $(FB_FW)/Resources/doc
+	cp -r ../doc $(FB_FW)/Resources
+	mkdir -p $(FB_FW)/Resources/examples
+	cp -r ../gen/$(TARGET)/firebird/examples $(FB_FW)/Resources
+	mkdir -p $(FB_FW)/Resources/bin
+	touch $(FB_FW)/Resources/SuperServer
+	chflags hidden $(FB_FW)/Resources/SuperServer
+	cp ../gen/$(TARGET)/firebird/bin/gfix $(FB_FW)/Versions/A/Resources/bin
+	cp ../gen/$(TARGET)/firebird/bin/gbak $(FB_FW)/Versions/A/Resources/bin
+	cp ../gen/$(TARGET)/firebird/bin/isql $(FB_FW)/Versions/A/Resources/bin
+	cp ../gen/$(TARGET)/firebird/bin/gpre $(FB_FW)/Versions/A/Resources/bin
+	cp ../gen/$(TARGET)/firebird/bin/fb_lock_print $(FB_FW)/Versions/A/Resources/bin
+	cp ../gen/$(TARGET)/firebird/bin/gsec $(FB_FW)/Versions/A/Resources/bin
+	cp ../gen/$(TARGET)/firebird/bin/gstat $(FB_FW)/Versions/A/Resources/bin
+	cp ../gen/$(TARGET)/firebird/bin/nbackup $(FB_FW)/Versions/A/Resources/bin
+	cp ../gen/$(TARGET)/firebird/bin/fbguard $(FB_FW)/Versions/A/Resources/bin
+	cp ../gen/$(TARGET)/firebird/bin/fbtracemgr $(FB_FW)/Versions/A/Resources/bin
+	cp ../gen/$(TARGET)/firebird/bin/firebird $(FB_FW)/Versions/A/Resources/bin
+	chmod +x ../builds/install/arch-specific/darwin/changeServerMode
+	cp ../builds/install/arch-specific/darwin/changeServerMode $(FB_FW)/Versions/A/Resources/bin/changeServerMode.sh
+	cp ../builds/install/arch-specific/darwin/FrameworkInfo.plist $(FB_FW)/Versions/A/Resources/Info.plist
+	cp ../builds/install/arch-specific/darwin/launchd.org.firebird.gds.plist $(FB_FW)/Versions/A/Resources/org.firebird.gds.plist
+	cp ../builds/install/arch-specific/darwin/launchdcs.org.firebird.gds.plist $(FB_FW)/Versions/A/Resources/cs.org.firebird.gds.plist
+	cp ../builds/install/arch-specific/darwin/Readme.txt $(FB_FW)/Versions/A/Resources/Readme.txt
+	cp ../builds/install/arch-specific/darwin/License.txt $(FB_FW)/Versions/A/Resources/License.txt
+	cp ../gen/$(TARGET)/firebird/firebird.conf $(FB_FW)/Versions/A/Resources//firebird.conf
+	cp ../gen/$(TARGET)/firebird/databases.conf $(FB_FW)/Versions/A/Resources/databases.conf
+	cp ../gen/$(TARGET)/firebird/fbtrace.conf $(FB_FW)/Versions/A/Resources/fbtrace.conf
+	cp ../gen/$(TARGET)/firebird/plugins.conf $(FB_FW)/Versions/A/Resources/plugins.conf
+	mkdir $(FB_FW)/Versions/A/Resources/misc
+	mkdir $(FB_FW)/Versions/A/Resources/misc/upgrade
+	cp -r ../src/misc/upgrade/v3.0 $(FB_FW)/Versions/A/Resources/misc/upgrade
+
+	install_name_tool -id /Library/Frameworks/Firebird.framework/Libraries/libfbclient.dylib $(FB_FW)/Versions/A/Resources/lib/libfbclient.dylib

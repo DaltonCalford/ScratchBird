@@ -1,0 +1,444 @@
+#
+#   The contents of this file are subject to the Mozilla Public
+#   License Version 1.1 (the "License"); you may not use this file
+#   except in compliance with the License. You may obtain a copy of
+#   the License at http://www.mozilla.org/MPL/
+#   Alternatively, the contents of this file may be used under the
+#   terms of the GNU General Public License Version 2 or later (the
+#   "GPL"), in which case the provisions of the GPL are applicable
+#   instead of those above. You may obtain a copy of the Licence at
+#   http://www.gnu.org/copyleft/gpl.html
+#
+#   This program is distributed in the hope that it will be useful,
+#   but WITHOUT ANY WARRANTY; without even the implied warranty of
+#   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#   Relevant for more details.
+#
+#   This file was created by members of the firebird development team.
+#   All individual contributions remain the Copyright (C) of those
+#   individuals.  Contributors to this file are either listed here or
+#   can be obtained from a CVS history command.
+#
+#   All rights reserved.
+#
+#   Created by: Mark O'Donohue <mark.odonohue@ludwig.edu.au>
+#
+#   Contributor(s):
+#
+#
+#
+
+
+#_____________________________________________________________________________
+
+
+
+# This file contains default values that are used by the build process do not
+# change these here, but override them in the platform specific file
+# prefix.xxx where xxx is the platform name using the form SH := bash
+# see the readme file with the Makefile.in files for more details.
+
+#_____________________________________________________________________________
+
+TMP_ROOT=$(ROOT)/temp/$(TARGET)
+GEN_ROOT=$(ROOT)/gen
+SRC_ROOT=$(ROOT)/src
+BLD_ROOT=$(ROOT)/builds
+EXA_ROOT=$(ROOT)/examples
+
+IsCross=@IS_CROSS@
+TOMMATH_BUILD_FLG=@TOMMATH_BUILD@
+TOMCRYPT_BUILD_FLG=@TOMCRYPT_BUILD@
+RE2_BUILD_FLG=@RE2_BUILD@
+SYSTEM_BOOST_FLG=@SYSTEM_BOOST@
+
+FB_BUILD=$(GEN_ROOT)/$(TARGET)/firebird
+
+ifeq ($(IsCross), Y)
+  SCRATCHBIRD=$(GEN_ROOT)/Native/firebird
+else
+  SCRATCHBIRD=$(FB_BUILD)
+endif
+SCRATCHBIRD_LOCK=$(SCRATCHBIRD)
+
+export SCRATCHBIRD
+export SCRATCHBIRD_LOCK
+
+# Set firebird to boot build mode
+SCRATCHBIRD_BOOT_BUILD=1
+export SCRATCHBIRD_BOOT_BUILD
+
+buildSubDirectory=$(FB_BUILD)/$(1)
+
+LIB=$(call buildSubDirectory,lib)
+BIN=$(call buildSubDirectory,bin)
+PLUGINS=$(call buildSubDirectory,plugins)
+TZDATA=$(call buildSubDirectory,tzdata)
+FB_TESTS_DIR=$(call buildSubDirectory,tests)
+
+STATIC_LIB=$(TMP_ROOT)
+RBIN=$(SCRATCHBIRD)/bin
+
+# This picks up the current directory and maps it to the equivalent module
+# in the src and gen area.
+
+RealSrcRootPath = $(shell cd $(SRC_ROOT); pwd)
+
+#ModuleName:=$(notdir $(CURDIR))
+ModuleName:=$(subst $(RealSrcRootPath)/,,$(CURDIR))
+
+OBJ=$(TMP_ROOT)
+
+GEN_SRC=$(OBJ)
+
+# avoid generated cpp files deletion
+.SECONDARY:
+
+  # This one is not so widely used at the momement.
+  # but I would like it to become so.
+
+RealFirebirdPath = @NEW_SCRATCHBIRD_DIR@
+
+#____________________________________________________________________________
+# From here we may set some global options to both compiler and linker.
+
+# Use empty default global options for all compilers and linkers
+GLOB_OPTIONS:=
+
+# Possible use - profiling.
+#GLOB_OPTIONS:= -pg
+
+#____________________________________________________________________________
+
+# Global c++ flags: firebird needs no RTTI, choose build standard and c++ specific warnings level
+PLUSPLUS_FLAGS:= -fno-rtti -std=c++17 -Werror=delete-incomplete -Werror=return-type
+
+# If this is defined then we use special rules useful for developers only
+IsDeveloper = @DEVEL_FLG@
+CLIENT_ONLY_FLG=@CLIENT_ONLY_FLG@
+WITH_TOMCRYPT=@WITH_TOMCRYPT@
+
+CpuType=@CPU_TYPE@
+PLATFORM=@PLATFORM@
+TZDATA_ZIP=@TZDATA_ZIP@
+SFIO_EXAMPLES=@SFIO_EXAMPLES@
+
+# link with readline libraries - set by configure
+EDITLINE_FLG=@EDITLINE_FLG@
+STD_EDITLINE=@STD_EDITLINE@
+READLINE=@READLINE@
+
+# threading options - set by configure
+THR_FLAGS=@PTHREAD_CFLAGS@
+THR_LIBS=@PTHREAD_LIBS@
+
+# thread local storage options - set by configure
+TLS_OPTIONS=@TLS_OPTIONS@
+
+# atomic options - set by configure
+ATOMIC_OPTIONS=@ATOMIC_OPTIONS@
+
+# compare and swap options - set by configure
+# needed at least for solaris inline assembly routines
+CAS_OPTIONS=@CAS_OPTIONS@
+
+# BigEndian int128 support
+ABSEIL_BUILD_FLG = @ABSEIL_BUILD_FLG@
+
+# multiple-precision integer library
+MATHLIB=@MATHLIB@
+DECLIB=-ldecFloat$(CROSS)
+RE2LIB=-lre2
+ifeq ($(ABSEIL_BUILD_FLG), Y)
+  I128LIB=-li128$(CROSS)
+else
+  I128LIB=
+endif
+
+LIBCDSLIB=-lcds
+
+# crypt library
+CRYPTLIB=@CRYPTLIB@
+
+LSB_FLG=@LSB_FLG@
+ifeq ($(LSB_FLG), Y)
+  LSB_UNDEF=-Wl,--allow-shlib-undefined
+endif
+
+# switch to make sed edit files inplace
+INLINE_EDIT_SED:= -i
+
+# Default programs and tools to be used in the build process
+
+SH=			sh -c
+RM=			rm -f
+RM_R=		rm -rf
+CHMOD=			chmod
+CHMOD_6=		chmod 666
+CHMOD_7=		chmod 777
+CHMOD_S7=		chmod 06777
+MV=			mv -f
+TOUCH=			touch
+CP=			cp
+ECHO=			echo
+QUIET_ECHO=		@echo
+CD=			cd
+CAT=			cat
+AR=			ar @AR_OPTIONS@
+LN=			@LN_S@
+RANLIB=			@RANLIB@
+BTYACC=$(ROOT)/extern/btyacc/btyacc
+CLOOP=$(GEN_ROOT)/$(TARGET)/cloop/release/bin/cloop
+
+AR =	@AR@
+CC =	@CC@
+CXX =	@CXX@
+LD =	@CXX@
+OBJCOPY = @OBJCOPY@
+READELF = @READELF@
+
+AC_CFLAGS = @CFLAGS@
+AC_CXXFLAGS = @CXXFLAGS@
+AC_LDFLAGS = @LDFLAGS@
+
+# LINKER COMMANDS
+
+LIB_LINK = $(CXX) $(GLOB_OPTIONS) $(CXXFLAGS) $(WLDFLAGS)
+EXE_LINK = $(CXX) $(GLOB_OPTIONS) $(CXXFLAGS) $(WLDFLAGS)
+
+STATICLIB_LINK = $(AR) crus
+
+LINK_LIBS = @LIBS@ $(DECLIB) $(I128LIB)
+SO_LINK_LIBS = @LIBS@ $(DECLIB) $(I128LIB)
+
+# Default extensions
+
+ARCH_EXT=		.a
+EXEC_EXT=		@EXEEXT@
+SHRLIB_EXT=@SHRLIB_EXT@
+LIB_PREFIX=		lib
+SHRLIB_FOREIGN_EXT=	$(SHRLIB_EXT)
+
+#_____________________________________________________________________________
+
+# Include file with version variable definitions
+
+include $(ROOT)/gen/Make.Version
+
+# Add windows dll to library patterns
+
+.LIBPATTERNS += %.dll lib%.dll
+
+# Search path for libraries
+
+vpath %.so $(LIB)
+vpath %.a $(LIB)
+vpath %.dll $(LIB)
+
+#_____________________________________________________________________________
+
+
+# From jrd
+
+
+# The firebird shared library name
+# SD: This name is also hard-coded in builds/install/.../linux/classic scripts.
+#     Scold me, but I don't want library names to be in configure.in
+#
+
+#LibraryFileName=libfbclient
+LibraryFileName=libfbclient
+LibraryFullName=$(LibraryFileName).${SHRLIB_EXT}.${FirebirdVersion}
+LibrarySoName=$(LibraryFileName).${SHRLIB_EXT}.2
+LibraryBaseName=$(LibraryFileName).${SHRLIB_EXT}
+
+LIBSCRATCHBIRD_FULLNAME = $(LIB)/$(LibraryFullName)
+LIBSCRATCHBIRD_SONAME = $(LIB)/$(LibraryBaseName)
+LIBSCRATCHBIRD_BASENAME = $(LIB)/$(LibrarySoName)
+
+# The firebird engine library name
+
+EngineFileName=libEngine${OdsVersion}
+EngineSoName=$(EngineFileName).${SHRLIB_EXT}
+ENGINE_SONAME = $(PLUGINS)/$(EngineSoName)
+ENGINE_TEST = $(FB_TESTS_DIR)/$(EngineFileName)_test$(EXEC_EXT)
+
+# intl will load dynamically, and having the whole soname set with version
+# confuses the dynamic load process.  So we only have the .$(SHRLIB_EXT) file
+# MOD 28-July-2002
+
+LIBFBINTL_SO=$(call buildSubDirectory,intl)/$(LIB_PREFIX)fbintl.$(SHRLIB_EXT)
+
+ifeq ($(EDITLINE_FLG),Y)
+  ifeq ($(STD_EDITLINE), true)
+	LIBEDITLINE := -l$(READLINE)
+  else
+	LIBEDITLINE := $(STATIC_LIB)/libedit.a
+	TERMLIB := -l@TERMLIB@
+  endif
+endif
+
+# Shared library name for usage inside of the UDF
+IbUtilLibraryName = $(LIB_PREFIX)ib_util.$(SHRLIB_EXT)
+LIBIBUTIL_SO = $(LIB)/$(IbUtilLibraryName)
+
+# Own tommath support
+TOMMATH=$(ROOT)/extern/libtommath
+TOMMATH_INC=$(TOMMATH)
+TOMMATH_VER=0
+ifeq ($(PLATFORM),DARWIN)
+TOMMATH_SO=$(TOMMATH)/.libs/libtommath.dylib
+else
+TOMMATH_SO=$(TOMMATH)/.libs/libtommath.so
+endif
+
+# Own tomcrypt support
+TOMCRYPT=$(ROOT)/extern/libtomcrypt
+TOMCRYPT_INC=$(TOMCRYPT)/src/headers
+TOMCRYPT_SO=$(TOMCRYPT)/.libs/libtomcrypt.so
+TOMCRYPT_VER=1
+
+# Own libcds support
+LIBCDS=$(ROOT)/extern/libcds
+LIBCDS_INC=$(LIBCDS)
+LIBCDS_DEF=CDS_BUILD_STATIC_LIB
+
+# LINKER OPTIONS
+#
+
+UNDEF_PLATFORM = -Wl,--no-undefined
+ifeq ($(TARGET),Debug)
+  UNDEF_FLAGS = $(UNDEF_PLATFORM)
+endif
+
+SCRATCHBIRD_VERS = firebird.vers
+FBINTL_VERS = fbintl.vers
+IB_UTIL_VERS = ib_util.vers
+UDR_PLUGIN_VERS = udr_plugin.vers
+EMPTY_VERS = empty.vers
+PLUGIN_VERS = fbplugin.vers
+
+ALLVERS = $(SCRATCHBIRD_VERS) $(FBINTL_VERS) $(IB_UTIL_VERS)
+ALLVERS += $(UDR_PLUGIN_VERS) $(EMPTY_VERS) $(PLUGIN_VERS)
+
+LINK_SCRATCHBIRD_SYMBOLS = $(call LIB_LINK_MAPFILE,$(SCRATCHBIRD_VERS))
+LINK_FBINTL_SYMBOLS = $(call LIB_LINK_MAPFILE,$(FBINTL_VERS))
+LINK_IBUTIL_SYMBOLS = $(call LIB_LINK_MAPFILE,$(IB_UTIL_VERS))
+LINK_UDR_PLUGIN_SYMBOLS = $(call LIB_LINK_MAPFILE,$(UDR_PLUGIN_VERS))
+LINK_EMPTY_SYMBOLS = $(call LIB_LINK_MAPFILE,$(EMPTY_VERS))
+LINK_PLUGIN_SYMBOLS = $(call LIB_LINK_MAPFILE,$(PLUGIN_VERS))
+LINK_EXEC_EXPORT=-rdynamic
+UDR_SUPPORT_LIBS=
+
+ifeq ($(PLATFORM),DARWIN)
+    LIB_LINK_RPATH =
+else
+	LIB_PLATFORM_RPATH = -Wl,-rpath,$(1)
+
+ifeq (@USE_RPATH@,1)
+    ifeq ($(strip @BINRELOC_CFLAGS@),)
+        LIB_LINK_RPATH = $(call LIB_PLATFORM_RPATH,$(if $(subst intl,,$(1)),@FB_LIBDIR@,@FB_INTLDIR@))
+    else
+        LIB_LINK_RPATH = $(call LIB_PLATFORM_RPATH,\$$ORIGIN/../$(1))
+    endif
+else
+    LIB_LINK_RPATH =
+endif
+endif
+
+ifeq ($(PLATFORM),DARWIN)
+    LINK_DARWIN_RPATH = -Wl,-rpath,@loader_path/$(1)
+    LIB_LINK_DARWIN_INSTALL_NAME = -install_name @rpath/$(1)
+else
+    LINK_DARWIN_RPATH =
+    LIB_LINK_DARWIN_INSTALL_NAME =
+endif
+
+LIB_PATH_OPTS = $(call LIB_LINK_RPATH,lib) $(call LIB_LINK_RPATH,intl)
+LIB_LINK_SONAME= -Wl,-soname,$(1)
+LIB_LINK_MAPFILE= -Wl,--version-script,$(1)
+SCRATCHBIRD_LIBRARY_LINK= -L$(LIB) -L$(STATIC_LIB) -lfbclient $(MATHLIB) $(CRYPTLIB)
+
+EXE_LINK_OPTIONS= $(LDFLAGS) $(THR_FLAGS) $(UNDEF_FLAGS) $(LIB_PATH_OPTS) $(call LINK_DARWIN_RPATH,..) $(LINK_EMPTY_SYMBOLS)
+LIB_LINK_OPTIONS= $(LDFLAGS) $(THR_FLAGS) -shared
+
+FB_DAEMON = $(BIN)/firebird$(EXEC_EXT)
+
+# Per-library link rules
+LINK_UDF = $(LIB_LINK) $(LIB_LINK_OPTIONS) $(call LIB_LINK_SONAME,$(1).$(SHRLIB_EXT)) $(UNDEF_FLAGS)\
+ $(call LIB_LINK_RPATH,lib) $(call LINK_DARWIN_RPATH,..)
+LINK_UDF_LIBS = $(THR_LIBS) -L$(LIB) -L$(STATIC_LIB) -lib_util $(SO_LINK_LIBS)
+
+LINK_IB_UTIL = $(LIB_LINK) $(LINK_IBUTIL_SYMBOLS) $(LIB_LINK_OPTIONS) $(UNDEF_FLAGS)\
+ $(call LIB_LINK_SONAME,$(IbUtilLibraryName)) $(call LIB_LINK_RPATH,lib) $(call LINK_DARWIN_RPATH,..)
+LINK_IB_UTIL_LIBS = $(THR_LIBS)
+
+LINK_INTL = $(LIB_LINK) $(LINK_FBINTL_SYMBOLS) $(LIB_LINK_OPTIONS) $(UNDEF_FLAGS)\
+ $(call LIB_LINK_SONAME,libfbintl.$(SHRLIB_EXT).1) $(call LIB_LINK_RPATH,lib) $(call LINK_DARWIN_RPATH,..)
+LINK_INTL_LIBS = -L$(LIB) -L$(STATIC_LIB) $(SO_LINK_LIBS) $(SCRATCHBIRD_LIBRARY_LINK)
+
+LINK_TRACE = $(LIB_LINK) $(LINK_PLUGIN_SYMBOLS) $(LIB_LINK_OPTIONS) $(UNDEF_FLAGS)\
+ $(call LIB_LINK_SONAME,$(LIB_PREFIX)fbtrace.$(SHRLIB_EXT).0) $(call LIB_LINK_RPATH,lib) $(call LINK_DARWIN_RPATH,..)
+LINK_TRACE_LIBS = -L$(LIB) -L$(STATIC_LIB) $(SO_LINK_LIBS)
+
+LINK_SCRATCHBIRD = $(LIB_LINK) $(LINK_SCRATCHBIRD_SYMBOLS) $(LIB_LINK_OPTIONS) $(LIB_SCRATCHBIRD_OPTIONS) $(UNDEF_FLAGS)\
+ $(call LIB_LINK_SONAME,$(LibrarySoName)) $(call LIB_LINK_RPATH,lib) $(call LINK_DARWIN_RPATH,..)
+LINK_SCRATCHBIRD_LIBS = -L$(LIB) -L$(STATIC_LIB) $(LIB_GUI) $(SO_LINK_LIBS) $(MATHLIB)
+
+LINK_ENGINE = $(LIB_LINK) $(LINK_PLUGIN_SYMBOLS) $(LIB_LINK_OPTIONS) $(LIB_SCRATCHBIRD_OPTIONS) $(UNDEF_FLAGS)\
+ $(call LIB_LINK_SONAME,$(EngineSoName)) $(call LIB_LINK_RPATH,lib) $(call LINK_DARWIN_RPATH,..)
+LINK_ENGINE_LIBS = $(LINK_SCRATCHBIRD_LIBS) $(RE2LIB) $(LIBCDSLIB) $(SCRATCHBIRD_LIBRARY_LINK)
+
+LINK_UDRENG = $(LIB_LINK) $(LINK_PLUGIN_SYMBOLS) $(LIB_LINK_OPTIONS) $(call LIB_LINK_RPATH,lib) $(UNDEF_FLAGS)\
+ $(call LINK_DARWIN_RPATH,..)
+LINK_UDRENG_LIBS = -L$(LIB) -L$(STATIC_LIB) $(SO_LINK_LIBS)
+
+LINK_PLUGIN = $(LIB_LINK) $(LINK_PLUGIN_SYMBOLS) $(LIB_LINK_OPTIONS) $(call LIB_LINK_RPATH,lib) $(UNDEF_FLAGS)\
+ $(call LINK_DARWIN_RPATH,..)
+LINK_PLUG_LIBS = -L$(LIB) -L$(STATIC_LIB) $(SO_LINK_LIBS)
+
+# Pay attention - we place common library into obj, not lib dir
+# It's just a set of object files, prepared to be used by ld, not an output library
+COMMON_LIB	= $(OBJ)/common.a
+COMMON_TEST = $(FB_TESTS_DIR)/common_test$(EXEC_EXT)
+
+# From utilities
+FBSVCMGR	= $(BIN)/fbsvcmgr$(EXEC_EXT)
+FBTRACEMGR	= $(BIN)/fbtracemgr$(EXEC_EXT)
+GSTAT		= $(BIN)/gstat$(EXEC_EXT)
+NBACKUP		= $(BIN)/nbackup$(EXEC_EXT)
+LOCKPRINT	= $(BIN)/fb_lock_print$(EXEC_EXT)
+GSEC		= $(BIN)/gsec$(EXEC_EXT)
+GFIX		= $(BIN)/gfix$(EXEC_EXT)
+RUN_GFIX	= $(RBIN)/gfix$(EXEC_EXT)
+FBGUARD		= $(BIN)/fbguard$(EXEC_EXT)
+INSTREG		= $(BIN)/instreg$(EXEC_EXT)
+INSTSVC		= $(BIN)/instsvc$(EXEC_EXT)
+
+SECURITY_FDB	= $(SCRATCHBIRD)/security6.fdb
+
+# From isql
+ISQL            = $(BIN)/isql$(EXEC_EXT)
+ISQL_TEST       = $(FB_TESTS_DIR)/isql_test$(EXEC_EXT)
+RUN_ISQL        = $(RBIN)/isql$(EXEC_EXT)
+
+# From burp
+GBAK            = $(BIN)/gbak$(EXEC_EXT)
+RUN_GBAK        = $(RBIN)/gbak$(EXEC_EXT)
+GSPLIT          = $(BIN)/gsplit$(EXEC_EXT)
+
+# From gpre
+# (gpre current is a link to one of the others)
+GPRE_BOOT       = $(RBIN)/gpre_boot$(EXEC_EXT)
+GPRE            = $(BIN)/gpre$(EXEC_EXT)
+RUN_GPRE        = $(RBIN)/gpre$(EXEC_EXT)
+GPRE_CURRENT    = $(RBIN)/gpre_current$(EXEC_EXT)
+
+# From msgs
+BUILD_FILE      = $(BIN)/build_file$(EXEC_EXT)
+SCRATCHBIRD_MSG    = $(SCRATCHBIRD)/firebird.msg
+
+# Platform Manager
+# For want of a better suggestion we may as well default to posix
+PLATFORM_PATH	=	os/posix
+TRACE_OS_Sources	=
