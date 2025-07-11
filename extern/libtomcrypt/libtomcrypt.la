@@ -1,0 +1,11 @@
+# libtomcrypt.la - a libtool library file
+dlname='libtomcrypt.so.1'
+library_names='libtomcrypt.so.1 libtomcrypt.so'
+old_library='libtomcrypt.a'
+dependency_libs=''
+current=1
+age=0
+revision=18
+installed=no
+shouldnotlink=no
+libdir='/usr/lib'

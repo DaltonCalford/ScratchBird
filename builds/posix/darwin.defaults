@@ -1,0 +1,37 @@
+# The contents of this file are subject to the Interbase Public
+# License Version 1.0 (the "License"); you may not use this file
+# except in compliance with the License. You may obtain a copy
+# of the License at http://www.Inprise.com/IPL.html
+#
+# Software distributed under the License is distributed on an
+# "AS IS" basis, WITHOUT WARRANTY OF ANY KIND, either express
+# or implied. See the License for the specific language governing
+# rights and limitations under the License.
+#
+# The Original Code was created by Inprise Corporation
+# and its predecessors. Portions created by Inprise Corporation are
+#
+# Copyright (C) 2000 Inprise Corporation
+# All Rights Reserved.
+# Contributor(s): ______________________________________.
+# 2 Oct 2002, Nickolay Samofatov - Major Cleanup
+# Wed Jan 28 2009 Alex Peshkov - moved common part of prefix.darwin* to separate file
+
+# Options
+#FirebirdInstallPrefix=
+LIB_BUNDLE_OPTIONS=$(LD_FLAGS) -bundle
+LIB_LINK_OPTIONS=$(LD_FLAGS) -dynamiclib
+LIB_LINK_SONAME:=-current_version @FIREBIRD_VERSION@ -compatibility_version @FIREBIRD_VERSION@ -seg1addr 0x30000000
+LIB_LINK_MAPFILE=-Wl,-exported_symbols_list,$(1)
+
+ADD_LIBS:=-lobjc -framework Foundation -framework Security
+LINK_LIBS += $(ADD_LIBS)
+STATICLINK_LIBS += $(ADD_LIBS)
+SO_LINK_LIBS += $(ADD_LIBS)
+
+PLATFORM_PATH=os/darwin
+PLATFORM_FALLBACK=os/posix
+
+STATIC_CXX_SUPPORT = -lsupc++ $(GCCS) -lgcc_eh -lSystem
+
+INLINE_EDIT_SED:= -i ""

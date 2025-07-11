@@ -1,0 +1,271 @@
+Firebird GSS-API Trusted Authentication Implementation
+=====================================================
+
+This document describes the GSS-API trusted authentication implementation for 
+Firebird, which enables Windows clients to authenticate to Linux-based Firebird
+servers using their Windows domain credentials.
+
+## Overview
+
+The GSS-API (Generic Security Services API) trusted authentication feature allows:
+
+- Windows clients to connect to Linux Firebird servers using domain credentials
+- Cross-platform Kerberos authentication between Windows and Linux
+- Seamless integration with existing Active Directory infrastructure
+- Wire encryption using Kerberos session keys
+- User and group mapping from Windows domains to Firebird users/roles
+
+## Architecture
+
+### Components
+
+1. **Windows Client**: Uses existing Win_Sspi plugin (no changes required)
+2. **Linux Server**: New Linux_GSSAPI plugin accepts GSS-API authentication
+3. **Active Directory**: Provides Kerberos authentication services
+4. **Firebird Mapping**: Maps Windows users/groups to Firebird users/roles
+
+### Authentication Flow
+
+1. Windows client initiates SSPI authentication
+2. Client sends SSPI tokens to Linux Firebird server
+3. Linux server processes tokens using GSS-API
+4. Kerberos validates credentials against Active Directory
+5. Server extracts user identity and group memberships
+6. Firebird maps Windows identity to database user/roles
+7. Connection established with optional wire encryption
+
+## Implementation Files
+
+### Core Implementation
+- `src/auth/trusted/AuthGssapi.h` - GSS-API authentication header
+- `src/auth/trusted/AuthGssapi.cpp` - GSS-API authentication implementation
+
+### Build System Integration
+- `builds/cmake/Configure.cmake` - GSS-API detection and configuration
+- `src/remote/CMakeLists.txt` - Build integration for AuthGssapi files
+- `src/include/gen/autoconfig.h.in` - Configuration flags
+
+### Server Integration
+- `src/remote/server/os/posix/inet_server.cpp` - Plugin registration
+
+## Build Requirements
+
+### Development Packages
+Ubuntu/Debian:
+```bash
+sudo apt-get install libkrb5-dev libgssapi-krb5-2-dev krb5-user cmake build-essential
+```
+
+CentOS/RHEL/Fedora:
+```bash
+sudo yum install krb5-devel krb5-workstation cmake gcc-c++
+# or
+sudo dnf install krb5-devel krb5-workstation cmake gcc-c++
+```
+
+### Build Configuration
+The build system automatically detects GSS-API availability:
+- Uses pkg-config for library detection
+- Falls back to manual library detection
+- Compiles AuthGssapi only when GSS-API is available
+- Links required Kerberos libraries
+
+### Build Process
+```bash
+cd /path/to/firebird/source
+mkdir build && cd build
+cmake ..
+make
+```
+
+## Configuration
+
+### Kerberos Client Configuration
+Create `/etc/krb5.conf`:
+```ini
+[libdefaults]
+    default_realm = DOMAIN.COM
+    dns_lookup_realm = true
+    dns_lookup_kdc = true
+
+[realms]
+    DOMAIN.COM = {
+        kdc = dc1.domain.com
+        admin_server = dc1.domain.com
+    }
+
+[domain_realm]
+    .domain.com = DOMAIN.COM
+    domain.com = DOMAIN.COM
+```
+
+### Active Directory Service Principal
+Create Firebird service principal:
+```cmd
+# On Windows Domain Controller
+setspn -A firebird/linuxserver.domain.com firebird-service-account
+ktpass -out firebird.keytab -prin firebird/linuxserver.domain.com@DOMAIN.COM 
+       -mapuser firebird-service-account@DOMAIN.COM -pass PASSWORD 
+       -ptype KRB5_NT_PRINCIPAL
+```
+
+Copy `firebird.keytab` to Linux server:
+```bash
+sudo cp firebird.keytab /opt/firebird/
+sudo chown firebird:firebird /opt/firebird/firebird.keytab
+sudo chmod 600 /opt/firebird/firebird.keytab
+```
+
+### Firebird Configuration
+Update `firebird.conf`:
+```ini
+# Enable GSS-API authentication
+AuthServer = Srp256, Linux_GSSAPI
+
+# Enable wire encryption (recommended)
+WireCrypt = Enabled
+
+# Optional: Client authentication order
+AuthClient = Srp256, Linux_GSSAPI, Legacy_Auth
+```
+
+### User Mapping
+Create global mappings in Firebird:
+```sql
+-- Map all domain users
+CREATE GLOBAL MAPPING trusted_auth_gssapi 
+    USING PLUGIN linux_gssapi 
+    FROM ANY USER 
+    TO USER;
+
+-- Map domain administrators
+CREATE GLOBAL MAPPING gssapi_admin 
+    USING PLUGIN linux_gssapi 
+    FROM PREDEFINED_GROUP 'DOMAIN_ANY_RID_ADMINS' 
+    TO ROLE RDB$ADMIN;
+
+-- Map specific domain groups
+CREATE GLOBAL MAPPING domain_users 
+    USING PLUGIN linux_gssapi 
+    FROM "DOMAIN\\Domain Users" 
+    TO USER;
+```
+
+## Usage
+
+### Client Connection
+From Windows client:
+```bash
+# Get Kerberos ticket (if not using Windows SSO)
+kinit username@DOMAIN.COM
+
+# Connect to Firebird
+isql -user 'DOMAIN\username' linuxserver:employee
+```
+
+### Troubleshooting
+
+#### Common Issues
+1. **Clock Skew**: Ensure time synchronization between client/server/DC
+2. **DNS Resolution**: Verify FQDN resolution works correctly
+3. **Firewall**: Open Kerberos ports (88, 464)
+4. **Keytab Permissions**: Ensure proper ownership and permissions
+
+#### Debug Commands
+```bash
+# Check Kerberos tickets
+klist
+
+# Test service principal
+kvno firebird/linuxserver.domain.com@DOMAIN.COM
+
+# Test keytab
+kinit -k -t /opt/firebird/firebird.keytab firebird/linuxserver.domain.com@DOMAIN.COM
+
+# Check Firebird logs
+tail -f /var/log/firebird/firebird.log
+```
+
+#### Log Files
+- Firebird: `/var/log/firebird/firebird.log`
+- Kerberos: `/var/log/krb5libs.log`
+- System: `/var/log/syslog` or `/var/log/messages`
+
+## Security Considerations
+
+### Authentication Security
+- Uses strong Kerberos authentication
+- No passwords transmitted over network
+- Mutual authentication between client and server
+- Session keys provide wire encryption
+
+### Access Control
+- Windows group memberships mapped to Firebird roles
+- Administrator privilege detection
+- Fine-grained user mapping control
+
+### Network Security
+- All authentication traffic encrypted
+- Compatible with IPSec and other network security
+- Works through firewalls with proper port configuration
+
+## Limitations
+
+### Current Implementation
+- Linux server only (Windows clients supported via existing SSPI)
+- Requires Active Directory domain environment
+- MIT Kerberos or compatible implementation required
+- No support for cross-realm authentication (planned for future)
+
+### Performance
+- Slight overhead for GSS-API operations
+- Network round-trips for Kerberos ticket validation
+- Minimal impact on established connections
+
+## Technical Details
+
+### GSS-API Integration
+- Uses standard GSS-API calls for maximum compatibility
+- Supports both MIT Kerberos and Heimdal implementations
+- Thread-safe implementation with proper context management
+- Automatic session key extraction for wire encryption
+
+### Principal Name Conversion
+- Converts `user@REALM.COM` to `REALM\user` format
+- Compatible with existing Firebird user mapping system
+- Preserves group membership information
+
+### Error Handling
+- Comprehensive GSS-API error reporting
+- Graceful fallback to other authentication methods
+- Detailed logging for troubleshooting
+
+## Future Enhancements
+
+### Planned Features
+- Cross-realm authentication support
+- Certificate-based authentication
+- LDAP group membership queries
+- Performance optimizations
+
+### Compatibility
+- Designed for easy extension to other platforms
+- Modular architecture allows additional authentication methods
+- Compatible with future Firebird authentication enhancements
+
+## Support
+
+### Documentation
+- Firebird documentation: https://firebirdsql.org/en/documentation/
+- Kerberos documentation: https://web.mit.edu/kerberos/
+- GSS-API specification: RFC 2743, RFC 2744
+
+### Community
+- Firebird support forums
+- GitHub issues for bug reports
+- Mailing lists for development discussion
+
+---
+
+Copyright (c) 2024 DCal Ford and Firebird Project
+All Rights Reserved.
