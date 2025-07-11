@@ -118,7 +118,7 @@ IDL_FILE=$(IDL_ROOT)/ScratchBirdInterface.idl
 API_H_FILE=$(IDL_ROOT)/IdlFbInterfaces.h
 API_PAS_FILE=$(INCLD_ROOT)/gen/ScratchBird.pas
 API_C_HEADER=fb_c_api.h
-API_C_H_FILE=$(SCRATCHBIRD)/include/scratchbird/$(API_C_HEADER)
+API_C_H_FILE=$(SCRATCHBIRD)/include/firebird/$(API_C_HEADER)
 API_C_TMP_FILE=$(TMP_ROOT)/fb_c_api.tmp
 API_C_TEMPLATE=$(IDL_ROOT)/fb_c_api.hdr
 MISC=$(SRC_ROOT)/misc
@@ -718,8 +718,8 @@ examples: include_generic
 
 message_file:	$(SCRATCHBIRD_MSG)
 
-$(SCRATCHBIRD_MSG) $(SCRATCHBIRD)/include/scratchbird/impl/iberror_c.h:	$(BUILD_FILE)
-	$(BUILD_FILE) -f $(SCRATCHBIRD_MSG) -c $(SCRATCHBIRD)/include/scratchbird/impl/iberror_c.h
+$(SCRATCHBIRD_MSG) $(SCRATCHBIRD)/include/firebird/impl/iberror_c.h:	$(BUILD_FILE)
+	$(BUILD_FILE) -f $(SCRATCHBIRD_MSG) -c $(SCRATCHBIRD)/include/firebird/impl/iberror_c.h
 	$(CHMOD_6) $(SCRATCHBIRD_MSG)
 
 tzdata: $(TZDATA)/ids.dat
@@ -758,17 +758,17 @@ $(INCLUDE_DEST)/ib_util.h : $(SRC_OtherDistribHeaders)
 	mkdir -p $(INCLUDE_DEST)
 	$(CP) $^ $(INCLUDE_DEST)/
 
-NEW_INCLUDES_SRC = $(shell find $(SRC_ROOT)/include/scratchbird -type f)
-NEW_INCLUDES_DEST = $(patsubst $(SRC_ROOT)/include/scratchbird/%, $(INCLUDE_DEST)/scratchbird/%, $(NEW_INCLUDES_SRC))
+NEW_INCLUDES_SRC = $(shell find $(SRC_ROOT)/include/firebird -type f)
+NEW_INCLUDES_DEST = $(patsubst $(SRC_ROOT)/include/firebird/%, $(INCLUDE_DEST)/firebird/%, $(NEW_INCLUDES_SRC))
 
 include_generic: $(NEW_INCLUDES_DEST) $(INCLUDE_DEST)/ib_util.h
 
 ifeq ($(SYSTEM_BOOST_FLG),Y)
-$(INCLUDE_DEST)/scratchbird/Message.h : $(SRC_ROOT)/include/scratchbird/Message.h
+$(INCLUDE_DEST)/firebird/Message.h : $(SRC_ROOT)/include/firebird/Message.h
 	sed 's,^#include "\./impl/boost/\(.\+\)",#include <boost/\1>,; s/\bFB_BOOST_PP_/BOOST_PP_/g' $< > $@
 endif
 
-$(INCLUDE_DEST)/scratchbird/%: $(SRC_ROOT)/include/scratchbird/%
+$(INCLUDE_DEST)/firebird/%: $(SRC_ROOT)/include/firebird/%
 	mkdir -p $(@D)
 	$(CP) $< $@
 

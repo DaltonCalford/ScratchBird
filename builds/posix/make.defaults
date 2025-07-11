@@ -311,12 +311,12 @@ ifeq ($(TARGET),Debug)
   UNDEF_FLAGS = $(UNDEF_PLATFORM)
 endif
 
-SCRATCHBIRD_VERS = firebird.vers
-FBINTL_VERS = fbintl.vers
+SCRATCHBIRD_VERS = scratchbird.vers
+FBINTL_VERS = sbintl.vers
 IB_UTIL_VERS = ib_util.vers
 UDR_PLUGIN_VERS = udr_plugin.vers
 EMPTY_VERS = empty.vers
-PLUGIN_VERS = fbplugin.vers
+PLUGIN_VERS = sbplugin.vers
 
 ALLVERS = $(SCRATCHBIRD_VERS) $(FBINTL_VERS) $(IB_UTIL_VERS)
 ALLVERS += $(UDR_PLUGIN_VERS) $(EMPTY_VERS) $(PLUGIN_VERS)
@@ -436,7 +436,7 @@ GPRE_CURRENT    = $(RBIN)/gpre_current$(EXEC_EXT)
 
 # From msgs
 BUILD_FILE      = $(BIN)/build_file$(EXEC_EXT)
-SCRATCHBIRD_MSG    = $(SCRATCHBIRD)/firebird.msg
+SCRATCHBIRD_MSG    = $(SCRATCHBIRD)/scratchbird.msg
 
 # Platform Manager
 # For want of a better suggestion we may as well default to posix

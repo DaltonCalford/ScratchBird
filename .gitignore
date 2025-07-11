@@ -1,0 +1,166 @@
+# ScratchBird Build Artifacts
+
+# Build directories
+build/
+temp/
+gen/Release/
+gen/Debug/
+gen/Native/
+
+# Generated configuration files
+build_config.env
+autoconfig.h
+
+# Build logs
+build_*.log
+*.log
+
+# Object files
+*.o
+*.obj
+*.a
+*.so
+*.dll
+*.exe
+
+# CMake
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+!Makefile.cross
+
+# Autotools
+autom4te.cache/
+config.log
+config.status
+configure
+aclocal.m4
+install-sh
+ltmain.sh
+missing
+depcomp
+compile
+config.guess
+config.sub
+config.h.in~
+
+# Generated source files
+*.d
+*.cpp.orig
+*.h.orig
+
+# Package directories
+packages/
+*.tar.gz
+*.zip
+*.deb
+*.rpm
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Backup files
+*.bak
+*.backup
+*.orig
+
+# Test databases
+*.fdb
+*.gdb
+*.ib
+*.gbak
+
+# Security files
+security6.fdb
+security6.fdb.lck
+
+# Generated documentation
+doc/generated/
+*.pdf
+*.html
+
+# Temporary files
+tmp/
+.tmp/
+*.tmp
+*.temp
+
+# Editor files
+*.kate-swp
+.*.swp
+.*.swo
+
+# Python cache (if any python tools are used)
+__pycache__/
+*.pyc
+*.pyo
+
+# Local configuration
+local_config.sh
+dev_settings.env
+
+# Cross-compilation artifacts
+*.cross
+*.mingw
+
+# Database logs
+*.log
+sb_*.log
+firebird.log
+
+# Lock files
+*.lck
+*.lock
+
+# Core dumps
+core
+core.*
+
+# Profiling data
+gmon.out
+*.prof
+
+# Coverage files
+*.gcno
+*.gcda
+*.gcov
+
+# Valgrind output
+valgrind-*.log
+massif.out.*
+
+# Clang static analyzer
+scan-build/
+*.plist
+
+# Address sanitizer
+*.asan
+*.tsan
+*.msan
+
+# Generated version files
+version.h
+build_version.h
+
+# Installation staging
+staging/
+install/
+
+# Documentation builds
+docs/_build/
+docs/build/
+
+# Node.js (if any tools use it)
+node_modules/
+npm-debug.log
+yarn-error.log

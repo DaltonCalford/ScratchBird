@@ -1,0 +1,80 @@
+#
+# Windows cross-compilation platform configuration
+# ScratchBird v0.5 - MinGW cross-compilation support
+#
+
+# Platform identification
+PLATFORM=WIN32
+CpuType=x64
+
+# MinGW cross-compilation toolchain
+MINGW_PREFIX=x86_64-w64-mingw32
+CC=$(MINGW_PREFIX)-gcc
+CXX=$(MINGW_PREFIX)-g++
+AR=$(MINGW_PREFIX)-ar
+RANLIB=$(MINGW_PREFIX)-ranlib
+STRIP=$(MINGW_PREFIX)-strip
+WINDRES=$(MINGW_PREFIX)-windres
+
+# Windows-specific definitions
+CFLAGS+=-DWIN32 -DWIN64 -D_WIN32 -D_WIN64 -DSIZEOF_LONG=4 -DFB_ALIGNMENT=8 -DFB_DOUBLE_ALIGN=8
+CXXFLAGS+=-DWIN32 -DWIN64 -D_WIN32 -D_WIN64 -DSIZEOF_LONG=4 -DFB_ALIGNMENT=8 -DFB_DOUBLE_ALIGN=8
+
+# MinGW compatibility flags
+CFLAGS+=-D_WINDOWS -D_USRDLL -D_CRT_SECURE_NO_WARNINGS -D_CRT_NONSTDC_NO_WARNINGS
+CXXFLAGS+=-D_WINDOWS -D_USRDLL -D_CRT_SECURE_NO_WARNINGS -D_CRT_NONSTDC_NO_WARNINGS
+
+# Static linking for cross-compilation
+LDFLAGS+=-static-libgcc -static-libstdc++
+
+# Windows system libraries
+SYSTEM_LIBS=-lws2_32 -lmswsock -lole32 -loleaut32 -luuid -lcomctl32 -lkernel32 -luser32 -lgdi32 -lwinspool -lcomdlg32 -ladvapi32 -lshell32 -lversion -lpsapi
+
+# Threading support for Windows
+THR_FLAGS=-mthreads
+THR_LIBS=-mthreads
+
+# Windows file extensions
+EXEC_EXT=.exe
+SHRLIB_EXT=dll
+LIB_PREFIX=lib
+
+# Install paths for Windows
+INSTALL_PREFIX=/usr/local/scratchbird-windows
+FB_INSTALL_PREFIX=$(INSTALL_PREFIX)
+
+# Windows-specific linker flags
+LIB_LINK_RPATH_OPT=
+LIB_LINK_SONAME_OPT=
+
+# Windows optimizations
+OPTIMIZE_FLAGS=-O2 -fno-omit-frame-pointer
+DEBUG_FLAGS=-g
+
+# Windows memory alignment
+ALIGNMENT_CFLAGS=-mpreferred-stack-boundary=3
+
+# Disable problematic warnings for MinGW
+CFLAGS+=-Wno-format -Wno-format-extra-args -Wno-format-zero-length
+CXXFLAGS+=-Wno-format -Wno-format-extra-args -Wno-format-zero-length
+
+# Windows resource compilation
+RC=$(WINDRES)
+RCFLAGS=-O coff
+
+# Case insensitive file system
+CASE_SENSITIVE=N
+
+# Windows-specific libraries
+ADDITIONAL_LIBS=-lpsapi -lnetapi32
+
+# Disable shared libraries for Windows (use static)
+SHARED_LIBS=N
+
+# Windows-specific build flags
+WINDOWS_BUILD_FLAGS=-D_WINDOWS -DWIN32_LEAN_AND_MEAN -DNOMINMAX
+
+# Cross-compilation host settings
+CROSS_COMPILING=Y
+HOST_PLATFORM=WIN32
+BUILD_PLATFORM=LINUX

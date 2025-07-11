@@ -48,6 +48,12 @@
  */
 
 #ifndef COMMON_COMMON_H
+#ifndef FB_ALIGNMENT
+#define FB_ALIGNMENT 8
+#endif
+#ifndef FB_DOUBLE_ALIGN
+#define FB_DOUBLE_ALIGN 8
+#endif
 #define COMMON_COMMON_H
 
 #include <string.h>

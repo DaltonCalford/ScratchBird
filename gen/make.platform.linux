@@ -1,0 +1,56 @@
+#
+# Linux platform-specific build configuration
+# ScratchBird v0.5 - Cross-platform build system
+#
+
+# Platform identification
+PLATFORM=LINUX
+CpuType=x64
+
+# Compiler settings
+CC=gcc
+CXX=g++
+AR=ar
+RANLIB=ranlib
+STRIP=strip
+
+# Linux-specific definitions
+CFLAGS+=-DLINUX -DAMD64 -DSIZEOF_LONG=8 -DFB_ALIGNMENT=8 -DFB_DOUBLE_ALIGN=8
+CXXFLAGS+=-DLINUX -DAMD64 -DSIZEOF_LONG=8 -DFB_ALIGNMENT=8 -DFB_DOUBLE_ALIGN=8
+
+# System library paths
+SYSTEM_LIBS=-lrt -lpthread -ldl -lm
+
+# External libraries (use system versions)
+RE2_BUILD_FLG=N
+RE2LIB=-lre2
+
+# Threading support
+THR_FLAGS=-pthread
+THR_LIBS=-lpthread
+
+# Platform-specific file extensions
+EXEC_EXT=
+SHRLIB_EXT=so
+LIB_PREFIX=lib
+
+# Install paths
+INSTALL_PREFIX=/usr/local/scratchbird
+FB_INSTALL_PREFIX=$(INSTALL_PREFIX)
+
+# Rpath settings for shared libraries
+LIB_LINK_RPATH_OPT=-Wl,-rpath,$(1)
+LIB_LINK_SONAME_OPT=-Wl,-soname,$(1)
+
+# Linux-specific optimizations
+OPTIMIZE_FLAGS=-O3 -fno-omit-frame-pointer
+DEBUG_FLAGS=-ggdb
+
+# Memory alignment
+ALIGNMENT_CFLAGS=-malign-natural
+
+# Additional Linux libraries
+ADDITIONAL_LIBS=-lcrypt
+
+# File system case sensitivity
+CASE_SENSITIVE=Y

@@ -24157,7 +24157,7 @@ for fb_tgt in $FB_TARGETS; do
 ac_config_files="$ac_config_files gen/$fb_tgt/firebird/firebird.conf:builds/install/misc/firebird.conf gen/$fb_tgt/firebird/plugins.conf:builds/install/misc/plugins.conf"
 
 if test "$CLIENT_ONLY_FLG" = "N"; then
-ac_config_files="$ac_config_files gen/$fb_tgt/firebird/databases.conf:builds/install/misc/databases.conf gen/$fb_tgt/firebird/fbtrace.conf:src/utilities/ntrace/fbtrace.conf gen/$fb_tgt/firebird/replication.conf:builds/install/misc/replication.conf"
+ac_config_files="$ac_config_files gen/$fb_tgt/firebird/databases.conf:builds/install/misc/databases.conf gen/$fb_tgt/firebird/sbtrace.conf:src/utilities/ntrace/sbtrace.conf gen/$fb_tgt/firebird/replication.conf:builds/install/misc/replication.conf"
 
 if test "x$fb_tgt" != "xNative" && [[ x$CROSS = xandroid* ]]; then
 ac_config_files="$ac_config_files gen/$fb_tgt/firebird/fbintl.conf:builds/install/misc/fbintl.conf"
@@ -25405,7 +25405,7 @@ do
     "gen/$fb_tgt/firebird/firebird.conf") CONFIG_FILES="$CONFIG_FILES gen/$fb_tgt/firebird/firebird.conf:builds/install/misc/firebird.conf" ;;
     "gen/$fb_tgt/firebird/plugins.conf") CONFIG_FILES="$CONFIG_FILES gen/$fb_tgt/firebird/plugins.conf:builds/install/misc/plugins.conf" ;;
     "gen/$fb_tgt/firebird/databases.conf") CONFIG_FILES="$CONFIG_FILES gen/$fb_tgt/firebird/databases.conf:builds/install/misc/databases.conf" ;;
-    "gen/$fb_tgt/firebird/fbtrace.conf") CONFIG_FILES="$CONFIG_FILES gen/$fb_tgt/firebird/fbtrace.conf:src/utilities/ntrace/fbtrace.conf" ;;
+    "gen/$fb_tgt/firebird/fbtrace.conf") CONFIG_FILES="$CONFIG_FILES gen/$fb_tgt/firebird/sbtrace.conf:src/utilities/ntrace/sbtrace.conf" ;;
     "gen/$fb_tgt/firebird/replication.conf") CONFIG_FILES="$CONFIG_FILES gen/$fb_tgt/firebird/replication.conf:builds/install/misc/replication.conf" ;;
     "gen/$fb_tgt/firebird/fbintl.conf") CONFIG_FILES="$CONFIG_FILES gen/$fb_tgt/firebird/fbintl.conf:builds/install/misc/fbintl.conf" ;;
     "gen/$fb_tgt/firebird/intl/fbintl.conf") CONFIG_FILES="$CONFIG_FILES gen/$fb_tgt/firebird/intl/fbintl.conf:builds/install/misc/fbintl.conf" ;;

@@ -15,4 +15,4 @@
 #define FB_REV_NO "0"
 #define FB_BUILD_NO "929"
 #define FB_BUILD_TYPE "T"
-#define FB_BUILD_SUFFIX "ScratchBird 6.0 f90eae0"
+#define FB_BUILD_SUFFIX "Firebird 6.0 f90eae0"

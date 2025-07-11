@@ -1,0 +1,133 @@
+#
+#  The contents of this file are subject to the Initial
+#  Developer's Public License Version 1.0 (the "License");
+#  you may not use this file except in compliance with the
+#  License. You may obtain a copy of the License at
+#  http://www.ibphoenix.com/main.nfs?a=ibphoenix&page=ibp_idpl.
+#
+#  Software distributed under the License is distributed AS IS,
+#  WITHOUT WARRANTY OF ANY KIND, either express or implied.
+#  See the License for the specific language governing rights
+#  and limitations under the License.
+#
+#  The Original Code was created by Mark O'Donohue
+#  for the ScratchBird Open Source RDBMS project.
+#
+#  Copyright (c) Mark O'Donohue <mark.odonohue@ludwig.edu.au>
+#  and all contributors signed below.
+#
+#  All Rights Reserved.
+#  Contributor(s): ______________________________________.
+#
+#
+#
+ROOT=..
+
+
+
+include     $(ROOT)/gen/make.defaults
+include     $(ROOT)/gen/make.platform
+include     $(ROOT)/gen/make.rules
+include     $(ROOT)/gen/make.shared.variables
+
+
+ 
+
+.PHONY: install dist packages tarfile
+.PHONY: buildTarDir buildImageDir buildRoot buildDebugInfo
+
+# Some of these targets are run from the root tree of the build.
+# those need to know where the install subdirectory is kept.
+# Others are run locally these need to know the path back to the
+# root of the build tree.
+
+BuildRoot=$(GEN_ROOT)
+CLIENT_ONLY_FLG=N
+WITH_TOMCRYPT=Y
+
+TAR=tar --owner root --group root
+
+InstallRoot=.
+
+BuildVersion=$(ScratchBirdVersion).$(BuildNum)
+
+Version=$(BuildVersion)-$(PackageVersion)
+
+
+
+# This means something like: ScratchBirdCS-*.0.0-*.i386.tar.gz
+
+TarDir=ScratchBird-$(Version)-linux-$(CpuType)
+TarFile=ScratchBird-$(Version)-linux-$(CpuType).tar.gz
+DebugDir=ScratchBird-$(Version)-linux-$(CpuType)-debugSymbols
+DebugFile=ScratchBird-$(Version)-linux-$(CpuType)-debugSymbols.tar.gz
+
+
+PkgSrcDir=$(InstallRoot)/$(ArchType)
+fb_install_prefix=/usr/local/scratchbird
+MiscDir=$(shell echo /usr/local/scratchbird/misc)
+DebugManifest=manifest_debug.txt
+
+
+TarInstallDir=$(GEN_ROOT)/install
+
+#Curses library
+TermLib=curses.so
+
+
+dist : packages
+
+packages: tarfile debugfile
+
+tarfile:  $(TarFile)
+
+$(TarFile) :  buildTarDir
+	(cd $(GEN_ROOT); $(TAR) -czf $(TarFile) $(TarDir))
+
+debugfile:  $(DebugFile)
+
+$(DebugFile) :  buildImageDir
+	(cd $(GEN_ROOT)/$(DebugDir); $(TAR) -czf ../$(DebugFile) `find . -not -type d`)
+
+buildRoot:
+	(cd $(GEN_ROOT); ./install/makeInstallImage.sh)
+
+buildDebugInfo: buildRoot
+	mkdir -p $(GEN_ROOT)/$(DebugDir)
+	for x in `(cd $(GEN_ROOT)/buildroot; find)`; do \
+        FIL=$(GEN_ROOT)/buildroot/$$x; \
+        D_FIL=$(GEN_ROOT)/$(DebugDir)/`dirname $${x}`/.debug/`basename $${x}`.debug; \
+        if [ ! -h $$FIL ] && $(READELF) -h $$FIL > /dev/null 2> /dev/null; then \
+            mkdir -p $(GEN_ROOT)/$(DebugDir)/`dirname $$x`/.debug; \
+            echo Generating external debug info for $$x; \
+            cp $${FIL} $${D_FIL}; \
+            $(OBJCOPY) --add-gnu-debuglink=$${D_FIL} $${FIL}; \
+            echo Stripping unneeded symbols from $${x}; \
+            $(OBJCOPY) --strip-debug --strip-unneeded $${FIL}; \
+        fi; \
+    done
+	(cd $(GEN_ROOT)/$(DebugDir); mkdir -p ./$(MiscDir); \
+		find . -type f -name '*.debug' -print >./$(MiscDir)/$(DebugManifest))
+
+# Use this line if you don't want to use separate debug info
+#buildImageDir: buildRoot
+buildImageDir: buildDebugInfo
+
+
+buildTarDir: buildImageDir
+	mkdir -p $(GEN_ROOT)/$(TarDir)
+ifeq ($(CLIENT_ONLY_FLG),N)
+	cp -r $(GEN_ROOT)/install/install.sh $(GEN_ROOT)/$(TarDir)
+	chmod a+x $(GEN_ROOT)/$(TarDir)/*.sh
+endif
+	(cd $(GEN_ROOT)/$(TarDir); $(TAR) -C ../buildroot -czf buildroot.tar.gz . )
+	(cd $(GEN_ROOT)/$(TarDir); $(TAR) -tzf buildroot.tar.gz > manifest.txt )
+
+
+install: buildTarDir
+	(cd $(GEN_ROOT)/$(TarDir); SCRATCHBIRD= SCRATCHBIRD_LOCK= ./install.sh)
+	cp -r $(GEN_ROOT)/$(DebugDir)/* /
+
+silent_install: buildTarDir
+	(cd $(GEN_ROOT)/$(TarDir); SCRATCHBIRD= SCRATCHBIRD_LOCK= ./install.sh -silent)
+	cp -r $(GEN_ROOT)/$(DebugDir)/* /
