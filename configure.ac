@@ -1404,7 +1404,7 @@ dnl # output
 		mkdir -p gen/\$fb_tgt/scratchbird/lib
 		mkdir -p gen/\$fb_tgt/scratchbird/tests
 		mkdir -p gen/\$fb_tgt/scratchbird/tzdata
-		mkdir -p gen/\$fb_tgt/scratchbird/include/scratchbird/impl
+		mkdir -p gen/\$fb_tgt/scratchbird/include/firebird/impl
 		if test "$CLIENT_ONLY_FLG" = "N" || test "$WITH_TOMCRYPT" = "Y"; then
 			mkdir -p gen/\$fb_tgt/scratchbird/plugins
 		fi
@@ -1470,7 +1470,7 @@ gen/$fb_tgt/scratchbird/plugins.conf:builds/install/misc/plugins.conf
 if test "$CLIENT_ONLY_FLG" = "N"; then
 AC_CONFIG_FILES([
 gen/$fb_tgt/scratchbird/databases.conf:builds/install/misc/databases.conf
-gen/$fb_tgt/scratchbird/fbtrace.conf:src/utilities/ntrace/fbtrace.conf
+gen/$fb_tgt/scratchbird/sbtrace.conf:src/utilities/ntrace/sbtrace.conf
 gen/$fb_tgt/scratchbird/replication.conf:builds/install/misc/replication.conf
 ])
 if test "x$fb_tgt" != "xNative" && [[[ x$CROSS = xandroid* ]]]; then

@@ -152,15 +152,15 @@ project_group(databases "Boot/Custom build steps")
 ########################################
 
 add_custom_command(
-    OUTPUT firebird.msg
+    OUTPUT scratchbird.msg
     DEPENDS
         build_msg
         msg_fdb
     #
-    COMMAND ${CMAKE_COMMAND} -E remove firebird.msg
-    COMMAND ${BUILD_MSG_CMD} -D msg.fdb -P ${CMAKE_CURRENT_BINARY_DIR}/ -F firebird.msg -L all
-    COMMAND ${BUILD_MSG_CMD} -D msg.fdb -P ${CMAKE_CURRENT_BINARY_DIR}/ -F firebird.msg
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different firebird.msg ${output_dir}/firebird.msg
+    COMMAND ${CMAKE_COMMAND} -E remove scratchbird.msg
+    COMMAND ${BUILD_MSG_CMD} -D msg.fdb -P ${CMAKE_CURRENT_BINARY_DIR}/ -F scratchbird.msg -L all
+    COMMAND ${BUILD_MSG_CMD} -D msg.fdb -P ${CMAKE_CURRENT_BINARY_DIR}/ -F scratchbird.msg
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different scratchbird.msg ${output_dir}/scratchbird.msg
 )
 add_custom_command(
     OUTPUT codes_headers.dummy
@@ -173,7 +173,7 @@ add_custom_command(
     COMMAND ${CMAKE_COMMAND} -E echo Building codes header...
     COMMAND ${CODES_CMD} ${CMAKE_CURRENT_SOURCE_DIR}/include/gen ${CMAKE_SOURCE_DIR}/lang_helpers
 )
-add_custom_target(messages ALL DEPENDS firebird.msg codes_headers.dummy)
+add_custom_target(messages ALL DEPENDS scratchbird.msg codes_headers.dummy)
 project_group(messages "Boot/Custom build steps")
 
 
