@@ -245,3 +245,10 @@
 	FIELD(fld_synonym_name	, nam_synonym_name	, dtype_text	, MAX_SQL_IDENTIFIER_LEN	, dsc_text_type_metadata	, NULL		, true		, ODS_14_0)
 	FIELD(fld_target_type	, nam_target_type	, dtype_short	, sizeof(SSHORT)			, 0							, NULL		, true		, ODS_14_0)
 	FIELD(fld_created		, nam_created		, dtype_timestamp, sizeof(GDS_TIMESTAMP)	, 0							, NULL		, true		, ODS_14_0)
+
+	// Database links fields
+	FIELD(fld_db_link_name	, nam_db_link_name	, dtype_text	, MAX_SQL_IDENTIFIER_LEN	, dsc_text_type_metadata	, NULL		, true		, ODS_14_0)
+	FIELD(fld_server_name	, nam_server_name	, dtype_text	, MAX_SQL_IDENTIFIER_LEN	, dsc_text_type_metadata	, NULL		, true		, ODS_14_0)
+	FIELD(fld_database_path	, nam_database_path	, dtype_varying	, 765						, dsc_text_type_metadata	, NULL		, true		, ODS_14_0)
+	FIELD(fld_password		, nam_password		, dtype_varying	, 255						, dsc_text_type_metadata	, NULL		, true		, ODS_14_0)
+	FIELD(fld_schema_mode	, nam_schema_mode	, dtype_short	, sizeof(SSHORT)			, 0							, NULL		, true		, ODS_14_0)

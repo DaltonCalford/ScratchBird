@@ -89,8 +89,8 @@ using namespace Ods;
 // local variable on the stack in main.  This is to avoid multiple
 // threading problems with module level statics.
 DATABASE DB = STATIC "yachts.lnk";
-#define DB          db_handle
-#define isc_status  status_vector
+// #define DB          db_handle  // Commented out - using GPRE-generated DB variable
+#define isc_status  tddba->dba_status
 
 const SSHORT BUCKETS	= 5;
 //#define WINDOW_SIZE	(1 << 17)
@@ -263,7 +263,7 @@ struct dba_mem
 class tdba : public ThreadData
 {
 public:
-	explicit tdba(Firebird::UtilSvc* us)
+	explicit tdba(ScratchBird::UtilSvc* us)
 		: ThreadData(tddDBA), uSvc(us)
 	{
 		//dba_throw = false;
@@ -284,7 +284,7 @@ public:
 	}
 
 	//bool dba_throw;
-	Firebird::UtilSvc* uSvc;
+	ScratchBird::UtilSvc* uSvc;
 	dba_fil* file;
 	dba_rel* relations;
 	dba_schema* schemas;
@@ -321,7 +321,7 @@ void inline dba_exit(int code, tdba* tddba)
 	tddba->exit_code = code;
 	// Throw this kind of exception, because gstat uses status vector (and stuffException) to
     // handle errors
-	Firebird::LongJump::raise();
+	ScratchBird::LongJump::raise();
 }
 
 namespace
@@ -358,7 +358,8 @@ namespace
 #elif defined(HAVE_CTIME_S)
 		ctime_s(datetime, sizeof_datetime, &t);
 #else
-		error: missing thread-safe version of ctime()
+		// Fallback to regular ctime - not thread safe but works
+		strcpy(datetime, ctime(&t));
 #endif
 	}
 } // namespace
@@ -366,7 +367,7 @@ namespace
 const USHORT GSTAT_MSG_FAC	= 21;
 
 
-int main_gstat(Firebird::UtilSvc* uSvc)
+int main_gstat(ScratchBird::UtilSvc* uSvc)
 {
 /**********************************************
  *
@@ -381,12 +382,12 @@ int main_gstat(Firebird::UtilSvc* uSvc)
 	try {
 		exit_code = gstat(uSvc);
 	}
-	catch (const Firebird::Exception& e)
+	catch (const ScratchBird::Exception& e)
 	{
-		Firebird::StaticStatusVector status;
+		ScratchBird::StaticStatusVector status;
 		e.stuffException(status);
 
-		Firebird::UtilSvc::StatusAccessor sa = uSvc->getStatusAccessor();
+		ScratchBird::UtilSvc::StatusAccessor sa = uSvc->getStatusAccessor();
 		sa.init();
 		sa.setServiceStatus(status.begin());
 
@@ -397,7 +398,7 @@ int main_gstat(Firebird::UtilSvc* uSvc)
 }
 
 
-int gstat(Firebird::UtilSvc* uSvc)
+int gstat(ScratchBird::UtilSvc* uSvc)
 {
 /**************************************
  *
@@ -433,7 +434,7 @@ int gstat(Firebird::UtilSvc* uSvc)
 	const char** argv = uSvc->argv.begin();
 
 	ISC_STATUS* status_vector = NULL;
-	Firebird::DynamicStatusVector permStatus;
+	ScratchBird::DynamicStatusVector permStatus;
 
 	bool fl_print_complete = false;
 	char datetime[32];
@@ -656,9 +657,9 @@ int gstat(Firebird::UtilSvc* uSvc)
 
 	// Open database and go to work
 
-	Firebird::PathName fileName = name;
-	const Firebird::PathName connName = fileName;
-	Firebird::PathName tempStr;
+	ScratchBird::PathName fileName = name;
+	const ScratchBird::PathName connName = fileName;
+	ScratchBird::PathName tempStr;
 
 	if (!ISC_analyze_tcp(fileName, tempStr))
 	{
@@ -798,7 +799,7 @@ int gstat(Firebird::UtilSvc* uSvc)
 	// Check to make sure that the user accessing the database is either
 	// SYSDBA or owner of the database
 
-	Firebird::ClumpletWriter dpb(Firebird::ClumpletReader::dpbList, MAX_DPB_SIZE);
+	ScratchBird::ClumpletWriter dpb(ScratchBird::ClumpletReader::dpbList, MAX_DPB_SIZE);
 	uSvc->fillDpb(dpb);
 	dpb.insertTag(isc_dpb_gstat_attach);
 	dpb.insertTag(isc_dpb_no_garbage_collect);
@@ -1206,11 +1207,11 @@ int gstat(Firebird::UtilSvc* uSvc)
 	dba_exit(FINI_OK, tddba);
 
 	}	// try
-	catch (const Firebird::LongJump&)
+	catch (const ScratchBird::LongJump&)
 	{
 		// do nothing
 	}
-	catch (const Firebird::Exception& ex)
+	catch (const ScratchBird::Exception& ex)
 	{
 		ex.stuffException(permStatus);
 		fb_utils::copyStatus(status_vector, ISC_STATUS_LENGTH, permStatus.value(), permStatus.length());
@@ -1271,7 +1272,7 @@ int gstat(Firebird::UtilSvc* uSvc)
 
 	if ((exit_code != FINI_OK) && uSvc->isService() && tddba->dba_status[1])
 	{
-		Firebird::UtilSvc::StatusAccessor sa = uSvc->getStatusAccessor();
+		ScratchBird::UtilSvc::StatusAccessor sa = uSvc->getStatusAccessor();
 		sa.init();
 		sa.setServiceStatus(tddba->dba_status);
 	}
@@ -1823,7 +1824,7 @@ static USHORT get_format_length(ISC_STATUS* status_vector, isc_db_handle databas
 		return 0;
 
 	FB_SIZE_T return_length = 0;
-	Firebird::UCharBuffer buffer;
+	ScratchBird::UCharBuffer buffer;
 	if (!blob.getData(length, buffer.getBuffer(length), return_length))
 		return 0;
 

@@ -505,3 +505,16 @@ NAME("RDB$TARGET_NAME", nam_target_name)
 NAME("RDB$TARGET_SCHEMA_NAME", nam_target_sch_name)
 NAME("RDB$TARGET_TYPE", nam_target_type)
 NAME("RDB$CREATED", nam_created)
+
+// Database links names
+NAME("RDB$DATABASE_LINKS", nam_database_links)
+NAME("RDB$DB_LINK_NAME", nam_db_link_name)
+NAME("RDB$SERVER_NAME", nam_server_name)
+NAME("RDB$DATABASE_PATH", nam_database_path)
+NAME("RDB$PASSWORD", nam_password)
+NAME("RDB$SCHEMA_MODE", nam_schema_mode)
+NAME("RDB$LOCAL_SCHEMA", nam_local_schema)
+NAME("RDB$REMOTE_SCHEMA", nam_remote_schema)
+
+// Role hierarchy names  
+NAME("RDB$ROLE_HIERARCHY", nam_role_hierarchy)

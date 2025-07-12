@@ -83,8 +83,9 @@ public:
 	struct SetPlanOnlyNode { std::string arg; };
 	struct SetSqldaDisplayNode { std::string arg; };
 	struct SetSqlDialectNode { std::string arg; };
-	struct SetSchemaNode { std::string schemaName; };
-	struct SetHomeSchemaNode { std::string schemaName; std::optional<std::string> userName; };
+	// TODO: Re-enable after fixing string API compatibility
+	// struct SetSchemaNode { std::string schemaName; };
+	// struct SetHomeSchemaNode { std::string schemaName; std::optional<std::string> userName; };
 	struct SetStatsNode { std::string arg; };
 	struct SetTermNode { std::string arg; };
 	struct SetTimeNode { std::string arg; };
@@ -111,9 +112,10 @@ public:
 	struct ShowProceduresNode { std::optional<ScratchBird::QualifiedMetaString> name; };
 	struct ShowPublicationsNode { std::optional<ScratchBird::MetaString> name; };
 	struct ShowRolesNode { std::optional<ScratchBird::MetaString> name; };
-	struct ShowSchemasNode { std::optional<ScratchBird::MetaString> name; };
-	struct ShowSchemaNode {};
-	struct ShowHomeSchemaNode {};
+	// TODO: Re-enable schema commands after fixing template compilation issues
+	// struct ShowSchemasNode { std::optional<ScratchBird::MetaString> name; };
+	// struct ShowSchemaNode {};
+	// struct ShowHomeSchemaNode {};
 	struct ShowSecClassesNode { std::optional<ScratchBird::QualifiedMetaString> name; bool detail = false; };
 	struct ShowSqlDialectNode {};
 	struct ShowSystemNode { std::optional<ObjectType> objType; };
@@ -155,8 +157,9 @@ public:
 		SetPlanOnlyNode,
 		SetSqldaDisplayNode,
 		SetSqlDialectNode,
-		SetSchemaNode,
-		SetHomeSchemaNode,
+		// TODO: Re-enable after fixing string API compatibility
+		// SetSchemaNode,
+		// SetHomeSchemaNode,
 		SetStatsNode,
 		SetTermNode,
 		SetTimeNode,
@@ -189,9 +192,10 @@ public:
 		ShowProceduresNode,
 		ShowPublicationsNode,
 		ShowRolesNode,
-		ShowSchemasNode,
-		ShowSchemaNode,
-		ShowHomeSchemaNode,
+		// TODO: Re-enable after fixing template compilation
+		// ShowSchemasNode,
+		// ShowSchemaNode,
+		// ShowHomeSchemaNode,
 		ShowSecClassesNode,
 		ShowSqlDialectNode,
 		ShowSynonymsNode,
