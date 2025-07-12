@@ -1,6 +1,6 @@
 /*
  *	PROGRAM:		Client/Server Common Code
- *	MODULE:			fb_atomic.h
+ *	MODULE:			sb_atomic.h
  *	DESCRIPTION:	Atomic counters
  *
  *  The contents of this file are subject to the Initial

@@ -5428,12 +5428,14 @@ inline BufferDesc* BCBHashTable::emplace(BufferDesc* bdb, const PageNumber& page
 		true);
 */
 
-	auto ret = list.update(page, bdb, [&bdb2](bool bNew, BdbList::value_type& val)
+	auto ret = list.update(page, [&bdb, &bdb2](bool bNew, BdbList::value_type& val)
 		{
 			// someone might have put a page buffer in the chain concurrently, so
 			// we store it for the further investigation
 			if (!bNew)
 				bdb2 = val.second;
+			else
+				val.second = bdb;  // set the new value
 		},
 		true);
 	fb_assert(ret.first);

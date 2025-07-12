@@ -31,7 +31,7 @@
 
 #include "firebird.h"
 #include "../common/gdsassert.h"
-#include "fb_exception.h"
+#include "sb_exception.h"
 
 #include "SyncObject.h"
 #include "Synchronize.h"

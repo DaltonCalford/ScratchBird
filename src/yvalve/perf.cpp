@@ -52,6 +52,10 @@
 #include <sys/timeb.h>
 #endif
 
+#ifdef HAVE_GETTIMEOFDAY
+#define GETTIMEOFDAY(tp) gettimeofday(tp, NULL)
+#endif
+
 template <typename T>
 static SINT64 get_parameter(const T** ptr)
 {

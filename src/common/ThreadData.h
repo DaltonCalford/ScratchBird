@@ -33,7 +33,7 @@
 #include "firebird.h"
 
 #ifdef USE_POSIX_THREADS
-#include "fb_pthread.h"
+#include "sb_pthread.h"
 #endif
 
 // Thread specific data

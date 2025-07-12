@@ -43,6 +43,7 @@
 #ifdef HAVE_SYS_STAT_H
 #include <sys/stat.h>
 #endif
+#include <pwd.h>
 
 #ifdef HAVE_DLADDR
 #ifndef _GNU_SOURCE

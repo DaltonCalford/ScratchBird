@@ -299,6 +299,11 @@ public:
 		return ScratchBird::toQuotedString(*this);
 	}
 
+	ScratchBird::string toString() const
+	{
+		return ScratchBird::string(c_str(), length());
+	}
+
 	bool operator==(const char* s) const
 	{
 		return compare(s) == 0;

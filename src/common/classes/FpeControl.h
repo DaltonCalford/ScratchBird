@@ -207,6 +207,36 @@ private:
 		fpsetmask(savedMask);
 	}
 
+#elif defined(LINUX)
+// Linux floating point exception handling
+#include <fenv.h>
+
+private:
+	int savedMask;
+
+public:
+	void getCurrentMask(int& mask) noexcept
+	{
+		mask = fegetexcept();
+	}
+
+	bool areExceptionsMasked(int mask) const noexcept
+	{
+		return (mask & (FE_DIVBYZERO | FE_INVALID | FE_OVERFLOW)) == 0;
+	}
+
+	void maskAll() noexcept
+	{
+		savedMask = fegetexcept();
+		fedisableexcept(FE_ALL_EXCEPT);
+	}
+
+	void restoreMask() noexcept
+	{
+		feclearexcept(FE_ALL_EXCEPT);
+		feenableexcept(savedMask);
+	}
+
 #else
 #error do not know how to mask floating point exceptions on this platform!
 #endif

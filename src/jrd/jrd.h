@@ -39,7 +39,7 @@
 #include "../jrd/val.h"
 #include "../jrd/status.h"
 
-#include "../common/classes/fb_atomic.h"
+#include "../common/classes/sb_atomic.h"
 #include "../common/classes/fb_string.h"
 #include "../jrd/MetaName.h"
 #include "../common/classes/NestConst.h"

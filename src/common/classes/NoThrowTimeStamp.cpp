@@ -38,6 +38,10 @@
 #include <windows.h>
 #endif
 
+#ifdef HAVE_GETTIMEOFDAY
+#define GETTIMEOFDAY(tp) gettimeofday(tp, NULL)
+#endif
+
 #include "../common/classes/NoThrowTimeStamp.h"
 
 namespace ScratchBird {

@@ -30,7 +30,7 @@
 #define CLASSES_LOCKS_H
 
 #include "firebird.h"
-#include "fb_exception.h"
+#include "sb_exception.h"
 #include "../common/gdsassert.h"
 #include "../common/classes/Reasons.h"
 
@@ -39,7 +39,7 @@
 // in thd.h ? This is Windows platform maintainers choice
 #include <windows.h>
 #else
-#include "fb_pthread.h"
+#include "sb_pthread.h"
 #include <errno.h>
 #endif
 

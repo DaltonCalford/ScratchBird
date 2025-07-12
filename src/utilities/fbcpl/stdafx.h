@@ -47,7 +47,7 @@
 #endif
 
 #ifdef HAVE_PTHREAD_H
-#include "fb_pthread.h"
+#include "sb_pthread.h"
 #endif
 
 #include "../ibase.h"

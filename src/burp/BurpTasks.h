@@ -36,7 +36,7 @@
 #include "../common/classes/array.h"
 #include "../common/classes/auto.h"
 #include "../common/classes/condition.h"
-#include "../common/classes/fb_atomic.h"
+#include "../common/classes/sb_atomic.h"
 
 namespace Burp {
 

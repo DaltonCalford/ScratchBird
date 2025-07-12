@@ -33,7 +33,7 @@
 #include "../alice/alice.h"
 #include "../alice/alice_meta.h"
 #include "../yvalve/gds_proto.h"
-#include "fb_exception.h"
+#include "sb_exception.h"
 #include "../common/classes/alloc.h"
 #include "../common/classes/array.h"
 #include "../common/classes/UserBlob.h"
@@ -81,7 +81,7 @@ static const rfr_tab_t rfr_table[] =
 static inline void return_error(const ISC_STATUS* /*user_status*/)
 {
 	ALICE_print_status(true, gds_status);
-	Firebird::LongJump::raise();
+	ScratchBird::LongJump::raise();
 }
 
 /*____________________________________________________________

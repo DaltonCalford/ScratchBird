@@ -30,7 +30,7 @@
 #define CLASSES_SEMAPHORE_H
 
 #include "../common/gdsassert.h"
-#include "fb_exception.h"
+#include "sb_exception.h"
 
 #ifdef _AIX
 #undef HAVE_SEMAPHORE_H
@@ -201,7 +201,7 @@ typedef SignalSafeSemaphore Semaphore;
 // Should implement Semaphore independent from SignalSafeSemaphore.
 // In the worst case no SignalSafeSemaphore at all (and no SS for that platform).
 #define COMMON_CLASSES_SEMAPHORE_COND_VAR
-#include "fb_pthread.h"
+#include "sb_pthread.h"
 #include <errno.h>
 
 namespace ScratchBird

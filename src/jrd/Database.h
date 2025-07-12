@@ -42,7 +42,7 @@
 #include "../jrd/lck.h"
 #include "../include/iberror.h"
 
-#include "../common/classes/fb_atomic.h"
+#include "../common/classes/sb_atomic.h"
 #include "../common/classes/fb_string.h"
 #include "../common/classes/auto.h"
 #include "../jrd/MetaName.h"

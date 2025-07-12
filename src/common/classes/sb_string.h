@@ -36,7 +36,7 @@
 
 #include "firebird.h"
 #include "fb_types.h"
-#include "fb_exception.h"
+#include "sb_exception.h"
 #include "../common/classes/alloc.h"
 #include "../common/classes/RefCounted.h"
 

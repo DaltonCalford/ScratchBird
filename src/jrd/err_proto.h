@@ -24,7 +24,7 @@
 #ifndef JRD_ERR_PROTO_H
 #define JRD_ERR_PROTO_H
 
-#include "fb_exception.h"
+#include "sb_exception.h"
 #include "../common/classes/fb_string.h"
 #include "../jrd/MetaName.h"
 #include "../common/StatusArg.h"

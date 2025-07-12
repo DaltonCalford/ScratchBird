@@ -29,7 +29,7 @@
 #ifndef FB_SIMPLE_STATUS_VECTOR
 #define FB_SIMPLE_STATUS_VECTOR
 
-#include "fb_exception.h"
+#include "sb_exception.h"
 #include "../common/utils_proto.h"
 #include "../common/classes/array.h"
 

@@ -32,7 +32,7 @@
 #ifndef CLASSES_SYNCOBJECT_H
 #define CLASSES_SYNCOBJECT_H
 
-#include "../../common/classes/fb_atomic.h"
+#include "../../common/classes/sb_atomic.h"
 #include "../../common/classes/locks.h"
 #include "../../common/classes/Reasons.h"
 

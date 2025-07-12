@@ -105,10 +105,10 @@ static int process_id;
 #endif
 
 #ifndef WIN_NT
-#ifndef HAVE_GETPAGESIZE
+#if !defined(HAVE_GETPAGESIZE) && !defined(_GNU_SOURCE)
 static size_t getpagesize()
 {
-	return PAGESIZE;
+	return sysconf(_SC_PAGESIZE);
 }
 #endif
 #endif

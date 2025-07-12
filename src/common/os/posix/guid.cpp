@@ -29,7 +29,7 @@
 #include "firebird.h"
 #include "../common/os/guid.h"
 
-#include "fb_exception.h"
+#include "sb_exception.h"
 #include "../common/os/os_utils.h"
 #include <unistd.h>
 #include <sys/types.h>

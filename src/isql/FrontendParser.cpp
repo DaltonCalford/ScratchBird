@@ -655,8 +655,10 @@ FrontendParser::AnyShowNode FrontendParser::parseShow()
 	static constexpr std::string_view TOKEN_PROCEDURES("PROCEDURES");
 	static constexpr std::string_view TOKEN_PUBLICATIONS("PUBLICATIONS");
 	static constexpr std::string_view TOKEN_ROLES("ROLES");
+	static constexpr std::string_view TOKEN_SCHEMA("SCHEMA");
 	static constexpr std::string_view TOKEN_SCHEMAS("SCHEMAS");
 	static constexpr std::string_view TOKEN_SECCLASSES("SECCLASSES");
+	static constexpr std::string_view TOKEN_HOME("HOME");
 	static constexpr std::string_view TOKEN_SEQUENCES("SEQUENCES");
 	static constexpr std::string_view TOKEN_SYNONYMS("SYNONYMS");
 	static constexpr std::string_view TOKEN_SQL("SQL");

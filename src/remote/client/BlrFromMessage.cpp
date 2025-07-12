@@ -271,7 +271,7 @@ void BlrFromMessage::buildBlr(IMessageMetadata* metadata)
 	}
 }
 
-bool BlrFromMessage::isVersion4()
+bool BlrFromMessage::isVersion4() const
 {
 	return dialect <= 1;
 }

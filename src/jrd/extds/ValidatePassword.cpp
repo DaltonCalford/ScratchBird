@@ -21,7 +21,7 @@
  */
 
 #include "firebird.h"
-#include "fb_exception.h"
+#include "sb_exception.h"
 #include "iberror.h"
 
 #include "../jrd.h"

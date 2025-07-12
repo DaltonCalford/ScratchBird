@@ -77,7 +77,7 @@
 #define blr_uuid		(unsigned char)32
 #define blr_json		(unsigned char)33
 #define blr_domain_name3	(unsigned char)34
-#define blr_column_name3	(unsigned char)35
+#define blr_column_name3	(unsigned char)36
 
 // first sub parameter for blr_column_name* and blr_domain_name*
 #define blr_domain_type_of	(unsigned char)0

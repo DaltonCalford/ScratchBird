@@ -49,6 +49,11 @@
 #include <sys/syscall.h>
 #endif
 
+// Fallback for SYS_gettid if not defined
+#ifndef SYS_gettid
+#define SYS_gettid 186
+#endif
+
 #include "../common/classes/locks.h"
 #include "../common/classes/rwlock.h"
 #include "../common/classes/Synchronize.h"

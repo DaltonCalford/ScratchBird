@@ -149,7 +149,7 @@ inline constexpr int WAIT_PERIOD = -1;
 DATABASE DB = FILENAME "ODS.RDB";
 
 using namespace Jrd;
-using namespace Firebird;
+using namespace ScratchBird;
 
 namespace Jrd {
 
@@ -171,6 +171,9 @@ typedef HashTable<
 // These two functions need to be split, and linked list of custom entries can
 // become generic.
 //
+
+// Forward declaration for template usage
+class DeferredWork;
 
 class DeferredWork : public pool_alloc<type_dfw>,
 					 public DfwHash::Entry
@@ -508,7 +511,7 @@ static bool create_expression_index(thread_db* tdbb, SSHORT phase, DeferredWork*
 static void check_computed_dependencies(thread_db* tdbb, jrd_tra* transaction,
 	const QualifiedName& fieldName);
 static void check_dependencies(thread_db*, const QualifiedName&, const MetaName&, int, jrd_tra*);
-static void check_filename(const Firebird::string&, bool);
+static void check_filename(const ScratchBird::string&, bool);
 static void cleanup_index_creation(thread_db*, DeferredWork*, jrd_tra*);
 static bool formatsAreEqual(const Format*, const Format*);
 static bool	find_depend_in_dfw(thread_db*, const QualifiedName&, USHORT, USHORT, jrd_tra*);
@@ -854,7 +857,7 @@ namespace
 							if (loadById(tdbb, work->dfw_id, false, 0))
 								validBlr = TRUE;
 						}
-						catch (const Firebird::Exception&)
+						catch (const ScratchBird::Exception&)
 						{
 							fb_utils::init_status(tdbb->tdbb_status_vector);
 						}
@@ -1610,7 +1613,7 @@ void DFW_perform_work(thread_db* tdbb, jrd_tra* transaction)
 
 			++phase;
 		}
-		catch (const Firebird::Exception& ex)
+		catch (const ScratchBird::Exception& ex)
 		{
 			// Do any necessary cleanup
 			if (!phase)
@@ -1913,7 +1916,7 @@ static bool add_shadow(thread_db* tdbb, SSHORT phase, DeferredWork* work, jrd_tr
 	AutoRequest handle;
 	Shadow* shadow;
 	bool finished;
-	Firebird::PathName expanded_fname;
+	ScratchBird::PathName expanded_fname;
 
 	SET_TDBB(tdbb);
 	Database* const dbb = tdbb->getDatabase();
@@ -2785,8 +2788,8 @@ static void check_computed_dependencies(thread_db* tdbb, jrd_tra* transaction,
 	SET_TDBB(tdbb);
 
 	bool err = false;
-	Firebird::SortedObjectsArray<QualifiedName> sortedNames(*tdbb->getDefaultPool());
-	Firebird::ObjectsArray<QualifiedName> names;
+	ScratchBird::SortedObjectsArray<QualifiedName> sortedNames(*tdbb->getDefaultPool());
+	ScratchBird::ObjectsArray<QualifiedName> names;
 
 	sortedNames.add(fieldName);
 	names.add(fieldName);
@@ -2931,7 +2934,7 @@ static void check_dependencies(thread_db* tdbb,
 }
 
 
-static void check_filename(const Firebird::string& name, bool shareExpand)
+static void check_filename(const ScratchBird::string& name, bool shareExpand)
 {
 /**************************************
  *
@@ -2944,8 +2947,8 @@ static void check_filename(const Firebird::string& name, bool shareExpand)
  *	inet node name.
  *
  **************************************/
-	const Firebird::PathName file_name(name.ToPathName());
-	const bool valid = file_name.find("::") == Firebird::PathName::npos;
+	const ScratchBird::PathName file_name(name.ToPathName());
+	const bool valid = file_name.find("::") == ScratchBird::PathName::npos;
 
 	if (!valid || ISC_check_if_remote(file_name, shareExpand)) {
 		ERR_post(Arg::Gds(isc_no_meta_update) <<
@@ -3898,14 +3901,14 @@ static string remove_icu_info_from_attributes(const QualifiedName& charsetName, 
 {
 	DbgRebuildIntl::Lvl debLevel;
 
-	Firebird::AutoPtr<charset> cs(FB_NEW charset);
+	ScratchBird::AutoPtr<charset> cs(FB_NEW charset);
 	memset(cs, 0, sizeof(*cs));
 
 	if (IntlManager::lookupCharSet(charsetName, cs))
 	{
 		DbgRebuildIntl::out("Remove_icu_info_from_attributes for charset '%s'\n", charsetName.toQuotedString().c_str());
 
-		AutoPtr<Firebird::CharSet> charSet(Firebird::CharSet::createInstance(*getDefaultMemoryPool(), 0, cs));
+		AutoPtr<ScratchBird::CharSet> charSet(ScratchBird::CharSet::createInstance(*getDefaultMemoryPool(), 0, cs));
 		IntlUtil::SpecificAttributesMap map;
 		if (IntlUtil::parseSpecificAttributes(charSet, specificAttributes.length(),
 			(const UCHAR*) specificAttributes.begin(), &map))
@@ -4197,7 +4200,7 @@ void DFW_reset_icu(thread_db* tdbb)
 		transaction = NULL;
 		tdbb->setTransaction(oldTransaction);
 	}
-	catch (const Firebird::Exception&)
+	catch (const ScratchBird::Exception&)
 	{
 		if (transaction)
 		{
@@ -5748,7 +5751,7 @@ static Format* make_format(thread_db* tdbb, jrd_rel* relation, USHORT* version, 
 
 		// Use generic representation of formats with 32-bit offsets
 
-		Firebird::Array<Ods::Descriptor> odsDescs;
+		ScratchBird::Array<Ods::Descriptor> odsDescs;
 		Ods::Descriptor* odsDesc = odsDescs.getBuffer(format->fmt_count);
 
 		for (Format::fmt_desc_const_iterator desc = format->fmt_desc.begin();
@@ -6098,7 +6101,7 @@ static bool make_version(thread_db* tdbb, SSHORT phase, DeferredWork* work, jrd_
 
 							dsc* result = nullptr;
 							{ // scope
-								Firebird::Cleanup detach([&defaultRequest] {TRA_detach_request(defaultRequest);});
+								ScratchBird::Cleanup detach([&defaultRequest] {TRA_detach_request(defaultRequest);});
 								TRA_attach_request(transaction, defaultRequest);
 								result = EVL_expr(tdbb, defaultRequest, defaultNode);
 							}
@@ -6380,7 +6383,7 @@ static bool modify_trigger(thread_db* tdbb, SSHORT phase, DeferredWork* work, jr
 
 							valid_blr = TRUE;
 						}
-						catch (const Firebird::Exception&)
+						catch (const ScratchBird::Exception&)
 						{
 							attachment->deletePool(new_pool);
 							throw;
@@ -6389,7 +6392,7 @@ static bool modify_trigger(thread_db* tdbb, SSHORT phase, DeferredWork* work, jr
 						attachment->deletePool(new_pool);
 					}
 				}
-				catch (const Firebird::Exception&)
+				catch (const ScratchBird::Exception&)
 				{
 				}
 

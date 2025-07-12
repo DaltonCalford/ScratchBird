@@ -62,6 +62,7 @@
 # endif
 #endif
  
+#ifndef __cplusplus
 #ifndef public
 # define public		/* Externally visible functions/variables */
 #endif
@@ -73,6 +74,7 @@
 #ifndef protected
 # define protected	/* Redefined from elsewhere to "static" */
 			/* When we want to hide everything	*/
+#endif
 #endif
 
 #ifndef __arraycount

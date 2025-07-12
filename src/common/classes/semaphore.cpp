@@ -39,6 +39,10 @@
 #include <sys/time.h>
 #endif
 
+#ifdef HAVE_GETTIMEOFDAY
+#define GETTIMEOFDAY(tp) gettimeofday(tp, NULL)
+#endif
+
 #if defined(COMMON_CLASSES_SEMAPHORE_POSIX_RT) || defined(COMMON_CLASSES_SEMAPHORE_COND_VAR)
 
 static timespec getCurrentTime()

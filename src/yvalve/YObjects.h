@@ -30,7 +30,7 @@
 #include "firebird/Interface.h"
 #include "iberror.h"
 #include "../common/StatusHolder.h"
-#include "../common/classes/fb_atomic.h"
+#include "../common/classes/sb_atomic.h"
 #include "../common/classes/alloc.h"
 #include "../common/classes/array.h"
 #include "../common/MsgMetadata.h"
