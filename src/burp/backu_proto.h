@@ -26,5 +26,9 @@
 
 int	BACKUP_backup (const TEXT*, const TEXT*);
 
+// TODO: Implement proper put_int16 and put_timestamp functions for new features
+void put_int16(int attr, int value);
+void put_timestamp(int attr, const ISC_TIMESTAMP& timestamp);
+
 #endif	//  BURP_BACKU_PROTO_H
 

@@ -1228,6 +1228,7 @@ public:
 	ScratchBird::IRequest*	handles_get_schema_req_handle1;
 	ScratchBird::IRequest*	handles_get_security_class_req_handle1;
 	ScratchBird::IRequest*	handles_get_sql_roles_req_handle1;
+	ScratchBird::IRequest*	handles_get_synonym_req_handle1;
 	ScratchBird::IRequest*	handles_get_trigger_message_req_handle1;
 	ScratchBird::IRequest*	handles_get_trigger_message_req_handle2;
 	ScratchBird::IRequest*	handles_get_trigger_old_req_handle1;

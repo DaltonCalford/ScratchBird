@@ -144,6 +144,8 @@ bool	get_index(BurpGlobals* tdgbl, const burp_rel*);
 void	get_misc_blob(BurpGlobals* tdgbl, ISC_QUAD&, bool);
 SLONG	get_int32(BurpGlobals* tdgbl);
 SINT64  get_int64(BurpGlobals* tdgbl);
+SSHORT	get_int16(BurpGlobals* tdgbl);
+ISC_TIMESTAMP get_timestamp(BurpGlobals* tdgbl);
 bool	get_package(BurpGlobals* tdgbl);
 bool	get_procedure(BurpGlobals* tdgbl);
 bool	get_procedure_prm(BurpGlobals* tdgbl, const QualifiedMetaString&);
@@ -7014,6 +7016,51 @@ SINT64 get_int64(BurpGlobals* tdgbl)
 	return isc_portable_integer ((UCHAR *) value, length);
 }
 
+SSHORT get_int16(BurpGlobals* tdgbl)
+{
+/**************************************
+ *
+ *	g e t _ i n t 1 6
+ *
+ **************************************
+ *
+ * Functional description
+ *	Get a 16-bit numeric value from the input stream.
+ *
+ **************************************/
+	SLONG	value[2];
+
+	const SSHORT length = get_text(tdgbl, (TEXT*) value, sizeof(value));
+
+	return (SSHORT) isc_portable_integer ((UCHAR *) value, length);
+}
+
+ISC_TIMESTAMP get_timestamp(BurpGlobals* tdgbl)
+{
+/**************************************
+ *
+ *	g e t _ t i m e s t a m p
+ *
+ **************************************
+ *
+ * Functional description
+ *	Get a timestamp value from the input stream.
+ *
+ **************************************/
+	ISC_TIMESTAMP timestamp;
+	SLONG	value[4];
+
+	// Get date part
+	SSHORT length = get_text(tdgbl, (TEXT*) value, sizeof(value));
+	timestamp.timestamp_date = isc_portable_integer ((UCHAR *) value, length);
+
+	// Get time part
+	length = get_text(tdgbl, (TEXT*) value, sizeof(value));
+	timestamp.timestamp_time = isc_portable_integer ((UCHAR *) value, length);
+
+	return timestamp;
+}
+
 bool get_package(BurpGlobals* tdgbl)
 {
 /**************************************
@@ -8804,7 +8851,7 @@ bool get_synonym(BurpGlobals* tdgbl)
 					break;
 
 				case att_synonym_description:
-					get_blob(tdgbl, X.RDB$DESCRIPTION, X.RDB$DESCRIPTION);
+					get_source_blob(tdgbl, X.RDB$DESCRIPTION, false);
 					X.RDB$DESCRIPTION.NULL = FALSE;
 					break;
 
@@ -8835,15 +8882,15 @@ bool get_database_link(BurpGlobals* tdgbl)
  *	Read database link information from backup file
  *
  **************************************/
-	TEXT linkName[METADATA_IDENTIFIER_SIZE];
+	TEXT linkName[MAX_SQL_IDENTIFIER_LEN];
 	TEXT target[256];
-	TEXT user[METADATA_IDENTIFIER_SIZE];
-	TEXT password[METADATA_IDENTIFIER_SIZE];
-	TEXT role[METADATA_IDENTIFIER_SIZE];
-	TEXT provider[METADATA_IDENTIFIER_SIZE];
-	TEXT schemaName[METADATA_IDENTIFIER_SIZE];
-	TEXT remoteSchema[METADATA_IDENTIFIER_SIZE];
-	TEXT description[METADATA_IDENTIFIER_SIZE];
+	TEXT user[MAX_SQL_IDENTIFIER_LEN];
+	TEXT password[MAX_SQL_IDENTIFIER_LEN];
+	TEXT role[MAX_SQL_IDENTIFIER_LEN];
+	TEXT provider[MAX_SQL_IDENTIFIER_LEN];
+	TEXT schemaName[MAX_SQL_IDENTIFIER_LEN];
+	TEXT remoteSchema[MAX_SQL_IDENTIFIER_LEN];
+	TEXT description[MAX_SQL_IDENTIFIER_LEN];
 	ISC_TIMESTAMP created;
 	SLONG flags = 0;
 	SLONG poolMin = 1;
@@ -8865,10 +8912,12 @@ bool get_database_link(BurpGlobals* tdgbl)
 	memset(&created, 0, sizeof(created));
 
 	// Read attributes from backup file
-	while (true)
+	att_type attribute;
+	scan_attr_t scan_next_attr;
+	skip_init(&scan_next_attr);
+	
+	while (skip_scan(&scan_next_attr), get_attribute(&attribute, tdgbl) != att_end)
 	{
-		const UCHAR attribute = get_attribute(tdgbl);
-
 		switch (attribute)
 		{
 		case att_database_link_name:
@@ -8912,7 +8961,7 @@ bool get_database_link(BurpGlobals* tdgbl)
 			break;
 
 		case att_database_link_created:
-			get_timestamp(tdgbl, &created);
+			created = get_timestamp(tdgbl);
 			break;
 
 		case att_database_link_schema_name:
@@ -8935,91 +8984,86 @@ bool get_database_link(BurpGlobals* tdgbl)
 			get_text(tdgbl, description, sizeof(description));
 			break;
 
-		case att_end:
-			goto end_attributes;
-
 		default:
-			bad_attribute(tdgbl, attribute);
+			bad_attribute(scan_next_attr, attribute, 425); // 425 = database link message
 			return false;
 		}
 	}
-
-end_attributes:
 	
-	// Store the database link
-	STORE (REQUEST_HANDLE tdgbl->burp_req_handle3)
-		X IN RDB$DATABASE_LINKS
-	{
-		strcpy(X.RDB$LINK_NAME, linkName);
-		strcpy(X.RDB$LINK_TARGET, target);
-		X.RDB$LINK_FLAGS = flags;
-		X.RDB$LINK_POOL_MIN = poolMin;
-		X.RDB$LINK_POOL_MAX = poolMax;
-		X.RDB$LINK_TIMEOUT = timeout;
-		X.RDB$LINK_CREATED = created;
-		X.RDB$LINK_SCHEMA_MODE = schemaMode;
-		X.RDB$LINK_SCHEMA_DEPTH = schemaDepth;
+	// TODO: Store the database link - disabled during development
+	// STORE (REQUEST_HANDLE tdgbl->burp_req_handle3)
+	//	X IN RDB$DATABASE_LINKS
+	// {
+	//	strcpy(X.RDB$LINK_NAME, linkName);
+	//	strcpy(X.RDB$LINK_TARGET, target);
+	//	X.RDB$LINK_FLAGS = flags;
+	//	X.RDB$LINK_POOL_MIN = poolMin;
+	//	X.RDB$LINK_POOL_MAX = poolMax;
+	//	X.RDB$LINK_TIMEOUT = timeout;
+	//	X.RDB$LINK_CREATED = created;
+	//	X.RDB$LINK_SCHEMA_MODE = schemaMode;
+	//	X.RDB$LINK_SCHEMA_DEPTH = schemaDepth;
 
-		if (user[0])
-		{
-			strcpy(X.RDB$LINK_USER, user);
-			X.RDB$LINK_USER.NULL = FALSE;
-		}
-		else
-			X.RDB$LINK_USER.NULL = TRUE;
-
-		if (password[0])
-		{
-			strcpy(X.RDB$LINK_PASSWORD, password);
-			X.RDB$LINK_PASSWORD.NULL = FALSE;
-		}
-		else
-			X.RDB$LINK_PASSWORD.NULL = TRUE;
-
-		if (role[0])
-		{
-			strcpy(X.RDB$LINK_ROLE, role);
-			X.RDB$LINK_ROLE.NULL = FALSE;
-		}
-		else
-			X.RDB$LINK_ROLE.NULL = TRUE;
-
-		if (provider[0])
-		{
-			strcpy(X.RDB$LINK_PROVIDER, provider);
-			X.RDB$LINK_PROVIDER.NULL = FALSE;
-		}
-		else
-			X.RDB$LINK_PROVIDER.NULL = TRUE;
-
-		if (schemaName[0])
-		{
-			strcpy(X.RDB$LINK_SCHEMA_NAME, schemaName);
-			X.RDB$LINK_SCHEMA_NAME.NULL = FALSE;
-		}
-		else
-			X.RDB$LINK_SCHEMA_NAME.NULL = TRUE;
-
-		if (remoteSchema[0])
-		{
-			strcpy(X.RDB$LINK_REMOTE_SCHEMA, remoteSchema);
-			X.RDB$LINK_REMOTE_SCHEMA.NULL = FALSE;
-		}
-		else
-			X.RDB$LINK_REMOTE_SCHEMA.NULL = TRUE;
-
-		if (description[0])
-		{
-			strcpy(X.RDB$LINK_DESCRIPTION, description);
-			X.RDB$LINK_DESCRIPTION.NULL = FALSE;
-		}
-		else
-			X.RDB$LINK_DESCRIPTION.NULL = TRUE;
-	}
-	END_STORE
-	ON_ERROR
-		general_on_error();
-	END_ERROR
+	//	if (user[0])
+	//	{
+	//		strcpy(X.RDB$LINK_USER, user);
+	//		X.RDB$LINK_USER.NULL = FALSE;
+	//	}
+	//	else
+	//		X.RDB$LINK_USER.NULL = TRUE;
+	//
+	//	if (password[0])
+	//	{
+	//		strcpy(X.RDB$LINK_PASSWORD, password);
+	//		X.RDB$LINK_PASSWORD.NULL = FALSE;
+	//	}
+	//	else
+	//		X.RDB$LINK_PASSWORD.NULL = TRUE;
+	//
+	//	if (role[0])
+	//	{
+	//		strcpy(X.RDB$LINK_ROLE, role);
+	//		X.RDB$LINK_ROLE.NULL = FALSE;
+	//	}
+	//	else
+	//		X.RDB$LINK_ROLE.NULL = TRUE;
+	//
+	//	if (provider[0])
+	//	{
+	//		strcpy(X.RDB$LINK_PROVIDER, provider);
+	//		X.RDB$LINK_PROVIDER.NULL = FALSE;
+	//	}
+	//	else
+	//		X.RDB$LINK_PROVIDER.NULL = TRUE;
+	//
+	//	if (schemaName[0])
+	//	{
+	//		strcpy(X.RDB$LINK_SCHEMA_NAME, schemaName);
+	//		X.RDB$LINK_SCHEMA_NAME.NULL = FALSE;
+	//	}
+	//	else
+	//		X.RDB$LINK_SCHEMA_NAME.NULL = TRUE;
+	//
+	//	if (remoteSchema[0])
+	//	{
+	//		strcpy(X.RDB$LINK_REMOTE_SCHEMA, remoteSchema);
+	//		X.RDB$LINK_REMOTE_SCHEMA.NULL = FALSE;
+	//	}
+	//	else
+	//		X.RDB$LINK_REMOTE_SCHEMA.NULL = TRUE;
+	//
+	//	if (description[0])
+	//	{
+	//		strcpy(X.RDB$LINK_DESCRIPTION, description);
+	//		X.RDB$LINK_DESCRIPTION.NULL = FALSE;
+	//	}
+	//	else
+	//		X.RDB$LINK_DESCRIPTION.NULL = TRUE;
+	// }
+	// END_STORE
+	// ON_ERROR
+	//	general_on_error();
+	// END_ERROR
 
 	return true;
 }
@@ -10658,17 +10702,19 @@ bool get_user_privilege(BurpGlobals* tdgbl)
 				REQUEST_HANDLE tdgbl->handles_get_user_privilege_req_handle1)
 			X IN RDB$USER_PRIVILEGES
 		{
-			X.RDB$USER_SCHEMA_NAME.NULL = TRUE;
-			X.RDB$RELATION_SCHEMA_NAME.NULL = TRUE;
+			// TODO: Re-enable after runtime database supports schema fields
+			// X.RDB$USER_SCHEMA_NAME.NULL = TRUE;
+			// X.RDB$RELATION_SCHEMA_NAME.NULL = TRUE;
 			X.RDB$FIELD_NAME.NULL = TRUE;
 			X.RDB$OBJECT_TYPE.NULL = TRUE;
 			X.RDB$GRANT_OPTION.NULL = TRUE;
 
-			if (user.schema.hasData())
-			{
-				strcpy(X.RDB$USER_SCHEMA_NAME, user.schema.c_str());
-				X.RDB$USER_SCHEMA_NAME.NULL = FALSE;
-			}
+			// TODO: Re-enable after runtime database supports schema fields
+			// if (user.schema.hasData())
+			// {
+			//	strcpy(X.RDB$USER_SCHEMA_NAME, user.schema.c_str());
+			//	X.RDB$USER_SCHEMA_NAME.NULL = FALSE;
+			// }
 
 			if (flags & USER_PRIV_USER)
 				strcpy(X.RDB$USER, user.object.c_str());
@@ -10685,11 +10731,12 @@ bool get_user_privilege(BurpGlobals* tdgbl)
 				X.RDB$GRANT_OPTION = grant_option;
 			}
 
-			if (relation.schema.hasData())
-			{
-				strcpy(X.RDB$RELATION_SCHEMA_NAME, relation.schema.c_str());
-				X.RDB$RELATION_SCHEMA_NAME.NULL = FALSE;
-			}
+			// TODO: Re-enable after runtime database supports schema fields
+			// if (relation.schema.hasData())
+			// {
+			//	strcpy(X.RDB$RELATION_SCHEMA_NAME, relation.schema.c_str());
+			//	X.RDB$RELATION_SCHEMA_NAME.NULL = FALSE;
+			// }
 
 			if (flags & USER_PRIV_OBJECT_NAME)
 				strcpy(X.RDB$RELATION_NAME, relation.object.c_str());
@@ -11676,14 +11723,16 @@ bool restore(BurpGlobals* tdgbl, ScratchBird::IProvider* provider, const TEXT* f
 			break;
 
 		case rec_database_link:
-			if (!get_database_link(tdgbl))
-				return false;
+			// TODO: Re-enable when database link support is complete
+			// if (!get_database_link(tdgbl))
+			//	return false;
 			flag = true;
 			break;
 
 		case rec_synonym:
-			if (!get_synonym(tdgbl))
-				return false;
+			// TODO: Re-enable when synonym support is complete
+			// if (!get_synonym(tdgbl))
+			//	return false;
 			flag = true;
 			break;
 

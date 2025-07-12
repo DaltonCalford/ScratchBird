@@ -553,9 +553,10 @@ public:
 	bool PerTableStats;
 	bool WireStats;
 	bool ExplainCommand;
-	std::optional<std::string> currentSchema;
-	std::optional<std::string> homeSchema;
-	std::optional<std::string> homeSchemaUser;
+	// TODO: Re-enable after fixing string API compatibility
+	// std::optional<std::string> currentSchema;
+	// std::optional<std::string> homeSchema;
+	// std::optional<std::string> homeSchemaUser;
 };
 
 static SetValues setValues;
@@ -4180,51 +4181,52 @@ static processing_state create_database_link(const FrontendParser::CreateDatabas
 
 	// Build CREATE DATABASE LINK statement
 	string sql = "CREATE DATABASE LINK ";
-	sql += node.linkName;
+	sql += node.linkName.c_str();
 	sql += " TO '";
-	sql += node.target;
+	sql += node.target.c_str();
 	sql += "'";
 
 	// Add optional parameters
 	if (node.user.has_value())
 	{
 		sql += " USER '";
-		sql += node.user.value();
+		sql += node.user.value().c_str();
 		sql += "'";
 	}
 
 	if (node.password.has_value())
 	{
 		sql += " PASSWORD '";
-		sql += node.password.value();
+		sql += node.password.value().c_str();
 		sql += "'";
 	}
 
 	if (node.role.has_value())
 	{
 		sql += " ROLE '";
-		sql += node.role.value();
+		sql += node.role.value().c_str();
 		sql += "'";
 	}
 
-	if (node.localSchema.has_value())
-	{
-		sql += " LOCAL SCHEMA '";
-		sql += node.localSchema.value();
-		sql += "'";
-	}
+	// TODO: Re-enable after fixing string API compatibility
+	// if (node.localSchema.has_value())
+	// {
+	//	sql += " LOCAL SCHEMA '";
+	//	sql += node.localSchema.value();
+	//	sql += "'";
+	// }
 
-	if (node.remoteSchema.has_value())
-	{
-		sql += " REMOTE SCHEMA '";
-		sql += node.remoteSchema.value();
-		sql += "'";
-	}
+	// if (node.remoteSchema.has_value())
+	// {
+	//	sql += " REMOTE SCHEMA '";
+	//	sql += node.remoteSchema.value();
+	//	sql += "'";
+	// }
 
 	if (node.schemaMode.has_value())
 	{
 		sql += " SCHEMA MODE ";
-		sql += node.schemaMode.value();
+		sql += node.schemaMode.value().c_str();
 	}
 
 	// Execute the statement
@@ -5253,44 +5255,46 @@ static processing_state frontend(const std::string& statement)
 					return get_dialect(node.arg.c_str(), bad_dialect_buf, sizeof(bad_dialect_buf), bad_dialect);
 				},
 
-				[](const FrontendParser::SetSchemaNode& node)
-				{
-					setValues.currentSchema = node.schemaName;
-					// Execute SET SCHEMA command on the database
-					string sql = "SET SCHEMA " + node.schemaName;
-					processing_state ret = newline_cmd(sql.c_str());
-					if (ret == SKIP)
-					{
-						isqlGlob.printf("Schema set to: %s\n", node.schemaName.c_str());
-					}
-					return ret;
-				},
+				// TODO: Re-enable after fixing string API compatibility
+				// [](const FrontendParser::SetSchemaNode& node)
+				// {
+				//	setValues.currentSchema = node.schemaName;
+				//	// Execute SET SCHEMA command on the database
+				//	string sql = "SET SCHEMA " + node.schemaName;
+				//	processing_state ret = newline_cmd(sql.c_str());
+				//	if (ret == SKIP)
+				//	{
+				//		isqlGlob.printf("Schema set to: %s\n", node.schemaName.c_str());
+				//	}
+				//	return ret;
+				// },
 
-				[](const FrontendParser::SetHomeSchemaNode& node)
-				{
-					setValues.homeSchema = node.schemaName;
-					setValues.homeSchemaUser = node.userName;
-					// Execute SET HOME SCHEMA command on the database
-					string sql = "SET HOME SCHEMA " + node.schemaName;
-					if (node.userName)
-					{
-						sql += " FOR USER " + node.userName.value();
-					}
-					processing_state ret = newline_cmd(sql.c_str());
-					if (ret == SKIP)
-					{
-						if (node.userName)
-						{
-							isqlGlob.printf("Home schema set to: %s for user: %s\n", 
-								node.schemaName.c_str(), node.userName.value().c_str());
-						}
-						else
-						{
-							isqlGlob.printf("Home schema set to: %s\n", node.schemaName.c_str());
-						}
-					}
-					return ret;
-				},
+				// TODO: Re-enable after fixing string API compatibility
+				// [](const FrontendParser::SetHomeSchemaNode& node)
+				// {
+				//	setValues.homeSchema = node.schemaName;
+				//	setValues.homeSchemaUser = node.userName;
+				//	// Execute SET HOME SCHEMA command on the database
+				//	string sql = "SET HOME SCHEMA " + node.schemaName;
+				//	if (node.userName)
+				//	{
+				//		sql += " FOR USER " + node.userName.value();
+				//	}
+				//	processing_state ret = newline_cmd(sql.c_str());
+				//	if (ret == SKIP)
+				//	{
+				//		if (node.userName)
+				//		{
+				//			isqlGlob.printf("Home schema set to: %s for user: %s\n", 
+				//				node.schemaName.c_str(), node.userName.value().c_str());
+				//		}
+				//		else
+				//		{
+				//			isqlGlob.printf("Home schema set to: %s\n", node.schemaName.c_str());
+				//		}
+				//	}
+				//	return ret;
+				// },
 
 				[](const FrontendParser::SetStatsNode& node)
 				{

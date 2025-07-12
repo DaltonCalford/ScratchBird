@@ -55,7 +55,7 @@ DATABASE DB = STATIC FILENAME "yachts.lnk";
 
 typedef Firebird::HalfStaticArray<TEXT, 1024> TextBuffer;
 
-static void get_string(const TEXT**, Firebird::string&);
+static void get_string(const TEXT**, ScratchBird::string&);
 static USHORT get_capabilities(ISC_STATUS*);
 static tdr* get_description(ISC_QUAD*);
 static void parse_fullpath(tdr*);

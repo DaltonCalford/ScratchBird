@@ -485,7 +485,7 @@ RELATION(nam_exceptions, rel_exceptions, ODS_8_0, rel_persistent)
 	FIELD(f_xcp_schema, nam_sch_name, fld_sch_name, 1, ODS_14_0)
 END_RELATION
 
-// Relation 31 (RDB$ROLES)
+// Relation 31 (RDB$ROLES) - Enhanced with schema awareness
 RELATION(nam_roles, rel_roles, ODS_9_0, rel_persistent)
 	FIELD(f_rol_name, nam_role_name, fld_user, 1, ODS_9_0)
 	FIELD(f_rol_owner, nam_owner, fld_user, 1, ODS_9_0)
@@ -493,6 +493,11 @@ RELATION(nam_roles, rel_roles, ODS_9_0, rel_persistent)
 	FIELD(f_rol_sys_flag, nam_sys_flag, fld_flag, 1, ODS_11_0)
 	FIELD(f_rol_class, nam_class, fld_class, 1, ODS_12_0)
 	FIELD(f_rol_sys_priv, nam_system_privileges, fld_system_privileges, 1, ODS_13_0)
+	FIELD(f_rol_schema, nam_sch_name, fld_sch_name, 1, ODS_14_0)
+	FIELD(f_rol_home_schema, nam_home_schema, fld_sch_name, 1, ODS_14_0)
+	FIELD(f_rol_default_privileges, nam_privilege, fld_privilege, 1, ODS_14_0)
+	FIELD(f_rol_inherits_from, nam_role_name, fld_user, 1, ODS_14_0)
+	FIELD(f_rol_is_hierarchical, nam_is_leaf, fld_flag, 1, ODS_14_0)
 END_RELATION
 
 // Relation 32 (RDB$BACKUP_HISTORY)
@@ -817,7 +822,6 @@ RELATION(nam_schemas, rel_schemas, ODS_14_0, rel_persistent)
 END_RELATION
 
 // View for hierarchical schema information
-/*
 VIEW(nam_schema_hierarchy, rel_schema_hierarchy, ODS_14_0, rel_virtual)
 	FIELD(f_sch_hier_schema, nam_sch_name, fld_sch_name, 0, ODS_14_0)
 	FIELD(f_sch_hier_parent, nam_sch_parent, fld_sch_parent, 0, ODS_14_0)
@@ -827,7 +831,6 @@ VIEW(nam_schema_hierarchy, rel_schema_hierarchy, ODS_14_0, rel_virtual)
 	FIELD(f_sch_hier_children_count, nam_children_count, fld_counter, 0, ODS_14_0)
 	FIELD(f_sch_hier_is_leaf, nam_is_leaf, fld_flag, 0, ODS_14_0)
 END_VIEW
-*/
 
 // SQL Dialect 4: Relation for synonyms (schema-aware object aliases)
 RELATION(nam_synonyms, rel_synonyms, ODS_14_0, rel_persistent)
@@ -841,3 +844,31 @@ RELATION(nam_synonyms, rel_synonyms, ODS_14_0, rel_persistent)
 	FIELD(f_syn_sys_flag, nam_sys_flag, fld_flag, 1, ODS_14_0)
 	FIELD(f_syn_description, nam_description, fld_description, 1, ODS_14_0)
 END_RELATION
+
+// Schema-aware database links relation
+RELATION(nam_database_links, rel_database_links, ODS_14_0, rel_persistent)
+	FIELD(f_dblink_name, nam_db_link_name, fld_db_link_name, 1, ODS_14_0)
+	FIELD(f_dblink_server, nam_server_name, fld_server_name, 1, ODS_14_0)
+	FIELD(f_dblink_database, nam_database_path, fld_database_path, 1, ODS_14_0)
+	FIELD(f_dblink_username, nam_user_name, fld_user, 1, ODS_14_0)
+	FIELD(f_dblink_password, nam_password, fld_password, 1, ODS_14_0)
+	FIELD(f_dblink_schema_mode, nam_schema_mode, fld_schema_mode, 1, ODS_14_0)
+	FIELD(f_dblink_local_schema, nam_local_schema, fld_sch_name, 1, ODS_14_0)
+	FIELD(f_dblink_remote_schema, nam_remote_schema, fld_sch_name, 1, ODS_14_0)
+	FIELD(f_dblink_schema_depth, nam_sch_level, fld_sch_level, 1, ODS_14_0)
+	FIELD(f_dblink_owner, nam_owner, fld_user, 1, ODS_14_0)
+	FIELD(f_dblink_created, nam_created, fld_created, 1, ODS_14_0)
+	FIELD(f_dblink_sys_flag, nam_sys_flag, fld_flag, 1, ODS_14_0)
+	FIELD(f_dblink_description, nam_description, fld_description, 1, ODS_14_0)
+END_RELATION
+
+// View for role hierarchy information
+VIEW(nam_role_hierarchy, rel_role_hierarchy, ODS_14_0, rel_virtual)
+	FIELD(f_rol_hier_role, nam_role_name, fld_user, 0, ODS_14_0)
+	FIELD(f_rol_hier_parent, nam_role_name, fld_user, 0, ODS_14_0)
+	FIELD(f_rol_hier_schema, nam_sch_name, fld_sch_name, 0, ODS_14_0)
+	FIELD(f_rol_hier_level, nam_sch_level, fld_sch_level, 0, ODS_14_0)
+	FIELD(f_rol_hier_owner, nam_owner, fld_user, 0, ODS_14_0)
+	FIELD(f_rol_hier_privileges, nam_privilege, fld_privilege, 0, ODS_14_0)
+	FIELD(f_rol_hier_inherited, nam_is_leaf, fld_flag, 0, ODS_14_0)
+END_VIEW
