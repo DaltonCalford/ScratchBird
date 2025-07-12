@@ -69,7 +69,7 @@
 #include <ctype.h>
 #endif
 
-using namespace Firebird;
+using namespace ScratchBird;
 using MsgFormat::SafeArg;
 
 
@@ -131,11 +131,11 @@ namespace {
 // and not to stdout if IUtil::version gets called
 
 class VersionCallback :
-	public Firebird::AutoIface<Firebird::IVersionCallbackImpl<VersionCallback, Firebird::CheckStatusWrapper> >
+	public ScratchBird::AutoIface<ScratchBird::IVersionCallbackImpl<VersionCallback, ScratchBird::CheckStatusWrapper> >
 {
 public:
 	// IVersionCallback implementation
-	void callback(Firebird::CheckStatusWrapper*, const char* text)
+	void callback(ScratchBird::CheckStatusWrapper*, const char* text)
 	{
 		isqlGlob.printf("%s%s", text, NEWLINE);
 	}
@@ -391,7 +391,7 @@ void SHOW_comments(bool force)
 }
 
 
-void SHOW_dbb_parameters(Firebird::IAttachment* db_handle,
+void SHOW_dbb_parameters(ScratchBird::IAttachment* db_handle,
 						 const UCHAR* db_itemsL,
 						 unsigned item_length,
 						 bool translate,
@@ -414,16 +414,16 @@ void SHOW_dbb_parameters(Firebird::IAttachment* db_handle,
 	UCHAR buffer[BUFFER_LENGTH400];
 	TEXT msg[MSG_LENGTH];
 
-	Firebird::AutoPtr<Firebird::IStatus, Firebird::SimpleDispose>
+	ScratchBird::AutoPtr<ScratchBird::IStatus, ScratchBird::SimpleDispose>
 		status_vector(fbMaster->getStatus());
-	Firebird::CheckStatusWrapper statusWrapper(status_vector);
+	ScratchBird::CheckStatusWrapper statusWrapper(status_vector);
 	db_handle->getInfo(&statusWrapper, item_length, db_itemsL, sizeof(buffer), buffer);
 	if (ISQL_errmsg(status_vector))
 		return;
 
 	bool crdatePrinted = false;
 
-	for (Firebird::ClumpletReader p(Firebird::ClumpletReader::InfoResponse, buffer, sizeof(buffer)); !p.isEof(); p.moveNext())
+	for (ScratchBird::ClumpletReader p(ScratchBird::ClumpletReader::InfoResponse, buffer, sizeof(buffer)); !p.isEof(); p.moveNext())
 	{
 		UCHAR item = p.getClumpTag();
 		SINT64 value_out = 0;
@@ -481,7 +481,7 @@ void SHOW_dbb_parameters(Firebird::IAttachment* db_handle,
 			value_out = p.getBigInt();
 			if (translate)
 			{
-				Firebird::string s;
+				ScratchBird::string s;
 				if (value_out & fb_info_crypt_encrypted)
 					IUTILS_msg_get(DATABASE_CRYPTED, msg);
 				else
@@ -619,9 +619,9 @@ void SHOW_dbb_parameters(Firebird::IAttachment* db_handle,
 				tsz.time_zone = ISQL_vax_integer(t, sizeof(ULONG));
 
 				unsigned year, month, day, hours, minutes, seconds, fractions;
-				char timeZone[Firebird::TimeZoneUtil::MAX_SIZE];
+				char timeZone[ScratchBird::TimeZoneUtil::MAX_SIZE];
 
-				Firebird::UtilInterfacePtr()->decodeTimeStampTz(fbStatus, &tsz,
+				ScratchBird::UtilInterfacePtr()->decodeTimeStampTz(fbStatus, &tsz,
 					&year, &month, &day, &hours, &minutes, &seconds, &fractions, sizeof(timeZone), timeZone);
 
 				if (ISQL_errmsg(fbStatus))
@@ -1720,7 +1720,7 @@ void SHOW_print_metadata_text_blob(FILE* fp, ISC_QUAD* blobid, bool escape_squot
 	if (UserBlob::blobIsNull(*blobid))
 		return;
 
-	Firebird::IBlob* blob = DB->openBlob(fbStatus, fbTrans, blobid,
+	ScratchBird::IBlob* blob = DB->openBlob(fbStatus, fbTrans, blobid,
 		sizeof(metadata_text_bpb), metadata_text_bpb);
 	if (ISQL_errmsg(fbStatus))
 		return;
@@ -1733,7 +1733,7 @@ void SHOW_print_metadata_text_blob(FILE* fp, ISC_QUAD* blobid, bool escape_squot
 	{
 		unsigned int length;
 		int cc = blob->getSegment(fbStatus, sizeof(buffer) - 1, buffer, &length);
-		if (cc == Firebird::IStatus::RESULT_NO_DATA || cc == Firebird::IStatus::RESULT_ERROR)
+		if (cc == ScratchBird::IStatus::RESULT_NO_DATA || cc == ScratchBird::IStatus::RESULT_ERROR)
 			break;
 
 		// ASF: In Windows, \n characters are printed as \r\n in text mode.
@@ -1795,7 +1795,7 @@ void SHOW_print_metadata_text_blob(FILE* fp, ISC_QUAD* blobid, bool escape_squot
 			fullText += "\r";
 	}
 
-	if (fbStatus->getState() & Firebird::IStatus::STATE_ERRORS)
+	if (fbStatus->getState() & ScratchBird::IStatus::STATE_ERRORS)
 		ISQL_errmsg(fbStatus);
 
 	blob->close(fbStatus);
@@ -3588,6 +3588,10 @@ static processing_state show_database_links(const std::optional<std::string>& na
 	if (name)
 	{
 		// Show specific database link
+		// TODO: Re-enable when RDB$DATABASE_LINKS table is available
+		isqlGlob.printf("DATABASE LINKS feature not yet available in this build%s", NEWLINE);
+		return OBJECT_NOT_FOUND;
+		/*
 		FOR (REQUEST_HANDLE req_handle)
 			LNK IN RDB$DATABASE_LINKS
 			WITH LNK.RDB$LINK_NAME EQ name->c_str()
@@ -3655,10 +3659,15 @@ static processing_state show_database_links(const std::optional<std::string>& na
 			ISQL_errmsg(fbStatus);
 			return ps_ERR;
 		END_ERROR
+		*/
 	}
 	else
 	{
 		// Show all database links
+		// TODO: Re-enable when RDB$DATABASE_LINKS table is available
+		isqlGlob.printf("DATABASE LINKS feature not yet available in this build%s", NEWLINE);
+		return OBJECT_NOT_FOUND;
+		/*
 		FOR (REQUEST_HANDLE req_handle)
 			LNK IN RDB$DATABASE_LINKS
 			SORTED BY LNK.RDB$LINK_NAME
@@ -3682,6 +3691,7 @@ static processing_state show_database_links(const std::optional<std::string>& na
 			ISQL_errmsg(fbStatus);
 			return ps_ERR;
 		END_ERROR
+		*/
 	}
 
 	return first ? OBJECT_NOT_FOUND : SKIP;
@@ -4756,8 +4766,8 @@ static processing_state show_generators(const std::optional<QualifiedMetaString>
  **************************************/
 	bool found = false;
 
-	Firebird::RefPtr<Firebird::IMetadataBuilder>
-		mb(Firebird::REF_NO_INCR, fbMaster->getMetadataBuilder(fbStatus, 1));
+	ScratchBird::RefPtr<ScratchBird::IMetadataBuilder>
+		mb(ScratchBird::REF_NO_INCR, fbMaster->getMetadataBuilder(fbStatus, 1));
 	if (ISQL_errmsg (fbStatus))
 		return ps_ERR;
 
@@ -4769,12 +4779,12 @@ static processing_state show_generators(const std::optional<QualifiedMetaString>
 	if (ISQL_errmsg (fbStatus))
 		return ps_ERR;
 
-	Firebird::RefPtr<Firebird::IMessageMetadata>
-		outMetadata(Firebird::REF_NO_INCR, mb->getMetadata(fbStatus));
+	ScratchBird::RefPtr<ScratchBird::IMessageMetadata>
+		outMetadata(ScratchBird::REF_NO_INCR, mb->getMetadata(fbStatus));
 	if (ISQL_errmsg (fbStatus))
 		return ps_ERR;
 
-	Firebird::AlignedBuffer<20> outBuffer;
+	ScratchBird::AlignedBuffer<20> outBuffer;
 	fb_assert(outMetadata->getMessageLength(fbStatus) <= outBuffer.size());
 	unsigned off = outMetadata->getOffset(fbStatus, 0);
 	if (ISQL_errmsg (fbStatus))
@@ -6172,6 +6182,11 @@ static processing_state show_current_schema()
  *	- Home schema (HOME_SCHEMA)
  *
  **************************************/
+	// TODO: Re-enable when schema context is available in runtime database
+	isqlGlob.printf("Schema context information is not yet available in this build.%s", NEWLINE);
+	return ps_ERR;
+
+	/*
 	if (isqlGlob.major_ods < ODS_VERSION14)
 	{
 		isqlGlob.printf("Schema context information is not available in this database version.%s", NEWLINE);
@@ -6212,6 +6227,7 @@ static processing_state show_current_schema()
 	}
 
 	return SKIP;
+	*/
 }
 
 
@@ -6818,8 +6834,8 @@ static processing_state show_users12()
 		(isqlGlob.major_ods >= ODS_VERSION14 ? "SYSTEM." : ""),
 		(isqlGlob.major_ods >= ODS_VERSION14 ? "SYSTEM." : ""));
 
-	Firebird::RefPtr<Firebird::IMetadataBuilder>
-		mb(Firebird::REF_NO_INCR, fbMaster->getMetadataBuilder(fbStatus, 3));
+	ScratchBird::RefPtr<ScratchBird::IMetadataBuilder>
+		mb(ScratchBird::REF_NO_INCR, fbMaster->getMetadataBuilder(fbStatus, 3));
 	if (ISQL_errmsg (fbStatus))
 		return ps_ERR;
 
@@ -6841,12 +6857,12 @@ static processing_state show_users12()
 	if (ISQL_errmsg (fbStatus))
 		return ps_ERR;
 
-	Firebird::RefPtr<Firebird::IMessageMetadata>
-		outMetadata(Firebird::REF_NO_INCR, mb->getMetadata(fbStatus));
+	ScratchBird::RefPtr<ScratchBird::IMessageMetadata>
+		outMetadata(ScratchBird::REF_NO_INCR, mb->getMetadata(fbStatus));
 	if (ISQL_errmsg (fbStatus))
 		return ps_ERR;
 
-	Firebird::AlignedBuffer<MAX_SQL_IDENTIFIER_SIZE + 32> outBuffer;
+	ScratchBird::AlignedBuffer<MAX_SQL_IDENTIFIER_SIZE + 32> outBuffer;
 	fb_assert(outMetadata->getMessageLength(fbStatus) <= outBuffer.size());
 
 	char* mark = (char*) &outBuffer[outMetadata->getOffset(fbStatus, 0)];
@@ -6859,14 +6875,14 @@ static processing_state show_users12()
 	if (ISQL_errmsg (fbStatus))
 		return ps_ERR;
 
-	Firebird::IResultSet* rs = DB->openCursor(fbStatus, fbTrans, 0, sql.c_str(), isqlGlob.SQL_dialect,
+	ScratchBird::IResultSet* rs = DB->openCursor(fbStatus, fbTrans, 0, sql.c_str(), isqlGlob.SQL_dialect,
 		NULL, NULL, outMetadata, NULL, 0);
 	if (ISQL_errmsg (fbStatus))
 		return ps_ERR;
 
 	processing_state rc = OBJECT_NOT_FOUND;
 
-	while (rs->fetchNext(fbStatus, outBuffer) == Firebird::IStatus::RESULT_OK)
+	while (rs->fetchNext(fbStatus, outBuffer) == ScratchBird::IStatus::RESULT_OK)
 	{
 		if (rc == OBJECT_NOT_FOUND)
 		{
@@ -6912,8 +6928,8 @@ static processing_state show_users()
 
 	TEXT msg[MSG_LENGTH]; // When messages can be translated.
 
-	Firebird::RefPtr<Firebird::IMetadataBuilder>
-		mb(Firebird::REF_NO_INCR, fbMaster->getMetadataBuilder(fbStatus, 1));
+	ScratchBird::RefPtr<ScratchBird::IMetadataBuilder>
+		mb(ScratchBird::REF_NO_INCR, fbMaster->getMetadataBuilder(fbStatus, 1));
 	if (ISQL_errmsg (fbStatus))
 		return ps_ERR;
 	mb->setType(fbStatus, 0, SQL_VARYING);
@@ -6923,12 +6939,12 @@ static processing_state show_users()
 	if (ISQL_errmsg (fbStatus))
 		return ps_ERR;
 
-	Firebird::RefPtr<Firebird::IMessageMetadata>
-		outMetadata(Firebird::REF_NO_INCR, mb->getMetadata(fbStatus));
+	ScratchBird::RefPtr<ScratchBird::IMessageMetadata>
+		outMetadata(ScratchBird::REF_NO_INCR, mb->getMetadata(fbStatus));
 	if (ISQL_errmsg (fbStatus))
 		return ps_ERR;
 
-	Firebird::AlignedBuffer<MAX_SQL_IDENTIFIER_SIZE + 32> outBuffer;
+	ScratchBird::AlignedBuffer<MAX_SQL_IDENTIFIER_SIZE + 32> outBuffer;
 	fb_assert(outMetadata->getMessageLength(fbStatus) <= outBuffer.size());
 	unsigned off = outMetadata->getOffset(fbStatus, 0);
 	if (ISQL_errmsg (fbStatus))
@@ -6952,7 +6968,7 @@ static processing_state show_users()
 
 	processing_state rc = OBJECT_NOT_FOUND;
 
-	for (Firebird::ClumpletReader p(Firebird::ClumpletReader::InfoResponse, buffer, sizeof(buffer)); !p.isEof(); p.moveNext())
+	for (ScratchBird::ClumpletReader p(ScratchBird::ClumpletReader::InfoResponse, buffer, sizeof(buffer)); !p.isEof(); p.moveNext())
 	{
 		switch (p.getClumpTag())
 		{
@@ -7098,7 +7114,7 @@ static processing_state show_synonyms(const std::optional<QualifiedMetaString>& 
 			if (!SYN.RDB$CREATED.NULL)
 			{
 				tm times;
-				Firebird::TimeStamp timestamp = *(Firebird::TimeStamp*)(&SYN.RDB$CREATED);
+				ScratchBird::TimeStamp timestamp = *(ScratchBird::TimeStamp*)(&SYN.RDB$CREATED);
 				timestamp.decode(&times);
 				isqlGlob.printf("Created: %04d-%02d-%02d %02d:%02d:%02d%s",
 					times.tm_year + 1900, times.tm_mon + 1, times.tm_mday,

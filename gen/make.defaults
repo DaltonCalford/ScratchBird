@@ -111,7 +111,7 @@ GLOB_OPTIONS:=
 #____________________________________________________________________________
 
 # Global c++ flags: firebird needs no RTTI, choose build standard and c++ specific warnings level
-PLUSPLUS_FLAGS:= -fno-rtti -std=c++17 -Werror=delete-incomplete -Werror=return-type
+PLUSPLUS_FLAGS:= -fno-rtti -std=c++17 -Werror=delete-incomplete -Werror=return-type -D_FORTIFY_SOURCE=0
 
 # If this is defined then we use special rules useful for developers only
 IsDeveloper = 
@@ -298,9 +298,9 @@ TOMCRYPT_INC=$(TOMCRYPT)/src/headers
 TOMCRYPT_SO=$(TOMCRYPT)/.libs/libtomcrypt.so
 TOMCRYPT_VER=1
 
-# Own libcds support
+# Own libcds support - using system library
 LIBCDS=$(ROOT)/extern/libcds
-LIBCDS_INC=$(LIBCDS)
+LIBCDS_INC=/usr/include
 LIBCDS_DEF=CDS_BUILD_STATIC_LIB
 
 # LINKER OPTIONS

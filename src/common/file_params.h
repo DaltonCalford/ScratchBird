@@ -90,7 +90,12 @@ static const char* const WORKFILE	= "/tmp/";
 static const char MSG_FILE_LANG[]	= "intl/%.10s.msg";
 #endif
 
-static const char* const LOCKDIR	= "firebird";		// created in WORKFILE
+static const char* const LOCKDIR	= "scratchbird";		// created in WORKFILE
+
+#ifndef FB_LOGFILENAME
+#define FB_LOGFILENAME "scratchbird.log"
+#endif
+
 static const char* const LOGFILE	= FB_LOGFILENAME;
 static const char* const MSG_FILE	= "scratchbird.msg";
 static const char* const SECURITY_DB	= "security6.fdb";

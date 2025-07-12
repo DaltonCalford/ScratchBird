@@ -1350,7 +1350,7 @@ public:
 				appendUChar(isVersion4() ? blr_version4 : blr_version5);
 			}
 
-			bool isVersion4() override
+			bool isVersion4() const override
 			{
 				return dsqlScratch->isVersion4();
 			}

@@ -29,7 +29,7 @@
 #ifndef FB_STATUS_ARG
 #define FB_STATUS_ARG
 
-#include "fb_exception.h"
+#include "sb_exception.h"
 #include "firebird/Interface.h"
 #include "../common/SimpleStatusVector.h"
 #include "../common/classes/fb_string.h"

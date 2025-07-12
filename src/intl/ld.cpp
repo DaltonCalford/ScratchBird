@@ -29,7 +29,7 @@
 #include "../intl/cs_icu.h"
 #include "../intl/lc_icu.h"
 #include "../common/utils_proto.h"
-#include "fb_exception.h"
+#include "sb_exception.h"
 
 #ifdef HAVE_SYS_PARAM_H
 #include <sys/param.h> // for MAXPATHLEN

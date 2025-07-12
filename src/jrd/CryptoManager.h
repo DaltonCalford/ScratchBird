@@ -30,7 +30,7 @@
 #define JRD_CRYPTO_MANAGER
 
 #include "../common/classes/alloc.h"
-#include "../common/classes/fb_atomic.h"
+#include "../common/classes/sb_atomic.h"
 #include "../common/classes/SyncObject.h"
 #include "../common/classes/fb_string.h"
 #include "../common/classes/objects_array.h"

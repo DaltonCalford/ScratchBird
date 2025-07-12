@@ -31,7 +31,7 @@
 
 #include "../common/classes/ClumpletWriter.h"
 #include "../common/classes/MetaString.h"
-#include "fb_exception.h"
+#include "sb_exception.h"
 #include "ibase.h"
 
 namespace ScratchBird {

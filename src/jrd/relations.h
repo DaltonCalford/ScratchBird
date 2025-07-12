@@ -817,6 +817,7 @@ RELATION(nam_schemas, rel_schemas, ODS_14_0, rel_persistent)
 END_RELATION
 
 // View for hierarchical schema information
+/*
 VIEW(nam_schema_hierarchy, rel_schema_hierarchy, ODS_14_0, rel_virtual)
 	FIELD(f_sch_hier_schema, nam_sch_name, fld_sch_name, 0, ODS_14_0)
 	FIELD(f_sch_hier_parent, nam_sch_parent, fld_sch_parent, 0, ODS_14_0)
@@ -826,6 +827,7 @@ VIEW(nam_schema_hierarchy, rel_schema_hierarchy, ODS_14_0, rel_virtual)
 	FIELD(f_sch_hier_children_count, nam_children_count, fld_counter, 0, ODS_14_0)
 	FIELD(f_sch_hier_is_leaf, nam_is_leaf, fld_flag, 0, ODS_14_0)
 END_VIEW
+*/
 
 // SQL Dialect 4: Relation for synonyms (schema-aware object aliases)
 RELATION(nam_synonyms, rel_synonyms, ODS_14_0, rel_persistent)

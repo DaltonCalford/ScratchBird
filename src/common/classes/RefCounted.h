@@ -25,8 +25,8 @@
 #ifndef COMMON_REF_COUNTED_H
 #define COMMON_REF_COUNTED_H
 
-#include "fb_exception.h"
-#include "../common/classes/fb_atomic.h"
+#include "sb_exception.h"
+#include "../common/classes/sb_atomic.h"
 #include "../common/gdsassert.h"
 
 namespace ScratchBird

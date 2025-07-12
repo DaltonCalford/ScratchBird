@@ -43,7 +43,7 @@ public:
 	const unsigned char* getBytes();
 	unsigned getMsgLength();
 
-	virtual bool isVersion4();
+	virtual bool isVersion4() const;
 
 private:
 	void buildBlr(ScratchBird::IMessageMetadata* metadata);
@@ -53,6 +53,6 @@ private:
 	unsigned protocol;
 };
 
-} // namespace ScratchBird
+} // namespace Remote
 
 #endif // FB_REMOTE_CLIENT_BLR_FROM_MESSAGE

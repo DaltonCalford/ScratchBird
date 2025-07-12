@@ -134,7 +134,7 @@ public:
 
 #else // WIN_NT
 
-#include "fb_pthread.h"
+#include "sb_pthread.h"
 #include <errno.h>
 
 namespace ScratchBird

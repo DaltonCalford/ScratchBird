@@ -29,7 +29,7 @@
 
 #include "firebird.h"
 #include "firebird/impl/consts_pub.h"
-#include "fb_exception.h"
+#include "sb_exception.h"
 #include "iberror.h"
 #include "../../common/classes/fb_string.h"
 #include "../../common/classes/ClumpletReader.h"

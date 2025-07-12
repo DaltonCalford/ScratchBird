@@ -49,6 +49,11 @@
 
 #include "../common/classes/init.h"
 
+#ifdef UNIX
+#include <pwd.h>
+#include <unistd.h>
+#endif
+
 #ifdef SOLARIS
 #include <sys/utsname.h>
 #endif

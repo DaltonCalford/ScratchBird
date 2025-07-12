@@ -119,6 +119,10 @@
 #define UNIX
 #define IEEE
 
+#ifdef HAVE_GETTIMEOFDAY
+#include <sys/time.h>
+#endif
+
 #ifdef AMD64
 #define FB_CPU CpuAmd
 

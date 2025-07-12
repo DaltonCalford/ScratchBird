@@ -2027,7 +2027,7 @@ public:
 	SetHomeSchemaNode(MemoryPool& pool, const MetaName& aSchemaName, const MetaName* aUserName)
 		: SessionManagementNode(pool),
 		  schemaName(pool, aSchemaName),
-		  userName(aUserName ? pool.allocate<MetaName>(*aUserName) : nullptr)
+		  userName(aUserName ? FB_NEW_POOL(pool) MetaName(*aUserName) : nullptr)
 	{
 	}
 

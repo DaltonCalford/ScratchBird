@@ -24,7 +24,7 @@
 #include "firebird.h"
 #include "fb_types.h"
 #include "../../include/fb_blk.h"
-#include "fb_exception.h"
+#include "sb_exception.h"
 #include "iberror.h"
 
 #include "../../common/classes/Hash.h"

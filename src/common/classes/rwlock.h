@@ -29,7 +29,7 @@
 #ifndef CLASSES_RWLOCK_H
 #define CLASSES_RWLOCK_H
 
-#include "../common/classes/fb_atomic.h"
+#include "../common/classes/sb_atomic.h"
 #include "../common/classes/Reasons.h"
 
 #ifdef WIN_NT
@@ -185,7 +185,7 @@ public:
 
 #else
 
-#include "fb_pthread.h"
+#include "sb_pthread.h"
 #include <errno.h>
 
 namespace ScratchBird

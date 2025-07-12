@@ -127,7 +127,7 @@ public:
 	ULONG getBaseOffset() const { return baseOffset; }
 	void setBaseOffset(ULONG value) { baseOffset = value; }
 
-	virtual bool isVersion4() = 0;
+	virtual bool isVersion4() const = 0;
 	virtual void raiseError(const Arg::StatusVector& vector);
 
 private:

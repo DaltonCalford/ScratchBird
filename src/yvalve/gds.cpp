@@ -87,6 +87,9 @@
 #ifdef HAVE_SYS_FILE_H
 #include <sys/file.h>
 #endif
+#ifdef HAVE_GETTIMEOFDAY
+#include <sys/time.h>
+#endif
 
 #ifndef O_RDWR
 #include <fcntl.h>
@@ -3350,10 +3353,6 @@ static int blr_print_dtype(gds_ctl* control)
 
 	switch (dtype)
 	{
-	case blr_not_nullable:
-		length = blr_print_dtype(control);
-		break;
-
 	case blr_text:
 		length = blr_print_word(control);
 		break;
@@ -3433,6 +3432,10 @@ static int blr_print_dtype(gds_ctl* control)
 
 			break;
 		}
+	default:
+		// For blr_not_nullable, the length was already set by the recursive call
+		// For other types, use the default length already set
+		break;
 	}
 
 	return length;

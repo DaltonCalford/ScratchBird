@@ -23,7 +23,7 @@
 
 #include "firebird.h"
 #include "Switches.h"
-#include "fb_exception.h"
+#include "sb_exception.h"
 
 namespace
 {

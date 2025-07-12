@@ -32,6 +32,37 @@
 
 #include <type_traits>
 
+// Default service and IPC names for ScratchBird
+#ifndef FB_SERVICE_NAME
+#define FB_SERVICE_NAME "scratchbird_server"
+#endif
+
+#ifndef FB_IPC_NAME  
+#define FB_IPC_NAME "SCRATCHBIRD"
+#endif
+
+// Directory constants for ScratchBird
+#ifndef FB_PREFIX
+#define FB_PREFIX "/usr/local/scratchbird"
+#endif
+
+#ifndef FB_CONFDIR
+#define FB_CONFDIR "/usr/local/scratchbird/etc"
+#endif
+
+#ifndef FB_MSGDIR
+#define FB_MSGDIR "/usr/local/scratchbird/msg"
+#endif
+
+#ifndef FB_SERVICE_PORT
+#define FB_SERVICE_PORT 3050
+#endif
+
+// Time function macro for Linux
+#ifndef GETTIMEOFDAY
+#define GETTIMEOFDAY(x) gettimeofday((x), (struct timezone *)0)
+#endif
+
 /**
 	Since the original (isc.cpp) code wasn't able to provide powerful and
 	easy-to-use abilities to work with complex configurations, a decision

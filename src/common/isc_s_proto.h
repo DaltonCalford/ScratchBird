@@ -59,7 +59,7 @@
 #define USE_ROBUST_MUTEX
 #endif // ROBUST mutex
 
-#include "fb_pthread.h"
+#include "sb_pthread.h"
 
 #define HAVE_SHARED_MUTEX_SECTION
 

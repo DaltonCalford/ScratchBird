@@ -297,3 +297,96 @@
 #define lint
 
 #define EL_UNUSED(a) do { if(a); } while (0)
+
+/* Time zone data directory */
+#ifndef FB_TZDATADIR
+#define FB_TZDATADIR "/usr/share/zoneinfo"
+#endif
+
+/* Case sensitivity for file systems */
+#ifndef CASE_SENSITIVITY
+#define CASE_SENSITIVITY 1
+#endif
+
+/* Define to 1 if you have the `times' function. */
+#define HAVE_TIMES 1
+
+/* ScratchBird installation directories */
+#ifndef FB_BINDIR
+#define FB_BINDIR "bin"
+#endif
+#ifndef FB_SBINDIR
+#define FB_SBINDIR "bin"
+#endif
+#ifndef FB_CONFDIR
+#define FB_CONFDIR "etc"
+#endif
+#ifndef FB_LIBDIR
+#define FB_LIBDIR "lib"
+#endif
+#ifndef FB_INCDIR
+#define FB_INCDIR "include"
+#endif
+#ifndef FB_DOCDIR
+#define FB_DOCDIR "doc"
+#endif
+#ifndef FB_SAMPLEDIR
+#define FB_SAMPLEDIR "examples"
+#endif
+#ifndef FB_SAMPLEDBDIR
+#define FB_SAMPLEDBDIR "examples/empbuild"
+#endif
+#ifndef FB_HELPDIR
+#define FB_HELPDIR "help"
+#endif
+#ifndef FB_INTLDIR
+#define FB_INTLDIR "intl"
+#endif
+#ifndef FB_MISCDIR
+#define FB_MISCDIR "misc"
+#endif
+#ifndef FB_SECDBDIR
+#define FB_SECDBDIR "security"
+#endif
+#ifndef FB_MSGDIR
+#define FB_MSGDIR "msg"
+#endif
+#ifndef FB_LOGDIR
+#define FB_LOGDIR "log"
+#endif
+#ifndef FB_GUARDDIR
+#define FB_GUARDDIR "guard"
+#endif
+#ifndef FB_PLUGDIR
+#define FB_PLUGDIR "plugins"
+#endif
+
+/* Shared library extension */
+#ifndef SHRLIB_EXT
+#define SHRLIB_EXT "so"
+#endif
+#define SIZEOF_LONG 8
+
+/* Define to 1 if you have the `strncasecmp' function. */
+#define HAVE_STRNCASECMP 1
+#define HAVE_GETTIMEOFDAY 1
+
+/* Define to 1 if you have the `vsnprintf' function. */
+#define HAVE_VSNPRINTF 1
+
+/* Define to 1 if you have the `va_copy' function. */
+#define HAVE_VA_COPY 1
+
+/* Define to 1 if you have the <setjmp.h> header file. */
+#define HAVE_SETJMP_H 1
+
+/* Define to 1 if you have the <signal.h> header file. */
+#define HAVE_SIGNAL_H 1
+
+/* Disable GCC fortify macros that cause C++ compilation issues */
+#ifdef __cplusplus
+#ifdef __USE_FORTIFY_LEVEL
+#undef __USE_FORTIFY_LEVEL
+#endif
+#define __USE_FORTIFY_LEVEL 0
+#endif

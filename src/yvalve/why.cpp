@@ -51,7 +51,7 @@
 #include "../common/classes/array.h"
 #include "../common/classes/stack.h"
 #include "../common/classes/fb_string.h"
-#include "../common/classes/fb_atomic.h"
+#include "../common/classes/sb_atomic.h"
 #include "../common/classes/init.h"
 #include "../common/classes/rwlock.h"
 #include "../common/classes/semaphore.h"

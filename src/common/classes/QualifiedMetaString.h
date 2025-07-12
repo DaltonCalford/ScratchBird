@@ -349,6 +349,31 @@ public:
 		return s;
 	}
 
+	ScratchBird::string toString() const
+	{
+		ScratchBird::string s;
+
+		const auto appendName = [&s](const T& name) {
+			if (name.hasData())
+			{
+				s += name.toString();
+				return true;
+			}
+
+			return false;
+		};
+
+		if (appendName(schema))
+			s.append(".");
+
+		if (appendName(package))
+			s.append(".");
+
+		appendName(object);
+
+		return s;
+	}
+
 public:
 	T object;
 	T schema;

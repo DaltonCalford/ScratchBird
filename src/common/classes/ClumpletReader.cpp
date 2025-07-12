@@ -29,7 +29,7 @@
 #include "firebird.h"
 
 #include "../common/classes/ClumpletReader.h"
-#include "fb_exception.h"
+#include "sb_exception.h"
 
 #include "ibase.h"
 #include "firebird/Interface.h"

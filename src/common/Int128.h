@@ -30,7 +30,7 @@
 #define FB_INT128
 
 #include "firebird/Interface.h"
-#include "fb_exception.h"
+#include "sb_exception.h"
 
 #include <string.h>
 

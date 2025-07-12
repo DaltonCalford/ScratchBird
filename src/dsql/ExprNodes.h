@@ -2453,6 +2453,8 @@ public:
 
 
 // SQL Dialect 4: Multi-row INSERT VALUES support
+// TODO: Fix inheritance and TYPE_LIST constant issues before enabling
+/*
 class MultiValueListNode final : public TypedNode<ListExprNode, ExprNode::TYPE_LIST>
 {
 public:
@@ -2474,7 +2476,7 @@ public:
 
 	ScratchBird::string internalPrint(NodePrinter& printer) const override
 	{
-		ListExprNode::internalPrint(printer);
+		this->ListExprNode::internalPrint(printer);
 		
 		NODE_PRINT(printer, rows);
 		
@@ -2487,7 +2489,7 @@ public:
 		
 		for (auto& row : rows)
 		{
-			ValueListNode* processedRow = doDsqlPass(dsqlScratch, row);
+			ValueListNode* processedRow = row->dsqlPass(dsqlScratch);
 			node->rows.add(processedRow);
 		}
 		
@@ -2510,12 +2512,13 @@ public:
 	// Get a specific row
 	ValueListNode* getRow(size_t index) const
 	{
-		return rows[index];
+		return const_cast<ValueListNode*>(static_cast<const ValueListNode*>(rows[index]));
 	}
 
 public:
 	ScratchBird::Array<NestConst<ValueListNode>> rows;
 };
+*/
 
 
 } // namespace

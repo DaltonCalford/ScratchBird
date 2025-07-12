@@ -61,7 +61,7 @@
 #include "../common/utils_proto.h"
 #include "../jrd/constants.h"
 
-using namespace Firebird;
+using namespace ScratchBird;
 using MsgFormat::SafeArg;
 
 

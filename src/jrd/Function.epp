@@ -50,7 +50,7 @@
 
 #include "../jrd/Function.h"
 
-using namespace Firebird;
+using namespace ScratchBird;
 using namespace Jrd;
 
 DATABASE DB = FILENAME "ODS.RDB";
@@ -227,7 +227,7 @@ Function* Function::loadMetadata(thread_db* tdbb, USHORT id, bool noscan, USHORT
 				(X.RDB$PACKAGE_NAME.NULL ? NULL : X.RDB$PACKAGE_NAME)));
 
 			function->owner = X.RDB$OWNER_NAME;
-			TriState ssDefiner;
+			ScratchBird::TriState ssDefiner;
 
 			if (!X.RDB$SECURITY_CLASS.NULL)
 				function->setSecurityName(QualifiedName(X.RDB$SECURITY_CLASS, SCH.RDB$SECURITY_CLASS));
@@ -307,7 +307,9 @@ Function* Function::loadMetadata(thread_db* tdbb, USHORT id, bool noscan, USHORT
 				const SSHORT collation_id = Y.RDB$COLLATION_ID;
 
 				SSHORT default_value_null = Y.RDB$DEFAULT_VALUE.NULL;
-				bid default_value = Y.RDB$DEFAULT_VALUE;
+				bid default_value;
+				default_value.bid_quad.bid_quad_high = Y.RDB$DEFAULT_VALUE.gds_quad_high;
+				default_value.bid_quad.bid_quad_low = Y.RDB$DEFAULT_VALUE.gds_quad_low;
 
 				if (!Y.RDB$FIELD_SOURCE.NULL)
 				{
@@ -328,7 +330,8 @@ Function* Function::loadMetadata(thread_db* tdbb, USHORT id, bool noscan, USHORT
 						if (default_value_null && fb_utils::implicit_domain(F.RDB$FIELD_NAME))
 						{
 							default_value_null = F.RDB$DEFAULT_VALUE.NULL;
-							default_value = F.RDB$DEFAULT_VALUE;
+							default_value.bid_quad.bid_quad_high = F.RDB$DEFAULT_VALUE.gds_quad_high;
+						default_value.bid_quad.bid_quad_low = F.RDB$DEFAULT_VALUE.gds_quad_low;
 						}
 					}
 					END_FOR
@@ -368,7 +371,7 @@ Function* Function::loadMetadata(thread_db* tdbb, USHORT id, bool noscan, USHORT
 						parameter->prm_default_value = static_cast<ValueExprNode*>(MET_parse_blob(
 							tdbb, &function->getName().schema, NULL, &default_value, NULL, NULL, false, false));
 					}
-					catch (const Exception&)
+					catch (const ScratchBird::Exception&)
 					{
 						attachment->deletePool(csb_pool);
 						throw; // an explicit error message would be better
@@ -433,15 +436,18 @@ Function* Function::loadMetadata(thread_db* tdbb, USHORT id, bool noscan, USHORT
 
 				try
 				{
-					AutoPtr<CompilerScratch> csb(FB_NEW_POOL(*csb_pool) CompilerScratch(*csb_pool));
+					ScratchBird::AutoPtr<CompilerScratch> csb(FB_NEW_POOL(*csb_pool) CompilerScratch(*csb_pool));
 
 					if (!X.RDB$ENGINE_NAME.NULL)
 					{
-						HalfStaticArray<UCHAR, 512> body;
+						ScratchBird::HalfStaticArray<UCHAR, 512> body;
 
 						if (!X.RDB$FUNCTION_SOURCE.NULL)
 						{
-							blb* const blob = blb::open(tdbb, sysTransaction, &X.RDB$FUNCTION_SOURCE);
+							bid function_source_bid;
+							function_source_bid.bid_quad.bid_quad_high = X.RDB$FUNCTION_SOURCE.gds_quad_high;
+							function_source_bid.bid_quad.bid_quad_low = X.RDB$FUNCTION_SOURCE.gds_quad_low;
+							blb* const blob = blb::open(tdbb, sysTransaction, &function_source_bid);
 							const ULONG len = blob->BLB_get_data(tdbb,
 								body.getBuffer(blob->blb_length + 1), blob->blb_length + 1);
 							body[MIN(blob->blb_length, len)] = 0;
@@ -457,27 +463,35 @@ Function* Function::loadMetadata(thread_db* tdbb, USHORT id, bool noscan, USHORT
 					}
 					else if (!X.RDB$FUNCTION_BLR.NULL)
 					{
-						const string name = function->getName().toQuotedString();
+						const ScratchBird::string name = function->getName().toQuotedString();
 
 						try
 						{
-							TraceFuncCompile trace(tdbb, name);
+							TraceFuncCompile trace(tdbb, name.c_str());
 
-							function->parseBlr(tdbb, csb, &X.RDB$FUNCTION_BLR,
-								X.RDB$DEBUG_INFO.NULL ? NULL : &X.RDB$DEBUG_INFO);
+							bid function_blr_bid;
+							function_blr_bid.bid_quad.bid_quad_high = X.RDB$FUNCTION_BLR.gds_quad_high;
+							function_blr_bid.bid_quad.bid_quad_low = X.RDB$FUNCTION_BLR.gds_quad_low;
+							bid debug_info_bid;
+							if (!X.RDB$DEBUG_INFO.NULL) {
+								debug_info_bid.bid_quad.bid_quad_high = X.RDB$DEBUG_INFO.gds_quad_high;
+								debug_info_bid.bid_quad.bid_quad_low = X.RDB$DEBUG_INFO.gds_quad_low;
+							}
+							function->parseBlr(tdbb, csb, &function_blr_bid,
+								X.RDB$DEBUG_INFO.NULL ? NULL : &debug_info_bid);
 
 							trace.finish(function->getStatement(), ITracePlugin::RESULT_SUCCESS);
 						}
-						catch (const Exception& ex)
+						catch (const ScratchBird::Exception& ex)
 						{
-							StaticStatusVector temp_status;
+							ScratchBird::StaticStatusVector temp_status;
 							ex.stuffException(temp_status);
-							(Arg::Gds(isc_bad_fun_BLR) << Arg::Str(name)
-								<< Arg::StatusVector(temp_status.begin())).raise();
+							(ScratchBird::Arg::Gds(isc_bad_fun_BLR) << ScratchBird::Arg::Str(name)
+								<< ScratchBird::Arg::StatusVector(temp_status.begin())).raise();
 						}
 					}
 				}
-				catch (const Exception&)
+				catch (const ScratchBird::Exception&)
 				{
 					attachment->deletePool(csb_pool);
 					throw;
@@ -487,10 +501,10 @@ Function* Function::loadMetadata(thread_db* tdbb, USHORT id, bool noscan, USHORT
 			}
 			else
 			{
-				RefPtr<MsgMetadata> inputMetadata(REF_NO_INCR, createMetadata(function->getInputFields(), false));
+				ScratchBird::RefPtr<ScratchBird::MsgMetadata> inputMetadata(ScratchBird::REF_NO_INCR, createMetadata(function->getInputFields(), false));
 				function->setInputFormat(createFormat(function->getPool(), inputMetadata, false));
 
-				RefPtr<MsgMetadata> outputMetadata(REF_NO_INCR, createMetadata(function->getOutputFields(), false));
+				ScratchBird::RefPtr<ScratchBird::MsgMetadata> outputMetadata(ScratchBird::REF_NO_INCR, createMetadata(function->getOutputFields(), false));
 				function->setOutputFormat(createFormat(function->getPool(), outputMetadata, true));
 
 				function->setImplemented(false);
@@ -520,7 +534,7 @@ Function* Function::loadMetadata(thread_db* tdbb, USHORT id, bool noscan, USHORT
 	function->flags &= ~Routine::FLAG_BEING_SCANNED;
 
 	}	// try
-	catch (const Exception&)
+	catch (const ScratchBird::Exception&)
 	{
 		function->flags &= ~(Routine::FLAG_BEING_SCANNED | Routine::FLAG_SCANNED);
 
@@ -550,7 +564,7 @@ int Function::blockingAst(void* ast_object)
 		LCK_release(tdbb, function->existenceLock);
 		function->flags |= Routine::FLAG_OBSOLETE;
 	}
-	catch (const Firebird::Exception&)
+	catch (const ScratchBird::Exception&)
 	{} // no-op
 
 	return 0;
@@ -595,27 +609,35 @@ bool Function::reload(thread_db* tdbb)
 
 		try
 		{
-			AutoPtr<CompilerScratch> csb(FB_NEW_POOL(*csb_pool) CompilerScratch(*csb_pool));
+			ScratchBird::AutoPtr<CompilerScratch> csb(FB_NEW_POOL(*csb_pool) CompilerScratch(*csb_pool));
 
 			try
 			{
-				this->parseBlr(tdbb, csb, &X.RDB$FUNCTION_BLR,
-					X.RDB$DEBUG_INFO.NULL ? NULL : &X.RDB$DEBUG_INFO);
+				bid function_blr_bid;
+				function_blr_bid.bid_quad.bid_quad_high = X.RDB$FUNCTION_BLR.gds_quad_high;
+				function_blr_bid.bid_quad.bid_quad_low = X.RDB$FUNCTION_BLR.gds_quad_low;
+				bid debug_info_bid;
+				if (!X.RDB$DEBUG_INFO.NULL) {
+					debug_info_bid.bid_quad.bid_quad_high = X.RDB$DEBUG_INFO.gds_quad_high;
+					debug_info_bid.bid_quad.bid_quad_low = X.RDB$DEBUG_INFO.gds_quad_low;
+				}
+				this->parseBlr(tdbb, csb, &function_blr_bid,
+					X.RDB$DEBUG_INFO.NULL ? NULL : &debug_info_bid);
 
 				// parseBlr() above could set FLAG_RELOAD again
 				return !(this->flags & Routine::FLAG_RELOAD);
 			}
-			catch (const Exception& ex)
+			catch (const ScratchBird::Exception& ex)
 			{
-				StaticStatusVector temp_status;
+				ScratchBird::StaticStatusVector temp_status;
 				ex.stuffException(temp_status);
 
-				const string name = this->getName().toQuotedString();
-				(Arg::Gds(isc_bad_fun_BLR) << Arg::Str(name)
-					<< Arg::StatusVector(temp_status.begin())).raise();
+				const ScratchBird::string name = this->getName().toQuotedString();
+				(ScratchBird::Arg::Gds(isc_bad_fun_BLR) << ScratchBird::Arg::Str(name)
+					<< ScratchBird::Arg::StatusVector(temp_status.begin())).raise();
 			}
 		}
-		catch (const Exception&)
+		catch (const ScratchBird::Exception&)
 		{
 			attachment->deletePool(csb_pool);
 			throw;

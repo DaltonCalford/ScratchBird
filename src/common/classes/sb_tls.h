@@ -107,7 +107,7 @@ private:
 
 #include "../common/classes/init.h"
 
-#include "fb_pthread.h"
+#include "sb_pthread.h"
 
 namespace ScratchBird {
 

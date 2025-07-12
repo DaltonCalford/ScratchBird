@@ -29,7 +29,7 @@
 #ifndef COMMON_STATUS_H
 #define COMMON_STATUS_H
 
-#include "fb_exception.h"
+#include "sb_exception.h"
 #include "../common/isc_proto.h"
 #include "../common/StatusHolder.h"
 #include "../common/utils_proto.h"

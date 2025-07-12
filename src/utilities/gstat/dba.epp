@@ -80,7 +80,7 @@ using MsgFormat::SafeArg;
 #include <io.h>
 #endif
 
-using namespace Firebird;
+using namespace ScratchBird;
 using namespace Jrd;
 using namespace Ods;
 
