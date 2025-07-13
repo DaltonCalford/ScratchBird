@@ -176,7 +176,11 @@ void MultiDimensionalArray<T>::toString(string& result) const {
         oss << "{";
         for (size_t i = 0; i < data_.size(); ++i) {
             if (i > 0) oss << ",";
-            oss << data_[i];
+            if constexpr (std::is_same_v<T, string>) {
+                oss << data_[i].c_str();
+            } else {
+                oss << data_[i];
+            }
         }
         oss << "}";
     } else {
@@ -184,7 +188,7 @@ void MultiDimensionalArray<T>::toString(string& result) const {
         oss << "{{multi-dimensional array}}";
     }
     
-    result = oss.str();
+    result = oss.str().c_str();
 }
 
 template<typename T>
@@ -214,8 +218,8 @@ void MultiDimensionalArray<T>::parseArrayLiteral(const char* literal) {
     
     // Split by commas
     std::vector<T> elements;
-    std::istringstream iss(content);
-    string token;
+    std::istringstream iss(content.c_str());
+    std::string token;
     
     while (std::getline(iss, token, ',')) {
         // Trim whitespace
@@ -225,7 +229,7 @@ void MultiDimensionalArray<T>::parseArrayLiteral(const char* literal) {
         if (!token.empty()) {
             // Convert token to T (simplified)
             if constexpr (std::is_same_v<T, string>) {
-                elements.push_back(token);
+                elements.push_back(T(token.c_str()));
             } else if constexpr (std::is_arithmetic_v<T>) {
                 elements.push_back(static_cast<T>(std::stod(token)));
             }
@@ -340,7 +344,7 @@ void ArraySliceType::toString(string& result) const {
         }
     }
     oss << "]";
-    result = oss.str();
+    result = oss.str().c_str();
 }
 
 ULONG ArraySliceType::makeIndexKey(vary* buf) const {
@@ -360,6 +364,6 @@ ULONG ArraySliceType::makeIndexKey(vary* buf) const {
 template class MultiDimensionalArray<SLONG>;
 template class MultiDimensionalArray<string>;
 template class MultiDimensionalArray<double>;
-template class MultiDimensionalArray<bool>;
+// Note: bool specialization removed due to std::vector<bool> issues
 
 } // namespace ScratchBird

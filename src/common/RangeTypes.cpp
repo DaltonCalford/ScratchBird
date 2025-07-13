@@ -31,8 +31,26 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdlib>
+#include <stdexcept>
 
 namespace ScratchBird {
+
+// Utility functions for timestamp comparison
+inline int compareTimestamp(const ISC_TIMESTAMP& a, const ISC_TIMESTAMP& b) {
+    if (a.timestamp_date < b.timestamp_date) return -1;
+    if (a.timestamp_date > b.timestamp_date) return 1;
+    if (a.timestamp_time < b.timestamp_time) return -1;
+    if (a.timestamp_time > b.timestamp_time) return 1;
+    return 0;
+}
+
+inline int compareTimestampTZ(const ISC_TIMESTAMP_TZ& a, const ISC_TIMESTAMP_TZ& b) {
+    int cmp = compareTimestamp(a.utc_timestamp, b.utc_timestamp);
+    if (cmp != 0) return cmp;
+    if (a.time_zone < b.time_zone) return -1;
+    if (a.time_zone > b.time_zone) return 1;
+    return 0;
+}
 
 // Generic Range template implementation
 
@@ -259,13 +277,115 @@ void Range<T>::invalid_range() {
     throw std::invalid_argument("Invalid range format");
 }
 
-// Explicit template instantiations
+// Template specializations for timestamp types
+
+// ISC_TIMESTAMP specializations
+template<>
+bool Range<ISC_TIMESTAMP>::contains(const ISC_TIMESTAMP& value) const {
+    if (isEmpty()) return false;
+    
+    if (!isLowerInfinite()) {
+        int cmp = compareTimestamp(value, lower);
+        if (isLowerIncluded()) {
+            if (cmp < 0) return false;
+        } else {
+            if (cmp <= 0) return false;
+        }
+    }
+    
+    if (!isUpperInfinite()) {
+        int cmp = compareTimestamp(value, upper);
+        if (isUpperIncluded()) {
+            if (cmp > 0) return false;
+        } else {
+            if (cmp >= 0) return false;
+        }
+    }
+    
+    return true;
+}
+
+template<>
+void Range<ISC_TIMESTAMP>::normalize() {
+    if (!isEmpty()) {
+        int cmp = compareTimestamp(lower, upper);
+        if (cmp > 0) {
+            std::swap(lower, upper);
+            UCHAR temp_flags = 0;
+            if (flags & RANGE_LB_INC) temp_flags |= RANGE_UB_INC;
+            if (flags & RANGE_UB_INC) temp_flags |= RANGE_LB_INC;
+            flags = (flags & ~(RANGE_LB_INC | RANGE_UB_INC)) | temp_flags;
+        }
+        if (cmp == 0 && (!isLowerIncluded() || !isUpperIncluded())) {
+            flags |= RANGE_EMPTY;
+            return;
+        }
+    }
+}
+
+template<>
+void Range<ISC_TIMESTAMP>::parseRange(const char* range_string) {
+    // For now, timestamp ranges are not parsed from strings
+    // This would require complex date/time parsing
+    throw std::invalid_argument("Timestamp range parsing not implemented");
+}
+
+// ISC_TIMESTAMP_TZ specializations
+template<>
+bool Range<ISC_TIMESTAMP_TZ>::contains(const ISC_TIMESTAMP_TZ& value) const {
+    if (isEmpty()) return false;
+    
+    if (!isLowerInfinite()) {
+        int cmp = compareTimestampTZ(value, lower);
+        if (isLowerIncluded()) {
+            if (cmp < 0) return false;
+        } else {
+            if (cmp <= 0) return false;
+        }
+    }
+    
+    if (!isUpperInfinite()) {
+        int cmp = compareTimestampTZ(value, upper);
+        if (isUpperIncluded()) {
+            if (cmp > 0) return false;
+        } else {
+            if (cmp >= 0) return false;
+        }
+    }
+    
+    return true;
+}
+
+template<>
+void Range<ISC_TIMESTAMP_TZ>::normalize() {
+    if (!isEmpty()) {
+        int cmp = compareTimestampTZ(lower, upper);
+        if (cmp > 0) {
+            std::swap(lower, upper);
+            UCHAR temp_flags = 0;
+            if (flags & RANGE_LB_INC) temp_flags |= RANGE_UB_INC;
+            if (flags & RANGE_UB_INC) temp_flags |= RANGE_LB_INC;
+            flags = (flags & ~(RANGE_LB_INC | RANGE_UB_INC)) | temp_flags;
+        }
+        if (cmp == 0 && (!isLowerIncluded() || !isUpperIncluded())) {
+            flags |= RANGE_EMPTY;
+            return;
+        }
+    }
+}
+
+template<>
+void Range<ISC_TIMESTAMP_TZ>::parseRange(const char* range_string) {
+    // For now, timestamp_tz ranges are not parsed from strings
+    throw std::invalid_argument("Timestamp_tz range parsing not implemented");
+}
+
+// Explicit template instantiations for basic types only
+// Timestamp specializations are handled above
 template class Range<SLONG>;
 template class Range<SINT64>;
 template class Range<double>;
-template class Range<ISC_TIMESTAMP>;
-template class Range<ISC_TIMESTAMP_TZ>;
-template class Range<ISC_DATE>;
+// Note: ISC_DATE is typedef int, so Range<SLONG> covers it
 
 // CITEXT implementation
 
