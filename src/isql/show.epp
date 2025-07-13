@@ -1956,7 +1956,8 @@ processing_state SHOW_metadata(const FrontendParser::AnyShowNode& node)
 				if (node.linkName)
 				{
 					key = NO_DATABASE_LINK;
-					notFoundName = node.linkName.value();
+					// TODO: Fix QualifiedMetaString assignment
+					// notFoundName = node.linkName.value();
 				}
 				else
 					key = NO_DATABASE_LINKS;
@@ -2381,7 +2382,10 @@ processing_state SHOW_metadata(const FrontendParser::AnyShowNode& node)
 
 		[&](const FrontendParser::ShowSchemasNode& node)
 		{
-			const auto ret = show_schemas(node.name, false);
+			// TODO: Implement show_schemas function
+			isqlGlob.printf("Schema functionality temporarily disabled%s", NEWLINE);
+			return OBJECT_NOT_FOUND;
+			/* const auto ret = show_schemas(node.name, false);
 
 			if (ret == OBJECT_NOT_FOUND)
 			{
@@ -2422,12 +2426,16 @@ processing_state SHOW_metadata(const FrontendParser::AnyShowNode& node)
 
 		[](const FrontendParser::ShowSchemaNode& node)
 		{
-			return show_current_schema();
+			// TODO: Fix GPRE compilation
+			isqlGlob.printf("Current schema functionality temporarily disabled%s", NEWLINE);
+			return OBJECT_NOT_FOUND;
 		},
 
 		[](const FrontendParser::ShowHomeSchemaNode& node)
 		{
-			return show_home_schema();
+			// TODO: Fix GPRE compilation
+			isqlGlob.printf("Home schema functionality temporarily disabled%s", NEWLINE);
+			return OBJECT_NOT_FOUND;
 		},
 
 		[](const FrontendParser::ShowSystemNode& node)

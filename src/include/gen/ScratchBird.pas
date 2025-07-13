@@ -6236,6 +6236,7 @@ const
 	 isc_dsql_recreate_schema_failed = 336397338;
 	 isc_dsql_alter_schema_failed = 336397339;
 	 isc_dsql_create_alter_schema_failed = 336397340;
+	 isc_dsql_synonym_failed = 336397341;
 	 isc_gsec_cant_open_db = 336723983;
 	 isc_gsec_switches_error = 336723984;
 	 isc_gsec_no_op_spec = 336723985;

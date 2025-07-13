@@ -6,10 +6,10 @@
 BuildVersion="$Id: writeBuildNum.sh,v 1.28732 2010/05/29 13:12:08 fsg Exp $"
 
 BuildType=T
-MajorVer=6
-MinorVer=0
+MajorVer=0
+MinorVer=5
 RevNo=0
-BuildNum=929
+BuildNum=1
 
 NowAt=`pwd`
 cd `dirname $0`
@@ -22,7 +22,7 @@ if [ "$SPECIAL_BUILD_SUFFIX" = "" ]; then
 # Normal builds
 SuffixKind="f90eae0"
 SuffixVer=""
-BuildSuffix="Firebird $MajorVer.$MinorVer"
+BuildSuffix="ScratchBird $MajorVer.$MinorVer"
 [ "$SuffixKind" = "" ] || BuildSuffix="$BuildSuffix $SuffixKind"
 [ "$SuffixVer" = "" ] || BuildSuffix="$BuildSuffix $SuffixVer"
 FIREBIRD_PACKAGE_VERSION="$SuffixKind$SuffixVer"
@@ -30,14 +30,14 @@ FIREBIRD_PACKAGE_VERSION="$SuffixKind$SuffixVer"
 PRODUCT_VER_STRING="$MajorVer.$MinorVer.$RevNo.$BuildNum"
 else
 # Special builds (daily snapshots, etc)
-BuildSuffix="Firebird $MajorVer.$MinorVer $SPECIAL_BUILD_SUFFIX"
+BuildSuffix="ScratchBird $MajorVer.$MinorVer $SPECIAL_BUILD_SUFFIX"
 FIREBIRD_PACKAGE_VERSION=$SPECIAL_BUILD_SUFFIX
 PRODUCT_VER_STRING="$MajorVer.$MinorVer.$RevNo.$BuildNum-$SPECIAL_BUILD_SUFFIX"
 fi
 FIREBIRD_PACKAGE_VERSION=`echo $FIREBIRD_PACKAGE_VERSION | tr -d '[ ]'`
 
 FIREBIRD_VERSION="$MajorVer.$MinorVer.$RevNo"
-FILE_VER_STRING="WI-$BuildType$MajorVer.$MinorVer.$RevNo.$BuildNum"
+FILE_VER_STRING="SB-$BuildType$MajorVer.$MinorVer.$RevNo.$BuildNum"
 FILE_VER_NUMBER="$MajorVer, $MinorVer, $RevNo, $BuildNum"
 
 if [ $# -eq 3  ]

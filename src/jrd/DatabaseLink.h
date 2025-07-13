@@ -113,12 +113,12 @@ public:
     // Iterator support for link enumeration
     class LinkIterator {
     private:
-        ScratchBird::GenericMap<ScratchBird::Pair<ScratchBird::Left<ScratchBird::string, DatabaseLink*>>>::iterator it;
-        ScratchBird::GenericMap<ScratchBird::Pair<ScratchBird::Left<ScratchBird::string, DatabaseLink*>>>::iterator end;
+        typename ScratchBird::GenericMap<ScratchBird::Pair<ScratchBird::Left<ScratchBird::string, DatabaseLink*>>>::iterator it;
+        typename ScratchBird::GenericMap<ScratchBird::Pair<ScratchBird::Left<ScratchBird::string, DatabaseLink*>>>::iterator end;
         
     public:
-        LinkIterator(ScratchBird::GenericMap<ScratchBird::Pair<ScratchBird::Left<ScratchBird::string, DatabaseLink*>>>::iterator begin,
-                    ScratchBird::GenericMap<ScratchBird::Pair<ScratchBird::Left<ScratchBird::string, DatabaseLink*>>>::iterator end);
+        LinkIterator(typename ScratchBird::GenericMap<ScratchBird::Pair<ScratchBird::Left<ScratchBird::string, DatabaseLink*>>>::iterator begin,
+                    typename ScratchBird::GenericMap<ScratchBird::Pair<ScratchBird::Left<ScratchBird::string, DatabaseLink*>>>::iterator end);
         
         bool hasNext() const;
         DatabaseLink* next();

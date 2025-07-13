@@ -112,10 +112,9 @@ public:
 	struct ShowProceduresNode { std::optional<ScratchBird::QualifiedMetaString> name; };
 	struct ShowPublicationsNode { std::optional<ScratchBird::MetaString> name; };
 	struct ShowRolesNode { std::optional<ScratchBird::MetaString> name; };
-	// TODO: Re-enable schema commands after fixing template compilation issues
-	// struct ShowSchemasNode { std::optional<ScratchBird::MetaString> name; };
-	// struct ShowSchemaNode {};
-	// struct ShowHomeSchemaNode {};
+	struct ShowSchemasNode { std::optional<ScratchBird::MetaString> name; };
+	struct ShowSchemaNode {};
+	struct ShowHomeSchemaNode {};
 	struct ShowSecClassesNode { std::optional<ScratchBird::QualifiedMetaString> name; bool detail = false; };
 	struct ShowSqlDialectNode {};
 	struct ShowSystemNode { std::optional<ObjectType> objType; };
@@ -192,10 +191,9 @@ public:
 		ShowProceduresNode,
 		ShowPublicationsNode,
 		ShowRolesNode,
-		// TODO: Re-enable after fixing template compilation
-		// ShowSchemasNode,
-		// ShowSchemaNode,
-		// ShowHomeSchemaNode,
+		ShowSchemasNode,
+		ShowSchemaNode,
+		ShowHomeSchemaNode,
 		ShowSecClassesNode,
 		ShowSqlDialectNode,
 		ShowSynonymsNode,
