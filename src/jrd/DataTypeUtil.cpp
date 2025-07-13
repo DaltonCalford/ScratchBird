@@ -241,6 +241,8 @@ ULONG DataTypeUtilBase::fixLength(const dsc* desc, ULONG length)
 	USHORT overhead = 0;
 	if (desc->dsc_dtype == dtype_varying)
 		overhead = sizeof(USHORT);
+	else if (desc->dsc_dtype == dtype_varying_large)
+		overhead = sizeof(ULONG);
 	else if (desc->dsc_dtype == dtype_cstring)
 		overhead = sizeof(UCHAR);
 

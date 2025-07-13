@@ -79,6 +79,39 @@
 #define blr_domain_name3	(unsigned char)34
 #define blr_column_name3	(unsigned char)36
 
+// Unsigned integer types
+#define blr_ushort		(unsigned char)39
+#define blr_ulong		(unsigned char)42
+#define blr_uint64		(unsigned char)43
+#define blr_uint128		(unsigned char)44
+
+// Enhanced VARCHAR support
+#define blr_varying_large	(unsigned char)45
+
+// Network address types  
+#define blr_inet		(unsigned char)46
+#define blr_cidr		(unsigned char)47
+#define blr_macaddr		(unsigned char)48
+
+// Enhanced text types
+#define blr_citext		(unsigned char)49
+
+// Range types
+#define blr_int4range	(unsigned char)50
+#define blr_int8range	(unsigned char)51
+#define blr_numrange	(unsigned char)52
+#define blr_tsrange		(unsigned char)53
+#define blr_tstzrange	(unsigned char)54
+#define blr_daterange	(unsigned char)55
+
+// Advanced array types
+#define blr_array_slice	(unsigned char)56
+#define blr_array_md	(unsigned char)57	// Multi-dimensional arrays
+
+// Full-text search types
+#define blr_tsvector	(unsigned char)58
+#define blr_tsquery		(unsigned char)59
+
 // first sub parameter for blr_column_name* and blr_domain_name*
 #define blr_domain_type_of	(unsigned char)0
 #define blr_domain_full		(unsigned char)1

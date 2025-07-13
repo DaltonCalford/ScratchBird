@@ -318,6 +318,7 @@ using namespace Firebird;
 %token <metaNamePtr> UNION
 %token <metaNamePtr> UNIQUE
 %token <metaNamePtr> UPDATE
+%token <metaNamePtr> UNSIGNED
 %token <metaNamePtr> USER
 %token <metaNamePtr> UUID
 %token <metaNamePtr> VALUES
@@ -564,6 +565,18 @@ using namespace Firebird;
 %token <metaNamePtr> ROW_NUMBER
 %token <metaNamePtr> SQLSTATE
 %token <metaNamePtr> BOOLEAN
+%token <metaNamePtr> CIDR
+%token <metaNamePtr> CITEXT
+%token <metaNamePtr> DATERANGE
+%token <metaNamePtr> INET
+%token <metaNamePtr> INT4RANGE
+%token <metaNamePtr> INT8RANGE
+%token <metaNamePtr> MACADDR
+%token <metaNamePtr> NUMRANGE
+%token <metaNamePtr> TSRANGE
+%token <metaNamePtr> TSTZRANGE
+%token <metaNamePtr> TSVECTOR
+%token <metaNamePtr> TSQUERY
 %token <metaNamePtr> FALSE
 %token <metaNamePtr> TRUE
 %token <metaNamePtr> UNKNOWN
@@ -5377,11 +5390,111 @@ non_charset_simple_type
 			$$->length = sizeof(SSHORT);
 			$$->flags |= FLD_has_prec;
 		}
+	| SMALLINT UNSIGNED
+		{
+			$$ = newNode<dsql_fld>();
+			$$->dtype = dtype_ushort;
+			$$->length = sizeof(USHORT);
+			$$->flags |= FLD_has_prec;
+		}
+	| integer_keyword UNSIGNED
+		{
+			$$ = newNode<dsql_fld>();
+			$$->dtype = dtype_ulong;
+			$$->length = sizeof(ULONG);
+			$$->flags |= FLD_has_prec;
+		}
+	| BIGINT UNSIGNED
+		{
+			$$ = newNode<dsql_fld>();
+			$$->dtype = dtype_uint64;
+			$$->length = sizeof(uint64_t);
+			$$->flags |= FLD_has_prec;
+		}
+	| INT128 UNSIGNED
+		{
+			$$ = newNode<dsql_fld>();
+			$$->dtype = dtype_uint128;
+			$$->length = sizeof(UInt128);
+			$$->flags |= FLD_has_prec;
+		}
 	| BOOLEAN
 		{
 			$$ = newNode<dsql_fld>();
 			$$->dtype = dtype_boolean;
 			$$->length = sizeof(UCHAR);
+		}
+	| INET
+		{
+			$$ = newNode<dsql_fld>();
+			$$->dtype = dtype_inet;
+			$$->length = 17;  // 1 byte family + 16 bytes address
+		}
+	| CIDR
+		{
+			$$ = newNode<dsql_fld>();
+			$$->dtype = dtype_cidr;
+			$$->length = 18;  // 1 byte family + 16 bytes address + 1 byte prefix
+		}
+	| MACADDR
+		{
+			$$ = newNode<dsql_fld>();
+			$$->dtype = dtype_macaddr;
+			$$->length = 6;   // 6 bytes MAC address
+		}
+	| CITEXT
+		{
+			$$ = newNode<dsql_fld>();
+			$$->dtype = dtype_citext;
+			$$->length = 0;  // Variable length
+		}
+	| INT4RANGE
+		{
+			$$ = newNode<dsql_fld>();
+			$$->dtype = dtype_int4range;
+			$$->length = sizeof(SLONG) * 2 + 1;  // 2 bounds + flags
+		}
+	| INT8RANGE
+		{
+			$$ = newNode<dsql_fld>();
+			$$->dtype = dtype_int8range;
+			$$->length = sizeof(SINT64) * 2 + 1;  // 2 bounds + flags
+		}
+	| NUMRANGE
+		{
+			$$ = newNode<dsql_fld>();
+			$$->dtype = dtype_numrange;
+			$$->length = sizeof(double) * 2 + 1;  // 2 bounds + flags
+		}
+	| TSRANGE
+		{
+			$$ = newNode<dsql_fld>();
+			$$->dtype = dtype_tsrange;
+			$$->length = sizeof(ISC_TIMESTAMP) * 2 + 1;  // 2 bounds + flags
+		}
+	| TSTZRANGE
+		{
+			$$ = newNode<dsql_fld>();
+			$$->dtype = dtype_tstzrange;
+			$$->length = sizeof(ISC_TIMESTAMP_TZ) * 2 + 1;  // 2 bounds + flags
+		}
+	| DATERANGE
+		{
+			$$ = newNode<dsql_fld>();
+			$$->dtype = dtype_daterange;
+			$$->length = sizeof(ISC_DATE) * 2 + 1;  // 2 bounds + flags
+		}
+	| TSVECTOR
+		{
+			$$ = newNode<dsql_fld>();
+			$$->dtype = dtype_tsvector;
+			$$->length = 0;  // Variable length
+		}
+	| TSQUERY
+		{
+			$$ = newNode<dsql_fld>();
+			$$->dtype = dtype_tsquery;
+			$$->length = 0;  // Variable length
 		}
 	| UUID
 		{
@@ -5558,8 +5671,25 @@ character_type
 	| varying_keyword '(' pos_short_integer ')'
 		{
 			$$ = newNode<dsql_fld>();
-			$$->dtype = dtype_varying;
-			$$->charLength = (USHORT) $3;
+			if ($3 > 32767) {
+				$$->dtype = dtype_varying_large;
+				$$->charLength = (ULONG) $3;
+			} else {
+				$$->dtype = dtype_varying;
+				$$->charLength = (USHORT) $3;
+			}
+			$$->flags |= FLD_has_len;
+		}
+	| varying_keyword '(' long_integer ')'
+		{
+			$$ = newNode<dsql_fld>();
+			if ($3 > 131070) {  // MAX_COLUMN_SIZE limit
+				ERRD_post(Arg::Gds(isc_sqlerr) << Arg::Num(-104) <<
+					Arg::Gds(isc_imp_exc) << 
+					Arg::Str("VARCHAR size exceeds maximum of 131070 characters"));
+			}
+			$$->dtype = dtype_varying_large;
+			$$->charLength = (ULONG) $3;
 			$$->flags |= FLD_has_len;
 		}
 	;

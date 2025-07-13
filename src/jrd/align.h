@@ -42,7 +42,7 @@ Maximum alignments for corresponding data types are defined in dsc.h
  *  value is greater than blr_blob_id, be sure to change the next define,
  *  and also add the required entries to all of the arrays below.
  */
-const unsigned char DTYPE_BLR_MAX	= blr_blob_id;
+const unsigned char DTYPE_BLR_MAX	= 59;  // Updated for full-text search types
 
 /*
  the blr types are defined in blr.h
@@ -84,10 +84,27 @@ static const USHORT gds_cvt_blr_dtype[DTYPE_BLR_MAX + 1] =
 	0,
 	dtype_varying,				/* blr_varying == 37 */
 	dtype_varying,				/* blr_varying2 == 38 */
-	0,
+	dtype_ushort,				/* blr_ushort == 39 */
 	dtype_cstring,				/* blr_cstring == 40 */
 	dtype_cstring,				/* blr_cstring2 == 41 */
-	0, 0, 0, 0
+	dtype_ulong,				/* blr_ulong == 42 */
+	dtype_uint64,				/* blr_uint64 == 43 */
+	dtype_uint128,				/* blr_uint128 == 44 */
+	dtype_varying_large,		/* blr_varying_large == 45 */
+	dtype_inet,					/* blr_inet == 46 */
+	dtype_cidr,					/* blr_cidr == 47 */
+	dtype_macaddr,				/* blr_macaddr == 48 */
+	dtype_citext,				/* blr_citext == 49 */
+	dtype_int4range,			/* blr_int4range == 50 */
+	dtype_int8range,			/* blr_int8range == 51 */
+	dtype_numrange,				/* blr_numrange == 52 */
+	dtype_tsrange,				/* blr_tsrange == 53 */
+	dtype_tstzrange,			/* blr_tstzrange == 54 */
+	dtype_daterange,			/* blr_daterange == 55 */
+	dtype_array_slice,			/* blr_array_slice == 56 */
+	dtype_array_md,				/* blr_array_md == 57 */
+	dtype_tsvector,				/* blr_tsvector == 58 */
+	dtype_tsquery				/* blr_tsquery == 59 */
 };
 
 static const USHORT type_alignments[DTYPE_TYPE_MAX] =
@@ -122,7 +139,40 @@ static const USHORT type_alignments[DTYPE_TYPE_MAX] =
 	sizeof(GDS_TIME),			/* dtype_ex_time_tz */
 	sizeof(GDS_DATE),			/* dtype_ex_timestamp_tz */
 	sizeof(SLONG),				/* dtype_uuid (16 bytes aligned to 4) */
-	sizeof(SLONG)				/* dtype_json (variable length, aligned to 4) */
+	sizeof(SLONG),				/* dtype_json (variable length, aligned to 4) */
+
+	// New unsigned integer types
+	sizeof(USHORT),				/* dtype_ushort */
+	sizeof(ULONG),				/* dtype_ulong */
+	sizeof(FB_UINT64),			/* dtype_uint64 */
+	sizeof(SINT64),				/* dtype_uint128 (aligned same as int128) */
+
+	// Enhanced VARCHAR support
+	sizeof(SSHORT),				/* dtype_varying_large */
+
+	// Network address types
+	sizeof(SLONG),				/* dtype_inet (IPv4/IPv6 address) */
+	sizeof(SLONG),				/* dtype_cidr (network block) */
+	sizeof(SLONG),				/* dtype_macaddr (MAC address) */
+
+	// Enhanced text types
+	sizeof(SSHORT),				/* dtype_citext (case-insensitive text) */
+
+	// Range types
+	sizeof(SLONG),				/* dtype_int4range */
+	sizeof(SINT64),				/* dtype_int8range */
+	sizeof(double),				/* dtype_numrange */
+	sizeof(ISC_TIMESTAMP),		/* dtype_tsrange */
+	sizeof(ISC_TIMESTAMP_TZ),	/* dtype_tstzrange */
+	sizeof(ISC_DATE),			/* dtype_daterange */
+
+	// Advanced array types
+	sizeof(SLONG),				/* dtype_array_slice */
+	sizeof(SLONG),				/* dtype_array_md */
+
+	// Full-text search types
+	sizeof(SLONG),				/* dtype_tsvector */
+	sizeof(SLONG)				/* dtype_tsquery */
 };
 
 static const USHORT type_lengths[DTYPE_TYPE_MAX] =
@@ -157,7 +207,40 @@ static const USHORT type_lengths[DTYPE_TYPE_MAX] =
 	sizeof(ISC_TIME_TZ_EX),			/* dtype_ex_time_tz */
 	sizeof(ISC_TIMESTAMP_TZ_EX),	/* dtype_ex_timestamp_tz */
 	16,								/* dtype_uuid (128-bit/16 bytes) */
-	0								/* dtype_json (variable length) */
+	0,								/* dtype_json (variable length) */
+
+	// New unsigned integer types
+	sizeof(USHORT),					/* dtype_ushort */
+	sizeof(ULONG),					/* dtype_ulong */
+	sizeof(FB_UINT64),				/* dtype_uint64 */
+	sizeof(ScratchBird::UInt128),	/* dtype_uint128 */
+
+	// Enhanced VARCHAR support
+	0,								/* dtype_varying_large (variable length) */
+
+	// Network address types
+	16,								/* dtype_inet (IPv4=4, IPv6=16 bytes max) */
+	17,								/* dtype_cidr (IP + prefix length) */
+	6,								/* dtype_macaddr (6 bytes) */
+
+	// Enhanced text types
+	0,								/* dtype_citext (variable length) */
+
+	// Range types
+	sizeof(SLONG) * 2 + 1,			/* dtype_int4range (2 bounds + flags) */
+	sizeof(SINT64) * 2 + 1,			/* dtype_int8range (2 bounds + flags) */
+	sizeof(double) * 2 + 1,			/* dtype_numrange (2 bounds + flags) */
+	sizeof(ISC_TIMESTAMP) * 2 + 1,	/* dtype_tsrange (2 bounds + flags) */
+	sizeof(ISC_TIMESTAMP_TZ) * 2 + 1, /* dtype_tstzrange (2 bounds + flags) */
+	sizeof(ISC_DATE) * 2 + 1,		/* dtype_daterange (2 bounds + flags) */
+
+	// Advanced array types
+	0,								/* dtype_array_slice (variable length) */
+	0,								/* dtype_array_md (variable length) */
+
+	// Full-text search types
+	0,								/* dtype_tsvector (variable length) */
+	0								/* dtype_tsquery (variable length) */
 };
 
 
@@ -195,7 +278,40 @@ static const USHORT type_significant_bits[DTYPE_TYPE_MAX] =
 	0,							// dtype_ex_time_tz
 	0,							// dtype_ex_timestamp_tz
 	128,						// dtype_uuid (128 bits)
-	0							// dtype_json (variable)
+	0,							// dtype_json (variable)
+
+	// New unsigned integer types
+	sizeof(USHORT) * 8,			// dtype_ushort (16 bits)
+	sizeof(ULONG) * 8,			// dtype_ulong (32 bits)
+	sizeof(FB_UINT64) * 8,		// dtype_uint64 (64 bits)
+	128,						// dtype_uint128 (128 bits)
+
+	// Enhanced VARCHAR support
+	0,							// dtype_varying_large (variable length)
+
+	// Network address types
+	128,						// dtype_inet (128 bits for IPv6)
+	128,						// dtype_cidr (128 bits + prefix)
+	48,							// dtype_macaddr (48 bits)
+
+	// Enhanced text types
+	0,							// dtype_citext (variable length)
+
+	// Range types
+	sizeof(SLONG) * 8 * 2,		// dtype_int4range (2 x 32-bit bounds)
+	sizeof(SINT64) * 8 * 2,		// dtype_int8range (2 x 64-bit bounds)
+	64 * 2,						// dtype_numrange (2 x double precision)
+	sizeof(ISC_TIMESTAMP) * 8 * 2, // dtype_tsrange (2 timestamp bounds)
+	sizeof(ISC_TIMESTAMP_TZ) * 8 * 2, // dtype_tstzrange (2 timestamp_tz bounds)
+	sizeof(ISC_DATE) * 8 * 2,	// dtype_daterange (2 date bounds)
+
+	// Advanced array types
+	0,							// dtype_array_slice (variable length)
+	0,							// dtype_array_md (variable length)
+
+	// Full-text search types
+	0,							// dtype_tsvector (variable length)
+	0							// dtype_tsquery (variable length)
 };
 
 #endif /* JRD_ALIGN_H */
