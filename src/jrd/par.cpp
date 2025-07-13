@@ -476,6 +476,7 @@ USHORT PAR_desc(thread_db* tdbb, CompilerScratch* csb, dsc* desc, ItemInfo* item
 					case dtype_cstring:
 					case dtype_text:
 					case dtype_varying:
+					case dtype_varying_large:
 						desc->setTextType(ttype);
 						break;
 
@@ -551,6 +552,7 @@ USHORT PAR_desc(thread_db* tdbb, CompilerScratch* csb, dsc* desc, ItemInfo* item
 					case dtype_cstring:
 					case dtype_text:
 					case dtype_varying:
+					case dtype_varying_large:
 						desc->setTextType(ttype);
 						break;
 

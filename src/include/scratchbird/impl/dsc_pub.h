@@ -70,7 +70,41 @@
 #define dtype_ex_timestamp_tz	28
 #define dtype_uuid		29
 #define dtype_json		30
-#define DTYPE_TYPE_MAX	31
+
+// Unsigned integer types
+#define dtype_ushort		31
+#define dtype_ulong		32
+#define dtype_uint64		33
+#define dtype_uint128		34
+
+// Enhanced VARCHAR support
+#define dtype_varying_large	35
+
+// Network address types
+#define dtype_inet		36
+#define dtype_cidr		37
+#define dtype_macaddr		38
+
+// Enhanced text types
+#define dtype_citext		39
+
+// Range types
+#define dtype_int4range		40
+#define dtype_int8range		41
+#define dtype_numrange		42
+#define dtype_tsrange		43
+#define dtype_tstzrange		44
+#define dtype_daterange		45
+
+// Advanced array types
+#define dtype_array_slice	46
+#define dtype_array_md		47
+
+// Full-text search types
+#define dtype_tsvector		48
+#define dtype_tsquery		49
+
+#define DTYPE_TYPE_MAX	50
 
 #define ISC_TIME_SECONDS_PRECISION		10000
 #define ISC_TIME_SECONDS_PRECISION_SCALE	(-4)

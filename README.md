@@ -1,25 +1,34 @@
 # ScratchBird Database v0.5
 
-ScratchBird is an advanced open-source relational database management system based on Firebird 6.0 with significant enhancements for modern development.
+ScratchBird is an advanced open-source relational database management system based on Firebird 6.0 with significant enhancements for modern development. It provides PostgreSQL-compatible features while maintaining Firebird's proven reliability and performance.
 
-## Key Features
+## 🚀 Major Features
 
-### 🎯 SQL Dialect 4 Enhancements
+### 📊 **Advanced Datatype System**
+- **Unsigned Integers**: USMALLINT, UINTEGER, UBIGINT, UINT128 (MySQL-compatible)
+- **Large VARCHAR**: 128KB UTF-8 support (vs 32KB limit)
+- **Network Types**: INET, CIDR, MACADDR (PostgreSQL-compatible)
+- **Range Types**: INT4RANGE, INT8RANGE, NUMRANGE, TSRANGE, DATERANGE
+- **Case-Insensitive Text**: CITEXT with automatic indexing
+- **Advanced Arrays**: Multi-dimensional arrays with slicing operations
+- **Full-Text Search**: TSVECTOR, TSQUERY with ranking and highlighting
+
+### 🌳 **Hierarchical Schema System**
+- **8-level deep schema nesting**: `finance.accounting.reports.table`
+- **PostgreSQL-style qualified names**: Exceeds PostgreSQL capabilities  
+- **Schema-aware database links**: Distributed database scenarios
+
+### 🎯 **SQL Dialect 4 Enhancements**
 - **FROM-less SELECT statements**: `SELECT GEN_UUID();`
 - **Multi-row INSERT VALUES**: `INSERT INTO table VALUES (1,2,3),(4,5,6);`
 - **Comprehensive SYNONYM support**: Schema-aware object aliasing
 
-### 🌳 Hierarchical Schema System
-- **8-level deep schema nesting**: `finance.accounting.reports.table`
-- **PostgreSQL-style qualified names**: Exceeds PostgreSQL capabilities
-- **Schema-aware database links**: Distributed database scenarios
-
-### 🔐 Enhanced Security
+### 🔐 **Enhanced Security**
 - **Trusted authentication**: GSSAPI/Kerberos integration
 - **Advanced authentication plugins**: Multi-factor support
 - **Schema-level security**: Granular access control
 
-### 🔗 Database Links
+### 🔗 **Database Links**
 - **5 schema resolution modes**: NONE, FIXED, CONTEXT_AWARE, HIERARCHICAL, MIRROR
 - **Remote schema targeting**: Seamless distributed queries
 - **Context-aware resolution**: CURRENT, HOME, USER schema references
