@@ -1489,7 +1489,7 @@ void SRVR_main(rem_port* main_port, USHORT flags)
  *
  **************************************/
 
-	FpeControl::maskAll();
+	FpeControl fpeControl;
 
 	// Setup context pool for main thread
 	ContextPoolHolder mainThreadContext(getDefaultMemoryPool());
@@ -6931,7 +6931,7 @@ static THREAD_ENTRY_DECLARE loopThread(THREAD_ENTRY_PARAM)
 
 	try {
 
-	FpeControl::maskAll();
+	FpeControl fpeControl;
 
 	Worker worker;
 

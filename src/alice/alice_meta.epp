@@ -53,7 +53,7 @@ DATABASE DB = STATIC FILENAME "yachts.lnk";
 #define DB			tdgbl->db_handle
 #define gds_trans	tdgbl->tr_handle
 
-typedef Firebird::HalfStaticArray<TEXT, 1024> TextBuffer;
+typedef ScratchBird::HalfStaticArray<TEXT, 1024> TextBuffer;
 
 static void get_string(const TEXT**, ScratchBird::string&);
 static USHORT get_capabilities(ISC_STATUS*);
@@ -243,7 +243,7 @@ void MET_set_capabilities(ISC_STATUS* user_status, tdr* trans)
  *		Eat a string with a byte-encoded length.
  */
 
-static void get_string(const TEXT** ptr, Firebird::string& str)
+static void get_string(const TEXT** ptr, ScratchBird::string& str)
 {
 	AliceGlobals* tdgbl = AliceGlobals::getSpecific();
 
@@ -316,11 +316,11 @@ static tdr* get_description(ISC_QUAD* blob_id)
 		return NULL;
 
 	tdr* trans = NULL;
-	Firebird::string host_site;
-	Firebird::string database_path;
+	ScratchBird::string host_site;
+	ScratchBird::string database_path;
 
 	const TEXT* p = buffer.begin();
-	Firebird::MemoryPool& pool(*tdgbl->getDefaultPool());
+	ScratchBird::MemoryPool& pool(*tdgbl->getDefaultPool());
 
 	// skip version number
 	++p;
@@ -380,8 +380,8 @@ static tdr* get_description(ISC_QUAD* blob_id)
 
 static void parse_fullpath(tdr* trans)
 {
-	Firebird::PathName filename = trans->tdr_fullpath.c_str();
-	Firebird::PathName hostname;
+	ScratchBird::PathName filename = trans->tdr_fullpath.c_str();
+	ScratchBird::PathName hostname;
 
 	// Find the last remote node in the path
 

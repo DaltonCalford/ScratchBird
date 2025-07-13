@@ -110,7 +110,7 @@
 #if defined(__loongarch__)
 #define FB_PLATFORM     "LL"	// Linux/LoongArch
 #else
-#define FB_PLATFORM     "LI"	// Linux on Intel
+#define FB_PLATFORM     "SB"	// ScratchBird Linux
 #endif
 #endif
 

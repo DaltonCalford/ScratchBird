@@ -52,10 +52,10 @@ TOMCRYPT_BUILD_FLG=N
 RE2_BUILD_FLG=N
 SYSTEM_BOOST_FLG=N
 
-FB_BUILD=$(GEN_ROOT)/$(TARGET)/firebird
+FB_BUILD=$(GEN_ROOT)/$(TARGET)/scratchbird
 
 ifeq ($(IsCross), Y)
-  SCRATCHBIRD=$(GEN_ROOT)/Native/firebird
+  SCRATCHBIRD=$(GEN_ROOT)/Native/scratchbird
 else
   SCRATCHBIRD=$(FB_BUILD)
 endif
@@ -246,8 +246,8 @@ vpath %.dll $(LIB)
 #     Scold me, but I don't want library names to be in configure.in
 #
 
-#LibraryFileName=libfbclient
-LibraryFileName=libfbclient
+#LibraryFileName=libsbclient
+LibraryFileName=libsbclient
 LibraryFullName=$(LibraryFileName).${SHRLIB_EXT}.${FirebirdVersion}
 LibrarySoName=$(LibraryFileName).${SHRLIB_EXT}.2
 LibraryBaseName=$(LibraryFileName).${SHRLIB_EXT}
@@ -357,12 +357,12 @@ endif
 LIB_PATH_OPTS = $(call LIB_LINK_RPATH,lib) $(call LIB_LINK_RPATH,intl)
 LIB_LINK_SONAME= -Wl,-soname,$(1)
 LIB_LINK_MAPFILE= -Wl,--version-script,$(1)
-SCRATCHBIRD_LIBRARY_LINK= -L$(LIB) -L$(STATIC_LIB) -lfbclient $(MATHLIB) $(CRYPTLIB)
+SCRATCHBIRD_LIBRARY_LINK= -L$(LIB) -L$(STATIC_LIB) -lsbclient $(MATHLIB) $(CRYPTLIB)
 
 EXE_LINK_OPTIONS= $(LDFLAGS) $(THR_FLAGS) $(UNDEF_FLAGS) $(LIB_PATH_OPTS) $(call LINK_DARWIN_RPATH,..) $(LINK_EMPTY_SYMBOLS)
 LIB_LINK_OPTIONS= $(LDFLAGS) $(THR_FLAGS) -shared
 
-FB_DAEMON = $(BIN)/firebird$(EXEC_EXT)
+FB_DAEMON = $(BIN)/sbserver$(EXEC_EXT)
 
 # Per-library link rules
 LINK_UDF = $(LIB_LINK) $(LIB_LINK_OPTIONS) $(call LIB_LINK_SONAME,$(1).$(SHRLIB_EXT)) $(UNDEF_FLAGS)\
@@ -403,14 +403,14 @@ COMMON_LIB	= $(OBJ)/common.a
 COMMON_TEST = $(FB_TESTS_DIR)/common_test$(EXEC_EXT)
 
 # From utilities
-FBSVCMGR	= $(BIN)/fbsvcmgr$(EXEC_EXT)
-FBTRACEMGR	= $(BIN)/fbtracemgr$(EXEC_EXT)
-GSTAT		= $(BIN)/gstat$(EXEC_EXT)
+FBSVCMGR	= $(BIN)/sb_svcmgr$(EXEC_EXT)
+FBTRACEMGR	= $(BIN)/sb_tracemgr$(EXEC_EXT)
+GSTAT		= $(BIN)/sb_gstat$(EXEC_EXT)
 NBACKUP		= $(BIN)/nbackup$(EXEC_EXT)
-LOCKPRINT	= $(BIN)/fb_lock_print$(EXEC_EXT)
-GSEC		= $(BIN)/gsec$(EXEC_EXT)
-GFIX		= $(BIN)/gfix$(EXEC_EXT)
-RUN_GFIX	= $(RBIN)/gfix$(EXEC_EXT)
+LOCKPRINT	= $(BIN)/sb_lock_print$(EXEC_EXT)
+GSEC		= $(BIN)/sb_gsec$(EXEC_EXT)
+GFIX		= $(BIN)/sb_gfix$(EXEC_EXT)
+RUN_GFIX	= $(RBIN)/sb_gfix$(EXEC_EXT)
 FBGUARD		= $(BIN)/fbguard$(EXEC_EXT)
 INSTREG		= $(BIN)/instreg$(EXEC_EXT)
 INSTSVC		= $(BIN)/instsvc$(EXEC_EXT)
@@ -418,14 +418,14 @@ INSTSVC		= $(BIN)/instsvc$(EXEC_EXT)
 SECURITY_FDB	= $(SCRATCHBIRD)/security6.fdb
 
 # From isql
-ISQL            = $(BIN)/isql$(EXEC_EXT)
+ISQL            = $(BIN)/sb_isql$(EXEC_EXT)
 ISQL_TEST       = $(FB_TESTS_DIR)/isql_test$(EXEC_EXT)
-RUN_ISQL        = $(RBIN)/isql$(EXEC_EXT)
+RUN_ISQL        = $(RBIN)/sb_isql$(EXEC_EXT)
 
 # From burp
-GBAK            = $(BIN)/gbak$(EXEC_EXT)
-RUN_GBAK        = $(RBIN)/gbak$(EXEC_EXT)
-GSPLIT          = $(BIN)/gsplit$(EXEC_EXT)
+GBAK            = $(BIN)/sb_gbak$(EXEC_EXT)
+RUN_GBAK        = $(RBIN)/sb_gbak$(EXEC_EXT)
+GSPLIT          = $(BIN)/sb_gsplit$(EXEC_EXT)
 
 # From gpre
 # (gpre current is a link to one of the others)

@@ -4175,7 +4175,7 @@ static processing_state create_database_link(const FrontendParser::CreateDatabas
 
 	if (!DB)
 	{
-		ISQL_errmsg("Must be connected to a database to create database links");
+		STDERROUT("Must be connected to a database to create database links");
 		return FAIL;
 	}
 
@@ -4232,13 +4232,16 @@ static processing_state create_database_link(const FrontendParser::CreateDatabas
 	// Execute the statement
 	try
 	{
-		DB->execute(sql.c_str());
+		DB->execute(fbStatus, M__trans, sql.length(), sql.c_str(), isqlGlob.SQL_dialect, NULL, NULL, NULL, NULL);
+		if (ISQL_errmsg(fbStatus))
+			return FAIL;
 		isqlGlob.printf("Database link %s created successfully.\n", node.linkName.c_str());
 		return SKIP;
 	}
 	catch (const Exception& ex)
 	{
-		ISQL_errmsg("Failed to create database link: %s", ex.what());
+		STDERROUT("Failed to create database link");
+		STDERROUT(ex.what());
 		return FAIL;
 	}
 }
@@ -4259,7 +4262,7 @@ static processing_state drop_database_link(const FrontendParser::DropDatabaseLin
 
 	if (!DB)
 	{
-		ISQL_errmsg("Must be connected to a database to drop database links");
+		STDERROUT("Must be connected to a database to drop database links");
 		return FAIL;
 	}
 
@@ -4267,12 +4270,14 @@ static processing_state drop_database_link(const FrontendParser::DropDatabaseLin
 	string sql = "DROP DATABASE LINK ";
 	if (node.ifExists)
 		sql += "IF EXISTS ";
-	sql += node.linkName;
+	sql += node.linkName.c_str();
 
 	// Execute the statement
 	try
 	{
-		DB->execute(sql.c_str());
+		DB->execute(fbStatus, M__trans, sql.length(), sql.c_str(), isqlGlob.SQL_dialect, NULL, NULL, NULL, NULL);
+		if (ISQL_errmsg(fbStatus))
+			return FAIL;
 		isqlGlob.printf("Database link %s dropped successfully.\n", node.linkName.c_str());
 		return SKIP;
 	}
@@ -4280,7 +4285,8 @@ static processing_state drop_database_link(const FrontendParser::DropDatabaseLin
 	{
 		if (!node.ifExists)
 		{
-			ISQL_errmsg("Failed to drop database link: %s", ex.what());
+			STDERROUT("Failed to drop database link");
+			STDERROUT(ex.what());
 			return FAIL;
 		}
 		else

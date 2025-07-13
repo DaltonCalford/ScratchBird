@@ -2,16 +2,16 @@
 #               *** DO NOT EDIT ***
 #  TO CHANGE ANY INFORMATION IN HERE PLEASE
 #  EDIT src/misc/writeBuildNum.sh
-#  FORMAL BUILD NUMBER:929
+#  FORMAL BUILD NUMBER:1
 
-MajorVer = 6
-MinorVer = 0
+MajorVer = 0
+MinorVer = 5
 RevNo = 0
-BuildNum = 929
+BuildNum = 1
 BuildType = T
-BuildSuffix = Firebird 6.0 f90eae0
+BuildSuffix = ScratchBird 0.5 f90eae0
 
 PackageVersion = f90eae0
-FirebirdVersion = 6.0.0
+FirebirdVersion = 0.5.0
 
 OdsVersion = 14
