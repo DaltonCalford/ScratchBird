@@ -536,6 +536,29 @@ public:
 };
 
 
+class CurrentPascalCaseModeNode final : public TypedNode<ValueExprNode, ExprNode::TYPE_CURRENT_PASCAL_CASE_MODE>
+{
+public:
+	explicit CurrentPascalCaseModeNode(MemoryPool& pool)
+		: TypedNode<ValueExprNode, ExprNode::TYPE_CURRENT_PASCAL_CASE_MODE>(pool)
+	{
+	}
+
+	static DmlNode* parse(thread_db* tdbb, MemoryPool& pool, CompilerScratch* csb, const UCHAR blrOp);
+
+	ScratchBird::string internalPrint(NodePrinter& printer) const override;
+	ValueExprNode* dsqlPass(DsqlCompilerScratch* dsqlScratch) override;
+	void setParameterName(dsql_par* parameter) const override;
+	void genBlr(DsqlCompilerScratch* dsqlScratch) override;
+	void make(DsqlCompilerScratch* dsqlScratch, dsc* desc) override;
+
+	void getDesc(thread_db* tdbb, CompilerScratch* csb, dsc* desc) override;
+	ValueExprNode* copy(thread_db* tdbb, NodeCopier& copier) const override;
+	ValueExprNode* pass2(thread_db* tdbb, CompilerScratch* csb) override;
+	dsc* execute(thread_db* tdbb, Request* request) const override;
+};
+
+
 class CurrentSchemaNode final : public TypedNode<ValueExprNode, ExprNode::TYPE_CURRENT_SCHEMA>
 {
 public:

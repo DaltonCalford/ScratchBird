@@ -21,6 +21,13 @@ DatabaseLink::DatabaseLink() :
 {
 }
 
+DatabaseLink::DatabaseLink(ScratchBird::MemoryPool& pool) : 
+    schemaMode(SCHEMA_MODE_NONE), 
+    schemaDepth(0), 
+    isValid_(false)
+{
+}
+
 DatabaseLink::DatabaseLink(const ScratchBird::string& name, const ScratchBird::string& server, 
                           const ScratchBird::string& database, const ScratchBird::string& user, 
                           const ScratchBird::string& pass) :
@@ -190,6 +197,10 @@ SSHORT DatabaseLink::getSchemaPathDepth(const ScratchBird::string& path)
 // LinkManager implementation
 
 LinkManager::LinkManager() : linksLock()
+{
+}
+
+LinkManager::LinkManager(ScratchBird::MemoryPool& pool) : linksLock()
 {
 }
 

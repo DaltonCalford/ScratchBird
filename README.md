@@ -36,6 +36,12 @@ The name ScratchBird was chosen for two main reasons:
 - **Schema-aware database links**: 5 resolution modes for distributed database scenarios
 - **Administrative functions**: Complete management and validation system
 
+### 🔤 PascalCase Object Identifiers (COMPLETED)
+- **Database-level case sensitivity control**: SQL Server-style identifier behavior
+- **CREATE DATABASE syntax**: `PASCAL CASE IDENTIFIERS` clause for case-insensitive mode
+- **Runtime detection**: `CURRENT_PASCAL_CASE_MODE` system context variable
+- **Flexible identifier matching**: Choose between case-sensitive (default) or case-insensitive modes
+
 ### 🎯 SQL Dialect 4 Enhancements (COMPLETED)
 - **FROM-less SELECT statements**: `SELECT GEN_UUID();`
 - **Multi-row INSERT VALUES**: `INSERT INTO table VALUES (1,2,3),(4,5,6);`
@@ -82,7 +88,10 @@ make TARGET=Release -j$(nproc)
 ### Quick Usage Examples
 ```bash
 # Start interactive shell
-./gen/Release/bin/sb_isql
+./gen/Release/scratchbird/bin/sb_isql
+
+# Create database with PascalCase identifiers (case-insensitive)
+CREATE DATABASE "myapp.fdb" PASCAL CASE IDENTIFIERS;
 
 # Create hierarchical schema (SQL Dialect 4)
 CREATE SCHEMA finance;
@@ -97,6 +106,14 @@ CREATE TABLE finance.accounting.reports.monthly_data (
     tags INT4RANGE,
     search_data TSVECTOR
 );
+
+# PascalCase mode: these are all equivalent when enabled
+CREATE TABLE MyTable (ID INTEGER, ColumnName VARCHAR(50));
+INSERT INTO mytable (id, columnname) VALUES (1, 'test');
+SELECT ID, COLUMNNAME FROM MYTABLE;
+
+# Check PascalCase mode status
+SELECT CURRENT_PASCAL_CASE_MODE FROM RDB$DATABASE;
 
 # FROM-less SELECT statements
 SELECT GEN_UUID();
@@ -115,17 +132,19 @@ INSERT INTO mytable(id, name) VALUES (1,'Alice'), (2,'Bob'), (3,'Carol');
 - **Advanced Arrays**: Multi-dimensional arrays with slicing operations
 - **Full-Text Search**: TSVECTOR/TSQUERY with text processing capabilities
 - **Database Links**: Schema-aware distributed database connectivity
+- **PascalCase Identifiers**: SQL Server-style case-insensitive object identifier support
 
 ### 🔄 In Progress (v0.5)
-- **Compilation Testing**: Core new datatypes compiling successfully
-- **Integration Testing**: Validating datatype infrastructure integration
+- **Enhanced VARCHAR**: 128KB UTF-8 support implementation (core changes complete)
+- **Compilation Testing**: Core new datatypes and identifier system compiling successfully
+- **Integration Testing**: Validating datatype infrastructure and PascalCase integration
 - **String API Compatibility**: Resolving ScratchBird::string vs std::string issues
 
 ### 📋 Planned Features
 - **Unsigned Integer Types**: USMALLINT, UINTEGER, UBIGINT, UINT128
-- **Enhanced VARCHAR**: 128KB UTF-8 support with smart overflow architecture
 - **Network Address Types**: Complete INET, CIDR, MACADDR implementation
 - **Type Conversion System**: Complete cvt.cpp integration for all new types
+- **Performance Optimizations**: Enhanced indexing for case-insensitive identifiers
 
 ## Relationship to FirebirdSQL
 
@@ -155,8 +174,46 @@ The core architectural decisions, feature design, and project direction for Scra
 - [Advanced Datatype System](doc/README.advanced_datatypes.md) *(planned)*
 - [Hierarchical Schemas Guide](doc/README.hierarchical_schemas.md)
 - [SQL Dialect 4 Reference](doc/README.sql_dialect_4.md)
+- [PascalCase Identifiers Guide](doc/README.pascalcase_identifiers.md) *(planned)*
 - [Build Instructions](doc/README.build.posix.html)
 - [Migration Guide](MIGRATION_GUIDE.md)
+
+## PascalCase Object Identifiers Technical Details
+
+### Overview
+ScratchBird v0.5 introduces SQL Server-style case-insensitive object identifier support, controllable at the database level. This feature allows developers to choose between traditional case-sensitive Firebird behavior or case-insensitive SQL Server-like behavior.
+
+### Usage
+```sql
+-- Create database with case-insensitive identifiers
+CREATE DATABASE "application.fdb" PASCAL CASE IDENTIFIERS;
+
+-- Now these are all equivalent:
+CREATE TABLE MyTable (ColumnName VARCHAR(50), ID INTEGER);
+INSERT INTO mytable (columnname, id) VALUES ('test', 1);
+SELECT COLUMNNAME, id FROM MYTABLE;
+
+-- Runtime detection
+SELECT CURRENT_PASCAL_CASE_MODE FROM RDB$DATABASE;  -- Returns TRUE
+```
+
+### Implementation Architecture
+
+**Database Header Flag**
+- Stored as `hdr_pascal_case_identifiers = 0x80` in database header (ODS level)
+- Runtime flag: `DBB_pascal_case_identifiers = 0x200L` in Database class
+- Persistent across database sessions and restarts
+
+**Identifier Resolution Engine**
+- Modified `MetaName::compare()` method with conditional logic
+- Case-sensitive mode (default): Uses fast `memcmp()` comparison
+- Case-insensitive mode: Uses `strncasecmp()` for SQL Server behavior
+- Consistent across all database objects: tables, columns, procedures, functions
+
+**System Integration**
+- `CURRENT_PASCAL_CASE_MODE` context variable for runtime detection
+- Integrated with Dictionary-based identifier caching system
+- Minimal performance overhead with conditional branching
 
 ## Contributing
 

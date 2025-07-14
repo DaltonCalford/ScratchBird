@@ -593,6 +593,7 @@ inline constexpr USHORT hdr_no_reserve			= 0x8;		// 8	don't reserve space for ve
 inline constexpr USHORT hdr_SQL_dialect_3		= 0x10;		// 16	database SQL dialect 3
 inline constexpr USHORT hdr_read_only			= 0x20;		// 32	Database is ReadOnly. If not set, DB is RW
 inline constexpr USHORT hdr_encrypted			= 0x40;		// 64	Database is encrypted
+inline constexpr USHORT hdr_pascal_case_identifiers = 0x80;		// 128	Database uses PascalCase identifier mode
 
 // Values for backup mode
 inline constexpr UCHAR hdr_nbak_normal			= 0;			// Normal mode. Changes are simply written to main files
@@ -895,13 +896,13 @@ struct __attribute__((packed)) Descriptor
 	ISC_ULONG	dsc_offset;   // Fixed 32-bit for on-disk compatibility
 };
 
-static_assert(sizeof(struct Descriptor) == 14, "struct Descriptor size mismatch");
+static_assert(sizeof(struct Descriptor) == 16, "struct Descriptor size mismatch");
 static_assert(offsetof(struct Descriptor, dsc_dtype) == 0, "dsc_dtype offset mismatch");
 static_assert(offsetof(struct Descriptor, dsc_scale) == 1, "dsc_scale offset mismatch");
-static_assert(offsetof(struct Descriptor, dsc_length) == 2, "dsc_length offset mismatch");
-static_assert(offsetof(struct Descriptor, dsc_sub_type) == 6, "dsc_sub_type offset mismatch");
-static_assert(offsetof(struct Descriptor, dsc_flags) == 8, "dsc_flags offset mismatch");
-static_assert(offsetof(struct Descriptor, dsc_offset) == 10, "dsc_offset offset mismatch");
+static_assert(offsetof(struct Descriptor, dsc_length) == 4, "dsc_length offset mismatch");
+static_assert(offsetof(struct Descriptor, dsc_sub_type) == 8, "dsc_sub_type offset mismatch");
+static_assert(offsetof(struct Descriptor, dsc_flags) == 10, "dsc_flags offset mismatch");
+static_assert(offsetof(struct Descriptor, dsc_offset) == 12, "dsc_offset offset mismatch");
 
 // Array description, "internal side" used by the engine.
 // And stored on the disk, in the relation summary blob.
@@ -924,14 +925,14 @@ struct InternalArrayDesc
 	};
 	iad_repeat iad_rpt[1];
 
-	static_assert(sizeof(struct iad_repeat) == 24, "struct iad_repeat size mismatch");
+	static_assert(sizeof(struct iad_repeat) == 28, "struct iad_repeat size mismatch");
 	static_assert(offsetof(struct iad_repeat, iad_desc) == 0, "iad_desc offset mismatch");
-	static_assert(offsetof(struct iad_repeat, iad_length) == 12, "iad_length offset mismatch");
-	static_assert(offsetof(struct iad_repeat, iad_lower) == 16, "iad_lower offset mismatch");
-	static_assert(offsetof(struct iad_repeat, iad_upper) == 20, "iad_upper offset mismatch");
+	static_assert(offsetof(struct iad_repeat, iad_length) == 16, "iad_length offset mismatch");
+	static_assert(offsetof(struct iad_repeat, iad_lower) == 20, "iad_lower offset mismatch");
+	static_assert(offsetof(struct iad_repeat, iad_upper) == 24, "iad_upper offset mismatch");
 };
 
-static_assert(sizeof(struct InternalArrayDesc) == 40, "struct InternalArrayDesc size mismatch");
+static_assert(sizeof(struct InternalArrayDesc) == 44, "struct InternalArrayDesc size mismatch");
 static_assert(offsetof(struct InternalArrayDesc, iad_version) == 0, "iad_version offset mismatch");
 static_assert(offsetof(struct InternalArrayDesc, iad_dimensions) == 1, "iad_dimension offset mismatch");
 static_assert(offsetof(struct InternalArrayDesc, iad_struct_count) == 2, "iad_struct_count offset mismatch");
