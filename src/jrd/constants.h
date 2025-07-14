@@ -52,8 +52,8 @@
 
 // Column Limits (in bytes)
 
-inline constexpr ULONG MAX_COLUMN_SIZE = 131070;        // 128KB - 2 bytes (enhanced for UTF-8 support)
-inline constexpr ULONG MAX_VARY_COLUMN_SIZE = MAX_COLUMN_SIZE - sizeof(USHORT);
+inline constexpr ULONG MAX_COLUMN_SIZE = 16777216;     // 16MB maximum column size
+inline constexpr ULONG MAX_VARY_COLUMN_SIZE = MAX_COLUMN_SIZE - sizeof(ULONG);
 inline constexpr ULONG VARCHAR_INLINE_THRESHOLD = 28672; // 28KB threshold for inline vs overflow storage
 
 inline constexpr ULONG MAX_STR_SIZE = 65535;
@@ -209,7 +209,7 @@ inline constexpr int PRETTY_BUFFER_SIZE = 1024;
 inline constexpr int MAX_INDEX_SEGMENTS = 16;
 
 // Maximum index key length (must be in sync with MAX_PAGE_SIZE in ods.h)
-inline constexpr ULONG MAX_KEY = 8192; // Maximum page size possible divide by 4 (MAX_PAGE_SIZE / 4)
+inline constexpr ULONG MAX_KEY = 32768; // Maximum page size possible divide by 4 (MAX_PAGE_SIZE / 4)
 
 inline constexpr USHORT SQL_MATCH_1_CHAR	= '_';
 inline constexpr USHORT SQL_MATCH_ANY_CHARS	= '%';

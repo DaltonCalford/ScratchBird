@@ -81,6 +81,7 @@ enum EXPECT_DATETIME
 };
 
 class Int128;
+class UInt128;
 
 } // namespace ScratchBird
 
@@ -96,6 +97,9 @@ ScratchBird::Decimal64 CVT_get_dec64(const dsc*, ScratchBird::DecimalStatus, Err
 ScratchBird::Decimal128 CVT_get_dec128(const dsc*, ScratchBird::DecimalStatus, ErrorFunction);
 ScratchBird::Int128 CVT_get_int128(const dsc*, SSHORT, ScratchBird::DecimalStatus, ErrorFunction);
 ScratchBird::Int128 CVT_hex_to_int128(const char* str, USHORT len);
+ScratchBird::UInt128 CVT_get_uint128(const dsc*, SSHORT, ScratchBird::DecimalStatus, ErrorFunction);
+SLONG CVT_get_ulong(const dsc*, SSHORT, ScratchBird::DecimalStatus, ErrorFunction);
+FB_UINT64 CVT_get_uint64(const dsc*, SSHORT, ScratchBird::DecimalStatus, ErrorFunction);
 USHORT CVT_make_string(const dsc*, USHORT, const char**, vary*, USHORT, ScratchBird::DecimalStatus, ErrorFunction);
 void CVT_move_common(const dsc*, dsc*, ScratchBird::DecimalStatus, ScratchBird::Callbacks*, bool trustedSource = false);
 void CVT_move(const dsc*, dsc*, ScratchBird::DecimalStatus, ErrorFunction, bool trustedSource = false);

@@ -70,7 +70,41 @@
 #define dtype_ex_timestamp_tz	28
 #define dtype_uuid		29
 #define dtype_json		30
-#define DTYPE_TYPE_MAX	31
+
+/* ScratchBird unsigned integer extensions */
+#define dtype_ushort	31	/* USMALLINT - 16-bit unsigned integer */
+#define dtype_ulong		32	/* UINTEGER - 32-bit unsigned integer */
+#define dtype_uint64	33	/* UBIGINT - 64-bit unsigned integer */
+#define dtype_uint128	34	/* UINT128 - 128-bit unsigned integer */
+
+/* ScratchBird enhanced VARCHAR support */
+#define dtype_varying_large	35	/* Enhanced VARCHAR with 128KB support */
+
+/* ScratchBird network address types */
+#define dtype_inet		36	/* INET - IPv4/IPv6 addresses */
+#define dtype_cidr		37	/* CIDR - Network blocks */
+#define dtype_macaddr	38	/* MACADDR - MAC addresses */
+
+/* ScratchBird enhanced text types */
+#define dtype_citext	39	/* CITEXT - Case-insensitive text */
+
+/* ScratchBird range types */
+#define dtype_int4range		40	/* INT4RANGE - Integer ranges */
+#define dtype_int8range		41	/* INT8RANGE - Big integer ranges */
+#define dtype_numrange		42	/* NUMRANGE - Numeric ranges */
+#define dtype_tsrange		43	/* TSRANGE - Timestamp ranges */
+#define dtype_tstzrange		44	/* TSTZRANGE - Timestamp with timezone ranges */
+#define dtype_daterange		45	/* DATERANGE - Date ranges */
+
+/* ScratchBird advanced array types */
+#define dtype_array_slice	46	/* Array slice operations */
+#define dtype_array_md		47	/* Multi-dimensional arrays */
+
+/* ScratchBird full-text search types */
+#define dtype_tsvector		48	/* TSVECTOR - Text search vector */
+#define dtype_tsquery		49	/* TSQUERY - Text search query */
+
+#define DTYPE_TYPE_MAX		50
 
 #define ISC_TIME_SECONDS_PRECISION		10000
 #define ISC_TIME_SECONDS_PRECISION_SCALE	(-4)

@@ -36,7 +36,7 @@
 namespace ScratchBird {
 
 // Common English stop words
-static const std::set<string> ENGLISH_STOP_WORDS = {
+static const std::set<std::string> ENGLISH_STOP_WORDS = {
     "a", "an", "and", "are", "as", "at", "be", "by", "for", "from",
     "has", "he", "in", "is", "it", "its", "of", "on", "that", "the",
     "to", "was", "will", "with", "the", "this", "but", "they", "have",
@@ -138,7 +138,7 @@ void TSVector::toString(string& result) const {
         first = false;
         
         const Lexeme& lexeme = pair.second;
-        oss << "'" << lexeme.term << "'";
+        oss << "'" << lexeme.term.c_str() << "'";
         
         // Add positions
         if (!lexeme.positions.empty()) {
@@ -156,7 +156,7 @@ void TSVector::toString(string& result) const {
         }
     }
     
-    result = oss.str();
+    result = oss.str().c_str();
 }
 
 string TSVector::toString() const {
@@ -181,11 +181,14 @@ void TSVector::processText(const string& text) {
 std::vector<string> TSVector::tokenizeText(const string& text) const {
     std::vector<string> tokens;
     std::regex word_regex(R"(\b\w+\b)");
-    std::sregex_iterator iter(text.begin(), text.end(), word_regex);
+    
+    // Convert to std::string for regex operations
+    std::string std_text(text.c_str());
+    std::sregex_iterator iter(std_text.begin(), std_text.end(), word_regex);
     std::sregex_iterator end;
     
     while (iter != end) {
-        tokens.push_back(iter->str());
+        tokens.push_back(string(iter->str().c_str()));
         ++iter;
     }
     
@@ -229,7 +232,7 @@ string TSVector::stemWord(const string& word) const {
 bool TSVector::isStopWord(const string& word) const {
     if (language_ == TS_LANG_SIMPLE) return false;
     
-    return ENGLISH_STOP_WORDS.find(word) != ENGLISH_STOP_WORDS.end();
+    return ENGLISH_STOP_WORDS.find(std::string(word.c_str())) != ENGLISH_STOP_WORDS.end();
 }
 
 ULONG TSVector::makeIndexKey(vary* buf) const {
@@ -252,20 +255,20 @@ void TSVector::parseVector(const char* tsvector_literal) {
     }
     
     // Parse format: 'word1':1,2A 'word2':3,4B,5
-    string input(tsvector_literal);
+    std::string std_input(tsvector_literal);
     std::regex lexeme_regex(R"('([^']+)':([0-9,A-D]+))");
-    std::sregex_iterator iter(input.begin(), input.end(), lexeme_regex);
+    std::sregex_iterator iter(std_input.begin(), std_input.end(), lexeme_regex);
     std::sregex_iterator end;
     
     while (iter != end) {
-        string term = iter->str(1);
-        string positions_str = iter->str(2);
+        string term(iter->str(1).c_str());
+        string positions_str(iter->str(2).c_str());
         
         Lexeme lexeme(term);
         
         // Parse positions: 1,2A,3B
-        std::istringstream pos_stream(positions_str);
-        string pos_token;
+        std::istringstream pos_stream(positions_str.c_str());
+        std::string pos_token;
         
         while (std::getline(pos_stream, pos_token, ',')) {
             if (pos_token.empty()) continue;

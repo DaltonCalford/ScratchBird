@@ -72,7 +72,35 @@ static const USHORT _DSC_convert_to_text_length[DTYPE_TYPE_MAX] =
 	14 + TimeZoneUtil::MAX_LEN,	// dtype_sql_time_tz      HH:MM:SS.MMMM +NN:NN
 	26 + TimeZoneUtil::MAX_LEN,	// dtype_timestamp_tz     YYYY-MM-DD HH:MM:SS.MMMM +NN:NN
 	14 + TimeZoneUtil::MAX_LEN,	// dtype_ex_time_tz       HH:MM:SS.MMMM +NN:NN
-	26 + TimeZoneUtil::MAX_LEN	// dtype_ex_timestamp_tz  YYYY-MM-DD HH:MM:SS.MMMM +NN:NN
+	26 + TimeZoneUtil::MAX_LEN,	// dtype_ex_timestamp_tz  YYYY-MM-DD HH:MM:SS.MMMM +NN:NN
+	26,							// dtype_uuid
+	42,							// dtype_json
+	/* ScratchBird unsigned integer extensions */
+	6,							// dtype_ushort     65535
+	11,							// dtype_ulong      4294967295
+	20,							// dtype_uint64     18446744073709551615
+	39,							// dtype_uint128    340282366920938463463374607431768211455
+	/* ScratchBird enhanced VARCHAR support */
+	0,							// dtype_varying_large
+	/* ScratchBird network address types */
+	45,							// dtype_inet       ::ffff:255.255.255.255/128
+	45,							// dtype_cidr       ::ffff:255.255.255.255/128
+	17,							// dtype_macaddr    ff:ff:ff:ff:ff:ff
+	/* ScratchBird enhanced text types */
+	0,							// dtype_citext
+	/* ScratchBird range types */
+	50,							// dtype_int4range  [min_int,max_int)
+	50,							// dtype_int8range  [min_bigint,max_bigint)
+	50,							// dtype_numrange   [min_numeric,max_numeric)
+	60,							// dtype_tsrange    [min_timestamp,max_timestamp)
+	70,							// dtype_tstzrange  [min_timestamp_tz,max_timestamp_tz)
+	30,							// dtype_daterange  [min_date,max_date)
+	/* ScratchBird advanced array types */
+	0,							// dtype_array_slice
+	0,							// dtype_array_md
+	/* ScratchBird full-text search types */
+	200,						// dtype_tsvector
+	100							// dtype_tsquery
 };
 
 // Unimplemented names are in lowercase & <brackets>
@@ -105,7 +133,37 @@ static const TEXT* const DSC_dtype_names[] =
 	"DECFLOAT(34)",
 	"INT128",
 	"TIME WITH TIME ZONE",
-	"TIMESTAMP WITH TIME ZONE"
+	"TIMESTAMP WITH TIME ZONE",
+	"TIME WITH TIME ZONE EXTENDED",
+	"TIMESTAMP WITH TIME ZONE EXTENDED",
+	"UUID",
+	"JSON",
+	/* ScratchBird unsigned integer extensions */
+	"USMALLINT",
+	"UINTEGER",
+	"UBIGINT",
+	"UINT128",
+	/* ScratchBird enhanced VARCHAR support */
+	"VARCHAR LARGE",
+	/* ScratchBird network address types */
+	"INET",
+	"CIDR",
+	"MACADDR",
+	/* ScratchBird enhanced text types */
+	"CITEXT",
+	/* ScratchBird range types */
+	"INT4RANGE",
+	"INT8RANGE",
+	"NUMRANGE",
+	"TSRANGE",
+	"TSTZRANGE",
+	"DATERANGE",
+	/* ScratchBird advanced array types */
+	"ARRAY SLICE",
+	"ARRAY MD",
+	/* ScratchBird full-text search types */
+	"TSVECTOR",
+	"TSQUERY"
 };
 
 

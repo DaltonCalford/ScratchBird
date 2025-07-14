@@ -76,7 +76,7 @@ public:
 		return *this;
 	}
 
-	UInt128 set(DecimalStatus decSt, Decimal128 value);
+	// UInt128 set(DecimalStatus decSt, Decimal128 value);
 
 	UInt128 set(UInt128 value)
 	{
@@ -317,13 +317,13 @@ public:
 		return result;
 	}
 
+	UInt128 set(const char* value);
+
 protected:
 	absl::uint128 v;
 
 	static void overflow();
 	static void zerodivide();
-
-	UInt128 set(const char* value);
 };
 
 class CUInt128 : public UInt128
@@ -368,13 +368,16 @@ struct DecimalStatus;
 class UInt128
 {
 public:
+	UInt128() {}
+	UInt128(unsigned int value) { v = ttmath::UInt(value); }
+	UInt128(const UInt128& other) { v = other.v; }
 #if SIZEOF_LONG < 8
 	UInt128 set(unsigned int value, int scale);
 #endif
 	UInt128 set(ULONG value, int scale);
 	UInt128 set(FB_UINT64 value, int scale);
 	UInt128 set(double value);
-	UInt128 set(DecimalStatus decSt, Decimal128 value);
+	// UInt128 set(DecimalStatus decSt, Decimal128 value);
 	UInt128 set(UInt128 value)
 	{
 		v = value.v;
@@ -408,65 +411,78 @@ public:
 	UInt128 operator/ (unsigned value) const
 	{
 		UInt128 rc (*this);
-		rc.v.DivInt (value);
+		rc.v = rc.v / ttmath::UInt(value);
 		return rc;
 	}
 
 	UInt128 operator<< (int value) const
 	{
 		UInt128 rc (*this);
-		rc.v <<= value;
+		// Simple left shift implementation
+		for (int i = 0; i < value; ++i)
+			rc.v = rc.v + rc.v;  // Multiply by 2
 		return rc;
 	}
 
 	UInt128 operator>> (int value) const
 	{
 		UInt128 rc (*this);
-		rc.v >>= value;
+		// Simple right shift implementation
+		for (int i = 0; i < value; ++i)
+			rc.v = rc.v / ttmath::UInt(2);
 		return rc;
 	}
 
 	UInt128 operator&= (UInt128 value)
 	{
-		v &= value.v;
+		v.table[0] &= value.v.table[0];
+		v.table[1] &= value.v.table[1];
 		return *this;
 	}
 
 	UInt128 operator|= (UInt128 value)
 	{
-		v |= value.v;
+		v.table[0] |= value.v.table[0];
+		v.table[1] |= value.v.table[1];
 		return *this;
 	}
 
 	UInt128 operator^= (UInt128 value)
 	{
-		v ^= value.v;
+		v.table[0] ^= value.v.table[0];
+		v.table[1] ^= value.v.table[1];
 		return *this;
 	}
 
 	UInt128 operator~ () const
 	{
 		UInt128 rc (*this);
-		rc.v.BitNot ();
+		rc.v.table[0] = ~rc.v.table[0];
+		rc.v.table[1] = ~rc.v.table[1];
 		return rc;
 	}
 
 	UInt128 operator+= (unsigned value)
 	{
-		v.AddInt (value);
+		v = v + ttmath::UInt(value);
 		return *this;
 	}
 
 	UInt128 operator-= (unsigned value)
 	{
-		if (v.SubInt(value))  // TTMath returns true on underflow for unsigned
+		ttmath::UInt val(value);
+		if (v < val)  // Check for underflow
 			overflow();
+		v = v - val;
 		return *this;
 	}
 
 	UInt128 operator*= (unsigned value)
 	{
-		if (v.MulInt(value))  // TTMath returns true on overflow
+		ttmath::UInt old_v = v;
+		v = v * ttmath::UInt(value);
+		// Simple overflow check
+		if (value != 0 && v < old_v)
 			overflow();
 		return *this;
 	}
@@ -478,7 +494,7 @@ public:
 
 	bool operator>= (UInt128 value) const
 	{
-		return v >= value.v;
+		return v > value.v || v == value.v;
 	}
 
 	bool operator== (UInt128 value) const
@@ -491,15 +507,38 @@ public:
 		return v != value.v;
 	}
 
+	UInt128 operator/ (UInt128 value) const
+	{
+		UInt128 rc(*this);
+		rc.v = rc.v / value.v;
+		return rc;
+	}
+
+	UInt128 operator* (UInt128 value) const
+	{
+		UInt128 rc(*this);
+		rc.v = rc.v * value.v;
+		return rc;
+	}
+
+	UInt128 operator- (UInt128 value) const
+	{
+		UInt128 rc(*this);
+		rc.v = rc.v - value.v;
+		return rc;
+	}
+
 	int sign() const
 	{
-		return v.IsZero() ? 0 : 1;  // Unsigned values are never negative
+		return (v.table[0] == 0 && v.table[1] == 0) ? 0 : 1;  // Unsigned values are never negative
 	}
 
 	UInt128 add(UInt128 op2) const
 	{
 		UInt128 rc(*this);
-		if (rc.v.Add(op2.v))
+		ttmath::UInt old_v = rc.v;
+		rc.v = rc.v + op2.v;
+		if (rc.v < old_v)  // Overflow check
 			overflow();
 		return rc;
 	}
@@ -507,8 +546,9 @@ public:
 	UInt128 sub(UInt128 op2) const
 	{
 		UInt128 rc(*this);
-		if (rc.v.Sub(op2.v))  // TTMath returns true on underflow
+		if (rc.v < op2.v)  // Underflow check
 			overflow();
+		rc.v = rc.v - op2.v;
 		return rc;
 	}
 
@@ -517,18 +557,23 @@ public:
 
 	UInt128 mod(UInt128 op2) const
 	{
-		UInt128 tmp(*this);
-		UInt128 rc;
-		if (tmp.v.Div(op2.v, rc.v))
+		if (op2.v.table[0] == 0 && op2.v.table[1] == 0)
 			zerodivide();
+		UInt128 dividend(*this);
+		UInt128 quotient = dividend / op2;
+		UInt128 rc = dividend - (quotient * op2);
 		return rc;
 	}
 
 	void divMod(unsigned int divisor, unsigned int* remainder)
 	{
-		ttmath::uint rem;
-		v.DivInt(divisor, &rem);
-		*remainder = static_cast<unsigned int>(rem);
+		if (divisor == 0)
+			zerodivide();
+		ttmath::UInt div_val(divisor);
+		UInt128 quotient = *this / UInt128(divisor);
+		UInt128 rem = *this - (quotient * UInt128(divisor));
+		v = quotient.v;
+		*remainder = static_cast<unsigned int>(rem.v.table[0]);
 	}
 
 	void getTable32(unsigned* dwords) const;		// internal data in per-32bit form
@@ -554,17 +599,18 @@ public:
 	static UInt128 MAX_VALUE()
 	{
 		UInt128 result;
-		result.v.SetMax();  // TTMath method to set maximum value
+		result.v.table[0] = UINT64_MAX;
+		result.v.table[1] = UINT64_MAX;
 		return result;
 	}
 
+	UInt128 set(const char* value);
+
 protected:
-	ttmath::UInt<TTMATH_BITS(128)> v;
+	ttmath::UInt v;
 
 	static void overflow();
 	static void zerodivide();
-
-	UInt128 set(const char* value);
 };
 
 class CUInt128 : public UInt128
@@ -587,7 +633,8 @@ class U128limit : public UInt128
 public:
 	U128limit()
 	{
-		v.SetMax();  // TTMath method to set maximum unsigned value
+		v.table[0] = UINT64_MAX;
+		v.table[1] = UINT64_MAX;
 	}
 };
 

@@ -210,7 +210,7 @@ ULONG LargeVarcharUtil::makeIndexKey(const LARGE_VARY* varchar, vary* keyBuffer,
     }
     
     // For indexing, we truncate to the maximum key size
-    ULONG copyLength = std::min(varchar->vary_length, maxKeySize - sizeof(USHORT));
+    ULONG copyLength = std::min(static_cast<ULONG>(varchar->vary_length), static_cast<ULONG>(maxKeySize - sizeof(USHORT)));
     keyBuffer->vary_length = static_cast<USHORT>(copyLength);
     
     if (copyLength > 0) {

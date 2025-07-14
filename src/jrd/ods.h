@@ -133,7 +133,8 @@ inline constexpr USHORT ODS_CURRENT13	= 1;
 // Minor versions for ODS 14
 
 inline constexpr USHORT ODS_CURRENT14_0	= 0;	// ScratchBird 6.0 features
-inline constexpr USHORT ODS_CURRENT14	= 0;
+inline constexpr USHORT ODS_CURRENT14_1	= 1;	// ScratchBird 6.0 large row support (ULONG field lengths)
+inline constexpr USHORT ODS_CURRENT14	= 1;
 
 // useful ODS macros. These are currently used to flag the version of the
 // system triggers and system indices in ini.e
@@ -156,6 +157,7 @@ inline constexpr USHORT ODS_12_0	= ENCODE_ODS(ODS_VERSION12, 0);
 inline constexpr USHORT ODS_13_0	= ENCODE_ODS(ODS_VERSION13, 0);
 inline constexpr USHORT ODS_13_1	= ENCODE_ODS(ODS_VERSION13, 1);
 inline constexpr USHORT ODS_14_0	= ENCODE_ODS(ODS_VERSION14, 0);
+inline constexpr USHORT ODS_14_1	= ENCODE_ODS(ODS_VERSION14, 1);
 
 inline constexpr USHORT ODS_FIREBIRD_FLAG = 0x8000;
 
@@ -218,7 +220,7 @@ inline constexpr USHORT PAGE_SIZE_BASE		= 1024;		// Minimal page size ever suppo
 														// common divisor for valid page sizes
 
 inline constexpr USHORT MIN_PAGE_SIZE		= 8192;
-inline constexpr USHORT MAX_PAGE_SIZE		= 32768;
+inline constexpr ULONG MAX_PAGE_SIZE		= 131072;  // 128KB maximum page size
 
 inline constexpr USHORT DEFAULT_PAGE_SIZE	= 8192;
 
@@ -883,23 +885,23 @@ inline constexpr USHORT rhd_not_packed		= 2048;		// record (or delta) is stored 
 
 // This (not exact) copy of class DSC is used to store descriptors on disk.
 // Hopefully its binary layout is common for 32/64 bit CPUs.
-struct Descriptor
+struct __attribute__((packed)) Descriptor
 {
-	UCHAR	dsc_dtype;
-	SCHAR	dsc_scale;
-	USHORT	dsc_length;
-	SSHORT	dsc_sub_type;
-	USHORT	dsc_flags;
-	ULONG	dsc_offset;
+	UCHAR		dsc_dtype;
+	SCHAR		dsc_scale;
+	ISC_ULONG	dsc_length;   // Fixed 32-bit for on-disk compatibility
+	SSHORT		dsc_sub_type;
+	USHORT		dsc_flags;
+	ISC_ULONG	dsc_offset;   // Fixed 32-bit for on-disk compatibility
 };
 
-static_assert(sizeof(struct Descriptor) == 12, "struct Descriptor size mismatch");
+static_assert(sizeof(struct Descriptor) == 14, "struct Descriptor size mismatch");
 static_assert(offsetof(struct Descriptor, dsc_dtype) == 0, "dsc_dtype offset mismatch");
 static_assert(offsetof(struct Descriptor, dsc_scale) == 1, "dsc_scale offset mismatch");
 static_assert(offsetof(struct Descriptor, dsc_length) == 2, "dsc_length offset mismatch");
-static_assert(offsetof(struct Descriptor, dsc_sub_type) == 4, "dsc_sub_type offset mismatch");
-static_assert(offsetof(struct Descriptor, dsc_flags) == 6, "dsc_flags offset mismatch");
-static_assert(offsetof(struct Descriptor, dsc_offset) == 8, "dsc_offset offset mismatch");
+static_assert(offsetof(struct Descriptor, dsc_sub_type) == 6, "dsc_sub_type offset mismatch");
+static_assert(offsetof(struct Descriptor, dsc_flags) == 8, "dsc_flags offset mismatch");
+static_assert(offsetof(struct Descriptor, dsc_offset) == 10, "dsc_offset offset mismatch");
 
 // Array description, "internal side" used by the engine.
 // And stored on the disk, in the relation summary blob.

@@ -26,10 +26,14 @@
  *
  */
 
+#include "firebird.h"
 #include "InetAddr.h"
 #include <arpa/inet.h>
 #include <cstring>
 #include <cstdio>
+#include <stdexcept>
+#include <algorithm>
+#include <sstream>
 
 namespace ScratchBird {
 
@@ -45,6 +49,35 @@ InetAddr::InetAddr(const char* addr_string)
 {
     memset(addr_bytes, 0, sizeof(addr_bytes));
     parseAddress(addr_string);
+}
+
+InetAddr::InetAddr(const sockaddr* addr)
+    : family(static_cast<InetFamily>(0))
+{
+    memset(addr_bytes, 0, sizeof(addr_bytes));
+    if (addr->sa_family == AF_INET) {
+        const sockaddr_in* ipv4 = reinterpret_cast<const sockaddr_in*>(addr);
+        family = INET_IPV4;
+        memcpy(addr_bytes, &ipv4->sin_addr, 4);
+    } else if (addr->sa_family == AF_INET6) {
+        const sockaddr_in6* ipv6 = reinterpret_cast<const sockaddr_in6*>(addr);
+        family = INET_IPV6;
+        memcpy(addr_bytes, &ipv6->sin6_addr, 16);
+    }
+}
+
+InetAddr::InetAddr(const sockaddr_in* addr)
+    : family(INET_IPV4)
+{
+    memset(addr_bytes, 0, sizeof(addr_bytes));
+    memcpy(addr_bytes, &addr->sin_addr, 4);
+}
+
+InetAddr::InetAddr(const sockaddr_in6* addr)
+    : family(INET_IPV6)
+{
+    memset(addr_bytes, 0, sizeof(addr_bytes));
+    memcpy(addr_bytes, &addr->sin6_addr, 16);
 }
 
 void InetAddr::parseAddress(const char* addr_string)
@@ -106,6 +139,21 @@ string InetAddr::toString() const
     return result;
 }
 
+InetAddr& InetAddr::operator=(const char* addr_string)
+{
+    parseAddress(addr_string);
+    return *this;
+}
+
+InetAddr& InetAddr::operator=(const InetAddr& other)
+{
+    if (this != &other) {
+        family = other.family;
+        memcpy(addr_bytes, other.addr_bytes, sizeof(addr_bytes));
+    }
+    return *this;
+}
+
 bool InetAddr::operator==(const InetAddr& other) const
 {
     if (family != other.family)
@@ -162,7 +210,7 @@ bool InetAddr::isLoopback() const
 
 ULONG InetAddr::makeIndexKey(vary* buf) const
 {
-    UCHAR* p = buf->vary_string;
+    UCHAR* p = reinterpret_cast<UCHAR*>(buf->vary_string);
     
     // Store family first
     *p++ = static_cast<UCHAR>(family);
@@ -180,6 +228,34 @@ ULONG InetAddr::makeIndexKey(vary* buf) const
     
     buf->vary_length = 17;  // 1 + 16 bytes
     return 17;
+}
+
+bool InetAddr::isMulticast() const
+{
+    if (family == INET_IPV4) {
+        // 224.0.0.0/4 (224.0.0.0 to 239.255.255.255)
+        return (addr_bytes[0] >= 224 && addr_bytes[0] <= 239);
+    } else if (family == INET_IPV6) {
+        // ff00::/8
+        return addr_bytes[0] == 0xff;
+    }
+    return false;
+}
+
+bool InetAddr::isValidAddress(const char* addr_string)
+{
+    if (!addr_string) return false;
+    
+    struct in_addr ipv4_addr;
+    struct in6_addr ipv6_addr;
+    
+    return (inet_pton(AF_INET, addr_string, &ipv4_addr) == 1) ||
+           (inet_pton(AF_INET6, addr_string, &ipv6_addr) == 1);
+}
+
+InetAddr InetAddr::parse(const char* addr_string)
+{
+    return InetAddr(addr_string);
 }
 
 void InetAddr::invalid_address()
@@ -291,7 +367,141 @@ void CidrBlock::toString(string& result) const
 
     address.toString(result);
     result += "/";
-    result += std::to_string(prefix_length);
+    std::ostringstream oss;
+    oss << prefix_length;
+    result += oss.str().c_str();
+}
+
+string CidrBlock::toString() const
+{
+    string result;
+    toString(result);
+    return result;
+}
+
+CidrBlock& CidrBlock::operator=(const char* cidr_string)
+{
+    parseCidr(cidr_string);
+    return *this;
+}
+
+CidrBlock& CidrBlock::operator=(const CidrBlock& other)
+{
+    if (this != &other) {
+        address = other.address;
+        prefix_length = other.prefix_length;
+    }
+    return *this;
+}
+
+bool CidrBlock::operator==(const CidrBlock& other) const
+{
+    return address == other.address && prefix_length == other.prefix_length;
+}
+
+bool CidrBlock::operator<(const CidrBlock& other) const
+{
+    if (address != other.address)
+        return address < other.address;
+    return prefix_length < other.prefix_length;
+}
+
+bool CidrBlock::contains(const CidrBlock& other) const
+{
+    // This CIDR contains other CIDR if other's network is within this network
+    // and other's prefix is longer (more specific)
+    return contains(other.address) && prefix_length <= other.prefix_length;
+}
+
+bool CidrBlock::overlaps(const CidrBlock& other) const
+{
+    return contains(other) || other.contains(*this) ||
+           contains(other.address) || other.contains(address);
+}
+
+InetAddr CidrBlock::getNetworkAddress() const
+{
+    return address;  // Already masked in constructor
+}
+
+InetAddr CidrBlock::getBroadcastAddress() const
+{
+    if (!isValid() || address.getFamily() != INET_IPV4)
+        return InetAddr();  // Only IPv4 has broadcast
+    
+    InetAddr broadcast = address;
+    UCHAR* bytes = const_cast<UCHAR*>(broadcast.getBytes());
+    
+    int host_bits = 32 - prefix_length;
+    for (int i = 3; i >= 0 && host_bits > 0; i--) {
+        int bits_in_byte = std::min(8, host_bits);
+        UCHAR mask = (1 << bits_in_byte) - 1;
+        bytes[i] |= mask;
+        host_bits -= bits_in_byte;
+    }
+    
+    return broadcast;
+}
+
+CidrBlock CidrBlock::getSupernet(int new_prefix_length) const
+{
+    if (!isValid() || new_prefix_length >= prefix_length)
+        return *this;
+    
+    return CidrBlock(address, new_prefix_length);
+}
+
+ULONG CidrBlock::makeIndexKey(vary* buf) const
+{
+    UCHAR* p = reinterpret_cast<UCHAR*>(buf->vary_string);
+    
+    // Store family first
+    *p++ = static_cast<UCHAR>(address.getFamily());
+    
+    // Store address bytes (pad IPv4 to 16 bytes)
+    if (address.getFamily() == INET_IPV4) {
+        memcpy(p, address.getBytes(), 4);
+        memset(p + 4, 0, 12);  // Pad with zeros
+    } else {
+        memcpy(p, address.getBytes(), 16);
+    }
+    p += 16;
+    
+    // Store prefix length
+    *p = static_cast<UCHAR>(prefix_length);
+    
+    buf->vary_length = 18;  // 1 + 16 + 1 bytes
+    return 18;
+}
+
+bool CidrBlock::isValidCidr(const char* cidr_string)
+{
+    if (!cidr_string) return false;
+    
+    string cidr_str(cidr_string);
+    size_t slash_pos = cidr_str.find('/');
+    
+    if (slash_pos == string::npos) return false;
+    
+    string addr_part = cidr_str.substr(0, slash_pos);
+    string prefix_part = cidr_str.substr(slash_pos + 1);
+    
+    if (!InetAddr::isValidAddress(addr_part.c_str())) return false;
+    
+    char* endptr;
+    int prefix_len = strtol(prefix_part.c_str(), &endptr, 10);
+    
+    if (*endptr != '\0' || prefix_len < 0) return false;
+    
+    InetAddr test_addr(addr_part.c_str());
+    int max_prefix = test_addr.isIPv4() ? 32 : 128;
+    
+    return prefix_len <= max_prefix;
+}
+
+CidrBlock CidrBlock::parse(const char* cidr_string)
+{
+    return CidrBlock(cidr_string);
 }
 
 void CidrBlock::invalid_cidr()
@@ -309,6 +519,15 @@ MacAddr::MacAddr(const char* mac_string)
 {
     memset(mac_bytes, 0, sizeof(mac_bytes));
     parseMac(mac_string);
+}
+
+MacAddr::MacAddr(const UCHAR* mac_bytes_in)
+{
+    if (mac_bytes_in) {
+        memcpy(mac_bytes, mac_bytes_in, 6);
+    } else {
+        memset(mac_bytes, 0, sizeof(mac_bytes));
+    }
 }
 
 void MacAddr::parseMac(const char* mac_string)
@@ -373,9 +592,57 @@ bool MacAddr::isBroadcast() const
 
 ULONG MacAddr::makeIndexKey(vary* buf) const
 {
-    memcpy(buf->vary_string, mac_bytes, 6);
+    memcpy(reinterpret_cast<UCHAR*>(buf->vary_string), mac_bytes, 6);
     buf->vary_length = 6;
     return 6;
+}
+
+MacAddr& MacAddr::operator=(const char* mac_string)
+{
+    parseMac(mac_string);
+    return *this;
+}
+
+MacAddr& MacAddr::operator=(const MacAddr& other)
+{
+    if (this != &other) {
+        memcpy(mac_bytes, other.mac_bytes, 6);
+    }
+    return *this;
+}
+
+string MacAddr::toString() const
+{
+    string result;
+    toString(result);
+    return result;
+}
+
+bool MacAddr::isValid() const
+{
+    // Simple validation - check if not all zeros
+    for (int i = 0; i < 6; i++) {
+        if (mac_bytes[i] != 0)
+            return true;
+    }
+    return false;
+}
+
+bool MacAddr::isValidMac(const char* mac_string)
+{
+    if (!mac_string) return false;
+    
+    try {
+        MacAddr test(mac_string);
+        return test.isValid();
+    } catch (...) {
+        return false;
+    }
+}
+
+MacAddr MacAddr::parse(const char* mac_string)
+{
+    return MacAddr(mac_string);
 }
 
 void MacAddr::invalid_mac()
