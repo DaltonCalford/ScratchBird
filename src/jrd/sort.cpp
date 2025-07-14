@@ -715,6 +715,9 @@ void Sort::diddleKey(UCHAR* record, bool direction, bool duplicateHandling)
 		case SKD_ushort:
 		case SKD_bytes:
 		case SKD_sql_time:
+		case SKD_inet:
+		case SKD_cidr:
+		case SKD_macaddr:
 			break;
 
 			// Stash embedded control info for non-fixed data types in the sort
@@ -931,6 +934,12 @@ void Sort::diddleKey(UCHAR* record, bool direction, bool duplicateHandling)
 
 		case SKD_ulong:
 		case SKD_ushort:
+			break;
+
+		case SKD_inet:
+		case SKD_cidr:
+		case SKD_macaddr:
+			// Network types: handle as binary data
 			break;
 
 		case SKD_text:

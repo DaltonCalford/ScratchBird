@@ -1307,6 +1307,7 @@ public:
 		QualifiedName fieldSource;
 		QualifiedName identitySequence;
 		std::optional<IdentityType> identityType;
+		NestConst<ValueSourceClause> uuidGenerator;	// UUID generator function call
 		std::optional<USHORT> collationId;
 		ScratchBird::TriState notNullFlag;	// true = NOT NULL / false = NULL
 		std::optional<USHORT> position;
@@ -1487,6 +1488,7 @@ public:
 		std::optional<IdentityType> type;
 		std::optional<SINT64> startValue;
 		std::optional<SLONG> increment;
+		NestConst<ValueSourceClause> uuidGenerator;	// UUID generator function call
 		bool restart;	// used in ALTER
 	};
 

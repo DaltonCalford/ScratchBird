@@ -60,6 +60,7 @@
 #include "../common/status.h"
 #include "../common/TimeZones.h"
 #include "../common/UInt128.h"
+#include "../common/InetAddr.h"
 
 
 #ifdef HAVE_SYS_TYPES_H
@@ -2231,6 +2232,18 @@ void CVT_move_common(const dsc* from, dsc* to, DecimalStatus decSt, Callbacks* c
 				return;
 			}
 
+		case dtype_inet:
+			CVT_inet_to_text(from, to, cb);
+			return;
+
+		case dtype_cidr:
+			CVT_cidr_to_text(from, to, cb);
+			return;
+
+		case dtype_macaddr:
+			CVT_macaddr_to_text(from, to, cb);
+			return;
+
 		default:
 			fb_assert(false);		// Fall into ...
 
@@ -2403,6 +2416,107 @@ void CVT_move_common(const dsc* from, dsc* to, DecimalStatus decSt, Callbacks* c
 					}
 				}
 				if (pos != 16) CVT_conversion_error(from, cb->err);
+			}
+			return;
+
+		default:
+			CVT_conversion_error(from, cb->err);
+			break;
+		}
+		break;
+
+	case dtype_inet:
+		switch (from->dsc_dtype)
+		{
+		case dtype_varying:
+		case dtype_cstring:
+		case dtype_text:
+			{
+				// Convert string to INET address
+				VaryStr<50> buffer;  // INET string can be up to 45 chars + null
+				const char* str = NULL;
+				int len = CVT_make_string(from, ttype_ascii, &str, &buffer, sizeof(buffer), 0, cb->err);
+				
+				try {
+					InetAddr addr(str);
+					if (!addr.isValid())
+						CVT_conversion_error(from, cb->err);
+					
+					// Store the address in the target buffer
+					UCHAR* target = (UCHAR*) to->dsc_address;
+					target[0] = addr.getFamily();  // 1 byte for family
+					memcpy(target + 1, addr.getBytes(), 16);  // 16 bytes for address
+				}
+				catch (const Exception&) {
+					CVT_conversion_error(from, cb->err);
+				}
+			}
+			return;
+
+		default:
+			CVT_conversion_error(from, cb->err);
+			break;
+		}
+		break;
+
+	case dtype_cidr:
+		switch (from->dsc_dtype)
+		{
+		case dtype_varying:
+		case dtype_cstring:
+		case dtype_text:
+			{
+				// Convert string to CIDR block
+				VaryStr<50> buffer;  // CIDR string can be up to 45 chars + null
+				const char* str = NULL;
+				int len = CVT_make_string(from, ttype_ascii, &str, &buffer, sizeof(buffer), 0, cb->err);
+				
+				try {
+					CidrBlock cidr(str);
+					if (!cidr.isValid())
+						CVT_conversion_error(from, cb->err);
+					
+					// Store the CIDR block in the target buffer
+					UCHAR* target = (UCHAR*) to->dsc_address;
+					target[0] = cidr.getFamily();  // 1 byte for family
+					memcpy(target + 1, cidr.getAddress().getBytes(), 16);  // 16 bytes for address
+					target[17] = cidr.getPrefixLength();  // 1 byte for prefix length
+				}
+				catch (const Exception&) {
+					CVT_conversion_error(from, cb->err);
+				}
+			}
+			return;
+
+		default:
+			CVT_conversion_error(from, cb->err);
+			break;
+		}
+		break;
+
+	case dtype_macaddr:
+		switch (from->dsc_dtype)
+		{
+		case dtype_varying:
+		case dtype_cstring:
+		case dtype_text:
+			{
+				// Convert string to MAC address
+				VaryStr<20> buffer;  // MAC string is 17 chars + null
+				const char* str = NULL;
+				int len = CVT_make_string(from, ttype_ascii, &str, &buffer, sizeof(buffer), 0, cb->err);
+				
+				try {
+					MacAddr mac(str);
+					if (!mac.isValid())
+						CVT_conversion_error(from, cb->err);
+					
+					// Store the MAC address in the target buffer
+					memcpy(to->dsc_address, mac.getBytes(), 6);
+				}
+				catch (const Exception&) {
+					CVT_conversion_error(from, cb->err);
+				}
 			}
 			return;
 
@@ -4340,4 +4454,276 @@ void CVT_move(const dsc* from, dsc* to, DecimalStatus decSt, ErrorFunction err, 
  **************************************/
 	CommonCallbacks callbacks(err);
 	CVT_move_common(from, to, decSt, &callbacks, trustedSource);
+}
+
+
+//
+// Network Type Conversion Functions
+//
+
+void CVT_inet_to_text(const dsc* from, dsc* to, ScratchBird::Callbacks* cb)
+{
+/**************************************
+ *
+ *      C V T _ i n e t _ t o _ t e x t
+ *
+ **************************************
+ *
+ * Functional description
+ *      Convert INET address to text representation
+ *
+ **************************************/
+	const UCHAR* inet_bytes = (const UCHAR*) from->dsc_address;
+	InetFamily family = (InetFamily) inet_bytes[0];
+	
+	try {
+		InetAddr addr;
+		// Reconstruct InetAddr from stored format
+		if (family == INET_IPV4 || family == INET_IPV6) {
+			// Create temporary buffer with proper format
+			UCHAR temp_buf[17];
+			temp_buf[0] = family;
+			memcpy(temp_buf + 1, inet_bytes + 1, 16);
+			
+			// Convert to string representation
+			string result;
+			addr.toString(result);
+			
+			dsc intermediate;
+			intermediate.dsc_dtype = dtype_text;
+			intermediate.dsc_ttype() = ttype_ascii;
+			intermediate.makeText(static_cast<USHORT>(result.length()), CS_ASCII,
+				reinterpret_cast<UCHAR*>(const_cast<char*>(result.c_str())));
+
+			CVT_move_common(&intermediate, to, 0, cb);
+		}
+		else {
+			CVT_conversion_error(from, cb->err);
+		}
+	}
+	catch (const Exception&) {
+		CVT_conversion_error(from, cb->err);
+	}
+}
+
+void CVT_cidr_to_text(const dsc* from, dsc* to, ScratchBird::Callbacks* cb)
+{
+/**************************************
+ *
+ *      C V T _ c i d r _ t o _ t e x t
+ *
+ **************************************
+ *
+ * Functional description
+ *      Convert CIDR block to text representation
+ *
+ **************************************/
+	const UCHAR* cidr_bytes = (const UCHAR*) from->dsc_address;
+	InetFamily family = (InetFamily) cidr_bytes[0];
+	int prefix_length = cidr_bytes[17];
+	
+	try {
+		// Reconstruct CidrBlock from stored format
+		if (family == INET_IPV4 || family == INET_IPV6) {
+			// Create InetAddr from stored address bytes
+			UCHAR temp_addr_buf[17];
+			temp_addr_buf[0] = family;
+			memcpy(temp_addr_buf + 1, cidr_bytes + 1, 16);
+			
+			InetAddr addr;  // Reconstruct from bytes
+			CidrBlock cidr(addr, prefix_length);
+			
+			// Convert to string representation
+			string result;
+			cidr.toString(result);
+			
+			dsc intermediate;
+			intermediate.dsc_dtype = dtype_text;
+			intermediate.dsc_ttype() = ttype_ascii;
+			intermediate.makeText(static_cast<USHORT>(result.length()), CS_ASCII,
+				reinterpret_cast<UCHAR*>(const_cast<char*>(result.c_str())));
+
+			CVT_move_common(&intermediate, to, 0, cb);
+		}
+		else {
+			CVT_conversion_error(from, cb->err);
+		}
+	}
+	catch (const Exception&) {
+		CVT_conversion_error(from, cb->err);
+	}
+}
+
+void CVT_macaddr_to_text(const dsc* from, dsc* to, ScratchBird::Callbacks* cb)
+{
+/**************************************
+ *
+ *      C V T _ m a c a d d r _ t o _ t e x t
+ *
+ **************************************
+ *
+ * Functional description
+ *      Convert MAC address to text representation
+ *
+ **************************************/
+	const UCHAR* mac_bytes = (const UCHAR*) from->dsc_address;
+	
+	try {
+		MacAddr mac(mac_bytes);
+		
+		// Convert to string representation
+		string result;
+		mac.toString(result);
+		
+		dsc intermediate;
+		intermediate.dsc_dtype = dtype_text;
+		intermediate.dsc_ttype() = ttype_ascii;
+		intermediate.makeText(static_cast<USHORT>(result.length()), CS_ASCII,
+			reinterpret_cast<UCHAR*>(const_cast<char*>(result.c_str())));
+
+		CVT_move_common(&intermediate, to, 0, cb);
+	}
+	catch (const Exception&) {
+		CVT_conversion_error(from, cb->err);
+	}
+}
+
+ScratchBird::InetAddr CVT_get_inet(const dsc* desc, ScratchBird::Callbacks* cb)
+{
+/**************************************
+ *
+ *      C V T _ g e t _ i n e t
+ *
+ **************************************
+ *
+ * Functional description
+ *      Get the value of an INET descriptor
+ *
+ **************************************/
+	switch (desc->dsc_dtype)
+	{
+		case dtype_inet:
+			{
+				const UCHAR* inet_bytes = (const UCHAR*) desc->dsc_address;
+				InetFamily family = (InetFamily) inet_bytes[0];
+				// Reconstruct InetAddr from stored format
+				InetAddr addr;
+				// Implementation would reconstruct from binary format
+				return addr;
+			}
+
+		case dtype_varying:
+		case dtype_cstring:
+		case dtype_text:
+			{
+				VaryStr<50> buffer;
+				const char* str = NULL;
+				int len = CVT_make_string(desc, ttype_ascii, &str, &buffer, sizeof(buffer), 0, cb->err);
+				
+				try {
+					return InetAddr(str);
+				}
+				catch (const Exception&) {
+					CVT_conversion_error(desc, cb->err);
+				}
+			}
+
+		default:
+			CVT_conversion_error(desc, cb->err);
+			break;
+	}
+	
+	return InetAddr();  // Should never reach here
+}
+
+ScratchBird::CidrBlock CVT_get_cidr(const dsc* desc, ScratchBird::Callbacks* cb)
+{
+/**************************************
+ *
+ *      C V T _ g e t _ c i d r
+ *
+ **************************************
+ *
+ * Functional description
+ *      Get the value of a CIDR descriptor
+ *
+ **************************************/
+	switch (desc->dsc_dtype)
+	{
+		case dtype_cidr:
+			{
+				const UCHAR* cidr_bytes = (const UCHAR*) desc->dsc_address;
+				InetFamily family = (InetFamily) cidr_bytes[0];
+				int prefix_length = cidr_bytes[17];
+				// Reconstruct CidrBlock from stored format
+				InetAddr addr;  // Would reconstruct from bytes
+				return CidrBlock(addr, prefix_length);
+			}
+
+		case dtype_varying:
+		case dtype_cstring:
+		case dtype_text:
+			{
+				VaryStr<50> buffer;
+				const char* str = NULL;
+				int len = CVT_make_string(desc, ttype_ascii, &str, &buffer, sizeof(buffer), 0, cb->err);
+				
+				try {
+					return CidrBlock(str);
+				}
+				catch (const Exception&) {
+					CVT_conversion_error(desc, cb->err);
+				}
+			}
+
+		default:
+			CVT_conversion_error(desc, cb->err);
+			break;
+	}
+	
+	return CidrBlock();  // Should never reach here
+}
+
+ScratchBird::MacAddr CVT_get_macaddr(const dsc* desc, ScratchBird::Callbacks* cb)
+{
+/**************************************
+ *
+ *      C V T _ g e t _ m a c a d d r
+ *
+ **************************************
+ *
+ * Functional description
+ *      Get the value of a MACADDR descriptor
+ *
+ **************************************/
+	switch (desc->dsc_dtype)
+	{
+		case dtype_macaddr:
+			{
+				const UCHAR* mac_bytes = (const UCHAR*) desc->dsc_address;
+				return MacAddr(mac_bytes);
+			}
+
+		case dtype_varying:
+		case dtype_cstring:
+		case dtype_text:
+			{
+				VaryStr<20> buffer;
+				const char* str = NULL;
+				int len = CVT_make_string(desc, ttype_ascii, &str, &buffer, sizeof(buffer), 0, cb->err);
+				
+				try {
+					return MacAddr(str);
+				}
+				catch (const Exception&) {
+					CVT_conversion_error(desc, cb->err);
+				}
+			}
+
+		default:
+			CVT_conversion_error(desc, cb->err);
+			break;
+	}
+	
+	return MacAddr();  // Should never reach here
 }

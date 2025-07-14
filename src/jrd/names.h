@@ -269,6 +269,7 @@ NAME("RDB$DETERMINISTIC_FLAG", nam_deterministic_flag)
 NAME("RDB$ARGUMENT_MECHANISM", nam_arg_mechanism)
 NAME("RDB$ARGUMENT_NAME", nam_arg_name)
 NAME("RDB$IDENTITY_TYPE", nam_identity_type)
+NAME("RDB$UUID_GENERATOR", nam_uuid_generator)
 NAME("RDB$AUTH_METHOD", nam_auth_method)
 
 NAME("SEC$USER_NAME", nam_user_name)

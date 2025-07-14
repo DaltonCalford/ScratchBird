@@ -2599,6 +2599,16 @@ identity_clause_option($identityOptions)
 		{ setClause($identityOptions->startValue, "START WITH", $3); }
 	| INCREMENT by_noise signed_long_integer
 		{ setClause($identityOptions->increment, "INCREMENT BY", $3); }
+	| GENERATOR uuid_generator_call
+		{ $identityOptions->uuidGenerator = $2; }
+	;
+
+%type <valueSourceClause> uuid_generator_call
+uuid_generator_call
+	: GEN_UUID '(' ')'
+		{ $$ = newNode<ValueSourceClause>($1, NULL); }
+	| GEN_UUID '(' signed_long_integer ')'
+		{ $$ = newNode<ValueSourceClause>($1, $3); }
 	;
 
 // value does allow parens around it, but there is a problem getting the source text.

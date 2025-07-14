@@ -131,6 +131,7 @@ RELATION(nam_r_fields, rel_rfr, ODS_8_0, rel_persistent)
 	FIELD(f_rfr_coll_id, nam_collate_id, fld_collate_id, 1, ODS_8_0)
 	FIELD(f_rfr_gen_name, nam_gen_name, fld_gen_name, 1, ODS_12_0)
 	FIELD(f_rfr_identity_type, nam_identity_type, fld_identity_type, 1, ODS_12_0)
+	FIELD(f_rfr_uuid_generator, nam_uuid_generator, fld_uuid_generator, 1, ODS_14_0)
 	FIELD(f_rfr_schema, nam_sch_name, fld_sch_name, 1, ODS_14_0)
 	FIELD(f_rfr_field_source_schema, nam_field_source_sch_name, fld_sch_name, 1, ODS_14_0)
 END_RELATION

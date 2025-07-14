@@ -556,6 +556,10 @@ ISC_STATUS filter_runtime(USHORT action, BlobControl* control)
 		snprintf(line, sizeof(line), "    field_generator_name: %s", p);
 		break;
 
+	case RSR_field_uuid_generator:
+		snprintf(line, sizeof(line), "    field_uuid_generator: %s", p);
+		break;
+
 	case RSR_field_identity_type:
 		snprintf(line, sizeof(line), "Field identity type: %d", n);
 		break;

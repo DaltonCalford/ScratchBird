@@ -1,7 +1,0 @@
-{
-global:
-	ib_util_malloc;
-	ib_util_init;
-local:
-	*;
-};
