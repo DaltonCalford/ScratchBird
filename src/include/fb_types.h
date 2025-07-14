@@ -107,7 +107,7 @@ inline bool operator>(const SQUAD& s1, const SQUAD& s2)
  */
 struct vary
 {
-	USHORT vary_length;
+	ULONG vary_length;
 	char   vary_string[1]; /* CVC: The original declaration used UCHAR. */
 };
 
@@ -148,7 +148,7 @@ typedef void (*FPTR_ERROR) (ISC_STATUS, ...);
 
 typedef ULONG RCRD_OFFSET;
 typedef ULONG RCRD_LENGTH;
-typedef USHORT FLD_LENGTH;
+typedef ULONG FLD_LENGTH;
 /* CVC: internal usage. I suspect the only reason to return int is that
 vmslock.cpp:LOCK_convert() calls VMS' sys$enq that may require this signature,
 but our code never uses the return value. */

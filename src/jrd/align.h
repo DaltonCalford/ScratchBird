@@ -34,6 +34,7 @@ Maximum alignments for corresponding data types are defined in dsc.h
 
 #include "../common/DecFloat.h"
 #include "../common/Int128.h"
+#include "../common/UInt128.h"
 #include "firebird/impl/blr.h"
 
 /*  The following macro must be defined as the highest-numericly-valued
