@@ -2778,6 +2778,7 @@ public:
 	MetaName keyName;
 	ScratchBird::TriState ssDefiner;
 	ScratchBird::Array<QualifiedName> pubTables;
+	bool pascalCaseIdentifiers = false;	// Enable PascalCase object identifiers
 };
 
 

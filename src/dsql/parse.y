@@ -381,6 +381,7 @@ using namespace Firebird;
 
 %token <metaNamePtr> CURRENT_USER
 %token <metaNamePtr> CURRENT_ROLE
+%token <metaNamePtr> CURRENT_PASCAL_CASE_MODE
 %token <metaNamePtr> BREAK
 %token <metaNamePtr> SUBSTRING
 %token <metaNamePtr> RECREATE
@@ -542,6 +543,8 @@ using namespace Firebird;
 %token <metaNamePtr> NAME
 %token <metaNamePtr> OVER
 %token <metaNamePtr> PACKAGE
+%token <metaNamePtr> PASCAL
+%token <metaNamePtr> IDENTIFIERS
 %token <metaNamePtr> PARTITION
 %token <metaNamePtr> RDB_GET_CONTEXT
 %token <metaNamePtr> RDB_SET_CONTEXT
@@ -2383,6 +2386,8 @@ db_initial_option($alterDatabaseNode)
 	| ROLE utf_string
 	| PASSWORD utf_string
 	| SET NAMES utf_string
+	| PASCAL CASE IDENTIFIERS
+		{ $alterDatabaseNode->pascalCaseIdentifiers = true; }
 	;
 
 %type db_rem_desc1(<alterDatabaseNode>)
@@ -2652,6 +2657,7 @@ default_value
 	: constant						{ $$ = $1; }
 	| current_user					{ $$ = $1; }
 	| current_role					{ $$ = $1; }
+	| current_pascal_case_mode		{ $$ = $1; }
 	| internal_info					{ $$ = $1; }
 	| null_value					{ $$ = $1; }
 	| datetime_value_expression		{ $$ = $1; }
@@ -4685,6 +4691,7 @@ keyword_or_column
 	| CURRENT_TIMESTAMP
 	| CURRENT_USER			// added in FB 1.0
 	| CURRENT_ROLE
+	| CURRENT_PASCAL_CASE_MODE
 	| RECREATE
 	| CURRENT_CONNECTION	// added in FB 1.5
 	| CURRENT_TRANSACTION
@@ -5683,10 +5690,10 @@ character_type
 	| varying_keyword '(' long_integer ')'
 		{
 			$$ = newNode<dsql_fld>();
-			if ($3 > 131070) {  // MAX_COLUMN_SIZE limit
+			if ($3 > MAX_COLUMN_SIZE) {  // MAX_COLUMN_SIZE limit
 				ERRD_post(Arg::Gds(isc_sqlerr) << Arg::Num(-104) <<
 					Arg::Gds(isc_imp_exc) << 
-					Arg::Str("VARCHAR size exceeds maximum of 131070 characters"));
+					Arg::Str("VARCHAR size exceeds maximum of 131072 bytes"));
 			}
 			$$->dtype = dtype_varying_large;
 			$$->charLength = (ULONG) $3;
@@ -8392,6 +8399,8 @@ nonparenthesized_value
 		{ $$ = $1; }
 	| current_role
 		{ $$ = $1; }
+	| current_pascal_case_mode
+		{ $$ = $1; }
 	| current_schema
 		{ $$ = $1; }
 	| current_schema_qualified
@@ -8629,6 +8638,11 @@ current_user
 %type <valueExprNode> current_role
 current_role
 	: CURRENT_ROLE	{ $$ = newNode<CurrentRoleNode>(); }
+	;
+
+%type <valueExprNode> current_pascal_case_mode
+current_pascal_case_mode
+	: CURRENT_PASCAL_CASE_MODE	{ $$ = newNode<CurrentPascalCaseModeNode>(); }
 	;
 
 %type <valueExprNode> current_schema

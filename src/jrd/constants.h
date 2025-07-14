@@ -52,7 +52,7 @@
 
 // Column Limits (in bytes)
 
-inline constexpr ULONG MAX_COLUMN_SIZE = 16777216;     // 16MB maximum column size
+inline constexpr ULONG MAX_COLUMN_SIZE = 131072;       // 128KB maximum column size
 inline constexpr ULONG MAX_VARY_COLUMN_SIZE = MAX_COLUMN_SIZE - sizeof(ULONG);
 inline constexpr ULONG VARCHAR_INLINE_THRESHOLD = 28672; // 28KB threshold for inline vs overflow storage
 

@@ -218,19 +218,20 @@ const ULONG DBB_gc_pending				= 0x20L;		// garbage collection requested
 const ULONG DBB_force_write				= 0x40L;		// Database is forced write
 const ULONG DBB_no_reserve				= 0x80L;		// No reserve space for versions
 const ULONG DBB_DB_SQL_dialect_3		= 0x100L;		// database SQL dialect 3
-const ULONG DBB_read_only				= 0x200L;		// DB is ReadOnly (RO). If not set, DB is RW
-const ULONG DBB_being_opened_read_only	= 0x400L;		// DB is being opened RO. If unset, opened as RW
-const ULONG DBB_no_ast					= 0x800L;		// AST delivery is prohibited
-const ULONG DBB_sweep_in_progress		= 0x1000L;		// A database sweep operation is in progress
-const ULONG DBB_gc_starting				= 0x2000L;		// garbage collector thread is starting
-const ULONG DBB_suspend_bgio			= 0x4000L;		// Suspend I/O by background threads
-const ULONG DBB_new						= 0x8000L;		// Database object is just created
-const ULONG DBB_gc_cooperative			= 0x10000L;		// cooperative garbage collection
-const ULONG DBB_gc_background			= 0x20000L;		// background garbage collection by gc_thread
-const ULONG DBB_sweep_starting			= 0x40000L;		// Auto-sweep is starting
-const ULONG DBB_creating				= 0x80000L;		// Database creation is in progress
-const ULONG DBB_shared					= 0x100000L;	// Database object is shared among connections
-const ULONG DBB_restoring				= 0x200000L;	// Database restore is in progress
+const ULONG DBB_pascal_case_identifiers	= 0x200L;		// PascalCase object identifiers enabled  
+const ULONG DBB_read_only				= 0x400L;		// DB is ReadOnly (RO). If not set, DB is RW
+const ULONG DBB_being_opened_read_only	= 0x800L;		// DB is being opened RO. If unset, opened as RW
+const ULONG DBB_no_ast					= 0x1000L;		// AST delivery is prohibited
+const ULONG DBB_sweep_in_progress		= 0x2000L;		// A database sweep operation is in progress
+const ULONG DBB_gc_starting				= 0x4000L;		// garbage collector thread is starting
+const ULONG DBB_suspend_bgio			= 0x8000L;		// Suspend I/O by background threads
+const ULONG DBB_new						= 0x10000L;		// Database object is just created
+const ULONG DBB_gc_cooperative			= 0x20000L;		// cooperative garbage collection
+const ULONG DBB_gc_background			= 0x40000L;		// background garbage collection by gc_thread
+const ULONG DBB_sweep_starting			= 0x80000L;		// Auto-sweep is starting
+const ULONG DBB_creating				= 0x100000L;		// Database creation is in progress
+const ULONG DBB_shared					= 0x200000L;	// Database object is shared among connections
+const ULONG DBB_restoring				= 0x400000L;	// Database restore is in progress
 
 //
 // dbb_ast_flags

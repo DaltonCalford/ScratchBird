@@ -50,6 +50,7 @@ private:
     
 public:
     DatabaseLink();
+    DatabaseLink(ScratchBird::MemoryPool& pool);
     DatabaseLink(const ScratchBird::string& name, const ScratchBird::string& server, 
                  const ScratchBird::string& database, const ScratchBird::string& user, 
                  const ScratchBird::string& pass);
@@ -92,6 +93,7 @@ private:
     
 public:
     LinkManager();
+    LinkManager(ScratchBird::MemoryPool& pool);
     ~LinkManager();
     
     // Link management

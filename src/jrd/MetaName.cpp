@@ -29,11 +29,13 @@
 #include "firebird.h"
 
 #include <stdarg.h>
+#include <string.h>
 
 #include "../jrd/MetaName.h"
 #include "../common/classes/MetaString.h"
 #include "../common/classes/RefMutex.h"
 #include "../jrd/jrd.h"
+#include "../jrd/Database.h"
 
 namespace Jrd {
 
@@ -43,7 +45,28 @@ int MetaName::compare(const char* s, FB_SIZE_T len) const
 	{
 		adjustLength(s, len);
 		FB_SIZE_T x = length() < len ? length() : len;
-		int rc = memcmp(c_str(), s, x);
+		
+		// Check if PascalCase identifiers are enabled in the database
+		thread_db* tdbb = JRD_get_thread_data();
+		bool useCaseSensitive = true;
+		if (tdbb && tdbb->getDatabase())
+		{
+			// PascalCase mode means case-insensitive comparison
+			if (tdbb->getDatabase()->dbb_flags & DBB_pascal_case_identifiers)
+				useCaseSensitive = false;
+		}
+		
+		int rc;
+		if (useCaseSensitive)
+		{
+			rc = memcmp(c_str(), s, x);
+		}
+		else
+		{
+			// Case-insensitive comparison using locale-aware comparison
+			rc = strncasecmp(c_str(), s, x);
+		}
+		
 		if (rc)
 		{
 			return rc;
@@ -246,7 +269,26 @@ Dictionary::Word* Dictionary::get(const char* s, FB_SIZE_T len)
 		Word* word = hashWord;
 		while (word)
 		{
-			if (word->length() == len && memcmp(word->c_str(), s, len) == 0)
+			// Check if PascalCase identifiers are enabled for case-insensitive comparison
+			bool matches = false;
+			if (word->length() == len)
+			{
+				thread_db* tdbb = JRD_get_thread_data();
+				bool useCaseSensitive = true;
+				if (tdbb && tdbb->getDatabase())
+				{
+					// PascalCase mode means case-insensitive comparison
+					if (tdbb->getDatabase()->dbb_flags & DBB_pascal_case_identifiers)
+						useCaseSensitive = false;
+				}
+				
+				if (useCaseSensitive)
+					matches = (memcmp(word->c_str(), s, len) == 0);
+				else
+					matches = (strncasecmp(word->c_str(), s, len) == 0);
+			}
+			
+			if (matches)
 			{
 				// Avoid finding duplicate - if at this step when word is located
 				// hash level did not change we definitely got correct word
@@ -426,7 +468,26 @@ Dictionary::HashTable* Dictionary::waitForMutex(Jrd::Dictionary::Word** checkWor
 	Word* word = t->getEntryByHash(s, len)->load();
 	while (word)
 	{
-		if (word->length() == len && memcmp(word->c_str(), s, len) == 0)
+		// Check if PascalCase identifiers are enabled for case-insensitive comparison
+		bool matches = false;
+		if (word->length() == len)
+		{
+			thread_db* tdbb = JRD_get_thread_data();
+			bool useCaseSensitive = true;
+			if (tdbb && tdbb->getDatabase())
+			{
+				// PascalCase mode means case-insensitive comparison
+				if (tdbb->getDatabase()->dbb_flags & DBB_pascal_case_identifiers)
+					useCaseSensitive = false;
+			}
+			
+			if (useCaseSensitive)
+				matches = (memcmp(word->c_str(), s, len) == 0);
+			else
+				matches = (strncasecmp(word->c_str(), s, len) == 0);
+		}
+		
+		if (matches)
 		{
 			// successfully found same word in new table - use it
 			*checkWordPtr = word;
