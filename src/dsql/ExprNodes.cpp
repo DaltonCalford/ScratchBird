@@ -5682,7 +5682,52 @@ DmlNode* DefaultNode::parse(thread_db* tdbb, MemoryPool& pool, CompilerScratch* 
 ValueExprNode* DefaultNode::createFromField(thread_db* tdbb, CompilerScratch* csb,
 	StreamType* map, jrd_fld* fld)
 {
-	if (fld->fld_generator_name.object.hasData())
+	if (fld->fld_uuid_generator.hasData())
+	{
+		// Make a UUID generator function call expression.
+		
+		// Parse the UUID generator string (e.g., "GEN_UUID(7)" or "GEN_UUID()")
+		SysFuncCallNode* uuidNode = nullptr;
+		
+		if (fld->fld_uuid_generator == "GEN_UUID()")
+		{
+			// GEN_UUID() with no version parameter
+			uuidNode = FB_NEW_POOL(csb->csb_pool) SysFuncCallNode(csb->csb_pool, "GEN_UUID", nullptr);
+		}
+		else
+		{
+			// Parse GEN_UUID(version)
+			ScratchBird::string genStr = fld->fld_uuid_generator;
+			FB_SIZE_T openParen = genStr.find('(');
+			FB_SIZE_T closeParen = genStr.find(')', openParen);
+			
+			if (openParen != ScratchBird::string::npos && closeParen != ScratchBird::string::npos)
+			{
+				ScratchBird::string versionStr = genStr.substr(openParen + 1, closeParen - openParen - 1);
+				if (versionStr.hasData())
+				{
+					// Create version parameter
+					SLONG version = atol(versionStr.c_str());
+					LiteralNode* versionNode = FB_NEW_POOL(csb->csb_pool) LiteralNode(csb->csb_pool);
+					versionNode->litDesc.makeInt32(0, &version);
+					
+					ValueListNode* args = FB_NEW_POOL(csb->csb_pool) ValueListNode(csb->csb_pool, 1);
+					args->items[0] = versionNode;
+					
+					uuidNode = FB_NEW_POOL(csb->csb_pool) SysFuncCallNode(csb->csb_pool, "GEN_UUID", args);
+				}
+				else
+				{
+					// Empty parentheses
+					uuidNode = FB_NEW_POOL(csb->csb_pool) SysFuncCallNode(csb->csb_pool, "GEN_UUID", nullptr);
+				}
+			}
+		}
+		
+		if (uuidNode)
+			return uuidNode;
+	}
+	else if (fld->fld_generator_name.object.hasData())
 	{
 		// Make a (next value for <generator name>) expression.
 

@@ -4209,6 +4209,12 @@ void MET_scan_relation(thread_db* tdbb, jrd_rel* relation)
 					field->fld_identity_type = IDENT_TYPE_BY_DEFAULT;
 				break;
 
+			case RSR_field_uuid_generator:
+				field->fld_uuid_generator = ScratchBird::string((const TEXT*) p, length);
+				if (!field->fld_identity_type.has_value())
+					field->fld_identity_type = IDENT_TYPE_BY_DEFAULT;
+				break;
+
 			case RSR_field_identity_type:
 				field->fld_identity_type = static_cast<IdentityType>(n);
 				break;

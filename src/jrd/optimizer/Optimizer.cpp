@@ -148,7 +148,11 @@ namespace
 		SKD_dec128,					// dtype_dec128
 		SKD_int128,					// dtype_int128
 		SKD_sql_time_tz,			// dtype_sql_time_tz
-		SKD_timestamp_tz			// dtype_timestamp_tz
+		SKD_timestamp_tz,			// dtype_timestamp_tz
+		0, 0, 0, 0, 0, 0, 0, 0, 0,	// dtype 27-35 (unused/future)
+		SKD_inet,					// dtype_inet (36)
+		SKD_cidr,					// dtype_cidr (37)
+		SKD_macaddr					// dtype_macaddr (38)
 	};
 
 	struct SortField

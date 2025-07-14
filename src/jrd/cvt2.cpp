@@ -107,7 +107,12 @@ const BYTE CVT2_compare_priority[] =
 	20,	// dtype_sql_time_tz - go after dtype_sql_time
 	22,	// dtype_timestamp_tz - go after dtype_timestamp
 	99, // dtype_ex_time_tz - should not be used here
-	99  // dtype_ex_timestamp_tz - should not be used here
+	99, // dtype_ex_timestamp_tz - should not be used here
+	// Enhanced varchar and network types (dtype 35-38)
+	27,	// dtype_varying_large - basic string type, after text types
+	28,	// dtype_inet - network addresses
+	29,	// dtype_cidr - network blocks  
+	30	// dtype_macaddr - MAC addresses
 };
 
 static inline int QUAD_COMPARE(const SQUAD* arg1, const SQUAD* arg2)
@@ -377,6 +382,12 @@ int CVT2_compare(const dsc* arg1, const dsc* arg2, ScratchBird::DecimalStatus de
 
 		case dtype_boolean:
 			return *p1 == *p2 ? 0 : *p1 < *p2 ? -1 : 1;
+
+		case dtype_inet:
+		case dtype_cidr:
+		case dtype_macaddr:
+			// Network types: binary comparison of raw bytes
+			return memcmp(p1, p2, MIN(arg1->dsc_length, arg2->dsc_length));
 
 		case dtype_text:
 		case dtype_varying:
@@ -740,6 +751,23 @@ int CVT2_compare(const dsc* arg1, const dsc* arg2, ScratchBird::DecimalStatus de
 			if (temp1 > temp2)
 				return 1;
 			return -1;
+		}
+
+	case dtype_inet:
+	case dtype_cidr:
+	case dtype_macaddr:
+		{
+			// Network types convert second argument to network type and compare
+			DSC desc;
+			desc.clear();
+			desc.dsc_dtype = arg1->dsc_dtype;
+			desc.dsc_length = arg1->dsc_length;
+			
+			UCHAR buffer[32];  // Sufficient for any network type
+			desc.dsc_address = buffer;
+			
+			CVT_move(arg2, &desc, 0);
+			return CVT2_compare(arg1, &desc, 0);
 		}
 
 	default:

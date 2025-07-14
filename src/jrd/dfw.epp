@@ -6029,6 +6029,13 @@ static bool make_version(thread_db* tdbb, SSHORT phase, DeferredWork* work, jrd_
 										   (UCHAR*) RFR.RDB$GENERATOR_NAME, n);
 					}
 
+					n = fb_utils::name_length(RFR.RDB$UUID_GENERATOR);
+					if (!RFR.RDB$UUID_GENERATOR.NULL && n)
+					{
+						put_summary_record(tdbb, blob, RSR_field_uuid_generator,
+										   (UCHAR*) RFR.RDB$UUID_GENERATOR, n);
+					}
+
 					n = RFR.RDB$IDENTITY_TYPE;
 					if (!RFR.RDB$IDENTITY_TYPE.NULL)
 						put_summary_record(tdbb, blob, RSR_field_identity_type, (UCHAR*) &n, sizeof(n));

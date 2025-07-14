@@ -80,6 +80,11 @@ inline bool DTYPE_IS_NUMERIC(UCHAR d)
 			d == dtype_int128 || DTYPE_IS_DECFLOAT(d);
 }
 
+inline bool DTYPE_IS_NETWORK(UCHAR d)
+{
+	return d == dtype_inet || d == dtype_cidr || d == dtype_macaddr;
+}
+
 // Descriptor format
 
 typedef struct dsc
@@ -496,6 +501,31 @@ typedef struct dsc
 			dsc_length = MAX_USHORT;
 		}
 		setTextType(ttype);
+		dsc_address = address;
+	}
+
+	// Network type make functions
+	void makeInet(UCHAR* address = NULL)
+	{
+		clear();
+		dsc_dtype = dtype_inet;
+		dsc_length = 17;  // 1 byte family + 16 bytes address
+		dsc_address = address;
+	}
+
+	void makeCidr(UCHAR* address = NULL)
+	{
+		clear();
+		dsc_dtype = dtype_cidr;
+		dsc_length = 18;  // 1 byte family + 16 bytes address + 1 byte prefix
+		dsc_address = address;
+	}
+
+	void makeMacaddr(UCHAR* address = NULL)
+	{
+		clear();
+		dsc_dtype = dtype_macaddr;
+		dsc_length = 6;   // 6 bytes MAC address
 		dsc_address = address;
 	}
 

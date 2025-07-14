@@ -167,6 +167,7 @@
 	FIELD(fld_arg_mechanism	, nam_arg_mechanism	, dtype_short	, sizeof(SSHORT)			, 0							, NULL		, true		, ODS_13_0)
 
 	FIELD(fld_identity_type	, nam_identity_type	, dtype_short	, sizeof(SSHORT)			, 0							, NULL		, true		, ODS_13_0)
+	FIELD(fld_uuid_generator, nam_uuid_generator, dtype_text	, 64						, dsc_text_type_metadata	, NULL		, true		, ODS_13_0)
 	FIELD(fld_bool			, nam_bool			, dtype_boolean	, 1							, 0							, NULL		, true		, ODS_13_0)
 
 	FIELD(fld_user_name		, nam_user_name		, dtype_varying	, MAX_SQL_IDENTIFIER_LEN	, dsc_text_type_metadata	, NULL		, true		, ODS_13_0)

@@ -494,6 +494,7 @@ public:
 	MetaName	fld_name;	// Field name
 	MetaName	fld_security_name;	// security class name for field
 	QualifiedName	fld_generator_name;	// identity generator name
+	ScratchBird::string	fld_uuid_generator;	// UUID generator function call (e.g., "GEN_UUID(7)")
 	QualifiedNameMetaNamePair	fld_source_rel_field;	// Relation/field source name
 	std::optional<IdentityType> fld_identity_type;
 	USHORT fld_flags;
@@ -503,6 +504,7 @@ public:
 		: fld_name(p),
 		  fld_security_name(p),
 		  fld_generator_name(p),
+		  fld_uuid_generator(p),
 		  fld_source_rel_field(p)
 	{
 	}

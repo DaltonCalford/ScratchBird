@@ -149,6 +149,9 @@ const int SKD_dec128		= 17;
 const int SKD_sql_time_tz	= 18;
 const int SKD_timestamp_tz	= 19;
 const int SKD_int128		= 20;
+const int SKD_inet			= 21;
+const int SKD_cidr			= 22;
+const int SKD_macaddr		= 23;
 
 // skd_flags
 const UCHAR SKD_ascending		= 0;	// default initializer

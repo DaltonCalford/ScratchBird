@@ -112,4 +112,18 @@ void CVT_string_to_datetime(const dsc*, ISC_TIMESTAMP_TZ*, bool*, const ScratchB
 	bool, ScratchBird::Callbacks*);
 const UCHAR* CVT_get_bytes(const dsc*, unsigned&);
 
+// Network type conversion functions
+namespace ScratchBird {
+class InetAddr;
+class CidrBlock;
+class MacAddr;
+}
+
+void CVT_inet_to_text(const dsc* from, dsc* to, ScratchBird::Callbacks* cb);
+void CVT_cidr_to_text(const dsc* from, dsc* to, ScratchBird::Callbacks* cb);
+void CVT_macaddr_to_text(const dsc* from, dsc* to, ScratchBird::Callbacks* cb);
+ScratchBird::InetAddr CVT_get_inet(const dsc*, ScratchBird::Callbacks*);
+ScratchBird::CidrBlock CVT_get_cidr(const dsc*, ScratchBird::Callbacks*);
+ScratchBird::MacAddr CVT_get_macaddr(const dsc*, ScratchBird::Callbacks*);
+
 #endif //COMMON_CVT_H

@@ -6352,6 +6352,7 @@ void RelationNode::FieldDefinition::store(thread_db* tdbb, jrd_tra* transaction)
 		RFR.RDB$COLLATION_ID.NULL = TRUE;
 		RFR.RDB$GENERATOR_NAME.NULL = TRUE;
 		RFR.RDB$IDENTITY_TYPE.NULL = TRUE;
+		RFR.RDB$UUID_GENERATOR.NULL = TRUE;
 		RFR.RDB$NULL_FLAG.NULL = TRUE;
 		RFR.RDB$DEFAULT_SOURCE.NULL = TRUE;
 		RFR.RDB$DEFAULT_VALUE.NULL = TRUE;
@@ -6371,6 +6372,38 @@ void RelationNode::FieldDefinition::store(thread_db* tdbb, jrd_tra* transaction)
 		{
 			RFR.RDB$GENERATOR_NAME.NULL = FALSE;
 			strcpy(RFR.RDB$GENERATOR_NAME, identitySequence.object.c_str());
+
+			RFR.RDB$IDENTITY_TYPE.NULL = FALSE;
+			RFR.RDB$IDENTITY_TYPE = identityType.value();
+		}
+
+		if (uuidGenerator)
+		{
+			// Store UUID generator function call string (e.g., "GEN_UUID(7)")
+			RFR.RDB$UUID_GENERATOR.NULL = FALSE;
+			ScratchBird::string uuidGenStr;
+			
+			// Convert ValueSourceClause to string representation
+			if (uuidGenerator->value)
+			{
+				// Extract function name and parameter if present
+				// This will be "GEN_UUID" or "GEN_UUID(version)"
+				uuidGenStr = "GEN_UUID";
+				if (auto literalNode = dynamic_cast<LiteralNode*>(uuidGenerator->value.getObject()))
+				{
+					if (literalNode->litDesc.dsc_dtype == dtype_long)
+					{
+						SLONG version = *reinterpret_cast<SLONG*>(literalNode->litDesc.dsc_address);
+						uuidGenStr.printf("GEN_UUID(%ld)", version);
+					}
+				}
+			}
+			else
+			{
+				uuidGenStr = "GEN_UUID()";
+			}
+			
+			strcpy(RFR.RDB$UUID_GENERATOR, uuidGenStr.c_str());
 
 			RFR.RDB$IDENTITY_TYPE.NULL = FALSE;
 			RFR.RDB$IDENTITY_TYPE = identityType.value();
@@ -6817,32 +6850,56 @@ void RelationNode::defineField(thread_db* tdbb, DsqlCompilerScratch* dsqlScratch
 
 		if (clause->identityOptions)
 		{
-			if (clause->identityOptions->increment.value_or(1) == 0)
-			{
-				status_exception::raise(Arg::Gds(isc_dyn_cant_use_zero_inc_ident) <<
-					Arg::Str(field->fld_name) <<
-					name.toQuotedString());
-			}
-
-			dsc desc;
-			MET_get_domain(tdbb, *tdbb->getDefaultPool(), fieldDefinition.fieldSource, &desc, NULL);
-
-			if (!desc.isExact() || desc.dsc_scale != 0)
-			{
-				// Identity column @1 of table @2 must be exact numeric with zero scale.
-				status_exception::raise(Arg::PrivateDyn(273) <<
-					field->fld_name.toQuotedString() <<
-					name.toQuotedString());
-			}
-
-			fieldDefinition.identitySequence.schema = fieldDefinition.relationName.schema;
-			DYN_UTIL_generate_generator_name(tdbb, fieldDefinition.identitySequence);
 			fieldDefinition.identityType = clause->identityOptions->type;
 
-			CreateAlterSequenceNode::store(tdbb, transaction, fieldDefinition.identitySequence,
-				fb_sysflag_identity_generator,
-				clause->identityOptions->startValue.value_or(1),
-				clause->identityOptions->increment.value_or(1));
+			// Check if this is a UUID identity column
+			if (clause->identityOptions->uuidGenerator)
+			{
+				dsc desc;
+				MET_get_domain(tdbb, *tdbb->getDefaultPool(), fieldDefinition.fieldSource, &desc, NULL);
+
+				// UUID identity columns must be CHAR(16) CHARACTER SET OCTETS or BINARY(16)
+				if (!((desc.dsc_dtype == dtype_text && desc.dsc_length == 16 && desc.dsc_ttype() == ttype_binary) ||
+					  (desc.dsc_dtype == dtype_varying && desc.dsc_length == 18 && desc.dsc_ttype() == ttype_binary)))
+				{
+					// Identity column @1 of table @2 with UUID generator must be CHAR(16) CHARACTER SET OCTETS.
+					status_exception::raise(Arg::PrivateDyn(275) <<
+						field->fld_name.toQuotedString() <<
+						name.toQuotedString());
+				}
+
+				// Store UUID generator information - will be used in Phase 4 for INSERT processing
+				fieldDefinition.uuidGenerator = clause->identityOptions->uuidGenerator;
+			}
+			else
+			{
+				// Traditional sequence-based identity column
+				if (clause->identityOptions->increment.value_or(1) == 0)
+				{
+					status_exception::raise(Arg::Gds(isc_dyn_cant_use_zero_inc_ident) <<
+						Arg::Str(field->fld_name) <<
+						name.toQuotedString());
+				}
+
+				dsc desc;
+				MET_get_domain(tdbb, *tdbb->getDefaultPool(), fieldDefinition.fieldSource, &desc, NULL);
+
+				if (!desc.isExact() || desc.dsc_scale != 0)
+				{
+					// Identity column @1 of table @2 must be exact numeric with zero scale.
+					status_exception::raise(Arg::PrivateDyn(273) <<
+						field->fld_name.toQuotedString() <<
+						name.toQuotedString());
+				}
+
+				fieldDefinition.identitySequence.schema = fieldDefinition.relationName.schema;
+				DYN_UTIL_generate_generator_name(tdbb, fieldDefinition.identitySequence);
+
+				CreateAlterSequenceNode::store(tdbb, transaction, fieldDefinition.identitySequence,
+					fb_sysflag_identity_generator,
+					clause->identityOptions->startValue.value_or(1),
+					clause->identityOptions->increment.value_or(1));
+			}
 		}
 
 		BlrDebugWriter::BlrData defaultValue;
