@@ -72,6 +72,26 @@ The ScratchBird v0.6 core database engine is functionally complete with hierarch
 - **Status**: DDL functionality disabled
 - **Fix Required**: Enable database link DDL operations
 
+### **BLOCKER #7: GPRE Preprocessing Hang - CRITICAL**
+- **Files**: `src/jrd/Function.epp`, `src/isql/extract.epp`, multiple client tool .epp files
+- **Issue**: GPRE preprocessor hangs indefinitely on specific .epp files
+- **Impact**: Cannot build client tools (sb_isql, sb_gbak, sb_gfix, sb_gsec, sb_gstat)
+- **Status**: Complete blockage of client tool builds
+- **Fix Required**: Debug and resolve GPRE hanging issue
+
+### **BLOCKER #8: Incomplete ScratchBird Branding - NAMING INCONSISTENCY**
+- **Files**: Multiple executables still use Firebird naming convention
+- **Issue**: Inconsistent branding across built tools
+- **Tools Affected**:
+  - `fb_config` → should be `sb_config`
+  - `fb_lock_print` → should be `sb_lock_print`
+  - `fbguard` → should be `sb_guard`
+  - `fbsvcmgr` → should be `sb_svcmgr`
+  - `fbtracemgr` → should be `sb_tracemgr`
+- **Impact**: Confusing user experience, incomplete product differentiation
+- **Status**: Branding inconsistency across release package
+- **Fix Required**: Complete renaming of all tools to ScratchBird naming convention
+
 ---
 
 ## 🟢 MODERATE Release Issues (MEDIUM PRIORITY)

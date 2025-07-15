@@ -27,13 +27,15 @@ ScratchBird v0.6.0 alpha has been successfully built with core functionality int
   - Status: FUNCTIONAL
 
 ### **Administrative Utilities**
-- **✅ fbguard** - Guardian/monitoring daemon (8.7MB)
-  - Status: FUNCTIONAL
+- **⚠️ fbguard** - Guardian/monitoring daemon (8.7MB)
+  - Status: FUNCTIONAL but incorrectly named (should be `sb_guard`)
   - Usage: Available with proper command-line options
-- **✅ fbsvcmgr** - Service manager (9.2MB)
-  - Status: BUILT (testing limited due to database requirements)
-- **✅ fbtracemgr** - Trace manager (9.1MB)
-  - Status: BUILT (testing limited due to database requirements)
+- **⚠️ fbsvcmgr** - Service manager (9.2MB)
+  - Status: BUILT but incorrectly named (should be `sb_svcmgr`)
+  - Testing limited due to database requirements
+- **⚠️ fbtracemgr** - Trace manager (9.1MB)
+  - Status: BUILT but incorrectly named (should be `sb_tracemgr`)
+  - Testing limited due to database requirements
 
 ### **Backup & Recovery Utilities**
 - **✅ nbackup** - Incremental backup utility (9.4MB)
@@ -51,8 +53,12 @@ ScratchBird v0.6.0 alpha has been successfully built with core functionality int
   - Status: FUNCTIONAL
 
 ### **Lock & Diagnostic Tools**
-- **✅ fb_lock_print** - Lock information utility (8.3MB)
-  - Status: BUILT
+- **⚠️ fb_lock_print** - Lock information utility (8.3MB)
+  - Status: BUILT but incorrectly named (should be `sb_lock_print`)
+
+### **Configuration Tools**
+- **⚠️ fb_config** - Configuration script (2.9KB)
+  - Status: BUILT but incorrectly named (should be `sb_config`)
 
 ---
 
@@ -116,6 +122,16 @@ The following core client tools are **NOT BUILT** due to GPRE preprocessing hang
 **Affected Tools**: fbsvcmgr, fbtracemgr, nbackup
 **Symptom**: Tools hang when run without database connection
 **Impact**: Limited testing capability in development environment
+
+### **Incomplete ScratchBird Branding**
+**Issue**: Multiple tools still use Firebird naming convention
+**Affected Tools**: 
+- `fb_config` (should be `sb_config`)
+- `fb_lock_print` (should be `sb_lock_print`)
+- `fbguard` (should be `sb_guard`)
+- `fbsvcmgr` (should be `sb_svcmgr`)
+- `fbtracemgr` (should be `sb_tracemgr`)
+**Impact**: Inconsistent user experience, incomplete product differentiation
 
 ---
 
