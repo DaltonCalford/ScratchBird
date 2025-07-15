@@ -218,6 +218,79 @@ str += another;  // Operator not available for string types
 
 ---
 
+### **CRITICAL BLOCKER #7: GPRE Preprocessing Hang**
+
+**Files**: `src/jrd/Function.epp`, `src/isql/extract.epp`, multiple client tool .epp files  
+**Current State**: GPRE preprocessor hangs indefinitely on specific .epp files
+
+**Technical Details**:
+```bash
+# Hangs indefinitely:
+/path/to/gpre_current -n -z -gds_cxx -ids src/jrd/Function.epp temp/Function.cpp
+/path/to/gpre_current -m -z -n -ocxx src/isql/extract.epp temp/extract.cpp
+```
+
+**Impact**:
+- Cannot build client tools (sb_isql, sb_gbak, sb_gfix, sb_gsec, sb_gstat)
+- Cannot complete engine build
+- Blocks entire client tool compilation pipeline
+
+**Technical Requirements**:
+1. Debug GPRE hanging issue with specific .epp files
+2. Identify root cause of preprocessing failure
+3. Fix or provide workaround for affected files
+4. Ensure all .epp files can be processed successfully
+5. Complete client tool build pipeline
+
+---
+
+### **MAJOR BLOCKER #8: Incomplete ScratchBird Branding**
+
+**Files**: Multiple build system files and executable targets  
+**Current State**: Inconsistent naming across built tools
+
+**Affected Tools and Required Changes**:
+```bash
+# Current → Required
+fb_config → sb_config
+fb_lock_print → sb_lock_print
+fbguard → sb_guard
+fbsvcmgr → sb_svcmgr
+fbtracemgr → sb_tracemgr
+```
+
+**Technical Requirements**:
+1. **Build System Updates**:
+   - Update `gen/Makefile` executable targets
+   - Update `gen/make.rules` naming conventions
+   - Update `gen/make.defaults` path variables
+
+2. **Source File Updates**:
+   - Update `src/utilities/guard/` build targets
+   - Update `src/utilities/fbsvcmgr/` build targets
+   - Update `src/utilities/fbtracemgr/` build targets
+   - Update `src/lock/` build targets
+
+3. **Configuration Updates**:
+   - Update `fb_config` script to `sb_config`
+   - Update version strings and help text
+   - Update man pages and documentation references
+
+4. **Installation Scripts**:
+   - Update `install.sh` to reference correct executable names
+   - Update `FirebirdUninstall.sh` to `ScratchBirdUninstall.sh`
+   - Update service management scripts
+
+**Implementation Example**:
+```makefile
+# In gen/Makefile, change:
+fbguard: $(FBGUARD_Objects)
+# To:
+sb_guard: $(SB_GUARD_Objects)
+```
+
+---
+
 ## 🔄 Build System Issues
 
 ### **GPRE Compilation Problems**
