@@ -55,7 +55,7 @@
 #endif
 
 #ifndef FB_SERVICE_PORT
-#define FB_SERVICE_PORT 3050
+#define FB_SERVICE_PORT 4050
 #endif
 
 // Time function macro for Linux

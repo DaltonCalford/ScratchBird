@@ -94,6 +94,7 @@
 #include "../common/intlobj_new.h"
 #include "../jrd/Attachment.h"
 #include "../common/StatusArg.h"
+#include "../dsql/DatabaseLinkNodes.h"
 
 // This is needed here to provide backward compatibility when working with SSPI plugin
 #include "../auth/trusted/AuthSspi.h"
@@ -745,6 +746,21 @@ using namespace Firebird;
 %token <metaNamePtr> CURRENT_SCHEMA_PARENT
 %token <metaNamePtr> CURRENT_SCHEMA_ROOT
 %token <metaNamePtr> CURRENT_SCHEMA_LEVEL
+
+// tokens added for ScratchBird Database Links
+%token <metaNamePtr> LINK
+%token <metaNamePtr> SCHEMA_MODE
+%token <metaNamePtr> FIXED
+%token <metaNamePtr> CONTEXT_AWARE
+%token <metaNamePtr> HIERARCHICAL
+%token <metaNamePtr> MIRROR
+%token <metaNamePtr> REMOTE_SCHEMA
+%token <metaNamePtr> LOCAL_SCHEMA
+
+// tokens added for ScratchBird unsigned integer types
+%token <metaNamePtr> USMALLINT
+%token <metaNamePtr> UINTEGER
+%token <metaNamePtr> UBIGINT
 
 // JSON function tokens
 %token <metaNamePtr> JSON_ARRAY
@@ -1715,6 +1731,12 @@ create_clause
 			$$ = node;
 		}
 	| DATABASE db_clause						{ $$ = $2; }
+	| DATABASE LINK if_not_exists_opt database_link_clause
+		{
+			const auto node = $4;
+			node->createIfNotExistsOnly = $3;
+			$$ = node;
+		}
 	| DOMAIN if_not_exists_opt domain_clause
 		{
 			const auto node = $3;
@@ -4457,6 +4479,7 @@ alter_clause
 			{ $<alterDatabaseNode>$ = newNode<AlterDatabaseNode>(); }
 		alter_db($<alterDatabaseNode>2)
 			{ $$ = $<alterDatabaseNode>2; }
+	| DATABASE LINK alter_database_link_clause	{ $$ = $3; }
 	| DOMAIN alter_domain					{ $$ = $2; }
 	| INDEX alter_index_clause				{ $$ = $2; }
 	| EXTERNAL FUNCTION alter_udf_clause	{ $$ = $3; }
@@ -5119,6 +5142,12 @@ drop_clause
 			node->silent = $2;
 			$$ = node;
 		}
+	| DATABASE LINK if_exists_opt symbol_database_link_name
+		{
+			const auto node = newNode<DropDatabaseLinkNode>(*$4);
+			node->silent = $3;
+			$$ = node;
+		}
 	| DOMAIN if_exists_opt symbol_domain_name
 		{
 			const auto node = newNode<DropDomainNode>(*$3);
@@ -5433,6 +5462,27 @@ non_charset_simple_type
 			$$ = newNode<dsql_fld>();
 			$$->dtype = dtype_uint128;
 			$$->length = sizeof(UInt128);
+			$$->flags |= FLD_has_prec;
+		}
+	| USMALLINT
+		{
+			$$ = newNode<dsql_fld>();
+			$$->dtype = dtype_ushort;
+			$$->length = sizeof(USHORT);
+			$$->flags |= FLD_has_prec;
+		}
+	| UINTEGER
+		{
+			$$ = newNode<dsql_fld>();
+			$$->dtype = dtype_ulong;
+			$$->length = sizeof(ULONG);
+			$$->flags |= FLD_has_prec;
+		}
+	| UBIGINT
+		{
+			$$ = newNode<dsql_fld>();
+			$$->dtype = dtype_uint64;
+			$$->length = sizeof(uint64_t);
 			$$->flags |= FLD_has_prec;
 		}
 	| BOOLEAN
@@ -6457,6 +6507,7 @@ ddl_type1_schema
 	| INDEX					{ $$ = obj_index; }
 	| CHARACTER SET			{ $$ = obj_charset; }
 	| COLLATION				{ $$ = obj_collation; }
+	| SCHEMA				{ $$ = obj_schema; }
 	| PACKAGE				{ $$ = obj_package_header; }
 	;
 
@@ -6464,7 +6515,6 @@ ddl_type1_schema
 ddl_type1_noschema
 	: FILTER				{ $$ = obj_blob_filter; }
 	| ROLE					{ $$ = obj_sql_role; }
-	| SCHEMA				{ $$ = obj_schema; }
 	;
 
 %type <intVal> ddl_type3
@@ -8133,6 +8183,7 @@ user_fixed_option($node)
 	| REVOKE ADMIN ROLE		{ setClause($node->adminRole, "ADMIN ROLE", false); }
 	| ACTIVE				{ setClause($node->active, "ACTIVE/INACTIVE", true); }
 	| INACTIVE				{ setClause($node->active, "ACTIVE/INACTIVE", false); }
+	| HOME SCHEMA symbol_schema_name	{ setClause($node->homeSchema, "HOME SCHEMA", $3); }
 	| use_plugin($node)
 	| TAGS '(' user_var_list($node) ')'
 	;
@@ -9935,6 +9986,7 @@ symbol_table_alias_name
 %type <qualifiedNamePtr> symbol_table_name
 symbol_table_name
 	: schema_opt_qualified_name
+	| database_link_table_name
 	;
 
 %type <qualifiedNamePtr> symbol_trigger_name
@@ -10051,6 +10103,16 @@ schema_opt_qualified_name
 	: valid_symbol_name									{ $$ = newNode<QualifiedName>(*$1); }
 	| valid_symbol_name '.' valid_symbol_name			{ $$ = newNode<QualifiedName>(*$3, *$1); }
 	| valid_symbol_name '.' valid_symbol_name '.' valid_symbol_name	{ $$ = newNode<QualifiedName>(*$5, *$1, *$3); }
+	;
+
+// Database link table access support (added for ScratchBird v0.6)
+%type <qualifiedNamePtr> database_link_table_name
+database_link_table_name
+	: schema_opt_qualified_name AT symbol_database_link_name
+		{
+			$$ = $1;
+			$$->databaseLink = *$3;  // Store the database link name in QualifiedName
+		}
 	;
 
 %type <metaNamePtr> valid_symbol_name
@@ -10366,6 +10428,47 @@ non_reserved_word
 	| SEARCH_PATH
 	| SCHEMA
 	| UNLIST
+	;
+
+// Database Links grammar rules (added for ScratchBird v0.6)
+
+%type <ddlNode> database_link_clause
+database_link_clause
+	: symbol_database_link_name TO sql_string USER sql_string PASSWORD sql_string schema_mode_clause_opt
+		{
+			const auto node = newNode<CreateDatabaseLinkNode>(*$1);
+			// Additional parameters would be processed here
+			$$ = node;
+		}
+	;
+
+%type <ddlNode> alter_database_link_clause  
+alter_database_link_clause
+	: symbol_database_link_name schema_mode_clause_opt
+		{
+			const auto node = newNode<AlterDatabaseLinkNode>(*$1);
+			// Additional parameters would be processed here
+			$$ = node;
+		}
+	;
+
+%type <metaNamePtr> symbol_database_link_name
+symbol_database_link_name
+	: valid_symbol_name
+	;
+
+%type <intVal> schema_mode_clause_opt
+schema_mode_clause_opt
+	: /* nothing */									{ $$ = 0; }
+	| SCHEMA_MODE schema_mode_type					{ $$ = $2; }
+	;
+
+%type <intVal> schema_mode_type
+schema_mode_type
+	: FIXED											{ $$ = 1; }
+	| CONTEXT_AWARE									{ $$ = 2; }
+	| HIERARCHICAL									{ $$ = 3; }
+	| MIRROR										{ $$ = 4; }
 	;
 
 %%

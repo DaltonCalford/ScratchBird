@@ -800,14 +800,14 @@ AC_SUBST(READLINE)
 AC_SUBST(STD_EDITLINE)
 AC_SUBST(EDITLINE_FLG)
 
-FB_SERVICE_NAME=gds_db
-FB_SERVICE_PORT=3050
+FB_SERVICE_NAME=sb_fdb
+FB_SERVICE_PORT=4050
 FB_IPC_NAME=ScratchBirdIPI
 AC_ARG_WITH(service-name,
-  [  --with-service-name     specify inet service name (default=gds_db)],
+  [  --with-service-name     specify inet service name (default=sb_fdb)],
   [FB_SERVICE_NAME=${withval}])
 AC_ARG_WITH(service-port,
-  [  --with-service-port     specify inet service port (default=3050)],
+  [  --with-service-port     specify inet service port (default=4050)],
   [FB_SERVICE_PORT=${withval}])
 AC_ARG_WITH(ipc-name,
   [  --with-ipc-name         specify local IPC name (default=ScratchBirdIPI)],

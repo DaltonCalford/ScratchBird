@@ -2419,6 +2419,7 @@ public:
 		  lastName(NULL),
 		  plugin(NULL),
 		  comment(NULL),
+		  homeSchema(NULL),
 		  mode(md)
 	{ }
 
@@ -2459,6 +2460,7 @@ public:
 	ScratchBird::string* lastName;
 	MetaName* plugin;
 	ScratchBird::string* comment;
+	MetaName* homeSchema;  // Home schema for user (ScratchBird v0.6)
 	ScratchBird::TriState adminRole;
 	ScratchBird::TriState active;
 	Mode mode;

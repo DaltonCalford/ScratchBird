@@ -61,7 +61,8 @@ inline bool DTYPE_IS_BLOB_OR_QUAD(UCHAR d)
 // Exact numeric?
 inline bool DTYPE_IS_EXACT(UCHAR d)
 {
-	return d == dtype_int64 || d == dtype_long || d == dtype_short || d == dtype_int128;
+	return d == dtype_int64 || d == dtype_long || d == dtype_short || d == dtype_int128 ||
+	       d == dtype_ushort || d == dtype_ulong || d == dtype_uint64 || d == dtype_uint128;
 }
 
 inline bool DTYPE_IS_APPROX(UCHAR d)
@@ -77,12 +78,19 @@ inline bool DTYPE_IS_DECFLOAT(UCHAR d)
 inline bool DTYPE_IS_NUMERIC(UCHAR d)
 {
 	return (d >= dtype_byte && d <= dtype_d_float) || d == dtype_int64 ||
-			d == dtype_int128 || DTYPE_IS_DECFLOAT(d);
+			d == dtype_int128 || d == dtype_ushort || d == dtype_ulong || 
+			d == dtype_uint64 || d == dtype_uint128 || DTYPE_IS_DECFLOAT(d);
 }
 
 inline bool DTYPE_IS_NETWORK(UCHAR d)
 {
 	return d == dtype_inet || d == dtype_cidr || d == dtype_macaddr;
+}
+
+// Unsigned integer type?
+inline bool DTYPE_IS_UNSIGNED(UCHAR d)
+{
+	return d == dtype_ushort || d == dtype_ulong || d == dtype_uint64 || d == dtype_uint128;
 }
 
 // Descriptor format
@@ -155,12 +163,19 @@ typedef struct dsc
 	bool isExact() const
 	{
 		return dsc_dtype == dtype_int128 || dsc_dtype == dtype_int64 ||
-			   dsc_dtype == dtype_long || dsc_dtype == dtype_short;
+			   dsc_dtype == dtype_long || dsc_dtype == dtype_short ||
+			   dsc_dtype == dtype_ushort || dsc_dtype == dtype_ulong ||
+			   dsc_dtype == dtype_uint64 || dsc_dtype == dtype_uint128;
 	}
 
 	bool isNumeric() const
 	{
 		return DTYPE_IS_NUMERIC(dsc_dtype);
+	}
+
+	bool isUnsigned() const
+	{
+		return DTYPE_IS_UNSIGNED(dsc_dtype);
 	}
 
 	bool isText() const
@@ -424,6 +439,42 @@ typedef struct dsc
 		dsc_dtype = dtype_short;
 		dsc_length = sizeof(SSHORT);
 		dsc_scale = scale;
+		dsc_address = (UCHAR*) address;
+	}
+
+	void makeUShort(USHORT* address = NULL)
+	{
+		clear();
+		dsc_dtype = dtype_ushort;
+		dsc_length = sizeof(USHORT);
+		dsc_scale = 0;
+		dsc_address = (UCHAR*) address;
+	}
+
+	void makeULong(ULONG* address = NULL)
+	{
+		clear();
+		dsc_dtype = dtype_ulong;
+		dsc_length = sizeof(ULONG);
+		dsc_scale = 0;
+		dsc_address = (UCHAR*) address;
+	}
+
+	void makeUInt64(FB_UINT64* address = NULL)
+	{
+		clear();
+		dsc_dtype = dtype_uint64;
+		dsc_length = sizeof(FB_UINT64);
+		dsc_scale = 0;
+		dsc_address = (UCHAR*) address;
+	}
+
+	void makeUInt128(ScratchBird::UInt128* address = NULL)
+	{
+		clear();
+		dsc_dtype = dtype_uint128;
+		dsc_length = sizeof(ScratchBird::UInt128);
+		dsc_scale = 0;
 		dsc_address = (UCHAR*) address;
 	}
 

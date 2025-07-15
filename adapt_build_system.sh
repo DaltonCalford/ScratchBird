@@ -74,7 +74,7 @@ update_cmake_files() {
             sed -i 's/install(TARGETS gstat/install(TARGETS sb_gstat/g' "$cmake_file"
             
             # Update version information
-            sed -i 's/VERSION 6\.0\.0/VERSION 0.5.0/g' "$cmake_file"
+            sed -i 's/VERSION 6\.0\.0/VERSION 0.6.0/g' "$cmake_file"
             sed -i 's/SOVERSION 6/SOVERSION 0/g' "$cmake_file"
         fi
     done
@@ -105,7 +105,7 @@ update_makefiles() {
             sed -i 's/libfb/libsb/g' "$makefile"
             
             # Update version
-            sed -i 's/VERSION=6\.0\.0/VERSION=0.5.0/g' "$makefile"
+            sed -i 's/VERSION=6\.0\.0/VERSION=0.6.0/g' "$makefile"
         fi
     done
 }
@@ -141,14 +141,14 @@ if [[ -f "configure.ac" ]]; then
     echo "  Updating configure.ac"
     sed -i 's/AC_INIT(\[Firebird\]/AC_INIT([ScratchBird]/g' configure.ac
     sed -i 's/firebird/scratchbird/g' configure.ac
-    sed -i 's/6\.0\.0/0.5.0/g' configure.ac
+    sed -i 's/6\.0\.0/0.6.0/g' configure.ac
 fi
 
 # Update version files
 if [[ -f "builds/posix/make.defaults" ]]; then
     echo "  Updating make.defaults"
     sed -i 's/FIREBIRD/SCRATCHBIRD/g' builds/posix/make.defaults
-    sed -i 's/6\.0\.0/0.5.0/g' builds/posix/make.defaults
+    sed -i 's/6\.0\.0/0.6.0/g' builds/posix/make.defaults
 fi
 
 # Execute updates
@@ -170,12 +170,12 @@ cat > src/include/sb_version.h << 'EOF'
 #define SB_VERSION_H
 
 #define SCRATCHBIRD_MAJOR_VER    0
-#define SCRATCHBIRD_MINOR_VER    5
+#define SCRATCHBIRD_MINOR_VER    6
 #define SCRATCHBIRD_REV_NO       0
 #define SCRATCHBIRD_BUILD_NO     1
 
-#define SCRATCHBIRD_VERSION      "0.5.0"
-#define SCRATCHBIRD_BUILD        "ScratchBird-0.5.0.1"
+#define SCRATCHBIRD_VERSION      "0.6.0"
+#define SCRATCHBIRD_BUILD        "ScratchBird-0.6.0.1"
 
 // SQL Dialect 4 support
 #define SCRATCHBIRD_SQL_DIALECT_MAX  4

@@ -83,10 +83,10 @@
 #define FB_SECDBDIR ""
 
 /* Inet service name */
-#define FB_SERVICE_NAME "gds_db"
+#define FB_SERVICE_NAME "sb_fdb"
 
 /* Inet service port */
-#define FB_SERVICE_PORT 3050
+#define FB_SERVICE_PORT 4050
 
 /* Define this if OS is FreeBSD */
 /* #undef FREEBSD */

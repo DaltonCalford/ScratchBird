@@ -7,12 +7,12 @@
 #define SB_VERSION_H
 
 #define SCRATCHBIRD_MAJOR_VER    0
-#define SCRATCHBIRD_MINOR_VER    5
+#define SCRATCHBIRD_MINOR_VER    6
 #define SCRATCHBIRD_REV_NO       0
 #define SCRATCHBIRD_BUILD_NO     1
 
-#define SCRATCHBIRD_VERSION      "0.5.0"
-#define SCRATCHBIRD_BUILD        "ScratchBird-0.5.0.1"
+#define SCRATCHBIRD_VERSION      "0.6.0"
+#define SCRATCHBIRD_BUILD        "ScratchBird-0.6.0.1"
 
 // SQL Dialect 4 support
 #define SCRATCHBIRD_SQL_DIALECT_MAX  4

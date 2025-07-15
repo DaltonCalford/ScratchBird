@@ -7,7 +7,7 @@ BuildVersion="$Id: writeBuildNum.sh,v 1.28732 2010/05/29 13:12:08 fsg Exp $"
 
 BuildType=T
 MajorVer=0
-MinorVer=5
+MinorVer=6
 RevNo=0
 BuildNum=1
 
