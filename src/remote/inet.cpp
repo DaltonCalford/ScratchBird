@@ -1004,7 +1004,7 @@ rem_port* INET_connect(const TEXT* name,
 
 		if ((n == EAI_SERVICE) && (protocol == FB_SERVICE_NAME))
 		{
-			// Try hard-wired translation of "gds_db" to "3050"
+			// Try hard-wired translation of "sb_fdb" to "4050"
 			protocol.printf("%hu", FB_SERVICE_PORT);
 			retry_gai = (protocol != FB_SERVICE_NAME);
 		}

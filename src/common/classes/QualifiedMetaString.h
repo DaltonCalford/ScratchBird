@@ -36,17 +36,19 @@ class BaseQualifiedName
 {
 public:
 	explicit BaseQualifiedName(MemoryPool& p, const T& aObject,
-			const T& aSchema = {}, const T& aPackage = {})
+			const T& aSchema = {}, const T& aPackage = {}, const T& aDatabaseLink = {})
 		: object(p, aObject),
 		  schema(p, aSchema),
-		  package(p, aPackage)
+		  package(p, aPackage),
+		  databaseLink(p, aDatabaseLink)
 	{
 	}
 
-	explicit BaseQualifiedName(const T& aObject, const T& aSchema = {}, const T& aPackage = {})
+	explicit BaseQualifiedName(const T& aObject, const T& aSchema = {}, const T& aPackage = {}, const T& aDatabaseLink = {})
 		: object(aObject),
 		  schema(aSchema),
-		  package(aPackage)
+		  package(aPackage),
+		  databaseLink(aDatabaseLink)
 	{
 	}
 
@@ -54,6 +56,7 @@ public:
 		: object(p, src.object),
 		  schema(p, src.schema),
 		  package(p, src.package),
+		  databaseLink(p, src.databaseLink),
 		  unambiguous(src.isUnambiguous())
 	{
 	}
@@ -62,6 +65,7 @@ public:
 		: object(src.object),
 		  schema(src.schema),
 		  package(src.package),
+		  databaseLink(src.databaseLink),
 		  unambiguous(src.isUnambiguous())
 	{
 	}
@@ -71,6 +75,7 @@ public:
 		: object(src.object),
 		  schema(src.schema),
 		  package(src.package),
+		  databaseLink(src.databaseLink),
 		  unambiguous(src.isUnambiguous())
 	{
 	}
@@ -78,7 +83,8 @@ public:
 	explicit BaseQualifiedName(MemoryPool& p)
 		: object(p),
 		  schema(p),
-		  package(p)
+		  package(p),
+		  databaseLink(p)
 	{
 	}
 
@@ -293,7 +299,7 @@ public:
 
 	bool operator==(const BaseQualifiedName& m) const
 	{
-		return schema == m.schema && object == m.object && package == m.package;
+		return schema == m.schema && object == m.object && package == m.package && databaseLink == m.databaseLink;
 	}
 
 	bool operator!=(const BaseQualifiedName& m) const
@@ -322,6 +328,7 @@ public:
 		object = {};
 		schema = {};
 		package = {};
+		databaseLink = {};
 	}
 
 	ScratchBird::string toQuotedString() const
@@ -345,6 +352,13 @@ public:
 			s.append(".");
 
 		appendName(object);
+		
+		// Add database link with @ symbol if present
+		if (databaseLink.hasData())
+		{
+			s.append("@");
+			s += databaseLink.toQuotedString();
+		}
 
 		return s;
 	}
@@ -370,6 +384,13 @@ public:
 			s.append(".");
 
 		appendName(object);
+		
+		// Add database link with @ symbol if present
+		if (databaseLink.hasData())
+		{
+			s.append("@");
+			s += databaseLink.toString();
+		}
 
 		return s;
 	}
@@ -378,6 +399,7 @@ public:
 	T object;
 	T schema;
 	T package;
+	T databaseLink;  // Database link name for remote table access (@symbol syntax)
 
 private:
 	bool unambiguous = false;

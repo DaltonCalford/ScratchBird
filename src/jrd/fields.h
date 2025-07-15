@@ -155,7 +155,7 @@
 	FIELD(fld_src_info		, nam_src_info		, dtype_long	, sizeof(SLONG)				, 0							, NULL		, true		, ODS_13_0)
 
 	FIELD(fld_ctx_var_name	, nam_ctx_var_name	, dtype_varying	, 80						, 0							, NULL		, true		, ODS_13_0)
-	FIELD(fld_ctx_var_value	, nam_ctx_var_value	, dtype_varying	, MAX_VARY_COLUMN_SIZE		, 0							, NULL		, true		, ODS_13_0)
+	FIELD(fld_ctx_var_value	, nam_ctx_var_value	, dtype_varying	, 32765		, 0							, NULL		, true		, ODS_13_0)
 
 	FIELD(fld_engine_name	, nam_engine_name	, dtype_text	, MAX_SQL_IDENTIFIER_LEN	, dsc_text_type_metadata	, NULL		, true		, ODS_13_0)
 
@@ -231,7 +231,7 @@
 
 	FIELD(fld_butil_handle	, nam_butil_handle	, dtype_long	, sizeof(SLONG)				, 0							, NULL		, true		, ODS_13_1)
 	FIELD(fld_blob			, nam_blob			, dtype_blob	, BLOB_SIZE					, isc_blob_untyped			, NULL		, true		, ODS_13_1)
-	FIELD(fld_varybinary_max, nam_varbinary_max	, dtype_varying	, MAX_VARY_COLUMN_SIZE		, 0							, NULL		, true		, ODS_13_1)
+	FIELD(fld_varybinary_max, nam_varbinary_max	, dtype_varying	, 32765		, 0							, NULL		, true		, ODS_13_1)
 	FIELD(fld_integer		, nam_integer		, dtype_long	, sizeof(SLONG)				, 0							, NULL		, true		, ODS_13_1)
 
 	FIELD(fld_par_workers	, nam_par_workers	, dtype_long	, sizeof(SLONG)				, 0							, NULL		, true		, ODS_13_1)
@@ -240,7 +240,7 @@
 	FIELD(fld_sch_parent	, nam_sch_parent	, dtype_text	, MAX_SQL_IDENTIFIER_LEN	, dsc_text_type_metadata	, NULL		, true		, ODS_14_0)
 	FIELD(fld_sch_path		, nam_sch_path		, dtype_varying	, 765						, dsc_text_type_metadata	, NULL		, true		, ODS_14_0)
 	FIELD(fld_sch_level		, nam_sch_level		, dtype_short	, sizeof(SSHORT)			, 0							, NULL		, true		, ODS_14_0)
-	FIELD(fld_text_max		, nam_text_max		, dtype_varying, MAX_VARY_COLUMN_SIZE / METADATA_BYTES_PER_CHAR * METADATA_BYTES_PER_CHAR, dsc_text_type_metadata, NULL, true, ODS_14_0)
+	FIELD(fld_text_max		, nam_text_max		, dtype_varying, 32765, dsc_text_type_metadata, NULL, true, ODS_14_0)
 
 	// SQL Dialect 4: SYNONYM fields
 	FIELD(fld_synonym_name	, nam_synonym_name	, dtype_text	, MAX_SQL_IDENTIFIER_LEN	, dsc_text_type_metadata	, NULL		, true		, ODS_14_0)

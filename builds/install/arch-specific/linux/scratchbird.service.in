@@ -1,13 +1,14 @@
 [Unit]
-Description=Firebird Database Server
+Description=ScratchBird Database Server
 After=syslog.target network.target
-Documentation=https://firebirdsql.org/en/firebird-rdbms/
+Documentation=https://github.com/dcalford/ScratchBird
 
 [Service]
-User=firebird
-Group=firebird
+User=scratchbird
+Group=scratchbird
 Type=forking
-ExecStart=@FB_SBINDIR@/fbguard -daemon -forever
+ExecStart=@FB_SBINDIR@/sb_fbguard -daemon -forever
+Environment=SCRATCHBIRD=@FB_PREFIX@
 
 [Install]
 WantedBy=multi-user.target
