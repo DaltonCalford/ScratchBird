@@ -111,7 +111,7 @@ GLOB_OPTIONS:=
 #____________________________________________________________________________
 
 # Global c++ flags: firebird needs no RTTI, choose build standard and c++ specific warnings level
-PLUSPLUS_FLAGS:= -fno-rtti -std=c++17 -Werror=delete-incomplete -Werror=return-type -D_FORTIFY_SOURCE=0
+PLUSPLUS_FLAGS:= -fno-rtti -std=c++17 -Werror=delete-incomplete -Werror=return-type
 
 # If this is defined then we use special rules useful for developers only
 IsDeveloper = 
@@ -125,8 +125,8 @@ SFIO_EXAMPLES=
 
 # link with readline libraries - set by configure
 EDITLINE_FLG=Y
-STD_EDITLINE=true
-READLINE=readline
+STD_EDITLINE=false
+READLINE=edit
 
 # threading options - set by configure
 THR_FLAGS=
@@ -246,8 +246,8 @@ vpath %.dll $(LIB)
 #     Scold me, but I don't want library names to be in configure.in
 #
 
-#LibraryFileName=libsbclient
-LibraryFileName=libsbclient
+#LibraryFileName=libfbclient
+LibraryFileName=libfbclient
 LibraryFullName=$(LibraryFileName).${SHRLIB_EXT}.${FirebirdVersion}
 LibrarySoName=$(LibraryFileName).${SHRLIB_EXT}.2
 LibraryBaseName=$(LibraryFileName).${SHRLIB_EXT}
@@ -298,9 +298,9 @@ TOMCRYPT_INC=$(TOMCRYPT)/src/headers
 TOMCRYPT_SO=$(TOMCRYPT)/.libs/libtomcrypt.so
 TOMCRYPT_VER=1
 
-# Own libcds support - using system library
+# Own libcds support
 LIBCDS=$(ROOT)/extern/libcds
-LIBCDS_INC=/usr/include
+LIBCDS_INC=$(LIBCDS)
 LIBCDS_DEF=CDS_BUILD_STATIC_LIB
 
 # LINKER OPTIONS
@@ -336,8 +336,8 @@ else
 	LIB_PLATFORM_RPATH = -Wl,-rpath,$(1)
 
 ifeq (1,1)
-    ifeq ($(strip -DENABLE_BINRELOC),)
-        LIB_LINK_RPATH = $(call LIB_PLATFORM_RPATH,$(if $(subst intl,,$(1)),/usr/local/scratchbird/lib,/usr/local/scratchbird/intl))
+    ifeq ($(strip ),)
+        LIB_LINK_RPATH = $(call LIB_PLATFORM_RPATH,$(if $(subst intl,,$(1)),${fb_install_prefix}/lib,${fb_install_prefix}/intl))
     else
         LIB_LINK_RPATH = $(call LIB_PLATFORM_RPATH,\$$ORIGIN/../$(1))
     endif
@@ -357,12 +357,12 @@ endif
 LIB_PATH_OPTS = $(call LIB_LINK_RPATH,lib) $(call LIB_LINK_RPATH,intl)
 LIB_LINK_SONAME= -Wl,-soname,$(1)
 LIB_LINK_MAPFILE= -Wl,--version-script,$(1)
-SCRATCHBIRD_LIBRARY_LINK= -L$(LIB) -L$(STATIC_LIB) -lsbclient $(MATHLIB) $(CRYPTLIB)
+SCRATCHBIRD_LIBRARY_LINK= -L$(LIB) -L$(STATIC_LIB) -lfbclient $(MATHLIB) $(CRYPTLIB)
 
 EXE_LINK_OPTIONS= $(LDFLAGS) $(THR_FLAGS) $(UNDEF_FLAGS) $(LIB_PATH_OPTS) $(call LINK_DARWIN_RPATH,..) $(LINK_EMPTY_SYMBOLS)
 LIB_LINK_OPTIONS= $(LDFLAGS) $(THR_FLAGS) -shared
 
-FB_DAEMON = $(BIN)/sbserver$(EXEC_EXT)
+FB_DAEMON = $(BIN)/scratchbird$(EXEC_EXT)
 
 # Per-library link rules
 LINK_UDF = $(LIB_LINK) $(LIB_LINK_OPTIONS) $(call LIB_LINK_SONAME,$(1).$(SHRLIB_EXT)) $(UNDEF_FLAGS)\
@@ -403,14 +403,14 @@ COMMON_LIB	= $(OBJ)/common.a
 COMMON_TEST = $(FB_TESTS_DIR)/common_test$(EXEC_EXT)
 
 # From utilities
-FBSVCMGR	= $(BIN)/sb_svcmgr$(EXEC_EXT)
-FBTRACEMGR	= $(BIN)/sb_tracemgr$(EXEC_EXT)
-GSTAT		= $(BIN)/sb_gstat$(EXEC_EXT)
+FBSVCMGR	= $(BIN)/fbsvcmgr$(EXEC_EXT)
+FBTRACEMGR	= $(BIN)/fbtracemgr$(EXEC_EXT)
+GSTAT		= $(BIN)/gstat$(EXEC_EXT)
 NBACKUP		= $(BIN)/nbackup$(EXEC_EXT)
-LOCKPRINT	= $(BIN)/sb_lock_print$(EXEC_EXT)
-GSEC		= $(BIN)/sb_gsec$(EXEC_EXT)
-GFIX		= $(BIN)/sb_gfix$(EXEC_EXT)
-RUN_GFIX	= $(RBIN)/sb_gfix$(EXEC_EXT)
+LOCKPRINT	= $(BIN)/fb_lock_print$(EXEC_EXT)
+GSEC		= $(BIN)/gsec$(EXEC_EXT)
+GFIX		= $(BIN)/gfix$(EXEC_EXT)
+RUN_GFIX	= $(RBIN)/gfix$(EXEC_EXT)
 FBGUARD		= $(BIN)/fbguard$(EXEC_EXT)
 INSTREG		= $(BIN)/instreg$(EXEC_EXT)
 INSTSVC		= $(BIN)/instsvc$(EXEC_EXT)
@@ -418,14 +418,14 @@ INSTSVC		= $(BIN)/instsvc$(EXEC_EXT)
 SECURITY_FDB	= $(SCRATCHBIRD)/security6.fdb
 
 # From isql
-ISQL            = $(BIN)/sb_isql$(EXEC_EXT)
+ISQL            = $(BIN)/isql$(EXEC_EXT)
 ISQL_TEST       = $(FB_TESTS_DIR)/isql_test$(EXEC_EXT)
-RUN_ISQL        = $(RBIN)/sb_isql$(EXEC_EXT)
+RUN_ISQL        = $(RBIN)/isql$(EXEC_EXT)
 
 # From burp
-GBAK            = $(BIN)/sb_gbak$(EXEC_EXT)
-RUN_GBAK        = $(RBIN)/sb_gbak$(EXEC_EXT)
-GSPLIT          = $(BIN)/sb_gsplit$(EXEC_EXT)
+GBAK            = $(BIN)/gbak$(EXEC_EXT)
+RUN_GBAK        = $(RBIN)/gbak$(EXEC_EXT)
+GSPLIT          = $(BIN)/gsplit$(EXEC_EXT)
 
 # From gpre
 # (gpre current is a link to one of the others)

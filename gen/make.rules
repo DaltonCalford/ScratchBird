@@ -135,12 +135,6 @@ $(OBJ)/%.o: $(OBJ)/%.cpp
 	$(CXX) $(WCXXFLAGS) -c $(firstword $<) -o $@
 	@sed $(INLINE_EDIT_SED) -e "1,2s/:/: \$$(wildcard/" -e "\$$s/\(.*\)/\\1)/" $(patsubst %.o,%.d,$@)
 
-# Special rule for CRC32C with SSE4.2 support
-$(OBJ)/common/CRC32C.o: $(SRC_ROOT)/common/CRC32C.cpp
-	mkdir -p $(dir $@)
-	$(CXX) $(WCXXFLAGS) -msse4.2 -c $(firstword $<) -o $@
-	@sed $(INLINE_EDIT_SED) -e "1,2s/:/: \$$(wildcard/" -e "\$$s/\(.*\)/\\1)/" $(patsubst %.o,%.d,$@)
-
 $(OBJ)/%.o: $(SRC_ROOT)/%.cpp
 	$(CXX) $(WCXXFLAGS) -c $(firstword $<) -o $@
 	@sed $(INLINE_EDIT_SED) -e "1,2s/:/: \$$(wildcard/" -e "\$$s/\(.*\)/\\1)/" $(patsubst %.o,%.d,$@)

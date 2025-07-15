@@ -64,8 +64,8 @@ DebugFile=ScratchBird-$(Version)-linux-$(CpuType)-debugSymbols.tar.gz
 
 
 PkgSrcDir=$(InstallRoot)/$(ArchType)
-fb_install_prefix=/usr/local/scratchbird
-MiscDir=$(shell echo /usr/local/scratchbird/misc)
+fb_install_prefix=/usr/local/firebird
+MiscDir=$(shell echo ${fb_install_prefix}/misc)
 DebugManifest=manifest_debug.txt
 
 
