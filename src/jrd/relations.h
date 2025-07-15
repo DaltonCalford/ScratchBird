@@ -822,16 +822,7 @@ RELATION(nam_schemas, rel_schemas, ODS_14_0, rel_persistent)
 	FIELD(f_sch_level, nam_sch_level, fld_sch_level, 1, ODS_14_0)
 END_RELATION
 
-// View for hierarchical schema information
-VIEW(nam_schema_hierarchy, rel_schema_hierarchy, ODS_14_0, rel_virtual)
-	FIELD(f_sch_hier_schema, nam_sch_name, fld_sch_name, 0, ODS_14_0)
-	FIELD(f_sch_hier_parent, nam_sch_parent, fld_sch_parent, 0, ODS_14_0)
-	FIELD(f_sch_hier_path, nam_sch_path, fld_sch_path, 0, ODS_14_0)
-	FIELD(f_sch_hier_level, nam_sch_level, fld_sch_level, 0, ODS_14_0)
-	FIELD(f_sch_hier_owner, nam_owner, fld_user, 0, ODS_14_0)
-	FIELD(f_sch_hier_children_count, nam_children_count, fld_counter, 0, ODS_14_0)
-	FIELD(f_sch_hier_is_leaf, nam_is_leaf, fld_flag, 0, ODS_14_0)
-END_VIEW
+// Hierarchical schema views will be implemented at SQL level
 
 // SQL Dialect 4: Relation for synonyms (schema-aware object aliases)
 RELATION(nam_synonyms, rel_synonyms, ODS_14_0, rel_persistent)
@@ -863,13 +854,4 @@ RELATION(nam_database_links, rel_database_links, ODS_14_0, rel_persistent)
 	FIELD(f_dblink_description, nam_description, fld_description, 1, ODS_14_0)
 END_RELATION
 
-// View for role hierarchy information
-VIEW(nam_role_hierarchy, rel_role_hierarchy, ODS_14_0, rel_virtual)
-	FIELD(f_rol_hier_role, nam_role_name, fld_user, 0, ODS_14_0)
-	FIELD(f_rol_hier_parent, nam_role_name, fld_user, 0, ODS_14_0)
-	FIELD(f_rol_hier_schema, nam_sch_name, fld_sch_name, 0, ODS_14_0)
-	FIELD(f_rol_hier_level, nam_sch_level, fld_sch_level, 0, ODS_14_0)
-	FIELD(f_rol_hier_owner, nam_owner, fld_user, 0, ODS_14_0)
-	FIELD(f_rol_hier_privileges, nam_privilege, fld_privilege, 0, ODS_14_0)
-	FIELD(f_rol_hier_inherited, nam_is_leaf, fld_flag, 0, ODS_14_0)
-END_VIEW
+// Role hierarchy views will be implemented at SQL level

@@ -43,7 +43,7 @@
 #ifdef HAVE_ERRNO_H
 #include <errno.h>
 #else
-int errno = -1;
+extern int errno;
 #endif
 
 #include <time.h>
