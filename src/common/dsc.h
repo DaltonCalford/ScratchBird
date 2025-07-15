@@ -33,6 +33,7 @@
 #include "../intl/charsets.h"
 #include "../common/DecFloat.h"
 #include "../common/Int128.h"
+#include "../common/UInt128.h"
 
 // Data type information
 

@@ -36,6 +36,10 @@
 #include "../common/os/os_utils.h"
 #include "unicode/ucal.h"
 
+#ifdef HAVE_SYS_TIMEB_H
+#include <sys/timeb.h>
+#endif
+
 using namespace ScratchBird;
 
 namespace

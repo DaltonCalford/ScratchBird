@@ -9242,6 +9242,12 @@ system_function_std_syntax
 	| TOTALORDER
 	| NORMALIZE_DECFLOAT
 	| COMPARE_DECFLOAT
+	| INT4RANGE
+	| INT8RANGE
+	| NUMRANGE
+	| TSRANGE
+	| TSTZRANGE
+	| DATERANGE
 	;
 
 %type <sysFuncCallNode> system_function_special_syntax

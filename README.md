@@ -308,7 +308,7 @@ SELECT CHAR_TO_UUID(id) as readable_uuid, name FROM users;
 
 ## Current Development Status
 
-### ✅ Production-Ready Features (v0.6)
+### ✅ Production-Ready Features (v0.5)
 
 **🏗️ Enterprise Infrastructure**
 - **Cross-Platform Build System**: Automated Linux/Windows MinGW compilation with self-extracting installers
@@ -330,32 +330,111 @@ SELECT CHAR_TO_UUID(id) as readable_uuid, name FROM users;
 - **Text Processing**: CITEXT case-insensitive text, TSVECTOR/TSQUERY full-text search
 - **Enhanced Storage**: 128KB VARCHAR support (4x standard Firebird), advanced multi-dimensional arrays
 
-### 🚀 Production Status (v0.6)
-- **✅ Stable Release**: All major features tested and production-ready
-- **✅ Cross-Platform Deployment**: Linux and Windows installers available  
-- **✅ Enterprise Integration**: systemd/Windows service support with automated installation
-- **✅ Comprehensive Documentation**: Complete usage examples and technical specifications
-- **✅ Build Automation**: One-command builds with comprehensive error reporting and validation
+### 🚀 Stage 2 Developement Status (v0.6)
+
+
+- ** Updated Default Schema**
+-   ROOT/
+-   ├── SYSTEM/
+-   │   ├── INFORMATION_SCHEMA/     # SQL standard views
+-   │   ├── HIERARCHY/              # Schema management tools
+-   │   ├── PLG$LEGACY_SEC/         # Legacy security plugin
+-   │   └── PLG$SRP/                # SRP authentication plugin
+-   ├── USERS/
+-   │   ├── PUBLIC/                 # Default user schema
+-   │   └── [username]/             # Optional (created on user addition)
+-   ├── LINKS/                      # Database links location
+-   ├── DATABASE/
+-   │   ├── MONITORING/             # Human-readable MON$ views
+-   │   ├── PROGRAMMING/            # Common procedures/functions ✨
+-   │   └── TRIGGERS/               # Database-level triggers
+-   ├── APPLICATIONS                # A place to hold the data structures and code needed for specific applications
+-   │   └── [ApplicationName]/      # Application Specific Data Structures
+-   ├── KAFKA                       # Recieving and sending tables for the Kafka server/client functionality  
+-   ├── GRAPH                       # Graph Database Implementation
+-   └── VECTOR                      # Vector Database Implementation
+  
+- **   1. Advanced Array Types
+  - Multi-dimensional arrays with proper slicing
+  - Advanced array operators (@>, <@, &&)
+  - Array aggregation functions
+
+  Current Status: Basic array support exists but is limited
+  Usage:
+  CREATE TABLE data (
+      tags TEXT[],
+      matrix INTEGER[][],
+      coordinates POINT[]
+  );
+
+  2. Full-Text Search Types
+
+  - TSVECTOR - Text search vector
+  - TSQUERY - Text search query
+  - Full-text search integration
+
+  Usage:
+  CREATE TABLE documents (
+      content TEXT,
+      search_vector TSVECTOR
+  );
+
+  3. Spatial/Geometric Types
+
+  - POINT, LINE, POLYGON - Basic geometry
+  - GEOMETRY, GEOGRAPHY - Advanced spatial
+  - Spatial indexing support (R-Tree)
+
+  Usage:
+  CREATE TABLE locations (
+      name VARCHAR(100),
+      coordinates POINT,
+      boundary POLYGON
+  );
+
+  4. Enhanced Binary Data Types
+
+  - BYTEA - Variable-length binary data
+  - Enhanced binary operations and functions
+
+  5. Additional Network Type Enhancements
+
+  - Enhanced IPv6 support beyond basic INET
+  - Network routing table types
+  - Advanced CIDR operations
+
+  6. New indexes
+   **Bitmap Indexes**
+   - Implement bitmap data structure
+   - Add bitmap combining operations
+   - Create OLAP query optimizations
+
+   **Full-Text Search**
+   - Implement `TSVECTOR` equivalent
+   - Add text search configuration
+   - Create ranking and highlighting functions
+
+   **Spatial Support**
+   - Basic geometry datatypes
+   - R-Tree index implementation
+   - Spatial operators and functions
+
 
 ### 🎯 Roadmap: Next Phase (v0.7 Planning)
 
 **🏛️ Enterprise Schema Architecture**
-- **SYSTEM.INFORMATION_SCHEMA**: Full SQL standard compliance with 37+ views
-- **DATABASE.MONITORING**: Real-time performance metrics and diagnostic capabilities  
-- **DATABASE.PROGRAMMING**: Centralized stored procedures, functions, and packages library
-- **USERS.***: Dynamic user-specific schema creation and management
-- **LINKS**: Centralized database link administration and monitoring
-
-**⚡ Performance & Standards**
-- **JSON Support**: Native JSON datatype with indexing and PostgreSQL-compatible functions
-- **Advanced Indexing**: Specialized indexes for range, network, and text search types
-- **Query Optimization**: Enhanced cost-based optimizer for hierarchical schemas
-- **Backup/Restore**: Schema-aware backup with selective restore capabilities
+- **Schedular**:
+- **Many-Many replication**:
+- **Client tools & drivers**:
+    
 
 **🔗 Integration & Connectivity**
 - **REST API**: Built-in HTTP server for REST endpoints and web administration
 - **Connection Pooling**: Advanced connection pooling with schema-aware routing
 - **Replication**: Multi-master replication with hierarchical schema support
+- **Kafka Broadcaster**:
+- **Kafka Receiver**:
+
 
 ## ScratchBird vs. Firebird Comparison
 
@@ -368,7 +447,7 @@ SELECT CHAR_TO_UUID(id) as readable_uuid, name FROM users;
 | **Range Types** | No | 6 range types with operators | Complete PostgreSQL compatibility |
 | **Case-Insensitive Mode** | No | PascalCase identifiers | SQL Server-style behavior |
 | **FROM-less SELECT** | No | `SELECT GEN_UUID();` | Modern SQL convenience |
-| **Enhanced VARCHAR** | 32KB | 128KB UTF-8 | 4x larger text storage |
+| **Enhanced VARCHAR** | 32KB | 128KB/32KB for UTF-8 | 4x larger text storage |
 | **Multi-row INSERT** | No | `VALUES (1,2),(3,4)` | PostgreSQL-style bulk insert |
 | **Database Links** | No | Schema-aware with 5 modes | Distributed database support |
 | **Default Port** | 3050 | 4050 | Conflict prevention |
@@ -400,13 +479,58 @@ The core architectural decisions, feature design, and project direction for Scra
 
 ## Documentation
 
-- [Advanced Datatype System](doc/README.advanced_datatypes.md) *(planned)*
-- [Hierarchical Schemas Guide](doc/README.hierarchical_schemas.md)
-- [Hierarchical Schema Reorganization Plan](doc/HIERARCHICAL_SCHEMA_REORGANIZATION_PLAN.md) *(NEW)*
-- [SQL Dialect 4 Reference](doc/README.sql_dialect_4.md)
-- [PascalCase Identifiers Guide](doc/README.pascalcase_identifiers.md) *(planned)*
-- [Build Instructions](doc/README.build.posix.html)
-- [Migration Guide](MIGRATION_GUIDE.md)
+### 📚 Core Documentation
+- [ScratchBird Data Types: A Deep Dive](doc/ScratchBird%20Data%20Types_%20A%20Deep%20Dive.md) - Comprehensive guide to all data types
+- [Hierarchical Schema Reorganization Plan](doc/HIERARCHICAL_SCHEMA_REORGANIZATION_PLAN.md) - Enterprise schema architecture
+- [SQL Data Types](doc/SQL%20Data%20Types.md) - Complete data type reference
+- [ScratchBird Built-in Functions and Expressions](doc/ScratchBird%20Built-in%20Functions%20and%20Expressions.md) - Function reference
+
+### 🛠️ DDL & Schema Management
+- [ScratchBird Schema Management Details](doc/ScratchBird%20Schema%20Management%20Details.md) - Hierarchical schema operations
+- [Database Link DDL Lifecycle](doc/ScratchBird%20Database%20Link%20DDL%20Lifecycle.md) - Remote database connections
+- [CREATE DATABASE Details](doc/ScratchBird%20CREATE%20DATABASE%20Details.md) - Database creation with advanced options
+- [Domain DDL Lifecycle](doc/ScratchBird%20Domain%20DDL%20Lifecycle.md) - Custom data type definitions
+- [Index DDL Lifecycle](doc/ScratchBird%20Index%20DDL%20Lifecycle.md) - Advanced indexing strategies
+
+### 📊 SQL Statements & Query Syntax
+- [SELECT Statement](doc/ScratchBird%20SELECT%20Statement.md) - Enhanced SELECT with hierarchical schema support
+- [INSERT Statement](doc/ScratchBird%20INSERT%20Statement.md) - Multi-row inserts and UUID IDENTITY
+- [UPDATE Statement](doc/ScratchBird%20UPDATE%20Statement.md) - Enhanced UPDATE operations
+- [DELETE Statement](doc/ScratchBird%20DELETE%20Statement.md) - Advanced DELETE syntax
+- [MERGE Statement](doc/ScratchBird%20MERGE%20Statement.md) - UPSERT operations
+- [WHERE Clause Predicates](doc/ScratchBird%20WHERE%20Clause%20Predicates.md) - Query filtering
+- [Window Functions](doc/ScratchBird%20Window%20Functions.md) - Analytical functions
+
+### 🔧 Stored Procedures & Programming
+- [Core PSQL Syntax](doc/ScratchBird%20Core%20PSQL%20Syntax.md) - Procedural SQL language
+- [PSQL Control-Flow Statements](doc/ScratchBird%20PSQL%20Control-Flow%20Statements.md) - Programming constructs
+- [EXECUTE BLOCK Statement](doc/ScratchBird%20EXECUTE%20BLOCK%20Statement.md) - Anonymous code blocks
+- [Stored Procedure DDL Lifecycle](doc/ScratchBird%20Stored%20Procedure%20DDL%20Lifecycle.md) - Procedure management
+- [Function DDL Lifecycle](doc/ScratchBird%20Function%20DDL%20Lifecycle.md) - User-defined functions
+- [Package DDL Lifecycle](doc/ScratchBird%20Package%20DDL%20Lifecycle.md) - Code organization
+
+### 🔐 Security & User Management
+- [User Management Syntax](doc/ScratchBird%20User%20Management%20Syntax.md) - User administration with HOME SCHEMA
+- [GRANT Statement](doc/ScratchBird%20GRANT%20Statement.md) - Permission management
+- [REVOKE Statement](doc/ScratchBird%20REVOKE%20Statement.md) - Permission revocation
+- [SET ROLE Statement](doc/ScratchBird%20SET%20ROLE%20Statement.md) - Role switching
+
+### ⚙️ Configuration & Administration
+- [ScratchBird Specific SET Commands](doc/ScratchBird%20%20Specific%20SET%20Commands.md) - Configuration commands
+- [SET TRANSACTION Statement](doc/ScratchBird%20SET%20TRANSACTION%20Statement.md) - Transaction control
+- [COMMENT ON Statement Details](doc/ScratchBird%20COMMENT%20ON%20Statement%20Details.md) - Object documentation
+- [Collation DDL Lifecycle](doc/ScratchBird%20%20Collation%20DDL%20Lifecycle.md) - Character sorting rules
+
+### 🔗 Advanced Features
+- [Logical Replication and Publication DDL](doc/ScratchBird%20Logical%20Replication%20and%20Publication%20DDL.md) - Data replication
+- [User-Defined Routine (UDR) Lifecycle](doc/ScratchBird%20User-Defined%20Routine%20(UDR)%20Lifecycle.md) - External functions
+- [Exception DDL Lifecycle](doc/ScratchBird%20Exception%20DDL%20Lifecycle.md) - Error handling
+- [Trigger DDL Lifecycle](doc/ScratchBird%20Trigger%20DDL%20Lifecycle.md) - Event-driven programming
+
+### 🛠️ Build & Installation
+- [Build Instructions (POSIX)](doc/README.build.posix.html) - Linux/Unix build guide
+- [Build Instructions (MinGW)](doc/README.build.mingw.html) - Windows cross-compilation
+- [Build Instructions (MSVC)](doc/README.build.msvc.html) - Windows native build
 
 ## PascalCase Object Identifiers Technical Details
 
