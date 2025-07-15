@@ -26,6 +26,7 @@
 
 #include "firebird.h"
 #include "../common/gdsassert.h"
+#include <ctime>
 
 #ifdef HAVE_SYS_TIMES_H
 #include <sys/times.h>

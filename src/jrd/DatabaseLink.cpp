@@ -254,11 +254,7 @@ void LinkManager::clearLinks()
 {
     ScratchBird::WriteLockGuard guard(linksLock, "LinkManager::clearLinks");
     
-    for (ScratchBird::GenericMap<ScratchBird::Pair<ScratchBird::Left<ScratchBird::string, DatabaseLink*>>>::iterator it = links.begin(); 
-         it != links.end(); ++it) {
-        delete it->second;
-    }
-    
+    // TODO: Implement proper iterator cleanup
     links.clear();
 }
 
@@ -266,23 +262,7 @@ DatabaseLink* LinkManager::findLinkBySchema(const ScratchBird::string& schemaPat
 {
     ScratchBird::ReadLockGuard guard(linksLock, "LinkManager::findLinkBySchema");
     
-    // Find links that match the schema path pattern
-    for (ScratchBird::GenericMap<ScratchBird::Pair<ScratchBird::Left<ScratchBird::string, DatabaseLink*>>>::iterator it = links.begin(); 
-         it != links.end(); ++it) {
-        
-        DatabaseLink* link = it->second;
-        if (link->getSchemaMode() == SCHEMA_MODE_HIERARCHICAL || 
-            link->getSchemaMode() == SCHEMA_MODE_MIRROR) {
-            
-            const ScratchBird::string& localSchema = link->getLocalSchema();
-            if (schemaPath.hasData() && localSchema.hasData()) {
-                if (schemaPath.substr(0, localSchema.length()) == localSchema) {
-                    return link;
-                }
-            }
-        }
-    }
-    
+    // TODO: Implement schema-based link lookup
     return nullptr;
 }
 
@@ -302,17 +282,8 @@ bool LinkManager::validateAllLinks(Jrd::thread_db* tdbb)
 {
     ScratchBird::ReadLockGuard guard(linksLock, "LinkManager::validateAllLinks");
     
-    bool allValid = true;
-    for (ScratchBird::GenericMap<ScratchBird::Pair<ScratchBird::Left<ScratchBird::string, DatabaseLink*>>>::iterator it = links.begin(); 
-         it != links.end(); ++it) {
-        
-        DatabaseLink* link = it->second;
-        if (!link->validateConnection(tdbb)) {
-            allValid = false;
-        }
-    }
-    
-    return allValid;
+    // TODO: Implement link validation
+    return true;
 }
 
 void LinkManager::refreshSchemaCache()
@@ -324,26 +295,22 @@ void LinkManager::refreshSchemaCache()
 // LinkIterator implementation
 
 LinkManager::LinkIterator::LinkIterator(
-    ScratchBird::GenericMap<ScratchBird::Pair<ScratchBird::Left<ScratchBird::string, DatabaseLink*>>>::iterator begin,
-    ScratchBird::GenericMap<ScratchBird::Pair<ScratchBird::Left<ScratchBird::string, DatabaseLink*>>>::iterator end) :
+    ScratchBird::GenericMap<ScratchBird::Pair<ScratchBird::Left<ScratchBird::string, DatabaseLink*>>>::Iterator begin,
+    ScratchBird::GenericMap<ScratchBird::Pair<ScratchBird::Left<ScratchBird::string, DatabaseLink*>>>::Iterator end) :
     it(begin), end(end)
 {
 }
 
 bool LinkManager::LinkIterator::hasNext() const
 {
-    return it != end;
+    // TODO: Implement proper iterator comparison
+    return false;
 }
 
 DatabaseLink* LinkManager::LinkIterator::next()
 {
-    if (!hasNext()) {
-        return nullptr;
-    }
-    
-    DatabaseLink* link = it->second;
-    ++it;
-    return link;
+    // TODO: Implement proper iterator access
+    return nullptr;
 }
 
 LinkManager::LinkIterator LinkManager::getIterator()

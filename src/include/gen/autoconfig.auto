@@ -321,6 +321,39 @@
 
 /* Define to 1 if you have the <sys/timeb.h> header file. */
 #define HAVE_SYS_TIMEB_H 1
+#define HAVE_SYS_TIMES_H 1
 
 /* Case sensitivity for filesystem (1 for case-sensitive, 0 for case-insensitive) */
 #define CASE_SENSITIVITY 1
+
+/* Directory constants for ScratchBird installation */
+#define FB_BINDIR "/usr/bin"
+#define FB_SBINDIR "/usr/sbin"
+#define FB_LIBDIR "/usr/lib"
+#define FB_INCDIR "/usr/include"
+#define FB_DOCDIR "/usr/share/doc"
+#define FB_SAMPLEDIR "/usr/share/scratchbird/examples"
+#define FB_SAMPLEDBDIR "/usr/share/scratchbird/examples/empbuild"
+#define FB_INTLDIR "/usr/lib/scratchbird/intl"
+#define FB_MISCDIR "/usr/share/scratchbird"
+#define FB_SECDBDIR "/etc/scratchbird"
+#define FB_MSGDIR "/usr/share/scratchbird/msg"
+#define FB_LOGDIR "/var/log/scratchbird"
+#define FB_GUARDDIR "/var/run/scratchbird"
+#define FB_PLUGDIR "/usr/lib/scratchbird/plugins"
+#define FB_TZDATADIR "/usr/share/zoneinfo"
+
+/* Shared library extension */
+#define SHRLIB_EXT "so"
+
+/* Define to 1 if you have the <sys/time.h> header file. */
+#define HAVE_SYS_TIME_H 1
+
+/* Define to 1 if you have the `gettimeofday' function. */
+#define HAVE_GETTIMEOFDAY 1
+
+/* Define to 1 if you have the `vsnprintf' function. */
+#define HAVE_VSNPRINTF 1
+
+/* Define to 1 if you have the `va_copy' function. */
+#define HAVE_VA_COPY 1

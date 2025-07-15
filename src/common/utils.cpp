@@ -36,6 +36,10 @@
 #include <stddef.h>
 #undef __need_size_t
 #endif
+
+#ifdef HAVE_SYS_TIMES_H
+#include <sys/times.h>
+#endif
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>

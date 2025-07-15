@@ -104,6 +104,10 @@ static int process_id;
 #include <sys/param.h>
 #endif
 
+#ifdef HAVE_SYS_TIMEB_H
+#include <sys/timeb.h>
+#endif
+
 #ifndef WIN_NT
 #if !defined(HAVE_GETPAGESIZE) && !defined(_GNU_SOURCE)
 static size_t getpagesize()
