@@ -1,0 +1,17 @@
+#include "firebird.h"
+using namespace ScratchBird;
+
+DATABASE DB = FILENAME "test.fdb";
+
+int test_function()
+{
+    FOR(REQUEST_HANDLE request)
+        X IN RDB$FUNCTIONS
+        WITH X.RDB$FUNCTION_ID EQ 1
+    {
+        // Do something
+    }
+    END_FOR
+    
+    return 0;
+}

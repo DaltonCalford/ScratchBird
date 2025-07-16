@@ -403,15 +403,15 @@ COMMON_LIB	= $(OBJ)/common.a
 COMMON_TEST = $(FB_TESTS_DIR)/common_test$(EXEC_EXT)
 
 # From utilities
-FBSVCMGR	= $(BIN)/fbsvcmgr$(EXEC_EXT)
-FBTRACEMGR	= $(BIN)/fbtracemgr$(EXEC_EXT)
+SBSVCMGR	= $(BIN)/sb_svcmgr$(EXEC_EXT)
+SBTRACEMGR	= $(BIN)/sb_tracemgr$(EXEC_EXT)
 GSTAT		= $(BIN)/gstat$(EXEC_EXT)
 NBACKUP		= $(BIN)/nbackup$(EXEC_EXT)
-LOCKPRINT	= $(BIN)/fb_lock_print$(EXEC_EXT)
+SBLOCKPRINT	= $(BIN)/sb_lock_print$(EXEC_EXT)
 GSEC		= $(BIN)/gsec$(EXEC_EXT)
 GFIX		= $(BIN)/gfix$(EXEC_EXT)
 RUN_GFIX	= $(RBIN)/gfix$(EXEC_EXT)
-FBGUARD		= $(BIN)/fbguard$(EXEC_EXT)
+SBGUARD		= $(BIN)/sb_guard$(EXEC_EXT)
 INSTREG		= $(BIN)/instreg$(EXEC_EXT)
 INSTSVC		= $(BIN)/instsvc$(EXEC_EXT)
 

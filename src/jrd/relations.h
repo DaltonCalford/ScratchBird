@@ -837,21 +837,24 @@ RELATION(nam_synonyms, rel_synonyms, ODS_14_0, rel_persistent)
 	FIELD(f_syn_description, nam_description, fld_description, 1, ODS_14_0)
 END_RELATION
 
-// Schema-aware database links relation
+// Schema-aware database links relation - Complete field set
 RELATION(nam_database_links, rel_database_links, ODS_14_0, rel_persistent)
-	FIELD(f_dblink_name, nam_db_link_name, fld_db_link_name, 1, ODS_14_0)
-	FIELD(f_dblink_server, nam_server_name, fld_server_name, 1, ODS_14_0)
-	FIELD(f_dblink_database, nam_database_path, fld_database_path, 1, ODS_14_0)
-	FIELD(f_dblink_username, nam_user_name, fld_user, 1, ODS_14_0)
-	FIELD(f_dblink_password, nam_password, fld_password, 1, ODS_14_0)
-	FIELD(f_dblink_schema_mode, nam_schema_mode, fld_schema_mode, 1, ODS_14_0)
-	FIELD(f_dblink_local_schema, nam_local_schema, fld_sch_name, 1, ODS_14_0)
-	FIELD(f_dblink_remote_schema, nam_remote_schema, fld_sch_name, 1, ODS_14_0)
-	FIELD(f_dblink_schema_depth, nam_sch_level, fld_sch_level, 1, ODS_14_0)
-	FIELD(f_dblink_owner, nam_owner, fld_user, 1, ODS_14_0)
-	FIELD(f_dblink_created, nam_created, fld_created, 1, ODS_14_0)
-	FIELD(f_dblink_sys_flag, nam_sys_flag, fld_flag, 1, ODS_14_0)
-	FIELD(f_dblink_description, nam_description, fld_description, 1, ODS_14_0)
+	FIELD(f_link_name, nam_link_name, fld_link_name, 1, ODS_14_0)
+	FIELD(f_link_target, nam_link_target, fld_link_target, 1, ODS_14_0)
+	FIELD(f_link_user, nam_link_user, fld_link_user, 1, ODS_14_0)
+	FIELD(f_link_password, nam_link_password, fld_link_password, 1, ODS_14_0)
+	FIELD(f_link_role, nam_link_role, fld_link_role, 1, ODS_14_0)
+	FIELD(f_link_flags, nam_link_flags, fld_link_flags, 1, ODS_14_0)
+	FIELD(f_link_provider, nam_link_provider, fld_link_provider, 1, ODS_14_0)
+	FIELD(f_link_pool_min, nam_link_pool_min, fld_link_pool_min, 1, ODS_14_0)
+	FIELD(f_link_pool_max, nam_link_pool_max, fld_link_pool_max, 1, ODS_14_0)
+	FIELD(f_link_timeout, nam_link_timeout, fld_link_timeout, 1, ODS_14_0)
+	FIELD(f_link_created, nam_link_created, fld_link_created, 1, ODS_14_0)
+	FIELD(f_link_schema_name, nam_link_schema_name, fld_link_schema_name, 1, ODS_14_0)
+	FIELD(f_link_remote_schema, nam_link_remote_schema, fld_link_remote_schema, 1, ODS_14_0)
+	FIELD(f_link_schema_mode, nam_link_schema_mode, fld_link_schema_mode, 1, ODS_14_0)
+	FIELD(f_link_schema_depth, nam_link_schema_depth, fld_link_schema_depth, 1, ODS_14_0)
+	FIELD(f_link_description, nam_link_description, fld_link_description, 1, ODS_14_0)
 END_RELATION
 
 // Role hierarchy views will be implemented at SQL level

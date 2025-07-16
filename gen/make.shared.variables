@@ -141,27 +141,27 @@ AllObjects += $(INTL_Objects)
 
 
 # Lockprint
-LOCKPRINT_Objects:= $(call makeObjects,lock,print.cpp)
+SBLOCKPRINT_Objects:= $(call makeObjects,lock,print.cpp)
 
-AllObjects += $(LOCKPRINT_Objects)
+AllObjects += $(SBLOCKPRINT_Objects)
 
 
 # Guardian
-FBGUARD_Objects:= $(call dirObjects,utilities/guard)
+SBGUARD_Objects:= $(call dirObjects,utilities/guard)
 
-AllObjects += $(FBGUARD_Objects)
+AllObjects += $(SBGUARD_Objects)
 
 
 # Services manager
-FBSVCMGR_Objects:= $(call dirObjects,utilities/fbsvcmgr)
+SBSVCMGR_Objects:= $(call dirObjects,utilities/fbsvcmgr)
 
-AllObjects += $(FBSVCMGR_Objects)
+AllObjects += $(SBSVCMGR_Objects)
 
 
 # Trace manager
-FBTRACEMGR_Objects:= $(call dirObjects,utilities/fbtracemgr) $(call makeObjects,jrd/trace,TraceCmdLine.cpp)
+SBTRACEMGR_Objects:= $(call dirObjects,utilities/fbtracemgr) $(call makeObjects,jrd/trace,TraceCmdLine.cpp)
 
-AllObjects += $(FBTRACEMGR_Objects)
+AllObjects += $(SBTRACEMGR_Objects)
 
 
 # Trace plugin

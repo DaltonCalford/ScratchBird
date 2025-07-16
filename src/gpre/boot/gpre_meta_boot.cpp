@@ -96,6 +96,18 @@ bool MET_database(gpre_dbb* db, bool /*print_version*/)
 	// isc_info_end will not have a 2-byte length - which gives us
 	// some padding in the buffer.
 
+	// FIX: Check if in manual mode - don't connect to database
+	if (!gpreGlob.sw_auto)
+	{
+		// In manual mode, don't connect to database
+		// Set minimal database handle state for parsing
+		db->dbb_handle = 0;
+		fprintf(stderr, "DEBUG: GPRE in manual mode - skipping database connection\n");
+		return true;  // Return success without connecting
+	}
+	
+	fprintf(stderr, "DEBUG: GPRE attempting database connection (sw_auto=%d)\n", gpreGlob.sw_auto);
+
 	JRDMET_init(db);
 	return true;
 }
