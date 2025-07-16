@@ -91,9 +91,9 @@ endif
 #	$(ECHO) $(testgpre)
 
 
-GPRE_FLAGS= -m -z -n
-JRD_GPRE_FLAGS = -n -z -gds_cxx -ids
-OBJECT_GPRE_FLAGS = -m -z -n -ocxx
+GPRE_FLAGS= -m -z -n -manual
+JRD_GPRE_FLAGS = -n -z -gds_cxx -ids -manual
+OBJECT_GPRE_FLAGS = -m -z -n -ocxx -manual
 
 
 .SUFFIXES: .c .e .epp .cpp

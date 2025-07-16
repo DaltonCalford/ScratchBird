@@ -909,7 +909,7 @@ clean_dependencies:
 # leave the directories to make dependacies work still
 
 clean_build:
-	$(RM) `find $(GEN_ROOT)/*/scratchbird \( -type f -o -type l \) \( \! -name '*.conf' -o -name 'udr_engine.conf' \) \! -name 'fb_config' \! -name '*.sh' -print`
+	$(RM) `find $(GEN_ROOT)/*/scratchbird \( -type f -o -type l \) \( \! -name '*.conf' -o -name 'udr_engine.conf' \) \! -name 'sb_config' \! -name '*.sh' -print`
 
 clean_makefiles:
 	$(RM) $(GEN_ROOT)/Make*

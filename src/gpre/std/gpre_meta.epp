@@ -155,6 +155,17 @@ bool MET_database(gpre_dbb* database, bool print_version)
 		return false;
 	}
 
+	// FIX: Check if in manual mode - don't connect to database
+	if (!gpreGlob.sw_auto)
+	{
+		// In manual mode, don't connect to database
+		// Set minimal database handle state for parsing
+		database->dbb_handle = 0;
+		gpreGlob.sw_ods_version = ODS_VERSION14;  // Assume latest ODS version
+		gpreGlob.sw_server_version = 4;  // Assume latest server version
+		return true;  // Return success without connecting
+	}
+
 	// generate a dpb for the attach from the specified
 	// compiletime user name and password
 

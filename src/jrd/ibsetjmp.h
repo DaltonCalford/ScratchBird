@@ -26,13 +26,8 @@
 
 #ifdef UNIX
 
-#ifdef HAVE_SETJMP_H
 #include <setjmp.h>
-#endif
-
-#ifdef HAVE_SIGNAL_H
 #include <signal.h>
-#endif
 
 #include "../common/os/SyncSignals.h"
 
@@ -44,9 +39,9 @@
 					{ \
 						if ((sig = sigsetjmp(sigenv, 1))) \
 							ISC_exception_post(sig, err, __isc_error_code); \
-						ScratchBird::syncSignalsSet(&sigenv); \
+						syncSignalsSet(&sigenv); \
 					}
-#define END_CHECK_FOR_EXCEPTIONS(err)   if (!Config::getBugcheckAbort()) ScratchBird::syncSignalsReset(); }
+#define END_CHECK_FOR_EXCEPTIONS(err)   if (!Config::getBugcheckAbort()) syncSignalsReset(); }
 
 #endif // UNIX
 

@@ -723,17 +723,22 @@ gpre_rse* EXP_rse(gpre_req* request, gpre_sym* initial_symbol)
 		return NULL;
 
 	gpre_ctx* context = EXP_context(request, initial_symbol);
+    gpre_ctx* first_context = context;
 	SSHORT count = 1;
 
 	// parse subsequent context clauses if this is a join
 	gpre_nod* boolean = NULL;
 	while (MSC_match(KW_CROSS))
 	{
-		context = EXP_context(request, 0);
+		gpre_ctx* next_context = EXP_context(request, 0);
+        context->ctx_next = next_context;
+        context = next_context;
 		count++;
 		if (MSC_match(KW_OVER))
 			boolean = make_and(boolean, par_over(context));
 	}
+
+    context = first_context;
 
 	// bug_3380 - could have an "over" clause without a "cross" clause
 	if (MSC_match(KW_OVER))
