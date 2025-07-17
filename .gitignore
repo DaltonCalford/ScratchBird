@@ -6,6 +6,8 @@ temp/
 gen/Release/
 gen/Debug/
 gen/Native/
+examples_original_for_reference
+
 
 # Generated configuration files
 build_config.env
