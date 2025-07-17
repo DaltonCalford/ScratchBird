@@ -1,5 +1,56 @@
 # ScratchBird Core Features
 
+## Modern Build System ✅ COMPLETED
+
+### Overview
+ScratchBird v0.5.0 features a completely modernized build system with automated cross-platform compilation and comprehensive utility management.
+
+### Key Features
+- **Automated Build Script**: Single `./sb_build_all` command builds all utilities
+- **Cross-Platform Support**: Native Linux and Windows MinGW cross-compilation
+- **Modern C++17**: GPRE-free implementation with 96.3% code reduction
+- **Comprehensive Utilities**: 12 database utilities with consistent branding
+- **Parallel Compilation**: Multi-core build support for faster compilation
+
+### Build System Features
+- **Dependency Checking**: Automatic validation of build requirements
+- **Clean Build Support**: Complete clean and rebuild functionality
+- **Platform-Specific Builds**: Linux-only or Windows-only compilation options
+- **Verbose Output**: Detailed build information and error reporting
+- **Automatic Verification**: Post-build validation of all utilities
+
+### Usage Examples
+```bash
+# Build all utilities for all platforms
+./sb_build_all
+
+# Build with clean and verbose output
+./sb_build_all --clean --verbose
+
+# Build only Linux utilities
+./sb_build_all --linux-only
+
+# Build with specific number of parallel jobs
+./sb_build_all --jobs 8
+
+# Show all build options
+./sb_build_all --help
+```
+
+### Utilities Built
+- **scratchbird** - Main database server
+- **sb_isql** - Interactive SQL utility
+- **sb_gbak** - Backup/restore utility
+- **sb_gfix** - Database maintenance
+- **sb_gsec** - Security management
+- **sb_gstat** - Database statistics
+- **sb_guard** - Process monitor
+- **sb_svcmgr** - Service manager
+- **sb_tracemgr** - Trace manager
+- **sb_nbackup** - Incremental backup
+- **sb_gssplit** - File splitter
+- **sb_lock_print** - Lock analyzer
+
 ## Hierarchical Schema System ✅ COMPLETED
 
 ### Overview

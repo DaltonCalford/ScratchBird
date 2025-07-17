@@ -102,6 +102,9 @@ sb_gstat -h -user SYSDBA -password masterkey /path/to/mydb.fdb
 3. **2PC External Data Sources**: Distributed transaction framework
 4. **Complete ScratchBird Branding**: Zero Firebird references
 5. **GPRE-Free Utilities**: 96.3% code reduction, modern C++17
+6. **PostgreSQL-Compatible Data Types**: Network types, unsigned integers, range types
+7. **UUID IDENTITY Columns**: Automatic UUID generation with versioning
+8. **PascalCase Object Identifiers**: SQL Server-style case-insensitive mode
 
 ## Next Steps
 

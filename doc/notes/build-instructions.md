@@ -32,7 +32,28 @@ sudo yum install mingw64-gcc mingw64-gcc-c++
 
 ## Build Process
 
-### Quick Build (Linux)
+### Automated Build (Recommended)
+```bash
+# Clone repository
+git clone https://github.com/dcalford/ScratchBird.git
+cd ScratchBird
+
+# Build all utilities for all platforms
+./sb_build_all
+
+# Build options
+./sb_build_all --help                    # Show all options
+./sb_build_all --clean --verbose         # Clean build with verbose output
+./sb_build_all --linux-only              # Build only Linux utilities
+./sb_build_all --windows-only            # Build only Windows utilities
+./sb_build_all --jobs 8                  # Use 8 parallel jobs
+
+# Utilities will be automatically placed in:
+# release/alpha0.5.0/linux-x86_64/bin/
+# release/alpha0.5.0/windows-x64/bin/
+```
+
+### Manual Build (Linux)
 ```bash
 # Clone repository
 git clone https://github.com/dcalford/ScratchBird.git
@@ -44,6 +65,13 @@ g++ -std=c++17 -O3 -o sb_gstat src/utilities/modern/sb_gstat.cpp
 g++ -std=c++17 -O3 -o sb_gfix src/utilities/modern/sb_gfix.cpp
 g++ -std=c++17 -O3 -o sb_gsec src/utilities/modern/sb_gsec.cpp
 g++ -std=c++17 -O3 -o sb_isql src/utilities/modern/sb_isql.cpp -lreadline
+g++ -std=c++17 -O3 -o sb_guard src/utilities/modern/sb_guard.cpp
+g++ -std=c++17 -O3 -o sb_svcmgr src/utilities/modern/sb_svcmgr.cpp
+g++ -std=c++17 -O3 -o sb_tracemgr src/utilities/modern/sb_tracemgr.cpp
+g++ -std=c++17 -O3 -o sb_nbackup src/utilities/modern/sb_nbackup.cpp
+g++ -std=c++17 -O3 -o sb_gssplit src/utilities/modern/sb_gssplit.cpp
+g++ -std=c++17 -O3 -o sb_lock_print src/utilities/modern/sb_lock_print.cpp
+g++ -std=c++17 -O3 -o scratchbird src/utilities/modern/scratchbird.cpp
 
 # Create mock client library
 g++ -shared -fPIC -o libsbclient.so.0.5.0 create_mock_library.cpp
@@ -58,7 +86,14 @@ x86_64-w64-mingw32-g++ -std=c++17 -O3 -o sb_gbak.exe src/utilities/modern/sb_gba
 x86_64-w64-mingw32-g++ -std=c++17 -O3 -o sb_gstat.exe src/utilities/modern/sb_gstat.cpp
 x86_64-w64-mingw32-g++ -std=c++17 -O3 -o sb_gfix.exe src/utilities/modern/sb_gfix.cpp
 x86_64-w64-mingw32-g++ -std=c++17 -O3 -o sb_gsec.exe src/utilities/modern/sb_gsec.cpp
-x86_64-w64-mingw32-g++ -std=c++17 -O3 -o sb_isql.exe sb_isql_windows.cpp
+x86_64-w64-mingw32-g++ -std=c++17 -O3 -o sb_isql.exe src/utilities/modern/sb_isql.cpp
+x86_64-w64-mingw32-g++ -std=c++17 -O3 -o sb_guard.exe src/utilities/modern/sb_guard_windows.cpp -ladvapi32
+x86_64-w64-mingw32-g++ -std=c++17 -O3 -o sb_svcmgr.exe src/utilities/modern/sb_svcmgr.cpp
+x86_64-w64-mingw32-g++ -std=c++17 -O3 -o sb_tracemgr.exe src/utilities/modern/sb_tracemgr.cpp
+x86_64-w64-mingw32-g++ -std=c++17 -O3 -o sb_nbackup.exe src/utilities/modern/sb_nbackup.cpp
+x86_64-w64-mingw32-g++ -std=c++17 -O3 -o sb_gssplit.exe src/utilities/modern/sb_gssplit.cpp
+x86_64-w64-mingw32-g++ -std=c++17 -O3 -o sb_lock_print.exe src/utilities/modern/sb_lock_print.cpp
+x86_64-w64-mingw32-g++ -std=c++17 -O3 -o scratchbird.exe src/utilities/modern/scratchbird_windows.cpp -lws2_32 -ladvapi32
 
 # Create Windows DLL
 x86_64-w64-mingw32-g++ -shared -o sbclient.dll create_windows_library.cpp
@@ -69,14 +104,21 @@ x86_64-w64-mingw32-g++ -shared -o sbclient.dll create_windows_library.cpp
 ### Check Build Results
 ```bash
 # Verify all utilities are built
-ls -la sb_*
+ls -la sb_* scratchbird*
 
-# Check version strings
+# Check version strings for all utilities
 ./sb_gbak -z
 ./sb_gstat -z  
 ./sb_gfix -z
 ./sb_gsec -z
 ./sb_isql -z
+./sb_guard -z
+./sb_svcmgr -z
+./sb_tracemgr -z
+./sb_nbackup -z
+./sb_gssplit -z
+./sb_lock_print -z
+./scratchbird -z
 
 # Expected output for all:
 # <tool> version SB-T0.5.0.1 ScratchBird 0.5 f90eae0
@@ -88,12 +130,19 @@ ls -la sb_*
 ./sb_isql --help
 
 # Test GBAK help
-./sb_gbak
+./sb_gbak --help
 
 # Test other utilities
 ./sb_gstat --help
 ./sb_gfix --help
 ./sb_gsec --help
+./sb_guard --help
+./sb_svcmgr --help
+./sb_tracemgr --help
+./sb_nbackup --help
+./sb_gssplit --help
+./sb_lock_print --help
+./scratchbird --help
 ```
 
 ## Package Creation
@@ -294,9 +343,75 @@ done
 echo "Build complete! All utilities ready for packaging."
 ```
 
+## Release Package Creation
+
+### Automated Release Building
+```bash
+# Create release packages for all platforms
+./build_release
+
+# Create packages with options
+./build_release --clean --verbose       # Clean build with verbose output
+./build_release --linux-only            # Only Linux packages
+./build_release --windows-only          # Only Windows packages
+./build_release --sign                  # Sign packages with GPG
+
+# Custom version
+./build_release --version 0.5.1
+
+# Show all options
+./build_release --help
+```
+
+### Release Package Structure
+```
+releases/download/v0.5.0/
+├── scratchbird-v0.5.0-linux-x86_64.tar.gz
+├── scratchbird-v0.5.0-windows-x64.zip
+├── scratchbird-v0.5.0-macos-x86_64.tar.gz
+├── scratchbird-v0.5.0-macos-arm64.tar.gz
+├── scratchbird-v0.5.0-freebsd-x86_64.tar.gz
+├── CHECKSUMS.md5
+├── CHECKSUMS.sha256
+└── RELEASE_NOTES.md
+```
+
+### Package Contents
+Each release package includes:
+- All 12 ScratchBird utilities
+- Client libraries (libsbclient)
+- Configuration files
+- Installation scripts (install.sh/install.bat)
+- Uninstallation scripts
+- Complete documentation
+- Examples and schemas
+- Version information
+
+### Package Testing
+```bash
+# Extract and test Linux package
+tar -xzf scratchbird-v0.5.0-linux-x86_64.tar.gz
+cd scratchbird-v0.5.0-linux-x86_64
+./bin/scratchbird -z
+./bin/sb_isql -z
+
+# Test Windows package
+unzip scratchbird-v0.5.0-windows-x64.zip
+cd scratchbird-v0.5.0-windows-x64
+./bin/scratchbird.exe -z
+./bin/sb_isql.exe -z
+```
+
+### Installation Scripts
+Each package includes platform-specific installation scripts:
+- **Linux/FreeBSD**: `install.sh` with systemd service setup
+- **Windows**: `install.bat` with Windows service installation
+- **macOS**: `install.sh` with launchd service configuration
+
 ## Next Steps
 
 After successful build:
 1. Follow [Quick Start](quick-start.md) to test the utilities
 2. Read [Core Features](core-features.md) for feature documentation  
-3. See [Migration Guide](migration-guide.md) for deployment guidance
+3. See [Utilities Guide](utilities-guide.md) for complete utility documentation
+4. Use [Release Building](build-instructions.md#release-package-creation) for distribution
