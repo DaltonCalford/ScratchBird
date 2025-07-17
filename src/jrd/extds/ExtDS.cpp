@@ -26,6 +26,8 @@
 #include "../../include/fb_blk.h"
 #include "sb_exception.h"
 #include "iberror.h"
+#include "../XACoordinator.h"
+#include "../ExternalDataSourceRegistry.h"
 
 #include "../../common/classes/Hash.h"
 #include "../../common/config/config.h"
@@ -1030,10 +1032,23 @@ Transaction* Connection::findTransaction(thread_db* tdbb, TraScope traScope) con
 		break;
 
 	case traTwoPhase :
-		ERR_post(Arg::Gds(isc_random) << Arg::Str("2PC transactions not implemented"));
-
-		//ext_tran = tran->tra_ext_two_phase;
-		// join transaction if not already joined
+		// Get or create 2PC transaction
+		ext_tran = tran->tra_ext_two_phase;
+		if (!ext_tran) {
+			// Check if this connection supports 2PC
+			if (!supports2PC()) {
+				ERR_post(Arg::Gds(isc_random) << Arg::Str("Data source does not support 2PC"));
+			}
+			
+			// Create new 2PC transaction branch
+			ext_tran = createTransaction();
+			if (ext_tran) {
+				ext_tran->m_scope = traTwoPhase;
+				ext_tran->m_nextTran = tran->tra_ext_two_phase;
+				ext_tran->m_jrdTran = tran->getInterface(true);
+				tran->tra_ext_two_phase = ext_tran;
+			}
+		}
 		break;
 	}
 
@@ -1938,6 +1953,7 @@ void Transaction::detachFromJrdTran()
 void Transaction::jrdTransactionEnd(thread_db* tdbb, jrd_tra* transaction,
 		bool commit, bool retain, bool force)
 {
+	// Handle common transactions
 	Transaction* tran = transaction->tra_ext_common;
 	while (tran)
 	{
@@ -1959,6 +1975,46 @@ void Transaction::jrdTransactionEnd(thread_db* tdbb, jrd_tra* transaction,
 			tran->detachFromJrdTran();
 		}
 		tran = next;
+	}
+	
+	// Handle 2PC transactions
+	tran = transaction->tra_ext_two_phase;
+	if (tran) {
+		try {
+			// Use external data source registry for 2PC coordination
+			ExternalDataSourceRegistry& registry = ExternalDataSourceRegistry::instance();
+			
+			if (commit) {
+				// This is the commit phase - external sources should already be prepared
+				if (!registry.commit2PC(transaction)) {
+					ERR_post(Arg::Gds(isc_random) << Arg::Str("2PC commit failed"));
+				}
+			} else {
+				// This is rollback
+				if (!registry.rollback2PC(transaction)) {
+					// Log warning but don't throw error during rollback
+					fb_utils::init_status(tdbb->tdbb_status_vector);
+				}
+			}
+			
+			// Clear 2PC transaction references
+			while (transaction->tra_ext_two_phase) {
+				Transaction* next = transaction->tra_ext_two_phase->m_nextTran;
+				transaction->tra_ext_two_phase->detachFromJrdTran();
+				transaction->tra_ext_two_phase = next;
+			}
+		}
+		catch (const Exception&) {
+			if (!force)
+				throw;
+			
+			// Force cleanup on error
+			while (transaction->tra_ext_two_phase) {
+				Transaction* next = transaction->tra_ext_two_phase->m_nextTran;
+				transaction->tra_ext_two_phase->detachFromJrdTran();
+				transaction->tra_ext_two_phase = next;
+			}
+		}
 	}
 }
 

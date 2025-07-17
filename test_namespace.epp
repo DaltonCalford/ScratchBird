@@ -1,7 +1,0 @@
-#include "firebird.h"
-using namespace ScratchBird;
-
-int test_function()
-{
-    return 0;
-}

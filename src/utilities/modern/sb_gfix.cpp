@@ -5,7 +5,7 @@
 #include <cstdlib>
 
 // Version information
-static const char* VERSION = "sb_gfix version SB-T0.6.0.1 ScratchBird 0.6 f90eae0";
+static const char* VERSION = "sb_gfix version SB-T0.5.0.1 ScratchBird 0.5 f90eae0";
 
 // Command line options
 struct GFixOptions {

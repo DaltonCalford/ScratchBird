@@ -1,9 +1,0 @@
-#include "firebird.h"
-using namespace ScratchBird;
-
-DATABASE DB = FILENAME "ODS.RDB";
-
-int test_function()
-{
-    return 0;
-}

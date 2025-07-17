@@ -1737,6 +1737,12 @@ create_clause
 			node->createIfNotExistsOnly = $3;
 			$$ = node;
 		}
+	| EXTERNAL DATA SOURCE if_not_exists_opt external_data_source_clause
+		{
+			const auto node = $5;
+			node->createIfNotExistsOnly = $4;
+			$$ = node;
+		}
 	| DOMAIN if_not_exists_opt domain_clause
 		{
 			const auto node = $3;
@@ -3900,10 +3906,8 @@ exec_stmt_option($execStatementNode)
 		{ setClause($execStatementNode->traScope, "TRANSACTION", EDS::traCommon); }
 	| WITH CALLER PRIVILEGES
 		{ setClause($execStatementNode->useCallerPrivs, "CALLER PRIVILEGES"); }
-	/*
 	| WITH TWO_PHASE TRANSACTION
 		{ setClause($execStatementNode->traScope, "TRANSACTION", EDS::traTwoPhase); }
-	*/
 	;
 
 %type <stmtNode> if_then_else
