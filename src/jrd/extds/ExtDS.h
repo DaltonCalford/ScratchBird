@@ -36,6 +36,10 @@ namespace Jrd
 	class jrd_tra;
 	class thread_db;
 	class ValueListNode;
+	class XACoordinator;
+	class XAGlobalTransaction;
+	class XATransactionBranch;
+	class ScratchBirdXAResourceManager;
 }
 
 namespace EDS {
@@ -573,6 +577,10 @@ public:
 
 	virtual bool isSameDatabase(const ScratchBird::PathName& dbName,
 		ScratchBird::ClumpletReader& dpb, const CryptHash& ch) const;
+	
+	// XA/2PC support methods
+	virtual bool supports2PC() const { return false; }
+	virtual class ScratchBirdXAResourceManager* getXAResourceManager() { return nullptr; }
 
 	// only Internal provider is able to create "current" connections
 	virtual bool isCurrent() const { return false; }

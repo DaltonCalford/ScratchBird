@@ -304,7 +304,7 @@ public:
 	SLONG tra_blob_util_next = 1;
 
 	EDS::Transaction *tra_ext_common;
-	//Transaction *tra_ext_two_phase;
+	EDS::Transaction *tra_ext_two_phase;
 	GenIdCache* tra_gen_ids;
 	ScratchBird::IReplicatedTransaction* tra_replicator;
 

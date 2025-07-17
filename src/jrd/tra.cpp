@@ -41,6 +41,7 @@
 #include "../common/ThreadStart.h"
 #include "../jrd/TimeZone.h"
 #include "../jrd/UserManagement.h"
+#include "../jrd/ExternalDataSourceRegistry.h"
 #include "../jrd/blb_proto.h"
 #include "../jrd/cch_proto.h"
 #include "../jrd/cmp_proto.h"
@@ -1104,6 +1105,14 @@ void TRA_prepare(thread_db* tdbb, jrd_tra* transaction, USHORT length, const UCH
 	// Perform any meta data work deferred
 
 	DFW_perform_work(tdbb, transaction);
+	
+	// Prepare external data sources (2PC)
+	if (transaction->tra_ext_two_phase) {
+		ExternalDataSourceRegistry& registry = ExternalDataSourceRegistry::instance();
+		if (!registry.prepare2PC(transaction)) {
+			ERR_post(Arg::Gds(isc_random) << Arg::Str("2PC prepare failed"));
+		}
+	}
 
 	// Flush pages if transaction logically modified data
 	jrd_tra* sysTran = tdbb->getAttachment()->getSysTransaction();
