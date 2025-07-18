@@ -1,0 +1,48 @@
+ScratchBird v0.5.0 Examples Documentation
+=========================================
+
+API Examples:
+api/sb_api_01_create.cpp
+
+Interface Examples:
+interfaces/01.create.cpp
+interfaces/02.update.cpp
+interfaces/03.select.cpp
+interfaces/04.print_table.cpp
+interfaces/05.user_metadata.cpp
+interfaces/06.sb_message.cpp
+interfaces/07.blob.cpp
+interfaces/08.events.cpp
+interfaces/09.service.cpp
+interfaces/10.backup.cpp
+interfaces/11.batch.cpp
+interfaces/12.batch_isc.cpp
+interfaces/13.null_pk.cpp
+interfaces/sb_interface_01_create.cpp
+interfaces/sb_interface_02_transactions.cpp
+
+UDR Examples:
+udr/Functions.cpp
+udr/install_udr.sql
+udr/Procedures.cpp
+udr/ScratchBirdUDR.cpp
+udr/Triggers.cpp
+udr/Zones.cpp
+
+Package Examples:
+packages/network_utilities.sql
+packages/schema_management.sql
+
+Data Type Examples:
+datatypes/network_types.sql
+
+Schema Examples:
+schemas/schema_basic.sql
+schemas/schema_hierarchy.sql
+
+Configuration Examples:
+config/databases.conf
+config/scratchbird.conf
+
+Utility Examples:
+utilities/backup_restore.sh

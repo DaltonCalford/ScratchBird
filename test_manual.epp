@@ -1,6 +1,0 @@
-DATABASE DB = STATIC FILENAME "test.db";
-
-void test_function() {
-    // Simple test
-    int x = 1;
-}

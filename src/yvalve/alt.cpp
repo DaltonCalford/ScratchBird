@@ -40,7 +40,7 @@
 #include "../yvalve/gds_proto.h"
 #include "../yvalve/utl_proto.h"
 #include "../yvalve/why_proto.h"
-#include "../utilities/gsec/gsec.h"
+// #include "../utilities/gsec/gsec.h"  // Commented out - file not found and not used
 #include "../common/security.h"
 #include "../common/call_service.h"
 
