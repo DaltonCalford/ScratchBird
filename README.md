@@ -1,11 +1,11 @@
-# ScratchBird v0.5.0 🔥
+# ScratchBird v0.6.0 🔥
 A modern, enterprise-ready fork of FirebirdSQL with advanced PostgreSQL-compatible features
 
-[![Build Status](https://img.shields.io/badge/build-stable-green)](https://github.com/dcalford/ScratchBird) [![License](https://img.shields.io/badge/license-IDPL-blue)](LICENSE) [![Version](https://img.shields.io/badge/version-0.5.0--stable-brightgreen)](CHANGELOG.md) [![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20Windows-blue)](README.md) [![Port](https://img.shields.io/badge/default%20port-4050-orange)](README.md)
+[![Build Status](https://img.shields.io/badge/build-development-yellow)](https://github.com/dcalford/ScratchBird) [![License](https://img.shields.io/badge/license-IDPL-blue)](LICENSE) [![Version](https://img.shields.io/badge/version-0.6.0--development-orange)](CHANGELOG.md) [![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20Windows-blue)](README.md) [![Port](https://img.shields.io/badge/default%20port-4050-orange)](README.md)
 
 ## What is ScratchBird?
 
-ScratchBird v0.5.0 is a production-ready fork of FirebirdSQL featuring advanced PostgreSQL-compatible datatypes, hierarchical schemas, and modern enterprise capabilities. Built from Firebird 6.0.0.929, ScratchBird extends the proven Firebird architecture with cutting-edge features for modern application development.
+ScratchBird v0.6.0 is the next-generation development version featuring enhanced PostgreSQL-compatible datatypes, hierarchical schemas, and advanced enterprise capabilities. Built from Firebird 6.0.0.929, ScratchBird extends the proven Firebird architecture with cutting-edge features for modern application development.
 
 **🎯 Target Audience**: Developers seeking PostgreSQL compatibility with Firebird's proven reliability, organizations requiring advanced datatype support, and teams building distributed database applications.
 
@@ -19,18 +19,18 @@ ScratchBird v0.5.0 is a production-ready fork of FirebirdSQL featuring advanced 
 
 ```bash
 # Linux - Download and run installer
-wget https://github.com/dcalford/ScratchBird/releases/download/v0.5.0/scratchbird-v0.5.0-linux-x86_64.tar.gz
-tar -xzf scratchbird-v0.5.0-linux-x86_64.tar.gz
-cd scratchbird-v0.5.0-linux-x86_64
+wget https://github.com/dcalford/ScratchBird/releases/download/v0.6.0/scratchbird-v0.6.0-linux-x86_64.tar.gz
+tar -xzf scratchbird-v0.6.0-linux-x86_64.tar.gz
+cd scratchbird-v0.6.0-linux-x86_64
 sudo ./install.sh
 
 # Windows - Download installer from releases page
-# https://github.com/dcalford/ScratchBird/releases/download/v0.5.0/scratchbird-v0.5.0-windows-x64.zip
+# https://github.com/dcalford/ScratchBird/releases/download/v0.6.0/scratchbird-v0.6.0-windows-x64.zip
 # Extract and run install.bat as administrator
 
 # Verify installation
 sb_isql -z
-# Expected: sb_isql version SB-T0.5.0.1 ScratchBird 0.5 f90eae0
+# Expected: sb_isql version SB-T0.6.0.1 ScratchBird 0.6 f90eae0
 ```
 
 **Build from Source (Developer Installation):**

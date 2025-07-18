@@ -33,6 +33,6 @@
 // Company/Product information
 #define SCRATCHBIRD_COMPANY      "ScratchBird Project"
 #define SCRATCHBIRD_PRODUCT      "ScratchBird Database"
-#define SCRATCHBIRD_COPYRIGHT    "Copyright (C) 2024 ScratchBird Project"
+#define SCRATCHBIRD_COPYRIGHT    "Copyright (C) 2025 ScratchBird Project"
 
 #endif /* SB_VERSION_H */

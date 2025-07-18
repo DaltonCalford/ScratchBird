@@ -5,6 +5,32 @@ All notable changes to ScratchBird will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - TBD - Development Version
+
+### 🚀 Development in Progress
+
+This is the next major version of ScratchBird currently under development. Features are being added incrementally.
+
+#### Planned Features
+- Advanced query optimization enhancements
+- Extended PostgreSQL compatibility features
+- Performance improvements for hierarchical schemas
+- Enhanced database link functionality
+- Additional network data type operations
+- Improved GPRE-free architecture optimizations
+
+#### Work in Progress
+- Schema path cache performance optimizations
+- DatabaseLink DDL enhancements
+- Extended SQL Dialect 4 features
+
+### 📝 Notes
+- This is a development version - not recommended for production use
+- Features may change during development
+- Use v0.5.0 for production deployments
+
+---
+
 ## [0.5.0] - 2025-01-17 - Production Ready Release
 
 ### 🎉 Major Features Added
