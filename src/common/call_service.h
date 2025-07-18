@@ -25,7 +25,7 @@
 #define UTILITIES_GSEC_CALL_SERVICE_H
 
 #include "ibase.h"
-#include "../utilities/gsec/gsec.h"
+// #include "../utilities/gsec/gsec.h"  // Constants now in iberror_c.h
 #include "../common/security.h"
 
 isc_svc_handle attachRemoteServiceManager(ISC_STATUS*, const TEXT*, const TEXT*,

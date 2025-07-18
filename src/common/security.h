@@ -242,6 +242,12 @@ public:
 
 int setGsecCode(int code, unsigned int operation);
 
+// Operation constants for user management
+const int ADD_OPER = 1;
+const int DEL_OPER = 2;  
+const int MOD_OPER = 3;
+const int ADDMOD_OPER = 4;
+
 } // namespace Auth
 
 #endif // UTILITIES_SECUR_PROTO_H

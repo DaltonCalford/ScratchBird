@@ -61,6 +61,14 @@ public:
     const ScratchBird::string& getName() const { return linkName; }
     const ScratchBird::string& getServerName() const { return serverName; }
     const ScratchBird::string& getDatabasePath() const { return databasePath; }
+    const ScratchBird::string& getUserName() const { return userName; }
+    const ScratchBird::string& getPassword() const { return password; }
+    
+    // Core property setters
+    void setServerName(const ScratchBird::string& server) { serverName = server; }
+    void setDatabasePath(const ScratchBird::string& database) { databasePath = database; }
+    void setUserName(const ScratchBird::string& user) { userName = user; }
+    void setPassword(const ScratchBird::string& pass) { password = pass; }
     
     // Schema-aware properties
     void setSchemaMode(SchemaMode mode) { schemaMode = mode; }
@@ -70,6 +78,7 @@ public:
     const ScratchBird::string& getLocalSchema() const { return localSchema; }
     const ScratchBird::string& getRemoteSchema() const { return remoteSchema; }
     SSHORT getSchemaDepth() const { return schemaDepth; }
+    void setSchemaDepth(SSHORT depth) { schemaDepth = depth; }
     
     // Schema resolution methods
     ScratchBird::string resolveTargetSchema(const ScratchBird::string& contextSchema, Jrd::thread_db* tdbb) const;

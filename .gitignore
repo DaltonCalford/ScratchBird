@@ -6,24 +6,41 @@ temp/
 gen/Release/
 gen/Debug/
 gen/Native/
-examples_original_for_reference
+examples_original_for_reference/
 
 
 # Generated configuration files
 build_config.env
 autoconfig.h
 
-# Build logs
+# Build logs (but allow release notes)
 build_*.log
 *.log
+!releases/**/*.log
+!release/**/*.log
 
-# Object files
+# Object files (but allow release files)
 *.o
 *.obj
 *.a
 *.so
 *.dll
 *.exe
+
+# Allow release files and packages (overrides above restrictions)
+!release/**/*
+!releases/**/*
+!releases/**/*.tar.gz
+!releases/**/*.zip
+!releases/**/*.md
+!release/**/*.so
+!release/**/*.dll
+!release/**/*.exe
+!**/RELEASE_NOTES.md
+!**/RELEASE_SUMMARY.md
+!**/CHANGELOG.md
+!scratchbird-v*.tar.gz
+!scratchbird-v*.zip
 
 # CMake
 CMakeFiles/
@@ -52,13 +69,6 @@ config.h.in~
 *.cpp.orig
 *.h.orig
 
-# Package directories
-packages/
-*.tar.gz
-*.zip
-*.deb
-*.rpm
-
 # IDE files
 .vscode/
 .idea/
@@ -71,10 +81,14 @@ packages/
 Thumbs.db
 desktop.ini
 
-# Backup files
+# Backup files (but allow release packages)
 *.bak
 *.backup
 *.orig
+!releases/**/*.tar.gz
+!releases/**/*.zip
+!release/**/*.tar.gz
+!release/**/*.zip
 
 # Test databases
 *.fdb

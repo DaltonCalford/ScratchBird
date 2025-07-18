@@ -1,0 +1,10 @@
+{
+global:
+	LD_lookup_charset;
+	LD_lookup_texttype;
+	LD_lookup_texttype_with_status;
+	LD_setup_attributes;
+	LD_version;
+local:
+	*;
+};

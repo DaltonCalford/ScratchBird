@@ -1,0 +1,6 @@
+{
+global:
+	firebird_plugin;
+local:
+	*;
+};

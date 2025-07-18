@@ -254,7 +254,17 @@ void LinkManager::clearLinks()
 {
     ScratchBird::WriteLockGuard guard(linksLock, "LinkManager::clearLinks");
     
-    // TODO: Implement proper iterator cleanup
+    // Delete all cached database links
+    auto it = links.begin();
+    while (it != links.end()) {
+        DatabaseLink* link = (*it).second;
+        if (link) {
+            link->disconnect();
+            delete link;
+        }
+        ++it;
+    }
+    
     links.clear();
 }
 
@@ -262,7 +272,31 @@ DatabaseLink* LinkManager::findLinkBySchema(const ScratchBird::string& schemaPat
 {
     ScratchBird::ReadLockGuard guard(linksLock, "LinkManager::findLinkBySchema");
     
-    // TODO: Implement schema-based link lookup
+    // Search for links that match the schema path
+    auto it = links.begin();
+    while (it != links.end()) {
+        DatabaseLink* link = (*it).second;
+        if (link && link->isValid()) {
+            // Check if this link's local schema matches or is a parent of the requested path
+            const ScratchBird::string& linkSchema = link->getLocalSchema();
+            
+            if (!linkSchema.isEmpty()) {
+                // Exact match
+                if (schemaPath == linkSchema) {
+                    return link;
+                }
+                
+                // Check if schema path starts with link schema (hierarchical match)
+                if (schemaPath.length() > linkSchema.length() && 
+                    schemaPath.substr(0, linkSchema.length()) == linkSchema &&
+                    schemaPath[linkSchema.length()] == '.') {
+                    return link;
+                }
+            }
+        }
+        ++it;
+    }
+    
     return nullptr;
 }
 
@@ -282,8 +316,33 @@ bool LinkManager::validateAllLinks(Jrd::thread_db* tdbb)
 {
     ScratchBird::ReadLockGuard guard(linksLock, "LinkManager::validateAllLinks");
     
-    // TODO: Implement link validation
-    return true;
+    bool allValid = true;
+    auto it = links.begin();
+    
+    while (it != links.end()) {
+        DatabaseLink* link = (*it).second;
+        if (link) {
+            // Validate connection parameters
+            if (!link->validateConnection(tdbb)) {
+                allValid = false;
+                continue;
+            }
+            
+            // Validate schema access if schema mode is configured
+            if (link->getSchemaMode() != SCHEMA_MODE_NONE) {
+                const ScratchBird::string& remoteSchema = link->getRemoteSchema();
+                if (!remoteSchema.isEmpty() && !link->validateSchemaAccess(remoteSchema, tdbb)) {
+                    allValid = false;
+                    continue;
+                }
+            }
+        } else {
+            allValid = false;
+        }
+        ++it;
+    }
+    
+    return allValid;
 }
 
 void LinkManager::refreshSchemaCache()

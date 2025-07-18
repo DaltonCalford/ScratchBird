@@ -156,12 +156,14 @@ ScratchBird v0.5.0 includes a comprehensive set of database utilities and a mode
 
 ## Development Status
 
-### ✅ Current Release: v0.5.0 (Production Ready)
-- **GPRE-Free Architecture**: 96.3% code reduction, modern C++17 implementation
+### ✅ Current Release: v0.5.0 (Production Ready) - Released January 17, 2025
+- **Complete Build System**: Successfully compiled and tested on Linux x86_64
+- **All Core Tools Working**: sb_isql, sb_gbak, sb_gfix, sb_gsec, sb_gstat, and more
 - **Hierarchical Schema System**: 8-level deep nesting exceeding PostgreSQL
 - **PostgreSQL-Compatible Data Types**: Network, unsigned integers, range types, UUID IDENTITY
-- **Cross-Platform Build**: Linux native and Windows MinGW cross-compilation
+- **Cross-Platform Build**: Linux native compilation completed
 - **Complete ScratchBird Branding**: Zero Firebird references, conflict-free operation
+- **Comprehensive Test Suite**: 8 test categories with performance benchmarks
 
 ### 🚀 Next Release: v0.6.0 (In Development)
 - **Enhanced Default Schema Architecture**: Enterprise-grade schema organization
