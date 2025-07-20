@@ -12,17 +12,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 This is the next major version of ScratchBird currently under development. Features are being added incrementally.
 
 #### Planned Features
-- Advanced query optimization enhancements
-- Extended PostgreSQL compatibility features
-- Performance improvements for hierarchical schemas
-- Enhanced database link functionality
-- Additional network data type operations
-- Improved GPRE-free architecture optimizations
+- Schema Reorganization
+- Advanced Array Types
+- Full-Text Search Types
+- Spatial/Geometric Types
+- Enhanced Binary Data Types
+- Additional Network Type Enhancements
+- New indexes
 
 #### Work in Progress
-- Schema path cache performance optimizations
-- DatabaseLink DDL enhancements
-- Extended SQL Dialect 4 features
+- Schema Reorganization
+- New Data Types
+- Add Type Enhancements
 
 ### 📝 Notes
 - This is a development version - not recommended for production use
