@@ -1,4 +1,4 @@
-# ScratchBird v0.5.0 - macOS x86_64 Release
+# ScratchBird v0.6.0 - macOS x86_64 Release
 
 ## Platform Information
 - **Architecture**: macOS x86_64 (64-bit Intel)
@@ -16,7 +16,7 @@
 - `gpre` - General Purpose Relation Engine preprocessor
 
 ### Libraries (`lib/`)
-- `libsbclient.0.5.0.dylib` - ScratchBird client library (primary)
+- `libsbclient.0.6.0.dylib` - ScratchBird client library (primary)
 - `libsbclient.2.dylib` - Compatibility symlink for Firebird applications
 - `libsbclient.dylib` - Development symlink
 - `libsbintl.dylib` - International character set support
@@ -56,13 +56,13 @@ sudo cp conf/* /usr/local/etc/scratchbird/
 ```
 
 ### Using the Package Installer
-1. Download `ScratchBird-v0.5.0-x86_64.pkg`
+1. Download `ScratchBird-v0.6.0-x86_64.pkg`
 2. Double-click to run the installer
 3. Follow the installation wizard
 
 ## Features
 
-### New in v0.5.0
+### New in v0.6.0
 - **Complete ScratchBird Branding**: All Firebird references removed
 - **Hierarchical Schema Support**: PostgreSQL-style nested schemas (finance.accounting.reports.table)
 - **Schema-Aware Database Links**: Remote schema targeting with 5 resolution modes
@@ -172,8 +172,8 @@ otool -L /usr/local/bin/sb_isql
 ```
 
 ## Version Information
-- **Version**: 0.5.0
-- **Build**: SB-T0.5.0.1
+- **Version**: 0.6.0
+- **Build**: SB-T0.6.0.1
 - **Release Date**: July 2025
 - **Compatibility**: ScratchBird v0.5.x series
 

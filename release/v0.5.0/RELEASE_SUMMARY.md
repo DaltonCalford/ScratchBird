@@ -1,20 +1,20 @@
-# ScratchBird v0.5.0 Release Summary
+# ScratchBird v0.6.0 Release Summary
 
 **Release Date:** January 17, 2025  
-**Version:** v0.5.0 (Production Ready)  
+**Version:** v0.6.0 (Production Ready)  
 **Platforms:** Linux x86_64  
 
 ## 📦 Release Packages
 
 ### Linux x86_64
-- **Package:** `scratchbird-v0.5.0-linux-x86_64.tar.gz` (4.0 MB)
+- **Package:** `scratchbird-v0.6.0-linux-x86_64.tar.gz` (4.0 MB)
 - **Installation:** Automated installer script included (`install.sh`)
 - **Target:** Linux distributions with systemd support
 
 ## ✅ What's Included
 
 ### Core Database Tools (All Working)
-- `sb_isql` - Interactive SQL utility (version SB-T0.5.0.1)
+- `sb_isql` - Interactive SQL utility (version SB-T0.6.0.1)
 - `sb_gbak` - Backup and restore utility
 - `sb_gfix` - Database maintenance tool
 - `sb_gsec` - Security management
@@ -47,7 +47,7 @@
 
 ### Technical Specifications
 - **Build Quality**: Clean compilation with resolved dependencies
-- **Version Consistency**: All tools show SB-T0.5.0.1 version
+- **Version Consistency**: All tools show SB-T0.6.0.1 version
 - **Performance**: Schema path caching and optimized operations
 - **Compatibility**: SQL Dialect 4 with FROM-less SELECT support
 
@@ -56,9 +56,9 @@
 ### Quick Installation
 ```bash
 # Download and extract
-wget https://github.com/dcalford/ScratchBird/releases/download/v0.5.0/scratchbird-v0.5.0-linux-x86_64.tar.gz
-tar -xzf scratchbird-v0.5.0-linux-x86_64.tar.gz
-cd scratchbird-v0.5.0-linux-x86_64
+wget https://github.com/dcalford/ScratchBird/releases/download/v0.6.0/scratchbird-v0.6.0-linux-x86_64.tar.gz
+tar -xzf scratchbird-v0.6.0-linux-x86_64.tar.gz
+cd scratchbird-v0.6.0-linux-x86_64
 
 # Run automated installer
 sudo ./install.sh
@@ -145,6 +145,6 @@ sb_isql -z
 
 ---
 
-**ScratchBird v0.5.0 represents a significant milestone in database technology, providing PostgreSQL-compatible features within Firebird's proven architecture.**
+**ScratchBird v0.6.0 represents a significant milestone in database technology, providing PostgreSQL-compatible features within Firebird's proven architecture.**
 
 *ScratchBird Development Team - January 17, 2025*

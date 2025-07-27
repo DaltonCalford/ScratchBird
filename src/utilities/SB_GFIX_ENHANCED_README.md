@@ -4,7 +4,7 @@
 
 The ScratchBird Enhanced GFIX (sb_gfix) is a next-generation database maintenance and repair utility that provides advanced capabilities for validating, repairing, and maintaining ScratchBird databases. Built upon the robust ScratchBird engine infrastructure, it offers significantly enhanced functionality compared to traditional database maintenance tools.
 
-**Version**: SB-T0.5.0.1 ScratchBird 0.5 f90eae0  
+**Version**: SB-T0.6.0.1 ScratchBird 0.6 f90eae0  
 **Compatibility**: 100% backward compatible with original Firebird GFIX commands  
 **Engine Integration**: Full integration with ScratchBird service infrastructure  
 
@@ -55,7 +55,7 @@ The ScratchBird Enhanced GFIX (sb_gfix) is a next-generation database maintenanc
 ## Installation and Setup
 
 ### Prerequisites
-- ScratchBird 0.5 or later
+- ScratchBird 0.6 or later
 - Enhanced engine integration components
 - Sufficient disk space for backup operations (if enabled)
 - Appropriate database access permissions

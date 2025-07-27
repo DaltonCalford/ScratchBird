@@ -1,7 +1,7 @@
 #!/bin/bash
 
 #
-# ScratchBird v0.5.0 - Performance Benchmark Tests
+# ScratchBird v0.6.0 - Performance Benchmark Tests
 #
 # This script tests the operational speed and performance characteristics
 # of ScratchBird, including benchmarks for:

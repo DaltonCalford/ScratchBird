@@ -604,7 +604,7 @@ bool testNamespaceUtilities() {
 int main() {
     try {
         std::cout << "ScratchBird Enhanced GFIX Integration Test" << std::endl;
-        std::cout << "Version: SB-T0.5.0.1 ScratchBird 0.5 f90eae0" << std::endl;
+        std::cout << "Version: SB-T0.6.0.1 ScratchBird 0.6 f90eae0" << std::endl;
         std::cout << "Testing database maintenance and repair functionality..." << std::endl;
         
         GFixIntegrationTest test;

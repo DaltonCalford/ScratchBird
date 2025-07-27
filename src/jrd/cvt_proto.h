@@ -96,4 +96,15 @@ inline USHORT CVT_get_string_ptr(const dsc* desc, USHORT* ttype, UCHAR** address
 									 &Jrd::EngineCallbacks::instance);
 }
 
+// Network and Range Type Conversion Function Prototypes for ScratchBird v0.6.0
+bool		CVT_inet_to_cidr(const dsc*, dsc*);
+bool		CVT_cidr_to_inet(const dsc*, dsc*);
+bool		CVT_macaddr_to_text(const dsc*, dsc*);
+bool		CVT_text_to_macaddr(const dsc*, dsc*);
+bool		CVT_int4range_to_text(const dsc*, dsc*);
+bool		CVT_text_to_int4range(const dsc*, dsc*);
+bool		CVT_tsrange_to_text(const dsc*, dsc*);
+bool		CVT_daterange_overlap(const dsc*, const dsc*, dsc*);
+bool		CVT_numrange_contains(const dsc*, const dsc*, dsc*);
+
 #endif // JRD_CVT_PROTO_H

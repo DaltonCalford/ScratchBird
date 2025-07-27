@@ -152,6 +152,11 @@ const int SKD_int128		= 20;
 const int SKD_inet			= 21;
 const int SKD_cidr			= 22;
 const int SKD_macaddr		= 23;
+const int SKD_int4range		= 24;
+const int SKD_int8range		= 25;
+const int SKD_numrange		= 26;
+const int SKD_tsrange		= 27;
+const int SKD_daterange		= 28;
 
 // skd_flags
 const UCHAR SKD_ascending		= 0;	// default initializer

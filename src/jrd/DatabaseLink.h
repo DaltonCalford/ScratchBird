@@ -46,9 +46,9 @@ private:
     
     // Schema path parsing and resolution
     ScratchBird::string resolveRemoteSchema(const ScratchBird::string& localPath, Jrd::thread_db* tdbb) const;
-    bool validateSchemaAccess(const ScratchBird::string& schemaPath, Jrd::thread_db* tdbb) const;
     
 public:
+    bool validateSchemaAccess(const ScratchBird::string& schemaPath, Jrd::thread_db* tdbb) const;
     DatabaseLink();
     DatabaseLink(ScratchBird::MemoryPool& pool);
     DatabaseLink(const ScratchBird::string& name, const ScratchBird::string& server, 

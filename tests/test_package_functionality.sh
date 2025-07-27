@@ -1,7 +1,7 @@
 #!/bin/bash
 
 #
-# ScratchBird v0.5.0 - Package Functionality Tests
+# ScratchBird v0.6.0 - Package Functionality Tests
 #
 # This script tests the package functionality in ScratchBird, including:
 # - Package creation and management

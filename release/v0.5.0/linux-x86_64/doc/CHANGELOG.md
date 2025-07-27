@@ -5,7 +5,7 @@ All notable changes to ScratchBird will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.5.0] - 2025-01-17 - Production Ready Release
+## [0.6.0] - 2025-01-17 - Production Ready Release
 
 ### 🎉 Major Features Added
 
@@ -40,7 +40,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 #### Database Utilities (All Working)
 - **scratchbird**: Main database server with hierarchical schema support
-- **sb_isql**: Interactive SQL utility (version SB-T0.5.0.1)
+- **sb_isql**: Interactive SQL utility (version SB-T0.6.0.1)
 - **sb_gbak**: Backup/restore utility with schema preservation
 - **sb_gfix**: Database maintenance and validation tool
 - **sb_gsec**: Security management and user administration
@@ -70,7 +70,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Successful Compilation**: Clean build with resolved dependency issues
 - **Authentication Constants**: Fixed missing Auth operation constants (ADD_OPER, DEL_OPER, MOD_OPER)
 - **Directory Structure**: Proper build directory organization and object file placement
-- **Version Consistency**: All tools show consistent SB-T0.5.0.1 version information
+- **Version Consistency**: All tools show consistent SB-T0.6.0.1 version information
 
 ### 🔨 Technical Improvements
 
@@ -131,7 +131,7 @@ CREATE DATABASE LINK finance_link
 
 #### Release Package Structure
 ```
-scratchbird-v0.5.0-linux-x86_64/
+scratchbird-v0.6.0-linux-x86_64/
 ├── bin/                    # All ScratchBird utilities
 ├── lib/                    # Client libraries  
 ├── include/                # Development headers
@@ -180,4 +180,4 @@ scratchbird-v0.5.0-linux-x86_64/
 
 For more details about upcoming features, see our [Development Roadmap](doc/notes/roadmap.md).
 
-**Download ScratchBird v0.5.0**: [GitHub Releases](https://github.com/dcalford/ScratchBird/releases/tag/v0.5.0)
+**Download ScratchBird v0.6.0**: [GitHub Releases](https://github.com/dcalford/ScratchBird/releases/tag/v0.6.0)

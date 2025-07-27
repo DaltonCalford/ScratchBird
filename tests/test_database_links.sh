@@ -1,7 +1,7 @@
 #!/bin/bash
 
 #
-# ScratchBird v0.5.0 - Database Links Tests
+# ScratchBird v0.6.0 - Database Links Tests
 #
 # This script tests the schema-aware database links functionality in ScratchBird,
 # including remote database connections, schema mapping, and link management.

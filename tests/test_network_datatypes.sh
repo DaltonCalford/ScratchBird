@@ -1,7 +1,7 @@
 #!/bin/bash
 
 #
-# ScratchBird v0.5.0 - Network Data Types Tests
+# ScratchBird v0.6.0 - Network Data Types Tests
 #
 # This script tests PostgreSQL-compatible network data types in ScratchBird,
 # including INET, CIDR, MACADDR, UUID, and related operators and functions.

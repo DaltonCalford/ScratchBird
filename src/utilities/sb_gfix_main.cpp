@@ -73,7 +73,7 @@ struct CommandLineArgs {
 };
 
 void showVersion() {
-    std::cout << "sb_gfix version SB-T0.5.0.1 ScratchBird 0.5 f90eae0" << std::endl;
+    std::cout << "sb_gfix version SB-T0.6.0.1 ScratchBird 0.6 f90eae0" << std::endl;
     std::cout << "Enhanced database maintenance utility for ScratchBird" << std::endl;
     std::cout << "Copyright (c) 2025 ScratchBird Project" << std::endl;
 }

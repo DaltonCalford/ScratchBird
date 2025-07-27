@@ -1,13 +1,13 @@
 #!/bin/bash
 
-# ScratchBird v0.5.0 Release Completion Script
+# ScratchBird v0.6.0 Release Completion Script
 # This script completes the full release process ensuring clean builds
 
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-RELEASE_DIR="$SCRIPT_DIR/release/v0.5.0"
-VERSION="0.5.0"
+RELEASE_DIR="$SCRIPT_DIR/release/v0.6.0"
+VERSION="0.6.0"
 
 echo "=== ScratchBird v${VERSION} Release Completion ==="
 echo "Release directory: $RELEASE_DIR"
@@ -47,7 +47,7 @@ check_file "$RELEASE_DIR/bin/gpre"
 echo
 echo "--- Core Libraries (Linux) ---"
 check_file "$RELEASE_DIR/lib/libsbclient.so"
-check_file "$RELEASE_DIR/lib/libsbclient.so.0.5.0"
+check_file "$RELEASE_DIR/lib/libsbclient.so.0.6.0"
 check_file "$RELEASE_DIR/lib/libsbembed.so"
 
 echo  

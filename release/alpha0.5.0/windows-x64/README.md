@@ -1,4 +1,4 @@
-# ScratchBird v0.5.0 - Windows x64 Release
+# ScratchBird v0.6.0 - Windows x64 Release
 
 ## Platform Information
 - **Architecture**: Windows x64 (64-bit Intel/AMD)
@@ -36,7 +36,7 @@
 ## Installation
 
 ### Using the Installer
-1. Run `ScratchBirdInstaller-v0.5.0-x64.msi` as Administrator
+1. Run `ScratchBirdInstaller-v0.6.0-x64.msi` as Administrator
 2. Follow the installation wizard
 3. Configure Windows services if needed
 
@@ -50,7 +50,7 @@
 
 ## Features
 
-### New in v0.5.0
+### New in v0.6.0
 - **Complete ScratchBird Branding**: All Firebird references removed
 - **Hierarchical Schema Support**: PostgreSQL-style nested schemas (finance.accounting.reports.table)
 - **Schema-Aware Database Links**: Remote schema targeting with 5 resolution modes
@@ -137,8 +137,8 @@ net stop ScratchBird
 - **Logs**: `C:\ProgramData\ScratchBird\logs\`
 
 ## Version Information
-- **Version**: 0.5.0
-- **Build**: SB-T0.5.0.1
+- **Version**: 0.6.0
+- **Build**: SB-T0.6.0.1
 - **Release Date**: July 2025
 - **Compatibility**: ScratchBird v0.5.x series
 

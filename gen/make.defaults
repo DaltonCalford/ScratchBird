@@ -246,8 +246,8 @@ vpath %.dll $(LIB)
 #     Scold me, but I don't want library names to be in configure.in
 #
 
-#LibraryFileName=libfbclient
-LibraryFileName=libfbclient
+#LibraryFileName=libfbclient (original Firebird name)
+LibraryFileName=libsbclient
 LibraryFullName=$(LibraryFileName).${SHRLIB_EXT}.${FirebirdVersion}
 LibrarySoName=$(LibraryFileName).${SHRLIB_EXT}.2
 LibraryBaseName=$(LibraryFileName).${SHRLIB_EXT}
@@ -357,7 +357,7 @@ endif
 LIB_PATH_OPTS = $(call LIB_LINK_RPATH,lib) $(call LIB_LINK_RPATH,intl)
 LIB_LINK_SONAME= -Wl,-soname,$(1)
 LIB_LINK_MAPFILE= -Wl,--version-script,$(1)
-SCRATCHBIRD_LIBRARY_LINK= -L$(LIB) -L$(STATIC_LIB) -lfbclient $(MATHLIB) $(CRYPTLIB)
+SCRATCHBIRD_LIBRARY_LINK= -L$(LIB) -L$(STATIC_LIB) -lsbclient $(MATHLIB) $(CRYPTLIB)
 
 EXE_LINK_OPTIONS= $(LDFLAGS) $(THR_FLAGS) $(UNDEF_FLAGS) $(LIB_PATH_OPTS) $(call LINK_DARWIN_RPATH,..) $(LINK_EMPTY_SYMBOLS)
 LIB_LINK_OPTIONS= $(LDFLAGS) $(THR_FLAGS) -shared

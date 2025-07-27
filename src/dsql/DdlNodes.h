@@ -1873,6 +1873,13 @@ public:
 		bid conditionSource;
 		QualifiedName refRelation;
 		ScratchBird::ObjectsArray<MetaName> refColumns;
+		MetaName indexTypeName;		// Index type (e.g., "HASH", "BTREE", "GIN", "BITMAP", "RTREE")
+		// GIN index options (stored as key-value pairs)
+		ScratchBird::ObjectsArray<ScratchBird::Pair<MetaName, ScratchBird::string>> ginOptions;
+		// Bitmap index options (stored as key-value pairs)
+		ScratchBird::ObjectsArray<ScratchBird::Pair<MetaName, ScratchBird::string>> bitmapOptions;
+		// Spatial index options (stored as key-value pairs)
+		ScratchBird::ObjectsArray<ScratchBird::Pair<MetaName, ScratchBird::string>> spatialOptions;
 	};
 
 public:
@@ -1885,6 +1892,19 @@ public:
 public:
 	static void store(thread_db* tdbb, jrd_tra* transaction, QualifiedName& name,
 		const Definition& definition, QualifiedName* referredIndexName = nullptr);
+
+private:
+	void processGinIndexOptions(thread_db* tdbb, jrd_tra* transaction, 
+		Definition& definition, ValueListNode* options);
+	void validateGinOptions(const ScratchBird::ObjectsArray<ScratchBird::Pair<MetaName, ScratchBird::string>>& options);
+	void processBitmapIndexOptions(thread_db* tdbb, jrd_tra* transaction, 
+		Definition& definition, ValueListNode* options);
+	void validateBitmapOptions(const ScratchBird::ObjectsArray<ScratchBird::Pair<MetaName, ScratchBird::string>>& options);
+	void validateBitmapSuitability(thread_db* tdbb, jrd_tra* transaction, const Definition& definition);
+	void processSpatialIndexOptions(thread_db* tdbb, jrd_tra* transaction,
+		Definition& definition, ValueListNode* options);
+	void validateSpatialOptions(const ScratchBird::ObjectsArray<ScratchBird::Pair<MetaName, ScratchBird::string>>& options);
+	void validateSpatialSuitability(thread_db* tdbb, jrd_tra* transaction, const Definition& definition);
 
 public:
 	ScratchBird::string internalPrint(NodePrinter& printer) const override;
@@ -1908,6 +1928,14 @@ public:
 	NestConst<ValueSourceClause> computed;
 	NestConst<BoolSourceClause> partial;
 	bool createIfNotExistsOnly = false;
+	// Index type support for USING clause
+	NestConst<MetaNamePtr> indexType;  // Index type name (e.g., "HASH", "BTREE", "GIN", "BITMAP", "RTREE")
+	// GIN index options support
+	NestConst<ValueListNode> ginOptions;  // GIN-specific options (FASTUPDATE, PARSER, etc.)
+	// Bitmap index options support
+	NestConst<ValueListNode> bitmapOptions;  // Bitmap-specific options (COMPRESSION, CHUNK_SIZE, etc.)
+	// Spatial index options support
+	NestConst<ValueListNode> spatialOptions;  // Spatial-specific options (SRID, SPLIT_STRATEGY, etc.)
 };
 
 

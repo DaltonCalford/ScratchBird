@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# ScratchBird v0.5.0 Linux Installer Creator
+# ScratchBird v0.6.0 Linux Installer Creator
 # Creates installation packages from release directory
 # Author: ScratchBird Development Team
 # Date: January 17, 2025
@@ -9,9 +9,9 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BUILD_ROOT="$SCRIPT_DIR"
-RELEASE_DIR="$BUILD_ROOT/release/v0.5.0"
-INSTALLER_DIR="$BUILD_ROOT/releases/download/v0.5.0"
-VERSION="0.5.0"
+RELEASE_DIR="$BUILD_ROOT/release/v0.6.0"
+INSTALLER_DIR="$BUILD_ROOT/releases/download/v0.6.0"
+VERSION="0.6.0"
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
 
 # Color codes

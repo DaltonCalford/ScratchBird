@@ -378,6 +378,30 @@ dsc* evlFamily(thread_db* tdbb, const SysFunction* function, const NestValueArra
 dsc* evlInetSameFamily(thread_db* tdbb, const SysFunction* function, const NestValueArray& args, impure_value* impure);
 dsc* evlInetMerge(thread_db* tdbb, const SysFunction* function, const NestValueArray& args, impure_value* impure);
 
+// Spatial function declarations
+dsc* evlStContains(thread_db* tdbb, const SysFunction* function, const NestValueArray& args, impure_value* impure);
+dsc* evlStIntersects(thread_db* tdbb, const SysFunction* function, const NestValueArray& args, impure_value* impure);
+dsc* evlStWithin(thread_db* tdbb, const SysFunction* function, const NestValueArray& args, impure_value* impure);
+dsc* evlStTouches(thread_db* tdbb, const SysFunction* function, const NestValueArray& args, impure_value* impure);
+dsc* evlStCrosses(thread_db* tdbb, const SysFunction* function, const NestValueArray& args, impure_value* impure);
+dsc* evlStOverlaps(thread_db* tdbb, const SysFunction* function, const NestValueArray& args, impure_value* impure);
+dsc* evlStEquals(thread_db* tdbb, const SysFunction* function, const NestValueArray& args, impure_value* impure);
+dsc* evlStDisjoint(thread_db* tdbb, const SysFunction* function, const NestValueArray& args, impure_value* impure);
+dsc* evlStDistance(thread_db* tdbb, const SysFunction* function, const NestValueArray& args, impure_value* impure);
+dsc* evlStDWithin(thread_db* tdbb, const SysFunction* function, const NestValueArray& args, impure_value* impure);
+dsc* evlStArea(thread_db* tdbb, const SysFunction* function, const NestValueArray& args, impure_value* impure);
+dsc* evlStLength(thread_db* tdbb, const SysFunction* function, const NestValueArray& args, impure_value* impure);
+dsc* evlStCentroid(thread_db* tdbb, const SysFunction* function, const NestValueArray& args, impure_value* impure);
+dsc* evlStEnvelope(thread_db* tdbb, const SysFunction* function, const NestValueArray& args, impure_value* impure);
+dsc* evlStBuffer(thread_db* tdbb, const SysFunction* function, const NestValueArray& args, impure_value* impure);
+dsc* evlStIntersection(thread_db* tdbb, const SysFunction* function, const NestValueArray& args, impure_value* impure);
+dsc* evlStUnion(thread_db* tdbb, const SysFunction* function, const NestValueArray& args, impure_value* impure);
+dsc* evlStDifference(thread_db* tdbb, const SysFunction* function, const NestValueArray& args, impure_value* impure);
+dsc* evlStGeomFromText(thread_db* tdbb, const SysFunction* function, const NestValueArray& args, impure_value* impure);
+dsc* evlStGeomFromWKB(thread_db* tdbb, const SysFunction* function, const NestValueArray& args, impure_value* impure);
+dsc* evlStAsText(thread_db* tdbb, const SysFunction* function, const NestValueArray& args, impure_value* impure);
+dsc* evlStAsBinary(thread_db* tdbb, const SysFunction* function, const NestValueArray& args, impure_value* impure);
+
 // System context function names
 const char
 	RDB_GET_CONTEXT[] = "RDB$GET_CONTEXT",
@@ -7101,6 +7125,80 @@ const SysFunction SysFunction::functions[] =
 		{"INET_SAME_FAMILY", 2, 2, true, NULL, makeBoolResult, evlInetSameFamily, NULL},
 		{"INET_MERGE", 2, 2, true, NULL, makeJsonTextResult, evlInetMerge, NULL},
 		
+		// Vector functions (AI/ML operations)
+		{"VECTOR_DISTANCE", 2, 3, true, setParamsVectorDistance, makeDoubleResult, evlVectorDistance, NULL},
+		{"VECTOR_SIMILARITY", 2, 3, true, setParamsVectorSimilarity, makeDoubleResult, evlVectorSimilarity, NULL},
+		{"VECTOR_MAGNITUDE", 1, 1, true, setParamsVector, makeDoubleResult, evlVectorMagnitude, NULL},
+		{"VECTOR_NORMALIZE", 1, 1, true, setParamsVector, makeVectorResult, evlVectorNormalize, NULL},
+		{"VECTOR_DOT_PRODUCT", 2, 2, true, setParamsVectorPair, makeDoubleResult, evlVectorDotProduct, NULL},
+		{"VECTOR_ADD", 2, 2, true, setParamsVectorPair, makeVectorResult, evlVectorAdd, NULL},
+		{"VECTOR_SUBTRACT", 2, 2, true, setParamsVectorPair, makeVectorResult, evlVectorSubtract, NULL},
+		{"VECTOR_MULTIPLY", 2, 2, true, setParamsVectorScalar, makeVectorResult, evlVectorMultiply, NULL},
+		{"VECTOR_FROM_ARRAY", 1, 1, true, setParamsFromList, makeVectorResult, evlVectorFromArray, NULL},
+		{"VECTOR_TO_ARRAY", 1, 1, true, setParamsVector, makeFromListResult, evlVectorToArray, NULL},
+		{"VECTOR_DIMENSIONS", 1, 1, true, setParamsVector, makeShortResult, evlVectorDimensions, NULL},
+		{"VECTOR_CREATE", 1, 2, true, setParamsVectorCreate, makeVectorResult, evlVectorCreate, NULL},
+		{"RANDOM_VECTOR", 1, 3, false, setParamsVectorRandom, makeVectorResult, evlRandomVector, NULL},
+		
+		// Array functions (PostgreSQL-compatible)
+		{"ARRAY_APPEND", 2, 2, true, setParamsArrayAppend, makeArrayResult, evlArrayAppend, NULL},
+		{"ARRAY_PREPEND", 2, 2, true, setParamsArrayPrepend, makeArrayResult, evlArrayPrepend, NULL},
+		{"ARRAY_REMOVE", 2, 2, true, setParamsArrayRemove, makeArrayResult, evlArrayRemove, NULL},
+		{"ARRAY_REPLACE", 3, 3, true, setParamsArrayReplace, makeArrayResult, evlArrayReplace, NULL},
+		{"ARRAY_CAT", 2, 2, true, setParamsArrayCat, makeArrayResult, evlArrayCat, NULL},
+		{"ARRAY_LENGTH", 1, 2, true, setParamsArrayLength, makeLongResult, evlArrayLength, NULL},
+		{"ARRAY_UPPER", 2, 2, true, setParamsArrayBounds, makeLongResult, evlArrayUpper, NULL},
+		{"ARRAY_LOWER", 2, 2, true, setParamsArrayBounds, makeLongResult, evlArrayLower, NULL},
+		{"ARRAY_DIMS", 1, 1, true, setParamsArray, makeArrayResult, evlArrayDims, NULL},
+		{"ARRAY_POSITION", 2, 3, true, setParamsArrayPosition, makeLongResult, evlArrayPosition, NULL},
+		{"ARRAY_POSITIONS", 2, 2, true, setParamsArrayPositions, makeArrayResult, evlArrayPositions, NULL},
+		{"ARRAY_TO_STRING", 2, 3, true, setParamsArrayToString, makeArrayResult, evlArrayToString, NULL},
+		{"STRING_TO_ARRAY", 2, 3, true, setParamsStringToArray, makeArrayResult, evlStringToArray, NULL},
+		{"UNNEST", 1, 1, true, setParamsArray, makeArrayResult, evlUnnest, NULL},
+		{"ARRAY_NDIMS", 1, 1, true, setParamsArray, makeShortResult, evlArrayNdims, NULL},
+		{"CARDINALITY", 1, 1, true, setParamsArray, makeLongResult, evlCardinality, NULL},
+		
+		// Full-text search functions (PostgreSQL-compatible)
+		{"TO_TSVECTOR", 1, 2, true, setParamsToTSVector, makeTSVectorResult, evlToTSVector, NULL},
+		{"TO_TSQUERY", 1, 2, true, setParamsToTSQuery, makeTSQueryResult, evlToTSQuery, NULL},
+		{"PLAINTO_TSQUERY", 1, 2, true, setParamsPlainToTSQuery, makeTSQueryResult, evlPlainToTSQuery, NULL},
+		{"PHRASETO_TSQUERY", 1, 2, true, setParamsPhraseToTSQuery, makeTSQueryResult, evlPhraseToTSQuery, NULL},
+		{"TS_RANK", 2, 3, true, setParamsTSRank, makeDoubleResult, evlTSRank, NULL},
+		{"TS_RANK_CD", 2, 3, true, setParamsTSRankCD, makeDoubleResult, evlTSRankCD, NULL},
+		{"TS_HEADLINE", 2, 4, true, setParamsTSHeadline, makeTSHeadlineResult, evlTSHeadline, NULL},
+		{"NUMNODE", 1, 1, true, setParamsTSQuery, makeLongResult, evlNumnode, NULL},
+		{"QUERYTREE", 1, 1, true, setParamsTSQuery, makeTSQueryResult, evlQuerytree, NULL},
+		{"SETWEIGHT", 2, 2, true, setParamsSetWeight, makeTSVectorResult, evlSetWeight, NULL},
+		{"STRIP", 1, 1, true, setParamsTSVector, makeTSVectorResult, evlStrip, NULL},
+		{"TSVECTOR_CONCAT", 2, 2, true, setParamsTSVectorConcat, makeTSVectorResult, evlTSVectorConcat, NULL},
+		{"TS_DELETE", 2, 2, true, setParamsTSDelete, makeTSVectorResult, evlTSDelete, NULL},
+		{"TS_FILTER", 2, 2, true, setParamsTSFilter, makeTSVectorResult, evlTSFilter, NULL},
+		{"TS_REWRITE", 3, 3, true, setParamsTSRewrite, makeTSQueryResult, evlTSRewrite, NULL},
+		
+		// Spatial functions
+		{"ST_CONTAINS", 2, 2, true, setParamsFromList, makeBoolResult, evlStContains, NULL},
+		{"ST_INTERSECTS", 2, 2, true, setParamsFromList, makeBoolResult, evlStIntersects, NULL},
+		{"ST_WITHIN", 2, 2, true, setParamsFromList, makeBoolResult, evlStWithin, NULL},
+		{"ST_TOUCHES", 2, 2, true, setParamsFromList, makeBoolResult, evlStTouches, NULL},
+		{"ST_CROSSES", 2, 2, true, setParamsFromList, makeBoolResult, evlStCrosses, NULL},
+		{"ST_OVERLAPS", 2, 2, true, setParamsFromList, makeBoolResult, evlStOverlaps, NULL},
+		{"ST_EQUALS", 2, 2, true, setParamsFromList, makeBoolResult, evlStEquals, NULL},
+		{"ST_DISJOINT", 2, 2, true, setParamsFromList, makeBoolResult, evlStDisjoint, NULL},
+		{"ST_DISTANCE", 2, 2, true, setParamsFromList, makeDoubleResult, evlStDistance, NULL},
+		{"ST_DWITHIN", 3, 3, true, setParamsFromList, makeBoolResult, evlStDWithin, NULL},
+		{"ST_AREA", 1, 1, true, setParamsFromList, makeDoubleResult, evlStArea, NULL},
+		{"ST_LENGTH", 1, 1, true, setParamsFromList, makeDoubleResult, evlStLength, NULL},
+		{"ST_CENTROID", 1, 1, true, setParamsFromList, makeBlobResult, evlStCentroid, NULL},
+		{"ST_ENVELOPE", 1, 1, true, setParamsFromList, makeBlobResult, evlStEnvelope, NULL},
+		{"ST_BUFFER", 2, 2, true, setParamsFromList, makeBlobResult, evlStBuffer, NULL},
+		{"ST_INTERSECTION", 2, 2, true, setParamsFromList, makeBlobResult, evlStIntersection, NULL},
+		{"ST_UNION", 2, 2, true, setParamsFromList, makeBlobResult, evlStUnion, NULL},
+		{"ST_DIFFERENCE", 2, 2, true, setParamsFromList, makeBlobResult, evlStDifference, NULL},
+		{"ST_GEOMFROMTEXT", 1, 2, true, setParamsFromList, makeBlobResult, evlStGeomFromText, NULL},
+		{"ST_GEOMFROMWKB", 1, 2, true, setParamsFromList, makeBlobResult, evlStGeomFromWKB, NULL},
+		{"ST_ASTEXT", 1, 1, true, setParamsFromList, makeStringResult, evlStAsText, NULL},
+		{"ST_ASBINARY", 1, 1, true, setParamsFromList, makeBlobResult, evlStAsBinary, NULL},
+		
 		{"", 0, 0, false, NULL, NULL, NULL, NULL}
 	};
 
@@ -7798,6 +7896,1183 @@ dsc* evlInetMerge(thread_db* tdbb, const SysFunction* function, const NestValueA
 		// Invalid address format
 		request->req_flags |= req_null;
 		return NULL;
+	}
+}
+
+//----------------------------
+// Spatial Function Implementations
+//----------------------------
+
+// Include spatial headers
+#include "SpatialDataTypes.h"
+#include "SpatialQueryProcessor.h"
+#include "WKTParser.h"
+#include "WKBParser.h"
+
+using namespace ScratchBird;
+
+// Global spatial query processor instance for function execution
+static SpatialQueryProcessor* g_spatialProcessor = nullptr;
+
+// Performance optimization settings for large datasets
+struct SpatialFunctionPerformanceSettings
+{
+	static const ULONG GEOMETRY_CACHE_SIZE = 1024;         // Cache up to 1024 geometry objects
+	static const ULONG MAX_GEOMETRY_SIZE = 1048576;        // 1MB max geometry size
+	static const double MBR_FILTER_THRESHOLD = 0.1;       // Use MBR filtering for 10% selectivity
+	static const ULONG PARALLEL_OPERATION_THRESHOLD = 100; // Use parallel processing for 100+ operations
+	static const ULONG WKB_BUFFER_SIZE = 65536;           // 64KB WKB buffer size
+};
+
+// Geometry object cache for performance optimization
+static GenericMap<Pair<NonPooled<string, Geometry*>>>* g_geometryCache = nullptr;
+static ULONG g_cacheHits = 0;
+static ULONG g_cacheMisses = 0;
+
+// Initialize spatial processor with performance optimizations
+static void initSpatialProcessor(thread_db* tdbb)
+{
+	if (!g_spatialProcessor)
+	{
+		Database* dbb = tdbb->getDatabase();
+		g_spatialProcessor = FB_NEW_POOL(*dbb->dbb_permanent) SpatialQueryProcessor(*dbb->dbb_permanent);
+		
+		// Initialize geometry cache for performance
+		g_geometryCache = FB_NEW_POOL(*dbb->dbb_permanent) GenericMap<Pair<NonPooled<string, Geometry*>>>(*dbb->dbb_permanent);
+	}
+}
+
+// Performance-optimized geometry conversion with caching
+Geometry* convertDscToGeometryOptimized(thread_db* tdbb, const dsc* desc, const string& cacheKey = "")
+{
+	if (!desc)
+		return nullptr;
+		
+	initSpatialProcessor(tdbb);
+	
+	// Try cache lookup for performance
+	if (!cacheKey.empty() && g_geometryCache)
+	{
+		auto found = g_geometryCache->get(cacheKey);
+		if (found)
+		{
+			g_cacheHits++;
+			return found->second;
+		}
+		g_cacheMisses++;
+	}
+		
+	// Handle BLOB types containing WKB geometry data
+	if (desc->dsc_dtype == dtype_blob)
+	{
+		try 
+		{
+			blb* blob = BLB_open(tdbb, tdbb->getRequest()->req_transaction, 
+								reinterpret_cast<const bid*>(desc->dsc_address));
+			if (!blob)
+				return nullptr;
+			
+			// Performance optimization: Read blob in larger chunks
+			std::vector<UCHAR> wkbBuffer;
+			wkbBuffer.reserve(SpatialFunctionPerformanceSettings::WKB_BUFFER_SIZE);
+			
+			UCHAR buffer[8192]; // Larger buffer for better I/O performance
+			USHORT bytesRead;
+			
+			while (BLB_get_segment(tdbb, blob, buffer, sizeof(buffer), &bytesRead))
+			{
+				wkbBuffer.insert(wkbBuffer.end(), buffer, buffer + bytesRead);
+				
+				// Safety check for very large geometries
+				if (wkbBuffer.size() > SpatialFunctionPerformanceSettings::MAX_GEOMETRY_SIZE)
+				{
+					BLB_close(tdbb, blob);
+					return nullptr; // Geometry too large
+				}
+			}
+			
+			BLB_close(tdbb, blob);
+			
+			if (wkbBuffer.empty())
+				return nullptr;
+				
+			// Parse WKB data to geometry using WKBReader
+			Database* dbb = tdbb->getDatabase();
+			WKBReader reader(wkbBuffer.data(), wkbBuffer.size(), *dbb->dbb_permanent);
+			Geometry* geometry = reader.parseWKB();
+			
+			// Cache the result for future use
+			if (geometry && !cacheKey.empty() && g_geometryCache && 
+				g_geometryCache->count() < SpatialFunctionPerformanceSettings::GEOMETRY_CACHE_SIZE)
+			{
+				g_geometryCache->put(cacheKey, geometry);
+			}
+			
+			return geometry;
+		}
+		catch (...)
+		{
+			return nullptr;
+		}
+	}
+	
+	return nullptr;
+}
+
+// Fast MBR-based pre-filtering for spatial operations
+bool quickSpatialFilter(Geometry* geom1, Geometry* geom2, SpatialOperation operation)
+{
+	if (!geom1 || !geom2)
+		return false;
+		
+	try
+	{
+		MBR mbr1 = geom1->getMBR();
+		MBR mbr2 = geom2->getMBR();
+		
+		// Quick MBR-based filtering for different operations
+		switch (operation)
+		{
+			case SpatialOperation::ST_DISJOINT:
+				return !mbr1.intersects(mbr2); // If MBRs don't intersect, geometries are disjoint
+				
+			case SpatialOperation::ST_INTERSECTS:
+				return mbr1.intersects(mbr2); // If MBRs don't intersect, geometries don't intersect
+				
+			case SpatialOperation::ST_CONTAINS:
+				return mbr1.contains(mbr2); // If outer MBR doesn't contain inner MBR, no containment
+				
+			case SpatialOperation::ST_WITHIN:
+				return mbr2.contains(mbr1); // If outer MBR doesn't contain inner MBR, not within
+				
+			default:
+				return true; // For other operations, continue with full processing
+		}
+	}
+	catch (...)
+	{
+		return true; // If MBR calculation fails, continue with full processing
+	}
+}
+
+// Helper function to convert DSC to geometry using WKB parsing
+Geometry* convertDscToGeometry(thread_db* tdbb, const dsc* desc)
+{
+	if (!desc)
+		return nullptr;
+		
+	// Handle BLOB types containing WKB geometry data
+	if (desc->dsc_dtype == dtype_blob)
+	{
+		try 
+		{
+			blb* blob = BLB_open(tdbb, tdbb->getRequest()->req_transaction, 
+								reinterpret_cast<const bid*>(desc->dsc_address));
+			if (!blob)
+				return nullptr;
+				
+			// Read blob data into ByteChunk
+			std::vector<UCHAR> wkbBuffer;
+			UCHAR buffer[4096];
+			USHORT bytesRead;
+			
+			while (BLB_get_segment(tdbb, blob, buffer, sizeof(buffer), &bytesRead))
+			{
+				wkbBuffer.insert(wkbBuffer.end(), buffer, buffer + bytesRead);
+			}
+			
+			BLB_close(tdbb, blob);
+			
+			if (wkbBuffer.empty())
+				return nullptr;
+				
+			// Parse WKB data to geometry using WKBReader
+			Database* dbb = tdbb->getDatabase();
+			WKBReader reader(wkbBuffer.data(), wkbBuffer.size(), *dbb->dbb_permanent);
+			return reader.parseWKB();
+		}
+		catch (...)
+		{
+			return nullptr;
+		}
+	}
+	
+	return nullptr;
+}
+
+// Helper function to convert geometry to DSC blob using WKB serialization
+dsc* convertGeometryToDsc(thread_db* tdbb, Geometry* geometry, impure_value* impure)
+{
+	if (!geometry)
+		return nullptr;
+		
+	try
+	{
+		// Convert geometry to WKB
+		ByteChunk* wkbData = geometry->toWKB();
+		if (!wkbData)
+			return nullptr;
+		
+		// Create blob to store WKB data
+		blb* blob = BLB_create(tdbb, tdbb->getRequest()->req_transaction, &impure->vlu_misc.vlu_bid);
+		
+		// Write WKB data to blob
+		const UCHAR* data = wkbData->getData();
+		ULONG size = wkbData->getSize();
+		ULONG offset = 0;
+		
+		while (offset < size)
+		{
+			ULONG chunkSize = MIN(32768, size - offset);
+			BLB_put_segment(tdbb, blob, data + offset, (USHORT)chunkSize);
+			offset += chunkSize;
+		}
+		
+		BLB_close(tdbb, blob);
+		
+		// Set up descriptor for blob
+		impure->vlu_desc.makeBlob(isc_blob_untyped, ttype_binary, &impure->vlu_misc.vlu_bid);
+		return &impure->vlu_desc;
+	}
+	catch (...)
+	{
+		return nullptr;
+	}
+}
+
+// Performance-optimized spatial predicate execution
+bool executeSpatialPredicate(thread_db* tdbb, Geometry* geom1, Geometry* geom2, SpatialOperation operation)
+{
+	if (!geom1 || !geom2)
+		return false;
+		
+	initSpatialProcessor(tdbb);
+	if (!g_spatialProcessor)
+		return false;
+		
+	try
+	{
+		// Performance optimization: Quick MBR-based pre-filtering
+		bool quickResult = quickSpatialFilter(geom1, geom2, operation);
+		
+		// For operations where MBR check is definitive, return early
+		if (operation == SpatialOperation::ST_DISJOINT)
+		{
+			if (!quickResult) return true; // MBRs don't intersect = disjoint
+		}
+		else if (operation == SpatialOperation::ST_INTERSECTS)
+		{
+			if (!quickResult) return false; // MBRs don't intersect = no intersection
+		}
+		else if (operation == SpatialOperation::ST_CONTAINS)
+		{
+			if (!quickResult) return false; // Outer MBR doesn't contain inner = no containment
+		}
+		else if (operation == SpatialOperation::ST_WITHIN)
+		{
+			if (!quickResult) return false; // Outer MBR doesn't contain inner = not within
+		}
+		
+		// For other operations or when MBR check is inconclusive, use full geometry methods
+		switch (operation)
+		{
+			case SpatialOperation::ST_CONTAINS:
+				return geom1->contains(*geom2);
+			case SpatialOperation::ST_INTERSECTS:
+				return geom1->intersects(*geom2);
+			case SpatialOperation::ST_WITHIN:
+				return geom1->within(*geom2);
+			case SpatialOperation::ST_TOUCHES:
+				return geom1->touches(*geom2);
+			case SpatialOperation::ST_CROSSES:
+				return geom1->crosses(*geom2);
+			case SpatialOperation::ST_OVERLAPS:
+				return geom1->overlaps(*geom2);
+			case SpatialOperation::ST_EQUALS:
+				return geom1->equals(*geom2);
+			case SpatialOperation::ST_DISJOINT:
+				return geom1->disjoint(*geom2);
+			default:
+				return false;
+		}
+	}
+	catch (...)
+	{
+		return false;
+	}
+}
+
+// ST_CONTAINS implementation - Full spatial algorithm with performance optimizations
+dsc* evlStContains(thread_db* tdbb, const SysFunction* function, const NestValueArray& args, impure_value* impure)
+{
+	fb_assert(args.getCount() == 2);
+	
+	Request* request = tdbb->getRequest();
+	
+	const dsc* geom1 = EVL_expr(tdbb, request, args[0]);
+	const dsc* geom2 = EVL_expr(tdbb, request, args[1]);
+	
+	if (request->req_flags & req_null)
+		return nullptr;
+		
+	// Performance optimization: Generate cache keys for repeated operations
+	char cacheKey1[32], cacheKey2[32];
+	sprintf(cacheKey1, "g1_%p", geom1->dsc_address);
+	sprintf(cacheKey2, "g2_%p", geom2->dsc_address);
+	
+	// Convert DSC to geometries with caching
+	Geometry* g1 = convertDscToGeometryOptimized(tdbb, geom1, cacheKey1);
+	Geometry* g2 = convertDscToGeometryOptimized(tdbb, geom2, cacheKey2);
+	
+	if (!g1 || !g2)
+	{
+		request->req_flags |= req_null;
+		return nullptr;
+	}
+	
+	// Execute spatial contains operation using optimized algorithms
+	bool result = executeSpatialPredicate(tdbb, g1, g2, SpatialOperation::ST_CONTAINS);
+	
+	impure->vlu_misc.vlu_uchar = result ? FB_TRUE : FB_FALSE;
+	impure->vlu_desc.makeBoolean(&impure->vlu_misc.vlu_uchar);
+	return &impure->vlu_desc;
+}
+
+// ST_INTERSECTS implementation - Full spatial algorithm
+dsc* evlStIntersects(thread_db* tdbb, const SysFunction* function, const NestValueArray& args, impure_value* impure)
+{
+	fb_assert(args.getCount() == 2);
+	
+	Request* request = tdbb->getRequest();
+	
+	const dsc* geom1 = EVL_expr(tdbb, request, args[0]);
+	const dsc* geom2 = EVL_expr(tdbb, request, args[1]);
+	
+	if (request->req_flags & req_null)
+		return nullptr;
+		
+	Geometry* g1 = convertDscToGeometry(tdbb, geom1);
+	Geometry* g2 = convertDscToGeometry(tdbb, geom2);
+	
+	if (!g1 || !g2)
+	{
+		request->req_flags |= req_null;
+		return nullptr;
+	}
+	
+	// Execute spatial intersects operation using full spatial algorithms
+	bool result = executeSpatialPredicate(tdbb, g1, g2, SpatialOperation::ST_INTERSECTS);
+	
+	impure->vlu_misc.vlu_uchar = result ? FB_TRUE : FB_FALSE;
+	impure->vlu_desc.makeBoolean(&impure->vlu_misc.vlu_uchar);
+	return &impure->vlu_desc;
+}
+
+// ST_DISTANCE implementation - Full spatial algorithm
+dsc* evlStDistance(thread_db* tdbb, const SysFunction* function, const NestValueArray& args, impure_value* impure)
+{
+	fb_assert(args.getCount() == 2);
+	
+	Request* request = tdbb->getRequest();
+	
+	const dsc* geom1 = EVL_expr(tdbb, request, args[0]);
+	const dsc* geom2 = EVL_expr(tdbb, request, args[1]);
+	
+	if (request->req_flags & req_null)
+		return nullptr;
+		
+	Geometry* g1 = convertDscToGeometry(tdbb, geom1);
+	Geometry* g2 = convertDscToGeometry(tdbb, geom2);
+	
+	if (!g1 || !g2)
+	{
+		request->req_flags |= req_null;
+		return nullptr;
+	}
+	
+	// Execute spatial distance calculation using full spatial algorithms
+	double distance = 0.0;
+	
+	try
+	{
+		distance = g1->distance(*g2);
+	}
+	catch (...)
+	{
+		request->req_flags |= req_null;
+		return nullptr;
+	}
+	
+	impure->vlu_misc.vlu_double = distance;
+	impure->vlu_desc.makeDouble(&impure->vlu_misc.vlu_double);
+	return &impure->vlu_desc;
+}
+
+// Full implementations for other spatial predicate functions
+dsc* evlStWithin(thread_db* tdbb, const SysFunction* function, const NestValueArray& args, impure_value* impure)
+{
+	fb_assert(args.getCount() == 2);
+	
+	Request* request = tdbb->getRequest();
+	
+	const dsc* geom1 = EVL_expr(tdbb, request, args[0]);
+	const dsc* geom2 = EVL_expr(tdbb, request, args[1]);
+	
+	if (request->req_flags & req_null)
+		return nullptr;
+		
+	Geometry* g1 = convertDscToGeometry(tdbb, geom1);
+	Geometry* g2 = convertDscToGeometry(tdbb, geom2);
+	
+	if (!g1 || !g2)
+	{
+		request->req_flags |= req_null;
+		return nullptr;
+	}
+	
+	bool result = executeSpatialPredicate(tdbb, g1, g2, SpatialOperation::ST_WITHIN);
+	
+	impure->vlu_misc.vlu_uchar = result ? FB_TRUE : FB_FALSE;
+	impure->vlu_desc.makeBoolean(&impure->vlu_misc.vlu_uchar);
+	return &impure->vlu_desc;
+}
+
+dsc* evlStTouches(thread_db* tdbb, const SysFunction* function, const NestValueArray& args, impure_value* impure)
+{
+	fb_assert(args.getCount() == 2);
+	
+	Request* request = tdbb->getRequest();
+	
+	const dsc* geom1 = EVL_expr(tdbb, request, args[0]);
+	const dsc* geom2 = EVL_expr(tdbb, request, args[1]);
+	
+	if (request->req_flags & req_null)
+		return nullptr;
+		
+	Geometry* g1 = convertDscToGeometry(tdbb, geom1);
+	Geometry* g2 = convertDscToGeometry(tdbb, geom2);
+	
+	if (!g1 || !g2)
+	{
+		request->req_flags |= req_null;
+		return nullptr;
+	}
+	
+	bool result = executeSpatialPredicate(tdbb, g1, g2, SpatialOperation::ST_TOUCHES);
+	
+	impure->vlu_misc.vlu_uchar = result ? FB_TRUE : FB_FALSE;
+	impure->vlu_desc.makeBoolean(&impure->vlu_misc.vlu_uchar);
+	return &impure->vlu_desc;
+}
+
+dsc* evlStCrosses(thread_db* tdbb, const SysFunction* function, const NestValueArray& args, impure_value* impure)
+{
+	fb_assert(args.getCount() == 2);
+	
+	Request* request = tdbb->getRequest();
+	
+	const dsc* geom1 = EVL_expr(tdbb, request, args[0]);
+	const dsc* geom2 = EVL_expr(tdbb, request, args[1]);
+	
+	if (request->req_flags & req_null)
+		return nullptr;
+		
+	Geometry* g1 = convertDscToGeometry(tdbb, geom1);
+	Geometry* g2 = convertDscToGeometry(tdbb, geom2);
+	
+	if (!g1 || !g2)
+	{
+		request->req_flags |= req_null;
+		return nullptr;
+	}
+	
+	bool result = executeSpatialPredicate(tdbb, g1, g2, SpatialOperation::ST_CROSSES);
+	
+	impure->vlu_misc.vlu_uchar = result ? FB_TRUE : FB_FALSE;
+	impure->vlu_desc.makeBoolean(&impure->vlu_misc.vlu_uchar);
+	return &impure->vlu_desc;
+}
+
+dsc* evlStOverlaps(thread_db* tdbb, const SysFunction* function, const NestValueArray& args, impure_value* impure)
+{
+	fb_assert(args.getCount() == 2);
+	
+	Request* request = tdbb->getRequest();
+	
+	const dsc* geom1 = EVL_expr(tdbb, request, args[0]);
+	const dsc* geom2 = EVL_expr(tdbb, request, args[1]);
+	
+	if (request->req_flags & req_null)
+		return nullptr;
+		
+	Geometry* g1 = convertDscToGeometry(tdbb, geom1);
+	Geometry* g2 = convertDscToGeometry(tdbb, geom2);
+	
+	if (!g1 || !g2)
+	{
+		request->req_flags |= req_null;
+		return nullptr;
+	}
+	
+	bool result = executeSpatialPredicate(tdbb, g1, g2, SpatialOperation::ST_OVERLAPS);
+	
+	impure->vlu_misc.vlu_uchar = result ? FB_TRUE : FB_FALSE;
+	impure->vlu_desc.makeBoolean(&impure->vlu_misc.vlu_uchar);
+	return &impure->vlu_desc;
+}
+
+dsc* evlStEquals(thread_db* tdbb, const SysFunction* function, const NestValueArray& args, impure_value* impure)
+{
+	fb_assert(args.getCount() == 2);
+	
+	Request* request = tdbb->getRequest();
+	
+	const dsc* geom1 = EVL_expr(tdbb, request, args[0]);
+	const dsc* geom2 = EVL_expr(tdbb, request, args[1]);
+	
+	if (request->req_flags & req_null)
+		return nullptr;
+		
+	Geometry* g1 = convertDscToGeometry(tdbb, geom1);
+	Geometry* g2 = convertDscToGeometry(tdbb, geom2);
+	
+	if (!g1 || !g2)
+	{
+		request->req_flags |= req_null;
+		return nullptr;
+	}
+	
+	bool result = executeSpatialPredicate(tdbb, g1, g2, SpatialOperation::ST_EQUALS);
+	
+	impure->vlu_misc.vlu_uchar = result ? FB_TRUE : FB_FALSE;
+	impure->vlu_desc.makeBoolean(&impure->vlu_misc.vlu_uchar);
+	return &impure->vlu_desc;
+}
+
+dsc* evlStDisjoint(thread_db* tdbb, const SysFunction* function, const NestValueArray& args, impure_value* impure)
+{
+	fb_assert(args.getCount() == 2);
+	
+	Request* request = tdbb->getRequest();
+	
+	const dsc* geom1 = EVL_expr(tdbb, request, args[0]);
+	const dsc* geom2 = EVL_expr(tdbb, request, args[1]);
+	
+	if (request->req_flags & req_null)
+		return nullptr;
+		
+	Geometry* g1 = convertDscToGeometry(tdbb, geom1);
+	Geometry* g2 = convertDscToGeometry(tdbb, geom2);
+	
+	if (!g1 || !g2)
+	{
+		request->req_flags |= req_null;
+		return nullptr;
+	}
+	
+	bool result = executeSpatialPredicate(tdbb, g1, g2, SpatialOperation::ST_DISJOINT);
+	
+	impure->vlu_misc.vlu_uchar = result ? FB_TRUE : FB_FALSE;
+	impure->vlu_desc.makeBoolean(&impure->vlu_misc.vlu_uchar);
+	return &impure->vlu_desc;
+}
+
+// ST_DWITHIN implementation - Full distance-based algorithm
+dsc* evlStDWithin(thread_db* tdbb, const SysFunction* function, const NestValueArray& args, impure_value* impure)
+{
+	fb_assert(args.getCount() == 3);
+	
+	Request* request = tdbb->getRequest();
+	
+	const dsc* geom1 = EVL_expr(tdbb, request, args[0]);
+	const dsc* geom2 = EVL_expr(tdbb, request, args[1]);
+	const dsc* maxDist = EVL_expr(tdbb, request, args[2]);
+	
+	if (request->req_flags & req_null)
+		return nullptr;
+		
+	Geometry* g1 = convertDscToGeometry(tdbb, geom1);
+	Geometry* g2 = convertDscToGeometry(tdbb, geom2);
+	
+	if (!g1 || !g2)
+	{
+		request->req_flags |= req_null;
+		return nullptr;
+	}
+	
+	double maxDistance = CVT_get_double(maxDist);
+	bool result = false;
+	
+	try
+	{
+		result = g1->isWithinDistance(*g2, maxDistance);
+	}
+	catch (...)
+	{
+		request->req_flags |= req_null;
+		return nullptr;
+	}
+	
+	impure->vlu_misc.vlu_uchar = result ? FB_TRUE : FB_FALSE;
+	impure->vlu_desc.makeBoolean(&impure->vlu_misc.vlu_uchar);
+	return &impure->vlu_desc;
+}
+
+// ST_AREA implementation - Full geometric algorithm
+dsc* evlStArea(thread_db* tdbb, const SysFunction* function, const NestValueArray& args, impure_value* impure)
+{
+	fb_assert(args.getCount() == 1);
+	
+	Request* request = tdbb->getRequest();
+	
+	const dsc* geomDesc = EVL_expr(tdbb, request, args[0]);
+	
+	if (request->req_flags & req_null)
+		return nullptr;
+		
+	Geometry* geometry = convertDscToGeometry(tdbb, geomDesc);
+	
+	if (!geometry)
+	{
+		request->req_flags |= req_null;
+		return nullptr;
+	}
+	
+	double area = 0.0;
+	
+	try
+	{
+		area = geometry->getArea();
+	}
+	catch (...)
+	{
+		request->req_flags |= req_null;
+		return nullptr;
+	}
+	
+	impure->vlu_misc.vlu_double = area;
+	impure->vlu_desc.makeDouble(&impure->vlu_misc.vlu_double);
+	return &impure->vlu_desc;
+}
+
+// ST_LENGTH implementation - Full geometric algorithm
+dsc* evlStLength(thread_db* tdbb, const SysFunction* function, const NestValueArray& args, impure_value* impure)
+{
+	fb_assert(args.getCount() == 1);
+	
+	Request* request = tdbb->getRequest();
+	
+	const dsc* geomDesc = EVL_expr(tdbb, request, args[0]);
+	
+	if (request->req_flags & req_null)
+		return nullptr;
+		
+	Geometry* geometry = convertDscToGeometry(tdbb, geomDesc);
+	
+	if (!geometry)
+	{
+		request->req_flags |= req_null;
+		return nullptr;
+	}
+	
+	double length = 0.0;
+	
+	try
+	{
+		length = geometry->getLength();
+	}
+	catch (...)
+	{
+		request->req_flags |= req_null;
+		return nullptr;
+	}
+	
+	impure->vlu_misc.vlu_double = length;
+	impure->vlu_desc.makeDouble(&impure->vlu_misc.vlu_double);
+	return &impure->vlu_desc;
+}
+
+// Geometric operation functions that return geometry blobs
+// These are advanced operations that require full computational geometry implementations
+
+dsc* evlStCentroid(thread_db* tdbb, const SysFunction* function, const NestValueArray& args, impure_value* impure)
+{
+	fb_assert(args.getCount() == 1);
+	
+	Request* request = tdbb->getRequest();
+	
+	const dsc* geomDesc = EVL_expr(tdbb, request, args[0]);
+	
+	if (request->req_flags & req_null)
+		return nullptr;
+		
+	Geometry* geometry = convertDscToGeometry(tdbb, geomDesc);
+	
+	if (!geometry)
+	{
+		request->req_flags |= req_null;
+		return nullptr;
+	}
+	
+	try
+	{
+		// Use MBR centroid as a simplified implementation
+		// Full implementation would compute true geometric centroid
+		MBR mbr = geometry->getMBR();
+		double centerX = (mbr.minX + mbr.maxX) / 2.0;
+		double centerY = (mbr.minY + mbr.maxY) / 2.0;
+		
+		// Create a Point geometry for the centroid
+		Database* dbb = tdbb->getDatabase();
+		Point* centroid = FB_NEW_POOL(*dbb->dbb_permanent) Point(centerX, centerY, geometry->getSRID(), *dbb->dbb_permanent);
+		
+		return convertGeometryToDsc(tdbb, centroid, impure);
+	}
+	catch (...)
+	{
+		request->req_flags |= req_null;
+		return nullptr;
+	}
+}
+
+dsc* evlStEnvelope(thread_db* tdbb, const SysFunction* function, const NestValueArray& args, impure_value* impure)
+{
+	fb_assert(args.getCount() == 1);
+	
+	Request* request = tdbb->getRequest();
+	
+	const dsc* geomDesc = EVL_expr(tdbb, request, args[0]);
+	
+	if (request->req_flags & req_null)
+		return nullptr;
+		
+	Geometry* geometry = convertDscToGeometry(tdbb, geomDesc);
+	
+	if (!geometry)
+	{
+		request->req_flags |= req_null;
+		return nullptr;
+	}
+	
+	try
+	{
+		// Get the minimum bounding rectangle and create a polygon
+		MBR mbr = geometry->getMBR();
+		
+		// Create a rectangular polygon from the MBR
+		Database* dbb = tdbb->getDatabase();
+		std::vector<Coordinate> coords;
+		coords.push_back(Coordinate(mbr.minX, mbr.minY));
+		coords.push_back(Coordinate(mbr.maxX, mbr.minY));
+		coords.push_back(Coordinate(mbr.maxX, mbr.maxY));
+		coords.push_back(Coordinate(mbr.minX, mbr.maxY));
+		coords.push_back(Coordinate(mbr.minX, mbr.minY)); // Close the ring
+		
+		Polygon* envelope = FB_NEW_POOL(*dbb->dbb_permanent) Polygon(coords, geometry->getSRID(), *dbb->dbb_permanent);
+		
+		return convertGeometryToDsc(tdbb, envelope, impure);
+	}
+	catch (...)
+	{
+		request->req_flags |= req_null;
+		return nullptr;
+	}
+}
+
+dsc* evlStBuffer(thread_db* tdbb, const SysFunction* function, const NestValueArray& args, impure_value* impure)
+{
+	fb_assert(args.getCount() == 2);
+	
+	Request* request = tdbb->getRequest();
+	
+	const dsc* geomDesc = EVL_expr(tdbb, request, args[0]);
+	const dsc* distanceDesc = EVL_expr(tdbb, request, args[1]);
+	
+	if (request->req_flags & req_null)
+		return nullptr;
+		
+	Geometry* geometry = convertDscToGeometry(tdbb, geomDesc);
+	
+	if (!geometry)
+	{
+		request->req_flags |= req_null;
+		return nullptr;
+	}
+	
+	double bufferDistance = CVT_get_double(distanceDesc);
+	
+	try
+	{
+		// For now, return expanded MBR as a simplified buffer
+		// Full implementation would use computational geometry algorithms
+		MBR mbr = geometry->getMBR();
+		mbr.minX -= bufferDistance;
+		mbr.minY -= bufferDistance;
+		mbr.maxX += bufferDistance;
+		mbr.maxY += bufferDistance;
+		
+		Database* dbb = tdbb->getDatabase();
+		std::vector<Coordinate> coords;
+		coords.push_back(Coordinate(mbr.minX, mbr.minY));
+		coords.push_back(Coordinate(mbr.maxX, mbr.minY));
+		coords.push_back(Coordinate(mbr.maxX, mbr.maxY));
+		coords.push_back(Coordinate(mbr.minX, mbr.maxY));
+		coords.push_back(Coordinate(mbr.minX, mbr.minY));
+		
+		Polygon* buffer = FB_NEW_POOL(*dbb->dbb_permanent) Polygon(coords, geometry->getSRID(), *dbb->dbb_permanent);
+		
+		return convertGeometryToDsc(tdbb, buffer, impure);
+	}
+	catch (...)
+	{
+		request->req_flags |= req_null;
+		return nullptr;
+	}
+}
+
+// Advanced geometric operations - these require sophisticated computational geometry
+// For now, implementing simplified versions that return the original geometry or MBR
+
+dsc* evlStIntersection(thread_db* tdbb, const SysFunction* function, const NestValueArray& args, impure_value* impure)
+{
+	fb_assert(args.getCount() == 2);
+	
+	Request* request = tdbb->getRequest();
+	
+	const dsc* geom1 = EVL_expr(tdbb, request, args[0]);
+	const dsc* geom2 = EVL_expr(tdbb, request, args[1]);
+	
+	if (request->req_flags & req_null)
+		return nullptr;
+		
+	Geometry* g1 = convertDscToGeometry(tdbb, geom1);
+	Geometry* g2 = convertDscToGeometry(tdbb, geom2);
+	
+	if (!g1 || !g2)
+	{
+		request->req_flags |= req_null;
+		return nullptr;
+	}
+	
+	// Simplified implementation - return MBR intersection as polygon
+	try
+	{
+		MBR mbr1 = g1->getMBR();
+		MBR mbr2 = g2->getMBR();
+		
+		if (!mbr1.intersects(mbr2))
+		{
+			request->req_flags |= req_null;
+			return nullptr; // No intersection
+		}
+		
+		// Calculate intersection rectangle
+		double minX = MAX(mbr1.minX, mbr2.minX);
+		double minY = MAX(mbr1.minY, mbr2.minY);
+		double maxX = MIN(mbr1.maxX, mbr2.maxX);
+		double maxY = MIN(mbr1.maxY, mbr2.maxY);
+		
+		Database* dbb = tdbb->getDatabase();
+		std::vector<Coordinate> coords;
+		coords.push_back(Coordinate(minX, minY));
+		coords.push_back(Coordinate(maxX, minY));
+		coords.push_back(Coordinate(maxX, maxY));
+		coords.push_back(Coordinate(minX, maxY));
+		coords.push_back(Coordinate(minX, minY));
+		
+		Polygon* intersection = FB_NEW_POOL(*dbb->dbb_permanent) Polygon(coords, g1->getSRID(), *dbb->dbb_permanent);
+		
+		return convertGeometryToDsc(tdbb, intersection, impure);
+	}
+	catch (...)
+	{
+		request->req_flags |= req_null;
+		return nullptr;
+	}
+}
+
+dsc* evlStUnion(thread_db* tdbb, const SysFunction* function, const NestValueArray& args, impure_value* impure)
+{
+	fb_assert(args.getCount() == 2);
+	
+	Request* request = tdbb->getRequest();
+	
+	const dsc* geom1 = EVL_expr(tdbb, request, args[0]);
+	const dsc* geom2 = EVL_expr(tdbb, request, args[1]);
+	
+	if (request->req_flags & req_null)
+		return nullptr;
+		
+	Geometry* g1 = convertDscToGeometry(tdbb, geom1);
+	Geometry* g2 = convertDscToGeometry(tdbb, geom2);
+	
+	if (!g1 || !g2)
+	{
+		request->req_flags |= req_null;
+		return nullptr;
+	}
+	
+	// Simplified implementation - return MBR union as polygon
+	try
+	{
+		MBR mbr1 = g1->getMBR();
+		MBR mbr2 = g2->getMBR();
+		
+		// Calculate union rectangle
+		double minX = MIN(mbr1.minX, mbr2.minX);
+		double minY = MIN(mbr1.minY, mbr2.minY);
+		double maxX = MAX(mbr1.maxX, mbr2.maxX);
+		double maxY = MAX(mbr1.maxY, mbr2.maxY);
+		
+		Database* dbb = tdbb->getDatabase();
+		std::vector<Coordinate> coords;
+		coords.push_back(Coordinate(minX, minY));
+		coords.push_back(Coordinate(maxX, minY));
+		coords.push_back(Coordinate(maxX, maxY));
+		coords.push_back(Coordinate(minX, maxY));
+		coords.push_back(Coordinate(minX, minY));
+		
+		Polygon* unionGeom = FB_NEW_POOL(*dbb->dbb_permanent) Polygon(coords, g1->getSRID(), *dbb->dbb_permanent);
+		
+		return convertGeometryToDsc(tdbb, unionGeom, impure);
+	}
+	catch (...)
+	{
+		request->req_flags |= req_null;
+		return nullptr;
+	}
+}
+
+dsc* evlStDifference(thread_db* tdbb, const SysFunction* function, const NestValueArray& args, impure_value* impure)
+{
+	fb_assert(args.getCount() == 2);
+	
+	Request* request = tdbb->getRequest();
+	
+	const dsc* geom1 = EVL_expr(tdbb, request, args[0]);
+	const dsc* geom2 = EVL_expr(tdbb, request, args[1]);
+	
+	if (request->req_flags & req_null)
+		return nullptr;
+		
+	Geometry* g1 = convertDscToGeometry(tdbb, geom1);
+	Geometry* g2 = convertDscToGeometry(tdbb, geom2);
+	
+	if (!g1 || !g2)
+	{
+		request->req_flags |= req_null;
+		return nullptr;
+	}
+	
+	// Simplified implementation - return first geometry if no intersection, empty if fully contained
+	try
+	{
+		if (g1->disjoint(*g2))
+		{
+			// No intersection, return first geometry
+			return convertGeometryToDsc(tdbb, g1, impure);
+		}
+		else if (g2->contains(*g1))
+		{
+			// First geometry fully contained in second, return empty
+			request->req_flags |= req_null;
+			return nullptr;
+		}
+		else
+		{
+			// Partial overlap - return first geometry (simplified)
+			return convertGeometryToDsc(tdbb, g1, impure);
+		}
+	}
+	catch (...)
+	{
+		request->req_flags |= req_null;
+		return nullptr;
+	}
+}
+
+// WKT/WKB Conversion Functions - Full parsing implementations
+
+dsc* evlStGeomFromText(thread_db* tdbb, const SysFunction* function, const NestValueArray& args, impure_value* impure)
+{
+	fb_assert(args.getCount() >= 1);
+	
+	Request* request = tdbb->getRequest();
+	
+	const dsc* wktDesc = EVL_expr(tdbb, request, args[0]);
+	if (request->req_flags & req_null)
+		return nullptr;
+		
+	string wktString = MOV_make_string2(tdbb, wktDesc, ttype_utf8);
+	
+	// Optional SRID parameter
+	SRID srid = DEFAULT_SRID;
+	if (args.getCount() > 1)
+	{
+		const dsc* sridDesc = EVL_expr(tdbb, request, args[1]);
+		if (!(request->req_flags & req_null))
+		{
+			srid = (SRID)CVT_get_long(sridDesc);
+		}
+	}
+	
+	try
+	{
+		// Parse WKT string using WKTParser
+		Database* dbb = tdbb->getDatabase();
+		Geometry* geometry = Geometry::fromWKT(wktString, srid, *dbb->dbb_permanent);
+		
+		if (geometry)
+		{
+			return convertGeometryToDsc(tdbb, geometry, impure);
+		}
+		else
+		{
+			request->req_flags |= req_null;
+			return nullptr;
+		}
+	}
+	catch (...)
+	{
+		request->req_flags |= req_null;
+		return nullptr;
+	}
+}
+
+dsc* evlStGeomFromWKB(thread_db* tdbb, const SysFunction* function, const NestValueArray& args, impure_value* impure)
+{
+	fb_assert(args.getCount() >= 1);
+	
+	Request* request = tdbb->getRequest();
+	
+	const dsc* wkbDesc = EVL_expr(tdbb, request, args[0]);
+	if (request->req_flags & req_null)
+		return nullptr;
+	
+	// Optional SRID parameter
+	SRID srid = DEFAULT_SRID;
+	if (args.getCount() > 1)
+	{
+		const dsc* sridDesc = EVL_expr(tdbb, request, args[1]);
+		if (!(request->req_flags & req_null))
+		{
+			srid = (SRID)CVT_get_long(sridDesc);
+		}
+	}
+		
+	try
+	{
+		// Handle BLOB containing WKB data
+		if (wkbDesc->dsc_dtype == dtype_blob)
+		{
+			blb* blob = BLB_open(tdbb, tdbb->getRequest()->req_transaction, 
+								reinterpret_cast<const bid*>(wkbDesc->dsc_address));
+			if (!blob)
+			{
+				request->req_flags |= req_null;
+				return nullptr;
+			}
+				
+			// Read blob data
+			std::vector<UCHAR> wkbBuffer;
+			UCHAR buffer[4096];
+			USHORT bytesRead;
+			
+			while (BLB_get_segment(tdbb, blob, buffer, sizeof(buffer), &bytesRead))
+			{
+				wkbBuffer.insert(wkbBuffer.end(), buffer, buffer + bytesRead);
+			}
+			
+			BLB_close(tdbb, blob);
+			
+			if (!wkbBuffer.empty())
+			{
+				// Parse WKB data using WKBReader
+				Database* dbb = tdbb->getDatabase();
+				WKBReader reader(wkbBuffer.data(), wkbBuffer.size(), *dbb->dbb_permanent, srid);
+				Geometry* geometry = reader.parseWKB();
+				
+				if (geometry)
+				{
+					return convertGeometryToDsc(tdbb, geometry, impure);
+				}
+			}
+		}
+		
+		request->req_flags |= req_null;
+		return nullptr;
+	}
+	catch (...)
+	{
+		request->req_flags |= req_null;
+		return nullptr;
+	}
+}
+
+dsc* evlStAsText(thread_db* tdbb, const SysFunction* function, const NestValueArray& args, impure_value* impure)
+{
+	fb_assert(args.getCount() == 1);
+	
+	Request* request = tdbb->getRequest();
+	
+	const dsc* geomDesc = EVL_expr(tdbb, request, args[0]);
+	if (request->req_flags & req_null)
+		return nullptr;
+		
+	Geometry* geometry = convertDscToGeometry(tdbb, geomDesc);
+	if (!geometry)
+	{
+		request->req_flags |= req_null;
+		return nullptr;
+	}
+	
+	try
+	{
+		// Convert geometry to WKT string using full WKT serialization
+		string wktString = geometry->toWKT();
+		
+		// Create string result with proper length
+		VaryStr<32768>* resultStr = (VaryStr<32768>*) impure->vlu_misc.vlu_string;
+		resultStr->str_length = MIN(wktString.length(), sizeof(resultStr->str_data));
+		memcpy(resultStr->str_data, wktString.c_str(), resultStr->str_length);
+		
+		impure->vlu_desc.makeVarying(resultStr->str_length, ttype_utf8, 
+									(UCHAR*) resultStr, sizeof(resultStr->str_length));
+		return &impure->vlu_desc;
+	}
+	catch (...)
+	{
+		request->req_flags |= req_null;
+		return nullptr;
+	}
+}
+
+dsc* evlStAsBinary(thread_db* tdbb, const SysFunction* function, const NestValueArray& args, impure_value* impure)
+{
+	fb_assert(args.getCount() == 1);
+	
+	Request* request = tdbb->getRequest();
+	
+	const dsc* geomDesc = EVL_expr(tdbb, request, args[0]);
+	if (request->req_flags & req_null)
+		return nullptr;
+		
+	Geometry* geometry = convertDscToGeometry(tdbb, geomDesc);
+	if (!geometry)
+	{
+		request->req_flags |= req_null;
+		return nullptr;
+	}
+	
+	try
+	{
+		// Convert geometry to WKB and return as blob (same as convertGeometryToDsc)
+		return convertGeometryToDsc(tdbb, geometry, impure);
+	}
+	catch (...)
+	{
+		request->req_flags |= req_null;
+		return nullptr;
 	}
 }
 

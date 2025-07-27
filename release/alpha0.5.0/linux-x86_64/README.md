@@ -1,4 +1,4 @@
-# ScratchBird v0.5.0 - Linux x86_64 Release
+# ScratchBird v0.6.0 - Linux x86_64 Release
 
 ## Platform Information
 - **Architecture**: Linux x86_64 (64-bit Intel/AMD)
@@ -16,7 +16,7 @@
 - `gpre` - General Purpose Relation Engine preprocessor
 
 ### Libraries (`lib/`)
-- `libsbclient.so.0.5.0` - ScratchBird client library (primary)
+- `libsbclient.so.0.6.0` - ScratchBird client library (primary)
 - `libsbclient.so.2` - Compatibility symlink for Firebird applications
 - `libsbclient.so` - Development symlink
 
@@ -53,7 +53,7 @@ sudo cp conf/* /etc/scratchbird/
 
 ## Features
 
-### New in v0.5.0
+### New in v0.6.0
 - **Complete ScratchBird Branding**: All Firebird references removed
 - **Hierarchical Schema Support**: PostgreSQL-style nested schemas (finance.accounting.reports.table)
 - **Schema-Aware Database Links**: Remote schema targeting with 5 resolution modes
@@ -114,8 +114,8 @@ SELECT * FROM finance.accounting.reports.monthly_summary;
 - **Logs**: `/var/log/scratchbird/` (if using system installation)
 
 ## Version Information
-- **Version**: 0.5.0
-- **Build**: SB-T0.5.0.1
+- **Version**: 0.6.0
+- **Build**: SB-T0.6.0.1
 - **Release Date**: July 2025
 - **Compatibility**: ScratchBird v0.5.x series
 

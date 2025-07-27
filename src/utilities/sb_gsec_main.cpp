@@ -204,9 +204,9 @@ void printHelp() {
 
 // Print version information
 void printVersion() {
-    std::cout << "ScratchBird Enhanced GSEC version SB-T0.5.0.1" << std::endl;
+    std::cout << "ScratchBird Enhanced GSEC version SB-T0.6.0.1" << std::endl;
     std::cout << "Enhanced security management utility" << std::endl;
-    std::cout << "Based on ScratchBird 0.5 engine with 100% original GSEC compatibility" << std::endl;
+    std::cout << "Based on ScratchBird 0.6 engine with 100% original GSEC compatibility" << std::endl;
     std::cout << "Features: User management, role-based access, security auditing, compliance checking" << std::endl;
 }
 

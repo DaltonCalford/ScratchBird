@@ -15,7 +15,7 @@
 #include <chrono>
 #include <ctime>
 
-static const char* VERSION = "sb_tracemgr version SB-T0.5.0.1 ScratchBird 0.5 f90eae0";
+static const char* VERSION = "sb_tracemgr version SB-T0.6.0.1 ScratchBird 0.6 f90eae0";
 
 class ScratchBirdTraceManager {
 private:

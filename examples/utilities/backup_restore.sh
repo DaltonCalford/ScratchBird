@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# ScratchBird v0.5.0 - Backup and Restore Examples
+# ScratchBird v0.6.0 - Backup and Restore Examples
 # 
 # This script demonstrates advanced backup and restore operations
 # using ScratchBird's schema-aware backup utilities.
@@ -28,7 +28,7 @@
 # http://www.ibphoenix.com/main.nfs?a=ibphoenix&page=ibp_idpl.
 
 # Configuration
-SCRATCHBIRD_VERSION="SB-T0.5.0.1 ScratchBird 0.5 f90eae0"
+SCRATCHBIRD_VERSION="SB-T0.6.0.1 ScratchBird 0.6 f90eae0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Default configuration
@@ -74,7 +74,7 @@ log_verbose() {
 # Help function
 show_help() {
     cat << EOF
-ScratchBird v0.5.0 - Backup and Restore Examples
+ScratchBird v0.6.0 - Backup and Restore Examples
 
 This script demonstrates advanced backup and restore operations using
 ScratchBird's schema-aware backup utilities.

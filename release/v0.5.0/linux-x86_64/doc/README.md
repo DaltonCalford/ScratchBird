@@ -1,11 +1,11 @@
-# ScratchBird v0.5.0 🔥
+# ScratchBird v0.6.0 🔥
 A modern, enterprise-ready fork of FirebirdSQL with advanced PostgreSQL-compatible features
 
-[![Build Status](https://img.shields.io/badge/build-stable-green)](https://github.com/dcalford/ScratchBird) [![License](https://img.shields.io/badge/license-IDPL-blue)](LICENSE) [![Version](https://img.shields.io/badge/version-0.5.0--stable-brightgreen)](CHANGELOG.md) [![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20Windows-blue)](README.md) [![Port](https://img.shields.io/badge/default%20port-4050-orange)](README.md)
+[![Build Status](https://img.shields.io/badge/build-stable-green)](https://github.com/dcalford/ScratchBird) [![License](https://img.shields.io/badge/license-IDPL-blue)](LICENSE) [![Version](https://img.shields.io/badge/version-0.6.0--stable-brightgreen)](CHANGELOG.md) [![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20Windows-blue)](README.md) [![Port](https://img.shields.io/badge/default%20port-4050-orange)](README.md)
 
 ## What is ScratchBird?
 
-ScratchBird v0.5.0 is a production-ready fork of FirebirdSQL featuring advanced PostgreSQL-compatible datatypes, hierarchical schemas, and modern enterprise capabilities. Built from Firebird 6.0.0.929, ScratchBird extends the proven Firebird architecture with cutting-edge features for modern application development.
+ScratchBird v0.6.0 is a production-ready fork of FirebirdSQL featuring advanced PostgreSQL-compatible datatypes, hierarchical schemas, and modern enterprise capabilities. Built from Firebird 6.0.0.929, ScratchBird extends the proven Firebird architecture with cutting-edge features for modern application development.
 
 **🎯 Target Audience**: Developers seeking PostgreSQL compatibility with Firebird's proven reliability, organizations requiring advanced datatype support, and teams building distributed database applications.
 
@@ -19,18 +19,18 @@ ScratchBird v0.5.0 is a production-ready fork of FirebirdSQL featuring advanced 
 
 ```bash
 # Linux - Download and run installer
-wget https://github.com/dcalford/ScratchBird/releases/download/v0.5.0/scratchbird-v0.5.0-linux-x86_64.tar.gz
-tar -xzf scratchbird-v0.5.0-linux-x86_64.tar.gz
-cd scratchbird-v0.5.0-linux-x86_64
+wget https://github.com/dcalford/ScratchBird/releases/download/v0.6.0/scratchbird-v0.6.0-linux-x86_64.tar.gz
+tar -xzf scratchbird-v0.6.0-linux-x86_64.tar.gz
+cd scratchbird-v0.6.0-linux-x86_64
 sudo ./install.sh
 
 # Windows - Download installer from releases page
-# https://github.com/dcalford/ScratchBird/releases/download/v0.5.0/scratchbird-v0.5.0-windows-x64.zip
+# https://github.com/dcalford/ScratchBird/releases/download/v0.6.0/scratchbird-v0.6.0-windows-x64.zip
 # Extract and run install.bat as administrator
 
 # Verify installation
 sb_isql -z
-# Expected: sb_isql version SB-T0.5.0.1 ScratchBird 0.5 f90eae0
+# Expected: sb_isql version SB-T0.6.0.1 ScratchBird 0.6 f90eae0
 ```
 
 **Build from Source (Developer Installation):**
@@ -57,10 +57,10 @@ cd ScratchBird
 ./build_release --windows-only
 
 # Utilities will be placed in:
-# release/alpha0.5.0/linux-x86_64/bin/
-# release/alpha0.5.0/windows-x64/bin/
+# release/alpha0.6.0/linux-x86_64/bin/
+# release/alpha0.6.0/windows-x64/bin/
 # Release packages in:
-# releases/download/v0.5.0/
+# releases/download/v0.6.0/
 ```
 
 **Try Advanced Features Immediately:**
@@ -81,7 +81,7 @@ CREATE TABLE users (
 INSERT INTO users (name) VALUES ('Alice'), ('Bob');  -- UUIDs generated automatically
 ```
 
-## Key Features (v0.5.0) 🚀
+## Key Features (v0.6.0) 🚀
 
 ### ✅ Production-Ready Features
 - **🌳 Hierarchical Schema System**: 8-level deep schema nesting exceeding PostgreSQL capabilities
@@ -101,7 +101,7 @@ INSERT INTO users (name) VALUES ('Alice'), ('Bob');  -- UUIDs generated automati
 
 ## 🔧 Build System & Utilities
 
-ScratchBird v0.5.0 includes a comprehensive set of database utilities and a modern build system:
+ScratchBird v0.6.0 includes a comprehensive set of database utilities and a modern build system:
 
 ### Database Utilities
 - **scratchbird** - Main database server with hierarchical schema support
@@ -156,7 +156,7 @@ ScratchBird v0.5.0 includes a comprehensive set of database utilities and a mode
 
 ## Development Status
 
-### ✅ Current Release: v0.5.0 (Production Ready) - Released January 17, 2025
+### ✅ Current Release: v0.6.0 (Production Ready) - Released January 17, 2025
 - **Complete Build System**: Successfully compiled and tested on Linux x86_64
 - **All Core Tools Working**: sb_isql, sb_gbak, sb_gfix, sb_gsec, sb_gstat, and more
 - **Hierarchical Schema System**: 8-level deep nesting exceeding PostgreSQL
@@ -182,7 +182,7 @@ See [Development Roadmap](doc/notes/roadmap.md) for detailed plans and timelines
 
 ## ScratchBird vs. Firebird Comparison
 
-| Feature | Firebird 6.0 | ScratchBird v0.5.0 | Advantage |
+| Feature | Firebird 6.0 | ScratchBird v0.6.0 | Advantage |
 |---------|---------------|--------------------|-----------|
 | **Hierarchical Schemas** | No | 8-level deep nesting | PostgreSQL-style + deeper |
 | **Network Types** | No | INET, CIDR, MACADDR | Full PostgreSQL compatibility |
@@ -203,7 +203,7 @@ See [Development Roadmap](doc/notes/roadmap.md) for detailed plans and timelines
 ScratchBird would not be possible without the decades of incredible work done by the FirebirdSQL team. This project is a direct fork of their work and gratefully retains the original Mozilla Public License (MPL) and InterBase Public License (IDPL).
 
 **Key Acknowledgments**:
-- Based on Firebird 6.0.0.929 (f90eae0) - ScratchBird v0.5.0
+- Based on Firebird 6.0.0.929 (f90eae0) - ScratchBird v0.6.0
 - Preserves all original licensing and attribution
 - Maintains compatibility with Firebird's proven architecture
 - Extends rather than replaces core functionality
@@ -236,7 +236,7 @@ We welcome contributions that align with ScratchBird's experimental direction! P
 
 ## 🛡️ Production Readiness & Support
 
-**ScratchBird v0.5.0 is production-ready** with comprehensive testing, cross-platform deployment, and enterprise-grade features. Built on Firebird's proven architecture with modern enhancements.
+**ScratchBird v0.6.0 is production-ready** with comprehensive testing, cross-platform deployment, and enterprise-grade features. Built on Firebird's proven architecture with modern enhancements.
 
 **✅ Production Confidence**:
 - **Stable Architecture**: Based on mature Firebird 6.0.0.929 with proven reliability

@@ -419,7 +419,7 @@ sb_gbak --diagnose mydb.fdb --output=diagnostic_report.json
 
 ---
 
-**Version**: SB-T0.5.0.1 ScratchBird 0.5 f90eae0  
+**Version**: SB-T0.6.0.1 ScratchBird 0.6 f90eae0  
 **Status**: Phase 4 Implementation Complete  
 **Compatibility**: 100% backward compatible with original GBAK  
 **Performance**: 200-800% improvement over original GBAK  

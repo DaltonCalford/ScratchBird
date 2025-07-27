@@ -7,7 +7,7 @@
 #include <cstring>
 
 // Version information
-static const char* VERSION = "sb_gstat version SB-T0.5.0.1 ScratchBird 0.5 f90eae0";
+static const char* VERSION = "sb_gstat version SB-T0.6.0.1 ScratchBird 0.6 f90eae0";
 
 // Mode detection
 enum class GStatMode {

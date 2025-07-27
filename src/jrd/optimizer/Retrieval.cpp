@@ -48,6 +48,9 @@
 #include "../jrd/par_proto.h"
 
 #include "../jrd/optimizer/Optimizer.h"
+#include "../jrd/optimizer/PartialHashIndexCostModel.h"
+#include "../jrd/PartialHashIndex.h"
+#include "../jrd/optimizer/HashIndexCostModel.h"
 
 #include <cmath>
 
@@ -194,6 +197,23 @@ Retrieval::Retrieval(thread_db* aTdbb, Optimizer* opt, StreamType streamNumber,
 		scratch.cardinality = cardinality;
 		scratch.matches.assign(matches);
 
+		// Apply hash-specific enhancements if this is a hash index
+		if (isHashIndex(&index))
+		{
+			HashOptimizerIntegration::enhanceIndexScratchForHash(scratch, &index);
+			
+			// Apply partial hash index specific enhancements if applicable
+			if (PartialHashIndexCostModel::isPartialIndexType(&index))
+			{
+				// Extract the partial index condition for cost calculations
+				const BoolExprNode* partialCondition = PartialHashOptimizerIntegration::extractPartialIndexCondition(&index);
+				if (partialCondition)
+				{
+					PartialHashOptimizerIntegration::enhanceIndexScratchForPartialHash(scratch, &index, partialCondition);
+				}
+			}
+		}
+
 		indexScratches.add(scratch);
 	}
 }
@@ -324,8 +344,19 @@ InversionCandidate* Retrieval::getInversion()
 	}
 	else
 	{
-		// Add the records retrieval cost to the priorly calculated index scan cost
-		invCandidate->cost += cardinality * invCandidate->selectivity;
+		// Check if this is a hash index and use hash-specific cost calculation
+		if (invCandidate->scratch && isHashIndex(invCandidate->scratch->index))
+		{
+			// Use hash index cost model
+			ScanType scan_type = HashOptimizerIntegration::determineScanType(invCandidate->conjuncts);
+			invCandidate->cost = HashIndexCostModel::calculateIndexScanCost(
+				invCandidate->scratch->index, invCandidate->selectivity, cardinality, scan_type);
+		}
+		else
+		{
+			// Add the records retrieval cost to the priorly calculated index scan cost
+			invCandidate->cost += cardinality * invCandidate->selectivity;
+		}
 	}
 
 	// Adjust the effective selectivity by treating computable but unmatched conjunctions
@@ -691,7 +722,24 @@ void Retrieval::analyzeNavigation(const InversionCandidateList& inversions)
 			// If no inversion candidate is found, create a fake one representing full index scan
 
 			candidate = FB_NEW_POOL(getPool()) InversionCandidate(getPool());
+			// Calculate cost - use partial hash cost model if applicable
+		if (PartialHashIndexCostModel::isPartialIndexType(indexScratch.index))
+		{
+			const BoolExprNode* partialCondition = PartialHashOptimizerIntegration::extractPartialIndexCondition(indexScratch.index);
+			if (partialCondition)
+			{
+				candidate->cost = PartialHashOptimizerIntegration::calculatePartialHashIndexCost(
+					indexScratch.index, partialCondition, indexScratch.selectivity, indexScratch.cardinality, SCAN_EQUALITY);
+			}
+			else
+			{
+				candidate->cost = DEFAULT_INDEX_COST + indexScratch.cardinality;
+			}
+		}
+		else
+		{
 			candidate->cost = DEFAULT_INDEX_COST + indexScratch.cardinality;
+		}
 			candidate->indexes = 1;
 			candidate->scratch = &indexScratch;
 			candidate->nonFullMatchedSegments = indexScratch.segments.getCount();
@@ -1150,7 +1198,19 @@ void Retrieval::getInversionCandidates(InversionCandidateList& inversions,
 		{
 			const auto invCandidate = FB_NEW_POOL(getPool()) InversionCandidate(getPool());
 			invCandidate->selectivity = idx->idx_fraction;
-			invCandidate->cost = DEFAULT_INDEX_COST + scratch.cardinality;
+			
+			// Use hash-specific cost calculation if this is a hash index
+			if (isHashIndex(idx))
+			{
+				ScanType scan_type = SCAN_FULL; // Conditional indexes typically require full scan
+				invCandidate->cost = HashIndexCostModel::calculateIndexScanCost(
+					idx, invCandidate->selectivity, scratch.cardinality, scan_type);
+			}
+			else
+			{
+				invCandidate->cost = DEFAULT_INDEX_COST + scratch.cardinality;
+			}
+			
 			invCandidate->indexes = 1;
 			invCandidate->scratch = &scratch;
 			invCandidate->nonFullMatchedSegments = scratch.segments.getCount();
@@ -1444,6 +1504,18 @@ InversionCandidate* Retrieval::makeInversion(InversionCandidateList& inversions)
 
 			if (idx->idx_flags & idx_condition)
 			{
+				// For partial hash indexes, apply specialized analysis
+				if (PartialHashIndexCostModel::isPartialIndexType(idx))
+				{
+					const BoolExprNode* partialCondition = PartialHashOptimizerIntegration::extractPartialIndexCondition(idx);
+					if (partialCondition)
+					{
+						// Use the specialized partial hash analyzer
+						PartialHashInversionCandidateAnalyzer analyzer(optimizer);
+						analyzer.analyzePartialHashCandidate(inversion, idx, partialCondition, SCAN_EQUALITY, streamCardinality);
+					}
+				}
+				
 				for (auto otherInversion : inversions)
 				{
 					if (otherInversion->boolean &&

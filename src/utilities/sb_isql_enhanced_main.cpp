@@ -29,7 +29,7 @@ void signalHandler(int signal)
 // Print usage information
 void printUsage(const char* program_name)
 {
-    std::cout << "ScratchBird Enhanced ISQL v0.5.0" << std::endl;
+    std::cout << "ScratchBird Enhanced ISQL v0.6.0" << std::endl;
     std::cout << "Usage: " << program_name << " [OPTIONS] [database_path]" << std::endl;
     std::cout << std::endl;
     std::cout << "Options:" << std::endl;
@@ -92,7 +92,7 @@ void printUsage(const char* program_name)
 // Print version information
 void printVersion()
 {
-    std::cout << "ScratchBird Enhanced ISQL v0.5.0" << std::endl;
+    std::cout << "ScratchBird Enhanced ISQL v0.6.0" << std::endl;
     std::cout << "Built on: " << __DATE__ << " " << __TIME__ << std::endl;
     std::cout << "Leverages existing ScratchBird infrastructure" << std::endl;
     std::cout << "Features: Advanced DDL extraction, Query analysis, Multiple output formats" << std::endl;

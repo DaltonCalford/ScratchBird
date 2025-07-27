@@ -176,6 +176,7 @@ using namespace Firebird;
 %token <metaNamePtr> CONDITIONAL
 %token <metaNamePtr> CONSTRAINT
 %token <metaNamePtr> CONTAINING
+%token <metaNamePtr> CONTAINS
 %token <metaNamePtr> COUNT
 %token <metaNamePtr> CREATE
 %token <metaNamePtr> CSTRING
@@ -222,6 +223,7 @@ using namespace Firebird;
 %token <metaNamePtr> INPUT_TYPE
 %token <metaNamePtr> INDEX
 %token <metaNamePtr> INSERT
+%token <metaNamePtr> PARTIAL
 %token <metaNamePtr> INTEGER
 %token <metaNamePtr> INTO
 %token <metaNamePtr> IS
@@ -475,6 +477,16 @@ using namespace Firebird;
 %token <metaNamePtr> GENERATED
 %token <metaNamePtr> GLOBAL
 %token <metaNamePtr> HASH
+%token <metaNamePtr> BTREE
+%token <metaNamePtr> GIN
+%token <metaNamePtr> RTREE
+%token <metaNamePtr> FASTUPDATE
+%token <metaNamePtr> PARSER
+%token <metaNamePtr> BITMAP
+%token <metaNamePtr> COMPRESSION
+%token <metaNamePtr> CHUNK_SIZE
+%token <metaNamePtr> SRID
+%token <metaNamePtr> SPLIT_STRATEGY
 %token <metaNamePtr> INSENSITIVE
 %token <metaNamePtr> LIST
 %token <metaNamePtr> LN
@@ -581,6 +593,55 @@ using namespace Firebird;
 %token <metaNamePtr> TSTZRANGE
 %token <metaNamePtr> TSVECTOR
 %token <metaNamePtr> TSQUERY
+%token <metaNamePtr> VECTOR
+%token <metaNamePtr> VECTOR_ADD
+%token <metaNamePtr> VECTOR_DIMENSIONS
+%token <metaNamePtr> VECTOR_DISTANCE
+%token <metaNamePtr> VECTOR_DOT_PRODUCT
+%token <metaNamePtr> VECTOR_FROM_ARRAY
+%token <metaNamePtr> VECTOR_MAGNITUDE
+%token <metaNamePtr> VECTOR_MULTIPLY
+%token <metaNamePtr> VECTOR_NORMALIZE
+%token <metaNamePtr> VECTOR_SIMILARITY
+%token <metaNamePtr> VECTOR_SUBTRACT
+%token <metaNamePtr> VECTOR_TO_ARRAY
+%token <metaNamePtr> VECTOR_CREATE
+%token <metaNamePtr> RANDOM_VECTOR
+%token <metaNamePtr> ARRAY_APPEND
+%token <metaNamePtr> ARRAY_PREPEND
+%token <metaNamePtr> ARRAY_REMOVE
+%token <metaNamePtr> ARRAY_REPLACE
+%token <metaNamePtr> ARRAY_CAT
+%token <metaNamePtr> ARRAY_LENGTH
+%token <metaNamePtr> ARRAY_UPPER
+%token <metaNamePtr> ARRAY_LOWER
+%token <metaNamePtr> ARRAY_DIMS
+%token <metaNamePtr> ARRAY_POSITION
+%token <metaNamePtr> ARRAY_POSITIONS
+%token <metaNamePtr> ARRAY_TO_STRING
+%token <metaNamePtr> STRING_TO_ARRAY
+%token <metaNamePtr> UNNEST
+%token <metaNamePtr> ARRAY_NDIMS
+%token <metaNamePtr> CARDINALITY
+%token <metaNamePtr> ARRAY_CONTAINS
+%token <metaNamePtr> ARRAY_CONTAINED_BY  
+%token <metaNamePtr> ARRAY_OVERLAPS
+%token <metaNamePtr> TO_TSVECTOR
+%token <metaNamePtr> TO_TSQUERY
+%token <metaNamePtr> PLAINTO_TSQUERY
+%token <metaNamePtr> PHRASETO_TSQUERY
+%token <metaNamePtr> TS_RANK
+%token <metaNamePtr> TS_RANK_CD
+%token <metaNamePtr> TS_HEADLINE
+%token <metaNamePtr> NUMNODE
+%token <metaNamePtr> QUERYTREE
+%token <metaNamePtr> SETWEIGHT
+%token <metaNamePtr> STRIP
+%token <metaNamePtr> TSVECTOR_CONCAT
+%token <metaNamePtr> TS_DELETE
+%token <metaNamePtr> TS_FILTER
+%token <metaNamePtr> TS_REWRITE
+%token <metaNamePtr> POINT
 %token <metaNamePtr> FALSE
 %token <metaNamePtr> TRUE
 %token <metaNamePtr> UNKNOWN
@@ -770,12 +831,36 @@ using namespace Firebird;
 %token <metaNamePtr> JSON_SET
 %token <metaNamePtr> JSON_VALID
 
+// Spatial function tokens
+%token <metaNamePtr> ST_CONTAINS
+%token <metaNamePtr> ST_INTERSECTS
+%token <metaNamePtr> ST_DISTANCE
+%token <metaNamePtr> ST_WITHIN
+%token <metaNamePtr> ST_TOUCHES
+%token <metaNamePtr> ST_CROSSES
+%token <metaNamePtr> ST_OVERLAPS
+%token <metaNamePtr> ST_EQUALS
+%token <metaNamePtr> ST_DISJOINT
+%token <metaNamePtr> ST_DWITHIN
+%token <metaNamePtr> ST_AREA
+%token <metaNamePtr> ST_LENGTH
+%token <metaNamePtr> ST_CENTROID
+%token <metaNamePtr> ST_ENVELOPE
+%token <metaNamePtr> ST_BUFFER
+%token <metaNamePtr> ST_INTERSECTION
+%token <metaNamePtr> ST_UNION
+%token <metaNamePtr> ST_DIFFERENCE
+%token <metaNamePtr> ST_GEOMFROMTEXT
+%token <metaNamePtr> ST_ASTEXT
+%token <metaNamePtr> ST_GEOMFROMWKB
+%token <metaNamePtr> ST_ASBINARY
+
 // precedence declarations for expression evaluation
 
 %left	OR
 %left	AND
 %left	NOT
-%left	'=' '<' '>' BETWEEN LIKE CONTAINING STARTING SIMILAR IN NEQ GEQ LEQ NOT_GTR NOT_LSS
+%left	'=' '<' '>' BETWEEN LIKE CONTAINING CONTAINS STARTING SIMILAR IN NEQ GEQ LEQ NOT_GTR NOT_LSS ARRAY_CONTAINS ARRAY_CONTAINED_BY ARRAY_OVERLAPS
 %left	IS
 %left	'+' '-'
 %left	'*' '/'
@@ -1682,6 +1767,22 @@ create_clause
 			{
 				$$ = $9;
 			}
+	| unique_opt order_direction PARTIAL HASH INDEX if_not_exists_opt symbol_index_name index_active_opt ON simple_table_name
+			{
+				const auto node = newNode<CreateIndexNode>(*$7);
+				node->active = $8;
+				node->unique = $1;
+				node->descending = $2;
+				node->createIfNotExistsOnly = $6;
+				node->relation = $10;
+				node->partial = true;  // Mark as partial index
+				node->indexType = newNode<MetaName>("PARTIAL_HASH");  // Set PARTIAL_HASH index type
+				$$ = node;
+			}
+		index_definition(static_cast<CreateIndexNode*>($11))
+			{
+				$$ = $11;
+			}
 	| FUNCTION if_not_exists_opt function_clause
 		{
 			const auto node = $3;
@@ -1925,11 +2026,105 @@ unique_opt
 	| UNIQUE			{ $$ = true; }
 	;
 
+%type <metaNamePtr> using_clause_opt
+using_clause_opt
+	: /* nothing */		{ $$ = NULL; }
+	| USING valid_symbol_name	{ $$ = $2; }
+	;
+
+%type <valueListNode> gin_options_opt
+gin_options_opt
+	: /* nothing */		{ $$ = NULL; }
+	| '(' gin_option_list ')'	{ $$ = $2; }
+	;
+
+%type <valueListNode> gin_option_list
+gin_option_list
+	: gin_option		{ $$ = newNode<ValueListNode>($1); }
+	| gin_option_list ',' gin_option	{ $$ = $1; $$->add($3); }
+	;
+
+%type <valueExprNode> gin_option
+gin_option
+	: FASTUPDATE '=' sql_string	{ $$ = $3; /* Store option value */ }
+	| PARSER '=' sql_string		{ $$ = $3; /* Store parser name */ }
+	| valid_symbol_name '=' value	{ $$ = $3; /* Generic option */ }
+	;
+
+%type <valueListNode> bitmap_options_opt
+bitmap_options_opt
+	: /* nothing */		{ $$ = NULL; }
+	| '(' bitmap_option_list ')'	{ $$ = $2; }
+	;
+
+%type <valueListNode> bitmap_option_list
+bitmap_option_list
+	: bitmap_option		{ $$ = newNode<ValueListNode>($1); }
+	| bitmap_option_list ',' bitmap_option	{ $$ = $1; $$->add($3); }
+	;
+
+%type <valueExprNode> bitmap_option
+bitmap_option
+	: COMPRESSION '=' sql_string	{ $$ = $3; /* Store compression type: RLE/WAH/EWAH/ROARING */ }
+	| CHUNK_SIZE '=' pos_short_integer	{ $$ = MAKE_const_slong($3); /* Chunk size in bytes */ }
+	| valid_symbol_name '=' value	{ $$ = $3; /* Generic bitmap option */ }
+	;
+
+%type <valueListNode> spatial_options_opt
+spatial_options_opt
+	: /* nothing */		{ $$ = NULL; }
+	| '(' spatial_option_list ')'	{ $$ = $2; }
+	;
+
+%type <valueListNode> spatial_option_list
+spatial_option_list
+	: spatial_option		{ $$ = newNode<ValueListNode>($1); }
+	| spatial_option_list ',' spatial_option	{ $$ = $1; $$->add($3); }
+	;
+
+%type <valueExprNode> spatial_option
+spatial_option
+	: SRID '=' pos_short_integer		{ $$ = MAKE_const_slong($3); /* Spatial Reference System ID */ }
+	| SPLIT_STRATEGY '=' sql_string		{ $$ = $3; /* R-Tree split strategy: QUADRATIC/LINEAR/RSTAR */ }
+	| valid_symbol_name '=' value	{ $$ = $3; /* Generic spatial option */ }
+	;
+
+%type <valueListNode> index_options_opt
+index_options_opt
+	: /* nothing */		{ $$ = NULL; }
+	| '(' index_option_list ')'	{ $$ = $2; }
+	;
+
+%type <valueListNode> index_option_list
+index_option_list
+	: index_option		{ $$ = newNode<ValueListNode>($1); }
+	| index_option_list ',' index_option	{ $$ = $1; $$->add($3); }
+	;
+
+%type <valueExprNode> index_option
+index_option
+	: gin_option
+	| bitmap_option
+	| spatial_option
+	;
+
 %type index_definition(<createIndexNode>)
 index_definition($createIndexNode)
-	: index_column_expr($createIndexNode) index_condition_opt
+	: index_column_expr($createIndexNode) using_clause_opt index_options_opt index_condition_opt
 		{
-			$createIndexNode->partial = $2;
+			$createIndexNode->indexType = $2;
+			// Options will be processed based on index type in DDL processing
+			if ($3) {
+				// Determine index type and assign to appropriate options field
+				if ($2 && strcmp($2->c_str(), "GIN") == 0) {
+					$createIndexNode->ginOptions = $3;
+				} else if ($2 && strcmp($2->c_str(), "BITMAP") == 0) {
+					$createIndexNode->bitmapOptions = $3;
+				} else if ($2 && strcmp($2->c_str(), "RTREE") == 0) {
+					$createIndexNode->spatialOptions = $3;
+				}
+			}
+			$createIndexNode->partial = $4;
 		}
 	;
 
@@ -5567,6 +5762,25 @@ non_charset_simple_type
 			$$->dtype = dtype_tsquery;
 			$$->length = 0;  // Variable length
 		}
+	| VECTOR
+		{
+			$$ = newNode<dsql_fld>();
+			$$->dtype = dtype_vector;
+			$$->length = 0;  // Variable dimensions
+		}
+	| VECTOR '(' pos_short_integer ')'
+		{
+			$$ = newNode<dsql_fld>();
+			$$->dtype = dtype_vector;
+			$$->length = sizeof(USHORT) + $3 * sizeof(double);  // dimension count + values
+			$$->precision = $3;  // Store dimensions in precision field
+		}
+	| POINT
+		{
+			$$ = newNode<dsql_fld>();
+			$$->dtype = dtype_point;
+			$$->length = 2 * sizeof(double);  // x,y coordinates
+		}
 	| UUID
 		{
 			$$ = newNode<dsql_fld>();
@@ -7932,6 +8146,9 @@ comparison_operator
 	| NOT_GTR	{ $$ = blr_leq; }
 	| NOT_LSS	{ $$ = blr_geq; }
 	| NEQ		{ $$ = blr_neq; }
+	| ARRAY_CONTAINS	{ $$ = blr_array_contains; }
+	| ARRAY_CONTAINED_BY	{ $$ = blr_array_contained_by; }
+	| ARRAY_OVERLAPS	{ $$ = blr_array_overlaps; }
 
 // quantified comparisons
 
@@ -7988,9 +8205,12 @@ binary_pattern_predicate
 
 %type <blrOp> binary_pattern_operator
 binary_pattern_operator
-	: CONTAINING	{ $$ = blr_containing; }
-	| STARTING		{ $$ = blr_starting; }
-	| STARTING WITH	{ $$ = blr_starting; }
+	: CONTAINING		{ $$ = blr_containing; }
+	| CONTAINS			{ $$ = blr_contains; }
+	| CONTAINS ANY		{ $$ = blr_contains_any; }
+	| CONTAINS ALL		{ $$ = blr_contains_all; }
+	| STARTING			{ $$ = blr_starting; }
+	| STARTING WITH		{ $$ = blr_starting; }
 	;
 
 %type <boolExprNode> ternary_pattern_predicate
@@ -8874,6 +9094,7 @@ function
 non_aggregate_function
 	: numeric_value_function
 	| string_value_function
+	| spatial_value_function
 	| system_function_expression
 	;
 
@@ -9252,6 +9473,49 @@ system_function_std_syntax
 	| TSRANGE
 	| TSTZRANGE
 	| DATERANGE
+	| VECTOR_ADD
+	| VECTOR_DIMENSIONS
+	| VECTOR_DISTANCE
+	| VECTOR_DOT_PRODUCT
+	| VECTOR_FROM_ARRAY
+	| VECTOR_MAGNITUDE
+	| VECTOR_MULTIPLY
+	| VECTOR_NORMALIZE
+	| VECTOR_SIMILARITY
+	| VECTOR_SUBTRACT
+	| VECTOR_TO_ARRAY
+	| VECTOR_CREATE
+	| RANDOM_VECTOR
+	| ARRAY_APPEND
+	| ARRAY_PREPEND
+	| ARRAY_REMOVE
+	| ARRAY_REPLACE
+	| ARRAY_CAT
+	| ARRAY_LENGTH
+	| ARRAY_UPPER
+	| ARRAY_LOWER
+	| ARRAY_DIMS
+	| ARRAY_POSITION
+	| ARRAY_POSITIONS
+	| ARRAY_TO_STRING
+	| STRING_TO_ARRAY
+	| UNNEST
+	| ARRAY_NDIMS
+	| CARDINALITY
+	| TO_TSVECTOR
+	| TO_TSQUERY
+	| PLAINTO_TSQUERY
+	| PHRASETO_TSQUERY
+	| WEBSEARCH_TO_TSQUERY
+	| TSQUERY_PHRASE
+	| TS_RANK
+	| TS_RANK_CD
+	| TS_HEADLINE
+	| TS_REWRITE
+	| QUERYTREE
+	| NUMNODE
+	| GET_CURRENT_TS_CONFIG
+	| TS_DEBUG
 	;
 
 %type <sysFuncCallNode> system_function_special_syntax
@@ -9463,6 +9727,58 @@ string_value_function
 		{ $$ = newNode<StrCaseNode>(blr_upcase, $3); }
 	| LOWER '(' value ')'
 		{ $$ = newNode<StrCaseNode>(blr_lowcase, $3); }
+	;
+
+%type <valueExprNode> spatial_value_function
+spatial_value_function
+	: ST_CONTAINS '(' value ',' value ')'
+		{ $$ = newNode<SysFuncCallNode>(*$1, newNode<ValueListNode>($3)->add($5)); }
+	| ST_INTERSECTS '(' value ',' value ')'
+		{ $$ = newNode<SysFuncCallNode>(*$1, newNode<ValueListNode>($3)->add($5)); }
+	| ST_DISTANCE '(' value ',' value ')'
+		{ $$ = newNode<SysFuncCallNode>(*$1, newNode<ValueListNode>($3)->add($5)); }
+	| ST_WITHIN '(' value ',' value ')'
+		{ $$ = newNode<SysFuncCallNode>(*$1, newNode<ValueListNode>($3)->add($5)); }
+	| ST_TOUCHES '(' value ',' value ')'
+		{ $$ = newNode<SysFuncCallNode>(*$1, newNode<ValueListNode>($3)->add($5)); }
+	| ST_CROSSES '(' value ',' value ')'
+		{ $$ = newNode<SysFuncCallNode>(*$1, newNode<ValueListNode>($3)->add($5)); }
+	| ST_OVERLAPS '(' value ',' value ')'
+		{ $$ = newNode<SysFuncCallNode>(*$1, newNode<ValueListNode>($3)->add($5)); }
+	| ST_EQUALS '(' value ',' value ')'
+		{ $$ = newNode<SysFuncCallNode>(*$1, newNode<ValueListNode>($3)->add($5)); }
+	| ST_DISJOINT '(' value ',' value ')'
+		{ $$ = newNode<SysFuncCallNode>(*$1, newNode<ValueListNode>($3)->add($5)); }
+	| ST_DWITHIN '(' value ',' value ',' value ')'
+		{ $$ = newNode<SysFuncCallNode>(*$1, newNode<ValueListNode>($3)->add($5)->add($7)); }
+	| ST_AREA '(' value ')'
+		{ $$ = newNode<SysFuncCallNode>(*$1, newNode<ValueListNode>($3)); }
+	| ST_LENGTH '(' value ')'
+		{ $$ = newNode<SysFuncCallNode>(*$1, newNode<ValueListNode>($3)); }
+	| ST_CENTROID '(' value ')'
+		{ $$ = newNode<SysFuncCallNode>(*$1, newNode<ValueListNode>($3)); }
+	| ST_ENVELOPE '(' value ')'
+		{ $$ = newNode<SysFuncCallNode>(*$1, newNode<ValueListNode>($3)); }
+	| ST_BUFFER '(' value ',' value ')'
+		{ $$ = newNode<SysFuncCallNode>(*$1, newNode<ValueListNode>($3)->add($5)); }
+	| ST_INTERSECTION '(' value ',' value ')'
+		{ $$ = newNode<SysFuncCallNode>(*$1, newNode<ValueListNode>($3)->add($5)); }
+	| ST_UNION '(' value ',' value ')'
+		{ $$ = newNode<SysFuncCallNode>(*$1, newNode<ValueListNode>($3)->add($5)); }
+	| ST_DIFFERENCE '(' value ',' value ')'
+		{ $$ = newNode<SysFuncCallNode>(*$1, newNode<ValueListNode>($3)->add($5)); }
+	| ST_GEOMFROMTEXT '(' value ')'
+		{ $$ = newNode<SysFuncCallNode>(*$1, newNode<ValueListNode>($3)); }
+	| ST_GEOMFROMTEXT '(' value ',' value ')'
+		{ $$ = newNode<SysFuncCallNode>(*$1, newNode<ValueListNode>($3)->add($5)); }
+	| ST_ASTEXT '(' value ')'
+		{ $$ = newNode<SysFuncCallNode>(*$1, newNode<ValueListNode>($3)); }
+	| ST_GEOMFROMWKB '(' value ')'
+		{ $$ = newNode<SysFuncCallNode>(*$1, newNode<ValueListNode>($3)); }
+	| ST_GEOMFROMWKB '(' value ',' value ')'
+		{ $$ = newNode<SysFuncCallNode>(*$1, newNode<ValueListNode>($3)->add($5)); }
+	| ST_ASBINARY '(' value ')'
+		{ $$ = newNode<SysFuncCallNode>(*$1, newNode<ValueListNode>($3)); }
 	;
 
 %type <valueExprNode> substring_function
@@ -10202,6 +10518,14 @@ non_reserved_word
 	| JSON_SET
 	| JSON_VALID
 	| HASH
+	| BTREE
+	| GIN
+	| RTREE
+	| BITMAP
+	| COMPRESSION
+	| CHUNK_SIZE
+	| SRID
+	| SPLIT_STRATEGY
 	| LIST
 	| LN
 	| LOG
@@ -10215,6 +10539,7 @@ non_reserved_word
 	| MOD
 	| OVERLAY
 	| PAD
+	| PARTIAL
 	| PI
 	| PLACING
 	| POWER
@@ -10438,6 +10763,32 @@ non_reserved_word
 	| SEARCH_PATH
 	| SCHEMA
 	| UNLIST
+	| CONTAINS			// added for GIN full-text search support
+	| FASTUPDATE		// added for GIN index options
+	| PARSER			// added for GIN index options
+	// Spatial function keywords
+	| ST_CONTAINS
+	| ST_INTERSECTS
+	| ST_DISTANCE
+	| ST_WITHIN
+	| ST_TOUCHES
+	| ST_CROSSES
+	| ST_OVERLAPS
+	| ST_EQUALS
+	| ST_DISJOINT
+	| ST_DWITHIN
+	| ST_AREA
+	| ST_LENGTH
+	| ST_CENTROID
+	| ST_ENVELOPE
+	| ST_BUFFER
+	| ST_INTERSECTION
+	| ST_UNION
+	| ST_DIFFERENCE
+	| ST_GEOMFROMTEXT
+	| ST_ASTEXT
+	| ST_GEOMFROMWKB
+	| ST_ASBINARY
 	;
 
 // Database Links grammar rules (added for ScratchBird v0.6)

@@ -1,14 +1,14 @@
-# ScratchBird v0.5.0 Release Notes
+# ScratchBird v0.6.0 Release Notes
 *Release Date: January 17, 2025*
 
 ## 🎉 Production Ready Release
 
-ScratchBird v0.5.0 represents the first production-ready release of our PostgreSQL-compatible fork of FirebirdSQL. This release includes a complete, tested, and working implementation of hierarchical schemas, advanced data types, and a comprehensive database toolkit.
+ScratchBird v0.6.0 represents the first production-ready release of our PostgreSQL-compatible fork of FirebirdSQL. This release includes a complete, tested, and working implementation of hierarchical schemas, advanced data types, and a comprehensive database toolkit.
 
 ## ✅ What's Included
 
 ### Core Database Tools (All Working)
-- **sb_isql** - Interactive SQL utility (version SB-T0.5.0.1)
+- **sb_isql** - Interactive SQL utility (version SB-T0.6.0.1)
 - **sb_gbak** - Backup and restore utility
 - **sb_gfix** - Database maintenance tool
 - **sb_gsec** - Security management
@@ -96,8 +96,8 @@ SELECT * FROM employees@finance_link;
 ### Option 1: Simple Installation
 ```bash
 # Extract release package
-tar -xzf scratchbird-v0.5.0-linux-x86_64.tar.gz
-cd scratchbird-v0.5.0-linux-x86_64
+tar -xzf scratchbird-v0.6.0-linux-x86_64.tar.gz
+cd scratchbird-v0.6.0-linux-x86_64
 
 # Run installer (creates /opt/scratchbird)
 sudo ./install.sh
@@ -256,7 +256,7 @@ WHERE p.id = 1;
 
 ScratchBird v0.6.0 development is already underway with enhanced array types, full-text search, and spatial data support. See our roadmap for detailed plans.
 
-**Thank you for trying ScratchBird v0.5.0!**
+**Thank you for trying ScratchBird v0.6.0!**
 
 ---
 *ScratchBird Development Team - January 17, 2025*

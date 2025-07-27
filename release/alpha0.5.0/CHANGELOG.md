@@ -1,13 +1,13 @@
-# ScratchBird v0.5.0 Release Notes
+# ScratchBird v0.6.0 Release Notes
 
 **Release Date**: July 16, 2025  
-**Version**: SB-T0.5.0.1  
+**Version**: SB-T0.6.0.1  
 **Codename**: "Phoenix Rising"
 
 ## 🎉 Major Milestones
 
 ### Complete Product Transformation
-ScratchBird v0.5.0 represents a complete transformation from Firebird, achieving full independence with zero user-facing Firebird references. This release establishes ScratchBird as a distinct, advanced database management system.
+ScratchBird v0.6.0 represents a complete transformation from Firebird, achieving full independence with zero user-facing Firebird references. This release establishes ScratchBird as a distinct, advanced database management system.
 
 ### Revolutionary Architecture Changes
 - **96.3% Code Reduction**: Utilities transformed from 42,319+ lines to 1,547 lines
@@ -82,7 +82,7 @@ CREATE DATABASE LINK finance_link
 - **Version Control**: Semantic versioning with proper release management
 
 ### API and Compatibility
-- **libsbclient.so**: Complete client library with v0.5.0 versioning
+- **libsbclient.so**: Complete client library with v0.6.0 versioning
 - **Header Migration**: All include paths updated to `scratchbird/`
 - **Namespace Migration**: Complete `Firebird::` → `ScratchBird::` transformation
 - **Backward Compatibility**: Firebird application compatibility maintained
@@ -223,6 +223,6 @@ Special thanks to early adopters who provided feedback on schema hierarchy featu
 
 ---
 
-**ScratchBird v0.5.0** represents a watershed moment in database technology - combining the proven reliability of Firebird's foundation with revolutionary advances in schema management, distributed transactions, and modern software architecture.
+**ScratchBird v0.6.0** represents a watershed moment in database technology - combining the proven reliability of Firebird's foundation with revolutionary advances in schema management, distributed transactions, and modern software architecture.
 
-**Download ScratchBird v0.5.0 today and experience the future of database management.**
+**Download ScratchBird v0.6.0 today and experience the future of database management.**

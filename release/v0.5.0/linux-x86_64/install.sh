@@ -1,10 +1,10 @@
 #!/bin/bash
-# ScratchBird v0.5.0 Installation Script for Linux x86_64
+# ScratchBird v0.6.0 Installation Script for Linux x86_64
 # Copyright (C) 2025 ScratchBird Development Team
 
 set -e
 
-SCRATCHBIRD_VERSION="0.5.0"
+SCRATCHBIRD_VERSION="0.6.0"
 INSTALL_ROOT="/opt/scratchbird"
 SERVICE_NAME="scratchbird"
 DEFAULT_PORT="4050"

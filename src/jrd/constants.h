@@ -139,9 +139,41 @@ inline constexpr int IMPLICIT_PK_PREFIX_LEN = 11;
 // The invisible "id zero" generator.
 inline constexpr const char* MASTER_GENERATOR = ""; //Was "RDB$GENERATORS";
 
+// Legacy schema names (maintained for compatibility)
 inline constexpr const char* SYSTEM_SCHEMA = "SYSTEM";
 inline constexpr const char* PUBLIC_SCHEMA = "PUBLIC";
 inline constexpr const char* PLG_LEGACY_SEC_SCHEMA = "PLG$LEGACY_SEC";
+
+// v0.6.0 Schema Hierarchy (at database root level, no "ROOT" schema)
+inline constexpr const char* SYSTEM_SCHEMA_V6 = "SYSTEM";  // Top-level SYSTEM schema
+inline constexpr const char* USERS_SCHEMA = "USERS";       // Top-level USERS schema
+inline constexpr const char* LINKS_SCHEMA = "LINKS";       // Top-level LINKS schema
+inline constexpr const char* DATABASE_SCHEMA = "DATABASE"; // Top-level DATABASE schema
+inline constexpr const char* APPLICATIONS_SCHEMA = "APPLICATIONS"; // Top-level APPLICATIONS schema
+
+// SYSTEM subschemas
+inline constexpr const char* SYSTEM_INFORMATION_SCHEMA = "SYSTEM.INFORMATION_SCHEMA";
+inline constexpr const char* SYSTEM_HIERARCHY_SCHEMA = "SYSTEM.HIERARCHY";
+inline constexpr const char* SYSTEM_PLG_LEGACY_SEC_SCHEMA = "SYSTEM.PLG$LEGACY_SEC";
+inline constexpr const char* SYSTEM_PLG_SRP_SCHEMA = "SYSTEM.PLG$SRP";
+
+// USERS subschemas
+inline constexpr const char* USERS_PUBLIC_SCHEMA = "USERS.PUBLIC";
+
+// LINKS subschemas
+inline constexpr const char* LINKS_TEMPORARY_SCHEMA = "LINKS.TEMPORARY";
+
+// DATABASE subschemas
+inline constexpr const char* DATABASE_MONITORING_SCHEMA = "DATABASE.MONITORING";
+inline constexpr const char* DATABASE_PROGRAMMING_SCHEMA = "DATABASE.PROGRAMMING";
+inline constexpr const char* DATABASE_TRIGGERS_SCHEMA = "DATABASE.TRIGGERS";
+
+// NoSQL Module Schema Names (optional, at database root level)
+inline constexpr const char* KAFKA_SCHEMA = "KAFKA";
+inline constexpr const char* COLUMNAR_SCHEMA = "COLUMNAR";
+inline constexpr const char* KEY_VALUE_SCHEMA = "KEY_VALUE";
+inline constexpr const char* GRAPH_SCHEMA = "GRAPH";
+inline constexpr const char* VECTOR_SCHEMA = "VECTOR";
 
 // Automatically created security classes for SQL objects.
 // Keep in sync with trig.h
@@ -510,5 +542,105 @@ inline constexpr int WITH_ADMIN_OPTION = 2;
 
 // Max length of the string returned by ERROR_TEXT context variable
 inline constexpr USHORT MAX_ERROR_MSG_LENGTH = 1024 * METADATA_BYTES_PER_CHAR; // 1024 UTF-8 characters
+
+//---------------------
+// Index Type Constants
+//---------------------
+
+// Index type identifiers for new pluggable index system
+// These constants define the numeric identifiers for different index types
+// used in the ODS format and internal systems
+
+inline constexpr int IDX_TYPE_BTREE = 0;     // B-Tree index (default, backward compatible)
+inline constexpr int IDX_TYPE_HASH = 1;      // Hash index for equality lookups
+inline constexpr int IDX_TYPE_GIN = 2;       // Generalized Inverted Index (full-text, arrays)
+inline constexpr int IDX_TYPE_BITMAP = 3;    // Bitmap index for low-cardinality data
+inline constexpr int IDX_TYPE_RTREE = 4;     // R-Tree index for spatial data
+inline constexpr int IDX_TYPE_BRIN = 5;      // Block Range Index for large sorted tables
+inline constexpr int IDX_TYPE_PARTIAL_HASH = 6; // Partial hash index with WHERE clause
+
+// Index type name constants (used in SQL syntax and catalogs)
+inline constexpr const char* IDX_TYPE_NAME_BTREE = "BTREE";
+inline constexpr const char* IDX_TYPE_NAME_HASH = "HASH";
+inline constexpr const char* IDX_TYPE_NAME_GIN = "GIN";
+inline constexpr const char* IDX_TYPE_NAME_BITMAP = "BITMAP";
+inline constexpr const char* IDX_TYPE_NAME_RTREE = "RTREE";
+inline constexpr const char* IDX_TYPE_NAME_BRIN = "BRIN";
+inline constexpr const char* IDX_TYPE_NAME_PARTIAL_HASH = "PARTIAL_HASH";
+
+//---------------------
+// Hash Index Constants
+//---------------------
+
+// Hash index specific constants
+inline constexpr USHORT HASH_DEFAULT_BUCKETS = 1024;      // Default bucket count for new hash indexes
+inline constexpr UCHAR HASH_MAX_LOAD_FACTOR = 75;         // Maximum load factor percentage (75%)
+inline constexpr UCHAR HASH_MIN_LOAD_FACTOR = 25;         // Minimum load factor for shrinking (25%)
+inline constexpr UCHAR HASH_TARGET_LOAD_FACTOR = 50;      // Target load factor for optimal performance (50%)
+inline constexpr USHORT HASH_MIN_BUCKET_SIZE = 64;        // Minimum bucket size in bytes
+inline constexpr USHORT HASH_MAX_BUCKET_SIZE = 8192;      // Maximum bucket size in bytes
+inline constexpr USHORT HASH_DEFAULT_BUCKET_SIZE = 512;   // Default bucket size in bytes
+
+// Hash algorithm identifiers
+inline constexpr UCHAR HASH_ALGORITHM_CRC32 = 0;          // CRC32 hash function
+inline constexpr UCHAR HASH_ALGORITHM_MURMUR3 = 1;        // MurmurHash3 function
+inline constexpr UCHAR HASH_ALGORITHM_DEFAULT = HASH_ALGORITHM_CRC32;
+
+// Hash index flags (in addition to standard index flags)
+inline constexpr USHORT IDX_HASH_FAST_EQUALITY = 0x1000;  // Optimized for equality queries only
+inline constexpr USHORT IDX_HASH_EXPANDABLE = 0x2000;     // Can expand dynamically
+inline constexpr USHORT IDX_HASH_LINEAR = 0x4000;         // Use linear probing for collision resolution
+
+// Hash bucket management constants
+inline constexpr USHORT HASH_BUCKET_CHAIN_LIMIT = 8;      // Maximum chain length before restructuring
+inline constexpr ULONG HASH_EXPANSION_THRESHOLD = 10000;  // Keys threshold for index expansion
+inline constexpr double HASH_SPLIT_RATIO = 2.0;           // Factor for bucket splitting
+
+//---------------------
+// GIN Index Constants  
+//---------------------
+
+// GIN token and text processing constants
+inline constexpr USHORT GIN_DEFAULT_MIN_TOKEN_LENGTH = 3;     // Default minimum token length
+inline constexpr USHORT GIN_DEFAULT_MAX_TOKEN_LENGTH = 255;   // Default maximum token length  
+inline constexpr USHORT GIN_MAX_TOKEN_LENGTH = 2048;         // Absolute maximum token length
+inline constexpr USHORT GIN_TOKEN_BUFFER_SIZE = 4096;        // Buffer size for tokenization
+
+// GIN posting list constants
+inline constexpr ULONG GIN_MAX_POSTING_LIST_SIZE = 1048576;   // Maximum posting list size (1MB)
+inline constexpr USHORT GIN_DEFAULT_POSTING_ENTRIES = 1024;   // Default posting entries per page
+inline constexpr UCHAR GIN_POSTING_COMPRESSION_THRESHOLD = 10; // Minimum entries for compression
+
+// GIN page management constants  
+inline constexpr USHORT GIN_TOKEN_PAGE_FILL_FACTOR = 80;     // Target fill percentage for token pages
+inline constexpr USHORT GIN_POSTING_PAGE_FILL_FACTOR = 90;   // Target fill percentage for posting pages
+inline constexpr ULONG GIN_MAX_TOKEN_TREE_DEPTH = 16;        // Maximum depth of token B-Tree
+
+// GIN performance and optimization constants
+inline constexpr ULONG GIN_FAST_UPDATE_THRESHOLD = 100;      // Records threshold for fast update mode
+inline constexpr ULONG GIN_CLEANUP_THRESHOLD = 10000;        // Operations threshold for maintenance
+inline constexpr USHORT GIN_CACHE_SIZE = 64;                 // Number of token pages to cache
+
+// GIN version and compatibility
+inline constexpr USHORT GIN_FORMAT_VERSION = 1;              // Current GIN format version
+inline constexpr SSHORT GIN_DEFAULT_LANGUAGE_ID = -1;        // Default language (language neutral)
+
+// GIN index flags (in addition to standard index flags)
+inline constexpr USHORT IDX_GIN_FAST_UPDATE = 0x1000;        // Enable fast update mode
+inline constexpr USHORT IDX_GIN_STOP_WORDS = 0x2000;         // Stop word filtering enabled
+inline constexpr USHORT IDX_GIN_STEMMING = 0x4000;           // Word stemming enabled
+inline constexpr USHORT IDX_GIN_CASE_SENSITIVE = 0x8000;     // Case-sensitive tokenization
+
+// Index error codes
+enum index_error_t {
+    IDX_E_OK = 0,                        // Success
+    IDX_E_DUPLICATE_KEY,                 // Duplicate key error
+    IDX_E_CORRUPTION,                    // Index corruption detected
+    IDX_E_OUT_OF_MEMORY,                 // Memory allocation failed
+    IDX_E_IO_ERROR,                      // I/O error during operation
+    IDX_E_UNSUPPORTED_OPERATION,         // Operation not supported by index type
+    IDX_E_CONSTRAINT_VIOLATION,          // Constraint violation
+    IDX_E_INTERNAL_ERROR                 // Internal error
+};
 
 #endif // JRD_CONSTANTS_H

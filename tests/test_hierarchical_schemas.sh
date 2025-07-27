@@ -1,7 +1,7 @@
 #!/bin/bash
 
 #
-# ScratchBird v0.5.0 - Hierarchical Schema Tests
+# ScratchBird v0.6.0 - Hierarchical Schema Tests
 #
 # This script tests the hierarchical schema functionality of ScratchBird,
 # including 8-level deep schema nesting, PostgreSQL-style schema operations,

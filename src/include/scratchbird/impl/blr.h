@@ -112,6 +112,9 @@
 #define blr_tsvector	(unsigned char)58
 #define blr_tsquery		(unsigned char)59
 
+// Geometric types
+#define blr_point		(unsigned char)60
+
 // first sub parameter for blr_column_name* and blr_domain_name*
 #define blr_domain_type_of	(unsigned char)0
 #define blr_domain_full		(unsigned char)1
@@ -568,5 +571,10 @@
 #define blr_current_schema_parent		(unsigned char) 237
 #define blr_current_schema_root			(unsigned char) 238
 #define blr_current_schema_level		(unsigned char) 239
+
+// ScratchBird array operators (PostgreSQL-compatible)
+#define blr_array_contains				(unsigned char) 240	// @>
+#define blr_array_contained_by			(unsigned char) 241	// <@
+#define blr_array_overlaps				(unsigned char) 242	// &&
 
 #endif // FIREBIRD_IMPL_BLR_H

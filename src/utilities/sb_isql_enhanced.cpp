@@ -505,7 +505,7 @@ bool ISQLEnhanced::startInteractiveMode()
         session_state.should_exit = false;
         
         // Display welcome message
-        *output_stream << "ScratchBird Enhanced ISQL v0.5.0" << std::endl;
+        *output_stream << "ScratchBird Enhanced ISQL v0.6.0" << std::endl;
         *output_stream << "Type 'help' for command help, 'exit' to quit." << std::endl;
         
         if (isConnected()) {
@@ -1450,7 +1450,7 @@ CommandResult ISQLEnhanced::processExitCommand(const std::vector<std::string>& a
 // Show version
 bool ISQLEnhanced::showVersion()
 {
-    *output_stream << "ScratchBird Enhanced ISQL v0.5.0" << std::endl;
+    *output_stream << "ScratchBird Enhanced ISQL v0.6.0" << std::endl;
     *output_stream << "Built on: " << __DATE__ << " " << __TIME__ << std::endl;
     
     if (isConnected()) {
@@ -2668,7 +2668,7 @@ SBEnhanced::CommandResult ISQLEnhanced::executeHelpCommand(const std::string& to
     
     if (help_topic.empty()) {
         // General help
-        result.output_lines.push_back("ScratchBird Enhanced ISQL v0.5.0 - Command Help");
+        result.output_lines.push_back("ScratchBird Enhanced ISQL v0.6.0 - Command Help");
         result.output_lines.push_back("=================================================");
         result.output_lines.push_back("");
         result.output_lines.push_back("Available Commands:");
@@ -3842,6 +3842,361 @@ SBEnhanced::CommandResult ISQLEnhanced::executeCopyCommand(const std::vector<std
         result.success = false;
         result.error_message = "Error in COPY command: " + std::string(e.what());
     }
+    
+    return result;
+}
+
+//----------------------------
+// Partial Hash Index Commands Implementation
+//----------------------------
+
+SBEnhanced::CommandResult ISQLEnhanced::executeCreatePartialHashIndex(const std::vector<std::string>& args)
+{
+    SBEnhanced::CommandResult result;
+    auto start_time = std::chrono::steady_clock::now();
+    
+    try {
+        if (args.size() < 5) {
+            result.success = false;
+            result.error_message = "Usage: CREATE PARTIAL HASH INDEX index_name ON table_name (column_list) WHERE condition [OPTIONS]";
+            return result;
+        }
+        
+        // Parse command arguments
+        std::string index_name = args[0];
+        std::string table_name = args[2]; // Skip "ON"
+        std::string columns_part;
+        std::string where_condition;
+        
+        // Find column list (between parentheses)
+        size_t start_paren = 0, end_paren = 0;
+        for (size_t i = 3; i < args.size(); i++) {
+            if (args[i].front() == '(') {
+                start_paren = i;
+            }
+            if (args[i].back() == ')') {
+                end_paren = i;
+                break;
+            }
+            if (start_paren > 0 && end_paren == 0) {
+                if (!columns_part.empty()) columns_part += " ";
+                columns_part += args[i];
+            }
+        }
+        
+        // Extract WHERE condition
+        bool found_where = false;
+        for (size_t i = end_paren + 1; i < args.size(); i++) {
+            if (args[i] == "WHERE") {
+                found_where = true;
+                continue;
+            }
+            if (found_where && args[i] != "OPTIONS") {
+                if (!where_condition.empty()) where_condition += " ";
+                where_condition += args[i];
+            }
+        }
+        
+        if (where_condition.empty()) {
+            result.success = false;
+            result.error_message = "Partial hash indexes require a WHERE condition";
+            return result;
+        }
+        
+        // Build the DDL statement
+        std::string create_sql = "CREATE PARTIAL HASH INDEX " + index_name + 
+                                " ON " + table_name + " (" + columns_part + ") WHERE " + where_condition;
+        
+        result.output_lines.push_back("Creating partial hash index...");
+        result.output_lines.push_back("SQL: " + create_sql);
+        
+        // Execute the DDL
+        int affected_rows = 0;
+        if (engine->executeUpdate(create_sql, affected_rows)) {
+            result.success = true;
+            result.output_lines.push_back("Partial hash index '" + index_name + "' created successfully.");
+            
+            // Add index information to result metadata
+            result.metadata["index_name"] = index_name;
+            result.metadata["table_name"] = table_name;
+            result.metadata["columns"] = columns_part;
+            result.metadata["where_condition"] = where_condition;
+        } else {
+            result.success = false;
+            result.error_message = "Failed to create partial hash index: " + engine->getLastError();
+        }
+        
+    } catch (const std::exception& e) {
+        result.success = false;
+        result.error_message = "Error creating partial hash index: " + std::string(e.what());
+    }
+    
+    auto end_time = std::chrono::steady_clock::now();
+    result.execution_time = std::chrono::duration_cast<std::chrono::microseconds>(end_time - start_time);
+    
+    return result;
+}
+
+SBEnhanced::CommandResult ISQLEnhanced::executeShowPartialHashIndexes(const SBEnhanced::ShowOptions& options)
+{
+    SBEnhanced::CommandResult result;
+    auto start_time = std::chrono::steady_clock::now();
+    
+    try {
+        // Build query to show partial hash indexes
+        std::string show_sql = 
+            "SELECT RDB$INDEX_NAME, RDB$RELATION_NAME, RDB$EXPRESSION_SOURCE, "
+            "       RDB$INDEX_TYPE, RDB$UNIQUE_FLAG, RDB$INDEX_INACTIVE "
+            "FROM RDB$INDICES "
+            "WHERE RDB$INDEX_TYPE = " + std::to_string(IDX_TYPE_PARTIAL_HASH);
+        
+        if (!options.schema_filter.empty()) {
+            show_sql += " AND RDB$RELATION_NAME LIKE '" + options.schema_filter + "%'";
+        }
+        
+        if (!options.name_filter.empty()) {
+            show_sql += " AND RDB$INDEX_NAME LIKE '" + options.name_filter + "%'";
+        }
+        
+        if (options.sort_results) {
+            show_sql += " ORDER BY RDB$RELATION_NAME, RDB$INDEX_NAME";
+        }
+        
+        result.output_lines.push_back("Querying partial hash indexes...");
+        result.output_lines.push_back("SQL: " + show_sql);
+        
+        // Execute the query
+        if (engine->executeQuery(show_sql, result.query_results)) {
+            result.success = true;
+            
+            if (result.query_results.rows.empty()) {
+                result.output_lines.push_back("No partial hash indexes found.");
+            } else {
+                result.output_lines.push_back("Found " + std::to_string(result.query_results.rows.size()) + " partial hash indexes:");
+                
+                // Format the results
+                for (const auto& row : result.query_results.rows) {
+                    std::string index_info = "  " + row[0] + " on " + row[1];
+                    if (!row[2].empty()) {
+                        index_info += " WHERE " + row[2];
+                    }
+                    if (row[4] == "1") {
+                        index_info += " (UNIQUE)";
+                    }
+                    if (row[5] == "1") {
+                        index_info += " (INACTIVE)";
+                    }
+                    result.output_lines.push_back(index_info);
+                }
+            }
+        } else {
+            result.success = false;
+            result.error_message = "Failed to query partial hash indexes: " + engine->getLastError();
+        }
+        
+    } catch (const std::exception& e) {
+        result.success = false;
+        result.error_message = "Error showing partial hash indexes: " + std::string(e.what());
+    }
+    
+    auto end_time = std::chrono::steady_clock::now();
+    result.execution_time = std::chrono::duration_cast<std::chrono::microseconds>(end_time - start_time);
+    
+    return result;
+}
+
+SBEnhanced::CommandResult ISQLEnhanced::executeAnalyzePartialHashIndex(const std::string& index_name)
+{
+    SBEnhanced::CommandResult result;
+    auto start_time = std::chrono::steady_clock::now();
+    
+    try {
+        if (index_name.empty()) {
+            result.success = false;
+            result.error_message = "Usage: ANALYZE PARTIAL HASH INDEX index_name";
+            return result;
+        }
+        
+        result.output_lines.push_back("Analyzing partial hash index: " + index_name);
+        
+        // Get basic index information
+        std::string info_sql = 
+            "SELECT RDB$INDEX_NAME, RDB$RELATION_NAME, RDB$EXPRESSION_SOURCE, "
+            "       RDB$STATISTICS, RDB$INDEX_TYPE "
+            "FROM RDB$INDICES "
+            "WHERE RDB$INDEX_NAME = '" + index_name + "' "
+            "  AND RDB$INDEX_TYPE = " + std::to_string(IDX_TYPE_PARTIAL_HASH);
+        
+        SBEnhanced::QueryResults index_info;
+        if (!engine->executeQuery(info_sql, index_info) || index_info.rows.empty()) {
+            result.success = false;
+            result.error_message = "Partial hash index '" + index_name + "' not found";
+            return result;
+        }
+        
+        const auto& index_row = index_info.rows[0];
+        std::string table_name = index_row[1];
+        std::string where_clause = index_row[2];
+        std::string statistics = index_row[3];
+        
+        result.output_lines.push_back("Index: " + index_name);
+        result.output_lines.push_back("Table: " + table_name);
+        result.output_lines.push_back("WHERE condition: " + where_clause);
+        result.output_lines.push_back("Current statistics: " + statistics);
+        
+        // Get table statistics for comparison
+        std::string table_stats_sql = "SELECT COUNT(*) FROM " + table_name;
+        SBEnhanced::QueryResults table_stats;
+        if (engine->executeQuery(table_stats_sql, table_stats)) {
+            uint64_t total_rows = std::stoull(table_stats.rows[0][0]);
+            result.output_lines.push_back("Total rows in table: " + std::to_string(total_rows));
+        }
+        
+        // Get index-qualified row count
+        std::string qualified_stats_sql = "SELECT COUNT(*) FROM " + table_name + " WHERE " + where_clause;
+        SBEnhanced::QueryResults qualified_stats;
+        if (engine->executeQuery(qualified_stats_sql, qualified_stats)) {
+            uint64_t qualified_rows = std::stoull(qualified_stats.rows[0][0]);
+            result.output_lines.push_back("Rows matching index condition: " + std::to_string(qualified_rows));
+            
+            if (qualified_rows > 0) {
+                double selectivity = static_cast<double>(qualified_rows) / static_cast<double>(std::stoull(table_stats.rows[0][0]));
+                result.output_lines.push_back("Index selectivity: " + std::to_string(selectivity * 100.0) + "%");
+            }
+        }
+        
+        // Performance analysis
+        result.output_lines.push_back("");
+        result.output_lines.push_back("Performance Analysis:");
+        result.output_lines.push_back("- Hash indexes provide O(1) average lookup time");
+        result.output_lines.push_back("- Partial indexes reduce storage overhead");
+        result.output_lines.push_back("- Best for equality searches on filtered data");
+        
+        result.success = true;
+        
+    } catch (const std::exception& e) {
+        result.success = false;
+        result.error_message = "Error analyzing partial hash index: " + std::string(e.what());
+    }
+    
+    auto end_time = std::chrono::steady_clock::now();
+    result.execution_time = std::chrono::duration_cast<std::chrono::microseconds>(end_time - start_time);
+    
+    return result;
+}
+
+SBEnhanced::CommandResult ISQLEnhanced::executeDropPartialHashIndex(const std::string& index_name)
+{
+    SBEnhanced::CommandResult result;
+    auto start_time = std::chrono::steady_clock::now();
+    
+    try {
+        if (index_name.empty()) {
+            result.success = false;
+            result.error_message = "Usage: DROP PARTIAL HASH INDEX index_name";
+            return result;
+        }
+        
+        // Verify the index exists and is a partial hash index
+        std::string check_sql = 
+            "SELECT RDB$INDEX_NAME FROM RDB$INDICES "
+            "WHERE RDB$INDEX_NAME = '" + index_name + "' "
+            "  AND RDB$INDEX_TYPE = " + std::to_string(IDX_TYPE_PARTIAL_HASH);
+        
+        SBEnhanced::QueryResults check_results;
+        if (!engine->executeQuery(check_sql, check_results) || check_results.rows.empty()) {
+            result.success = false;
+            result.error_message = "Partial hash index '" + index_name + "' not found";
+            return result;
+        }
+        
+        // Drop the index
+        std::string drop_sql = "DROP INDEX " + index_name;
+        
+        result.output_lines.push_back("Dropping partial hash index...");
+        result.output_lines.push_back("SQL: " + drop_sql);
+        
+        int affected_rows = 0;
+        if (engine->executeUpdate(drop_sql, affected_rows)) {
+            result.success = true;
+            result.output_lines.push_back("Partial hash index '" + index_name + "' dropped successfully.");
+        } else {
+            result.success = false;
+            result.error_message = "Failed to drop partial hash index: " + engine->getLastError();
+        }
+        
+    } catch (const std::exception& e) {
+        result.success = false;
+        result.error_message = "Error dropping partial hash index: " + std::string(e.what());
+    }
+    
+    auto end_time = std::chrono::steady_clock::now();
+    result.execution_time = std::chrono::duration_cast<std::chrono::microseconds>(end_time - start_time);
+    
+    return result;
+}
+
+SBEnhanced::CommandResult ISQLEnhanced::executeRecomputePartialHashIndex(const std::string& index_name)
+{
+    SBEnhanced::CommandResult result;
+    auto start_time = std::chrono::steady_clock::now();
+    
+    try {
+        if (index_name.empty()) {
+            result.success = false;
+            result.error_message = "Usage: RECOMPUTE PARTIAL HASH INDEX index_name";
+            return result;
+        }
+        
+        // Verify the index exists and is a partial hash index
+        std::string check_sql = 
+            "SELECT RDB$INDEX_NAME, RDB$RELATION_NAME FROM RDB$INDICES "
+            "WHERE RDB$INDEX_NAME = '" + index_name + "' "
+            "  AND RDB$INDEX_TYPE = " + std::to_string(IDX_TYPE_PARTIAL_HASH);
+        
+        SBEnhanced::QueryResults check_results;
+        if (!engine->executeQuery(check_sql, check_results) || check_results.rows.empty()) {
+            result.success = false;
+            result.error_message = "Partial hash index '" + index_name + "' not found";
+            return result;
+        }
+        
+        std::string table_name = check_results.rows[0][1];
+        
+        result.output_lines.push_back("Recomputing partial hash index: " + index_name);
+        result.output_lines.push_back("Table: " + table_name);
+        
+        // Recompute index statistics
+        std::string recompute_sql = "SET STATISTICS INDEX " + index_name;
+        
+        result.output_lines.push_back("SQL: " + recompute_sql);
+        
+        int affected_rows = 0;
+        if (engine->executeUpdate(recompute_sql, affected_rows)) {
+            result.success = true;
+            result.output_lines.push_back("Statistics recomputed successfully for partial hash index '" + index_name + "'.");
+            
+            // Get updated statistics
+            std::string stats_sql = 
+                "SELECT RDB$STATISTICS FROM RDB$INDICES "
+                "WHERE RDB$INDEX_NAME = '" + index_name + "'";
+            
+            SBEnhanced::QueryResults stats_results;
+            if (engine->executeQuery(stats_sql, stats_results) && !stats_results.rows.empty()) {
+                result.output_lines.push_back("Updated statistics: " + stats_results.rows[0][0]);
+            }
+        } else {
+            result.success = false;
+            result.error_message = "Failed to recompute partial hash index statistics: " + engine->getLastError();
+        }
+        
+    } catch (const std::exception& e) {
+        result.success = false;
+        result.error_message = "Error recomputing partial hash index: " + std::string(e.what());
+    }
+    
+    auto end_time = std::chrono::steady_clock::now();
+    result.execution_time = std::chrono::duration_cast<std::chrono::microseconds>(end_time - start_time);
     
     return result;
 }

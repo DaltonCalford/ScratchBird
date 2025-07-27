@@ -26,8 +26,11 @@
 #include "firebird.h"
 #include "../common/security.h"
 #include "../common/StatusArg.h"
-#include "../utilities/gsec/gsec.h"		// gsec error codes
+// #include "../utilities/gsec/gsec.h"		// gsec error codes - File not found, commented out
 #include "../common/db_alias.h"
+#include "../include/firebird/iberror.h"
+#include "../include/scratchbird/IdlFbInterfaces.h"
+// #include "../include/scratchbird/impl/msg/gsec.h"  // Temporarily disabled due to MSG_SYMBOL issues
 
 
 using namespace ScratchBird;
@@ -36,15 +39,15 @@ namespace {
 
 void raise()
 {
-	Arg::Gds(isc_user_manager).raise();
+	ScratchBird::Arg::Gds(isc_user_manager).raise();
 }
 
 } // anonymous namespace
 
 namespace Auth {
 
-Get::Get(const Config* firebirdConf)
-	: GetPlugins<ScratchBird::IManagement>(IPluginManager::TYPE_AUTH_USER_MANAGEMENT, firebirdConf)
+Get::Get(const ScratchBird::Config* firebirdConf)
+	: GetPlugins<ScratchBird::IManagement>(ScratchBird::IPluginManager::TYPE_AUTH_USER_MANAGEMENT, firebirdConf)
 {
 	if (!hasData())
 	{
@@ -52,8 +55,8 @@ Get::Get(const Config* firebirdConf)
 	}
 }
 
-Get::Get(const Config* firebirdConf, const char* plugName)
-	: GetPlugins<ScratchBird::IManagement>(IPluginManager::TYPE_AUTH_USER_MANAGEMENT, firebirdConf, plugName)
+Get::Get(const ScratchBird::Config* firebirdConf, const char* plugName)
+	: GetPlugins<ScratchBird::IManagement>(ScratchBird::IPluginManager::TYPE_AUTH_USER_MANAGEMENT, firebirdConf, plugName)
 {
 	if (!hasData())
 	{
@@ -101,24 +104,24 @@ int setGsecCode(int code, unsigned int operation)
 	switch(operation)
 	{
 	case ADD_OPER:
-		return GsecMsg19;
+		return 19; // GsecMsg19 - temporarily using code numbers
 
 	case MOD_OPER:
-		return GsecMsg20;
+		return 20; // GsecMsg20;
 
 	case DEL_OPER:
-		return GsecMsg23;
+		return 23; // GsecMsg23;
 
 	case OLD_DIS_OPER:
 	case DIS_OPER:
-		return GsecMsg28;
+		return 28; // GsecMsg28;
 
 	case MAP_DROP_OPER:
 	case MAP_SET_OPER:
-		return GsecMsg97;
+		return 97; // GsecMsg97;
 	}
 
-	return GsecMsg17;
+	return 17; // GsecMsg17;
 }
 
 } // namespace Auth

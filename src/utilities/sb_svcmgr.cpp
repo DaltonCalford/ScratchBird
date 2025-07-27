@@ -13,7 +13,7 @@
 #include <sstream>
 #include <iomanip>
 
-static const char* VERSION = "sb_svcmgr version SB-T0.5.0.1 ScratchBird 0.5 f90eae0";
+static const char* VERSION = "sb_svcmgr version SB-T0.6.0.1 ScratchBird 0.6 f90eae0";
 
 class ScratchBirdServiceManager {
 private:
@@ -151,7 +151,7 @@ private:
         if (dbname != parameters.end()) {
             std::cout << "Database: " << dbname->second << std::endl;
             std::cout << "\nDatabase Properties:" << std::endl;
-            std::cout << "  Database version: ScratchBird 0.5" << std::endl;
+            std::cout << "  Database version: ScratchBird 0.6" << std::endl;
             std::cout << "  SQL Dialect: 3" << std::endl;
             std::cout << "  Hierarchical schemas: Enabled" << std::endl;
             std::cout << "  Page size: 8192" << std::endl;

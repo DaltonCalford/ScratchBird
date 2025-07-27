@@ -47,7 +47,13 @@ enum class CommandType {
     BLOBVIEW_COMMAND,
     COMMENT,
     EMPTY,
-    UNKNOWN
+    UNKNOWN,
+    // Partial Hash Index Commands
+    CREATE_PARTIAL_HASH_INDEX,
+    SHOW_PARTIAL_HASH_INDEXES,
+    ANALYZE_PARTIAL_HASH_INDEX,
+    DROP_PARTIAL_HASH_INDEX,
+    RECOMPUTE_PARTIAL_HASH_INDEX
 };
 
 // SET command options
@@ -288,6 +294,53 @@ struct SessionState {
     std::map<std::string, std::function<CommandResult(const std::vector<std::string>&)>> custom_commands;
 };
 
+// Partial Hash Index Information Structures
+struct PartialHashIndexInfo {
+    std::string index_name;
+    std::string table_name;
+    std::string schema_name;
+    std::vector<std::string> columns;
+    std::string where_condition;
+    std::string hash_algorithm;
+    uint32_t bucket_count;
+    double load_factor;
+    uint64_t total_keys;
+    uint64_t total_records_evaluated;
+    uint64_t records_included;
+    double inclusion_ratio;
+    std::string creation_time;
+    std::string last_maintenance;
+    bool is_active;
+    uint64_t cache_hits;
+    uint64_t cache_misses;
+    double average_lookup_time;
+    uint64_t collision_count;
+    std::string index_status;
+};
+
+struct PartialHashIndexStatistics {
+    uint64_t total_lookups;
+    uint64_t successful_lookups;
+    uint64_t hash_collisions;
+    double average_chain_length;
+    double selectivity_ratio;
+    uint64_t memory_usage;
+    uint64_t disk_usage;
+    std::string performance_rating;
+    std::vector<std::pair<std::string, double>> bucket_distribution;
+    std::map<std::string, uint64_t> operation_counts;
+};
+
+struct PartialHashIndexMaintenanceInfo {
+    std::string last_recompute;
+    std::string last_statistics_update;
+    uint64_t records_added_since_maintenance;
+    uint64_t records_deleted_since_maintenance;
+    bool needs_recompute;
+    double fragmentation_level;
+    std::string next_scheduled_maintenance;
+};
+
 } // namespace SBEnhanced
 
 // Enhanced ISQL class
@@ -401,6 +454,13 @@ public:
     bool extractSchemaDDL(const std::string& schema_name, const SBEnhanced::ExtractOptions& options);
     bool extractTableDDL(const std::string& table_name, const SBEnhanced::ExtractOptions& options);
     bool extractViewDDL(const std::string& view_name, const SBEnhanced::ExtractOptions& options);
+    
+    // Partial Hash Index Commands
+    SBEnhanced::CommandResult executeCreatePartialHashIndex(const std::vector<std::string>& args);
+    SBEnhanced::CommandResult executeShowPartialHashIndexes(const SBEnhanced::ShowOptions& options);
+    SBEnhanced::CommandResult executeAnalyzePartialHashIndex(const std::string& index_name);
+    SBEnhanced::CommandResult executeDropPartialHashIndex(const std::string& index_name);
+    SBEnhanced::CommandResult executeRecomputePartialHashIndex(const std::string& index_name);
     bool extractProcedureDDL(const std::string& procedure_name, const SBEnhanced::ExtractOptions& options);
     bool extractFunctionDDL(const std::string& function_name, const SBEnhanced::ExtractOptions& options);
     bool extractTriggerDDL(const std::string& trigger_name, const SBEnhanced::ExtractOptions& options);
