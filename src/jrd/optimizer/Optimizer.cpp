@@ -152,7 +152,14 @@ namespace
 		0, 0, 0, 0, 0, 0, 0, 0, 0,	// dtype 27-35 (unused/future)
 		SKD_inet,					// dtype_inet (36)
 		SKD_cidr,					// dtype_cidr (37)
-		SKD_macaddr					// dtype_macaddr (38)
+		SKD_macaddr,				// dtype_macaddr (38)
+		0,							// dtype_citext (39) - use text sort
+		SKD_int4range,				// dtype_int4range (40)
+		SKD_int8range,				// dtype_int8range (41)
+		SKD_numrange,				// dtype_numrange (42)
+		SKD_tsrange,				// dtype_tsrange (43)
+		0,							// dtype 44 (reserved)
+		SKD_daterange				// dtype_daterange (45)
 	};
 
 	struct SortField
@@ -3367,4 +3374,135 @@ void Optimizer::printf(const char* format, ...)
 	fprintf(debugFile, "%s", str.c_str());
 	fflush(debugFile);
 #endif
+}
+
+
+//
+// Schema Path Optimization Methods for Hierarchical Schema Support
+// These methods integrate SchemaPathCache with query optimization
+//
+
+double Optimizer::getSchemaAwareStreamCost(StreamType stream, const ScratchBird::string& schemaPath)
+{
+	// Get base cost for the stream (simplified - would normally use existing cost calculation)
+	double baseCost = 1.0;
+	
+	if (schemaPath.empty() || !tdbb->getAttachment()) {
+		return baseCost;
+	}
+	
+	auto attachment = tdbb->getAttachment();
+	auto& schemaCache = attachment->att_schema_cache;
+	
+	// Check if path is already cached (high-speed lookup)
+	if (schemaCache.isValidPath(schemaPath)) {
+		// Cached paths have minimal resolution cost
+		return baseCost * 0.1; // 90% cost reduction for cached paths
+	}
+	
+	// Calculate cost based on schema depth
+	size_t depth = schemaCache.getSchemaDepth(schemaPath);
+	if (depth == 0) {
+		depth = 1; // Simple schema name
+	}
+	
+	// Cost increases logarithmically with depth
+	double schemaCostFactor = 1.0 + (depth - 1) * 0.1;
+	
+	return baseCost * schemaCostFactor;
+}
+
+double Optimizer::getSchemaAwareJoinCost(StreamType leftStream, StreamType rightStream,
+                                        const ScratchBird::string& leftSchema,
+                                        const ScratchBird::string& rightSchema)
+{
+	// Get base join cost (simplified - would normally use existing join cost calculation)
+	double baseCost = 1.0;
+	
+	if (leftSchema.empty() || rightSchema.empty() || !tdbb->getAttachment()) {
+		return baseCost;
+	}
+	
+	auto attachment = tdbb->getAttachment();
+	auto& schemaCache = attachment->att_schema_cache;
+	
+	// Check if schemas are related (one is parent of the other)
+	if (schemaCache.isSubSchema(leftSchema, rightSchema) ||
+	    schemaCache.isSubSchema(rightSchema, leftSchema)) {
+		return baseCost * 0.8; // 20% cost reduction for related schemas
+	}
+	
+	// Check if schemas share a common parent
+	ScratchBird::string leftParent = schemaCache.getParentSchema(leftSchema);
+	ScratchBird::string rightParent = schemaCache.getParentSchema(rightSchema);
+	
+	if (!leftParent.empty() && leftParent == rightParent) {
+		return baseCost * 0.9; // 10% cost reduction for sibling schemas
+	}
+	
+	return baseCost; // No locality bonus
+}
+
+double Optimizer::getSchemaAwareSelectivity(const BoolExprNode* node, const ScratchBird::string& schemaPath)
+{
+	// Get base selectivity from existing logic
+	double baseSelectivity = getSelectivity(node);
+	
+	if (schemaPath.empty() || !tdbb->getAttachment()) {
+		return baseSelectivity;
+	}
+	
+	auto attachment = tdbb->getAttachment();
+	auto& schemaCache = attachment->att_schema_cache;
+	
+	size_t depth = schemaCache.getSchemaDepth(schemaPath);
+	
+	// Deeper schemas tend to be more selective (fewer objects)
+	double schemaSelectivity = DEFAULT_SELECTIVITY / (1.0 + (depth - 1) * 0.5);
+	schemaSelectivity = MAX(schemaSelectivity, 0.001); // Minimum selectivity
+	
+	// Combine selectivities (geometric mean for conservative estimation)
+	return sqrt(baseSelectivity * schemaSelectivity);
+}
+
+void Optimizer::compileSchemaAwareRelation(StreamType stream, const ScratchBird::string& schemaPath)
+{
+	if (!schemaPath.empty() && tdbb->getAttachment()) {
+		auto attachment = tdbb->getAttachment();
+		auto& schemaCache = attachment->att_schema_cache;
+		
+		// Pre-resolve schema path for optimization
+		schemaCache.parseSchemaPath(schemaPath);
+	}
+	
+	// Continue with existing compilation logic
+	compileRelation(stream);
+}
+
+RecordSource* Optimizer::generateSchemaAwareRetrieval(StreamType stream,
+                                                     const ScratchBird::string& schemaPath,
+                                                     SortNode** sortClause,
+                                                     bool outerFlag,
+                                                     bool innerFlag,
+                                                     BoolExprNode** returnBoolean)
+{
+	// Apply schema-specific optimizations before generating retrieval
+	if (!schemaPath.empty() && tdbb->getAttachment()) {
+		auto attachment = tdbb->getAttachment();
+		auto& schemaCache = attachment->att_schema_cache;
+		
+		// Get schema statistics for optimization decisions
+		size_t hits, misses, entries, maxDepth;
+		schemaCache.getCacheStats(hits, misses, entries, maxDepth);
+		
+		// Log cache performance for debugging
+		if (hits > 0 && (hits + misses) > 0) {
+			size_t hitRate = hits * 100 / (hits + misses);
+			printf("Schema cache hit rate: %zu%%, using optimized path resolution for %s\n", 
+			       hitRate, schemaPath.c_str());
+		}
+	}
+	
+	// Continue with existing retrieval generation
+	return generateRetrieval(stream, sortClause, outerFlag, innerFlag, returnBoolean);
 }

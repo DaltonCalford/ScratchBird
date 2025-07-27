@@ -1,7 +1,7 @@
 #!/bin/bash
 
 #
-# ScratchBird v0.5.0 - Master Test Runner Script
+# ScratchBird v0.6.0 - Master Test Runner Script
 #
 # This script runs all ScratchBird tests in sequence, providing comprehensive
 # validation of the entire product lifecycle including:
@@ -75,7 +75,7 @@ log_with_timestamp() {
 
 # Function to show usage
 show_usage() {
-    echo "ScratchBird v0.5.0 - Master Test Runner"
+    echo "ScratchBird v0.6.0 - Master Test Runner"
     echo "======================================"
     echo ""
     echo "Usage: $0 [options]"
@@ -190,7 +190,7 @@ generate_summary() {
     {
         echo ""
         echo "========================================="
-        echo "ScratchBird v0.5.0 Test Summary"
+        echo "ScratchBird v0.6.0 Test Summary"
         echo "========================================="
         echo "Total test categories: $total_tests"
         echo "Passed: $passed_tests"
@@ -244,7 +244,7 @@ main() {
     # Initialize output file
     {
         echo "========================================="
-        echo "ScratchBird v0.5.0 - Test Suite Results"
+        echo "ScratchBird v0.6.0 - Test Suite Results"
         echo "========================================="
         echo "Test started at: $(date)"
         echo "Test directory: $SCRIPT_DIR"
@@ -255,7 +255,7 @@ main() {
     } > "$OUTPUT_FILE"
     
     # Print banner
-    print_colored $CYAN "ScratchBird v0.5.0 - Test Suite"
+    print_colored $CYAN "ScratchBird v0.6.0 - Test Suite"
     print_colored $CYAN "================================"
     echo ""
     

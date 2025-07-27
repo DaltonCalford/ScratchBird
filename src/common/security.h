@@ -247,6 +247,10 @@ const int ADD_OPER = 1;
 const int DEL_OPER = 2;  
 const int MOD_OPER = 3;
 const int ADDMOD_OPER = 4;
+const int DIS_OPER = 5;
+const int OLD_DIS_OPER = 6;
+const int MAP_SET_OPER = 7;
+const int MAP_DROP_OPER = 8;
 
 } // namespace Auth
 

@@ -1,4 +1,4 @@
-# ScratchBird v0.5.0 - Examples and Documentation
+# ScratchBird v0.6.0 - Examples and Documentation
 
 ## Overview
 
@@ -295,6 +295,6 @@ All examples are released under the Initial Developer's Public License (IDPL), m
 
 ---
 
-**ScratchBird Examples v0.5.0**
-**Build Version**: SB-T0.5.0.1 ScratchBird 0.5 f90eae0
+**ScratchBird Examples v0.6.0**
+**Build Version**: SB-T0.6.0.1 ScratchBird 0.6 f90eae0
 **Documentation Date**: $(date)

@@ -26,7 +26,7 @@ GBakEnhanced::GBakEnhanced() {
         operation_cancelled = false;
         
         std::cout << "ScratchBird Enhanced Backup/Restore Utility" << std::endl;
-        std::cout << "Version: SB-T0.5.0.1 ScratchBird 0.5 f90eae0" << std::endl;
+        std::cout << "Version: SB-T0.6.0.1 ScratchBird 0.6 f90eae0" << std::endl;
         std::cout << std::endl;
         
     } catch (const std::exception& e) {
@@ -627,7 +627,7 @@ void GBakEnhanced::terminateWorkerThreads() {
 // Main class implementation
 void GBakEnhancedMain::printUsage() {
     std::cout << "sb_gbak - ScratchBird Enhanced Backup/Restore Utility" << std::endl;
-    std::cout << "Version: SB-T0.5.0.1 ScratchBird 0.5 f90eae0" << std::endl;
+    std::cout << "Version: SB-T0.6.0.1 ScratchBird 0.6 f90eae0" << std::endl;
     std::cout << std::endl;
     std::cout << "Usage:" << std::endl;
     std::cout << "  sb_gbak -b database backup_file [options]     # Backup" << std::endl;
@@ -672,7 +672,7 @@ void GBakEnhancedMain::printUsage() {
 }
 
 void GBakEnhancedMain::printVersion() {
-    std::cout << "sb_gbak version SB-T0.5.0.1 ScratchBird 0.5 f90eae0" << std::endl;
+    std::cout << "sb_gbak version SB-T0.6.0.1 ScratchBird 0.6 f90eae0" << std::endl;
 }
 
 void GBakEnhancedMain::handleSignal(int signal) {

@@ -91,11 +91,22 @@ CommitNumber ActiveSnapshots::getSnapshotForVersion(CommitNumber version_cn)
 // static method
 Jrd::Attachment* Jrd::Attachment::create(Database* dbb, JProvider* provider)
 {
+	if (!dbb) {
+		ERR_post(Arg::Gds(isc_unavailable) << "Database not initialized for attachment creation");
+	}
+
 	MemoryPool* const pool = dbb->createPool();
+	if (!pool) {
+		ERR_post(Arg::Gds(isc_unavailable) << "Unable to create memory pool for attachment");
+	}
 
 	try
 	{
 		Attachment* const attachment = FB_NEW_POOL(*pool) Attachment(pool, dbb, provider);
+		if (!attachment) {
+			dbb->deletePool(pool);
+			ERR_post(Arg::Gds(isc_unavailable) << "Failed to create attachment object");
+		}
 		pool->setStatsGroup(attachment->att_memory_stats);
 		return attachment;
 	}
@@ -187,6 +198,11 @@ bool Jrd::Attachment::backupStateWriteLock(thread_db* tdbb, SSHORT wait)
 {
 	if (att_backup_state_counter++)
 		return true;
+
+	if (!att_database || !att_database->dbb_backup_manager) {
+		att_backup_state_counter--;
+		ERR_post(Arg::Gds(isc_unavailable) << "Database or backup manager not initialized");
+	}
 
 	if (att_database->dbb_backup_manager->lockStateWrite(tdbb, wait))
 		return true;

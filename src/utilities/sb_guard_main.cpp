@@ -680,7 +680,7 @@ private:
     }
     
     void showVersion() {
-        std::cout << "sb_guard version SB-T0.5.0.1 ScratchBird 0.5 f90eae0" << std::endl;
+        std::cout << "sb_guard version SB-T0.6.0.1 ScratchBird 0.6 f90eae0" << std::endl;
         std::cout << "ScratchBird Enhanced Database Guardian Service" << std::endl;
         std::cout << "Copyright (C) 2025 ScratchBird Project" << std::endl;
     }

@@ -4,7 +4,7 @@
 
 **Status**: PHASE 4 CORE IMPLEMENTATION COMPLETE ✅  
 **Date**: July 19, 2025  
-**Version**: SB-T0.5.0.1 ScratchBird 0.5 f90eae0  
+**Version**: SB-T0.6.0.1 ScratchBird 0.6 f90eae0  
 **Completion Level**: 85% (Core functionality complete, advanced features pending)
 
 Phase 4 of the ScratchBird Enhanced Utilities implementation has been successfully completed with all core backup and restore functionality implemented. The enhanced sb_gbak utility now provides advanced features while maintaining 100% backward compatibility with the original Firebird GBAK.

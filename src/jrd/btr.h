@@ -60,6 +60,7 @@ struct index_desc
 	USHORT	idx_id;
 	USHORT	idx_flags;
 	UCHAR	idx_runtime_flags;				// flags used at runtime, not stored on disk
+	UCHAR	idx_type;						// index type (B-Tree, Hash, GIN, etc.)
 	USHORT	idx_primary_index;				// id for primary key partner index
 	USHORT	idx_primary_relation;			// id for primary key partner relation
 	USHORT	idx_count;						// number of keys

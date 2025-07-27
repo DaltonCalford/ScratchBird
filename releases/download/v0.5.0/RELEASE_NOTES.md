@@ -1,24 +1,24 @@
-# ScratchBird v0.5.0 - Release Notes
+# ScratchBird v0.6.0 - Release Notes
 
 ## Overview
 
-ScratchBird v0.5.0 is a production-ready release featuring advanced PostgreSQL-compatible features, hierarchical schemas, and modern C++17 implementation.
+ScratchBird v0.6.0 is a production-ready release featuring advanced PostgreSQL-compatible features, hierarchical schemas, and modern C++17 implementation.
 
 ## Download Links
 
 ### Linux
-- **Linux x86_64**: `scratchbird-v0.5.0-linux-x86_64.tar.gz`
-- **Linux ARM64**: `scratchbird-v0.5.0-linux-arm64.tar.gz`
+- **Linux x86_64**: `scratchbird-v0.6.0-linux-x86_64.tar.gz`
+- **Linux ARM64**: `scratchbird-v0.6.0-linux-arm64.tar.gz`
 
 ### Windows
-- **Windows x64**: `scratchbird-v0.5.0-windows-x64.zip`
+- **Windows x64**: `scratchbird-v0.6.0-windows-x64.zip`
 
 ### macOS
-- **macOS x86_64**: `scratchbird-v0.5.0-macos-x86_64.tar.gz`
-- **macOS ARM64**: `scratchbird-v0.5.0-macos-arm64.tar.gz`
+- **macOS x86_64**: `scratchbird-v0.6.0-macos-x86_64.tar.gz`
+- **macOS ARM64**: `scratchbird-v0.6.0-macos-arm64.tar.gz`
 
 ### FreeBSD
-- **FreeBSD x86_64**: `scratchbird-v0.5.0-freebsd-x86_64.tar.gz`
+- **FreeBSD x86_64**: `scratchbird-v0.6.0-freebsd-x86_64.tar.gz`
 
 ## Key Features
 
@@ -43,23 +43,23 @@ ScratchBird v0.5.0 is a production-ready release featuring advanced PostgreSQL-c
 ### Quick Installation
 ```bash
 # Linux
-tar -xzf scratchbird-v0.5.0-linux-x86_64.tar.gz
-cd scratchbird-v0.5.0-linux-x86_64
+tar -xzf scratchbird-v0.6.0-linux-x86_64.tar.gz
+cd scratchbird-v0.6.0-linux-x86_64
 sudo ./install.sh
 
 # Windows (as administrator)
 # Extract ZIP and run install.bat
 
 # macOS
-tar -xzf scratchbird-v0.5.0-macos-x86_64.tar.gz
-cd scratchbird-v0.5.0-macos-x86_64
+tar -xzf scratchbird-v0.6.0-macos-x86_64.tar.gz
+cd scratchbird-v0.6.0-macos-x86_64
 ./install.sh
 ```
 
 ### Verification
 ```bash
 sb_isql -z
-# Expected: sb_isql version SB-T0.5.0.1 ScratchBird 0.5 f90eae0
+# Expected: sb_isql version SB-T0.6.0.1 ScratchBird 0.6 f90eae0
 ```
 
 ## Database Utilities
@@ -84,7 +84,7 @@ All packages include 12 comprehensive database utilities:
 
 ## Technical Specifications
 
-- **Build Version**: SB-T0.5.0.1 ScratchBird 0.5 f90eae0
+- **Build Version**: SB-T0.6.0.1 ScratchBird 0.6 f90eae0
 - **Base Architecture**: Firebird 6.0.0.929 (f90eae0)
 - **Language**: C++17 (GPRE-free)
 - **Default Port**: 4050 (conflict-free with Firebird)
@@ -119,4 +119,4 @@ ScratchBird is released under the Initial Developer's Public License (IDPL), mai
 ---
 
 **Package Build Date**: Thu 17 Jul 2025 09:59:22 AM EDT
-**Build System**: ScratchBird Release Builder v0.5.0
+**Build System**: ScratchBird Release Builder v0.6.0

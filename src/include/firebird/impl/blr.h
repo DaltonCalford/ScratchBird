@@ -536,4 +536,9 @@
 #define blr_current_schema_root			(unsigned char) 238
 #define blr_current_schema_level		(unsigned char) 239
 
+// GIN full-text search operators
+#define blr_contains					(unsigned char) 240
+#define blr_contains_any				(unsigned char) 241
+#define blr_contains_all				(unsigned char) 242
+
 #endif // FIREBIRD_IMPL_BLR_H

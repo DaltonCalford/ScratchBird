@@ -67,7 +67,7 @@ This is the next major version of ScratchBird currently under development. Featu
 
 #### Database Utilities (All Working)
 - **scratchbird**: Main database server with hierarchical schema support
-- **sb_isql**: Interactive SQL utility (version SB-T0.5.0.1)
+- **sb_isql**: Interactive SQL utility (version SB-T0.6.0.1)
 - **sb_gbak**: Backup/restore utility with schema preservation
 - **sb_gfix**: Database maintenance and validation tool
 - **sb_gsec**: Security management and user administration
@@ -97,7 +97,7 @@ This is the next major version of ScratchBird currently under development. Featu
 - **Successful Compilation**: Clean build with resolved dependency issues
 - **Authentication Constants**: Fixed missing Auth operation constants (ADD_OPER, DEL_OPER, MOD_OPER)
 - **Directory Structure**: Proper build directory organization and object file placement
-- **Version Consistency**: All tools show consistent SB-T0.5.0.1 version information
+- **Version Consistency**: All tools show consistent SB-T0.6.0.1 version information
 
 ### 🔨 Technical Improvements
 
@@ -158,7 +158,7 @@ CREATE DATABASE LINK finance_link
 
 #### Release Package Structure
 ```
-scratchbird-v0.5.0-linux-x86_64/
+scratchbird-v0.6.0-linux-x86_64/
 ├── bin/                    # All ScratchBird utilities
 ├── lib/                    # Client libraries  
 ├── include/                # Development headers
@@ -207,4 +207,4 @@ scratchbird-v0.5.0-linux-x86_64/
 
 For more details about upcoming features, see our [Development Roadmap](doc/notes/roadmap.md).
 
-**Download ScratchBird v0.5.0**: [GitHub Releases](https://github.com/dcalford/ScratchBird/releases/tag/v0.5.0)
+**Download ScratchBird v0.6.0**: [GitHub Releases](https://github.com/dcalford/ScratchBird/releases/tag/v0.6.0)

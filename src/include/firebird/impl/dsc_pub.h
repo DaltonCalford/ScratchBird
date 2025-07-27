@@ -104,7 +104,13 @@
 #define dtype_tsvector		48	/* TSVECTOR - Text search vector */
 #define dtype_tsquery		49	/* TSQUERY - Text search query */
 
-#define DTYPE_TYPE_MAX		50
+/* ScratchBird AI/ML types */
+#define dtype_vector		50	/* VECTOR - Multi-dimensional vector for AI/ML */
+
+/* ScratchBird geometric types */
+#define dtype_point			51	/* POINT - 2D geometric point (x,y) */
+
+#define DTYPE_TYPE_MAX		52
 
 #define ISC_TIME_SECONDS_PRECISION		10000
 #define ISC_TIME_SECONDS_PRECISION_SCALE	(-4)

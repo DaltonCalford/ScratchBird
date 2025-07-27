@@ -206,7 +206,14 @@ inline constexpr SCHAR pag_index			= 7;		// Index (B-tree) page
 inline constexpr SCHAR pag_blob				= 8;		// Blob data page
 inline constexpr SCHAR pag_ids				= 9;		// Gen-ids
 inline constexpr SCHAR pag_scns				= 10;		// SCN's inventory page
-inline constexpr SCHAR pag_max				= 10;		// Max page type
+inline constexpr SCHAR pag_hash				= 11;		// Hash index page
+inline constexpr SCHAR pag_gin_token		= 12;		// GIN token index page
+inline constexpr SCHAR pag_gin_posting		= 13;		// GIN posting list page
+inline constexpr SCHAR pag_gin_meta			= 14;		// GIN metadata page
+inline constexpr SCHAR pag_bitmap_meta		= 15;		// Bitmap index metadata page
+inline constexpr SCHAR pag_bitmap_value		= 16;		// Bitmap index value page
+inline constexpr SCHAR pag_bitmap_data		= 17;		// Bitmap index data page
+inline constexpr SCHAR pag_max				= 17;		// Max page type
 
 // Pre-defined page numbers
 
@@ -231,7 +238,9 @@ namespace Ods {
 inline constexpr bool pag_crypt_page[pag_max + 1] = {false, false, false,
 													 false, false, true,	// data
 													 false, true, true,		// index, blob
-													 true, false};			// generators
+													 true, false, true,		// generators, hash
+													 true, true, false,		// gin_token, gin_posting, gin_meta
+													 false, true, true};	// bitmap_meta, bitmap_value, bitmap_data
 
 // pag_flags for any page type
 
@@ -327,6 +336,371 @@ static_assert(offsetof(struct btree_page, btr_nodes) == 39, "btr_nodes offset mi
 //const UCHAR btr_descending		= 2;	// Page/bucket is part of a descending index
 //const UCHAR btr_jump_info			= 16;	// AB: 2003-index-structure enhancement
 inline constexpr UCHAR btr_released			= 32;	// Page was released from b-tree
+
+// Hash Index Page
+struct hash_page
+{
+	pag hsh_header;				// Standard page header (16 bytes)
+	ULONG hsh_sibling;			// Right sibling hash page (for bucket chains)
+	ULONG hsh_left_sibling;		// Left sibling hash page (for bucket chains)
+	USHORT hsh_relation;		// Relation id for consistency
+	UCHAR hsh_id;				// Index id for consistency
+	UCHAR hsh_algorithm;		// Hash algorithm used (CRC32, MurmurHash3, etc.)
+	USHORT hsh_bucket_count;	// Number of buckets on this page
+	USHORT hsh_bucket_size;		// Size of each bucket in bytes
+	UCHAR hsh_load_factor;		// Current load factor percentage
+	UCHAR hsh_flags;			// Hash-specific flags
+	USHORT hsh_key_count;		// Total number of keys stored on page
+	USHORT hsh_free_space;		// Amount of free space remaining
+	ULONG hsh_split_bucket;		// Next bucket to split (for dynamic expansion)
+	UCHAR hsh_buckets[1];		// Variable-length bucket data
+};
+
+static_assert(sizeof(struct hash_page) == 48, "struct hash_page size mismatch");
+static_assert(offsetof(struct hash_page, hsh_header) == 0, "hsh_header offset mismatch");
+static_assert(offsetof(struct hash_page, hsh_sibling) == 16, "hsh_sibling offset mismatch");
+static_assert(offsetof(struct hash_page, hsh_left_sibling) == 20, "hsh_left_sibling offset mismatch");
+static_assert(offsetof(struct hash_page, hsh_relation) == 24, "hsh_relation offset mismatch");
+static_assert(offsetof(struct hash_page, hsh_id) == 26, "hsh_id offset mismatch");
+static_assert(offsetof(struct hash_page, hsh_algorithm) == 27, "hsh_algorithm offset mismatch");
+static_assert(offsetof(struct hash_page, hsh_bucket_count) == 28, "hsh_bucket_count offset mismatch");
+static_assert(offsetof(struct hash_page, hsh_bucket_size) == 30, "hsh_bucket_size offset mismatch");
+static_assert(offsetof(struct hash_page, hsh_load_factor) == 32, "hsh_load_factor offset mismatch");
+static_assert(offsetof(struct hash_page, hsh_flags) == 33, "hsh_flags offset mismatch");
+static_assert(offsetof(struct hash_page, hsh_key_count) == 34, "hsh_key_count offset mismatch");
+static_assert(offsetof(struct hash_page, hsh_free_space) == 36, "hsh_free_space offset mismatch");
+static_assert(offsetof(struct hash_page, hsh_split_bucket) == 40, "hsh_split_bucket offset mismatch");
+static_assert(offsetof(struct hash_page, hsh_buckets) == 44, "hsh_buckets offset mismatch");
+
+#define HSH_SIZE static_cast<FB_SIZE_T>(offsetof(Ods::hash_page, hsh_buckets[0]))
+
+// Hash page flags
+inline constexpr UCHAR hsh_bucket_overflow	= 0x01;	// Page contains overflow buckets
+inline constexpr UCHAR hsh_compressed		= 0x02;	// Bucket data is compressed
+inline constexpr UCHAR hsh_expandable		= 0x04;	// Page can expand dynamically
+inline constexpr UCHAR hsh_linear_probing	= 0x08;	// Use linear probing for collisions
+
+// GIN (Generalized Inverted Index) Pages
+
+// GIN Token Page - stores the token B-Tree structure
+struct gin_token_page
+{
+	pag gin_header;					// Standard page header (16 bytes)
+	ULONG gin_sibling;				// Right sibling page in token tree
+	ULONG gin_left_sibling;			// Left sibling page in token tree
+	USHORT gin_relation;			// Relation id for consistency
+	USHORT gin_level;				// Tree level (0=posting, 1+=token tree levels)
+	UCHAR gin_id;					// Index id for consistency
+	UCHAR gin_flags;				// GIN-specific flags
+	USHORT gin_token_count;			// Number of token entries on page
+	USHORT gin_free_space;			// Amount of free space remaining
+	ULONG gin_prefix_total;			// Sum of all token prefixes (for compression)
+	USHORT gin_max_token_len;		// Maximum token length on this page
+	UCHAR gin_nodes[1];				// Variable-length token entries
+};
+
+static_assert(sizeof(struct gin_token_page) == 44, "struct gin_token_page size mismatch");
+static_assert(offsetof(struct gin_token_page, gin_header) == 0, "gin_header offset mismatch");
+static_assert(offsetof(struct gin_token_page, gin_sibling) == 16, "gin_sibling offset mismatch");
+static_assert(offsetof(struct gin_token_page, gin_left_sibling) == 20, "gin_left_sibling offset mismatch");
+static_assert(offsetof(struct gin_token_page, gin_relation) == 24, "gin_relation offset mismatch");
+static_assert(offsetof(struct gin_token_page, gin_level) == 26, "gin_level offset mismatch");
+static_assert(offsetof(struct gin_token_page, gin_id) == 28, "gin_id offset mismatch");
+static_assert(offsetof(struct gin_token_page, gin_flags) == 29, "gin_flags offset mismatch");
+static_assert(offsetof(struct gin_token_page, gin_token_count) == 30, "gin_token_count offset mismatch");
+static_assert(offsetof(struct gin_token_page, gin_free_space) == 32, "gin_free_space offset mismatch");
+static_assert(offsetof(struct gin_token_page, gin_prefix_total) == 36, "gin_prefix_total offset mismatch");
+static_assert(offsetof(struct gin_token_page, gin_max_token_len) == 40, "gin_max_token_len offset mismatch");
+static_assert(offsetof(struct gin_token_page, gin_nodes) == 42, "gin_nodes offset mismatch");
+
+#define GIN_TOKEN_SIZE static_cast<FB_SIZE_T>(offsetof(Ods::gin_token_page, gin_nodes[0]))
+
+// GIN Posting Page - stores compressed posting lists
+struct gin_posting_page
+{
+	pag gin_header;					// Standard page header (16 bytes)
+	ULONG gin_sibling;				// Right sibling posting page (for large posting lists)
+	ULONG gin_left_sibling;			// Left sibling posting page
+	USHORT gin_relation;			// Relation id for consistency
+	UCHAR gin_id;					// Index id for consistency
+	UCHAR gin_compression_type;		// Compression algorithm used
+	ULONG gin_posting_count;		// Number of posting list entries
+	ULONG gin_total_records;		// Total record IDs across all posting lists
+	USHORT gin_free_space;			// Amount of free space remaining
+	USHORT gin_largest_posting;		// Size of largest posting list on page
+	UCHAR gin_postings[1];			// Variable-length compressed posting lists
+};
+
+static_assert(sizeof(struct gin_posting_page) == 44, "struct gin_posting_page size mismatch");
+static_assert(offsetof(struct gin_posting_page, gin_header) == 0, "gin_header offset mismatch");
+static_assert(offsetof(struct gin_posting_page, gin_sibling) == 16, "gin_sibling offset mismatch");
+static_assert(offsetof(struct gin_posting_page, gin_left_sibling) == 20, "gin_left_sibling offset mismatch");
+static_assert(offsetof(struct gin_posting_page, gin_relation) == 24, "gin_relation offset mismatch");
+static_assert(offsetof(struct gin_posting_page, gin_id) == 26, "gin_id offset mismatch");
+static_assert(offsetof(struct gin_posting_page, gin_compression_type) == 27, "gin_compression_type offset mismatch");
+static_assert(offsetof(struct gin_posting_page, gin_posting_count) == 28, "gin_posting_count offset mismatch");
+static_assert(offsetof(struct gin_posting_page, gin_total_records) == 32, "gin_total_records offset mismatch");
+static_assert(offsetof(struct gin_posting_page, gin_free_space) == 36, "gin_free_space offset mismatch");
+static_assert(offsetof(struct gin_posting_page, gin_largest_posting) == 38, "gin_largest_posting offset mismatch");
+static_assert(offsetof(struct gin_posting_page, gin_postings) == 40, "gin_postings offset mismatch");
+
+#define GIN_POSTING_SIZE static_cast<FB_SIZE_T>(offsetof(Ods::gin_posting_page, gin_postings[0]))
+
+// GIN Metadata Page - stores index configuration and statistics
+struct gin_meta_page
+{
+	pag gin_header;					// Standard page header (16 bytes)
+	ULONG gin_root_token_page;		// Root page of token B-Tree
+	ULONG gin_total_tokens;			// Total number of unique tokens
+	ULONG gin_total_postings;		// Total number of posting entries
+	ULONG gin_total_records;		// Total number of indexed records
+	USHORT gin_tokenizer_type;		// Text processing method (simple, standard, language)
+	USHORT gin_min_token_length;	// Minimum token length
+	USHORT gin_max_token_length;	// Maximum token length
+	UCHAR gin_stop_words_enabled;	// Stop word filtering enabled
+	UCHAR gin_stemming_enabled;		// Word stemming enabled
+	UCHAR gin_compression_type;		// Default posting list compression
+	UCHAR gin_flags;				// GIN index flags
+	SSHORT gin_language_id;			// Language identifier for text processing
+	USHORT gin_version;				// GIN format version
+	ULONG gin_last_cleanup;			// Last maintenance operation timestamp
+	UCHAR gin_reserved[12];			// Reserved for future expansion
+};
+
+static_assert(sizeof(struct gin_meta_page) == 64, "struct gin_meta_page size mismatch");
+static_assert(offsetof(struct gin_meta_page, gin_header) == 0, "gin_header offset mismatch");
+static_assert(offsetof(struct gin_meta_page, gin_root_token_page) == 16, "gin_root_token_page offset mismatch");
+static_assert(offsetof(struct gin_meta_page, gin_total_tokens) == 20, "gin_total_tokens offset mismatch");
+static_assert(offsetof(struct gin_meta_page, gin_total_postings) == 24, "gin_total_postings offset mismatch");
+static_assert(offsetof(struct gin_meta_page, gin_total_records) == 28, "gin_total_records offset mismatch");
+static_assert(offsetof(struct gin_meta_page, gin_tokenizer_type) == 32, "gin_tokenizer_type offset mismatch");
+static_assert(offsetof(struct gin_meta_page, gin_min_token_length) == 34, "gin_min_token_length offset mismatch");
+static_assert(offsetof(struct gin_meta_page, gin_max_token_length) == 36, "gin_max_token_length offset mismatch");
+static_assert(offsetof(struct gin_meta_page, gin_stop_words_enabled) == 38, "gin_stop_words_enabled offset mismatch");
+static_assert(offsetof(struct gin_meta_page, gin_stemming_enabled) == 39, "gin_stemming_enabled offset mismatch");
+static_assert(offsetof(struct gin_meta_page, gin_compression_type) == 40, "gin_compression_type offset mismatch");
+static_assert(offsetof(struct gin_meta_page, gin_flags) == 41, "gin_flags offset mismatch");
+static_assert(offsetof(struct gin_meta_page, gin_language_id) == 42, "gin_language_id offset mismatch");
+static_assert(offsetof(struct gin_meta_page, gin_version) == 44, "gin_version offset mismatch");
+static_assert(offsetof(struct gin_meta_page, gin_last_cleanup) == 48, "gin_last_cleanup offset mismatch");
+static_assert(offsetof(struct gin_meta_page, gin_reserved) == 52, "gin_reserved offset mismatch");
+
+#define GIN_META_SIZE static_cast<FB_SIZE_T>(offsetof(Ods::gin_meta_page, gin_reserved[0]))
+
+// GIN page flags (for gin_flags field)
+inline constexpr UCHAR gin_page_compressed		= 0x01;	// Page data is compressed
+inline constexpr UCHAR gin_page_leaf			= 0x02;	// Token page is a leaf page
+inline constexpr UCHAR gin_page_overflow		= 0x04;	// Page contains overflow data
+inline constexpr UCHAR gin_fast_update			= 0x08;	// Fast update mode enabled
+inline constexpr UCHAR gin_pending_cleanup		= 0x10;	// Page needs cleanup/maintenance
+
+// GIN tokenizer types
+inline constexpr USHORT GIN_TOKENIZER_SIMPLE	= 0;	// Basic whitespace/punctuation tokenizer
+inline constexpr USHORT GIN_TOKENIZER_STANDARD	= 1;	// Unicode-aware with stop words
+inline constexpr USHORT GIN_TOKENIZER_LANGUAGE	= 2;	// Language-specific processing
+
+// GIN compression types for posting lists
+inline constexpr UCHAR GIN_COMPRESSION_NONE		= 0;	// No compression
+inline constexpr UCHAR GIN_COMPRESSION_DELTA	= 1;	// Delta encoding for record IDs
+inline constexpr UCHAR GIN_COMPRESSION_RLE		= 2;	// Run-length encoding
+inline constexpr UCHAR GIN_COMPRESSION_VBYTE	= 3;	// Variable-byte encoding
+
+// GIN Token Entry - stored in gin_token_page.gin_nodes
+struct gin_token_entry
+{
+	USHORT token_length;			// Length of token string
+	ULONG posting_page_id;			// Page containing posting list
+	ULONG posting_offset;			// Offset within posting page
+	ULONG posting_count;			// Number of records in posting list
+	USHORT token_flags;				// Token-specific flags
+	UCHAR token_data[1];			// Variable-length token string
+};
+
+// GIN token entry flags
+inline constexpr USHORT gin_token_compressed		= 0x01;	// Token uses prefix compression
+inline constexpr USHORT gin_token_overflow			= 0x02;	// Posting list spans multiple pages
+inline constexpr USHORT gin_token_frequent			= 0x04;	// High-frequency token (optimization hint)
+
+// GIN Posting Entry - stored in gin_posting_page.gin_postings
+struct gin_posting_entry
+{
+	ULONG record_count;				// Number of record IDs in this entry
+	UCHAR compression_type;			// Compression algorithm used
+	USHORT compressed_size;			// Size of compressed data
+	UCHAR flags;					// Posting entry flags
+	UCHAR posting_data[1];			// Variable-length compressed record ID list
+};
+
+// GIN posting entry flags
+inline constexpr UCHAR gin_posting_sorted			= 0x01;	// Record IDs are sorted
+inline constexpr UCHAR gin_posting_delta_compressed	= 0x02;	// Uses delta compression
+inline constexpr UCHAR gin_posting_rle_compressed	= 0x04;	// Uses run-length encoding
+
+//----------------------------
+// Bitmap Index Pages
+//----------------------------
+
+// Bitmap Meta Page - stores bitmap index configuration and metadata
+struct bitmap_meta_page
+{
+	pag bmp_header;					// Standard page header (16 bytes)
+	ULONG bmp_root_value_page;		// Root page of value B-Tree
+	ULONG bmp_total_values;			// Total number of distinct values
+	ULONG bmp_total_records;		// Total number of indexed records
+	ULONG bmp_cardinality;			// Current cardinality (distinct value count)
+	USHORT bmp_compression_type;	// Bitmap compression algorithm
+	USHORT bmp_chunk_size;			// Bitmap chunk size in bytes
+	ULONG bmp_max_cardinality;		// Maximum allowed cardinality threshold
+	double bmp_cardinality_ratio;	// Current cardinality ratio (0.0-1.0)
+	UCHAR bmp_flags;				// Bitmap index flags
+	UCHAR bmp_data_type;			// Indexed column data type
+	USHORT bmp_version;				// Bitmap format version
+	ULONG bmp_last_maintenance;		// Last maintenance operation timestamp
+	UCHAR bmp_reserved[16];			// Reserved for future expansion
+};
+
+static_assert(sizeof(struct bitmap_meta_page) == 72, "struct bitmap_meta_page size mismatch");
+static_assert(offsetof(struct bitmap_meta_page, bmp_header) == 0, "bmp_header offset mismatch");
+static_assert(offsetof(struct bitmap_meta_page, bmp_root_value_page) == 16, "bmp_root_value_page offset mismatch");
+static_assert(offsetof(struct bitmap_meta_page, bmp_total_values) == 20, "bmp_total_values offset mismatch");
+static_assert(offsetof(struct bitmap_meta_page, bmp_total_records) == 24, "bmp_total_records offset mismatch");
+static_assert(offsetof(struct bitmap_meta_page, bmp_cardinality) == 28, "bmp_cardinality offset mismatch");
+static_assert(offsetof(struct bitmap_meta_page, bmp_compression_type) == 32, "bmp_compression_type offset mismatch");
+static_assert(offsetof(struct bitmap_meta_page, bmp_chunk_size) == 34, "bmp_chunk_size offset mismatch");
+static_assert(offsetof(struct bitmap_meta_page, bmp_max_cardinality) == 36, "bmp_max_cardinality offset mismatch");
+static_assert(offsetof(struct bitmap_meta_page, bmp_cardinality_ratio) == 40, "bmp_cardinality_ratio offset mismatch");
+static_assert(offsetof(struct bitmap_meta_page, bmp_flags) == 48, "bmp_flags offset mismatch");
+static_assert(offsetof(struct bitmap_meta_page, bmp_data_type) == 49, "bmp_data_type offset mismatch");
+static_assert(offsetof(struct bitmap_meta_page, bmp_version) == 50, "bmp_version offset mismatch");
+static_assert(offsetof(struct bitmap_meta_page, bmp_last_maintenance) == 52, "bmp_last_maintenance offset mismatch");
+static_assert(offsetof(struct bitmap_meta_page, bmp_reserved) == 56, "bmp_reserved offset mismatch");
+
+#define BITMAP_META_SIZE static_cast<FB_SIZE_T>(offsetof(Ods::bitmap_meta_page, bmp_reserved[0]))
+
+// Bitmap Value Page - stores the value B-Tree for bitmap indexes
+struct bitmap_value_page
+{
+	pag bmp_header;					// Standard page header (16 bytes)
+	ULONG bmp_sibling;				// Right sibling page in value tree
+	ULONG bmp_left_sibling;			// Left sibling page in value tree
+	USHORT bmp_relation;			// Relation id for consistency
+	USHORT bmp_level;				// Tree level (0=leaf, 1+=internal nodes)
+	UCHAR bmp_id;					// Index id for consistency
+	UCHAR bmp_flags;				// Page-specific flags
+	USHORT bmp_value_count;			// Number of value entries on page
+	USHORT bmp_free_space;			// Amount of free space remaining
+	ULONG bmp_total_bitmaps;		// Total bitmap pages referenced from this page
+	USHORT bmp_max_value_len;		// Maximum value length on this page
+	UCHAR bmp_values[1];			// Variable-length value entries
+};
+
+static_assert(sizeof(struct bitmap_value_page) == 44, "struct bitmap_value_page size mismatch");
+static_assert(offsetof(struct bitmap_value_page, bmp_header) == 0, "bmp_header offset mismatch");
+static_assert(offsetof(struct bitmap_value_page, bmp_sibling) == 16, "bmp_sibling offset mismatch");
+static_assert(offsetof(struct bitmap_value_page, bmp_left_sibling) == 20, "bmp_left_sibling offset mismatch");
+static_assert(offsetof(struct bitmap_value_page, bmp_relation) == 24, "bmp_relation offset mismatch");
+static_assert(offsetof(struct bitmap_value_page, bmp_level) == 26, "bmp_level offset mismatch");
+static_assert(offsetof(struct bitmap_value_page, bmp_id) == 28, "bmp_id offset mismatch");
+static_assert(offsetof(struct bitmap_value_page, bmp_flags) == 29, "bmp_flags offset mismatch");
+static_assert(offsetof(struct bitmap_value_page, bmp_value_count) == 30, "bmp_value_count offset mismatch");
+static_assert(offsetof(struct bitmap_value_page, bmp_free_space) == 32, "bmp_free_space offset mismatch");
+static_assert(offsetof(struct bitmap_value_page, bmp_total_bitmaps) == 36, "bmp_total_bitmaps offset mismatch");
+static_assert(offsetof(struct bitmap_value_page, bmp_max_value_len) == 40, "bmp_max_value_len offset mismatch");
+static_assert(offsetof(struct bitmap_value_page, bmp_values) == 42, "bmp_values offset mismatch");
+
+#define BITMAP_VALUE_SIZE static_cast<FB_SIZE_T>(offsetof(Ods::bitmap_value_page, bmp_values[0]))
+
+// Bitmap Data Page - stores compressed bitmaps for specific values
+struct bitmap_data_page
+{
+	pag bmp_header;					// Standard page header (16 bytes)
+	ULONG bmp_sibling;				// Right sibling bitmap page (for overflow)
+	ULONG bmp_left_sibling;			// Left sibling bitmap page
+	USHORT bmp_relation;			// Relation id for consistency
+	UCHAR bmp_id;					// Index id for consistency
+	UCHAR bmp_compression_type;		// Compression algorithm used
+	ULONG bmp_record_count;			// Number of records represented in bitmaps
+	ULONG bmp_first_record_id;		// Starting record ID for bitmap range
+	ULONG bmp_last_record_id;		// Ending record ID for bitmap range
+	USHORT bmp_bitmap_count;		// Number of bitmap entries on page
+	USHORT bmp_free_space;			// Amount of free space remaining
+	USHORT bmp_largest_bitmap;		// Size of largest compressed bitmap on page
+	UCHAR bmp_bitmaps[1];			// Variable-length compressed bitmaps
+};
+
+static_assert(sizeof(struct bitmap_data_page) == 48, "struct bitmap_data_page size mismatch");
+static_assert(offsetof(struct bitmap_data_page, bmp_header) == 0, "bmp_header offset mismatch");
+static_assert(offsetof(struct bitmap_data_page, bmp_sibling) == 16, "bmp_sibling offset mismatch");
+static_assert(offsetof(struct bitmap_data_page, bmp_left_sibling) == 20, "bmp_left_sibling offset mismatch");
+static_assert(offsetof(struct bitmap_data_page, bmp_relation) == 24, "bmp_relation offset mismatch");
+static_assert(offsetof(struct bitmap_data_page, bmp_id) == 26, "bmp_id offset mismatch");
+static_assert(offsetof(struct bitmap_data_page, bmp_compression_type) == 27, "bmp_compression_type offset mismatch");
+static_assert(offsetof(struct bitmap_data_page, bmp_record_count) == 28, "bmp_record_count offset mismatch");
+static_assert(offsetof(struct bitmap_data_page, bmp_first_record_id) == 32, "bmp_first_record_id offset mismatch");
+static_assert(offsetof(struct bitmap_data_page, bmp_last_record_id) == 36, "bmp_last_record_id offset mismatch");
+static_assert(offsetof(struct bitmap_data_page, bmp_bitmap_count) == 40, "bmp_bitmap_count offset mismatch");
+static_assert(offsetof(struct bitmap_data_page, bmp_free_space) == 42, "bmp_free_space offset mismatch");
+static_assert(offsetof(struct bitmap_data_page, bmp_largest_bitmap) == 44, "bmp_largest_bitmap offset mismatch");
+static_assert(offsetof(struct bitmap_data_page, bmp_bitmaps) == 46, "bmp_bitmaps offset mismatch");
+
+#define BITMAP_DATA_SIZE static_cast<FB_SIZE_T>(offsetof(Ods::bitmap_data_page, bmp_bitmaps[0]))
+
+// Bitmap page flags (for bmp_flags field)
+inline constexpr UCHAR bitmap_page_compressed		= 0x01;	// Page data is compressed
+inline constexpr UCHAR bitmap_page_leaf				= 0x02;	// Value page is a leaf page
+inline constexpr UCHAR bitmap_page_overflow			= 0x04;	// Page contains overflow data
+inline constexpr UCHAR bitmap_page_low_cardinality	= 0x08;	// Low cardinality optimization enabled
+inline constexpr UCHAR bitmap_page_dirty			= 0x10;	// Page needs maintenance/recompression
+
+// Bitmap compression types
+inline constexpr USHORT BITMAP_COMPRESSION_NONE		= 0;	// No compression (raw bitmaps)
+inline constexpr USHORT BITMAP_COMPRESSION_RLE			= 1;	// Run-Length Encoding
+inline constexpr USHORT BITMAP_COMPRESSION_WAH			= 2;	// Word-Aligned Hybrid encoding
+inline constexpr USHORT BITMAP_COMPRESSION_EWAH		= 3;	// Enhanced Word-Aligned Hybrid encoding
+inline constexpr USHORT BITMAP_COMPRESSION_ROARING		= 4;	// Roaring bitmap compression
+
+// Bitmap data types (for bmp_data_type field)
+inline constexpr UCHAR BITMAP_TYPE_STRING		= 1;	// VARCHAR/CHAR columns
+inline constexpr UCHAR BITMAP_TYPE_INTEGER		= 2;	// INTEGER columns
+inline constexpr UCHAR BITMAP_TYPE_BIGINT		= 3;	// BIGINT columns
+inline constexpr UCHAR BITMAP_TYPE_DOUBLE		= 4;	// DOUBLE PRECISION columns
+inline constexpr UCHAR BITMAP_TYPE_DATE			= 5;	// DATE columns
+inline constexpr UCHAR BITMAP_TYPE_TIMESTAMP	= 6;	// TIMESTAMP columns
+
+// Bitmap Value Entry - stored in bitmap_value_page.bmp_values
+struct bitmap_value_entry
+{
+	USHORT value_length;			// Length of value data
+	ULONG bitmap_page_id;			// Page containing bitmaps for this value
+	ULONG bitmap_offset;			// Offset within bitmap page
+	ULONG record_count;				// Number of records with this value
+	USHORT value_flags;				// Value-specific flags
+	UCHAR value_data[1];			// Variable-length value data
+};
+
+// Bitmap value entry flags
+inline constexpr USHORT bitmap_value_compressed		= 0x01;	// Value uses prefix compression
+inline constexpr USHORT bitmap_value_overflow		= 0x02;	// Bitmap spans multiple pages
+inline constexpr USHORT bitmap_value_frequent		= 0x04;	// High-frequency value (optimization hint)
+inline constexpr USHORT bitmap_value_null			= 0x08;	// Represents NULL values
+
+// Bitmap Entry - stored in bitmap_data_page.bmp_bitmaps
+struct bitmap_entry
+{
+	ULONG bitmap_size;				// Size of compressed bitmap data
+	UCHAR compression_type;			// Compression algorithm used
+	USHORT compressed_size;			// Size after compression
+	UCHAR flags;					// Bitmap entry flags
+	ULONG first_record_id;			// First record ID in this bitmap
+	ULONG last_record_id;			// Last record ID in this bitmap
+	UCHAR bitmap_data[1];			// Variable-length compressed bitmap
+};
+
+// Bitmap entry flags
+inline constexpr UCHAR bitmap_entry_sorted			= 0x01;	// Record IDs are sorted
+inline constexpr UCHAR bitmap_entry_rle_compressed	= 0x02;	// Uses run-length encoding
+inline constexpr UCHAR bitmap_entry_sparse			= 0x04;	// Sparse bitmap (few set bits)
+inline constexpr UCHAR bitmap_entry_dense			= 0x08;	// Dense bitmap (many set bits)
 
 // Data Page
 

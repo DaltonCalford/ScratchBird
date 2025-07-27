@@ -41,6 +41,7 @@
 #include "../jrd/RecordSourceNodes.h"
 #include "../jrd/exe.h"
 #include "../jrd/recsrc/RecordSource.h"
+#include "../jrd/SchemaPathCache.h"
 
 namespace Jrd {
 
@@ -551,6 +552,20 @@ public:
 	ScratchBird::string getStreamName(StreamType stream);
 	ScratchBird::string makeAlias(StreamType stream);
 	void printf(const char* format, ...);
+
+	// Schema path optimization methods for hierarchical schema support
+	double getSchemaAwareStreamCost(StreamType stream, const ScratchBird::string& schemaPath);
+	double getSchemaAwareJoinCost(StreamType leftStream, StreamType rightStream,
+	                             const ScratchBird::string& leftSchema,
+	                             const ScratchBird::string& rightSchema);
+	double getSchemaAwareSelectivity(const BoolExprNode* node, const ScratchBird::string& schemaPath);
+	void compileSchemaAwareRelation(StreamType stream, const ScratchBird::string& schemaPath);
+	RecordSource* generateSchemaAwareRetrieval(StreamType stream,
+	                                          const ScratchBird::string& schemaPath,
+	                                          SortNode** sortClause,
+	                                          bool outerFlag,
+	                                          bool innerFlag,
+	                                          BoolExprNode** returnBoolean = nullptr);
 
 private:
 	Optimizer(thread_db* aTdbb, CompilerScratch* aCsb, RseNode* aRse,

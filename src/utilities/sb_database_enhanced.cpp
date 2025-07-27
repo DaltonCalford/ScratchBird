@@ -552,7 +552,7 @@ std::string SBDatabaseEnhanced::getServerVersion() const {
 }
 
 std::string SBDatabaseEnhanced::getClientVersion() const {
-    return "ScratchBird Enhanced Client 0.5.0";
+    return "ScratchBird Enhanced Client 0.6.0";
 }
 
 std::map<std::string, std::string> SBDatabaseEnhanced::getConnectionInfo() const {

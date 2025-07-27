@@ -1,6 +1,6 @@
 # ScratchBird Enhanced GSEC - Security Management Utility
 
-**Version**: SB-T0.5.0.1 ScratchBird 0.5  
+**Version**: SB-T0.6.0.1 ScratchBird 0.6  
 **Status**: Phase 6 Complete - Production Ready  
 **Compatibility**: 100% Original Firebird GSEC Compatible + Enhanced Features  
 
@@ -676,7 +676,7 @@ sb_gsec -compliance GDPR -audit_level COMPREHENSIVE database.fdb
 
 ### Version History
 
-- **v0.5.0**: Initial Enhanced GSEC implementation
+- **v0.6.0**: Initial Enhanced GSEC implementation
 - **v0.5.1**: Performance optimizations and bug fixes
 - **v0.6.0**: Advanced compliance features (planned)
 - **v0.7.0**: Cloud integration (planned)
@@ -710,4 +710,4 @@ The utility successfully bridges the gap between traditional database security a
 
 ---
 
-**ScratchBird Enhanced GSEC v0.5.0** - Built with ❤️ for the ScratchBird Community
+**ScratchBird Enhanced GSEC v0.6.0** - Built with ❤️ for the ScratchBird Community

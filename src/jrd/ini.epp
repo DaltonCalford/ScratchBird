@@ -620,6 +620,9 @@ static void store_intlnames(thread_db*, NonRelationSecurity&);
 static void store_relation(thread_db*, int, const char*, int, int, AutoRequest&, RelationSecurity&);
 static void store_relation_field(thread_db*, int, const char*, const char*, const char*, int, AutoRequest&);
 static void store_packages(thread_db*, NonRelationSecurity&, USHORT = 0);
+static void createRootSchemaHierarchy(thread_db*, const MetaString&, NonRelationSecurity&);
+static void createInformationSchemaViews(thread_db*);
+static void createDatabaseMonitoringViews(thread_db*);
 
 
 //
@@ -781,6 +784,15 @@ void INI_format(thread_db* tdbb, const string& charset)
 			obj_schema, USAGE_PRIVILEGES, true);
 
 		GRANT_privileges(tdbb, QualifiedName(PUBLIC_SCHEMA), obj_schema, transaction);
+
+		// Create ROOT schema hierarchy (v0.6.0)
+		createRootSchemaHierarchy(tdbb, ownerName, nonRelSec);
+
+		// Create INFORMATION_SCHEMA views (v0.6.0)
+		createInformationSchemaViews(tdbb);
+
+		// Create DATABASE.MONITORING views (v0.6.0)
+		createDatabaseMonitoringViews(tdbb);
 	}
 
 	// Create indices for system relations
@@ -890,6 +902,46 @@ void INI_format(thread_db* tdbb, const string& charset)
 	storeGrant(tdbb, buf.c_str(), obj_privilege, QualifiedName("RDB$DB_CREATORS", SYSTEM_SCHEMA),
 		obj_relation, ALL_PRIVILEGES);
 	GRANT_privileges(tdbb, QualifiedName("RDB$DB_CREATORS", SYSTEM_SCHEMA), obj_relation, transaction);
+
+	// Store default schemas
+	handle.reset();
+
+	// Default SYSTEM schema
+	STORE(REQUEST_HANDLE handle) SCHEMA IN RDB$SCHEMAS
+	{
+		PAD("SYSTEM", SCHEMA.RDB$SCHEMA_NAME);
+		PAD("SYSTEM", SCHEMA.RDB$OWNER);
+		PAD("UTF8", SCHEMA.RDB$CHARSET_NAME);
+		PAD("SYSTEM", SCHEMA.RDB$CHARSET_SCHEMA_NAME);
+		SCHEMA.RDB$SQL_SECURITY = 1; // DEFINER
+		PAD("SYSTEM", SCHEMA.RDB$CLASS);
+		SCHEMA.RDB$SYS_FLAG = 1; // System schema
+		PAD("System schema for database metadata", SCHEMA.RDB$DESCRIPTION);
+		// RDB$PARENT_SCHEMA_NAME remains NULL for root schema
+		PAD("SYSTEM", SCHEMA.RDB$SCHEMA_PATH);
+		SCHEMA.RDB$SCHEMA_LEVEL = 1;
+	}
+	END_STORE
+
+	// Store default database links
+	handle.reset();
+
+	// Default self-reference link
+	STORE(REQUEST_HANDLE handle) LINK IN RDB$DATABASE_LINKS
+	{
+		PAD("SELF", LINK.RDB$LINK_NAME);
+		PAD("localhost:memory", LINK.RDB$LINK_TARGET);
+		LINK.RDB$LINK_FLAGS = 7; // trusted + session + pooling
+		PAD("ScratchBird", LINK.RDB$LINK_PROVIDER);
+		PAD("Self-reference link to current database", LINK.RDB$LINK_DESCRIPTION);
+		LINK.RDB$LINK_POOL_MIN = 1;
+		LINK.RDB$LINK_POOL_MAX = 10;
+		LINK.RDB$LINK_TIMEOUT = 3600;
+		LINK.RDB$LINK_SCHEMA_MODE = 0;
+		LINK.RDB$LINK_SCHEMA_DEPTH = 0;
+		// RDB$LINK_CREATED will be set by default value
+	}
+	END_STORE
 
 	DFW_perform_work(tdbb, transaction);
 
@@ -2159,6 +2211,419 @@ static void store_packages(thread_db* tdbb, NonRelationSecurity& security, USHOR
 				}
 				END_STORE
 			}
+		}
+	}
+}
+
+
+//
+// Create v0.6.0 schema hierarchy at database root level
+// Establishes the base structure: SYSTEM (existing), USERS, LINKS, DATABASE, APPLICATIONS
+// and their respective subschemas for logical organization
+//
+static void createRootSchemaHierarchy(thread_db* tdbb, const MetaString& ownerName, NonRelationSecurity& nonRelSec)
+{
+	const auto attachment = tdbb->getAttachment();
+	AutoRequest handle;
+
+	// Helper function to create a schema with hierarchical information
+	auto createSchema = [&](const char* schemaName, const char* parentSchema, SSHORT level) {
+		handle.reset();
+		
+		STORE(REQUEST_HANDLE handle) SCH IN RDB$SCHEMAS
+		{
+			PAD(schemaName, SCH.RDB$SCHEMA_NAME);
+			PAD(ownerName, SCH.RDB$OWNER_NAME);
+			SCH.RDB$SYSTEM_FLAG = RDB_system;
+			PAD("UTF8", SCH.RDB$CHARACTER_SET_NAME);
+			PAD(SYSTEM_SCHEMA, SCH.RDB$CHARACTER_SET_SCHEMA_NAME);
+			
+			// Set hierarchical fields
+			if (parentSchema)
+			{
+				PAD(parentSchema, SCH.RDB$PARENT_SCHEMA_NAME);
+				SCH.RDB$PARENT_SCHEMA_NAME.NULL = FALSE;
+			}
+			else
+			{
+				SCH.RDB$PARENT_SCHEMA_NAME.NULL = TRUE;
+			}
+			
+			PAD(schemaName, SCH.RDB$SCHEMA_PATH);
+			SCH.RDB$SCHEMA_PATH.NULL = FALSE;
+			
+			SCH.RDB$SCHEMA_LEVEL = level;
+			SCH.RDB$SCHEMA_LEVEL.NULL = FALSE;
+
+			const auto securityClass = nonRelSec.storeSecurityClass(tdbb);
+			PAD(securityClass, SCH.RDB$SECURITY_CLASS);
+		}
+		END_STORE
+
+		// Grant usage to the database owner and PUBLIC
+		storeGrant(tdbb, attachment->getUserName().c_str(), obj_user, QualifiedName(schemaName),
+			obj_schema, USAGE_PRIVILEGES, false);
+
+		storeGrant(tdbb, "PUBLIC", obj_user, QualifiedName(schemaName),
+			obj_schema, USAGE_PRIVILEGES, false);
+
+		GRANT_privileges(tdbb, QualifiedName(schemaName), obj_schema, attachment->getSysTransaction());
+	};
+
+	// Create v0.6.0 schema hierarchy at database root level
+	// Level 0: Top-level schemas (no ROOT schema, these are at database root)
+	createSchema(USERS_SCHEMA, nullptr, 0);
+	createSchema(LINKS_SCHEMA, nullptr, 0);
+	createSchema(DATABASE_SCHEMA, nullptr, 0);
+	createSchema(APPLICATIONS_SCHEMA, nullptr, 0);
+	
+	// Level 1: SYSTEM subschemas (SYSTEM already exists, add its subschemas)
+	createSchema(SYSTEM_INFORMATION_SCHEMA, SYSTEM_SCHEMA, 1);
+	createSchema(SYSTEM_HIERARCHY_SCHEMA, SYSTEM_SCHEMA, 1);
+	createSchema(SYSTEM_PLG_LEGACY_SEC_SCHEMA, SYSTEM_SCHEMA, 1);
+	createSchema(SYSTEM_PLG_SRP_SCHEMA, SYSTEM_SCHEMA, 1);
+	
+	// Level 1: USERS subschemas
+	createSchema(USERS_PUBLIC_SCHEMA, USERS_SCHEMA, 1);
+	
+	// Level 1: LINKS subschemas  
+	createSchema(LINKS_TEMPORARY_SCHEMA, LINKS_SCHEMA, 1);
+	
+	// Level 1: DATABASE subschemas
+	createSchema(DATABASE_MONITORING_SCHEMA, DATABASE_SCHEMA, 1);
+	createSchema(DATABASE_PROGRAMMING_SCHEMA, DATABASE_SCHEMA, 1);
+	createSchema(DATABASE_TRIGGERS_SCHEMA, DATABASE_SCHEMA, 1);
+}
+
+
+//
+// Create INFORMATION_SCHEMA views for SQL standard compliance (v0.6.0)
+// These views provide standardized access to database metadata
+//
+static void createInformationSchemaViews(thread_db* tdbb)
+{
+	const auto attachment = tdbb->getAttachment();
+	
+	// SQL statements to create INFORMATION_SCHEMA views
+	const char* informationSchemaSQL[] = {
+		// SCHEMATA view - Shows all schemas with their hierarchy information
+		"CREATE VIEW SYSTEM.INFORMATION_SCHEMA.SCHEMATA AS "
+		"SELECT "
+		"  RDB$SCHEMA_NAME AS SCHEMA_NAME, "
+		"  RDB$OWNER_NAME AS SCHEMA_OWNER, "
+		"  RDB$CHARACTER_SET_NAME AS DEFAULT_CHARACTER_SET_NAME, "
+		"  RDB$CHARACTER_SET_SCHEMA_NAME AS DEFAULT_CHARACTER_SET_SCHEMA, "
+		"  RDB$SQL_SECURITY AS SQL_PATH, "
+		"  RDB$PARENT_SCHEMA_NAME AS PARENT_SCHEMA_NAME, "
+		"  RDB$SCHEMA_PATH AS SCHEMA_PATH, "
+		"  RDB$SCHEMA_LEVEL AS SCHEMA_LEVEL "
+		"FROM RDB$SCHEMAS "
+		"WHERE RDB$SCHEMA_NAME IS NOT NULL",
+
+		// TABLES view - Shows all tables with schema context
+		"CREATE VIEW SYSTEM.INFORMATION_SCHEMA.TABLES AS "
+		"SELECT "
+		"  RDB$RELATION_SCHEMA_NAME AS TABLE_SCHEMA, "
+		"  RDB$RELATION_NAME AS TABLE_NAME, "
+		"  CASE RDB$RELATION_TYPE "
+		"    WHEN 0 THEN 'BASE TABLE' "
+		"    WHEN 1 THEN 'VIEW' "
+		"    WHEN 2 THEN 'EXTERNAL TABLE' "
+		"    WHEN 3 THEN 'VIRTUAL TABLE' "
+		"    WHEN 4 THEN 'GLOBAL TEMPORARY' "
+		"    WHEN 5 THEN 'GLOBAL TEMPORARY' "
+		"    ELSE 'UNKNOWN' "
+		"  END AS TABLE_TYPE, "
+		"  RDB$DESCRIPTION AS TABLE_COMMENT "
+		"FROM RDB$RELATIONS "
+		"WHERE RDB$RELATION_NAME IS NOT NULL",
+
+		// COLUMNS view - Shows all columns with their data types and schema context
+		"CREATE VIEW SYSTEM.INFORMATION_SCHEMA.COLUMNS AS "
+		"SELECT "
+		"  REL.RDB$RELATION_SCHEMA_NAME AS TABLE_SCHEMA, "
+		"  REL.RDB$RELATION_NAME AS TABLE_NAME, "
+		"  FLD.RDB$FIELD_NAME AS COLUMN_NAME, "
+		"  FLD.RDB$FIELD_POSITION + 1 AS ORDINAL_POSITION, "
+		"  FLD.RDB$DEFAULT_SOURCE AS COLUMN_DEFAULT, "
+		"  CASE FLD.RDB$NULL_FLAG WHEN 1 THEN 'NO' ELSE 'YES' END AS IS_NULLABLE, "
+		"  CASE GLB.RDB$FIELD_TYPE "
+		"    WHEN 7 THEN 'SMALLINT' "
+		"    WHEN 8 THEN 'INTEGER' "
+		"    WHEN 16 THEN 'BIGINT' "
+		"    WHEN 10 THEN 'FLOAT' "
+		"    WHEN 27 THEN 'DOUBLE PRECISION' "
+		"    WHEN 12 THEN 'DATE' "
+		"    WHEN 13 THEN 'TIME' "
+		"    WHEN 35 THEN 'TIMESTAMP' "
+		"    WHEN 37 THEN 'VARCHAR' "
+		"    WHEN 14 THEN 'CHAR' "
+		"    WHEN 261 THEN 'BLOB' "
+		"    ELSE 'UNKNOWN' "
+		"  END AS DATA_TYPE, "
+		"  GLB.RDB$FIELD_LENGTH AS CHARACTER_MAXIMUM_LENGTH "
+		"FROM RDB$RELATION_FIELDS FLD "
+		"JOIN RDB$RELATIONS REL ON FLD.RDB$RELATION_NAME = REL.RDB$RELATION_NAME "
+		"JOIN RDB$FIELDS GLB ON FLD.RDB$FIELD_SOURCE = GLB.RDB$FIELD_NAME "
+		"WHERE FLD.RDB$FIELD_NAME IS NOT NULL",
+
+		// CONSTRAINTS view - Shows all constraints
+		"CREATE VIEW SYSTEM.INFORMATION_SCHEMA.TABLE_CONSTRAINTS AS "
+		"SELECT "
+		"  RDB$CONSTRAINT_SCHEMA_NAME AS CONSTRAINT_SCHEMA, "
+		"  RDB$CONSTRAINT_NAME AS CONSTRAINT_NAME, "
+		"  RDB$RELATION_SCHEMA_NAME AS TABLE_SCHEMA, "
+		"  RDB$RELATION_NAME AS TABLE_NAME, "
+		"  CASE RDB$CONSTRAINT_TYPE "
+		"    WHEN 'PRIMARY KEY' THEN 'PRIMARY KEY' "
+		"    WHEN 'FOREIGN KEY' THEN 'FOREIGN KEY' "
+		"    WHEN 'UNIQUE' THEN 'UNIQUE' "
+		"    WHEN 'CHECK' THEN 'CHECK' "
+		"    ELSE RDB$CONSTRAINT_TYPE "
+		"  END AS CONSTRAINT_TYPE, "
+		"  CASE RDB$DEFERRABLE WHEN 'NO' THEN 'NO' ELSE 'YES' END AS IS_DEFERRABLE, "
+		"  CASE RDB$INITIALLY_DEFERRED WHEN 'NO' THEN 'NO' ELSE 'YES' END AS INITIALLY_DEFERRED "
+		"FROM RDB$RELATION_CONSTRAINTS "
+		"WHERE RDB$CONSTRAINT_NAME IS NOT NULL",
+
+		// ROUTINES view - Shows stored procedures and functions
+		"CREATE VIEW SYSTEM.INFORMATION_SCHEMA.ROUTINES AS "
+		"SELECT "
+		"  RDB$FUNCTION_SCHEMA_NAME AS ROUTINE_SCHEMA, "
+		"  RDB$FUNCTION_NAME AS ROUTINE_NAME, "
+		"  'FUNCTION' AS ROUTINE_TYPE, "
+		"  RDB$MODULE_NAME AS MODULE_NAME, "
+		"  RDB$DESCRIPTION AS ROUTINE_COMMENT "
+		"FROM RDB$FUNCTIONS "
+		"WHERE RDB$FUNCTION_NAME IS NOT NULL "
+		"UNION ALL "
+		"SELECT "
+		"  RDB$PROCEDURE_SCHEMA_NAME AS ROUTINE_SCHEMA, "
+		"  RDB$PROCEDURE_NAME AS ROUTINE_NAME, "
+		"  CASE RDB$PROCEDURE_TYPE "
+		"    WHEN 1 THEN 'PROCEDURE' "
+		"    WHEN 2 THEN 'PROCEDURE' "
+		"    ELSE 'PROCEDURE' "
+		"  END AS ROUTINE_TYPE, "
+		"  NULL AS MODULE_NAME, "
+		"  RDB$DESCRIPTION AS ROUTINE_COMMENT "
+		"FROM RDB$PROCEDURES "
+		"WHERE RDB$PROCEDURE_NAME IS NOT NULL",
+
+		// TRIGGERS view - Shows all triggers
+		"CREATE VIEW SYSTEM.INFORMATION_SCHEMA.TRIGGERS AS "
+		"SELECT "
+		"  RDB$TRIGGER_SCHEMA_NAME AS TRIGGER_SCHEMA, "
+		"  RDB$TRIGGER_NAME AS TRIGGER_NAME, "
+		"  RDB$RELATION_SCHEMA_NAME AS EVENT_OBJECT_SCHEMA, "
+		"  RDB$RELATION_NAME AS EVENT_OBJECT_TABLE, "
+		"  CASE RDB$TRIGGER_TYPE "
+		"    WHEN 1 THEN 'BEFORE INSERT' "
+		"    WHEN 2 THEN 'AFTER INSERT' "
+		"    WHEN 3 THEN 'BEFORE UPDATE' "
+		"    WHEN 4 THEN 'AFTER UPDATE' "
+		"    WHEN 5 THEN 'BEFORE DELETE' "
+		"    WHEN 6 THEN 'AFTER DELETE' "
+		"    ELSE 'OTHER' "
+		"  END AS ACTION_TIMING, "
+		"  RDB$TRIGGER_SOURCE AS ACTION_STATEMENT, "
+		"  RDB$DESCRIPTION AS TRIGGER_COMMENT "
+		"FROM RDB$TRIGGERS "
+		"WHERE RDB$TRIGGER_NAME IS NOT NULL",
+
+		// Grant permissions for public access
+		"GRANT SELECT ON SYSTEM.INFORMATION_SCHEMA.SCHEMATA TO PUBLIC",
+		"GRANT SELECT ON SYSTEM.INFORMATION_SCHEMA.TABLES TO PUBLIC", 
+		"GRANT SELECT ON SYSTEM.INFORMATION_SCHEMA.COLUMNS TO PUBLIC",
+		"GRANT SELECT ON SYSTEM.INFORMATION_SCHEMA.TABLE_CONSTRAINTS TO PUBLIC",
+		"GRANT SELECT ON SYSTEM.INFORMATION_SCHEMA.ROUTINES TO PUBLIC",
+		"GRANT SELECT ON SYSTEM.INFORMATION_SCHEMA.TRIGGERS TO PUBLIC",
+
+		NULL  // End marker
+	};
+
+	// Execute each DDL statement
+	for (const char** sql = informationSchemaSQL; *sql; ++sql)
+	{
+		try 
+		{
+			attachment->getInterface()->execute(
+				&attachment->getUserStatus(),
+				attachment->getSysTransaction()->getInterface(),
+				0,
+				*sql,
+				SQL_DIALECT_V6,
+				nullptr, nullptr, nullptr, nullptr
+			);
+		}
+		catch (const Exception& ex)
+		{
+			// Log error but continue with initialization
+			// INFORMATION_SCHEMA views are not critical for basic operation
+			gds__log("Warning: Failed to create INFORMATION_SCHEMA view: %s", ex.what());
+		}
+	}
+}
+
+
+//
+// Create DATABASE.MONITORING views for human-readable monitoring (v0.6.0)
+// These views transform technical MON$ tables into user-friendly formats
+//
+static void createDatabaseMonitoringViews(thread_db* tdbb)
+{
+	const auto attachment = tdbb->getAttachment();
+	
+	// SQL statements to create DATABASE.MONITORING views
+	const char* monitoringSQL[] = {
+		// ACTIVE_CONNECTIONS view - Friendly connection information
+		"CREATE VIEW DATABASE.MONITORING.ACTIVE_CONNECTIONS AS "
+		"SELECT "
+		"  ATT.MON$ATTACHMENT_ID AS CONNECTION_ID, "
+		"  ATT.MON$USER AS USERNAME, "
+		"  ATT.MON$ROLE AS USER_ROLE, "
+		"  ATT.MON$REMOTE_ADDRESS AS CLIENT_ADDRESS, "
+		"  ATT.MON$REMOTE_PROTOCOL AS PROTOCOL, "
+		"  ATT.MON$TIMESTAMP AS CONNECTED_AT, "
+		"  ATT.MON$GARBAGE_COLLECTION AS GC_ALLOWED, "
+		"  ATT.MON$STATE AS CONNECTION_STATE, "
+		"  CASE ATT.MON$STATE "
+		"    WHEN 0 THEN 'IDLE' "
+		"    WHEN 1 THEN 'ACTIVE' "
+		"    WHEN 2 THEN 'STALLED' "
+		"    ELSE 'UNKNOWN' "
+		"  END AS STATE_DESCRIPTION "
+		"FROM MON$ATTACHMENTS ATT "
+		"WHERE ATT.MON$ATTACHMENT_ID <> CURRENT_CONNECTION",
+
+		// RUNNING_TRANSACTIONS view - Transaction status information  
+		"CREATE VIEW DATABASE.MONITORING.RUNNING_TRANSACTIONS AS "
+		"SELECT "
+		"  TXN.MON$TRANSACTION_ID AS TRANSACTION_ID, "
+		"  TXN.MON$ATTACHMENT_ID AS CONNECTION_ID, "
+		"  ATT.MON$USER AS USERNAME, "
+		"  TXN.MON$TIMESTAMP AS STARTED_AT, "
+		"  TXN.MON$STATE AS TRANSACTION_STATE, "
+		"  CASE TXN.MON$STATE "
+		"    WHEN 0 THEN 'IDLE' "
+		"    WHEN 1 THEN 'ACTIVE' "
+		"    WHEN 2 THEN 'STALLED' "
+		"    ELSE 'UNKNOWN' "
+		"  END AS STATE_DESCRIPTION, "
+		"  TXN.MON$TOP_TRANSACTION AS TOP_TRANSACTION, "
+		"  TXN.MON$OLDEST_TRANSACTION AS OLDEST_TRANSACTION, "
+		"  TXN.MON$OLDEST_ACTIVE AS OLDEST_ACTIVE, "
+		"  TXN.MON$ISOLATION_MODE AS ISOLATION_MODE, "
+		"  CASE TXN.MON$ISOLATION_MODE "
+		"    WHEN 0 THEN 'CONSISTENCY' "
+		"    WHEN 1 THEN 'CONCURRENCY' "
+		"    WHEN 2 THEN 'READ_COMMITTED_REC_VERSION' "
+		"    WHEN 3 THEN 'READ_COMMITTED_NO_REC_VERSION' "
+		"    WHEN 4 THEN 'READ_COMMITTED_READ_CONSISTENCY' "
+		"    ELSE 'UNKNOWN' "
+		"  END AS ISOLATION_DESCRIPTION "
+		"FROM MON$TRANSACTIONS TXN "
+		"LEFT JOIN MON$ATTACHMENTS ATT ON TXN.MON$ATTACHMENT_ID = ATT.MON$ATTACHMENT_ID",
+
+		// PERFORMANCE_STATS view - Database performance metrics
+		"CREATE VIEW DATABASE.MONITORING.PERFORMANCE_STATS AS "
+		"SELECT "
+		"  'DATABASE' AS METRIC_SCOPE, "
+		"  'Page Reads' AS METRIC_NAME, "
+		"  SUM(IO.MON$PAGE_READS) AS CURRENT_VALUE, "
+		"  'Number of pages read from disk' AS DESCRIPTION "
+		"FROM MON$IO_STATS IO "
+		"WHERE IO.MON$STAT_GROUP = 0 "
+		"UNION ALL "
+		"SELECT "
+		"  'DATABASE' AS METRIC_SCOPE, "
+		"  'Page Writes' AS METRIC_NAME, "
+		"  SUM(IO.MON$PAGE_WRITES) AS CURRENT_VALUE, "
+		"  'Number of pages written to disk' AS DESCRIPTION "
+		"FROM MON$IO_STATS IO "
+		"WHERE IO.MON$STAT_GROUP = 0 "
+		"UNION ALL "
+		"SELECT "
+		"  'DATABASE' AS METRIC_SCOPE, "
+		"  'Page Fetches' AS METRIC_NAME, "
+		"  SUM(IO.MON$PAGE_FETCHES) AS CURRENT_VALUE, "
+		"  'Number of page fetches from cache' AS DESCRIPTION "
+		"FROM MON$IO_STATS IO "
+		"WHERE IO.MON$STAT_GROUP = 0",
+
+		// MEMORY_USAGE view - Memory consumption by component
+		"CREATE VIEW DATABASE.MONITORING.MEMORY_USAGE AS "
+		"SELECT "
+		"  CASE MEM.MON$STAT_GROUP "
+		"    WHEN 0 THEN 'DATABASE' "
+		"    WHEN 1 THEN 'ATTACHMENT' "
+		"    WHEN 2 THEN 'TRANSACTION' "
+		"    WHEN 3 THEN 'STATEMENT' "
+		"    WHEN 4 THEN 'CALL' "
+		"    ELSE 'OTHER' "
+		"  END AS MEMORY_SCOPE, "
+		"  MEM.MON$STAT_ID AS OBJECT_ID, "
+		"  MEM.MON$MEMORY_USED AS MEMORY_USED_BYTES, "
+		"  MEM.MON$MEMORY_ALLOCATED AS MEMORY_ALLOCATED_BYTES, "
+		"  MEM.MON$MAX_MEMORY_USED AS MAX_MEMORY_USED_BYTES, "
+		"  MEM.MON$MAX_MEMORY_ALLOCATED AS MAX_MEMORY_ALLOCATED_BYTES, "
+		"  ROUND(MEM.MON$MEMORY_USED / 1024.0 / 1024.0, 2) AS MEMORY_USED_MB, "
+		"  ROUND(MEM.MON$MEMORY_ALLOCATED / 1024.0 / 1024.0, 2) AS MEMORY_ALLOCATED_MB "
+		"FROM MON$MEMORY_USAGE MEM",
+
+		// STATEMENT_PERFORMANCE view - SQL statement performance
+		"CREATE VIEW DATABASE.MONITORING.STATEMENT_PERFORMANCE AS "
+		"SELECT "
+		"  STMT.MON$STATEMENT_ID AS STATEMENT_ID, "
+		"  STMT.MON$ATTACHMENT_ID AS CONNECTION_ID, "
+		"  ATT.MON$USER AS USERNAME, "
+		"  STMT.MON$TIMESTAMP AS STARTED_AT, "
+		"  STMT.MON$SQL_TEXT AS SQL_TEXT, "
+		"  STMT.MON$STATE AS STATEMENT_STATE, "
+		"  CASE STMT.MON$STATE "
+		"    WHEN 0 THEN 'IDLE' "
+		"    WHEN 1 THEN 'ACTIVE' "
+		"    WHEN 2 THEN 'STALLED' "
+		"    ELSE 'UNKNOWN' "
+		"  END AS STATE_DESCRIPTION, "
+		"  REC.MON$RECORD_SEQ_READS AS SEQUENTIAL_READS, "
+		"  REC.MON$RECORD_IDX_READS AS INDEX_READS, "
+		"  REC.MON$RECORD_INSERTS AS RECORD_INSERTS, "
+		"  REC.MON$RECORD_UPDATES AS RECORD_UPDATES, "
+		"  REC.MON$RECORD_DELETES AS RECORD_DELETES "
+		"FROM MON$STATEMENTS STMT "
+		"LEFT JOIN MON$ATTACHMENTS ATT ON STMT.MON$ATTACHMENT_ID = ATT.MON$ATTACHMENT_ID "
+		"LEFT JOIN MON$RECORD_STATS REC ON STMT.MON$STATEMENT_ID = REC.MON$STAT_ID AND REC.MON$STAT_GROUP = 3",
+
+		// Grant permissions for monitoring access
+		"GRANT SELECT ON DATABASE.MONITORING.ACTIVE_CONNECTIONS TO PUBLIC",
+		"GRANT SELECT ON DATABASE.MONITORING.RUNNING_TRANSACTIONS TO PUBLIC",
+		"GRANT SELECT ON DATABASE.MONITORING.PERFORMANCE_STATS TO PUBLIC", 
+		"GRANT SELECT ON DATABASE.MONITORING.MEMORY_USAGE TO PUBLIC",
+		"GRANT SELECT ON DATABASE.MONITORING.STATEMENT_PERFORMANCE TO PUBLIC",
+
+		NULL  // End marker
+	};
+
+	// Execute each DDL statement
+	for (const char** sql = monitoringSQL; *sql; ++sql)
+	{
+		try 
+		{
+			attachment->getInterface()->execute(
+				&attachment->getUserStatus(),
+				attachment->getSysTransaction()->getInterface(),
+				0,
+				*sql,
+				SQL_DIALECT_V6,
+				nullptr, nullptr, nullptr, nullptr
+			);
+		}
+		catch (const Exception& ex)
+		{
+			// Log error but continue with initialization
+			// Monitoring views are helpful but not critical
+			gds__log("Warning: Failed to create DATABASE.MONITORING view: %s", ex.what());
 		}
 	}
 }

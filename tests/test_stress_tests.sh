@@ -1,7 +1,7 @@
 #!/bin/bash
 
 #
-# ScratchBird v0.5.0 - Stress Tests
+# ScratchBird v0.6.0 - Stress Tests
 #
 # This script runs stress tests to validate ScratchBird's behavior under
 # high load conditions and resource constraints. These tests validate:

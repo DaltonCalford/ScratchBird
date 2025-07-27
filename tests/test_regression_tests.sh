@@ -1,7 +1,7 @@
 #!/bin/bash
 
 #
-# ScratchBird v0.5.0 - Regression Tests
+# ScratchBird v0.6.0 - Regression Tests
 #
 # This script runs regression tests to ensure that existing functionality
 # continues to work correctly after changes. These tests validate:

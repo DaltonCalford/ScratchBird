@@ -11,7 +11,7 @@
 using namespace SBEnhanced;
 
 // Static member definitions
-const std::string GSTATClassic::VERSION = "sb_gstat version SB-T0.5.0.1 ScratchBird 0.5 f90eae0";
+const std::string GSTATClassic::VERSION = "sb_gstat version SB-T0.6.0.1 ScratchBird 0.6 f90eae0";
 const std::string GSTATClassic::BUILD_DATE = __DATE__;
 
 // Static members for signal handling

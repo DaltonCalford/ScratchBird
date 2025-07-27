@@ -1,7 +1,7 @@
 #!/bin/bash
 
 #
-# ScratchBird v0.5.0 - UDR (User Defined Routines) Functionality Tests
+# ScratchBird v0.6.0 - UDR (User Defined Routines) Functionality Tests
 #
 # This script tests the UDR functionality in ScratchBird, including:
 # - User-defined functions

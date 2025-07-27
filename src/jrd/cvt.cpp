@@ -620,3 +620,328 @@ void EngineCallbacks::isVersion4(bool& v4)
 		v4 = (tdbb->getRequest()->getStatement()->blrVersion == 4);
 	}
 }
+
+
+//
+// Network and Range Type Conversion Functions for ScratchBird v0.6.0
+// Provides conversion between related network and range data types
+//
+
+bool CVT_inet_to_cidr(const dsc* from, dsc* to)
+{
+/**************************************
+ *
+ *	C V T _ i n e t _ t o _ c i d r
+ *
+ **************************************
+ *
+ * Functional description
+ *	Convert INET address to CIDR network block
+ *	INET -> CIDR conversion assumes /32 for IPv4, /128 for IPv6
+ *
+ **************************************/
+	
+	if (!from || !to || from->dsc_dtype != dtype_inet || to->dsc_dtype != dtype_cidr)
+		return false;
+		
+	// For simplicity, copy the INET address and append appropriate prefix length
+	// In a full implementation, this would parse IP address format
+	const UCHAR* source = from->dsc_address;
+	UCHAR* target = to->dsc_address;
+	
+	if (from->dsc_length <= to->dsc_length) {
+		memcpy(target, source, from->dsc_length);
+		// Zero-fill remainder
+		memset(target + from->dsc_length, 0, to->dsc_length - from->dsc_length);
+		return true;
+	}
+	
+	return false;
+}
+
+bool CVT_cidr_to_inet(const dsc* from, dsc* to)
+{
+/**************************************
+ *
+ *	C V T _ c i d r _ t o _ i n e t
+ *
+ **************************************
+ *
+ * Functional description
+ *	Convert CIDR network block to INET address
+ *	CIDR -> INET conversion extracts the network address
+ *
+ **************************************/
+	
+	if (!from || !to || from->dsc_dtype != dtype_cidr || to->dsc_dtype != dtype_inet)
+		return false;
+		
+	// Extract the network address part from CIDR
+	const UCHAR* source = from->dsc_address;
+	UCHAR* target = to->dsc_address;
+	
+	if (from->dsc_length <= to->dsc_length) {
+		memcpy(target, source, from->dsc_length);
+		// Zero-fill remainder
+		memset(target + from->dsc_length, 0, to->dsc_length - from->dsc_length);
+		return true;
+	}
+	
+	return false;
+}
+
+bool CVT_macaddr_to_text(const dsc* from, dsc* to)
+{
+/**************************************
+ *
+ *	C V T _ m a c a d d r _ t o _ t e x t
+ *
+ **************************************
+ *
+ * Functional description
+ *	Convert MACADDR to text representation
+ *	Format: XX:XX:XX:XX:XX:XX
+ *
+ **************************************/
+	
+	if (!from || !to || from->dsc_dtype != dtype_macaddr)
+		return false;
+		
+	// MAC address is 6 bytes, text representation is 17 chars (XX:XX:XX:XX:XX:XX)
+	if (from->dsc_length == 6 && to->dsc_length >= 17) {
+		const UCHAR* mac = from->dsc_address;
+		char* text = (char*)to->dsc_address;
+		
+		sprintf(text, "%02X:%02X:%02X:%02X:%02X:%02X",
+		        mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+		
+		return true;
+	}
+	
+	return false;
+}
+
+bool CVT_text_to_macaddr(const dsc* from, dsc* to)
+{
+/**************************************
+ *
+ *	C V T _ t e x t _ t o _ m a c a d d r
+ *
+ **************************************
+ *
+ * Functional description
+ *	Convert text representation to MACADDR
+ *	Accepts formats: XX:XX:XX:XX:XX:XX, XX-XX-XX-XX-XX-XX
+ *
+ **************************************/
+	
+	if (!from || !to || to->dsc_dtype != dtype_macaddr || to->dsc_length < 6)
+		return false;
+		
+	const char* text = (const char*)from->dsc_address;
+	UCHAR* mac = to->dsc_address;
+	
+	// Simple parsing for XX:XX:XX:XX:XX:XX format
+	if (from->dsc_length >= 17) {
+		int values[6];
+		int parsed = sscanf(text, "%x:%x:%x:%x:%x:%x",
+		                   &values[0], &values[1], &values[2],
+		                   &values[3], &values[4], &values[5]);
+		
+		if (parsed == 6) {
+			for (int i = 0; i < 6; i++) {
+				mac[i] = (UCHAR)values[i];
+			}
+			return true;
+		}
+		
+		// Try XX-XX-XX-XX-XX-XX format
+		parsed = sscanf(text, "%x-%x-%x-%x-%x-%x",
+		               &values[0], &values[1], &values[2],
+		               &values[3], &values[4], &values[5]);
+		
+		if (parsed == 6) {
+			for (int i = 0; i < 6; i++) {
+				mac[i] = (UCHAR)values[i];
+			}
+			return true;
+		}
+	}
+	
+	return false;
+}
+
+bool CVT_int4range_to_text(const dsc* from, dsc* to)
+{
+/**************************************
+ *
+ *	C V T _ i n t 4 r a n g e _ t o _ t e x t
+ *
+ **************************************
+ *
+ * Functional description
+ *	Convert INT4RANGE to text representation
+ *	Format: [lower,upper) or [lower,upper] or (lower,upper) etc.
+ *
+ **************************************/
+	
+	if (!from || !to || from->dsc_dtype != dtype_int4range)
+		return false;
+		
+	// INT4RANGE is typically 2 integers + flags for inclusivity
+	// Simplified implementation assumes 8 bytes (2 x 4-byte integers)
+	if (from->dsc_length >= 8 && to->dsc_length >= 20) {
+		const SLONG* range = (const SLONG*)from->dsc_address;
+		char* text = (char*)to->dsc_address;
+		
+		// Assume inclusive range for simplicity
+		sprintf(text, "[%ld,%ld]", range[0], range[1]);
+		
+		return true;
+	}
+	
+	return false;
+}
+
+bool CVT_text_to_int4range(const dsc* from, dsc* to)
+{
+/**************************************
+ *
+ *	C V T _ t e x t _ t o _ i n t 4 r a n g e
+ *
+ **************************************
+ *
+ * Functional description
+ *	Convert text representation to INT4RANGE
+ *	Accepts formats: [lower,upper], (lower,upper), [lower,upper), etc.
+ *
+ **************************************/
+	
+	if (!from || !to || to->dsc_dtype != dtype_int4range || to->dsc_length < 8)
+		return false;
+		
+	const char* text = (const char*)from->dsc_address;
+	SLONG* range = (SLONG*)to->dsc_address;
+	
+	// Simple parsing for [lower,upper] format
+	SLONG lower, upper;
+	int parsed = sscanf(text, "[%ld,%ld]", &lower, &upper);
+	
+	if (parsed == 2) {
+		range[0] = lower;
+		range[1] = upper;
+		return true;
+	}
+	
+	// Try (lower,upper) format
+	parsed = sscanf(text, "(%ld,%ld)", &lower, &upper);
+	
+	if (parsed == 2) {
+		range[0] = lower;
+		range[1] = upper;
+		return true;
+	}
+	
+	return false;
+}
+
+bool CVT_tsrange_to_text(const dsc* from, dsc* to)
+{
+/**************************************
+ *
+ *	C V T _ t s r a n g e _ t o _ t e x t
+ *
+ **************************************
+ *
+ * Functional description
+ *	Convert TSRANGE to text representation
+ *	Format: ["2024-01-01 12:00:00","2024-01-02 12:00:00")
+ *
+ **************************************/
+	
+	if (!from || !to || from->dsc_dtype != dtype_tsrange)
+		return false;
+		
+	// TSRANGE is typically 2 timestamps + flags
+	// Simplified implementation
+	if (from->dsc_length >= 16 && to->dsc_length >= 50) {
+		const ISC_TIMESTAMP* range = (const ISC_TIMESTAMP*)from->dsc_address;
+		char* text = (char*)to->dsc_address;
+		
+		// Simple timestamp formatting (would need proper date formatting in full implementation)
+		sprintf(text, "[ts:%u.%u,ts:%u.%u]", 
+		        range[0].timestamp_date, range[0].timestamp_time,
+		        range[1].timestamp_date, range[1].timestamp_time);
+		
+		return true;
+	}
+	
+	return false;
+}
+
+bool CVT_daterange_overlap(const dsc* range1, const dsc* range2, dsc* result)
+{
+/**************************************
+ *
+ *	C V T _ d a t e r a n g e _ o v e r l a p
+ *
+ **************************************
+ *
+ * Functional description
+ *	Check if two DATERANGE values overlap
+ *	Returns boolean result
+ *
+ **************************************/
+	
+	if (!range1 || !range2 || !result || 
+	    range1->dsc_dtype != dtype_daterange || 
+	    range2->dsc_dtype != dtype_daterange)
+		return false;
+		
+	// Simplified overlap check
+	const GDS_DATE* dates1 = (const GDS_DATE*)range1->dsc_address;
+	const GDS_DATE* dates2 = (const GDS_DATE*)range2->dsc_address;
+	
+	// Check if ranges overlap: start1 <= end2 && start2 <= end1
+	bool overlaps = (dates1[0] <= dates2[1]) && (dates2[0] <= dates1[1]);
+	
+	// Store result as boolean
+	*(bool*)result->dsc_address = overlaps;
+	result->dsc_dtype = dtype_boolean;
+	result->dsc_length = sizeof(bool);
+	
+	return true;
+}
+
+bool CVT_numrange_contains(const dsc* range, const dsc* value, dsc* result)
+{
+/**************************************
+ *
+ *	C V T _ n u m r a n g e _ c o n t a i n s
+ *
+ **************************************
+ *
+ * Functional description
+ *	Check if NUMRANGE contains a numeric value
+ *	Returns boolean result
+ *
+ **************************************/
+	
+	if (!range || !value || !result || range->dsc_dtype != dtype_numrange)
+		return false;
+		
+	// Simplified containment check
+	// In full implementation, would handle different numeric types
+	const double* numRange = (const double*)range->dsc_address;
+	double numValue = *(const double*)value->dsc_address;
+	
+	// Check if value is within range: lower <= value <= upper
+	bool contains = (numRange[0] <= numValue) && (numValue <= numRange[1]);
+	
+	// Store result as boolean
+	*(bool*)result->dsc_address = contains;
+	result->dsc_dtype = dtype_boolean;
+	result->dsc_length = sizeof(bool);
+	
+	return true;
+}

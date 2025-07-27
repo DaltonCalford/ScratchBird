@@ -60,6 +60,9 @@ namespace Jrd
 	bool Database::onRawDevice() const
 	{
 		const auto pageSpace = dbb_page_manager.findPageSpace(DB_PAGE_SPACE);
+		if (!pageSpace) {
+			return false; // Safe default for uninitialized database
+		}
 		return pageSpace->onRawDevice();
 	}
 
@@ -67,6 +70,10 @@ namespace Jrd
 	{
 		const auto pageSpace = dbb_page_manager.findPageSpace(DB_PAGE_SPACE);
 		fb_assert(pageSpace && pageSpace->file);
+
+		if (!pageSpace || !pageSpace->file) {
+			return PAGE_ALIGNMENT; // Safe default for uninitialized database
+		}
 
 		if ((pageSpace->file->fil_flags & FIL_no_fs_cache) || pageSpace->onRawDevice())
 			return DIRECT_IO_BLOCK_SIZE;
@@ -77,12 +84,18 @@ namespace Jrd
 	AttNumber Database::generateAttachmentId()
 	{
 		fb_assert(dbb_tip_cache);
+		if (!dbb_tip_cache) {
+			ERR_post(Arg::Gds(isc_unavailable) << "TIP cache not initialized");
+		}
 		return dbb_tip_cache->generateAttachmentId();
 	}
 
 	TraNumber Database::generateTransactionId()
 	{
 		fb_assert(dbb_tip_cache);
+		if (!dbb_tip_cache) {
+			ERR_post(Arg::Gds(isc_unavailable) << "TIP cache not initialized");
+		}
 		return dbb_tip_cache->generateTransactionId();
 	}
 
@@ -131,6 +144,9 @@ namespace Jrd
 	ULONG Database::newMonitorGeneration() const
 	{
 		fb_assert(dbb_tip_cache);
+		if (!dbb_tip_cache) {
+			ERR_post(Arg::Gds(isc_unavailable) << "TIP cache not initialized");
+		}
 		return dbb_tip_cache->newMonitorGeneration();
 	}
 
@@ -139,6 +155,9 @@ namespace Jrd
 		if (dbb_file_id.isEmpty())
 		{
 			const PageSpace* const pageSpace = dbb_page_manager.findPageSpace(DB_PAGE_SPACE);
+			if (!pageSpace || !pageSpace->file) {
+				ERR_post(Arg::Gds(isc_unavailable) << "Database file not accessible for unique ID generation");
+			}
 
 			UCharBuffer buffer;
 			os_utils::getUniqueFileId(pageSpace->file->fil_desc, buffer);
