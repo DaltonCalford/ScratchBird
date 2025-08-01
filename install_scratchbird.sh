@@ -863,7 +863,7 @@ WHERE is_active = TRUE AND department = 'Engineering';
 ### 4. Create Your First Database
 \`\`\`bash
 # Create a new database
-sb_isql -user SYSDBA -password $SYSDBA_PASSWORD << EOF
+sb_isql -user SYSDBA -password $SYSDBA_PASSWORD << 'INNER_EOF'
 CREATE DATABASE '/opt/Scratchbird/data/databases/myapp.fdb'
     USER 'SYSDBA' PASSWORD '$SYSDBA_PASSWORD'
     DEFAULT CHARACTER SET UTF8
@@ -887,7 +887,7 @@ CREATE PARTIAL HASH INDEX idx_active_users
     WHERE active = TRUE;
 
 EXIT;
-EOF
+INNER_EOF
 \`\`\`
 
 ## Configuration Files
