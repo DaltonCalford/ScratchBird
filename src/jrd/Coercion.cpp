@@ -25,7 +25,7 @@
  *
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "../jrd/Coercion.h"
 #include "../jrd/cvt_proto.h"
 

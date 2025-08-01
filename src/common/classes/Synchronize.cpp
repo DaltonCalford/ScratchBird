@@ -29,7 +29,7 @@
 *  Contributor(s):
 */
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "fb_tls.h"
 #include "init.h"
 #include "../ThreadStart.h"

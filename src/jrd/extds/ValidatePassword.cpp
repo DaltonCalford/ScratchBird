@@ -20,7 +20,7 @@
  *  Contributor(s): ______________________________________.
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "sb_exception.h"
 #include "iberror.h"
 

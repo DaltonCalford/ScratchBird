@@ -30,7 +30,7 @@
  *
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include <string.h>
 #include <stdio.h>
 #include "../common/classes/init.h"

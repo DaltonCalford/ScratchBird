@@ -29,7 +29,7 @@
 #define _WIN32_WINNT 0x0403
 #endif
 
-#include "firebird.h"
+#include "scratchbird.h"
 
 #include "../../common/classes/locks.h"
 #include "../../common/ThreadStart.h"

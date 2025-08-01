@@ -19,7 +19,7 @@
  * Alex Peshkov
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "firebird/impl/consts_pub.h"
 #include "dyn_consts.h"
 #include "iberror.h"

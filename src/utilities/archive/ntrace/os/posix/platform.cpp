@@ -25,7 +25,7 @@
  *
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "../platform.h"
 #include "../common/classes/fb_tls.h"
 #include <sys/types.h>

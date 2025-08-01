@@ -24,7 +24,7 @@
  *  Contributor(s): ______________________________________.
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 
 #include "./Arc4.h"
 #include "../common/classes/ImplementHelper.h"

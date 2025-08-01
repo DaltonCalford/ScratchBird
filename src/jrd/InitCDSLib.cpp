@@ -26,7 +26,7 @@
  */
 
 
-#include "firebird.h"
+#include "scratchbird.h"
 
 #ifndef CDS_UNAVAILABLE
 

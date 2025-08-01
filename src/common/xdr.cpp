@@ -24,7 +24,7 @@
  *
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include <string.h>
 #include "../common/xdr.h"
 #include "../common/xdr_proto.h"

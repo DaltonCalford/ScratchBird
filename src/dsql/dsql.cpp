@@ -32,7 +32,7 @@
  * Adriano dos Santos Fernandes
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

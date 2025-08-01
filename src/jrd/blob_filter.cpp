@@ -22,7 +22,7 @@
  * Adriano dos Santos Fernandes
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include <algorithm>
 #include <iterator>
 #include <string.h>

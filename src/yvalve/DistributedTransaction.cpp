@@ -26,7 +26,7 @@
  *
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 
 #include "../yvalve/DistributedTransaction.h"
 

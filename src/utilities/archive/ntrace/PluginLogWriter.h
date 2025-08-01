@@ -29,7 +29,7 @@
 #define PLUGINLOGWRITER_H
 
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "../../jrd/ntrace.h"
 #include "../../common/classes/timestamp.h"
 #include "../../common/isc_s_proto.h"

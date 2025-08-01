@@ -6,11 +6,12 @@
 #ifndef JRD_DATABASE_LINK_H
 #define JRD_DATABASE_LINK_H
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "../common/classes/fb_string.h"
 #include "../common/classes/array.h"
 #include "../common/classes/GenericMap.h"
 #include "../common/classes/SyncObject.h"
+#include "../common/classes/rwlock.h"
 #include "constants.h"
 
 namespace Jrd {
@@ -97,7 +98,7 @@ public:
 class LinkManager
 {
 private:
-    ScratchBird::GenericMap<ScratchBird::Pair<ScratchBird::Left<ScratchBird::string, DatabaseLink*>>> links;
+    ScratchBird::GenericMap<ScratchBird::LeftPooledPair<ScratchBird::string, DatabaseLink*>> links;
     ScratchBird::RWLock linksLock;
     
 public:
@@ -124,12 +125,12 @@ public:
     // Iterator support for link enumeration
     class LinkIterator {
     private:
-        ScratchBird::GenericMap<ScratchBird::Pair<ScratchBird::Left<ScratchBird::string, DatabaseLink*>>>::Iterator it;
-        ScratchBird::GenericMap<ScratchBird::Pair<ScratchBird::Left<ScratchBird::string, DatabaseLink*>>>::Iterator end;
+        ScratchBird::GenericMap<ScratchBird::LeftPooledPair<ScratchBird::string, DatabaseLink*>>::Iterator it;
+        ScratchBird::GenericMap<ScratchBird::LeftPooledPair<ScratchBird::string, DatabaseLink*>>::Iterator end;
         
     public:
-        LinkIterator(ScratchBird::GenericMap<ScratchBird::Pair<ScratchBird::Left<ScratchBird::string, DatabaseLink*>>>::Iterator begin,
-                    ScratchBird::GenericMap<ScratchBird::Pair<ScratchBird::Left<ScratchBird::string, DatabaseLink*>>>::Iterator end);
+        LinkIterator(ScratchBird::GenericMap<ScratchBird::LeftPooledPair<ScratchBird::string, DatabaseLink*>>::Iterator begin,
+                    ScratchBird::GenericMap<ScratchBird::LeftPooledPair<ScratchBird::string, DatabaseLink*>>::Iterator end);
         
         bool hasNext() const;
         DatabaseLink* next();

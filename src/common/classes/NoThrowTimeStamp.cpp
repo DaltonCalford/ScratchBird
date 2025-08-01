@@ -24,7 +24,7 @@
  *     this is why we need to use IPL license for it
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "../common/gdsassert.h"
 #include <ctime>
 

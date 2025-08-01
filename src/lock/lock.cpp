@@ -38,7 +38,7 @@
  *
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "../lock/lock_proto.h"
 #include "../common/ThreadStart.h"
 #include "../jrd/jrd.h"

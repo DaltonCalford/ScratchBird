@@ -26,7 +26,7 @@
 //____________________________________________________________
 //
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include <stdlib.h>
 #include <string.h>
 #include "ibase.h"

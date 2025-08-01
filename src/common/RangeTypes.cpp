@@ -25,7 +25,7 @@
  *
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "RangeTypes.h"
 #include <cstring>
 #include <algorithm>

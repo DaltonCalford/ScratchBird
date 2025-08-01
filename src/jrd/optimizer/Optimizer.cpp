@@ -37,7 +37,7 @@
  *             a retrieval. With this change BUG SF #219525 is solved too.
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include <stdio.h>
 #include <string.h>
 #include "../jrd/jrd.h"

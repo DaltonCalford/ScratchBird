@@ -1,0 +1,374 @@
+#pragma once
+
+#include "../utilities/sb_engine_integration.h"
+#include "../utilities/utility_enhancements.h"
+#include <string>
+#include <vector>
+#include <map>
+#include <memory>
+#include <iostream>
+#include <thread>
+#include <atomic>
+#include <chrono>
+
+namespace SBEnhanced {
+
+// Compression algorithms supported
+enum class CompressionType {
+    NONE = 0,
+    GZIP = 1,
+    LZ4 = 2,
+    ZSTD = 3,
+    BZIP2 = 4
+};
+
+// Encryption algorithms supported  
+enum class EncryptionType {
+    NONE = 0,
+    AES_128 = 1,
+    AES_256 = 2,
+    CHACHA20 = 3
+};
+
+// Backup types
+enum class BackupType {
+    FULL = 0,
+    INCREMENTAL = 1,
+    DIFFERENTIAL = 2,
+    TRANSPORTABLE = 3,
+    METADATA_ONLY = 4
+};
+
+// Backup format versions
+enum class BackupFormat {
+    FIREBIRD_COMPATIBLE = 0,  // Standard Firebird format
+    SCRATCHBIRD_ENHANCED = 1, // Enhanced format with compression/encryption
+    PORTABLE = 2              // Cross-platform portable format
+};
+
+// Progress callback function type
+using ProgressCallback = std::function<void(uint64_t current, uint64_t total, const std::string& operation)>;
+
+// Backup options structure
+struct BackupOptions {
+    std::string database_path;
+    std::string backup_path;
+    
+    // Connection options
+    std::string username = "SYSDBA";
+    std::string password = "masterkey";
+    std::string role;
+    bool trusted_auth = false;
+    
+    // Backup configuration
+    BackupType backup_type = BackupType::FULL;
+    BackupFormat backup_format = BackupFormat::SCRATCHBIRD_ENHANCED;
+    CompressionType compression = CompressionType::ZSTD;
+    int compression_level = 6;  // 1-9 scale
+    EncryptionType encryption = EncryptionType::NONE;
+    std::string encryption_key;
+    
+    // Performance options
+    bool parallel_processing = true;
+    int worker_threads = std::thread::hardware_concurrency();
+    uint32_t page_buffers = 1024;
+    uint32_t batch_size = 10000;
+    
+    // Output options
+    bool verbose = false;
+    bool show_progress = true;
+    bool verify_backup = true;
+    bool garbage_collect = false;
+    bool include_inactive_indices = true;
+    bool no_db_triggers = false;
+    
+    // Filtering options
+    std::vector<std::string> include_tables;
+    std::vector<std::string> exclude_tables;
+    std::vector<std::string> include_schemas;
+    std::vector<std::string> exclude_schemas;
+    
+    // Callback for progress reporting
+    ProgressCallback progress_callback;
+};
+
+// Restore options structure  
+struct RestoreOptions {
+    std::string backup_path;
+    std::string database_path;
+    
+    // Connection options
+    std::string username = "SYSDBA";
+    std::string password = "masterkey";
+    std::string role;
+    bool trusted_auth = false;
+    
+    // Restore configuration
+    bool replace_database = false;
+    bool create_database = true;
+    uint32_t page_size = 8192;
+    std::string page_buffers = "2048";
+    std::string character_set = "UTF8";
+    
+    // Performance options
+    bool parallel_processing = true;
+    int worker_threads = std::thread::hardware_concurrency();
+    uint32_t commit_interval = 10000;
+    bool no_validity_check = false;
+    
+    // Output options
+    bool verbose = false;
+    bool show_progress = true;
+    bool fix_fss_metadata = true;
+    bool fix_fss_data = true;
+    bool no_db_triggers = false;
+    
+    // Filtering options
+    std::vector<std::string> include_tables;
+    std::vector<std::string> exclude_tables;
+    std::vector<std::string> include_schemas;
+    std::vector<std::string> exclude_schemas;
+    
+    // Schema mapping for hierarchical schemas
+    std::map<std::string, std::string> schema_mapping;
+    
+    // Callback for progress reporting
+    ProgressCallback progress_callback;
+};
+
+// Backup validation options
+struct ValidationOptions {
+    std::string backup_path;
+    bool verify_structure = true;
+    bool verify_data = true;
+    bool verify_checksums = true;
+    bool verbose = false;
+    
+    ProgressCallback progress_callback;
+};
+
+// Backup progress information
+struct BackupProgress {
+    uint64_t total_pages = 0;
+    uint64_t processed_pages = 0;
+    uint64_t total_records = 0;
+    uint64_t processed_records = 0;
+    uint64_t total_size_bytes = 0;
+    uint64_t processed_size_bytes = 0;
+    uint64_t compressed_size_bytes = 0;
+    
+    std::string current_operation;
+    std::string current_table;
+    std::chrono::steady_clock::time_point start_time;
+    std::chrono::steady_clock::time_point current_time;
+    
+    double getCompressionRatio() const {
+        return processed_size_bytes > 0 ? 
+               static_cast<double>(compressed_size_bytes) / processed_size_bytes : 0.0;
+    }
+    
+    double getProgressPercentage() const {
+        return total_size_bytes > 0 ? 
+               (static_cast<double>(processed_size_bytes) / total_size_bytes) * 100.0 : 0.0;
+    }
+    
+    std::chrono::seconds getElapsedTime() const {
+        return std::chrono::duration_cast<std::chrono::seconds>(current_time - start_time);
+    }
+    
+    std::chrono::seconds getEstimatedTimeRemaining() const {
+        auto elapsed = getElapsedTime();
+        double progress = getProgressPercentage() / 100.0;
+        if (progress > 0.01) {
+            return std::chrono::seconds(static_cast<long>(elapsed.count() / progress - elapsed.count()));
+        }
+        return std::chrono::seconds(0);
+    }
+};
+
+// Backup statistics and reporting
+struct BackupStatistics {
+    std::chrono::steady_clock::time_point start_time;
+    std::chrono::steady_clock::time_point end_time;
+    
+    uint64_t total_pages_backed_up = 0;
+    uint64_t total_records_backed_up = 0;
+    uint64_t original_size_bytes = 0;
+    uint64_t backup_size_bytes = 0;
+    uint64_t compressed_size_bytes = 0;
+    
+    uint32_t tables_processed = 0;
+    uint32_t indices_processed = 0;
+    uint32_t triggers_processed = 0;
+    uint32_t procedures_processed = 0;
+    uint32_t functions_processed = 0;
+    
+    std::vector<std::string> warnings;
+    std::vector<std::string> errors;
+    
+    double getCompressionRatio() const {
+        return original_size_bytes > 0 ? 
+               static_cast<double>(compressed_size_bytes) / original_size_bytes : 0.0;
+    }
+    
+    std::chrono::duration<double> getTotalDuration() const {
+        return end_time - start_time;
+    }
+    
+    double getThroughputMBps() const {
+        auto duration = getTotalDuration();
+        if (duration.count() > 0) {
+            return (static_cast<double>(original_size_bytes) / (1024 * 1024)) / duration.count();
+        }
+        return 0.0;
+    }
+};
+
+} // namespace SBEnhanced
+
+// Enhanced backup/restore utility class
+class GBakEnhanced {
+private:
+    std::unique_ptr<SBEngineIntegration> engine;
+    std::unique_ptr<jrd::Service> backup_service;
+    std::unique_ptr<UtilityEnhancements::OutputFormatter> formatter;
+    
+    // Progress tracking
+    std::atomic<bool> operation_active{false};
+    std::atomic<bool> operation_cancelled{false};
+    SBEnhanced::BackupProgress current_progress;
+    std::mutex progress_mutex;
+    
+    // Thread management
+    std::vector<std::thread> worker_threads;
+    std::atomic<int> active_workers{0};
+    
+    // Error handling
+    std::vector<std::string> error_log;
+    std::vector<std::string> warning_log;
+    std::mutex log_mutex;
+
+public:
+    GBakEnhanced();
+    ~GBakEnhanced();
+    
+    // Main backup/restore operations
+    bool performBackup(const SBEnhanced::BackupOptions& options);
+    bool performRestore(const SBEnhanced::RestoreOptions& options);
+    bool validateBackup(const SBEnhanced::ValidationOptions& options);
+    
+    // Advanced backup operations
+    bool performIncrementalBackup(const SBEnhanced::BackupOptions& options, 
+                                 const std::string& base_backup_path);
+    bool mergeIncrementalBackups(const std::vector<std::string>& backup_paths,
+                                const std::string& output_path);
+    
+    // Progress monitoring
+    SBEnhanced::BackupProgress getProgress() const;
+    bool isOperationActive() const { return operation_active.load(); }
+    void cancelOperation() { operation_cancelled.store(true); }
+    
+    // Configuration and management
+    bool setConfiguration(const std::string& key, const std::string& value);
+    std::string getConfiguration(const std::string& key) const;
+    
+    // Statistics and reporting
+    SBEnhanced::BackupStatistics getLastOperationStatistics() const;
+    std::string generateProgressReport() const;
+    std::string generateStatisticsReport() const;
+    
+    // Error handling
+    std::vector<std::string> getErrors() const;
+    std::vector<std::string> getWarnings() const;
+    void clearErrors();
+    void clearWarnings();
+    std::string getLastError() const;
+    
+    // Utility methods
+    bool testDatabaseConnection(const std::string& database_path,
+                               const std::string& username,
+                               const std::string& password);
+    bool verifyBackupIntegrity(const std::string& backup_path);
+    std::vector<std::string> listBackupContents(const std::string& backup_path);
+    uint64_t estimateBackupSize(const std::string& database_path);
+    
+    // Multi-format output
+    bool exportBackupInfo(const std::string& backup_path, 
+                         const std::string& output_path,
+                         UtilityEnhancements::ExportFormat format);
+
+private:
+    // Internal implementation methods
+    bool connectToDatabase(const std::string& database_path,
+                          const std::string& username,
+                          const std::string& password,
+                          const std::string& role,
+                          bool trusted_auth);
+    void disconnectFromDatabase();
+    
+    // Service-based backup implementation
+    bool initializeBackupService(const SBEnhanced::BackupOptions& options);
+    bool executeBackupWithService(const SBEnhanced::BackupOptions& options);
+    bool executeRestoreWithService(const SBEnhanced::RestoreOptions& options);
+    
+    // Compression and encryption
+    bool compressData(const std::vector<uint8_t>& input, 
+                     std::vector<uint8_t>& output,
+                     SBEnhanced::CompressionType type,
+                     int level);
+    bool decompressData(const std::vector<uint8_t>& input,
+                       std::vector<uint8_t>& output,
+                       SBEnhanced::CompressionType type);
+    bool encryptData(const std::vector<uint8_t>& input,
+                    std::vector<uint8_t>& output,
+                    SBEnhanced::EncryptionType type,
+                    const std::string& key);
+    bool decryptData(const std::vector<uint8_t>& input,
+                    std::vector<uint8_t>& output,
+                    SBEnhanced::EncryptionType type,
+                    const std::string& key);
+    
+    // Parallel processing
+    bool initializeWorkerThreads(int thread_count);
+    void terminateWorkerThreads();
+    void workerThreadFunction(int worker_id, const SBEnhanced::BackupOptions& options);
+    
+    // Progress and statistics
+    void updateProgress(const std::string& operation, 
+                       uint64_t current, uint64_t total);
+    void updateStatistics(const SBEnhanced::BackupStatistics& stats);
+    void reportProgress() const;
+    
+    // Error logging
+    void logError(const std::string& error);
+    void logWarning(const std::string& warning);
+    
+    // Validation helpers
+    bool validateBackupOptions(const SBEnhanced::BackupOptions& options);
+    bool validateRestoreOptions(const SBEnhanced::RestoreOptions& options);
+    bool validateDatabasePath(const std::string& path);
+    bool validateBackupPath(const std::string& path);
+    
+    // File format handling
+    bool writeBackupHeader(std::ostream& stream, const SBEnhanced::BackupOptions& options);
+    bool readBackupHeader(std::istream& stream, SBEnhanced::BackupOptions& options);
+    bool writeBackupMetadata(std::ostream& stream, const std::map<std::string, std::string>& metadata);
+    bool readBackupMetadata(std::istream& stream, std::map<std::string, std::string>& metadata);
+};
+
+// Main class for command-line interface compatibility
+class GBakEnhancedMain {
+public:
+    static int main(int argc, char* argv[]);
+    static void printUsage();
+    static void printVersion();
+    static void handleSignal(int signal);
+    
+private:
+    static GBakEnhanced* gbak_instance;
+    static bool interrupted;
+    static bool parseCommandLine(int argc, char* argv[], 
+                                SBEnhanced::BackupOptions& backup_opts,
+                                SBEnhanced::RestoreOptions& restore_opts,
+                                bool& is_backup_operation);
+};

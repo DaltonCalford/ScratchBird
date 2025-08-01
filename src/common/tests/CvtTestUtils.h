@@ -1,7 +1,7 @@
 #ifndef CVT_TEST_UTILS_H
 #define CVT_TEST_UTILS_H
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "../common/dsc.h"
 #include "../common/TimeZoneUtil.h"
 #include "../common/TimeZones.h"

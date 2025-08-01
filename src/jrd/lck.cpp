@@ -26,7 +26,7 @@
  *
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include <stdio.h>
 #include "../common/classes/Hash.h"
 #include "../jrd/jrd.h"

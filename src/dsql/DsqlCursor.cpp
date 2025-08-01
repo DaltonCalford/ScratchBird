@@ -20,7 +20,7 @@
  *  Contributor(s): ______________________________________.
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "../common/classes/ClumpletWriter.h"
 #include "../jrd/tra_proto.h"
 #include "../jrd/trace/TraceManager.h"

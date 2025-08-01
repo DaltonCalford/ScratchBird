@@ -21,7 +21,7 @@
  * Contributor(s): ______________________________________.
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "../common/call_service.h"
 #include "../common/classes/ClumpletWriter.h"
 #include <string.h>

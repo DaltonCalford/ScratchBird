@@ -17,7 +17,7 @@
  * Contributor(s): ______________________________________.
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "../common/gdsassert.h"
 #include "../jrd/tra.h"
 #include "../jrd/blb_proto.h"

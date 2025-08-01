@@ -23,7 +23,7 @@
 #ifndef JRD_PREPARED_STATEMENT_H
 #define JRD_PREPARED_STATEMENT_H
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include <utility>
 #include <optional>
 #include "../common/dsc.h"

@@ -20,7 +20,7 @@
  *  Contributor(s): ______________________________________.
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "../common/gdsassert.h"
 #include "../jrd/req.h"
 

@@ -23,7 +23,7 @@
 #ifndef DSQL_KEYWORDS_H
 #define DSQL_KEYWORDS_H
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "../common/classes/alloc.h"
 #include "../common/classes/GenericMap.h"
 #include "../jrd/MetaName.h"

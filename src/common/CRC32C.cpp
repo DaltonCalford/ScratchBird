@@ -25,7 +25,7 @@
  *
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 
 // Can be used only on x86 architectures
 // WARNING: With GCC must be compiled separately with -msse4.2 flag

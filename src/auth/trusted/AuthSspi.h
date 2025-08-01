@@ -28,7 +28,7 @@
 #ifndef AUTH_SSPI_H
 #define AUTH_SSPI_H
 
-#include <firebird.h>
+#include <scratchbird.h>
 
 // This is old versions backward compatibility
 #define FB_PREDEFINED_GROUP "Predefined_Group"

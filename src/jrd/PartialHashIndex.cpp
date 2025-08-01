@@ -22,7 +22,7 @@
  * 2025.07.24 - ScratchBird Partial Hash Index Implementation
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "req.h"
 #include "PartialHashIndex.h"
 #include "PartialHashIndexStatistics.h"

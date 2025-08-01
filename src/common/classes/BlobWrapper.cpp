@@ -22,7 +22,7 @@
  *
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "BlobWrapper.h"
 #include "ibase.h"
 #include "firebird/Interface.h"

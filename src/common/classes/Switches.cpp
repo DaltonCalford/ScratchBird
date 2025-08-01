@@ -21,7 +21,7 @@
  *
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "Switches.h"
 #include "sb_exception.h"
 

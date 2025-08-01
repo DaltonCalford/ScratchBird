@@ -18,7 +18,7 @@
  * Contributor(s): Jonas Jasas
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "../intl/ldcommon.h"
 #include "ld_proto.h"
 #include "lc_narrow.h"

@@ -23,7 +23,7 @@
  *
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include <string.h>
 #include "../jrd/flu.h"
 #include "../jrd/flu_proto.h"

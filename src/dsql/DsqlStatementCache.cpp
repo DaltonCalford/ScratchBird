@@ -20,7 +20,7 @@
  *  Contributor(s): ______________________________________.
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "../dsql/DsqlStatementCache.h"
 #include "../dsql/DsqlStatements.h"
 #include "../jrd/Attachment.h"

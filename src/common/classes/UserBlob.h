@@ -24,7 +24,7 @@
 #ifndef FB_USER_BLOB_H
 #define FB_USER_BLOB_H
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include <memory.h>
 
 class UserBlob

@@ -25,7 +25,7 @@
 // =====================================
 // File functions
 
-#include "firebird.h"
+#include "scratchbird.h"
 
 #include "../common/classes/array.h"
 #include "../common/classes/init.h"

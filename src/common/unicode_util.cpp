@@ -24,7 +24,7 @@
  *  Contributor(s): ______________________________________.
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "../common/classes/alloc.h"
 #include "../jrd/constants.h"
 #include "../common/unicode_util.h"

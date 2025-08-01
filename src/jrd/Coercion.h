@@ -28,7 +28,7 @@
 #ifndef JRD_COERCION_H
 #define JRD_COERCION_H
 
-#include "firebird.h"
+#include "scratchbird.h"
 
 #include "../common/classes/array.h"
 #include "../common/dsc.h"

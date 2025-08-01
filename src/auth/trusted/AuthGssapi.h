@@ -28,7 +28,7 @@
 #ifndef AUTH_GSSAPI_H
 #define AUTH_GSSAPI_H
 
-#include <firebird.h>
+#include <scratchbird.h>
 
 #ifdef TRUSTED_AUTH_GSSAPI
 

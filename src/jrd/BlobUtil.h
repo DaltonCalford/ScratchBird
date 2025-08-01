@@ -23,7 +23,7 @@
 #ifndef JRD_BLOB_UTIL_H
 #define JRD_BLOB_UTIL_H
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "firebird/Message.h"
 #include "../common/classes/fb_string.h"
 #include "../common/classes/ImplementHelper.h"

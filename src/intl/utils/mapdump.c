@@ -17,7 +17,7 @@
  * Contributor(s): ______________________________________.
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "cs_w1254.h"
 
 /*

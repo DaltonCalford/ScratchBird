@@ -51,7 +51,7 @@
 
 #include <string.h>
 #ifndef NIST_COMPLIANCY_TESTS
-#include "firebird.h"
+#include "scratchbird.h"
 #include "../../common/classes/alloc.h"
 #include "../../common/classes/array.h"
 #include "../../common/classes/fb_string.h"

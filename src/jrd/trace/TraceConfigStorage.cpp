@@ -25,7 +25,7 @@
  *
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 
 #include "../../common/classes/TempFile.h"
 #include "../../common/StatusArg.h"

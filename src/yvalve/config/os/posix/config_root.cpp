@@ -23,7 +23,7 @@
  *
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 
 #ifdef HAVE_UNISTD_H
 #include <unistd.h>

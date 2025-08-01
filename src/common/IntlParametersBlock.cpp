@@ -26,7 +26,7 @@
  *
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "../common/IntlParametersBlock.h"
 
 #include "firebird/impl/consts_pub.h"

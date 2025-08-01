@@ -24,7 +24,7 @@
  *  Contributor(s): ______________________________________.
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "../common/classes/semaphore.h"
 #include "../common/classes/alloc.h"
 #include "iberror.h"

@@ -5,10 +5,12 @@
 
 #include "SchemaPathCache.h"
 #include "../common/classes/init.h"
+#include "../common/classes/alloc.h"
 #include "../jrd/err_proto.h"
 #include <algorithm>
 #include <sstream>
 #include <cctype>
+#include <shared_mutex>
 
 namespace Jrd {
 
@@ -75,7 +77,7 @@ ParsedSchemaPath* SchemaPathCache::parseSchemaPath(const ScratchBird::string& pa
 
 ParsedSchemaPath* SchemaPathCache::parseSchemaPathInternal(const ScratchBird::string& path)
 {
-    ParsedSchemaPath* parsed = FB_NEW(pool) ParsedSchemaPath();
+    ParsedSchemaPath* parsed = new ParsedSchemaPath();
     parsed->fullPath = path;
     
     // Split by separator
@@ -86,12 +88,12 @@ ParsedSchemaPath* SchemaPathCache::parseSchemaPathInternal(const ScratchBird::st
     while (std::getline(ss, component, SCHEMA_SEPARATOR)) {
         if (component.empty()) {
             // Empty component (e.g., ".." in path)
-            FB_DELETE(pool, parsed);
+            delete parsed;
             return nullptr;
         }
         
         if (!validateSchemaComponent(ScratchBird::string(component.c_str()))) {
-            FB_DELETE(pool, parsed);
+            delete parsed;
             return nullptr;
         }
         
@@ -102,7 +104,7 @@ ParsedSchemaPath* SchemaPathCache::parseSchemaPathInternal(const ScratchBird::st
     
     // Check depth limits
     if (parsed->depth == 0 || parsed->depth > MAX_SCHEMA_DEPTH) {
-        FB_DELETE(pool, parsed);
+        delete parsed;
         return nullptr;
     }
     
@@ -137,10 +139,10 @@ bool SchemaPathCache::validateSchemaComponent(const ScratchBird::string& compone
 void SchemaPathCache::insertIntoCache(const ScratchBird::string& path, ParsedSchemaPath* parsed)
 {
     // Insert into path cache
-    pathCache.put(ScratchBird::Pair<ScratchBird::string, ParsedSchemaPath*>(path, parsed));
+    pathCache.put(path, parsed);
     
     // Insert into hash cache for fast lookup
-    hashCache.put(ScratchBird::Pair<size_t, ParsedSchemaPath*>(parsed->pathHash, parsed));
+    hashCache.put(parsed->pathHash, parsed);
     
     // Trim cache if it gets too large
     if (pathCache.count() > 2000) {
@@ -265,7 +267,7 @@ void SchemaPathCache::clearCache()
     // Delete all cached entries
     auto it = pathCache.begin();
     while (it != pathCache.end()) {
-        FB_DELETE(pool, (*it).second);
+        delete (*it).second;
         ++it;
     }
     
@@ -294,7 +296,7 @@ void SchemaPathCache::trimCache(size_t maxEntries)
         // Remove from both caches
         pathCache.remove((*it).first);
         hashCache.remove(hash);
-        FB_DELETE(pool, parsed);
+        delete parsed;
         
         removed++;
         it = pathCache.begin(); // Restart iteration after removal

@@ -63,7 +63,12 @@ libeditline : $(STATIC_LIB)/libedit.a
 
 $(STATIC_LIB)/libedit.a:
 	AR=ar
-	cd $(ROOT)/extern/editline; chmod +x configure; ./configure --enable-static --disable-shared --enable-widec
+	cd $(ROOT)/extern/editline; chmod +x configure; \
+	if [ "$(CC)" != "gcc" ]; then \
+		./configure --enable-static --disable-shared --enable-widec --host=$$(echo $(CC) | sed 's/-gcc//'); \
+	else \
+		./configure --enable-static --disable-shared --enable-widec; \
+	fi
 	$(MAKE) -C $(ROOT)/extern/editline
 	cp $(ROOT)/extern/editline/src/libedit.a $(STATIC_LIB)
 

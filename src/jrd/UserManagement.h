@@ -23,7 +23,7 @@
 #ifndef JRD_USER_MANAGEMENT_H
 #define JRD_USER_MANAGEMENT_H
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "../common/classes/objects_array.h"
 #include "../common/classes/fb_string.h"
 #include "../jrd/Monitoring.h"

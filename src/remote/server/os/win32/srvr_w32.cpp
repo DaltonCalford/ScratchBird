@@ -80,7 +80,7 @@
  * copyright (c) 1993, 1996 by Borland International
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <windows.h>

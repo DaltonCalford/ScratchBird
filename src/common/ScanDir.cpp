@@ -29,11 +29,11 @@
 //////////////////////////////////////////////////////////////////////
 
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "ScanDir.h"
 
 // In order to have readdir() working correct on solaris 10,
-// firebird.h should be included before sys/stat.h and unistd.
+// scratchbird.h should be included before sys/stat.h and unistd.
 // Luckily this seems to be the only place where we use readdir().
 // AP, 2007.
 

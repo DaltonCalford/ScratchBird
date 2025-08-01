@@ -20,7 +20,7 @@
  *  Contributor(s): ________________________________
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 
 #include "../dsql/DsqlBatch.h"
 

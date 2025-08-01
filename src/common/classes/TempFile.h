@@ -23,7 +23,7 @@
 #ifndef CLASSES_TEMP_FILE_H
 #define CLASSES_TEMP_FILE_H
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "../common/classes/fb_string.h"
 #include "../common/classes/File.h"
 #include "firebird/Interface.h"

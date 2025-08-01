@@ -26,7 +26,7 @@
  *
  */
 
-#include "../include/firebird.h"
+#include "../include/scratchbird.h"
 #include "UInt128.h"
 #include "DecFloat.h"
 #include "../common/status.h"

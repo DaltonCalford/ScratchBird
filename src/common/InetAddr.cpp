@@ -26,7 +26,7 @@
  *
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "InetAddr.h"
 #include <arpa/inet.h>
 #include <cstring>

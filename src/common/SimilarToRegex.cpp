@@ -18,7 +18,7 @@
  *
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "../common/SimilarToRegex.h"
 #include "../common/StatusArg.h"
 #include "../common/unicode_util.h"

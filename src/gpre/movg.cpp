@@ -25,7 +25,7 @@
 //
 //
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include <stdarg.h>
 
 #include "../common/dsc.h"

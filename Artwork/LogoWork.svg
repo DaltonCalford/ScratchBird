@@ -28,8 +28,8 @@
      inkscape:deskcolor="#d1d1d1"
      inkscape:document-units="mm"
      inkscape:zoom="1.2220607"
-     inkscape:cx="193.93473"
-     inkscape:cy="153.02023"
+     inkscape:cx="193.93472"
+     inkscape:cy="153.02022"
      inkscape:window-width="2226"
      inkscape:window-height="1223"
      inkscape:window-x="0"
@@ -82,7 +82,10 @@
              id="tspan4"
              x="42.816185"
              y="37.600891">This is for learning and testing purposes only</tspan></text></g></g><g
-       id="g8"><image
+       id="g8"
+       inkscape:export-filename="ScratchRobinLogoHeader.png"
+       inkscape:export-xdpi="96"
+       inkscape:export-ydpi="96"><image
          width="40.56012"
          height="40.973999"
          preserveAspectRatio="none"

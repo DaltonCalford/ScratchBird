@@ -43,7 +43,7 @@
  *
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 #ifdef TIME_WITH_SYS_TIME
 # include <sys/time.h>
 # include <time.h>

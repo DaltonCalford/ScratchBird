@@ -216,7 +216,7 @@ void Point::unpack(const UCHAR* buffer) {
 ULONG Point::makeIndexKey(vary* buf) const {
     if (!buf) return 0;
     
-    UCHAR* p = buf->vary_string;
+    UCHAR* p = reinterpret_cast<UCHAR*>(buf->vary_string);
     pack(p);
     
     buf->vary_length = getStorageSize();

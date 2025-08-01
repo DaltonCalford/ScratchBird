@@ -35,7 +35,7 @@
  *
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "../dsql/chars.h"
 #include "firebird/impl/sqlda_pub.h"
 #include "../yvalve/gds_proto.h"

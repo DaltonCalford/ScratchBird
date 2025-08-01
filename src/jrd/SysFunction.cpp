@@ -29,7 +29,7 @@
  *
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "../common/TimeZoneUtil.h"
 #include "../common/classes/VaryStr.h"
 #include "../common/classes/Hash.h"

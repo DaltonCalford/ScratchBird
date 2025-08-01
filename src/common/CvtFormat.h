@@ -1,7 +1,7 @@
 #ifndef COMMON_CVT_FORMAT_H
 #define COMMON_CVT_FORMAT_H
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "../common/cvt.h"
 
 ScratchBird::string CVT_format_datetime_to_string(const dsc* desc, const ScratchBird::string& format, ScratchBird::Callbacks* cb);

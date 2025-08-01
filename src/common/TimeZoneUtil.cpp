@@ -24,7 +24,7 @@
  *  Contributor(s): ______________________________________.
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "../common/TimeZoneUtil.h"
 #include "../common/TimeZones.h"
 #include "../common/StatusHolder.h"

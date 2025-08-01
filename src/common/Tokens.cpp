@@ -24,7 +24,7 @@
  *  Contributor(s): ______________________________________.
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "../common/Tokens.h"
 
 #include "../common/StatusArg.h"

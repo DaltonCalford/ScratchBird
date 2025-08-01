@@ -1,0 +1,52 @@
+// ScratchBird GBAK - Standard main entry point
+// Temporarily using standard Firebird-compatible gbak until enhancements are complete
+
+#include "../common/common.h"
+#include "burp.h"
+#include <iostream>
+#include <stdlib.h>
+
+#ifdef HAVE_LOCALE_H
+#include <locale.h>
+#endif
+
+extern "C" {
+
+int CLIB_ROUTINE main(int argc, char* argv[])
+{
+/**************************************
+ *
+ *	 m a i n
+ *
+ **************************************
+ *
+ * Functional description
+ *	Main entrypoint for ScratchBird GBAK utility.
+ *	This is a temporary standard implementation until
+ *	the enhanced version is fully integrated.
+ *
+ **************************************/
+
+#ifdef HAVE_LOCALE_H
+	// Set locale for proper character handling
+	setlocale(LC_CTYPE, "");
+#endif
+
+	try
+	{
+		// Initialize and run GBAK
+		return BURP_main(argc, argv);
+	}
+	catch (const std::exception& e)
+	{
+		std::cerr << "Fatal error: " << e.what() << std::endl;
+		return FINI_ERROR;
+	}
+	catch (...)
+	{
+		std::cerr << "Unknown fatal error in GBAK" << std::endl;
+		return FINI_ERROR;
+	}
+}
+
+} // extern "C"

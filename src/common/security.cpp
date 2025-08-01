@@ -23,7 +23,7 @@
  * 					Alex Peshkoff
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "../common/security.h"
 #include "../common/StatusArg.h"
 // #include "../utilities/gsec/gsec.h"		// gsec error codes - File not found, commented out

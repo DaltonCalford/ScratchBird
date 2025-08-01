@@ -49,7 +49,7 @@
  * copyright (c) 1986 by Groton Database Systems, Inc.
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "../common/os/divorce.h"
 #include "../common/classes/semaphore.h"
 #include "../common/os/os_utils.h"

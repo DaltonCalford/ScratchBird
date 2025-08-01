@@ -26,7 +26,7 @@
 //
 //
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include <stdio.h>
 #include <stdarg.h>
 #include <string.h>

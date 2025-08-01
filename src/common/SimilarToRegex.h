@@ -21,7 +21,7 @@
 #ifndef FB_COMMON_SIMILAR_TO_REGEX_H
 #define FB_COMMON_SIMILAR_TO_REGEX_H
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "re2/re2.h"
 #include "../common/classes/auto.h"
 #include "../common/classes/array.h"

@@ -19,7 +19,7 @@
  * Adriano dos Santos Fernandes
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "../jrd/Routine.h"
 #include "../jrd/Statement.h"
 #include "../jrd/Function.h"

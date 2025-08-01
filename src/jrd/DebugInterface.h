@@ -23,7 +23,7 @@
 #ifndef DEBUG_INTERFACE_H
 #define DEBUG_INTERFACE_H
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "../jrd/jrd.h"
 
 #include "../jrd/blb.h"

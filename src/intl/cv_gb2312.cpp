@@ -21,7 +21,7 @@
  * Contributor(s): ______________________________________.
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "../intl/ldcommon.h"
 #include "../intl/cv_gb2312.h"
 #include "../intl/cv_narrow.h"

@@ -28,7 +28,7 @@
 #ifndef TRACE_CONFIGURATION
 #define TRACE_CONFIGURATION
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "../../common/classes/auto.h"
 #include "../../common/classes/fb_string.h"
 #include "../../common/config/config_file.h"

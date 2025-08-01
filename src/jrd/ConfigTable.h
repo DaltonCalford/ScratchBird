@@ -23,7 +23,7 @@
 #ifndef JRD_CONFIG_TABLE_H
 #define JRD_CONFIG_TABLE_H
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "../common/classes/fb_string.h"
 #include "../jrd/Monitoring.h"
 #include "../jrd/recsrc/RecordSource.h"

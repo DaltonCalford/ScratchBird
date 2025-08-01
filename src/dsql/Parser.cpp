@@ -20,7 +20,7 @@
  *  Contributor(s): ______________________________________.
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include <ctype.h>
 #include <math.h>
 #include "../dsql/Parser.h"

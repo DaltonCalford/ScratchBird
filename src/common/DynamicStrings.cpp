@@ -26,7 +26,7 @@
  *
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 
 #include "DynamicStrings.h"
 #include "utils_proto.h"

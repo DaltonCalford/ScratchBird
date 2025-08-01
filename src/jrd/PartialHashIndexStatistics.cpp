@@ -14,7 +14,7 @@
  * 2025.07.24 - ScratchBird Partial Hash Index Statistics and Monitoring Implementation
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "PartialHashIndexStatistics.h"
 #include "PartialHashIndex.h"
 #include "Database.h"

@@ -22,7 +22,7 @@
  * Adriano dos Santos Fernandes
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "../common/IntlUtil.h"
 #include "../intl/ldcommon.h"
 #include "../intl/ld_proto.h"

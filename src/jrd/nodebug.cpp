@@ -21,7 +21,7 @@
  * Contributor(s): ______________________________________.
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 
 int DBG_supervisor(int /*arg*/)
 {

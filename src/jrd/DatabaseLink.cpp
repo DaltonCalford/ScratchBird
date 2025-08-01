@@ -354,8 +354,8 @@ void LinkManager::refreshSchemaCache()
 // LinkIterator implementation
 
 LinkManager::LinkIterator::LinkIterator(
-    ScratchBird::GenericMap<ScratchBird::Pair<ScratchBird::Left<ScratchBird::string, DatabaseLink*>>>::Iterator begin,
-    ScratchBird::GenericMap<ScratchBird::Pair<ScratchBird::Left<ScratchBird::string, DatabaseLink*>>>::Iterator end) :
+    ScratchBird::GenericMap<ScratchBird::LeftPooledPair<ScratchBird::string, DatabaseLink*>>::Iterator begin,
+    ScratchBird::GenericMap<ScratchBird::LeftPooledPair<ScratchBird::string, DatabaseLink*>>::Iterator end) :
     it(begin), end(end)
 {
 }

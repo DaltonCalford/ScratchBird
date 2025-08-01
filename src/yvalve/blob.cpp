@@ -29,7 +29,7 @@
  *
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "firebird/Message.h"
 #include "ibase.h"
 #include "../jrd/intl.h"

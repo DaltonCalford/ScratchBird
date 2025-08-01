@@ -22,7 +22,7 @@
  *
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "../dsql/DSqlDataTypeUtil.h"
 #include "../dsql/DsqlCompilerScratch.h"
 #include "../dsql/metd_proto.h"

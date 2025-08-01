@@ -41,7 +41,7 @@
  *
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include <unordered_map>
 #include <stdio.h>
 #include <string.h>

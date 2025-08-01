@@ -20,7 +20,7 @@
  *  Contributor(s): ______________________________________.
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "../common/classes/auto.h"
 #include "../common/classes/locks.h"
 #include "../common/classes/fb_string.h"

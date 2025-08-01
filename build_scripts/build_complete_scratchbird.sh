@@ -52,8 +52,22 @@ exec > >(tee -a "$BUILD_LOG") 2>&1
 
 log "Starting complete ScratchBird build process"
 
-# Step 1: Validate directories
-log "Step 1: Validating build directories..."
+# Step 1: Create and validate build directories
+log "Step 1: Creating and validating build directories..."
+
+# Create all necessary build directories first
+log "Creating comprehensive build directory structure..."
+if [ -f "build_scripts/create_build_directories.sh" ]; then
+    bash build_scripts/create_build_directories.sh create $BUILD_TARGET
+else
+    # Fallback: create basic directory structure
+    warning "create_build_directories.sh not found, using fallback method"
+    find src -type d | sed "s|src/|temp/$BUILD_TARGET/|g" | xargs mkdir -p
+    mkdir -p "gen/$BUILD_TARGET/scratchbird/{bin,lib,include,plugins}"
+fi
+success "Build directories created"
+
+# Validate directories
 if ! ./build_scripts/validate_build_directories.sh; then
     error "Directory validation failed"
     exit 1
@@ -80,7 +94,7 @@ log "Step 4: Building core ScratchBird components..."
 
 # Build order for proper dependency resolution
 CORE_TARGETS=(
-    "libsbclient"
+    "yvalve"
     "scratchbird"
 )
 
@@ -102,8 +116,8 @@ UTILITY_TARGETS=(
     "sb_gstat" 
     "sb_gfix"
     "sb_gsec"
-    "sb_nbackup"
-    "sb_trace"
+    "nbackup"
+    "sb_tracemgr"
 )
 
 for utility in "${UTILITY_TARGETS[@]}"; do

@@ -22,7 +22,7 @@
  *
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "../jrd/Attachment.h"
 #include "../jrd/MetaName.h"
 #include "../jrd/Database.h"

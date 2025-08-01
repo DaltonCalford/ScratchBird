@@ -23,7 +23,7 @@
  * 2003.02.02 Dmitry Yemanov: Implemented cached security database connection
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 
 #include "ibase.h"
 #include "iberror.h"

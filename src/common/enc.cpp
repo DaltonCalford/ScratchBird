@@ -4,7 +4,7 @@
  * 2002.10.30 Sean Leyne - Removed support for obsolete "PC_PLATFORM" define
  *
 */
-#include "firebird.h"
+#include "scratchbird.h"
 
 #include "../common/enc_proto.h"
 #include "../common/gdsassert.h"

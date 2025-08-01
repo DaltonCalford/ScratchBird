@@ -20,7 +20,7 @@
  *  Contributor(s): ______________________________________.
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "../common/classes/GenericMap.h"
 #include "../common/config/config_file.h"
 #include "../common/isc_proto.h"

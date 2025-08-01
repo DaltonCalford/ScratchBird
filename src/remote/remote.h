@@ -956,7 +956,7 @@ class KnownServerKey : public ScratchBird::AutoStorage
 {
 public:
 	ScratchBird::PathName type, plugins;
-	typedef ScratchBird::Pair<ScratchBird::Full<ScratchBird::PathName, ScratchBird::UCharBuffer> > PluginSpecific;
+	typedef ScratchBird::FullPooledPair<ScratchBird::PathName, ScratchBird::UCharBuffer> PluginSpecific;
 	ScratchBird::ObjectsArray<PluginSpecific> specificData;
 
 	KnownServerKey()
@@ -1081,7 +1081,7 @@ private:
 
 		class TriedPlugins
 		{
-			typedef ScratchBird::Pair<ScratchBird::Left<ScratchBird::PathName, ScratchBird::IKeyHolderPlugin*> > TriedPlugin;
+			typedef ScratchBird::LeftPooledPair<ScratchBird::PathName, ScratchBird::IKeyHolderPlugin*> TriedPlugin;
 			ScratchBird::ObjectsArray<TriedPlugin> data;
 
 		public:

@@ -25,7 +25,7 @@
  * 2002.10.29 Nickolay Samofatov: Added support for savepoints
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include <string.h>
 #include "../jrd/jrd.h"
 #include "../jrd/tra.h"

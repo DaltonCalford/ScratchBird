@@ -13,30 +13,35 @@ ScratchBird Alpha 0.6.0 provides enterprise-grade administrative features that e
 ### Key Administrative Features
 
 **Monitoring & Tracing**:
+
 - Real-time database monitoring with comprehensive metrics
 - Advanced tracing system with plugin-based analysis
 - Performance profiling with automated bottleneck detection
 - Web-based monitoring interface with live dashboards
 
 **Backup & Recovery**:
+
 - Multi-level incremental backup system (10 levels)
 - Compressed backups with multiple algorithms
 - Automated backup verification and chain management
 - Point-in-time recovery with transaction-level precision
 
 **Security Management**:
+
 - Advanced user authentication with plugin support
 - Comprehensive security auditing and anomaly detection
 - Role-based access control with fine-grained permissions
 - Database encryption with automated key management
 
 **Replication & Clustering**:
+
 - Schema-aware database replication
 - Automated conflict resolution and failover
 - Real-time replication monitoring and lag detection
 - Multi-master replication with consistency guarantees
 
 **Maintenance Automation**:
+
 - Automated database health monitoring
 - Intelligent index maintenance and optimization
 - Scheduled maintenance tasks with email notifications
@@ -65,13 +70,13 @@ public:
         uint64_t memoryUsage;            // Current memory usage
         double cpuUtilization;           // CPU utilization percentage
     };
-    
+
     // Capture current database state
     DatabaseState captureSnapshot() const;
-    
+
     // Monitor specific connection
     ConnectionMetrics getConnectionMetrics(ConnectionId id) const;
-    
+
     // Transaction monitoring
     TransactionMetrics getTransactionMetrics(TransactionId id) const;
 };
@@ -89,32 +94,32 @@ class RuntimeStatistics {
         std::atomic<uint64_t> pageReads{0};
         std::atomic<uint64_t> pageWrites{0};
         std::atomic<uint64_t> pageMarks{0};
-        
+
         // Record-level statistics
         std::atomic<uint64_t> recordReads{0};
         std::atomic<uint64_t> recordInserts{0};
         std::atomic<uint64_t> recordUpdates{0};
         std::atomic<uint64_t> recordDeletes{0};
-        
+
         // Index statistics
         std::atomic<uint64_t> indexReads{0};
         std::atomic<uint64_t> indexInserts{0};
         std::atomic<uint64_t> indexDeletes{0};
-        
+
         // Lock statistics
         std::atomic<uint64_t> lockAcquisitions{0};
         std::atomic<uint64_t> lockConflicts{0};
         std::atomic<uint64_t> lockWaits{0};
         std::atomic<uint64_t> deadlocks{0};
     };
-    
+
 public:
     // Real-time counter updates
     void updateCounters(const OperationMetrics& metrics);
-    
+
     // Performance report generation
     PerformanceReport generateReport(const TimeRange& range) const;
-    
+
     // Historical data collection
     void collectHistoricalData(const SamplingInterval& interval);
 };
@@ -137,7 +142,7 @@ public:
         bool includeStatements = true;      // Include SQL statements
         bool includePlans = true;          // Include execution plans
     };
-    
+
     struct RequestProfile {
         uint64_t requestId;               // Unique request ID
         std::chrono::nanoseconds duration; // Total execution time
@@ -147,13 +152,13 @@ public:
         std::string sqlText;              // SQL statement
         ExecutionPlan plan;               // Execution plan
     };
-    
+
     // Start profiling a request
     ProfileSession startProfiling(const RequestInfo& request);
-    
+
     // End profiling and collect metrics
     RequestProfile endProfiling(const ProfileSession& session);
-    
+
     // Generate profiling report
     ProfilingReport generateReport(const ReportCriteria& criteria);
 };
@@ -175,13 +180,13 @@ public:
         bool enableSecurity = true;       // Enable authentication
         std::string templatePath = "web/"; // Template directory
     };
-    
+
     // Start web interface
     void startWebInterface(const DashboardConfig& config);
-    
+
     // Register custom dashboard widgets
     void registerWidget(const WidgetDefinition& widget);
-    
+
     // Generate live data for dashboard
     json generateLiveData() const;
 };
@@ -231,7 +236,7 @@ public:
         ERROR_RAISED,         // Error occurred
         WARNING_RAISED        // Warning issued
     };
-    
+
     struct TraceSession {
         uint32_t sessionId;              // Unique session ID
         std::string sessionName;         // Session description
@@ -241,16 +246,16 @@ public:
         bool isActive;                   // Session active status
         SamplingRate samplingRate;       // Event sampling rate
     };
-    
+
     // Create new trace session
     TraceSession createSession(const TraceConfiguration& config);
-    
+
     // Start tracing
     void startTracing(uint32_t sessionId);
-    
+
     // Stop tracing
     void stopTracing(uint32_t sessionId);
-    
+
     // Log trace event
     void logEvent(const TraceEvent& event);
 };
@@ -271,7 +276,7 @@ public:
         ANOMALY_DETECTION,      // General anomaly detection
         BOTTLENECK_IDENTIFICATION // System bottleneck identification
     };
-    
+
     struct AnalysisReport {
         AnalysisType type;              // Analysis type performed
         std::vector<Finding> findings;   // Analysis findings
@@ -279,13 +284,13 @@ public:
         ConfidenceLevel confidence;      // Analysis confidence
         std::chrono::system_clock::time_point timestamp; // Report timestamp
     };
-    
+
     // Analyze trace data
     AnalysisReport analyzeTrace(
         const TraceData& data,
         const AnalysisType& type
     );
-    
+
     // Generate automated recommendations
     std::vector<Recommendation> generateRecommendations(
         const TraceData& data
@@ -318,7 +323,7 @@ public:
         INCREMENTAL_8 = 8,      // Level 8 incremental
         INCREMENTAL_9 = 9       // Level 9 incremental
     };
-    
+
     enum class CompressionAlgorithm {
         NO_COMPRESSION,
         GZIP_COMPRESSION,
@@ -326,7 +331,7 @@ public:
         ZSTD_COMPRESSION,
         BZIP2_COMPRESSION
     };
-    
+
     struct BackupConfiguration {
         BackupLevel level;                    // Backup level
         CompressionAlgorithm compression;     // Compression algorithm
@@ -336,13 +341,13 @@ public:
         bool enableEncryption;               // Encrypt backup
         std::string encryptionKey;           // Encryption key
     };
-    
+
     // Perform backup operation
     BackupResult performBackup(const BackupConfiguration& config);
-    
+
     // Verify backup integrity
     VerificationResult verifyBackup(const std::string& backupFile);
-    
+
     // Analyze backup chain
     ChainAnalysis analyzeBackupChain(const std::string& basePath);
 };
@@ -360,7 +365,7 @@ public:
         COMPREHENSIVE_VERIFICATION, // Full data validation
         FORENSIC_VERIFICATION      // Detailed forensic analysis
     };
-    
+
     struct VerificationResult {
         bool isValid;                     // Backup validity
         VerificationLevel level;          // Verification level used
@@ -369,13 +374,13 @@ public:
         BackupMetadata metadata;          // Backup metadata
         std::chrono::milliseconds duration; // Verification time
     };
-    
+
     // Verify backup with specified level
     VerificationResult verify(
         const std::string& backupFile,
         const VerificationLevel& level
     );
-    
+
     // Verify backup chain consistency
     ChainVerificationResult verifyChain(
         const std::vector<std::string>& backupChain
@@ -394,18 +399,18 @@ public:
         std::string backupFile;           // Base backup file
         std::vector<std::string> logFiles; // Required log files
     };
-    
+
     // Find optimal recovery point
     RecoveryPoint findRecoveryPoint(
         const std::chrono::system_clock::time_point& targetTime
     );
-    
+
     // Perform point-in-time recovery
     RecoveryResult performRecovery(
         const RecoveryPoint& point,
         const std::string& targetDatabase
     );
-    
+
     // Validate recovery possibility
     bool canRecoverToPoint(
         const std::chrono::system_clock::time_point& targetTime
@@ -434,7 +439,7 @@ public:
         CERTIFICATE_AUTHENTICATION, // X.509 certificate authentication
         MULTI_FACTOR_AUTHENTICATION // Multi-factor authentication
     };
-    
+
     struct UserCredentials {
         std::string username;            // User name
         std::string password;            // Password (if applicable)
@@ -442,16 +447,16 @@ public:
         std::string token;               // Authentication token
         AuthenticationMethod method;     // Authentication method
     };
-    
+
     // Authenticate user with specified method
     AuthenticationResult authenticate(const UserCredentials& credentials);
-    
+
     // Register authentication plugin
     void registerAuthenticationPlugin(
         const AuthenticationMethod& method,
         std::unique_ptr<AuthenticationPlugin> plugin
     );
-    
+
     // Enable multi-factor authentication
     void enableMultiFactorAuth(
         const std::string& username,
@@ -475,7 +480,7 @@ public:
         CONFIGURATION_CHANGE,    // Security configuration change
         SUSPICIOUS_ACTIVITY      // Anomalous behavior detected
     };
-    
+
     struct SecurityEvent {
         SecurityEventType type;          // Event type
         std::string username;            // User involved
@@ -484,15 +489,15 @@ public:
         std::chrono::system_clock::time_point timestamp; // Event timestamp
         SeverityLevel severity;         // Event severity
     };
-    
+
     // Log security event
     void logSecurityEvent(const SecurityEvent& event);
-    
+
     // Analyze security events for anomalies
     std::vector<SecurityAnomaly> analyzeSecurityEvents(
         const TimeRange& range
     );
-    
+
     // Generate security report
     SecurityReport generateSecurityReport(
         const ReportCriteria& criteria
@@ -514,29 +519,29 @@ public:
         AES_256_GCM,            // AES 256-bit GCM mode
         CHACHA20_POLY1305       // ChaCha20-Poly1305
     };
-    
+
     struct EncryptionKey {
         std::vector<uint8_t> keyData;    // Key material
         EncryptionAlgorithm algorithm;   // Encryption algorithm
         uint32_t keyVersion;             // Key version
         std::chrono::system_clock::time_point created; // Creation time
     };
-    
+
     // Generate new encryption key
     EncryptionKey generateKey(const EncryptionAlgorithm& algorithm);
-    
+
     // Encrypt database page
     std::vector<uint8_t> encryptPage(
         const std::vector<uint8_t>& pageData,
         const EncryptionKey& key
     );
-    
+
     // Decrypt database page
     std::vector<uint8_t> decryptPage(
         const std::vector<uint8_t>& encryptedData,
         const EncryptionKey& key
     );
-    
+
     // Rotate encryption keys
     void rotateKeys(const KeyRotationPolicy& policy);
 };
@@ -561,7 +566,7 @@ public:
         MULTI_MASTER,           // Multi-master with conflict resolution
         CASCADING_REPLICATION   // Cascading replication topology
     };
-    
+
     struct ReplicationConfiguration {
         ReplicationMode mode;            // Replication mode
         std::vector<std::string> remoteHosts; // Remote database hosts
@@ -571,16 +576,16 @@ public:
         ConflictResolutionStrategy strategy; // Conflict resolution strategy
         bool enableSchemaReplication;    // Replicate schema changes
     };
-    
+
     // Start replication with configuration
     void startReplication(const ReplicationConfiguration& config);
-    
+
     // Stop replication
     void stopReplication();
-    
+
     // Monitor replication lag
     ReplicationLag getReplicationLag() const;
-    
+
     // Resolve replication conflicts
     void resolveConflict(const ReplicationConflict& conflict);
 };
@@ -598,7 +603,7 @@ public:
         CUSTOM_RESOLUTION,     // Custom resolution logic
         MANUAL_RESOLUTION      // Manual intervention required
     };
-    
+
     struct ReplicationConflict {
         ConflictType type;              // Type of conflict
         TransactionId localTransaction;  // Local transaction ID
@@ -608,13 +613,13 @@ public:
         std::chrono::system_clock::time_point localTimestamp;  // Local timestamp
         std::chrono::system_clock::time_point remoteTimestamp; // Remote timestamp
     };
-    
+
     // Resolve conflict using strategy
     ResolutionResult resolveConflict(
         const ReplicationConflict& conflict,
         const ResolutionStrategy& strategy
     );
-    
+
     // Register custom conflict resolver
     void registerCustomResolver(
         const ConflictType& type,
@@ -645,7 +650,7 @@ public:
         bool enableAutoRestart{true};         // Enable auto-restart
         bool enableFailover{true};            // Enable failover
     };
-    
+
     enum class HealthStatus {
         HEALTHY,               // Database is healthy
         WARNING,               // Warning conditions detected
@@ -653,16 +658,16 @@ public:
         FAILED,                // Database failure detected
         RECOVERY               // Recovery in progress
     };
-    
+
     // Perform comprehensive health check
     HealthStatus performHealthCheck();
-    
+
     // Start continuous monitoring
     void startMonitoring(const HealthCheckConfiguration& config);
-    
+
     // Handle database failure
     void handleDatabaseFailure(const FailureInfo& failure);
-    
+
     // Attempt automatic recovery
     RecoveryResult attemptRecovery();
 };
@@ -683,7 +688,7 @@ public:
         THRESHOLD_MAINTENANCE,  // Threshold-based maintenance
         ADAPTIVE_MAINTENANCE    // Adaptive maintenance based on usage
     };
-    
+
     struct MaintenanceConfiguration {
         MaintenanceStrategy strategy;        // Maintenance strategy
         std::chrono::seconds maintenanceInterval{3600}; // Maintenance interval
@@ -692,18 +697,18 @@ public:
         bool enableAutoVacuum{true};       // Enable automatic vacuum
         bool enableAutoOptimize{true};     // Enable auto-optimization
     };
-    
+
     // Perform index maintenance
     MaintenanceResult performMaintenance(
         const IndexId& indexId,
         const MaintenanceConfiguration& config
     );
-    
+
     // Schedule automatic maintenance
     void scheduleAutomaticMaintenance(
         const MaintenanceConfiguration& config
     );
-    
+
     // Analyze index health
     IndexHealthReport analyzeIndexHealth(const IndexId& indexId);
 };
@@ -722,15 +727,15 @@ public:
         ImplementationDifficulty difficulty; // Implementation difficulty
         ConfidenceLevel confidence;        // Confidence in recommendation
     };
-    
+
     // Analyze database performance
     std::vector<TuningRecommendation> analyzePerformance();
-    
+
     // Implement automatic tuning
     void implementAutoTuning(
         const std::vector<TuningRecommendation>& recommendations
     );
-    
+
     // Monitor tuning effectiveness
     TuningEffectivenessReport monitorTuningEffectiveness();
 };
@@ -753,22 +758,22 @@ public:
         std::vector<std::string> validValues; // Valid value constraints
         std::string description;         // Parameter description
     };
-    
+
     // Get configuration parameter
     std::string getParameter(const std::string& name) const;
-    
+
     // Set configuration parameter
     void setParameter(const std::string& name, const std::string& value);
-    
+
     // Apply configuration changes
     void applyChanges();
-    
+
     // Validate configuration
     ValidationResult validateConfiguration() const;
-    
+
     // Export configuration
     void exportConfiguration(const std::string& filePath) const;
-    
+
     // Import configuration
     void importConfiguration(const std::string& filePath);
 };
@@ -789,7 +794,7 @@ public:
         ERROR,                 // Error condition
         CRITICAL               // Critical system failure
     };
-    
+
     enum class NotificationChannel {
         EMAIL,                 // Email notification
         SMS,                   // SMS notification
@@ -797,7 +802,7 @@ public:
         SNMP_TRAP,             // SNMP trap
         SYSTEM_LOG             // System log entry
     };
-    
+
     struct AlertRule {
         std::string name;              // Rule name
         std::string condition;         // Alert condition
@@ -806,16 +811,16 @@ public:
         std::vector<NotificationChannel> channels; // Notification channels
         bool enabled{true};            // Rule enabled status
     };
-    
+
     // Register alert rule
     void registerAlertRule(const AlertRule& rule);
-    
+
     // Send alert notification
     void sendAlert(
         const std::string& message,
         const AlertSeverity& severity
     );
-    
+
     // Configure notification channel
     void configureNotificationChannel(
         const NotificationChannel& channel,
@@ -831,31 +836,37 @@ public:
 ### Key Administrative Files
 
 **Monitoring and Tracing**:
+
 - `src/jrd/Monitoring.h` - Real-time database monitoring
 - `src/jrd/RuntimeStatistics.h` - Performance statistics collection
 - `src/jrd/trace/TraceManager.h` - Comprehensive tracing system
 - `src/utilities/sb_tracemgr_enhanced.h` - Enhanced trace management
 
 **Backup and Recovery**:
+
 - `src/utilities/sb_nbackup_enhanced.h` - Multi-level incremental backup
 - `src/utilities/GinIndexBackupSupport.h` - Specialized index backup
 - `src/jrd/PointInTimeRecovery.h` - Point-in-time recovery system
 
 **Security and Authentication**:
+
 - `src/common/security.h` - User management and authentication
 - `src/jrd/CryptoManager.h` - Database encryption system
 - `src/jrd/SecurityAuditor.h` - Security auditing and analysis
 
 **Replication and Clustering**:
+
 - `src/jrd/replication/Replicator.h` - Database replication engine
 - `src/jrd/replication/ConflictResolver.h` - Conflict resolution system
 
 **Maintenance and Automation**:
+
 - `src/utilities/sb_guard_enhanced.h` - Database guardian system
 - `src/jrd/GinIndexMaintenance.h` - Automated index maintenance
 - `src/utilities/PerformanceTuner.h` - Automated performance tuning
 
 **Service Management**:
+
 - `src/utilities/service_manager.h` - Service management infrastructure
 - `src/jrd/ConfigurationManager.h` - Dynamic configuration management
 - `src/utilities/AlertManager.h` - Multi-channel alerting system

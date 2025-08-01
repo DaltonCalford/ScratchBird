@@ -24,7 +24,7 @@
  *
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include <windows.h>
 #include <shellapi.h>
 #include <prsht.h>

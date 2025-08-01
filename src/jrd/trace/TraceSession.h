@@ -29,7 +29,7 @@
 
 #include <time.h>
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "../../common/classes/fb_string.h"
 #include "../../common/classes/ClumpletReader.h"
 

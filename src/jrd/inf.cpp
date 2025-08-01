@@ -35,7 +35,7 @@
  *      operation.
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include <string.h>
 #include "../jrd/jrd.h"
 #include "../jrd/tra.h"

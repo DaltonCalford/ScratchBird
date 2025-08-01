@@ -102,10 +102,10 @@ public:
     bool operator==(const Vector& other) const;
     bool operator!=(const Vector& other) const;
     
-    // Similarity/distance operators (PostgreSQL-compatible)
-    double operator<->(const Vector& other) const;  // Cosine distance
-    double operator<#>(const Vector& other) const;  // L2 distance
-    double operator<+>(const Vector& other) const;  // L1 distance
+    // Similarity/distance functions (PostgreSQL-compatible)
+    double cosineDistance(const Vector& other) const;  // Cosine distance
+    double l2Distance(const Vector& other) const;     // L2 distance  
+    double l1Distance(const Vector& other) const;     // L1 distance
     
     // Mathematical functions
     double magnitude() const;

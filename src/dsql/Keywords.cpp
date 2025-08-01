@@ -20,7 +20,7 @@
  *  Contributor(s): ______________________________________.
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "../dsql/Keywords.h"
 #include "../jrd/jrd.h"
 #include "../common/Token.h"

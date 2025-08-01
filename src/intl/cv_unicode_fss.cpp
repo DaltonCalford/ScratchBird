@@ -23,7 +23,7 @@
 
 // Note: all routines have cousins in jrd/intl.cpp
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "../intl/ldcommon.h"
 #include "cv_unicode_fss.h"
 #include "ld_proto.h"

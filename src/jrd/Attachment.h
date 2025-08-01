@@ -131,8 +131,8 @@ struct DSqlCacheItem
 	bool locked;
 };
 
-typedef ScratchBird::GenericMap<ScratchBird::Pair<ScratchBird::Full<
-	ScratchBird::string, DSqlCacheItem> > > DSqlCache;
+typedef ScratchBird::GenericMap<ScratchBird::FullPooledPair<
+	ScratchBird::string, DSqlCacheItem> > DSqlCache;
 
 
 struct DdlTriggerContext
@@ -577,8 +577,8 @@ public:
 	Attachment*	att_next;					// Next attachment to database
 	UserId*		att_user;					// User identification
 	UserId*		att_ss_user;				// User identification for SQL SECURITY actual user
-	ScratchBird::GenericMap<ScratchBird::Pair<ScratchBird::Left<
-		ScratchBird::MetaString, UserId*> > > att_user_ids;	// set of used UserIds
+	ScratchBird::GenericMap<ScratchBird::LeftPooledPair<
+		ScratchBird::MetaString, UserId*> > att_user_ids;	// set of used UserIds
 	jrd_tra*	att_transactions;			// Transactions belonging to attachment
 	jrd_tra*	att_dbkey_trans;			// transaction to control db-key scope
 	TraNumber	att_oldest_snapshot;		// GTT's record versions older than this can be garbage-collected
@@ -712,7 +712,7 @@ public:
 	Request* findSystemRequest(thread_db* tdbb, USHORT id, USHORT which);
 
 	ScratchBird::Array<CharSetContainer*>	att_charsets;		// intl character set descriptions
-	ScratchBird::GenericMap<ScratchBird::Pair<ScratchBird::Left<QualifiedName, USHORT>>> att_charset_ids;	// Character set ids
+	ScratchBird::GenericMap<ScratchBird::LeftPooledPair<QualifiedName, USHORT>> att_charset_ids;	// Character set ids
 
 	void releaseIntlObjects(thread_db* tdbb);			// defined in intl.cpp
 	void destroyIntlObjects(thread_db* tdbb);			// defined in intl.cpp

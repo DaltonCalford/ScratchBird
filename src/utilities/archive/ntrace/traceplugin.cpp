@@ -26,7 +26,7 @@
  *  2008 Khorsun Vladyslav
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "../common/classes/ImplementHelper.h"
 
 #include "TraceConfiguration.h"

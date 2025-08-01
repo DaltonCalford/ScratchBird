@@ -362,7 +362,7 @@ protected:
 	static void adjustLength(const char* const s, FB_SIZE_T& l);
 };
 
-typedef ScratchBird::Pair<ScratchBird::Full<MetaName, MetaName> > MetaNamePair;
+typedef ScratchBird::FullPooledPair<MetaName, MetaName> MetaNamePair;
 
 } // namespace Jrd
 

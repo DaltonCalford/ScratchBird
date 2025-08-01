@@ -28,7 +28,7 @@
  *
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include <stdio.h>
 #include <string.h>
 #include "ibase.h"			// fb_shutdown_callback() is used from it

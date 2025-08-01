@@ -1,6 +1,0 @@
-{
-global:
-	firebird_udr_plugin;
-local:
-	*;
-};

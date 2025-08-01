@@ -41,7 +41,7 @@
 #include "../common/classes/Switches.h"
 #include "../common/classes/ClumpletReader.h"
 #include "../common/classes/RefMutex.h"
-#include "../burp/split/spit.h"
+// #include "../burp/split/spit.h"  // DISABLED: spit.h not found
 #include "../jrd/status.h"
 
 namespace ScratchBird {
@@ -64,6 +64,7 @@ struct serv_entry
 const ULONG SERVICE_VERSION			= 2;
 
 const int SVC_STDOUT_BUFFER_SIZE	= 1024;
+const ULONG SVC_IO_BUFFER_SIZE		= 8192;
 
 // Flag of capabilities supported by the server
 //const ULONG WAL_SUPPORT				= 0x1L;		// Write Ahead Log

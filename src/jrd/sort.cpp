@@ -28,7 +28,7 @@
  *
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include <errno.h>
 #include <string.h>
 #include "../jrd/jrd.h"

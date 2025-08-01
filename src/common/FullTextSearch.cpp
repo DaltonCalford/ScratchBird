@@ -25,7 +25,7 @@
  *
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "FullTextSearch.h"
 #include <algorithm>
 #include <sstream>

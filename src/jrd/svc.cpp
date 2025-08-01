@@ -31,7 +31,7 @@
  * 2008		Alex Peshkoff - refactored services code for MT safe engine
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include <stdio.h>
 #include <string.h>
 #include "../common/file_params.h"

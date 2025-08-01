@@ -23,7 +23,7 @@
 #ifndef JRD_TEMP_SPACE_H
 #define JRD_TEMP_SPACE_H
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "../common/classes/fb_string.h"
 #include "../common/classes/array.h"
 #include "../common/classes/TempFile.h"

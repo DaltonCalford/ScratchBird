@@ -119,7 +119,7 @@ private:
 	ExternalDataSourceConfig m_config;
 	ExternalDataSourcePool* m_connectionPool;
 	
-	typedef ScratchBird::GenericMap<ScratchBird::Pair<ScratchBird::Left<XATransactionId, EDS::Connection*>>> XAConnectionMap;
+	typedef ScratchBird::GenericMap<ScratchBird::LeftPooledPair<XATransactionId, EDS::Connection*>> XAConnectionMap;
 	XAConnectionMap m_xaConnections;
 	ScratchBird::RefMutex m_mutex;
 	
@@ -162,10 +162,10 @@ public:
 	void getStatistics(ScratchBird::string& result);
 	
 private:
-	typedef ScratchBird::GenericMap<ScratchBird::Pair<ScratchBird::Left<ScratchBird::string, ExternalDataSourceConfig*>>> DataSourceConfigMap;
-	typedef ScratchBird::GenericMap<ScratchBird::Pair<ScratchBird::Left<ScratchBird::string, ExternalDataSourcePool*>>> ConnectionPoolMap;
-	typedef ScratchBird::GenericMap<ScratchBird::Pair<ScratchBird::Left<ScratchBird::string, ScratchBirdXAResourceManager*>>> XAResourceManagerMap;
-	typedef ScratchBird::GenericMap<ScratchBird::Pair<ScratchBird::Left<Jrd::jrd_tra*, XAGlobalTransaction*>>> TransactionMap;
+	typedef ScratchBird::GenericMap<ScratchBird::LeftPooledPair<ScratchBird::string, ExternalDataSourceConfig*>> DataSourceConfigMap;
+	typedef ScratchBird::GenericMap<ScratchBird::LeftPooledPair<ScratchBird::string, ExternalDataSourcePool*>> ConnectionPoolMap;
+	typedef ScratchBird::GenericMap<ScratchBird::LeftPooledPair<ScratchBird::string, ScratchBirdXAResourceManager*>> XAResourceManagerMap;
+	typedef ScratchBird::GenericMap<ScratchBird::LeftPooledPair<Jrd::jrd_tra*, XAGlobalTransaction*>> TransactionMap;
 	
 	DataSourceConfigMap m_dataSources;
 	ConnectionPoolMap m_connectionPools;

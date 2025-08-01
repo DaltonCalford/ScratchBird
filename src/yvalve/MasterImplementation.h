@@ -29,7 +29,7 @@
 #ifndef YVALVE_MASTER_IMPLEMENTATION_H
 #define YVALVE_MASTER_IMPLEMENTATION_H
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "firebird/Interface.h"
 #include "../yvalve/YObjects.h"
 #include "../yvalve/DistributedTransaction.h"

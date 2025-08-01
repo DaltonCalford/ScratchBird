@@ -91,7 +91,7 @@
  *
 */
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "iberror.h"
 #include "../jrd/jrd.h"
 #include "../jrd/err_proto.h"

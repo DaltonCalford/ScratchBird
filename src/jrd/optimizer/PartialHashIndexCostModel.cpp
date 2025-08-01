@@ -22,7 +22,7 @@
  * 2025.07.24 - ScratchBird Partial Hash Index Optimizer Integration
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "PartialHashIndexCostModel.h"
 #include "../PartialHashIndex.h" 
 #include "../jrd.h"

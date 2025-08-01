@@ -26,7 +26,7 @@
 // =====================================
 // Utility functions
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "../common/os/guid.h"
 
 #ifdef HAVE_SYS_TYPES_H

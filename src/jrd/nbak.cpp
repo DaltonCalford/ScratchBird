@@ -28,7 +28,7 @@
  *
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "jrd.h"
 #include "nbak.h"
 #include "ods.h"

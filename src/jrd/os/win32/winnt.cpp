@@ -33,7 +33,7 @@
  * 21-Nov-2001 Ann Harrison: Allow read sharing so gstat works
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include <string.h>
 #include "../jrd/jrd.h"
 #include "../jrd/os/pio.h"

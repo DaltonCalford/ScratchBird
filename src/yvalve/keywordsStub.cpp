@@ -24,7 +24,7 @@
  *  Adriano dos Santos Fernandes
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 
 #ifdef HAVE_STRING_H
 #include <string.h>

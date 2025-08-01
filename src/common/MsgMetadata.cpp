@@ -22,7 +22,7 @@
  *
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "../common/MsgMetadata.h"
 #include "../common/utils_proto.h"
 #include "../common/classes/MetaString.h"

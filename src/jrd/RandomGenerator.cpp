@@ -20,7 +20,7 @@
  *  Contributor(s): ______________________________________.
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "../jrd/RandomGenerator.h"
 #include "../common/os/guid.h"
 

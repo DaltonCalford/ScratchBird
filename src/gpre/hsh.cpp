@@ -27,7 +27,7 @@
 //
 //
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "../gpre/gpre.h"
 #include "../gpre/hsh_proto.h"
 #include "../gpre/gpre_proto.h"

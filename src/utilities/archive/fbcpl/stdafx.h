@@ -17,7 +17,7 @@
 
 #undef TRACE				// TRACE is used by ScratchBird too.
 
-#include "firebird.h"
+#include "scratchbird.h"
 
 #ifdef HAVE_MATH_H
 #include <math.h>

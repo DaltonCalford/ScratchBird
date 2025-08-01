@@ -24,7 +24,7 @@
  *  Contributor(s): ______________________________________.
  */
 
-#include "firebird.h"			// needed for get_long
+#include "scratchbird.h"			// needed for get_long
 #include "memory_routines.h"	// needed for get_long
 
 #include "../jrd/ods.h"

@@ -27,7 +27,7 @@
  *
  */
 
-#include "../../include/firebird.h"
+#include "../../include/scratchbird.h"
 #include "alloc.h"
 #include "tree.h"
 #include "sparse_bitmap.h"

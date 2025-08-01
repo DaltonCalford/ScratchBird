@@ -26,7 +26,7 @@
  *  2008 Khorsun Vladyslav
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 
 #include "../../jrd/trace/TraceManager.h"
 #include "../../jrd/trace/TraceObjects.h"

@@ -21,7 +21,7 @@
  * Contributor(s): ______________________________________.
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "fb_types.h"
 #include "../jrd/event.h"
 #include "../jrd/event_proto.h"

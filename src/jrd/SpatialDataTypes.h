@@ -1,11 +1,13 @@
 #ifndef SPATIAL_DATA_TYPES_H
 #define SPATIAL_DATA_TYPES_H
 
-#include "firebird.h"
-#include "common/classes/alloc.h"
-#include "common/classes/array.h"
-#include "common/classes/objects_array.h"
-#include "jrd/constants.h"
+#include "scratchbird.h"
+#include "../common/classes/alloc.h"
+#include "../common/classes/array.h"
+#include "../common/classes/objects_array.h"
+#include "../common/classes/ByteChunk.h"
+#include "../common/classes/fb_string.h"
+#include "constants.h"
 #include <vector>
 #include <string>
 #include <cmath>
@@ -122,7 +124,7 @@ public:
     virtual double getLength() const = 0;
     
     // Serialization
-    virtual string toWKT() const = 0;
+    virtual ScratchBird::string toWKT() const = 0;
     virtual ByteChunk* toWKB() const = 0;
     virtual ULONG getWKBSize() const = 0;
     
@@ -141,7 +143,7 @@ public:
     virtual bool isWithinDistance(const Geometry& other, double distance) const = 0;
     
     // Factory methods
-    static Geometry* fromWKT(const string& wkt, SRID srid, MemoryPool& pool);
+    static Geometry* fromWKT(const ScratchBird::string& wkt, SRID srid, MemoryPool& pool);
     static Geometry* fromWKB(const ByteChunk* wkb, MemoryPool& pool);
     
     // Type checking
@@ -183,7 +185,7 @@ public:
     virtual double getLength() const override { return 0.0; }
     
     // Serialization
-    virtual string toWKT() const override;
+    virtual ScratchBird::string toWKT() const override;
     virtual ByteChunk* toWKB() const override;
     virtual ULONG getWKBSize() const override;
     
@@ -237,7 +239,7 @@ public:
     virtual double getLength() const override;
     
     // Serialization
-    virtual string toWKT() const override;
+    virtual ScratchBird::string toWKT() const override;
     virtual ByteChunk* toWKB() const override;
     virtual ULONG getWKBSize() const override;
     
@@ -303,7 +305,7 @@ public:
     virtual double getLength() const override; // Perimeter
     
     // Serialization
-    virtual string toWKT() const override;
+    virtual ScratchBird::string toWKT() const override;
     virtual ByteChunk* toWKB() const override;
     virtual ULONG getWKBSize() const override;
     
@@ -353,7 +355,7 @@ public:
     virtual double getLength() const override;
     
     // Serialization  
-    virtual string toWKT() const override;
+    virtual ScratchBird::string toWKT() const override;
     virtual ByteChunk* toWKB() const override;
     virtual ULONG getWKBSize() const override;
     

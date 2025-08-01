@@ -20,7 +20,7 @@
  *  Contributor(s): ______________________________________.
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "../common/classes/init.h"
 #include "../common/config/config.h"
 #include "../common/config/config_file.h"

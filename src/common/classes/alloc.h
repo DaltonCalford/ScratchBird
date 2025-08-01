@@ -42,7 +42,7 @@
 #ifndef CLASSES_ALLOC_H
 #define CLASSES_ALLOC_H
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "fb_types.h"
 #include "../common/classes/locks.h"
 #include "../common/classes/auto.h"

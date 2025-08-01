@@ -6,7 +6,7 @@
 #ifndef JRD_SCHEMA_PATH_CACHE_H
 #define JRD_SCHEMA_PATH_CACHE_H
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "../common/classes/fb_string.h"
 #include "../common/classes/array.h"
 #include "../common/classes/GenericMap.h"
@@ -14,6 +14,7 @@
 #include "../jrd/constants.h"
 #include <vector>
 #include <mutex>
+#include <shared_mutex>
 
 namespace Jrd {
 
@@ -62,8 +63,8 @@ private:
     ScratchBird::MemoryPool& pool;
     
     // Cache structures
-    ScratchBird::GenericMap<ScratchBird::Pair<ScratchBird::string, ParsedSchemaPath*>> pathCache;
-    ScratchBird::GenericMap<ScratchBird::Pair<size_t, ParsedSchemaPath*>> hashCache;
+    ScratchBird::GenericMap<ScratchBird::LeftPooledPair<ScratchBird::string, ParsedSchemaPath*>> pathCache;
+    ScratchBird::GenericMap<ScratchBird::NonPooledPair<size_t, ParsedSchemaPath*>> hashCache;
     
     // Thread safety
     mutable std::shared_mutex cacheMutex;
