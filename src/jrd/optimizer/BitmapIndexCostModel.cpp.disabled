@@ -1,0 +1,630 @@
+/*
+ *	PROGRAM:	JRD Access Method
+ *	MODULE:		BitmapIndexCostModel.cpp
+ *	DESCRIPTION:	Cost model for bitmap index operations and query optimization
+ *
+ * The contents of this file are subject to the Interbase Public
+ * License Version 1.0 (the "License"); you may not use this file
+ * except in compliance with the License. You may obtain a copy
+ * of the License at http://www.Inprise.com/IPL.html
+ *
+ * Software distributed under the License is distributed on an
+ * "AS IS" basis, WITHOUT WARRANTY OF ANY KIND, either express
+ * or implied. See the License for the specific language governing
+ * rights and limitations under the License.
+ *
+ * The Original Code was created by Inprise Corporation
+ * and its predecessors. Portions created by Inprise Corporation are
+ * Copyright (C) Inprise Corporation.
+ *
+ * All Rights Reserved.
+ * 2025.07.23 - ScratchBird Bitmap Index Cost Model Implementation
+ */
+
+#include "scratchbird.h"
+#include "BitmapIndexCostModel.h"
+#include "../jrd/jrd.h"
+#include "../jrd/BitmapIndex.h"
+#include "../jrd/Relation.h"
+#include "../jrd/Database.h"
+#include "../jrd/req.h"
+#include "../jrd/CompilerScratch.h"
+#include "../common/StatusArg.h"
+#include "../dsql/BoolNodes.h"
+#include "../dsql/Nodes.h"
+
+using namespace Jrd;
+using namespace ScratchBird;
+
+// Static member initialization
+BitmapIndexCostModel* BitmapIndexOptimizerIntegration::s_global_cost_model = nullptr;
+
+//----------------------------
+// BitmapIndexCostModel Implementation
+//----------------------------
+
+BitmapIndexCostModel::BitmapIndexCostModel(MemoryPool* pool)
+	: m_pool(pool),
+	  m_statistics_cache(*pool),
+	  m_index_ids(*pool)
+{
+	fb_assert(pool);
+	
+	// Initialize with default cost factors
+	m_cost_factors = BitmapIndexCostFactors();
+}
+
+BitmapIndexCostModel::~BitmapIndexCostModel()
+{
+	// Cleanup cached statistics
+	m_statistics_cache.clear();
+	m_index_ids.clear();
+}
+
+//----------------------------
+// Main cost estimation methods
+//----------------------------
+
+BitmapQueryCostEstimate BitmapIndexCostModel::estimateQueryCost(thread_db* tdbb,
+																const index_desc* bitmap_index,
+																BitmapQueryType query_type,
+																const dsc* search_value,
+																const HalfStaticArray<dsc, 8>* search_values) const
+{
+	validateIndexDescriptor(bitmap_index);
+	validateQueryParameters(query_type, search_value);
+	
+	BitmapQueryCostEstimate estimate;
+	BitmapIndexStatistics stats = getIndexStatistics(tdbb, bitmap_index);
+	
+	// Calculate base costs based on query type
+	switch (query_type) {
+	case BITMAP_QUERY_EQUALITY:
+		estimate.total_cost = estimateEqualityScanCost(tdbb, bitmap_index, search_value);
+		estimate.bitmaps_to_process = 1;
+		estimate.estimated_selectivity = estimateSelectivity(tdbb, bitmap_index, query_type, search_value);
+		break;
+		
+	case BITMAP_QUERY_IN_LIST:
+		if (search_values) {
+			estimate.total_cost = estimateInListScanCost(tdbb, bitmap_index, *search_values);
+			estimate.bitmaps_to_process = search_values->getCount();
+			estimate.estimated_selectivity = estimateInListSelectivity(tdbb, bitmap_index, *search_values);
+		}
+		break;
+		
+	case BITMAP_QUERY_NULL:
+	case BITMAP_QUERY_NOT_NULL:
+		estimate.total_cost = estimateNullScanCost(tdbb, bitmap_index);
+		estimate.bitmaps_to_process = 1;
+		estimate.estimated_selectivity = estimateNullSelectivity(tdbb, bitmap_index);
+		break;
+		
+	case BITMAP_QUERY_RANGE:
+		// Range queries are complex for bitmap indexes
+		estimate.total_cost = stats.total_records * 0.5; // Fallback to partial scan cost
+		estimate.bitmaps_to_process = static_cast<ULONG>(stats.distinct_values * 0.3);
+		estimate.estimated_selectivity = 0.3; // Conservative estimate
+		break;
+		
+	default:
+		estimate.total_cost = stats.total_records; // Worst case - full scan
+		estimate.estimated_selectivity = 1.0;
+		break;
+	}
+	
+	// Break down costs
+	estimate.bitmap_access_cost = calculateBitmapAccessCost(stats, estimate.bitmaps_to_process);
+	estimate.bitmap_operation_cost = calculateBitmapOperationCost(BITMAP_OP_OR, 
+																 estimate.bitmaps_to_process,
+																 stats.average_bitmap_size);
+	
+	estimate.estimated_result_count = static_cast<ULONG>(stats.total_records * estimate.estimated_selectivity);
+	estimate.record_retrieval_cost = calculateRecordRetrievalCost(estimate.estimated_result_count);
+	estimate.memory_cost = calculateMemoryCost(stats.average_bitmap_size * estimate.bitmaps_to_process, true);
+	
+	// Calculate component costs
+	estimate.io_cost = estimate.bitmap_access_cost + (estimate.record_retrieval_cost * 0.7);
+	estimate.cpu_cost = estimate.bitmap_operation_cost + estimate.filtering_cost + (estimate.record_retrieval_cost * 0.3);
+	
+	// Apply cardinality factor
+	double cardinality_factor = calculateCardinalityFactor(stats.cardinality_ratio);
+	estimate.total_cost *= cardinality_factor;
+	
+	// Generate optimization recommendations
+	estimate.recommended_strategy = recommendExecutionStrategy(tdbb, bitmap_index, estimate.estimated_result_count);
+	estimate.recommend_compression = recommendCompression(tdbb, bitmap_index, stats.average_bitmap_size);
+	estimate.recommend_caching = (stats.cache_hit_rate > 50);
+	estimate.recommended_chunk_size = recommendChunkSize(tdbb, bitmap_index, 1024 * 1024); // 1MB default
+	
+	return estimate;
+}
+
+double BitmapIndexCostModel::estimateEqualityScanCost(thread_db* tdbb, const index_desc* bitmap_index,
+													 const dsc* search_value) const
+{
+	BitmapIndexStatistics stats = getIndexStatistics(tdbb, bitmap_index);
+	
+	// Base cost for equality scan
+	double base_cost = m_cost_factors.equality_scan_cost;
+	
+	// Add bitmap access cost
+	double bitmap_cost = calculateBitmapAccessCost(stats, 1);
+	
+	// Estimate result size based on value frequency
+	ULONG value_frequency = estimateValueFrequency(tdbb, bitmap_index, search_value);
+	double record_cost = calculateRecordRetrievalCost(value_frequency);
+	
+	// Apply cardinality factor
+	double cardinality_factor = calculateCardinalityFactor(stats.cardinality_ratio);
+	
+	return (base_cost + bitmap_cost + record_cost) * cardinality_factor;
+}
+
+double BitmapIndexCostModel::estimateInListScanCost(thread_db* tdbb, const index_desc* bitmap_index,
+												   const HalfStaticArray<dsc, 8>& search_values) const
+{
+	BitmapIndexStatistics stats = getIndexStatistics(tdbb, bitmap_index);
+	ULONG value_count = search_values.getCount();
+	
+	if (value_count == 0) {
+		return 0.0;
+	}
+	
+	// Base cost for IN list scan
+	double base_cost = m_cost_factors.in_list_scan_cost_base + 
+					  (m_cost_factors.in_list_scan_cost_per_value * value_count);
+	
+	// Bitmap access costs for each value
+	double bitmap_cost = calculateBitmapAccessCost(stats, value_count);
+	
+	// Bitmap union operation cost
+	double union_cost = calculateBitmapOperationCost(BITMAP_OP_OR, value_count, stats.average_bitmap_size);
+	
+	// Estimate total result size
+	ULONG total_results = 0;
+	for (size_t i = 0; i < search_values.getCount(); i++) {
+		total_results += estimateValueFrequency(tdbb, bitmap_index, &search_values[i]);
+	}
+	
+	double record_cost = calculateRecordRetrievalCost(total_results);
+	
+	// Apply cardinality factor
+	double cardinality_factor = calculateCardinalityFactor(stats.cardinality_ratio);
+	
+	return (base_cost + bitmap_cost + union_cost + record_cost) * cardinality_factor;
+}
+
+double BitmapIndexCostModel::estimateNullScanCost(thread_db* tdbb, const index_desc* bitmap_index) const
+{
+	BitmapIndexStatistics stats = getIndexStatistics(tdbb, bitmap_index);
+	
+	// Base cost for NULL scan
+	double base_cost = m_cost_factors.null_scan_cost;
+	
+	// Bitmap access cost for NULL bitmap
+	double bitmap_cost = calculateBitmapAccessCost(stats, 1);
+	
+	// Record retrieval cost based on NULL count
+	double record_cost = calculateRecordRetrievalCost(stats.null_count);
+	
+	return base_cost + bitmap_cost + record_cost;
+}
+
+double BitmapIndexCostModel::estimateRangeScanCost(thread_db* tdbb, const index_desc* bitmap_index,
+												  const dsc* min_value, const dsc* max_value) const
+{
+	BitmapIndexStatistics stats = getIndexStatistics(tdbb, bitmap_index);
+	
+	// Range queries are expensive for bitmap indexes
+	double base_cost = m_cost_factors.range_scan_cost;
+	
+	// Estimate number of values in range (conservative: 30% of distinct values)
+	ULONG values_in_range = static_cast<ULONG>(stats.distinct_values * 0.3);
+	
+	// Bitmap access costs
+	double bitmap_cost = calculateBitmapAccessCost(stats, values_in_range);
+	
+	// Union operation cost for combining bitmaps
+	double union_cost = calculateBitmapOperationCost(BITMAP_OP_OR, values_in_range, stats.average_bitmap_size);
+	
+	// Estimate result size (conservative: 30% of total records)
+	ULONG estimated_results = static_cast<ULONG>(stats.total_records * 0.3);
+	double record_cost = calculateRecordRetrievalCost(estimated_results);
+	
+	return base_cost + bitmap_cost + union_cost + record_cost;
+}
+
+//----------------------------
+// Selectivity estimation methods
+//----------------------------
+
+double BitmapIndexCostModel::estimateSelectivity(thread_db* tdbb, const index_desc* bitmap_index,
+												 BitmapQueryType query_type, const dsc* search_value) const
+{
+	BitmapIndexStatistics stats = getIndexStatistics(tdbb, bitmap_index);
+	
+	switch (query_type) {
+	case BITMAP_QUERY_EQUALITY:
+		if (search_value) {
+			ULONG value_frequency = estimateValueFrequency(tdbb, bitmap_index, search_value);
+			return estimateValueSelectivity(value_frequency, stats.total_records);
+		}
+		// Default selectivity for equality without specific value
+		return 1.0 / stats.distinct_values;
+		
+	case BITMAP_QUERY_NULL:
+		return static_cast<double>(stats.null_count) / stats.total_records;
+		
+	case BITMAP_QUERY_NOT_NULL:
+		return 1.0 - (static_cast<double>(stats.null_count) / stats.total_records);
+		
+	case BITMAP_QUERY_RANGE:
+		// Conservative estimate for range queries
+		return 0.3;
+		
+	default:
+		// Conservative fallback
+		return 0.1;
+	}
+}
+
+double BitmapIndexCostModel::estimateInListSelectivity(thread_db* tdbb, const index_desc* bitmap_index,
+													  const HalfStaticArray<dsc, 8>& search_values) const
+{
+	BitmapIndexStatistics stats = getIndexStatistics(tdbb, bitmap_index);
+	
+	if (search_values.isEmpty()) {
+		return 0.0;
+	}
+	
+	double total_selectivity = 0.0;
+	
+	for (size_t i = 0; i < search_values.getCount(); i++) {
+		ULONG value_frequency = estimateValueFrequency(tdbb, bitmap_index, &search_values[i]);
+		total_selectivity += estimateValueSelectivity(value_frequency, stats.total_records);
+	}
+	
+	// Cap at 1.0 (100% selectivity)
+	return MIN(total_selectivity, 1.0);
+}
+
+double BitmapIndexCostModel::estimateNullSelectivity(thread_db* tdbb, const index_desc* bitmap_index) const
+{
+	BitmapIndexStatistics stats = getIndexStatistics(tdbb, bitmap_index);
+	return static_cast<double>(stats.null_count) / stats.total_records;
+}
+
+//----------------------------
+// Index suitability assessment
+//----------------------------
+
+bool BitmapIndexCostModel::isBitmapIndexSuitable(thread_db* tdbb, const index_desc* bitmap_index,
+												 BitmapQueryType query_type, ULONG expected_result_count) const
+{
+	BitmapIndexStatistics stats = getIndexStatistics(tdbb, bitmap_index);
+	
+	// Check cardinality suitability
+	if (!isLowCardinality(stats.cardinality_ratio)) {
+		return false;
+	}
+	
+	// Check query type suitability
+	switch (query_type) {
+	case BITMAP_QUERY_EQUALITY:
+	case BITMAP_QUERY_IN_LIST:
+	case BITMAP_QUERY_NULL:
+	case BITMAP_QUERY_NOT_NULL:
+		return true; // These are well-suited for bitmap indexes
+		
+	case BITMAP_QUERY_RANGE:
+		// Range queries are less suitable
+		return stats.cardinality_ratio < 0.05; // Only for very low cardinality
+		
+	default:
+		return false;
+	}
+}
+
+bool BitmapIndexCostModel::shouldUseBitmapIndex(thread_db* tdbb, const index_desc* bitmap_index,
+											   const index_desc* alternative_index, BitmapQueryType query_type) const
+{
+	if (!alternative_index) {
+		return isBitmapIndexSuitable(tdbb, bitmap_index, query_type, 0);
+	}
+	
+	// Compare costs with alternative index
+	double bitmap_cost = estimateQueryCost(tdbb, bitmap_index, query_type).total_cost;
+	
+	// Estimate alternative index cost (simplified)
+	double alternative_cost = bitmap_cost * 1.5; // Placeholder - would need actual alternative cost model
+	
+	return bitmap_cost < alternative_cost;
+}
+
+//----------------------------
+// Strategy recommendation methods
+//----------------------------
+
+BitmapExecutionStrategy BitmapIndexCostModel::recommendExecutionStrategy(thread_db* tdbb,
+																		 const index_desc* bitmap_index,
+																		 ULONG expected_result_count) const
+{
+	BitmapIndexStatistics stats = getIndexStatistics(tdbb, bitmap_index);
+	
+	if (expected_result_count > PARALLEL_PROCESSING_THRESHOLD) {
+		return BITMAP_STRATEGY_PARALLEL;
+	} else if (expected_result_count > 1000) {
+		return BITMAP_STRATEGY_CHUNKED;
+	} else {
+		return BITMAP_STRATEGY_SEQUENTIAL;
+	}
+}
+
+bool BitmapIndexCostModel::recommendCompression(thread_db* tdbb, const index_desc* bitmap_index,
+											   ULONG expected_bitmap_size) const
+{
+	// Recommend compression for larger bitmaps or when memory is limited
+	return expected_bitmap_size > 4096; // 4KB threshold
+}
+
+ULONG BitmapIndexCostModel::recommendChunkSize(thread_db* tdbb, const index_desc* bitmap_index,
+											   ULONG available_memory) const
+{
+	// Recommend chunk size based on available memory
+	ULONG chunk_size = available_memory / 8; // Use 1/8 of available memory
+	
+	// Clamp to reasonable bounds
+	chunk_size = MAX(chunk_size, 1024);      // Minimum 1KB
+	chunk_size = MIN(chunk_size, 1024 * 1024); // Maximum 1MB
+	
+	return chunk_size;
+}
+
+//----------------------------
+// Statistics and configuration methods
+//----------------------------
+
+void BitmapIndexCostModel::updateCostFactors(const BitmapIndexCostFactors& factors)
+{
+	m_cost_factors = factors;
+}
+
+BitmapIndexCostFactors BitmapIndexCostModel::getCostFactors() const
+{
+	return m_cost_factors;
+}
+
+BitmapIndexStatistics BitmapIndexCostModel::getIndexStatistics(thread_db* tdbb,
+															   const index_desc* bitmap_index) const
+{
+	// Check cache first
+	for (size_t i = 0; i < m_index_ids.getCount(); i++) {
+		if (m_index_ids[i] == bitmap_index->idx_id) {
+			return m_statistics_cache[i];
+		}
+	}
+	
+	// Collect fresh statistics
+	BitmapIndexStatistics stats = collectIndexStatistics(tdbb, bitmap_index);
+	
+	// Cache the statistics (with size limit)
+	if (m_statistics_cache.getCount() < MAX_CACHED_STATISTICS) {
+		const_cast<BitmapIndexCostModel*>(this)->m_statistics_cache.add(stats);
+		const_cast<BitmapIndexCostModel*>(this)->m_index_ids.add(bitmap_index->idx_id);
+	}
+	
+	return stats;
+}
+
+//----------------------------
+// Private implementation methods
+//----------------------------
+
+BitmapIndexStatistics BitmapIndexCostModel::collectIndexStatistics(thread_db* tdbb,
+																   const index_desc* bitmap_index) const
+{
+	BitmapIndexStatistics stats;
+	
+	// Get basic relation statistics
+	jrd_rel* relation = MET_lookup_relation_id(tdbb, bitmap_index->idx_relation_id, false);
+	if (relation) {
+		stats.total_records = relation->rel_total_records;
+	}
+	
+	// Placeholder values - in a real implementation, these would be collected from the bitmap index
+	stats.distinct_values = MAX(1, stats.total_records / 10); // Assume 10% cardinality by default
+	stats.cardinality_ratio = static_cast<double>(stats.distinct_values) / stats.total_records;
+	stats.average_bitmap_size = 1024; // 1KB default
+	stats.largest_bitmap_size = 4096;  // 4KB default
+	stats.compression_ratio = DEFAULT_COMPRESSION_RATIO;
+	stats.cache_hit_rate = static_cast<ULONG>(DEFAULT_CACHE_HIT_RATIO * 100);
+	stats.null_count = stats.total_records / 20; // Assume 5% NULL values
+	
+	return stats;
+}
+
+double BitmapIndexCostModel::calculateBitmapAccessCost(const BitmapIndexStatistics& stats,
+													   ULONG bitmaps_to_access) const
+{
+	double cache_hit_ratio = stats.cache_hit_rate / 100.0;
+	double cache_miss_ratio = 1.0 - cache_hit_ratio;
+	
+	double hit_cost = bitmaps_to_access * cache_hit_ratio * m_cost_factors.bitmap_cache_hit_cost;
+	double miss_cost = bitmaps_to_access * cache_miss_ratio * m_cost_factors.bitmap_cache_miss_cost;
+	
+	return hit_cost + miss_cost;
+}
+
+double BitmapIndexCostModel::calculateBitmapOperationCost(BitmapOperation operation,
+														  ULONG bitmap_count, ULONG average_bitmap_size) const
+{
+	if (bitmap_count <= 1) {
+		return 0.0;
+	}
+	
+	double operation_cost;
+	switch (operation) {
+	case BITMAP_OP_AND:
+		operation_cost = m_cost_factors.bitmap_intersection_cost;
+		break;
+	case BITMAP_OP_OR:
+		operation_cost = m_cost_factors.bitmap_union_cost;
+		break;
+	default:
+		operation_cost = m_cost_factors.bitmap_union_cost;
+		break;
+	}
+	
+	// Cost scales with number of operations and bitmap size
+	return operation_cost * (bitmap_count - 1) * (average_bitmap_size / 1024.0);
+}
+
+double BitmapIndexCostModel::calculateMemoryCost(ULONG total_bitmap_size, bool compression_enabled) const
+{
+	double size_factor = total_bitmap_size / (1024.0 * 1024.0); // Convert to MB
+	double base_cost = size_factor * m_cost_factors.memory_allocation_cost;
+	
+	if (compression_enabled) {
+		double compression_cost = size_factor * m_cost_factors.compression_cpu_cost;
+		double compression_savings = size_factor * m_cost_factors.compression_io_savings;
+		return base_cost + compression_cost - compression_savings;
+	}
+	
+	return base_cost;
+}
+
+double BitmapIndexCostModel::calculateRecordRetrievalCost(ULONG estimated_result_count) const
+{
+	// Cost scales with number of records to retrieve
+	return estimated_result_count * 0.01; // 0.01 cost unit per record
+}
+
+double BitmapIndexCostModel::calculateCardinalityFactor(double cardinality_ratio) const
+{
+	if (isLowCardinality(cardinality_ratio)) {
+		return m_cost_factors.low_cardinality_bonus;
+	} else if (isHighCardinality(cardinality_ratio)) {
+		return m_cost_factors.high_cardinality_penalty;
+	} else {
+		return 1.0; // Neutral factor
+	}
+}
+
+bool BitmapIndexCostModel::isLowCardinality(double cardinality_ratio) const
+{
+	return cardinality_ratio <= m_cost_factors.cardinality_threshold_low;
+}
+
+bool BitmapIndexCostModel::isHighCardinality(double cardinality_ratio) const
+{
+	return cardinality_ratio >= m_cost_factors.cardinality_threshold_high;
+}
+
+ULONG BitmapIndexCostModel::estimateValueFrequency(thread_db* tdbb, const index_desc* bitmap_index,
+												   const dsc* value) const
+{
+	BitmapIndexStatistics stats = getIndexStatistics(tdbb, bitmap_index);
+	
+	// Simple uniform distribution assumption
+	if (stats.distinct_values > 0) {
+		return stats.total_records / stats.distinct_values;
+	}
+	
+	return 1;
+}
+
+double BitmapIndexCostModel::estimateValueSelectivity(ULONG value_frequency, ULONG total_records) const
+{
+	if (total_records == 0) {
+		return 0.0;
+	}
+	
+	return static_cast<double>(value_frequency) / total_records;
+}
+
+void BitmapIndexCostModel::validateIndexDescriptor(const index_desc* bitmap_index) const
+{
+	if (!bitmap_index) {
+		status_exception::raise(Arg::Gds(isc_invalid_index));
+	}
+	
+	if (bitmap_index->idx_itype != idx_bitmap) {
+		status_exception::raise(Arg::Gds(isc_invalid_index_type));
+	}
+}
+
+void BitmapIndexCostModel::validateQueryParameters(BitmapQueryType query_type, const dsc* search_value) const
+{
+	// Validation logic for query parameters
+	if (query_type == BITMAP_QUERY_EQUALITY && !search_value) {
+		status_exception::raise(Arg::Gds(isc_invalid_query_parameter));
+	}
+}
+
+//----------------------------
+// BitmapIndexCostModelFactory Implementation
+//----------------------------
+
+BitmapIndexCostModel* BitmapIndexCostModelFactory::createCostModel(MemoryPool* pool)
+{
+	return FB_NEW_POOL(*pool) BitmapIndexCostModel(pool);
+}
+
+BitmapIndexCostModel* BitmapIndexCostModelFactory::createOptimizedCostModel(MemoryPool* pool,
+																			const BitmapIndexCostFactors& factors)
+{
+	BitmapIndexCostModel* model = createCostModel(pool);
+	model->updateCostFactors(factors);
+	return model;
+}
+
+BitmapIndexCostFactors BitmapIndexCostModelFactory::getDefaultCostFactors()
+{
+	return BitmapIndexCostFactors();
+}
+
+//----------------------------
+// BitmapIndexOptimizerIntegration Implementation
+//----------------------------
+
+void BitmapIndexOptimizerIntegration::registerBitmapIndexCostModel(BitmapIndexCostModel* cost_model)
+{
+	s_global_cost_model = cost_model;
+}
+
+BitmapIndexCostModel* BitmapIndexOptimizerIntegration::getBitmapIndexCostModel()
+{
+	return s_global_cost_model;
+}
+
+double BitmapIndexOptimizerIntegration::calculateBitmapIndexCost(thread_db* tdbb, CompilerScratch* csb,
+																const index_desc* bitmap_index,
+																BoolExprNode* condition)
+{
+	if (!s_global_cost_model) {
+		return 1000.0; // Fallback cost
+	}
+	
+	// Extract query type and parameters from condition
+	BitmapQueryType query_type = BITMAP_QUERY_EQUALITY; // Simplified
+	
+	BitmapQueryCostEstimate estimate = s_global_cost_model->estimateQueryCost(
+		tdbb, bitmap_index, query_type, nullptr, nullptr);
+	
+	return estimate.total_cost;
+}
+
+bool BitmapIndexOptimizerIntegration::shouldPreferBitmapIndex(thread_db* tdbb, CompilerScratch* csb,
+															 const index_desc* bitmap_index,
+															 const index_desc* alternative_index,
+															 BoolExprNode* condition)
+{
+	if (!s_global_cost_model) {
+		return false; // Conservative fallback
+	}
+	
+	BitmapQueryType query_type = BITMAP_QUERY_EQUALITY; // Simplified
+	
+	return s_global_cost_model->shouldUseBitmapIndex(tdbb, bitmap_index, alternative_index, query_type);
+}

@@ -22,7 +22,7 @@
  * Adriano dos Santos Fernandes
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include <windows.h>
 #include "../../../common/dllinst.h"
 #include "../../../yvalve/utl_proto.h"

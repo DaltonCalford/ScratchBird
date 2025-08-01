@@ -24,7 +24,7 @@
 #ifndef JRD_VALIDATION_H
 #define JRD_VALIDATION_H
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "fb_types.h"
 
 #include "../common/classes/array.h"

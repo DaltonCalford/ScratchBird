@@ -22,7 +22,7 @@
  */
 
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include <stdio.h>
 #include <errno.h>
 #include <string.h>

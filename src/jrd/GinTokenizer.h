@@ -200,7 +200,7 @@ public:
 	
 private:
 	LanguageCode m_language;
-	ScratchBird::GenericMap<Pair<ScratchBird::string, bool>> m_stop_words;
+	ScratchBird::GenericMap<ScratchBird::LeftPooledPair<ScratchBird::string, bool>> m_stop_words;
 	
 	// Language-specific processing methods
 	void initializeStopWords();
@@ -224,7 +224,7 @@ private:
 struct TokenizerConfig
 {
 	// Tokenization options
-	GinTokenizer::TokenizerType type;
+	TokenizerType type;
 	USHORT min_token_length;
 	USHORT max_token_length;
 	bool case_sensitive;
@@ -393,7 +393,7 @@ private:
 	mutable TokenizationStats m_cumulative_stats;
 	
 	// Token cache for performance
-	mutable ScratchBird::GenericMap<Pair<ScratchBird::string, TokenList>> m_token_cache;
+	mutable ScratchBird::GenericMap<ScratchBird::LeftPooledPair<ScratchBird::string, TokenList>> m_token_cache;
 	mutable ULONG m_cache_hits;
 	mutable ULONG m_cache_misses;
 	

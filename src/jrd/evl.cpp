@@ -60,7 +60,7 @@
  * Adriano dos Santos Fernandes
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include <string.h>
 #include <math.h>
 #include "../dsql/Nodes.h"

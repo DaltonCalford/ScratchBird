@@ -30,12 +30,12 @@
 #include "../jrd/ods.h"
 #include "../jrd/RecordNumber.h"
 #include "../common/classes/array.h"
+#include "../common/dsc.h"
 
 namespace Jrd {
 
 // Forward declarations
 class thread_db;
-struct dsc;
 
 //----------------------------
 // Collision Resolution Strategy
@@ -168,6 +168,7 @@ public:
 
 	// Utility methods
 	USHORT calculateEntrySize(const dsc* key);
+	USHORT calculateKeySize(const dsc* key);
 	USHORT calculateRequiredSpace(const dsc* key);
 	bool hasSpaceForEntry(const HashBucketHeader* bucket, USHORT entry_size);
 	bool compareKeys(const dsc* key1, const UCHAR* key2_data, USHORT key2_length);

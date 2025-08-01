@@ -20,7 +20,7 @@
  * Contributor(s): ______________________________________.
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "../jrd/rpb_chain.h"
 
 using namespace Jrd;

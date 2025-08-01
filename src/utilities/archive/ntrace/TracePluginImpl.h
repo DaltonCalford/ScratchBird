@@ -29,7 +29,7 @@
 #ifndef TRACEPLUGINIMPL_H
 #define TRACEPLUGINIMPL_H
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "../../jrd/ntrace.h"
 #include "TracePluginConfig.h"
 #include "../../common/SimilarToRegex.h"

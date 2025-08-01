@@ -1,6 +1,6 @@
 /*
  *	PROGRAM:		ScratchBird RDBMS definitions
- *	MODULE:			firebird.h
+ *	MODULE:			scratchbird.h
  *	DESCRIPTION:	Main ScratchBird header.
  *
  *  The contents of this file are subject to the Initial

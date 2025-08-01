@@ -34,7 +34,7 @@
 #include <stdarg.h>
 #include <utility>
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "fb_types.h"
 #include "sb_exception.h"
 #include "../common/classes/alloc.h"

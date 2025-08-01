@@ -19,7 +19,7 @@
  * 2022.02.07 Adriano dos Santos Fernandes: Refactored from dsql.cpp
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "../dsql/DsqlStatements.h"
 #include "../dsql/dsql.h"
 #include "../dsql/Nodes.h"

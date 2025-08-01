@@ -24,7 +24,7 @@
  *  Contributor(s): ______________________________________.
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "../jrd/DataTypeUtil.h"
 #include "../jrd/SysFunction.h"
 #include "../jrd/align.h"

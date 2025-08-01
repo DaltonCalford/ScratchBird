@@ -18,7 +18,7 @@
  * Adriano dos Santos Fernandes
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "../dsql/DsqlCompilerScratch.h"
 #include "../dsql/DdlNodes.h"
 #include "../dsql/ExprNodes.h"

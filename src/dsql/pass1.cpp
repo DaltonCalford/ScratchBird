@@ -138,7 +138,7 @@
  *
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include <numeric>
 #include <string.h>
 #include <stdio.h>

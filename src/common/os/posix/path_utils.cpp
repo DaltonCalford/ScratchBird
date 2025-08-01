@@ -25,7 +25,7 @@
  *
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "../common/os/os_utils.h"
 #include "../common/os/path_utils.h"
 #include <sys/types.h>

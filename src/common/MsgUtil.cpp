@@ -20,7 +20,7 @@
  *  Contributor(s): ______________________________________.
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "firebird/impl/msg_helper.h"
 #include "MsgUtil.h"
 #include "msg_encode.h"

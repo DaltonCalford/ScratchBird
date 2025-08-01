@@ -30,7 +30,7 @@
 #ifndef JRD_DATABASE_H
 #define JRD_DATABASE_H
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "../jrd/cch.h"
 #include "../common/gdsassert.h"
 #include "../common/dsc.h"

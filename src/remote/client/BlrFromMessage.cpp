@@ -26,7 +26,7 @@
  *
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "BlrFromMessage.h"
 #include "../common/StatusHolder.h"
 #include "../jrd/align.h"

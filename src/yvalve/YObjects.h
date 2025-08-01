@@ -26,7 +26,7 @@
 #ifndef YVALVE_Y_OBJECTS_H
 #define YVALVE_Y_OBJECTS_H
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "firebird/Interface.h"
 #include "iberror.h"
 #include "../common/StatusHolder.h"

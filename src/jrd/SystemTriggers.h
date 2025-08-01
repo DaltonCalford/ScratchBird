@@ -23,7 +23,7 @@
 #ifndef JRD_SYSTEM_TRIGGERS_H
 #define JRD_SYSTEM_TRIGGERS_H
 
-#include "firebird.h"
+#include "scratchbird.h"
 
 namespace Jrd
 {

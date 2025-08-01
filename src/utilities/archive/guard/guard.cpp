@@ -21,7 +21,7 @@
 
 // contains the main() and not shared routines for fbguard
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include <stdio.h>
 
 #ifdef HAVE_STRING_H

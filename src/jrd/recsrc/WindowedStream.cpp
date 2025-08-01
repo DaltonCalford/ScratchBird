@@ -20,7 +20,7 @@
  *  Contributor(s): ______________________________________.
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "../dsql/Nodes.h"
 #include "../jrd/mov_proto.h"
 #include "../jrd/evl_proto.h"

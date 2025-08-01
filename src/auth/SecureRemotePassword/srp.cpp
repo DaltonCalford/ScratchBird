@@ -1,4 +1,4 @@
-#include "firebird.h"
+#include "scratchbird.h"
 #include "iberror.h"
 
 #include "../auth/SecureRemotePassword/srp.h"

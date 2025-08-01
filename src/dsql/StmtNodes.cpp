@@ -19,7 +19,7 @@
  */
 
 #include <algorithm>
-#include "firebird.h"
+#include "scratchbird.h"
 #include "firebird/impl/blr.h"
 #include "../common/TimeZoneUtil.h"
 #include "../common/classes/BaseStream.h"

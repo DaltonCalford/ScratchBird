@@ -27,7 +27,7 @@
  *
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include <string>
 #include <vector>
 #include <stdio.h>

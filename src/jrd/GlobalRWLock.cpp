@@ -28,7 +28,7 @@
  *
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "GlobalRWLock.h"
 #include "../lock/lock_proto.h"
 #include "../common/isc_proto.h"

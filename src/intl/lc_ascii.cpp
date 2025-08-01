@@ -21,7 +21,7 @@
  * Contributor(s): ______________________________________.
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "../common/classes/alloc.h"
 #include "../intl/ldcommon.h"
 #include "../common/CharSet.h"

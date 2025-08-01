@@ -35,7 +35,7 @@
  *
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "memory_routines.h"
 #include <string.h>
 

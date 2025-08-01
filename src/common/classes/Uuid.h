@@ -23,7 +23,7 @@
 #ifndef CLASSES_UUID_H
 #define CLASSES_UUID_H
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "../common/gdsassert.h"
 #include "../common/os/guid.h"
 #include <algorithm>

@@ -29,7 +29,7 @@
  *								   check_duplicates() to ignore NULL key duplicates.
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include <string.h>
 #include "../jrd/jrd.h"
 #include "../jrd/val.h"

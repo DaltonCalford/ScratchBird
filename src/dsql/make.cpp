@@ -33,7 +33,7 @@
  * Adriano dos Santos Fernandes
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include <ctype.h>
 #include <string.h>
 #include "../dsql/dsql.h"

@@ -25,7 +25,7 @@
  *
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "../FileObject.h"
 #include <errno.h>
 #include <sys/types.h>

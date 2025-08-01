@@ -25,7 +25,7 @@
  *  Contributor(s): ______________________________________.
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "../common/Auth.h"
 #include "ibase.h"
 #include "../common/classes/ImplementHelper.h"

@@ -31,7 +31,7 @@ void sha_final(unsigned char [SHA_DIGESTSIZE], SHA_INFO *);
 
 #define SHA_VERSION 1
 
-#include "firebird.h"
+#include "scratchbird.h"
 
 #ifdef WORDS_BIGENDIAN
 #  if SIZEOF_LONG == 4

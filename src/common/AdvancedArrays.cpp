@@ -25,7 +25,7 @@
  *
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "AdvancedArrays.h"
 #include <algorithm>
 #include <sstream>

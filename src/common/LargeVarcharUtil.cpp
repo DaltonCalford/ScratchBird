@@ -25,7 +25,7 @@
  *
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "../include/sb_large_varchar.h"
 #include <cstring>
 #include <algorithm>

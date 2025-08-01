@@ -23,7 +23,7 @@
 #ifndef JRD_GARBAGE_COLLECTOR_H
 #define JRD_GARBAGE_COLLECTOR_H
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "../common/classes/array.h"
 #include "../common/classes/GenericMap.h"
 #include "../common/classes/SyncObject.h"

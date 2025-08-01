@@ -1,5 +1,5 @@
 
-#include "firebird.h"
+#include "scratchbird.h"
 
 #include "ibase.h"
 #include "../common/classes/ClumpletWriter.h"

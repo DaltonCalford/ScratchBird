@@ -24,7 +24,7 @@
  *  Contributor(s): ______________________________________.
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "../jrd/IntlManager.h"
 #include "../common/os/mod_loader.h"
 #include "../common/intlobj_new.h"

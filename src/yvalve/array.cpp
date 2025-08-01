@@ -32,7 +32,7 @@
  *
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "firebird/Message.h"
 #include <string.h>
 #include <stdarg.h>

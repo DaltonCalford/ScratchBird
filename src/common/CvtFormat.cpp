@@ -25,7 +25,7 @@
  *
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "../common/gdsassert.h"
 #include "../common/classes/auto.h"
 #include "../common/classes/fb_string.h"

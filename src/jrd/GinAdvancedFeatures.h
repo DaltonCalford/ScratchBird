@@ -24,7 +24,7 @@
 #ifndef JRD_GIN_ADVANCED_FEATURES_H
 #define JRD_GIN_ADVANCED_FEATURES_H
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "../common/classes/fb_string.h"
 #include "../common/classes/array.h"
 #include "../common/classes/GenericMap.h"

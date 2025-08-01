@@ -18,7 +18,7 @@
  * Adriano dos Santos Fernandes
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "../jrd/align.h"
 #include "../jrd/RecordSourceNodes.h"
 #include "../jrd/DataTypeUtil.h"

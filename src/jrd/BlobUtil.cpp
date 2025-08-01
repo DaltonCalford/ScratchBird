@@ -20,7 +20,7 @@
  *  Contributor(s): ______________________________________.
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "../jrd/BlobUtil.h"
 #include "../jrd/blb.h"
 #include "../jrd/tra.h"

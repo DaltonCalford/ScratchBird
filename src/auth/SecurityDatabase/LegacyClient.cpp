@@ -25,7 +25,7 @@
  *
  *
  */
-#include "firebird.h"
+#include "scratchbird.h"
 #include "ibase.h"
 #include "../auth/SecurityDatabase/LegacyClient.h"
 #include "../auth/SecurityDatabase/LegacyHash.h"

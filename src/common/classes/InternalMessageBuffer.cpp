@@ -25,7 +25,7 @@
  *
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "../common/classes/InternalMessageBuffer.h"
 #include "../common/utils_proto.h"
 #include "../intl/charsets.h"

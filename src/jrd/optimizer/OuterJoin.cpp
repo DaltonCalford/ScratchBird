@@ -21,7 +21,7 @@
  *
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 
 #include "../jrd/jrd.h"
 #include "../jrd/cmp_proto.h"

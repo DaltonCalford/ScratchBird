@@ -29,7 +29,7 @@
 
 #define FB_DLL_INST
 
-#include <firebird.h>
+#include <scratchbird.h>
 
 #include <windows.h>
 

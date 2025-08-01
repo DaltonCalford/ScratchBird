@@ -18,7 +18,7 @@
  * Contributor(s): Michal Bukovjan_________________.
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "../intl/ldcommon.h"
 #include "lc_narrow.h"
 #include "lc_dos.h"

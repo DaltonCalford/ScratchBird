@@ -29,7 +29,7 @@
 #ifndef CLASSES_LOCKS_H
 #define CLASSES_LOCKS_H
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "sb_exception.h"
 #include "../common/gdsassert.h"
 #include "../common/classes/Reasons.h"

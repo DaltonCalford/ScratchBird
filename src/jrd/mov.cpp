@@ -26,7 +26,7 @@
  * Adriano dos Santos Fernandes
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "../common/gdsassert.h"
 #include "../common/classes/VaryStr.h"
 #include "../jrd/jrd.h"

@@ -21,7 +21,7 @@
  * Contributor(s): ______________________________________.
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 
 #ifdef HAVE_TIMES
 #include <sys/types.h>

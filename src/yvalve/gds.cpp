@@ -35,7 +35,7 @@
 //#define ISC_TIME_SECONDS_PRECISION		10000L
 //#define ISC_TIME_SECONDS_PRECISION_SCALE	-4
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "firebird/impl/msg_helper.h"
 #include <stdio.h>
 #include <stdlib.h>

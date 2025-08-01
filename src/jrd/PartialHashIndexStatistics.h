@@ -17,7 +17,7 @@
 #ifndef JRD_PARTIAL_HASH_INDEX_STATISTICS_H
 #define JRD_PARTIAL_HASH_INDEX_STATISTICS_H
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "jrd.h"
 #include "constants.h"
 #include "../common/classes/array.h"

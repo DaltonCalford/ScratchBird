@@ -20,7 +20,7 @@
  *
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "../common/classes/Hash.h"
 #include "../common/dsc.h"
 

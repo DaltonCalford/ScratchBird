@@ -22,7 +22,7 @@
  * Contributor(s): ______________________________________.
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include <stdlib.h>
 #include <string.h>
 #include "../yvalve/prepa_proto.h"

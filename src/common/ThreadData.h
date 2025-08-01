@@ -30,7 +30,7 @@
 #ifndef JRD_THREADDATA_H
 #define JRD_THREADDATA_H
 
-#include "firebird.h"
+#include "scratchbird.h"
 
 #ifdef USE_POSIX_THREADS
 #include "sb_pthread.h"

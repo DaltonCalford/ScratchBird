@@ -24,7 +24,7 @@
  *  Contributor(s): ______________________________________.
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 
 #include "../common/classes/ImplementHelper.h"
 #include "../common/classes/ClumpletWriter.h"

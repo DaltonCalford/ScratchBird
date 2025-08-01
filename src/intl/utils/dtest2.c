@@ -23,7 +23,7 @@
  * Contributor(s): ______________________________________.
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include <stdio.h>
 
 static int full_debug = 0;

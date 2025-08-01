@@ -18,7 +18,7 @@
  * Adriano dos Santos Fernandes
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "../jrd/Statement.h"
 #include "../jrd/Attachment.h"
 #include "../jrd/intl_classes.h"

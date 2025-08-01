@@ -24,7 +24,7 @@
  *  Contributor(s): ______________________________________.
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 
 #include "../auth/SecureRemotePassword/client/SrpClient.h"
 #include "../auth/SecureRemotePassword/srp.h"

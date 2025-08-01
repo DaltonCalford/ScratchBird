@@ -28,7 +28,7 @@
  *
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include <string.h>
 #include "ibase.h"
 #include "../gpre/gpre.h"

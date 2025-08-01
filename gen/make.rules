@@ -133,11 +133,11 @@ $(OBJ)/%.o: $(SRC_ROOT)/%.m
 
 $(OBJ)/%.o: $(OBJ)/%.cpp
 	$(CXX) $(WCXXFLAGS) -c $(firstword $<) -o $@
-	@sed $(INLINE_EDIT_SED) -e "1,2s/:/: \$$(wildcard/" -e "\$$s/\(.*\)/\\1)/" $(patsubst %.o,%.d,$@)
+	@if [ -f $(patsubst %.o,%.d,$@) ]; then sed $(INLINE_EDIT_SED) -e "1,2s/:/: \$$(wildcard/" -e "\$$s/\(.*\)/\\1)/" $(patsubst %.o,%.d,$@); fi
 
 $(OBJ)/%.o: $(SRC_ROOT)/%.cpp
 	$(CXX) $(WCXXFLAGS) -c $(firstword $<) -o $@
-	@sed $(INLINE_EDIT_SED) -e "1,2s/:/: \$$(wildcard/" -e "\$$s/\(.*\)/\\1)/" $(patsubst %.o,%.d,$@)
+	@if [ -f $(patsubst %.o,%.d,$@) ]; then sed $(INLINE_EDIT_SED) -e "1,2s/:/: \$$(wildcard/" -e "\$$s/\(.*\)/\\1)/" $(patsubst %.o,%.d,$@); fi
 
 $(OBJ)/%.o: $(ROOT)/%.cpp
 	$(CXX) $(WCFLAGS) -c $(firstword $<) -o $@

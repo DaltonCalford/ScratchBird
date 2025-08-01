@@ -28,7 +28,7 @@
 #ifndef JRD_INTL_CLASSES_H
 #define JRD_INTL_CLASSES_H
 
-#include "firebird.h"
+#include "scratchbird.h"
 
 #include "../common/intlobj_new.h"
 #include "../jrd/constants.h"

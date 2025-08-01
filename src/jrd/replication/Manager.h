@@ -39,7 +39,7 @@ namespace Replication
 {
 	class TableMatcher
 	{
-		typedef ScratchBird::GenericMap<ScratchBird::Pair<ScratchBird::Left<Jrd::QualifiedName, bool> > > TablePermissionMap;
+		typedef ScratchBird::GenericMap<ScratchBird::LeftPooledPair<Jrd::QualifiedName, bool> > TablePermissionMap;
 
 	public:
 		TableMatcher(MemoryPool& pool,

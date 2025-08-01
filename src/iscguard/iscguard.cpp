@@ -16,7 +16,7 @@
  * All Rights Reserved.
  * Contributor(s): ______________________________________.
  */
-#include "firebird.h"
+#include "scratchbird.h"
 #include <stdio.h>
 #include "../yvalve/gds_proto.h"
 #include <stdlib.h>

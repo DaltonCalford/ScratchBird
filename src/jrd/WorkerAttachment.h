@@ -28,7 +28,7 @@
 #ifndef JRD_WORKER_ATTACHMENT_H
 #define JRD_WORKER_ATTACHMENT_H
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "../common/classes/alloc.h"
 #include "../common/classes/array.h"
 #include "../common/classes/condition.h"
@@ -110,7 +110,7 @@ private:
 	void waitForWorkers();
 
 
-	typedef ScratchBird::GenericMap<ScratchBird::Pair<ScratchBird::Left<ScratchBird::PathName, WorkerAttachment*> > >
+	typedef ScratchBird::GenericMap<ScratchBird::LeftPooledPair<ScratchBird::PathName, WorkerAttachment*> >
 		MapDbIdToWorkAtts;
 
 	static ScratchBird::GlobalPtr<ScratchBird::Mutex> m_mapMutex;

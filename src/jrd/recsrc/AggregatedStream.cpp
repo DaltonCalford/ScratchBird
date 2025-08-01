@@ -17,7 +17,7 @@
  * Contributor(s): ______________________________________.
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "../jrd/jrd.h"
 #include "../dsql/Nodes.h"
 #include "../dsql/ExprNodes.h"

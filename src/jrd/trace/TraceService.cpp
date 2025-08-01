@@ -24,7 +24,7 @@
  *
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "firebird/impl/consts_pub.h"
 #include "sb_exception.h"
 #include "iberror.h"

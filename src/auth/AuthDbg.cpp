@@ -25,7 +25,7 @@
  *  Contributor(s): ______________________________________.
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "../auth/AuthDbg.h"
 #include "ibase.h"
 #include "../common/StatusHolder.h"

@@ -26,7 +26,7 @@
  *
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "../common/classes/fb_tls.h"
 #include "../common/classes/ImplementHelper.h"
 #include "../common/status.h"

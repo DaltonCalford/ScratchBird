@@ -22,7 +22,7 @@
  * Contributor(s): ______________________________________.
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "../intl/ldcommon.h"
 #include "../intl/ld_proto.h"
 #include "../common/CharSet.h"

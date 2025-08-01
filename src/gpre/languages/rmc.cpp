@@ -25,7 +25,7 @@
 // Modified by Stephen W. Boyd 31.May.2007
 // Added support for ISC_TIME & ISC_DATE values
 //
-#include "firebird.h"
+#include "scratchbird.h"
 #include <stdio.h>
 #include <stdarg.h>
 #include "ibase.h"

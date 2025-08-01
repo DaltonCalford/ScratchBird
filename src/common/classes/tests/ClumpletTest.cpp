@@ -1,4 +1,4 @@
-#include "firebird.h"
+#include "scratchbird.h"
 #include "boost/test/unit_test.hpp"
 #include "../common/classes/ClumpletReader.h"
 #include "../common/classes/ClumpletWriter.h"

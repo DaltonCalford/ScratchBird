@@ -21,7 +21,7 @@
  *  Adriano dos Santos Fernandes
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 
 #include <windows.h>
 

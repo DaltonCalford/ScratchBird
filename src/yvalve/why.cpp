@@ -27,7 +27,7 @@
  *
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 
 #define FB_UsedInYValve true
 #include "firebird/Interface.h"

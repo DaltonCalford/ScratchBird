@@ -27,7 +27,7 @@
 #ifndef CLASSES_SWITCHES
 #define CLASSES_SWITCHES
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "../common/classes/fb_string.h"
 
 class Switches

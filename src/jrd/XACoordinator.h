@@ -200,8 +200,8 @@ public:
 	void removePreparedTransaction(const XATransactionId& xid);
 	
 private:
-	typedef ScratchBird::GenericMap<ScratchBird::Pair<ScratchBird::Left<XATransactionId, XAGlobalTransaction*>>> GlobalTransactionMap;
-	typedef ScratchBird::GenericMap<ScratchBird::Pair<ScratchBird::Left<ScratchBird::string, XAResourceManager*>>> ResourceManagerMap;
+	typedef ScratchBird::GenericMap<ScratchBird::LeftPooledPair<XATransactionId, XAGlobalTransaction*>> GlobalTransactionMap;
+	typedef ScratchBird::GenericMap<ScratchBird::LeftPooledPair<ScratchBird::string, XAResourceManager*>> ResourceManagerMap;
 	
 	GlobalTransactionMap m_globalTransactions;
 	ResourceManagerMap m_resourceManagers;

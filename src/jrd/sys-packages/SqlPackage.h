@@ -23,7 +23,7 @@
 #ifndef JRD_SYS_PACKAGES_SQL_PACKAGE_H
 #define JRD_SYS_PACKAGES_SQL_PACKAGE_H
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "firebird/Message.h"
 #include "../common/classes/array.h"
 #include "../common/classes/MetaString.h"

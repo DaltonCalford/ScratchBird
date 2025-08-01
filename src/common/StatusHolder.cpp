@@ -26,7 +26,7 @@
  *
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "StatusHolder.h"
 #include "iberror.h"
 #include "classes/alloc.h"

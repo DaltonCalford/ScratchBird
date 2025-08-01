@@ -20,7 +20,7 @@
  *  Contributor(s): ______________________________________.
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "../common/classes/ClumpletWriter.h"
 #include "../common/isc_proto.h"
 #include "../common/isc_s_proto.h"

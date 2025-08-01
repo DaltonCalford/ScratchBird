@@ -36,7 +36,7 @@
  * Adriano dos Santos Fernandes
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include <stdio.h>
 #include <string.h>
 #include "../jrd/jrd.h"

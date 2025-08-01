@@ -23,7 +23,7 @@
 #ifndef COMMON_SHA_H
 #define COMMON_SHA_H
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "../common/classes/alloc.h"
 #include "../common/classes/array.h"
 #include "../common/classes/fb_string.h"

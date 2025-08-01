@@ -24,7 +24,7 @@
  *                         readonly databases.
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "../jrd/ini.h"
 #include "../jrd/tra.h"
 #include "../jrd/lck.h"

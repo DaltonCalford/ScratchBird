@@ -97,7 +97,7 @@ namespace Jrd
 	class MetaName;
 
 	typedef ScratchBird::Stack<dsql_ctx*> DsqlContextStack;
-	typedef ScratchBird::Pair<ScratchBird::Left<MetaName, NestConst<Jrd::WindowClause>>> NamedWindowClause;
+	typedef ScratchBird::LeftPooledPair<MetaName, NestConst<Jrd::WindowClause>> NamedWindowClause;
 	typedef ScratchBird::ObjectsArray<NamedWindowClause> NamedWindowsClause;
 }
 

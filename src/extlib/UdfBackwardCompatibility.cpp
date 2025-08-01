@@ -24,7 +24,7 @@
 
 #define FB_UDR_STATUS_TYPE ::ScratchBird::ThrowStatusWrapper
 
-#include "firebird.h"
+#include "scratchbird.h"
 
 #include <ibase.h>
 #include <firebird/UdrCppEngine.h>

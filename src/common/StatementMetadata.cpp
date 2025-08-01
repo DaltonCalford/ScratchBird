@@ -22,7 +22,7 @@
  *
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "../common/StatementMetadata.h"
 #include "memory_routines.h"
 #include "../common/StatusHolder.h"

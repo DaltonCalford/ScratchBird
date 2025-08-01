@@ -18,7 +18,7 @@
  * Adriano dos Santos Fernandes - refactored from pass1.cpp, gen.cpp, cmp.cpp, par.cpp and evl.cpp
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include <cmath>
 #include <math.h>
 #include <ctype.h>

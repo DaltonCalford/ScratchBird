@@ -26,7 +26,7 @@
  *
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "../utilities/nbackup/nbk_proto.h"
 #include "../common/classes/auto.h"
 

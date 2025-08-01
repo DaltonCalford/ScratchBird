@@ -20,7 +20,7 @@
  *  Contributor(s): ______________________________________.
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "../dsql/WinNodes.h"
 #include "../dsql/make_proto.h"
 #include "../dsql/pass1_proto.h"

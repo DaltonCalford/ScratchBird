@@ -20,7 +20,7 @@
  *  Contributor(s): ______________________________________.
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "firebird/impl/consts_pub.h"
 #include "iberror.h"
 #include "../yvalve/PluginManager.h"

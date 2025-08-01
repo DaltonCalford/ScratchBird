@@ -26,7 +26,7 @@
  *  2008 Khorsun Vladyslav
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include <signal.h>
 #ifdef WIN_NT
 #include <fcntl.h>

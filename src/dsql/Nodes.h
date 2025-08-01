@@ -233,7 +233,7 @@ public:
 		const QualifiedName& oldNewObjectName, const ScratchBird::string& sqlText);
 
 protected:
-	typedef ScratchBird::Pair<ScratchBird::Left<MetaName, bid> > MetaNameBidPair;
+	typedef ScratchBird::LeftPooledPair<MetaName, bid> MetaNameBidPair;
 	typedef ScratchBird::GenericMap<MetaNameBidPair> MetaNameBidMap;
 
 	// Return exception code based on combination of create and alter clauses.

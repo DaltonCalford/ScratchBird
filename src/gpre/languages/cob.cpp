@@ -39,7 +39,7 @@
 // Stephen W. Boyd 31.Aug.2006
 //
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include <stdio.h>
 #include <stdarg.h>
 #include "ibase.h"

@@ -27,7 +27,7 @@
 #ifndef JRD_TRACESERVICE_H
 #define JRD_TRACESERVICE_H
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "firebird/impl/consts_pub.h"
 #include "sb_exception.h"
 #include "iberror.h"

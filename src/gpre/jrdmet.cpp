@@ -26,7 +26,7 @@
 //
 //
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "ibase.h"
 #include "../jrd/constants.h"
 #include "../jrd/ods.h"

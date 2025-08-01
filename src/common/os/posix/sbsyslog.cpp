@@ -19,7 +19,7 @@
  * Contributor(s): ______________________________________.
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "../common/os/fbsyslog.h"
 
 #include <syslog.h>

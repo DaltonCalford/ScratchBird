@@ -91,7 +91,7 @@
  *
 */
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "../jrd/intl_classes.h"
 #include "../common/classes/Aligner.h"
 

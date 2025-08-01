@@ -24,7 +24,7 @@
  * 2011 - 2020	Alexander Peshkov
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 
 #include "../auth/SecDbCache.h"
 #include "../common/status.h"

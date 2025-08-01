@@ -20,7 +20,7 @@
  *  Contributor(s): ______________________________________.
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "../jrd/sys-packages/SqlPackage.h"
 #include "../dsql/DsqlRequests.h"
 #include "../jrd/Statement.h"

@@ -29,7 +29,7 @@
  *  Contributor(s):
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "../common/gdsassert.h"
 #include "sb_exception.h"
 

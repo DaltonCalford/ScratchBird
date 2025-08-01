@@ -24,7 +24,7 @@
  * Claudio Valderrama C.
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 // Definition of block types for data allocation in JRD
 #include "../include/fb_blk.h"
 

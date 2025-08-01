@@ -20,7 +20,7 @@
  *  Contributor(s): ______________________________________.
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "firebird/Message.h"
 #include "../common/common.h"
 #include "../jrd/constants.h"

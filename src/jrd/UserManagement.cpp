@@ -20,13 +20,13 @@
  *  Contributor(s): ______________________________________.
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "../common/classes/ClumpletWriter.h"
 #include "../jrd/UserManagement.h"
 #include "../jrd/jrd.h"
 #include "../jrd/tra.h"
 #include "../common/msg_encode.h"
-#include "../utilities/gsec/gsec.h"
+#include "scratchbird/impl/msg/gsec.h"
 #include "../common/security.h"
 #include "../jrd/met_proto.h"
 #include "../jrd/ini.h"

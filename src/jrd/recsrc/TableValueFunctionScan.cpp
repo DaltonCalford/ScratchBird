@@ -19,7 +19,7 @@
  *  All Rights Reserved.
  *  Contributor(s):
  */
-#include "firebird.h"
+#include "scratchbird.h"
 #include "../dsql/ExprNodes.h"
 #include "../dsql/StmtNodes.h"
 #include "../jrd/jrd.h"

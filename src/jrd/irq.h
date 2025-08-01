@@ -185,6 +185,14 @@ enum irq_type_t
 	irq_l_pub_tab_state,	// lookup publication state for a table
 	irq_l_index_cnstrt,     // lookup index for constraint
 
+	// Shadow/backup file operations
+	irq_activate_shadow1,	// activate shadow: delete files with shadow_number = 0
+	irq_activate_shadow2,	// activate shadow: scan files with shadow_number != 0
+	irq_activate_shadow3,	// activate shadow: update shadow number to 0
+	irq_delete_shadow,		// delete shadow files by shadow number
+	irq_r_shadow_files,		// read shadow files for synchronization
+	irq_update_shadow,		// update shadow file flags
+
 	irq_MAX
 };
 

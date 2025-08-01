@@ -20,7 +20,7 @@
  *  Contributor(s): ______________________________________.
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "../jrd/ProfilerManager.h"
 #include "../jrd/Record.h"
 #include "../jrd/ini.h"

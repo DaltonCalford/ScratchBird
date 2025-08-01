@@ -21,7 +21,7 @@
  *  Adriano dos Santos Fernandes
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "../common/dsc.h"
 #include "../jrd/constants.h"
 #include "../jrd/jrd.h"

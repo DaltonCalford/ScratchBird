@@ -23,7 +23,7 @@
 #ifndef JRD_SYSTEM_PACKAGES_H
 #define JRD_SYSTEM_PACKAGES_H
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "../common/status.h"
 #include "../common/classes/init.h"
 #include "../common/classes/array.h"

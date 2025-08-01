@@ -1,31 +1,56 @@
-# The contents of this file are subject to the Interbase Public
-# License Version 1.0 (the "License"); you may not use this file
-# except in compliance with the License. You may obtain a copy
-# of the License at http://www.Inprise.com/IPL.html
 #
-# Software distributed under the License is distributed on an
-# "AS IS" basis, WITHOUT WARRANTY OF ANY KIND, either express
-# or implied. See the License for the specific language governing
-# rights and limitations under the License.
+# Linux platform-specific build configuration
+# ScratchBird v0.5 - Cross-platform build system
 #
-# The Original Code was created by Inprise Corporation
-# and its predecessors. Portions created by Inprise Corporation are
-# Copyright (C) Inprise Corporation.
-#
-# All Rights Reserved.
-# Contributor(s): ______________________________________.
-# Start of file prefix.linux:	$(VERSION)	$(PLATFORM)
-#
-# 2 Oct 2002, Nickolay Samofatov - Major cleanup
 
-COMMON_FLAGS=-ggdb -DFB_SEND_FLAGS=MSG_NOSIGNAL -DLINUX -DAMD64 -pipe -MMD -fPIC -fmessage-length=0
+# Platform identification
+PLATFORM=LINUX
+CpuType=x64
+
+# Compiler settings
+CC=gcc
+CXX=g++
+AR=ar
+RANLIB=ranlib
+STRIP=strip
+
+# Linux-specific definitions
+CFLAGS+=-DLINUX -DAMD64 -DSIZEOF_LONG=8 -DFB_ALIGNMENT=8 -DFB_DOUBLE_ALIGN=8 -fPIC
+CXXFLAGS+=-DLINUX -DAMD64 -DSIZEOF_LONG=8 -DFB_ALIGNMENT=8 -DFB_DOUBLE_ALIGN=8 -fPIC
+
+# System library paths
+SYSTEM_LIBS=-lrt -lpthread -ldl -lm
+
+# External libraries (use system versions)
+RE2_BUILD_FLG=N
+RE2LIB=-lre2
+
+# Threading support
+THR_FLAGS=-pthread
+THR_LIBS=-lpthread
+
+# Platform-specific file extensions
+EXEC_EXT=
+SHRLIB_EXT=so
+LIB_PREFIX=lib
+
+# Install paths
+INSTALL_PREFIX=/usr/local/scratchbird
+FB_INSTALL_PREFIX=$(INSTALL_PREFIX)
+
+# Rpath settings for shared libraries
+LIB_LINK_RPATH_OPT=-Wl,-rpath,$(1)
+LIB_LINK_SONAME_OPT=-Wl,-soname,$(1)
+
+# Linux-specific optimizations
 OPTIMIZE_FLAGS=-O3 -fno-omit-frame-pointer
-WARN_FLAGS=-Wall -Wno-switch -Wno-parentheses -Wno-unknown-pragmas -Wno-unused-variable -Wno-narrowing -Wno-unused-local-typedefs
-PLATFORM_PLUSPLUS_FLAGS=-Wno-invalid-offsetof -Wno-class-memaccess
-#VALGRIND_FLAGS=-DUSE_VALGRIND
+DEBUG_FLAGS=-ggdb
 
-PROD_FLAGS=$(COMMON_FLAGS) $(OPTIMIZE_FLAGS)
-DEV_FLAGS=$(VALGRIND_FLAGS) $(WARN_FLAGS) $(COMMON_FLAGS) -fmax-errors=8
+# Memory alignment
+ALIGNMENT_CFLAGS=-malign-natural
 
-# This file must be compiled with SSE4.2 support
-%/CRC32C.o: COMMON_FLAGS += -msse4
+# Additional Linux libraries
+ADDITIONAL_LIBS=-lcrypt
+
+# File system case sensitivity
+CASE_SENSITIVE=Y

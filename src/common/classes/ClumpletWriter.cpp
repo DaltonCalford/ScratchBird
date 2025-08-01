@@ -27,7 +27,7 @@
 
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 
 #include "../common/classes/ClumpletWriter.h"
 #include "../common/classes/MetaString.h"

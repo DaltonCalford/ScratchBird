@@ -25,7 +25,7 @@
  *
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "VectorTypes.h"
 #include <algorithm>
 #include <sstream>
@@ -269,16 +269,16 @@ bool Vector::operator!=(const Vector& other) const {
     return !(*this == other);
 }
 
-// PostgreSQL-compatible similarity operators
-double Vector::operator<->(const Vector& other) const {
+// PostgreSQL-compatible similarity functions
+double Vector::cosineDistance(const Vector& other) const {
     return 1.0 - similarity(other, VECTOR_COSINE_SIMILARITY);
 }
 
-double Vector::operator<#>(const Vector& other) const {
+double Vector::l2Distance(const Vector& other) const {
     return distance(other, VECTOR_L2_DISTANCE);
 }
 
-double Vector::operator<+>(const Vector& other) const {
+double Vector::l1Distance(const Vector& other) const {
     return distance(other, VECTOR_L1_DISTANCE);
 }
 

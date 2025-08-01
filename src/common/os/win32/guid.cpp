@@ -36,7 +36,7 @@
 #include <objbase.h>
 #include <stdio.h>
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "../common/os/guid.h"
 #include "sb_exception.h"
 

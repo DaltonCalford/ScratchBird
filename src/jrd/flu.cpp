@@ -46,7 +46,7 @@
  *
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "../common/config/config.h"
 #include "../common/config/dir_list.h"
 #include "../common/os/path_utils.h"

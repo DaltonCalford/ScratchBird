@@ -26,7 +26,7 @@
  *
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 
 #include "../common/classes/ClumpletReader.h"
 #include "sb_exception.h"

@@ -20,7 +20,7 @@
  *  Contributor(s): ______________________________________.
  */
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "fb_types.h"
 #include "../../include/fb_blk.h"
 #include "sb_exception.h"

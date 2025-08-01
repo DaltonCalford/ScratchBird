@@ -23,7 +23,7 @@
 #ifndef FB_COMMON_MSG_UTIL_H
 #define FB_COMMON_MSG_UTIL_H
 
-#include "firebird.h"
+#include "scratchbird.h"
 
 
 namespace ScratchBird {

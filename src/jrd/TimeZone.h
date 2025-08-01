@@ -23,7 +23,7 @@
 #ifndef JRD_TIME_ZONE_H
 #define JRD_TIME_ZONE_H
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "firebird/Message.h"
 #include "../common/classes/fb_string.h"
 #include "../jrd/Monitoring.h"

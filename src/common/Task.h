@@ -28,7 +28,7 @@
 #ifndef COMMON_TASK_H
 #define COMMON_TASK_H
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "../common/classes/alloc.h"
 #include "../common/classes/array.h"
 #include "../common/classes/locks.h"

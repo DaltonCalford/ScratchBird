@@ -23,7 +23,7 @@
 #ifndef JRD_PROFILER_MANAGER_H
 #define JRD_PROFILER_MANAGER_H
 
-#include "firebird.h"
+#include "scratchbird.h"
 #include "firebird/Message.h"
 #include <optional>
 #include "../common/PerformanceStopWatch.h"
