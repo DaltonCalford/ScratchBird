@@ -195,4 +195,8 @@ if(SCRATCHBIRD_BUILD_TESTS)
   add_executable(wal_tests tests/wal_tests.cpp)
   target_link_libraries(wal_tests scratchbird_engine)
   add_test(NAME wal_tests COMMAND wal_tests)
+
+  add_executable(having_tests tests/having_tests.cpp)
+  target_link_libraries(having_tests scratchbird_engine)
+  add_test(NAME having_tests COMMAND having_tests)
 endif()
