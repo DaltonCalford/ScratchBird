@@ -3501,8 +3501,9 @@ namespace scratchbird
                 };
                 // Map projection index -> window type and spec
                 struct WinOp {
-                    enum Kind { RowNumber, Rank, DenseRank } kind;
+                    enum Kind { RowNumber, Rank, DenseRank, Sum } kind;
                     WinSpec spec;
+                    int arg_col_idx = -1; // For aggregate functions like SUM(column)
                 };
                 std::unordered_map<int, WinOp> win_targets;
                 for (int pi = 0; pi < (int)q.projections.size(); ++pi) {
@@ -3513,13 +3514,34 @@ namespace scratchbird
                         continue;
                     // Identify function
                     WinOp::Kind kind;
+                    int arg_col_idx = -1;
                     if (u.rfind("ROW_NUMBER()", 0) == 0)
                         kind = WinOp::RowNumber;
                     else if (u.rfind("RANK()", 0) == 0)
                         kind = WinOp::Rank;
                     else if (u.rfind("DENSE_RANK()", 0) == 0)
                         kind = WinOp::DenseRank;
-                    else
+                    else if (u.rfind("SUM(", 0) == 0) {
+                        kind = WinOp::Sum;
+                        // Extract the column argument from SUM(column_name)
+                        auto lp = u.find('(', 0);
+                        auto rp = u.find(')', lp);
+                        if (lp != std::string::npos && rp != std::string::npos && rp > lp + 1) {
+                            std::string arg = p.substr(lp + 1, rp - (lp + 1));
+                            // trim whitespace
+                            size_t start = arg.find_first_not_of(" \t");
+                            size_t end = arg.find_last_not_of(" \t");
+                            if (start != std::string::npos && end != std::string::npos) {
+                                arg = arg.substr(start, end - start + 1);
+                                auto it = alias_index.find(arg);
+                                if (it != alias_index.end()) {
+                                    arg_col_idx = (int)it->second;
+                                }
+                            }
+                        }
+                        if (arg_col_idx == -1)
+                            continue; // Invalid SUM column
+                    } else
                         continue;
                     // Extract spec in parentheses after OVER
                     auto lp = p.find('(', ov);
@@ -3572,7 +3594,11 @@ namespace scratchbird
                                 ws.order_idx.push_back((int)a->second);
                         }
                     }
-                    win_targets[pi] = WinOp{kind, ws};
+                    WinOp winop;
+                    winop.kind = kind;
+                    winop.spec = ws;
+                    winop.arg_col_idx = arg_col_idx;
+                    win_targets[pi] = winop;
                 }
                 if (!win_targets.empty() && !rows_buffer.empty()) {
                     // Build permutation indices per partition to compute ranks
@@ -3641,6 +3667,30 @@ namespace scratchbird
                                     // Here, use curr_rank but adjust when duplicates occur; for
                                     // subset, reuse rank
                                     rows_buffer[ridx][col] = std::to_string(curr_rank);
+                                    break;
+                                }
+                                case WinOp::Sum: {
+                                    // Calculate running sum within partition up to current row
+                                    if (op.arg_col_idx >= 0 &&
+                                        op.arg_col_idx < (int)rows_buffer[ridx].size()) {
+                                        double running_sum = 0.0;
+                                        for (std::size_t sum_k = i; sum_k <= k; ++sum_k) {
+                                            std::size_t sum_ridx = keys[sum_k].second;
+                                            const std::string& val =
+                                                rows_buffer[sum_ridx][op.arg_col_idx];
+                                            try {
+                                                if (val != "NULL" && !val.empty()) {
+                                                    running_sum += std::stod(val);
+                                                }
+                                            } catch (...) {
+                                                // Invalid number, skip
+                                            }
+                                        }
+                                        rows_buffer[ridx][col] =
+                                            std::to_string((long long)running_sum);
+                                    } else {
+                                        rows_buffer[ridx][col] = "0";
+                                    }
                                     break;
                                 }
                                 }

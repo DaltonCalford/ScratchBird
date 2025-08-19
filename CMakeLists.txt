@@ -215,5 +215,8 @@ if(SCRATCHBIRD_BUILD_TESTS)
 
   add_executable(create_index_tests tests/create_index_tests.cpp)
   target_link_libraries(create_index_tests scratchbird_engine)
+
+  add_executable(window_functions_tests tests/window_functions_tests.cpp)
+  target_link_libraries(window_functions_tests scratchbird_engine)
   add_test(NAME fk_set_default_tests COMMAND fk_set_default_tests)
 endif()
