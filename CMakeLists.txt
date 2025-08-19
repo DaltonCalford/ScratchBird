@@ -47,6 +47,7 @@ add_library(
   src/engine/generators.cpp
   src/engine/header.cpp
   src/engine/heap.cpp
+  src/engine/heap_validator.cpp
   src/engine/index_btree.cpp
   src/engine/index_build.cpp
   src/engine/index.cpp
@@ -81,6 +82,10 @@ target_link_libraries(scratchbird scratchbird_engine)
 # Database Space Monitor Utility
 add_executable(dbspace src/dbspace.cpp)
 target_link_libraries(dbspace scratchbird_engine)
+
+# Database Integrity Check Utility
+add_executable(dbcheck src/dbcheck.cpp)
+target_link_libraries(dbcheck scratchbird_engine)
 
 # Tests
 if(SCRATCHBIRD_BUILD_TESTS)
