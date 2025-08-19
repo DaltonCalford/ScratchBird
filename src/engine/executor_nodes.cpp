@@ -299,12 +299,33 @@ namespace scratchbird::engine
         return indices;
     }
 
-    bool HashJoinNode::evaluate_additional_predicate(const Tuple& /* left */,
-                                                     const Tuple& /* right */)
+    bool HashJoinNode::evaluate_additional_predicate(const Tuple& left, const Tuple& right)
     {
-        // Placeholder for additional predicate evaluation
-        // TODO: Implement proper expression evaluation
-        return true;
+        if (additional_predicate_.empty()) {
+            return true;
+        }
+
+        // Build combined tuple and column mapping for predicate evaluation
+        Tuple combined = left;
+        combined.insert(combined.end(), right.begin(), right.end());
+
+        // Build column index mapping (left.col, right.col format)
+        std::unordered_map<std::string, std::size_t> col_index;
+        auto left_cols = left_child_->columns();
+        auto right_cols = right_child_->columns();
+
+        // Add left columns with table prefix
+        for (std::size_t i = 0; i < left_cols.size(); ++i) {
+            col_index[left_cols[i]] = i;
+        }
+
+        // Add right columns with table prefix and offset
+        for (std::size_t i = 0; i < right_cols.size(); ++i) {
+            col_index[right_cols[i]] = left_cols.size() + i;
+        }
+
+        // Evaluate the additional predicate
+        return evaluate_predicate(additional_predicate_, col_index, combined);
     }
 
     // ========== NestedLoopJoinNode Implementation ==========
@@ -412,12 +433,114 @@ namespace scratchbird::engine
         return columns_;
     }
 
-    bool NestedLoopJoinNode::evaluate_join_predicate(const Tuple& /* left */,
-                                                     const Tuple& /* right */)
+    bool NestedLoopJoinNode::evaluate_join_predicate(const Tuple& left, const Tuple& right)
     {
-        // Placeholder for join predicate evaluation
-        // TODO: Implement proper expression evaluation
-        return true;
+        if (join_predicate_.empty()) {
+            return true;
+        }
+
+        // Build combined tuple and column mapping for predicate evaluation
+        Tuple combined = left;
+        combined.insert(combined.end(), right.begin(), right.end());
+
+        // Build column index mapping
+        std::unordered_map<std::string, std::size_t> col_index;
+        auto left_cols = left_child_->columns();
+        auto right_cols = right_child_->columns();
+
+        // Add left columns
+        for (std::size_t i = 0; i < left_cols.size(); ++i) {
+            col_index[left_cols[i]] = i;
+        }
+
+        // Add right columns with offset
+        for (std::size_t i = 0; i < right_cols.size(); ++i) {
+            col_index[right_cols[i]] = left_cols.size() + i;
+        }
+
+        // Evaluate the join predicate
+        return evaluate_predicate(join_predicate_, col_index, combined);
+    }
+
+    // ========== FilterNode Implementation ==========
+
+    FilterNode::FilterNode(std::unique_ptr<ExecutorNode> child, const std::string& predicate)
+        : child_(std::move(child)), predicate_(predicate), opened_(false)
+    {
+    }
+
+    void FilterNode::open(ExecutorContext& ctx)
+    {
+        auto start_time = std::chrono::steady_clock::now();
+
+        child_->open(ctx);
+        columns_ = child_->columns();
+
+        // Compile predicate for better performance
+        if (!predicate_.empty()) {
+            compiled_predicate_ = compile_predicate(predicate_);
+        }
+
+        opened_ = true;
+
+        auto end_time = std::chrono::steady_clock::now();
+        instr_.wall_time_ms +=
+            std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time).count();
+    }
+
+    bool FilterNode::next(Tuple& out)
+    {
+        if (!opened_) {
+            return false;
+        }
+
+        Tuple child_tuple;
+        while (child_->next(child_tuple)) {
+            instr_.input_rows++;
+
+            // Apply filter predicate
+            if (!predicate_.empty()) {
+                // Build column index mapping
+                std::unordered_map<std::string, std::size_t> col_index;
+                auto child_cols = child_->columns();
+                for (std::size_t i = 0; i < child_cols.size(); ++i) {
+                    col_index[child_cols[i]] = i;
+                }
+
+                // Evaluate predicate (use compiled version for performance)
+                bool matches;
+                if (!compiled_predicate_.empty()) {
+                    matches =
+                        evaluate_predicate_compiled(compiled_predicate_, col_index, child_tuple);
+                } else {
+                    matches = evaluate_predicate(predicate_, col_index, child_tuple);
+                }
+
+                if (!matches) {
+                    instr_.filtered_rows++;
+                    continue;
+                }
+            }
+
+            out = child_tuple;
+            instr_.output_rows++;
+            return true;
+        }
+
+        return false;
+    }
+
+    void FilterNode::close()
+    {
+        if (opened_) {
+            child_->close();
+            opened_ = false;
+        }
+    }
+
+    std::vector<std::string> FilterNode::columns() const
+    {
+        return columns_;
     }
 
     // ========== ProjectNode Implementation ==========
@@ -458,28 +581,27 @@ namespace scratchbird::engine
 
         instr_.input_rows++;
 
-        // Project columns
+        // Project columns using the existing projection system
+        auto child_cols = child_->columns();
+        std::unordered_map<std::string, std::size_t> col_index;
+        for (std::size_t i = 0; i < child_cols.size(); ++i) {
+            col_index[child_cols[i]] = i;
+        }
+
         if (projections_.empty() || (projections_.size() == 1 && projections_[0] == "*")) {
             // SELECT *
             out = child_tuple;
         } else {
-            // Specific projections
-            out.clear();
-            auto child_cols = child_->columns();
+            // Use the existing project_row function for comprehensive projection support
+            auto projected_strings = project_row(projections_, child_cols, col_index, child_tuple);
 
-            for (const auto& proj : projections_) {
-                auto it = std::find(child_cols.begin(), child_cols.end(), proj);
-                if (it != child_cols.end()) {
-                    std::size_t idx = std::distance(child_cols.begin(), it);
-                    if (idx < child_tuple.size()) {
-                        out.push_back(child_tuple[idx]);
-                    } else {
-                        out.emplace_back(); // NULL
-                    }
-                } else {
-                    // TODO: Handle computed expressions
-                    out.emplace_back(); // NULL for now
-                }
+            // Convert projected strings back to Values
+            out.clear();
+            for (const auto& str : projected_strings) {
+                Value val;
+                val.bytes = str;
+                val.is_null = str.empty();
+                out.push_back(val);
             }
         }
 

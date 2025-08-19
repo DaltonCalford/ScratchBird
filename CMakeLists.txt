@@ -222,5 +222,8 @@ if(SCRATCHBIRD_BUILD_TESTS)
 
   add_executable(hash_join_tests tests/hash_join_tests.cpp)
   target_link_libraries(hash_join_tests scratchbird_engine)
+
+  add_executable(expression_engine_tests tests/expression_engine_tests.cpp)
+  target_link_libraries(expression_engine_tests scratchbird_engine)
   add_test(NAME fk_set_default_tests COMMAND fk_set_default_tests)
 endif()
