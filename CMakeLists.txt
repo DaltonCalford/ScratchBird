@@ -72,7 +72,8 @@ add_library(
   src/engine/txn.cpp
   src/engine/types.cpp
   src/engine/uuid.cpp
-  src/engine/wal.cpp)
+  src/engine/wal.cpp
+  src/engine/executor_nodes.cpp)
 
 # Main ScratchBird executable
 add_executable(scratchbird src/main.cpp src/scratchbird.cpp)
@@ -218,5 +219,8 @@ if(SCRATCHBIRD_BUILD_TESTS)
 
   add_executable(window_functions_tests tests/window_functions_tests.cpp)
   target_link_libraries(window_functions_tests scratchbird_engine)
+
+  add_executable(hash_join_tests tests/hash_join_tests.cpp)
+  target_link_libraries(hash_join_tests scratchbird_engine)
   add_test(NAME fk_set_default_tests COMMAND fk_set_default_tests)
 endif()
