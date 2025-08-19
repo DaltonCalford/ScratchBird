@@ -4413,13 +4413,102 @@ namespace scratchbird
             }
             if (ast.kind == NodeKind::DdlIndex) {
                 r.columns = {"ok"};
-                // Parser-first executor: act as a no-op and emit action planned
                 std::string action =
                     ast.ddlIndex.action.empty() ? std::string("CREATE") : ast.ddlIndex.action;
+
                 if (action == "CREATE") {
-                    r.rows = {{"CREATE INDEX accepted: offline bulk build planned"}};
-                    invalidate_optimizer_cache();
-                    invalidate_prepared_cache();
+                    // CREATE INDEX implementation
+                    CatalogManager cm(g_executor_db_path);
+
+                    // Parse index name and table
+                    std::string index_name = ast.ddlIndex.name;
+                    std::string table_name = ast.ddlIndex.on_table;
+
+                    if (index_name.empty() || table_name.empty()) {
+                        r.columns = {"error"};
+                        r.rows = {{"INDEX name and table name are required"}};
+                        return r;
+                    }
+
+                    // Resolve schema (use public as default)
+                    auto soid = cm.lookup_schema_oid_by_name("public");
+                    auto rel_oid = cm.lookup_object_oid(soid, "RELATION", table_name);
+                    if (!rel_oid) {
+                        r.columns = {"error"};
+                        r.rows = {{"Table '" + table_name + "' not found"}};
+                        return r;
+                    }
+
+                    // Prepare index columns and keys
+                    std::vector<std::pair<std::string, std::string>> keys;
+                    for (const auto& col : ast.ddlIndex.columns) {
+                        std::string direction = "";
+                        // Find direction for this column
+                        for (const auto& dir_pair : ast.ddlIndex.column_directions) {
+                            if (dir_pair.first == col && !dir_pair.second.empty()) {
+                                direction = dir_pair.second;
+                                break;
+                            }
+                        }
+                        keys.push_back({col, direction.empty() ? "ASC" : direction});
+                    }
+
+                    // Handle expression indexes
+                    if (!ast.ddlIndex.expr_raw.empty() && keys.empty()) {
+                        // For expression indexes, use the raw expression as a single key
+                        keys.push_back({ast.ddlIndex.expr_raw, "ASC"});
+                    }
+
+                    if (keys.empty()) {
+                        r.columns = {"error"};
+                        r.rows = {{"Index must specify at least one column or expression"}};
+                        return r;
+                    }
+
+                    // Determine index method
+                    std::string method = ast.ddlIndex.method;
+                    if (method.empty()) {
+                        method = "BTREE"; // Default to B-tree
+                    }
+
+                    // Create index catalog entry
+                    bool success = cm.create_index_catalog(soid, *rel_oid, index_name, method, keys,
+                                                           ast.ddlIndex.unique);
+
+                    if (success) {
+                        r.rows = {{"CREATE INDEX '" + index_name + "' completed successfully"}};
+                        invalidate_optimizer_cache();
+                        invalidate_prepared_cache();
+                    } else {
+                        r.columns = {"error"};
+                        r.rows = {{"Failed to create index '" + index_name + "'"}};
+                    }
+
+                } else if (action == "DROP") {
+                    // DROP INDEX implementation
+                    CatalogManager cm(g_executor_db_path);
+
+                    std::string index_name = ast.ddlIndex.name;
+                    if (index_name.empty()) {
+                        r.columns = {"error"};
+                        r.rows = {{"INDEX name is required for DROP"}};
+                        return r;
+                    }
+
+                    // Resolve schema (use public as default)
+                    auto soid = cm.lookup_schema_oid_by_name("public");
+
+                    // Drop the index using catalog manager
+                    bool success = cm.drop_index_by_name(soid, index_name);
+                    if (success) {
+                        r.rows = {{"DROP INDEX '" + index_name + "' completed successfully"}};
+                        invalidate_optimizer_cache();
+                        invalidate_prepared_cache();
+                    } else {
+                        r.columns = {"error"};
+                        r.rows = {{"Index '" + index_name + "' not found"}};
+                    }
+
                 } else if (action == "REINDEX") {
                     r.rows = {{"REINDEX accepted: validate + rebuild planned"}};
                     invalidate_optimizer_cache();
@@ -4432,10 +4521,6 @@ namespace scratchbird
                     invalidate_prepared_cache();
                 } else if (!ast.ddlIndex.statistics.empty()) {
                     r.rows = {{"ALTER INDEX SET STATISTICS accepted"}};
-                    invalidate_optimizer_cache();
-                    invalidate_prepared_cache();
-                } else if (action == "DROP") {
-                    r.rows = {{"DROP INDEX accepted"}};
                     invalidate_optimizer_cache();
                     invalidate_prepared_cache();
                 } else {

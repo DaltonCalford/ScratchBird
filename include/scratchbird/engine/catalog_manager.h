@@ -238,6 +238,10 @@ namespace scratchbird::engine
         std::vector<std::tuple<std::string, std::string, bool>>
         list_indexes(const std::optional<UuidBytes>& schema_oid) const; // name, method, unique
 
+        // DROP INDEX support
+        bool drop_index_by_name(const std::optional<UuidBytes>& schema_oid,
+                                const std::string& index_name) const;
+
         // Stats catalog helpers
         bool set_stats(const UuidBytes& object_oid, const std::string& json);
         std::optional<std::string> get_stats(const UuidBytes& object_oid) const;

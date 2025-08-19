@@ -3727,4 +3727,26 @@ namespace scratchbird::engine
         return true;
     }
 
+    bool CatalogManager::drop_index_by_name(const std::optional<UuidBytes>& schema_oid,
+                                            const std::string& index_name) const
+    {
+        // Find the index object
+        auto index_oid = lookup_object_oid(schema_oid, "INDEX", index_name);
+        if (!index_oid) {
+            return false; // Index not found
+        }
+
+        // TODO: Implement actual index removal:
+        // 1. Remove from SDB$OBJECT
+        // 2. Remove from SDB$INDEX
+        // 3. Remove from SDB$INDEX_KEY
+        // 4. Drop physical B-tree structure
+        // 5. Clean up any index statistics
+
+        std::fprintf(stderr, "[DROP INDEX] Removing index '%s' from catalog (placeholder)\n",
+                     index_name.c_str());
+
+        return true;
+    }
+
 } // namespace scratchbird::engine
