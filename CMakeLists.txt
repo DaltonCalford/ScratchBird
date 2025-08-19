@@ -229,5 +229,8 @@ if(SCRATCHBIRD_BUILD_TESTS)
 
   add_executable(explain_analyze_tests tests/explain_analyze_tests.cpp)
   target_link_libraries(explain_analyze_tests scratchbird_engine)
+
+  add_executable(sort_aggregation_tests tests/sort_aggregation_tests.cpp)
+  target_link_libraries(sort_aggregation_tests scratchbird_engine)
   add_test(NAME fk_set_default_tests COMMAND fk_set_default_tests)
 endif()
