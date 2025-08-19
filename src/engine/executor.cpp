@@ -2599,6 +2599,195 @@ namespace scratchbird
             std::uint64_t mem_peak_bytes{0};
         };
 
+        // Helper function to convert a row to a string for comparison
+        static std::string row_to_string(const std::vector<std::string>& row)
+        {
+            std::string result;
+            for (size_t i = 0; i < row.size(); ++i) {
+                if (i > 0)
+                    result += "\x01"; // Use non-printable char as separator
+                result += row[i];
+            }
+            return result;
+        }
+
+        // Execute UNION operation
+        static ExecutionResult exec_union(const ExecutionResult& left, const ExecutionResult& right,
+                                          bool all)
+        {
+            ExecutionResult result;
+            result.columns = left.columns; // Use left columns as the result schema
+
+            if (all) {
+                // UNION ALL: simply concatenate all rows
+                result.rows = left.rows;
+                result.rows.insert(result.rows.end(), right.rows.begin(), right.rows.end());
+            } else {
+                // UNION (DISTINCT): remove duplicates
+                std::unordered_set<std::string> seen;
+
+                // Add left rows
+                for (const auto& row : left.rows) {
+                    std::string row_key = row_to_string(row);
+                    if (seen.insert(row_key).second) {
+                        result.rows.push_back(row);
+                    }
+                }
+
+                // Add right rows (if not already seen)
+                for (const auto& row : right.rows) {
+                    std::string row_key = row_to_string(row);
+                    if (seen.insert(row_key).second) {
+                        result.rows.push_back(row);
+                    }
+                }
+            }
+
+            return result;
+        }
+
+        // Execute INTERSECT operation
+        static ExecutionResult exec_intersect(const ExecutionResult& left,
+                                              const ExecutionResult& right, bool all)
+        {
+            ExecutionResult result;
+            result.columns = left.columns;
+
+            if (all) {
+                // INTERSECT ALL: keep duplicates based on minimum count
+                std::unordered_map<std::string, int> left_counts, right_counts;
+
+                for (const auto& row : left.rows) {
+                    left_counts[row_to_string(row)]++;
+                }
+
+                for (const auto& row : right.rows) {
+                    right_counts[row_to_string(row)]++;
+                }
+
+                for (const auto& row : left.rows) {
+                    std::string row_key = row_to_string(row);
+                    if (right_counts[row_key] > 0 && left_counts[row_key] > 0) {
+                        result.rows.push_back(row);
+                        left_counts[row_key]--;
+                        right_counts[row_key]--;
+                    }
+                }
+            } else {
+                // INTERSECT (DISTINCT): only rows present in both sets
+                std::unordered_set<std::string> right_set;
+
+                for (const auto& row : right.rows) {
+                    right_set.insert(row_to_string(row));
+                }
+
+                std::unordered_set<std::string> seen;
+                for (const auto& row : left.rows) {
+                    std::string row_key = row_to_string(row);
+                    if (right_set.count(row_key) && seen.insert(row_key).second) {
+                        result.rows.push_back(row);
+                    }
+                }
+            }
+
+            return result;
+        }
+
+        // Execute EXCEPT operation
+        static ExecutionResult exec_except(const ExecutionResult& left,
+                                           const ExecutionResult& right, bool all)
+        {
+            ExecutionResult result;
+            result.columns = left.columns;
+
+            if (all) {
+                // EXCEPT ALL: subtract right counts from left counts
+                std::unordered_map<std::string, int> right_counts;
+
+                for (const auto& row : right.rows) {
+                    right_counts[row_to_string(row)]++;
+                }
+
+                for (const auto& row : left.rows) {
+                    std::string row_key = row_to_string(row);
+                    if (right_counts[row_key] > 0) {
+                        right_counts[row_key]--;
+                    } else {
+                        result.rows.push_back(row);
+                    }
+                }
+            } else {
+                // EXCEPT (DISTINCT): left rows not in right set
+                std::unordered_set<std::string> right_set;
+
+                for (const auto& row : right.rows) {
+                    right_set.insert(row_to_string(row));
+                }
+
+                std::unordered_set<std::string> seen;
+                for (const auto& row : left.rows) {
+                    std::string row_key = row_to_string(row);
+                    if (!right_set.count(row_key) && seen.insert(row_key).second) {
+                        result.rows.push_back(row);
+                    }
+                }
+            }
+
+            return result;
+        }
+
+        // Execute set operations (UNION/INTERSECT/EXCEPT)
+        static ExecutionResult exec_set_operation(const SetTree& tree, ExecMetrics* metrics)
+        {
+            ExecutionResult r{};
+
+            // Base case: leaf node
+            if (tree.leaf) {
+                return exec_select_query(*tree.leaf, metrics);
+            }
+
+            // Recursive case: binary operation
+            if (!tree.left || !tree.right) {
+                r.columns = {"error"};
+                r.rows = {{"Invalid set operation tree structure"}};
+                return r;
+            }
+
+            // Execute left and right operands
+            auto left_result = exec_set_operation(*tree.left, metrics);
+            if (!left_result.columns.empty() && left_result.columns[0] == "error") {
+                return left_result;
+            }
+
+            auto right_result = exec_set_operation(*tree.right, metrics);
+            if (!right_result.columns.empty() && right_result.columns[0] == "error") {
+                return right_result;
+            }
+
+            // Check column compatibility
+            if (left_result.columns.size() != right_result.columns.size()) {
+                r.columns = {"error"};
+                r.rows = {{"Set operation requires same number of columns in both queries"}};
+                return r;
+            }
+
+            // Perform the set operation
+            std::string op = tree.op;
+            std::transform(op.begin(), op.end(), op.begin(), ::toupper);
+
+            if (op == "UNION") {
+                return exec_union(left_result, right_result, tree.all);
+            } else if (op == "INTERSECT") {
+                return exec_intersect(left_result, right_result, tree.all);
+            } else if (op == "EXCEPT") {
+                return exec_except(left_result, right_result, tree.all);
+            } else {
+                r.columns = {"error"};
+                r.rows = {{"Unsupported set operation: " + tree.op}};
+                return r;
+            }
+        }
+
         static ExecutionResult exec_select_query(const SelectQuery& q_in, ExecMetrics* metrics)
         {
             ExecutionResult r{};
@@ -2609,6 +2798,11 @@ namespace scratchbird
                 r.columns = {"error"};
                 r.rows = {{q.error}};
                 return r;
+            }
+
+            // Handle set operations (UNION/INTERSECT/EXCEPT)
+            if (q.compound) {
+                return exec_set_operation(*q.compound, metrics);
             }
             // Minimal multi-relation support (two sources, nested loop); Phase 6: allow optimizer
             // hint to choose order
@@ -3949,6 +4143,9 @@ namespace scratchbird
                 r.rows = {{std::to_string(ast.literal_value)}};
                 return r;
             }
+            if (ast.kind == NodeKind::SelectQuery) {
+                return execute_select_sql(ast.select_sql);
+            }
             std::string target;
             if (is_analyze_stmt(ast, target)) {
                 IndexStats st{};
@@ -4394,6 +4591,38 @@ namespace scratchbird
                 invalidate_prepared_cache();
                 r.columns = {"ok"};
                 r.rows = {{"CREATE TABLE accepted: catalog rows written"}};
+                return r;
+            }
+            if (ast.kind == NodeKind::DdlView) {
+                CatalogManager cm(get_executor_db_path());
+                // schema.view split
+                std::string full = ast.ddlView.name;
+                std::string schema = "public";
+                std::string viewname = full;
+                auto dot = full.find('.');
+                if (dot != std::string::npos) {
+                    schema = full.substr(0, dot);
+                    viewname = full.substr(dot + 1);
+                }
+                auto soid = cm.lookup_schema_oid_by_name(schema);
+                if (!soid) {
+                    r.columns = {"error"};
+                    r.rows = {{"schema not found: " + schema}};
+                    return r;
+                }
+
+                // Create the view in the catalog
+                bool success = cm.create_view(*soid, viewname, ast.ddlView.body_raw);
+                if (!success) {
+                    r.columns = {"error"};
+                    r.rows = {{"Failed to create view: " + viewname}};
+                    return r;
+                }
+
+                invalidate_optimizer_cache();
+                invalidate_prepared_cache();
+                r.columns = {"ok"};
+                r.rows = {{"CREATE VIEW accepted: " + viewname}};
                 return r;
             }
             if (ast.kind == NodeKind::PsqlTrigger) {

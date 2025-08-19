@@ -13,6 +13,7 @@ namespace scratchbird
         enum class NodeKind {
             Unknown,
             SelectLiteral,
+            SelectQuery,
             SessionStmt,
             DdlTable,
             DdlIndex,
@@ -123,6 +124,7 @@ namespace scratchbird
             NodeKind kind{NodeKind::Unknown};
             std::int64_t literal_value{0};
             SessionStmtAst session; // valid if kind == SessionStmt
+            std::string select_sql; // valid if kind == SelectQuery
             std::vector<std::string> warnings;
             std::vector<SourceSpan> warning_spans;
             std::vector<std::string> errors;
