@@ -1,0 +1,6 @@
+@SET_MAKE@
+
+all: scratchbird
+
+.DEFAULT:
+	$(MAKE) -C gen $@

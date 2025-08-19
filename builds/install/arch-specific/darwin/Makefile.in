@@ -1,0 +1,78 @@
+TARGET ?= Release
+
+# EKU: taken from Makefile.in.scratchbird
+ROOT=..
+
+include	$(ROOT)/gen/make.defaults
+include	$(ROOT)/gen/make.platform
+include	$(ROOT)/gen/make.rules
+include	$(ROOT)/gen/make.shared.variables
+
+all: package
+
+FB_INST_VERS:=$(shell cpp -DDARWIN -I.  ../builds/install/arch-specific/darwin/buildsuffix.c | tail -2 | sed -e 's/" "//g' -e 's/"//g' -e 's/ScratchBird[ ]*//' -e 's/Release Candidate/RC/' -e 's/ /-/g')
+FB_VER_SUFFIX:=$(shell cpp -DDARWIN -I.  ../builds/install/arch-specific/darwin/buildsuffix.c | tail -2 | sed -e 's/" "//g' -e 's/"//g')
+FB_VER_SUFFIX_SM:=$(shell cpp -DDARWIN -I.  ../builds/install/arch-specific/darwin/buildsuffix.c | tail -2 | sed -e 's/" "//g' -e 's/"//g' -e 's/ScratchBird[ ]*//' -e 's/Release Candidate/RC/')
+FB_VER_SUFFIX_M:=$(shell cpp -DDARWIN -I.  ../builds/install/arch-specific/darwin/buildsuffix.c | tail -2 | sed -e 's/" "//g' -e 's/"//g' -e 's/Release Candidate/RC/')
+FB_MAJOR_VERS:=$(shell cpp -DDARWIN -I.  ../builds/install/arch-specific/darwin/majorvers.c | tail -2 | sed -e 's/" "//g' -e 's/"//g')
+FB_MINOR_VERS:=$(shell cpp -DDARWIN -I.  ../builds/install/arch-specific/darwin/minorvers.c | tail -2 | sed -e 's/" "//g' -e 's/"//g')
+FB_REV_NO:=$(shell cpp -DDARWIN -I. ../builds/install/arch-specific/darwin/revno.c | tail -2 | sed -e 's/" "//g' -e 's/"//g')
+
+BuildVersion=$(ScratchBirdVersion).$(BuildNum)
+Version=$(BuildVersion)-$(PackageVersion)
+
+package: package_scratchbird
+package_scratchbird: INST_NM=ScratchBird-$(Version)-macos-$(CpuType)
+package_scratchbird:
+	sed -e 's/_FB_BUILD_SUFFIX_/$(FB_VER_SUFFIX)/g' \
+			-e 's/_SMFB_BUILD_SUFFIX_/$(FB_VER_SUFFIX_SM)/g' \
+			-e 's/_MFB_BUILD_SUFFIX_/$(FB_VER_SUFFIX_M)/g' \
+			-e 's/_MAJOR_VERS_/$(FB_MAJOR_VERS)/g' \
+			-e 's/_MINOR_VERS_/$(FB_MINOR_VERS)/g' \
+			-e 's/_REV_NO_/$(FB_REV_NO)/g' \
+			../builds/install/arch-specific/darwin/Info.plist \
+			> $(ROOT)/gen/$(TARGET)/frameworks/ScratchBird6.framework/Resources/Info.plist
+	sed -e 's/_FB_BUILD_SUFFIX_/$(FB_VER_SUFFIX)/g' \
+			-e 's/_SMFB_BUILD_SUFFIX_/$(FB_VER_SUFFIX_SM)/g' \
+			-e 's/_MFB_BUILD_SUFFIX_/$(FB_VER_SUFFIX_M)/g' \
+			-e 's/_MAJOR_VERS_/$(FB_MAJOR_VERS)/g' \
+			-e 's/_MINOR_VERS_/$(FB_MINOR_VERS)/g' \
+			-e 's/_REV_NO_/$(FB_REV_NO)/g' \
+			../builds/install/arch-specific/darwin/Description.plist \
+			> $(ROOT)/gen/$(TARGET)/frameworks/ScratchBird6.framework/Resources/Description.plist
+
+	rm -fr $(ROOT)/gen/$(TARGET)/scripts
+	mkdir $(ROOT)/gen/$(TARGET)/scripts
+	cp ../builds/install/arch-specific/darwin/install-script \
+			$(ROOT)/gen/$(TARGET)/scripts/postinstall
+	cp ../builds/install/arch-specific/darwin/preupgrade-script \
+			$(ROOT)/gen/$(TARGET)/scripts/preinstall
+	chmod u+x $(ROOT)/gen/$(TARGET)/scripts/postinstall
+	chmod u+x $(ROOT)/gen/$(TARGET)/scripts/preinstall
+
+	rm -fr $(ROOT)/gen/$(TARGET)/resources
+	mkdir $(ROOT)/gen/$(TARGET)/resources
+	cp ../builds/install/arch-specific/darwin/Welcome.txt \
+			$(ROOT)/gen/$(TARGET)/resources/Welcome.txt
+	cp ../builds/install/arch-specific/darwin/Readme.txt \
+			$(ROOT)/gen/$(TARGET)/resources/Readme.txt
+	cp ../builds/install/arch-specific/darwin/License.txt \
+			$(ROOT)/gen/$(TARGET)/resources/License.txt
+	cp ../builds/install/arch-specific/darwin/Distribution-$(CpuType).xml \
+			$(ROOT)/gen/$(TARGET)/Distribution.xml
+
+	rm -fr $(TARGET)/packages
+	mkdir $(TARGET)/packages
+	pkgbuild --root $(ROOT)/gen/$(TARGET)/frameworks/ScratchBird6.framework \
+			--identifier com.scratchbirdsql.ScratchBird \
+			--install-location /Library/Frameworks/ScratchBird.framework \
+			--scripts $(ROOT)/gen/$(TARGET)/scripts \
+			$(TARGET)/packages/ScratchBird.pkg
+
+	productbuild --distribution $(TARGET)/Distribution.xml \
+			--resources $(TARGET)/resources \
+			--package-path $(TARGET)/packages \
+			$(TARGET)/$(INST_NM).pkg
+
+
+
