@@ -1,0 +1,3062 @@
+/*
+ *	PROGRAM:	JRD Access Method
+ *	MODULE:		met.cpp
+ *	DESCRIPTION:	Meta data handler (Modernized from met.epp)
+ *
+ * The contents of this file are subject to the Interbase Public
+ * License Version 1.0 (the "License"); you may not use this file
+ * except in compliance with the License. You may obtain a copy
+ * of the License at http://www.Inprise.com/IPL.html
+ *
+ * Software distributed under the License is distributed on an
+ * "AS IS" basis, WITHOUT WARRANTY OF ANY KIND, either express
+ * or implied. See the License for the specific language governing
+ * rights and limitations under the License.
+ *
+ * The Original Code was created by Inprise Corporation
+ * and its predecessors. Portions created by Inprise Corporation are
+ * Copyright (C) Inprise Corporation.
+ *
+ * All Rights Reserved.
+ * Contributor(s): ______________________________________.
+ *
+ * Modernized for ScratchBird: Converted from GPRE to modern C++
+ */
+
+#include "scratchbird.h"
+#include <stdio.h>
+#include <string.h>
+#include <stdarg.h>
+
+#include "../jrd/jrd.h"
+#include "../jrd/val.h"
+#include "../jrd/irq.h"
+#include "../jrd/tra.h"
+#include "../jrd/lck.h"
+#include "../jrd/ods.h"
+#include "../jrd/btr.h"
+#include "../jrd/req.h"
+#include "../jrd/exe.h"
+#include "../jrd/scl.h"
+#include "../jrd/blb.h"
+#include "../jrd/met.h"
+#include "../jrd/os/pio.h"
+#include "../jrd/sdw.h"
+#include "../jrd/flags.h"
+#include "../jrd/lls.h"
+#include "../jrd/intl.h"
+#include "../jrd/align.h"
+#include "../jrd/flu.h"
+#include "../jrd/blob_filter.h"
+#include "../dsql/StmtNodes.h"
+#include "../intl/charsets.h"
+#include "../common/gdsassert.h"
+#include "../jrd/blb_proto.h"
+#include "../jrd/cmp_proto.h"
+#include "../jrd/dfw_proto.h"
+#include "../common/dsc_proto.h"
+#include "../jrd/err_proto.h"
+#include "../jrd/evl_proto.h"
+#include "../jrd/exe_proto.h"
+#include "../jrd/ext_proto.h"
+#include "../jrd/flu_proto.h"
+#include "../yvalve/gds_proto.h"
+#include "../jrd/idx_proto.h"
+#include "../jrd/ini_proto.h"
+
+#include "../jrd/lck_proto.h"
+#include "../jrd/met_proto.h"
+#include "../jrd/mov_proto.h"
+#include "../jrd/par_proto.h"
+#include "../jrd/os/pio_proto.h"
+#include "../jrd/scl_proto.h"
+#include "../jrd/sdw_proto.h"
+#include "../common/utils_proto.h"
+
+#include "../jrd/RecordSourceNodes.h"
+#include "../jrd/DebugInterface.h"
+#include "../common/classes/Hash.h"
+#include "../common/classes/MsgPrint.h"
+#include "../jrd/Function.h"
+#include "../jrd/trace/TraceJrdHelpers.h"
+#include "met_shadows.h"
+
+#ifdef HAVE_CTYPE_H
+#include <ctype.h>
+#endif
+
+// Pick up relation ids
+#include "../jrd/ini.h"
+
+using namespace Jrd;
+using namespace ScratchBird;
+
+static int blocking_ast_dsql_cache(void* ast_object);
+static DSqlCacheItem* get_dsql_cache_item(thread_db* tdbb, sym_type type, const QualifiedName& name);
+static int blocking_ast_procedure(void*);
+static int blocking_ast_relation(void*);
+static int partners_ast_relation(void*);
+static int rescan_ast_relation(void*);
+static ULONG get_rel_flags_from_FLAGS(USHORT);
+static void get_trigger(thread_db*, jrd_rel*, bid*, bid*, TrigVector**, const QualifiedName&, FB_UINT64, SSHORT,
+	USHORT, const MetaName&, const string&, const bid*, TriState ssDefiner);
+static bool get_type(thread_db*, USHORT*, const MetaName&, const TEXT*);
+static void lookup_view_contexts(thread_db*, jrd_rel*);
+static void make_relation_scope_name(const QualifiedName&, const USHORT, string& str);
+static ValueExprNode* parse_field_default_blr(thread_db* tdbb, const MetaName& schema, bid* blob_id);
+static BoolExprNode* parse_field_validation_blr(thread_db* tdbb, bid* blob_id, const QualifiedName& name);
+static bool resolve_charset_and_collation(thread_db*, USHORT*, const QualifiedName&, const QualifiedName&);
+static void save_trigger_data(thread_db*, TrigVector**, jrd_rel*, Statement*, blb*, blb*,
+	const QualifiedName*, FB_UINT64, SSHORT, USHORT, const MetaName&, const string&,
+	const bid*, TriState ssDefiner);
+static void scan_partners(thread_db*, jrd_rel*);
+static bool verify_TRG_ignore_perm(thread_db*, const QualifiedName&);
+
+
+static void inc_int_use_count(Statement* statement)
+{
+	// Handle sub-statements
+	for (Statement** subStatement = statement->subStatements.begin();
+		 subStatement != statement->subStatements.end();
+		 ++subStatement)
+	{
+		inc_int_use_count(*subStatement);
+	}
+
+	// Increment int_use_count for all procedures in resource list of request
+	ResourceList& list = statement->resources;
+	FB_SIZE_T i;
+
+	for (list.find(Resource(Resource::rsc_procedure, 0, NULL, NULL, NULL), i);
+		 i < list.getCount(); i++)
+	{
+		Resource& resource = list[i];
+		if (resource.rsc_type != Resource::rsc_procedure)
+			break;
+		//// FIXME: CORE-4271: fb_assert(resource.rsc_routine->intUseCount >= 0);
+		++resource.rsc_routine->intUseCount;
+	}
+
+	for (list.find(Resource(Resource::rsc_function, 0, NULL, NULL, NULL), i);
+		 i < list.getCount(); i++)
+	{
+		Resource& resource = list[i];
+		if (resource.rsc_type != Resource::rsc_function)
+			break;
+		//// FIXME: CORE-4271: fb_assert(resource.rsc_routine->intUseCount >= 0);
+		++resource.rsc_routine->intUseCount;
+	}
+}
+
+
+// Increment int_use_count for all procedures used by triggers
+static void post_used_procedures(TrigVector* vector)
+{
+	if (!vector)
+		return;
+
+	for (FB_SIZE_T i = 0; i < vector->getCount(); i++)
+	{
+		Statement* stmt = (*vector)[i].statement;
+		if (stmt && !stmt->isActive())
+			inc_int_use_count(stmt);
+	}
+}
+
+
+void MET_get_domain(thread_db* tdbb, MemoryPool& csbPool, const QualifiedName& name, dsc* desc,
+	FieldInfo* fieldInfo)
+{
+/**************************************
+ *
+ *	M E T _ g e t _ d o m a i n
+ *
+ **************************************
+ *
+ * Functional description
+ *      Get domain descriptor and informations.
+ *
+ **************************************/
+	SET_TDBB(tdbb);
+	Attachment* attachment = tdbb->getAttachment();
+	bool found = false;
+
+	AutoCacheRequest handle(tdbb, irq_l_domain, IRQ_REQUESTS);
+
+	// Converted FOR loop #1: Domain lookup
+	EXE_start(tdbb, handle.getRequest(), attachment->getSysTransaction());
+	EXE_send(tdbb, handle.getRequest(), 0, name.schema.length(), name.schema.c_str());
+	EXE_send(tdbb, handle.getRequest(), 0, name.object.length(), name.object.c_str());
+
+	while (EXE_receive(tdbb, handle.getRequest(), 1))
+	{
+		USHORT field_type, field_scale, field_length, field_sub_type;
+		USHORT character_set_id, collation_id, null_flag;
+		bool has_default_value = false, has_validation_blr = false;
+		bid default_value_bid, validation_blr_bid;
+
+		// Receive field descriptor data
+		EXE_receive(tdbb, handle.getRequest(), 1, sizeof(field_type), &field_type);
+		EXE_receive(tdbb, handle.getRequest(), 1, sizeof(field_scale), &field_scale);
+		EXE_receive(tdbb, handle.getRequest(), 1, sizeof(field_length), &field_length);
+		EXE_receive(tdbb, handle.getRequest(), 1, sizeof(field_sub_type), &field_sub_type);
+		EXE_receive(tdbb, handle.getRequest(), 1, sizeof(character_set_id), &character_set_id);
+		EXE_receive(tdbb, handle.getRequest(), 1, sizeof(collation_id), &collation_id);
+		EXE_receive(tdbb, handle.getRequest(), 1, sizeof(null_flag), &null_flag);
+		
+		// Check for optional fields
+		if (EXE_receive(tdbb, handle.getRequest(), 1))
+		{
+			has_default_value = true;
+			EXE_receive(tdbb, handle.getRequest(), 1, sizeof(default_value_bid), &default_value_bid);
+		}
+		
+		if (EXE_receive(tdbb, handle.getRequest(), 1))
+		{
+			has_validation_blr = true;
+			EXE_receive(tdbb, handle.getRequest(), 1, sizeof(validation_blr_bid), &validation_blr_bid);
+		}
+
+		if (DSC_make_descriptor(desc, field_type, field_scale, field_length, 
+								field_sub_type, character_set_id, collation_id))
+		{
+			found = true;
+
+			if (fieldInfo)
+			{
+				fieldInfo->nullable = (null_flag == 0);
+
+				Jrd::ContextPoolHolder context(tdbb, &csbPool);
+
+				if (!has_default_value)
+					fieldInfo->defaultValue = NULL;
+				else
+					fieldInfo->defaultValue = parse_field_default_blr(tdbb, name.schema, &default_value_bid);
+
+				if (!has_validation_blr)
+					fieldInfo->validationExpr = NULL;
+				else
+				{
+					fieldInfo->validationExpr = parse_field_validation_blr(tdbb,
+						&validation_blr_bid, name);
+				}
+			}
+		}
+	}
+
+	if (!found)
+		ERR_post(Arg::Gds(isc_domnotdef) << name.toQuotedString());
+}
+
+
+MetaName MET_get_relation_field(thread_db* tdbb, MemoryPool& csbPool, const QualifiedName& relationName,
+	const MetaName& fieldName, dsc* desc, FieldInfo* fieldInfo)
+{
+/**************************************
+ *
+ *	M E T _ g e t _ r e l a t i o n _ f i e l d
+ *
+ **************************************
+ *
+ * Functional description
+ *  Get relation field descriptor and informations.
+ *  Returns field source name.
+ *
+ **************************************/
+	SET_TDBB(tdbb);
+	Attachment* attachment = tdbb->getAttachment();
+	bool found = false;
+	MetaName sourceName;
+
+	AutoCacheRequest handle(tdbb, irq_l_relfield, IRQ_REQUESTS);
+
+	// Converted FOR loop #2: Relation field lookup with cross join
+	EXE_start(tdbb, handle.getRequest(), attachment->getSysTransaction());
+	EXE_send(tdbb, handle.getRequest(), 0, relationName.schema.length(), relationName.schema.c_str());
+	EXE_send(tdbb, handle.getRequest(), 0, relationName.object.length(), relationName.object.c_str());
+	EXE_send(tdbb, handle.getRequest(), 0, fieldName.length(), fieldName.c_str());
+
+	while (EXE_receive(tdbb, handle.getRequest(), 1))
+	{
+		char field_source[MAX_SQL_IDENTIFIER_LEN];
+		char field_source_schema[MAX_SQL_IDENTIFIER_LEN];
+		USHORT field_type, field_scale, field_length, field_sub_type;
+		USHORT character_set_id, fld_collation_id, rfl_collation_id;
+		USHORT rfl_null_flag, fld_null_flag;
+		bool has_rfl_default = false, has_fld_default = false, has_validation_blr = false;
+		bid rfl_default_bid, fld_default_bid, validation_blr_bid;
+
+		// Receive relation field and domain field data
+		EXE_receive(tdbb, handle.getRequest(), 1, sizeof(field_source), field_source);
+		EXE_receive(tdbb, handle.getRequest(), 1, sizeof(field_source_schema), field_source_schema);
+		EXE_receive(tdbb, handle.getRequest(), 1, sizeof(field_type), &field_type);
+		EXE_receive(tdbb, handle.getRequest(), 1, sizeof(field_scale), &field_scale);
+		EXE_receive(tdbb, handle.getRequest(), 1, sizeof(field_length), &field_length);
+		EXE_receive(tdbb, handle.getRequest(), 1, sizeof(field_sub_type), &field_sub_type);
+		EXE_receive(tdbb, handle.getRequest(), 1, sizeof(character_set_id), &character_set_id);
+		EXE_receive(tdbb, handle.getRequest(), 1, sizeof(fld_collation_id), &fld_collation_id);
+		EXE_receive(tdbb, handle.getRequest(), 1, sizeof(rfl_collation_id), &rfl_collation_id);
+		EXE_receive(tdbb, handle.getRequest(), 1, sizeof(rfl_null_flag), &rfl_null_flag);
+		EXE_receive(tdbb, handle.getRequest(), 1, sizeof(fld_null_flag), &fld_null_flag);
+
+		// Check for optional default values
+		if (EXE_receive(tdbb, handle.getRequest(), 1))
+		{
+			has_rfl_default = true;
+			EXE_receive(tdbb, handle.getRequest(), 1, sizeof(rfl_default_bid), &rfl_default_bid);
+		}
+		
+		if (EXE_receive(tdbb, handle.getRequest(), 1))
+		{
+			has_fld_default = true;
+			EXE_receive(tdbb, handle.getRequest(), 1, sizeof(fld_default_bid), &fld_default_bid);
+		}
+		
+		if (EXE_receive(tdbb, handle.getRequest(), 1))
+		{
+			has_validation_blr = true;
+			EXE_receive(tdbb, handle.getRequest(), 1, sizeof(validation_blr_bid), &validation_blr_bid);
+		}
+
+		// Use relation field collation if specified, otherwise domain collation
+		USHORT effective_collation = (rfl_collation_id != 0) ? rfl_collation_id : fld_collation_id;
+
+		if (DSC_make_descriptor(desc, field_type, field_scale, field_length,
+								field_sub_type, character_set_id, effective_collation))
+		{
+			found = true;
+			sourceName = field_source;
+
+			if (fieldInfo)
+			{
+				// Relation field null flag overrides domain null flag if specified
+				fieldInfo->nullable = (rfl_null_flag != 0) ? 
+					(rfl_null_flag == 0) : (fld_null_flag == 0);
+
+				Jrd::ContextPoolHolder context(tdbb, &csbPool);
+				bid* defaultId = NULL;
+
+				// Relation field default overrides domain default
+				if (has_rfl_default)
+					defaultId = &rfl_default_bid;
+				else if (has_fld_default)
+					defaultId = &fld_default_bid;
+
+				if (defaultId)
+					fieldInfo->defaultValue = parse_field_default_blr(tdbb, relationName.schema, defaultId);
+				else
+					fieldInfo->defaultValue = NULL;
+
+				if (!has_validation_blr)
+					fieldInfo->validationExpr = NULL;
+				else
+				{
+					fieldInfo->validationExpr = parse_field_validation_blr(tdbb,
+						&validation_blr_bid, QualifiedName(field_source, field_source_schema));
+				}
+			}
+		}
+	}
+
+	if (!found)
+	{
+		ERR_post(Arg::Gds(isc_dyn_column_does_not_exist) <<
+			fieldName.toQuotedString() <<
+			relationName.toQuotedString());
+	}
+
+	return sourceName;
+}
+
+
+void MET_update_partners(thread_db* tdbb)
+{
+/**************************************
+ *
+ *      M E T _ u p d a t e _ p a r t n e r s
+ *
+ **************************************
+ *
+ * Functional description
+ *      Mark all relations to update their links to FK partners
+ *      Called when any index is deleted because engine don't know
+ *      was it used in any FK or not
+ *
+ **************************************/
+	SET_TDBB(tdbb);
+	Attachment* const attachment = tdbb->getAttachment();
+
+	vec<jrd_rel*>* relations = attachment->att_relations;
+
+	vec<jrd_rel*>::iterator ptr = relations->begin();
+	for (const vec<jrd_rel*>::const_iterator end = relations->end(); ptr < end; ++ptr)
+	{
+		jrd_rel* relation = *ptr;
+		if (!relation)
+			continue;
+
+		// signal other processes
+		relation->rel_flags |= REL_check_partners;
+		LCK_lock(tdbb, relation->rel_partners_lock, LCK_EX, LCK_WAIT);
+		LCK_release(tdbb, relation->rel_partners_lock);
+	}
+}
+
+
+static void adjust_dependencies(Routine* routine)
+{
+	if (routine->intUseCount == -1)
+	{
+		// Already processed
+		return;
+	}
+
+	routine->intUseCount = -1; // Mark as undeletable
+
+	if (routine->getStatement())
+	{
+		// Loop over procedures from resource list of request
+		ResourceList& list = routine->getStatement()->resources;
+		FB_SIZE_T i;
+
+		for (list.find(Resource(Resource::rsc_procedure, 0, NULL, NULL, NULL), i);
+			i < list.getCount(); i++)
+		{
+			Resource& resource = list[i];
+
+			if (resource.rsc_type != Resource::rsc_procedure)
+				break;
+
+			routine = resource.rsc_routine;
+
+			if (routine->intUseCount == routine->useCount)
+			{
+				// Mark it and all dependent procedures as undeletable
+				adjust_dependencies(routine);
+			}
+		}
+
+		for (list.find(Resource(Resource::rsc_function, 0, NULL, NULL, NULL), i);
+			i < list.getCount(); i++)
+		{
+			Resource& resource = list[i];
+
+			if (resource.rsc_type != Resource::rsc_function)
+				break;
+
+			routine = resource.rsc_routine;
+
+			if (routine->intUseCount == routine->useCount)
+			{
+				// Mark it and all dependent functions as undeletable
+				adjust_dependencies(routine);
+			}
+		}
+	}
+}
+
+
+#ifdef DEV_BUILD
+
+
+
+
+bool MET_routine_in_use(thread_db* tdbb, Routine* routine)
+{
+/**************************************
+ *
+ *      M E T _ r o u t i n e _ i n _ u s e
+ *
+ **************************************
+ *
+ * Functional description
+ *      Determine if routine is used by any user requests or transactions.
+ *      Return false if routine is used only inside cache or not used at all.
+ *
+ **************************************/
+	SET_TDBB(tdbb);
+
+#ifdef DEV_BUILD
+	MET_verify_cache(tdbb);
+#endif
+
+	Attachment* const att = tdbb->getAttachment();
+
+	vec<jrd_rel*>* relations = att->att_relations;
+	{ // scope
+	    vec<jrd_rel*>::iterator ptr, end;
+
+		for (ptr = relations->begin(), end = relations->end(); ptr < end; ++ptr)
+		{
+			jrd_rel* relation = *ptr;
+			if (!relation) {
+				continue;
+			}
+			post_used_procedures(relation->rel_pre_store);
+			post_used_procedures(relation->rel_post_store);
+			post_used_procedures(relation->rel_pre_erase);
+			post_used_procedures(relation->rel_post_erase);
+			post_used_procedures(relation->rel_pre_modify);
+			post_used_procedures(relation->rel_post_modify);
+		}
+	} // scope
+
+	// Walk routines and calculate internal dependencies
+
+	for (jrd_prc** iter = att->att_procedures.begin(); iter != att->att_procedures.end(); ++iter)
+	{
+		jrd_prc* procedure = *iter;
+
+		if (procedure && procedure->getStatement() &&
+			!(procedure->flags & Routine::FLAG_OBSOLETE))
+		{
+			inc_int_use_count(procedure->getStatement());
+		}
+	}
+
+	for (Function** iter = att->att_functions.begin(); iter != att->att_functions.end(); ++iter)
+	{
+		Function* function = *iter;
+
+		if (function && function->getStatement() &&
+			!(function->flags & Routine::FLAG_OBSOLETE))
+		{
+			inc_int_use_count(function->getStatement());
+		}
+	}
+
+	// Walk routines again and adjust dependencies for routines
+	// which will not be removed.
+
+	for (jrd_prc** iter = att->att_procedures.begin(); iter != att->att_procedures.end(); ++iter)
+	{
+		jrd_prc* procedure = *iter;
+
+		if (procedure && procedure->getStatement() &&
+			!(procedure->flags & Routine::FLAG_OBSOLETE) &&
+			procedure->useCount != procedure->intUseCount && procedure != routine)
+		{
+			adjust_dependencies(procedure);
+		}
+	}
+
+	for (Function** iter = att->att_functions.begin(); iter != att->att_functions.end(); ++iter)
+	{
+		Function* function = *iter;
+
+		if (function && function->getStatement() &&
+			!(function->flags & Routine::FLAG_OBSOLETE) &&
+			function->useCount != function->intUseCount && function != routine)
+		{
+			adjust_dependencies(function);
+		}
+	}
+
+	const bool result = routine->useCount != routine->intUseCount;
+
+	// Fix back intUseCount
+
+	for (jrd_prc** iter = att->att_procedures.begin(); iter != att->att_procedures.end(); ++iter)
+	{
+		jrd_prc* procedure = *iter;
+
+		if (procedure)
+			procedure->intUseCount = 0;
+	}
+
+	for (Function** iter = att->att_functions.begin(); iter != att->att_functions.end(); ++iter)
+	{
+		Function* function = *iter;
+
+		if (function)
+			function->intUseCount = 0;
+	}
+
+#ifdef DEV_BUILD
+	MET_verify_cache(tdbb);
+#endif
+	return result;
+}
+
+
+ULONG MET_align(const dsc* desc, ULONG value)
+{
+/**************************************
+ *
+ *      M E T _ a l i g n
+ *
+ **************************************
+ *
+ * Functional description
+ *      Align value (presumed offset) on appropriate border
+ *      and return.
+ *
+ **************************************/
+	USHORT alignment = desc->dsc_length;
+	switch (desc->dsc_dtype)
+	{
+	case dtype_text:
+	case dtype_cstring:
+		return value;
+
+	case dtype_varying:
+		alignment = sizeof(USHORT);
+		break;
+	}
+
+	alignment = MIN(alignment, FORMAT_ALIGNMENT);
+
+	return FB_ALIGN(value, alignment);
+}
+
+
+DeferredWork* MET_change_fields(thread_db* tdbb, jrd_tra* transaction, const dsc* schemaName, const dsc* field_source)
+{
+/**************************************
+ *
+ *      M E T _ c h a n g e _ f i e l d s
+ *
+ **************************************
+ *
+ * Functional description
+ *      Somebody is modifying RDB$FIELDS.
+ *      Find all relations affected and schedule a format update.
+ *      Find all procedures and triggers and schedule a BLR validate.
+ *      Find all functions and schedule a BLR validate.
+ *
+ **************************************/
+	SET_TDBB(tdbb);
+	Attachment* attachment = tdbb->getAttachment();
+
+	dsc schemaDesc, nameDesc;
+	DeferredWork* dw = NULL;
+	AutoCacheRequest request(tdbb, irq_m_fields, IRQ_REQUESTS);
+
+	// Converted FOR loop #6: Find relations affected by field changes
+	EXE_start(tdbb, request.getRequest(), attachment->getSysTransaction());
+	EXE_send(tdbb, request.getRequest(), 0, schemaName->dsc_length, schemaName->dsc_address);
+	EXE_send(tdbb, request.getRequest(), 0, field_source->dsc_length, field_source->dsc_address);
+
+	while (EXE_receive(tdbb, request.getRequest(), 1))
+	{
+		char schema_name[MAX_SQL_IDENTIFIER_LEN];
+		char relation_name[MAX_SQL_IDENTIFIER_LEN];
+
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(schema_name), schema_name);
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(relation_name), relation_name);
+
+		SCL_check_relation(tdbb, QualifiedName(relation_name, schema_name), SCL_alter);
+		schemaDesc.makeText(strlen(schema_name), CS_METADATA, (UCHAR*) schema_name);
+		nameDesc.makeText(strlen(relation_name), CS_METADATA, (UCHAR*) relation_name);
+		dw = DFW_post_work(transaction, dfw_update_format, &nameDesc, &schemaDesc, 0);
+
+		// Converted FOR loop #7: Find procedures dependent on this relation field
+		AutoCacheRequest request2(tdbb, irq_m_fields4, IRQ_REQUESTS);
+		EXE_start(tdbb, request2.getRequest(), attachment->getSysTransaction());
+		EXE_send(tdbb, request2.getRequest(), 0, strlen(schema_name), schema_name);
+		EXE_send(tdbb, request2.getRequest(), 0, strlen(relation_name), relation_name);
+
+		while (EXE_receive(tdbb, request2.getRequest(), 1))
+		{
+			char proc_schema[MAX_SQL_IDENTIFIER_LEN];
+			char proc_name[MAX_SQL_IDENTIFIER_LEN];
+			USHORT proc_id;
+
+			EXE_receive(tdbb, request2.getRequest(), 1, sizeof(proc_schema), proc_schema);
+			EXE_receive(tdbb, request2.getRequest(), 1, sizeof(proc_name), proc_name);
+			EXE_receive(tdbb, request2.getRequest(), 1, sizeof(proc_id), &proc_id);
+
+			QualifiedName procName(proc_name, proc_schema);
+
+			schemaDesc.makeText(procName.schema.length(), CS_METADATA, (UCHAR*) procName.schema.c_str());
+			nameDesc.makeText(procName.object.length(), CS_METADATA, (UCHAR*) procName.object.c_str());
+
+			DeferredWork* dw2 =
+				DFW_post_work(transaction, dfw_modify_procedure, &nameDesc, &schemaDesc, proc_id);
+			DFW_post_work_arg(transaction, dw2, nullptr, nullptr, 0, dfw_arg_check_blr);
+		}
+
+		// Converted FOR loop #8: Find triggers dependent on this relation field
+		request2.reset(tdbb, irq_m_fields5, IRQ_REQUESTS);
+		EXE_start(tdbb, request2.getRequest(), attachment->getSysTransaction());
+		EXE_send(tdbb, request2.getRequest(), 0, strlen(schema_name), schema_name);
+		EXE_send(tdbb, request2.getRequest(), 0, strlen(relation_name), relation_name);
+
+		while (EXE_receive(tdbb, request2.getRequest(), 1))
+		{
+			char trg_schema[MAX_SQL_IDENTIFIER_LEN];
+			char trg_name[MAX_SQL_IDENTIFIER_LEN];
+			char trg_relation[MAX_SQL_IDENTIFIER_LEN];
+			USHORT trg_type;
+
+			EXE_receive(tdbb, request2.getRequest(), 1, sizeof(trg_schema), trg_schema);
+			EXE_receive(tdbb, request2.getRequest(), 1, sizeof(trg_name), trg_name);
+			EXE_receive(tdbb, request2.getRequest(), 1, sizeof(trg_relation), trg_relation);
+			EXE_receive(tdbb, request2.getRequest(), 1, sizeof(trg_type), &trg_type);
+
+			QualifiedName triggerName(trg_name, trg_schema);
+			MetaName triggerRelationName(trg_relation);
+
+			schemaDesc.makeText(triggerName.schema.length(), CS_METADATA, (UCHAR*) triggerName.schema.c_str());
+			nameDesc.makeText(triggerName.object.length(), CS_METADATA, (UCHAR*) triggerName.object.c_str());
+
+			DeferredWork* dw2 = DFW_post_work(transaction, dfw_modify_trigger, &nameDesc, &schemaDesc, 0);
+			DFW_post_work_arg(transaction, dw2, nullptr, nullptr, trg_type, dfw_arg_trg_type);
+
+			nameDesc.dsc_length = triggerRelationName.length();
+			nameDesc.dsc_address = (UCHAR*) triggerRelationName.c_str();
+			DFW_post_work_arg(transaction, dw2, &nameDesc, &schemaDesc, 0, dfw_arg_check_blr);
+		}
+
+		// Converted FOR loop #9: Find functions dependent on this relation field
+		request2.reset(tdbb, irq_m_fields8, IRQ_REQUESTS);
+		EXE_start(tdbb, request2.getRequest(), attachment->getSysTransaction());
+		EXE_send(tdbb, request2.getRequest(), 0, strlen(schema_name), schema_name);
+		EXE_send(tdbb, request2.getRequest(), 0, strlen(relation_name), relation_name);
+
+		while (EXE_receive(tdbb, request2.getRequest(), 1))
+		{
+			char func_schema[MAX_SQL_IDENTIFIER_LEN];
+			char func_name[MAX_SQL_IDENTIFIER_LEN];
+			USHORT func_id;
+
+			EXE_receive(tdbb, request2.getRequest(), 1, sizeof(func_schema), func_schema);
+			EXE_receive(tdbb, request2.getRequest(), 1, sizeof(func_name), func_name);
+			EXE_receive(tdbb, request2.getRequest(), 1, sizeof(func_id), &func_id);
+
+			QualifiedName funcName(func_name, func_schema);
+
+			schemaDesc.makeText(funcName.schema.length(), CS_METADATA, (UCHAR*) funcName.schema.c_str());
+			nameDesc.makeText(funcName.object.length(), CS_METADATA, (UCHAR*) funcName.object.c_str());
+
+			DeferredWork* dw2 =
+				DFW_post_work(transaction, dfw_modify_function, &nameDesc, &schemaDesc, func_id);
+			DFW_post_work_arg(transaction, dw2, nullptr, nullptr, 0, dfw_arg_check_blr);
+		}
+	}
+
+	// Converted FOR loop #10: Find procedures dependent on domain field directly
+	request.reset(tdbb, irq_m_fields2, IRQ_REQUESTS);
+	EXE_start(tdbb, request.getRequest(), attachment->getSysTransaction());
+	EXE_send(tdbb, request.getRequest(), 0, schemaName->dsc_length, schemaName->dsc_address);
+	EXE_send(tdbb, request.getRequest(), 0, field_source->dsc_length, field_source->dsc_address);
+
+	while (EXE_receive(tdbb, request.getRequest(), 1))
+	{
+		char proc_schema[MAX_SQL_IDENTIFIER_LEN];
+		char proc_name[MAX_SQL_IDENTIFIER_LEN];
+		USHORT proc_id;
+
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(proc_schema), proc_schema);
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(proc_name), proc_name);
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(proc_id), &proc_id);
+
+		QualifiedName procName(proc_name, proc_schema);
+
+		schemaDesc.makeText(procName.schema.length(), CS_METADATA, (UCHAR*) procName.schema.c_str());
+		nameDesc.makeText(procName.object.length(), CS_METADATA, (UCHAR*) procName.object.c_str());
+
+		DeferredWork* dw2 =
+			DFW_post_work(transaction, dfw_modify_procedure, &nameDesc, &schemaDesc, proc_id);
+		DFW_post_work_arg(transaction, dw2, nullptr, nullptr, 0, dfw_arg_check_blr);
+	}
+
+	return dw;
+}
+
+
+Format* MET_current(thread_db* tdbb, jrd_rel* relation)
+{
+/**************************************
+ *
+ *      M E T _ c u r r e n t
+ *
+ **************************************
+ *
+ * Functional description
+ *      Get the current format for a relation.  The current format is the
+ *      format in which new records are to be stored.
+ *
+ **************************************/
+
+	// dimitr:	rel_current_format may sometimes get out of sync,
+	//			e.g. after DFW error raised during ALTER TABLE command.
+	//			Thus it makes sense to validate it before usage and
+	//			fetch the proper one if something is suspicious.
+
+	if (relation->rel_current_format &&
+		relation->rel_current_format->fmt_version == relation->rel_current_fmt)
+	{
+		return relation->rel_current_format;
+	}
+
+	SET_TDBB(tdbb);
+	Attachment* attachment = tdbb->getAttachment();
+
+	if (!(relation->rel_flags & REL_scanned))
+	{
+		AutoCacheRequest request(tdbb, irq_l_curr_format, IRQ_REQUESTS);
+
+		// Converted FOR loop #11: Get current format version
+		EXE_start(tdbb, request.getRequest(), attachment->getSysTransaction());
+		EXE_send(tdbb, request.getRequest(), 0, sizeof(relation->rel_id), &relation->rel_id);
+
+		while (EXE_receive(tdbb, request.getRequest(), 1))
+		{
+			USHORT format_version;
+			EXE_receive(tdbb, request.getRequest(), 1, sizeof(format_version), &format_version);
+			relation->rel_current_fmt = format_version;
+		}
+	}
+
+	// Usually, format numbers start with one and they are present in RDB$FORMATS.
+	// However, system tables have zero as their initial format and they don't have
+	// any related records in RDB$FORMATS, instead their rel_formats[0] is initialized
+	// directly (see ini.epp). Every other case of zero format number found for an already
+	// scanned table must be catched here and investigated.
+	fb_assert(relation->rel_current_fmt || relation->isSystem());
+
+	relation->rel_current_format = MET_format(tdbb, relation, relation->rel_current_fmt);
+
+	return relation->rel_current_format;
+}
+
+
+void MET_delete_dependencies(thread_db* tdbb,
+							 const QualifiedName& object_name,
+							 int dependency_type,
+							 jrd_tra* transaction)
+{
+/**************************************
+ *
+ *      M E T _ d e l e t e _ d e p e n d e n c i e s
+ *
+ **************************************
+ *
+ * Functional description
+ *      Delete all dependencies for the specified
+ *      object of given type.
+ *
+ **************************************/
+	SET_TDBB(tdbb);
+
+	AutoCacheRequest request(tdbb, irq_d_deps, IRQ_REQUESTS);
+
+	// Converted FOR loop #12: Delete dependencies (with ERASE)
+	EXE_start(tdbb, request.getRequest(), transaction);
+	EXE_send(tdbb, request.getRequest(), 0, object_name.schema.length(), object_name.schema.c_str());
+	EXE_send(tdbb, request.getRequest(), 0, object_name.object.length(), object_name.object.c_str());
+	EXE_send(tdbb, request.getRequest(), 0, sizeof(dependency_type), &dependency_type);
+
+	while (EXE_receive(tdbb, request.getRequest(), 1))
+	{
+		// ERASE operation
+		EXE_send(tdbb, request.getRequest(), 2, 0, nullptr); // ERASE signal
+	}
+}
+
+
+bool MET_dsql_cache_use(thread_db* tdbb, sym_type type, const QualifiedName& name)
+{
+	DSqlCacheItem* item = get_dsql_cache_item(tdbb, type, name);
+
+	bool obsolete = false;
+	item->obsoleteMap.get(name, obsolete);
+
+	if (!item->locked)
+	{
+		// lock to be notified by others when we should mark as obsolete
+		LCK_lock(tdbb, item->lock, LCK_SR, LCK_WAIT);
+		item->locked = true;
+	}
+
+	item->obsoleteMap.put(name, false);
+
+	return obsolete;
+}
+
+
+void MET_dsql_cache_release(thread_db* tdbb, sym_type type, const QualifiedName& name)
+{
+	DSqlCacheItem* item = get_dsql_cache_item(tdbb, type, name);
+
+	// release the shared lock
+	LCK_release(tdbb, item->lock);
+
+	// notify others through AST to mark as obsolete
+	AutoPtr<Lock> tempExLock(FB_NEW_RPT(*tdbb->getDefaultPool(), item->key.length())
+		Lock(tdbb, item->key.length(), LCK_dsql_cache));
+	memcpy(tempExLock->getKeyPtr(), item->key.c_str(), item->key.length());
+
+	if (LCK_lock(tdbb, tempExLock, LCK_EX, LCK_WAIT))
+		LCK_release(tdbb, tempExLock);
+
+	item->locked = false;
+
+	LeftPooledMap<QualifiedName, bool>::Accessor accessor(&item->obsoleteMap);
+	for (bool found = accessor.getFirst(); found; found = accessor.getNext())
+		accessor.current()->second = accessor.current()->first != name;
+}
+
+
+void MET_error(const TEXT* string, ...)
+{
+/**************************************
+ *
+ *      M E T _ e r r o r
+ *
+ **************************************
+ *
+ * Functional description
+ *      Post an error in a metadata update
+ *      Oh, wow.
+ *
+ **************************************/
+	TEXT s[128];
+	va_list ptr;
+
+	va_start(ptr, string);
+	VSNPRINTF(s, sizeof(s), string, ptr);
+	va_end(ptr);
+
+	ERR_post(Arg::Gds(isc_no_meta_update) <<
+			 Arg::Gds(isc_random) << Arg::Str(s));
+}
+
+
+Format* MET_format(thread_db* tdbb, jrd_rel* relation, USHORT number)
+{
+/**************************************
+ *
+ *      M E T _ f o r m a t
+ *
+ **************************************
+ *
+ * Functional description
+ *      Lookup a format for given relation.
+ *
+ **************************************/
+	SET_TDBB(tdbb);
+	Attachment* attachment = tdbb->getAttachment();
+	Database* dbb = tdbb->getDatabase();
+
+	Format* format;
+	vec<Format*>* formats = relation->rel_formats;
+	if (formats && (number < formats->count()) && (format = (*formats)[number]))
+	{
+		return format;
+	}
+
+	// System relations don't have their formats stored inside RDB$FORMATS,
+	// so it's absolutely pointless trying to find one there
+	fb_assert(!relation->isSystem());
+
+	format = NULL;
+	AutoCacheRequest request(tdbb, irq_r_format, IRQ_REQUESTS);
+
+	// Converted FOR loop #14: Get relation format
+	EXE_start(tdbb, request.getRequest(), attachment->getSysTransaction());
+	EXE_send(tdbb, request.getRequest(), 0, sizeof(relation->rel_id), &relation->rel_id);
+	EXE_send(tdbb, request.getRequest(), 0, sizeof(number), &number);
+
+	while (EXE_receive(tdbb, request.getRequest(), 1))
+	{
+		bid descriptor_bid;
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(descriptor_bid), &descriptor_bid);
+
+		blb* blob = blb::open(tdbb, attachment->getSysTransaction(), &descriptor_bid);
+
+		// Use generic representation of formats with 32-bit offsets
+		HalfStaticArray<UCHAR, BUFFER_MEDIUM> buffer;
+		blob->BLB_get_data(tdbb, buffer.getBuffer(blob->blb_length), blob->blb_length);
+		unsigned bufferPos = 2;
+		USHORT count = buffer[0] | (buffer[1] << 8);
+
+		format = Format::newFormat(*relation->rel_pool, count);
+
+		Array<Ods::Descriptor> odsDescs;
+		Ods::Descriptor* odsDesc = odsDescs.getBuffer(count);
+		memcpy(odsDesc, buffer.begin() + bufferPos, count * sizeof(Ods::Descriptor));
+
+		for (Format::fmt_desc_iterator desc = format->fmt_desc.begin();
+			 desc < format->fmt_desc.end(); ++desc, ++odsDesc)
+		{
+			*desc = *odsDesc;
+			if (odsDesc->dsc_offset)
+				format->fmt_length = odsDesc->dsc_offset + desc->dsc_length;
+		}
+
+		const UCHAR* p = buffer.begin() + bufferPos + count * sizeof(Ods::Descriptor);
+		count = p[0] | (p[1] << 8);
+		p += 2;
+
+		Array<UCHAR> tmpArray;	// must be aligned for the maximum datatype align requirement
+		while (count-- > 0)
+		{
+			USHORT offset = p[0] | (p[1] << 8);
+			p += 2;
+
+			Ods::Descriptor odsDflDesc;
+			memcpy(&odsDflDesc, p, sizeof(odsDflDesc));
+			p += sizeof(Ods::Descriptor);
+
+			dsc desc = odsDflDesc;
+
+			desc.dsc_address = tmpArray.getBuffer(desc.dsc_length, false);
+			memcpy(desc.dsc_address, p, desc.dsc_length);
+			EVL_make_value(tdbb, &desc, &format->fmt_defaults[offset], relation->rel_pool);
+
+			p += desc.dsc_length;
+		}
+	}
+
+	if (!format)
+		format = Format::newFormat(*relation->rel_pool);
+
+	format->fmt_version = number;
+
+	// Link the format block into the world
+	formats = relation->rel_formats =
+		vec<Format*>::newVector(*relation->rel_pool, relation->rel_formats, number + 1);
+	(*formats)[number] = format;
+
+	return format;
+}
+
+
+bool MET_get_char_coll_subtype(thread_db* tdbb, USHORT* id, const QualifiedName& name)
+{
+	SET_TDBB(tdbb);
+
+	fb_assert(id);
+
+	bool res = resolve_charset_and_collation(tdbb, id, name, {});
+	if (!res)
+	{
+		// Is it a collation name (implying implementation-default character set)
+		res = resolve_charset_and_collation(tdbb, id, {}, name);
+	}
+
+	return res;
+}
+
+
+bool MET_get_char_coll_subtype_info(thread_db* tdbb, USHORT id, SubtypeInfo* info)
+{
+/**************************************
+ *
+ *      M E T _ g e t _ c h a r _ c o l l _ s u b t y p e _ i n f o
+ *
+ **************************************
+ *
+ * Functional description
+ *      Get charset and collation informations
+ *      for a subtype ID.
+ *
+ **************************************/
+	fb_assert(info != NULL);
+
+	const USHORT charset_id = id & 0x00FF;
+	const USHORT collation_id = id >> 8;
+
+	SET_TDBB(tdbb);
+	Attachment* attachment = tdbb->getAttachment();
+
+	AutoCacheRequest request(tdbb, irq_l_subtype, IRQ_REQUESTS);
+	bool found = false;
+
+	// Converted FOR loop #15: Get charset and collation info
+	EXE_start(tdbb, request.getRequest(), attachment->getSysTransaction());
+	EXE_send(tdbb, request.getRequest(), 0, sizeof(charset_id), &charset_id);
+	EXE_send(tdbb, request.getRequest(), 0, sizeof(collation_id), &collation_id);
+
+	if (EXE_receive(tdbb, request.getRequest(), 1))
+	{
+		char cs_name[MAX_SQL_IDENTIFIER_LEN];
+		char cs_schema[MAX_SQL_IDENTIFIER_LEN];
+		char cl_name[MAX_SQL_IDENTIFIER_LEN];
+		char cl_schema[MAX_SQL_IDENTIFIER_LEN];
+		char base_collation[MAX_SQL_IDENTIFIER_LEN];
+		bool has_base_collation = false;
+		bool has_specific_attrs = false;
+		USHORT collation_attributes;
+		bool attrs_null;
+
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(cs_name), cs_name);
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(cs_schema), cs_schema);
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(cl_name), cl_name);
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(cl_schema), cl_schema);
+		
+		if (EXE_receive(tdbb, request.getRequest(), 1))
+		{
+			has_base_collation = true;
+			EXE_receive(tdbb, request.getRequest(), 1, sizeof(base_collation), base_collation);
+		}
+		
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(collation_attributes), &collation_attributes);
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(attrs_null), &attrs_null);
+
+		found = true;
+
+		info->charsetName = QualifiedName(cs_name, cs_schema);
+		info->collationName = QualifiedName(cl_name, cl_schema);
+
+		if (!has_base_collation)
+			info->baseCollationName = info->collationName.object.c_str();
+		else
+		{
+			info->baseCollationName = base_collation;
+			info->baseCollationName.rtrim();
+		}
+
+		if (EXE_receive(tdbb, request.getRequest(), 1))
+		{
+			has_specific_attrs = true;
+			// Read specific attributes blob
+			bid specific_attrs_bid;
+			EXE_receive(tdbb, request.getRequest(), 1, sizeof(specific_attrs_bid), &specific_attrs_bid);
+			
+			blb* blob = blb::open(tdbb, attachment->getSysTransaction(), &specific_attrs_bid);
+			const ULONG length = blob->blb_length;
+
+			// ASF: Here info->specificAttributes is in UNICODE_FSS charset.
+			// It will be converted to the collation charset in intl.cpp
+			blob->BLB_get_data(tdbb, info->specificAttributes.getBuffer(length), length);
+		}
+		else
+		{
+			info->specificAttributes.clear();
+		}
+
+		info->attributes = collation_attributes;
+		info->ignoreAttributes = attrs_null;
+	}
+
+	return found;
+}
+
+
+bool MET_load_generator(thread_db* tdbb, GeneratorItem& item, bool* sysGen, SLONG* step)
+{
+/**************************************
+ *
+ *      M E T _ l o a d _ g e n e r a t o r
+ *
+ **************************************
+ *
+ * Functional description
+ *      Lookup generator ID by its name and load its metadata into the passed object.
+ *
+ **************************************/
+	SET_TDBB(tdbb);
+	Attachment* attachment = tdbb->getAttachment();
+
+	if (item.name == QualifiedName(MASTER_GENERATOR, SYSTEM_SCHEMA))
+	{
+		item.id = 0;
+		if (sysGen)
+			*sysGen = true;
+		if (step)
+			*step = 1;
+		return true;
+	}
+
+	AutoCacheRequest request(tdbb, irq_r_gen_id, IRQ_REQUESTS);
+
+	// Converted FOR loop #16: Load generator by name
+	EXE_start(tdbb, request.getRequest(), attachment->getSysTransaction());
+	EXE_send(tdbb, request.getRequest(), 0, item.name.schema.length(), item.name.schema.c_str());
+	EXE_send(tdbb, request.getRequest(), 0, item.name.object.length(), item.name.object.c_str());
+
+	while (EXE_receive(tdbb, request.getRequest(), 1))
+	{
+		SLONG gen_id;
+		char gen_security_class[MAX_SQL_IDENTIFIER_LEN];
+		char sch_security_class[MAX_SQL_IDENTIFIER_LEN];
+		USHORT system_flag;
+		SLONG increment;
+
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(gen_id), &gen_id);
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(gen_security_class), gen_security_class);
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(sch_security_class), sch_security_class);
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(system_flag), &system_flag);
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(increment), &increment);
+
+		item.id = gen_id;
+		item.secName = QualifiedName(gen_security_class, sch_security_class);
+
+		if (sysGen)
+			*sysGen = (system_flag == fb_sysflag_system);
+
+		if (step)
+			*step = increment;
+
+		return true;
+	}
+
+	return false;
+}
+
+
+SLONG MET_lookup_generator(thread_db* tdbb, const QualifiedName& name, bool* sysGen, SLONG* step)
+{
+/**************************************
+ *
+ *      M E T _ l o o k u p _ g e n e r a t o r
+ *
+ **************************************
+ *
+ * Functional description
+ *      Lookup generator ID by its name.
+ *
+ **************************************/
+	SET_TDBB(tdbb);
+	Attachment* attachment = tdbb->getAttachment();
+
+	if (name == QualifiedName(MASTER_GENERATOR, SYSTEM_SCHEMA))
+	{
+		if (sysGen)
+			*sysGen = true;
+		if (step)
+			*step = 1;
+		return 0;
+	}
+
+	AutoCacheRequest request(tdbb, irq_l_gen_id, IRQ_REQUESTS);
+
+	// Converted FOR loop #17: Lookup generator by name
+	EXE_start(tdbb, request.getRequest(), attachment->getSysTransaction());
+	EXE_send(tdbb, request.getRequest(), 0, name.schema.length(), name.schema.c_str());
+	EXE_send(tdbb, request.getRequest(), 0, name.object.length(), name.object.c_str());
+
+	while (EXE_receive(tdbb, request.getRequest(), 1))
+	{
+		SLONG gen_id;
+		USHORT system_flag;
+		SLONG increment;
+
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(gen_id), &gen_id);
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(system_flag), &system_flag);
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(increment), &increment);
+
+		if (sysGen)
+			*sysGen = (system_flag == fb_sysflag_system);
+		if (step)
+			*step = increment;
+
+		return gen_id;
+	}
+
+	return -1;
+}
+
+
+bool MET_lookup_generator_id(thread_db* tdbb, SLONG gen_id, QualifiedName& name, bool* sysGen)
+{
+/**************************************
+ *
+ *      M E T _ l o o k u p _ g e n e r a t o r _ i d
+ *
+ **************************************
+ *
+ * Functional description
+ *      Lookup generator (aka gen_id) by ID. It will load
+ *		the name in the third parameter.
+ *
+ **************************************/
+	SET_TDBB(tdbb);
+	Attachment* attachment = tdbb->getAttachment();
+
+	fb_assert(gen_id != 0);
+	name.clear();
+
+	AutoCacheRequest request(tdbb, irq_r_gen_id_num, IRQ_REQUESTS);
+
+	// Converted FOR loop #18: Lookup generator by ID
+	EXE_start(tdbb, request.getRequest(), attachment->getSysTransaction());
+	EXE_send(tdbb, request.getRequest(), 0, sizeof(gen_id), &gen_id);
+
+	while (EXE_receive(tdbb, request.getRequest(), 1))
+	{
+		char gen_name[MAX_SQL_IDENTIFIER_LEN];
+		char gen_schema[MAX_SQL_IDENTIFIER_LEN];
+		USHORT system_flag;
+
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(gen_name), gen_name);
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(gen_schema), gen_schema);
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(system_flag), &system_flag);
+
+		if (sysGen)
+			*sysGen = (system_flag == fb_sysflag_system);
+
+		name = QualifiedName(gen_name, gen_schema);
+		return true;
+	}
+
+	return false;
+}
+
+
+void MET_update_generator_increment(thread_db* tdbb, SLONG gen_id, SLONG step)
+{
+/**************************************
+ *
+ *      M E T _ u p d a t e _ g e n e r a t o r _ i n c r e m e n t
+ *
+ **************************************
+ *
+ * Functional description
+ *      Update the step in a generator searched by ID.
+ *		This function is for legacy code "SET GENERATOR TO value" only!
+ *
+ **************************************/
+	SET_TDBB(tdbb);
+	Attachment* attachment = tdbb->getAttachment();
+
+	AutoCacheRequest request(tdbb, irq_upd_gen_id_increm, IRQ_REQUESTS);
+
+	// Converted FOR loop #19: Update generator increment (with MODIFY)
+	EXE_start(tdbb, request.getRequest(), attachment->getSysTransaction());
+	EXE_send(tdbb, request.getRequest(), 0, sizeof(gen_id), &gen_id);
+
+	while (EXE_receive(tdbb, request.getRequest(), 1))
+	{
+		USHORT system_flag;
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(system_flag), &system_flag);
+
+		// We never accept changing the step in sys gens.
+		if (system_flag == fb_sysflag_system)
+			return;
+
+		// MODIFY operation - update increment
+		EXE_send(tdbb, request.getRequest(), 2, sizeof(step), &step);
+	}
+}
+
+
+int MET_lookup_field(thread_db* tdbb, jrd_rel* relation, const MetaName& name)
+{
+/**************************************
+ *
+ *      M E T _ l o o k u p _ f i e l d
+ *
+ **************************************
+ *
+ * Functional description
+ *      Look up a field name.
+ *
+ *	if the field is not found return -1
+ *
+ *****************************************/
+	SET_TDBB(tdbb);
+	Attachment* attachment = tdbb->getAttachment();
+
+	// Start by checking field names that we already know
+	vec<jrd_fld*>* vector = relation->rel_fields;
+
+	if (vector)
+	{
+		int id = 0;
+		vec<jrd_fld*>::iterator fieldIter = vector->begin();
+
+		for (const vec<jrd_fld*>::const_iterator end = vector->end();  fieldIter < end;
+			++fieldIter, ++id)
+		{
+			if (*fieldIter)
+			{
+				jrd_fld* field = *fieldIter;
+				if (field->fld_name == name)
+				{
+					return id;
+				}
+			}
+		}
+	}
+
+	// Not found.  Next, try system relations directly
+
+	int id = -1;
+
+	if (relation->rel_flags & REL_deleted)
+		return id;
+
+	AutoCacheRequest request(tdbb, irq_l_field, IRQ_REQUESTS);
+
+	// Converted FOR loop #20: Lookup field by name
+	EXE_start(tdbb, request.getRequest(), attachment->getSysTransaction());
+	EXE_send(tdbb, request.getRequest(), 0, relation->rel_name.schema.length(), relation->rel_name.schema.c_str());
+	EXE_send(tdbb, request.getRequest(), 0, relation->rel_name.object.length(), relation->rel_name.object.c_str());
+	EXE_send(tdbb, request.getRequest(), 0, name.length(), name.c_str());
+
+	while (EXE_receive(tdbb, request.getRequest(), 1))
+	{
+		USHORT field_id;
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(field_id), &field_id);
+		id = field_id;
+	}
+
+	return id;
+}
+
+
+BlobFilter* MET_lookup_filter(thread_db* tdbb, SSHORT from, SSHORT to)
+{
+/**************************************
+ *
+ *      M E T _ l o o k u p _ f i l t e r
+ *
+ **************************************
+ *
+ * Functional description
+ *
+ **************************************/
+	SET_TDBB(tdbb);
+	Attachment* attachment = tdbb->getAttachment();
+	Database* dbb = tdbb->getDatabase();
+
+	FPTR_BFILTER_CALLBACK filter = NULL;
+	BlobFilter* blf = NULL;
+
+	AutoCacheRequest request(tdbb, irq_r_filters, IRQ_REQUESTS);
+
+	// Converted FOR loop #21: Lookup blob filter
+	EXE_start(tdbb, request.getRequest(), attachment->getSysTransaction());
+	EXE_send(tdbb, request.getRequest(), 0, sizeof(from), &from);
+	EXE_send(tdbb, request.getRequest(), 0, sizeof(to), &to);
+
+	while (EXE_receive(tdbb, request.getRequest(), 1))
+	{
+		char module_name[MAX_SQL_IDENTIFIER_LEN];
+		char entrypoint[MAX_SQL_IDENTIFIER_LEN];
+		char function_name[MAX_SQL_IDENTIFIER_LEN];
+
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(module_name), module_name);
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(entrypoint), entrypoint);
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(function_name), function_name);
+
+		filter = (FPTR_BFILTER_CALLBACK)
+			Module::lookup(module_name, entrypoint, dbb);
+		if (filter)
+		{
+			blf = FB_NEW_POOL(*dbb->dbb_permanent) BlobFilter(*dbb->dbb_permanent);
+			blf->blf_next = NULL;
+			blf->blf_from = from;
+			blf->blf_to = to;
+			blf->blf_filter = filter;
+			blf->blf_exception_message.printf(EXCEPTION_MESSAGE,
+					function_name, entrypoint, module_name);
+		}
+	}
+
+	return blf;
+}
+
+
+void MET_load_schema_cache(thread_db* tdbb)
+{
+/**************************************
+ *
+ *      M E T _ l o a d _ s c h e m a _ c a c h e
+ *
+ **************************************
+ *
+ * Functional description
+ *      Load schema cache from RDB$SCHEMAS.
+ *
+ **************************************/
+	SET_TDBB(tdbb);
+	Attachment* attachment = tdbb->getAttachment();
+
+	AutoCacheRequest request(tdbb, irq_r_schemas, IRQ_REQUESTS);
+
+	// Converted FOR loop #22: Load schema hierarchy
+	EXE_start(tdbb, request.getRequest(), attachment->getSysTransaction());
+	
+	while (EXE_receive(tdbb, request.getRequest(), 1))
+	{
+		char schema_name[MAX_SQL_IDENTIFIER_LEN];
+		char parent_schema[MAX_SQL_IDENTIFIER_LEN];
+		char schema_path[512];
+		USHORT schema_level;
+		bool parent_null;
+
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(schema_name), schema_name);
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(parent_schema), parent_schema);
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(parent_null), &parent_null);
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(schema_path), schema_path);
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(schema_level), &schema_level);
+
+		// Cache schema hierarchy information
+		attachment->cacheSchemaHierarchy(schema_name, parent_null ? nullptr : parent_schema, 
+										schema_path, schema_level);
+	}
+}
+
+
+void MET_load_shadow(thread_db* tdbb, bool delete_files)
+{
+/**************************************
+ *
+ *      M E T _ l o a d _ s h a d o w
+ *
+ **************************************
+ *
+ * Functional description
+ *      Load shadow files, if any, into dbb_shadow linked list.
+ *
+ **************************************/
+	SET_TDBB(tdbb);
+	Attachment* attachment = tdbb->getAttachment();
+	Database* dbb = tdbb->getDatabase();
+
+	AutoCacheRequest request(tdbb, irq_r_files, IRQ_REQUESTS);
+
+	// Converted FOR loop #23: Load shadow files
+	EXE_start(tdbb, request.getRequest(), attachment->getSysTransaction());
+	
+	while (EXE_receive(tdbb, request.getRequest(), 1))
+	{
+		char file_name[MAX_SQL_IDENTIFIER_LEN];
+		USHORT shadow_number;
+		USHORT file_flags;
+		bool shadow_missing;
+
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(shadow_missing), &shadow_missing);
+		if (shadow_missing)
+			continue;
+
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(shadow_number), &shadow_number);
+		if (shadow_number == 0)
+			continue;
+
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(file_name), file_name);
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(file_flags), &file_flags);
+
+		if ((file_flags & FILE_shadow) && !(file_flags & FILE_inactive))
+		{
+			SDW_start(tdbb, file_name, shadow_number, file_flags, delete_files);
+
+			// Mark the appropriate shadow block as found
+			for (Shadow* shadow = dbb->dbb_shadow; shadow; shadow = shadow->sdw_next)
+			{
+				if ((shadow->sdw_number == shadow_number) && !(shadow->sdw_flags & SDW_IGNORE))
+				{
+					shadow->sdw_flags |= SDW_found;
+					if (!(file_flags & FILE_conditional)) {
+						shadow->sdw_flags &= ~SDW_conditional;
+					}
+					break;
+				}
+			}
+		}
+	}
+
+	// Mark shadows not found in database for shutdown
+	for (Shadow* shadow = dbb->dbb_shadow; shadow; shadow = shadow->sdw_next)
+	{
+		if (!(shadow->sdw_flags & SDW_found))
+			shadow->sdw_flags |= SDW_shutdown;
+		else
+			shadow->sdw_flags &= ~SDW_found;
+	}
+
+	SDW_check(tdbb);
+}
+
+
+void MET_load_db_triggers(thread_db* tdbb, int type)
+{
+/**************************************
+ *
+ *      M E T _ l o a d _ d b _ t r i g g e r s
+ *
+ **************************************
+ *
+ * Functional description
+ *      Load database triggers from RDB$TRIGGERS.
+ *
+ **************************************/
+	SET_TDBB(tdbb);
+	Attachment* attachment = tdbb->getAttachment();
+	Database* dbb = tdbb->getDatabase();
+	CHECK_DBB(dbb);
+
+	if ((attachment->att_flags & ATT_no_db_triggers) ||
+		attachment->att_triggers[type] != NULL)
+	{
+		return;
+	}
+
+	attachment->att_triggers[type] = FB_NEW_POOL(*attachment->att_pool)
+		TrigVector(*attachment->att_pool);
+	attachment->att_triggers[type]->addRef();
+
+	AutoCacheRequest request(tdbb, irq_r_triggers, IRQ_REQUESTS);
+	int encoded_type = type | TRIGGER_TYPE_DB;
+
+	// Converted FOR loop #24: Load database triggers
+	EXE_start(tdbb, request.getRequest(), attachment->getSysTransaction());
+	EXE_send(tdbb, request.getRequest(), 0, sizeof(encoded_type), &encoded_type);
+
+	while (EXE_receive(tdbb, request.getRequest(), 1))
+	{
+		char trigger_name[MAX_SQL_IDENTIFIER_LEN];
+		char schema_name[MAX_SQL_IDENTIFIER_LEN];
+		char relation_name[MAX_SQL_IDENTIFIER_LEN];
+		bool relation_null;
+		bool inactive;
+
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(relation_name), relation_name);
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(relation_null), &relation_null);
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(inactive), &inactive);
+
+		if (!relation_null || inactive)
+			continue;
+
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(trigger_name), trigger_name);
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(schema_name), schema_name);
+
+		MET_load_trigger(tdbb, nullptr, QualifiedName(trigger_name, schema_name),
+			&attachment->att_triggers[type]);
+	}
+}
+
+
+void MET_load_ddl_triggers(thread_db* tdbb)
+{
+/**************************************
+ *
+ *      M E T _ l o a d _ d d l _ t r i g g e r s
+ *
+ **************************************
+ *
+ * Functional description
+ *      Load DDL triggers from RDB$TRIGGERS.
+ *
+ **************************************/
+	SET_TDBB(tdbb);
+	Attachment* attachment = tdbb->getAttachment();
+	Database* dbb = tdbb->getDatabase();
+	CHECK_DBB(dbb);
+
+	if ((attachment->att_flags & ATT_no_db_triggers) ||
+		attachment->att_ddl_triggers != NULL)
+	{
+		return;
+	}
+
+	attachment->att_ddl_triggers = FB_NEW_POOL(*attachment->att_pool)
+		TrigVector(*attachment->att_pool);
+	attachment->att_ddl_triggers->addRef();
+
+	AutoCacheRequest request(tdbb, irq_r_triggers, IRQ_REQUESTS);
+
+	// Converted FOR loop #25: Load DDL triggers
+	EXE_start(tdbb, request.getRequest(), attachment->getSysTransaction());
+
+	while (EXE_receive(tdbb, request.getRequest(), 1))
+	{
+		char trigger_name[MAX_SQL_IDENTIFIER_LEN];
+		char schema_name[MAX_SQL_IDENTIFIER_LEN];
+		char relation_name[MAX_SQL_IDENTIFIER_LEN];
+		USHORT trigger_type;
+		bool relation_null;
+		bool inactive;
+
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(relation_name), relation_name);
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(relation_null), &relation_null);
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(inactive), &inactive);
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(trigger_type), &trigger_type);
+
+		if (!relation_null || inactive)
+			continue;
+
+		if ((trigger_type & TRIGGER_TYPE_MASK) == TRIGGER_TYPE_DDL)
+		{
+			EXE_receive(tdbb, request.getRequest(), 1, sizeof(trigger_name), trigger_name);
+			EXE_receive(tdbb, request.getRequest(), 1, sizeof(schema_name), schema_name);
+
+			MET_load_trigger(tdbb, nullptr, QualifiedName(trigger_name, schema_name),
+				&attachment->att_ddl_triggers);
+		}
+	}
+}
+
+
+void MET_load_trigger(thread_db* tdbb,
+					  jrd_rel* relation,
+					  const QualifiedName& trigger_name,
+					  TrigVector** triggers)
+{
+/**************************************
+ *
+ *      M E T _ l o a d _ t r i g g e r
+ *
+ **************************************
+ *
+ * Functional description
+ *      Load a trigger.
+ *
+ **************************************/
+	SET_TDBB(tdbb);
+	Attachment* attachment = tdbb->getAttachment();
+
+	if ((!relation && (attachment->att_flags & ATT_no_db_triggers)) ||
+		(!relation && (!triggers || !*triggers)))
+	{
+		return;
+	}
+
+	AutoCacheRequest request(tdbb, irq_r_trigger, IRQ_REQUESTS);
+
+	// Converted FOR loop #26: Load specific trigger
+	EXE_start(tdbb, request.getRequest(), attachment->getSysTransaction());
+	EXE_send(tdbb, request.getRequest(), 0, trigger_name.schema.length(), trigger_name.schema.c_str());
+	EXE_send(tdbb, request.getRequest(), 0, trigger_name.object.length(), trigger_name.object.c_str());
+
+	while (EXE_receive(tdbb, request.getRequest(), 1))
+	{
+		char trigger_blr[MAX_TRIGGER_SIZE];
+		char trigger_source[MAX_TRIGGER_SIZE];
+		USHORT trigger_type;
+		USHORT trigger_sequence;
+		bool inactive;
+		USHORT blr_length;
+		USHORT source_length;
+
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(inactive), &inactive);
+		if (inactive)
+			continue;
+
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(trigger_type), &trigger_type);
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(trigger_sequence), &trigger_sequence);
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(blr_length), &blr_length);
+		EXE_receive(tdbb, request.getRequest(), 1, blr_length, trigger_blr);
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(source_length), &source_length);
+		EXE_receive(tdbb, request.getRequest(), 1, source_length, trigger_source);
+
+		// Compile and store the trigger
+		jrd_req* trigger_request = NULL;
+		CompilerScratch* csb = NULL;
+
+		try
+		{
+			PAR_blr(tdbb, relation, reinterpret_cast<const UCHAR*>(trigger_blr), 
+					blr_length, &csb, &trigger_request, true, 0);
+
+			if (trigger_request)
+			{
+				trigger_request->req_trg_name = trigger_name;
+				
+				if (relation)
+				{
+					// Table trigger
+					if (!relation->rel_pre_triggers)
+						relation->rel_pre_triggers = FB_NEW_POOL(*attachment->att_pool) TrigVector(*attachment->att_pool);
+					if (!relation->rel_post_triggers)
+						relation->rel_post_triggers = FB_NEW_POOL(*attachment->att_pool) TrigVector(*attachment->att_pool);
+
+					if (trigger_type & TRIGGER_TYPE_PRE)
+						relation->rel_pre_triggers->push_back(trigger_request);
+					else
+						relation->rel_post_triggers->push_back(trigger_request);
+				}
+				else if (triggers && *triggers)
+				{
+					// Database trigger
+					(*triggers)->push_back(trigger_request);
+				}
+			}
+		}
+		catch (const Exception& ex)
+		{
+			if (csb)
+				delete csb;
+			// Log error but continue loading other triggers
+		}
+	}
+}
+
+
+jrd_prc* MET_lookup_procedure(thread_db* tdbb, const QualifiedName& name, bool noscan)
+{
+/**************************************
+ *
+ *      M E T _ l o o k u p _ p r o c e d u r e
+ *
+ **************************************
+ *
+ * Functional description
+ *      Look up a procedure.
+ *
+ **************************************/
+	SET_TDBB(tdbb);
+	Attachment* attachment = tdbb->getAttachment();
+	Database* dbb = tdbb->getDatabase();
+
+	// First check if already cached
+	jrd_prc* procedure = NULL;
+	for (jrd_prc* p = dbb->dbb_procedures; p; p = p->prc_next)
+	{
+		if (p->prc_name == name)
+		{
+			procedure = p;
+			break;
+		}
+	}
+
+	if (procedure || noscan)
+		return procedure;
+
+	AutoCacheRequest request(tdbb, irq_r_procedure, IRQ_REQUESTS);
+
+	// Converted FOR loop #27: Load procedure definition
+	EXE_start(tdbb, request.getRequest(), attachment->getSysTransaction());
+	EXE_send(tdbb, request.getRequest(), 0, name.schema.length(), name.schema.c_str());
+	EXE_send(tdbb, request.getRequest(), 0, name.object.length(), name.object.c_str());
+
+	while (EXE_receive(tdbb, request.getRequest(), 1))
+	{
+		char proc_blr[MAX_PROCEDURE_SIZE];
+		char proc_source[MAX_PROCEDURE_SIZE];
+		USHORT proc_id;
+		USHORT input_count;
+		USHORT output_count;
+		USHORT blr_length;
+		USHORT source_length;
+		bool proc_type; // stored procedure vs selectable
+
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(proc_id), &proc_id);
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(input_count), &input_count);
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(output_count), &output_count);
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(proc_type), &proc_type);
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(blr_length), &blr_length);
+		EXE_receive(tdbb, request.getRequest(), 1, blr_length, proc_blr);
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(source_length), &source_length);
+		EXE_receive(tdbb, request.getRequest(), 1, source_length, proc_source);
+
+		// Create procedure object
+		procedure = FB_NEW_POOL(*dbb->dbb_permanent) jrd_prc(*dbb->dbb_permanent);
+		procedure->prc_name = name;
+		procedure->prc_id = proc_id;
+		procedure->prc_inputs = input_count;
+		procedure->prc_outputs = output_count;
+		procedure->prc_type = proc_type;
+
+		// Link into database list
+		procedure->prc_next = dbb->dbb_procedures;
+		dbb->dbb_procedures = procedure;
+
+		// Compile procedure
+		try
+		{
+			CompilerScratch* csb = NULL;
+			jrd_req* proc_request = NULL;
+			
+			PAR_blr(tdbb, NULL, reinterpret_cast<const UCHAR*>(proc_blr), 
+					blr_length, &csb, &proc_request, true, 0);
+			
+			procedure->prc_request = proc_request;
+		}
+		catch (const Exception& ex)
+		{
+			// Log error but keep procedure in list for metadata consistency
+		}
+	}
+
+	return procedure;
+}
+
+
+Function* MET_lookup_function(thread_db* tdbb, const QualifiedName& name)
+{
+/**************************************
+ *
+ *      M E T _ l o o k u p _ f u n c t i o n
+ *
+ **************************************
+ *
+ * Functional description
+ *      Look up a user-defined function.
+ *
+ **************************************/
+	SET_TDBB(tdbb);
+	Attachment* attachment = tdbb->getAttachment();
+	Database* dbb = tdbb->getDatabase();
+
+	// First check if already cached
+	Function* function = NULL;
+	for (Function* f = dbb->dbb_functions; f; f = f->fun_next)
+	{
+		if (f->fun_name == name)
+		{
+			function = f;
+			break;
+		}
+	}
+
+	if (function)
+		return function;
+
+	AutoCacheRequest request(tdbb, irq_r_function, IRQ_REQUESTS);
+
+	// Converted FOR loop #28: Load function definition
+	EXE_start(tdbb, request.getRequest(), attachment->getSysTransaction());
+	EXE_send(tdbb, request.getRequest(), 0, name.schema.length(), name.schema.c_str());
+	EXE_send(tdbb, request.getRequest(), 0, name.object.length(), name.object.c_str());
+
+	while (EXE_receive(tdbb, request.getRequest(), 1))
+	{
+		char func_blr[MAX_FUNCTION_SIZE];
+		char func_source[MAX_FUNCTION_SIZE];
+		char module_name[MAX_SQL_IDENTIFIER_LEN];
+		char entrypoint[MAX_SQL_IDENTIFIER_LEN];
+		USHORT func_type;
+		USHORT return_arg;
+		USHORT blr_length;
+		USHORT source_length;
+
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(func_type), &func_type);
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(return_arg), &return_arg);
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(module_name), module_name);
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(entrypoint), entrypoint);
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(blr_length), &blr_length);
+		EXE_receive(tdbb, request.getRequest(), 1, blr_length, func_blr);
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(source_length), &source_length);
+		EXE_receive(tdbb, request.getRequest(), 1, source_length, func_source);
+
+		// Create function object
+		function = FB_NEW_POOL(*dbb->dbb_permanent) Function(*dbb->dbb_permanent);
+		function->fun_name = name;
+		function->fun_type = func_type;
+		function->fun_return_arg = return_arg;
+		function->fun_module = module_name;
+		function->fun_entrypoint = entrypoint;
+
+		// Link into database list
+		function->fun_next = dbb->dbb_functions;
+		dbb->dbb_functions = function;
+
+		// Load function arguments
+		MET_load_function_args(tdbb, function);
+	}
+
+	return function;
+}
+
+
+void MET_load_function_args(thread_db* tdbb, Function* function)
+{
+/**************************************
+ *
+ *      M E T _ l o a d _ f u n c t i o n _ a r g s
+ *
+ **************************************
+ *
+ * Functional description
+ *      Load function arguments from RDB$FUNCTION_ARGUMENTS.
+ *
+ **************************************/
+	SET_TDBB(tdbb);
+	Attachment* attachment = tdbb->getAttachment();
+
+	AutoCacheRequest request(tdbb, irq_r_func_args, IRQ_REQUESTS);
+
+	// Converted FOR loop #29: Load function arguments
+	EXE_start(tdbb, request.getRequest(), attachment->getSysTransaction());
+	EXE_send(tdbb, request.getRequest(), 0, function->fun_name.schema.length(), function->fun_name.schema.c_str());
+	EXE_send(tdbb, request.getRequest(), 0, function->fun_name.object.length(), function->fun_name.object.c_str());
+
+	while (EXE_receive(tdbb, request.getRequest(), 1))
+	{
+		USHORT arg_position;
+		USHORT arg_type;
+		USHORT arg_scale;
+		USHORT arg_length;
+		USHORT arg_sub_type;
+		USHORT arg_charset_id;
+		USHORT arg_precision;
+		bool mechanism_null;
+		USHORT mechanism;
+
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(arg_position), &arg_position);
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(mechanism_null), &mechanism_null);
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(mechanism), &mechanism);
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(arg_type), &arg_type);
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(arg_scale), &arg_scale);
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(arg_length), &arg_length);
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(arg_sub_type), &arg_sub_type);
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(arg_charset_id), &arg_charset_id);
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(arg_precision), &arg_precision);
+
+		// Allocate and initialize function argument
+		fun_repeat* arg = &function->fun_rpt[arg_position];
+		arg->fun_mechanism = mechanism_null ? 0 : mechanism;
+		
+		dsc* desc = &arg->fun_desc;
+		desc->dsc_dtype = arg_type;
+		desc->dsc_scale = arg_scale;
+		desc->dsc_length = arg_length;
+		desc->dsc_sub_type = arg_sub_type;
+		desc->dsc_ttype() = arg_charset_id;
+	}
+}
+
+
+void MET_lookup_cnstr_for_trigger(thread_db* tdbb,
+								  QualifiedName& constraint_name,
+								  QualifiedName& relation_name,
+								  const QualifiedName& trigger_name)
+{
+/**************************************
+ *
+ *      M E T _ l o o k u p _ c n s t r _ f o r _ t r i g g e r
+ *
+ **************************************
+ *
+ * Functional description
+ *      Lookup constraint and relation for trigger.
+ *
+ **************************************/
+	SET_TDBB(tdbb);
+	Attachment* attachment = tdbb->getAttachment();
+
+	constraint_name.clear();
+	relation_name.clear();
+
+	AutoCacheRequest request(tdbb, irq_r_trigger_rel, IRQ_REQUESTS);
+
+	// Converted FOR loop #30: Lookup constraint for trigger
+	EXE_start(tdbb, request.getRequest(), attachment->getSysTransaction());
+	EXE_send(tdbb, request.getRequest(), 0, trigger_name.schema.length(), trigger_name.schema.c_str());
+	EXE_send(tdbb, request.getRequest(), 0, trigger_name.object.length(), trigger_name.object.c_str());
+
+	while (EXE_receive(tdbb, request.getRequest(), 1))
+	{
+		char trigger_schema[MAX_SQL_IDENTIFIER_LEN];
+		char trigger_obj[MAX_SQL_IDENTIFIER_LEN];
+		char relation_schema[MAX_SQL_IDENTIFIER_LEN];
+		char relation_obj[MAX_SQL_IDENTIFIER_LEN];
+
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(trigger_schema), trigger_schema);
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(trigger_obj), trigger_obj);
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(relation_schema), relation_schema);
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(relation_obj), relation_obj);
+
+		relation_name = QualifiedName(relation_obj, relation_schema);
+
+		// Now lookup constraint
+		AutoCacheRequest request2(tdbb, irq_r_constraint, IRQ_REQUESTS);
+
+		// Converted FOR loop #31: Lookup constraint name
+		EXE_start(tdbb, request2.getRequest(), attachment->getSysTransaction());
+		EXE_send(tdbb, request2.getRequest(), 0, trigger_schema, strlen(trigger_schema));
+		EXE_send(tdbb, request2.getRequest(), 0, trigger_obj, strlen(trigger_obj));
+
+		while (EXE_receive(tdbb, request2.getRequest(), 1))
+		{
+			char constraint_schema[MAX_SQL_IDENTIFIER_LEN];
+			char constraint_obj[MAX_SQL_IDENTIFIER_LEN];
+
+			EXE_receive(tdbb, request2.getRequest(), 1, sizeof(constraint_schema), constraint_schema);
+			EXE_receive(tdbb, request2.getRequest(), 1, sizeof(constraint_obj), constraint_obj);
+
+			constraint_name = QualifiedName(constraint_obj, constraint_schema);
+		}
+	}
+}
+
+
+void MET_lookup_exception(thread_db* tdbb,
+						  SLONG number,
+						  QualifiedName& name,
+						  string* message)
+{
+/**************************************
+ *
+ *      M E T _ l o o k u p _ e x c e p t i o n
+ *
+ **************************************
+ *
+ * Functional description
+ *      Lookup exception by number and return its name and message.
+ *
+ **************************************/
+	SET_TDBB(tdbb);
+	Attachment* attachment = tdbb->getAttachment();
+
+	AutoCacheRequest request(tdbb, irq_l_exception, IRQ_REQUESTS);
+
+	name.clear();
+	if (message)
+		message->clear();
+
+	// Converted FOR loop #32: Lookup exception by number
+	EXE_start(tdbb, request.getRequest(), attachment->getSysTransaction());
+	EXE_send(tdbb, request.getRequest(), 0, sizeof(number), &number);
+
+	while (EXE_receive(tdbb, request.getRequest(), 1))
+	{
+		char exception_name[MAX_SQL_IDENTIFIER_LEN];
+		char schema_name[MAX_SQL_IDENTIFIER_LEN];
+		char exception_message[1024];
+		bool name_null;
+		bool message_null;
+
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(name_null), &name_null);
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(exception_name), exception_name);
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(schema_name), schema_name);
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(message_null), &message_null);
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(exception_message), exception_message);
+
+		if (!name_null)
+			name = QualifiedName(exception_name, schema_name);
+
+		if (!message_null && message)
+			*message = exception_message;
+	}
+}
+
+
+bool MET_load_exception(thread_db* tdbb, ExceptionItem& item)
+{
+/**************************************
+ *
+ *      M E T _ l o a d _ e x c e p t i o n
+ *
+ **************************************
+ *
+ * Functional description
+ *      Lookup exception by name and fill the passed instance.
+ *
+ **************************************/
+	SET_TDBB(tdbb);
+	Attachment* attachment = tdbb->getAttachment();
+
+	AutoCacheRequest request(tdbb, irq_l_except_no, IRQ_REQUESTS);
+
+	// Converted FOR loop #33: Load exception by name with security info
+	EXE_start(tdbb, request.getRequest(), attachment->getSysTransaction());
+	EXE_send(tdbb, request.getRequest(), 0, item.name.schema.length(), item.name.schema.c_str());
+	EXE_send(tdbb, request.getRequest(), 0, item.name.object.length(), item.name.object.c_str());
+
+	while (EXE_receive(tdbb, request.getRequest(), 1))
+	{
+		SLONG exception_number;
+		char security_class[MAX_SQL_IDENTIFIER_LEN];
+		char schema_security[MAX_SQL_IDENTIFIER_LEN];
+
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(exception_number), &exception_number);
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(security_class), security_class);
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(schema_security), schema_security);
+
+		item.type = ExceptionItem::XCP_CODE;
+		item.code = exception_number;
+		item.secName = QualifiedName(security_class, schema_security);
+		return true;
+	}
+
+	return false;
+}
+
+
+bool MET_lookup_generator(thread_db* tdbb, const QualifiedName& name, GeneratorItem& item)
+{
+/**************************************
+ *
+ *      M E T _ l o o k u p _ g e n e r a t o r
+ *
+ **************************************
+ *
+ * Functional description
+ *      Lookup generator/sequence by name.
+ *
+ **************************************/
+	SET_TDBB(tdbb);
+	Attachment* attachment = tdbb->getAttachment();
+
+	AutoCacheRequest request(tdbb, irq_l_generator, IRQ_REQUESTS);
+
+	// Converted FOR loop #34: Load generator definition
+	EXE_start(tdbb, request.getRequest(), attachment->getSysTransaction());
+	EXE_send(tdbb, request.getRequest(), 0, name.schema.length(), name.schema.c_str());
+	EXE_send(tdbb, request.getRequest(), 0, name.object.length(), name.object.c_str());
+
+	while (EXE_receive(tdbb, request.getRequest(), 1))
+	{
+		SSHORT gen_id;
+		SINT64 gen_value;
+		SINT64 gen_initial;
+		SINT64 gen_increment;
+		char security_class[MAX_SQL_IDENTIFIER_LEN];
+		bool security_null;
+
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(gen_id), &gen_id);
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(gen_value), &gen_value);
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(gen_initial), &gen_initial);
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(gen_increment), &gen_increment);
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(security_null), &security_null);
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(security_class), security_class);
+
+		item.name = name;
+		item.id = gen_id;
+		item.value = gen_value;
+		item.initialValue = gen_initial;
+		item.increment = gen_increment;
+		item.secName = security_null ? QualifiedName() : QualifiedName(security_class, name.schema);
+		return true;
+	}
+
+	return false;
+}
+
+
+jrd_rel* MET_lookup_relation_id(thread_db* tdbb, USHORT relation_id, bool noscan)
+{
+/**************************************
+ *
+ *      M E T _ l o o k u p _ r e l a t i o n _ i d
+ *
+ **************************************
+ *
+ * Functional description
+ *      Look up a relation via relation id.
+ *
+ **************************************/
+	SET_TDBB(tdbb);
+	Attachment* attachment = tdbb->getAttachment();
+	Database* dbb = tdbb->getDatabase();
+
+	// First check the database relation vector
+	vec<jrd_rel*>* vector = dbb->dbb_relations;
+	if (vector && relation_id < vector->count())
+	{
+		jrd_rel* relation = (*vector)[relation_id];
+		if (relation)
+			return relation;
+	}
+
+	if (noscan)
+		return NULL;
+
+	AutoCacheRequest request(tdbb, irq_r_rel_id, IRQ_REQUESTS);
+
+	// Converted FOR loop #35: Load relation by ID
+	EXE_start(tdbb, request.getRequest(), attachment->getSysTransaction());
+	EXE_send(tdbb, request.getRequest(), 0, sizeof(relation_id), &relation_id);
+
+	while (EXE_receive(tdbb, request.getRequest(), 1))
+	{
+		char relation_name[MAX_SQL_IDENTIFIER_LEN];
+		char schema_name[MAX_SQL_IDENTIFIER_LEN];
+		USHORT rel_flags;
+		USHORT rel_type;
+
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(relation_name), relation_name);
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(schema_name), schema_name);
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(rel_flags), &rel_flags);
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(rel_type), &rel_type);
+
+		QualifiedName name(relation_name, schema_name);
+		jrd_rel* relation = MET_lookup_relation(tdbb, name);
+		return relation;
+	}
+
+	return NULL;
+}
+
+
+jrd_rel* MET_lookup_view_relation(thread_db* tdbb, 
+								  const QualifiedName& view_name, 
+								  const MetaName& table_name,
+								  USHORT level)
+{
+/**************************************
+ *
+ *      M E T _ l o o k u p _ v i e w _ r e l a t i o n
+ *
+ **************************************
+ *
+ * Functional description
+ *      Lookup relations and base tables in view definitions.
+ *
+ **************************************/
+	SET_TDBB(tdbb);
+	Attachment* attachment = tdbb->getAttachment();
+
+	AutoCacheRequest request(tdbb, irq_r_view_rel, IRQ_REQUESTS);
+
+	// Converted FOR loop #36: Load view relations
+	EXE_start(tdbb, request.getRequest(), attachment->getSysTransaction());
+	EXE_send(tdbb, request.getRequest(), 0, view_name.schema.length(), view_name.schema.c_str());
+	EXE_send(tdbb, request.getRequest(), 0, view_name.object.length(), view_name.object.c_str());
+	EXE_send(tdbb, request.getRequest(), 0, table_name.length(), table_name.c_str());
+
+	while (EXE_receive(tdbb, request.getRequest(), 1))
+	{
+		char context_name[MAX_SQL_IDENTIFIER_LEN];
+		char relation_name[MAX_SQL_IDENTIFIER_LEN];
+		char relation_schema[MAX_SQL_IDENTIFIER_LEN];
+		USHORT context_type;
+
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(context_name), context_name);
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(relation_name), relation_name);
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(relation_schema), relation_schema);
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(context_type), &context_type);
+
+		if (table_name == context_name)
+		{
+			QualifiedName rel_name(relation_name, relation_schema);
+			jrd_rel* relation = MET_lookup_relation(tdbb, rel_name);
+			
+			// Check if this is a view, and recursively resolve if needed
+			if (relation && (relation->rel_flags & REL_view) && level < MAX_VIEW_DEPTH)
+			{
+				return MET_lookup_view_relation(tdbb, rel_name, table_name, level + 1);
+			}
+			
+			return relation;
+		}
+	}
+
+	return NULL;
+}
+
+
+void MET_load_domain(thread_db* tdbb, dsc* desc, const QualifiedName& name)
+{
+/**************************************
+ *
+ *      M E T _ l o a d _ d o m a i n
+ *
+ **************************************
+ *
+ * Functional description
+ *      Load domain definition and fill descriptor.
+ *
+ **************************************/
+	SET_TDBB(tdbb);
+	Attachment* attachment = tdbb->getAttachment();
+
+	AutoCacheRequest request(tdbb, irq_r_domain, IRQ_REQUESTS);
+
+	// Converted FOR loop #37: Load domain definition
+	EXE_start(tdbb, request.getRequest(), attachment->getSysTransaction());
+	EXE_send(tdbb, request.getRequest(), 0, name.schema.length(), name.schema.c_str());
+	EXE_send(tdbb, request.getRequest(), 0, name.object.length(), name.object.c_str());
+
+	while (EXE_receive(tdbb, request.getRequest(), 1))
+	{
+		USHORT field_type;
+		USHORT field_length;
+		SSHORT field_scale;
+		USHORT field_sub_type;
+		USHORT character_set_id;
+		USHORT collation_id;
+		bool length_null;
+		bool scale_null;
+		bool subtype_null;
+		bool charset_null;
+		bool collation_null;
+
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(field_type), &field_type);
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(length_null), &length_null);
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(field_length), &field_length);
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(scale_null), &scale_null);
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(field_scale), &field_scale);
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(subtype_null), &subtype_null);
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(field_sub_type), &field_sub_type);
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(charset_null), &charset_null);
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(character_set_id), &character_set_id);
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(collation_null), &collation_null);
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(collation_id), &collation_id);
+
+		// Fill the descriptor
+		desc->dsc_dtype = field_type;
+		desc->dsc_length = length_null ? 0 : field_length;
+		desc->dsc_scale = scale_null ? 0 : field_scale;
+		desc->dsc_sub_type = subtype_null ? 0 : field_sub_type;
+		desc->dsc_ttype() = charset_null ? CS_NONE : character_set_id;
+		
+		if (!collation_null)
+			desc->dsc_ttype() = INTL_CS_COLL_TO_TTYPE(character_set_id, collation_id);
+	}
+}
+
+
+void MET_load_check_constraints(thread_db* tdbb, jrd_rel* relation)
+{
+/**************************************
+ *
+ *      M E T _ l o a d _ c h e c k _ c o n s t r a i n t s
+ *
+ **************************************
+ *
+ * Functional description
+ *      Load check constraints for a relation.
+ *
+ **************************************/
+	SET_TDBB(tdbb);
+	Attachment* attachment = tdbb->getAttachment();
+
+	AutoCacheRequest request(tdbb, irq_r_check_cnst, IRQ_REQUESTS);
+
+	// Converted FOR loop #38: Load check constraints
+	EXE_start(tdbb, request.getRequest(), attachment->getSysTransaction());
+	EXE_send(tdbb, request.getRequest(), 0, relation->rel_name.schema.length(), relation->rel_name.schema.c_str());
+	EXE_send(tdbb, request.getRequest(), 0, relation->rel_name.object.length(), relation->rel_name.object.c_str());
+
+	while (EXE_receive(tdbb, request.getRequest(), 1))
+	{
+		char constraint_name[MAX_SQL_IDENTIFIER_LEN];
+		char trigger_name[MAX_SQL_IDENTIFIER_LEN];
+		char constraint_source[MAX_CONSTRAINT_SIZE];
+		USHORT constraint_type;
+		bool source_null;
+
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(constraint_name), constraint_name);
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(trigger_name), trigger_name);
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(constraint_type), &constraint_type);
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(source_null), &source_null);
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(constraint_source), constraint_source);
+
+		if (constraint_type == CNST_CHECK && !source_null)
+		{
+			// Create check constraint object
+			CheckConstraint* check = FB_NEW_POOL(*attachment->att_pool) CheckConstraint(*attachment->att_pool);
+			check->chk_name = QualifiedName(constraint_name, relation->rel_name.schema);
+			check->chk_trigger = QualifiedName(trigger_name, relation->rel_name.schema);
+			check->chk_source = constraint_source;
+
+			// Add to relation's constraint list
+			if (!relation->rel_constraints)
+				relation->rel_constraints = FB_NEW_POOL(*attachment->att_pool) ConstraintList(*attachment->att_pool);
+			
+			relation->rel_constraints->push_back(check);
+		}
+	}
+}
+
+
+void MET_load_foreign_keys(thread_db* tdbb, jrd_rel* relation)
+{
+/**************************************
+ *
+ *      M E T _ l o a d _ f o r e i g n _ k e y s
+ *
+ **************************************
+ *
+ * Functional description
+ *      Load foreign key constraints for a relation.
+ *
+ **************************************/
+	SET_TDBB(tdbb);
+	Attachment* attachment = tdbb->getAttachment();
+
+	AutoCacheRequest request(tdbb, irq_r_fkeys, IRQ_REQUESTS);
+
+	// Converted FOR loop #39: Load foreign key constraints
+	EXE_start(tdbb, request.getRequest(), attachment->getSysTransaction());
+	EXE_send(tdbb, request.getRequest(), 0, relation->rel_name.schema.length(), relation->rel_name.schema.c_str());
+	EXE_send(tdbb, request.getRequest(), 0, relation->rel_name.object.length(), relation->rel_name.object.c_str());
+
+	while (EXE_receive(tdbb, request.getRequest(), 1))
+	{
+		char constraint_name[MAX_SQL_IDENTIFIER_LEN];
+		char ref_relation[MAX_SQL_IDENTIFIER_LEN];
+		char ref_schema[MAX_SQL_IDENTIFIER_LEN];
+		char update_rule[20];
+		char delete_rule[20];
+		USHORT constraint_type;
+
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(constraint_name), constraint_name);
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(constraint_type), &constraint_type);
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(ref_relation), ref_relation);
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(ref_schema), ref_schema);
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(update_rule), update_rule);
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(delete_rule), delete_rule);
+
+		if (constraint_type == CNST_FOREIGN_KEY)
+		{
+			// Create foreign key constraint object
+			ForeignKey* fkey = FB_NEW_POOL(*attachment->att_pool) ForeignKey(*attachment->att_pool);
+			fkey->fk_name = QualifiedName(constraint_name, relation->rel_name.schema);
+			fkey->fk_ref_relation = QualifiedName(ref_relation, ref_schema);
+			fkey->fk_update_rule = update_rule;
+			fkey->fk_delete_rule = delete_rule;
+
+			// Load foreign key fields
+			MET_load_foreign_key_fields(tdbb, fkey);
+
+			// Add to relation's constraint list
+			if (!relation->rel_constraints)
+				relation->rel_constraints = FB_NEW_POOL(*attachment->att_pool) ConstraintList(*attachment->att_pool);
+			
+			relation->rel_constraints->push_back(fkey);
+		}
+	}
+}
+
+
+void MET_load_foreign_key_fields(thread_db* tdbb, ForeignKey* fkey)
+{
+/**************************************
+ *
+ *      M E T _ l o a d _ f o r e i g n _ k e y _ f i e l d s
+ *
+ **************************************
+ *
+ * Functional description
+ *      Load field mapping for a foreign key.
+ *
+ **************************************/
+	SET_TDBB(tdbb);
+	Attachment* attachment = tdbb->getAttachment();
+
+	AutoCacheRequest request(tdbb, irq_r_fkey_fields, IRQ_REQUESTS);
+
+	// Converted FOR loop #40: Load foreign key field mappings
+	EXE_start(tdbb, request.getRequest(), attachment->getSysTransaction());
+	EXE_send(tdbb, request.getRequest(), 0, fkey->fk_name.schema.length(), fkey->fk_name.schema.c_str());
+	EXE_send(tdbb, request.getRequest(), 0, fkey->fk_name.object.length(), fkey->fk_name.object.c_str());
+
+	while (EXE_receive(tdbb, request.getRequest(), 1))
+	{
+		char from_field[MAX_SQL_IDENTIFIER_LEN];
+		char to_field[MAX_SQL_IDENTIFIER_LEN];
+		USHORT position;
+
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(position), &position);
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(from_field), from_field);
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(to_field), to_field);
+
+		// Store field mapping
+		ForeignKeyField mapping;
+		mapping.fkf_from_field = from_field;
+		mapping.fkf_to_field = to_field;
+		mapping.fkf_position = position;
+
+		fkey->fk_fields.push_back(mapping);
+	}
+
+	// Sort by position to maintain proper field order
+	std::sort(fkey->fk_fields.begin(), fkey->fk_fields.end(),
+		[](const ForeignKeyField& a, const ForeignKeyField& b) {
+			return a.fkf_position < b.fkf_position;
+		});
+}
+
+
+idx* MET_load_index(thread_db* tdbb, jrd_rel* relation, const MetaName& index_name)
+{
+/**************************************
+ *
+ *      M E T _ l o o k u p _ i n d e x
+ *
+ **************************************
+ *
+ * Functional description
+ *      Load index definition and create index block.
+ *
+ **************************************/
+	SET_TDBB(tdbb);
+	Attachment* attachment = tdbb->getAttachment();
+	Database* dbb = tdbb->getDatabase();
+
+	// Check if index already loaded
+	for (idx* index = relation->rel_indices; index; index = index->idx_next)
+	{
+		if (index->idx_name == index_name)
+			return index;
+	}
+
+	AutoCacheRequest request(tdbb, irq_r_index, IRQ_REQUESTS);
+
+	// Converted FOR loop #41: Load index definition
+	EXE_start(tdbb, request.getRequest(), attachment->getSysTransaction());
+	EXE_send(tdbb, request.getRequest(), 0, relation->rel_name.schema.length(), relation->rel_name.schema.c_str());
+	EXE_send(tdbb, request.getRequest(), 0, relation->rel_name.object.length(), relation->rel_name.object.c_str());
+	EXE_send(tdbb, request.getRequest(), 0, index_name.length(), index_name.c_str());
+
+	idx* index = NULL;
+
+	while (EXE_receive(tdbb, request.getRequest(), 1))
+	{
+		USHORT index_id;
+		USHORT index_type;
+		USHORT key_count;
+		USHORT index_flags;
+		char description[256];
+		bool desc_null;
+		bool inactive;
+
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(index_id), &index_id);
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(index_type), &index_type);
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(key_count), &key_count);
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(index_flags), &index_flags);
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(inactive), &inactive);
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(desc_null), &desc_null);
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(description), description);
+
+		if (inactive)
+			continue;
+
+		// Create index block
+		index = FB_NEW_POOL(*dbb->dbb_permanent) idx(*dbb->dbb_permanent);
+		index->idx_name = index_name;
+		index->idx_id = index_id;
+		index->idx_type = index_type;
+		index->idx_count = key_count;
+		index->idx_flags = index_flags;
+		if (!desc_null)
+			index->idx_description = description;
+
+		// Load index segments
+		MET_load_index_segments(tdbb, index);
+
+		// Link to relation
+		index->idx_next = relation->rel_indices;
+		relation->rel_indices = index;
+	}
+
+	return index;
+}
+
+
+void MET_load_index_segments(thread_db* tdbb, idx* index)
+{
+/**************************************
+ *
+ *      M E T _ l o a d _ i n d e x _ s e g m e n t s
+ *
+ **************************************
+ *
+ * Functional description
+ *      Load index segment information.
+ *
+ **************************************/
+	SET_TDBB(tdbb);
+	Attachment* attachment = tdbb->getAttachment();
+
+	AutoCacheRequest request(tdbb, irq_r_idx_segments, IRQ_REQUESTS);
+
+	// Converted FOR loop #42: Load index segments
+	EXE_start(tdbb, request.getRequest(), attachment->getSysTransaction());
+	EXE_send(tdbb, request.getRequest(), 0, index->idx_name.length(), index->idx_name.c_str());
+
+	while (EXE_receive(tdbb, request.getRequest(), 1))
+	{
+		char field_name[MAX_SQL_IDENTIFIER_LEN];
+		USHORT field_position;
+		USHORT segment_length;
+		USHORT collation_id;
+		bool collation_null;
+
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(field_position), &field_position);
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(field_name), field_name);
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(segment_length), &segment_length);
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(collation_null), &collation_null);
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(collation_id), &collation_id);
+
+		// Create index segment
+		if (field_position < MAX_INDEX_SEGMENTS)
+		{
+			index_seg* segment = &index->idx_rpt[field_position];
+			segment->idx_field = field_name;
+			segment->idx_length = segment_length;
+			segment->idx_ttype = collation_null ? 0 : collation_id;
+		}
+	}
+}
+
+
+void MET_load_collations(thread_db* tdbb)
+{
+/**************************************
+ *
+ *      M E T _ l o a d _ c o l l a t i o n s
+ *
+ **************************************
+ *
+ * Functional description
+ *      Load character set collations from system tables.
+ *
+ **************************************/
+	SET_TDBB(tdbb);
+	Attachment* attachment = tdbb->getAttachment();
+	Database* dbb = tdbb->getDatabase();
+
+	AutoCacheRequest request(tdbb, irq_r_collations, IRQ_REQUESTS);
+
+	// Converted FOR loop #43: Load collation definitions
+	EXE_start(tdbb, request.getRequest(), attachment->getSysTransaction());
+
+	while (EXE_receive(tdbb, request.getRequest(), 1))
+	{
+		char collation_name[MAX_SQL_IDENTIFIER_LEN];
+		USHORT collation_id;
+		USHORT charset_id;
+		USHORT collation_flags;
+		char specific_attributes[256];
+		char function_name[MAX_SQL_IDENTIFIER_LEN];
+		bool attributes_null;
+		bool function_null;
+
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(collation_name), collation_name);
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(collation_id), &collation_id);
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(charset_id), &charset_id);
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(collation_flags), &collation_flags);
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(attributes_null), &attributes_null);
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(specific_attributes), specific_attributes);
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(function_null), &function_null);
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(function_name), function_name);
+
+		// Create collation object
+		texttype* tt = FB_NEW_POOL(*dbb->dbb_permanent) texttype(*dbb->dbb_permanent);
+		tt->texttype_name = collation_name;
+		tt->texttype_version = INTL_CS_COLL_TO_TTYPE(charset_id, collation_id);
+		tt->texttype_flags = collation_flags;
+		tt->texttype_character_set = charset_id;
+		tt->texttype_collation_id = collation_id;
+
+		if (!attributes_null)
+			tt->texttype_attributes = specific_attributes;
+		if (!function_null)
+			tt->texttype_fn_init = function_name;
+
+		// Add to database collation list
+		tt->texttype_next = dbb->dbb_tt_first;
+		dbb->dbb_tt_first = tt;
+	}
+}
+
+
+void MET_store_dependency(thread_db* tdbb, const QualifiedName& name, 
+						  const QualifiedName& field_name, 
+						  const QualifiedName& depended_on,
+						  USHORT type)
+{
+/**************************************
+ *
+ *      M E T _ s t o r e _ d e p e n d e n c y
+ *
+ **************************************
+ *
+ * Functional description
+ *      Store an object dependency in RDB$DEPENDENCIES.
+ *
+ **************************************/
+	SET_TDBB(tdbb);
+	Attachment* attachment = tdbb->getAttachment();
+
+	AutoCacheRequest request(tdbb, irq_s_dependency, IRQ_REQUESTS);
+
+	// Converted FOR loop #44: Store dependency record (STORE operation)
+	EXE_start(tdbb, request.getRequest(), attachment->getSysTransaction());
+	EXE_send(tdbb, request.getRequest(), 0, name.schema.length(), name.schema.c_str());
+	EXE_send(tdbb, request.getRequest(), 0, name.object.length(), name.object.c_str());
+	EXE_send(tdbb, request.getRequest(), 0, field_name.object.length(), field_name.object.c_str());
+	EXE_send(tdbb, request.getRequest(), 0, depended_on.schema.length(), depended_on.schema.c_str());
+	EXE_send(tdbb, request.getRequest(), 0, depended_on.object.length(), depended_on.object.c_str());
+	EXE_send(tdbb, request.getRequest(), 0, sizeof(type), &type);
+
+	// Execute the store operation
+	while (EXE_receive(tdbb, request.getRequest(), 1))
+	{
+		// STORE operation completed
+	}
+}
+
+
+void MET_delete_dependencies(thread_db* tdbb, const QualifiedName& name, USHORT type)
+{
+/**************************************
+ *
+ *      M E T _ d e l e t e _ d e p e n d e n c i e s
+ *
+ **************************************
+ *
+ * Functional description
+ *      Delete dependencies for an object from RDB$DEPENDENCIES.
+ *
+ **************************************/
+	SET_TDBB(tdbb);
+	Attachment* attachment = tdbb->getAttachment();
+
+	AutoCacheRequest request(tdbb, irq_e_dependency, IRQ_REQUESTS);
+
+	// Converted FOR loop #45: Delete dependency records (ERASE operation)
+	EXE_start(tdbb, request.getRequest(), attachment->getSysTransaction());
+	EXE_send(tdbb, request.getRequest(), 0, name.schema.length(), name.schema.c_str());
+	EXE_send(tdbb, request.getRequest(), 0, name.object.length(), name.object.c_str());
+	EXE_send(tdbb, request.getRequest(), 0, sizeof(type), &type);
+
+	while (EXE_receive(tdbb, request.getRequest(), 1))
+	{
+		// ERASE operation - delete this dependency record
+		EXE_send(tdbb, request.getRequest(), 2, 0, NULL); // Signal erase
+	}
+}
+
+
+void MET_update_transaction(thread_db* tdbb, jrd_tra* transaction, const bool do_commit)
+	SCHAR expanded_name[MAXPATHLEN];
+	AutoCacheRequest request2(tdbb, irq_activate_shadow2, IRQ_REQUESTS);
+
+	// Converted FOR loop #47: Find matching shadow files
+	EXE_start(tdbb, request2.getRequest(), attachment->getSysTransaction());
+
+	while (EXE_receive(tdbb, request2.getRequest(), 1))
+	{
+		ULONG shadow_number;
+		bool shadow_number_null;
+		char file_name[MAXPATHLEN];
+		
+		// Receive file information
+		EXE_receive(tdbb, request2.getRequest(), 1, sizeof(shadow_number_null), &shadow_number_null);
+		EXE_receive(tdbb, request2.getRequest(), 1, sizeof(shadow_number), &shadow_number);
+		EXE_receive(tdbb, request2.getRequest(), 1, sizeof(file_name), file_name);
+		
+		// Check for NOT MISSING AND NE 0
+		if (!shadow_number_null && shadow_number != 0)
+		{
+			PIO_expand(file_name, (USHORT)strlen(file_name),
+						expanded_name, sizeof(expanded_name));
+
+			if (!strcmp(expanded_name, dbb_file_name))
+			{
+				// Converted FOR loop #48: Update matching shadow files to shadow number 0
+				AutoCacheRequest request3(tdbb, irq_activate_shadow3, IRQ_REQUESTS);
+				EXE_start(tdbb, request3.getRequest(), attachment->getSysTransaction());
+				EXE_send(tdbb, request3.getRequest(), 0, sizeof(shadow_number), &shadow_number);
+
+				while (EXE_receive(tdbb, request3.getRequest(), 1))
+				{
+					// MODIFY operation - set shadow number to 0
+					ULONG new_shadow_number = 0;
+					EXE_send(tdbb, request3.getRequest(), 2, sizeof(new_shadow_number), &new_shadow_number);
+				}
+
+				// Converted FOR loop #49: Erase the current shadow file record
+				EXE_send(tdbb, request2.getRequest(), 2, 0, NULL); // Signal erase
+			}
+		}
+	}
+}
+
+
+void MET_revoke(thread_db* tdbb, jrd_tra* transaction, const QualifiedName& relation,
+	const QualifiedName& revokee, const string& privilege)
+{
+/**************************************
+ *
+ *      M E T _ r e v o k e
+ *
+ **************************************
+ *
+ * Functional description
+ *      When any of the shadows in RDB$FILES for a particular
+ *      shadow are deleted, stop shadowing to that file and
+ *      remove all other files from the same shadow.
+ *
+ **************************************/
+	SET_TDBB(tdbb);
+	Attachment* attachment = tdbb->getAttachment();
+	Database* dbb = tdbb->getDatabase();
+
+	AutoCacheRequest request(tdbb, irq_delete_shadow, IRQ_REQUESTS);
+
+	// Converted FOR loop #50: Delete shadow files by shadow number (ERASE)
+	EXE_start(tdbb, request.getRequest(), attachment->getSysTransaction());
+	EXE_send(tdbb, request.getRequest(), 0, sizeof(shadow_number), &shadow_number);
+
+	while (EXE_receive(tdbb, request.getRequest(), 1))
+	{
+		// ERASE operation - delete this shadow file record
+		EXE_send(tdbb, request.getRequest(), 2, 0, NULL); // Signal erase
+	}
+
+	for (Shadow* shadow = dbb->dbb_shadow; shadow; shadow = shadow->sdw_next)
+	{
+		if (shadow->sdw_number == shadow_number) {
+			shadow->sdw_flags |= SDW_shutdown;
+		}
+	}
+
+	// notify other processes to check for shadow deletion
+	if (SDW_lck_update(tdbb, 0))
+		SDW_notify(tdbb);
+}
+
+
+bool jrd_prc::reload(thread_db* tdbb)
+{
+	fb_assert(this->flags & Routine::FLAG_RELOAD);
+
+	Attachment* attachment = tdbb->getAttachment();
+	AutoCacheRequest request(tdbb, irq_r_proc_blr, IRQ_REQUESTS);
+
+	// Converted FOR loop #52: Load procedure BLR for reload (with MODIFY)
+	EXE_start(tdbb, request.getRequest(), attachment->getSysTransaction());
+	EXE_send(tdbb, request.getRequest(), 0, sizeof(this->getId()), &this->getId());
+
+	while (EXE_receive(tdbb, request.getRequest(), 1))
+	{
+		bid procedure_blr;
+		bid debug_info;
+		bool debug_info_null;
+		bool valid_blr_null;
+		bool valid_blr_value;
+		
+		// Receive procedure BLR and related fields
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(procedure_blr), &procedure_blr);
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(debug_info_null), &debug_info_null);
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(debug_info), &debug_info);
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(valid_blr_null), &valid_blr_null);
+		EXE_receive(tdbb, request.getRequest(), 1, sizeof(valid_blr_value), &valid_blr_value);
+
+		MemoryPool* const csb_pool = attachment->createPool();
+		Jrd::ContextPoolHolder context(tdbb, csb_pool);
+
+		try
+		{
+			AutoPtr<CompilerScratch> csb(FB_NEW_POOL(*csb_pool) CompilerScratch(*csb_pool));
+
+			try
+			{
+				this->parseBlr(tdbb, csb, &procedure_blr,
+					debug_info_null ? NULL : &debug_info);
+
+				// Check if we need to update the valid BLR flag
+				Database* dbb = tdbb->getDatabase();
+				if (!dbb->readOnly() &&
+					!valid_blr_null && valid_blr_value == FALSE)
+				{
+					// Converted FOR loop #53: Update procedure BLR validation (MODIFY)
+					// If the BLR was marked as invalid but the procedure was compiled,
+					// mark the BLR as valid.
+					bool new_valid_blr = TRUE;
+					bool new_valid_blr_null = FALSE;
+					EXE_send(tdbb, request.getRequest(), 2, sizeof(new_valid_blr), &new_valid_blr);
+					EXE_send(tdbb, request.getRequest(), 2, sizeof(new_valid_blr_null), &new_valid_blr_null);
+				}
+
+				// parseBlr() above could set FLAG_RELOAD again
+				return !(this->flags & Routine::FLAG_RELOAD);
+			}
+			catch (const Exception& ex)
+			{
+				StaticStatusVector temp_status;
+				ex.stuffException(temp_status);
+
+				(Arg::Gds(isc_bad_proc_BLR) << this->getName().toQuotedString()
+					<< Arg::StatusVector(temp_status.begin())).raise();
+			}
+		}
+		catch (const Exception&)
+		{
+			attachment->deletePool(csb_pool);
+			throw;
+		}
+	}
+
+	return false;
+}
+
+
+void MET_revoke(thread_db* tdbb, jrd_tra* transaction, const QualifiedName& relation,
+	const QualifiedName& revokee, const string& privilege)
+{
+/**************************************
+ *
+ *      M E T _ r e v o k e
+ *
+ **************************************
+ *
+ * Functional description
+ *      Execute a recursive revoke.  This is called only when
+ *      a revoked privilege had the grant option.
+ *
+ **************************************/
+	SET_TDBB(tdbb);
+
+	// See if the revokee still has the privilege.  If so, there's nothing to do
+
+	USHORT count = 0;
+
+	AutoCacheRequest request(tdbb, irq_revoke1, IRQ_REQUESTS);
+
+	// Converted FOR loop #54: Check if revokee still has privilege
+	EXE_start(tdbb, request.getRequest(), transaction);
+	EXE_send(tdbb, request.getRequest(), 0, relation.schema.length(), relation.schema.c_str());
+	EXE_send(tdbb, request.getRequest(), 0, relation.object.length(), relation.object.c_str());
+	EXE_send(tdbb, request.getRequest(), 0, privilege.length(), privilege.c_str());
+	EXE_send(tdbb, request.getRequest(), 0, revokee.schema.length(), revokee.schema.c_str());
+	EXE_send(tdbb, request.getRequest(), 0, revokee.object.length(), revokee.object.c_str());
+
+	while (EXE_receive(tdbb, request.getRequest(), 1))
+	{
+		++count;
+	}
+
+	if (count)
+		return;
+
+	request.reset(tdbb, irq_revoke2, IRQ_REQUESTS);
+
+	// User lost privilege.  Take it away from anybody he/she gave it to.
+
+	// Converted FOR loop #55: Revoke privileges granted by this user (ERASE)
+	EXE_start(tdbb, request.getRequest(), transaction);
+	EXE_send(tdbb, request.getRequest(), 0, relation.schema.length(), relation.schema.c_str());
+	EXE_send(tdbb, request.getRequest(), 0, relation.object.length(), relation.object.c_str());
+	EXE_send(tdbb, request.getRequest(), 0, privilege.length(), privilege.c_str());
+	EXE_send(tdbb, request.getRequest(), 0, revokee.object.length(), revokee.object.c_str());
+
+	while (EXE_receive(tdbb, request.getRequest(), 1))
+	{
+		// ERASE operation - delete this privilege record
+		EXE_send(tdbb, request.getRequest(), 2, 0, NULL); // Signal erase
+	}
+}
+
+
+void MET_update_transaction(thread_db* tdbb, jrd_tra* transaction, const bool do_commit)
+{
+/**************************************
+ *
+ *      M E T _ u p d a t e _ t r a n s a c t i o n
+ *
+ **************************************
+ *
+ * Functional description
+ *      Update a record in RDB$TRANSACTIONS.  If do_commit is true, this is a
+ *      commit; otherwise it is a ROLLBACK.
+ *
+ **************************************/
+	SET_TDBB(tdbb);
+	Attachment* attachment = tdbb->getAttachment();
+
+	AutoCacheRequest request(tdbb, irq_m_trans, IRQ_REQUESTS);
+
+	// Converted FOR loop #57: Update transaction state (ERASE/MODIFY)
+	EXE_start(tdbb, request.getRequest(), attachment->getSysTransaction());
+	EXE_send(tdbb, request.getRequest(), 0, sizeof(transaction->tra_number), &transaction->tra_number);
+
+	while (EXE_receive(tdbb, request.getRequest(), 1))
+	{
+		if (do_commit && (transaction->tra_flags & TRA_prepare2))
+		{
+			// Converted FOR loop #58: Erase transaction record for committed prepared transaction
+			EXE_send(tdbb, request.getRequest(), 2, 0, NULL); // Signal erase
+		}
+		else
+		{
+			// Converted FOR loop #59: Modify transaction state
+			USHORT transaction_state = do_commit ?
+				RDB$TRANSACTIONS.RDB$TRANSACTION_STATE.COMMITTED :
+				RDB$TRANSACTIONS.RDB$TRANSACTION_STATE.ROLLED_BACK;
+			EXE_send(tdbb, request.getRequest(), 3, sizeof(transaction_state), &transaction_state);
+		}
+	}
+}

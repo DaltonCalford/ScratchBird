@@ -1,0 +1,397 @@
+# ScratchBird Enhanced Utilities - Integration Layer CMakeLists.txt
+# This CMakeLists.txt leverages existing ScratchBird infrastructure rather than duplicating it
+
+cmake_minimum_required(VERSION 3.15)
+project(ScratchBirdEnhancedUtilities VERSION 0.5.0)
+
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+# Build configuration
+if(NOT CMAKE_BUILD_TYPE)
+    set(CMAKE_BUILD_TYPE Release)
+endif()
+
+# Compiler flags
+set(CMAKE_CXX_FLAGS "-Wall -Wextra -Wpedantic")
+set(CMAKE_CXX_FLAGS_DEBUG "-g -O0 -DDEBUG")
+set(CMAKE_CXX_FLAGS_RELEASE "-O3 -DNDEBUG")
+
+# ScratchBird source directories
+set(SCRATCHBIRD_SRC_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/../..)
+set(SCRATCHBIRD_JRD_DIR ${SCRATCHBIRD_SRC_ROOT}/jrd)
+set(SCRATCHBIRD_DSQL_DIR ${SCRATCHBIRD_SRC_ROOT}/dsql)
+set(SCRATCHBIRD_COMMON_DIR ${SCRATCHBIRD_SRC_ROOT}/common)
+set(SCRATCHBIRD_INCLUDE_DIR ${SCRATCHBIRD_SRC_ROOT}/include)
+
+# Include directories
+include_directories(
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${SCRATCHBIRD_SRC_ROOT}
+    ${SCRATCHBIRD_JRD_DIR}
+    ${SCRATCHBIRD_DSQL_DIR}
+    ${SCRATCHBIRD_COMMON_DIR}
+    ${SCRATCHBIRD_INCLUDE_DIR}
+    ${SCRATCHBIRD_INCLUDE_DIR}/scratchbird
+)
+
+# Find required libraries
+find_package(Threads REQUIRED)
+
+# Find ScratchBird client library (built separately)
+find_library(SCRATCHBIRD_CLIENT_LIB
+    NAMES sbclient libsbclient
+    PATHS ${SCRATCHBIRD_SRC_ROOT}/../gen/Release/scratchbird/lib
+    NO_DEFAULT_PATH
+)
+
+if(NOT SCRATCHBIRD_CLIENT_LIB)
+    message(FATAL_ERROR "ScratchBird client library not found. Please build ScratchBird first.")
+endif()
+
+message(STATUS "Found ScratchBird client library: ${SCRATCHBIRD_CLIENT_LIB}")
+
+# Define source files for integration layer
+set(INTEGRATION_SOURCES
+    sb_engine_integration.cpp
+    utility_enhancements.cpp
+    utility_config.cpp
+)
+
+set(INTEGRATION_HEADERS
+    sb_engine_integration.h
+    utility_enhancements.h
+    utility_config.h
+)
+
+# Integration layer library
+add_library(SBIntegration SHARED ${INTEGRATION_SOURCES} ${INTEGRATION_HEADERS})
+
+# Link against existing ScratchBird infrastructure
+target_link_libraries(SBIntegration
+    ${SCRATCHBIRD_CLIENT_LIB}
+    Threads::Threads
+    ${CMAKE_DL_LIBS}
+)
+
+# Set library properties
+set_target_properties(SBIntegration PROPERTIES
+    VERSION ${PROJECT_VERSION}
+    SOVERSION ${PROJECT_VERSION_MAJOR}
+    PUBLIC_HEADER "${INTEGRATION_HEADERS}"
+)
+
+# Enhanced sb_isql utility
+add_executable(sb_isql_enhanced
+    sb_isql_enhanced.cpp
+    ${INTEGRATION_SOURCES}
+)
+
+target_link_libraries(sb_isql_enhanced
+    SBIntegration
+    ${SCRATCHBIRD_CLIENT_LIB}
+    Threads::Threads
+    ${CMAKE_DL_LIBS}
+)
+
+# Enhanced sb_gstat utility
+add_executable(sb_gstat_enhanced
+    sb_gstat_enhanced.cpp
+    ${INTEGRATION_SOURCES}
+)
+
+target_link_libraries(sb_gstat_enhanced
+    SBIntegration
+    ${SCRATCHBIRD_CLIENT_LIB}
+    Threads::Threads
+    ${CMAKE_DL_LIBS}
+)
+
+# Enhanced sb_gbak utility
+add_executable(sb_gbak_enhanced
+    sb_gbak_enhanced.cpp
+    ${INTEGRATION_SOURCES}
+)
+
+target_link_libraries(sb_gbak_enhanced
+    SBIntegration
+    ${SCRATCHBIRD_CLIENT_LIB}
+    Threads::Threads
+    ${CMAKE_DL_LIBS}
+)
+
+# Integration tests
+add_executable(integration_tests
+    integration_tests.cpp
+    ${INTEGRATION_SOURCES}
+)
+
+target_link_libraries(integration_tests
+    SBIntegration
+    ${SCRATCHBIRD_CLIENT_LIB}
+    Threads::Threads
+    ${CMAKE_DL_LIBS}
+)
+
+# Performance benchmarks
+add_executable(performance_benchmarks
+    performance_benchmarks.cpp
+    ${INTEGRATION_SOURCES}
+)
+
+target_link_libraries(performance_benchmarks
+    SBIntegration
+    ${SCRATCHBIRD_CLIENT_LIB}
+    Threads::Threads
+    ${CMAKE_DL_LIBS}
+)
+
+# Compiler-specific optimizations
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(SBIntegration PRIVATE
+        -fPIC
+        -ffast-math
+        -fno-rtti
+        -fno-exceptions
+        -fdata-sections
+        -ffunction-sections
+    )
+    
+    target_link_options(SBIntegration PRIVATE
+        -Wl,--gc-sections
+        -Wl,--as-needed
+    )
+endif()
+
+# Platform-specific configurations
+if(WIN32)
+    target_compile_definitions(SBIntegration PRIVATE
+        WIN32_LEAN_AND_MEAN
+        NOMINMAX
+        _CRT_SECURE_NO_WARNINGS
+    )
+    
+    target_link_libraries(SBIntegration
+        ws2_32
+        advapi32
+        user32
+        kernel32
+    )
+    
+    # Windows-specific library naming
+    set_target_properties(SBIntegration PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
+        LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib
+        ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib
+    )
+    
+elseif(UNIX)
+    target_compile_definitions(SBIntegration PRIVATE
+        _GNU_SOURCE
+        _REENTRANT
+    )
+    
+    target_link_libraries(SBIntegration
+        pthread
+        dl
+        rt
+        m
+    )
+    
+    # Unix-specific library naming
+    set_target_properties(SBIntegration PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
+        LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib
+        ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib
+    )
+endif()
+
+# Debug configurations
+if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+    target_compile_definitions(SBIntegration PRIVATE
+        DEBUG
+        _DEBUG
+        SB_DEBUG
+        ENABLE_TRACE
+        ENABLE_ASSERTIONS
+    )
+    
+    # Add debug symbols
+    target_compile_options(SBIntegration PRIVATE -g3 -ggdb)
+    
+    # Enable AddressSanitizer for debug builds
+    if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+        target_compile_options(SBIntegration PRIVATE -fsanitize=address)
+        target_link_options(SBIntegration PRIVATE -fsanitize=address)
+    endif()
+endif()
+
+# Installation configuration
+install(TARGETS SBIntegration
+    LIBRARY DESTINATION lib
+    ARCHIVE DESTINATION lib
+    RUNTIME DESTINATION bin
+    PUBLIC_HEADER DESTINATION include/scratchbird/utilities
+)
+
+install(TARGETS sb_isql_enhanced sb_gstat_enhanced sb_gbak_enhanced
+    RUNTIME DESTINATION bin
+)
+
+install(FILES
+    ${CMAKE_CURRENT_SOURCE_DIR}/INTEGRATION_GUIDE.md
+    ${CMAKE_CURRENT_SOURCE_DIR}/REVISED_IMPLEMENTATION_PLAN.md
+    DESTINATION share/doc/scratchbird-enhanced-utilities
+)
+
+# Configuration files
+install(FILES
+    ${CMAKE_CURRENT_SOURCE_DIR}/config/sb_utilities.conf
+    ${CMAKE_CURRENT_SOURCE_DIR}/config/sb_isql.conf
+    ${CMAKE_CURRENT_SOURCE_DIR}/config/sb_gstat.conf
+    ${CMAKE_CURRENT_SOURCE_DIR}/config/sb_gbak.conf
+    DESTINATION etc/scratchbird
+)
+
+# Development tools
+if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+    # Code formatting
+    find_program(CLANG_FORMAT clang-format)
+    if(CLANG_FORMAT)
+        add_custom_target(format
+            COMMAND ${CLANG_FORMAT} -i ${INTEGRATION_SOURCES} ${INTEGRATION_HEADERS}
+            WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+            COMMENT "Formatting code with clang-format"
+        )
+    endif()
+    
+    # Static analysis
+    find_program(CLANG_TIDY clang-tidy)
+    if(CLANG_TIDY)
+        add_custom_target(analyze
+            COMMAND ${CLANG_TIDY} ${INTEGRATION_SOURCES} -- -I${CMAKE_CURRENT_SOURCE_DIR}
+            WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+            COMMENT "Running static analysis with clang-tidy"
+        )
+    endif()
+    
+    # Memory leak detection
+    find_program(VALGRIND valgrind)
+    if(VALGRIND)
+        add_custom_target(memcheck
+            COMMAND ${VALGRIND} --leak-check=full --show-leak-kinds=all --track-origins=yes $<TARGET_FILE:integration_tests>
+            DEPENDS integration_tests
+            COMMENT "Running memory leak detection with valgrind"
+        )
+    endif()
+endif()
+
+# Testing configuration
+enable_testing()
+
+# Unit tests
+add_test(NAME integration_tests
+    COMMAND integration_tests
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+)
+
+# Performance benchmarks
+add_test(NAME performance_benchmarks
+    COMMAND performance_benchmarks
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+)
+
+# Test data setup
+configure_file(
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_data/sample_database.sql
+    ${CMAKE_BINARY_DIR}/test_data/sample_database.sql
+    COPYONLY
+)
+
+# Custom build targets
+add_custom_target(all_utilities
+    DEPENDS sb_isql_enhanced sb_gstat_enhanced sb_gbak_enhanced
+    COMMENT "Building all enhanced utilities"
+)
+
+add_custom_target(run_tests
+    COMMAND ${CMAKE_CTEST_COMMAND} --verbose
+    DEPENDS integration_tests performance_benchmarks
+    COMMENT "Running all tests"
+)
+
+# Documentation generation
+find_program(DOXYGEN doxygen)
+if(DOXYGEN)
+    configure_file(
+        ${CMAKE_CURRENT_SOURCE_DIR}/doc/Doxyfile.in
+        ${CMAKE_BINARY_DIR}/Doxyfile
+        @ONLY
+    )
+    
+    add_custom_target(docs
+        COMMAND ${DOXYGEN} ${CMAKE_BINARY_DIR}/Doxyfile
+        WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+        COMMENT "Generating documentation with Doxygen"
+    )
+endif()
+
+# Packaging
+set(CPACK_PACKAGE_NAME "scratchbird-enhanced-utilities")
+set(CPACK_PACKAGE_VERSION ${PROJECT_VERSION})
+set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "Enhanced utilities for ScratchBird database")
+set(CPACK_PACKAGE_VENDOR "ScratchBird Project")
+set(CPACK_PACKAGE_CONTACT "dev@scratchbird.org")
+
+if(WIN32)
+    set(CPACK_GENERATOR "ZIP")
+else()
+    set(CPACK_GENERATOR "TGZ")
+endif()
+
+include(CPack)
+
+# Build summary
+message(STATUS "=== ScratchBird Enhanced Utilities Build Configuration ===")
+message(STATUS "Build Type: ${CMAKE_BUILD_TYPE}")
+message(STATUS "C++ Standard: ${CMAKE_CXX_STANDARD}")
+message(STATUS "Compiler: ${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION}")
+message(STATUS "ScratchBird Client Library: ${SCRATCHBIRD_CLIENT_LIB}")
+message(STATUS "Install Prefix: ${CMAKE_INSTALL_PREFIX}")
+message(STATUS "Integration Layer: ENABLED")
+message(STATUS "Enhanced Utilities: sb_isql_enhanced, sb_gstat_enhanced, sb_gbak_enhanced")
+message(STATUS "Testing: ENABLED")
+message(STATUS "=== Configuration Complete ===")
+
+# Development notes
+message(STATUS "")
+message(STATUS "Development Notes:")
+message(STATUS "  - This build leverages existing ScratchBird infrastructure")
+message(STATUS "  - No duplication of core database engine functionality")
+message(STATUS "  - Enhanced utilities provide additional features while maintaining compatibility")
+message(STATUS "  - Integration layer provides high-level API for utility development")
+message(STATUS "  - All utilities link against existing ScratchBird client library")
+message(STATUS "")
+
+# Build instructions
+message(STATUS "Build Instructions:")
+message(STATUS "  1. Ensure ScratchBird is built first:")
+message(STATUS "     cd ../../.. && make TARGET=Release")
+message(STATUS "  2. Build enhanced utilities:")
+message(STATUS "     mkdir build && cd build")
+message(STATUS "     cmake .. -DCMAKE_BUILD_TYPE=Release")
+message(STATUS "     make -j$(nproc)")
+message(STATUS "  3. Run tests:")
+message(STATUS "     make run_tests")
+message(STATUS "  4. Install:")
+message(STATUS "     make install")
+message(STATUS "")
+
+# Performance optimization recommendations
+if(CMAKE_BUILD_TYPE STREQUAL "Release")
+    message(STATUS "Performance Optimizations:")
+    message(STATUS "  - Link-time optimization: Consider adding -DCMAKE_INTERPROCEDURAL_OPTIMIZATION=ON")
+    message(STATUS "  - Profile-guided optimization: Consider PGO for production builds")
+    message(STATUS "  - Native architecture: Consider adding -march=native for target-specific optimization")
+    message(STATUS "")
+endif()

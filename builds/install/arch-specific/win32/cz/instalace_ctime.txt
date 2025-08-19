@@ -1,0 +1,149 @@
+﻿Databázový server Firebird $MAJOR.$MINOR.$RELEASE
+=======================================================
+
+
+Tento dokument je návod pro instalaci tohoto balíčku
+Firebird $MAJOR.$MINOR na platformě Windows. Zdejší poznámky
+odkazují spíše na balíček samotný, než obecně na
+Firebird $MAJOR.$MINOR. Navíc jsou tyto poznámky
+primárně zaměřeny na uživatele spustitelného instalátoru.
+
+Předpokládá se, že čtenář tohoto dokumentu je již
+obeznámen s Firebirdem. Pokud přecházíte
+na Firebird $MAJOR.$MINOR přímo z Fb 2.5, doporučujeme
+vám pro zjištění změn pročíst dokumentaci Fb $MAJOR.$MINOR.
+
+
+Obsah
+-----
+
+o Před instalací
+o Instalace gds32.dll
+o Instalace Hlídače
+o Reinstalace Firebird $MAJOR.$MINOR
+o Známé problémy instalace
+o Odinstalace
+o Instalace z dávkového souboru
+
+
+Před instalací
+--------------
+
+Doporučuje se před instalací tohoto balíčku
+ODINSTALOVAT všechny předchozí verze Firebirdu
+či InterBase. Je zvláště důležité zkontrolovat,
+že fbclient.dll a gds32.dll byly odstraněny
+ze složky <system32>. Pro více informací o tom,
+viz část ODINSTALACE níže.
+
+Máte-li nainstalovanou beta či alpha verzi
+Firebirdu $MAJOR.$MINOR, instalátor přejmenuje firebird.conf 
+a security$MAJOR.fdb, jelikož tyto soubory již nejsou kompatibilní.
+
+
+Instalace gds32.dll
+-------------------
+
+Tato knihovna pro kompatibilitu už nebude nadále
+implicitně instalována do systémové složky Windows.
+Avšak zůstává jako volba při instalaci.
+
+
+Instalace Hlídače
+-----------------
+
+Doufáme v možné vyřazení Hlídače. Hlídač nefunguje
+s Classic serverem a binární instalátor jej při instalaci
+nenabízí, pokud je navolen Classic server.
+Pokud je zvolen SeperServer, nebo SuperClassic, volba
+Hlídače je dostupná, ale standardně vypnutá.
+
+
+Reinstalace of Firebird $MAJOR.$MINOR
+---------------------------
+
+Instalační program dělá vše pro detekci a zachování předchozí instalace.
+Jestliže instalátor rozpozná firebird.conf či security$MAJOR.fdb, nebude
+nabízet možnost instalace legacy_auth. Rovněž nebude nabízet
+volbu pro nastavení hesla pro SYSDBA.
+
+
+Známé problémy instalace
+------------------------
+
+o Binární instalátor je možné použít pouze
+  k instalaci výchozí instance Firebird $MAJOR.$MINOR.
+  Pokud chcete instalovat další pojmenované
+  instance, musíte je nainstalovat ručně
+  z instalačního balíčku zip.
+
+o Bohužel, instalátor nedokáže spolehlivě detekovat
+  předchozí běžící verzi Firebirdu, spuštěnou jako
+  Classic Server.
+
+o Instalátor služby (instsvc) využívá stejné implicitní
+  pojmenování pro 32bitovou i 64bitovou instalaci.
+  To je záměr. Služba se nachází v jediném jmenném prostoru.
+
+o Instalaci určitě spouštějte jako správce. Tj., pokud použijete
+  binární instalátor, klepněte pravým tlačítkem myši a zvolte
+  'Spustit  jako správce'. Jinak instalátor nebude schopen spustit
+  službu Firebird na konci instalace.
+
+o Jestliže nebyly správně nainstalované běhové knihovný 
+  MS, selže načtení knihoven uvolněných pomocí 
+  instclient. V takovém případfě by uživatel měl 
+  nainstalovat příslušnou verzi vcredist.exe, jak bylo 
+  zmíněno výše.
+
+
+Odinstalace
+-----------
+
+o Je upřednostňované, aby tento balíček byl
+  správně odinstalován použitím dodávané
+  odinstalční aplikace. Tato může být spuštěna
+  z Ovládacích panelů. Jinak může být odinstalován
+  spuštěním unins000.exe přímo z instalační
+  složky.
+
+o Pokud Firebird běží jako aplikace (místo jako
+  služba), je doporučeno abyste před spuštením
+  odinstalátoru ručně zastavili server.
+  To protože odinstalátor nemůže ukončit běžící
+  aplikaci. Pokud server během odinstalace beží,
+  odinstalace skončí chybou. Pozůstalé soubory
+  musíte vymazat ručně.
+
+o Odinstalace v instalační složce zanechá
+  šest souborů:
+
+  - databases.conf
+  - firebird.conf
+  - fbtrace.conf
+  - replication.conf
+  - firebird.log
+  - security$MAJOR.fdb
+
+  To je záměr. Všechny tyto soubory jsou
+  potencionálně pozměnitelné uživatelem a
+  mohou být potřeba, pokud někdy v budoucnu
+  bude Firebird reinstalovaný. Pokud nejsou více
+  třeba, mohou být odstraněny.
+
+o Nová funkce odinstalátoru je možnost spustit
+  jej s parametrem /CLEAN. To provede kontrolu
+  počítadel sdílených souborů pro každý z výše
+  uvedených souborů. V případě možnosti budou
+  soubory odstraněny.
+
+
+Instalace z dávkového souboru
+-----------------------------
+
+Instalační program lze spustit z dávkového souboru.
+Pro úplnou informaci se prosím přečtěte dokument:
+
+	instalace_davkova.txt
+
+

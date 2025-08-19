@@ -1,0 +1,441 @@
+# CMakeLists.txt for Enhanced ScratchBird Utilities - Phase 1
+# Implementation of enhanced database framework and manager components
+
+cmake_minimum_required(VERSION 3.10)
+project(ScratchBirdUtilitiesEnhanced)
+
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+# Enable debugging symbols and optimization
+set(CMAKE_CXX_FLAGS_DEBUG "-g -O0 -Wall -Wextra -DDEBUG")
+set(CMAKE_CXX_FLAGS_RELEASE "-O3 -Wall -Wextra -DNDEBUG")
+
+# Set default build type
+if(NOT CMAKE_BUILD_TYPE)
+    set(CMAKE_BUILD_TYPE Release)
+endif()
+
+# Find required packages
+find_package(PkgConfig REQUIRED)
+find_package(Threads REQUIRED)
+
+# Find ScratchBird client library
+find_library(SCRATCHBIRD_LIB
+    NAMES sbclient libsbclient
+    PATHS /usr/lib /usr/local/lib
+    PATH_SUFFIXES scratchbird
+)
+
+if(NOT SCRATCHBIRD_LIB)
+    message(WARNING "ScratchBird client library not found. Trying firebird client library.")
+    find_library(SCRATCHBIRD_LIB
+        NAMES fbclient libfbclient
+        PATHS /usr/lib /usr/local/lib
+        PATH_SUFFIXES firebird
+    )
+endif()
+
+if(NOT SCRATCHBIRD_LIB)
+    message(FATAL_ERROR "Neither ScratchBird nor Firebird client library found!")
+endif()
+
+# Find readline library
+find_library(READLINE_LIB readline)
+
+# Find compression libraries
+find_library(LZ4_LIB lz4)
+find_library(ZSTD_LIB zstd)
+
+# Include directories
+include_directories(${CMAKE_CURRENT_SOURCE_DIR})
+include_directories(${CMAKE_CURRENT_SOURCE_DIR}/../../include)
+
+# Check if we have firebird includes
+if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/../../include/firebird)
+    include_directories(${CMAKE_CURRENT_SOURCE_DIR}/../../include/firebird)
+endif()
+
+# Try system firebird includes
+find_path(FIREBIRD_INCLUDE_DIR ibase.h
+    PATHS /usr/include/firebird /usr/local/include/firebird
+)
+
+if(FIREBIRD_INCLUDE_DIR)
+    include_directories(${FIREBIRD_INCLUDE_DIR})
+endif()
+
+# Define source files for Phase 1 components
+
+# Enhanced Database Framework
+set(ENHANCED_DATABASE_SOURCES
+    sb_database_enhanced.cpp
+    sb_database_enhanced.h
+)
+
+# Attachment Manager
+set(ATTACHMENT_MANAGER_SOURCES
+    attachment_manager.cpp
+    attachment_manager.h
+)
+
+# Transaction Manager
+set(TRANSACTION_MANAGER_SOURCES
+    transaction_manager.cpp
+    transaction_manager.h
+)
+
+# Service Manager
+set(SERVICE_MANAGER_SOURCES
+    service_manager.cpp
+    service_manager.h
+)
+
+# Metadata Cache
+set(METADATA_CACHE_SOURCES
+    metadata_cache.cpp
+    metadata_cache.h
+)
+
+# Schema Cache (will be implemented later)
+set(SCHEMA_CACHE_SOURCES
+    schema_cache.cpp
+    schema_cache.h
+)
+
+# Query Processor (will be implemented later)
+set(QUERY_PROCESSOR_SOURCES
+    query_processor.cpp
+    query_processor.h
+)
+
+# Result Set Manager (will be implemented later)
+set(RESULT_SET_MANAGER_SOURCES
+    result_set_manager.cpp
+    result_set_manager.h
+)
+
+# Metadata Extractor (will be implemented later)
+set(METADATA_EXTRACTOR_SOURCES
+    metadata_extractor.cpp
+    metadata_extractor.h
+)
+
+# Existing functional utilities
+set(FUNCTIONAL_SOURCES
+    sb_database.cpp
+    sb_database.h
+    sb_isql.cpp
+    sb_gstat_functional.cpp
+    sb_gbak_functional.cpp
+)
+
+# Build the enhanced database framework library
+add_library(sb_database_enhanced STATIC
+    ${ENHANCED_DATABASE_SOURCES}
+    ${ATTACHMENT_MANAGER_SOURCES}
+    ${TRANSACTION_MANAGER_SOURCES}
+    ${SERVICE_MANAGER_SOURCES}
+    ${METADATA_CACHE_SOURCES}
+    # Note: Schema cache, query processor, result set manager, and metadata extractor
+    # will be added when implemented
+)
+
+# Build the original database framework for comparison
+add_library(sb_database STATIC
+    sb_database.cpp
+    sb_database.h
+)
+
+# Link enhanced database framework with required libraries
+target_link_libraries(sb_database_enhanced 
+    ${SCRATCHBIRD_LIB}
+    ${CMAKE_THREAD_LIBS_INIT}
+)
+
+# Add compression libraries if available
+if(LZ4_LIB)
+    target_link_libraries(sb_database_enhanced ${LZ4_LIB})
+    target_compile_definitions(sb_database_enhanced PRIVATE HAVE_LZ4)
+endif()
+
+if(ZSTD_LIB)
+    target_link_libraries(sb_database_enhanced ${ZSTD_LIB})
+    target_compile_definitions(sb_database_enhanced PRIVATE HAVE_ZSTD)
+endif()
+
+# Link original database framework
+target_link_libraries(sb_database ${SCRATCHBIRD_LIB})
+
+# Build enhanced utilities (Phase 1 versions)
+add_executable(sb_isql_enhanced
+    sb_isql_enhanced.cpp
+)
+
+target_link_libraries(sb_isql_enhanced 
+    sb_database_enhanced
+    ${READLINE_LIB}
+    ${SCRATCHBIRD_LIB}
+    ${CMAKE_THREAD_LIBS_INIT}
+)
+
+# Build original functional utilities for comparison
+add_executable(sb_isql_functional
+    sb_isql.cpp
+)
+
+target_link_libraries(sb_isql_functional 
+    sb_database
+    ${READLINE_LIB}
+    ${SCRATCHBIRD_LIB}
+)
+
+add_executable(sb_gstat_functional
+    sb_gstat_functional.cpp
+)
+
+target_link_libraries(sb_gstat_functional 
+    sb_database
+    ${SCRATCHBIRD_LIB}
+)
+
+add_executable(sb_gbak_functional
+    sb_gbak_functional.cpp
+)
+
+target_link_libraries(sb_gbak_functional 
+    sb_database
+    ${SCRATCHBIRD_LIB}
+)
+
+# Build test framework
+add_executable(test_enhanced_framework
+    test_enhanced_framework.cpp
+)
+
+target_link_libraries(test_enhanced_framework
+    sb_database_enhanced
+    ${SCRATCHBIRD_LIB}
+    ${CMAKE_THREAD_LIBS_INIT}
+)
+
+# Build benchmark utility
+add_executable(benchmark_enhanced
+    benchmark_enhanced.cpp
+)
+
+target_link_libraries(benchmark_enhanced
+    sb_database_enhanced
+    sb_database
+    ${SCRATCHBIRD_LIB}
+    ${CMAKE_THREAD_LIBS_INIT}
+)
+
+# Set compiler flags for all targets
+set(TARGETS 
+    sb_database_enhanced 
+    sb_database 
+    sb_isql_enhanced 
+    sb_isql_functional 
+    sb_gstat_functional 
+    sb_gbak_functional
+    test_enhanced_framework
+    benchmark_enhanced
+)
+
+foreach(target ${TARGETS})
+    target_compile_options(${target} PRIVATE 
+        -Wall -Wextra -Wpedantic
+        -Wno-unused-parameter
+        -Wno-missing-field-initializers
+    )
+    
+    # Add debug flags for debug builds
+    target_compile_options(${target} PRIVATE 
+        $<$<CONFIG:Debug>:-g -O0 -DDEBUG>
+    )
+    
+    # Add optimization flags for release builds
+    target_compile_options(${target} PRIVATE 
+        $<$<CONFIG:Release>:-O3 -DNDEBUG>
+    )
+    
+    # Add thread safety flags
+    target_compile_definitions(${target} PRIVATE 
+        _THREAD_SAFE
+        _REENTRANT
+    )
+    
+    # Add feature flags
+    target_compile_definitions(${target} PRIVATE
+        ENHANCED_DATABASE_FRAMEWORK
+        PHASE_1_IMPLEMENTATION
+    )
+endforeach()
+
+# Install targets
+install(TARGETS 
+    sb_isql_enhanced 
+    sb_isql_functional 
+    sb_gstat_functional 
+    sb_gbak_functional
+    test_enhanced_framework
+    benchmark_enhanced
+    RUNTIME DESTINATION bin
+)
+
+# Install libraries
+install(TARGETS sb_database_enhanced sb_database
+    LIBRARY DESTINATION lib
+    ARCHIVE DESTINATION lib
+)
+
+# Install headers
+install(FILES
+    sb_database_enhanced.h
+    attachment_manager.h
+    transaction_manager.h
+    service_manager.h
+    metadata_cache.h
+    sb_database.h
+    DESTINATION include/scratchbird
+)
+
+# Create development package
+install(FILES
+    CMakeLists_enhanced.txt
+    DESTINATION share/scratchbird/cmake
+)
+
+# Custom targets for development
+
+# Format code
+add_custom_target(format
+    COMMAND clang-format -i *.cpp *.h
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    COMMENT "Formatting source code with clang-format"
+)
+
+# Run static analysis
+add_custom_target(analyze
+    COMMAND cppcheck --enable=all --std=c++17 *.cpp *.h
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    COMMENT "Running static analysis with cppcheck"
+)
+
+# Generate documentation
+add_custom_target(docs
+    COMMAND doxygen Doxyfile
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    COMMENT "Generating documentation with doxygen"
+)
+
+# Run tests
+add_custom_target(test
+    COMMAND ./test_enhanced_framework
+    DEPENDS test_enhanced_framework
+    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+    COMMENT "Running enhanced framework tests"
+)
+
+# Run benchmarks
+add_custom_target(benchmark
+    COMMAND ./benchmark_enhanced
+    DEPENDS benchmark_enhanced
+    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+    COMMENT "Running performance benchmarks"
+)
+
+# Clean enhanced build
+add_custom_target(clean-enhanced
+    COMMAND ${CMAKE_COMMAND} -E remove -f 
+        sb_isql_enhanced 
+        sb_isql_functional 
+        sb_gstat_functional 
+        sb_gbak_functional
+        test_enhanced_framework
+        benchmark_enhanced
+        libsb_database_enhanced.a
+        libsb_database.a
+    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+    COMMENT "Cleaning enhanced build artifacts"
+)
+
+# Package creation
+set(CPACK_PACKAGE_NAME "ScratchBirdUtilitiesEnhanced")
+set(CPACK_PACKAGE_VERSION "0.5.0")
+set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "Enhanced ScratchBird Database Utilities")
+set(CPACK_PACKAGE_VENDOR "ScratchBird Project")
+set(CPACK_PACKAGE_CONTACT "admin@scratchbird.org")
+set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE")
+set(CPACK_RESOURCE_FILE_README "${CMAKE_CURRENT_SOURCE_DIR}/README_ENHANCED.md")
+
+# Source package
+set(CPACK_SOURCE_GENERATOR "TGZ")
+set(CPACK_SOURCE_IGNORE_FILES
+    /build/
+    /.git/
+    /temp/
+    /.gitignore
+    /CMakeCache.txt
+    /CMakeFiles/
+    /Makefile
+    /cmake_install.cmake
+)
+
+# Binary package
+set(CPACK_GENERATOR "TGZ;DEB;RPM")
+set(CPACK_DEBIAN_PACKAGE_DEPENDS "libfirebird3-dev, libreadline-dev")
+set(CPACK_RPM_PACKAGE_REQUIRES "firebird-devel, readline-devel")
+
+include(CPack)
+
+# Print configuration summary
+message(STATUS "")
+message(STATUS "ScratchBird Enhanced Utilities Configuration Summary:")
+message(STATUS "========================================")
+message(STATUS "Build Type: ${CMAKE_BUILD_TYPE}")
+message(STATUS "C++ Standard: ${CMAKE_CXX_STANDARD}")
+message(STATUS "ScratchBird Library: ${SCRATCHBIRD_LIB}")
+message(STATUS "Readline Library: ${READLINE_LIB}")
+message(STATUS "LZ4 Library: ${LZ4_LIB}")
+message(STATUS "ZSTD Library: ${ZSTD_LIB}")
+message(STATUS "Firebird Include: ${FIREBIRD_INCLUDE_DIR}")
+message(STATUS "")
+message(STATUS "Targets to build:")
+message(STATUS "- sb_database_enhanced (Enhanced database framework)")
+message(STATUS "- sb_database (Original database framework)")
+message(STATUS "- sb_isql_enhanced (Enhanced interactive SQL)")
+message(STATUS "- sb_isql_functional (Functional interactive SQL)")
+message(STATUS "- sb_gstat_functional (Functional statistics)")
+message(STATUS "- sb_gbak_functional (Functional backup)")
+message(STATUS "- test_enhanced_framework (Test suite)")
+message(STATUS "- benchmark_enhanced (Performance benchmarks)")
+message(STATUS "")
+message(STATUS "Available custom targets:")
+message(STATUS "- format: Format source code")
+message(STATUS "- analyze: Run static analysis")
+message(STATUS "- docs: Generate documentation")
+message(STATUS "- test: Run test suite")
+message(STATUS "- benchmark: Run benchmarks")
+message(STATUS "- clean-enhanced: Clean build artifacts")
+message(STATUS "")
+message(STATUS "Phase 1 Implementation Status:")
+message(STATUS "- AttachmentManager: IMPLEMENTED")
+message(STATUS "- TransactionManager: HEADER ONLY")
+message(STATUS "- ServiceManager: HEADER ONLY")
+message(STATUS "- MetadataCache: HEADER ONLY")
+message(STATUS "- SchemaCache: PENDING")
+message(STATUS "- QueryProcessor: PENDING")
+message(STATUS "- ResultSetManager: PENDING")
+message(STATUS "- MetadataExtractor: PENDING")
+message(STATUS "")
+message(STATUS "Build commands:")
+message(STATUS "  mkdir -p build_enhanced")
+message(STATUS "  cd build_enhanced")
+message(STATUS "  cmake -DCMAKE_BUILD_TYPE=Release -f ../CMakeLists_enhanced.txt ..")
+message(STATUS "  make -j$(nproc)")
+message(STATUS "  make test")
+message(STATUS "  make benchmark")
+message(STATUS "========================================")
+message(STATUS "")
