@@ -1,0 +1,16 @@
+id: psql-triggers
+title: Triggers (PSQL)
+status: draft
+version: 0.1.0
+updated: 2025-08-12T00:00:00Z
+content:
+  grammar: |
+    CREATE TRIGGER name [ACTIVE|INACTIVE] {BEFORE|AFTER} (INSERT|UPDATE [OF col_list]|DELETE [OR ...])
+      ON table [FOR EACH {ROW|STATEMENT}] AS BEGIN ... END
+    ALTER TRIGGER name ...
+    DROP TRIGGER name
+  notes: |
+    POSITION n is captured; events are split into a list.
+  acceptance:
+    - 'CREATE TRIGGER tr BEFORE INSERT ON t FOR EACH ROW AS BEGIN SUSPEND; END'
+    - 'CREATE TRIGGER tr BEFORE INSERT OR UPDATE OF col1,col2 ON t FOR EACH ROW AS BEGIN SUSPEND; END'

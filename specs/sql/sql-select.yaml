@@ -1,0 +1,50 @@
+id: sql-select
+title: SELECT
+status: draft
+version: 0.2.0
+updated: 2025-08-15T00:00:00Z
+related: [sql-cte, sql-joins, sql-group-order, sql-returning-lock-fetch, sql-setops, sql-plan]
+content:
+  grammar: |
+    SELECT [DISTINCT [ON (...)] | ALL] select_list
+      FROM from_item [, from_item ...]
+      [WHERE ...]
+      [GROUP BY ...]
+      [HAVING ...]
+      [WINDOW ...]
+      [ORDER BY ...]
+      [FETCH FIRST ...]
+  from_item: |
+    table_name [AS alias]
+      [TABLESAMPLE {SYSTEM|BERNOULLI} (percent)]
+  acceptance:
+    - 'SELECT * FROM t TABLESAMPLE SYSTEM (10)'
+  order_by:
+    item: |
+      expression [ASC|DESC] [NULLS FIRST|LAST]
+      | ordinal [ASC|DESC] [NULLS FIRST|LAST]
+    notes: |
+      Ordinals are 1-based and must not exceed the projection count.
+      ASC is default; engine-default NULLS behavior documented separately.
+  window:
+    grammar: |
+      WINDOW window_name AS ( [PARTITION BY ...] [ORDER BY ...] frame_clause ) [, ...]
+      frame_clause := (ROWS|RANGE) [BETWEEN frame_start AND frame_end]
+      frame_start := UNBOUNDED PRECEDING | CURRENT ROW | <expr> PRECEDING | <expr> FOLLOWING
+      frame_end   := UNBOUNDED FOLLOWING | CURRENT ROW | <expr> FOLLOWING | <expr> PRECEDING
+    notes: |
+      Named window references by name are supported.
+      Referencing a named window copies PARTITION/ORDER defaults; frames may be overridden.
+  compound:
+    grammar: |
+      select_expr ( (UNION|INTERSECT|EXCEPT) [ALL] select_expr )*
+      [ORDER BY order_item [, ...]] [FETCH FIRST n ROWS ONLY]
+    precedence: |
+      INTERSECT binds tighter than UNION and EXCEPT; parentheses override.
+  plan:
+    grammar: |
+      PLAN JOIN ( rel_access [, ...] )
+         | PLAN R rel_access
+      rel_access := relation [INDEX (ix1 [, ix2 ...]) | NATURAL]
+    notes: |
+      Emulates Firebird plan syntax for compatibility. Parsing is syntactic; no optimizer yet.

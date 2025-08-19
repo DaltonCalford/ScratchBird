@@ -1,0 +1,16 @@
+id: sql-plan
+name: PLAN Clause
+notes:
+  - Supports nested JOIN/NESTED/MERGE/SORT/HASH/UNION with relation ops NATURAL, INDEX(...), and ORDER <index> [INDEX(...)]
+  - Optional index type hints after relation ops: BTREE (default), HASH, BITMAP, CLUSTERED, NON-CLUSTERED, FULLTEXT, MULTIKEY, GEOSPATIAL, INVERTED
+  - Accepts multiple relation ops inside JOIN(...)
+  - Parses into structured nodes for analysis; validation is deferred
+accept:
+  - PLAN (RDB$RELATIONS NATURAL)
+  - PLAN JOIN (R NATURAL, RF INDEX (IX_RF_RELATION, IX_RF_FIELD) HASH)
+  - PLAN MERGE (SORT (R NATURAL), SORT (RF NATURAL BITMAP))
+  - PLAN NESTED (JOIN (A NATURAL, B INDEX (IX_B) CLUSTERED), SORT (C NATURAL NON-CLUSTERED))
+  - PLAN SORT (JOIN (A NATURAL FULLTEXT, B NATURAL MULTIKEY))
+  - PLAN JOIN (T ORDER IX_T_NAME INDEX (IX_T_X, IX_T_Y) GEOSPATIAL, U NATURAL INVERTED)
+  - PLAN HASH (R A NATURAL, R B NATURAL)
+  - PLAN UNION (JOIN (R A NATURAL, R B NATURAL), SORT (R C NATURAL))

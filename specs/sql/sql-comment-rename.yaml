@@ -1,0 +1,23 @@
+id: sql-comment-rename
+title: COMMENT and RENAME
+status: draft
+version: 0.1.0
+updated: 2025-08-12T00:00:00Z
+content:
+  grammar: |
+    COMMENT ON <object-type> name IS 'text'
+    ALTER <object-type> name RENAME TO new_name
+    -- Supported object-types include (non-exhaustive):
+    -- DATABASE, SCHEMA, TABLE, VIEW, INDEX, SEQUENCE, DOMAIN,
+    -- PROCEDURE, FUNCTION, TRIGGER, PACKAGE, CHARACTER SET, COLLATION,
+    -- EXCEPTION, ROLE, USER, FOREIGN SERVER, FOREIGN TABLE, TABLESPACE,
+    -- PUBLICATION, SUBSCRIPTION, TRACE PROFILE, AUDIT POLICY,
+    -- JOB, SCHEDULE, CLUSTER, SERVICE, AUTH PROVIDER, DATABASE LINK
+  acceptance:
+    - "COMMENT ON TABLE t IS 'hello'"
+    - 'ALTER TABLE t RENAME TO t2'
+    - "COMMENT ON TABLESPACE fast IS 'NVMe tier'"
+    - "ALTER INDEX ix RENAME TO ix_new"
+    - "COMMENT ON FOREIGN SERVER srv IS 'Remote MSSQL'"
+    - "ALTER PUBLICATION pub_all RENAME TO pub_rw"
+    - "COMMENT ON JOB nightly IS 'Nightly ETL'"

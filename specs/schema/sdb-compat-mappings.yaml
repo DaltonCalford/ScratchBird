@@ -1,0 +1,272 @@
+id: sdb-compat-mappings
+name: Detailed RDB$ Compatibility Mappings
+status: draft
+version: 0.1.0
+updated: 2025-08-15T00:00:00Z
+content:
+  overview: |
+    This document specifies column-by-column mappings from Firebird's legacy
+    `RDB$*` system tables to ScratchBird's normalized `SDB$*` catalog. The
+    intent is to provide read-only compatibility views so that most tools work
+    unmodified. Deprecated or engine-internal columns are exposed as NULL or
+    synthesized constants when no exact equivalent exists.
+
+  mappings:
+    - table: RDB$RELATIONS
+      source: SDB$OBJECT o JOIN SDB$RELATION r ON r.oid=o.oid LEFT JOIN SDB$USER u ON u.oid=o.owner_oid
+      columns:
+        RDB$RELATION_NAME: o.name
+        RDB$OWNER_NAME: u.name
+        RDB$RELATION_ID: NULL
+        RDB$FORMAT: NULL
+        RDB$DBKEY_LENGTH: NULL
+        RDB$DEFAULT_CLASS: NULL
+        RDB$SYSTEM_FLAG: CAST(CASE WHEN o.type IN ('TABLE','VIEW','MATVIEW') AND o.schema_oid IS NOT NULL THEN 0 ELSE 1 END AS SMALLINT)
+        RDB$SECURITY_CLASS: NULL
+        RDB$EXTERNAL_FILE: r.external_file
+        RDB$CONSTRAINT_COUNT: NULL
+        RDB$FLAGS: NULL
+        RDB$VIEW_SOURCE: NULL
+        RDB$VIEW_BLR: NULL
+        RDB$RELATION_TYPE: CASE WHEN r.kind='VIEW' THEN 1 WHEN r.kind='MATVIEW' THEN 2 ELSE 0 END
+        RDB$DESCRIPTION: o.comment
+
+    - table: RDB$RELATION_FIELDS
+      source: SDB$RELATION r JOIN SDB$COLUMN c ON c.relation_oid=r.oid JOIN SDB$OBJECT o ON o.oid=r.oid LEFT JOIN SDB$DOMAIN d ON d.oid=c.domain_oid
+      columns:
+        RDB$RELATION_NAME: o.name
+        RDB$FIELD_NAME: c.name
+        RDB$FIELD_SOURCE: COALESCE(d.oid, NULL)
+        RDB$FIELD_POSITION: c.position
+        RDB$DEFAULT_SOURCE: c.default_expr
+        RDB$NULL_FLAG: CASE WHEN c.not_null THEN 1 ELSE 0 END
+        RDB$FIELD_ID: NULL
+        RDB$DESCRIPTION: NULL
+        RDB$SECURITY_CLASS: NULL
+        RDB$SYSTEM_FLAG: 0
+        RDB$UPDATE_FLAG: NULL
+
+    - table: RDB$FIELDS
+      source: SDB$DOMAIN d
+      columns:
+        RDB$FIELD_NAME: d.oid
+        RDB$VALIDATION_SOURCE: d.check_expr
+        RDB$COMPUTED_SOURCE: NULL
+        RDB$DEFAULT_SOURCE: d.default_expr
+        RDB$FIELD_LENGTH: d.length
+        RDB$FIELD_PRECISION: d.precision
+        RDB$FIELD_SCALE: d.scale
+        RDB$CHARACTER_LENGTH: d.length
+        RDB$FIELD_SUB_TYPE: NULL
+        RDB$FIELD_TYPE: d.base_type
+        RDB$SEGMENT_LENGTH: NULL
+        RDB$NULL_FLAG: CASE WHEN d.not_null THEN 1 ELSE 0 END
+        RDB$COLLATION_ID: d.collate
+        RDB$CHARACTER_SET_ID: d.charset
+        RDB$DESCRIPTION: NULL
+        RDB$SYSTEM_FLAG: 0
+
+    - table: RDB$INDICES
+      source: SDB$INDEX i JOIN SDB$OBJECT o ON o.oid=i.oid JOIN SDB$RELATION r ON r.oid=i.relation_oid
+      columns:
+        RDB$INDEX_NAME: o.name
+        RDB$RELATION_NAME: (SELECT name FROM SDB$OBJECT WHERE oid=r.oid)
+        RDB$UNIQUE_FLAG: CASE WHEN i.unique THEN 1 ELSE 0 END
+        RDB$INDEX_INACTIVE: 0
+        RDB$INDEX_TYPE: CASE WHEN i.method='BTREE' THEN 0 ELSE 1 END
+        RDB$FOREIGN_KEY: NULL
+        RDB$DESCRIPTION: NULL
+        RDB$STATISTICS: NULL
+
+    - table: RDB$INDEX_SEGMENTS
+      source: SDB$INDEX_KEY k JOIN SDB$INDEX i ON i.oid=k.index_oid JOIN SDB$OBJECT o ON o.oid=i.oid
+      columns:
+        RDB$INDEX_NAME: o.name
+        RDB$FIELD_NAME: (SELECT name FROM SDB$COLUMN WHERE oid=k.column_oid)
+        RDB$FIELD_POSITION: k.position
+        RDB$STATISTICS: NULL
+
+    - table: RDB$TRIGGERS
+      source: SDB$TRIGGER t JOIN SDB$OBJECT o ON o.oid=t.oid JOIN SDB$RELATION r ON r.oid=t.relation_oid
+      columns:
+        RDB$TRIGGER_NAME: o.name
+        RDB$RELATION_NAME: (SELECT name FROM SDB$OBJECT WHERE oid=r.oid)
+        RDB$TRIGGER_SEQUENCE: t.position
+        RDB$TRIGGER_TYPE: NULL
+        RDB$TRIGGER_SOURCE: NULL
+        RDB$TRIGGER_BLR: NULL
+        RDB$DESCRIPTION: NULL
+        RDB$SYSTEM_FLAG: 0
+
+    - table: RDB$PROCEDURES
+      source: SDB$ROUTINE rt JOIN SDB$OBJECT o ON o.oid=rt.oid AND rt.kind='PROCEDURE'
+      columns:
+        RDB$PROCEDURE_NAME: o.name
+        RDB$PROCEDURE_ID: NULL
+        RDB$PROCEDURE_BLR: NULL
+        RDB$PROCEDURE_SOURCE: (SELECT text FROM SDB$SOURCE WHERE object_oid=o.oid)
+        RDB$DESCRIPTION: o.comment
+        RDB$OWNER_NAME: (SELECT name FROM SDB$USER WHERE oid=o.owner_oid)
+        RDB$SYSTEM_FLAG: 0
+
+    - table: RDB$FUNCTIONS
+      source: SDB$ROUTINE rt JOIN SDB$OBJECT o ON o.oid=rt.oid AND rt.kind='FUNCTION'
+      columns:
+        RDB$FUNCTION_NAME: o.name
+        RDB$MODULE_NAME: NULL
+        RDB$ENTRYPOINT: NULL
+        RDB$QUERY_NAME: NULL
+        RDB$DESCRIPTION: o.comment
+        RDB$RETURN_ARGUMENT: NULL
+        RDB$SYSTEM_FLAG: 0
+
+    - table: RDB$GENERATORS
+      source: SDB$SEQUENCE s JOIN SDB$OBJECT o ON o.oid=s.oid
+      columns:
+        RDB$GENERATOR_NAME: o.name
+        RDB$INITIAL_VALUE: s.start_value
+        RDB$GENERATOR_ID: NULL
+        RDB$SYSTEM_FLAG: 0
+
+    - table: RDB$DEPENDENCIES
+      source: SDB$DEPENDENCY d JOIN SDB$OBJECT fo ON fo.oid=d.from_oid JOIN SDB$OBJECT to1 ON to1.oid=d.to_oid
+      columns:
+        RDB$DEPENDENT_NAME: fo.name
+        RDB$DEPENDED_ON_NAME: to1.name
+        RDB$FIELD_NAME: NULL
+        RDB$DEPENDENCY_TYPE: d.kind
+        RDB$DEPENDED_ON_TYPE: to1.type
+        RDB$PACKAGE_NAME: NULL
+
+    - table: RDB$USER_PRIVILEGES
+      source: SDB$GRANT g JOIN SDB$OBJECT o ON o.oid=g.object_oid JOIN SDB$OBJECT gr ON gr.oid=g.grantee_oid
+      columns:
+        RDB$USER: gr.name
+        RDB$GRANTOR: (SELECT name FROM SDB$OBJECT WHERE oid=g.grantor_oid)
+        RDB$PRIVILEGE: g.privilege
+        RDB$GRANT_OPTION: CASE WHEN g.grant_option THEN 1 ELSE 0 END
+        RDB$RELATION_NAME: o.name
+        RDB$FIELD_NAME: NULL
+        RDB$USER_TYPE: NULL
+        RDB$OBJECT_TYPE: o.type
+
+    - table: RDB$CHARACTER_SETS
+      source: SDB$CHARSET c
+      columns:
+        RDB$CHARACTER_SET_NAME: c.name
+        RDB$DEFAULT_COLLATE_NAME: NULL
+        RDB$DESCRIPTION: c.description
+
+    - table: RDB$COLLATIONS
+      source: SDB$COLLATION c
+      columns:
+        RDB$COLLATION_NAME: c.name
+        RDB$CHARACTER_SET_NAME: c.base_charset
+        RDB$COLLATION_ATTRIBUTES: CASE WHEN c.deterministic THEN 0 ELSE 1 END
+
+    - table: RDB$PACKAGES
+      source: SDB$PACKAGE p JOIN SDB$OBJECT o ON o.oid=p.oid LEFT JOIN SDB$USER u ON u.oid=o.owner_oid
+      columns:
+        RDB$PACKAGE_NAME: o.name
+        RDB$OWNER_NAME: u.name
+        RDB$DESCRIPTION: o.comment
+        RDB$SYSTEM_FLAG: 0
+        RDB$PACKAGE_BLR: NULL
+        RDB$PACKAGE_SOURCE: (SELECT text FROM SDB$SOURCE WHERE object_oid=o.oid)
+
+    - table: RDB$EXCEPTIONS
+      source: SDB$EXCEPTION e JOIN SDB$OBJECT o ON o.oid=e.oid LEFT JOIN SDB$USER u ON u.oid=o.owner_oid
+      columns:
+        RDB$EXCEPTION_NAME: o.name
+        RDB$OWNER_NAME: u.name
+        RDB$DESCRIPTION: o.comment
+        RDB$MESSAGE: e.message
+        RDB$EXCEPTION_NUMBER: NULL
+        RDB$SYSTEM_FLAG: 0
+
+  monitoring_outline:
+    overview: |
+      Monitoring views (MON$*) will be exposed under a `sys.monitoring` schema
+      and re-exported as top-level MON$ compatibility views. Backing sources are
+      transient/virtual tables populated from in-memory engine state. Column
+      coverage aims to be compatible with Firebird 5.0.
+    views:
+      - name: MON$ATTACHMENTS
+        source: sys.monitoring.attachments a
+        columns:
+          MON$ATTACHMENT_ID: a.attachment_id
+          MON$STATE: a.state
+          MON$USER: a.user_name
+          MON$ROLE: a.role_name
+          MON$REMOTE_ADDRESS: a.remote_address
+          MON$REMOTE_PROCESS: a.remote_process
+          MON$REMOTE_PID: a.remote_pid
+          MON$CHARACTER_SET_ID: a.charset
+          MON$AUTH_METHOD: a.auth_method
+          MON$CLIENT_VERSION: a.client_version
+          MON$SERVER_VERSION: a.server_version
+      - name: MON$TRANSACTIONS
+        source: sys.monitoring.transactions t
+        columns:
+          MON$TRANSACTION_ID: t.txn_id
+          MON$ATTACHMENT_ID: t.attachment_id
+          MON$STATE: t.state
+          MON$ISOLATION_MODE: t.isolation
+          MON$LOCK_TIMEOUT: t.lock_timeout
+          MON$READ_ONLY: t.read_only
+          MON$AUTO_COMMIT: t.auto_commit
+          MON$START_TIMESTAMP: t.start_ts
+      - name: MON$STATEMENTS
+        source: sys.monitoring.statements s
+        columns:
+          MON$STATEMENT_ID: s.stmt_id
+          MON$ATTACHMENT_ID: s.attachment_id
+          MON$TRANSACTION_ID: s.txn_id
+          MON$STATE: s.state
+          MON$SQL_TEXT: s.sql_text
+          MON$PLAN_TEXT: s.plan_text
+          MON$TIMESTAMP: s.start_ts
+      - name: MON$CALL_STACK
+        source: sys.monitoring.call_stack c
+        columns:
+          MON$STATEMENT_ID: c.stmt_id
+          MON$CALL_LEVEL: c.level
+          MON$OBJECT_NAME: c.object_name
+          MON$OBJECT_TYPE: c.object_type
+      - name: MON$CONTEXT_VARIABLES
+        source: sys.monitoring.context_vars v
+        columns:
+          MON$ATTACHMENT_ID: v.attachment_id
+          MON$TRANSACTION_ID: v.txn_id
+          MON$VARIABLE_NAME: v.name
+          MON$VARIABLE_VALUE: v.value
+      - name: MON$IO_STATS
+        source: sys.monitoring.io_stats i
+        columns:
+          MON$STAT_ID: i.id
+          MON$PAGE_READS: i.page_reads
+          MON$PAGE_WRITES: i.page_writes
+          MON$PAGE_FETCHES: i.page_fetches
+          MON$PAGE_MARKS: i.page_marks
+      - name: MON$RECORD_STATS
+        source: sys.monitoring.record_stats r
+        columns:
+          MON$TABLE_NAME: r.table_name
+          MON$RECORD_SEQ_READS: r.seq_reads
+          MON$RECORD_IDX_READS: r.idx_reads
+          MON$RECORD_INSERTS: r.inserts
+          MON$RECORD_UPDATES: r.updates
+          MON$RECORD_DELETES: r.deletes
+      - name: MON$TABLE_STATS
+        source: sys.monitoring.table_stats t
+        columns:
+          MON$TABLE_NAME: t.table_name
+          MON$RECORD_COUNT: t.record_count
+          MON$PAGE_COUNT: t.page_count
+      - name: MON$MEMORY_USAGE
+        source: sys.monitoring.memory m
+        columns:
+          MON$ATTACHMENT_ID: m.attachment_id
+          MON$MEMORY_USED: m.bytes
+          MON$MEMORY_ALLOCATED: m.allocated
+          MON$MEMORY_MAX: m.max_bytes

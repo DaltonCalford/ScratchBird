@@ -1,0 +1,14 @@
+id: ddl-index
+title: CREATE/ALTER/DROP INDEX (B-Tree)
+status: draft
+version: 0.1.0
+updated: 2025-08-12T00:00:00Z
+related: []
+content:
+  create:
+    grammar: 'CREATE [UNIQUE] INDEX idx ON tbl ( col [ASC|DESC] [, ...] )'
+  drop:
+    grammar: 'DROP INDEX idx'
+  acceptance:
+    - 'CREATE INDEX i1 ON t(a DESC, b)'
+    - 'DROP INDEX i1'

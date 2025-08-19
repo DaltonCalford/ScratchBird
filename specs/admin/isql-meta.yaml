@@ -1,0 +1,28 @@
+id: admin-isql-meta
+name: isql meta commands
+status: draft
+version: 0.1.1
+updated: 2025-08-15T00:00:00Z
+content:
+  commands:
+    - 'SET AUTODDL {ON|OFF}'
+    - 'INPUT filename'
+    - 'OUTPUT filename'
+    - 'SHOW <object>'
+    - 'SHELL <command>'
+    - 'EDIT'
+    - 'ECHO text'
+    - 'TERM <terminator>'
+    - 'PLAN {ON|OFF}'
+    - 'TIMING {ON|OFF}'
+    - 'CONNECT dbspec'
+    - cmd: SHOW HEADER
+      desc: Prints database header information (page size, type, checksum) for the current database path or provided path when used in the dbhdr tool.
+      example: |
+        SHOW HEADER
+  notes:
+    - SHOW HEADER is also provided as a standalone helper `dbhdr <db_path>` printing a concise header dump.
+  acceptance:
+    - 'SET AUTODDL ON'
+    - "CONNECT 'localhost:/tmp/db.fdb'"
+    - 'SHOW TABLES'

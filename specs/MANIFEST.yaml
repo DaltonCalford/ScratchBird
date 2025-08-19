@@ -1,0 +1,149 @@
+version: 1
+updated: "$(date -Iseconds)"
+modules:
+  - id: ddl
+    title: DDL Specifications
+    specs:
+      - id: ddl-table
+      - id: ddl-index
+      - id: ddl-sequence
+      - id: ddl-domain
+      - id: ddl-collation
+      - id: ddl-function
+      - id: ddl-procedure
+      - id: ddl-trigger
+      - id: ddl-view
+      - id: ddl-package
+      - id: ddl-exception
+      - id: ddl-user
+      - id: ddl-role
+      - id: ddl-mapping
+      - id: ddl-udr
+      - id: ddl-dblink
+  - id: schema
+    title: Schema and Catalog
+    specs:
+      - id: schema-search-path
+      - id: schema-navigation
+      - id: catalog-objects
+      - id: catalog-ids
+      - id: domains
+      - id: system-schema
+      - id: default-schemas
+  - id: types
+    title: Data Types
+    specs:
+      - id: types-core
+      - id: types-extensions
+      - id: types-charsets-collations
+      - id: types-json
+  - id: protocol
+    title: Wire Protocol
+    specs:
+      - id: protocol-v1-framing
+      - id: protocol-negotiation
+  - id: auth
+    title: Authentication & Authorization
+    specs:
+      - id: auth-pipeline
+      - id: privileges-model
+  - id: sql
+    title: SQL Language
+    specs:
+      - id: sql-tokens
+      - id: sql-identifiers
+      - id: sql-literals
+      - id: sql-operators
+      - id: sql-expressions
+      - id: sql-select
+      - id: sql-cte
+      - id: sql-joins
+      - id: sql-group-order
+      - id: sql-window
+      - id: sql-setops
+      - id: sql-plan
+      - id: sql-insert
+      - id: sql-update
+      - id: sql-delete
+      - id: sql-returning-lock-fetch
+      - id: sql-functions-like
+      - id: sql-grant-revoke
+      - id: sql-transactions
+      - id: sql-session
+      - id: sql-ddl-table
+      - id: sql-ddl-index
+      - id: sql-constraints-deferred
+      - id: sql-truncate
+      - id: sql-explain
+      - id: sql-ddl-sequence
+      - id: sql-ddl-domain
+      - id: sql-ddl-view
+      - id: sql-ddl-collation
+      - id: sql-ddl-charset
+      - id: sql-ddl-exception
+      - id: sql-comment-rename
+      - id: sql-ddl-role-user
+      - id: psql-core
+      - id: psql-routines
+      - id: psql-triggers
+      - id: psql-packages
+      - id: sql-merge
+      - id: sql-upsert
+      - id: sql-ddl-udf
+      - id: sql-ddl-udr
+      - id: sql-ddl-mapping
+      - id: sql-ddl-gtt
+      - id: sql-dblink
+      - id: sql-terminators
+      - id: sql-doc-comments
+      - id: sql-foreign-data
+      - id: sql-admin-logging
+      - id: sql-admin-jobs
+      - id: sql-admin-maintenance
+      - id: sql-replication
+      - id: sql-tablespaces
+      - id: sql-backup-restore
+      - id: sql-cluster
+      - id: sql-partitioning
+      - id: sql-rls
+      - id: sql-matview
+      - id: sql-analyze-vacuum
+      - id: sql-ddl-routine
+  - id: engine
+    title: Engine & Execution
+    specs:
+      - id: engine-api
+      - id: optimizer-outline
+      - id: engine-diagnostics
+      - id: parser-freeze
+      - id: enginelib
+      - id: engine-comparison
+      - id: engine-journaling
+      - id: engine-metadata-visibility
+      - id: engine-storage-limits
+      - id: engine-heap-format
+  - id: engine-heap-format
+    path: specs/engine/heap-format.md
+  - id: engine-config
+    path: specs/engine/engine-config.yaml
+  - id: server
+    title: Server & Providers
+    specs:
+      - id: yvalve-dispatch
+      - id: providers
+  - id: admin
+    title: Admin & Utilities
+    specs:
+      - id: utilities-overview
+      - id: replication-outline
+      - id: isql-meta
+  - id: engine-performance-notes
+    path: specs/engine/performance-notes.md
+  - id: sdb-catalog
+    path: specs/schema/sdb-catalog.yaml
+  - id: sdb-compat-views
+    path: specs/schema/sdb-compat-views.yaml
+  - id: sdb-compat-mappings
+    path: specs/schema/sdb-compat-mappings.yaml
+  - id: engine-bootstrap-catalog
+    path: specs/engine/bootstrap-catalog.yaml

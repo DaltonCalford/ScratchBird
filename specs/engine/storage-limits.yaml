@@ -1,0 +1,45 @@
+id: engine-storage-limits
+title: Storage Limits, Row Width, and Schema/Txn Counters
+status: draft
+version: 0.1.0
+updated: 2025-08-15T00:00:00Z
+content:
+  goals: |
+    - Eliminate legacy constraints that force backup/restore after many table changes.
+    - Increase effective row width to meet/exceed competitors by supporting off-page storage for large values.
+    - Avoid transaction wraparound maintenance by using wide counters.
+
+  design:
+    row_width: |
+      - Base tuple limited by page size, but large varlena values are stored off-page automatically
+        (overflow pages), similar to TOAST. Threshold configurable (e.g., 25% of page).
+      - Target: up to 1 GiB per large value; effective combined row size unbounded except by storage.
+      - Multi-part overflow with checksums and back-pointers for integrity.
+    columns: |
+      - Support up to 4096 columns per table (soft limit via metadata and descriptor size).
+      - Null bitmap and varlena descriptors sized dynamically.
+    index_keys: |
+      - B-tree key length target >= 8 KiB with prefix compression; larger keys spill to indirection pages.
+    txn_counters: |
+      - 64-bit transaction IDs to eliminate wraparound.
+      - TIP layout accommodates large ranges; background pruning keeps TIP compact.
+    schema_versions: |
+      - 64-bit per-relation format version replaces small counters. Online upgrade path:
+        tuples carry a format-id; readers decode old formats; writers opportunistically rewrite to newest.
+      - No backup/restore required due to format-id exhaustion.
+
+  compatibility_and_migration: |
+    - Parser and catalog unaffected; engine handles overflow and version decoding.
+    - On attach/open, engine validates ODS supports wide IDs and varlena overflow.
+
+  diagnostics:
+    - "ROW value stored off-page (overflow)"
+    - "Index key exceeds inline threshold; using overflow"
+    - "Legacy tuple format encountered; decoding via compatibility shim"
+  diagnostics_notes:
+    - Messages follow engine-diagnostics style; concise, stable wording
+
+  future_engine_tasks:
+    - Implement varlena overflow manager and integrity checks.
+    - Implement online tuple rewrite to latest format in vacuum path.
+    - Add planner awareness for large keys/values and cost them appropriately.

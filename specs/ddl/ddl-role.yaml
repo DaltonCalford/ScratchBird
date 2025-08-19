@@ -1,0 +1,11 @@
+id: ddl-role
+title: CREATE/ALTER/DROP ROLE
+status: draft
+version: 0.1.0
+updated: 2025-08-12T00:00:00Z
+related: []
+content:
+  create:
+    grammar: 'CREATE ROLE name'
+  drop:
+    grammar: 'DROP ROLE name'

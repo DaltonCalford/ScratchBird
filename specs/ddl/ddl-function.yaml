@@ -1,0 +1,13 @@
+id: ddl-function
+title: CREATE/ALTER/DROP FUNCTION
+status: draft
+version: 0.1.0
+updated: 2025-08-12T00:00:00Z
+related: [psql-overview]
+content:
+  create:
+    grammar: 'CREATE FUNCTION name(args) RETURNS type AS 18231 body 18231 LANGUAGE PSQL'
+  drop:
+    grammar: 'DROP FUNCTION name(args)'
+  acceptance:
+    - 'CREATE FUNCTION f(a INTEGER) RETURNS INTEGER AS 18231 BEGIN RETURN a+1; END 18231 LANGUAGE PSQL'

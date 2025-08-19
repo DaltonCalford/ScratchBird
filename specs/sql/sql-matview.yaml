@@ -1,0 +1,26 @@
+id: sql-matview
+title: Materialized views
+status: should
+version: 0.1.0
+updated: 2025-08-15T00:00:00Z
+content:
+  overview: |
+    Parser-only SQL to define and manage materialized views. Execution deferred.
+
+  grammar: |
+    CREATE MATERIALIZED VIEW name [(col_list)] AS select_stmt [WITH [NO] DATA]
+    REFRESH MATERIALIZED VIEW name [CONCURRENTLY]
+    ALTER MATERIALIZED VIEW name RENAME TO new_name
+    DROP MATERIALIZED VIEW name
+
+  acceptance:
+    - "CREATE MATERIALIZED VIEW mv AS SELECT * FROM t WITH DATA"
+    - "REFRESH MATERIALIZED VIEW mv"
+  diagnostics:
+    - "MATERIALIZED VIEW select statement missing"
+    - "REFRESH target missing"
+  diagnostics_notes:
+    - Messages follow engine-diagnostics style; concise, stable wording
+
+  future_engine_tasks:
+    - Storage, refresh plans (incremental vs full), concurrency, index management.

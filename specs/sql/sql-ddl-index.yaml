@@ -1,0 +1,26 @@
+id: sql-ddl-index
+title: CREATE/ALTER INDEX
+status: draft
+version: 0.2.0
+updated: 2025-08-15T00:00:00Z
+content:
+  grammar: |
+    CREATE [UNIQUE] INDEX name ON table (expr_or_col_list)
+      [USING method]
+      [ACTIVE|INACTIVE]
+      [WHERE condition]
+      [INCLUDE (col_list)]
+    CREATE INDEX name ON table COMPUTED BY (expression)
+    ALTER INDEX name REBUILD | ALTER INDEX name SET STATISTICS n | ALTER INDEX name [ACTIVE|INACTIVE]
+    DROP INDEX name
+  notes: |
+    method may be GIN, BITMAP, RTREE. The form "CREATE PARTIAL HASH INDEX" is accepted and normalized to method PARTIAL_HASH.
+  acceptance:
+    - 'CREATE UNIQUE INDEX ix_t_id ON t (id) ACTIVE'
+    - 'ALTER INDEX ix REBUILD'
+    - 'ALTER INDEX ix SET STATISTICS 100'
+    - 'CREATE INDEX ix_comp ON t COMPUTED BY (a + b)'
+    - 'CREATE INDEX ix_gin ON docs USING GIN (content)'
+    - 'CREATE INDEX ix_rtree ON geom USING RTREE (shape)'
+    - 'CREATE PARTIAL HASH INDEX ix_ph ON t (a) WHERE a IS NOT NULL'
+    - 'CREATE INDEX ix_cov ON t (a) INCLUDE (b, c)'

@@ -1,0 +1,20 @@
+id: sql-returning-lock-fetch
+title: RETURNING, FOR UPDATE, FETCH FIRST/NEXT
+status: draft
+version: 0.1.0
+updated: 2025-08-12T00:00:00Z
+related: [sql-select, sql-insert, sql-update, sql-delete]
+content:
+  returning:
+    applies: [INSERT, UPDATE, DELETE]
+    grammar: '... RETURNING select_list'
+  locking:
+    grammar: 'SELECT ... FOR UPDATE [OF col_list] [NOWAIT|SKIP LOCKED]'
+  fetch:
+    grammar: 'FETCH {FIRST|NEXT} n ROWS ONLY | SELECT [SKIP n] [FIRST n] ... | SELECT ... ROWS m [TO n]'
+  acceptance:
+    - 'UPDATE t SET a=1 WHERE id=1 RETURNING id,a'
+    - 'SELECT * FROM t FOR UPDATE NOWAIT'
+    - 'SELECT * FROM t ORDER BY a FETCH FIRST 10 ROWS ONLY'
+    - 'SELECT SKIP 5 FIRST 10 * FROM t'
+    - 'SELECT * FROM t ROWS 11 TO 20'

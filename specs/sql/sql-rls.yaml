@@ -1,0 +1,39 @@
+id: sql-rls
+title: Row-level security policies
+status: should
+version: 0.1.0
+updated: 2025-08-15T00:00:00Z
+content:
+  overview: |
+    Parser-only SQL for row-level security (RLS) policies. Inspired by PostgreSQL.
+    Execution deferred. Policies restrict visibility and/or permissible changes
+    per table by injecting predicates into queries and validating writes.
+
+  grammar: |
+    CREATE POLICY name ON table USING (predicate) [WITH CHECK (predicate)] [TO role_list]
+    ALTER POLICY name ON table RENAME TO new_name
+    ALTER POLICY name ON table USING (predicate) [WITH CHECK (predicate)] [TO role_list]
+    DROP POLICY name ON table
+    ALTER TABLE table ENABLE ROW LEVEL SECURITY
+    ALTER TABLE table DISABLE ROW LEVEL SECURITY
+    ALTER TABLE table FORCE ROW LEVEL SECURITY           -- optional strict mode
+    ALTER TABLE table NO FORCE ROW LEVEL SECURITY
+
+    -- Introspection helpers (parser-only now)
+    SHOW POLICIES FOR table
+
+  acceptance:
+    - "CREATE POLICY org_isolation ON t USING (org_id = current_setting('org'))"
+    - "ALTER TABLE t ENABLE ROW LEVEL SECURITY"
+    - "ALTER TABLE t FORCE ROW LEVEL SECURITY"
+    - "SHOW POLICIES FOR t"
+  diagnostics:
+    - "POLICY target table missing"
+    - "POLICY USING predicate missing"
+  diagnostics_notes:
+    - Messages follow engine-diagnostics style; concise, stable wording
+
+  future_engine_tasks:
+    - Predicate enforcement in planner/executor; current_user context; predicate caching.
+    - Plan cache invalidation on policy change; parameterizable policies.
+    - DDL barriers for apply/replication when schema_version changes.

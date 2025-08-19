@@ -1,0 +1,10 @@
+id: sql-ddl-mapping
+title: MAPPING
+status: draft
+version: 0.1.0
+updated: 2025-08-12T00:00:00Z
+content:
+  grammar: |
+    CREATE MAPPING name USING <plugin> FROM <auth> TO <auth>
+  acceptance:
+    - 'CREATE MAPPING m USING plugin FROM ldap TO srp'

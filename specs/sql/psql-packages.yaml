@@ -1,0 +1,13 @@
+id: psql-packages
+title: Packages (PSQL)
+status: draft
+version: 0.1.0
+updated: 2025-08-12T00:00:00Z
+content:
+  grammar: |
+    CREATE PACKAGE name AS <decls> [END]
+    CREATE PACKAGE BODY name AS <psql> END
+    DROP PACKAGE name | DROP PACKAGE BODY name
+  acceptance:
+    - 'CREATE PACKAGE pkg AS PROCEDURE p; END'
+    - 'CREATE PACKAGE BODY pkg AS BEGIN END'

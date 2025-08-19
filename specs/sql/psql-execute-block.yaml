@@ -1,0 +1,15 @@
+id: psql-execute-block
+title: EXECUTE BLOCK (PSQL stub)
+status: draft
+version: 0.1.0
+updated: 2025-08-12T00:00:00Z
+related: []
+content:
+  grammar: |
+    EXECUTE BLOCK [ ( param_list ) ]
+    AS
+    BEGIN
+      statements
+    END
+  acceptance:
+    - "EXECUTE BLOCK AS BEGIN SUSPEND; END"

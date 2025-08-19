@@ -1,0 +1,88 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure (RelWithDebInfo)
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo
+      - name: Build
+        run: cmake --build build -j
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+      - name: Fuzz smoke
+        run: ctest --test-dir build -R fuzz_smoke --output-on-failure
+      - name: Parser bench smoke
+        run: ctest --test-dir build -R parser_bench_smoke --output-on-failure
+      - name: Parity gaps gate (TODO enable failure later)
+        run: |
+          echo "Checking parity gaps Must items are zero..."
+          if grep -E "^- \\[ \\] .*\\(Must\\)" specs/engine/parity-gaps.md; then
+            echo "Found Must gaps above. Not failing CI yet (TODO: enable exit 1)."
+            exit 1
+          else
+            echo "No Must gaps found."
+          fi
+
+  asan_ubsan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure with sanitizers
+        run: |
+          cmake -S . -B build-asan \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer" \
+            -DCMAKE_LINKER_FLAGS="-fsanitize=address,undefined"
+      - name: Build
+        run: cmake --build build-asan -j
+      - name: Test (ASan/UBSan)
+        env:
+          ASAN_OPTIONS: symbolize=1
+          UBSAN_OPTIONS: print_stacktrace=1
+        run: ctest --test-dir build-asan --output-on-failure
+
+  tsan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure with ThreadSanitizer
+        run: |
+          cmake -S . -B build-tsan \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_CXX_FLAGS="-fsanitize=thread -fno-omit-frame-pointer -O1" \
+            -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=thread" \
+            -DCMAKE_SHARED_LINKER_FLAGS="-fsanitize=thread"
+      - name: Build
+        run: cmake --build build-tsan -j
+      - name: Test (TSan - targeted)
+        env:
+          TSAN_OPTIONS: halt_on_error=1 history_size=7 second_deadlock_stack=1
+        run: |
+          ctest --test-dir build-tsan -R btree_v1_randomized_tests --output-on-failure
+          ctest --test-dir build-tsan -R btree_v1_concurrency_tests --output-on-failure
+
+  coverage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install lcov
+        run: sudo apt-get update && sudo apt-get install -y lcov
+      - name: Configure with coverage flags
+        run: |
+          cmake -S . -B build-cov -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_CXX_FLAGS="--coverage" -DCMAKE_EXE_LINKER_FLAGS="--coverage" -DCMAKE_SHARED_LINKER_FLAGS="--coverage"
+      - name: Build
+        run: cmake --build build-cov -j
+      - name: Test
+        run: ctest --test-dir build-cov --output-on-failure
+      - name: Collect coverage
+        run: |
+          lcov --capture --directory build-cov --output-file coverage.info
+          lcov --remove coverage.info '*/tests/*' '/usr/*' --output-file coverage.info
+          lcov --list coverage.info

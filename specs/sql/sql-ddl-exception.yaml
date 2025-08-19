@@ -1,0 +1,12 @@
+id: sql-ddl-exception
+title: EXCEPTION
+status: draft
+version: 0.1.0
+updated: 2025-08-12T00:00:00Z
+content:
+  grammar: |
+    CREATE EXCEPTION name 'message'
+    ALTER EXCEPTION name 'message'
+    DROP EXCEPTION name
+  acceptance:
+    - "CREATE EXCEPTION ex 'oops'"

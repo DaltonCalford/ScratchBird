@@ -1,0 +1,16 @@
+id: protocol-v1-framing
+title: Protocol v1 Framing
+status: draft
+version: 0.1.0
+updated: 2025-08-12T00:00:00Z
+related:
+  - protocol-negotiation
+frame:
+  layout:
+    - type:u32
+    - length:u32
+    - payload:bytes
+  msg_types:
+    - Ping
+    - Handshake
+    - Connect

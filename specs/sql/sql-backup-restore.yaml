@@ -1,0 +1,33 @@
+id: sql-backup-restore
+title: Backup and restore
+status: proposal
+version: 0.1.0
+updated: 2025-08-15T00:00:00Z
+content:
+  overview: |
+    Parser-only SQL for backup and restore orchestration. Execution deferred.
+
+  grammar: |
+    BACKUP DATABASE TO 'path' WITH (format='full', compress='lz4', parallel=4, label='nightly')
+    RESTORE DATABASE FROM 'path' WITH (into='path/db.fdb', replace=on, parallel=4)
+    BACKUP TABLESPACE name TO 'path'
+    SHOW BACKUP HISTORY [FOR DATABASE | TABLESPACE name]
+
+  acceptance:
+    - "BACKUP DATABASE TO '/backup/db.bak' WITH (compress='zstd', parallel=8)"
+    - "RESTORE DATABASE FROM '/backup/db.bak' WITH (into='/data/db.fdb', replace=on)"
+    - "SHOW BACKUP HISTORY FOR DATABASE"
+
+  diagnostics:
+    - "Backup path not permitted"
+    - "Restore target exists; REPLACE required"
+  diagnostics_notes:
+    - Messages follow engine-diagnostics style; concise, stable wording
+
+  notes:
+    - Parser-only. Future: online backups, encryption, validation.
+
+  future_engine_tasks:
+    - Implement backup pipelines (full/incremental), compression/encryption.
+    - Restore orchestration with validation and conflict checks.
+    - Expose backup history/catalog.

@@ -1,0 +1,96 @@
+id: traceability
+title: Traceability Matrix (Docs → Specs → Tests)
+status: draft
+version: 0.1.0
+updated: 2025-08-12T00:00:00Z
+links:
+  - src: OLD DOCUMENTATION/DATA_TYPES_DOCUMENTATION.md
+    specs: [types-core]
+    tests: [types_tests]
+  - src: OLD DOCUMENTATION/SCHEMA_DDL_DOCUMENTATION.md
+    specs: [schema-search-path, schema-navigation, catalog-objects]
+    tests: []
+  - src: OLD DOCUMENTATION/SQL_STATEMENTS_DOCUMENTATION.md
+    specs: [parser-roadmap, parser-backlog]
+    tests: []
+
+  - src: OLD DOCUMENTATION/SQL_OPERATORS_DOCUMENTATION.md
+    specs: [sql-operators, sql-expressions, sql-functions-like]
+    tests: []
+  - src: OLD DOCUMENTATION/SQL_LANGUAGE_LITERALS.md
+    specs: [sql-literals]
+    tests: []
+  - src: OLD DOCUMENTATION/SQL_STATEMENTS_DOCUMENTATION.md
+    specs: [sql-select, sql-insert, sql-update, sql-delete, sql-cte, sql-setops, sql-joins,
+            sql-group-order, sql-window, sql-returning-lock-fetch]
+    tests: [parser_acceptance_lex]
+  - src: OLD DOCUMENTATION/OBJECT_NAMING_RULES_DOCUMENTATION.md
+    specs: [sql-identifiers]
+    tests: [resolver_ident_tests]
+  - src: OLD DOCUMENTATION/COLLATION_DDL_DOCUMENTATION.md
+    specs: [types-charsets-collations]
+    tests: []
+
+  - src: OLD DOCUMENTATION/DATABASE_DDL_DOCUMENTATION.md
+    specs: [ddl-table]
+    tests: []
+
+  - src: OLD DOCUMENTATION/TABLE_DDL_DOCUMENTATION.md
+    specs: [ddl-table, ddl-index]
+    tests: []
+
+  - src: OLD DOCUMENTATION/SEQUENCE_DDL_DOCUMENTATION.md
+    specs: [ddl-sequence]
+    tests: []
+
+  - src: OLD DOCUMENTATION/DOMAIN_DDL_DOCUMENTATION.md
+    specs: [ddl-domain]
+    tests: []
+
+  - src: OLD DOCUMENTATION/COLLATION_DDL_DOCUMENTATION.md
+    specs: [ddl-collation]
+    tests: []
+
+  - src: OLD DOCUMENTATION/FUNCTION_DDL_DOCUMENTATION.md
+    specs: [ddl-function]
+    tests: []
+
+  - src: OLD DOCUMENTATION/PROCEDURE_DDL_DOCUMENTATION.md
+    specs: [ddl-procedure]
+    tests: []
+
+  - src: OLD DOCUMENTATION/TRIGGER_DDL_DOCUMENTATION.md
+    specs: [ddl-trigger]
+    tests: []
+
+  - src: OLD DOCUMENTATION/VIEW_DDL_DOCUMENTATION.md
+    specs: [ddl-view]
+    tests: []
+
+  - src: OLD DOCUMENTATION/PACKAGE_DDL_DOCUMENTATION.md
+    specs: [ddl-package]
+    tests: []
+
+  - src: OLD DOCUMENTATION/EXCEPTION_DDL_DOCUMENTATION.md
+    specs: [ddl-exception]
+    tests: []
+
+  - src: OLD DOCUMENTATION/USER_DDL_DOCUMENTATION.md
+    specs: [ddl-user]
+    tests: []
+
+  - src: OLD DOCUMENTATION/ROLE_DDL_DOCUMENTATION.md
+    specs: [ddl-role]
+    tests: []
+
+  - src: OLD DOCUMENTATION/MAPPING_DDL_DOCUMENTATION.md
+    specs: [ddl-mapping]
+    tests: []
+
+  - src: OLD DOCUMENTATION/UDR_DOCUMENTATION.md
+    specs: [ddl-udr]
+    tests: []
+
+  - src: OLD DOCUMENTATION/DATABASE_LINK_DDL_DOCUMENTATION.md
+    specs: [ddl-dblink]
+    tests: []

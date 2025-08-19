@@ -1,0 +1,11 @@
+id: ddl-exception
+title: CREATE/ALTER/DROP EXCEPTION
+status: draft
+version: 0.1.0
+updated: 2025-08-12T00:00:00Z
+related: []
+content:
+  create:
+    grammar: 'CREATE EXCEPTION name message'
+  drop:
+    grammar: 'DROP EXCEPTION name'

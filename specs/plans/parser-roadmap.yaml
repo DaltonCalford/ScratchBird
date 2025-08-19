@@ -1,0 +1,41 @@
+id: parser-roadmap
+title: Parser & Resolver Roadmap
+status: draft
+version: 0.1.0
+updated: 2025-08-12T00:00:00Z
+related:
+  - schema-search-path
+  - catalog-objects
+  - engine-api
+phases:
+  - id: p0-foundation
+    goal: Minimal AST + type inference for core literals and SELECT 1
+    exit:
+      - parse SELECT 1 to AST.SelectLiteral
+      - execute returns single row
+  - id: p1-lexer-parser
+    goal: Grammar skeleton; statements SELECT/INSERT/UPDATE/DELETE; basic FROM/WHERE
+    exit:
+      - roundtrip examples compile
+      - negative tests for syntax errors
+  - id: p2-resolver
+    goal: Name resolution against search path; schema-qualified names; simple joins
+    exit:
+      - lookup via catalog (parent_id,type,name)
+      - relative/absolute paths per schema specs
+  - id: p3-types
+    goal: Type system coverage for core numerics/text/temporal; casting rules
+    exit:
+      - conformance tests from data types doc pass for supported subset
+  - id: p4-ddl
+    goal: Parse core DDL (CREATE TABLE/INDEX/SCHEMA/DOMAIN/COLLATION minimal)
+    exit:
+      - catalog entries created; validation rules
+  - id: p5-expressions
+    goal: Operators and built-ins (subset)
+    exit:
+      - arithmetic/comparison/logical over core types
+risks:
+  - grammar-ambiguity
+  - search-path-shadowing
+  - collation-semantics

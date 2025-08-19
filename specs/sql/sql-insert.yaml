@@ -1,0 +1,14 @@
+id: sql-insert
+title: INSERT
+status: draft
+version: 0.2.0
+updated: 2025-08-12T00:00:00Z
+related: [sql-returning-lock-fetch]
+content:
+  grammar: |
+    INSERT INTO target [(col_list)] { DEFAULT VALUES | VALUES (value_list) | <select_stmt> }
+    [RETURNING select_list]
+  acceptance:
+    - 'INSERT INTO t(a,b) VALUES(1,2) RETURNING a, b'
+    - 'INSERT INTO t DEFAULT VALUES RETURNING id'
+    - 'INSERT INTO t(a) SELECT a FROM u RETURNING a'

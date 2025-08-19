@@ -1,0 +1,25 @@
+id: sql-constraints-deferred
+title: Deferred Constraints and Validation
+status: draft
+version: 0.1.0
+updated: 2025-08-15T00:00:00Z
+content:
+  overview: |
+    Parser-only support for DEFERRABLE constraints, SET CONSTRAINTS runtime
+    mode, and NOT VALID/VALIDATE CONSTRAINT management.
+  grammar: |
+    CREATE TABLE t (..., CONSTRAINT fk FOREIGN KEY (...) REFERENCES r(...)
+      [DEFERRABLE | NOT DEFERRABLE] [INITIALLY IMMEDIATE | INITIALLY DEFERRED])
+    ALTER TABLE t ALTER CONSTRAINT fk [DEFERRABLE | NOT DEFERRABLE]
+    ALTER TABLE t ALTER CONSTRAINT fk [INITIALLY IMMEDIATE | INITIALLY DEFERRED]
+    ALTER TABLE t ADD CONSTRAINT ... NOT VALID
+    ALTER TABLE t VALIDATE CONSTRAINT fk
+    SET CONSTRAINTS {ALL | name_list} {IMMEDIATE | DEFERRED}
+  acceptance:
+    - "ALTER TABLE t ALTER CONSTRAINT fk DEFERRABLE INITIALLY DEFERRED"
+    - "ALTER TABLE t ADD CONSTRAINT fk FOREIGN KEY (a) REFERENCES r(a) NOT VALID"
+    - "ALTER TABLE t VALIDATE CONSTRAINT fk"
+    - "SET CONSTRAINTS ALL DEFERRED"
+  diagnostics:
+    - "DEFERRABLE constraints parser-only; engine enforcement deferred"
+    - "VALIDATE CONSTRAINT target not found"

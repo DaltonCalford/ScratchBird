@@ -1,0 +1,15 @@
+id: sql-joins
+title: Joins
+status: draft
+version: 0.1.0
+updated: 2025-08-12T00:00:00Z
+related: [sql-select]
+content:
+  grammar: |
+    FROM a
+      [INNER|LEFT|RIGHT|FULL] JOIN b ON condition
+      [CROSS JOIN c]
+      [NATURAL JOIN d]
+  acceptance:
+    - 'SELECT * FROM a INNER JOIN b ON a.id = b.a_id'
+    - 'SELECT * FROM a LEFT JOIN b USING(id)'

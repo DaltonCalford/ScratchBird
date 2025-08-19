@@ -1,0 +1,13 @@
+id: ddl-collation
+title: CREATE/ALTER/DROP COLLATION
+status: draft
+version: 0.1.0
+updated: 2025-08-12T00:00:00Z
+related: []
+content:
+  create:
+    grammar: 'CREATE COLLATION name FOR charset FROM base [CASE INSENSITIVE] [ACCENT INSENSITIVE]'
+  drop:
+    grammar: 'DROP COLLATION name'
+  acceptance:
+    - 'CREATE COLLATION EN_US_CI FOR UTF8 FROM UTF8 CASE INSENSITIVE'

@@ -1,0 +1,19 @@
+id: sql-window
+title: Window Functions
+status: draft
+version: 0.1.0
+updated: 2025-08-12T00:00:00Z
+related: [sql-select]
+content:
+  grammar: |
+    function_call OVER (
+      [PARTITION BY expr_list]
+      [ORDER BY expr_list]
+      [ROWS frame | RANGE frame]
+    )
+    frame := { UNBOUNDED PRECEDING | CURRENT ROW | expr PRECEDING }
+             [AND { UNBOUNDED FOLLOWING | CURRENT ROW | expr FOLLOWING }]
+    WINDOW win AS (...)
+  acceptance:
+    - 'SELECT ROW_NUMBER() OVER (ORDER BY a) FROM t'
+    - 'SELECT SUM(a) OVER (PARTITION BY b ORDER BY c ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) FROM t'

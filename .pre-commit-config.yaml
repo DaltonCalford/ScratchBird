@@ -1,0 +1,24 @@
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+  - repo: local
+    hooks:
+      - id: clang-format
+        name: clang-format
+        entry: clang-format -i
+        language: system
+        files: \.(c|cc|cpp|cxx|h|hpp)$
+      - id: cmake-format
+        name: cmake-format
+        entry: cmake-format -i
+        language: system
+        files: (CMakeLists\.txt|.*\.cmake)$
+      - id: cmake-lint
+        name: cmake-lint
+        entry: cmake-lint
+        language: system
+        files: (CMakeLists\.txt|.*\.cmake)$

@@ -1,0 +1,25 @@
+id: sql-literals
+name: SQL Literals
+notes:
+  - Supports string, numeric, date/time, UUID (X'..' and textual), and national/charset-prefixed strings
+  - DATE accepts YYYY-MM-DD, YYYY/MM/DD, DD-MM-YYYY, DD/MM/YYYY, MM-DD-YYYY, MM/DD/YYYY
+  - TIME/TIMESTAMP accept optional timezone: Z, ±HH, ±HH:MM, ±HHMM; TIMESTAMP also accepts ISO 'T' separator
+  - Lexer captures charset tags on string tokens (N, _UTF8, _WIN1251, etc.). Unknown tags may be warned.
+accept:
+  - DATE '2024-01-02'
+  - DATE '02/01/2024'
+  - DATE '01-02-2024'
+  - TIME '12:34:56.789'
+  - TIME '12:34:56Z'
+  - TIME '12:34:56+02:30'
+  - TIME '12:34:56-0530'
+  - TIMESTAMP '2024-01-02 12:34:56'
+  - TIMESTAMP '2024-01-02T12:34:56Z'
+  - TIMESTAMP '02/01/2024 12:34:56+01'
+  - UUID '123e4567-e89b-12d3-a456-426614174000'
+  - X'0A0B0C0D'
+  - _UTF8 'héllo'
+  - N'hello'
+reject:
+  - DATE 'oops'
+  - TIME '99:99'

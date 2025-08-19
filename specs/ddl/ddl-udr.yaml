@@ -1,0 +1,15 @@
+id: ddl-udr
+title: UDR (External Routines)
+status: draft
+version: 0.1.0
+updated: 2025-08-12T00:00:00Z
+related: []
+content:
+  create:
+    grammar: |
+      CREATE FUNCTION name(args) RETURNS type
+      EXTERNAL NAME 'library!symbol'
+      ENGINE udr
+      [AS 'config']
+  acceptance:
+    - "CREATE FUNCTION ext_add(a INT, b INT) RETURNS INT EXTERNAL NAME 'lib!add' ENGINE udr"

@@ -1,0 +1,27 @@
+# Build artifacts
+/build/
+/build-*/
+CMakeFiles/
+CMakeCache.txt
+cmake-build-*/
+compile_commands.json
+
+# IDE/editor
+.vscode/
+.idea/
+*.code-workspace
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Tests
+Testing/
+ctest-
+
+# Logs
+*.log
+
+# Python venvs (if used)
+.venv/
+venv/

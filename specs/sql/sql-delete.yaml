@@ -1,0 +1,15 @@
+id: sql-delete
+title: DELETE
+status: draft
+version: 0.1.0
+updated: 2025-08-12T00:00:00Z
+content:
+  grammar: |
+    DELETE FROM target
+      [USING using_list]
+      [WHERE condition | WHERE CURRENT OF cursor]
+      [RETURNING select_list]
+  acceptance:
+    - 'DELETE FROM t WHERE id=1 RETURNING id'
+    - 'DELETE FROM t USING u WHERE t.id = u.id'
+    - 'DELETE FROM t WHERE CURRENT OF c2'

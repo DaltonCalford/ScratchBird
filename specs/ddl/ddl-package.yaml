@@ -1,0 +1,23 @@
+id: ddl-package
+title: CREATE/ALTER/DROP PACKAGE
+status: draft
+version: 0.1.0
+updated: 2025-08-12T00:00:00Z
+related: []
+content:
+  create:
+    grammar: |
+      CREATE PACKAGE pkg_name AS
+        -- interface section: procedure/function specs
+      END
+      ;
+      CREATE PACKAGE BODY pkg_name AS
+        -- implementations in PSQL
+      END
+  alter:
+    grammar: 'ALTER PACKAGE pkg_name [REPLACE] ...'
+  drop:
+    grammar: 'DROP PACKAGE pkg_name'
+  acceptance:
+    - 'CREATE PACKAGE util AS END'
+    - 'CREATE PACKAGE BODY util AS END'

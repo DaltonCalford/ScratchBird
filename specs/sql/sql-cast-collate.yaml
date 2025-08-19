@@ -1,0 +1,15 @@
+id: sql-cast-collate
+title: CAST and COLLATE
+status: draft
+version: 0.1.0
+updated: 2025-08-12T00:00:00Z
+related: [types-core]
+content:
+  cast:
+    grammar: 'CAST ( expr AS type ) | expr :: type | TYPE OF (unsupported surface)'
+  collate:
+    grammar: 'expr COLLATE collation_name'
+  acceptance:
+    - 'SELECT CAST(123 AS VARCHAR(10))'
+    - 'SELECT name COLLATE EN_US_CI FROM t'
+    - 'SELECT a::DECIMAL(10,2)'

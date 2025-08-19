@@ -1,0 +1,8 @@
+id: ddl-domain
+title: CREATE/ALTER/DROP DOMAIN (alias to domains spec)
+status: draft
+version: 0.1.0
+updated: 2025-08-12T00:00:00Z
+related: [domains]
+content:
+  note: 'See specs/schema/domains.yaml for rules and acceptance.'

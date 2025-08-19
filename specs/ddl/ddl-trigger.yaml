@@ -1,0 +1,21 @@
+id: ddl-trigger
+title: CREATE/ALTER/DROP TRIGGER
+status: draft
+version: 0.1.0
+updated: 2025-08-12T00:00:00Z
+related: []
+content:
+  create:
+    grammar: |
+      CREATE TRIGGER trg_name {BEFORE|AFTER} {INSERT|UPDATE|DELETE}
+      ON tbl
+      [ACTIVE|INACTIVE]
+      POSITION n
+      AS
+      BEGIN
+        -- PSQL body
+      END
+  drop:
+    grammar: 'DROP TRIGGER trg_name'
+  acceptance:
+    - 'CREATE TRIGGER trg BEFORE INSERT ON t POSITION 0 AS BEGIN END'

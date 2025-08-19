@@ -1,0 +1,18 @@
+id: sql-setops
+title: Set operations (UNION / INTERSECT / EXCEPT)
+status: draft
+version: 0.1.0
+updated: 2025-08-12T00:00:00Z
+content:
+  grammar: |
+    set_expr := select_expr ( (UNION|INTERSECT|EXCEPT) [ALL] select_expr )*
+    select_expr := SELECT ... | ( set_expr )
+  precedence: |
+    INTERSECT has higher precedence than UNION and EXCEPT.
+    Parentheses force grouping.
+  compound_tail: |
+    ORDER BY and FETCH FIRST/NEXT are allowed at the top-level compound tail only.
+  acceptance:
+    - 'SELECT 1 INTERSECT SELECT 2 UNION SELECT 3'
+    - '(SELECT 1 UNION SELECT 2) INTERSECT SELECT 3'
+    - 'SELECT 1 UNION ALL SELECT 2 ORDER BY 1 FETCH FIRST 5 ROWS ONLY'

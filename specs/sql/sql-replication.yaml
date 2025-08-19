@@ -1,0 +1,40 @@
+id: sql-replication
+title: Logical replication (publications and subscriptions)
+status: proposal
+version: 0.1.0
+updated: 2025-08-15T00:00:00Z
+content:
+  overview: |
+    Parser-only SQL to declare publications and subscriptions for logical replication.
+    Engine wiring deferred. Inspired by PostgreSQL semantics.
+
+  grammar: |
+    CREATE PUBLICATION name FOR {ALL TABLES | TABLES (t1, t2, ...)} OPTIONS (key=value [, ...])
+    ALTER PUBLICATION name SET (key=value [, ...]) ADD TABLE t1 [, ...] DROP TABLE t2 [, ...]
+    DROP PUBLICATION name
+
+    CREATE SUBSCRIPTION name CONNECTION 'conn_string' PUBLICATION pub
+      INTO schema_name OPTIONS (key=value [, ...])
+    ALTER SUBSCRIPTION name {ENABLE|DISABLE|SET (key=value [, ...])}
+    DROP SUBSCRIPTION name
+    PAUSE SUBSCRIPTION name
+    RESUME SUBSCRIPTION name
+
+  acceptance:
+    - "CREATE PUBLICATION pub_all FOR ALL TABLES"
+    - "CREATE SUBSCRIPTION sub1 CONNECTION 'odbc:DSN=rem' PUBLICATION pub_all INTO ext"
+    - "PAUSE SUBSCRIPTION sub1"
+
+  diagnostics:
+    - "Unknown publication option '<k>'"
+    - "Subscription connection string invalid"
+  diagnostics_notes:
+    - Messages follow engine-diagnostics style; concise, no trailing punctuation
+
+  notes:
+    - Parser-only. Later map to provider-based feeds or native logical replication.
+    - Subscription INTO schema denotes local landing schema.
+
+  future_engine_tasks:
+    - Change data capture, WAL/log readers, queueing, conflict resolution.
+    - Initial snapshot, resync, and health monitoring APIs.

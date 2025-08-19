@@ -1,0 +1,20 @@
+id: sql-dblink
+title: Database Links (DDL and references)
+status: draft
+version: 0.1.0
+updated: 2025-08-15T00:00:00Z
+content:
+  ddl:
+    accept:
+      - CREATE DATABASE LINK fin_link USING 'dsn=finance'
+      - ALTER DATABASE LINK fin_link SET 'dsn=finance_ro'
+      - DROP DATABASE LINK fin_link
+  usage:
+    notes:
+      - FROM items may reference remote tables using table@link notation
+    accept:
+      - SELECT * FROM users@fin_link u
+      - SELECT a.* FROM (SELECT * FROM orders@erp) a
+  diagnostics:
+    - Unknown database link name '<name>'
+    - Database link '<name>' not accessible

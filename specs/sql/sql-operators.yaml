@@ -1,0 +1,18 @@
+id: sql-operators
+title: Operators & Precedence
+status: draft
+version: 0.1.0
+updated: 2025-08-12T00:00:00Z
+related: [sql-expressions]
+content:
+  precedence: |
+    Highest -> Lowest:
+      - unary + - NOT
+      - * / %
+      - + -
+      - comparison (= <> < > <= >=) and predicates (LIKE, SIMILAR, IN, BETWEEN)
+      - AND
+      - OR
+  acceptance:
+    - 'SELECT 1 + 2 * 3'
+    - 'SELECT NOT a AND b OR c'

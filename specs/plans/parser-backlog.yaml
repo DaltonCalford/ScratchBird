@@ -1,0 +1,95 @@
+id: parser-backlog
+title: Parser Task Backlog
+status: draft
+version: 0.1.0
+updated: 2025-08-12T00:00:00Z
+items:
+  - id: T-001
+    title: Tokenizer for identifiers, numbers, strings, keywords
+    status: todo
+    size: S
+    depends: []
+    specs: []
+    tests: [SELECT 1, SELECT a]
+  - id: T-002
+    title: AST nodes for literals, select-list, single-table, no where
+    status: todo
+    size: S
+    depends: [T-001]
+    specs: []
+    tests: [SELECT 1, SELECT x]
+  - id: T-003
+    title: Minimal planner to execute SELECT literal
+    status: todo
+    size: XS
+    depends: [T-002]
+    specs: []
+    tests: [SELECT 1]
+  - id: T-004
+    title: Name resolver using search-path and absolute/relative schema paths
+    status: todo
+    size: M
+    depends: [T-001]
+    specs: [schema-search-path, schema-navigation, catalog-objects]
+    tests: [tbl in current schema, org/app/tbl, ../dev/tbl]
+  - id: T-005
+    title: Type descriptor parsing for core SQL types
+    status: doing
+    size: S
+    depends: []
+    specs: [types-core]
+    tests: [NUMERIC(10,2), VARCHAR(255), DOUBLE PRECISION]
+  - id: T-006
+    title: Casting/coercion matrix (core types)
+    status: todo
+    size: M
+    depends: [T-005]
+    specs: [types-core]
+    tests: [1 + 1.5 => DOUBLE PRECISION]
+  - id: T-007
+    title: Error model for syntax/semantic errors
+    status: todo
+    size: S
+    depends: []
+    specs: [engine-api]
+    tests: [invalid token, unknown column]
+  - id: T-008
+    title: Identifier resolver Unicode casefolding
+    status: todo
+    size: M
+    depends: []
+    specs: [sql-identifiers]
+    notes: |
+      Implement Unicode casefolding normalization in resolver (not lexer). Use ICU (preferred) or
+      utf8proc as a fallback. Start with ASCII-only normalization, then extend to full Unicode.
+    acceptance:
+      - Unquoted ASCII identifiers compare case-insensitively
+      - Quoted identifiers remain case-sensitive; normalization not applied
+  - id: T-009
+    title: Parser coverage for INSERT/UPDATE/DELETE
+    status: todo
+    size: M
+    depends: [T-001, T-002]
+    specs: [sql-insert, sql-update, sql-delete, sql-returning-lock-fetch]
+    tests: [basic VALUES/SET/DELETE with WHERE and RETURNING]
+  - id: T-010
+    title: Parser coverage for WITH/CTE and set operations
+    status: todo
+    size: M
+    depends: [T-001, T-002]
+    specs: [sql-cte, sql-setops]
+    tests: [simple CTE and UNION ALL]
+  - id: T-011
+    title: Parser coverage for JOINs and GROUP/ORDER/WINDOW
+    status: todo
+    size: L
+    depends: [T-001, T-002]
+    specs: [sql-joins, sql-group-order, sql-window]
+    tests: [inner/left join, group by, window]
+  - id: T-012
+    title: Expressions, operators, functions
+    status: todo
+    size: L
+    depends: [T-001]
+    specs: [sql-expressions, sql-operators, sql-functions-like]
+    tests: [arithmetic, predicates, LIKE/SIMILAR]

@@ -1,0 +1,27 @@
+id: domains
+title: Domains (User-defined Types)
+status: draft
+version: 0.1.0
+updated: 2025-08-12T00:00:00Z
+related:
+  - types-core
+  - schema-search-path
+content:
+  summary: |
+    Domains define named type aliases with optional constraints/defaults.
+    Composite data definitions are represented as domains (not native types).
+  ddl:
+    create: CREATE DOMAIN name AS <type> [DEFAULT expr] [CHECK (predicate)] [COLLATE x]
+    alter: ALTER DOMAIN name ...
+    drop: DROP DOMAIN name
+  semantics:
+    - domains are resolved at prepare-time to underlying type + rules
+    - constraints are enforced on INSERT/UPDATE and CAST to the domain
+    - composite domains: structured row types via DOMAIN with field list
+  resolution:
+    - domains obey search path and schema qualification
+    - uniqueness on (parent_id, name)
+  acceptance:
+    - create simple domain: EMAIL_TYPE AS VARCHAR(255) CHECK (...)
+    - create composite domain: ADDRESS_TYPE(street VARCHAR(255), city VARCHAR(100), zip VARCHAR(10))
+    - use in table columns and function signatures

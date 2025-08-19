@@ -1,0 +1,51 @@
+id: providers
+title: Provider SPI (External Engines)
+status: proposal
+version: 0.1.0
+updated: 2025-08-15T00:00:00Z
+content:
+  overview: |
+    Service Provider Interface enabling external database engines (ODBC, MSSQL, etc.)
+    to integrate with ScratchBird through a unified provider API. Y‑Valve dispatches
+    to providers at runtime. Providers advertise capabilities, manage connections,
+    import metadata, and execute read/write operations with pushdown when possible.
+
+  capabilities:
+    - read: SELECT queries with projection/predicate pushdown
+    - write: INSERT/UPDATE/DELETE pushdown (optional)
+    - ddl_passthrough: ability to execute DDL remotely (optional)
+    - schema_import: list schemas, tables, and column metadata
+    - transactions: map begin/commit/rollback; optional 2PC/XA
+    - explain: optional cost/rowcount estimates for optimizer
+
+  api:
+    provider:
+      - name() -> string
+      - capabilities() -> set
+      - connect(server_options, user_mapping) -> session
+      - disconnect(session)
+      - list_schemas(session) -> [string]
+      - list_tables(session, schema) -> [table]
+      - describe_table(session, fq_name) -> columns, keys
+      - prepare(session, sql, param_types) -> handle
+      - execute(handle, params)
+      - fetch(handle, batch_size) -> rows
+      - close(handle)
+
+  optimizer:
+    - ForeignScan node pushes down supported clauses (projection, filters, order/limit).
+    - Join pushdown when all relations originate from same provider/server and supported.
+    - Fallback: fetch then evaluate remaining clauses locally.
+
+  security:
+    - CREATE USER MAPPING stores credentials or references a secret record.
+    - GRANT USAGE ON FOREIGN SERVER controls access.
+
+  errors:
+    - Normalize remote codes to engine diagnostics; include remote snippets for context.
+
+  appendix:
+    builtins:
+      - Embedded
+      - Remote
+      - Legacy

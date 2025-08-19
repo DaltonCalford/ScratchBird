@@ -1,0 +1,12 @@
+id: sql-ddl-view
+title: CREATE VIEW
+status: draft
+version: 0.1.0
+updated: 2025-08-12T00:00:00Z
+content:
+  grammar: |
+    CREATE [OR ALTER|RECREATE] VIEW name [(col_list)] AS <select>
+      [WITH [LOCAL|CASCADED] CHECK OPTION]
+  acceptance:
+    - 'CREATE VIEW v(a,b) AS SELECT a,b FROM t WITH CHECK OPTION'
+    - 'CREATE OR ALTER VIEW v AS SELECT 1'

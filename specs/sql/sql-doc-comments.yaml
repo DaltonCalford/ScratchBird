@@ -1,0 +1,56 @@
+id: sql-doc-comments
+title: Leading comments as object documentation
+status: proposal
+version: 0.1.0
+updated: 2025-08-15T00:00:00Z
+content:
+  overview: |
+    Treat contiguous comment blocks immediately preceding a top-level DDL
+    statement as that object's documentation. On extraction/dump, emit those
+    comments immediately before the object's DDL. Optional executor integration
+    can persist these as catalog descriptions (like COMMENT ON).
+
+  scope:
+    - "Top-level DDL statements: CREATE/ALTER/RECREATE/DROP of TABLE, VIEW, INDEX, SEQUENCE, DOMAIN, PROCEDURE, FUNCTION, TRIGGER, PACKAGE, ROLE, USER, COLLATION, CHARACTER SET, BLOB FILTER, MAPPING, GTT, SCHEMA, DATABASE LINK."
+    - "Does not attempt to document inner statements inside PSQL bodies."
+
+  capture_rules:
+    - "Collect contiguous leading comments (//, --, /* ... */) and blank lines from the statement boundary to the first non-comment token."
+    - "Same-line trailing comment after a previous statement is not captured for the next statement."
+    - "Optional marker mode: only capture comments that start with a marker (e.g., `--!` or `/**!`)."
+    - "Optional file-header heuristic: comments at file start separated by ≥2 blank lines from the object are treated as file header (not attached) unless forced."
+
+  configuration:
+    session:
+      - "SET DOC COMMENTS {ON|OFF|MARKER_ONLY}"
+    cli:
+      - "--doc-comments=on|off|marker_only"
+    extraction:
+      - "Emit captured doc comments before object DDL."
+      - "Toggle to suppress separate COMMENT ON emission if a doc comment is present."
+
+  persistence (optional/future):
+    - "If enabled, on successful DDL, auto-issue a semantic 'COMMENT ON' equivalent to store the doc into the catalog."
+    - "De-duplicate if explicit COMMENT ON for the same object appears in the same batch."
+
+  acceptance:
+    - |
+      --! Customer master table
+      --! Holds demographic information used by CRM
+      CREATE TABLE customer(id INT PRIMARY KEY, name VARCHAR(100))
+    - |
+      /*<!> Compute index to speed up reports */
+      CREATE INDEX ix_customer_name ON customer(UPPER(name))
+    - |
+      -- file header (license) — not attached by default
+
+  diagnostics:
+    - "Leading comment block looks like code; enable MARKER_ONLY to avoid accidental capture (advisory warning)."
+
+  ast:
+    - "Each DDL AST node gains: leading_comments: [string...] and spans."
+    - "Parser preserves original text (including delimiters) for round-trip fidelity."
+
+  notes:
+    - "No grammar change; implemented in the feeder/trivia layer."
+    - "Catalog persistence is an executor task; spec leaves it optional."

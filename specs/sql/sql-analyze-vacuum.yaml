@@ -1,0 +1,17 @@
+id: sql-analyze-vacuum
+title: ANALYZE, VACUUM, and CREATE STATISTICS
+status: draft
+version: 0.1.0
+updated: 2025-08-15T00:00:00Z
+content:
+  grammar: |
+    ANALYZE [VERBOSE] [table [ ( column [, ...] ) ]]
+    VACUUM [FULL] [VERBOSE] [table]
+    CREATE STATISTICS name ON table (col [, ...])
+    DROP STATISTICS name
+  acceptance:
+    - "ANALYZE"
+    - "VACUUM FULL t"
+    - "CREATE STATISTICS st_t_ab ON t (a, b)"
+  diagnostics:
+    - "ANALYZE/VACUUM parser-only; engine deferred"

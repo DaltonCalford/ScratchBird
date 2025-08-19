@@ -1,0 +1,13 @@
+id: sql-explain
+title: EXPLAIN and EXPLAIN ANALYZE
+status: draft
+version: 0.1.0
+updated: 2025-08-15T00:00:00Z
+content:
+  grammar: |
+    EXPLAIN [ANALYZE] statement
+  acceptance:
+    - "EXPLAIN SELECT * FROM t"
+    - "EXPLAIN ANALYZE SELECT * FROM t WHERE id=1"
+  diagnostics:
+    - "EXPLAIN ANALYZE parser-only; no runtime metrics yet"

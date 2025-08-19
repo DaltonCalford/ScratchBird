@@ -1,0 +1,20 @@
+id: sql-ddl-table
+title: CREATE/ALTER TABLE
+status: draft
+version: 0.1.0
+updated: 2025-08-12T00:00:00Z
+content:
+  grammar: |
+    CREATE TABLE name (
+      column_def | table_constraint [, ...]
+    ) [table_attributes]
+    ALTER TABLE name <ops>
+  notes: |
+    Column defs may include NOT NULL, GENERATED {ALWAYS|BY DEFAULT} AS IDENTITY (...),
+    COMPUTED BY (expr), GENERATED ALWAYS AS (expr) [VIRTUAL], per-column CHARACTER SET/COLLATE.
+    Constraints include PRIMARY KEY, UNIQUE, CHECK(expr), FOREIGN KEY ... REFERENCES ...
+    [ON UPDATE/DELETE action] [DEFERRABLE INITIALLY ...].
+    External tables: CREATE TABLE ... EXTERNAL FILE 'path' accepted; path captured.
+  acceptance:
+    - 'CREATE TABLE t (id INT NOT NULL, x VARCHAR(20) DEFAULT ''a'', CONSTRAINT pk PRIMARY KEY(id))'
+    - 'ALTER TABLE t ALTER COLUMN x TYPE VARCHAR(50)'
