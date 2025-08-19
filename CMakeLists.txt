@@ -232,5 +232,9 @@ if(SCRATCHBIRD_BUILD_TESTS)
 
   add_executable(sort_aggregation_tests tests/sort_aggregation_tests.cpp)
   target_link_libraries(sort_aggregation_tests scratchbird_engine)
+
+  add_executable(real_heap_integration_tests
+                 tests/real_heap_integration_tests.cpp)
+  target_link_libraries(real_heap_integration_tests scratchbird_engine)
   add_test(NAME fk_set_default_tests COMMAND fk_set_default_tests)
 endif()
