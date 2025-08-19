@@ -3325,6 +3325,132 @@ namespace scratchbird
                     out_rows.emplace_back(std::move(row));
                 }
                 rows_buffer.swap(out_rows);
+
+                // HAVING clause filtering (after GROUP BY aggregation)
+                if (!q.having_raw.empty()) {
+                    auto th0 = std::chrono::steady_clock::now();
+                    std::vector<std::vector<std::string>> having_filtered;
+                    having_filtered.reserve(rows_buffer.size());
+
+                    // Build alias map for HAVING expression evaluation
+                    std::unordered_map<std::string, std::size_t> having_alias_index;
+                    for (std::size_t i = 0; i < r.columns.size(); ++i)
+                        having_alias_index[r.columns[i]] = i;
+
+                    for (const auto& row : rows_buffer) {
+                        // Evaluate HAVING condition for this grouped row
+                        // This is a simplified implementation - real implementation would need
+                        // full expression evaluation with support for aggregates in HAVING
+                        std::string having_expr = q.having_raw;
+
+                        // Simple substitution for aggregate references in HAVING
+                        // Handle common patterns like COUNT(*) > 5, SUM(col) > 100, etc.
+                        bool matches_having = true;
+
+                        // Parse simple HAVING expressions (basic comparison operators)
+                        auto evaluate_simple_condition = [&](const std::string& expr) -> bool {
+                            // Look for patterns like "COUNT(*) > 5", "SUM(col) < 100", etc.
+                            std::string clean_expr = expr;
+                            // Remove extra whitespace
+                            clean_expr.erase(0, clean_expr.find_first_not_of(" \t"));
+                            clean_expr.erase(clean_expr.find_last_not_of(" \t") + 1);
+
+                            // Find comparison operators
+                            std::string op;
+                            std::size_t op_pos = std::string::npos;
+                            for (const auto& candidate : {">=", "<=", "!=", "<>", ">", "<", "="}) {
+                                std::size_t pos = clean_expr.find(candidate);
+                                if (pos != std::string::npos) {
+                                    op = candidate;
+                                    op_pos = pos;
+                                    break;
+                                }
+                            }
+
+                            if (op_pos == std::string::npos) {
+                                // No operator found, assume condition is true for now
+                                return true;
+                            }
+
+                            std::string left = clean_expr.substr(0, op_pos);
+                            std::string right = clean_expr.substr(op_pos + op.length());
+                            left.erase(0, left.find_first_not_of(" \t"));
+                            left.erase(left.find_last_not_of(" \t") + 1);
+                            right.erase(0, right.find_first_not_of(" \t"));
+                            right.erase(right.find_last_not_of(" \t") + 1);
+
+                            // Try to resolve left side (should be an aggregate or column reference)
+                            std::string left_value;
+                            bool found_left = false;
+
+                            // Check if left side is a column alias
+                            auto alias_it = having_alias_index.find(left);
+                            if (alias_it != having_alias_index.end() &&
+                                alias_it->second < row.size()) {
+                                left_value = row[alias_it->second];
+                                found_left = true;
+                            }
+
+                            if (!found_left) {
+                                // For now, if we can't resolve the left side, assume condition
+                                // passes
+                                return true;
+                            }
+
+                            // Try to convert both sides to numbers for comparison
+                            try {
+                                double left_num = std::stod(left_value);
+                                double right_num = std::stod(right);
+
+                                if (op == ">" || op == "GT")
+                                    return left_num > right_num;
+                                if (op == ">=" || op == "GE")
+                                    return left_num >= right_num;
+                                if (op == "<" || op == "LT")
+                                    return left_num < right_num;
+                                if (op == "<=" || op == "LE")
+                                    return left_num <= right_num;
+                                if (op == "=" || op == "EQ")
+                                    return std::abs(left_num - right_num) < 1e-9;
+                                if (op == "!=" || op == "<>" || op == "NE")
+                                    return std::abs(left_num - right_num) >= 1e-9;
+                            } catch (const std::exception&) {
+                                // Fallback to string comparison
+                                if (op == "=" || op == "EQ")
+                                    return left_value == right;
+                                if (op == "!=" || op == "<>" || op == "NE")
+                                    return left_value != right;
+                                if (op == ">" || op == "GT")
+                                    return left_value > right;
+                                if (op == ">=" || op == "GE")
+                                    return left_value >= right;
+                                if (op == "<" || op == "LT")
+                                    return left_value < right;
+                                if (op == "<=" || op == "LE")
+                                    return left_value <= right;
+                            }
+
+                            return true; // Default to true if comparison fails
+                        };
+
+                        matches_having = evaluate_simple_condition(having_expr);
+
+                        if (matches_having) {
+                            having_filtered.emplace_back(row);
+                        }
+                    }
+
+                    rows_buffer.swap(having_filtered);
+
+                    if (metrics) {
+                        auto th1 = std::chrono::steady_clock::now();
+                        metrics->group_time_ms +=
+                            (std::uint64_t)std::chrono::duration_cast<std::chrono::milliseconds>(
+                                th1 - th0)
+                                .count();
+                    }
+                }
+
                 if (metrics) {
                     metrics->group_groups = rows_buffer.size();
                     auto tg1 = std::chrono::steady_clock::now();
