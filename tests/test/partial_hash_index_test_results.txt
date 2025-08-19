@@ -1,4 +1,0 @@
-ScratchBird Partial Hash Index Test Results
-Test run started: Thu 24 Jul 2025 06:02:50 PM EDT
-Database: /home/dcalford/Documents/claude/GitHubRepo/ScratchBird/tests/test_databases/partial_hash_index_test.fdb
-
