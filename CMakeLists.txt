@@ -75,7 +75,8 @@ add_library(
   src/engine/wal.cpp
   src/engine/executor_nodes.cpp
   src/engine/query_planner.cpp
-  src/engine/statistics.cpp)
+  src/engine/statistics.cpp
+  src/engine/trigger_engine.cpp)
 
 # Main ScratchBird executable
 add_executable(scratchbird src/main.cpp src/scratchbird.cpp)
@@ -240,5 +241,8 @@ if(SCRATCHBIRD_BUILD_TESTS)
 
   add_executable(statistics_tests tests/statistics_tests.cpp)
   target_link_libraries(statistics_tests scratchbird_engine)
+
+  add_executable(trigger_engine_tests tests/trigger_engine_tests.cpp)
+  target_link_libraries(trigger_engine_tests scratchbird_engine)
   add_test(NAME fk_set_default_tests COMMAND fk_set_default_tests)
 endif()
