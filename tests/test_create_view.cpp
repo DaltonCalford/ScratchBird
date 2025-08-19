@@ -8,7 +8,7 @@ using namespace scratchbird::engine;
 int main()
 {
     std::cout << "=== Testing CREATE VIEW ===" << std::endl;
-    
+
     // Test 1: Parse CREATE VIEW
     std::cout << "\n1. Testing CREATE VIEW parsing..." << std::endl;
     std::string sql = "CREATE VIEW test_view AS SELECT 1 AS num";
@@ -21,12 +21,14 @@ int main()
     } else {
         std::cout << "Not parsed as DdlView" << std::endl;
     }
-    
-    // Test 2: Try to execute CREATE VIEW (will fail without database, but should show parsing works)
+
+    // Test 2: Try to execute CREATE VIEW (will fail without database, but should show parsing
+    // works)
     std::cout << "\n2. Testing CREATE VIEW execution (expected to fail without DB)..." << std::endl;
     auto result = execute_ast(ast);
     if (!result.columns.empty() && result.columns[0] == "error") {
-        std::cout << "Execution error (expected): " << (result.rows.empty() ? "unknown" : result.rows[0][0]) << std::endl;
+        std::cout << "Execution error (expected): "
+                  << (result.rows.empty() ? "unknown" : result.rows[0][0]) << std::endl;
     } else {
         std::cout << "Execution succeeded unexpectedly" << std::endl;
         for (const auto& row : result.rows) {
@@ -36,7 +38,7 @@ int main()
             std::cout << std::endl;
         }
     }
-    
+
     std::cout << "\n=== CREATE VIEW Test Complete ===" << std::endl;
     return 0;
 }
