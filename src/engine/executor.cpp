@@ -4072,10 +4072,19 @@ namespace scratchbird
                     for (const auto& op : ast.ddlTable.alter_ops) {
                         std::string lo = lower(op.raw);
                         if (op.kind == "ADD") {
+                            std::string lb = lower(op.raw);
+
+                            // ADD COLUMN support
+                            if (lb.rfind("column ", 0) == 0) {
+                                std::string column_def = op.raw.substr(7);
+                                trim(column_def);
+                                cm.add_column(soid, relname, column_def);
+                                continue;
+                            }
+
                             // Optional CONSTRAINT name
                             std::string cname;
                             std::string body = op.raw;
-                            std::string lb = lower(body);
                             if (lb.rfind("constraint ", 0) == 0) {
                                 auto after = body.substr(11);
                                 trim(after);
@@ -4159,13 +4168,19 @@ namespace scratchbird
                                     "NO_ACTION");
                             }
                         } else if (op.kind == "DROP") {
-                            // DROP CONSTRAINT <name>
+                            // DROP CONSTRAINT <name> or DROP COLUMN <name>
                             std::string lo2 = lower(op.raw);
-                            auto p = lo2.find("constraint ");
-                            if (p != std::string::npos) {
-                                auto name = op.raw.substr(p + 11);
+                            auto constraint_pos = lo2.find("constraint ");
+                            auto column_pos = lo2.find("column ");
+
+                            if (constraint_pos != std::string::npos) {
+                                auto name = op.raw.substr(constraint_pos + 11);
                                 trim(name);
                                 cm.drop_constraint_by_name(soid, relname, name);
+                            } else if (column_pos != std::string::npos) {
+                                auto name = op.raw.substr(column_pos + 7);
+                                trim(name);
+                                cm.drop_column(soid, relname, name);
                             } else if (!op.target.empty()) {
                                 cm.drop_constraint_by_name(soid, relname, op.target);
                             }
@@ -4192,10 +4207,64 @@ namespace scratchbird
                                 cm.alter_constraint_deferral(soid, relname, cname, deferrable,
                                                              initially_deferred);
                             }
+                            // ALTER COLUMN operations
+                            else if (lo3.find("column ") != std::string::npos) {
+                                auto col_pos = lo3.find("column ");
+                                std::string tail = op.raw.substr(col_pos + 7);
+                                trim(tail);
+                                auto sp = tail.find_first_of(" \t\n");
+                                std::string colname =
+                                    (sp == std::string::npos) ? tail : tail.substr(0, sp);
+                                std::string rest =
+                                    (sp == std::string::npos) ? std::string() : tail.substr(sp + 1);
+                                std::string lrest = lower(rest);
+
+                                // ALTER COLUMN name TYPE new_type
+                                if (lrest.rfind("type ", 0) == 0) {
+                                    std::string new_type = rest.substr(5);
+                                    trim(new_type);
+                                    cm.alter_column_type(soid, relname, colname, new_type);
+                                }
+                                // ALTER COLUMN name SET DEFAULT value
+                                else if (lrest.find("set default ") != std::string::npos) {
+                                    auto def_pos = lrest.find("set default ");
+                                    std::string default_val = rest.substr(def_pos + 12);
+                                    trim(default_val);
+                                    cm.alter_column_default(soid, relname, colname, default_val);
+                                }
+                                // ALTER COLUMN name DROP DEFAULT
+                                else if (lrest.find("drop default") != std::string::npos) {
+                                    cm.alter_column_default(soid, relname, colname, std::string());
+                                }
+                                // ALTER COLUMN name SET NOT NULL
+                                else if (lrest.find("set not null") != std::string::npos) {
+                                    cm.alter_column_not_null(soid, relname, colname, true);
+                                }
+                                // ALTER COLUMN name DROP NOT NULL
+                                else if (lrest.find("drop not null") != std::string::npos) {
+                                    cm.alter_column_not_null(soid, relname, colname, false);
+                                }
+                            }
+                        } else if (op.kind == "RENAME") {
+                            // RENAME COLUMN old_name TO new_name
+                            std::string lo4 = lower(op.raw);
+                            if (lo4.find("column ") != std::string::npos &&
+                                lo4.find(" to ") != std::string::npos) {
+                                auto col_pos = lo4.find("column ");
+                                auto to_pos = lo4.find(" to ");
+                                if (col_pos < to_pos) {
+                                    std::string old_name =
+                                        op.raw.substr(col_pos + 7, to_pos - (col_pos + 7));
+                                    std::string new_name = op.raw.substr(to_pos + 4);
+                                    trim(old_name);
+                                    trim(new_name);
+                                    cm.rename_column(soid, relname, old_name, new_name);
+                                }
+                            }
                         }
                     }
                     r.columns = {"ok"};
-                    r.rows = {{"ALTER TABLE accepted: constraints updated"}};
+                    r.rows = {{"ALTER TABLE accepted: columns and constraints updated"}};
                     return r;
                 }
                 // basic column name extraction: first token of each column def
