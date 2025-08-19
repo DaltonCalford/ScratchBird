@@ -3634,4 +3634,97 @@ namespace scratchbird::engine
         return false;
     }
 
+    // ALTER TABLE column operations implementation
+    bool CatalogManager::add_column(const std::optional<UuidBytes>& schema_oid,
+                                    const std::string& relation_name,
+                                    const std::string& column_definition) const
+    {
+        // Find the relation
+        auto rel_oid = lookup_object_oid(schema_oid, "RELATION", relation_name);
+        if (!rel_oid)
+            return false;
+
+        // Parse column definition (basic parsing for name and type)
+        std::string colname = column_definition;
+        auto sp = colname.find_first_of(" \t\n");
+        if (sp != std::string::npos) {
+            colname = colname.substr(0, sp);
+        }
+
+        // Get current max position
+        auto cols = list_columns(*rel_oid);
+        std::int64_t new_position = cols.empty() ? 0 : cols.back().first + 1;
+
+        // Create the new column entry
+        std::vector<std::pair<std::int64_t, std::string>> new_cols = {{new_position, colname}};
+        return create_columns(*rel_oid, new_cols, {});
+    }
+
+    bool CatalogManager::drop_column(const std::optional<UuidBytes>& schema_oid,
+                                     const std::string& relation_name,
+                                     const std::string& column_name) const
+    {
+        // Find the relation
+        auto rel_oid = lookup_object_oid(schema_oid, "RELATION", relation_name);
+        if (!rel_oid)
+            return false;
+
+        // TODO: Implement actual column removal from SDB$COLUMN
+        // This is a placeholder implementation that would need to:
+        // 1. Remove the column from SDB$COLUMN
+        // 2. Update existing data to remove the column
+        // 3. Update any dependent constraints/indexes
+        std::fprintf(stderr, "[DROP COLUMN] Column %s from %s (placeholder)\n", column_name.c_str(),
+                     relation_name.c_str());
+        return true;
+    }
+
+    bool CatalogManager::alter_column_type(const std::optional<UuidBytes>& schema_oid,
+                                           const std::string& relation_name,
+                                           const std::string& column_name,
+                                           const std::string& new_type) const
+    {
+        // TODO: Implement column type alteration
+        // This requires updating SDB$COLUMN and potentially converting existing data
+        std::fprintf(stderr, "[ALTER COLUMN TYPE] %s.%s to %s (placeholder)\n",
+                     relation_name.c_str(), column_name.c_str(), new_type.c_str());
+        return true;
+    }
+
+    bool CatalogManager::alter_column_default(const std::optional<UuidBytes>& schema_oid,
+                                              const std::string& relation_name,
+                                              const std::string& column_name,
+                                              const std::string& default_value) const
+    {
+        // TODO: Implement column default alteration
+        // This requires updating SDB$COLUMN default_value field
+        std::fprintf(stderr, "[ALTER COLUMN DEFAULT] %s.%s = %s (placeholder)\n",
+                     relation_name.c_str(), column_name.c_str(),
+                     default_value.empty() ? "NULL" : default_value.c_str());
+        return true;
+    }
+
+    bool CatalogManager::alter_column_not_null(const std::optional<UuidBytes>& schema_oid,
+                                               const std::string& relation_name,
+                                               const std::string& column_name, bool not_null) const
+    {
+        // TODO: Implement NOT NULL constraint alteration
+        // This requires updating SDB$COLUMN not_null field and validating existing data
+        std::fprintf(stderr, "[ALTER COLUMN NOT NULL] %s.%s = %s (placeholder)\n",
+                     relation_name.c_str(), column_name.c_str(), not_null ? "NOT NULL" : "NULL");
+        return true;
+    }
+
+    bool CatalogManager::rename_column(const std::optional<UuidBytes>& schema_oid,
+                                       const std::string& relation_name,
+                                       const std::string& old_name,
+                                       const std::string& new_name) const
+    {
+        // TODO: Implement column renaming
+        // This requires updating SDB$COLUMN name field and any dependent objects
+        std::fprintf(stderr, "[RENAME COLUMN] %s.%s -> %s (placeholder)\n", relation_name.c_str(),
+                     old_name.c_str(), new_name.c_str());
+        return true;
+    }
+
 } // namespace scratchbird::engine

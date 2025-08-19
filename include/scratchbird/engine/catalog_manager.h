@@ -242,6 +242,25 @@ namespace scratchbird::engine
         bool set_stats(const UuidBytes& object_oid, const std::string& json);
         std::optional<std::string> get_stats(const UuidBytes& object_oid) const;
 
+        // ALTER TABLE column operations
+        bool add_column(const std::optional<UuidBytes>& schema_oid,
+                        const std::string& relation_name,
+                        const std::string& column_definition) const;
+        bool drop_column(const std::optional<UuidBytes>& schema_oid,
+                         const std::string& relation_name, const std::string& column_name) const;
+        bool alter_column_type(const std::optional<UuidBytes>& schema_oid,
+                               const std::string& relation_name, const std::string& column_name,
+                               const std::string& new_type) const;
+        bool alter_column_default(const std::optional<UuidBytes>& schema_oid,
+                                  const std::string& relation_name, const std::string& column_name,
+                                  const std::string& default_value) const;
+        bool alter_column_not_null(const std::optional<UuidBytes>& schema_oid,
+                                   const std::string& relation_name, const std::string& column_name,
+                                   bool not_null) const;
+        bool rename_column(const std::optional<UuidBytes>& schema_oid,
+                           const std::string& relation_name, const std::string& old_name,
+                           const std::string& new_name) const;
+
       private:
         std::string db_path_;
     };
