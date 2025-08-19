@@ -160,6 +160,25 @@ namespace scratchbird::engine
         bool evaluate_join_predicate(const Tuple& left, const Tuple& right);
     };
 
+    // Filter node for WHERE clause predicates
+    class FilterNode : public ExecutorNode
+    {
+      public:
+        FilterNode(std::unique_ptr<ExecutorNode> child, const std::string& predicate);
+
+        void open(ExecutorContext& ctx) override;
+        bool next(Tuple& out) override;
+        void close() override;
+        std::vector<std::string> columns() const override;
+
+      private:
+        std::unique_ptr<ExecutorNode> child_;
+        std::string predicate_;
+        std::vector<std::string> compiled_predicate_;
+        std::vector<std::string> columns_;
+        bool opened_;
+    };
+
     // Project node for column projection and computed expressions
     class ProjectNode : public ExecutorNode
     {
