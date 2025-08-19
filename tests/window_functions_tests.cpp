@@ -3,6 +3,7 @@
 #include "scratchbird/engine/executor.h"
 #include "scratchbird/engine/parser.h"
 
+#include <algorithm>
 #include <cstring>
 #include <iostream>
 #include <sstream>
@@ -52,8 +53,29 @@ namespace scratchbird::engine
     // Helper function to execute SQL and check for errors
     ExecutionResult execute_sql(const std::string& sql)
     {
-        auto ast = parse_sql(sql);
-        return execute_ast(ast);
+        std::string sql_upper = sql;
+        std::transform(sql_upper.begin(), sql_upper.end(), sql_upper.begin(), ::toupper);
+
+        // Remove leading whitespace
+        size_t start = sql_upper.find_first_not_of(" \t\n\r");
+        if (start != std::string::npos) {
+            sql_upper = sql_upper.substr(start);
+        }
+
+        // Route to appropriate executor based on SQL type
+        if (sql_upper.substr(0, 6) == "INSERT") {
+            return execute_insert_sql(sql);
+        } else if (sql_upper.substr(0, 6) == "UPDATE") {
+            return execute_update_sql(sql);
+        } else if (sql_upper.substr(0, 6) == "DELETE") {
+            return execute_delete_sql(sql);
+        } else if (sql_upper.substr(0, 6) == "SELECT") {
+            return execute_select_sql(sql);
+        } else {
+            // For DDL statements, use AST-based execution
+            auto ast = parse_sql(sql);
+            return execute_ast(ast);
+        }
     }
 
     bool has_error(const ExecutionResult& result)
