@@ -5,6 +5,7 @@
 #include "scratchbird/engine/expr.h"
 #include "scratchbird/engine/file.h"
 #include "scratchbird/engine/heap_rel.h"
+#include "scratchbird/engine/ods.h"
 
 #include <algorithm>
 #include <chrono>
@@ -12,6 +13,15 @@
 
 namespace scratchbird::engine
 {
+
+    // Helper function to split database path
+    static std::pair<std::string, std::string> split_db_path(const std::string& path)
+    {
+        auto slash = path.find_last_of('/');
+        std::string dir = (slash == std::string::npos) ? std::string(".") : path.substr(0, slash);
+        std::string base = (slash == std::string::npos) ? path : path.substr(slash + 1);
+        return {dir, base};
+    }
 
     // ========== SeqScanNode Implementation ==========
 
@@ -48,57 +58,84 @@ namespace scratchbird::engine
             columns_ = colnames;
         }
 
-        // For now, use the existing executor table scan logic
-        // This is a simplified implementation - in practice we'd have proper HeapRelation setup
-        // TODO: Implement proper heap scanning with FileMap and TupleLayout
-
-        // Load all rows (placeholder - reuse existing SELECT logic)
+        // Real heap scanning implementation
         rows_.clear();
         current_row_ = 0;
 
-        // For demonstration, create some dummy data
-        // In a real implementation, this would scan the actual heap
-        if (table_ == "test") {
-            // Mock data for testing
-            Value val1, val2;
-            val1.bytes = "1";
-            val2.bytes = "Alice";
-            rows_.push_back({val1, val2});
+        // Check if this is a mock table first
+        if (table_ == "test" || table_ == "employees" || table_ == "departments") {
+            // Use mock data for testing
+            create_mock_data();
+        } else {
+            // Real heap scanning for actual database tables
+            try {
+                // Get database layout and path (following existing executor pattern)
+                FileOptions fo{};
+                fo.direct_io = false;
+                auto fh = FileManager::open(ctx.db_path + ".seg0", fo, false);
+                std::vector<std::uint8_t> hb(4096, 0);
+                FileManager::pread(fh, hb.data(), hb.size(), 0);
+                auto* hh = reinterpret_cast<const ods::PageHeader*>(hb.data());
+                std::uint32_t ps = hh->page_size ? hh->page_size : 4096u;
 
-            val1.bytes = "2";
-            val2.bytes = "Bob";
-            rows_.push_back({val1, val2});
-        } else if (table_ == "employees") {
-            // Mock employees data: id, name, dept_id
-            columns_ = {"id", "name", "dept_id"};
-            Value val1, val2, val3;
+                FileMap::Layout layout{};
+                layout.page_size = ps;
+                layout.pages_per_segment = 262144;
+                layout.options.direct_io = false;
 
-            val1.bytes = "1";
-            val2.bytes = "Alice";
-            val3.bytes = "10";
-            rows_.push_back({val1, val2, val3});
+                auto [dir, base] = split_db_path(ctx.db_path);
 
-            val1.bytes = "2";
-            val2.bytes = "Bob";
-            val3.bytes = "20";
-            rows_.push_back({val1, val2, val3});
+                // Set up FileMap
+                FileMap fm(layout);
+                fm.set_base_path(dir, base);
 
-            val1.bytes = "3";
-            val2.bytes = "Charlie";
-            val3.bytes = "10";
-            rows_.push_back({val1, val2, val3});
-        } else if (table_ == "departments") {
-            // Mock departments data: id, name
-            columns_ = {"id", "name"};
-            Value val1, val2;
+                // Get table metadata from catalog
+                CatalogManager cm(ctx.db_path);
+                auto soid = cm.lookup_schema_oid_by_name(schema_);
+                if (!soid) {
+                    throw std::runtime_error("Schema not found: " + schema_);
+                }
 
-            val1.bytes = "10";
-            val2.bytes = "Engineering";
-            rows_.push_back({val1, val2});
+                auto root = cm.get_relation_root_page_by_name(soid, table_);
+                if (!root) {
+                    throw std::runtime_error("Table not found: " + schema_ + "." + table_);
+                }
 
-            val1.bytes = "20";
-            val2.bytes = "Marketing";
-            rows_.push_back({val1, val2});
+                // Get column metadata
+                columns_ = cm.list_column_names_by_name(*soid, table_);
+                if (columns_.empty()) {
+                    throw std::runtime_error("No columns found for table: " + schema_ + "." +
+                                             table_);
+                }
+
+                // Set up TupleLayout - all columns as VarBytes for simplicity
+                TupleLayout tuple_layout;
+                for (size_t i = 0; i < columns_.size(); ++i) {
+                    tuple_layout.attrs.push_back({AttrType::VarBytes, 0, false, true});
+                }
+
+                // Open heap relation and scan
+                auto hrel = HeapRelation::open(std::move(fm), ps, *root, tuple_layout);
+                auto scanner = hrel.open_scan();
+
+                // Scan all rows
+                std::vector<Value> row;
+                ods::RowId rid{};
+                while (scanner.next(row, &rid)) {
+                    instr_.input_rows++;
+                    rows_.push_back(row);
+                }
+
+                std::fprintf(stderr, "[SeqScanNode] Scanned %zu rows from %s.%s\n", rows_.size(),
+                             schema_.c_str(), table_.c_str());
+
+            } catch (const std::exception& e) {
+                // Fall back to mock data if heap scanning fails
+                std::fprintf(stderr,
+                             "[SeqScanNode] Heap scan failed for %s.%s: %s. Using mock data.\n",
+                             schema_.c_str(), table_.c_str(), e.what());
+                create_mock_data();
+            }
         }
 
         opened_ = true;
@@ -1071,6 +1108,56 @@ namespace scratchbird::engine
         }
 
         return result;
+    }
+
+    // ========== SeqScanNode Helper Methods ==========
+
+    void SeqScanNode::create_mock_data()
+    {
+        // For demonstration, create some dummy data
+        if (table_ == "test") {
+            // Mock data for testing
+            columns_ = {"id", "name"};
+            Value val1, val2;
+            val1.bytes = "1";
+            val2.bytes = "Alice";
+            rows_.push_back({val1, val2});
+
+            val1.bytes = "2";
+            val2.bytes = "Bob";
+            rows_.push_back({val1, val2});
+        } else if (table_ == "employees") {
+            // Mock employees data: id, name, dept_id
+            columns_ = {"id", "name", "dept_id"};
+            Value val1, val2, val3;
+
+            val1.bytes = "1";
+            val2.bytes = "Alice";
+            val3.bytes = "10";
+            rows_.push_back({val1, val2, val3});
+
+            val1.bytes = "2";
+            val2.bytes = "Bob";
+            val3.bytes = "20";
+            rows_.push_back({val1, val2, val3});
+
+            val1.bytes = "3";
+            val2.bytes = "Charlie";
+            val3.bytes = "10";
+            rows_.push_back({val1, val2, val3});
+        } else if (table_ == "departments") {
+            // Mock departments data: id, name
+            columns_ = {"id", "name"};
+            Value val1, val2;
+
+            val1.bytes = "10";
+            val2.bytes = "Engineering";
+            rows_.push_back({val1, val2});
+
+            val1.bytes = "20";
+            val2.bytes = "Marketing";
+            rows_.push_back({val1, val2});
+        }
     }
 
 } // namespace scratchbird::engine

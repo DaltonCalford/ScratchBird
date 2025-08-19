@@ -87,6 +87,9 @@ namespace scratchbird::engine
         std::vector<std::vector<Value>> rows_;
         std::size_t current_row_;
         bool opened_;
+
+        // Helper methods
+        void create_mock_data();
     };
 
     // Hash join node for equi-joins
