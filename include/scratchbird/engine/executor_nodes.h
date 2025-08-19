@@ -179,6 +179,90 @@ namespace scratchbird::engine
         bool opened_;
     };
 
+    // Sort node for ORDER BY clauses
+    class SortNode : public ExecutorNode
+    {
+      public:
+        struct SortKey {
+            std::string column;
+            bool ascending{true};
+            bool nulls_first{false};
+        };
+
+        SortNode(std::unique_ptr<ExecutorNode> child, const std::vector<SortKey>& sort_keys);
+
+        void open(ExecutorContext& ctx) override;
+        bool next(Tuple& out) override;
+        void close() override;
+        std::vector<std::string> columns() const override;
+
+      private:
+        std::unique_ptr<ExecutorNode> child_;
+        std::vector<SortKey> sort_keys_;
+        std::vector<std::string> columns_;
+
+        // Runtime state
+        std::vector<Tuple> sorted_tuples_;
+        std::size_t current_index_;
+        bool materialized_;
+        bool opened_;
+
+        // Helper methods
+        bool compare_tuples(const Tuple& left, const Tuple& right);
+        std::vector<std::size_t> get_sort_column_indices();
+    };
+
+    // Aggregation node for GROUP BY and aggregate functions
+    class AggregationNode : public ExecutorNode
+    {
+      public:
+        struct AggregateFunction {
+            enum Type { Count, Sum, Avg, Min, Max, CountStar };
+            Type type;
+            std::string column; // empty for COUNT(*)
+            std::string alias;  // output column name
+        };
+
+        AggregationNode(std::unique_ptr<ExecutorNode> child,
+                        const std::vector<std::string>& group_by_columns,
+                        const std::vector<AggregateFunction>& aggregates);
+
+        void open(ExecutorContext& ctx) override;
+        bool next(Tuple& out) override;
+        void close() override;
+        std::vector<std::string> columns() const override;
+
+      private:
+        std::unique_ptr<ExecutorNode> child_;
+        std::vector<std::string> group_by_columns_;
+        std::vector<AggregateFunction> aggregates_;
+        std::vector<std::string> columns_;
+
+        // Runtime state
+        struct GroupState {
+            std::uint64_t count{0};
+            double sum{0.0};
+            double min_val{std::numeric_limits<double>::max()};
+            double max_val{std::numeric_limits<double>::lowest()};
+            std::string min_str;
+            std::string max_str;
+            bool first_value{true};
+        };
+
+        std::unordered_map<std::string, GroupState> groups_;
+        std::unordered_map<std::string, GroupState>::iterator current_group_;
+        bool materialized_;
+        bool opened_;
+
+        // Helper methods
+        std::string build_group_key(const Tuple& tuple);
+        std::vector<std::size_t> get_group_column_indices();
+        std::vector<std::size_t> get_aggregate_column_indices();
+        void update_group_state(GroupState& state, const AggregateFunction& agg,
+                                const Value& value);
+        Value compute_aggregate_result(const GroupState& state, const AggregateFunction& agg);
+    };
+
     // Project node for column projection and computed expressions
     class ProjectNode : public ExecutorNode
     {

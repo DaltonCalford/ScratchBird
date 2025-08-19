@@ -622,4 +622,455 @@ namespace scratchbird::engine
         return columns_;
     }
 
+    // ========== SortNode Implementation ==========
+
+    SortNode::SortNode(std::unique_ptr<ExecutorNode> child, const std::vector<SortKey>& sort_keys)
+        : child_(std::move(child)), sort_keys_(sort_keys), current_index_(0), materialized_(false),
+          opened_(false)
+    {
+    }
+
+    void SortNode::open(ExecutorContext& ctx)
+    {
+        auto start_time = std::chrono::steady_clock::now();
+
+        child_->open(ctx);
+        columns_ = child_->columns();
+
+        // Materialize all input tuples
+        sorted_tuples_.clear();
+        Tuple tuple;
+        while (child_->next(tuple)) {
+            instr_.input_rows++;
+            sorted_tuples_.push_back(tuple);
+        }
+
+        // Sort the tuples
+        std::sort(
+            sorted_tuples_.begin(), sorted_tuples_.end(),
+            [this](const Tuple& left, const Tuple& right) { return compare_tuples(left, right); });
+
+        current_index_ = 0;
+        materialized_ = true;
+        opened_ = true;
+
+        auto end_time = std::chrono::steady_clock::now();
+        instr_.wall_time_ms +=
+            std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time).count();
+    }
+
+    bool SortNode::next(Tuple& out)
+    {
+        if (!opened_ || !materialized_ || current_index_ >= sorted_tuples_.size()) {
+            return false;
+        }
+
+        out = sorted_tuples_[current_index_++];
+        instr_.output_rows++;
+        return true;
+    }
+
+    void SortNode::close()
+    {
+        if (opened_) {
+            child_->close();
+            sorted_tuples_.clear();
+            materialized_ = false;
+            opened_ = false;
+        }
+    }
+
+    std::vector<std::string> SortNode::columns() const
+    {
+        return columns_;
+    }
+
+    bool SortNode::compare_tuples(const Tuple& left, const Tuple& right)
+    {
+        auto sort_indices = get_sort_column_indices();
+
+        for (std::size_t i = 0; i < sort_keys_.size() && i < sort_indices.size(); ++i) {
+            std::size_t col_idx = sort_indices[i];
+            const auto& sort_key = sort_keys_[i];
+
+            if (col_idx >= left.size() || col_idx >= right.size()) {
+                continue;
+            }
+
+            const Value& left_val = left[col_idx];
+            const Value& right_val = right[col_idx];
+
+            // Handle NULL values
+            if (left_val.is_null && right_val.is_null) {
+                continue; // Equal, check next sort key
+            }
+            if (left_val.is_null) {
+                return sort_key.nulls_first;
+            }
+            if (right_val.is_null) {
+                return !sort_key.nulls_first;
+            }
+
+            // Compare values (try numeric first, then string)
+            int cmp = 0;
+            try {
+                double left_num = std::stod(left_val.bytes);
+                double right_num = std::stod(right_val.bytes);
+                if (left_num < right_num)
+                    cmp = -1;
+                else if (left_num > right_num)
+                    cmp = 1;
+                else
+                    cmp = 0;
+            } catch (...) {
+                // Fall back to string comparison
+                cmp = left_val.bytes.compare(right_val.bytes);
+            }
+
+            if (cmp != 0) {
+                return sort_key.ascending ? (cmp < 0) : (cmp > 0);
+            }
+        }
+
+        return false; // Equal
+    }
+
+    std::vector<std::size_t> SortNode::get_sort_column_indices()
+    {
+        std::vector<std::size_t> indices;
+        for (const auto& sort_key : sort_keys_) {
+            auto it = std::find(columns_.begin(), columns_.end(), sort_key.column);
+            if (it != columns_.end()) {
+                indices.push_back(std::distance(columns_.begin(), it));
+            }
+        }
+        return indices;
+    }
+
+    // ========== AggregationNode Implementation ==========
+
+    AggregationNode::AggregationNode(std::unique_ptr<ExecutorNode> child,
+                                     const std::vector<std::string>& group_by_columns,
+                                     const std::vector<AggregateFunction>& aggregates)
+        : child_(std::move(child)), group_by_columns_(group_by_columns), aggregates_(aggregates),
+          materialized_(false), opened_(false)
+    {
+    }
+
+    void AggregationNode::open(ExecutorContext& ctx)
+    {
+        auto start_time = std::chrono::steady_clock::now();
+
+        child_->open(ctx);
+
+        // Build output column names
+        columns_.clear();
+        for (const auto& group_col : group_by_columns_) {
+            columns_.push_back(group_col);
+        }
+        for (const auto& agg : aggregates_) {
+            if (!agg.alias.empty()) {
+                columns_.push_back(agg.alias);
+            } else {
+                // Generate default name
+                std::string default_name;
+                switch (agg.type) {
+                case AggregateFunction::Count:
+                    default_name = "count(" + agg.column + ")";
+                    break;
+                case AggregateFunction::Sum:
+                    default_name = "sum(" + agg.column + ")";
+                    break;
+                case AggregateFunction::Avg:
+                    default_name = "avg(" + agg.column + ")";
+                    break;
+                case AggregateFunction::Min:
+                    default_name = "min(" + agg.column + ")";
+                    break;
+                case AggregateFunction::Max:
+                    default_name = "max(" + agg.column + ")";
+                    break;
+                case AggregateFunction::CountStar:
+                    default_name = "count(*)";
+                    break;
+                }
+                columns_.push_back(default_name);
+            }
+        }
+
+        // Process all input tuples and build groups
+        groups_.clear();
+        Tuple tuple;
+        while (child_->next(tuple)) {
+            instr_.input_rows++;
+
+            std::string group_key = build_group_key(tuple);
+            GroupState& state = groups_[group_key];
+
+            // Update aggregate states
+            auto agg_indices = get_aggregate_column_indices();
+            for (std::size_t i = 0; i < aggregates_.size(); ++i) {
+                const auto& agg = aggregates_[i];
+
+                if (agg.type == AggregateFunction::CountStar) {
+                    state.count++;
+                } else if (i < agg_indices.size()) {
+                    std::size_t col_idx = agg_indices[i];
+                    if (col_idx < tuple.size()) {
+                        update_group_state(state, agg, tuple[col_idx]);
+                    }
+                }
+            }
+        }
+
+        current_group_ = groups_.begin();
+        materialized_ = true;
+        opened_ = true;
+
+        auto end_time = std::chrono::steady_clock::now();
+        instr_.wall_time_ms +=
+            std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time).count();
+    }
+
+    bool AggregationNode::next(Tuple& out)
+    {
+        if (!opened_ || !materialized_ || current_group_ == groups_.end()) {
+            return false;
+        }
+
+        out.clear();
+
+        // Add group by column values (decode from group key)
+        if (!group_by_columns_.empty()) {
+            // For simplicity, we'll reconstruct from the first tuple of this group
+            // In a real implementation, we'd store the group values separately
+            std::vector<std::string> group_parts;
+            std::string group_key = current_group_->first;
+
+            // Split group key by delimiter (simple implementation)
+            std::istringstream iss(group_key);
+            std::string part;
+            while (std::getline(iss, part, '|')) {
+                group_parts.push_back(part);
+            }
+
+            for (std::size_t i = 0; i < group_by_columns_.size() && i < group_parts.size(); ++i) {
+                Value val;
+                val.bytes = group_parts[i];
+                val.is_null = group_parts[i].empty();
+                out.push_back(val);
+            }
+        }
+
+        // Add aggregate results
+        const GroupState& state = current_group_->second;
+        for (const auto& agg : aggregates_) {
+            Value result = compute_aggregate_result(state, agg);
+            out.push_back(result);
+        }
+
+        ++current_group_;
+        instr_.output_rows++;
+        return true;
+    }
+
+    void AggregationNode::close()
+    {
+        if (opened_) {
+            child_->close();
+            groups_.clear();
+            materialized_ = false;
+            opened_ = false;
+        }
+    }
+
+    std::vector<std::string> AggregationNode::columns() const
+    {
+        return columns_;
+    }
+
+    std::string AggregationNode::build_group_key(const Tuple& tuple)
+    {
+        if (group_by_columns_.empty()) {
+            return ""; // Single group for no GROUP BY
+        }
+
+        auto group_indices = get_group_column_indices();
+        std::ostringstream key;
+
+        for (std::size_t i = 0; i < group_indices.size(); ++i) {
+            if (i > 0)
+                key << "|";
+
+            std::size_t col_idx = group_indices[i];
+            if (col_idx < tuple.size()) {
+                key << tuple[col_idx].bytes;
+            }
+        }
+
+        return key.str();
+    }
+
+    std::vector<std::size_t> AggregationNode::get_group_column_indices()
+    {
+        std::vector<std::size_t> indices;
+        auto child_cols = child_->columns();
+
+        for (const auto& group_col : group_by_columns_) {
+            auto it = std::find(child_cols.begin(), child_cols.end(), group_col);
+            if (it != child_cols.end()) {
+                indices.push_back(std::distance(child_cols.begin(), it));
+            }
+        }
+        return indices;
+    }
+
+    std::vector<std::size_t> AggregationNode::get_aggregate_column_indices()
+    {
+        std::vector<std::size_t> indices;
+        auto child_cols = child_->columns();
+
+        for (const auto& agg : aggregates_) {
+            if (agg.type == AggregateFunction::CountStar) {
+                indices.push_back(0); // Dummy index for COUNT(*)
+            } else {
+                auto it = std::find(child_cols.begin(), child_cols.end(), agg.column);
+                if (it != child_cols.end()) {
+                    indices.push_back(std::distance(child_cols.begin(), it));
+                } else {
+                    indices.push_back(0); // Default index
+                }
+            }
+        }
+        return indices;
+    }
+
+    void AggregationNode::update_group_state(GroupState& state, const AggregateFunction& agg,
+                                             const Value& value)
+    {
+        if (value.is_null) {
+            return; // Skip NULL values for most aggregates
+        }
+
+        switch (agg.type) {
+        case AggregateFunction::Count:
+            state.count++;
+            break;
+
+        case AggregateFunction::Sum:
+        case AggregateFunction::Avg: {
+            try {
+                double num_val = std::stod(value.bytes);
+                state.sum += num_val;
+                state.count++; // For average calculation
+            } catch (...) {
+                // Skip non-numeric values
+            }
+            break;
+        }
+
+        case AggregateFunction::Min: {
+            if (state.first_value) {
+                try {
+                    state.min_val = std::stod(value.bytes);
+                } catch (...) {
+                    state.min_str = value.bytes;
+                }
+                state.first_value = false;
+            } else {
+                try {
+                    double num_val = std::stod(value.bytes);
+                    if (num_val < state.min_val) {
+                        state.min_val = num_val;
+                    }
+                } catch (...) {
+                    if (state.min_str.empty() || value.bytes < state.min_str) {
+                        state.min_str = value.bytes;
+                    }
+                }
+            }
+            break;
+        }
+
+        case AggregateFunction::Max: {
+            if (state.first_value) {
+                try {
+                    state.max_val = std::stod(value.bytes);
+                } catch (...) {
+                    state.max_str = value.bytes;
+                }
+                state.first_value = false;
+            } else {
+                try {
+                    double num_val = std::stod(value.bytes);
+                    if (num_val > state.max_val) {
+                        state.max_val = num_val;
+                    }
+                } catch (...) {
+                    if (state.max_str.empty() || value.bytes > state.max_str) {
+                        state.max_str = value.bytes;
+                    }
+                }
+            }
+            break;
+        }
+
+        case AggregateFunction::CountStar:
+            // Handled separately in main loop
+            break;
+        }
+    }
+
+    Value AggregationNode::compute_aggregate_result(const GroupState& state,
+                                                    const AggregateFunction& agg)
+    {
+        Value result;
+        result.is_null = false;
+
+        switch (agg.type) {
+        case AggregateFunction::Count:
+        case AggregateFunction::CountStar:
+            result.bytes = std::to_string(state.count);
+            break;
+
+        case AggregateFunction::Sum:
+            result.bytes = std::to_string(state.sum);
+            break;
+
+        case AggregateFunction::Avg:
+            if (state.count > 0) {
+                result.bytes = std::to_string(state.sum / state.count);
+            } else {
+                result.is_null = true;
+            }
+            break;
+
+        case AggregateFunction::Min:
+            if (!state.first_value) {
+                if (!state.min_str.empty()) {
+                    result.bytes = state.min_str;
+                } else {
+                    result.bytes = std::to_string(state.min_val);
+                }
+            } else {
+                result.is_null = true;
+            }
+            break;
+
+        case AggregateFunction::Max:
+            if (!state.first_value) {
+                if (!state.max_str.empty()) {
+                    result.bytes = state.max_str;
+                } else {
+                    result.bytes = std::to_string(state.max_val);
+                }
+            } else {
+                result.is_null = true;
+            }
+            break;
+        }
+
+        return result;
+    }
+
 } // namespace scratchbird::engine
