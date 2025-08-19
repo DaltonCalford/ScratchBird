@@ -20,6 +20,12 @@ namespace scratchbird
             if (s == "select 1" || s == "select\n1" || s == "select\t1") {
                 ast.kind = NodeKind::SelectLiteral;
                 ast.literal_value = 1;
+            } else if (s.rfind("select ", 0) == 0 || s.rfind("with ", 0) == 0 ||
+                       s.find(" union ") != std::string::npos ||
+                       s.find(" intersect ") != std::string::npos ||
+                       s.find(" except ") != std::string::npos) {
+                ast.kind = NodeKind::SelectQuery;
+                ast.select_sql = sql;
             } else if (s.rfind("create database", 0) == 0 || s.rfind("alter database", 0) == 0 ||
                        s.rfind("drop database", 0) == 0 || s.rfind("connect", 0) == 0 ||
                        s.rfind("disconnect", 0) == 0 || s.rfind("set names", 0) == 0 ||
