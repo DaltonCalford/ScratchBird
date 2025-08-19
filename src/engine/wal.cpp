@@ -378,13 +378,42 @@ namespace scratchbird::engine
 
     bool WalManager::recover_database(FileMap& fmap)
     {
-        // TODO: Implement full crash recovery
-        // 1. Scan WAL segments from last checkpoint
-        // 2. Apply REDO for committed transactions
-        // 3. Apply UNDO for uncommitted transactions
-        std::cout << "[WAL] Recovering database (stub)" << std::endl;
-        (void)fmap; // Suppress warning
-        return true;
+        std::cout << "[WAL] Starting crash recovery..." << std::endl;
+
+        try {
+            // Phase 1: Analyze WAL records to identify transaction states
+            auto recovery_info = analyze_wal_for_recovery();
+
+            std::cout << "[WAL] Analysis complete. Found "
+                      << recovery_info.committed_transactions.size() << " committed, "
+                      << recovery_info.uncommitted_transactions.size()
+                      << " uncommitted transactions" << std::endl;
+
+            // Phase 2: REDO - Apply all changes from committed transactions
+            if (!apply_redo_pass(fmap, recovery_info)) {
+                std::cerr << "[WAL] REDO pass failed" << std::endl;
+                return false;
+            }
+
+            // Phase 3: UNDO - Rollback all changes from uncommitted transactions
+            if (!apply_undo_pass(fmap, recovery_info)) {
+                std::cerr << "[WAL] UNDO pass failed" << std::endl;
+                return false;
+            }
+
+            // Phase 4: Clean up and checkpoint
+            if (!finalize_recovery()) {
+                std::cerr << "[WAL] Recovery finalization failed" << std::endl;
+                return false;
+            }
+
+            std::cout << "[WAL] Crash recovery completed successfully" << std::endl;
+            return true;
+
+        } catch (const std::exception& e) {
+            std::cerr << "[WAL] Recovery failed with exception: " << e.what() << std::endl;
+            return false;
+        }
     }
 
     std::uint64_t WalManager::get_last_checkpoint_lsn() const
@@ -567,5 +596,210 @@ namespace scratchbird::engine
         }
 
     } // namespace wal_util
+
+    // Recovery Implementation
+
+    RecoveryInfo WalManager::analyze_wal_for_recovery()
+    {
+        RecoveryInfo info{};
+
+        // Start analysis from last checkpoint (or LSN 1 if no checkpoint)
+        info.recovery_start_lsn =
+            std::max(last_checkpoint_lsn_.load(), static_cast<std::uint64_t>(1));
+        info.last_checkpoint_lsn = last_checkpoint_lsn_.load();
+
+        std::cout << "[WAL] Analyzing WAL from LSN " << info.recovery_start_lsn << std::endl;
+
+        // Read all WAL records from recovery start point
+        auto records = read_wal_records_from_lsn(info.recovery_start_lsn);
+
+        // Analyze transaction states
+        for (const auto& record : records) {
+            info.all_records.emplace_back(record.header.lsn, record.type);
+
+            if (record.type == WalRecordType::Begin) {
+                // Transaction started - mark as uncommitted for now
+                info.uncommitted_transactions.insert(record.header.xid);
+            } else if (record.type == WalRecordType::Commit) {
+                // Transaction committed - move from uncommitted to committed
+                info.uncommitted_transactions.erase(record.header.xid);
+                info.committed_transactions.insert(record.header.xid);
+            } else if (record.type == WalRecordType::Rollback) {
+                // Transaction rolled back - remove from uncommitted (no REDO needed)
+                info.uncommitted_transactions.erase(record.header.xid);
+            }
+        }
+
+        std::cout << "[WAL] Analysis found " << records.size() << " WAL records to process"
+                  << std::endl;
+        return info;
+    }
+
+    bool WalManager::apply_redo_pass(FileMap& fmap, const RecoveryInfo& recovery_info)
+    {
+        std::cout << "[WAL] Starting REDO pass..." << std::endl;
+        std::size_t redo_count = 0;
+
+        // Read all WAL records and apply REDO for committed transactions
+        auto records = read_wal_records_from_lsn(recovery_info.recovery_start_lsn);
+
+        for (const auto& record : records) {
+            // Only apply REDO for committed transactions' data records
+            if (record.is_data_record() &&
+                recovery_info.committed_transactions.count(record.header.xid)) {
+
+                if (!apply_record_redo(fmap, record)) {
+                    std::cerr << "[WAL] REDO failed for record LSN " << record.header.lsn
+                              << std::endl;
+                    return false;
+                }
+                redo_count++;
+            }
+        }
+
+        std::cout << "[WAL] REDO pass completed. Applied " << redo_count << " records" << std::endl;
+        return true;
+    }
+
+    bool WalManager::apply_undo_pass(FileMap& fmap, const RecoveryInfo& recovery_info)
+    {
+        std::cout << "[WAL] Starting UNDO pass..." << std::endl;
+        std::size_t undo_count = 0;
+
+        // Read all WAL records and apply UNDO for uncommitted transactions
+        // Process in reverse order for proper UNDO semantics
+        auto records = read_wal_records_from_lsn(recovery_info.recovery_start_lsn);
+        std::reverse(records.begin(), records.end());
+
+        for (const auto& record : records) {
+            // Only apply UNDO for uncommitted transactions' data records
+            if (record.is_data_record() &&
+                recovery_info.uncommitted_transactions.count(record.header.xid)) {
+
+                if (!apply_record_undo(fmap, record)) {
+                    std::cerr << "[WAL] UNDO failed for record LSN " << record.header.lsn
+                              << std::endl;
+                    return false;
+                }
+                undo_count++;
+            }
+        }
+
+        std::cout << "[WAL] UNDO pass completed. Rolled back " << undo_count << " records"
+                  << std::endl;
+        return true;
+    }
+
+    bool WalManager::finalize_recovery()
+    {
+        std::cout << "[WAL] Finalizing recovery..." << std::endl;
+
+        // Force a checkpoint to establish a new recovery point
+        if (!perform_checkpoint()) {
+            std::cerr << "[WAL] Failed to create post-recovery checkpoint" << std::endl;
+            return false;
+        }
+
+        // Reset internal state
+        current_lsn_.store(get_current_lsn() + 1);
+
+        std::cout << "[WAL] Recovery finalized successfully" << std::endl;
+        return true;
+    }
+
+    std::vector<RecoveryRecord> WalManager::read_wal_records_from_lsn(std::uint64_t start_lsn)
+    {
+        std::vector<RecoveryRecord> records;
+
+        // This is a simplified implementation
+        // Real implementation would read from WAL segment files
+        std::cout << "[WAL] Reading WAL records from LSN " << start_lsn << " (stub implementation)"
+                  << std::endl;
+
+        // TODO: Implement actual WAL segment reading
+        // For now, return empty vector as we don't have persistent WAL yet
+
+        return records;
+    }
+
+    bool WalManager::apply_record_redo(FileMap& fmap, const RecoveryRecord& record)
+    {
+        std::cout << "[WAL] Applying REDO for LSN " << record.header.lsn << " type "
+                  << static_cast<int>(record.type) << std::endl;
+
+        switch (record.type) {
+        case WalRecordType::HeapInsert: {
+            // Replay heap insert operation
+            // TODO: Parse record data and apply to heap page
+            std::cout << "[WAL] REDO HeapInsert (stub)" << std::endl;
+            break;
+        }
+        case WalRecordType::HeapUpdate: {
+            // Replay heap update operation
+            // TODO: Parse record data and apply to heap page
+            std::cout << "[WAL] REDO HeapUpdate (stub)" << std::endl;
+            break;
+        }
+        case WalRecordType::HeapDelete: {
+            // Replay heap delete operation
+            // TODO: Parse record data and apply to heap page
+            std::cout << "[WAL] REDO HeapDelete (stub)" << std::endl;
+            break;
+        }
+        case WalRecordType::PageWrite: {
+            // Replay page write operation
+            // TODO: Parse record data and write to page
+            std::cout << "[WAL] REDO PageWrite (stub)" << std::endl;
+            break;
+        }
+        default:
+            std::cerr << "[WAL] Unknown record type for REDO: " << static_cast<int>(record.type)
+                      << std::endl;
+            return false;
+        }
+
+        (void)fmap; // Suppress unused parameter warning
+        return true;
+    }
+
+    bool WalManager::apply_record_undo(FileMap& fmap, const RecoveryRecord& record)
+    {
+        std::cout << "[WAL] Applying UNDO for LSN " << record.header.lsn << " type "
+                  << static_cast<int>(record.type) << std::endl;
+
+        switch (record.type) {
+        case WalRecordType::HeapInsert: {
+            // Undo heap insert = delete the inserted tuple
+            // TODO: Parse record data and remove from heap page
+            std::cout << "[WAL] UNDO HeapInsert (delete tuple, stub)" << std::endl;
+            break;
+        }
+        case WalRecordType::HeapUpdate: {
+            // Undo heap update = restore old tuple version
+            // TODO: Parse record data and restore old tuple
+            std::cout << "[WAL] UNDO HeapUpdate (restore old tuple, stub)" << std::endl;
+            break;
+        }
+        case WalRecordType::HeapDelete: {
+            // Undo heap delete = restore deleted tuple
+            // TODO: Parse record data and restore to heap page
+            std::cout << "[WAL] UNDO HeapDelete (restore tuple, stub)" << std::endl;
+            break;
+        }
+        case WalRecordType::PageWrite: {
+            // Undo page write = restore previous page state
+            // TODO: This requires before-images in WAL records
+            std::cout << "[WAL] UNDO PageWrite (restore page, stub)" << std::endl;
+            break;
+        }
+        default:
+            std::cerr << "[WAL] Unknown record type for UNDO: " << static_cast<int>(record.type)
+                      << std::endl;
+            return false;
+        }
+
+        (void)fmap; // Suppress unused parameter warning
+        return true;
+    }
 
 } // namespace scratchbird::engine

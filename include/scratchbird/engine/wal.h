@@ -9,6 +9,7 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 namespace scratchbird::engine
@@ -125,6 +126,35 @@ namespace scratchbird::engine
         std::vector<std::uint8_t> key_bytes;
         std::uint64_t row_id = 0;
         // Record data follows
+    };
+
+    // Recovery analysis information
+    struct RecoveryInfo {
+        std::unordered_set<std::uint64_t> committed_transactions;
+        std::unordered_set<std::uint64_t> uncommitted_transactions;
+        std::vector<std::pair<std::uint64_t, WalRecordType>> all_records; // LSN -> Record Type
+        std::uint64_t last_checkpoint_lsn = 0;
+        std::uint64_t recovery_start_lsn = 0;
+    };
+
+    // Individual WAL record for recovery processing
+    struct RecoveryRecord {
+        WalRecordHeader header;
+        WalRecordType type;
+        std::vector<std::uint8_t> data;
+
+        // Helper methods for different record types
+        bool is_transaction_record() const
+        {
+            return type == WalRecordType::Begin || type == WalRecordType::Commit ||
+                   type == WalRecordType::Rollback;
+        }
+
+        bool is_data_record() const
+        {
+            return type == WalRecordType::HeapInsert || type == WalRecordType::HeapUpdate ||
+                   type == WalRecordType::HeapDelete || type == WalRecordType::PageWrite;
+        }
     };
 
     // WAL Configuration
@@ -247,6 +277,16 @@ namespace scratchbird::engine
         std::uint64_t write_record(const void* record, std::uint32_t size);
         bool write_to_segment(const void* data, std::uint32_t size);
         bool rotate_segment();
+
+        // Recovery helper methods
+        RecoveryInfo analyze_wal_for_recovery();
+        bool apply_redo_pass(FileMap& fmap, const RecoveryInfo& recovery_info);
+        bool apply_undo_pass(FileMap& fmap, const RecoveryInfo& recovery_info);
+        bool finalize_recovery();
+
+        std::vector<RecoveryRecord> read_wal_records_from_lsn(std::uint64_t start_lsn);
+        bool apply_record_redo(FileMap& fmap, const RecoveryRecord& record);
+        bool apply_record_undo(FileMap& fmap, const RecoveryRecord& record);
         std::uint16_t calculate_checksum(const void* data, std::uint32_t size);
         bool ensure_space(std::uint32_t required_bytes);
 
