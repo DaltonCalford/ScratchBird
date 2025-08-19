@@ -64,6 +64,7 @@ add_library(
   src/engine/parser_session.cpp
   src/engine/planner.cpp
   src/engine/resolver.cpp
+  src/engine/segment_monitor.cpp
   src/engine/stats.cpp
   src/engine/storage.cpp
   src/engine/system_oids.cpp
@@ -76,6 +77,10 @@ add_library(
 add_executable(scratchbird src/main.cpp src/scratchbird.cpp)
 
 target_link_libraries(scratchbird scratchbird_engine)
+
+# Database Space Monitor Utility
+add_executable(dbspace src/dbspace.cpp)
+target_link_libraries(dbspace scratchbird_engine)
 
 # Tests
 if(SCRATCHBIRD_BUILD_TESTS)
@@ -199,4 +204,8 @@ if(SCRATCHBIRD_BUILD_TESTS)
   add_executable(having_tests tests/having_tests.cpp)
   target_link_libraries(having_tests scratchbird_engine)
   add_test(NAME having_tests COMMAND having_tests)
+
+  add_executable(fk_set_default_tests tests/fk_set_default_tests.cpp)
+  target_link_libraries(fk_set_default_tests scratchbird_engine)
+  add_test(NAME fk_set_default_tests COMMAND fk_set_default_tests)
 endif()
