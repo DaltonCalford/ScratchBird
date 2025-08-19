@@ -47,7 +47,6 @@ add_library(
   src/engine/generators.cpp
   src/engine/header.cpp
   src/engine/heap.cpp
-  src/engine/heap_validator.cpp
   src/engine/index_btree.cpp
   src/engine/index_build.cpp
   src/engine/index.cpp
@@ -79,7 +78,9 @@ add_library(
   src/engine/trigger_engine.cpp
   src/engine/wal_manager.cpp
   src/engine/multi_segment_manager.cpp
-  src/engine/alter_table_manager.cpp)
+  src/engine/alter_table_manager.cpp
+  src/engine/security_manager.cpp
+  src/engine/serializable_isolation.cpp)
 
 # Main ScratchBird executable
 add_executable(scratchbird src/main.cpp src/scratchbird.cpp)
@@ -256,5 +257,14 @@ if(SCRATCHBIRD_BUILD_TESTS)
 
   add_executable(alter_table_tests tests/alter_table_tests.cpp)
   target_link_libraries(alter_table_tests scratchbird_engine)
+
+  add_executable(security_tests tests/security_tests.cpp)
+  target_link_libraries(security_tests scratchbird_engine)
+
+  add_executable(serializable_tests tests/serializable_tests.cpp)
+  target_link_libraries(serializable_tests scratchbird_engine)
+
+  add_executable(serializable_simple_tests tests/serializable_simple_tests.cpp)
+  target_link_libraries(serializable_simple_tests scratchbird_engine)
   add_test(NAME fk_set_default_tests COMMAND fk_set_default_tests)
 endif()
