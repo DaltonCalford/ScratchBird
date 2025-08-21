@@ -2606,6 +2606,8 @@ namespace scratchbird
 
             const SelectQuery& q = q_in;
             if (!q.ok) {
+                r.success = false;
+                r.error_message = q.error;
                 r.columns = {"error"};
                 r.rows = {{q.error}};
                 return r;
