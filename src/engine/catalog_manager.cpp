@@ -1342,16 +1342,19 @@ namespace scratchbird::engine
         std::string base3 = (slash3 == std::string::npos) ? db_path_ : db_path_.substr(slash3 + 1);
         fmap.set_base_path(dir3, base3);
         TupleLayout column_layout{};
-        column_layout.attrs = {{AttrType::VarBytes, 0, false, false},
-                               {AttrType::Int64, 8, true, false},
-                               {AttrType::VarBytes, 0, false, false},
-                               {AttrType::Int64, 8, true, false}}; // not_null
+        column_layout.attrs = {{AttrType::VarBytes, 0, false, false}, // 0: relation_oid
+                               {AttrType::Int64, 8, true, false},     // 1: position
+                               {AttrType::VarBytes, 0, false, false}, // 2: name
+                               {AttrType::Int64, 8, true, false},     // 3: not_null (0/1)
+                               {AttrType::VarBytes, 0, false, true},  // 4: domain_oid (nullable)
+                               {AttrType::VarBytes, 0, false, true},  // 5: type_info (nullable)
+                               {AttrType::VarBytes, 0, false, true}}; // 6: default_expr (nullable)
         auto col_rel =
             HeapRelation::open(std::move(fmap), ps, *hi.sdb_column_root_page, column_layout);
         auto scan = col_rel.open_scan();
         std::vector<Value> row;
         while (scan.next(row, nullptr)) {
-            if (row.size() < 4)
+            if (row.size() < 7)
                 continue;
             if (row[0].is_null || row[0].bytes.size() != 16)
                 continue;
@@ -1368,7 +1371,8 @@ namespace scratchbird::engine
     bool
     CatalogManager::create_columns(const UuidBytes& relation_oid,
                                    const std::vector<std::pair<std::int64_t, std::string>>& columns,
-                                   const std::vector<std::string>& not_null_columns) const
+                                   const std::vector<std::string>& not_null_columns,
+                                   const std::unordered_map<std::string, std::string>& column_defaults) const
     {
         FileOptions fo{};
         fo.direct_io = false;
@@ -1391,10 +1395,13 @@ namespace scratchbird::engine
         if (!hi.sdb_column_root_page)
             return false;
         TupleLayout col_layout{};
-        col_layout.attrs = {{AttrType::VarBytes, 0, false, false}, // relation_oid
-                            {AttrType::Int64, 8, true, false},     // position
-                            {AttrType::VarBytes, 0, false, false}, // name
-                            {AttrType::Int64, 8, true, false}};    // not_null (0/1)
+        col_layout.attrs = {{AttrType::VarBytes, 0, false, false}, // 0: relation_oid
+                            {AttrType::Int64, 8, true, false},     // 1: position
+                            {AttrType::VarBytes, 0, false, false}, // 2: name
+                            {AttrType::Int64, 8, true, false},     // 3: not_null (0/1)
+                            {AttrType::VarBytes, 0, false, true},  // 4: domain_oid (nullable)
+                            {AttrType::VarBytes, 0, false, true},  // 5: type_info (nullable)
+                            {AttrType::VarBytes, 0, false, true}}; // 6: default_expr (nullable)
         FileMap fmap_c(layout);
         fmap_c.set_base_path(dir, base);
         auto col_rel =
@@ -1418,10 +1425,23 @@ namespace scratchbird::engine
             return v;
         };
         std::unordered_set<std::string> nn(not_null_columns.begin(), not_null_columns.end());
+        auto make_null = []() {
+            Value v{};
+            v.is_null = true;
+            return v;
+        };
         for (auto& [pos, name] : columns) {
             std::uint64_t notnull = nn.count(name) ? 1ull : 0ull;
+            
+            // Check if column has a default value
+            Value default_val = make_null();
+            auto it = column_defaults.find(name);
+            if (it != column_defaults.end()) {
+                default_val = make_str(it->second);
+            }
+            
             col_rel.insert({make_uuid_val(relation_oid), make_i64(pos), make_str(name),
-                            make_i64((std::int64_t)notnull)});
+                            make_i64((std::int64_t)notnull), make_null(), make_null(), default_val});
         }
         return true;
     }
@@ -3657,7 +3677,7 @@ namespace scratchbird::engine
 
         // Create the new column entry
         std::vector<std::pair<std::int64_t, std::string>> new_cols = {{new_position, colname}};
-        return create_columns(*rel_oid, new_cols, {});
+        return create_columns(*rel_oid, new_cols, {}, {});
     }
 
     bool CatalogManager::drop_column(const std::optional<UuidBytes>& schema_oid,
