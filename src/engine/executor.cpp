@@ -4562,18 +4562,51 @@ namespace scratchbird
                     r.rows = {{"ALTER TABLE accepted: columns and constraints updated"}};
                     return r;
                 }
-                // basic column name extraction: first token of each column def
+                // Parse column definitions to extract names and defaults
                 std::vector<std::string> colnames;
+                std::unordered_map<std::string, std::string> col_defaults;
                 {
                     std::string s = ast.ddlTable.column_defs_raw;
                     std::string cur;
                     int d = 0;
-                    auto push_name = [&](const std::string& def) {
+                    auto parse_column_def = [&](const std::string& def) {
+                        // Extract column name (first token)
                         size_t a = def.find_first_not_of(" \t\n");
                         size_t b = def.find_first_of(" \t\n", a == std::string::npos ? 0 : a + 1);
-                        if (a != std::string::npos)
-                            colnames.push_back(
-                                def.substr(a, (b == std::string::npos ? def.size() : b) - a));
+                        if (a == std::string::npos)
+                            return;
+                        std::string name = def.substr(a, (b == std::string::npos ? def.size() : b) - a);
+                        colnames.push_back(name);
+                        
+                        // Look for DEFAULT clause
+                        std::string lower_def = def;
+                        std::transform(lower_def.begin(), lower_def.end(), lower_def.begin(),
+                                       [](unsigned char c) { return char(std::tolower(c)); });
+                        size_t default_pos = lower_def.find(" default ");
+                        if (default_pos != std::string::npos) {
+                            size_t value_start = default_pos + 9; // length of " default "
+                            size_t value_end = def.size();
+                            
+                            // Find end of default value (before next keyword like NOT NULL, etc.)
+                            std::vector<std::string> keywords = {" not ", " null", " check", " references", " constraint"};
+                            for (const auto& kw : keywords) {
+                                size_t kw_pos = lower_def.find(kw, value_start);
+                                if (kw_pos != std::string::npos && kw_pos < value_end) {
+                                    value_end = kw_pos;
+                                }
+                            }
+                            
+                            if (value_start < value_end) {
+                                std::string default_val = def.substr(value_start, value_end - value_start);
+                                // Trim whitespace
+                                size_t start = default_val.find_first_not_of(" \t\n");
+                                size_t end = default_val.find_last_not_of(" \t\n");
+                                if (start != std::string::npos && end != std::string::npos) {
+                                    default_val = default_val.substr(start, end - start + 1);
+                                    col_defaults[name] = default_val;
+                                }
+                            }
+                        }
                     };
                     for (char c : s) {
                         if (c == '(')
@@ -4581,13 +4614,13 @@ namespace scratchbird
                         else if (c == ')' && d > 0)
                             d--;
                         if (c == ',' && d == 0) {
-                            push_name(cur);
+                            parse_column_def(cur);
                             cur.clear();
                         } else
                             cur.push_back(c);
                     }
                     if (!cur.empty())
-                        push_name(cur);
+                        parse_column_def(cur);
                 }
                 std::fprintf(stderr, "[EXEC DDL] CREATE TABLE schema='%s' name='%s' cols=%zu\n",
                              schema.c_str(), relname.c_str(), colnames.size());
@@ -4601,7 +4634,7 @@ namespace scratchbird
                 cols_with_pos.reserve(colnames.size());
                 for (size_t i = 0; i < colnames.size(); ++i)
                     cols_with_pos.emplace_back((std::int64_t)(i + 1), colnames[i]);
-                cm.create_columns(rel_oid, cols_with_pos, ast.ddlTable.not_null_columns);
+                cm.create_columns(rel_oid, cols_with_pos, ast.ddlTable.not_null_columns, col_defaults);
                 // Persist column-level NOT NULL as constraints
                 for (const auto& nncol : ast.ddlTable.not_null_columns) {
                     std::string cname = "nn_" + nncol;

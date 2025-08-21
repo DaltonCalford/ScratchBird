@@ -73,10 +73,11 @@ namespace scratchbird::engine
         std::vector<std::pair<std::int64_t, std::string>>
         list_columns(const UuidBytes& relation_oid) const;
 
-        // Create SDB$COLUMN rows for a relation with NOT NULL flags
+        // Create SDB$COLUMN rows for a relation with NOT NULL flags and defaults
         bool create_columns(const UuidBytes& relation_oid,
                             const std::vector<std::pair<std::int64_t, std::string>>& columns,
-                            const std::vector<std::string>& not_null_columns) const;
+                            const std::vector<std::string>& not_null_columns,
+                            const std::unordered_map<std::string, std::string>& column_defaults = {}) const;
 
         // Phase 5 helpers: resolve relation heap root page and list columns by name
         std::optional<std::uint32_t> get_relation_root_page(const UuidBytes& relation_oid) const;

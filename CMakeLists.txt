@@ -233,6 +233,14 @@ if(SCRATCHBIRD_BUILD_TESTS)
   endif()
   add_test(NAME txn_deadlock_tests COMMAND txn_deadlock_tests)
 
+  add_executable(enhanced_deadlock_tests tests/enhanced_deadlock_tests.cpp)
+  target_link_libraries(enhanced_deadlock_tests scratchbird_engine)
+  if(GTEST_FOUND)
+    target_link_libraries(enhanced_deadlock_tests ${GTEST_LIBRARIES})
+    target_include_directories(enhanced_deadlock_tests PRIVATE ${GTEST_INCLUDE_DIRS})
+  endif()
+  add_test(NAME enhanced_deadlock_tests COMMAND enhanced_deadlock_tests)
+
   add_executable(txn_prepare_scaffold_tests
                  tests/txn_prepare_scaffold_tests.cpp)
   target_link_libraries(txn_prepare_scaffold_tests scratchbird_engine)
