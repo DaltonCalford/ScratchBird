@@ -15,6 +15,8 @@ namespace scratchbird
         struct ExecutionResult {
             std::vector<std::string> columns;
             std::vector<std::vector<std::string>> rows;
+            bool success = true;
+            std::string error_message;
         };
 
         struct NodeActuals {
