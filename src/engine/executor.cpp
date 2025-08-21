@@ -1850,8 +1850,16 @@ namespace scratchbird
                             LockManager::release_write_lock(cr, stmt_xid);
                         }
                     } else if (up == "SET DEFAULT") {
-                        // Apply effective column defaults
-                        auto defaults = cm.get_effective_column_defaults_by_name(soid, rel);
+                        // Apply effective column defaults from child table (not parent)
+                        auto defaults =
+                            cm.get_effective_column_defaults_by_name(soid, fk.child_relation_name);
+                        std::fprintf(stderr,
+                                     "[FK SET DEFAULT] Found %zu defaults for relation '%s'\n",
+                                     defaults.size(), fk.child_relation_name.c_str());
+                        for (const auto& [col, def] : defaults) {
+                            std::fprintf(stderr, "[FK SET DEFAULT] Column '%s' default: '%s'\n",
+                                         col.c_str(), def.c_str());
+                        }
                         for (auto& [cr, cv] : child_matches) {
                             if (!LockManager::acquire_write_lock(cr, stmt_xid)) {
                                 r.columns = {"error"};
@@ -1866,8 +1874,16 @@ namespace scratchbird
                                 Value nv{};
                                 auto dit = defaults.find(cname);
                                 if (dit == defaults.end()) {
+                                    std::fprintf(stderr,
+                                                 "[FK SET DEFAULT] No default found for column "
+                                                 "'%s', setting to NULL\n",
+                                                 cname.c_str());
                                     nv.is_null = true;
                                 } else {
+                                    std::fprintf(
+                                        stderr,
+                                        "[FK SET DEFAULT] Setting column '%s' to default '%s'\n",
+                                        cname.c_str(), dit->second.c_str());
                                     nv.is_null = false;
                                     nv.bytes = dit->second;
                                 }
@@ -2405,7 +2421,9 @@ namespace scratchbird
                             LockManager::release_write_lock(cr, stmt_xid);
                         }
                     } else if (od == "SET DEFAULT") {
-                        auto defaults = cm.get_effective_column_defaults_by_name(soid, rel);
+                        // Apply effective column defaults from child table (not parent)
+                        auto defaults =
+                            cm.get_effective_column_defaults_by_name(soid, fk.child_relation_name);
                         for (auto& [cr, cv] : child_matches) {
                             if (!LockManager::acquire_write_lock(cr, stmt_xid)) {
                                 r.columns = {"error"};
@@ -2420,8 +2438,16 @@ namespace scratchbird
                                 Value nv{};
                                 auto dit = defaults.find(cname);
                                 if (dit == defaults.end()) {
+                                    std::fprintf(stderr,
+                                                 "[FK SET DEFAULT] No default found for column "
+                                                 "'%s', setting to NULL\n",
+                                                 cname.c_str());
                                     nv.is_null = true;
                                 } else {
+                                    std::fprintf(
+                                        stderr,
+                                        "[FK SET DEFAULT] Setting column '%s' to default '%s'\n",
+                                        cname.c_str(), dit->second.c_str());
                                     nv.is_null = false;
                                     nv.bytes = dit->second;
                                 }
@@ -4187,6 +4213,22 @@ namespace scratchbird
                 r.columns = {"ok"};
                 r.rows = {{ok ? "CREATE SCHEMA accepted" : "CREATE SCHEMA failed"}};
                 return r;
+            }
+            if (ast.kind == NodeKind::DdlView) {
+                // Create view catalog entry
+                try {
+                    CatalogManager cm(get_executor_db_path());
+                    // Use public schema by default (could be enhanced to parse schema.viewname)
+                    UuidBytes schema_oid = oid_public_schema();
+                    bool ok = cm.create_view(schema_oid, ast.ddlView.name, ast.ddlView.body_raw);
+                    r.columns = {"ok"};
+                    r.rows = {{ok ? "CREATE VIEW accepted" : "CREATE VIEW failed"}};
+                    return r;
+                } catch (const std::exception& e) {
+                    r.columns = {"error"};
+                    r.rows = {{std::string("CREATE VIEW error: ") + e.what()}};
+                    return r;
+                }
             }
             if (ast.kind == NodeKind::SessionStmt && ast.session.kind == SessionKind::SetOption) {
                 // Handle SQL-level SET CONSTRAINTS (ALL|name[,name]) DEFERRED|IMMEDIATE
