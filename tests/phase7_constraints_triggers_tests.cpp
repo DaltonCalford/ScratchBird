@@ -341,3 +341,9 @@ TEST(Phase7, TriggerActiveInactiveAndRaise)
     EXPECT_TRUE(result.rows[0][0].find("trigger error:") == 0);
     cleanup_db(db);
 }
+
+int main(int argc, char** argv)
+{
+    ::testing::InitGoogleTest(&argc, argv);
+    return RUN_ALL_TESTS();
+}

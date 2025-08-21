@@ -190,3 +190,9 @@ TEST_F(HavingTest, HavingWithoutGroupBy)
         EXPECT_EQ(count, 8);
     }
 }
+
+int main(int argc, char** argv)
+{
+    ::testing::InitGoogleTest(&argc, argv);
+    return RUN_ALL_TESTS();
+}

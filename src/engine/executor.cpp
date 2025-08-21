@@ -17,6 +17,9 @@
 #include <cctype>
 #include <chrono>
 #include <cstring>
+#include <iterator>
+#include <map>
+#include <set>
 
 namespace scratchbird
 {
@@ -2599,6 +2602,193 @@ namespace scratchbird
             std::uint64_t mem_peak_bytes{0};
         };
 
+        static ExecutionResult exec_literal_select(const SelectQuery& q)
+        {
+            ExecutionResult r{};
+            r.success = true;
+
+            // Build columns and single row
+            std::vector<std::string> row_values;
+
+            for (const auto& proj_expr : q.projections) {
+                // Use generic column name for now
+                r.columns.push_back("computed");
+
+                // Evaluate simple literal expressions
+                std::string value;
+                if (proj_expr == "1" || proj_expr == "2" || proj_expr == "3" || proj_expr == "4" ||
+                    proj_expr == "5") {
+                    value = proj_expr;
+                } else {
+                    // For more complex expressions, just return as-is for now
+                    value = proj_expr;
+                }
+                row_values.push_back(value);
+            }
+
+            // If no projections, return a single unnamed column
+            if (r.columns.empty()) {
+                r.columns.push_back("computed");
+                row_values.push_back("1");
+            }
+
+            r.rows.push_back(row_values);
+            return r;
+        }
+
+        static ExecutionResult exec_union(const ExecutionResult& left, const ExecutionResult& right,
+                                          bool all)
+        {
+            ExecutionResult result;
+            result.columns = left.columns;
+            result.success = true;
+
+            // Add all rows from left result
+            result.rows = left.rows;
+
+            if (all) {
+                // UNION ALL: just concatenate all rows
+                result.rows.insert(result.rows.end(), right.rows.begin(), right.rows.end());
+            } else {
+                // UNION: eliminate duplicates
+                std::set<std::vector<std::string>> unique_rows(left.rows.begin(), left.rows.end());
+                for (const auto& row : right.rows) {
+                    unique_rows.insert(row);
+                }
+                result.rows.assign(unique_rows.begin(), unique_rows.end());
+            }
+
+            return result;
+        }
+
+        static ExecutionResult exec_intersect(const ExecutionResult& left,
+                                              const ExecutionResult& right, bool all)
+        {
+            ExecutionResult result;
+            result.columns = left.columns;
+            result.success = true;
+
+            if (all) {
+                // INTERSECT ALL: more complex - need to count occurrences
+                std::map<std::vector<std::string>, int> left_counts, right_counts;
+                for (const auto& row : left.rows) {
+                    left_counts[row]++;
+                }
+                for (const auto& row : right.rows) {
+                    right_counts[row]++;
+                }
+
+                for (const auto& [row, left_count] : left_counts) {
+                    auto right_it = right_counts.find(row);
+                    if (right_it != right_counts.end()) {
+                        int min_count = std::min(left_count, right_it->second);
+                        for (int i = 0; i < min_count; i++) {
+                            result.rows.push_back(row);
+                        }
+                    }
+                }
+            } else {
+                // INTERSECT: only unique rows that appear in both
+                std::set<std::vector<std::string>> left_set(left.rows.begin(), left.rows.end());
+                std::set<std::vector<std::string>> right_set(right.rows.begin(), right.rows.end());
+
+                std::set_intersection(left_set.begin(), left_set.end(), right_set.begin(),
+                                      right_set.end(), std::back_inserter(result.rows));
+            }
+
+            return result;
+        }
+
+        static ExecutionResult exec_except(const ExecutionResult& left,
+                                           const ExecutionResult& right, bool all)
+        {
+            ExecutionResult result;
+            result.columns = left.columns;
+            result.success = true;
+
+            if (all) {
+                // EXCEPT ALL: subtract counts
+                std::map<std::vector<std::string>, int> left_counts, right_counts;
+                for (const auto& row : left.rows) {
+                    left_counts[row]++;
+                }
+                for (const auto& row : right.rows) {
+                    right_counts[row]++;
+                }
+
+                for (const auto& [row, left_count] : left_counts) {
+                    auto right_it = right_counts.find(row);
+                    int right_count = (right_it != right_counts.end()) ? right_it->second : 0;
+                    int remaining = left_count - right_count;
+                    for (int i = 0; i < remaining; i++) {
+                        result.rows.push_back(row);
+                    }
+                }
+            } else {
+                // EXCEPT: unique rows in left but not in right
+                std::set<std::vector<std::string>> left_set(left.rows.begin(), left.rows.end());
+                std::set<std::vector<std::string>> right_set(right.rows.begin(), right.rows.end());
+
+                std::set_difference(left_set.begin(), left_set.end(), right_set.begin(),
+                                    right_set.end(), std::back_inserter(result.rows));
+            }
+
+            return result;
+        }
+
+        static ExecutionResult exec_compound_query(const SetTree& tree, ExecMetrics* metrics)
+        {
+            ExecutionResult r{};
+
+            // Handle leaf nodes - execute the SELECT query
+            if (tree.op.empty() && tree.leaf) {
+                return exec_select_query(*tree.leaf, metrics);
+            }
+
+            // Execute left and right subtrees
+            if (!tree.left || !tree.right) {
+                r.success = false;
+                r.error_message = "Compound query missing left or right operand";
+                r.columns = {"error"};
+                r.rows = {{r.error_message}};
+                return r;
+            }
+
+            ExecutionResult left_result = exec_compound_query(*tree.left, metrics);
+            if (!left_result.success) {
+                return left_result;
+            }
+
+            ExecutionResult right_result = exec_compound_query(*tree.right, metrics);
+            if (!right_result.success) {
+                return right_result;
+            }
+
+            // Verify that both sides have the same number of columns
+            if (left_result.columns.size() != right_result.columns.size()) {
+                r.success = false;
+                r.error_message = "UNION queries must have the same number of columns";
+                r.columns = {"error"};
+                r.rows = {{r.error_message}};
+                return r;
+            }
+
+            // Perform the set operation
+            if (tree.op == "UNION") {
+                return exec_union(left_result, right_result, tree.all);
+            } else if (tree.op == "INTERSECT") {
+                return exec_intersect(left_result, right_result, tree.all);
+            } else if (tree.op == "EXCEPT") {
+                return exec_except(left_result, right_result, tree.all);
+            } else {
+                r.success = false;
+                r.error_message = "Unsupported set operation: " + tree.op;
+                r.columns = {"error"};
+                r.rows = {{r.error_message}};
+                return r;
+            }
+        }
+
         static ExecutionResult exec_select_query(const SelectQuery& q_in, ExecMetrics* metrics)
         {
             ExecutionResult r{};
@@ -2612,6 +2802,17 @@ namespace scratchbird
                 r.rows = {{q.error}};
                 return r;
             }
+
+            // Handle compound queries (UNION, INTERSECT, EXCEPT)
+            if (q.compound) {
+                return exec_compound_query(*q.compound, metrics);
+            }
+
+            // Handle SELECT without FROM (literals like SELECT 1, SELECT 'hello')
+            if (q.from_items.empty() && q.from_table.empty()) {
+                return exec_literal_select(q);
+            }
+
             // Minimal multi-relation support (two sources, nested loop); Phase 6: allow optimizer
             // hint to choose order
             if (q.from_items.size() >= 2) {

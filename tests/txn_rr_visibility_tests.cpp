@@ -59,3 +59,9 @@ TEST(txn_rr_visibility, snapshot_stability)
     ASSERT_TRUE(scan_rr.next(out, &rid_out));
     ASSERT_EQ(out[0].u64, 1u);
 }
+
+int main(int argc, char** argv)
+{
+    ::testing::InitGoogleTest(&argc, argv);
+    return RUN_ALL_TESTS();
+}

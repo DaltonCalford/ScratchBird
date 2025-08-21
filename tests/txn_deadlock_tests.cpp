@@ -44,3 +44,9 @@ TEST(txn_deadlock, simple_cycle_detection)
     ASSERT_FALSE(LockManager::acquire_write_lock(rB, t1.id));
     ASSERT_FALSE(LockManager::acquire_write_lock(rA, t2.id));
 }
+
+int main(int argc, char** argv)
+{
+    ::testing::InitGoogleTest(&argc, argv);
+    return RUN_ALL_TESTS();
+}
