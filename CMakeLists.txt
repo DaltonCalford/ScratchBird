@@ -266,5 +266,19 @@ if(SCRATCHBIRD_BUILD_TESTS)
 
   add_executable(serializable_simple_tests tests/serializable_simple_tests.cpp)
   target_link_libraries(serializable_simple_tests scratchbird_engine)
+
+  # Set operations and CREATE VIEW tests
+  add_executable(test_union_simple tests/test_union_simple.cpp)
+  target_link_libraries(test_union_simple scratchbird_engine)
+  add_test(NAME test_union_simple COMMAND test_union_simple)
+
+  add_executable(test_union_advanced tests/test_union_advanced.cpp)
+  target_link_libraries(test_union_advanced scratchbird_engine)
+  add_test(NAME test_union_advanced COMMAND test_union_advanced)
+
+  add_executable(test_create_view tests/test_create_view.cpp)
+  target_link_libraries(test_create_view scratchbird_engine)
+  add_test(NAME test_create_view COMMAND test_create_view)
+
   add_test(NAME fk_set_default_tests COMMAND fk_set_default_tests)
 endif()
