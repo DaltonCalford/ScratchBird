@@ -98,6 +98,38 @@ target_link_libraries(dbcheck scratchbird_engine)
 if(SCRATCHBIRD_BUILD_TESTS)
   enable_testing()
 
+  # Find GoogleTest for tests that use it
+  find_package(PkgConfig QUIET)
+  if(PkgConfig_FOUND)
+    pkg_check_modules(GTEST gtest)
+    pkg_check_modules(GTEST_MAIN gtest_main)
+  endif()
+
+  # Fallback to manual detection if pkg-config fails
+  if(NOT GTEST_FOUND)
+    find_library(GTEST_LIB gtest PATHS /usr/lib /usr/local/lib
+                                       /usr/lib/x86_64-linux-gnu)
+    find_library(GTEST_MAIN_LIB gtest_main PATHS /usr/lib /usr/local/lib
+                                                 /usr/lib/x86_64-linux-gnu)
+    find_path(GTEST_INCLUDE_DIR gtest/gtest.h PATHS /usr/include
+                                                    /usr/local/include)
+
+    if(GTEST_LIB
+       AND GTEST_MAIN_LIB
+       AND GTEST_INCLUDE_DIR)
+      set(GTEST_FOUND TRUE)
+      set(GTEST_LIBRARIES ${GTEST_LIB} ${GTEST_MAIN_LIB} pthread)
+      set(GTEST_INCLUDE_DIRS ${GTEST_INCLUDE_DIR})
+      message(STATUS "Found GoogleTest: ${GTEST_LIB}")
+    else()
+      message(
+        WARNING
+          "GoogleTest not found - GoogleTest-based tests will not link properly"
+      )
+      set(GTEST_FOUND FALSE)
+    endif()
+  endif()
+
   # Core engine tests
   add_executable(engine_api_tests tests/engine_api_tests.cpp)
   target_link_libraries(engine_api_tests scratchbird_engine)
@@ -172,6 +204,11 @@ if(SCRATCHBIRD_BUILD_TESTS)
   add_executable(txn_update_visibility_tests
                  tests/txn_update_visibility_tests.cpp)
   target_link_libraries(txn_update_visibility_tests scratchbird_engine)
+  if(GTEST_FOUND)
+    target_link_libraries(txn_update_visibility_tests ${GTEST_LIBRARIES})
+    target_include_directories(txn_update_visibility_tests
+                               PRIVATE ${GTEST_INCLUDE_DIRS})
+  endif()
   add_test(NAME txn_update_visibility_tests COMMAND txn_update_visibility_tests)
 
   add_executable(txn_delete_visibility_tests
@@ -181,15 +218,29 @@ if(SCRATCHBIRD_BUILD_TESTS)
 
   add_executable(txn_rr_visibility_tests tests/txn_rr_visibility_tests.cpp)
   target_link_libraries(txn_rr_visibility_tests scratchbird_engine)
+  if(GTEST_FOUND)
+    target_link_libraries(txn_rr_visibility_tests ${GTEST_LIBRARIES})
+    target_include_directories(txn_rr_visibility_tests
+                               PRIVATE ${GTEST_INCLUDE_DIRS})
+  endif()
   add_test(NAME txn_rr_visibility_tests COMMAND txn_rr_visibility_tests)
 
   add_executable(txn_deadlock_tests tests/txn_deadlock_tests.cpp)
   target_link_libraries(txn_deadlock_tests scratchbird_engine)
+  if(GTEST_FOUND)
+    target_link_libraries(txn_deadlock_tests ${GTEST_LIBRARIES})
+    target_include_directories(txn_deadlock_tests PRIVATE ${GTEST_INCLUDE_DIRS})
+  endif()
   add_test(NAME txn_deadlock_tests COMMAND txn_deadlock_tests)
 
   add_executable(txn_prepare_scaffold_tests
                  tests/txn_prepare_scaffold_tests.cpp)
   target_link_libraries(txn_prepare_scaffold_tests scratchbird_engine)
+  if(GTEST_FOUND)
+    target_link_libraries(txn_prepare_scaffold_tests ${GTEST_LIBRARIES})
+    target_include_directories(txn_prepare_scaffold_tests
+                               PRIVATE ${GTEST_INCLUDE_DIRS})
+  endif()
   add_test(NAME txn_prepare_scaffold_tests COMMAND txn_prepare_scaffold_tests)
 
   # Optimizer tests
@@ -201,24 +252,43 @@ if(SCRATCHBIRD_BUILD_TESTS)
   add_executable(phase7_constraints_triggers_tests
                  tests/phase7_constraints_triggers_tests.cpp)
   target_link_libraries(phase7_constraints_triggers_tests scratchbird_engine)
+  if(GTEST_FOUND)
+    target_link_libraries(phase7_constraints_triggers_tests ${GTEST_LIBRARIES})
+    target_include_directories(phase7_constraints_triggers_tests
+                               PRIVATE ${GTEST_INCLUDE_DIRS})
+  endif()
   add_test(NAME phase7_constraints_triggers_tests
            COMMAND phase7_constraints_triggers_tests)
 
   # Main test runner
-  add_executable(scratchbird_tests tests/scratchbird_tests.cpp)
+  add_executable(scratchbird_tests tests/scratchbird_tests.cpp
+                                   src/scratchbird.cpp)
   target_link_libraries(scratchbird_tests scratchbird_engine)
   add_test(NAME scratchbird_tests COMMAND scratchbird_tests)
 
   add_executable(wal_tests tests/wal_tests.cpp)
   target_link_libraries(wal_tests scratchbird_engine)
+  if(GTEST_FOUND)
+    target_link_libraries(wal_tests ${GTEST_LIBRARIES})
+    target_include_directories(wal_tests PRIVATE ${GTEST_INCLUDE_DIRS})
+  endif()
   add_test(NAME wal_tests COMMAND wal_tests)
 
   add_executable(having_tests tests/having_tests.cpp)
   target_link_libraries(having_tests scratchbird_engine)
+  if(GTEST_FOUND)
+    target_link_libraries(having_tests ${GTEST_LIBRARIES})
+    target_include_directories(having_tests PRIVATE ${GTEST_INCLUDE_DIRS})
+  endif()
   add_test(NAME having_tests COMMAND having_tests)
 
   add_executable(fk_set_default_tests tests/fk_set_default_tests.cpp)
   target_link_libraries(fk_set_default_tests scratchbird_engine)
+  if(GTEST_FOUND)
+    target_link_libraries(fk_set_default_tests ${GTEST_LIBRARIES})
+    target_include_directories(fk_set_default_tests
+                               PRIVATE ${GTEST_INCLUDE_DIRS})
+  endif()
 
   add_executable(create_index_tests tests/create_index_tests.cpp)
   target_link_libraries(create_index_tests scratchbird_engine)
@@ -256,5 +326,19 @@ if(SCRATCHBIRD_BUILD_TESTS)
 
   add_executable(alter_table_tests tests/alter_table_tests.cpp)
   target_link_libraries(alter_table_tests scratchbird_engine)
+
+  # Set operations and CREATE VIEW tests
+  add_executable(test_union_simple tests/test_union_simple.cpp)
+  target_link_libraries(test_union_simple scratchbird_engine)
+  add_test(NAME test_union_simple COMMAND test_union_simple)
+
+  add_executable(test_union_advanced tests/test_union_advanced.cpp)
+  target_link_libraries(test_union_advanced scratchbird_engine)
+  add_test(NAME test_union_advanced COMMAND test_union_advanced)
+
+  add_executable(test_create_view tests/test_create_view.cpp)
+  target_link_libraries(test_create_view scratchbird_engine)
+  add_test(NAME test_create_view COMMAND test_create_view)
+
   add_test(NAME fk_set_default_tests COMMAND fk_set_default_tests)
 endif()

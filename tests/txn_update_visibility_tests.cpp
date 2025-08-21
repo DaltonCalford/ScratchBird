@@ -105,3 +105,9 @@ TEST(txn_update_visibility, concurrent_update_rc)
     ASSERT_EQ(out[0].u64, 2u);
     ASSERT_FALSE(scan2.next(out, &rid_out));
 }
+
+int main(int argc, char** argv)
+{
+    ::testing::InitGoogleTest(&argc, argv);
+    return RUN_ALL_TESTS();
+}

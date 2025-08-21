@@ -226,3 +226,9 @@ TEST_F(FKSetDefaultTest, CascadeVsSetDefault)
     EXPECT_TRUE(result.success) << "SELECT should succeed: " << result.error_message;
     EXPECT_EQ(result.rows.size(), 0); // CASCADE delete should remove all projects
 }
+
+int main(int argc, char** argv)
+{
+    ::testing::InitGoogleTest(&argc, argv);
+    return RUN_ALL_TESTS();
+}
