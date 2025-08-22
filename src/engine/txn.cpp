@@ -156,13 +156,14 @@ namespace scratchbird::engine
         std::lock_guard<std::mutex> g(s_mutex);
         std::uint64_t key = ods::pack_rowid(rid);
         auto it = s_write_locks.find(key);
-        
+
         // Track transaction start time (first lock acquisition)
         if (s_txn_start_times.find(xid) == s_txn_start_times.end()) {
             s_txn_start_times[xid] = std::chrono::duration_cast<std::chrono::microseconds>(
-                std::chrono::steady_clock::now().time_since_epoch()).count();
+                                         std::chrono::steady_clock::now().time_since_epoch())
+                                         .count();
         }
-        
+
         if (it == s_write_locks.end()) {
             s_write_locks[key] = xid;
             // Increment lock count for this transaction
@@ -172,7 +173,7 @@ namespace scratchbird::engine
         if (it->second == xid)
             return true;
         s_wait_for.emplace(xid, it->second);
-        
+
         // Enhanced deadlock detection with victim selection
         auto cycle = find_deadlock_cycle(xid, it->second);
         if (!cycle.empty()) {
@@ -232,33 +233,34 @@ namespace scratchbird::engine
     }
 
     // Enhanced deadlock resolution functions
-    
+
     void LockManager::set_deadlock_victim_policy(DeadlockVictimPolicy policy)
     {
         std::lock_guard<std::mutex> g(s_mutex);
         s_victim_policy = policy;
     }
-    
+
     DeadlockVictimPolicy LockManager::get_deadlock_victim_policy()
     {
         std::lock_guard<std::mutex> g(s_mutex);
         return s_victim_policy;
     }
-    
-    std::vector<std::uint64_t> LockManager::find_deadlock_cycle(std::uint64_t waiting_xid, std::uint64_t holding_xid)
+
+    std::vector<std::uint64_t> LockManager::find_deadlock_cycle(std::uint64_t waiting_xid,
+                                                                std::uint64_t holding_xid)
     {
         std::vector<std::uint64_t> cycle;
         std::unordered_set<std::uint64_t> visited;
         std::unordered_map<std::uint64_t, std::uint64_t> parent;
         std::stack<std::uint64_t> st;
-        
+
         st.push(holding_xid);
         parent[holding_xid] = 0; // Mark as root
-        
+
         while (!st.empty()) {
             auto cur = st.top();
             st.pop();
-            
+
             if (cur == waiting_xid) {
                 // Found cycle, reconstruct path
                 std::uint64_t node = waiting_xid;
@@ -271,10 +273,10 @@ namespace scratchbird::engine
                 cycle.push_back(waiting_xid); // Complete the cycle
                 return cycle;
             }
-            
+
             if (!visited.insert(cur).second)
                 continue;
-                
+
             auto range = s_wait_for.equal_range(cur);
             for (auto p = range.first; p != range.second; ++p) {
                 if (parent.find(p->second) == parent.end()) {
@@ -283,76 +285,77 @@ namespace scratchbird::engine
                 }
             }
         }
-        
+
         return cycle; // Empty if no cycle found
     }
-    
+
     std::uint64_t LockManager::choose_deadlock_victim(const std::vector<std::uint64_t>& cycle)
     {
-        if (cycle.empty()) return 0;
-        
+        if (cycle.empty())
+            return 0;
+
         switch (s_victim_policy) {
-            case DeadlockVictimPolicy::YoungTransaction: {
-                // Choose transaction with highest start time (most recent)
-                std::uint64_t victim = cycle[0];
-                std::uint64_t max_start_time = 0;
-                for (auto xid : cycle) {
-                    auto it = s_txn_start_times.find(xid);
-                    if (it != s_txn_start_times.end() && it->second > max_start_time) {
-                        max_start_time = it->second;
-                        victim = xid;
-                    }
+        case DeadlockVictimPolicy::YoungTransaction: {
+            // Choose transaction with highest start time (most recent)
+            std::uint64_t victim = cycle[0];
+            std::uint64_t max_start_time = 0;
+            for (auto xid : cycle) {
+                auto it = s_txn_start_times.find(xid);
+                if (it != s_txn_start_times.end() && it->second > max_start_time) {
+                    max_start_time = it->second;
+                    victim = xid;
                 }
-                return victim;
             }
-            
-            case DeadlockVictimPolicy::OldTransaction: {
-                // Choose transaction with lowest start time (oldest)
-                std::uint64_t victim = cycle[0];
-                std::uint64_t min_start_time = UINT64_MAX;
-                for (auto xid : cycle) {
-                    auto it = s_txn_start_times.find(xid);
-                    if (it != s_txn_start_times.end() && it->second < min_start_time) {
-                        min_start_time = it->second;
-                        victim = xid;
-                    }
+            return victim;
+        }
+
+        case DeadlockVictimPolicy::OldTransaction: {
+            // Choose transaction with lowest start time (oldest)
+            std::uint64_t victim = cycle[0];
+            std::uint64_t min_start_time = UINT64_MAX;
+            for (auto xid : cycle) {
+                auto it = s_txn_start_times.find(xid);
+                if (it != s_txn_start_times.end() && it->second < min_start_time) {
+                    min_start_time = it->second;
+                    victim = xid;
                 }
-                return victim;
             }
-            
-            case DeadlockVictimPolicy::FewestLocks: {
-                // Choose transaction holding fewest locks
-                std::uint64_t victim = cycle[0];
-                std::uint64_t min_locks = UINT64_MAX;
-                for (auto xid : cycle) {
-                    auto it = s_txn_lock_counts.find(xid);
-                    std::uint64_t lock_count = (it != s_txn_lock_counts.end()) ? it->second : 0;
-                    if (lock_count < min_locks) {
-                        min_locks = lock_count;
-                        victim = xid;
-                    }
+            return victim;
+        }
+
+        case DeadlockVictimPolicy::FewestLocks: {
+            // Choose transaction holding fewest locks
+            std::uint64_t victim = cycle[0];
+            std::uint64_t min_locks = UINT64_MAX;
+            for (auto xid : cycle) {
+                auto it = s_txn_lock_counts.find(xid);
+                std::uint64_t lock_count = (it != s_txn_lock_counts.end()) ? it->second : 0;
+                if (lock_count < min_locks) {
+                    min_locks = lock_count;
+                    victim = xid;
                 }
-                return victim;
             }
-            
-            case DeadlockVictimPolicy::LowestCost: {
-                // Simple heuristic: choose transaction with fewest locks as proxy for cost
-                // In a full implementation, this could integrate with query cost estimates
-                std::uint64_t victim = cycle[0];
-                std::uint64_t min_locks = UINT64_MAX;
-                for (auto xid : cycle) {
-                    auto it = s_txn_lock_counts.find(xid);
-                    std::uint64_t lock_count = (it != s_txn_lock_counts.end()) ? it->second : 0;
-                    if (lock_count < min_locks) {
-                        min_locks = lock_count;
-                        victim = xid;
-                    }
+            return victim;
+        }
+
+        case DeadlockVictimPolicy::LowestCost: {
+            // Simple heuristic: choose transaction with fewest locks as proxy for cost
+            // In a full implementation, this could integrate with query cost estimates
+            std::uint64_t victim = cycle[0];
+            std::uint64_t min_locks = UINT64_MAX;
+            for (auto xid : cycle) {
+                auto it = s_txn_lock_counts.find(xid);
+                std::uint64_t lock_count = (it != s_txn_lock_counts.end()) ? it->second : 0;
+                if (lock_count < min_locks) {
+                    min_locks = lock_count;
+                    victim = xid;
                 }
-                return victim;
             }
-            
-            default:
-                return cycle[0]; // Fallback to first transaction in cycle
+            return victim;
+        }
+
+        default:
+            return cycle[0]; // Fallback to first transaction in cycle
         }
     }
 

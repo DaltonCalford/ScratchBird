@@ -357,4 +357,13 @@ if(SCRATCHBIRD_BUILD_TESTS)
   target_link_libraries(psql_basic_tests scratchbird_engine)
   add_test(NAME psql_basic_tests COMMAND psql_basic_tests)
 
+  # Stored Procedure Tests
+  add_executable(stored_procedure_tests tests/stored_procedure_tests.cpp)
+  target_link_libraries(stored_procedure_tests scratchbird_engine)
+  add_test(NAME stored_procedure_tests COMMAND stored_procedure_tests)
+
+  # Parser Debug Test
+  add_executable(parser_debug_test tests/parser_debug_test.cpp)
+  target_link_libraries(parser_debug_test scratchbird_engine)
+
 endif()

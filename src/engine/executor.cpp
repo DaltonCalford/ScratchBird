@@ -4875,6 +4875,51 @@ namespace scratchbird
                     return r;
                 }
             }
+            if (ast.kind == NodeKind::PsqlRoutine) {
+                // Create stored procedure/function
+                CatalogManager cm(get_executor_db_path());
+                auto schema_oid = oid_public_schema(); // Default to public schema for now
+
+                // Convert AST parameters to catalog format
+                std::vector<CatalogManager::RoutineParamInfo> params;
+                for (const auto& param : ast.psqlRoutine.params) {
+                    CatalogManager::RoutineParamInfo param_info;
+                    // Parse mode from param name (e.g., "IN param_name" or just "param_name")
+                    std::string param_str = param.first;
+                    if (param_str.find("IN ") == 0) {
+                        param_info.mode = "IN";
+                        param_info.name = param_str.substr(3);
+                    } else if (param_str.find("OUT ") == 0) {
+                        param_info.mode = "OUT";
+                        param_info.name = param_str.substr(4);
+                    } else if (param_str.find("INOUT ") == 0) {
+                        param_info.mode = "INOUT";
+                        param_info.name = param_str.substr(6);
+                    } else {
+                        param_info.mode = "IN";
+                        param_info.name = param_str;
+                    }
+                    param_info.type_json = param.second; // Store raw type for now
+                    param_info.position = static_cast<int>(params.size());
+                    params.push_back(param_info);
+                }
+
+                // Create the routine in the catalog
+                bool success = cm.create_routine(
+                    schema_oid, ast.psqlRoutine.name, ast.psqlRoutine.kind, "PSQL", "INVOKER",
+                    "VOLATILE", false, false, params, ast.psqlRoutine.body_raw);
+
+                if (success) {
+                    r.columns = {"Message"};
+                    r.rows = {{ast.psqlRoutine.kind + " " + ast.psqlRoutine.name +
+                               " created successfully"}};
+                } else {
+                    r.columns = {"Error"};
+                    r.rows = {
+                        {"Failed to create " + ast.psqlRoutine.kind + " " + ast.psqlRoutine.name}};
+                }
+                return r;
+            }
             if (ast.kind == NodeKind::DdlExplain) {
                 r.columns = {"Plan"};
                 SelectQuery q = parse_select_minimal(ast.ddlExplain.statement_raw);

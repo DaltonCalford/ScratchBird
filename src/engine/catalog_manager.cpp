@@ -6,9 +6,12 @@
 #include "scratchbird/engine/heap.h"
 #include "scratchbird/engine/heap_rel.h"
 #include "scratchbird/engine/index_btree.h"
+#include "scratchbird/engine/uuid.h"
 
 #include <algorithm>
+#include <cstdio>
 #include <cstring>
+#include <filesystem>
 
 namespace scratchbird::engine
 {
@@ -1368,11 +1371,11 @@ namespace scratchbird::engine
         return out;
     }
 
-    bool
-    CatalogManager::create_columns(const UuidBytes& relation_oid,
-                                   const std::vector<std::pair<std::int64_t, std::string>>& columns,
-                                   const std::vector<std::string>& not_null_columns,
-                                   const std::unordered_map<std::string, std::string>& column_defaults) const
+    bool CatalogManager::create_columns(
+        const UuidBytes& relation_oid,
+        const std::vector<std::pair<std::int64_t, std::string>>& columns,
+        const std::vector<std::string>& not_null_columns,
+        const std::unordered_map<std::string, std::string>& column_defaults) const
     {
         FileOptions fo{};
         fo.direct_io = false;
@@ -1432,16 +1435,17 @@ namespace scratchbird::engine
         };
         for (auto& [pos, name] : columns) {
             std::uint64_t notnull = nn.count(name) ? 1ull : 0ull;
-            
+
             // Check if column has a default value
             Value default_val = make_null();
             auto it = column_defaults.find(name);
             if (it != column_defaults.end()) {
                 default_val = make_str(it->second);
             }
-            
+
             col_rel.insert({make_uuid_val(relation_oid), make_i64(pos), make_str(name),
-                            make_i64((std::int64_t)notnull), make_null(), make_null(), default_val});
+                            make_i64((std::int64_t)notnull), make_null(), make_null(),
+                            default_val});
         }
         return true;
     }
@@ -3766,6 +3770,123 @@ namespace scratchbird::engine
         std::fprintf(stderr, "[DROP INDEX] Removing index '%s' from catalog (placeholder)\n",
                      index_name.c_str());
 
+        return true;
+    }
+
+    bool CatalogManager::create_routine(const std::optional<UuidBytes>& schema_oid,
+                                        const std::string& name, const std::string& kind,
+                                        const std::string& language, const std::string& security,
+                                        const std::string& volatility, bool leakproof,
+                                        bool returns_set,
+                                        const std::vector<RoutineParamInfo>& params,
+                                        const std::string& source_code) const
+    {
+        // Read header to get catalog root pages
+        FileOptions fo{};
+        fo.direct_io = false;
+        auto fh = FileManager::open(db_path_ + ".seg0", fo, /*create*/ false);
+        std::vector<std::uint8_t> buf(4096, 0);
+        FileManager::pread(fh, buf.data(), buf.size(), 0);
+        auto* hdr = reinterpret_cast<const ods::PageHeader*>(buf.data());
+        std::uint32_t ps = hdr->page_size ? hdr->page_size : 4096u;
+        buf.assign(ps, 0);
+        FileManager::pread(fh, buf.data(), buf.size(), 0);
+
+        FileMap::Layout layout{};
+        layout.page_size = ps;
+        layout.pages_per_segment = 262144;
+        layout.options.direct_io = false;
+
+        auto slash = db_path_.find_last_of('/');
+        std::string dir =
+            (slash == std::string::npos) ? std::string(".") : db_path_.substr(0, slash);
+        std::string base = (slash == std::string::npos) ? db_path_ : db_path_.substr(slash + 1);
+
+        HeaderManager hm(FileMap(layout), ps);
+        FileMap fmap(layout);
+        fmap.set_base_path(dir, base);
+        hm = HeaderManager(std::move(fmap), ps);
+        auto hi = hm.read();
+
+        if (!hi.sdb_object_root_page)
+            return false;
+
+        // Generate UUID for the routine
+        auto uuid_bytes = uuid_v7_bytes();
+        UuidBytes routine_oid{};
+        std::copy(uuid_bytes.begin(), uuid_bytes.end(), routine_oid.begin());
+
+        // Create object entry in SDB$OBJECT
+        if (!create_object(routine_oid, kind, schema_oid, name)) {
+            return false;
+        }
+
+        // Store source code in SDB$SOURCE if provided
+        if (!source_code.empty()) {
+            TupleLayout s_layout{};
+            s_layout.attrs = {
+                {AttrType::VarBytes, 0, false, false}, // object_oid
+                {AttrType::VarBytes, 0, false, false}  // source
+            };
+
+            FileMap fmap_s(layout);
+            fmap_s.set_base_path(dir, base);
+            auto source_rel =
+                HeapRelation::open(std::move(fmap_s), ps, *hi.sdb_source_root_page, s_layout);
+
+            auto make_uuid_val = [](const UuidBytes& uuid) {
+                Value v{};
+                v.is_null = false;
+                v.bytes.assign(reinterpret_cast<const char*>(uuid.data()), uuid.size());
+                return v;
+            };
+            auto make_str = [](const std::string& s) {
+                Value v{};
+                v.is_null = false;
+                v.bytes = s;
+                return v;
+            };
+
+            source_rel.insert({make_uuid_val(routine_oid), make_str(source_code)});
+        }
+
+        std::fprintf(stderr, "[CREATE ROUTINE] Created %s '%s' successfully\n", kind.c_str(),
+                     name.c_str());
+        return true;
+    }
+
+    std::vector<CatalogManager::RoutineInfo>
+    CatalogManager::list_routines(const std::optional<UuidBytes>& schema_oid) const
+    {
+        // Implementation placeholder - would need to query SDB$OBJECT and SDB$ROUTINE
+        std::vector<RoutineInfo> routines;
+        std::fprintf(stderr, "[LIST ROUTINES] Listing routines (placeholder)\n");
+        return routines;
+    }
+
+    std::optional<CatalogManager::RoutineInfo>
+    CatalogManager::get_routine_by_name(const std::optional<UuidBytes>& schema_oid,
+                                        const std::string& name) const
+    {
+        // Implementation placeholder - would need to query catalog tables
+        std::fprintf(stderr, "[GET ROUTINE] Getting routine '%s' (placeholder)\n", name.c_str());
+        return std::nullopt;
+    }
+
+    std::vector<CatalogManager::RoutineParamInfo>
+    CatalogManager::get_routine_params(const UuidBytes& routine_oid) const
+    {
+        // Implementation placeholder - would need to query SDB$ROUTINE_PARAM
+        std::vector<RoutineParamInfo> params;
+        std::fprintf(stderr, "[GET ROUTINE PARAMS] Getting parameters (placeholder)\n");
+        return params;
+    }
+
+    bool CatalogManager::drop_routine_by_name(const std::optional<UuidBytes>& schema_oid,
+                                              const std::string& name) const
+    {
+        // Implementation placeholder - would need to remove from all catalog tables
+        std::fprintf(stderr, "[DROP ROUTINE] Dropping routine '%s' (placeholder)\n", name.c_str());
         return true;
     }
 

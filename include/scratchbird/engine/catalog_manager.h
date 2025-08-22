@@ -74,10 +74,11 @@ namespace scratchbird::engine
         list_columns(const UuidBytes& relation_oid) const;
 
         // Create SDB$COLUMN rows for a relation with NOT NULL flags and defaults
-        bool create_columns(const UuidBytes& relation_oid,
-                            const std::vector<std::pair<std::int64_t, std::string>>& columns,
-                            const std::vector<std::string>& not_null_columns,
-                            const std::unordered_map<std::string, std::string>& column_defaults = {}) const;
+        bool create_columns(
+            const UuidBytes& relation_oid,
+            const std::vector<std::pair<std::int64_t, std::string>>& columns,
+            const std::vector<std::string>& not_null_columns,
+            const std::unordered_map<std::string, std::string>& column_defaults = {}) const;
 
         // Phase 5 helpers: resolve relation heap root page and list columns by name
         std::optional<std::uint32_t> get_relation_root_page(const UuidBytes& relation_oid) const;
@@ -265,6 +266,48 @@ namespace scratchbird::engine
         bool rename_column(const std::optional<UuidBytes>& schema_oid,
                            const std::string& relation_name, const std::string& old_name,
                            const std::string& new_name) const;
+
+        // Stored procedures and functions
+        struct RoutineInfo {
+            UuidBytes oid{};
+            std::string name;
+            std::string kind;       // PROCEDURE or FUNCTION
+            std::string language;   // PSQL
+            std::string security;   // INVOKER or DEFINER
+            std::string volatility; // VOLATILE, STABLE, IMMUTABLE
+            bool leakproof{false};
+            bool returns_set{false};
+            std::string source_code; // from SDB$SOURCE
+        };
+
+        struct RoutineParamInfo {
+            std::string name;
+            std::string mode;      // IN, OUT, INOUT
+            std::string type_json; // serialized type info
+            int position{0};
+        };
+
+        // Create stored procedure/function in catalog
+        bool create_routine(const std::optional<UuidBytes>& schema_oid, const std::string& name,
+                            const std::string& kind, const std::string& language,
+                            const std::string& security, const std::string& volatility,
+                            bool leakproof, bool returns_set,
+                            const std::vector<RoutineParamInfo>& params,
+                            const std::string& source_code) const;
+
+        // List routines in a schema
+        std::vector<RoutineInfo> list_routines(const std::optional<UuidBytes>& schema_oid) const;
+
+        // Get routine by name
+        std::optional<RoutineInfo> get_routine_by_name(const std::optional<UuidBytes>& schema_oid,
+                                                       const std::string& name) const;
+
+        // Get routine parameters
+        std::vector<RoutineParamInfo> get_routine_params(const UuidBytes& routine_oid) const;
+
+        // Drop routine by name
+        bool drop_routine_by_name(const std::optional<UuidBytes>& schema_oid,
+                                  const std::string& name) const;
 
       private:
         std::string db_path_;
