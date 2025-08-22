@@ -367,6 +367,16 @@ if(SCRATCHBIRD_BUILD_TESTS)
   target_link_libraries(function_execution_tests scratchbird_engine)
   add_test(NAME function_execution_tests COMMAND function_execution_tests)
 
+  # Exception Handling Tests
+  add_executable(exception_handling_tests tests/exception_handling_tests.cpp)
+  target_link_libraries(exception_handling_tests scratchbird_engine)
+  add_test(NAME exception_handling_tests COMMAND exception_handling_tests)
+
+  # Cursor Tests
+  add_executable(cursor_tests tests/cursor_tests.cpp)
+  target_link_libraries(cursor_tests scratchbird_engine)
+  add_test(NAME cursor_tests COMMAND cursor_tests)
+
   # Parser Debug Test
   add_executable(parser_debug_test tests/parser_debug_test.cpp)
   target_link_libraries(parser_debug_test scratchbird_engine)

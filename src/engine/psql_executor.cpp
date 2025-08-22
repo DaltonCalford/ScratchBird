@@ -69,6 +69,43 @@ namespace scratchbird::engine
         return true;
     }
 
+    bool PsqlScope::has_cursor(const std::string& name) const
+    {
+        if (cursors.find(name) != cursors.end()) {
+            return true;
+        }
+        return parent_scope ? parent_scope->has_cursor(name) : false;
+    }
+
+    PsqlCursor* PsqlScope::get_cursor(const std::string& name)
+    {
+        auto it = cursors.find(name);
+        if (it != cursors.end()) {
+            return &it->second;
+        }
+        return parent_scope ? parent_scope->get_cursor(name) : nullptr;
+    }
+
+    const PsqlCursor* PsqlScope::get_cursor(const std::string& name) const
+    {
+        auto it = cursors.find(name);
+        if (it != cursors.end()) {
+            return &it->second;
+        }
+        return parent_scope ? parent_scope->get_cursor(name) : nullptr;
+    }
+
+    void PsqlScope::declare_cursor(const std::string& name, const std::string& query)
+    {
+        PsqlCursor cursor;
+        cursor.name = name;
+        cursor.query = query;
+        cursor.is_open = false;
+        cursor.current_row = 0;
+        cursor.has_data = false;
+        cursors[name] = cursor;
+    }
+
     // PsqlExecutionContext implementation
     PsqlExecutionContext::PsqlExecutionContext()
     {
@@ -151,6 +188,48 @@ namespace scratchbird::engine
             }
         }
         return outputs;
+    }
+
+    void PsqlExecutionContext::set_exception(const std::string& name, const std::string& message)
+    {
+        exception_name = name;
+        exception_message = message;
+        control_state = ControlFlowState::Exception;
+    }
+
+    std::unordered_map<std::string, int> PsqlExecutionContext::get_system_exceptions()
+    {
+        // Firebird-compatible system exceptions
+        static std::unordered_map<std::string, int> system_exceptions = {
+            {"GDSCODE", 335544321},           // Generic error
+            {"SQLCODE", 335544322},           // SQL error
+            {"NO_DATA_FOUND", 335544382},     // No data returned
+            {"TOO_MANY_ROWS", 335544383},     // Multiple rows returned
+            {"INVALID_CURSOR", 335544384},    // Invalid cursor operation
+            {"ZERO_DIVIDE", 335544385},       // Division by zero
+            {"NUMERIC_OVERFLOW", 335544386},  // Numeric overflow
+            {"INVALID_DATE", 335544387},      // Invalid date/time
+            {"STRING_TRUNCATION", 335544388}, // String truncation
+            {"NULL_SEGMENT", 335544389},      // Null in compound statement
+            {"USER_EXCEPTION", 335544390},    // User-defined exception
+            {"OTHERS", 0}                     // Catch-all exception
+        };
+        return system_exceptions;
+    }
+
+    void PsqlExecutionContext::declare_cursor(const std::string& name, const std::string& query)
+    {
+        current_scope().declare_cursor(name, query);
+    }
+
+    bool PsqlExecutionContext::has_cursor(const std::string& name) const
+    {
+        return current_scope().has_cursor(name);
+    }
+
+    PsqlCursor* PsqlExecutionContext::get_cursor(const std::string& name)
+    {
+        return current_scope().get_cursor(name);
     }
 
     // PsqlTypeManager implementation
@@ -312,8 +391,32 @@ namespace scratchbird::engine
             for (const auto& stmt : block.body) {
                 auto stmt_result = execute_statement(stmt, context);
 
-                // Check for control flow changes
-                if (context.control_state != PsqlExecutionContext::ControlFlowState::Normal) {
+                // Check for exceptions first
+                if (context.has_active_exception()) {
+                    // Look for exception handlers in remaining statements
+                    bool exception_handled = false;
+                    for (size_t i = 0; i < block.body.size(); ++i) {
+                        const auto& handler_stmt = block.body[i];
+                        if (handler_stmt.kind == Ast::PsqlStmtKind::Exception) {
+                            auto handler_result = execute_exception_handler(handler_stmt, context);
+                            if (!context.has_active_exception()) {
+                                exception_handled = true;
+                                break;
+                            }
+                        }
+                    }
+
+                    if (!exception_handled) {
+                        // Propagate unhandled exception
+                        result.error_message = "Unhandled exception: " + context.exception_name +
+                                               " - " + context.exception_message;
+                        break;
+                    }
+                }
+
+                // Check for other control flow changes
+                if (context.control_state != PsqlExecutionContext::ControlFlowState::Normal &&
+                    context.control_state != PsqlExecutionContext::ControlFlowState::Exception) {
                     break;
                 }
 
@@ -377,6 +480,21 @@ namespace scratchbird::engine
 
         case Ast::PsqlStmtKind::ExecStmt:
             return execute_sql_statement(stmt.raw, context);
+
+        case Ast::PsqlStmtKind::Raise:
+            return execute_raise_statement(stmt, context);
+
+        case Ast::PsqlStmtKind::Exception:
+            return execute_exception_handler(stmt, context);
+
+        case Ast::PsqlStmtKind::OpenCursor:
+            return execute_open_cursor(stmt, context);
+
+        case Ast::PsqlStmtKind::FetchCursor:
+            return execute_fetch_cursor(stmt, context);
+
+        case Ast::PsqlStmtKind::CloseCursor:
+            return execute_close_cursor(stmt, context);
 
         default:
             result.error_message = "Unsupported PSQL statement type";
@@ -476,35 +594,66 @@ namespace scratchbird::engine
         ExecutionResult result;
 
         try {
-            // Parse variable declaration: "DECLARE var_name type [DEFAULT value]"
-            std::string decl = stmt.raw;
+            if (stmt.declare_is_cursor) {
+                // Handle cursor declaration
+                std::string decl = stmt.raw;
 
-            // Simple regex-based parsing for now
-            std::regex decl_regex(
-                R"(DECLARE\s+(\w+)\s+(\w+(?:\(\d+\))?)\s*(?:DEFAULT\s+(.+?))?(?:\s*;|$))",
-                std::regex_constants::icase);
-            std::smatch match;
+                // Parse cursor declaration: "DECLARE cursor_name CURSOR FOR (query)"
+                std::regex cursor_regex(R"(DECLARE\s+(\w+)\s+CURSOR\s+FOR\s*\(([\s\S]+)\))",
+                                        std::regex_constants::icase);
+                std::smatch match;
 
-            if (std::regex_search(decl, match, decl_regex)) {
-                std::string var_name = match[1].str();
-                std::string type_str = match[2].str();
-                std::string default_expr = match[3].str();
+                if (std::regex_search(decl, match, cursor_regex)) {
+                    std::string cursor_name = match[1].str();
+                    std::string cursor_query = match[2].str();
 
-                PsqlVariableType type = PsqlTypeManager::parse_type(type_str);
+                    // Trim whitespace from query
+                    auto trim = [](std::string& s) {
+                        auto not_space = [](int ch) { return !std::isspace(ch); };
+                        s.erase(s.begin(), std::find_if(s.begin(), s.end(), not_space));
+                        s.erase(std::find_if(s.rbegin(), s.rend(), not_space).base(), s.end());
+                    };
+                    trim(cursor_query);
 
-                Value default_value;
-                if (!default_expr.empty()) {
-                    default_value = evaluate_expression(default_expr, context);
+                    // Declare the cursor
+                    context.declare_cursor(cursor_name, cursor_query);
+
+                    result.columns = {"cursor_declared"};
+                    result.rows = {{cursor_name}};
                 } else {
-                    default_value = PsqlTypeManager::get_default_value(type);
+                    result.error_message = "Invalid DECLARE CURSOR syntax: " + stmt.raw;
                 }
-
-                context.declare_variable(var_name, type, default_value);
-
-                result.columns = {"variable_declared"};
-                result.rows = {{var_name}};
             } else {
-                result.error_message = "Invalid DECLARE syntax: " + stmt.raw;
+                // Handle variable declaration: "DECLARE var_name type [DEFAULT value]"
+                std::string decl = stmt.raw;
+
+                // Simple regex-based parsing for now
+                std::regex decl_regex(
+                    R"(DECLARE\s+(\w+)\s+(\w+(?:\(\d+\))?)\s*(?:DEFAULT\s+(.+?))?(?:\s*;|$))",
+                    std::regex_constants::icase);
+                std::smatch match;
+
+                if (std::regex_search(decl, match, decl_regex)) {
+                    std::string var_name = match[1].str();
+                    std::string type_str = match[2].str();
+                    std::string default_expr = match[3].str();
+
+                    PsqlVariableType type = PsqlTypeManager::parse_type(type_str);
+
+                    Value default_value;
+                    if (!default_expr.empty()) {
+                        default_value = evaluate_expression(default_expr, context);
+                    } else {
+                        default_value = PsqlTypeManager::get_default_value(type);
+                    }
+
+                    context.declare_variable(var_name, type, default_value);
+
+                    result.columns = {"variable_declared"};
+                    result.rows = {{var_name}};
+                } else {
+                    result.error_message = "Invalid DECLARE syntax: " + stmt.raw;
+                }
             }
 
         } catch (const std::exception& e) {
@@ -789,6 +938,296 @@ namespace scratchbird::engine
         // TODO: Parse block.returns_raw and extract return values
         // For now, return empty vector
         return {};
+    }
+
+    ExecutionResult PsqlExecutor::execute_raise_statement(const Ast::PsqlStmt& stmt,
+                                                          PsqlExecutionContext& context)
+    {
+        ExecutionResult result;
+
+        try {
+            // Parse RAISE statement - format: RAISE [exception_name] ['message']
+            std::string raw = stmt.raw;
+            std::string content = raw.substr(5); // Remove "RAISE"
+
+            // Trim whitespace
+            auto trim = [](std::string& s) {
+                auto not_space = [](int ch) { return !std::isspace(ch); };
+                s.erase(s.begin(), std::find_if(s.begin(), s.end(), not_space));
+                s.erase(std::find_if(s.rbegin(), s.rend(), not_space).base(), s.end());
+            };
+            trim(content);
+
+            std::string exception_name = "USER_EXCEPTION";
+            std::string exception_message = "";
+
+            if (!content.empty()) {
+                // Parse exception name and optional message
+                // Format: RAISE exception_name 'message'
+                // or: RAISE 'message' (uses default exception)
+
+                if (content[0] == '\'' || content[0] == '"') {
+                    // RAISE 'message' - use default exception name
+                    exception_message = content.substr(1, content.length() - 2);
+                } else {
+                    // RAISE exception_name ['message']
+                    size_t space_pos = content.find(' ');
+                    if (space_pos != std::string::npos) {
+                        exception_name = content.substr(0, space_pos);
+                        std::string msg_part = content.substr(space_pos + 1);
+                        trim(msg_part);
+                        if (!msg_part.empty() && (msg_part[0] == '\'' || msg_part[0] == '"')) {
+                            exception_message = msg_part.substr(1, msg_part.length() - 2);
+                        }
+                    } else {
+                        exception_name = content;
+                    }
+                }
+            }
+
+            // Set exception state
+            context.set_exception(exception_name, exception_message);
+            context.control_state = PsqlExecutionContext::ControlFlowState::Exception;
+
+            result.columns = {"exception_raised"};
+            result.rows = {{exception_name + ": " + exception_message}};
+
+        } catch (const std::exception& e) {
+            result.error_message = std::string("RAISE statement error: ") + e.what();
+        }
+
+        return result;
+    }
+
+    ExecutionResult PsqlExecutor::execute_exception_handler(const Ast::PsqlStmt& stmt,
+                                                            PsqlExecutionContext& context)
+    {
+        ExecutionResult result;
+
+        try {
+            // WHEN exception handler - only execute if we have an active exception
+            if (!context.has_active_exception()) {
+                // No active exception, skip this handler
+                result.columns = {"when_handler_skipped"};
+                result.rows = {{"no_active_exception"}};
+                return result;
+            }
+
+            // Evaluate WHEN condition if present
+            bool should_handle = true;
+            if (!stmt.when_condition_raw.empty()) {
+                // Parse condition - could be exception name match or boolean expression
+                std::string condition = stmt.when_condition_raw;
+
+                // Check if it's an exception name match
+                if (condition == context.exception_name || condition == "OTHERS" ||
+                    condition == "ANY") {
+                    should_handle = true;
+                } else {
+                    // Try to evaluate as boolean expression
+                    Value condition_result = evaluate_expression(condition, context);
+                    should_handle = !condition_result.is_null &&
+                                    (condition_result.bytes == "true" ||
+                                     condition_result.bytes == "1" || condition_result.u64 != 0);
+                }
+            }
+
+            if (should_handle) {
+                // Clear the exception state since we're handling it
+                context.clear_exception();
+                context.control_state = PsqlExecutionContext::ControlFlowState::Normal;
+
+                // Execute nested statements (the exception handler body)
+                context.push_scope(); // Create new scope for exception handler
+
+                for (const auto& nested_stmt : stmt.nested) {
+                    auto nested_result = execute_statement(nested_stmt, context);
+                    if (!nested_result.error_message.empty()) {
+                        result.error_message = nested_result.error_message;
+                        break;
+                    }
+                    if (context.control_state != PsqlExecutionContext::ControlFlowState::Normal) {
+                        break;
+                    }
+                }
+
+                context.pop_scope(); // Exit exception handler scope
+
+                result.columns = {"exception_handled"};
+                result.rows = {{"true"}};
+            } else {
+                result.columns = {"exception_handled"};
+                result.rows = {{"false"}};
+            }
+
+        } catch (const std::exception& e) {
+            result.error_message = std::string("Exception handler error: ") + e.what();
+        }
+
+        return result;
+    }
+
+    ExecutionResult PsqlExecutor::execute_open_cursor(const Ast::PsqlStmt& stmt,
+                                                      PsqlExecutionContext& context)
+    {
+        ExecutionResult result;
+
+        try {
+            std::string cursor_name = stmt.cursor_name;
+            if (cursor_name.empty()) {
+                cursor_name = stmt.name; // Fallback to name field
+            }
+
+            if (cursor_name.empty()) {
+                result.error_message = "OPEN CURSOR: Missing cursor name";
+                return result;
+            }
+
+            // Get the cursor
+            PsqlCursor* cursor = context.get_cursor(cursor_name);
+            if (!cursor) {
+                result.error_message = "OPEN CURSOR: Cursor '" + cursor_name + "' not declared";
+                return result;
+            }
+
+            if (cursor->is_open) {
+                result.error_message = "OPEN CURSOR: Cursor '" + cursor_name + "' is already open";
+                return result;
+            }
+
+            // Execute the cursor query
+            auto query_result = execute_sql_statement(cursor->query, context);
+            if (!query_result.error_message.empty()) {
+                result.error_message =
+                    "OPEN CURSOR: Failed to execute query: " + query_result.error_message;
+                return result;
+            }
+
+            // Cache the results and open the cursor
+            cursor->cached_result = query_result;
+            cursor->is_open = true;
+            cursor->current_row = 0;
+            cursor->has_data = !query_result.rows.empty();
+
+            result.columns = {"cursor_opened"};
+            result.rows = {{cursor_name}};
+
+        } catch (const std::exception& e) {
+            result.error_message = std::string("OPEN CURSOR error: ") + e.what();
+        }
+
+        return result;
+    }
+
+    ExecutionResult PsqlExecutor::execute_fetch_cursor(const Ast::PsqlStmt& stmt,
+                                                       PsqlExecutionContext& context)
+    {
+        ExecutionResult result;
+
+        try {
+            std::string cursor_name = stmt.cursor_name;
+            if (cursor_name.empty()) {
+                cursor_name = stmt.name; // Fallback to name field
+            }
+
+            if (cursor_name.empty()) {
+                result.error_message = "FETCH CURSOR: Missing cursor name";
+                return result;
+            }
+
+            // Get the cursor
+            PsqlCursor* cursor = context.get_cursor(cursor_name);
+            if (!cursor) {
+                result.error_message = "FETCH CURSOR: Cursor '" + cursor_name + "' not declared";
+                return result;
+            }
+
+            if (!cursor->is_open) {
+                result.error_message = "FETCH CURSOR: Cursor '" + cursor_name + "' is not open";
+                return result;
+            }
+
+            // Check if there's data to fetch
+            if (cursor->current_row >= cursor->cached_result.rows.size()) {
+                // No more data - set cursor attributes
+                cursor->has_data = false;
+
+                // Set exception for NO_DATA_FOUND
+                context.set_exception("NO_DATA_FOUND", "No more rows to fetch");
+
+                result.columns = {"fetch_status"};
+                result.rows = {{"no_data_found"}};
+                return result;
+            }
+
+            // Fetch the current row
+            const auto& row = cursor->cached_result.rows[cursor->current_row];
+            cursor->current_row++;
+            cursor->has_data = (cursor->current_row < cursor->cached_result.rows.size());
+
+            // Handle INTO variables if specified
+            if (!stmt.into_vars.empty()) {
+                for (size_t i = 0; i < stmt.into_vars.size() && i < row.size(); ++i) {
+                    Value val;
+                    val.bytes = row[i];
+                    val.is_null = (row[i] == "NULL");
+                    context.assign_variable(stmt.into_vars[i], val);
+                }
+            }
+
+            // Return the fetched row
+            result.columns = cursor->cached_result.columns;
+            result.rows = {row};
+
+        } catch (const std::exception& e) {
+            result.error_message = std::string("FETCH CURSOR error: ") + e.what();
+        }
+
+        return result;
+    }
+
+    ExecutionResult PsqlExecutor::execute_close_cursor(const Ast::PsqlStmt& stmt,
+                                                       PsqlExecutionContext& context)
+    {
+        ExecutionResult result;
+
+        try {
+            std::string cursor_name = stmt.cursor_name;
+            if (cursor_name.empty()) {
+                cursor_name = stmt.name; // Fallback to name field
+            }
+
+            if (cursor_name.empty()) {
+                result.error_message = "CLOSE CURSOR: Missing cursor name";
+                return result;
+            }
+
+            // Get the cursor
+            PsqlCursor* cursor = context.get_cursor(cursor_name);
+            if (!cursor) {
+                result.error_message = "CLOSE CURSOR: Cursor '" + cursor_name + "' not declared";
+                return result;
+            }
+
+            if (!cursor->is_open) {
+                result.error_message = "CLOSE CURSOR: Cursor '" + cursor_name + "' is not open";
+                return result;
+            }
+
+            // Close the cursor and clear cached data
+            cursor->is_open = false;
+            cursor->current_row = 0;
+            cursor->has_data = false;
+            cursor->cached_result = ExecutionResult{}; // Clear cached data
+
+            result.columns = {"cursor_closed"};
+            result.rows = {{cursor_name}};
+
+        } catch (const std::exception& e) {
+            result.error_message = std::string("CLOSE CURSOR error: ") + e.what();
+        }
+
+        return result;
     }
 
 } // namespace scratchbird::engine

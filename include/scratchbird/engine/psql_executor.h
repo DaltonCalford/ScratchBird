@@ -36,9 +36,20 @@ namespace scratchbird::engine
         std::string param_mode;   // IN, OUT, INOUT for parameters
     };
 
+    // PSQL cursor state
+    struct PsqlCursor {
+        std::string name;
+        std::string query;             // SQL query for the cursor
+        bool is_open{false};           // Cursor state
+        size_t current_row{0};         // Current row position
+        ExecutionResult cached_result; // Cached query results
+        bool has_data{false};          // Has more data to fetch
+    };
+
     // PSQL execution scope for variable management
     struct PsqlScope {
         std::unordered_map<std::string, PsqlVariable> variables;
+        std::unordered_map<std::string, PsqlCursor> cursors;
         std::shared_ptr<PsqlScope> parent_scope; // For nested blocks
 
         // Scope management
@@ -48,6 +59,12 @@ namespace scratchbird::engine
         void declare_variable(const std::string& name, const PsqlVariableType& type,
                               const Value& default_value = Value{});
         bool assign_variable(const std::string& name, const Value& value);
+
+        // Cursor management
+        bool has_cursor(const std::string& name) const;
+        PsqlCursor* get_cursor(const std::string& name);
+        const PsqlCursor* get_cursor(const std::string& name) const;
+        void declare_cursor(const std::string& name, const std::string& query);
     };
 
     // PSQL execution context
@@ -75,6 +92,11 @@ namespace scratchbird::engine
                             const PsqlVariableType& type, const Value& value);
         std::vector<Value> get_output_parameters() const;
 
+        // Cursor management
+        void declare_cursor(const std::string& name, const std::string& query);
+        bool has_cursor(const std::string& name) const;
+        PsqlCursor* get_cursor(const std::string& name);
+
         // Control flow state
         enum class ControlFlowState { Normal, Break, Continue, Return, Exception };
 
@@ -84,6 +106,19 @@ namespace scratchbird::engine
         // Exception state
         std::string exception_name;
         std::string exception_message;
+        bool has_active_exception() const
+        {
+            return !exception_name.empty();
+        }
+        void clear_exception()
+        {
+            exception_name.clear();
+            exception_message.clear();
+        }
+        void set_exception(const std::string& name, const std::string& message);
+
+        // System exception definitions (Firebird-compatible)
+        static std::unordered_map<std::string, int> get_system_exceptions();
 
         // Execution statistics
         size_t statements_executed{0};
@@ -140,6 +175,20 @@ namespace scratchbird::engine
         // SQL execution within PSQL context
         ExecutionResult execute_sql_statement(const std::string& sql,
                                               PsqlExecutionContext& context);
+
+        // Exception handling
+        ExecutionResult execute_raise_statement(const Ast::PsqlStmt& stmt,
+                                                PsqlExecutionContext& context);
+        ExecutionResult execute_exception_handler(const Ast::PsqlStmt& stmt,
+                                                  PsqlExecutionContext& context);
+
+        // Cursor operations
+        ExecutionResult execute_open_cursor(const Ast::PsqlStmt& stmt,
+                                            PsqlExecutionContext& context);
+        ExecutionResult execute_fetch_cursor(const Ast::PsqlStmt& stmt,
+                                             PsqlExecutionContext& context);
+        ExecutionResult execute_close_cursor(const Ast::PsqlStmt& stmt,
+                                             PsqlExecutionContext& context);
 
         // Expression evaluation in PSQL context
         Value evaluate_expression(const std::string& expr, const PsqlExecutionContext& context);
