@@ -176,6 +176,8 @@ namespace scratchbird
                     return parse_ddl_udr(sql);
                 }
                 return parse_psql_routine(sql);
+            } else if (s.rfind("call ", 0) == 0) {
+                return parse_psql_call(sql);
             } else if (s.rfind("create trigger", 0) == 0 || s.rfind("alter trigger", 0) == 0 ||
                        s.rfind("recreate trigger", 0) == 0) {
                 return parse_psql_trigger(sql);

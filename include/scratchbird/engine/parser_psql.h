@@ -13,6 +13,7 @@ namespace scratchbird::engine
     Ast parse_psql_routine(const std::string& sql);
     Ast parse_psql_trigger(const std::string& sql);
     Ast parse_psql_package(const std::string& sql);
+    Ast parse_psql_call(const std::string& sql);
 } // namespace scratchbird::engine
 
 #endif // SCRATCHBIRD_ENGINE_PARSER_PSQL_H

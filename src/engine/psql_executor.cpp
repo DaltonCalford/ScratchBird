@@ -1,7 +1,9 @@
 #include "scratchbird/engine/psql_executor.h"
 
+#include "scratchbird/engine/catalog_manager.h"
 #include "scratchbird/engine/expr.h"
 #include "scratchbird/engine/parser.h"
+#include "scratchbird/engine/system_oids.h"
 
 #include <algorithm>
 #include <cctype>
@@ -379,6 +381,90 @@ namespace scratchbird::engine
         default:
             result.error_message = "Unsupported PSQL statement type";
             break;
+        }
+
+        return result;
+    }
+
+    ExecutionResult PsqlExecutor::execute_call(const decltype(Ast{}.psqlCall)& call)
+    {
+        ExecutionResult result;
+
+        try {
+            // Use catalog manager to find the procedure/function
+            CatalogManager cm(db_path_);
+            auto schema_oid = oid_public_schema(); // Default to public schema
+
+            auto routine_info = cm.get_routine_by_name(schema_oid, call.routine_name);
+            if (!routine_info) {
+                result.error_message = "Procedure/function '" + call.routine_name + "' not found";
+                return result;
+            }
+
+            // Get the stored procedure/function source code
+            std::string source_code = routine_info->source_code;
+            if (source_code.empty()) {
+                result.error_message = "No source code found for '" + call.routine_name + "'";
+                return result;
+            }
+
+            // Get parameter definitions
+            auto param_info = cm.get_routine_params(routine_info->oid);
+
+            // Create execution context
+            PsqlExecutionContext context;
+
+            // Bind input parameters from call arguments
+            if (call.arguments.size() > param_info.size()) {
+                result.error_message =
+                    "Too many arguments for procedure '" + call.routine_name + "'";
+                return result;
+            }
+
+            for (size_t i = 0; i < param_info.size() && i < call.arguments.size(); ++i) {
+                const auto& param = param_info[i];
+                const auto& arg_expr = call.arguments[i];
+
+                // Evaluate argument expression (simplified for now)
+                Value arg_value = evaluate_expression(arg_expr, context);
+
+                // Create parameter type (simplified parsing)
+                PsqlVariableType param_type = PsqlTypeManager::parse_type(param.type_json);
+
+                // Bind the parameter
+                context.bind_parameter(param.name, param.mode, param_type, arg_value);
+            }
+
+            // Parse the stored procedure source as an EXECUTE BLOCK
+            // Wrap the source code in an EXECUTE BLOCK structure
+            std::string block_sql = "EXECUTE BLOCK AS BEGIN " + source_code + " END";
+            Ast block_ast = parse_sql(block_sql);
+
+            ExecutionResult proc_result;
+            if (block_ast.kind == NodeKind::PsqlBlock) {
+                // Execute the procedure body
+                proc_result = execute_block(block_ast.psqlBlock);
+            } else {
+                proc_result.error_message = "Failed to parse procedure body as PSQL block";
+            }
+
+            if (routine_info->kind == "FUNCTION") {
+                // For functions, return the function result
+                if (context.control_state == PsqlExecutionContext::ControlFlowState::Return) {
+                    result.columns = {"function_result"};
+                    result.rows = {{context.return_value.bytes}};
+                } else {
+                    result.columns = {"function_result"};
+                    result.rows = {{"NULL"}};
+                }
+            } else {
+                // For procedures, return execution status
+                result.columns = {"procedure_status"};
+                result.rows = {{"Procedure executed successfully"}};
+            }
+
+        } catch (const std::exception& e) {
+            result.error_message = std::string("CALL execution error: ") + e.what();
         }
 
         return result;

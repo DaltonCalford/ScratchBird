@@ -4927,6 +4927,18 @@ namespace scratchbird
                 r.rows = {{plan}};
                 return r;
             }
+            if (ast.kind == NodeKind::PsqlCall) {
+                // Execute stored procedure call
+                try {
+                    PsqlExecutor psql_executor(get_executor_db_path());
+                    ExecutionResult call_result = psql_executor.execute_call(ast.psqlCall);
+                    return call_result;
+                } catch (const std::exception& e) {
+                    r.columns = {"error"};
+                    r.rows = {{std::string("CALL execution error: ") + e.what()}};
+                    return r;
+                }
+            }
             // Fallback: try SELECT minimal executor when input looks like SELECT
             if (!g_executor_db_path.empty() && ast.kind == NodeKind::Unknown) {
                 // detect leading SELECT quickly
