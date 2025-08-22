@@ -51,6 +51,7 @@ namespace scratchbird
             PsqlRoutine,
             PsqlTrigger,
             PsqlPackage,
+            PsqlCall,
             DdlUdf,
             DdlUdr,
             DdlBlobFilter,
@@ -493,6 +494,12 @@ namespace scratchbird
                 std::string body_raw;
                 SourceSpan span{};
             } psqlPackage;
+            struct {
+                std::string routine_name;
+                std::vector<std::string> arguments; // argument expressions
+                std::string args_raw;               // raw argument list for later parsing
+                SourceSpan span{};
+            } psqlCall;
             struct {
                 std::string name;
                 std::string external_name;

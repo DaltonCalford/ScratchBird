@@ -1010,4 +1010,61 @@ namespace scratchbird::engine
         }
         return ast;
     }
+
+    Ast parse_psql_call(const std::string& sql)
+    {
+        Ast ast{};
+        ast.kind = NodeKind::PsqlCall;
+        ast.psqlCall.span = {0, int(sql.size())};
+        std::string s = sql;
+        std::string ls = lowercase(s);
+
+        // CALL procedure_name[(arguments)]
+        auto call_pos = ls.find("call ");
+        if (call_pos == 0) {
+            auto after_call = s.substr(5); // Skip "call "
+            trim(after_call);
+
+            // Find procedure name and arguments
+            auto paren_pos = after_call.find('(');
+            if (paren_pos == std::string::npos) {
+                // No arguments: CALL proc_name
+                ast.psqlCall.routine_name = after_call;
+            } else {
+                // With arguments: CALL proc_name(args)
+                ast.psqlCall.routine_name = after_call.substr(0, paren_pos);
+                trim(ast.psqlCall.routine_name);
+
+                auto close_paren = after_call.find(')', paren_pos);
+                if (close_paren != std::string::npos) {
+                    std::string args =
+                        after_call.substr(paren_pos + 1, close_paren - paren_pos - 1);
+                    trim(args);
+                    ast.psqlCall.args_raw = args;
+
+                    // Simple comma-separated argument parsing
+                    if (!args.empty()) {
+                        size_t pos = 0;
+                        while (pos < args.length()) {
+                            auto comma = args.find(',', pos);
+                            auto arg = (comma == std::string::npos) ? args.substr(pos)
+                                                                    : args.substr(pos, comma - pos);
+                            trim(arg);
+                            if (!arg.empty()) {
+                                ast.psqlCall.arguments.push_back(arg);
+                            }
+                            if (comma == std::string::npos)
+                                break;
+                            pos = comma + 1;
+                        }
+                    }
+                } else {
+                    // Malformed - missing closing parenthesis
+                    ast.warnings.push_back("CALL statement missing closing parenthesis");
+                    ast.psqlCall.args_raw = after_call.substr(paren_pos + 1);
+                }
+            }
+        }
+        return ast;
+    }
 } // namespace scratchbird::engine

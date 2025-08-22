@@ -119,6 +119,9 @@ namespace scratchbird::engine
         // Execute PSQL block
         ExecutionResult execute_block(const decltype(Ast{}.psqlBlock)& block);
 
+        // Execute stored procedure/function call
+        ExecutionResult execute_call(const decltype(Ast{}.psqlCall)& call);
+
         // Execute individual PSQL statement
         ExecutionResult execute_statement(const Ast::PsqlStmt& stmt, PsqlExecutionContext& context);
 

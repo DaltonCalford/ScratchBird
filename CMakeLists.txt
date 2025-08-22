@@ -362,6 +362,11 @@ if(SCRATCHBIRD_BUILD_TESTS)
   target_link_libraries(stored_procedure_tests scratchbird_engine)
   add_test(NAME stored_procedure_tests COMMAND stored_procedure_tests)
 
+  # Function Execution Tests
+  add_executable(function_execution_tests tests/function_execution_tests.cpp)
+  target_link_libraries(function_execution_tests scratchbird_engine)
+  add_test(NAME function_execution_tests COMMAND function_execution_tests)
+
   # Parser Debug Test
   add_executable(parser_debug_test tests/parser_debug_test.cpp)
   target_link_libraries(parser_debug_test scratchbird_engine)
