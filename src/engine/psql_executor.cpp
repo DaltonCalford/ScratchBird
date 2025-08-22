@@ -232,6 +232,35 @@ namespace scratchbird::engine
         return current_scope().get_cursor(name);
     }
 
+    void PsqlExecutionContext::set_security_context(const std::string& security_type,
+                                                    const std::string& owner_role)
+    {
+        // Store original context if not already set
+        if (original_security_type_ == "INVOKER" && current_security_type_ == "INVOKER") {
+            original_security_type_ = current_security_type_;
+            original_owner_role_ = current_owner_role_;
+        }
+
+        current_security_type_ = security_type;
+        current_owner_role_ = owner_role;
+    }
+
+    void PsqlExecutionContext::restore_security_context()
+    {
+        current_security_type_ = original_security_type_;
+        current_owner_role_ = original_owner_role_;
+    }
+
+    std::string PsqlExecutionContext::get_current_security_context() const
+    {
+        return current_security_type_;
+    }
+
+    bool PsqlExecutionContext::has_definer_rights() const
+    {
+        return current_security_type_ == "DEFINER";
+    }
+
     // PsqlTypeManager implementation
     PsqlVariableType PsqlTypeManager::parse_type(const std::string& type_str)
     {
@@ -496,6 +525,12 @@ namespace scratchbird::engine
         case Ast::PsqlStmtKind::CloseCursor:
             return execute_close_cursor(stmt, context);
 
+        case Ast::PsqlStmtKind::Leave:
+            return execute_leave_statement(stmt, context);
+
+        case Ast::PsqlStmtKind::Continue:
+            return execute_continue_statement(stmt, context);
+
         default:
             result.error_message = "Unsupported PSQL statement type";
             break;
@@ -531,6 +566,16 @@ namespace scratchbird::engine
 
             // Create execution context
             PsqlExecutionContext context;
+
+            // Set security context based on routine definition
+            if (routine_info->security == "DEFINER") {
+                // Switch to definer's security context
+                // In a real implementation, this would switch to the routine owner's role
+                context.set_security_context("DEFINER", "routine_owner");
+            } else {
+                // Use invoker's security context (default)
+                context.set_security_context("INVOKER", "");
+            }
 
             // Bind input parameters from call arguments
             if (call.arguments.size() > param_info.size()) {
@@ -580,6 +625,9 @@ namespace scratchbird::engine
                 result.columns = {"procedure_status"};
                 result.rows = {{"Procedure executed successfully"}};
             }
+
+            // Restore original security context
+            context.restore_security_context();
 
         } catch (const std::exception& e) {
             result.error_message = std::string("CALL execution error: ") + e.what();
@@ -1225,6 +1273,56 @@ namespace scratchbird::engine
 
         } catch (const std::exception& e) {
             result.error_message = std::string("CLOSE CURSOR error: ") + e.what();
+        }
+
+        return result;
+    }
+
+    ExecutionResult PsqlExecutor::execute_leave_statement(const Ast::PsqlStmt& stmt,
+                                                          PsqlExecutionContext& context)
+    {
+        ExecutionResult result;
+
+        try {
+            // LEAVE (equivalent to BREAK) - exit from current loop
+            context.control_state = PsqlExecutionContext::ControlFlowState::Break;
+
+            // If a label is specified, it could be used for nested loop control
+            if (!stmt.label.empty()) {
+                // In a full implementation, this would handle labeled breaks
+                // For now, we just set the break state
+            }
+
+            result.columns = {"leave_executed"};
+            result.rows = {{"break_from_loop"}};
+
+        } catch (const std::exception& e) {
+            result.error_message = std::string("LEAVE statement error: ") + e.what();
+        }
+
+        return result;
+    }
+
+    ExecutionResult PsqlExecutor::execute_continue_statement(const Ast::PsqlStmt& stmt,
+                                                             PsqlExecutionContext& context)
+    {
+        ExecutionResult result;
+
+        try {
+            // CONTINUE - continue to next iteration of current loop
+            context.control_state = PsqlExecutionContext::ControlFlowState::Continue;
+
+            // If a label is specified, it could be used for nested loop control
+            if (!stmt.label.empty()) {
+                // In a full implementation, this would handle labeled continues
+                // For now, we just set the continue state
+            }
+
+            result.columns = {"continue_executed"};
+            result.rows = {{"continue_loop"}};
+
+        } catch (const std::exception& e) {
+            result.error_message = std::string("CONTINUE statement error: ") + e.what();
         }
 
         return result;
