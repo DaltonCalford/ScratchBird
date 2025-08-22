@@ -64,6 +64,7 @@ add_library(
   src/engine/parser_select.cpp
   src/engine/parser_session.cpp
   src/engine/planner.cpp
+  src/engine/psql_executor.cpp
   src/engine/resolver.cpp
   src/engine/segment_monitor.cpp
   src/engine/stats.cpp
@@ -237,7 +238,8 @@ if(SCRATCHBIRD_BUILD_TESTS)
   target_link_libraries(enhanced_deadlock_tests scratchbird_engine)
   if(GTEST_FOUND)
     target_link_libraries(enhanced_deadlock_tests ${GTEST_LIBRARIES})
-    target_include_directories(enhanced_deadlock_tests PRIVATE ${GTEST_INCLUDE_DIRS})
+    target_include_directories(enhanced_deadlock_tests
+                               PRIVATE ${GTEST_INCLUDE_DIRS})
   endif()
   add_test(NAME enhanced_deadlock_tests COMMAND enhanced_deadlock_tests)
 
@@ -349,4 +351,10 @@ if(SCRATCHBIRD_BUILD_TESTS)
   add_test(NAME test_create_view COMMAND test_create_view)
 
   add_test(NAME fk_set_default_tests COMMAND fk_set_default_tests)
+
+  # PSQL Tests
+  add_executable(psql_basic_tests tests/psql_basic_tests.cpp)
+  target_link_libraries(psql_basic_tests scratchbird_engine)
+  add_test(NAME psql_basic_tests COMMAND psql_basic_tests)
+
 endif()
