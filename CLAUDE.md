@@ -2,7 +2,7 @@
 
 ## Project Identity
 
-**ScratchBird** is a SQL database engine in Alpha development. The system was previously corrupted by Claude-generated commits that improperly removed heap validator files, breaking the build system. The system has been recovered and is now functional, but significant work remains to complete all required features before reaching Beta testing phase.
+**ScratchBird** is a SQL database engine transitioning from Alpha to Beta development. Phases 1-7 are 99% complete (comprehensive database functionality). **Currently implementing Phase 8: PSQL Runtime Engine** - adding procedural SQL capabilities (EXECUTE BLOCK, stored procedures, functions, control flow). This transforms ScratchBird from a database into a full application development platform.
 
 ## Directory Structure (CRITICAL - Remember This!)
 
@@ -24,10 +24,10 @@ ScratchBird/
 
 **IF CONTEXT IS COMPACTED - DO THIS FIRST:**
 
-1. **Read `ProjectPlan/2ndTry_Phase_Review.md`** - Contains gap analysis of missing features that need implementation
-2. **Build verification**: `cmake --build build --parallel` should work (system is recovered)
-3. **DO NOT modify heap validator files** - they are working correctly
-4. **Focus on implementing missing features** identified in the gap analysis
+1. **Read `ProjectPlan/Phase_8_Implementation_Plan.md`** - Current development focus (Sprint 1 in progress)
+2. **Build verification**: `cmake --build build --parallel` should work
+3. **Phase 8 Status**: Sprint 1 75% complete - PSQL executor integrated, basic tests passing
+4. **Current Priority**: Complete control flow execution (IF/WHILE/FOR) and proceed to Sprint 2
 
 ## Build System Rules (NON-NEGOTIABLE!)
 
@@ -48,25 +48,18 @@ ScratchBird/
 - Build with `cmake --build build --target <name>`
 - Run tests with `cd build && ctest -R <name>`
 
-## Key Implementation Files at Working State
-
-- `src/engine/heap_validator.cpp` - ✅ PRESENT and working
-- `include/scratchbird/engine/heap_validator.h` - ✅ PRESENT and working
-- `src/dbcheck.cpp` - ✅ PRESENT and compiles correctly
-- All test executables build successfully
-
 ## Memory Refresh Protocol
 
 **⚠️  CRITICAL: If context is compacted, immediately check:**
 
-1. 🔴 **`ProjectPlan/2ndTry_Phase_Review.md`** - MOST IMPORTANT - identifies missing features to implement
-2. 🔴 **Check `ProjectPlan/` directory first** - contains all project documentation and current development focus
+1. 🔴 **`ProjectPlan/Phase_8_Implementation_Plan.md`** - Current Sprint 1 progress and next steps
+2. 🔴 **`ProjectPlan/2ndTry_Phase_Review.md`** - Historical - Phases 1-7 completion status (99% done)
 3. 🔴 **Build system**: CMake only, executables in `build/` only
 4. 🔴 **Test workflow**: Source in `tests/`, register in `CMakeLists.txt`, build with CMake
 
 ## If Ever In Doubt:
 
-1. Read `ProjectPlan/2ndTry_Phase_Review.md` for missing features that need implementation
+1. Read `ProjectPlan/Phase_8_Implementation_Plan` for missing features that need implementation
 2. Read `ProjectPlan/BuildSystem.md` for complete build system rules
 3. Verify current commit with `git log --oneline -1`
 4. Test build with `cmake --build build --parallel`
@@ -78,8 +71,26 @@ ScratchBird/
 - **GitHub**: https://github.com/DaltonCalford/ScratchBird.git
 - **Remote name**: `github` (not `origin`)
 - **Current branch**: `main` (recovery completed)
-- **Current status**: Build system recovered, focus on implementing missing features
+- **Current status**: Phase 8 Sprint 1 in progress - PSQL runtime implementation
+
+## Current Phase 8 Implementation Status
+
+**✅ SPRINT 1 COMPLETED (75%):**
+- PSQL execution context with variable scoping
+- EXECUTE BLOCK integration in main executor
+- Type management system (PsqlTypeManager)
+- Basic control flow framework (IF/WHILE)
+- PSQL test suite foundation (`psql_basic_tests.cpp`)
+
+**🔄 SPRINT 1 IN PROGRESS:**
+- Control flow execution refinement
+- Parser integration for complex EXECUTE BLOCK syntax
+
+**📋 SPRINT 2 PLANNED:**
+- Stored procedures (CREATE/EXECUTE PROCEDURE)
+- User-defined functions with return values
+- Exception handling infrastructure
 
 ---
 
-🚨 **REMEMBER**: System was previously corrupted by improper Claude changes but has been recovered. Current focus: implement missing features identified in gap analysis to progress from Alpha to Beta phase.
+🚨 **CURRENT FOCUS**: Complete Phase 8 Sprint 1 control flow execution, then advance to Sprint 2 stored procedures and functions. This will complete the transition from database to application development platform.

@@ -8,6 +8,7 @@
 #include "scratchbird/engine/index_btree.h"
 #include "scratchbird/engine/parser_dml.h"
 #include "scratchbird/engine/parser_select.h"
+#include "scratchbird/engine/psql_executor.h"
 #include "scratchbird/engine/system_oids.h"
 #include "scratchbird/engine/txn.h"
 // no planner header; local selectivity helper below for bucketing
@@ -4575,9 +4576,10 @@ namespace scratchbird
                         size_t b = def.find_first_of(" \t\n", a == std::string::npos ? 0 : a + 1);
                         if (a == std::string::npos)
                             return;
-                        std::string name = def.substr(a, (b == std::string::npos ? def.size() : b) - a);
+                        std::string name =
+                            def.substr(a, (b == std::string::npos ? def.size() : b) - a);
                         colnames.push_back(name);
-                        
+
                         // Look for DEFAULT clause
                         std::string lower_def = def;
                         std::transform(lower_def.begin(), lower_def.end(), lower_def.begin(),
@@ -4586,18 +4588,20 @@ namespace scratchbird
                         if (default_pos != std::string::npos) {
                             size_t value_start = default_pos + 9; // length of " default "
                             size_t value_end = def.size();
-                            
+
                             // Find end of default value (before next keyword like NOT NULL, etc.)
-                            std::vector<std::string> keywords = {" not ", " null", " check", " references", " constraint"};
+                            std::vector<std::string> keywords = {" not ", " null", " check",
+                                                                 " references", " constraint"};
                             for (const auto& kw : keywords) {
                                 size_t kw_pos = lower_def.find(kw, value_start);
                                 if (kw_pos != std::string::npos && kw_pos < value_end) {
                                     value_end = kw_pos;
                                 }
                             }
-                            
+
                             if (value_start < value_end) {
-                                std::string default_val = def.substr(value_start, value_end - value_start);
+                                std::string default_val =
+                                    def.substr(value_start, value_end - value_start);
                                 // Trim whitespace
                                 size_t start = default_val.find_first_not_of(" \t\n");
                                 size_t end = default_val.find_last_not_of(" \t\n");
@@ -4634,7 +4638,8 @@ namespace scratchbird
                 cols_with_pos.reserve(colnames.size());
                 for (size_t i = 0; i < colnames.size(); ++i)
                     cols_with_pos.emplace_back((std::int64_t)(i + 1), colnames[i]);
-                cm.create_columns(rel_oid, cols_with_pos, ast.ddlTable.not_null_columns, col_defaults);
+                cm.create_columns(rel_oid, cols_with_pos, ast.ddlTable.not_null_columns,
+                                  col_defaults);
                 // Persist column-level NOT NULL as constraints
                 for (const auto& nncol : ast.ddlTable.not_null_columns) {
                     std::string cname = "nn_" + nncol;
@@ -4857,6 +4862,18 @@ namespace scratchbird
                     invalidate_prepared_cache();
                 }
                 return r;
+            }
+            if (ast.kind == NodeKind::PsqlBlock) {
+                // Execute PSQL block with variables and control flow
+                try {
+                    PsqlExecutor psql_executor(get_executor_db_path());
+                    ExecutionResult psql_result = psql_executor.execute_block(ast.psqlBlock);
+                    return psql_result;
+                } catch (const std::exception& e) {
+                    r.columns = {"error"};
+                    r.rows = {{std::string("PSQL execution error: ") + e.what()}};
+                    return r;
+                }
             }
             if (ast.kind == NodeKind::DdlExplain) {
                 r.columns = {"Plan"};
