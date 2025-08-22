@@ -97,6 +97,13 @@ namespace scratchbird::engine
         bool has_cursor(const std::string& name) const;
         PsqlCursor* get_cursor(const std::string& name);
 
+        // Security context management
+        void set_security_context(const std::string& security_type,
+                                  const std::string& owner_role = "");
+        void restore_security_context();
+        std::string get_current_security_context() const;
+        bool has_definer_rights() const;
+
         // Control flow state
         enum class ControlFlowState { Normal, Break, Continue, Return, Exception };
 
@@ -126,6 +133,12 @@ namespace scratchbird::engine
 
       private:
         std::stack<std::shared_ptr<PsqlScope>> scope_stack_;
+
+        // Security context state
+        std::string current_security_type_{"INVOKER"}; // Default to INVOKER
+        std::string current_owner_role_;
+        std::string original_security_type_{"INVOKER"};
+        std::string original_owner_role_;
     };
 
     // PSQL type parser and validator
@@ -189,6 +202,12 @@ namespace scratchbird::engine
                                              PsqlExecutionContext& context);
         ExecutionResult execute_close_cursor(const Ast::PsqlStmt& stmt,
                                              PsqlExecutionContext& context);
+
+        // Advanced control flow
+        ExecutionResult execute_leave_statement(const Ast::PsqlStmt& stmt,
+                                                PsqlExecutionContext& context);
+        ExecutionResult execute_continue_statement(const Ast::PsqlStmt& stmt,
+                                                   PsqlExecutionContext& context);
 
         // Expression evaluation in PSQL context
         Value evaluate_expression(const std::string& expr, const PsqlExecutionContext& context);

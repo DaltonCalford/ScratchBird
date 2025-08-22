@@ -377,6 +377,13 @@ if(SCRATCHBIRD_BUILD_TESTS)
   target_link_libraries(cursor_tests scratchbird_engine)
   add_test(NAME cursor_tests COMMAND cursor_tests)
 
+  # Advanced PSQL Features Tests
+  add_executable(advanced_psql_features_tests
+                 tests/advanced_psql_features_tests.cpp)
+  target_link_libraries(advanced_psql_features_tests scratchbird_engine)
+  add_test(NAME advanced_psql_features_tests
+           COMMAND advanced_psql_features_tests)
+
   # Parser Debug Test
   add_executable(parser_debug_test tests/parser_debug_test.cpp)
   target_link_libraries(parser_debug_test scratchbird_engine)
