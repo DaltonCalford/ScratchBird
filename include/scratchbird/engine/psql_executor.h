@@ -5,7 +5,10 @@
 #include "scratchbird/engine/executor.h"
 #include "scratchbird/engine/heap.h"
 
+#include <chrono>
 #include <memory>
+#include <mutex>
+#include <optional>
 #include <stack>
 #include <string>
 #include <unordered_map>
@@ -212,8 +215,102 @@ namespace scratchbird::engine
         // Expression evaluation in PSQL context
         Value evaluate_expression(const std::string& expr, const PsqlExecutionContext& context);
 
+        // Performance optimization methods
+        struct CompiledProcedure {
+            std::string name;
+            std::string schema_name;
+            std::string compiled_body; // Optimized PSQL body
+            std::chrono::steady_clock::time_point compiled_time;
+            size_t execution_count{0};
+            bool is_deterministic{false};
+            std::unordered_map<std::string, Value> constant_values; // Constant folding results
+        };
+
+        // Enable procedure plan caching
+        void enable_plan_caching(bool enabled = true);
+
+        // Get compiled procedure from cache
+        std::optional<CompiledProcedure> get_cached_procedure(const std::string& name) const;
+
+        // Cache compiled procedure
+        void cache_procedure(const std::string& name, const CompiledProcedure& compiled);
+
+        // Clear procedure cache
+        void clear_procedure_cache();
+
+        // Expression optimization
+        std::string optimize_expression(const std::string& expr,
+                                        const PsqlExecutionContext& context);
+
+        // Function inlining for deterministic functions
+        std::string inline_deterministic_functions(const std::string& code);
+
+        // PSQL Debugging Support
+        struct DebugBreakpoint {
+            std::string procedure_name;
+            int line_number{0};
+            bool enabled{true};
+            std::string condition; // Optional conditional breakpoint
+        };
+
+        struct DebugCallFrame {
+            std::string procedure_name;
+            std::string source_code;
+            int current_line{0};
+            std::unordered_map<std::string, Value> local_variables;
+            std::chrono::steady_clock::time_point start_time;
+        };
+
+        struct DebugState {
+            bool debugging_enabled{false};
+            bool step_mode{false};
+            bool break_on_exception{true};
+            std::vector<DebugBreakpoint> breakpoints;
+            std::vector<DebugCallFrame> call_stack;
+            std::string last_error;
+            int last_error_line{0};
+        };
+
+        // Enable/disable debugging
+        void enable_debugging(bool enabled = true);
+
+        // Breakpoint management
+        void add_breakpoint(const std::string& procedure_name, int line_number,
+                            const std::string& condition = "");
+        void remove_breakpoint(const std::string& procedure_name, int line_number);
+        void clear_breakpoints();
+        std::vector<DebugBreakpoint> get_breakpoints() const;
+
+        // Execution control
+        void enable_step_mode(bool enabled = true);
+        void step_over();
+        void step_into();
+        void continue_execution();
+
+        // Variable inspection
+        std::unordered_map<std::string, Value> get_current_variables() const;
+        Value get_variable_value(const std::string& name) const;
+
+        // Call stack inspection
+        std::vector<DebugCallFrame> get_call_stack() const;
+        std::string get_current_procedure() const;
+        int get_current_line() const;
+
+        // Error reporting
+        std::string get_last_error_with_location() const;
+        void report_runtime_error(const std::string& error, int line_number = 0);
+
       private:
         std::string db_path_;
+
+        // Performance optimization state
+        bool plan_caching_enabled_{true};
+        std::unordered_map<std::string, CompiledProcedure> procedure_cache_;
+        mutable std::mutex cache_mutex_; // Thread safety for cache access
+
+        // Debugging state
+        DebugState debug_state_;
+        mutable std::mutex debug_mutex_; // Thread safety for debug operations
 
         // Helper methods
         void process_declarations(const decltype(Ast{}.psqlBlock)& block,

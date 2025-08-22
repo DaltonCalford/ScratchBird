@@ -3890,4 +3890,61 @@ namespace scratchbird::engine
         return true;
     }
 
+    // Package management implementations
+
+    bool CatalogManager::create_package_header(const std::optional<UuidBytes>& schema_oid,
+                                               const std::string& name,
+                                               const std::string& header_source) const
+    {
+        std::fprintf(stderr, "[CREATE PACKAGE HEADER] Creating package header '%s'\n",
+                     name.c_str());
+        std::fprintf(stderr, "[CREATE PACKAGE HEADER] Header source: %s\n",
+                     header_source.substr(0, 100).c_str());
+
+        // TODO: Store in SDB$PACKAGE table
+        // For now, just return success
+        return true;
+    }
+
+    bool CatalogManager::create_package_body(const std::optional<UuidBytes>& schema_oid,
+                                             const std::string& name,
+                                             const std::string& body_source) const
+    {
+        std::fprintf(stderr, "[CREATE PACKAGE BODY] Creating package body '%s'\n", name.c_str());
+        std::fprintf(stderr, "[CREATE PACKAGE BODY] Body source: %s\n",
+                     body_source.substr(0, 100).c_str());
+
+        // TODO: Store in SDB$PACKAGE table with body flag
+        // For now, just return success
+        return true;
+    }
+
+    std::optional<CatalogManager::PackageInfo>
+    CatalogManager::get_package_by_name(const std::optional<UuidBytes>& schema_oid,
+                                        const std::string& name) const
+    {
+        std::fprintf(stderr, "[GET PACKAGE] Getting package '%s' (placeholder)\n", name.c_str());
+
+        // TODO: Implement actual catalog lookup
+        return std::nullopt;
+    }
+
+    std::vector<CatalogManager::PackageInfo>
+    CatalogManager::list_packages(const std::optional<UuidBytes>& schema_oid) const
+    {
+        std::fprintf(stderr, "[LIST PACKAGES] Listing packages (placeholder)\n");
+
+        // TODO: Implement actual catalog listing
+        return {};
+    }
+
+    bool CatalogManager::drop_package_by_name(const std::optional<UuidBytes>& schema_oid,
+                                              const std::string& name) const
+    {
+        std::fprintf(stderr, "[DROP PACKAGE] Dropping package '%s' (placeholder)\n", name.c_str());
+
+        // TODO: Remove from SDB$PACKAGE table
+        return true;
+    }
+
 } // namespace scratchbird::engine

@@ -990,22 +990,28 @@ namespace scratchbird::engine
         std::string ls = lowercase(s);
         // CREATE PACKAGE name AS ... [END] | CREATE PACKAGE BODY name AS ... END
         auto aspos = ls.find(" as ");
-        ast.psqlPackage.header_raw = (aspos == std::string::npos) ? s : s.substr(0, aspos);
-        ast.psqlPackage.body_raw =
-            (aspos == std::string::npos) ? std::string() : s.substr(aspos + 4);
-        ast.psqlPackage.is_body = (ls.find(" package body ") != std::string::npos);
-        // name after PACKAGE or PACKAGE BODY
-        auto ppos2 = ls.find(" package ");
-        if (ppos2 != std::string::npos) {
-            size_t start = ppos2 + 9;
-            if (ls.find(" package body ") == ppos2)
-                start = ppos2 + 13;
-            auto after3 = s.substr(start);
-            auto sp3 = after3.find_first_not_of(" \t\n");
-            if (sp3 != std::string::npos) {
-                auto rest3 = after3.substr(sp3);
-                auto end3 = rest3.find_first_of(" \t\n");
-                ast.psqlPackage.name = end3 == std::string::npos ? rest3 : rest3.substr(0, end3);
+        ast.psqlPackage.is_header = (ls.find(" package body ") == std::string::npos);
+
+        if (ast.psqlPackage.is_header) {
+            ast.psqlPackage.header_body = (aspos == std::string::npos) ? s : s.substr(aspos + 4);
+        } else {
+            ast.psqlPackage.implementation_body =
+                (aspos == std::string::npos) ? s : s.substr(aspos + 4);
+        }
+
+        // Extract package name after PACKAGE or PACKAGE BODY
+        auto ppos = ls.find(" package ");
+        if (ppos != std::string::npos) {
+            size_t start = ppos + 9;
+            if (ls.find(" package body ") == ppos) {
+                start = ppos + 14; // skip " package body "
+            }
+            auto after = s.substr(start);
+            auto sp = after.find_first_not_of(" \t\n");
+            if (sp != std::string::npos) {
+                auto rest = after.substr(sp);
+                auto end = rest.find_first_of(" \t\n");
+                ast.psqlPackage.name = end == std::string::npos ? rest : rest.substr(0, end);
             }
         }
         return ast;
