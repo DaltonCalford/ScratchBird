@@ -16,6 +16,15 @@ namespace scratchbird
             std::string s(sql);
             std::transform(s.begin(), s.end(), s.begin(),
                            [](unsigned char c) { return char(::tolower(c)); });
+
+            // Trim leading whitespace for proper keyword detection
+            auto start = s.find_first_not_of(" \t\n\r");
+            if (start != std::string::npos) {
+                s = s.substr(start);
+            } else {
+                s.clear(); // String is all whitespace
+            }
+
             Ast ast{};
             if (s == "select 1" || s == "select\n1" || s == "select\t1") {
                 ast.kind = NodeKind::SelectLiteral;

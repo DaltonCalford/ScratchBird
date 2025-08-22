@@ -2,15 +2,17 @@
 #include "scratchbird/engine/heap_rel.h"
 #include "scratchbird/engine/txn.h"
 
+#include <chrono>
 #include <gtest/gtest.h>
 #include <thread>
-#include <chrono>
 
 using namespace scratchbird::engine;
 
-class EnhancedDeadlockTest : public ::testing::Test {
-protected:
-    void SetUp() override {
+class EnhancedDeadlockTest : public ::testing::Test
+{
+  protected:
+    void SetUp() override
+    {
         // Reset to default policy before each test
         LockManager::set_deadlock_victim_policy(DeadlockVictimPolicy::YoungTransaction);
     }
@@ -47,52 +49,53 @@ TEST_F(EnhancedDeadlockTest, VictimSelectionPolicies)
     // Test 1: YoungTransaction policy (default)
     {
         LockManager::set_deadlock_victim_policy(DeadlockVictimPolicy::YoungTransaction);
-        ASSERT_EQ(LockManager::get_deadlock_victim_policy(), DeadlockVictimPolicy::YoungTransaction);
-        
+        ASSERT_EQ(LockManager::get_deadlock_victim_policy(),
+                  DeadlockVictimPolicy::YoungTransaction);
+
         auto t1 = tm.begin();
         auto t2 = tm.begin();
-        
+
         // T1 locks A first
         ASSERT_TRUE(LockManager::acquire_write_lock(rA, t1.id));
-        
+
         // Small delay to ensure T2 starts after T1
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
-        
+
         // T2 locks B
         ASSERT_TRUE(LockManager::acquire_write_lock(rB, t2.id));
-        
+
         // Create deadlock: T1 waits on B, T2 waits on A
         // With YoungTransaction policy, T2 (newer) should be victim
-        ASSERT_FALSE(LockManager::acquire_write_lock(rB, t1.id));  // T1 waits
-        ASSERT_FALSE(LockManager::acquire_write_lock(rA, t2.id));  // T2 becomes victim
-        
+        ASSERT_FALSE(LockManager::acquire_write_lock(rB, t1.id)); // T1 waits
+        ASSERT_FALSE(LockManager::acquire_write_lock(rA, t2.id)); // T2 becomes victim
+
         // Clean up
         LockManager::release_write_lock(rA, t1.id);
         LockManager::release_write_lock(rB, t2.id);
     }
-    
+
     // Test 2: OldTransaction policy
     {
         LockManager::set_deadlock_victim_policy(DeadlockVictimPolicy::OldTransaction);
         ASSERT_EQ(LockManager::get_deadlock_victim_policy(), DeadlockVictimPolicy::OldTransaction);
-        
+
         // Policy changed successfully - deadlock detection should now prefer different victims
         // (Actual victim selection testing would require more complex scenarios)
     }
-    
+
     // Test 3: FewestLocks policy
     {
         LockManager::set_deadlock_victim_policy(DeadlockVictimPolicy::FewestLocks);
         ASSERT_EQ(LockManager::get_deadlock_victim_policy(), DeadlockVictimPolicy::FewestLocks);
-        
+
         // Policy changed successfully
     }
-    
-    // Test 4: LowestCost policy  
+
+    // Test 4: LowestCost policy
     {
         LockManager::set_deadlock_victim_policy(DeadlockVictimPolicy::LowestCost);
         ASSERT_EQ(LockManager::get_deadlock_victim_policy(), DeadlockVictimPolicy::LowestCost);
-        
+
         // Policy changed successfully
     }
 }
@@ -129,21 +132,22 @@ TEST_F(EnhancedDeadlockTest, CycleDetectionAndReconstruction)
     auto t2 = tm.begin();
 
     // Create simple 2-transaction cycle by establishing wait-for relationships
-    ASSERT_TRUE(LockManager::acquire_write_lock(rA, t1.id));  // T1 locks A
-    ASSERT_TRUE(LockManager::acquire_write_lock(rB, t2.id));  // T2 locks B
-    
+    ASSERT_TRUE(LockManager::acquire_write_lock(rA, t1.id)); // T1 locks A
+    ASSERT_TRUE(LockManager::acquire_write_lock(rB, t2.id)); // T2 locks B
+
     // Now create the deadlock by having each transaction wait for the other's lock
     ASSERT_FALSE(LockManager::acquire_write_lock(rB, t1.id)); // T1 tries to lock B (fails, waits)
-    ASSERT_FALSE(LockManager::acquire_write_lock(rA, t2.id)); // T2 tries to lock A (fails, creates cycle)
-    
+    ASSERT_FALSE(
+        LockManager::acquire_write_lock(rA, t2.id)); // T2 tries to lock A (fails, creates cycle)
+
     // Test that cycle detection works after the deadlock is established
     auto cycle = LockManager::find_deadlock_cycle(t2.id, t1.id);
     ASSERT_FALSE(cycle.empty());
-    
+
     // Test victim selection
     auto victim = LockManager::choose_deadlock_victim(cycle);
     ASSERT_TRUE(victim == t1.id || victim == t2.id);
-    
+
     // Clean up
     LockManager::release_write_lock(rA, t1.id);
     LockManager::release_write_lock(rB, t2.id);
