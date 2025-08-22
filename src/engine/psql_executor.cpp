@@ -422,25 +422,8 @@ namespace scratchbird::engine
 
                 // Check for exceptions first
                 if (context.has_active_exception()) {
-                    // Look for exception handlers in remaining statements
-                    bool exception_handled = false;
-                    for (size_t i = 0; i < block.body.size(); ++i) {
-                        const auto& handler_stmt = block.body[i];
-                        if (handler_stmt.kind == Ast::PsqlStmtKind::Exception) {
-                            auto handler_result = execute_exception_handler(handler_stmt, context);
-                            if (!context.has_active_exception()) {
-                                exception_handled = true;
-                                break;
-                            }
-                        }
-                    }
-
-                    if (!exception_handled) {
-                        // Propagate unhandled exception
-                        result.error_message = "Unhandled exception: " + context.exception_name +
-                                               " - " + context.exception_message;
-                        break;
-                    }
+                    // Break from normal execution - exception handlers will be processed after loop
+                    break;
                 }
 
                 // Check for other control flow changes
@@ -456,6 +439,31 @@ namespace scratchbird::engine
                 }
 
                 context.statements_executed++;
+            }
+
+            // Process exception handlers if we have an active exception
+            if (context.has_active_exception()) {
+                bool exception_handled = false;
+                for (const auto& stmt : block.body) {
+                    if (stmt.kind == Ast::PsqlStmtKind::Exception) {
+                        auto handler_result = execute_exception_handler(stmt, context);
+                        if (!context.has_active_exception()) {
+                            exception_handled = true;
+                            // Merge any results from the handler
+                            if (!handler_result.error_message.empty()) {
+                                result.error_message = handler_result.error_message;
+                            }
+                            break;
+                        }
+                    }
+                }
+
+                if (!exception_handled) {
+                    // Propagate unhandled exception
+                    result.error_message = "Unhandled exception: " + context.exception_name +
+                                           " - " + context.exception_message;
+                    return result;
+                }
             }
 
             // Handle return values if this is a function-like block
