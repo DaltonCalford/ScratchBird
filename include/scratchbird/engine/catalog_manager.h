@@ -309,6 +309,35 @@ namespace scratchbird::engine
         bool drop_routine_by_name(const std::optional<UuidBytes>& schema_oid,
                                   const std::string& name) const;
 
+        // Package management
+        struct PackageInfo {
+            std::string name;
+            std::string schema_name;
+            std::string header_source;
+            std::string body_source;
+            bool has_header{false};
+            bool has_body{false};
+        };
+
+        // Create package header
+        bool create_package_header(const std::optional<UuidBytes>& schema_oid,
+                                   const std::string& name, const std::string& header_source) const;
+
+        // Create package body
+        bool create_package_body(const std::optional<UuidBytes>& schema_oid,
+                                 const std::string& name, const std::string& body_source) const;
+
+        // Get package by name
+        std::optional<PackageInfo> get_package_by_name(const std::optional<UuidBytes>& schema_oid,
+                                                       const std::string& name) const;
+
+        // List packages in a schema
+        std::vector<PackageInfo> list_packages(const std::optional<UuidBytes>& schema_oid) const;
+
+        // Drop package by name
+        bool drop_package_by_name(const std::optional<UuidBytes>& schema_oid,
+                                  const std::string& name) const;
+
       private:
         std::string db_path_;
     };

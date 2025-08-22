@@ -4939,6 +4939,33 @@ namespace scratchbird
                     return r;
                 }
             }
+            if (ast.kind == NodeKind::PsqlPackage) {
+                // Create package header or body
+                try {
+                    CatalogManager cm(get_executor_db_path());
+                    auto schema_oid = oid_public_schema(); // Default to public schema for now
+
+                    if (ast.psqlPackage.is_header) {
+                        // Create package header
+                        bool success = cm.create_package_header(schema_oid, ast.psqlPackage.name,
+                                                                ast.psqlPackage.header_body);
+
+                        r.columns = {"package_header_created"};
+                        r.rows = {{success ? "true" : "false"}};
+                    } else {
+                        // Create package body
+                        bool success = cm.create_package_body(schema_oid, ast.psqlPackage.name,
+                                                              ast.psqlPackage.implementation_body);
+
+                        r.columns = {"package_body_created"};
+                        r.rows = {{success ? "true" : "false"}};
+                    }
+                } catch (const std::exception& e) {
+                    r.columns = {"error"};
+                    r.rows = {{std::string("Package creation error: ") + e.what()}};
+                }
+                return r;
+            }
             // Fallback: try SELECT minimal executor when input looks like SELECT
             if (!g_executor_db_path.empty() && ast.kind == NodeKind::Unknown) {
                 // detect leading SELECT quickly

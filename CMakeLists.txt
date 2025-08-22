@@ -65,6 +65,7 @@ add_library(
   src/engine/parser_session.cpp
   src/engine/planner.cpp
   src/engine/psql_executor.cpp
+  src/engine/psql_dev_tools.cpp
   src/engine/resolver.cpp
   src/engine/segment_monitor.cpp
   src/engine/stats.cpp
@@ -383,6 +384,28 @@ if(SCRATCHBIRD_BUILD_TESTS)
   target_link_libraries(advanced_psql_features_tests scratchbird_engine)
   add_test(NAME advanced_psql_features_tests
            COMMAND advanced_psql_features_tests)
+
+  # Package Support Tests
+  add_executable(package_support_tests tests/package_support_tests.cpp)
+  target_link_libraries(package_support_tests scratchbird_engine)
+  add_test(NAME package_support_tests COMMAND package_support_tests)
+
+  # Performance Optimization Tests
+  add_executable(performance_optimization_tests
+                 tests/performance_optimization_tests.cpp)
+  target_link_libraries(performance_optimization_tests scratchbird_engine)
+  add_test(NAME performance_optimization_tests
+           COMMAND performance_optimization_tests)
+
+  # PSQL Debugging Support Tests
+  add_executable(psql_debugging_tests tests/psql_debugging_tests.cpp)
+  target_link_libraries(psql_debugging_tests scratchbird_engine)
+  add_test(NAME psql_debugging_tests COMMAND psql_debugging_tests)
+
+  # PSQL Development Tools Tests
+  add_executable(psql_dev_tools_tests tests/psql_dev_tools_tests.cpp)
+  target_link_libraries(psql_dev_tools_tests scratchbird_engine)
+  add_test(NAME psql_dev_tools_tests COMMAND psql_dev_tools_tests)
 
   # Parser Debug Test
   add_executable(parser_debug_test tests/parser_debug_test.cpp)

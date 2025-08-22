@@ -552,6 +552,15 @@ namespace scratchbird::engine
         ExecutionResult result;
 
         try {
+            // Check procedure cache first
+            auto cached = get_cached_procedure(call.routine_name);
+            if (cached) {
+                // Use cached compiled procedure
+                cached->execution_count++;
+                // For now, just use the cached compiled_body as source
+                // In a full implementation, this would be pre-compiled bytecode
+            }
+
             // Use catalog manager to find the procedure/function
             CatalogManager cm(db_path_);
             auto schema_oid = oid_public_schema(); // Default to public schema
@@ -567,6 +576,23 @@ namespace scratchbird::engine
             if (source_code.empty()) {
                 result.error_message = "No source code found for '" + call.routine_name + "'";
                 return result;
+            }
+
+            // Apply performance optimizations if not cached
+            if (!cached) {
+                // Inline deterministic functions
+                source_code = inline_deterministic_functions(source_code);
+
+                // Create compiled procedure entry for caching
+                CompiledProcedure compiled;
+                compiled.name = call.routine_name;
+                compiled.schema_name = "public"; // TODO: get actual schema
+                compiled.compiled_body = source_code;
+                compiled.compiled_time = std::chrono::steady_clock::now();
+                compiled.is_deterministic = (routine_info->volatility == "IMMUTABLE");
+
+                // Cache the compiled procedure
+                cache_procedure(call.routine_name, compiled);
             }
 
             // Get parameter definitions
@@ -1334,6 +1360,271 @@ namespace scratchbird::engine
         }
 
         return result;
+    }
+
+    // Performance optimization method implementations
+
+    void PsqlExecutor::enable_plan_caching(bool enabled)
+    {
+        std::lock_guard<std::mutex> lock(cache_mutex_);
+        plan_caching_enabled_ = enabled;
+        if (!enabled) {
+            procedure_cache_.clear();
+        }
+    }
+
+    std::optional<PsqlExecutor::CompiledProcedure>
+    PsqlExecutor::get_cached_procedure(const std::string& name) const
+    {
+        if (!plan_caching_enabled_) {
+            return std::nullopt;
+        }
+
+        std::lock_guard<std::mutex> lock(cache_mutex_);
+        auto it = procedure_cache_.find(name);
+        if (it != procedure_cache_.end()) {
+            return it->second;
+        }
+        return std::nullopt;
+    }
+
+    void PsqlExecutor::cache_procedure(const std::string& name, const CompiledProcedure& compiled)
+    {
+        if (!plan_caching_enabled_) {
+            return;
+        }
+
+        std::lock_guard<std::mutex> lock(cache_mutex_);
+        procedure_cache_[name] = compiled;
+    }
+
+    void PsqlExecutor::clear_procedure_cache()
+    {
+        std::lock_guard<std::mutex> lock(cache_mutex_);
+        procedure_cache_.clear();
+    }
+
+    std::string PsqlExecutor::optimize_expression(const std::string& expr,
+                                                  const PsqlExecutionContext& context)
+    {
+        // Basic expression optimization
+        std::string optimized = expr;
+
+        // Constant folding for simple arithmetic
+        if (optimized.find("1 + 1") != std::string::npos) {
+            optimized = std::regex_replace(optimized, std::regex("1 \\+ 1"), "2");
+        }
+        if (optimized.find("2 * 2") != std::string::npos) {
+            optimized = std::regex_replace(optimized, std::regex("2 \\* 2"), "4");
+        }
+        if (optimized.find("0 +") != std::string::npos) {
+            optimized = std::regex_replace(optimized, std::regex("0 \\+ "), "");
+        }
+        if (optimized.find("+ 0") != std::string::npos) {
+            optimized = std::regex_replace(optimized, std::regex(" \\+ 0"), "");
+        }
+        if (optimized.find("1 *") != std::string::npos) {
+            optimized = std::regex_replace(optimized, std::regex("1 \\* "), "");
+        }
+        if (optimized.find("* 1") != std::string::npos) {
+            optimized = std::regex_replace(optimized, std::regex(" \\* 1"), "");
+        }
+
+        // Variable substitution for known constant values
+        for (const auto& var_name : {"TRUE", "FALSE", "NULL"}) {
+            std::string pattern = std::string("\\b") + var_name + "\\b";
+            // Leave as-is for boolean constants (basic implementation)
+        }
+
+        return optimized;
+    }
+
+    std::string PsqlExecutor::inline_deterministic_functions(const std::string& code)
+    {
+        std::string optimized = code;
+
+        // Inline simple deterministic functions
+        // Use manual parsing for better compatibility
+
+        // Example: UPPER('hello') -> 'HELLO'
+        std::regex upper_regex("UPPER\\('([^']+)'\\)");
+        std::smatch match;
+        while (std::regex_search(optimized, match, upper_regex)) {
+            std::string str = match[1].str();
+            std::transform(str.begin(), str.end(), str.begin(), ::toupper);
+            optimized = std::regex_replace(optimized, upper_regex, "'" + str + "'",
+                                           std::regex_constants::format_first_only);
+        }
+
+        // Example: LOWER('HELLO') -> 'hello'
+        std::regex lower_regex("LOWER\\('([^']+)'\\)");
+        while (std::regex_search(optimized, match, lower_regex)) {
+            std::string str = match[1].str();
+            std::transform(str.begin(), str.end(), str.begin(), ::tolower);
+            optimized = std::regex_replace(optimized, lower_regex, "'" + str + "'",
+                                           std::regex_constants::format_first_only);
+        }
+
+        // Example: LENGTH('hello') -> 5
+        std::regex length_regex("LENGTH\\('([^']*)'\\)");
+        while (std::regex_search(optimized, match, length_regex)) {
+            std::string len_str = std::to_string(match[1].str().length());
+            optimized = std::regex_replace(optimized, length_regex, len_str,
+                                           std::regex_constants::format_first_only);
+        }
+
+        return optimized;
+    }
+
+    // PSQL Debugging Support implementations
+
+    void PsqlExecutor::enable_debugging(bool enabled)
+    {
+        std::lock_guard<std::mutex> lock(debug_mutex_);
+        debug_state_.debugging_enabled = enabled;
+        if (!enabled) {
+            debug_state_.step_mode = false;
+            debug_state_.call_stack.clear();
+        }
+    }
+
+    void PsqlExecutor::add_breakpoint(const std::string& procedure_name, int line_number,
+                                      const std::string& condition)
+    {
+        std::lock_guard<std::mutex> lock(debug_mutex_);
+        DebugBreakpoint bp;
+        bp.procedure_name = procedure_name;
+        bp.line_number = line_number;
+        bp.condition = condition;
+        bp.enabled = true;
+        debug_state_.breakpoints.push_back(bp);
+    }
+
+    void PsqlExecutor::remove_breakpoint(const std::string& procedure_name, int line_number)
+    {
+        std::lock_guard<std::mutex> lock(debug_mutex_);
+        auto it = std::remove_if(debug_state_.breakpoints.begin(), debug_state_.breakpoints.end(),
+                                 [&](const DebugBreakpoint& bp) {
+                                     return bp.procedure_name == procedure_name &&
+                                            bp.line_number == line_number;
+                                 });
+        debug_state_.breakpoints.erase(it, debug_state_.breakpoints.end());
+    }
+
+    void PsqlExecutor::clear_breakpoints()
+    {
+        std::lock_guard<std::mutex> lock(debug_mutex_);
+        debug_state_.breakpoints.clear();
+    }
+
+    std::vector<PsqlExecutor::DebugBreakpoint> PsqlExecutor::get_breakpoints() const
+    {
+        std::lock_guard<std::mutex> lock(debug_mutex_);
+        return debug_state_.breakpoints;
+    }
+
+    void PsqlExecutor::enable_step_mode(bool enabled)
+    {
+        std::lock_guard<std::mutex> lock(debug_mutex_);
+        debug_state_.step_mode = enabled;
+    }
+
+    void PsqlExecutor::step_over()
+    {
+        std::lock_guard<std::mutex> lock(debug_mutex_);
+        debug_state_.step_mode = true;
+        // In a full implementation, this would set a flag to break at the next statement
+        // at the same call stack level
+    }
+
+    void PsqlExecutor::step_into()
+    {
+        std::lock_guard<std::mutex> lock(debug_mutex_);
+        debug_state_.step_mode = true;
+        // In a full implementation, this would set a flag to break at the next statement
+        // regardless of call stack level
+    }
+
+    void PsqlExecutor::continue_execution()
+    {
+        std::lock_guard<std::mutex> lock(debug_mutex_);
+        debug_state_.step_mode = false;
+        // In a full implementation, this would resume execution until the next breakpoint
+    }
+
+    std::unordered_map<std::string, Value> PsqlExecutor::get_current_variables() const
+    {
+        std::lock_guard<std::mutex> lock(debug_mutex_);
+        if (debug_state_.call_stack.empty()) {
+            return {};
+        }
+        return debug_state_.call_stack.back().local_variables;
+    }
+
+    Value PsqlExecutor::get_variable_value(const std::string& name) const
+    {
+        std::lock_guard<std::mutex> lock(debug_mutex_);
+        if (debug_state_.call_stack.empty()) {
+            return Value{};
+        }
+
+        const auto& vars = debug_state_.call_stack.back().local_variables;
+        auto it = vars.find(name);
+        return (it != vars.end()) ? it->second : Value{};
+    }
+
+    std::vector<PsqlExecutor::DebugCallFrame> PsqlExecutor::get_call_stack() const
+    {
+        std::lock_guard<std::mutex> lock(debug_mutex_);
+        return debug_state_.call_stack;
+    }
+
+    std::string PsqlExecutor::get_current_procedure() const
+    {
+        std::lock_guard<std::mutex> lock(debug_mutex_);
+        if (debug_state_.call_stack.empty()) {
+            return "";
+        }
+        return debug_state_.call_stack.back().procedure_name;
+    }
+
+    int PsqlExecutor::get_current_line() const
+    {
+        std::lock_guard<std::mutex> lock(debug_mutex_);
+        if (debug_state_.call_stack.empty()) {
+            return 0;
+        }
+        return debug_state_.call_stack.back().current_line;
+    }
+
+    std::string PsqlExecutor::get_last_error_with_location() const
+    {
+        std::lock_guard<std::mutex> lock(debug_mutex_);
+        if (debug_state_.last_error.empty()) {
+            return "";
+        }
+
+        std::string result = debug_state_.last_error;
+        if (debug_state_.last_error_line > 0) {
+            result += " (line " + std::to_string(debug_state_.last_error_line) + ")";
+        }
+
+        if (!debug_state_.call_stack.empty()) {
+            result += " in procedure '" + debug_state_.call_stack.back().procedure_name + "'";
+        }
+
+        return result;
+    }
+
+    void PsqlExecutor::report_runtime_error(const std::string& error, int line_number)
+    {
+        std::lock_guard<std::mutex> lock(debug_mutex_);
+        debug_state_.last_error = error;
+        debug_state_.last_error_line = line_number;
+
+        if (debug_state_.break_on_exception) {
+            debug_state_.step_mode = true;
+        }
     }
 
 } // namespace scratchbird::engine
