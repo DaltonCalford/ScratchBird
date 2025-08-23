@@ -4,6 +4,7 @@
 #include "scratchbird/engine/index_btree.h"
 #include "scratchbird/engine/index_gin.h"
 #include "scratchbird/engine/index_hash.h"
+#include "scratchbird/engine/index_rtree.h"
 
 #include <stdexcept>
 
@@ -28,8 +29,7 @@ namespace scratchbird::engine
             return std::make_unique<GinIndex>(std::move(fmap), page_size, unique);
 
         case IndexMethod::RTree:
-            // Will implement RTreeIndex later
-            return nullptr;
+            return std::make_unique<RTreeIndex>(std::move(fmap), page_size, unique);
 
         case IndexMethod::PartialHash:
             // Specialized hash index variant
