@@ -85,7 +85,8 @@ add_library(
   src/engine/index_family.cpp
   src/engine/index_hash.cpp
   src/engine/index_bitmap.cpp
-  src/engine/index_gin.cpp)
+  src/engine/index_gin.cpp
+  src/engine/index_rtree.cpp)
 
 # Main ScratchBird executable
 add_executable(scratchbird src/main.cpp src/scratchbird.cpp)
@@ -418,5 +419,9 @@ if(SCRATCHBIRD_BUILD_TESTS)
   add_executable(hash_index_tests tests/hash_index_tests.cpp)
   target_link_libraries(hash_index_tests scratchbird_engine)
   add_test(NAME hash_index_tests COMMAND hash_index_tests)
+
+  add_executable(rtree_index_tests tests/rtree_index_tests.cpp)
+  target_link_libraries(rtree_index_tests scratchbird_engine)
+  add_test(NAME rtree_index_tests COMMAND rtree_index_tests)
 
 endif()
