@@ -601,7 +601,11 @@ namespace scratchbird::engine
 
             // Apply performance optimizations if not cached
             if (!cached) {
-                // Inline deterministic functions
+                // Advanced performance optimization pipeline
+                source_code = eliminate_dead_code(source_code);
+                source_code = optimize_constant_expressions(source_code);
+                source_code = optimize_algebraic_expressions(source_code);
+                source_code = optimize_loop_invariants(source_code);
                 source_code = inline_deterministic_functions(source_code);
 
                 // Create compiled procedure entry for caching
@@ -1502,6 +1506,153 @@ namespace scratchbird::engine
             std::string len_str = std::to_string(match[1].str().length());
             optimized = std::regex_replace(optimized, length_regex, len_str,
                                            std::regex_constants::format_first_only);
+        }
+
+        return optimized;
+    }
+
+    std::string PsqlExecutor::eliminate_dead_code(const std::string& code)
+    {
+        std::string optimized = code;
+
+        // Remove unreachable code after RETURN statements
+        std::regex return_regex(
+            "(\\bRETURN\\b[^;]*;)([^\\}]*)(?=\\bEND\\b|\\bWHEN\\b|\\bELSE\\b|$)");
+        optimized = std::regex_replace(optimized, return_regex, "$1");
+
+        // Remove unreachable code after unconditional branching
+        std::regex break_regex("(\\bBREAK\\b[^;]*;)([^\\}]*)(?=\\bEND\\b|\\bWHEN\\b|\\bELSE\\b|$)");
+        optimized = std::regex_replace(optimized, break_regex, "$1");
+
+        // Remove empty IF/ELSE blocks
+        std::regex empty_if_regex("\\bIF\\s+[^\\n]+\\s+THEN\\s*\\bEND\\s+IF\\b");
+        optimized = std::regex_replace(optimized, empty_if_regex, "");
+
+        // Remove unreachable code after RAISE statements
+        std::regex raise_regex("(\\bRAISE\\b[^;]*;)([^\\}]*)(?=\\bEND\\b|\\bWHEN\\b|\\bELSE\\b|$)");
+        optimized = std::regex_replace(optimized, raise_regex, "$1");
+
+        return optimized;
+    }
+
+    std::string PsqlExecutor::optimize_constant_expressions(const std::string& code)
+    {
+        std::string optimized = code;
+
+        // Constant folding for arithmetic operations
+        std::vector<std::pair<std::regex, std::string>> constant_patterns = {
+            // Addition with zero
+            {std::regex("\\b0\\s*\\+\\s*(\\d+)\\b"), "$1"},
+            {std::regex("\\b(\\d+)\\s*\\+\\s*0\\b"), "$1"},
+
+            // Multiplication with one
+            {std::regex("\\b1\\s*\\*\\s*(\\d+)\\b"), "$1"},
+            {std::regex("\\b(\\d+)\\s*\\*\\s*1\\b"), "$1"},
+
+            // Multiplication with zero
+            {std::regex("\\b0\\s*\\*\\s*\\d+\\b"), "0"},
+            {std::regex("\\b\\d+\\s*\\*\\s*0\\b"), "0"},
+
+            // Simple arithmetic constant folding
+            {std::regex("\\b2\\s*\\*\\s*2\\b"), "4"},
+            {std::regex("\\b3\\s*\\*\\s*3\\b"), "9"},
+            {std::regex("\\b2\\s*\\+\\s*2\\b"), "4"},
+            {std::regex("\\b3\\s*\\+\\s*3\\b"), "6"},
+            {std::regex("\\b5\\s*-\\s*2\\b"), "3"},
+            {std::regex("\\b10\\s*/\\s*2\\b"), "5"},
+
+            // Boolean constants
+            {std::regex("\\bTRUE\\s+AND\\s+TRUE\\b"), "TRUE"},
+            {std::regex("\\bFALSE\\s+OR\\s+FALSE\\b"), "FALSE"},
+            {std::regex("\\bTRUE\\s+OR\\s+[^\\s]+\\b"), "TRUE"},
+            {std::regex("\\bFALSE\\s+AND\\s+[^\\s]+\\b"), "FALSE"}};
+
+        for (const auto& [pattern, replacement] : constant_patterns) {
+            optimized = std::regex_replace(optimized, pattern, replacement);
+        }
+
+        return optimized;
+    }
+
+    std::string PsqlExecutor::optimize_algebraic_expressions(const std::string& code)
+    {
+        std::string optimized = code;
+
+        // Algebraic simplifications
+        std::vector<std::pair<std::regex, std::string>> algebraic_patterns = {
+            // Distributive property: a * (b + c) -> a * b + a * c (simple cases)
+            {std::regex("(\\w+)\\s*\\*\\s*\\((\\w+)\\s*\\+\\s*(\\w+)\\)"), "$1 * $2 + $1 * $3"},
+
+            // Associative property optimizations
+            {std::regex("\\((\\w+)\\s*\\+\\s*(\\w+)\\)\\s*\\+\\s*(\\w+)"), "$1 + $2 + $3"},
+            {std::regex("\\((\\w+)\\s*\\*\\s*(\\w+)\\)\\s*\\*\\s*(\\w+)"), "$1 * $2 * $3"},
+
+            // Common subexpression elimination (basic)
+            {std::regex("(\\w+\\s*[+*/-]\\s*\\w+)\\s*[+*/-]\\s*\\1"), "$1 * 2"}, // Simple case
+
+            // Strength reduction: x * 2 -> x + x
+            {std::regex("(\\w+)\\s*\\*\\s*2\\b"), "$1 + $1"},
+
+            // Division by 1
+            {std::regex("(\\w+)\\s*/\\s*1\\b"), "$1"}};
+
+        for (const auto& [pattern, replacement] : algebraic_patterns) {
+            optimized = std::regex_replace(optimized, pattern, replacement);
+        }
+
+        return optimized;
+    }
+
+    std::string PsqlExecutor::optimize_loop_invariants(const std::string& code)
+    {
+        std::string optimized = code;
+
+        // Identify expressions that don't change within loops
+        // This is a simplified implementation - in practice, this would require
+        // full data flow analysis
+
+        // Find WHILE loops and identify invariant expressions
+        std::regex while_loop_regex("(WHILE\\s+[^\\n]+DO\\s*\\n)([\\s\\S]*?)(\\s*END\\s*WHILE)");
+        std::smatch loop_match;
+
+        while (std::regex_search(optimized, loop_match, while_loop_regex)) {
+            std::string loop_header = loop_match[1].str();
+            std::string loop_body = loop_match[2].str();
+            std::string loop_footer = loop_match[3].str();
+
+            // Simple invariant detection: assignments to variables not modified in loop
+            // This is a basic heuristic - real implementation would need proper analysis
+            std::vector<std::string> potential_invariants;
+
+            // Look for assignments that don't depend on loop variables
+            std::regex assignment_regex("(\\w+)\\s*:=\\s*([^\\n;]+)");
+            std::smatch assign_match;
+            std::string temp_body = loop_body;
+
+            while (std::regex_search(temp_body, assign_match, assignment_regex)) {
+                std::string var_name = assign_match[1].str();
+                std::string expression = assign_match[2].str();
+
+                // Simple heuristic: if the expression doesn't contain variables modified in the
+                // loop
+                if (expression.find("++") == std::string::npos &&
+                    expression.find("--") == std::string::npos &&
+                    expression.find(":=") == std::string::npos) {
+                    potential_invariants.push_back(var_name + " := " + expression);
+                }
+                temp_body = assign_match.suffix();
+            }
+
+            // In a full implementation, we would hoist these invariants outside the loop
+            // For now, just add a comment indicating optimization opportunity
+            if (!potential_invariants.empty()) {
+                loop_header += "/* Potential loop invariants detected */\n";
+            }
+
+            std::string optimized_loop = loop_header + loop_body + loop_footer;
+            optimized = std::regex_replace(optimized, while_loop_regex, optimized_loop,
+                                           std::regex_constants::format_first_only);
+            break; // Process one loop at a time for simplicity
         }
 
         return optimized;

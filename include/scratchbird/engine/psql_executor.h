@@ -331,6 +331,12 @@ namespace scratchbird::engine
         // Function inlining for deterministic functions
         std::string inline_deterministic_functions(const std::string& code);
 
+        // Advanced Performance Optimizations
+        std::string eliminate_dead_code(const std::string& code);
+        std::string optimize_constant_expressions(const std::string& code);
+        std::string optimize_algebraic_expressions(const std::string& code);
+        std::string optimize_loop_invariants(const std::string& code);
+
         // PSQL Debugging Support
         struct DebugBreakpoint {
             std::string procedure_name;

@@ -1,12 +1,48 @@
+#include "scratchbird/capi.h"
 #include "scratchbird/engine/ast.h"
+#include "scratchbird/engine/catalog_manager.h"
 #include "scratchbird/engine/executor.h"
 #include "scratchbird/engine/parser.h"
 
 #include <cassert>
 #include <filesystem>
 #include <iostream>
+#include <unistd.h>
 
 using namespace scratchbird::engine;
+
+// Database setup utility functions
+static std::string tempdb()
+{
+    return std::string("/tmp/advanced_psql_test_") + std::to_string(::getpid());
+}
+
+static void create_db_and_set_path(const std::string& base)
+{
+    SB_CreateDbOptions o{};
+    o.page_size = 4096;
+    SB_Database* db = nullptr;
+    auto st = sb_create_database(base.c_str(), &o, &db);
+    (void)st;
+    if (db)
+        sb_close_database(db);
+    set_executor_db_path(base);
+    // Ensure catalog roots are bootstrapped before any DDL
+    CatalogManager cm(base);
+    cm.bootstrap_if_needed();
+}
+
+static void cleanup_db(const std::string& base)
+{
+    // Best-effort: remove segment files base.seg0..base.seg15
+    for (int i = 0; i < 16; ++i) {
+        std::string seg = base + ".seg" + std::to_string(i);
+        unlink(seg.c_str());
+    }
+    // Also try to remove any .bootstrap.sql file
+    std::string bootstrap = base + ".bootstrap.sql";
+    unlink(bootstrap.c_str());
+}
 
 void test_security_context_definer()
 {
@@ -291,12 +327,9 @@ int main()
     std::cout << "=== Advanced PSQL Feature Tests ===" << std::endl;
 
     try {
-        // Set up temporary database path
-        std::string db_path = "/tmp/advanced_psql_test.db";
-        set_executor_db_path(db_path);
-
-        // Clean up any existing test database
-        std::filesystem::remove(db_path + ".seg0");
+        // Set up temporary database with proper initialization
+        std::string db_path = tempdb();
+        create_db_and_set_path(db_path);
 
         // Run parsing tests first (these should work)
         test_parsing_advanced_statements();
@@ -318,7 +351,7 @@ int main()
                   << std::endl;
 
         // Clean up
-        std::filesystem::remove(db_path + ".seg0");
+        cleanup_db(db_path);
 
         return 0;
     } catch (const std::exception& e) {

@@ -1,0 +1,253 @@
+CREATE DOMAIN SDB$OID AS BINARY(16) NOT NULL -- UUID bytes
+CREATE DOMAIN SDB$NAME AS VARCHAR(128) NOT NULL
+CREATE DOMAIN SDB$TEXT AS BLOB SUB_TYPE TEXT
+CREATE DOMAIN SDB$BOOL AS BOOLEAN
+CREATE DOMAIN SDB$JSON AS BLOB SUB_TYPE TEXT
+CREATE DOMAIN SDB$TIMESTAMPTZ AS TIMESTAMP WITH TIME ZONE
+CREATE DOMAIN SDB$INT AS INTEGER
+CREATE DOMAIN SDB$BIGINT AS BIGINT
+
+CREATE TABLE SDB$OBJECT (
+  oid SDB$OID PRIMARY KEY,
+  type VARCHAR(24) NOT NULL,
+  schema_oid SDB$OID,
+  name SDB$NAME NOT NULL,
+  owner_oid SDB$OID,
+  created_at SDB$TIMESTAMPTZ,
+  altered_at SDB$TIMESTAMPTZ,
+  flags BIGINT DEFAULT 0,
+  comment SDB$TEXT,
+  source_hash CHAR(40)
+)
+CREATE UNIQUE INDEX UX_SDB$OBJECT_NAME ON SDB$OBJECT(schema_oid, type, name)
+COMMENT ON TABLE SDB$OBJECT IS 'All catalog objects (UUID, type, name, owner, timestamps, doc)'
+COMMENT ON COLUMN SDB$OBJECT.oid IS 'UUID object identifier' 
+COMMENT ON COLUMN SDB$OBJECT.type IS 'Object type' 
+COMMENT ON COLUMN SDB$OBJECT.schema_oid IS 'Owning schema UUID' 
+COMMENT ON COLUMN SDB$OBJECT.name IS 'Local object name' 
+COMMENT ON COLUMN SDB$OBJECT.owner_oid IS 'Owner UUID' 
+COMMENT ON COLUMN SDB$OBJECT.comment IS 'Documentation comment' 
+
+CREATE TABLE SDB$SCHEMA (
+  oid SDB$OID PRIMARY KEY,
+  parent_oid SDB$OID,
+  name SDB$NAME NOT NULL,
+  kind VARCHAR(16) NOT NULL,
+  path_cache SDB$TEXT
+)
+CREATE UNIQUE INDEX UX_SDB$SCHEMA_PARENT_NAME ON SDB$SCHEMA(parent_oid, name)
+COMMENT ON TABLE SDB$SCHEMA IS 'Schemas (recursive)'
+COMMENT ON COLUMN SDB$SCHEMA.parent_oid IS 'Parent schema UUID (nullable)'
+COMMENT ON COLUMN SDB$SCHEMA.kind IS 'SYSTEM | USER | REMOTE'
+
+CREATE TABLE SDB$RELATION (
+  oid SDB$OID PRIMARY KEY,
+  kind VARCHAR(16) NOT NULL,
+  persistence VARCHAR(16) DEFAULT 'PERMANENT',
+  external_file SDB$TEXT,
+  tablespace SDB$NAME,
+  with_oids SDB$BOOL DEFAULT FALSE
+)
+COMMENT ON TABLE SDB$RELATION IS 'Tables, views, foreign tables'
+
+CREATE TABLE SDB$COLUMN (
+  oid SDB$OID PRIMARY KEY,
+  relation_oid SDB$OID NOT NULL,
+  position INTEGER NOT NULL,
+  name SDB$NAME NOT NULL,
+  domain_oid SDB$OID,
+  inline_type SDB$JSON,
+  default_expr SDB$TEXT,
+  identity_kind VARCHAR(16) DEFAULT 'NONE',
+  identity_options SDB$JSON,
+  computed_expr SDB$TEXT,
+  col_charset VARCHAR(64),
+  col_collate VARCHAR(64),
+  not_null SDB$BOOL DEFAULT FALSE
+)
+CREATE UNIQUE INDEX UX_SDB$COLUMN_NAME ON SDB$COLUMN(relation_oid, name)
+
+CREATE TABLE SDB$DOMAIN (
+  oid SDB$OID PRIMARY KEY,
+  base_type VARCHAR(64) NOT NULL,
+  length INTEGER,
+  precision INTEGER,
+  scale INTEGER,
+  charset VARCHAR(64),
+  collate VARCHAR(64),
+  not_null SDB$BOOL DEFAULT FALSE,
+  default_expr SDB$TEXT,
+  check_expr SDB$TEXT
+)
+
+CREATE TABLE SDB$INDEX (
+  oid SDB$OID PRIMARY KEY,
+  relation_oid SDB$OID,
+  unique SDB$BOOL DEFAULT FALSE,
+  method VARCHAR(16) NOT NULL,
+  where_expr SDB$TEXT,
+  include_cols SDB$JSON,
+  tablespace SDB$NAME
+)
+CREATE TABLE SDB$INDEX_KEY (
+  index_oid SDB$OID NOT NULL,
+  position INTEGER NOT NULL,
+  column_oid SDB$OID,
+  expr SDB$TEXT,
+  direction VARCHAR(8) DEFAULT 'ASC',
+  collation VARCHAR(64),
+  PRIMARY KEY(index_oid, position)
+)
+
+CREATE TABLE SDB$CONSTRAINT (
+  oid SDB$OID PRIMARY KEY,
+  relation_oid SDB$OID NOT NULL,
+  type VARCHAR(8) NOT NULL,
+  deferrable SDB$BOOL DEFAULT FALSE,
+  initially_deferred SDB$BOOL DEFAULT FALSE,
+  check_expr SDB$TEXT,
+  index_oid SDB$OID,
+  ref_relation_oid SDB$OID,
+  on_delete VARCHAR(12) DEFAULT 'NO_ACTION',
+  on_update VARCHAR(12) DEFAULT 'NO_ACTION'
+)
+CREATE TABLE SDB$CONSTRAINT_KEY (
+  constraint_oid SDB$OID NOT NULL,
+  position INTEGER NOT NULL,
+  column_oid SDB$OID NOT NULL,
+  ref_column_oid SDB$OID,
+  PRIMARY KEY(constraint_oid, position)
+)
+
+CREATE TABLE SDB$ROUTINE (
+  oid SDB$OID PRIMARY KEY,
+  kind VARCHAR(16) NOT NULL,
+  language VARCHAR(16) NOT NULL,
+  security VARCHAR(16) DEFAULT 'INVOKER',
+  volatility VARCHAR(16) DEFAULT 'VOLATILE',
+  leakproof SDB$BOOL DEFAULT FALSE,
+  returns_set SDB$BOOL DEFAULT FALSE
+)
+CREATE TABLE SDB$ROUTINE_PARAM (
+  routine_oid SDB$OID NOT NULL,
+  position INTEGER NOT NULL,
+  name SDB$NAME NOT NULL,
+  mode VARCHAR(8) DEFAULT 'IN',
+  domain_oid SDB$OID,
+  inline_type SDB$JSON,
+  PRIMARY KEY(routine_oid, position)
+)
+
+CREATE TABLE SDB$PACKAGE (
+  oid SDB$OID PRIMARY KEY
+)
+CREATE TABLE SDB$PACKAGE_MEMBER (
+  package_oid SDB$OID NOT NULL,
+  member_name SDB$NAME NOT NULL,
+  routine_oid SDB$OID NOT NULL,
+  PRIMARY KEY(package_oid, member_name)
+)
+
+CREATE TABLE SDB$SEQUENCE (
+  oid SDB$OID PRIMARY KEY,
+  start_value NUMERIC(38),
+  increment_by NUMERIC(38),
+  min_value NUMERIC(38),
+  max_value NUMERIC(38),
+  cycle SDB$BOOL DEFAULT FALSE,
+  cache INTEGER DEFAULT 1
+)
+
+CREATE TABLE SDB$TRIGGER (
+  oid SDB$OID PRIMARY KEY,
+  relation_oid SDB$OID,
+  timing VARCHAR(8) NOT NULL,
+  events SDB$JSON NOT NULL,
+  position INTEGER DEFAULT 0,
+  for_each VARCHAR(9) DEFAULT 'ROW',
+  active SDB$BOOL DEFAULT TRUE,
+  update_of SDB$JSON
+)
+
+CREATE TABLE SDB$EXCEPTION (
+  oid SDB$OID PRIMARY KEY,
+  message SDB$TEXT NOT NULL
+)
+
+CREATE TABLE SDB$CHARSET (
+  name VARCHAR(64) PRIMARY KEY,
+  description SDB$TEXT
+)
+CREATE TABLE SDB$COLLATION (
+  name VARCHAR(64) PRIMARY KEY,
+  base_charset VARCHAR(64) NOT NULL,
+  deterministic SDB$BOOL DEFAULT TRUE
+)
+
+CREATE TABLE SDB$GRANT (
+  grantee_oid SDB$OID NOT NULL,
+  object_oid SDB$OID NOT NULL,
+  privilege VARCHAR(32) NOT NULL,
+  grantor_oid SDB$OID NOT NULL,
+  grant_option SDB$BOOL DEFAULT FALSE,
+  columns SDB$JSON,
+  PRIMARY KEY(grantee_oid, object_oid, privilege, columns)
+)
+
+CREATE TABLE SDB$DEPENDENCY (
+  from_oid SDB$OID NOT NULL,
+  to_oid SDB$OID NOT NULL,
+  kind VARCHAR(16) NOT NULL,
+  detail_from SDB$JSON,
+  detail_to SDB$JSON,
+  PRIMARY KEY(from_oid, to_oid, kind)
+)
+
+CREATE TABLE SDB$SOURCE (
+  object_oid SDB$OID PRIMARY KEY,
+  text SDB$TEXT NOT NULL,
+  doc SDB$TEXT
+)
+CREATE TABLE SDB$STATS (
+  object_oid SDB$OID PRIMARY KEY,
+  stats SDB$JSON NOT NULL
+)
+
+CREATE TABLE SDB$CATALOG_VERSION(major INTEGER, minor INTEGER, stamp SDB$TIMESTAMPTZ)
+CREATE TABLE SDB$MIGRATIONS(id VARCHAR(64) PRIMARY KEY, applied_at SDB$TIMESTAMPTZ, text_hash CHAR(40))
+
+-- Seed schemas (UUIDs to be parameterized by engine)
+INSERT INTO SDB$SCHEMA(oid,parent_oid,name,kind) VALUES ('0x1122337000007080aabbccddeeff0001',NULL,'sys.catalog','SYSTEM');
+INSERT INTO SDB$SCHEMA(oid,parent_oid,name,kind) VALUES ('0x1122337000007080aabbccddeeff0002',NULL,'sys.security','SYSTEM');
+INSERT INTO SDB$SCHEMA(oid,parent_oid,name,kind) VALUES ('0x1122337000007080aabbccddeeff0003',NULL,'sys.monitoring','SYSTEM');
+INSERT INTO SDB$SCHEMA(oid,parent_oid,name,kind) VALUES ('0x1122337000007080aabbccddeeff0004',NULL,'public','USER');
+-- Seed users and roles
+INSERT INTO SDB$USER(oid,name) VALUES ('0x2233447000007080aabbccddeeff1010','SYSDBA');
+INSERT INTO SDB$ROLE(oid,name) VALUES ('0x2233447000007080aabbccddeeff1011','PUBLIC');
+
+INSERT INTO SDB$CATALOG_VERSION(major,minor,stamp) VALUES (1,0, CURRENT_TIMESTAMP);
+
+-- Compatibility views (RDB$*)
+CREATE VIEW RDB$RELATIONS AS
+SELECT
+  o.name AS RDB$RELATION_NAME,
+  CAST(NULL AS SMALLINT) AS RDB$SYSTEM_FLAG,
+  r.external_file AS RDB$EXTERNAL_FILE,
+  o.comment AS RDB$DESCRIPTION
+FROM SDB$OBJECT o JOIN SDB$RELATION r ON r.oid=o.oid;
+CREATE VIEW RDB$FIELDS AS
+SELECT
+  d.oid AS RDB$FIELD_NAME,
+  d.base_type AS RDB$FIELD_TYPE,
+  d.length AS RDB$FIELD_LENGTH,
+  d.precision AS RDB$FIELD_PRECISION,
+  d.scale AS RDB$FIELD_SCALE
+FROM SDB$DOMAIN d;
+
+-- Monitoring views (MON$*) stubs
+CREATE VIEW MON$ATTACHMENTS AS
+SELECT
+  CAST(NULL AS BIGINT) AS MON$ATTACHMENT_ID,
+  CAST(NULL AS VARCHAR(31)) AS MON$USER
+WHERE 1=0;
+
