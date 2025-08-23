@@ -1,4 +1,6 @@
+#include "scratchbird/capi.h"
 #include "scratchbird/engine/ast.h"
+#include "scratchbird/engine/catalog_manager.h"
 #include "scratchbird/engine/executor.h"
 #include "scratchbird/engine/parser.h"
 #include "scratchbird/engine/psql_executor.h"
@@ -6,14 +8,48 @@
 #include <cassert>
 #include <filesystem>
 #include <iostream>
+#include <unistd.h>
 
 using namespace scratchbird::engine;
 
-void test_procedure_caching()
+// Database setup utility functions
+static std::string tempdb()
+{
+    return std::string("/tmp/performance_test_") + std::to_string(::getpid());
+}
+
+static void create_db_and_set_path(const std::string& base)
+{
+    SB_CreateDbOptions o{};
+    o.page_size = 4096;
+    SB_Database* db = nullptr;
+    auto st = sb_create_database(base.c_str(), &o, &db);
+    (void)st;
+    if (db)
+        sb_close_database(db);
+    set_executor_db_path(base);
+    // Ensure catalog roots are bootstrapped before any DDL
+    CatalogManager cm(base);
+    cm.bootstrap_if_needed();
+}
+
+static void cleanup_db(const std::string& base)
+{
+    // Best-effort: remove segment files base.seg0..base.seg15
+    for (int i = 0; i < 16; ++i) {
+        std::string seg = base + ".seg" + std::to_string(i);
+        unlink(seg.c_str());
+    }
+    // Also try to remove any .bootstrap.sql file
+    std::string bootstrap = base + ".bootstrap.sql";
+    unlink(bootstrap.c_str());
+}
+
+void test_procedure_caching(const std::string& db_path)
 {
     std::cout << "Testing procedure plan caching..." << std::endl;
 
-    PsqlExecutor executor("/tmp/performance_test.db");
+    PsqlExecutor executor(db_path);
 
     // Test enabling/disabling cache
     executor.enable_plan_caching(true);
@@ -146,15 +182,12 @@ int main()
     std::cout << "=== Performance Optimization Tests ===" << std::endl;
 
     try {
-        // Set up temporary database path
-        std::string db_path = "/tmp/performance_test.db";
-        set_executor_db_path(db_path);
-
-        // Clean up any existing test database
-        std::filesystem::remove(db_path + ".seg0");
+        // Set up temporary database with proper initialization
+        std::string db_path = tempdb();
+        create_db_and_set_path(db_path);
 
         // Run performance optimization tests
-        test_procedure_caching();
+        test_procedure_caching(db_path);
         test_expression_optimization();
         test_function_inlining();
         test_cache_performance();
@@ -166,7 +199,7 @@ int main()
         std::cout << "Note: Some integration failures are expected during development" << std::endl;
 
         // Clean up
-        std::filesystem::remove(db_path + ".seg0");
+        cleanup_db(db_path);
 
         return 0;
     } catch (const std::exception& e) {

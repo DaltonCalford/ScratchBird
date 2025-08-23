@@ -1,6 +1,8 @@
 #include "scratchbird/engine/psql_dev_tools.h"
 
+#include "scratchbird/engine/catalog_manager.h"
 #include "scratchbird/engine/parser.h"
+#include "scratchbird/engine/system_oids.h"
 
 #include <algorithm>
 #include <cctype>
@@ -634,14 +636,100 @@ namespace scratchbird::engine
 
     std::string PsqlDevEnvironment::find_definition(const std::string& name)
     {
-        // In a full implementation, this would search the catalog
-        return "Definition search not implemented";
+        try {
+            // Search in catalog using same pattern as PSQL executor
+            if (db_path_.empty()) {
+                return "Error: Database path not configured for definition search";
+            }
+
+            // Use CatalogManager to look up the routine
+            std::string db_path = db_path_;
+            CatalogManager cm(db_path);
+            auto schema_oid = oid_public_schema(); // Default to public schema
+
+            auto routine_info = cm.get_routine_by_name(schema_oid, name);
+            if (!routine_info) {
+                return "Definition not found for: " + name;
+            }
+
+            // Format the definition information
+            std::ostringstream definition;
+            definition << "=== Definition for " << name << " ===\n\n";
+            definition << "Type: " << routine_info->kind << "\n";
+            definition << "Language: " << routine_info->language << "\n";
+            definition << "Security: " << routine_info->security << "\n";
+            definition << "Volatility: " << routine_info->volatility << "\n";
+
+            if (!routine_info->source_code.empty()) {
+                definition << "\nSource Code:\n";
+                definition << "----------------------------------------\n";
+                definition << routine_info->source_code << "\n";
+                definition << "----------------------------------------\n";
+            } else {
+                definition << "\nNo source code available\n";
+            }
+
+            return definition.str();
+        } catch (const std::exception& e) {
+            return "Error searching definition: " + std::string(e.what());
+        }
     }
 
     std::vector<std::string> PsqlDevEnvironment::find_references(const std::string& name)
     {
-        // In a full implementation, this would search all procedures for references
-        return {"Reference search not implemented"};
+        std::vector<std::string> references;
+
+        try {
+            if (db_path_.empty()) {
+                references.push_back("Error: Database path not configured for reference search");
+                return references;
+            }
+
+            // Use CatalogManager to get all routines
+            CatalogManager cm(db_path_);
+            auto schema_oid = oid_public_schema(); // Default to public schema
+
+            auto all_routines = cm.list_routines(schema_oid);
+
+            // Search through all routine source code for references to 'name'
+            for (const auto& routine : all_routines) {
+                if (routine.name == name) {
+                    continue; // Skip self-references
+                }
+
+                // Search for CALL statements and function calls
+                std::string source = routine.source_code;
+                bool has_reference = false;
+
+                // Search for CALL statements
+                std::regex call_regex("\\bCALL\\s+" + name + "\\s*\\(",
+                                      std::regex_constants::icase);
+                if (std::regex_search(source, call_regex)) {
+                    has_reference = true;
+                }
+
+                // Search for function calls (name followed by parentheses)
+                if (!has_reference) {
+                    std::regex func_regex("\\b" + name + "\\s*\\(", std::regex_constants::icase);
+                    if (std::regex_search(source, func_regex)) {
+                        has_reference = true;
+                    }
+                }
+
+                if (has_reference) {
+                    references.push_back("Referenced in " + routine.kind + ": " + routine.name);
+                }
+            }
+
+            if (references.empty()) {
+                references.push_back("No references found for: " + name);
+            }
+
+        } catch (const std::exception& e) {
+            references.push_back("Error searching references: " + std::string(e.what()));
+        }
+
+        return references;
     }
 
 } // namespace scratchbird::engine
