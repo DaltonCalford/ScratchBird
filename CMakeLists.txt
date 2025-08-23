@@ -81,7 +81,11 @@ add_library(
   src/engine/trigger_engine.cpp
   src/engine/wal_manager.cpp
   src/engine/multi_segment_manager.cpp
-  src/engine/alter_table_manager.cpp)
+  src/engine/alter_table_manager.cpp
+  src/engine/index_family.cpp
+  src/engine/index_hash.cpp
+  src/engine/index_bitmap.cpp
+  src/engine/index_gin.cpp)
 
 # Main ScratchBird executable
 add_executable(scratchbird src/main.cpp src/scratchbird.cpp)
@@ -410,5 +414,9 @@ if(SCRATCHBIRD_BUILD_TESTS)
   # Parser Debug Test
   add_executable(parser_debug_test tests/parser_debug_test.cpp)
   target_link_libraries(parser_debug_test scratchbird_engine)
+
+  add_executable(hash_index_tests tests/hash_index_tests.cpp)
+  target_link_libraries(hash_index_tests scratchbird_engine)
+  add_test(NAME hash_index_tests COMMAND hash_index_tests)
 
 endif()
