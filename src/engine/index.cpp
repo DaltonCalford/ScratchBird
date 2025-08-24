@@ -64,6 +64,19 @@ namespace scratchbird::engine
             if (opts.where_predicate.empty())
                 msgs.push_back({true, "PARTIAL HASH requires WHERE predicate"});
             break;
+        case IndexMethod::LSMTree:
+            // LSM-Tree: optimized for write-heavy workloads
+            if (opts.keys.empty())
+                msgs.push_back({true, "LSM-Tree index requires at least one key"});
+            if (!opts.compaction_strategy.empty() && opts.compaction_strategy != "SIZE_TIERED" &&
+                opts.compaction_strategy != "LEVELED")
+                msgs.push_back(
+                    {true, "Invalid compaction strategy; expected SIZE_TIERED or LEVELED"});
+            break;
+        case IndexMethod::Columnstore:
+        case IndexMethod::TTL:
+            msgs.push_back({true, "Index method not yet implemented"});
+            break;
         }
         // Direction and collation check
         for (const auto& k : opts.keys) {
@@ -109,6 +122,24 @@ namespace scratchbird::engine
             break;
         case IndexMethod::PartialHash:
             ss << " USING PARTIAL_HASH";
+            break;
+        case IndexMethod::LSMTree:
+            ss << " USING LSM";
+            if (!opts.compaction_strategy.empty()) {
+                ss << " WITH (compaction_strategy=" << opts.compaction_strategy << ")";
+            }
+            break;
+        case IndexMethod::Columnstore:
+            ss << " USING COLUMNSTORE";
+            if (!opts.compression_algorithm.empty()) {
+                ss << " WITH (compression=" << opts.compression_algorithm << ")";
+            }
+            break;
+        case IndexMethod::TTL:
+            ss << " USING TTL";
+            if (!opts.ttl_expire_column.empty() && !opts.ttl_interval.empty()) {
+                ss << " EXPIRE AFTER " << opts.ttl_interval << " ON " << opts.ttl_expire_column;
+            }
             break;
         }
         if (!opts.include_columns.empty()) {

@@ -4,6 +4,7 @@
 #include "scratchbird/engine/index_btree.h"
 #include "scratchbird/engine/index_gin.h"
 #include "scratchbird/engine/index_hash.h"
+#include "scratchbird/engine/index_lsm.h"
 #include "scratchbird/engine/index_rtree.h"
 
 #include <stdexcept>
@@ -34,6 +35,14 @@ namespace scratchbird::engine
         case IndexMethod::PartialHash:
             // Specialized hash index variant
             return nullptr;
+
+        case IndexMethod::LSMTree:
+            return std::make_unique<LSMTreeIndex>(std::move(fmap), page_size, unique);
+
+        case IndexMethod::Columnstore:
+        case IndexMethod::TTL:
+            // Placeholder for future implementation
+            throw std::runtime_error("Index method not yet implemented");
 
         default:
             throw std::invalid_argument("Unsupported index method");
@@ -92,6 +101,25 @@ namespace scratchbird::engine
             }
             break;
 
+        case IndexMethod::LSMTree:
+            if (opts.unique) {
+                messages.push_back(
+                    {false, "LSM-Tree indexes typically don't enforce uniqueness during writes"});
+            }
+            if (!opts.compaction_strategy.empty()) {
+                if (opts.compaction_strategy != "SIZE_TIERED" &&
+                    opts.compaction_strategy != "LEVELED") {
+                    messages.push_back(
+                        {true, "Supported compaction strategies: SIZE_TIERED, LEVELED"});
+                }
+            }
+            break;
+
+        case IndexMethod::Columnstore:
+        case IndexMethod::TTL:
+            messages.push_back({true, "Index method not yet implemented"});
+            break;
+
         default:
             messages.push_back({true, "Unknown index method"});
             break;
@@ -105,11 +133,14 @@ namespace scratchbird::engine
         switch (method) {
         case IndexMethod::BTree:
         case IndexMethod::RTree:
+        case IndexMethod::LSMTree: // LSM-Trees support range scans
             return true;
         case IndexMethod::Hash:
         case IndexMethod::Bitmap:
         case IndexMethod::Gin:
         case IndexMethod::PartialHash:
+        case IndexMethod::Columnstore: // Would support in analytics context
+        case IndexMethod::TTL:
             return false;
         }
         return false;
@@ -121,11 +152,14 @@ namespace scratchbird::engine
         case IndexMethod::BTree:
         case IndexMethod::Hash:
         case IndexMethod::PartialHash:
+        case IndexMethod::LSMTree: // LSM-Trees can filter during writes
             return true;
         case IndexMethod::Bitmap:
         case IndexMethod::Gin:
         case IndexMethod::RTree:
-            return false; // These methods have their own filtering mechanisms
+        case IndexMethod::Columnstore: // Has built-in filtering
+        case IndexMethod::TTL:         // TTL has time-based filtering
+            return false;              // These methods have their own filtering mechanisms
         }
         return false;
     }
@@ -137,10 +171,14 @@ namespace scratchbird::engine
             return true;
         case IndexMethod::Hash:
             return true; // Hash indexes can store payload
+        case IndexMethod::LSMTree:
+            return true; // LSM-Trees can store payloads efficiently
         case IndexMethod::Bitmap:
         case IndexMethod::Gin:
         case IndexMethod::RTree:
         case IndexMethod::PartialHash:
+        case IndexMethod::Columnstore: // Different paradigm
+        case IndexMethod::TTL:
             return false;
         }
         return false;
@@ -152,11 +190,14 @@ namespace scratchbird::engine
         case IndexMethod::BTree:
         case IndexMethod::Hash:
         case IndexMethod::PartialHash:
+        case IndexMethod::LSMTree: // Can index computed values
             return true;
         case IndexMethod::Bitmap:
         case IndexMethod::Gin:
         case IndexMethod::RTree:
-            return false; // Require column values directly
+        case IndexMethod::Columnstore: // Typically works on raw columns
+        case IndexMethod::TTL:         // Works on timestamp columns
+            return false;              // Require column values directly
         }
         return false;
     }
