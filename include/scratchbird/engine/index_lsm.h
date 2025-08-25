@@ -105,12 +105,14 @@ namespace scratchbird::engine
         Iterator begin() const;
         Iterator next(const Iterator& it) const;
 
+        // Public for compaction operations
+        bool write_entry(const std::string& key, std::uint64_t row_id, const std::string& payload);
+
       private:
         FileMap& fmap_;
         std::uint32_t sstable_id_;
         mutable SSTableInfo info_;
 
-        bool write_entry(const std::string& key, std::uint64_t row_id, const std::string& payload);
         bool read_entry(std::uint32_t offset, std::string& key, std::uint64_t& row_id,
                         std::string& payload) const;
     };

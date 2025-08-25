@@ -198,7 +198,7 @@ namespace scratchbird::engine
         // Posting list operations
         PostingListEntry& get_posting_list(const std::string& token);
         void compress_posting_list(PostingListEntry& entry);
-        void decompress_posting_list(PostingListEntry& entry);
+        void decompress_posting_list(PostingListEntry& entry) const;
         std::uint32_t allocate_posting_page();
 
         // Set operations for combining posting lists

@@ -20,6 +20,8 @@ namespace scratchbird::engine
         RunLength,  // Run-length encoding for repeated values
         BitPacking, // Bit packing for integers
         LZ4,        // LZ4 compression
+        ZSTD,       // Zstandard compression
+        SNAPPY,     // Snappy compression
         Delta       // Delta encoding for sorted sequences
     };
 
@@ -136,6 +138,18 @@ namespace scratchbird::engine
                                                 CompressionAlgorithm algorithm) const;
         std::vector<std::uint8_t> decompress_data(const std::vector<std::uint8_t>& compressed_data,
                                                   CompressionAlgorithm algorithm) const;
+
+        // Individual compression algorithm implementations
+        std::vector<std::uint8_t> compress_lz4(const std::vector<std::uint8_t>& data) const;
+        std::vector<std::uint8_t>
+        decompress_lz4(const std::vector<std::uint8_t>& compressed_data) const;
+        std::vector<std::uint8_t> compress_zstd(const std::vector<std::uint8_t>& data) const;
+        std::vector<std::uint8_t>
+        decompress_zstd(const std::vector<std::uint8_t>& compressed_data) const;
+        std::vector<std::uint8_t> compress_snappy(const std::vector<std::uint8_t>& data) const;
+        std::vector<std::uint8_t>
+        decompress_snappy(const std::vector<std::uint8_t>& compressed_data) const;
+
         std::uint32_t allocate_page();
     };
 

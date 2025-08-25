@@ -448,7 +448,14 @@ namespace scratchbird::engine
             return; // Already compressed or too small to benefit
         }
 
-        if (tunables_.use_rle_compression) {
+        if (tunables_.use_wah_compression) {
+            // Use WAH compression for better performance
+            auto compressed = wah_compress(entry.bitmap);
+            if (compressed.size() < entry.bitmap.size()) {
+                entry.bitmap = std::move(compressed);
+                entry.compressed = true;
+            }
+        } else if (tunables_.use_rle_compression) {
             auto compressed = rle_compress(entry.bitmap);
             if (compressed.size() < entry.bitmap.size()) {
                 entry.bitmap = std::move(compressed);
@@ -463,8 +470,11 @@ namespace scratchbird::engine
             return;
         }
 
-        // Decompress based on compression type (simplified)
-        if (tunables_.use_rle_compression) {
+        // Decompress based on compression type
+        if (tunables_.use_wah_compression) {
+            entry.bitmap = wah_decompress(entry.bitmap);
+            entry.compressed = false;
+        } else if (tunables_.use_rle_compression) {
             entry.bitmap = rle_decompress(entry.bitmap);
             entry.compressed = false;
         }
@@ -521,16 +531,123 @@ namespace scratchbird::engine
 
     std::vector<std::uint8_t> BitmapIndex::wah_compress(const std::vector<std::uint8_t>& bitmap)
     {
-        (void)bitmap; // Suppress warning
-        // WAH compression is more complex - placeholder implementation
-        return bitmap;
+        std::vector<std::uint8_t> compressed;
+        if (bitmap.empty()) {
+            return compressed;
+        }
+
+        // WAH compression works on 32-bit words
+        constexpr std::size_t WORD_SIZE = 4;                 // 32 bits = 4 bytes
+        constexpr std::uint32_t FILL_BIT = 0x80000000;       // High bit indicates fill word
+        constexpr std::uint32_t MAX_FILL_COUNT = 0x3FFFFFFF; // Max fill count (30 bits)
+
+        // Pad bitmap to word boundary
+        std::vector<std::uint8_t> padded_bitmap = bitmap;
+        while (padded_bitmap.size() % WORD_SIZE != 0) {
+            padded_bitmap.push_back(0);
+        }
+
+        std::size_t word_count = padded_bitmap.size() / WORD_SIZE;
+        std::size_t i = 0;
+
+        while (i < word_count) {
+            // Convert 4 bytes to 32-bit word
+            std::uint32_t current_word = 0;
+            for (std::size_t j = 0; j < WORD_SIZE && (i * WORD_SIZE + j) < padded_bitmap.size();
+                 ++j) {
+                current_word |=
+                    (static_cast<std::uint32_t>(padded_bitmap[i * WORD_SIZE + j]) << (j * 8));
+            }
+
+            // Check for runs of identical words (fill words)
+            if (current_word == 0x00000000 || current_word == 0xFFFFFFFF) {
+                std::uint32_t fill_count = 1;
+                std::uint32_t fill_value = current_word;
+
+                // Count consecutive identical words
+                while (i + fill_count < word_count && fill_count < MAX_FILL_COUNT) {
+                    std::uint32_t next_word = 0;
+                    for (std::size_t j = 0;
+                         j < WORD_SIZE && ((i + fill_count) * WORD_SIZE + j) < padded_bitmap.size();
+                         ++j) {
+                        next_word |= (static_cast<std::uint32_t>(
+                                          padded_bitmap[(i + fill_count) * WORD_SIZE + j])
+                                      << (j * 8));
+                    }
+                    if (next_word != fill_value) {
+                        break;
+                    }
+                    fill_count++;
+                }
+
+                // Create fill word: FILL_BIT | (fill_type << 30) | fill_count
+                std::uint32_t fill_type = (fill_value == 0xFFFFFFFF) ? 1 : 0;
+                std::uint32_t fill_word = FILL_BIT | (fill_type << 30) | fill_count;
+
+                // Store fill word as 4 bytes
+                compressed.push_back(static_cast<std::uint8_t>(fill_word & 0xFF));
+                compressed.push_back(static_cast<std::uint8_t>((fill_word >> 8) & 0xFF));
+                compressed.push_back(static_cast<std::uint8_t>((fill_word >> 16) & 0xFF));
+                compressed.push_back(static_cast<std::uint8_t>((fill_word >> 24) & 0xFF));
+
+                i += fill_count;
+            } else {
+                // Literal word - store as-is
+                compressed.push_back(static_cast<std::uint8_t>(current_word & 0xFF));
+                compressed.push_back(static_cast<std::uint8_t>((current_word >> 8) & 0xFF));
+                compressed.push_back(static_cast<std::uint8_t>((current_word >> 16) & 0xFF));
+                compressed.push_back(static_cast<std::uint8_t>((current_word >> 24) & 0xFF));
+                i++;
+            }
+        }
+
+        return compressed;
     }
 
     std::vector<std::uint8_t>
     BitmapIndex::wah_decompress(const std::vector<std::uint8_t>& compressed)
     {
-        // WAH decompression - placeholder implementation
-        return compressed;
+        std::vector<std::uint8_t> decompressed;
+        if (compressed.empty() || compressed.size() % 4 != 0) {
+            return decompressed;
+        }
+
+        constexpr std::uint32_t FILL_BIT = 0x80000000; // High bit indicates fill word
+        constexpr std::size_t WORD_SIZE = 4;           // 32 bits = 4 bytes
+
+        for (std::size_t i = 0; i < compressed.size(); i += WORD_SIZE) {
+            // Reconstruct 32-bit word from 4 bytes
+            std::uint32_t word = 0;
+            word |= static_cast<std::uint32_t>(compressed[i]);
+            word |= static_cast<std::uint32_t>(compressed[i + 1]) << 8;
+            word |= static_cast<std::uint32_t>(compressed[i + 2]) << 16;
+            word |= static_cast<std::uint32_t>(compressed[i + 3]) << 24;
+
+            if (word & FILL_BIT) {
+                // Fill word: decode run of identical words
+                std::uint32_t fill_type = (word >> 30) & 1;   // Bit 30 indicates 0s or 1s
+                std::uint32_t fill_count = word & 0x3FFFFFFF; // Lower 30 bits = count
+
+                std::uint32_t fill_value = (fill_type == 1) ? 0xFFFFFFFF : 0x00000000;
+
+                // Expand fill word into multiple literal words
+                for (std::uint32_t j = 0; j < fill_count; ++j) {
+                    // Convert 32-bit word back to 4 bytes
+                    decompressed.push_back(static_cast<std::uint8_t>(fill_value & 0xFF));
+                    decompressed.push_back(static_cast<std::uint8_t>((fill_value >> 8) & 0xFF));
+                    decompressed.push_back(static_cast<std::uint8_t>((fill_value >> 16) & 0xFF));
+                    decompressed.push_back(static_cast<std::uint8_t>((fill_value >> 24) & 0xFF));
+                }
+            } else {
+                // Literal word - store as-is
+                decompressed.push_back(static_cast<std::uint8_t>(word & 0xFF));
+                decompressed.push_back(static_cast<std::uint8_t>((word >> 8) & 0xFF));
+                decompressed.push_back(static_cast<std::uint8_t>((word >> 16) & 0xFF));
+                decompressed.push_back(static_cast<std::uint8_t>((word >> 24) & 0xFF));
+            }
+        }
+
+        return decompressed;
     }
 
     // Utility functions

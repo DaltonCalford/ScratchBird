@@ -433,6 +433,10 @@ if(SCRATCHBIRD_BUILD_TESTS)
   target_link_libraries(hash_index_tests scratchbird_engine)
   add_test(NAME hash_index_tests COMMAND hash_index_tests)
 
+  add_executable(hash_index_memory_debug tests/hash_index_memory_debug.cpp)
+  target_link_libraries(hash_index_memory_debug scratchbird_engine)
+  add_test(NAME hash_index_memory_debug COMMAND hash_index_memory_debug)
+
   add_executable(rtree_index_tests tests/rtree_index_tests.cpp)
   target_link_libraries(rtree_index_tests scratchbird_engine)
   add_test(NAME rtree_index_tests COMMAND rtree_index_tests)
@@ -455,5 +459,11 @@ if(SCRATCHBIRD_BUILD_TESTS)
   add_executable(ttl_index_tests tests/ttl_index_tests.cpp)
   target_link_libraries(ttl_index_tests scratchbird_engine)
   add_test(NAME ttl_index_tests COMMAND ttl_index_tests)
+
+  add_executable(comprehensive_index_validation_tests
+                 tests/comprehensive_index_validation_tests.cpp)
+  target_link_libraries(comprehensive_index_validation_tests scratchbird_engine)
+  add_test(NAME comprehensive_index_validation_tests
+           COMMAND comprehensive_index_validation_tests)
 
 endif()
