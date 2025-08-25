@@ -96,7 +96,8 @@ add_library(
   src/engine/fdw_postgresql.cpp
   src/engine/fdw_json.cpp
   src/engine/database_link.cpp
-  src/engine/fdw_security.cpp)
+  src/engine/fdw_security.cpp
+  src/engine/fdw_error_handling.cpp)
 
 # Main ScratchBird executable
 add_executable(scratchbird src/main.cpp src/scratchbird.cpp)
@@ -495,5 +496,9 @@ if(SCRATCHBIRD_BUILD_TESTS)
   add_executable(fdw_security_tests tests/fdw_security_tests.cpp)
   target_link_libraries(fdw_security_tests scratchbird_engine)
   add_test(NAME fdw_security_tests COMMAND fdw_security_tests)
+
+  add_executable(fdw_error_handling_tests tests/fdw_error_handling_tests.cpp)
+  target_link_libraries(fdw_error_handling_tests scratchbird_engine)
+  add_test(NAME fdw_error_handling_tests COMMAND fdw_error_handling_tests)
 
 endif()
