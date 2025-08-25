@@ -2,6 +2,7 @@
 
 #include "scratchbird/engine/catalog_manager.h"
 #include "scratchbird/engine/expr.h"
+#include "scratchbird/engine/fdw.h"
 #include "scratchbird/engine/file.h"
 #include "scratchbird/engine/header.h"
 #include "scratchbird/engine/heap_rel.h"
@@ -4231,6 +4232,81 @@ namespace scratchbird
                     return r;
                 }
             }
+
+            // FDW DDL Operations
+            if (ast.kind == NodeKind::DdlForeignServer) {
+                try {
+                    // Parse foreign server DDL and execute
+                    std::string action = ast.ddlForeignServer.action;
+                    std::string name = ast.ddlForeignServer.name;
+                    std::string options = ast.ddlForeignServer.options;
+
+                    // For now, return a success placeholder
+                    // TODO: Integrate with FdwManager when catalog is connected
+                    r.columns = {"ok"};
+                    r.rows = {{action + " FOREIGN SERVER " + name + " accepted (placeholder)"}};
+                    return r;
+                } catch (const std::exception& e) {
+                    r.columns = {"error"};
+                    r.rows = {{std::string("FOREIGN SERVER error: ") + e.what()}};
+                    return r;
+                }
+            }
+
+            if (ast.kind == NodeKind::DdlUserMapping) {
+                try {
+                    // Parse user mapping DDL and execute
+                    std::string action = ast.ddlUserMapping.action;
+                    std::string server_name = ast.ddlUserMapping.server_name;
+                    std::string username = ast.ddlUserMapping.user_name;
+
+                    r.columns = {"ok"};
+                    r.rows = {{action + " USER MAPPING for " + username + " on " + server_name +
+                               " accepted (placeholder)"}};
+                    return r;
+                } catch (const std::exception& e) {
+                    r.columns = {"error"};
+                    r.rows = {{std::string("USER MAPPING error: ") + e.what()}};
+                    return r;
+                }
+            }
+
+            if (ast.kind == NodeKind::DdlForeignTable) {
+                try {
+                    // Parse foreign table DDL and execute
+                    std::string action = ast.ddlForeignTable.action;
+                    std::string name = ast.ddlForeignTable.name;
+                    std::string server_name = ast.ddlForeignTable.server_name;
+
+                    r.columns = {"ok"};
+                    r.rows = {{action + " FOREIGN TABLE " + name + " on " + server_name +
+                               " accepted (placeholder)"}};
+                    return r;
+                } catch (const std::exception& e) {
+                    r.columns = {"error"};
+                    r.rows = {{std::string("FOREIGN TABLE error: ") + e.what()}};
+                    return r;
+                }
+            }
+
+            if (ast.kind == NodeKind::DdlImportForeignSchema) {
+                try {
+                    // Parse import foreign schema DDL and execute
+                    std::string server_name = ast.ddlImportForeignSchema.server_name;
+                    std::string remote_schema = ast.ddlImportForeignSchema.remote_schema;
+                    std::string local_schema = ast.ddlImportForeignSchema.into_schema;
+
+                    r.columns = {"ok"};
+                    r.rows = {{"IMPORT FOREIGN SCHEMA " + remote_schema + " from " + server_name +
+                               " accepted (placeholder)"}};
+                    return r;
+                } catch (const std::exception& e) {
+                    r.columns = {"error"};
+                    r.rows = {{std::string("IMPORT FOREIGN SCHEMA error: ") + e.what()}};
+                    return r;
+                }
+            }
+
             if (ast.kind == NodeKind::SessionStmt && ast.session.kind == SessionKind::SetOption) {
                 // Handle SQL-level SET CONSTRAINTS (ALL|name[,name]) DEFERRED|IMMEDIATE
                 std::string txt = ast.session.setopts.debug_option;

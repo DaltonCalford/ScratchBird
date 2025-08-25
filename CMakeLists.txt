@@ -90,7 +90,9 @@ add_library(
   src/engine/index_lsm.cpp
   src/engine/index_columnstore.cpp
   src/engine/index_rtree.cpp
-  src/engine/index_ttl.cpp)
+  src/engine/index_ttl.cpp
+  src/engine/fdw.cpp
+  src/engine/fdw_csv.cpp)
 
 # Main ScratchBird executable
 add_executable(scratchbird src/main.cpp src/scratchbird.cpp)
@@ -465,5 +467,13 @@ if(SCRATCHBIRD_BUILD_TESTS)
   target_link_libraries(comprehensive_index_validation_tests scratchbird_engine)
   add_test(NAME comprehensive_index_validation_tests
            COMMAND comprehensive_index_validation_tests)
+
+  add_executable(fdw_basic_tests tests/fdw_basic_tests.cpp)
+  target_link_libraries(fdw_basic_tests scratchbird_engine)
+  add_test(NAME fdw_basic_tests COMMAND fdw_basic_tests)
+
+  add_executable(fdw_ddl_tests tests/fdw_ddl_tests.cpp)
+  target_link_libraries(fdw_ddl_tests scratchbird_engine)
+  add_test(NAME fdw_ddl_tests COMMAND fdw_ddl_tests)
 
 endif()
