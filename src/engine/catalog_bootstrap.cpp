@@ -244,6 +244,75 @@ namespace scratchbird::engine
                  "  stats SDB$JSON NOT NULL\n"
                  ")");
         emit(ss, "");
+        // Foreign Data Wrapper (FDW) tables
+        emit(ss, "CREATE TABLE SDB$FOREIGN_SERVER (\n"
+                 "  oid SDB$OID PRIMARY KEY,\n"
+                 "  server_name SDB$NAME NOT NULL,\n"
+                 "  fdw_name VARCHAR(64) NOT NULL,\n"
+                 "  host VARCHAR(255),\n"
+                 "  port INTEGER,\n"
+                 "  database_name VARCHAR(128),\n"
+                 "  options SDB$JSON,\n"
+                 "  use_ssl SDB$BOOL DEFAULT FALSE,\n"
+                 "  ssl_cert_path VARCHAR(512),\n"
+                 "  ssl_key_path VARCHAR(512),\n"
+                 "  ssl_ca_path VARCHAR(512),\n"
+                 "  created_at SDB$TIMESTAMPTZ,\n"
+                 "  modified_at SDB$TIMESTAMPTZ\n"
+                 ")");
+        emit(ss,
+             "CREATE UNIQUE INDEX UX_SDB$FOREIGN_SERVER_NAME ON SDB$FOREIGN_SERVER(server_name)");
+        emit(ss, "COMMENT ON TABLE SDB$FOREIGN_SERVER IS 'Foreign servers for FDW connections'");
+        emit(ss, "");
+        emit(ss, "CREATE TABLE SDB$USER_MAPPING (\n"
+                 "  oid SDB$OID PRIMARY KEY,\n"
+                 "  server_name SDB$NAME NOT NULL,\n"
+                 "  local_username SDB$NAME NOT NULL,\n"
+                 "  remote_username VARCHAR(128),\n"
+                 "  remote_password_hash VARCHAR(256),\n"
+                 "  options SDB$JSON,\n"
+                 "  created_at SDB$TIMESTAMPTZ,\n"
+                 "  FOREIGN KEY (server_name) REFERENCES SDB$FOREIGN_SERVER(server_name)\n"
+                 ")");
+        emit(ss, "CREATE UNIQUE INDEX UX_SDB$USER_MAPPING ON SDB$USER_MAPPING(server_name, "
+                 "local_username)");
+        emit(ss,
+             "COMMENT ON TABLE SDB$USER_MAPPING IS 'User credentials for foreign server access'");
+        emit(ss, "");
+        emit(ss, "CREATE TABLE SDB$FOREIGN_TABLE (\n"
+                 "  oid SDB$OID PRIMARY KEY,\n"
+                 "  table_name SDB$NAME NOT NULL,\n"
+                 "  server_name SDB$NAME NOT NULL,\n"
+                 "  remote_schema VARCHAR(128),\n"
+                 "  remote_table SDB$NAME,\n"
+                 "  options SDB$JSON,\n"
+                 "  created_at SDB$TIMESTAMPTZ,\n"
+                 "  FOREIGN KEY (server_name) REFERENCES SDB$FOREIGN_SERVER(server_name)\n"
+                 ")");
+        emit(ss, "CREATE UNIQUE INDEX UX_SDB$FOREIGN_TABLE_NAME ON SDB$FOREIGN_TABLE(table_name)");
+        emit(ss, "COMMENT ON TABLE SDB$FOREIGN_TABLE IS 'Foreign table definitions'");
+        emit(ss, "");
+        emit(ss, "CREATE TABLE SDB$DATABASE_LINK (\n"
+                 "  oid SDB$OID PRIMARY KEY,\n"
+                 "  link_name SDB$NAME NOT NULL,\n"
+                 "  host VARCHAR(255) NOT NULL,\n"
+                 "  port INTEGER,\n"
+                 "  database_name VARCHAR(128) NOT NULL,\n"
+                 "  username VARCHAR(128),\n"
+                 "  password_hash VARCHAR(256),\n"
+                 "  use_ssl SDB$BOOL DEFAULT FALSE,\n"
+                 "  connection_timeout INTEGER DEFAULT 30,\n"
+                 "  query_timeout INTEGER DEFAULT 300,\n"
+                 "  options SDB$JSON,\n"
+                 "  created_at SDB$TIMESTAMPTZ,\n"
+                 "  last_used_at SDB$TIMESTAMPTZ,\n"
+                 "  status VARCHAR(16) DEFAULT 'ACTIVE'\n"
+                 ")");
+        emit(ss, "CREATE UNIQUE INDEX UX_SDB$DATABASE_LINK_NAME ON SDB$DATABASE_LINK(link_name)");
+        emit(
+            ss,
+            "COMMENT ON TABLE SDB$DATABASE_LINK IS 'Database links for cross-database operations'");
+        emit(ss, "");
         // Version tables
         emit(ss, "CREATE TABLE SDB$CATALOG_VERSION(major INTEGER, minor INTEGER, stamp "
                  "SDB$TIMESTAMPTZ)");
