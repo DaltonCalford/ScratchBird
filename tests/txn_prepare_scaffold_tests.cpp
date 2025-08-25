@@ -27,3 +27,9 @@ TEST(txn_prepare_scaffold, tip_state_transitions)
     tm.commit(t);
     ASSERT_EQ(tm.read_txn_state(t.id), TxnState::Committed);
 }
+
+int main(int argc, char** argv)
+{
+    ::testing::InitGoogleTest(&argc, argv);
+    return RUN_ALL_TESTS();
+}

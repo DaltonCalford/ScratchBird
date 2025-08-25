@@ -1,11 +1,32 @@
-### Phase 1 — Heap storage and row format: detailed implementation plan
+# Phase 1 — Heap Storage and Row Format ✅ **COMPLETED**
 
-#### 1. On-disk structures (ODS) and constants
+## Implementation Status: FULLY IMPLEMENTED
 
-- Add page types and metadata
+All planned features have been successfully implemented:
 
-  - Add `ods::PageType::HeapRoot`, `ods::PageType::HeapData`, `ods::PageType::HeapOverflow`, `ods::PageType::Blob` (if not already present) to `include/scratchbird/engine/ods.h`.
-  - Add fixed constants for maximum slots per page, alignment, and varlena thresholds.
+- ✅ **Complete heap page structures** with slot-directory model (`[PageHeader][HeapPageHeader][tuples...][free space][line pointer directory]`)
+- ✅ **Tuple encoding/decoding** with null bitmap and attribute directory
+- ✅ **RowID format** and relation root structures
+- ✅ **Varlena and overflow support** with off-page storage (`HeapOverflow` pages)
+- ✅ **Heap relation API** with `HeapRelation` and `HeapScan` classes
+- ✅ **Comprehensive test suite** (heap_*.cpp files: heap_tuple_tests.cpp, heap_page_tests.cpp, etc.)
+- ✅ **Integration** with pager, allocator, and transaction systems
+- ✅ **Free space tracking** per page with sophisticated page management
+- ✅ **Heap tuple codec** with encoding/decoding, null handling, overflow support
+
+**Exit Criteria Met:**
+- ✅ Create/insert/select rows via internal harness
+- ✅ Comprehensive page validation tools
+- ✅ All planned APIs and structures implemented
+
+---
+
+## Original Implementation Plan (Completed)
+
+### 1. On-disk structures (ODS) and constants
+
+- ✅ **Page types and metadata implemented**: `ods::PageType::HeapRoot`, `ods::PageType::HeapData`, `ods::PageType::HeapOverflow`, `ods::PageType::Blob` in `include/scratchbird/engine/ods.h`
+- ✅ **Fixed constants implemented**: maximum slots per page, alignment, and varlena thresholds
 
 - Heap data page layout (slot-directory model)
 

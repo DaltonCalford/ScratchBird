@@ -7,7 +7,17 @@
 namespace scratchbird::engine
 {
 
-    enum class IndexMethod { BTree, Hash, Gin, RTree, Bitmap, PartialHash };
+    enum class IndexMethod {
+        BTree,
+        Hash,
+        Gin,
+        RTree,
+        Bitmap,
+        PartialHash,
+        Columnstore,
+        LSMTree,
+        TTL
+    };
 
     struct IndexKeySpec {
         std::string column_name; // optional if expr is set
@@ -26,6 +36,16 @@ namespace scratchbird::engine
         std::string where_predicate;              // partial index
         std::string tablespace;                   // optional
         bool active{true};
+
+        // LSM-Tree specific options
+        std::string compaction_strategy; // SIZE_TIERED, LEVELED
+
+        // TTL specific options
+        std::string ttl_expire_column;
+        std::string ttl_interval;
+
+        // Columnstore specific options
+        std::string compression_algorithm; // LZ4, ZSTD, SNAPPY
     };
 
     struct ValidationMessage {

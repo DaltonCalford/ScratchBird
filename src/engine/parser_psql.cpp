@@ -990,22 +990,85 @@ namespace scratchbird::engine
         std::string ls = lowercase(s);
         // CREATE PACKAGE name AS ... [END] | CREATE PACKAGE BODY name AS ... END
         auto aspos = ls.find(" as ");
-        ast.psqlPackage.header_raw = (aspos == std::string::npos) ? s : s.substr(0, aspos);
-        ast.psqlPackage.body_raw =
-            (aspos == std::string::npos) ? std::string() : s.substr(aspos + 4);
-        ast.psqlPackage.is_body = (ls.find(" package body ") != std::string::npos);
-        // name after PACKAGE or PACKAGE BODY
-        auto ppos2 = ls.find(" package ");
-        if (ppos2 != std::string::npos) {
-            size_t start = ppos2 + 9;
-            if (ls.find(" package body ") == ppos2)
-                start = ppos2 + 13;
-            auto after3 = s.substr(start);
-            auto sp3 = after3.find_first_not_of(" \t\n");
-            if (sp3 != std::string::npos) {
-                auto rest3 = after3.substr(sp3);
-                auto end3 = rest3.find_first_of(" \t\n");
-                ast.psqlPackage.name = end3 == std::string::npos ? rest3 : rest3.substr(0, end3);
+        ast.psqlPackage.is_header = (ls.find(" package body ") == std::string::npos);
+
+        if (ast.psqlPackage.is_header) {
+            ast.psqlPackage.header_body = (aspos == std::string::npos) ? s : s.substr(aspos + 4);
+        } else {
+            ast.psqlPackage.implementation_body =
+                (aspos == std::string::npos) ? s : s.substr(aspos + 4);
+        }
+
+        // Extract package name after PACKAGE or PACKAGE BODY
+        auto ppos = ls.find(" package ");
+        if (ppos != std::string::npos) {
+            size_t start = ppos + 9;
+            if (ls.find(" package body ") == ppos) {
+                start = ppos + 14; // skip " package body "
+            }
+            auto after = s.substr(start);
+            auto sp = after.find_first_not_of(" \t\n");
+            if (sp != std::string::npos) {
+                auto rest = after.substr(sp);
+                auto end = rest.find_first_of(" \t\n");
+                ast.psqlPackage.name = end == std::string::npos ? rest : rest.substr(0, end);
+            }
+        }
+        return ast;
+    }
+
+    Ast parse_psql_call(const std::string& sql)
+    {
+        Ast ast{};
+        ast.kind = NodeKind::PsqlCall;
+        ast.psqlCall.span = {0, int(sql.size())};
+        std::string s = sql;
+        std::string ls = lowercase(s);
+
+        // CALL procedure_name[(arguments)]
+        auto call_pos = ls.find("call ");
+        if (call_pos == 0) {
+            auto after_call = s.substr(5); // Skip "call "
+            trim(after_call);
+
+            // Find procedure name and arguments
+            auto paren_pos = after_call.find('(');
+            if (paren_pos == std::string::npos) {
+                // No arguments: CALL proc_name
+                ast.psqlCall.routine_name = after_call;
+            } else {
+                // With arguments: CALL proc_name(args)
+                ast.psqlCall.routine_name = after_call.substr(0, paren_pos);
+                trim(ast.psqlCall.routine_name);
+
+                auto close_paren = after_call.find(')', paren_pos);
+                if (close_paren != std::string::npos) {
+                    std::string args =
+                        after_call.substr(paren_pos + 1, close_paren - paren_pos - 1);
+                    trim(args);
+                    ast.psqlCall.args_raw = args;
+
+                    // Simple comma-separated argument parsing
+                    if (!args.empty()) {
+                        size_t pos = 0;
+                        while (pos < args.length()) {
+                            auto comma = args.find(',', pos);
+                            auto arg = (comma == std::string::npos) ? args.substr(pos)
+                                                                    : args.substr(pos, comma - pos);
+                            trim(arg);
+                            if (!arg.empty()) {
+                                ast.psqlCall.arguments.push_back(arg);
+                            }
+                            if (comma == std::string::npos)
+                                break;
+                            pos = comma + 1;
+                        }
+                    }
+                } else {
+                    // Malformed - missing closing parenthesis
+                    ast.warnings.push_back("CALL statement missing closing parenthesis");
+                    ast.psqlCall.args_raw = after_call.substr(paren_pos + 1);
+                }
             }
         }
         return ast;
