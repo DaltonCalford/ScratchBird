@@ -2,6 +2,7 @@
 
 #include "scratchbird/engine/index_bitmap.h"
 #include "scratchbird/engine/index_btree.h"
+#include "scratchbird/engine/index_columnstore.h"
 #include "scratchbird/engine/index_gin.h"
 #include "scratchbird/engine/index_hash.h"
 #include "scratchbird/engine/index_lsm.h"
@@ -40,9 +41,11 @@ namespace scratchbird::engine
             return std::make_unique<LSMTreeIndex>(std::move(fmap), page_size, unique);
 
         case IndexMethod::Columnstore:
+            return std::make_unique<ColumnstoreIndex>(std::move(fmap), page_size, unique);
+
         case IndexMethod::TTL:
             // Placeholder for future implementation
-            throw std::runtime_error("Index method not yet implemented");
+            throw std::runtime_error("TTL index method not yet implemented");
 
         default:
             throw std::invalid_argument("Unsupported index method");
@@ -61,67 +64,131 @@ namespace scratchbird::engine
 
         case IndexMethod::Hash:
             if (!opts.where_predicate.empty()) {
-                messages.push_back({false, "Hash indexes support partial indexes"});
+                messages.push_back(
+                    {false, "Hash indexes support partial indexes with WHERE predicates"});
             }
-            if (opts.keys.size() != 1) {
-                messages.push_back({true, "Hash indexes support only single-column keys"});
+            if (opts.keys.size() == 0) {
+                messages.push_back({true, "Hash indexes require exactly one key column"});
+            } else if (opts.keys.size() > 1) {
+                messages.push_back({true, "Hash indexes support only single-column keys. Consider "
+                                          "B-Tree for composite keys."});
             }
             break;
 
         case IndexMethod::Bitmap:
             if (opts.unique) {
-                messages.push_back({true, "Bitmap indexes cannot be unique"});
+                messages.push_back(
+                    {true, "Bitmap indexes cannot be unique (designed for low-cardinality data). "
+                           "Use Hash or B-Tree for unique constraints."});
             }
-            if (opts.keys.size() != 1) {
-                messages.push_back({true, "Bitmap indexes support only single-column keys"});
+            if (opts.keys.size() == 0) {
+                messages.push_back({true, "Bitmap indexes require exactly one key column"});
+            } else if (opts.keys.size() > 1) {
+                messages.push_back({true, "Bitmap indexes support only single-column keys. "
+                                          "Consider separate bitmap indexes per column."});
             }
             break;
 
         case IndexMethod::Gin:
             if (opts.unique) {
-                messages.push_back({true, "GIN indexes cannot be unique"});
+                messages.push_back({true, "GIN indexes cannot be unique (designed for full-text "
+                                          "search). Use B-Tree for unique text columns."});
+            }
+            if (opts.keys.empty()) {
+                messages.push_back(
+                    {true, "GIN indexes require at least one key column for tokenization"});
             }
             break;
 
         case IndexMethod::RTree:
             if (opts.unique) {
-                messages.push_back({true, "R-Tree indexes cannot be unique"});
+                messages.push_back({true, "R-Tree indexes cannot be unique (designed for spatial "
+                                          "data). Use B-Tree for unique geometric identifiers."});
             }
-            if (opts.keys.size() != 1) {
-                messages.push_back({true, "R-Tree indexes support only single-column keys"});
+            if (opts.keys.size() == 0) {
+                messages.push_back({true, "R-Tree indexes require exactly one spatial column"});
+            } else if (opts.keys.size() > 1) {
+                messages.push_back({true, "R-Tree indexes support only single-column spatial keys. "
+                                          "Consider composite geometry columns."});
             }
             if (!opts.include_columns.empty()) {
-                messages.push_back({false, "R-Tree indexes do not benefit from INCLUDE columns"});
+                messages.push_back(
+                    {false,
+                     "R-Tree indexes do not benefit from INCLUDE columns for spatial queries"});
             }
             break;
 
         case IndexMethod::PartialHash:
             if (opts.where_predicate.empty()) {
-                messages.push_back({true, "Partial hash indexes require WHERE clause"});
+                messages.push_back(
+                    {true,
+                     "Partial hash indexes require WHERE clause (e.g., WHERE status = 'active')"});
+            }
+            if (opts.keys.size() != 1) {
+                messages.push_back({true, "Partial hash indexes support only single-column keys "
+                                          "with selective predicates"});
             }
             break;
 
         case IndexMethod::LSMTree:
             if (opts.unique) {
                 messages.push_back(
-                    {false, "LSM-Tree indexes typically don't enforce uniqueness during writes"});
+                    {false,
+                     "LSM-Tree indexes typically don't enforce uniqueness during writes (optimized "
+                     "for write throughput). Consider Hash or B-Tree for unique constraints."});
+            }
+            if (opts.keys.empty()) {
+                messages.push_back({true, "LSM-Tree indexes require at least one key column"});
             }
             if (!opts.compaction_strategy.empty()) {
                 if (opts.compaction_strategy != "SIZE_TIERED" &&
                     opts.compaction_strategy != "LEVELED") {
-                    messages.push_back(
-                        {true, "Supported compaction strategies: SIZE_TIERED, LEVELED"});
+                    messages.push_back({true, "Supported compaction strategies: SIZE_TIERED "
+                                              "(write-optimized), LEVELED (read-optimized)"});
                 }
             }
             break;
 
         case IndexMethod::Columnstore:
+            if (opts.unique) {
+                messages.push_back(
+                    {true, "Columnstore indexes cannot be unique (designed for analytical "
+                           "workloads). Use B-Tree for unique analytical columns."});
+            }
+            if (opts.keys.empty()) {
+                messages.push_back(
+                    {true, "Columnstore indexes require at least one column for columnar storage"});
+            }
+            if (!opts.compression_algorithm.empty()) {
+                // Validate compression algorithm
+                if (opts.compression_algorithm != "LZ4" && opts.compression_algorithm != "ZSTD" &&
+                    opts.compression_algorithm != "SNAPPY") {
+                    messages.push_back({false, "Supported compression algorithms: LZ4 (balanced), "
+                                               "ZSTD (maximum compression), SNAPPY (fastest)"});
+                }
+            }
+            break;
+
         case IndexMethod::TTL:
-            messages.push_back({true, "Index method not yet implemented"});
+            if (opts.ttl_expire_column.empty()) {
+                messages.push_back(
+                    {true, "TTL indexes require expire column specification (e.g., 'expires_at')"});
+            }
+            if (opts.ttl_interval.empty()) {
+                messages.push_back(
+                    {true,
+                     "TTL indexes require interval specification (e.g., '1 hour', '30 days')"});
+            }
+            if (opts.keys.size() == 0) {
+                messages.push_back({true, "TTL indexes require exactly one timestamp key column"});
+            } else if (opts.keys.size() > 1) {
+                messages.push_back({true, "TTL indexes support only single-column timestamp keys"});
+            }
             break;
 
         default:
-            messages.push_back({true, "Unknown index method"});
+            messages.push_back({true, "Unknown index method. Supported types: BTREE, HASH, BITMAP, "
+                                      "GIN, RTREE, LSMTREE, COLUMNSTORE"});
             break;
         }
 
@@ -133,13 +200,13 @@ namespace scratchbird::engine
         switch (method) {
         case IndexMethod::BTree:
         case IndexMethod::RTree:
-        case IndexMethod::LSMTree: // LSM-Trees support range scans
+        case IndexMethod::LSMTree:     // LSM-Trees support range scans
+        case IndexMethod::Columnstore: // Analytics often need range queries
             return true;
         case IndexMethod::Hash:
         case IndexMethod::Bitmap:
         case IndexMethod::Gin:
         case IndexMethod::PartialHash:
-        case IndexMethod::Columnstore: // Would support in analytics context
         case IndexMethod::TTL:
             return false;
         }
@@ -173,11 +240,12 @@ namespace scratchbird::engine
             return true; // Hash indexes can store payload
         case IndexMethod::LSMTree:
             return true; // LSM-Trees can store payloads efficiently
+        case IndexMethod::Columnstore:
+            return true; // Columnstore excels at covering indexes
         case IndexMethod::Bitmap:
         case IndexMethod::Gin:
         case IndexMethod::RTree:
         case IndexMethod::PartialHash:
-        case IndexMethod::Columnstore: // Different paradigm
         case IndexMethod::TTL:
             return false;
         }
