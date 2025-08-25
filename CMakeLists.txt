@@ -92,7 +92,9 @@ add_library(
   src/engine/index_rtree.cpp
   src/engine/index_ttl.cpp
   src/engine/fdw.cpp
-  src/engine/fdw_csv.cpp)
+  src/engine/fdw_csv.cpp
+  src/engine/fdw_postgresql.cpp
+  src/engine/database_link.cpp)
 
 # Main ScratchBird executable
 add_executable(scratchbird src/main.cpp src/scratchbird.cpp)
@@ -475,5 +477,13 @@ if(SCRATCHBIRD_BUILD_TESTS)
   add_executable(fdw_ddl_tests tests/fdw_ddl_tests.cpp)
   target_link_libraries(fdw_ddl_tests scratchbird_engine)
   add_test(NAME fdw_ddl_tests COMMAND fdw_ddl_tests)
+
+  add_executable(fdw_postgresql_tests tests/fdw_postgresql_tests.cpp)
+  target_link_libraries(fdw_postgresql_tests scratchbird_engine)
+  add_test(NAME fdw_postgresql_tests COMMAND fdw_postgresql_tests)
+
+  add_executable(database_link_tests tests/database_link_tests.cpp)
+  target_link_libraries(database_link_tests scratchbird_engine)
+  add_test(NAME database_link_tests COMMAND database_link_tests)
 
 endif()

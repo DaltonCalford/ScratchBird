@@ -404,8 +404,14 @@ namespace scratchbird::engine
                             ColumnDef col;
                             col.name = iterator.get_column_name(i);
                             col.type.kind = iterator.get_column_type(i);
+                            col.type.length = -1;
+                            col.type.precision = -1;
+                            col.type.scale = -1;
+                            col.type.vector_dims = -1;
+                            col.type.collation = "";
+                            col.type.charset = "";
                             col.nullable = true; // CSV columns are generally nullable
-                            columns.push_back(col);
+                            columns.push_back(std::move(col));
                         }
 
                         schema_info.table_columns[table_name] = columns;
