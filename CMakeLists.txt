@@ -87,6 +87,7 @@ add_library(
   src/engine/index_bitmap.cpp
   src/engine/index_gin.cpp
   src/engine/index_lsm.cpp
+  src/engine/index_columnstore.cpp
   src/engine/index_rtree.cpp)
 
 # Main ScratchBird executable
@@ -428,5 +429,16 @@ if(SCRATCHBIRD_BUILD_TESTS)
   add_executable(lsm_index_tests tests/lsm_index_tests.cpp)
   target_link_libraries(lsm_index_tests scratchbird_engine)
   add_test(NAME lsm_index_tests COMMAND lsm_index_tests)
+
+  add_executable(columnstore_index_tests tests/columnstore_index_tests.cpp)
+  target_link_libraries(columnstore_index_tests scratchbird_engine)
+  add_test(NAME columnstore_index_tests COMMAND columnstore_index_tests)
+  add_executable(index_integration_tests tests/index_integration_tests.cpp)
+  target_link_libraries(index_integration_tests scratchbird_engine)
+  add_test(NAME index_integration_tests COMMAND index_integration_tests)
+  add_executable(query_optimizer_index_tests
+                 tests/query_optimizer_index_tests.cpp)
+  target_link_libraries(query_optimizer_index_tests scratchbird_engine)
+  add_test(NAME query_optimizer_index_tests COMMAND query_optimizer_index_tests)
 
 endif()
