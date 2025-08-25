@@ -650,8 +650,11 @@ namespace scratchbird::engine
     {
         switch (algorithm) {
         case CompressionAlgorithm::LZ4:
-            // Would use actual LZ4 compression
-            return data; // Placeholder
+            return compress_lz4(data);
+        case CompressionAlgorithm::ZSTD:
+            return compress_zstd(data);
+        case CompressionAlgorithm::SNAPPY:
+            return compress_snappy(data);
         default:
             return data;
         }
@@ -663,8 +666,11 @@ namespace scratchbird::engine
     {
         switch (algorithm) {
         case CompressionAlgorithm::LZ4:
-            // Would use actual LZ4 decompression
-            return compressed_data; // Placeholder
+            return decompress_lz4(compressed_data);
+        case CompressionAlgorithm::ZSTD:
+            return decompress_zstd(compressed_data);
+        case CompressionAlgorithm::SNAPPY:
+            return decompress_snappy(compressed_data);
         default:
             return compressed_data;
         }
@@ -768,6 +774,427 @@ namespace scratchbird::engine
         }
 
         return batch_count;
+    }
+
+    // LZ4 Compression Implementation (Simplified LZ77-based algorithm)
+    std::vector<std::uint8_t>
+    ColumnstoreIndex::compress_lz4(const std::vector<std::uint8_t>& data) const
+    {
+        if (data.empty())
+            return data;
+
+        std::vector<std::uint8_t> compressed;
+        compressed.reserve(data.size()); // Reserve space
+
+        // LZ4 compression header (simplified)
+        compressed.push_back(0x4C); // 'L'
+        compressed.push_back(0x5A); // 'Z'
+        compressed.push_back(0x34); // '4'
+        compressed.push_back(0x00); // Version
+
+        // Add uncompressed size for decompression
+        std::uint32_t original_size = static_cast<std::uint32_t>(data.size());
+        compressed.push_back((original_size >> 0) & 0xFF);
+        compressed.push_back((original_size >> 8) & 0xFF);
+        compressed.push_back((original_size >> 16) & 0xFF);
+        compressed.push_back((original_size >> 24) & 0xFF);
+
+        // Simplified LZ4 compression using dictionary lookback
+        std::unordered_map<std::uint32_t, std::size_t> hash_table;
+        const std::size_t window_size = 65536; // 64KB window
+        const std::size_t min_match = 4;
+
+        for (std::size_t i = 0; i < data.size();) {
+            std::size_t best_length = 0;
+            std::size_t best_distance = 0;
+
+            // Look for matches in the sliding window
+            if (i >= min_match) {
+                std::uint32_t hash = 0;
+                for (std::size_t j = 0; j < min_match && i + j < data.size(); ++j) {
+                    hash = (hash << 8) | data[i + j];
+                }
+
+                auto it = hash_table.find(hash);
+                if (it != hash_table.end() && i - it->second < window_size) {
+                    std::size_t match_pos = it->second;
+                    std::size_t match_len = 0;
+
+                    // Extend the match
+                    while (match_len < 255 && i + match_len < data.size() &&
+                           match_pos + match_len < data.size() &&
+                           data[i + match_len] == data[match_pos + match_len]) {
+                        match_len++;
+                    }
+
+                    if (match_len >= min_match) {
+                        best_length = match_len;
+                        best_distance = i - match_pos;
+                    }
+                }
+
+                hash_table[hash] = i;
+            }
+
+            if (best_length >= min_match) {
+                // Encode match: length + distance
+                compressed.push_back(0x80 | (best_length - min_match)); // Match marker + length
+                compressed.push_back((best_distance >> 0) & 0xFF);
+                compressed.push_back((best_distance >> 8) & 0xFF);
+                i += best_length;
+            } else {
+                // Literal byte
+                compressed.push_back(data[i]);
+                i++;
+            }
+        }
+
+        return compressed;
+    }
+
+    std::vector<std::uint8_t>
+    ColumnstoreIndex::decompress_lz4(const std::vector<std::uint8_t>& compressed_data) const
+    {
+        if (compressed_data.size() < 8)
+            return compressed_data;
+
+        // Verify LZ4 header
+        if (compressed_data[0] != 0x4C || compressed_data[1] != 0x5A ||
+            compressed_data[2] != 0x34 || compressed_data[3] != 0x00) {
+            return compressed_data; // Not LZ4 format
+        }
+
+        // Read original size
+        std::uint32_t original_size = (static_cast<std::uint32_t>(compressed_data[4]) << 0) |
+                                      (static_cast<std::uint32_t>(compressed_data[5]) << 8) |
+                                      (static_cast<std::uint32_t>(compressed_data[6]) << 16) |
+                                      (static_cast<std::uint32_t>(compressed_data[7]) << 24);
+
+        std::vector<std::uint8_t> decompressed;
+        decompressed.reserve(original_size);
+
+        for (std::size_t i = 8;
+             i < compressed_data.size() && decompressed.size() < original_size;) {
+            std::uint8_t token = compressed_data[i++];
+
+            if (token & 0x80) {
+                // Match: length + distance
+                std::size_t length = (token & 0x7F) + 4;
+                if (i + 1 >= compressed_data.size())
+                    break;
+
+                std::size_t distance = (static_cast<std::size_t>(compressed_data[i]) << 0) |
+                                       (static_cast<std::size_t>(compressed_data[i + 1]) << 8);
+                i += 2;
+
+                // Copy from lookback buffer
+                std::size_t copy_pos = decompressed.size() - distance;
+                for (std::size_t j = 0; j < length && decompressed.size() < original_size; ++j) {
+                    if (copy_pos + j < decompressed.size()) {
+                        decompressed.push_back(decompressed[copy_pos + j]);
+                    }
+                }
+            } else {
+                // Literal byte
+                decompressed.push_back(token);
+            }
+        }
+
+        return decompressed;
+    }
+
+    // ZSTD Compression Implementation (Simplified Zstandard algorithm)
+    std::vector<std::uint8_t>
+    ColumnstoreIndex::compress_zstd(const std::vector<std::uint8_t>& data) const
+    {
+        if (data.empty())
+            return data;
+
+        std::vector<std::uint8_t> compressed;
+        compressed.reserve(data.size());
+
+        // ZSTD magic header
+        compressed.push_back(0x28);
+        compressed.push_back(0xB5);
+        compressed.push_back(0x2F);
+        compressed.push_back(0xFD);
+
+        // Frame header with uncompressed size
+        std::uint32_t original_size = static_cast<std::uint32_t>(data.size());
+        compressed.push_back((original_size >> 0) & 0xFF);
+        compressed.push_back((original_size >> 8) & 0xFF);
+        compressed.push_back((original_size >> 16) & 0xFF);
+        compressed.push_back((original_size >> 24) & 0xFF);
+
+        // Simplified ZSTD compression using entropy encoding and dictionary
+        std::unordered_map<std::uint8_t, std::uint32_t> frequency;
+        for (std::uint8_t byte : data) {
+            frequency[byte]++;
+        }
+
+        // Build simple Huffman-like encoding table
+        std::unordered_map<std::uint8_t, std::pair<std::uint16_t, std::uint8_t>> encoding_table;
+        std::uint16_t code = 0;
+        for (const auto& [byte, freq] : frequency) {
+            std::uint8_t bit_length =
+                std::min(8, static_cast<int>(std::ceil(std::log2(frequency.size()))));
+            encoding_table[byte] = {code++, bit_length};
+        }
+
+        // Encode frequency table size
+        compressed.push_back(static_cast<std::uint8_t>(frequency.size()));
+
+        // Store encoding table
+        for (const auto& [byte, encoding] : encoding_table) {
+            compressed.push_back(byte);
+            compressed.push_back((encoding.first >> 0) & 0xFF);
+            compressed.push_back((encoding.first >> 8) & 0xFF);
+            compressed.push_back(encoding.second);
+        }
+
+        // Encode data using the table (simplified bit packing)
+        std::uint32_t bit_buffer = 0;
+        std::uint8_t bit_count = 0;
+
+        for (std::uint8_t byte : data) {
+            auto [code, length] = encoding_table[byte];
+            bit_buffer |= (static_cast<std::uint32_t>(code) << bit_count);
+            bit_count += length;
+
+            while (bit_count >= 8) {
+                compressed.push_back(bit_buffer & 0xFF);
+                bit_buffer >>= 8;
+                bit_count -= 8;
+            }
+        }
+
+        // Flush remaining bits
+        if (bit_count > 0) {
+            compressed.push_back(bit_buffer & 0xFF);
+        }
+
+        return compressed;
+    }
+
+    std::vector<std::uint8_t>
+    ColumnstoreIndex::decompress_zstd(const std::vector<std::uint8_t>& compressed_data) const
+    {
+        if (compressed_data.size() < 9)
+            return compressed_data;
+
+        // Verify ZSTD magic header
+        if (compressed_data[0] != 0x28 || compressed_data[1] != 0xB5 ||
+            compressed_data[2] != 0x2F || compressed_data[3] != 0xFD) {
+            return compressed_data; // Not ZSTD format
+        }
+
+        // Read original size
+        std::uint32_t original_size = (static_cast<std::uint32_t>(compressed_data[4]) << 0) |
+                                      (static_cast<std::uint32_t>(compressed_data[5]) << 8) |
+                                      (static_cast<std::uint32_t>(compressed_data[6]) << 16) |
+                                      (static_cast<std::uint32_t>(compressed_data[7]) << 24);
+
+        std::size_t pos = 8;
+        std::uint8_t table_size = compressed_data[pos++];
+
+        // Rebuild decoding table
+        std::unordered_map<std::uint16_t, std::uint8_t> decoding_table;
+        for (std::uint8_t i = 0; i < table_size && pos + 3 < compressed_data.size(); ++i) {
+            std::uint8_t byte = compressed_data[pos++];
+            std::uint16_t code = (static_cast<std::uint16_t>(compressed_data[pos]) << 0) |
+                                 (static_cast<std::uint16_t>(compressed_data[pos + 1]) << 8);
+            pos += 2;
+            std::uint8_t length = compressed_data[pos++];
+            decoding_table[code] = byte;
+        }
+
+        // Decode compressed data (simplified)
+        std::vector<std::uint8_t> decompressed;
+        decompressed.reserve(original_size);
+
+        std::uint32_t bit_buffer = 0;
+        std::uint8_t bit_count = 0;
+
+        while (pos < compressed_data.size() && decompressed.size() < original_size) {
+            // Fill bit buffer
+            while (bit_count < 16 && pos < compressed_data.size()) {
+                bit_buffer |= (static_cast<std::uint32_t>(compressed_data[pos++]) << bit_count);
+                bit_count += 8;
+            }
+
+            // Try to decode symbols
+            for (const auto& [code, byte] : decoding_table) {
+                if ((bit_buffer & ((1 << 8) - 1)) == code) {
+                    decompressed.push_back(byte);
+                    bit_buffer >>= 8;
+                    bit_count -= 8;
+                    break;
+                }
+            }
+
+            // Fallback: treat as literal if no match found
+            if (bit_count >= 8) {
+                decompressed.push_back(bit_buffer & 0xFF);
+                bit_buffer >>= 8;
+                bit_count -= 8;
+            }
+        }
+
+        return decompressed;
+    }
+
+    // Snappy Compression Implementation (Simplified LZ77-variant)
+    std::vector<std::uint8_t>
+    ColumnstoreIndex::compress_snappy(const std::vector<std::uint8_t>& data) const
+    {
+        if (data.empty())
+            return data;
+
+        std::vector<std::uint8_t> compressed;
+        compressed.reserve(data.size());
+
+        // Snappy format identifier
+        compressed.push_back(0x73); // 's'
+        compressed.push_back(0x4E); // 'N'
+        compressed.push_back(0x61); // 'a'
+        compressed.push_back(0x50); // 'P'
+
+        // Uncompressed length (varint encoding)
+        std::uint32_t length = static_cast<std::uint32_t>(data.size());
+        while (length >= 0x80) {
+            compressed.push_back((length & 0x7F) | 0x80);
+            length >>= 7;
+        }
+        compressed.push_back(length & 0x7F);
+
+        // Simple Snappy compression: literal runs and copy operations
+        const std::size_t window_size = 32768; // 32KB window
+        const std::size_t min_match = 4;
+        std::unordered_map<std::uint32_t, std::size_t> hash_table;
+
+        for (std::size_t i = 0; i < data.size();) {
+            std::size_t best_length = 0;
+            std::size_t best_offset = 0;
+
+            // Find matches in the sliding window
+            if (i >= min_match) {
+                std::uint32_t hash = 0;
+                for (std::size_t j = 0; j < min_match && i + j < data.size(); ++j) {
+                    hash = (hash * 31) + data[i + j];
+                }
+
+                auto it = hash_table.find(hash);
+                if (it != hash_table.end() && i - it->second < window_size) {
+                    std::size_t match_pos = it->second;
+                    std::size_t match_len = 0;
+
+                    while (match_len < 64 && i + match_len < data.size() &&
+                           data[i + match_len] == data[match_pos + match_len]) {
+                        match_len++;
+                    }
+
+                    if (match_len >= min_match) {
+                        best_length = match_len;
+                        best_offset = i - match_pos;
+                    }
+                }
+
+                hash_table[hash] = i;
+            }
+
+            if (best_length >= min_match) {
+                // Copy operation: encode length and offset
+                std::uint8_t copy_tag = 0x01;         // Copy tag
+                copy_tag |= ((best_length - 4) << 2); // Encode length-4 in upper 6 bits
+                compressed.push_back(copy_tag);
+
+                // Encode offset (little-endian)
+                compressed.push_back(best_offset & 0xFF);
+                compressed.push_back((best_offset >> 8) & 0xFF);
+
+                i += best_length;
+            } else {
+                // Literal: find run of literals
+                std::size_t literal_start = i;
+                while (i < data.size() && (i - literal_start) < 60) {
+                    // Simple heuristic: continue literals if no good match found
+                    i++;
+                }
+
+                std::size_t literal_length = i - literal_start;
+                std::uint8_t literal_tag = static_cast<std::uint8_t>((literal_length - 1) << 2);
+                compressed.push_back(literal_tag);
+
+                // Copy literal bytes
+                for (std::size_t j = literal_start; j < i; ++j) {
+                    compressed.push_back(data[j]);
+                }
+            }
+        }
+
+        return compressed;
+    }
+
+    std::vector<std::uint8_t>
+    ColumnstoreIndex::decompress_snappy(const std::vector<std::uint8_t>& compressed_data) const
+    {
+        if (compressed_data.size() < 5)
+            return compressed_data;
+
+        // Verify Snappy header
+        if (compressed_data[0] != 0x73 || compressed_data[1] != 0x4E ||
+            compressed_data[2] != 0x61 || compressed_data[3] != 0x50) {
+            return compressed_data; // Not Snappy format
+        }
+
+        // Decode varint length
+        std::size_t pos = 4;
+        std::uint32_t original_size = 0;
+        std::uint32_t shift = 0;
+
+        while (pos < compressed_data.size()) {
+            std::uint8_t byte = compressed_data[pos++];
+            original_size |= (static_cast<std::uint32_t>(byte & 0x7F) << shift);
+            shift += 7;
+            if ((byte & 0x80) == 0)
+                break;
+        }
+
+        std::vector<std::uint8_t> decompressed;
+        decompressed.reserve(original_size);
+
+        while (pos < compressed_data.size() && decompressed.size() < original_size) {
+            std::uint8_t tag = compressed_data[pos++];
+
+            if (tag & 0x01) {
+                // Copy operation
+                std::size_t length = (tag >> 2) + 4;
+                if (pos + 1 >= compressed_data.size())
+                    break;
+
+                std::size_t offset = (static_cast<std::size_t>(compressed_data[pos]) << 0) |
+                                     (static_cast<std::size_t>(compressed_data[pos + 1]) << 8);
+                pos += 2;
+
+                // Copy from sliding window
+                std::size_t copy_start = decompressed.size() - offset;
+                for (std::size_t i = 0; i < length && decompressed.size() < original_size; ++i) {
+                    if (copy_start + i < decompressed.size()) {
+                        decompressed.push_back(decompressed[copy_start + i]);
+                    }
+                }
+            } else {
+                // Literal operation
+                std::size_t literal_length = (tag >> 2) + 1;
+                for (std::size_t i = 0; i < literal_length && pos < compressed_data.size() &&
+                                        decompressed.size() < original_size;
+                     ++i) {
+                    decompressed.push_back(compressed_data[pos++]);
+                }
+            }
+        }
+
+        return decompressed;
     }
 
 } // namespace scratchbird::engine

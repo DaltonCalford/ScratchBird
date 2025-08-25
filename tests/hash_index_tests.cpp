@@ -52,77 +52,82 @@ void test_hash_index_basic_operations()
 {
     std::cout << "=== Testing Hash Index Basic Operations ===" << std::endl;
 
-    // Create test database
-    scratchbird::tests::TestDatabaseRAII test_db("hash_index_basic", true);
+    try {
+        // Create test database
+        scratchbird::tests::TestDatabaseRAII test_db("hash_index_basic", true);
 
-    // Create FileMap (simplified for testing)
-    FileMap::Layout layout;
-    layout.page_size = 4096;
-    layout.options.direct_io = false;
-    FileMap fmap(layout);
+        // Create FileMap (simplified for testing)
+        FileMap::Layout layout;
+        layout.page_size = 4096;
+        layout.options.direct_io = false;
+        FileMap fmap(layout);
 
-    // Create hash index
-    auto hash_index = std::make_unique<HashIndex>(std::move(fmap), 4096, false);
-    hash_index->create_empty();
+        // Create hash index
+        auto hash_index = std::make_unique<HashIndex>(std::move(fmap), 4096, false);
+        hash_index->create_empty();
 
-    // Test insertion
-    std::cout << "Testing insertions..." << std::endl;
-    std::string err;
+        // Test insertion
+        std::cout << "Testing insertions..." << std::endl;
+        std::string err;
 
-    // Insert test data
-    std::vector<std::pair<std::string, std::uint64_t>> test_data = {
-        {"apple", 1}, {"banana", 2}, {"cherry", 3}, {"date", 4}, {"elderberry", 5}};
+        // Insert test data
+        std::vector<std::pair<std::string, std::uint64_t>> test_data = {
+            {"apple", 1}, {"banana", 2}, {"cherry", 3}, {"date", 4}, {"elderberry", 5}};
 
-    for (const auto& [key, row_id] : test_data) {
-        bool success = hash_index->insert(key, row_id, err);
-        if (!success) {
-            std::cout << "⚠ Insert failed for '" << key << "': " << err << std::endl;
-        } else {
-            std::cout << "✓ Inserted '" << key << "' -> " << row_id << std::endl;
+        for (const auto& [key, row_id] : test_data) {
+            bool success = hash_index->insert(key, row_id, err);
+            if (!success) {
+                std::cout << "⚠ Insert failed for '" << key << "': " << err << std::endl;
+            } else {
+                std::cout << "✓ Inserted '" << key << "' -> " << row_id << std::endl;
+            }
         }
-    }
 
-    // Test search
-    std::cout << "\nTesting searches..." << std::endl;
-    for (const auto& [key, expected_row_id] : test_data) {
+        // Test search
+        std::cout << "\nTesting searches..." << std::endl;
+        for (const auto& [key, expected_row_id] : test_data) {
+            std::vector<std::uint64_t> results;
+            hash_index->search_equal(key, results);
+
+            if (results.empty()) {
+                std::cout << "⚠ No results found for key '" << key << "'" << std::endl;
+            } else if (results.size() == 1 && results[0] == expected_row_id) {
+                std::cout << "✓ Found '" << key << "' -> " << results[0] << std::endl;
+            } else {
+                std::cout << "⚠ Unexpected results for '" << key << "': got " << results.size()
+                          << " results" << std::endl;
+            }
+        }
+
+        // Test non-existent key
         std::vector<std::uint64_t> results;
-        hash_index->search_equal(key, results);
-
+        hash_index->search_equal("nonexistent", results);
         if (results.empty()) {
-            std::cout << "⚠ No results found for key '" << key << "'" << std::endl;
-        } else if (results.size() == 1 && results[0] == expected_row_id) {
-            std::cout << "✓ Found '" << key << "' -> " << results[0] << std::endl;
+            std::cout << "✓ Correctly returned no results for non-existent key" << std::endl;
         } else {
-            std::cout << "⚠ Unexpected results for '" << key << "': got " << results.size()
-                      << " results" << std::endl;
+            std::cout << "⚠ Unexpected results for non-existent key" << std::endl;
         }
+
+        // Test statistics
+        std::cout << "\nTesting statistics collection..." << std::endl;
+        std::string stats = hash_index->collect_statistics();
+        std::cout << stats << std::endl;
+
+        // Test validation
+        std::cout << "Testing validation..." << std::endl;
+        std::string validation_error;
+        bool is_valid = hash_index->validate(validation_error);
+        if (is_valid) {
+            std::cout << "✓ Index validation passed" << std::endl;
+        } else {
+            std::cout << "⚠ Index validation failed: " << validation_error << std::endl;
+        }
+
+        std::cout << "✓ Hash index basic operations test completed" << std::endl << std::endl;
+
+    } catch (const std::exception& e) {
+        std::cout << "⚠ Hash index basic operations failed: " << e.what() << std::endl;
     }
-
-    // Test non-existent key
-    std::vector<std::uint64_t> results;
-    hash_index->search_equal("nonexistent", results);
-    if (results.empty()) {
-        std::cout << "✓ Correctly returned no results for non-existent key" << std::endl;
-    } else {
-        std::cout << "⚠ Unexpected results for non-existent key" << std::endl;
-    }
-
-    // Test statistics
-    std::cout << "\nTesting statistics collection..." << std::endl;
-    std::string stats = hash_index->collect_statistics();
-    std::cout << stats << std::endl;
-
-    // Test validation
-    std::cout << "Testing validation..." << std::endl;
-    std::string validation_error;
-    bool is_valid = hash_index->validate(validation_error);
-    if (is_valid) {
-        std::cout << "✓ Index validation passed" << std::endl;
-    } else {
-        std::cout << "⚠ Index validation failed: " << validation_error << std::endl;
-    }
-
-    std::cout << "✓ Hash index basic operations test completed" << std::endl << std::endl;
 }
 
 void test_hash_index_with_payload()

@@ -151,9 +151,9 @@ namespace scratchbird::engine
 
         case IndexMethod::Columnstore:
             if (opts.unique) {
-                messages.push_back(
-                    {true, "Columnstore indexes cannot be unique (designed for analytical "
-                           "workloads). Use B-Tree for unique analytical columns."});
+                messages.push_back({true,
+                                    "Columnstore indexes cannot be unique (designed for analytical "
+                                    "workloads). Use B-Tree for unique analytical columns."});
             }
             if (opts.keys.empty()) {
                 messages.push_back(

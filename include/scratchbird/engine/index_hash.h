@@ -17,7 +17,8 @@ namespace scratchbird::engine
      * Hash index tunables for performance optimization
      */
     struct HashIndexTunables {
-        std::uint32_t initial_buckets{1024};
+        std::uint32_t initial_buckets{4};  // Start small to avoid memory issues
+        std::uint32_t bucket_capacity{64}; // Maximum entries per bucket
         double max_load_factor{0.75};
         std::uint32_t bucket_split_threshold{8};
         bool enable_extensible_hashing{true};
@@ -228,6 +229,9 @@ namespace scratchbird::engine
         // Statistics
         mutable HashIndexStats cached_stats_;
         mutable bool stats_dirty_{true};
+
+        // Temporary in-memory bucket storage to avoid FileMap memory issues
+        mutable std::unordered_map<std::uint32_t, std::vector<HashEntry>> in_memory_buckets_;
     };
 
     /**

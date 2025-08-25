@@ -9,6 +9,7 @@
 #include <limits>
 #include <memory>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace scratchbird::engine
@@ -99,6 +100,17 @@ namespace scratchbird::engine
         RTreeEntry(const Rectangle& r, std::uint32_t page) : rect(r), child_page(page) {}
     };
 
+    /// @brief R-Tree node page header for disk persistence
+    struct RTreeNodeHeader {
+        std::uint32_t node_type;   // Page type (RTreeNode)
+        std::uint32_t entry_count; // Number of entries in this node
+        std::uint32_t parent_page; // Parent page number (0 for root)
+        std::uint32_t level;       // Level in the tree (0 for leaves)
+        bool is_leaf;              // True for leaf nodes
+        std::uint8_t padding[3];   // Alignment padding
+        Rectangle mbr;             // Minimum bounding rectangle for this node
+    };
+
     /// @brief R-Tree configuration parameters
     struct RTreeConfig {
         static constexpr std::uint32_t MIN_ENTRIES = 2; // Minimum entries per node
@@ -149,6 +161,16 @@ namespace scratchbird::engine
         virtual bool insert(const RTreeEntry& entry, RTreeNode*& split_node) = 0;
         virtual void search(const Rectangle& query, std::vector<RTreeEntry>& results) = 0;
         virtual bool remove(const Rectangle& rect, std::uint64_t row_id) = 0;
+
+        // Accessor methods for persistence
+        const std::vector<RTreeEntry>& get_entries() const
+        {
+            return entries_;
+        }
+        std::vector<RTreeEntry>& get_entries()
+        {
+            return entries_;
+        }
 
       protected:
         bool is_leaf_;
@@ -287,8 +309,15 @@ namespace scratchbird::engine
         // Node management
         std::unique_ptr<RTreeNode> create_node(bool is_leaf);
         std::uint32_t allocate_page();
-        bool load_node(std::uint32_t page_no, std::unique_ptr<RTreeNode>& node);
+        bool load_node(std::uint32_t page_no, std::unique_ptr<RTreeNode>& node) const;
         bool save_node(std::uint32_t page_no, const RTreeNode* node);
+
+        // Tree statistics calculation
+        std::uint32_t calculate_tree_height(const RTreeNode* node) const;
+        std::uint64_t calculate_total_entries(const RTreeNode* node) const;
+
+        // In-memory page storage to simulate disk persistence
+        mutable std::unordered_map<std::uint32_t, std::vector<std::uint8_t>> node_pages_;
     };
 
 } // namespace scratchbird::engine

@@ -42,22 +42,31 @@ namespace scratchbird::engine
 
     void HashIndex::create_empty()
     {
-        // Allocate directory page
-        directory_page_ = 1; // Assuming page 0 is reserved
-        global_depth_ = 1;
+        try {
+            // Allocate directory page
+            directory_page_ = 1; // Assuming page 0 is reserved
+            global_depth_ = 1;
 
-        // Initialize directory with initial buckets
-        directory_.clear();
-        for (std::uint32_t i = 0; i < tunables_.initial_buckets; ++i) {
-            HashDirEntry entry;
-            entry.bucket_page = allocate_bucket_page();
-            entry.local_depth = global_depth_;
-            entry.entry_count = 0;
-            directory_.push_back(entry);
+            // Initialize directory with initial buckets
+            directory_.clear();
+            directory_.reserve(tunables_.initial_buckets);
+
+            for (std::uint32_t i = 0; i < tunables_.initial_buckets; ++i) {
+                HashDirEntry entry;
+                entry.bucket_page = allocate_bucket_page();
+                entry.local_depth = global_depth_;
+                entry.entry_count = 0;
+                directory_.push_back(entry);
+            }
+
+            write_directory();
+            stats_dirty_ = true;
+        } catch (const std::exception& e) {
+            // If creation fails, clean up and rethrow
+            directory_.clear();
+            in_memory_buckets_.clear();
+            throw;
         }
-
-        write_directory();
-        stats_dirty_ = true;
     }
 
     bool HashIndex::open_existing(std::uint32_t root_page)
@@ -600,23 +609,79 @@ namespace scratchbird::engine
     bool HashIndex::bucket_insert(std::uint32_t bucket_page, const HashEntry& entry,
                                   std::string& err)
     {
-        // Simplified implementation - would read page, check space, insert entry
-        return true;
+        try {
+            // For now, use in-memory bucket management to avoid FileMap memory issues
+            auto& bucket = in_memory_buckets_[bucket_page];
+
+            // Check if bucket is full (simulate page-based storage limits)
+            if (bucket.size() >= tunables_.bucket_capacity) {
+                err = "bucket full";
+                return false;
+            }
+
+            // Check for duplicates in unique index
+            if (unique_) {
+                for (const auto& existing : bucket) {
+                    if (existing.key == entry.key) {
+                        err = "Duplicate key: " + entry.key;
+                        return false;
+                    }
+                }
+            }
+
+            bucket.push_back(entry);
+            return true;
+        } catch (const std::exception& e) {
+            err = "Bucket insert error: " + std::string(e.what());
+            return false;
+        }
     }
 
     bool HashIndex::bucket_search(std::uint32_t bucket_page, const std::string& key,
                                   std::vector<HashEntry>& out) const
     {
-        // Simplified implementation - would read page and search for key
-        return true;
+        try {
+            out.clear();
+            auto it = in_memory_buckets_.find(bucket_page);
+            if (it == in_memory_buckets_.end()) {
+                return true; // Empty bucket is valid
+            }
+
+            for (const auto& entry : it->second) {
+                if (entry.key == key) {
+                    out.push_back(entry);
+                }
+            }
+            return true;
+        } catch (const std::exception&) {
+            return false;
+        }
     }
 
     bool HashIndex::bucket_delete(std::uint32_t bucket_page, const std::string& key,
                                   std::size_t& deleted)
     {
-        // Simplified implementation - would read page, find entries, remove them
-        deleted = 0;
-        return true;
+        try {
+            deleted = 0;
+            auto it = in_memory_buckets_.find(bucket_page);
+            if (it == in_memory_buckets_.end()) {
+                return true; // No bucket to delete from
+            }
+
+            auto& bucket = it->second;
+            bucket.erase(std::remove_if(bucket.begin(), bucket.end(),
+                                        [&key, &deleted](const HashEntry& entry) {
+                                            if (entry.key == key) {
+                                                deleted++;
+                                                return true;
+                                            }
+                                            return false;
+                                        }),
+                         bucket.end());
+            return true;
+        } catch (const std::exception&) {
+            return false;
+        }
     }
 
     void HashIndex::encode_entry(std::vector<std::uint8_t>& page, std::uint16_t& offset,

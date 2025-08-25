@@ -19,7 +19,7 @@ namespace scratchbird::engine
     struct BitmapIndexTunables {
         std::uint32_t compression_threshold{1000}; // Compress bitmaps with more than N bits
         bool use_rle_compression{true};            // Run-length encoding
-        bool use_wah_compression{false};           // Word-Aligned Hybrid compression
+        bool use_wah_compression{true};            // Word-Aligned Hybrid compression
         std::uint32_t bitmap_cache_size{100};      // Number of bitmaps to cache
     };
 

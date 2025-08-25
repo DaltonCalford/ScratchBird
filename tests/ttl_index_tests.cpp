@@ -35,7 +35,7 @@ void test_ttl_basic_operations()
     config.interval = std::chrono::seconds(2);
     config.auto_cleanup = true;
     config.cleanup_frequency = std::chrono::seconds(1);
-    
+
     ttl_index->configure_ttl(config);
 
     std::cout << "Testing basic insertion..." << std::endl;
@@ -95,7 +95,7 @@ void test_ttl_cleanup_operations()
     config.interval = std::chrono::seconds(1);
     config.auto_cleanup = false; // Manual cleanup for testing
     config.cleanup_frequency = std::chrono::seconds(10);
-    
+
     ttl_index->configure_ttl(config);
 
     std::cout << "Inserting entries with short TTL..." << std::endl;
@@ -170,7 +170,7 @@ void test_ttl_unique_constraint()
     config.expire_column = "expires_at";
     config.interval = std::chrono::seconds(5);
     config.auto_cleanup = false;
-    
+
     ttl_index->configure_ttl(config);
 
     std::string err;
@@ -260,26 +260,27 @@ void test_ttl_scan_operations()
     // Test scan
     TTLIndexScan scan(ttl_index.get());
     bool scan_init = scan.init();
-    
+
     if (scan_init) {
         std::cout << "✓ TTL scan initialization succeeded" << std::endl;
-        
+
         int count = 0;
         std::uint64_t row_id;
         std::string key, payload;
-        
+
         while (scan.next(row_id, key, payload)) {
-            std::cout << "  Scanned: " << key << " -> " << row_id << " (payload: " << payload << ")" << std::endl;
+            std::cout << "  Scanned: " << key << " -> " << row_id << " (payload: " << payload << ")"
+                      << std::endl;
             count++;
         }
-        
+
         if (count == 5) {
             std::cout << "✓ Scanned all 5 inserted entries" << std::endl;
         } else {
             std::cout << "⚠ Expected 5 entries, found " << count << std::endl;
         }
-        
-        std::cout << "Scan statistics: " << scan.rows_scanned() << " rows, " 
+
+        std::cout << "Scan statistics: " << scan.rows_scanned() << " rows, "
                   << scan.pages_accessed() << " pages" << std::endl;
     } else {
         std::cout << "⚠ TTL scan initialization failed" << std::endl;
@@ -298,8 +299,9 @@ void test_ttl_factory_integration()
     layout.options.direct_io = false;
     FileMap fmap(layout);
 
-    auto ttl_index = IndexFamilyFactory::create_index(IndexMethod::TTL, std::move(fmap), 4096, false);
-    
+    auto ttl_index =
+        IndexFamilyFactory::create_index(IndexMethod::TTL, std::move(fmap), 4096, false);
+
     if (ttl_index && ttl_index->get_method() == IndexMethod::TTL) {
         std::cout << "✓ TTL index family creation through factory succeeded" << std::endl;
         std::cout << "  Method: TTL" << std::endl;

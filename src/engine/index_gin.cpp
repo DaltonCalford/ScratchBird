@@ -314,7 +314,13 @@ namespace scratchbird::engine
                 out.clear(); // If any token is missing, no documents match
                 return;
             }
-            posting_lists.push_back(it->second.row_ids);
+
+            // Decompress posting list if needed
+            PostingListEntry entry_copy = it->second;
+            if (entry_copy.compressed) {
+                decompress_posting_list(entry_copy);
+            }
+            posting_lists.push_back(entry_copy.row_ids);
         }
 
         // Find intersection of all posting lists
@@ -353,7 +359,12 @@ namespace scratchbird::engine
         for (const auto& element : elements) {
             auto it = posting_lists_.find(normalize_token(element));
             if (it != posting_lists_.end()) {
-                posting_lists.push_back(it->second.row_ids);
+                // Decompress posting list if needed
+                PostingListEntry entry_copy = it->second;
+                if (entry_copy.compressed) {
+                    decompress_posting_list(entry_copy);
+                }
+                posting_lists.push_back(entry_copy.row_ids);
             }
         }
 
@@ -536,7 +547,13 @@ namespace scratchbird::engine
             return true;
         }
 
-        out = it->second.row_ids;
+        // Decompress posting list if needed for search
+        PostingListEntry entry_copy = it->second;
+        if (entry_copy.compressed) {
+            decompress_posting_list(entry_copy);
+        }
+
+        out = entry_copy.row_ids;
         return true;
     }
 
@@ -579,19 +596,52 @@ namespace scratchbird::engine
             // Sort row IDs for better compression
             std::sort(entry.row_ids.begin(), entry.row_ids.end());
 
-            // In a real implementation, we would apply delta compression
-            // For now, just mark as compressed
-            entry.compressed = true;
+            // Apply delta compression: store differences between consecutive IDs
+            if (entry.row_ids.size() > 1) {
+                std::vector<std::uint64_t> compressed_data;
+                compressed_data.reserve(entry.row_ids.size());
+
+                // Store first ID as-is
+                compressed_data.push_back(entry.row_ids[0]);
+
+                // Store deltas for subsequent IDs
+                for (std::size_t i = 1; i < entry.row_ids.size(); ++i) {
+                    std::uint64_t delta = entry.row_ids[i] - entry.row_ids[i - 1];
+                    compressed_data.push_back(delta);
+                }
+
+                // Replace original data with compressed version
+                entry.row_ids = std::move(compressed_data);
+                entry.compressed = true;
+            }
         }
     }
 
-    void GinIndex::decompress_posting_list(PostingListEntry& entry)
+    void GinIndex::decompress_posting_list(PostingListEntry& entry) const
     {
         if (!entry.compressed) {
             return;
         }
 
-        // In a real implementation, we would decompress delta-encoded data
+        // Decompress delta-encoded data back to original row IDs
+        if (entry.row_ids.size() > 1) {
+            std::vector<std::uint64_t> decompressed_data;
+            decompressed_data.reserve(entry.row_ids.size());
+
+            // First ID is stored as-is
+            std::uint64_t current_id = entry.row_ids[0];
+            decompressed_data.push_back(current_id);
+
+            // Reconstruct subsequent IDs by adding deltas
+            for (std::size_t i = 1; i < entry.row_ids.size(); ++i) {
+                current_id += entry.row_ids[i]; // Add delta to get original ID
+                decompressed_data.push_back(current_id);
+            }
+
+            // Replace compressed data with decompressed version
+            entry.row_ids = std::move(decompressed_data);
+        }
+
         entry.compressed = false;
     }
 
