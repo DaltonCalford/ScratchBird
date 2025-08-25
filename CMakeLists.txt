@@ -89,7 +89,8 @@ add_library(
   src/engine/index_gin.cpp
   src/engine/index_lsm.cpp
   src/engine/index_columnstore.cpp
-  src/engine/index_rtree.cpp)
+  src/engine/index_rtree.cpp
+  src/engine/index_ttl.cpp)
 
 # Main ScratchBird executable
 add_executable(scratchbird src/main.cpp src/scratchbird.cpp)
@@ -450,5 +451,9 @@ if(SCRATCHBIRD_BUILD_TESTS)
                  tests/query_optimizer_index_tests.cpp)
   target_link_libraries(query_optimizer_index_tests scratchbird_engine)
   add_test(NAME query_optimizer_index_tests COMMAND query_optimizer_index_tests)
+
+  add_executable(ttl_index_tests tests/ttl_index_tests.cpp)
+  target_link_libraries(ttl_index_tests scratchbird_engine)
+  add_test(NAME ttl_index_tests COMMAND ttl_index_tests)
 
 endif()

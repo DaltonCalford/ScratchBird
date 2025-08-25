@@ -7,6 +7,7 @@
 #include "scratchbird/engine/index_hash.h"
 #include "scratchbird/engine/index_lsm.h"
 #include "scratchbird/engine/index_rtree.h"
+#include "scratchbird/engine/index_ttl.h"
 
 #include <stdexcept>
 
@@ -44,8 +45,7 @@ namespace scratchbird::engine
             return std::make_unique<ColumnstoreIndex>(std::move(fmap), page_size, unique);
 
         case IndexMethod::TTL:
-            // Placeholder for future implementation
-            throw std::runtime_error("TTL index method not yet implemented");
+            return std::make_unique<TTLIndex>(std::move(fmap), page_size, unique);
 
         default:
             throw std::invalid_argument("Unsupported index method");
