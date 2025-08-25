@@ -52,6 +52,7 @@ namespace scratchbird
             PsqlRoutine,
             PsqlTrigger,
             PsqlPackage,
+            PsqlCall,
             DdlUdf,
             DdlUdr,
             DdlBlobFilter,
@@ -477,6 +478,18 @@ namespace scratchbird
             } psqlRoutine;
             struct {
                 std::string name;
+                std::string schema_name;                     // optional schema
+                std::string header_body;                     // package header declarations
+                std::string implementation_body;             // package body implementation
+                bool is_header{true};                        // true for header, false for body
+                std::vector<std::string> public_procedures;  // public procedure names
+                std::vector<std::string> public_functions;   // public function names
+                std::vector<std::string> private_procedures; // private procedure names
+                std::vector<std::string> private_functions;  // private function names
+                SourceSpan span{};
+            } psqlPackage;
+            struct {
+                std::string name;
                 std::string table;
                 std::string timing;                         // BEFORE/AFTER
                 std::string events;                         // INSERT/UPDATE/DELETE or combinations
@@ -489,12 +502,11 @@ namespace scratchbird
                 SourceSpan span{};
             } psqlTrigger;
             struct {
-                std::string name;
-                bool is_body{false};
-                std::string header_raw;
-                std::string body_raw;
+                std::string routine_name;
+                std::vector<std::string> arguments; // argument expressions
+                std::string args_raw;               // raw argument list for later parsing
                 SourceSpan span{};
-            } psqlPackage;
+            } psqlCall;
             struct {
                 std::string name;
                 std::string external_name;

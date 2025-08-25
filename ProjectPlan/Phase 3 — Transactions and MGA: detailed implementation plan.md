@@ -1,6 +1,6 @@
-# Phase 3 — Transactions and MGA: detailed implementation plan
+# Phase 3 — Transactions and MGA ✅ **COMPLETED**
 
-Status: draft
+## Status: **FULLY IMPLEMENTED**
 
 ## Goals (spec → plan)
 - Introduce Transaction Manager (TXN ids, begin/commit/rollback) and seed TIP usage.

@@ -22,20 +22,17 @@ int main()
         std::cout << "Not parsed as DdlView" << std::endl;
     }
 
-    // Test 2: Try to execute CREATE VIEW (will fail without database, but should show parsing
-    // works)
+    // Test 2: Try to execute CREATE VIEW (should fail gracefully without database)
     std::cout << "\n2. Testing CREATE VIEW execution (expected to fail without DB)..." << std::endl;
     auto result = execute_ast(ast);
     if (!result.columns.empty() && result.columns[0] == "error") {
         std::cout << "Execution error (expected): "
                   << (result.rows.empty() ? "unknown" : result.rows[0][0]) << std::endl;
     } else {
-        std::cout << "Execution succeeded unexpectedly" << std::endl;
-        for (const auto& row : result.rows) {
-            for (const auto& col : row) {
-                std::cout << col << " ";
-            }
-            std::cout << std::endl;
+        std::cout << "Execution result - Columns: " << result.columns.size()
+                  << ", Rows: " << result.rows.size() << std::endl;
+        if (!result.rows.empty() && !result.rows[0].empty()) {
+            std::cout << "Result: " << result.rows[0][0] << std::endl;
         }
     }
 

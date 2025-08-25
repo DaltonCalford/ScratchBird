@@ -108,15 +108,35 @@ namespace scratchbird::engine
         std::unordered_multimap<std::uint64_t, std::uint64_t> wait_for_;
     };
 
+    // Deadlock victim selection strategies
+    enum class DeadlockVictimPolicy {
+        YoungTransaction, // Abort newest transaction (default)
+        OldTransaction,   // Abort oldest transaction
+        FewestLocks,      // Abort transaction holding fewest locks
+        LowestCost        // Abort transaction with lowest estimated cost
+    };
+
     // Global, minimal lock manager (Phase 3 WW-conflict + deadlock detection)
     struct LockManager {
         static bool acquire_write_lock(const ods::RowId& rid, std::uint64_t xid);
         static void release_write_lock(const ods::RowId& rid, std::uint64_t xid);
         static bool detect_deadlock(std::uint64_t waiting_xid, std::uint64_t holding_xid);
 
+        // Enhanced deadlock resolution with victim selection
+        static void set_deadlock_victim_policy(DeadlockVictimPolicy policy);
+        static DeadlockVictimPolicy get_deadlock_victim_policy();
+        static std::uint64_t choose_deadlock_victim(const std::vector<std::uint64_t>& cycle);
+        static std::vector<std::uint64_t> find_deadlock_cycle(std::uint64_t waiting_xid,
+                                                              std::uint64_t holding_xid);
+
       private:
         static std::unordered_map<std::uint64_t, std::uint64_t> s_write_locks;   // rid -> holder
         static std::unordered_multimap<std::uint64_t, std::uint64_t> s_wait_for; // waiter -> holder
+        static std::unordered_map<std::uint64_t, std::uint64_t>
+            s_txn_start_times; // xid -> start_time
+        static std::unordered_map<std::uint64_t, std::uint64_t>
+            s_txn_lock_counts; // xid -> lock_count
+        static DeadlockVictimPolicy s_victim_policy;
         static std::mutex s_mutex;
     };
 

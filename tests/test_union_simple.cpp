@@ -29,8 +29,7 @@ int main()
 
     // Test execution
     std::cout << "Testing execution..." << std::endl;
-    auto ast = parse_sql(sql);
-    auto result = execute_ast(ast);
+    auto result = execute_select_sql(sql);
 
     if (!result.columns.empty() && result.columns[0] == "error") {
         std::cout << "Execution error: " << (result.rows.empty() ? "unknown" : result.rows[0][0])

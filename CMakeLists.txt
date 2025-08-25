@@ -63,6 +63,8 @@ add_library(
   src/engine/parser_select.cpp
   src/engine/parser_session.cpp
   src/engine/planner.cpp
+  src/engine/psql_executor.cpp
+  src/engine/psql_dev_tools.cpp
   src/engine/resolver.cpp
   src/engine/segment_monitor.cpp
   src/engine/stats.cpp
@@ -80,7 +82,14 @@ add_library(
   src/engine/multi_segment_manager.cpp
   src/engine/alter_table_manager.cpp
   src/engine/security_manager.cpp
-  src/engine/serializable_isolation.cpp)
+  src/engine/serializable_isolation.cpp
+  src/engine/index_family.cpp
+  src/engine/index_hash.cpp
+  src/engine/index_bitmap.cpp
+  src/engine/index_gin.cpp
+  src/engine/index_lsm.cpp
+  src/engine/index_columnstore.cpp
+  src/engine/index_rtree.cpp)
 
 # Main ScratchBird executable
 add_executable(scratchbird src/main.cpp src/scratchbird.cpp)
@@ -98,6 +107,38 @@ target_link_libraries(dbcheck scratchbird_engine)
 # Tests
 if(SCRATCHBIRD_BUILD_TESTS)
   enable_testing()
+
+  # Find GoogleTest for tests that use it
+  find_package(PkgConfig QUIET)
+  if(PkgConfig_FOUND)
+    pkg_check_modules(GTEST gtest)
+    pkg_check_modules(GTEST_MAIN gtest_main)
+  endif()
+
+  # Fallback to manual detection if pkg-config fails
+  if(NOT GTEST_FOUND)
+    find_library(GTEST_LIB gtest PATHS /usr/lib /usr/local/lib
+                                       /usr/lib/x86_64-linux-gnu)
+    find_library(GTEST_MAIN_LIB gtest_main PATHS /usr/lib /usr/local/lib
+                                                 /usr/lib/x86_64-linux-gnu)
+    find_path(GTEST_INCLUDE_DIR gtest/gtest.h PATHS /usr/include
+                                                    /usr/local/include)
+
+    if(GTEST_LIB
+       AND GTEST_MAIN_LIB
+       AND GTEST_INCLUDE_DIR)
+      set(GTEST_FOUND TRUE)
+      set(GTEST_LIBRARIES ${GTEST_LIB} ${GTEST_MAIN_LIB} pthread)
+      set(GTEST_INCLUDE_DIRS ${GTEST_INCLUDE_DIR})
+      message(STATUS "Found GoogleTest: ${GTEST_LIB}")
+    else()
+      message(
+        WARNING
+          "GoogleTest not found - GoogleTest-based tests will not link properly"
+      )
+      set(GTEST_FOUND FALSE)
+    endif()
+  endif()
 
   # Core engine tests
   add_executable(engine_api_tests tests/engine_api_tests.cpp)
@@ -173,6 +214,11 @@ if(SCRATCHBIRD_BUILD_TESTS)
   add_executable(txn_update_visibility_tests
                  tests/txn_update_visibility_tests.cpp)
   target_link_libraries(txn_update_visibility_tests scratchbird_engine)
+  if(GTEST_FOUND)
+    target_link_libraries(txn_update_visibility_tests ${GTEST_LIBRARIES})
+    target_include_directories(txn_update_visibility_tests
+                               PRIVATE ${GTEST_INCLUDE_DIRS})
+  endif()
   add_test(NAME txn_update_visibility_tests COMMAND txn_update_visibility_tests)
 
   add_executable(txn_delete_visibility_tests
@@ -182,15 +228,38 @@ if(SCRATCHBIRD_BUILD_TESTS)
 
   add_executable(txn_rr_visibility_tests tests/txn_rr_visibility_tests.cpp)
   target_link_libraries(txn_rr_visibility_tests scratchbird_engine)
+  if(GTEST_FOUND)
+    target_link_libraries(txn_rr_visibility_tests ${GTEST_LIBRARIES})
+    target_include_directories(txn_rr_visibility_tests
+                               PRIVATE ${GTEST_INCLUDE_DIRS})
+  endif()
   add_test(NAME txn_rr_visibility_tests COMMAND txn_rr_visibility_tests)
 
   add_executable(txn_deadlock_tests tests/txn_deadlock_tests.cpp)
   target_link_libraries(txn_deadlock_tests scratchbird_engine)
+  if(GTEST_FOUND)
+    target_link_libraries(txn_deadlock_tests ${GTEST_LIBRARIES})
+    target_include_directories(txn_deadlock_tests PRIVATE ${GTEST_INCLUDE_DIRS})
+  endif()
   add_test(NAME txn_deadlock_tests COMMAND txn_deadlock_tests)
+
+  add_executable(enhanced_deadlock_tests tests/enhanced_deadlock_tests.cpp)
+  target_link_libraries(enhanced_deadlock_tests scratchbird_engine)
+  if(GTEST_FOUND)
+    target_link_libraries(enhanced_deadlock_tests ${GTEST_LIBRARIES})
+    target_include_directories(enhanced_deadlock_tests
+                               PRIVATE ${GTEST_INCLUDE_DIRS})
+  endif()
+  add_test(NAME enhanced_deadlock_tests COMMAND enhanced_deadlock_tests)
 
   add_executable(txn_prepare_scaffold_tests
                  tests/txn_prepare_scaffold_tests.cpp)
   target_link_libraries(txn_prepare_scaffold_tests scratchbird_engine)
+  if(GTEST_FOUND)
+    target_link_libraries(txn_prepare_scaffold_tests ${GTEST_LIBRARIES})
+    target_include_directories(txn_prepare_scaffold_tests
+                               PRIVATE ${GTEST_INCLUDE_DIRS})
+  endif()
   add_test(NAME txn_prepare_scaffold_tests COMMAND txn_prepare_scaffold_tests)
 
   # Optimizer tests
@@ -202,24 +271,43 @@ if(SCRATCHBIRD_BUILD_TESTS)
   add_executable(phase7_constraints_triggers_tests
                  tests/phase7_constraints_triggers_tests.cpp)
   target_link_libraries(phase7_constraints_triggers_tests scratchbird_engine)
+  if(GTEST_FOUND)
+    target_link_libraries(phase7_constraints_triggers_tests ${GTEST_LIBRARIES})
+    target_include_directories(phase7_constraints_triggers_tests
+                               PRIVATE ${GTEST_INCLUDE_DIRS})
+  endif()
   add_test(NAME phase7_constraints_triggers_tests
            COMMAND phase7_constraints_triggers_tests)
 
   # Main test runner
-  add_executable(scratchbird_tests tests/scratchbird_tests.cpp)
+  add_executable(scratchbird_tests tests/scratchbird_tests.cpp
+                                   src/scratchbird.cpp)
   target_link_libraries(scratchbird_tests scratchbird_engine)
   add_test(NAME scratchbird_tests COMMAND scratchbird_tests)
 
   add_executable(wal_tests tests/wal_tests.cpp)
   target_link_libraries(wal_tests scratchbird_engine)
+  if(GTEST_FOUND)
+    target_link_libraries(wal_tests ${GTEST_LIBRARIES})
+    target_include_directories(wal_tests PRIVATE ${GTEST_INCLUDE_DIRS})
+  endif()
   add_test(NAME wal_tests COMMAND wal_tests)
 
   add_executable(having_tests tests/having_tests.cpp)
   target_link_libraries(having_tests scratchbird_engine)
+  if(GTEST_FOUND)
+    target_link_libraries(having_tests ${GTEST_LIBRARIES})
+    target_include_directories(having_tests PRIVATE ${GTEST_INCLUDE_DIRS})
+  endif()
   add_test(NAME having_tests COMMAND having_tests)
 
   add_executable(fk_set_default_tests tests/fk_set_default_tests.cpp)
   target_link_libraries(fk_set_default_tests scratchbird_engine)
+  if(GTEST_FOUND)
+    target_link_libraries(fk_set_default_tests ${GTEST_LIBRARIES})
+    target_include_directories(fk_set_default_tests
+                               PRIVATE ${GTEST_INCLUDE_DIRS})
+  endif()
 
   add_executable(create_index_tests tests/create_index_tests.cpp)
   target_link_libraries(create_index_tests scratchbird_engine)
@@ -281,4 +369,86 @@ if(SCRATCHBIRD_BUILD_TESTS)
   add_test(NAME test_create_view COMMAND test_create_view)
 
   add_test(NAME fk_set_default_tests COMMAND fk_set_default_tests)
+
+  # PSQL Tests
+  add_executable(psql_basic_tests tests/psql_basic_tests.cpp)
+  target_link_libraries(psql_basic_tests scratchbird_engine)
+  add_test(NAME psql_basic_tests COMMAND psql_basic_tests)
+
+  # Stored Procedure Tests
+  add_executable(stored_procedure_tests tests/stored_procedure_tests.cpp)
+  target_link_libraries(stored_procedure_tests scratchbird_engine)
+  add_test(NAME stored_procedure_tests COMMAND stored_procedure_tests)
+
+  # Function Execution Tests
+  add_executable(function_execution_tests tests/function_execution_tests.cpp)
+  target_link_libraries(function_execution_tests scratchbird_engine)
+  add_test(NAME function_execution_tests COMMAND function_execution_tests)
+
+  # Exception Handling Tests
+  add_executable(exception_handling_tests tests/exception_handling_tests.cpp)
+  target_link_libraries(exception_handling_tests scratchbird_engine)
+  add_test(NAME exception_handling_tests COMMAND exception_handling_tests)
+
+  # Cursor Tests
+  add_executable(cursor_tests tests/cursor_tests.cpp)
+  target_link_libraries(cursor_tests scratchbird_engine)
+  add_test(NAME cursor_tests COMMAND cursor_tests)
+
+  # Advanced PSQL Features Tests
+  add_executable(advanced_psql_features_tests
+                 tests/advanced_psql_features_tests.cpp)
+  target_link_libraries(advanced_psql_features_tests scratchbird_engine)
+  add_test(NAME advanced_psql_features_tests
+           COMMAND advanced_psql_features_tests)
+
+  # Package Support Tests
+  add_executable(package_support_tests tests/package_support_tests.cpp)
+  target_link_libraries(package_support_tests scratchbird_engine)
+  add_test(NAME package_support_tests COMMAND package_support_tests)
+
+  # Performance Optimization Tests
+  add_executable(performance_optimization_tests
+                 tests/performance_optimization_tests.cpp)
+  target_link_libraries(performance_optimization_tests scratchbird_engine)
+  add_test(NAME performance_optimization_tests
+           COMMAND performance_optimization_tests)
+
+  # PSQL Debugging Support Tests
+  add_executable(psql_debugging_tests tests/psql_debugging_tests.cpp)
+  target_link_libraries(psql_debugging_tests scratchbird_engine)
+  add_test(NAME psql_debugging_tests COMMAND psql_debugging_tests)
+
+  # PSQL Development Tools Tests
+  add_executable(psql_dev_tools_tests tests/psql_dev_tools_tests.cpp)
+  target_link_libraries(psql_dev_tools_tests scratchbird_engine)
+  add_test(NAME psql_dev_tools_tests COMMAND psql_dev_tools_tests)
+
+  # Parser Debug Test
+  add_executable(parser_debug_test tests/parser_debug_test.cpp)
+  target_link_libraries(parser_debug_test scratchbird_engine)
+
+  add_executable(hash_index_tests tests/hash_index_tests.cpp)
+  target_link_libraries(hash_index_tests scratchbird_engine)
+  add_test(NAME hash_index_tests COMMAND hash_index_tests)
+
+  add_executable(rtree_index_tests tests/rtree_index_tests.cpp)
+  target_link_libraries(rtree_index_tests scratchbird_engine)
+  add_test(NAME rtree_index_tests COMMAND rtree_index_tests)
+
+  add_executable(lsm_index_tests tests/lsm_index_tests.cpp)
+  target_link_libraries(lsm_index_tests scratchbird_engine)
+  add_test(NAME lsm_index_tests COMMAND lsm_index_tests)
+
+  add_executable(columnstore_index_tests tests/columnstore_index_tests.cpp)
+  target_link_libraries(columnstore_index_tests scratchbird_engine)
+  add_test(NAME columnstore_index_tests COMMAND columnstore_index_tests)
+  add_executable(index_integration_tests tests/index_integration_tests.cpp)
+  target_link_libraries(index_integration_tests scratchbird_engine)
+  add_test(NAME index_integration_tests COMMAND index_integration_tests)
+  add_executable(query_optimizer_index_tests
+                 tests/query_optimizer_index_tests.cpp)
+  target_link_libraries(query_optimizer_index_tests scratchbird_engine)
+  add_test(NAME query_optimizer_index_tests COMMAND query_optimizer_index_tests)
+
 endif()

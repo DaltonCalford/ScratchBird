@@ -8,6 +8,7 @@
 #include "scratchbird/engine/index_btree.h"
 #include "scratchbird/engine/parser_dml.h"
 #include "scratchbird/engine/parser_select.h"
+#include "scratchbird/engine/psql_executor.h"
 #include "scratchbird/engine/system_oids.h"
 #include "scratchbird/engine/txn.h"
 // no planner header; local selectivity helper below for bucketing
@@ -17,6 +18,9 @@
 #include <cctype>
 #include <chrono>
 #include <cstring>
+#include <iterator>
+#include <map>
+#include <set>
 
 namespace scratchbird
 {
@@ -1847,8 +1851,16 @@ namespace scratchbird
                             LockManager::release_write_lock(cr, stmt_xid);
                         }
                     } else if (up == "SET DEFAULT") {
-                        // Apply effective column defaults
-                        auto defaults = cm.get_effective_column_defaults_by_name(soid, rel);
+                        // Apply effective column defaults from child table (not parent)
+                        auto defaults =
+                            cm.get_effective_column_defaults_by_name(soid, fk.child_relation_name);
+                        std::fprintf(stderr,
+                                     "[FK SET DEFAULT] Found %zu defaults for relation '%s'\n",
+                                     defaults.size(), fk.child_relation_name.c_str());
+                        for (const auto& [col, def] : defaults) {
+                            std::fprintf(stderr, "[FK SET DEFAULT] Column '%s' default: '%s'\n",
+                                         col.c_str(), def.c_str());
+                        }
                         for (auto& [cr, cv] : child_matches) {
                             if (!LockManager::acquire_write_lock(cr, stmt_xid)) {
                                 r.columns = {"error"};
@@ -1863,8 +1875,16 @@ namespace scratchbird
                                 Value nv{};
                                 auto dit = defaults.find(cname);
                                 if (dit == defaults.end()) {
+                                    std::fprintf(stderr,
+                                                 "[FK SET DEFAULT] No default found for column "
+                                                 "'%s', setting to NULL\n",
+                                                 cname.c_str());
                                     nv.is_null = true;
                                 } else {
+                                    std::fprintf(
+                                        stderr,
+                                        "[FK SET DEFAULT] Setting column '%s' to default '%s'\n",
+                                        cname.c_str(), dit->second.c_str());
                                     nv.is_null = false;
                                     nv.bytes = dit->second;
                                 }
@@ -2402,7 +2422,9 @@ namespace scratchbird
                             LockManager::release_write_lock(cr, stmt_xid);
                         }
                     } else if (od == "SET DEFAULT") {
-                        auto defaults = cm.get_effective_column_defaults_by_name(soid, rel);
+                        // Apply effective column defaults from child table (not parent)
+                        auto defaults =
+                            cm.get_effective_column_defaults_by_name(soid, fk.child_relation_name);
                         for (auto& [cr, cv] : child_matches) {
                             if (!LockManager::acquire_write_lock(cr, stmt_xid)) {
                                 r.columns = {"error"};
@@ -2417,8 +2439,16 @@ namespace scratchbird
                                 Value nv{};
                                 auto dit = defaults.find(cname);
                                 if (dit == defaults.end()) {
+                                    std::fprintf(stderr,
+                                                 "[FK SET DEFAULT] No default found for column "
+                                                 "'%s', setting to NULL\n",
+                                                 cname.c_str());
                                     nv.is_null = true;
                                 } else {
+                                    std::fprintf(
+                                        stderr,
+                                        "[FK SET DEFAULT] Setting column '%s' to default '%s'\n",
+                                        cname.c_str(), dit->second.c_str());
                                     nv.is_null = false;
                                     nv.bytes = dit->second;
                                 }
@@ -2599,191 +2629,189 @@ namespace scratchbird
             std::uint64_t mem_peak_bytes{0};
         };
 
-        // Helper function to convert a row to a string for comparison
-        static std::string row_to_string(const std::vector<std::string>& row)
+        static ExecutionResult exec_literal_select(const SelectQuery& q)
         {
-            std::string result;
-            for (size_t i = 0; i < row.size(); ++i) {
-                if (i > 0)
-                    result += "\x01"; // Use non-printable char as separator
-                result += row[i];
+            ExecutionResult r{};
+            r.success = true;
+
+            // Build columns and single row
+            std::vector<std::string> row_values;
+
+            for (const auto& proj_expr : q.projections) {
+                // Use generic column name for now
+                r.columns.push_back("computed");
+
+                // Evaluate simple literal expressions
+                std::string value;
+                if (proj_expr == "1" || proj_expr == "2" || proj_expr == "3" || proj_expr == "4" ||
+                    proj_expr == "5") {
+                    value = proj_expr;
+                } else {
+                    // For more complex expressions, just return as-is for now
+                    value = proj_expr;
+                }
+                row_values.push_back(value);
             }
-            return result;
+
+            // If no projections, return a single unnamed column
+            if (r.columns.empty()) {
+                r.columns.push_back("computed");
+                row_values.push_back("1");
+            }
+
+            r.rows.push_back(row_values);
+            return r;
         }
 
-        // Execute UNION operation
         static ExecutionResult exec_union(const ExecutionResult& left, const ExecutionResult& right,
                                           bool all)
         {
             ExecutionResult result;
-            result.columns = left.columns; // Use left columns as the result schema
+            result.columns = left.columns;
+            result.success = true;
+
+            // Add all rows from left result
+            result.rows = left.rows;
 
             if (all) {
-                // UNION ALL: simply concatenate all rows
-                result.rows = left.rows;
+                // UNION ALL: just concatenate all rows
                 result.rows.insert(result.rows.end(), right.rows.begin(), right.rows.end());
             } else {
-                // UNION (DISTINCT): remove duplicates
-                std::unordered_set<std::string> seen;
-
-                // Add left rows
-                for (const auto& row : left.rows) {
-                    std::string row_key = row_to_string(row);
-                    if (seen.insert(row_key).second) {
-                        result.rows.push_back(row);
-                    }
-                }
-
-                // Add right rows (if not already seen)
+                // UNION: eliminate duplicates
+                std::set<std::vector<std::string>> unique_rows(left.rows.begin(), left.rows.end());
                 for (const auto& row : right.rows) {
-                    std::string row_key = row_to_string(row);
-                    if (seen.insert(row_key).second) {
-                        result.rows.push_back(row);
-                    }
+                    unique_rows.insert(row);
                 }
+                result.rows.assign(unique_rows.begin(), unique_rows.end());
             }
 
             return result;
         }
 
-        // Execute INTERSECT operation
         static ExecutionResult exec_intersect(const ExecutionResult& left,
                                               const ExecutionResult& right, bool all)
         {
             ExecutionResult result;
             result.columns = left.columns;
+            result.success = true;
 
             if (all) {
-                // INTERSECT ALL: keep duplicates based on minimum count
-                std::unordered_map<std::string, int> left_counts, right_counts;
-
+                // INTERSECT ALL: more complex - need to count occurrences
+                std::map<std::vector<std::string>, int> left_counts, right_counts;
                 for (const auto& row : left.rows) {
-                    left_counts[row_to_string(row)]++;
+                    left_counts[row]++;
                 }
-
                 for (const auto& row : right.rows) {
-                    right_counts[row_to_string(row)]++;
+                    right_counts[row]++;
                 }
 
-                for (const auto& row : left.rows) {
-                    std::string row_key = row_to_string(row);
-                    if (right_counts[row_key] > 0 && left_counts[row_key] > 0) {
-                        result.rows.push_back(row);
-                        left_counts[row_key]--;
-                        right_counts[row_key]--;
+                for (const auto& [row, left_count] : left_counts) {
+                    auto right_it = right_counts.find(row);
+                    if (right_it != right_counts.end()) {
+                        int min_count = std::min(left_count, right_it->second);
+                        for (int i = 0; i < min_count; i++) {
+                            result.rows.push_back(row);
+                        }
                     }
                 }
             } else {
-                // INTERSECT (DISTINCT): only rows present in both sets
-                std::unordered_set<std::string> right_set;
+                // INTERSECT: only unique rows that appear in both
+                std::set<std::vector<std::string>> left_set(left.rows.begin(), left.rows.end());
+                std::set<std::vector<std::string>> right_set(right.rows.begin(), right.rows.end());
 
-                for (const auto& row : right.rows) {
-                    right_set.insert(row_to_string(row));
-                }
-
-                std::unordered_set<std::string> seen;
-                for (const auto& row : left.rows) {
-                    std::string row_key = row_to_string(row);
-                    if (right_set.count(row_key) && seen.insert(row_key).second) {
-                        result.rows.push_back(row);
-                    }
-                }
+                std::set_intersection(left_set.begin(), left_set.end(), right_set.begin(),
+                                      right_set.end(), std::back_inserter(result.rows));
             }
 
             return result;
         }
 
-        // Execute EXCEPT operation
         static ExecutionResult exec_except(const ExecutionResult& left,
                                            const ExecutionResult& right, bool all)
         {
             ExecutionResult result;
             result.columns = left.columns;
+            result.success = true;
 
             if (all) {
-                // EXCEPT ALL: subtract right counts from left counts
-                std::unordered_map<std::string, int> right_counts;
-
+                // EXCEPT ALL: subtract counts
+                std::map<std::vector<std::string>, int> left_counts, right_counts;
+                for (const auto& row : left.rows) {
+                    left_counts[row]++;
+                }
                 for (const auto& row : right.rows) {
-                    right_counts[row_to_string(row)]++;
+                    right_counts[row]++;
                 }
 
-                for (const auto& row : left.rows) {
-                    std::string row_key = row_to_string(row);
-                    if (right_counts[row_key] > 0) {
-                        right_counts[row_key]--;
-                    } else {
+                for (const auto& [row, left_count] : left_counts) {
+                    auto right_it = right_counts.find(row);
+                    int right_count = (right_it != right_counts.end()) ? right_it->second : 0;
+                    int remaining = left_count - right_count;
+                    for (int i = 0; i < remaining; i++) {
                         result.rows.push_back(row);
                     }
                 }
             } else {
-                // EXCEPT (DISTINCT): left rows not in right set
-                std::unordered_set<std::string> right_set;
+                // EXCEPT: unique rows in left but not in right
+                std::set<std::vector<std::string>> left_set(left.rows.begin(), left.rows.end());
+                std::set<std::vector<std::string>> right_set(right.rows.begin(), right.rows.end());
 
-                for (const auto& row : right.rows) {
-                    right_set.insert(row_to_string(row));
-                }
-
-                std::unordered_set<std::string> seen;
-                for (const auto& row : left.rows) {
-                    std::string row_key = row_to_string(row);
-                    if (!right_set.count(row_key) && seen.insert(row_key).second) {
-                        result.rows.push_back(row);
-                    }
-                }
+                std::set_difference(left_set.begin(), left_set.end(), right_set.begin(),
+                                    right_set.end(), std::back_inserter(result.rows));
             }
 
             return result;
         }
 
-        // Execute set operations (UNION/INTERSECT/EXCEPT)
-        static ExecutionResult exec_set_operation(const SetTree& tree, ExecMetrics* metrics)
+        static ExecutionResult exec_compound_query(const SetTree& tree, ExecMetrics* metrics)
         {
             ExecutionResult r{};
 
-            // Base case: leaf node
-            if (tree.leaf) {
+            // Handle leaf nodes - execute the SELECT query
+            if (tree.op.empty() && tree.leaf) {
                 return exec_select_query(*tree.leaf, metrics);
             }
 
-            // Recursive case: binary operation
+            // Execute left and right subtrees
             if (!tree.left || !tree.right) {
+                r.success = false;
+                r.error_message = "Compound query missing left or right operand";
                 r.columns = {"error"};
-                r.rows = {{"Invalid set operation tree structure"}};
+                r.rows = {{r.error_message}};
                 return r;
             }
 
-            // Execute left and right operands
-            auto left_result = exec_set_operation(*tree.left, metrics);
-            if (!left_result.columns.empty() && left_result.columns[0] == "error") {
+            ExecutionResult left_result = exec_compound_query(*tree.left, metrics);
+            if (!left_result.success) {
                 return left_result;
             }
 
-            auto right_result = exec_set_operation(*tree.right, metrics);
-            if (!right_result.columns.empty() && right_result.columns[0] == "error") {
+            ExecutionResult right_result = exec_compound_query(*tree.right, metrics);
+            if (!right_result.success) {
                 return right_result;
             }
 
-            // Check column compatibility
+            // Verify that both sides have the same number of columns
             if (left_result.columns.size() != right_result.columns.size()) {
+                r.success = false;
+                r.error_message = "UNION queries must have the same number of columns";
                 r.columns = {"error"};
-                r.rows = {{"Set operation requires same number of columns in both queries"}};
+                r.rows = {{r.error_message}};
                 return r;
             }
 
             // Perform the set operation
-            std::string op = tree.op;
-            std::transform(op.begin(), op.end(), op.begin(), ::toupper);
-
-            if (op == "UNION") {
+            if (tree.op == "UNION") {
                 return exec_union(left_result, right_result, tree.all);
-            } else if (op == "INTERSECT") {
+            } else if (tree.op == "INTERSECT") {
                 return exec_intersect(left_result, right_result, tree.all);
-            } else if (op == "EXCEPT") {
+            } else if (tree.op == "EXCEPT") {
                 return exec_except(left_result, right_result, tree.all);
             } else {
+                r.success = false;
+                r.error_message = "Unsupported set operation: " + tree.op;
                 r.columns = {"error"};
-                r.rows = {{"Unsupported set operation: " + tree.op}};
+                r.rows = {{r.error_message}};
                 return r;
             }
         }
@@ -2795,15 +2823,23 @@ namespace scratchbird
 
             const SelectQuery& q = q_in;
             if (!q.ok) {
+                r.success = false;
+                r.error_message = q.error;
                 r.columns = {"error"};
                 r.rows = {{q.error}};
                 return r;
             }
 
-            // Handle set operations (UNION/INTERSECT/EXCEPT)
+            // Handle compound queries (UNION, INTERSECT, EXCEPT)
             if (q.compound) {
-                return exec_set_operation(*q.compound, metrics);
+                return exec_compound_query(*q.compound, metrics);
             }
+
+            // Handle SELECT without FROM (literals like SELECT 1, SELECT 'hello')
+            if (q.from_items.empty() && q.from_table.empty()) {
+                return exec_literal_select(q);
+            }
+
             // Minimal multi-relation support (two sources, nested loop); Phase 6: allow optimizer
             // hint to choose order
             if (q.from_items.size() >= 2) {
@@ -4143,9 +4179,6 @@ namespace scratchbird
                 r.rows = {{std::to_string(ast.literal_value)}};
                 return r;
             }
-            if (ast.kind == NodeKind::SelectQuery) {
-                return execute_select_sql(ast.select_sql);
-            }
             std::string target;
             if (is_analyze_stmt(ast, target)) {
                 IndexStats st{};
@@ -4181,6 +4214,22 @@ namespace scratchbird
                 r.columns = {"ok"};
                 r.rows = {{ok ? "CREATE SCHEMA accepted" : "CREATE SCHEMA failed"}};
                 return r;
+            }
+            if (ast.kind == NodeKind::DdlView) {
+                // Create view catalog entry
+                try {
+                    CatalogManager cm(get_executor_db_path());
+                    // Use public schema by default (could be enhanced to parse schema.viewname)
+                    UuidBytes schema_oid = oid_public_schema();
+                    bool ok = cm.create_view(schema_oid, ast.ddlView.name, ast.ddlView.body_raw);
+                    r.columns = {"ok"};
+                    r.rows = {{ok ? "CREATE VIEW accepted" : "CREATE VIEW failed"}};
+                    return r;
+                } catch (const std::exception& e) {
+                    r.columns = {"error"};
+                    r.rows = {{std::string("CREATE VIEW error: ") + e.what()}};
+                    return r;
+                }
             }
             if (ast.kind == NodeKind::SessionStmt && ast.session.kind == SessionKind::SetOption) {
                 // Handle SQL-level SET CONSTRAINTS (ALL|name[,name]) DEFERRED|IMMEDIATE
@@ -4514,18 +4563,54 @@ namespace scratchbird
                     r.rows = {{"ALTER TABLE accepted: columns and constraints updated"}};
                     return r;
                 }
-                // basic column name extraction: first token of each column def
+                // Parse column definitions to extract names and defaults
                 std::vector<std::string> colnames;
+                std::unordered_map<std::string, std::string> col_defaults;
                 {
                     std::string s = ast.ddlTable.column_defs_raw;
                     std::string cur;
                     int d = 0;
-                    auto push_name = [&](const std::string& def) {
+                    auto parse_column_def = [&](const std::string& def) {
+                        // Extract column name (first token)
                         size_t a = def.find_first_not_of(" \t\n");
                         size_t b = def.find_first_of(" \t\n", a == std::string::npos ? 0 : a + 1);
-                        if (a != std::string::npos)
-                            colnames.push_back(
-                                def.substr(a, (b == std::string::npos ? def.size() : b) - a));
+                        if (a == std::string::npos)
+                            return;
+                        std::string name =
+                            def.substr(a, (b == std::string::npos ? def.size() : b) - a);
+                        colnames.push_back(name);
+
+                        // Look for DEFAULT clause
+                        std::string lower_def = def;
+                        std::transform(lower_def.begin(), lower_def.end(), lower_def.begin(),
+                                       [](unsigned char c) { return char(std::tolower(c)); });
+                        size_t default_pos = lower_def.find(" default ");
+                        if (default_pos != std::string::npos) {
+                            size_t value_start = default_pos + 9; // length of " default "
+                            size_t value_end = def.size();
+
+                            // Find end of default value (before next keyword like NOT NULL, etc.)
+                            std::vector<std::string> keywords = {" not ", " null", " check",
+                                                                 " references", " constraint"};
+                            for (const auto& kw : keywords) {
+                                size_t kw_pos = lower_def.find(kw, value_start);
+                                if (kw_pos != std::string::npos && kw_pos < value_end) {
+                                    value_end = kw_pos;
+                                }
+                            }
+
+                            if (value_start < value_end) {
+                                std::string default_val =
+                                    def.substr(value_start, value_end - value_start);
+                                // Trim whitespace
+                                size_t start = default_val.find_first_not_of(" \t\n");
+                                size_t end = default_val.find_last_not_of(" \t\n");
+                                if (start != std::string::npos && end != std::string::npos) {
+                                    default_val = default_val.substr(start, end - start + 1);
+                                    col_defaults[name] = default_val;
+                                }
+                            }
+                        }
                     };
                     for (char c : s) {
                         if (c == '(')
@@ -4533,13 +4618,13 @@ namespace scratchbird
                         else if (c == ')' && d > 0)
                             d--;
                         if (c == ',' && d == 0) {
-                            push_name(cur);
+                            parse_column_def(cur);
                             cur.clear();
                         } else
                             cur.push_back(c);
                     }
                     if (!cur.empty())
-                        push_name(cur);
+                        parse_column_def(cur);
                 }
                 std::fprintf(stderr, "[EXEC DDL] CREATE TABLE schema='%s' name='%s' cols=%zu\n",
                              schema.c_str(), relname.c_str(), colnames.size());
@@ -4553,7 +4638,8 @@ namespace scratchbird
                 cols_with_pos.reserve(colnames.size());
                 for (size_t i = 0; i < colnames.size(); ++i)
                     cols_with_pos.emplace_back((std::int64_t)(i + 1), colnames[i]);
-                cm.create_columns(rel_oid, cols_with_pos, ast.ddlTable.not_null_columns);
+                cm.create_columns(rel_oid, cols_with_pos, ast.ddlTable.not_null_columns,
+                                  col_defaults);
                 // Persist column-level NOT NULL as constraints
                 for (const auto& nncol : ast.ddlTable.not_null_columns) {
                     std::string cname = "nn_" + nncol;
@@ -4591,38 +4677,6 @@ namespace scratchbird
                 invalidate_prepared_cache();
                 r.columns = {"ok"};
                 r.rows = {{"CREATE TABLE accepted: catalog rows written"}};
-                return r;
-            }
-            if (ast.kind == NodeKind::DdlView) {
-                CatalogManager cm(get_executor_db_path());
-                // schema.view split
-                std::string full = ast.ddlView.name;
-                std::string schema = "public";
-                std::string viewname = full;
-                auto dot = full.find('.');
-                if (dot != std::string::npos) {
-                    schema = full.substr(0, dot);
-                    viewname = full.substr(dot + 1);
-                }
-                auto soid = cm.lookup_schema_oid_by_name(schema);
-                if (!soid) {
-                    r.columns = {"error"};
-                    r.rows = {{"schema not found: " + schema}};
-                    return r;
-                }
-
-                // Create the view in the catalog
-                bool success = cm.create_view(*soid, viewname, ast.ddlView.body_raw);
-                if (!success) {
-                    r.columns = {"error"};
-                    r.rows = {{"Failed to create view: " + viewname}};
-                    return r;
-                }
-
-                invalidate_optimizer_cache();
-                invalidate_prepared_cache();
-                r.columns = {"ok"};
-                r.rows = {{"CREATE VIEW accepted: " + viewname}};
                 return r;
             }
             if (ast.kind == NodeKind::PsqlTrigger) {
@@ -4809,11 +4863,107 @@ namespace scratchbird
                 }
                 return r;
             }
+            if (ast.kind == NodeKind::PsqlBlock) {
+                // Execute PSQL block with variables and control flow
+                try {
+                    PsqlExecutor psql_executor(get_executor_db_path());
+                    ExecutionResult psql_result = psql_executor.execute_block(ast.psqlBlock);
+                    return psql_result;
+                } catch (const std::exception& e) {
+                    r.columns = {"error"};
+                    r.rows = {{std::string("PSQL execution error: ") + e.what()}};
+                    return r;
+                }
+            }
+            if (ast.kind == NodeKind::PsqlRoutine) {
+                // Create stored procedure/function
+                CatalogManager cm(get_executor_db_path());
+                auto schema_oid = oid_public_schema(); // Default to public schema for now
+
+                // Convert AST parameters to catalog format
+                std::vector<CatalogManager::RoutineParamInfo> params;
+                for (const auto& param : ast.psqlRoutine.params) {
+                    CatalogManager::RoutineParamInfo param_info;
+                    // Parse mode from param name (e.g., "IN param_name" or just "param_name")
+                    std::string param_str = param.first;
+                    if (param_str.find("IN ") == 0) {
+                        param_info.mode = "IN";
+                        param_info.name = param_str.substr(3);
+                    } else if (param_str.find("OUT ") == 0) {
+                        param_info.mode = "OUT";
+                        param_info.name = param_str.substr(4);
+                    } else if (param_str.find("INOUT ") == 0) {
+                        param_info.mode = "INOUT";
+                        param_info.name = param_str.substr(6);
+                    } else {
+                        param_info.mode = "IN";
+                        param_info.name = param_str;
+                    }
+                    param_info.type_json = param.second; // Store raw type for now
+                    param_info.position = static_cast<int>(params.size());
+                    params.push_back(param_info);
+                }
+
+                // Create the routine in the catalog
+                bool success = cm.create_routine(
+                    schema_oid, ast.psqlRoutine.name, ast.psqlRoutine.kind, "PSQL", "INVOKER",
+                    "VOLATILE", false, false, params, ast.psqlRoutine.body_raw);
+
+                if (success) {
+                    r.columns = {"Message"};
+                    r.rows = {{ast.psqlRoutine.kind + " " + ast.psqlRoutine.name +
+                               " created successfully"}};
+                } else {
+                    r.columns = {"Error"};
+                    r.rows = {
+                        {"Failed to create " + ast.psqlRoutine.kind + " " + ast.psqlRoutine.name}};
+                }
+                return r;
+            }
             if (ast.kind == NodeKind::DdlExplain) {
                 r.columns = {"Plan"};
                 SelectQuery q = parse_select_minimal(ast.ddlExplain.statement_raw);
                 std::string plan = explain_select_plan(q, ast.ddlExplain.analyze);
                 r.rows = {{plan}};
+                return r;
+            }
+            if (ast.kind == NodeKind::PsqlCall) {
+                // Execute stored procedure call
+                try {
+                    PsqlExecutor psql_executor(get_executor_db_path());
+                    ExecutionResult call_result = psql_executor.execute_call(ast.psqlCall);
+                    return call_result;
+                } catch (const std::exception& e) {
+                    r.columns = {"error"};
+                    r.rows = {{std::string("CALL execution error: ") + e.what()}};
+                    return r;
+                }
+            }
+            if (ast.kind == NodeKind::PsqlPackage) {
+                // Create package header or body
+                try {
+                    CatalogManager cm(get_executor_db_path());
+                    auto schema_oid = oid_public_schema(); // Default to public schema for now
+
+                    if (ast.psqlPackage.is_header) {
+                        // Create package header
+                        bool success = cm.create_package_header(schema_oid, ast.psqlPackage.name,
+                                                                ast.psqlPackage.header_body);
+
+                        r.columns = {"package_header_created"};
+                        r.rows = {{success ? "true" : "false"}};
+                    } else {
+                        // Create package body
+                        bool success = cm.create_package_body(schema_oid, ast.psqlPackage.name,
+                                                              ast.psqlPackage.implementation_body);
+
+                        r.columns = {"package_body_created"};
+                        r.rows = {{success ? "true" : "false"}};
+                    }
+                } catch (const std::exception& e) {
+                    r.columns = {"error"};
+                    r.rows = {{std::string("Package creation error: ") + e.what()}};
+                }
                 return r;
             }
             // Fallback: try SELECT minimal executor when input looks like SELECT
