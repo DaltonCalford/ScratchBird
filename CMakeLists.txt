@@ -506,4 +506,8 @@ if(SCRATCHBIRD_BUILD_TESTS)
   target_link_libraries(fdw_catalog_tests scratchbird_engine)
   add_test(NAME fdw_catalog_tests COMMAND fdw_catalog_tests)
 
+  add_executable(fdw_comprehensive_tests tests/fdw_comprehensive_tests.cpp)
+  target_link_libraries(fdw_comprehensive_tests scratchbird_engine)
+  add_test(NAME fdw_comprehensive_tests COMMAND fdw_comprehensive_tests)
+
 endif()

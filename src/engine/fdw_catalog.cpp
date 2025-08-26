@@ -4,8 +4,8 @@
 #include <chrono>
 #include <fstream>
 #include <iostream>
-#include <sstream>
 #include <regex>
+#include <sstream>
 
 namespace scratchbird::engine
 {
@@ -13,40 +13,74 @@ namespace scratchbird::engine
     std::string type_kind_to_string(TypeKind type_kind)
     {
         switch (type_kind) {
-            case TypeKind::Unknown: return "UNKNOWN";
-            case TypeKind::TinyInt: return "TINYINT";
-            case TypeKind::SmallInt: return "SMALLINT";
-            case TypeKind::Integer: return "INTEGER";
-            case TypeKind::BigInt: return "BIGINT";
-            case TypeKind::Int128: return "INT128";
-            case TypeKind::UTinyInt: return "UTINYINT";
-            case TypeKind::USmallInt: return "USMALLINT";
-            case TypeKind::UInteger: return "UINTEGER";
-            case TypeKind::UBigInt: return "UBIGINT";
-            case TypeKind::UInt128: return "UINT128";
-            case TypeKind::Numeric: return "NUMERIC";
-            case TypeKind::Decimal: return "DECIMAL";
-            case TypeKind::Float: return "FLOAT";
-            case TypeKind::DoublePrecision: return "DOUBLE PRECISION";
-            case TypeKind::DecFloat: return "DECFLOAT";
-            case TypeKind::Char: return "CHAR";
-            case TypeKind::VarChar: return "VARCHAR";
-            case TypeKind::CiText: return "CITEXT";
-            case TypeKind::Blob: return "BLOB";
-            case TypeKind::Boolean: return "BOOLEAN";
-            case TypeKind::Uuid: return "UUID";
-            case TypeKind::Json: return "JSON";
-            case TypeKind::Date: return "DATE";
-            case TypeKind::Time: return "TIME";
-            case TypeKind::TimeTz: return "TIMETZ";
-            case TypeKind::Timestamp: return "TIMESTAMP";
-            case TypeKind::TimestampTz: return "TIMESTAMPTZ";
-            case TypeKind::Inet: return "INET";
-            case TypeKind::Cidr: return "CIDR";
-            case TypeKind::MacAddr: return "MACADDR";
-            case TypeKind::Point: return "POINT";
-            case TypeKind::TsVector: return "TSVECTOR";
-            default: return "UNKNOWN";
+        case TypeKind::Unknown:
+            return "UNKNOWN";
+        case TypeKind::TinyInt:
+            return "TINYINT";
+        case TypeKind::SmallInt:
+            return "SMALLINT";
+        case TypeKind::Integer:
+            return "INTEGER";
+        case TypeKind::BigInt:
+            return "BIGINT";
+        case TypeKind::Int128:
+            return "INT128";
+        case TypeKind::UTinyInt:
+            return "UTINYINT";
+        case TypeKind::USmallInt:
+            return "USMALLINT";
+        case TypeKind::UInteger:
+            return "UINTEGER";
+        case TypeKind::UBigInt:
+            return "UBIGINT";
+        case TypeKind::UInt128:
+            return "UINT128";
+        case TypeKind::Numeric:
+            return "NUMERIC";
+        case TypeKind::Decimal:
+            return "DECIMAL";
+        case TypeKind::Float:
+            return "FLOAT";
+        case TypeKind::DoublePrecision:
+            return "DOUBLE PRECISION";
+        case TypeKind::DecFloat:
+            return "DECFLOAT";
+        case TypeKind::Char:
+            return "CHAR";
+        case TypeKind::VarChar:
+            return "VARCHAR";
+        case TypeKind::CiText:
+            return "CITEXT";
+        case TypeKind::Blob:
+            return "BLOB";
+        case TypeKind::Boolean:
+            return "BOOLEAN";
+        case TypeKind::Uuid:
+            return "UUID";
+        case TypeKind::Json:
+            return "JSON";
+        case TypeKind::Date:
+            return "DATE";
+        case TypeKind::Time:
+            return "TIME";
+        case TypeKind::TimeTz:
+            return "TIMETZ";
+        case TypeKind::Timestamp:
+            return "TIMESTAMP";
+        case TypeKind::TimestampTz:
+            return "TIMESTAMPTZ";
+        case TypeKind::Inet:
+            return "INET";
+        case TypeKind::Cidr:
+            return "CIDR";
+        case TypeKind::MacAddr:
+            return "MACADDR";
+        case TypeKind::Point:
+            return "POINT";
+        case TypeKind::TsVector:
+            return "TSVECTOR";
+        default:
+            return "UNKNOWN";
         }
     }
 
@@ -74,7 +108,8 @@ namespace scratchbird::engine
             return schema_name + "." + table_name;
         }
 
-        std::string make_user_mapping_key(const std::string& server_name, const std::string& username)
+        std::string make_user_mapping_key(const std::string& server_name,
+                                          const std::string& username)
         {
             return server_name + ":" + username;
         }
@@ -88,7 +123,7 @@ namespace scratchbird::engine
         {
             return std::chrono::duration_cast<std::chrono::seconds>(
                        std::chrono::system_clock::now().time_since_epoch())
-                       .count();
+                .count();
         }
 
         bool validate_object_name(const std::string& name)
@@ -97,9 +132,8 @@ namespace scratchbird::engine
                 return false;
             }
             // Simple validation - alphanumeric, underscore, dot
-            return std::all_of(name.begin(), name.end(), [](char c) {
-                return std::isalnum(c) || c == '_' || c == '.';
-            });
+            return std::all_of(name.begin(), name.end(),
+                               [](char c) { return std::isalnum(c) || c == '_' || c == '.'; });
         }
     };
 
@@ -132,8 +166,8 @@ namespace scratchbird::engine
             json_fdw.fdw_version = "1.0.0";
             json_fdw.fdw_library = "libscratchbird_json_fdw.so";
             json_fdw.fdw_handler = "json_fdw_handler";
-            json_fdw.fdw_capabilities = static_cast<std::int32_t>(FdwCapability::SelectSupport |
-                                                                 FdwCapability::SchemaIntrospection);
+            json_fdw.fdw_capabilities = static_cast<std::int32_t>(
+                FdwCapability::SelectSupport | FdwCapability::SchemaIntrospection);
             json_fdw.description = "JSON file foreign data wrapper";
             json_fdw.created_time = pImpl_->current_timestamp();
             json_fdw.created_by = "system";
@@ -147,7 +181,7 @@ namespace scratchbird::engine
             postgresql_fdw.fdw_library = "libscratchbird_postgresql_fdw.so";
             postgresql_fdw.fdw_handler = "postgresql_fdw_handler";
             postgresql_fdw.fdw_capabilities = static_cast<std::int32_t>(
-                FdwCapability::SelectSupport | FdwCapability::InsertSupport | 
+                FdwCapability::SelectSupport | FdwCapability::InsertSupport |
                 FdwCapability::UpdateSupport | FdwCapability::DeleteSupport |
                 FdwCapability::TransactionSupport | FdwCapability::SchemaIntrospection);
             postgresql_fdw.description = "PostgreSQL foreign data wrapper";
@@ -187,11 +221,13 @@ namespace scratchbird::engine
     }
 
     bool FdwCatalogManager::upgrade_catalog_schema(const std::string& from_version,
-                                                   const std::string& to_version, std::string& error_msg)
+                                                   const std::string& to_version,
+                                                   std::string& error_msg)
     {
         try {
             // Simulate schema upgrade
-            std::cout << "✓ FDW catalog schema upgraded from " << from_version << " to " << to_version << std::endl;
+            std::cout << "✓ FDW catalog schema upgraded from " << from_version << " to "
+                      << to_version << std::endl;
             return true;
 
         } catch (const std::exception& e) {
@@ -235,7 +271,8 @@ namespace scratchbird::engine
             // Check for dependent servers
             for (const auto& server_pair : pImpl_->server_entries_) {
                 if (server_pair.second.fdw_name == fdw_name) {
-                    error_msg = "Cannot drop FDW " + fdw_name + ": server " + server_pair.first + " depends on it";
+                    error_msg = "Cannot drop FDW " + fdw_name + ": server " + server_pair.first +
+                                " depends on it";
                     return false;
                 }
             }
@@ -295,7 +332,8 @@ namespace scratchbird::engine
                 return false;
             }
 
-            if (pImpl_->server_entries_.find(server_entry.server_name) != pImpl_->server_entries_.end()) {
+            if (pImpl_->server_entries_.find(server_entry.server_name) !=
+                pImpl_->server_entries_.end()) {
                 error_msg = "Foreign server already exists: " + server_entry.server_name;
                 return false;
             }
@@ -334,7 +372,7 @@ namespace scratchbird::engine
                 for (const auto& table_pair : pImpl_->foreign_tables_) {
                     if (table_pair.second.server_name == server_name) {
                         error_msg = "Cannot drop server " + server_name + ": foreign table " +
-                                   table_pair.second.table_name + " depends on it";
+                                    table_pair.second.table_name + " depends on it";
                         return false;
                     }
                 }
@@ -374,7 +412,8 @@ namespace scratchbird::engine
     }
 
     bool FdwCatalogManager::get_foreign_server(const std::string& server_name,
-                                               ForeignServerCatalogEntry& entry, std::string& error_msg)
+                                               ForeignServerCatalogEntry& entry,
+                                               std::string& error_msg)
     {
         try {
             auto it = pImpl_->server_entries_.find(server_name);
@@ -392,7 +431,8 @@ namespace scratchbird::engine
         }
     }
 
-    std::vector<ForeignServerCatalogEntry> FdwCatalogManager::list_foreign_servers(const std::string& fdw_name)
+    std::vector<ForeignServerCatalogEntry>
+    FdwCatalogManager::list_foreign_servers(const std::string& fdw_name)
     {
         std::vector<ForeignServerCatalogEntry> result;
         for (const auto& pair : pImpl_->server_entries_) {
@@ -403,8 +443,9 @@ namespace scratchbird::engine
         return result;
     }
 
-    bool FdwCatalogManager::update_server_health_status(const std::string& server_name, 
-                                                        const std::string& status, std::string& error_msg)
+    bool FdwCatalogManager::update_server_health_status(const std::string& server_name,
+                                                        const std::string& status,
+                                                        std::string& error_msg)
     {
         try {
             auto it = pImpl_->server_entries_.find(server_name);
@@ -428,21 +469,23 @@ namespace scratchbird::engine
     {
         try {
             // Check if server exists
-            if (pImpl_->server_entries_.find(mapping_entry.server_name) == pImpl_->server_entries_.end()) {
+            if (pImpl_->server_entries_.find(mapping_entry.server_name) ==
+                pImpl_->server_entries_.end()) {
                 error_msg = "Foreign server not found: " + mapping_entry.server_name;
                 return false;
             }
 
-            std::string key = pImpl_->make_user_mapping_key(mapping_entry.server_name, mapping_entry.local_username);
+            std::string key = pImpl_->make_user_mapping_key(mapping_entry.server_name,
+                                                            mapping_entry.local_username);
             if (pImpl_->user_mappings_.find(key) != pImpl_->user_mappings_.end()) {
                 error_msg = "User mapping already exists for user " + mapping_entry.local_username +
-                           " on server " + mapping_entry.server_name;
+                            " on server " + mapping_entry.server_name;
                 return false;
             }
 
             pImpl_->user_mappings_[key] = mapping_entry;
-            std::cout << "✓ Created user mapping: " << mapping_entry.local_username 
-                      << " -> " << mapping_entry.server_name << std::endl;
+            std::cout << "✓ Created user mapping: " << mapping_entry.local_username << " -> "
+                      << mapping_entry.server_name << std::endl;
             return true;
 
         } catch (const std::exception& e) {
@@ -451,19 +494,22 @@ namespace scratchbird::engine
         }
     }
 
-    bool FdwCatalogManager::drop_user_mapping(const std::string& server_name, const std::string& local_username,
+    bool FdwCatalogManager::drop_user_mapping(const std::string& server_name,
+                                              const std::string& local_username,
                                               std::string& error_msg)
     {
         try {
             std::string key = pImpl_->make_user_mapping_key(server_name, local_username);
             auto it = pImpl_->user_mappings_.find(key);
             if (it == pImpl_->user_mappings_.end()) {
-                error_msg = "User mapping not found for user " + local_username + " on server " + server_name;
+                error_msg = "User mapping not found for user " + local_username + " on server " +
+                            server_name;
                 return false;
             }
 
             pImpl_->user_mappings_.erase(it);
-            std::cout << "✓ Dropped user mapping: " << local_username << " -> " << server_name << std::endl;
+            std::cout << "✓ Dropped user mapping: " << local_username << " -> " << server_name
+                      << std::endl;
             return true;
 
         } catch (const std::exception& e) {
@@ -472,14 +518,16 @@ namespace scratchbird::engine
         }
     }
 
-    bool FdwCatalogManager::get_user_mapping(const std::string& server_name, const std::string& local_username,
+    bool FdwCatalogManager::get_user_mapping(const std::string& server_name,
+                                             const std::string& local_username,
                                              UserMappingCatalogEntry& entry, std::string& error_msg)
     {
         try {
             std::string key = pImpl_->make_user_mapping_key(server_name, local_username);
             auto it = pImpl_->user_mappings_.find(key);
             if (it == pImpl_->user_mappings_.end()) {
-                error_msg = "User mapping not found for user " + local_username + " on server " + server_name;
+                error_msg = "User mapping not found for user " + local_username + " on server " +
+                            server_name;
                 return false;
             }
 
@@ -492,20 +540,22 @@ namespace scratchbird::engine
         }
     }
 
-    std::vector<UserMappingCatalogEntry> FdwCatalogManager::list_user_mappings(const std::string& server_name)
+    std::vector<UserMappingCatalogEntry>
+    FdwCatalogManager::list_user_mappings(const std::string& server_name)
     {
         std::vector<UserMappingCatalogEntry> result;
         for (const auto& pair : pImpl_->user_mappings_) {
-            if (pair.second.is_active && (server_name.empty() || pair.second.server_name == server_name)) {
+            if (pair.second.is_active &&
+                (server_name.empty() || pair.second.server_name == server_name)) {
                 result.push_back(pair.second);
             }
         }
         return result;
     }
 
-    bool FdwCatalogManager::create_foreign_table(const ForeignTableCatalogEntry& table_entry,
-                                                 const std::vector<ForeignTableColumnCatalogEntry>& columns,
-                                                 std::string& error_msg)
+    bool FdwCatalogManager::create_foreign_table(
+        const ForeignTableCatalogEntry& table_entry,
+        const std::vector<ForeignTableColumnCatalogEntry>& columns, std::string& error_msg)
     {
         try {
             if (!pImpl_->validate_object_name(table_entry.table_name)) {
@@ -514,14 +564,17 @@ namespace scratchbird::engine
             }
 
             // Check if server exists
-            if (pImpl_->server_entries_.find(table_entry.server_name) == pImpl_->server_entries_.end()) {
+            if (pImpl_->server_entries_.find(table_entry.server_name) ==
+                pImpl_->server_entries_.end()) {
                 error_msg = "Foreign server not found: " + table_entry.server_name;
                 return false;
             }
 
-            std::string key = pImpl_->make_table_key(table_entry.table_name, table_entry.schema_name);
+            std::string key =
+                pImpl_->make_table_key(table_entry.table_name, table_entry.schema_name);
             if (pImpl_->foreign_tables_.find(key) != pImpl_->foreign_tables_.end()) {
-                error_msg = "Foreign table already exists: " + table_entry.schema_name + "." + table_entry.table_name;
+                error_msg = "Foreign table already exists: " + table_entry.schema_name + "." +
+                            table_entry.table_name;
                 return false;
             }
 
@@ -533,8 +586,9 @@ namespace scratchbird::engine
             pImpl_->foreign_tables_[key] = table_entry;
             pImpl_->table_columns_[key] = columns;
 
-            std::cout << "✓ Created foreign table: " << table_entry.schema_name << "." << table_entry.table_name
-                      << " with " << columns.size() << " columns" << std::endl;
+            std::cout << "✓ Created foreign table: " << table_entry.schema_name << "."
+                      << table_entry.table_name << " with " << columns.size() << " columns"
+                      << std::endl;
             return true;
 
         } catch (const std::exception& e) {
@@ -543,7 +597,8 @@ namespace scratchbird::engine
         }
     }
 
-    bool FdwCatalogManager::drop_foreign_table(const std::string& table_name, const std::string& schema_name,
+    bool FdwCatalogManager::drop_foreign_table(const std::string& table_name,
+                                               const std::string& schema_name,
                                                std::string& error_msg)
     {
         try {
@@ -557,7 +612,8 @@ namespace scratchbird::engine
             pImpl_->foreign_tables_.erase(it);
             pImpl_->table_columns_.erase(key);
 
-            std::cout << "✓ Dropped foreign table: " << schema_name << "." << table_name << std::endl;
+            std::cout << "✓ Dropped foreign table: " << schema_name << "." << table_name
+                      << std::endl;
             return true;
 
         } catch (const std::exception& e) {
@@ -566,8 +622,10 @@ namespace scratchbird::engine
         }
     }
 
-    bool FdwCatalogManager::get_foreign_table(const std::string& table_name, const std::string& schema_name,
-                                              ForeignTableCatalogEntry& entry, std::string& error_msg)
+    bool FdwCatalogManager::get_foreign_table(const std::string& table_name,
+                                              const std::string& schema_name,
+                                              ForeignTableCatalogEntry& entry,
+                                              std::string& error_msg)
     {
         try {
             std::string key = pImpl_->make_table_key(table_name, schema_name);
@@ -586,9 +644,9 @@ namespace scratchbird::engine
         }
     }
 
-    bool FdwCatalogManager::get_foreign_table_columns(const std::string& table_name, const std::string& schema_name,
-                                                      std::vector<ForeignTableColumnCatalogEntry>& columns,
-                                                      std::string& error_msg)
+    bool FdwCatalogManager::get_foreign_table_columns(
+        const std::string& table_name, const std::string& schema_name,
+        std::vector<ForeignTableColumnCatalogEntry>& columns, std::string& error_msg)
     {
         try {
             std::string key = pImpl_->make_table_key(table_name, schema_name);
@@ -607,14 +665,14 @@ namespace scratchbird::engine
         }
     }
 
-    std::vector<ForeignTableCatalogEntry> FdwCatalogManager::list_foreign_tables(const std::string& server_name,
-                                                                                 const std::string& schema_name)
+    std::vector<ForeignTableCatalogEntry>
+    FdwCatalogManager::list_foreign_tables(const std::string& server_name,
+                                           const std::string& schema_name)
     {
         std::vector<ForeignTableCatalogEntry> result;
         for (const auto& pair : pImpl_->foreign_tables_) {
             const auto& entry = pair.second;
-            if (entry.is_active &&
-                (server_name.empty() || entry.server_name == server_name) &&
+            if (entry.is_active && (server_name.empty() || entry.server_name == server_name) &&
                 (schema_name.empty() || entry.schema_name == schema_name)) {
                 result.push_back(entry);
             }
@@ -631,7 +689,8 @@ namespace scratchbird::engine
                 return false;
             }
 
-            if (pImpl_->database_links_.find(link_entry.link_name) != pImpl_->database_links_.end()) {
+            if (pImpl_->database_links_.find(link_entry.link_name) !=
+                pImpl_->database_links_.end()) {
                 error_msg = "Database link already exists: " + link_entry.link_name;
                 return false;
             }
@@ -665,7 +724,8 @@ namespace scratchbird::engine
         }
     }
 
-    bool FdwCatalogManager::get_database_link(const std::string& link_name, DatabaseLinkCatalogEntry& entry,
+    bool FdwCatalogManager::get_database_link(const std::string& link_name,
+                                              DatabaseLinkCatalogEntry& entry,
                                               std::string& error_msg)
     {
         try {
@@ -695,16 +755,17 @@ namespace scratchbird::engine
         return result;
     }
 
-    bool FdwCatalogManager::update_statistics(const FdwStatisticsCatalogEntry& stats_entry, std::string& error_msg)
+    bool FdwCatalogManager::update_statistics(const FdwStatisticsCatalogEntry& stats_entry,
+                                              std::string& error_msg)
     {
         try {
             // Remove existing statistics for the same object/stat name
             auto it = std::remove_if(pImpl_->statistics_.begin(), pImpl_->statistics_.end(),
-                [&](const FdwStatisticsCatalogEntry& existing) {
-                    return existing.object_type == stats_entry.object_type &&
-                           existing.object_name == stats_entry.object_name &&
-                           existing.stat_name == stats_entry.stat_name;
-                });
+                                     [&](const FdwStatisticsCatalogEntry& existing) {
+                                         return existing.object_type == stats_entry.object_type &&
+                                                existing.object_name == stats_entry.object_name &&
+                                                existing.stat_name == stats_entry.stat_name;
+                                     });
 
             if (it != pImpl_->statistics_.end()) {
                 pImpl_->statistics_.erase(it, pImpl_->statistics_.end());
@@ -719,13 +780,16 @@ namespace scratchbird::engine
         }
     }
 
-    bool FdwCatalogManager::get_statistics(const std::string& object_type, const std::string& object_name,
-                                          std::vector<FdwStatisticsCatalogEntry>& stats, std::string& error_msg)
+    bool FdwCatalogManager::get_statistics(const std::string& object_type,
+                                           const std::string& object_name,
+                                           std::vector<FdwStatisticsCatalogEntry>& stats,
+                                           std::string& error_msg)
     {
         try {
             stats.clear();
             for (const auto& entry : pImpl_->statistics_) {
-                if (entry.object_type == object_type && entry.object_name == object_name && entry.is_current) {
+                if (entry.object_type == object_type && entry.object_name == object_name &&
+                    entry.is_current) {
                     stats.push_back(entry);
                 }
             }
@@ -741,15 +805,17 @@ namespace scratchbird::engine
     {
         try {
             std::int64_t current_time = pImpl_->current_timestamp();
-            auto it = std::remove_if(pImpl_->statistics_.begin(), pImpl_->statistics_.end(),
-                [current_time](const FdwStatisticsCatalogEntry& entry) {
-                    return entry.expiry_time > 0 && entry.expiry_time < current_time;
-                });
+            auto it =
+                std::remove_if(pImpl_->statistics_.begin(), pImpl_->statistics_.end(),
+                               [current_time](const FdwStatisticsCatalogEntry& entry) {
+                                   return entry.expiry_time > 0 && entry.expiry_time < current_time;
+                               });
 
             std::size_t removed_count = std::distance(it, pImpl_->statistics_.end());
             pImpl_->statistics_.erase(it, pImpl_->statistics_.end());
 
-            std::cout << "✓ Cleaned up " << removed_count << " expired statistics entries" << std::endl;
+            std::cout << "✓ Cleaned up " << removed_count << " expired statistics entries"
+                      << std::endl;
             return true;
 
         } catch (const std::exception& e) {
@@ -758,9 +824,10 @@ namespace scratchbird::engine
         }
     }
 
-    bool FdwCatalogManager::set_fdw_option(const std::string& object_type, const std::string& object_name,
-                                           const std::string& option_name, const std::string& option_value,
-                                           std::string& error_msg)
+    bool FdwCatalogManager::set_fdw_option(const std::string& object_type,
+                                           const std::string& object_name,
+                                           const std::string& option_name,
+                                           const std::string& option_value, std::string& error_msg)
     {
         try {
             std::string key = pImpl_->make_options_key(object_type, object_name);
@@ -773,7 +840,8 @@ namespace scratchbird::engine
         }
     }
 
-    bool FdwCatalogManager::get_fdw_options(const std::string& object_type, const std::string& object_name,
+    bool FdwCatalogManager::get_fdw_options(const std::string& object_type,
+                                            const std::string& object_name,
                                             std::unordered_map<std::string, std::string>& options,
                                             std::string& error_msg)
     {
@@ -793,8 +861,10 @@ namespace scratchbird::engine
         }
     }
 
-    bool FdwCatalogManager::remove_fdw_option(const std::string& object_type, const std::string& object_name,
-                                              const std::string& option_name, std::string& error_msg)
+    bool FdwCatalogManager::remove_fdw_option(const std::string& object_type,
+                                              const std::string& object_name,
+                                              const std::string& option_name,
+                                              std::string& error_msg)
     {
         try {
             std::string key = pImpl_->make_options_key(object_type, object_name);
@@ -813,7 +883,8 @@ namespace scratchbird::engine
         }
     }
 
-    bool FdwCatalogManager::import_foreign_schema(const std::string& server_name, const std::string& remote_schema,
+    bool FdwCatalogManager::import_foreign_schema(const std::string& server_name,
+                                                  const std::string& remote_schema,
                                                   const std::string& local_schema,
                                                   const std::vector<std::string>& table_filters,
                                                   bool exclude_mode, std::string& error_msg)
@@ -845,7 +916,7 @@ namespace scratchbird::engine
                     table_entry.server_name = server_name;
                     table_entry.remote_schema = remote_schema;
                     table_entry.remote_table = table_name;
-                    table_entry.column_count = 3; // Simulate
+                    table_entry.column_count = 3;      // Simulate
                     table_entry.estimated_rows = 1000; // Simulate
                     table_entry.table_type = "TABLE";
                     table_entry.created_time = pImpl_->current_timestamp();
@@ -854,7 +925,7 @@ namespace scratchbird::engine
 
                     // Create sample columns
                     std::vector<ForeignTableColumnCatalogEntry> columns;
-                    
+
                     ForeignTableColumnCatalogEntry col1;
                     col1.table_name = table_name;
                     col1.schema_name = local_schema;
@@ -899,7 +970,7 @@ namespace scratchbird::engine
                 }
             }
 
-            std::cout << "✓ Imported " << imported_count << " foreign tables from schema " 
+            std::cout << "✓ Imported " << imported_count << " foreign tables from schema "
                       << remote_schema << std::endl;
             return true;
 
@@ -909,8 +980,10 @@ namespace scratchbird::engine
         }
     }
 
-    bool FdwCatalogManager::check_dependencies(const std::string& object_type, const std::string& object_name,
-                                              std::vector<std::string>& dependencies, std::string& error_msg)
+    bool FdwCatalogManager::check_dependencies(const std::string& object_type,
+                                               const std::string& object_name,
+                                               std::vector<std::string>& dependencies,
+                                               std::string& error_msg)
     {
         try {
             dependencies.clear();
@@ -919,15 +992,16 @@ namespace scratchbird::engine
                 // Check for user mappings
                 for (const auto& mapping_pair : pImpl_->user_mappings_) {
                     if (mapping_pair.second.server_name == object_name) {
-                        dependencies.push_back("USER_MAPPING:" + mapping_pair.second.local_username);
+                        dependencies.push_back("USER_MAPPING:" +
+                                               mapping_pair.second.local_username);
                     }
                 }
 
                 // Check for foreign tables
                 for (const auto& table_pair : pImpl_->foreign_tables_) {
                     if (table_pair.second.server_name == object_name) {
-                        dependencies.push_back("FOREIGN_TABLE:" + table_pair.second.schema_name + 
-                                              "." + table_pair.second.table_name);
+                        dependencies.push_back("FOREIGN_TABLE:" + table_pair.second.schema_name +
+                                               "." + table_pair.second.table_name);
                     }
                 }
             } else if (object_type == "FDW") {
@@ -947,8 +1021,9 @@ namespace scratchbird::engine
         }
     }
 
-    bool FdwCatalogManager::resolve_dependencies(const std::string& object_type, const std::string& object_name,
-                                                 bool cascade, std::string& error_msg)
+    bool FdwCatalogManager::resolve_dependencies(const std::string& object_type,
+                                                 const std::string& object_name, bool cascade,
+                                                 std::string& error_msg)
     {
         try {
             if (!cascade) {
@@ -956,15 +1031,17 @@ namespace scratchbird::engine
                 if (!check_dependencies(object_type, object_name, deps, error_msg)) {
                     return false;
                 }
-                
+
                 if (!deps.empty()) {
-                    error_msg = "Cannot drop " + object_type + " " + object_name + " due to dependencies";
+                    error_msg =
+                        "Cannot drop " + object_type + " " + object_name + " due to dependencies";
                     return false;
                 }
             }
 
             // CASCADE mode would recursively drop dependent objects
-            std::cout << "✓ Dependencies resolved for " << object_type << " " << object_name << std::endl;
+            std::cout << "✓ Dependencies resolved for " << object_type << " " << object_name
+                      << std::endl;
             return true;
 
         } catch (const std::exception& e) {
@@ -975,19 +1052,14 @@ namespace scratchbird::engine
 
     std::vector<std::string> FdwCatalogManager::get_catalog_table_names()
     {
-        return {
-            FdwCatalogTables::FOREIGN_DATA_WRAPPERS,
-            FdwCatalogTables::FOREIGN_SERVERS,
-            FdwCatalogTables::USER_MAPPINGS,
-            FdwCatalogTables::FOREIGN_TABLES,
-            FdwCatalogTables::FOREIGN_TABLE_COLUMNS,
-            FdwCatalogTables::DATABASE_LINKS,
-            FdwCatalogTables::FDW_STATISTICS,
-            FdwCatalogTables::FDW_OPTIONS
-        };
+        return {FdwCatalogTables::FOREIGN_DATA_WRAPPERS, FdwCatalogTables::FOREIGN_SERVERS,
+                FdwCatalogTables::USER_MAPPINGS,         FdwCatalogTables::FOREIGN_TABLES,
+                FdwCatalogTables::FOREIGN_TABLE_COLUMNS, FdwCatalogTables::DATABASE_LINKS,
+                FdwCatalogTables::FDW_STATISTICS,        FdwCatalogTables::FDW_OPTIONS};
     }
 
-    bool FdwCatalogManager::export_catalog_metadata(const std::string& file_path, std::string& error_msg)
+    bool FdwCatalogManager::export_catalog_metadata(const std::string& file_path,
+                                                    std::string& error_msg)
     {
         try {
             std::ofstream file(file_path);
@@ -1003,7 +1075,7 @@ namespace scratchbird::engine
             file << "-- Foreign Data Wrappers\n";
             for (const auto& fdw_pair : pImpl_->fdw_entries_) {
                 const auto& fdw = fdw_pair.second;
-                file << "INSERT INTO " << FdwCatalogTables::FOREIGN_DATA_WRAPPERS 
+                file << "INSERT INTO " << FdwCatalogTables::FOREIGN_DATA_WRAPPERS
                      << " (fdw_name, fdw_version, fdw_library, description) VALUES ("
                      << "'" << fdw.fdw_name << "', '" << fdw.fdw_version << "', '"
                      << fdw.fdw_library << "', '" << fdw.description << "');\n";
@@ -1029,8 +1101,8 @@ namespace scratchbird::engine
         }
     }
 
-    bool FdwCatalogManager::import_catalog_metadata(const std::string& file_path, bool replace_existing,
-                                                    std::string& error_msg)
+    bool FdwCatalogManager::import_catalog_metadata(const std::string& file_path,
+                                                    bool replace_existing, std::string& error_msg)
     {
         try {
             std::ifstream file(file_path);
@@ -1073,7 +1145,8 @@ namespace scratchbird::engine
 
     FdwInformationSchema::~FdwInformationSchema() = default;
 
-    std::vector<FdwInformationSchema::ForeignDataWrapperInfo> FdwInformationSchema::get_foreign_data_wrappers()
+    std::vector<FdwInformationSchema::ForeignDataWrapperInfo>
+    FdwInformationSchema::get_foreign_data_wrappers()
     {
         std::vector<ForeignDataWrapperInfo> result;
         auto fdw_entries = catalog_manager_.list_fdw_entries();
@@ -1091,7 +1164,7 @@ namespace scratchbird::engine
         return result;
     }
 
-    std::vector<FdwInformationSchema::ForeignServerInfo> 
+    std::vector<FdwInformationSchema::ForeignServerInfo>
     FdwInformationSchema::get_foreign_servers(const std::string& fdw_name)
     {
         std::vector<ForeignServerInfo> result;
@@ -1156,7 +1229,8 @@ namespace scratchbird::engine
         std::vector<ForeignTableColumnCatalogEntry> columns;
         std::string error_msg;
 
-        if (catalog_manager_.get_foreign_table_columns(table_name, schema_name, columns, error_msg)) {
+        if (catalog_manager_.get_foreign_table_columns(table_name, schema_name, columns,
+                                                       error_msg)) {
             for (const auto& entry : columns) {
                 ColumnInfo info;
                 info.table_name = entry.table_name;
