@@ -98,7 +98,17 @@ add_library(
   src/engine/database_link.cpp
   src/engine/fdw_security.cpp
   src/engine/fdw_error_handling.cpp
-  src/engine/fdw_catalog.cpp)
+  src/engine/fdw_catalog.cpp
+  src/engine/network_server.cpp
+  src/engine/session.cpp
+  src/engine/protocol_handler.cpp
+  src/engine/scratchbird_protocol.cpp
+  src/engine/firebird_protocol.cpp
+  src/engine/provider_dispatch.cpp
+  src/engine/database_provider_simple.cpp
+  src/engine/threading.cpp
+  src/engine/embedded_provider.cpp
+  src/engine/remote_provider.cpp)
 
 # Main ScratchBird executable
 add_executable(scratchbird src/main.cpp src/scratchbird.cpp)
@@ -509,5 +519,38 @@ if(SCRATCHBIRD_BUILD_TESTS)
   add_executable(fdw_comprehensive_tests tests/fdw_comprehensive_tests.cpp)
   target_link_libraries(fdw_comprehensive_tests scratchbird_engine)
   add_test(NAME fdw_comprehensive_tests COMMAND fdw_comprehensive_tests)
+
+  # Phase 11: Network Server Tests
+  add_executable(network_server_tests tests/network_server_tests.cpp)
+  target_link_libraries(network_server_tests scratchbird_engine)
+  add_test(NAME network_server_tests COMMAND network_server_tests)
+
+  add_executable(protocol_handler_tests tests/protocol_handler_tests.cpp)
+  target_link_libraries(protocol_handler_tests scratchbird_engine)
+  add_test(NAME protocol_handler_tests COMMAND protocol_handler_tests)
+
+  add_executable(threading_tests tests/threading_tests.cpp)
+  target_link_libraries(threading_tests scratchbird_engine)
+  add_test(NAME threading_tests COMMAND threading_tests)
+
+  add_executable(firebird_protocol_tests tests/firebird_protocol_tests.cpp)
+  target_link_libraries(firebird_protocol_tests scratchbird_engine)
+  add_test(NAME firebird_protocol_tests COMMAND firebird_protocol_tests)
+
+  add_executable(provider_dispatch_tests tests/provider_dispatch_tests.cpp)
+  target_link_libraries(provider_dispatch_tests scratchbird_engine)
+  add_test(NAME provider_dispatch_tests COMMAND provider_dispatch_tests)
+
+  add_executable(database_provider_tests tests/database_provider_tests.cpp)
+  target_link_libraries(database_provider_tests scratchbird_engine)
+  add_test(NAME database_provider_tests COMMAND database_provider_tests)
+
+  add_executable(embedded_provider_tests tests/embedded_provider_tests.cpp)
+  target_link_libraries(embedded_provider_tests scratchbird_engine)
+  add_test(NAME embedded_provider_tests COMMAND embedded_provider_tests)
+
+  add_executable(remote_provider_tests tests/remote_provider_tests.cpp)
+  target_link_libraries(remote_provider_tests scratchbird_engine)
+  add_test(NAME remote_provider_tests COMMAND remote_provider_tests)
 
 endif()
