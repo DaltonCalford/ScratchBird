@@ -11,6 +11,7 @@
 #include "scratchbird/engine/parser_select.h"
 #include "scratchbird/engine/psql_executor.h"
 #include "scratchbird/engine/system_oids.h"
+#include "scratchbird/engine/statistics.h"
 #include "scratchbird/engine/txn.h"
 // no planner header; local selectivity helper below for bucketing
 
@@ -4184,6 +4185,7 @@ namespace scratchbird
             std::string target;
             if (is_analyze_stmt(ast, target)) {
                 IndexStats st{};
+                // Base defaults; refined below if stats/catalog available
                 st.height = 3;
                 st.leaf_pages = 128;
                 st.branch_pages = 16;
@@ -4192,6 +4194,46 @@ namespace scratchbird
                 st.correlation = 0.4;
                 st.mcv = {{"A", 0.02}, {"B", 0.015}};
                 st.histogram = {{"H1", 0.1}, {"H2", 0.2}, {"H3", 0.3}, {"H4", 0.4}, {"H5", 0.5}};
+
+                try {
+                    // Enrich with table/column stats and compute cross-index multi-ndistinct
+                    CatalogManager cm(get_executor_db_path());
+                    auto soid = cm.lookup_schema_oid_by_name("public");
+                    StatisticsCollector collector(get_executor_db_path());
+                    TableStatistics tstats = collector.get_table_statistics("public", target);
+                    double table_rows = (tstats.n_rows > 0) ? static_cast<double>(tstats.n_rows)
+                                                            : 1000000.0;
+                    auto indexes = cm.list_relation_indexes_by_name(soid, target);
+                    for (const auto& idx : indexes) {
+                        if (idx.keys.size() < 2)
+                            continue;
+                        // Build composite key name "col1,col2,..."
+                        std::string comp;
+                        comp.reserve(64);
+                        double product_nd = 1.0;
+                        bool any = false;
+                        for (std::size_t i = 0; i < idx.keys.size(); ++i) {
+                            const std::string& col = idx.keys[i].first;
+                            if (!comp.empty())
+                                comp.push_back(',');
+                            comp += col;
+                            ColumnStatistics cst =
+                                collector.get_column_statistics("public", target, col);
+                            double nd = (cst.n_distinct > 0)
+                                            ? static_cast<double>(cst.n_distinct)
+                                            : (st.ndistinct > 1.0 ? st.ndistinct : 1000.0);
+                            product_nd *= std::max(1.0, nd);
+                            any = true;
+                        }
+                        if (any) {
+                            double comp_nd = std::max(1.0, std::min(table_rows, product_nd));
+                            st.multi_ndistinct[comp] = comp_nd;
+                        }
+                    }
+                } catch (...) {
+                    // Best-effort enrichment; keep defaults on failure
+                }
+
                 stats_register(target.empty() ? std::string("<unknown>") : target, st);
                 // Invalidate any cached optimizer plans that might rely on old stats
                 invalidate_optimizer_cache();
