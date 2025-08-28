@@ -121,7 +121,7 @@
 - ✅ **Enterprise features**: Memory safety, compression algorithms, comprehensive validation
 - ✅ Exit: 8 production index families with specialized workload optimization
 
-**Phase 10 — FDW/SPI and Database Links**
+**Phase 10 — FDW/SPI and Database Links** ✅ **COMPLETED**
 
 - ✅ FDW SPI framework allows third-party data source integration
 - ✅ FOREIGN SERVER/USER MAPPING/FOREIGN TABLE DDL operations working
@@ -133,7 +133,7 @@
 - ✅ Performance acceptable for federated queries
 - ✅ Comprehensive error handling and connection management
 
-**Phase 11 — Server (Y-Valve) and protocol/auth**
+**Phase 11 — Server (Y-Valve) and protocol/auth** 🔄 **IN PROGRESS**
 
 - Listener and session; Firebird wire protocol compatibility layers; Y-Valve dispatch to embedded/remote/providers with version negotiation.
 
@@ -243,7 +243,8 @@ Current Status Summary
 
 - **Phases 1-8**: ✅ **COMPLETED** - Core database functionality and PSQL runtime fully implemented
 - **Phase 9**: ✅ **COMPLETED** - Advanced Index Families with 8 production index types
-- **Phases 10-16**: 🔄 **FOUNDATION IMPLEMENTED** - Advanced features have architectural foundation
+- **Phase 10**: ✅ **COMPLETED** - FDW/SPI and Database Links (CSV/JSON/PostgreSQL FDWs; database links; catalog and tests)
+- **Phase 11**: 🔄 **IN PROGRESS** - Network server, protocol/auth, provider dispatch implemented; advanced TLS features, role attributes/security context, monitoring/administration, and 11.7 performance items pending
 
 Production Readiness Status
 
@@ -255,7 +256,6 @@ Production Readiness Status
 
 Remaining for Production (Beta)
 
-- Complete Phase 10 FDW/Database Links
 - Implement client libraries for multiple languages
 - Build management and monitoring interfaces
 - Add comprehensive testing and CI/CD
