@@ -120,7 +120,8 @@ add_library(
   src/engine/tls_server.cpp
   src/engine/connection_security.cpp
   src/engine/role_management.cpp
-  src/engine/tcp_optimizer.cpp)
+  src/engine/tcp_optimizer.cpp
+  src/engine/connection_pool.cpp)
 
 # Link OpenSSL to the engine library
 target_link_libraries(scratchbird_engine OpenSSL::SSL OpenSSL::Crypto)
@@ -637,5 +638,15 @@ if(SCRATCHBIRD_BUILD_TESTS)
                                PRIVATE ${GTEST_INCLUDE_DIRS})
   endif()
   add_test(NAME tcp_optimizer_tests COMMAND tcp_optimizer_tests)
+
+  # Phase 11.7: Connection Pool Tests
+  add_executable(connection_pool_tests tests/connection_pool_tests.cpp)
+  target_link_libraries(connection_pool_tests scratchbird_engine)
+  if(GTEST_FOUND)
+    target_link_libraries(connection_pool_tests ${GTEST_LIBRARIES})
+    target_include_directories(connection_pool_tests
+                               PRIVATE ${GTEST_INCLUDE_DIRS})
+  endif()
+  add_test(NAME connection_pool_tests COMMAND connection_pool_tests)
 
 endif()
