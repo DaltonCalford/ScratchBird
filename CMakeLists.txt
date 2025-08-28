@@ -118,7 +118,8 @@ add_library(
   src/engine/trusted_auth.cpp
   src/engine/two_factor_auth.cpp
   src/engine/tls_server.cpp
-  src/engine/connection_security.cpp)
+  src/engine/connection_security.cpp
+  src/engine/role_management.cpp)
 
 # Link OpenSSL to the engine library
 target_link_libraries(scratchbird_engine OpenSSL::SSL OpenSSL::Crypto)
@@ -615,5 +616,15 @@ if(SCRATCHBIRD_BUILD_TESTS)
     target_include_directories(tls_server_tests PRIVATE ${GTEST_INCLUDE_DIRS})
   endif()
   add_test(NAME tls_server_tests COMMAND tls_server_tests)
+
+  # Phase 11.6: Role Management and Security Context Tests
+  add_executable(role_management_tests tests/role_management_tests.cpp)
+  target_link_libraries(role_management_tests scratchbird_engine)
+  if(GTEST_FOUND)
+    target_link_libraries(role_management_tests ${GTEST_LIBRARIES})
+    target_include_directories(role_management_tests
+                               PRIVATE ${GTEST_INCLUDE_DIRS})
+  endif()
+  add_test(NAME role_management_tests COMMAND role_management_tests)
 
 endif()
