@@ -10,9 +10,9 @@ namespace scratchbird::engine
 {
 
     Session::Session(std::uint64_t session_id, std::unique_ptr<TcpConnection> connection,
-                     CatalogManager* catalog)
+                     CatalogManager* catalog, AuthenticationManager* auth_manager)
         : session_id_(session_id), connection_(std::move(connection)), catalog_(catalog),
-          state_(SessionState::Created), database_attached_(false),
+          auth_manager_(auth_manager), state_(SessionState::Created), database_attached_(false),
           connect_time_(get_current_time_ms()), queries_executed_(0)
     {
         last_activity_time_ = connect_time_;
@@ -122,7 +122,8 @@ namespace scratchbird::engine
 
     bool Session::is_authenticated() const
     {
-        return auth_context_.is_authenticated;
+        return auth_context_.is_authenticated() && (state_.load() == SessionState::Authenticated ||
+                                                    state_.load() == SessionState::Connected);
     }
 
     bool Session::attach_database(const std::string& database_path)
@@ -178,18 +179,28 @@ namespace scratchbird::engine
 
     bool Session::handle_authentication()
     {
-        // TODO: Implement proper authentication protocol
-        // For now, simulate successful authentication
+        // Use proper authentication system if available
+        if (auth_manager_) {
+            // Set up authentication context with connection information
+            auth_context_.set_remote_address(get_client_address());
+            auth_context_.set_client_info("ScratchBird Session " + std::to_string(session_id_));
 
-        auth_context_.username = "anonymous";
-        auth_context_.client_address = get_client_address();
-        auth_context_.auth_method = "none";
-        auth_context_.is_authenticated = true;
-        auth_context_.requires_2fa = false;
-        auth_context_.role_name = "public";
+            // For network protocols, authentication typically involves a handshake
+            // For now, we'll require explicit authentication calls
+            state_ = SessionState::Authenticating;
+            return true;
+        } else {
+            // Fallback to anonymous authentication if no auth manager
+            auth_context_.set_username("anonymous");
+            auth_context_.set_remote_address(get_client_address());
+            auth_context_.set_authenticated(true);
 
-        state_ = SessionState::Authenticated;
-        return true;
+            security_context_ = std::make_unique<SecurityContext>(
+                "anonymous", "", std::vector<std::string>{"public"});
+
+            state_ = SessionState::Authenticated;
+            return true;
+        }
     }
 
     bool Session::process_messages()
@@ -232,6 +243,71 @@ namespace scratchbird::engine
         auto now = std::chrono::system_clock::now();
         return std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch())
             .count();
+    }
+
+    // Enhanced authentication methods
+    bool Session::authenticate_user(const std::string& username, const std::string& password)
+    {
+        if (!auth_manager_) {
+            return false;
+        }
+
+        std::lock_guard<std::mutex> lock(session_mutex_);
+
+        auth_context_.set_username(username);
+        auth_context_.set_credential("password", password);
+
+        ScratchBird::AuthenticationResult result = auth_manager_->authenticate_user(auth_context_);
+
+        if (result == ScratchBird::AuthenticationResult::Success) {
+            // Create security context
+            security_context_ =
+                std::make_unique<SecurityContext>(username, "", std::vector<std::string>{"user"});
+
+            state_ = SessionState::Authenticated;
+            return true;
+        } else if (result == ScratchBird::AuthenticationResult::RequiresTwoFactor) {
+            // Initiate 2FA challenge
+            active_challenge_ = auth_manager_->initiate_challenge(
+                username, ScratchBird::AuthenticationMethod::TwoFactor);
+            auth_context_.set_requires_2fa(true);
+            return false; // Not fully authenticated yet
+        }
+
+        return false;
+    }
+
+    bool Session::authenticate_with_challenge(const std::string& challenge_response)
+    {
+        if (!auth_manager_ || !active_challenge_) {
+            return false;
+        }
+
+        std::lock_guard<std::mutex> lock(session_mutex_);
+
+        active_challenge_->set_response(challenge_response);
+
+        ScratchBird::AuthenticationResult result =
+            auth_manager_->complete_challenge(*active_challenge_, auth_context_);
+
+        if (result == ScratchBird::AuthenticationResult::Success) {
+            // Create security context
+            security_context_ = std::make_unique<SecurityContext>(auth_context_.get_username(), "",
+                                                                  std::vector<std::string>{"user"});
+
+            active_challenge_.reset();
+            state_ = SessionState::Authenticated;
+            return true;
+        }
+
+        // Clear challenge on failure
+        active_challenge_.reset();
+        return false;
+    }
+
+    bool Session::require_two_factor() const
+    {
+        return auth_context_.requires_2fa();
     }
 
 } // namespace scratchbird::engine
