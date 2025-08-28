@@ -4,8 +4,10 @@
 #include <chrono>
 #include <cmath>
 #include <map>
+#include <numeric>
 #include <sstream>
 #include <stdexcept>
+#include <thread>
 
 namespace scratchbird::engine
 {
@@ -138,6 +140,25 @@ namespace scratchbird::engine
         auto it = memtable.begin();
         std::uint64_t entries_written = 0;
 
+        // Simple Bloom filter build: fixed-size 8192 bits, 3 hash functions
+        const std::size_t bloom_bits = 8192;
+        std::vector<std::uint8_t> bloom((bloom_bits + 7) / 8, 0);
+
+        auto bloom_set = [&](const std::string& k) {
+            auto h1 = std::hash<std::string>{}(k);
+            std::uint64_t h2 = 1469598103934665603ull; // FNV-like
+            for (unsigned char c : k)
+                h2 = (h2 ^ c) * 1099511628211ull;
+            auto h3 = static_cast<std::uint64_t>(std::accumulate(k.begin(), k.end(), 0u));
+            auto set_bit = [&](std::uint64_t h) {
+                std::size_t idx = static_cast<std::size_t>(h % bloom_bits);
+                bloom[idx / 8] |= static_cast<std::uint8_t>(1u << (idx % 8));
+            };
+            set_bit(h1);
+            set_bit(h2);
+            set_bit(h3);
+        };
+
         while (it.valid) {
             if (write_entry(it.key, it.row_id, it.payload)) {
                 entries_written++;
@@ -145,19 +166,38 @@ namespace scratchbird::engine
                     info_.min_key = it.key;
                 }
                 info_.max_key = it.key;
+                bloom_set(it.key);
             }
             it = memtable.next(it);
         }
 
         info_.key_count = entries_written;
+        info_.bloom_bits = std::move(bloom);
         return entries_written > 0;
     }
 
     bool SSTable::search(const std::string& key, std::vector<std::uint64_t>& row_ids) const
     {
-        // Simplified search - would use bloom filters and indices in production
+        // Key range pre-check
         if (key < info_.min_key || key > info_.max_key) {
             return false;
+        }
+
+        // Bloom filter pre-check (best-effort)
+        if (!info_.bloom_bits.empty()) {
+            auto bits = info_.bloom_bits.size() * 8;
+            auto h1 = std::hash<std::string>{}(key);
+            std::uint64_t h2 = 1469598103934665603ull;
+            for (unsigned char c : key)
+                h2 = (h2 ^ c) * 1099511628211ull;
+            auto h3 = static_cast<std::uint64_t>(std::accumulate(key.begin(), key.end(), 0u));
+            auto test_bit = [&](std::uint64_t h) {
+                std::size_t idx = static_cast<std::size_t>(h % bits);
+                return (info_.bloom_bits[idx / 8] >> (idx % 8)) & 1u;
+            };
+            if (!(test_bit(h1) && test_bit(h2) && test_bit(h3))) {
+                return false; // Definitely not present
+            }
         }
 
         // Simulate SSTable search by iterating through entries
@@ -362,11 +402,20 @@ namespace scratchbird::engine
             size_tiers[tier].push_back(ss.sstable_id);
         }
 
+        // Parallelize merges per tier (simple thread-per-merge demo)
+        std::vector<std::thread> workers;
         for (auto& [tier, sstable_ids] : size_tiers) {
             if (sstable_ids.size() >= 4) {
-                merge_sstables(sstable_ids,
-                               0); // All compacted SSTables go to level 0 in size-tiered
+                // Copy IDs for thread safety
+                auto ids = sstable_ids;
+                workers.emplace_back([this, ids]() {
+                    merge_sstables(ids, 0);
+                });
             }
+        }
+        for (auto& t : workers) {
+            if (t.joinable())
+                t.join();
         }
     }
 
@@ -651,7 +700,12 @@ namespace scratchbird::engine
         // LSM-Tree search cost depends on number of levels
         auto sstables = compaction_manager_->get_sstables_for_level(0);
         double cost = 1.0;             // MemTable search
-        cost += sstables.size() * 0.5; // SSTable searches with bloom filters
+        // Lower cost if Bloom filters are present
+        double per_sstable = 0.5;
+        for (const auto& ss : sstables) {
+            per_sstable += ss.bloom_bits.empty() ? 0.0 : -0.2;
+        }
+        cost += sstables.size() * std::max(0.2, per_sstable);
         return cost;
     }
 

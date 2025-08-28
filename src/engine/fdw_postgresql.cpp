@@ -282,9 +282,10 @@ namespace scratchbird::engine
 
         // Mock connection establishment
         std::cout << "PostgreSQL FDW: Connecting to " << conn->host << ":" << conn->port
-                  << " database " << conn->database << " as " << conn->username << std::endl;
+                  << " database " << conn->database << " as " << conn->username
+                  << (server_config.use_ssl ? " (SSL)" : "") << std::endl;
 
-        // In real implementation, this would use PQconnectdb()
+        // In real implementation, this would use PQconnectdb() with ssl/gss options
         conn->connected = true; // Mock: assume connection always succeeds
 
         if (!test_postgresql_connection(conn, error_msg)) {
@@ -636,9 +637,23 @@ namespace scratchbird::engine
 
         if (server_config.use_ssl) {
             conn_str << " sslmode=require";
+            if (!server_config.ssl_cert_path.empty())
+                conn_str << " sslcert='" << server_config.ssl_cert_path << "'";
+            if (!server_config.ssl_key_path.empty())
+                conn_str << " sslkey='" << server_config.ssl_key_path << "'";
+            if (!server_config.ssl_ca_path.empty())
+                conn_str << " sslrootcert='" << server_config.ssl_ca_path << "'";
         } else {
             conn_str << " sslmode=disable";
         }
+
+        // Optional GSSAPI/Kerberos parameters via server options
+        auto it = server_config.options.find("gssencmode");
+        if (it != server_config.options.end())
+            conn_str << " gssencmode='" << it->second << "'";
+        it = server_config.options.find("krbsrvname");
+        if (it != server_config.options.end())
+            conn_str << " krbsrvname='" << it->second << "'";
 
         return conn_str.str();
     }

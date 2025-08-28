@@ -32,6 +32,9 @@ namespace scratchbird::engine
         std::string max_key;
         std::uint64_t creation_time;
         bool compacting{false};
+        // Optional Bloom filter to reduce false-positive SSTable probes
+        // Represented as a simple bit-vector; empty means disabled/unavailable
+        std::vector<std::uint8_t> bloom_bits;
     };
 
     /**
