@@ -4443,6 +4443,140 @@ namespace scratchbird
                         return out;
                     };
                     for (const auto& op : ast.ddlTable.alter_ops) {
+                        // Partitioning registration: ALTER TABLE ... SET PARTITION BY ...
+                        {
+                            auto lower = [](std::string s) {
+                                std::transform(s.begin(), s.end(), s.begin(),
+                                               [](unsigned char c) { return char(std::tolower(c)); });
+                                return s;
+                            };
+                            std::string lo = lower(op.raw);
+                            auto pos_part = lo.find(" partition by ");
+                            if (pos_part != std::string::npos) {
+                                // Determine method (range or list)
+                                std::string method;
+                                std::string tail = op.raw.substr(pos_part + 13);
+                                auto trim = [](std::string& s) {
+                                    auto not_space = [](int ch) { return !std::isspace(ch); };
+                                    s.erase(s.begin(), std::find_if(s.begin(), s.end(), not_space));
+                                    s.erase(std::find_if(s.rbegin(), s.rend(), not_space).base(), s.end());
+                                };
+                                std::string ltail = lower(tail);
+                                if (ltail.rfind("range ", 0) == 0) {
+                                    method = "RANGE";
+                                    tail = tail.substr(6);
+                                } else if (ltail.rfind("list ", 0) == 0) {
+                                    method = "LIST";
+                                    tail = tail.substr(5);
+                                }
+                                // Expect key column in parentheses
+                                auto lp = tail.find('(');
+                                auto rp = tail.find(')');
+                                if (lp == std::string::npos || rp == std::string::npos || rp <= lp) {
+                                    continue; // malformed; ignore
+                                }
+                                std::string keycol = tail.substr(lp + 1, rp - lp - 1);
+                                trim(keycol);
+                                // After key, expect a parenthesized partition spec list
+                                auto lp2 = tail.find('(', rp + 1);
+                                auto rp2 = tail.rfind(')');
+                                if (lp2 == std::string::npos || rp2 == std::string::npos || rp2 <= lp2) {
+                                    // Some formats may use the remaining of op.raw as specs; try from last '(' overall
+                                    lp2 = op.raw.find('(', op.raw.find(')', pos_part) + 1);
+                                    rp2 = op.raw.rfind(')');
+                                    if (lp2 == std::string::npos || rp2 == std::string::npos || rp2 <= lp2)
+                                        continue;
+                                }
+                                std::string specs = op.raw.substr(lp2 + 1, rp2 - lp2 - 1);
+                                // Split top-level commas
+                                auto split_csv_top = [&](const std::string& s) {
+                                    std::vector<std::string> out;
+                                    std::string cur;
+                                    int d = 0;
+                                    for (char c : s) {
+                                        if (c == '(')
+                                            d++;
+                                        else if (c == ')' && d > 0)
+                                            d--;
+                                        if (c == ',' && d == 0) {
+                                            std::string t = cur;
+                                            trim(t);
+                                            if (!t.empty())
+                                                out.push_back(t);
+                                            cur.clear();
+                                        } else
+                                            cur.push_back(c);
+                                    }
+                                    std::string t = cur;
+                                    trim(t);
+                                    if (!t.empty())
+                                        out.push_back(t);
+                                    return out;
+                                };
+                                auto unquote = [](std::string s) {
+                                    auto a = s.find_first_not_of(" \t");
+                                    auto b = s.find_last_not_of(" \t");
+                                    if (a == std::string::npos)
+                                        return std::string();
+                                    s = s.substr(a, b - a + 1);
+                                    if (!s.empty() && (s.front() == '\'' || s.front() == '"')) {
+                                        if (s.size() >= 2 && (s.back() == '\'' || s.back() == '"'))
+                                            s = s.substr(1, s.size() - 2);
+                                    }
+                                    return s;
+                                };
+                                PartitionMap pm;
+                                pm.relation = relname;
+                                pm.key_column = keycol;
+                                for (const auto& item : split_csv_top(specs)) {
+                                    std::string lit = item;
+                                    std::string ll = lower(lit);
+                                    // Expect: name FROM 'a' TO 'b'   or   name IN ('a','b')
+                                    // Extract name (first token)
+                                    std::string name;
+                                    {
+                                        std::string t = lit;
+                                        trim(t);
+                                        auto sp = t.find_first_of(" \t\n");
+                                        name = (sp == std::string::npos) ? t : t.substr(0, sp);
+                                        if (sp != std::string::npos)
+                                            lit = t.substr(sp + 1);
+                                        else
+                                            lit.clear();
+                                    }
+                                    PartitionRange pr;
+                                    pr.name = name;
+                                    std::string ll2 = lower(lit);
+                                    if (ll2.rfind("from ", 0) == 0) {
+                                        std::string after = lit.substr(5);
+                                        trim(after);
+                                        auto topos = lower(after).find(" to ");
+                                        if (topos != std::string::npos) {
+                                            std::string a = after.substr(0, topos);
+                                            std::string b = after.substr(topos + 4);
+                                            trim(a);
+                                            trim(b);
+                                            pr.start = unquote(a);
+                                            pr.end = unquote(b);
+                                        }
+                                    } else if (ll2.rfind("in ", 0) == 0) {
+                                        std::string after = lit.substr(3);
+                                        trim(after);
+                                        auto lpv = after.find('(');
+                                        auto rpv = after.rfind(')');
+                                        if (lpv != std::string::npos && rpv != std::string::npos && rpv > lpv) {
+                                            std::string vals = after.substr(lpv + 1, rpv - lpv - 1);
+                                            for (const auto& v : split_csv_top(vals))
+                                                pr.list_values.push_back(unquote(v));
+                                        }
+                                    }
+                                    pm.ranges.push_back(std::move(pr));
+                                }
+                                partition_register(pm);
+                                // proceed to next op
+                                continue;
+                            }
+                        }
                         std::string lo = lower(op.raw);
                         if (op.kind == "ADD") {
                             std::string lb = lower(op.raw);
