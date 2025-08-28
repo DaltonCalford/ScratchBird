@@ -1115,6 +1115,66 @@ namespace ScratchBird
         return !get_user_enrolled_methods(username).empty();
     }
 
+    TwoFactorStatus
+    TwoFactorAuthenticationManager::get_user_2fa_status(const std::string& username) const
+    {
+        return is_user_enrolled(username) ? TwoFactorStatus::Enrolled : TwoFactorStatus::NotEnrolled;
+    }
+
+    std::unique_ptr<AuthenticationChallenge> TwoFactorAuthenticationManager::initiate_2fa_challenge(
+        const std::string& username, AuthenticationContext& context,
+        TwoFactorMethod preferred_method)
+    {
+        // Try preferred provider first
+        if (auto* provider = get_provider(preferred_method)) {
+            if (auto challenge = provider->create_challenge(username, context)) {
+                return challenge;
+            }
+        }
+
+        // Fallback: try any enrolled provider
+        auto methods = get_user_enrolled_methods(username);
+        for (auto method : methods) {
+            if (auto* provider = get_provider(method)) {
+                if (auto challenge = provider->create_challenge(username, context)) {
+                    return challenge;
+                }
+            }
+        }
+
+        return nullptr;
+    }
+
+    AuthenticationResult TwoFactorAuthenticationManager::verify_2fa_response(
+        const AuthenticationChallenge& challenge, const std::string& response,
+        AuthenticationContext& context)
+    {
+        const std::string& username = context.get_username();
+
+        // Attempt verification against all providers (first success wins)
+        {
+            std::lock_guard<std::mutex> lock(pimpl_->providers_mutex_);
+            for (auto& [name, provider] : pimpl_->providers_) {
+                auto result = provider->verify_response(challenge, response, context);
+                if (result == AuthenticationResult::Success) {
+                    std::lock_guard<std::mutex> stats_lock(pimpl_->stats_mutex_);
+                    pimpl_->stats_.successful_verifications++;
+                    return result;
+                } else if (result == AuthenticationResult::AccountLocked ||
+                           result == AuthenticationResult::InvalidCredentials) {
+                    // Count as failed attempt for statistics
+                    std::lock_guard<std::mutex> stats_lock(pimpl_->stats_mutex_);
+                    pimpl_->stats_.failed_verifications++;
+                    // keep trying other providers unless account is locked
+                    if (result == AuthenticationResult::AccountLocked)
+                        return result;
+                }
+            }
+        }
+
+        return AuthenticationResult::InvalidCredentials;
+    }
+
     // TwoFactorAuthenticationProvider implementation
     TwoFactorAuthenticationProvider::TwoFactorAuthenticationProvider(
         std::unique_ptr<TwoFactorAuthenticationManager> manager)

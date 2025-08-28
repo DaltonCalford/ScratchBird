@@ -2,6 +2,7 @@
 
 #include <chrono>
 #include <gtest/gtest.h>
+#include <algorithm>
 #include <memory>
 #include <thread>
 
@@ -143,7 +144,7 @@ TEST_F(TwoFactorAuthTest, TOTPUtilities_QRCodeURL)
     std::string qr_url = generate_totp_qr_url(secret, account, issuer);
 
     EXPECT_FALSE(qr_url.empty());
-    EXPECT_TRUE(qr_url.starts_with("otpauth://totp/"));
+    EXPECT_TRUE(qr_url.rfind("otpauth://totp/", 0) == 0);
     EXPECT_TRUE(qr_url.find(secret) != std::string::npos);
     EXPECT_TRUE(qr_url.find(account) != std::string::npos);
     EXPECT_TRUE(qr_url.find(issuer) != std::string::npos);

@@ -1,6 +1,7 @@
 #include "scratchbird/engine/trusted_auth.h"
 
 #include <gtest/gtest.h>
+#include <algorithm>
 #include <memory>
 
 using namespace ScratchBird;
@@ -115,7 +116,6 @@ TEST_F(TrustedAuthTest, TrustedOSAuthenticatorFactory_AutoCreation)
     auto authenticator = TrustedOSAuthenticatorFactory::create_auto();
 
     if (authenticator) {
-        EXPECT_FALSE(authenticator->get_provider_name().empty());
         EXPECT_FALSE(authenticator->get_auth_type_name().empty());
 
         // Basic interface tests

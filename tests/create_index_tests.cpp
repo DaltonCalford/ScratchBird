@@ -22,7 +22,7 @@ namespace scratchbird::engine
             )
         )";
 
-            auto result = execute_ddl_sql(create_table_sql);
+            auto result = execute_select_sql(create_table_sql);
             if (!result.success) {
                 std::cerr << "CREATE TABLE failed: " << result.error_message << std::endl;
                 return;
@@ -31,7 +31,7 @@ namespace scratchbird::engine
 
             // Test 1: CREATE simple single-column INDEX
             std::string create_idx1_sql = "CREATE INDEX idx_name ON test_index_table (name)";
-            result = execute_ddl_sql(create_idx1_sql);
+            result = execute_select_sql(create_idx1_sql);
             if (result.success) {
                 std::cout << "✅ CREATE INDEX (single column) succeeded" << std::endl;
             } else {
@@ -42,7 +42,7 @@ namespace scratchbird::engine
             // Test 2: CREATE UNIQUE INDEX
             std::string create_unique_sql =
                 "CREATE UNIQUE INDEX idx_email_unique ON test_index_table (email)";
-            result = execute_ddl_sql(create_unique_sql);
+            result = execute_select_sql(create_unique_sql);
             if (result.success) {
                 std::cout << "✅ CREATE UNIQUE INDEX succeeded" << std::endl;
             } else {
@@ -52,7 +52,7 @@ namespace scratchbird::engine
             // Test 3: CREATE multi-column INDEX with directions
             std::string create_multi_sql =
                 "CREATE INDEX idx_age_score ON test_index_table (age ASC, score DESC)";
-            result = execute_ddl_sql(create_multi_sql);
+            result = execute_select_sql(create_multi_sql);
             if (result.success) {
                 std::cout << "✅ CREATE INDEX (multi-column with directions) succeeded"
                           << std::endl;
@@ -64,7 +64,7 @@ namespace scratchbird::engine
             // Test 4: CREATE INDEX with specific method
             std::string create_btree_sql =
                 "CREATE INDEX idx_name_btree ON test_index_table USING BTREE (name)";
-            result = execute_ddl_sql(create_btree_sql);
+            result = execute_select_sql(create_btree_sql);
             if (result.success) {
                 std::cout << "✅ CREATE INDEX USING BTREE succeeded" << std::endl;
             } else {
@@ -75,7 +75,7 @@ namespace scratchbird::engine
             // Test 5: CREATE expression INDEX (computed by)
             std::string create_expr_sql =
                 "CREATE INDEX idx_name_upper ON test_index_table COMPUTED BY (UPPER(name))";
-            result = execute_ddl_sql(create_expr_sql);
+            result = execute_select_sql(create_expr_sql);
             if (result.success) {
                 std::cout << "✅ CREATE INDEX (expression/computed by) succeeded" << std::endl;
             } else {
@@ -85,7 +85,7 @@ namespace scratchbird::engine
 
             // Test 6: Error case - CREATE INDEX on non-existent table
             std::string create_error_sql = "CREATE INDEX idx_error ON nonexistent_table (id)";
-            result = execute_ddl_sql(create_error_sql);
+            result = execute_select_sql(create_error_sql);
             if (!result.success) {
                 std::cout << "✅ CREATE INDEX on non-existent table correctly failed: "
                           << result.error_message << std::endl;
@@ -96,7 +96,7 @@ namespace scratchbird::engine
 
             // Test 7: Error case - CREATE INDEX without columns
             std::string create_no_cols_sql = "CREATE INDEX idx_empty ON test_index_table ()";
-            result = execute_ddl_sql(create_no_cols_sql);
+            result = execute_select_sql(create_no_cols_sql);
             if (!result.success) {
                 std::cout << "✅ CREATE INDEX without columns correctly failed: "
                           << result.error_message << std::endl;
@@ -107,7 +107,7 @@ namespace scratchbird::engine
 
             // Test 8: DROP INDEX operations
             std::string drop_idx1_sql = "DROP INDEX idx_name";
-            result = execute_ddl_sql(drop_idx1_sql);
+            result = execute_select_sql(drop_idx1_sql);
             if (result.success) {
                 std::cout << "✅ DROP INDEX succeeded" << std::endl;
             } else {
@@ -116,7 +116,7 @@ namespace scratchbird::engine
 
             // Test 9: DROP UNIQUE INDEX
             std::string drop_unique_sql = "DROP INDEX idx_email_unique";
-            result = execute_ddl_sql(drop_unique_sql);
+            result = execute_select_sql(drop_unique_sql);
             if (result.success) {
                 std::cout << "✅ DROP INDEX (unique) succeeded" << std::endl;
             } else {
@@ -125,7 +125,7 @@ namespace scratchbird::engine
 
             // Test 10: Error case - DROP non-existent INDEX
             std::string drop_error_sql = "DROP INDEX nonexistent_index";
-            result = execute_ddl_sql(drop_error_sql);
+            result = execute_select_sql(drop_error_sql);
             if (!result.success) {
                 std::cout << "✅ DROP INDEX on non-existent index correctly failed: "
                           << result.error_message << std::endl;
@@ -136,7 +136,7 @@ namespace scratchbird::engine
 
             // Test 11: Error case - DROP INDEX without name
             std::string drop_no_name_sql = "DROP INDEX";
-            result = execute_ddl_sql(drop_no_name_sql);
+            result = execute_select_sql(drop_no_name_sql);
             if (!result.success) {
                 std::cout << "✅ DROP INDEX without name correctly failed: " << result.error_message
                           << std::endl;
