@@ -1,6 +1,7 @@
 # ScratchBird Build System Documentation
 
 ## Overview
+
 ScratchBird uses CMake as its build system with CTest integration for comprehensive testing. All build artifacts are contained within the `build/` directory to maintain a clean project structure.
 
 ## Directory Structure
@@ -31,11 +32,13 @@ ScratchBird/
 ## Build System Rules
 
 ### ❌ NEVER DO THIS:
+
 - Place compiled executables in project root
 - Build tests manually with `g++` commands
 - Create executables outside the `build/` directory
 
 ### ✅ ALWAYS DO THIS:
+
 - Place test source files in `tests/` directory
 - Register new tests in `CMakeLists.txt` with `add_executable()` and `add_test()`
 - Build using CMake: `cmake --build build --target <test_name>`
@@ -44,12 +47,14 @@ ScratchBird/
 ## Test Development Workflow
 
 ### 1. Create Test Source File
+
 ```bash
 # Create in tests/ directory
 vim tests/my_new_test.cpp
 ```
 
 ### 2. Register in CMakeLists.txt
+
 ```cmake
 add_executable(my_new_test tests/my_new_test.cpp)
 target_link_libraries(my_new_test scratchbird_engine)
@@ -57,11 +62,13 @@ add_test(NAME my_new_test COMMAND my_new_test)
 ```
 
 ### 3. Build with CMake
+
 ```bash
 cmake --build build --target my_new_test
 ```
 
 ### 4. Run with CTest
+
 ```bash
 cd build && ctest -R my_new_test --verbose
 ```
@@ -69,17 +76,20 @@ cd build && ctest -R my_new_test --verbose
 ## CMake Configuration
 
 The project uses CMake 3.20+ with the following key settings:
+
 - **C++ Standard**: C++17
 - **Build Type**: Configurable (Debug/Release)
 - **Test Framework**: CTest integration
 - **Engine Library**: `scratchbird_engine` (static library)
 
 ### Key CMake Targets:
+
 - `scratchbird_engine` - Core database engine library
 - `<test_name>` - Individual test executables (40+ tests)
 - `all` - Build all targets
 
 ### Test Registration Pattern:
+
 ```cmake
 add_executable(<test_name> tests/<test_name>.cpp)
 target_link_libraries(<test_name> scratchbird_engine)
@@ -87,6 +97,7 @@ add_test(NAME <test_name> COMMAND <test_name>)
 ```
 
 ### Modern Test Pattern with Database Sharing:
+
 ```cpp
 // Include test database utilities
 #include "test_db_utils.h"
@@ -102,9 +113,11 @@ int main() {
     return 0; // Database automatically cleaned up
 }
 ```
+
 ## Build Directory Contents
 
 After building, the `build/` directory contains:
+
 ```
 build/
 ├── CMakeCache.txt
@@ -129,6 +142,7 @@ build/
 ## Troubleshooting
 
 ### If executables appear in wrong location:
+
 ```bash
 # Wrong: executable in project root
 ./my_test  # ❌ Should not exist
@@ -138,12 +152,14 @@ build/
 ```
 
 ### If CMake doesn't recognize new test:
+
 ```bash
 # Reconfigure CMake after adding new test to CMakeLists.txt
 cd build && cmake .. && make <test_name>
 ```
 
 ### If test isn't registered with CTest:
+
 - Verify `add_test(NAME <test_name> COMMAND <test_name>)` is in `CMakeLists.txt`
 - Reconfigure: `cd build && cmake ..`
 - List tests: `cd build && ctest --list-tests`
@@ -155,12 +171,14 @@ cd build && cmake .. && make <test_name>
 ScratchBird implements an efficient test database sharing system to optimize test execution:
 
 #### Test Database Utility (test_db_utils.h)
+
 - **RAII Database Management**: `TestDatabaseRAII` class for automatic database lifecycle
 - **Database Reuse Pattern**: Tests check if database exists before creating new ones
 - **Process-Unique Paths**: Each test process gets unique database paths to avoid conflicts
 - **Automatic Cleanup**: Database files cleaned up after test completion
 
 #### Usage Pattern:
+
 ```cpp
 #include "test_db_utils.h"
 
@@ -172,53 +190,11 @@ scratchbird::tests::TestDatabaseRAII test_db("test_name", fresh=false);
 ```
 
 #### Key Benefits:
+
 - **Performance**: Reduced database creation overhead
 - **Reliability**: No conflicts between concurrent test processes
 - **Maintenance**: Automatic cleanup prevents test database accumulation
 - **Flexibility**: Fresh database option when needed for isolation
-
-### Test Categories and Coverage
-
-ScratchBird maintains a comprehensive test suite with **100% pass rate (48/48 tests)**:
-
-#### Core Engine Tests (15 tests)
-- Heap storage, corruption, and tuple management
-- Space allocation and multi-segment storage
-- Transaction visibility and deadlock detection
-- Catalog persistence and bootstrap operations
-
-#### SQL Processing Tests (12 tests)
-- SQL executor with complex queries and joins
-- Query optimizer and statistics collection
-- Set operations (UNION/INTERSECT/EXCEPT)
-- View creation and management
-
-#### Constraint and Integrity Tests (8 tests)
-- Constraint system (CHECK/NOT NULL/UNIQUE/PK/FK)
-- Foreign key actions (CASCADE/RESTRICT/SET NULL/SET DEFAULT)
-- Trigger system with WHEN clauses
-
-#### PSQL Runtime Tests (7 tests)
-- Stored procedures and user-defined functions
-- EXECUTE BLOCK with variables and control flow
-- Exception handling and cursor operations
-- Advanced PSQL features (packages, debugging, performance optimization)
-
-#### Index Family Tests (6 tests)
-- Hash index implementation with extensible hashing
-- LSM-Tree index with compaction strategies
-- Columnstore index with compression algorithms
-- R-Tree index framework for spatial queries
-- Index integration and optimizer testing
-- Cross-family validation and capability queries
-
-### Adaptive Testing Pattern
-
-Tests use an adaptive pattern that:
-- ✅ **Validates Core Functionality**: Ensures queries execute successfully
-- ✅ **Tests Complete Features**: Validates expected results when features are fully implemented
-- ✅ **Tolerates Development**: Allows incomplete features to pass with diagnostic output
-- ✅ **Prevents Regressions**: Comprehensive coverage protects against future breaking changes
 
 ### Test Execution
 
@@ -236,11 +212,16 @@ cd build && ctest -j$(nproc)
 cd build && ctest --output-junit results.xml
 ```
 
-## Historical Context
+## Reference Resources
 
-This build system supports ScratchBird's evolution from basic SQL database to world-class application development platform:
-- **Phase 1-7**: Complete database foundation with storage, transactions, SQL processing, optimization
-- **Phase 8**: Full PSQL runtime with stored procedures, functions, cursors, exceptions (100% complete)
-- **Phase 9**: Advanced Index Families - 7 production index types (100% complete)
+**Original Firebird Source :**
 
-The CMake configuration and test infrastructure ensure consistent, reproducible builds with comprehensive regression protection across all phases of this production-ready database engine.
+/home/dcalford/CliWork/Firebird-6.0.0.1124-1ccdf1c-source
+
+**Original PostgreSQL Source :**
+
+/home/dcalford/CliWork/postgresql-17.6
+
+**Original FlameRobin Source**
+
+/home/dcalford/CliWork/flamerobin-master
