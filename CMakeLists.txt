@@ -116,7 +116,9 @@ add_library(
   src/engine/authentication.cpp
   src/engine/password_auth.cpp
   src/engine/trusted_auth.cpp
-  src/engine/two_factor_auth.cpp)
+  src/engine/two_factor_auth.cpp
+  src/engine/tls_server.cpp
+  src/engine/connection_security.cpp)
 
 # Link OpenSSL to the engine library
 target_link_libraries(scratchbird_engine OpenSSL::SSL OpenSSL::Crypto)
@@ -604,5 +606,14 @@ if(SCRATCHBIRD_BUILD_TESTS)
                                PRIVATE ${GTEST_INCLUDE_DIRS})
   endif()
   add_test(NAME two_factor_auth_tests COMMAND two_factor_auth_tests)
+
+  # Phase 11.5: TLS and Security Tests
+  add_executable(tls_server_tests tests/tls_server_tests.cpp)
+  target_link_libraries(tls_server_tests scratchbird_engine)
+  if(GTEST_FOUND)
+    target_link_libraries(tls_server_tests ${GTEST_LIBRARIES})
+    target_include_directories(tls_server_tests PRIVATE ${GTEST_INCLUDE_DIRS})
+  endif()
+  add_test(NAME tls_server_tests COMMAND tls_server_tests)
 
 endif()
