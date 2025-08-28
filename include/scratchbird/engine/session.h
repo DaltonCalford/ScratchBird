@@ -1,5 +1,6 @@
 #pragma once
 
+#include "scratchbird/engine/authentication.h"
 #include "scratchbird/engine/catalog_manager.h"
 #include "scratchbird/engine/network_server.h"
 
@@ -27,24 +28,17 @@ namespace scratchbird::engine
         Error
     };
 
-    /// Authentication context
-    struct AuthenticationContext {
-        std::string username;
-        std::string password_hash;
-        std::string client_address;
-        std::string auth_method; // "password", "trusted", "certificate", "2fa"
-        bool is_authenticated = false;
-        bool requires_2fa = false;
-        std::string role_name;
-        std::unordered_map<std::string, std::string> attributes;
-    };
+    // Use the comprehensive authentication system from ScratchBird namespace
+    using AuthenticationContext = ScratchBird::AuthenticationContext;
+    using SecurityContext = ScratchBird::SecurityContext;
+    using AuthenticationManager = ScratchBird::AuthenticationManager;
 
     /// Session implementation
     class Session
     {
       public:
         Session(std::uint64_t session_id, std::unique_ptr<TcpConnection> connection,
-                CatalogManager* catalog);
+                CatalogManager* catalog, AuthenticationManager* auth_manager = nullptr);
         ~Session();
 
         // Non-copyable, non-movable
@@ -78,7 +72,16 @@ namespace scratchbird::engine
         }
         std::string get_username() const
         {
-            return auth_context_.username;
+            return auth_context_.get_username();
+        }
+
+        /// Enhanced authentication methods
+        bool authenticate_user(const std::string& username, const std::string& password);
+        bool authenticate_with_challenge(const std::string& challenge_response);
+        bool require_two_factor() const;
+        SecurityContext* get_security_context() const
+        {
+            return security_context_.get();
         }
 
         /// Database operations
@@ -108,6 +111,7 @@ namespace scratchbird::engine
         std::uint64_t session_id_;
         std::unique_ptr<TcpConnection> connection_;
         CatalogManager* catalog_;
+        AuthenticationManager* auth_manager_;
         // TODO: Add engine and protocol handler when available
         // std::unique_ptr<Engine> engine_;
         // std::unique_ptr<ProtocolHandler> protocol_handler_;
@@ -115,6 +119,8 @@ namespace scratchbird::engine
         mutable std::mutex session_mutex_;
         std::atomic<SessionState> state_;
         AuthenticationContext auth_context_;
+        std::unique_ptr<SecurityContext> security_context_;
+        std::unique_ptr<ScratchBird::AuthenticationChallenge> active_challenge_;
 
         std::string database_name_;
         bool database_attached_;

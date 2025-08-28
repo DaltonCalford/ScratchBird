@@ -29,6 +29,9 @@ endif()
 # Include directories
 include_directories(include)
 
+# Find OpenSSL for authentication
+find_package(OpenSSL REQUIRED)
+
 # ScratchBird Engine Library
 add_library(
   scratchbird_engine STATIC
@@ -104,11 +107,19 @@ add_library(
   src/engine/protocol_handler.cpp
   src/engine/scratchbird_protocol.cpp
   src/engine/firebird_protocol.cpp
+  src/engine/firebird_protocol_handler.cpp
   src/engine/provider_dispatch.cpp
   src/engine/database_provider_simple.cpp
   src/engine/threading.cpp
   src/engine/embedded_provider.cpp
-  src/engine/remote_provider.cpp)
+  src/engine/remote_provider.cpp
+  src/engine/authentication.cpp
+  src/engine/password_auth.cpp
+  src/engine/trusted_auth.cpp
+  src/engine/two_factor_auth.cpp)
+
+# Link OpenSSL to the engine library
+target_link_libraries(scratchbird_engine OpenSSL::SSL OpenSSL::Crypto)
 
 # Main ScratchBird executable
 add_executable(scratchbird src/main.cpp src/scratchbird.cpp)
@@ -535,6 +546,11 @@ if(SCRATCHBIRD_BUILD_TESTS)
 
   add_executable(firebird_protocol_tests tests/firebird_protocol_tests.cpp)
   target_link_libraries(firebird_protocol_tests scratchbird_engine)
+  if(GTEST_FOUND)
+    target_link_libraries(firebird_protocol_tests ${GTEST_LIBRARIES})
+    target_include_directories(firebird_protocol_tests
+                               PRIVATE ${GTEST_INCLUDE_DIRS})
+  endif()
   add_test(NAME firebird_protocol_tests COMMAND firebird_protocol_tests)
 
   add_executable(provider_dispatch_tests tests/provider_dispatch_tests.cpp)
@@ -552,5 +568,41 @@ if(SCRATCHBIRD_BUILD_TESTS)
   add_executable(remote_provider_tests tests/remote_provider_tests.cpp)
   target_link_libraries(remote_provider_tests scratchbird_engine)
   add_test(NAME remote_provider_tests COMMAND remote_provider_tests)
+
+  # Phase 11.4: Authentication System Tests
+  add_executable(authentication_tests tests/authentication_tests.cpp)
+  target_link_libraries(authentication_tests scratchbird_engine)
+  if(GTEST_FOUND)
+    target_link_libraries(authentication_tests ${GTEST_LIBRARIES})
+    target_include_directories(authentication_tests
+                               PRIVATE ${GTEST_INCLUDE_DIRS})
+  endif()
+  add_test(NAME authentication_tests COMMAND authentication_tests)
+
+  add_executable(password_auth_tests tests/password_auth_tests.cpp)
+  target_link_libraries(password_auth_tests scratchbird_engine)
+  if(GTEST_FOUND)
+    target_link_libraries(password_auth_tests ${GTEST_LIBRARIES})
+    target_include_directories(password_auth_tests
+                               PRIVATE ${GTEST_INCLUDE_DIRS})
+  endif()
+  add_test(NAME password_auth_tests COMMAND password_auth_tests)
+
+  add_executable(trusted_auth_tests tests/trusted_auth_tests.cpp)
+  target_link_libraries(trusted_auth_tests scratchbird_engine)
+  if(GTEST_FOUND)
+    target_link_libraries(trusted_auth_tests ${GTEST_LIBRARIES})
+    target_include_directories(trusted_auth_tests PRIVATE ${GTEST_INCLUDE_DIRS})
+  endif()
+  add_test(NAME trusted_auth_tests COMMAND trusted_auth_tests)
+
+  add_executable(two_factor_auth_tests tests/two_factor_auth_tests.cpp)
+  target_link_libraries(two_factor_auth_tests scratchbird_engine)
+  if(GTEST_FOUND)
+    target_link_libraries(two_factor_auth_tests ${GTEST_LIBRARIES})
+    target_include_directories(two_factor_auth_tests
+                               PRIVATE ${GTEST_INCLUDE_DIRS})
+  endif()
+  add_test(NAME two_factor_auth_tests COMMAND two_factor_auth_tests)
 
 endif()
