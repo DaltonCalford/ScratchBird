@@ -119,7 +119,8 @@ add_library(
   src/engine/two_factor_auth.cpp
   src/engine/tls_server.cpp
   src/engine/connection_security.cpp
-  src/engine/role_management.cpp)
+  src/engine/role_management.cpp
+  src/engine/tcp_optimizer.cpp)
 
 # Link OpenSSL to the engine library
 target_link_libraries(scratchbird_engine OpenSSL::SSL OpenSSL::Crypto)
@@ -626,5 +627,15 @@ if(SCRATCHBIRD_BUILD_TESTS)
                                PRIVATE ${GTEST_INCLUDE_DIRS})
   endif()
   add_test(NAME role_management_tests COMMAND role_management_tests)
+
+  # Phase 11.7: TCP Optimizer Tests
+  add_executable(tcp_optimizer_tests tests/tcp_optimizer_tests.cpp)
+  target_link_libraries(tcp_optimizer_tests scratchbird_engine)
+  if(GTEST_FOUND)
+    target_link_libraries(tcp_optimizer_tests ${GTEST_LIBRARIES})
+    target_include_directories(tcp_optimizer_tests
+                               PRIVATE ${GTEST_INCLUDE_DIRS})
+  endif()
+  add_test(NAME tcp_optimizer_tests COMMAND tcp_optimizer_tests)
 
 endif()
