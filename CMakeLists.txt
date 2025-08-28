@@ -121,7 +121,8 @@ add_library(
   src/engine/connection_security.cpp
   src/engine/role_management.cpp
   src/engine/tcp_optimizer.cpp
-  src/engine/connection_pool.cpp)
+  src/engine/connection_pool.cpp
+  src/engine/network_buffer.cpp)
 
 # Link OpenSSL to the engine library
 target_link_libraries(scratchbird_engine OpenSSL::SSL OpenSSL::Crypto)
@@ -648,5 +649,15 @@ if(SCRATCHBIRD_BUILD_TESTS)
                                PRIVATE ${GTEST_INCLUDE_DIRS})
   endif()
   add_test(NAME connection_pool_tests COMMAND connection_pool_tests)
+
+  # Phase 11.7: Network Buffer Tests
+  add_executable(network_buffer_tests tests/network_buffer_tests.cpp)
+  target_link_libraries(network_buffer_tests scratchbird_engine)
+  if(GTEST_FOUND)
+    target_link_libraries(network_buffer_tests ${GTEST_LIBRARIES})
+    target_include_directories(network_buffer_tests
+                               PRIVATE ${GTEST_INCLUDE_DIRS})
+  endif()
+  add_test(NAME network_buffer_tests COMMAND network_buffer_tests)
 
 endif()
