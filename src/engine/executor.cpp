@@ -3266,6 +3266,116 @@ namespace scratchbird
             auto scan = relh.open_scan();
             std::vector<Value> rowv;
             ods::RowId rid{};
+            // Partition-wise execution: if a partition map exists, precompute surviving partitions
+            std::vector<PartitionRange> selected_partitions;
+            int partition_key_col_index = -1;
+            if (const PartitionMap* pm = partition_lookup(rel)) {
+                // Identify key column index
+                auto itci = std::find(colnames.begin(), colnames.end(), pm->key_column);
+                if (itci != colnames.end())
+                    partition_key_col_index = static_cast<int>(std::distance(colnames.begin(), itci));
+
+                // Start with all partitions and prune using simple WHERE parsing as in planner
+                selected_partitions = pm->ranges;
+                auto trim = [](std::string s) {
+                    auto a = s.find_first_not_of(" \t");
+                    auto b = s.find_last_not_of(" \t");
+                    if (a == std::string::npos)
+                        return std::string();
+                    return s.substr(a, b - a + 1);
+                };
+                auto parse_const = [&](const std::string& tok) -> std::string {
+                    std::string t = trim(tok);
+                    if (!t.empty() && (t.front() == '\'' || t.front() == '"')) {
+                        if (t.size() >= 2 && (t.back() == '\'' || t.back() == '"'))
+                            return t.substr(1, t.size() - 2);
+                    }
+                    return t;
+                };
+                std::string U = q.where_expr;
+                for (auto& c : U)
+                    c = (char)std::toupper((unsigned char)c);
+                std::string K = pm->key_column;
+                for (auto& c : K)
+                    c = (char)std::toupper((unsigned char)c);
+                auto prune = [&](auto pred) {
+                    std::vector<PartitionRange> kept;
+                    kept.reserve(selected_partitions.size());
+                    for (const auto& pr : selected_partitions) {
+                        if (pred(pr))
+                            kept.push_back(pr);
+                    }
+                    selected_partitions.swap(kept);
+                };
+                if (!q.where_expr.empty()) {
+                    // BETWEEN
+                    auto pos = U.find(" BETWEEN ");
+                    if (pos != std::string::npos) {
+                        auto lhs = trim(q.where_expr.substr(0, pos));
+                        if (lhs == pm->key_column) {
+                            auto rest = q.where_expr.substr(pos + 9);
+                            auto andp = rest.find(" AND ");
+                            if (andp != std::string::npos) {
+                                std::string a = parse_const(rest.substr(0, andp));
+                                std::string b = parse_const(rest.substr(andp + 5));
+                                prune([&](const PartitionRange& pr) {
+                                    if (!pr.list_values.empty())
+                                        return true; // keep list partitions; filtered later
+                                    if ((!pr.end.empty() && pr.end < a) ||
+                                        (!pr.start.empty() && pr.start > b))
+                                        return false;
+                                    return true;
+                                });
+                            }
+                        }
+                    }
+                    // Comparators
+                    for (auto op : {std::string(">="), std::string("<="), std::string(">"),
+                                    std::string("<")}) {
+                        auto p = U.find(" " + op + " ");
+                        if (p != std::string::npos) {
+                            auto lhs = trim(q.where_expr.substr(0, p));
+                            if (lhs == pm->key_column) {
+                                std::string rhs = parse_const(q.where_expr.substr(p + op.size() + 2));
+                                prune([&](const PartitionRange& pr) {
+                                    if (!pr.list_values.empty())
+                                        return true;
+                                    if (op == ">" || op == ">=") {
+                                        if (!pr.end.empty() &&
+                                            ((op == ">" && pr.end <= rhs) ||
+                                             (op == ">=" && pr.end < rhs)))
+                                            return false;
+                                    } else if (op == "<" || op == "<=") {
+                                        if (!pr.start.empty() &&
+                                            ((op == "<" && pr.start >= rhs) ||
+                                             (op == "<=" && pr.start > rhs)))
+                                            return false;
+                                    }
+                                    return true;
+                                });
+                                break;
+                            }
+                        }
+                    }
+                    // Equality for list partitions
+                    auto pe = U.find(" = ");
+                    if (pe != std::string::npos) {
+                        auto lhs = trim(q.where_expr.substr(0, pe));
+                        if (lhs == pm->key_column) {
+                            std::string rhs = parse_const(q.where_expr.substr(pe + 3));
+                            prune([&](const PartitionRange& pr) {
+                                if (!pr.list_values.empty()) {
+                                    for (const auto& v : pr.list_values)
+                                        if (v == rhs)
+                                            return true;
+                                    return false;
+                                }
+                                return true;
+                            });
+                        }
+                    }
+                }
+            }
             // WHERE filtering + projection (buffer rows for ORDER BY/LIMIT)
             std::vector<std::vector<std::string>> rows_buffer;
             // Early-exit optimization when no ORDER BY and no GROUP and LIMIT present
@@ -3289,6 +3399,35 @@ namespace scratchbird
                 if (metrics)
                     metrics->scanned_rows++;
                 scanned_here++;
+                // Partition prefilter: skip rows not in selected partitions
+                if (!selected_partitions.empty() && partition_key_col_index >= 0 &&
+                    partition_key_col_index < (int)rowv.size()) {
+                    const std::string key = rowv[partition_key_col_index].bytes;
+                    bool ok_part = false;
+                    for (const auto& pr : selected_partitions) {
+                        if (!pr.list_values.empty()) {
+                            for (const auto& v : pr.list_values) {
+                                if (v == key) {
+                                    ok_part = true;
+                                    break;
+                                }
+                            }
+                            if (ok_part)
+                                break;
+                        } else {
+                            bool ge_start = pr.start.empty() ||
+                                            (pr.start_inclusive ? key >= pr.start : key > pr.start);
+                            bool le_end = pr.end.empty() ||
+                                          (pr.end_inclusive ? key <= pr.end : key < pr.end);
+                            if (ge_start && le_end) {
+                                ok_part = true;
+                                break;
+                            }
+                        }
+                    }
+                    if (!ok_part)
+                        continue;
+                }
                 if (!q.where_expr.empty()) {
                     if (!evaluate_predicate_compiled(where_pf, col_index, rowv))
                         continue;
