@@ -37,7 +37,7 @@ namespace scratchbird::engine
         for (;;) {
             skip_ws_and_comments();
             if (i >= s.size()) {
-                out.push_back({TokenKind::End, "", {i, i}});
+                out.push_back({TokenKind::End, "", {static_cast<int>(i), static_cast<int>(i)}});
                 break;
             }
             char c = s[i];
@@ -314,7 +314,7 @@ namespace scratchbird::engine
             }
         }
         if (matched_generated) {
-            return {TokenKind::Keyword, upper, {start, i}};
+            return {TokenKind::Keyword, upper, {static_cast<int>(start), static_cast<int>(i)}};
         }
         // Fallback keyword set when generated table is empty or unavailable
         static const std::unordered_set<std::string> kFallbackKeywords = {
@@ -333,10 +333,10 @@ namespace scratchbird::engine
             // Other common keywords
             "AND", "OR", "IN", "EXISTS", "BETWEEN", "LIKE", "IS", "TRUE", "FALSE"};
         if (kFallbackKeywords.find(upper) != kFallbackKeywords.end()) {
-            return {TokenKind::Keyword, upper, {start, i}};
+            return {TokenKind::Keyword, upper, {static_cast<int>(start), static_cast<int>(i)}};
         }
         // keep identifier as typed; resolver will normalize
-        return {TokenKind::Identifier, t, {start, i}};
+        return {TokenKind::Identifier, t, {static_cast<int>(start), static_cast<int>(i)}};
     }
 
     Token Lexer::lex_quoted_ident()
@@ -356,7 +356,7 @@ namespace scratchbird::engine
             }
             out.push_back(c);
         }
-        return {TokenKind::QuotedIdentifier, out, {start, i}};
+        return {TokenKind::QuotedIdentifier, out, {static_cast<int>(start), static_cast<int>(i)}};
     }
 
     Token Lexer::lex_number()
@@ -369,7 +369,7 @@ namespace scratchbird::engine
             while (i < s.size() && std::isxdigit(static_cast<unsigned char>(s[i])))
                 i++;
             std::string t(s.substr(start, i - start));
-            return {TokenKind::Integer, t, {start, i}};
+            return {TokenKind::Integer, t, {static_cast<int>(start), static_cast<int>(i)}};
         }
         // UUID/Binary literal X'....'
         if (s[i] == 'X' && i + 1 < s.size() && s[i + 1] == '\'') {
@@ -387,7 +387,7 @@ namespace scratchbird::engine
                 j++;
                 std::string t(s.substr(i, j - i));
                 i = j;
-                return {TokenKind::Uuid, t, {start, i}};
+                return {TokenKind::Uuid, t, {static_cast<int>(start), static_cast<int>(i)}};
             }
         }
         // Leading digits
@@ -413,7 +413,7 @@ namespace scratchbird::engine
                 i = j;
             } else {
                 // Not a number: just a '.' symbol
-                return {TokenKind::Symbol, std::string(1, s[i++]), {start, i}};
+                return {TokenKind::Symbol, std::string(1, s[i++]), {static_cast<int>(start), static_cast<int>(i)}};
             }
         }
         // Exponent part
@@ -440,7 +440,7 @@ namespace scratchbird::engine
         for (char ch : t)
             if (ch != '_')
                 norm.push_back(ch);
-        return {is_decimal ? TokenKind::Decimal : TokenKind::Integer, norm, {start, i}};
+        return {is_decimal ? TokenKind::Decimal : TokenKind::Integer, norm, {static_cast<int>(start), static_cast<int>(i)}};
     }
 
     Token Lexer::lex_string()
@@ -460,7 +460,7 @@ namespace scratchbird::engine
             }
             out.push_back(c);
         }
-        return {TokenKind::String, out, {start, i}};
+        return {TokenKind::String, out, {static_cast<int>(start), static_cast<int>(i)}};
     }
 
     // Helper: look back to previous non-space token text
@@ -479,7 +479,7 @@ namespace scratchbird::engine
         size_t start = i;
         size_t tag_start = i;
         if (s[i] != '$')
-            return {TokenKind::Symbol, std::string(1, s[i++]), {start, i}};
+            return {TokenKind::Symbol, std::string(1, s[i++]), {static_cast<int>(start), static_cast<int>(i)}};
         i++; // skip first $
         std::string tag;
         while (i < s.size() && s[i] != '$' &&
@@ -514,7 +514,7 @@ namespace scratchbird::engine
             }
             content.push_back(s[i++]);
         }
-        return {TokenKind::String, content, {start, i}};
+        return {TokenKind::String, content, {static_cast<int>(start), static_cast<int>(i)}};
     }
 
     Token Lexer::lex_symbol()
@@ -526,11 +526,11 @@ namespace scratchbird::engine
             if (i + n <= s.size() && s.substr(i, n) == t) {
                 std::string v(t);
                 i += n;
-                return {TokenKind::Symbol, v, {start, i}};
+                return {TokenKind::Symbol, v, {static_cast<int>(start), static_cast<int>(i)}};
             }
         }
         char c = s[i++];
-        return {TokenKind::Symbol, std::string(1, c), {start, i}};
+        return {TokenKind::Symbol, std::string(1, c), {static_cast<int>(start), static_cast<int>(i)}};
     }
 
 } // namespace scratchbird::engine
