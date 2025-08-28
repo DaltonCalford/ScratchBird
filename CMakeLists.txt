@@ -126,6 +126,20 @@ add_library(
 # Link OpenSSL to the engine library
 target_link_libraries(scratchbird_engine OpenSSL::SSL OpenSSL::Crypto)
 
+# Optional: libpq integration for PostgreSQL FDW
+option(SCRATCHBIRD_WITH_LIBPQ "Enable libpq for PostgreSQL FDW" OFF)
+if(SCRATCHBIRD_WITH_LIBPQ)
+  find_library(LIBPQ_LIB pq)
+  find_path(LIBPQ_INCLUDE libpq-fe.h)
+  if(LIBPQ_LIB AND LIBPQ_INCLUDE)
+    target_compile_definitions(scratchbird_engine PRIVATE SCRATCHBIRD_WITH_LIBPQ)
+    target_include_directories(scratchbird_engine PRIVATE ${LIBPQ_INCLUDE})
+    target_link_libraries(scratchbird_engine ${LIBPQ_LIB})
+  else()
+    message(WARNING "libpq not found; building without libpq integration")
+  endif()
+endif()
+
 # Main ScratchBird executable
 add_executable(scratchbird src/main.cpp src/scratchbird.cpp)
 
