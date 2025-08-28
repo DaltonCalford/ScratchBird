@@ -449,6 +449,14 @@ if(SCRATCHBIRD_BUILD_TESTS)
   add_test(NAME performance_optimization_tests
            COMMAND performance_optimization_tests)
 
+  add_executable(partitioning_tests tests/partitioning_tests.cpp)
+  target_link_libraries(partitioning_tests scratchbird_engine)
+  if(GTEST_FOUND)
+    target_link_libraries(partitioning_tests ${GTEST_LIBRARIES})
+    target_include_directories(partitioning_tests PRIVATE ${GTEST_INCLUDE_DIRS})
+  endif()
+  add_test(NAME partitioning_tests COMMAND partitioning_tests)
+
   # Analytics and Time-series function tests
   add_executable(analytics_functions_tests tests/analytics_functions_tests.cpp)
   target_link_libraries(analytics_functions_tests scratchbird_engine)
