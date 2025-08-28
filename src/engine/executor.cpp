@@ -22,6 +22,7 @@
 #include <iterator>
 #include <map>
 #include <set>
+#include <cmath>
 
 namespace scratchbird
 {
