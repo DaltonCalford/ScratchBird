@@ -229,20 +229,19 @@ void test_authentication_context()
 {
     std::cout << "\n=== Test 4.2: Authentication Context ===" << std::endl;
 
-    scratchbird::engine::AuthenticationContext auth_ctx;
-    auth_ctx.username = "testuser";
-    auth_ctx.client_address = "127.0.0.1";
-    auth_ctx.auth_method = "password";
-    auth_ctx.is_authenticated = true;
-    auth_ctx.requires_2fa = false;
-    auth_ctx.role_name = "user";
+    ScratchBird::AuthenticationContext auth_ctx;
+    auth_ctx.set_username("testuser");
+    auth_ctx.set_remote_address("127.0.0.1");
+    auth_ctx.set_credential("method", "password");
+    auth_ctx.set_authenticated(true);
+    auth_ctx.set_requires_2fa(false);
 
-    assert(auth_ctx.username == "testuser");
-    assert(auth_ctx.client_address == "127.0.0.1");
-    assert(auth_ctx.auth_method == "password");
-    assert(auth_ctx.is_authenticated);
-    assert(!auth_ctx.requires_2fa);
-    assert(auth_ctx.role_name == "user");
+    assert(auth_ctx.get_username() == "testuser");
+    assert(auth_ctx.get_remote_address() == "127.0.0.1");
+    auto method = auth_ctx.get_credential("method");
+    assert(method.has_value() && *method == std::string("password"));
+    assert(auth_ctx.is_authenticated());
+    assert(!auth_ctx.requires_2fa());
     std::cout << "✓ Authentication context structure working correctly" << std::endl;
 }
 
