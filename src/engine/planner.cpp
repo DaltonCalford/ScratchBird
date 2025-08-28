@@ -101,6 +101,7 @@ namespace scratchbird::engine
         std::uint64_t est_rows{0};
         bool order_satisfied{false};
         bool index_only{false};
+        std::string recommendation; // optional suggestion (e.g., create index)
     };
 
     static double cost_index_scan(double selectivity, double ndistinct, std::uint64_t total_rows)
@@ -235,6 +236,7 @@ namespace scratchbird::engine
         std::uint64_t rows{0};
         std::vector<std::string> used_indexes;      // for BitmapOr
         std::vector<std::string> pruned_partitions; // for partition pruning reporting
+        std::string recommendation;                  // optional suggestion (e.g., create index)
     };
 
     struct SargInfo {
@@ -729,6 +731,14 @@ namespace scratchbird::engine
             best = seq;
         else if (best.cost > seq.cost)
             best = seq;
+        // Simple index recommendation: if no index chosen and equality predicate exists, suggest
+        // creating an index on the filtered column using most selective candidate
+        if (best.method == "seq_scan" && !q.where_expr.empty()) {
+            double nd = st.ndistinct > 1.0 ? st.ndistinct : 1000.0;
+            double sel = estimate_selectivity_from_where(q.where_expr, nd);
+            if (sel <= 0.05)
+                best.recommendation = std::string("CREATE INDEX ON ") + rel + " (...)";
+        }
         return best;
     }
 
@@ -795,6 +805,9 @@ namespace scratchbird::engine
                       pc.order_satisfied ? " order_satisfied" : "",
                       pc.index_only ? " index_only" : "");
         std::string out = buf;
+        if (!pc.recommendation.empty()) {
+            out += std::string("  recommend=") + pc.recommendation;
+        }
         if (analyze) {
             // Append a toy timing estimate
             char tb[64];
