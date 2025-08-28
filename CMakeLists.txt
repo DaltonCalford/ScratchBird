@@ -488,6 +488,22 @@ if(SCRATCHBIRD_BUILD_TESTS)
   endif()
   add_test(NAME timeseries_functions_tests COMMAND timeseries_functions_tests)
 
+  add_executable(statistics_plan_tests tests/statistics_plan_tests.cpp)
+  target_link_libraries(statistics_plan_tests scratchbird_engine)
+  if(GTEST_FOUND)
+    target_link_libraries(statistics_plan_tests ${GTEST_LIBRARIES})
+    target_include_directories(statistics_plan_tests PRIVATE ${GTEST_INCLUDE_DIRS})
+  endif()
+  add_test(NAME statistics_plan_tests COMMAND statistics_plan_tests)
+
+  add_executable(fdw_postgresql_ssl_tests tests/fdw_postgresql_ssl_tests.cpp)
+  target_link_libraries(fdw_postgresql_ssl_tests scratchbird_engine)
+  if(GTEST_FOUND)
+    target_link_libraries(fdw_postgresql_ssl_tests ${GTEST_LIBRARIES})
+    target_include_directories(fdw_postgresql_ssl_tests PRIVATE ${GTEST_INCLUDE_DIRS})
+  endif()
+  add_test(NAME fdw_postgresql_ssl_tests COMMAND fdw_postgresql_ssl_tests)
+
   # PSQL Debugging Support Tests
   add_executable(psql_debugging_tests tests/psql_debugging_tests.cpp)
   target_link_libraries(psql_debugging_tests scratchbird_engine)
