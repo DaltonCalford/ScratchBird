@@ -449,6 +449,23 @@ if(SCRATCHBIRD_BUILD_TESTS)
   add_test(NAME performance_optimization_tests
            COMMAND performance_optimization_tests)
 
+  # Analytics and Time-series function tests
+  add_executable(analytics_functions_tests tests/analytics_functions_tests.cpp)
+  target_link_libraries(analytics_functions_tests scratchbird_engine)
+  if(GTEST_FOUND)
+    target_link_libraries(analytics_functions_tests ${GTEST_LIBRARIES})
+    target_include_directories(analytics_functions_tests PRIVATE ${GTEST_INCLUDE_DIRS})
+  endif()
+  add_test(NAME analytics_functions_tests COMMAND analytics_functions_tests)
+
+  add_executable(timeseries_functions_tests tests/timeseries_functions_tests.cpp)
+  target_link_libraries(timeseries_functions_tests scratchbird_engine)
+  if(GTEST_FOUND)
+    target_link_libraries(timeseries_functions_tests ${GTEST_LIBRARIES})
+    target_include_directories(timeseries_functions_tests PRIVATE ${GTEST_INCLUDE_DIRS})
+  endif()
+  add_test(NAME timeseries_functions_tests COMMAND timeseries_functions_tests)
+
   # PSQL Debugging Support Tests
   add_executable(psql_debugging_tests tests/psql_debugging_tests.cpp)
   target_link_libraries(psql_debugging_tests scratchbird_engine)
