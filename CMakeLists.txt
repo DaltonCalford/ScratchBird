@@ -197,6 +197,14 @@ target_link_libraries(dbcheck scratchbird_engine)
 # Install rules for packaging
 include(GNUInstallDirs)
 
+# ##############################################################################
+# Phase 19: Tooling targets (isql/cli/diag/bench)
+# ##############################################################################
+
+add_subdirectory(tools)
+
+# ##############################################################################
+
 # Binaries
 install(TARGETS scratchbird RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 install(TARGETS dbspace dbcheck RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
@@ -917,6 +925,10 @@ if(SCRATCHBIRD_FUZZ)
     message(WARNING "Fuzzing requires Clang; skipping fuzz targets")
   endif()
 endif()
+
+# Phase 19: basic isql smoke test to ensure the tool runs
+add_test(NAME isql_smoke_select1 COMMAND $<TARGET_FILE:isql> -c "SELECT 1"
+                                         --timing)
 
 # -----------------------------
 # Static analysis targets
