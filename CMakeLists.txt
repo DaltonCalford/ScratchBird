@@ -1,6 +1,9 @@
 cmake_minimum_required(VERSION 3.20)
 project(ScratchBird LANGUAGES C CXX)
 
+# Packaging options
+option(SB_ENABLE_CPACK "Enable CPack packaging" OFF)
+
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS OFF)
@@ -145,6 +148,55 @@ endif()
 add_executable(scratchbird src/main.cpp src/scratchbird.cpp)
 
 target_link_libraries(scratchbird scratchbird_engine)
+
+# Install rules for packaging
+include(GNUInstallDirs)
+
+# Binaries
+install(TARGETS scratchbird
+        RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+install(TARGETS dbspace dbcheck
+        RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+
+# Library (static for now) and headers
+install(TARGETS scratchbird_engine
+        ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
+install(DIRECTORY include/
+        DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+        FILES_MATCHING PATTERN "*.h")
+
+# Configuration and service files (installed only if present in source tree)
+install(FILES packaging/config/scratchbird.conf
+        DESTINATION ${CMAKE_INSTALL_SYSCONFDIR}/scratchbird
+        OPTIONAL)
+install(FILES packaging/systemd/scratchbird.service
+        DESTINATION ${CMAKE_INSTALL_PREFIX}/lib/systemd/system
+        OPTIONAL)
+
+# CPack configuration
+if(SB_ENABLE_CPACK)
+  set(CPACK_PACKAGE_NAME "scratchbird")
+  set(CPACK_PACKAGE_VENDOR "ScratchBird Project")
+  set(CPACK_PACKAGE_CONTACT "support@scratchbird.local")
+  set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "ScratchBird database server and tools")
+  set(CPACK_PACKAGE_VERSION "${PROJECT_VERSION}")
+
+  # Fallback version if project() has no VERSION
+  if(NOT CPACK_PACKAGE_VERSION)
+    set(CPACK_PACKAGE_VERSION "0.1.0")
+  endif()
+
+  set(CPACK_GENERATOR "DEB;RPM")
+  set(CPACK_PACKAGING_INSTALL_PREFIX "/")
+  set(CPACK_DEBIAN_PACKAGE_MAINTAINER "ScratchBird Maintainers")
+  set(CPACK_DEBIAN_PACKAGE_DEPENDS "libssl3 | libssl1.1")
+  set(CPACK_RPM_PACKAGE_REQUIRES "openssl")
+
+  set(CPACK_DEBIAN_FILE_NAME DEB-DEFAULT)
+  set(CPACK_RPM_FILE_NAME RPM-DEFAULT)
+
+  include(CPack)
+endif()
 
 # Database Space Monitor Utility
 add_executable(dbspace src/dbspace.cpp)

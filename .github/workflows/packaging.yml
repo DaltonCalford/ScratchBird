@@ -1,0 +1,107 @@
+name: Packaging
+
+on:
+  pull_request:
+    branches: [ "phase21/packaging-docs" ]
+  push:
+    branches: [ "phase21/packaging-docs" ]
+
+jobs:
+  build-packages:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build build-essential rpm dpkg-sig gnupg
+
+      - name: Configure (RelWithDebInfo, CPack)
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DSB_ENABLE_CPACK=ON
+
+      - name: Build
+        run: cmake --build build -j
+
+      - name: Package (DEB & RPM)
+        working-directory: build
+        run: |
+          cpack -G DEB
+          cpack -G RPM
+
+      - name: Generate SBOM (SPDX JSON)
+        uses: anchore/sbom-action@v0
+        with:
+          path: build
+          artifact-name: scratchbird-sbom-spdx.json
+          output-file: scratchbird-sbom-spdx.json
+
+      - name: Create ephemeral GPG key
+        id: gpg
+        run: |
+          cat >gpg-batch <<'EOF'
+          %echo Generating a temporary key
+          Key-Type: RSA
+          Key-Length: 2048
+          Subkey-Type: RSA
+          Subkey-Length: 2048
+          Name-Real: ScratchBird CI
+          Name-Email: ci@scratchbird.local
+          Expire-Date: 1d
+          %no-protection
+          %commit
+          %echo done
+          EOF
+          gpg --batch --gen-key gpg-batch
+          KEYID=$(gpg --list-keys --with-colons | awk -F: '/^pub/ {print $5; exit}')
+          echo "keyid=$KEYID" >> $GITHUB_OUTPUT
+
+      - name: Sign packages
+        working-directory: build
+        run: |
+          KEYID=${{ steps.gpg.outputs.keyid }}
+          for deb in *.deb; do sudo dpkg-sig --sign builder -k "$KEYID" "$deb"; done
+          for rpm in *.rpm; do rpm --addsign "$rpm"; done
+
+      - name: Verify signatures
+        working-directory: build
+        run: |
+          for deb in *.deb; do dpkg-sig --verify "$deb"; done
+          for rpm in *.rpm; do rpm --checksig "$rpm"; done
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-packages
+          path: |
+            build/*.deb
+            build/*.rpm
+            scratchbird-sbom-spdx.json
+
+  smoke-install-ubuntu:
+    runs-on: ubuntu-latest
+    needs: build-packages
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: native-packages
+          path: artifacts
+
+      - name: Ubuntu install smoke
+        run: |
+          ls -l artifacts
+          docker run --rm -v "$PWD/artifacts:/w" -w /w ubuntu:24.04 bash -lc "apt-get update && apt-get -y install ./scratchbird_*.deb && scratchbird"
+
+  smoke-install-rpm:
+    runs-on: ubuntu-latest
+    needs: build-packages
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: native-packages
+          path: artifacts
+
+      - name: RPM install smoke (Rocky 9)
+        run: |
+          docker run --rm -v "$PWD/artifacts:/w" -w /w rockylinux:9 bash -lc "dnf -y install /w/scratchbird-*.rpm && scratchbird"
+
