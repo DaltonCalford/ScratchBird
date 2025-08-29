@@ -123,6 +123,22 @@ namespace scratchbird::engine
                         static_cast<std::uint32_t>(std::strtoul(val.c_str(), nullptr, 10));
                 } else if (key == "bootstrap_execute") {
                     cfg.bootstrap_execute = parse_bool(val);
+                } else if (key == "tablespaces_enabled") {
+                    cfg.tablespaces_enabled = parse_bool(val);
+                } else if (key == "enable_partition_pruning") {
+                    cfg.enable_partition_pruning = parse_bool(val);
+                } else if (key == "enable_partition_wise_ops") {
+                    cfg.enable_partition_wise_ops = parse_bool(val);
+                } else if (key == "enable_materialized_views") {
+                    cfg.enable_materialized_views = parse_bool(val);
+                } else if (key == "enable_mv_incremental") {
+                    cfg.enable_mv_incremental = parse_bool(val);
+                } else if (key == "enable_mv_concurrent_refresh") {
+                    cfg.enable_mv_concurrent_refresh = parse_bool(val);
+                } else if (key == "enable_query_rewrite") {
+                    cfg.enable_query_rewrite = parse_bool(val);
+                } else if (key == "enable_global_indexes") {
+                    cfg.enable_global_indexes = parse_bool(val);
                 }
             }
         }
