@@ -25,6 +25,14 @@ namespace scratchbird::engine
         bool bootstrap_execute{false};
         // Tablespace management (Phase 14)
         bool tablespaces_enabled{true};
+        // Phase 18 feature flags (defaults chosen for safety/back-compat)
+        bool enable_partition_pruning{true};      // safe when partitions are registered
+        bool enable_partition_wise_ops{false};    // advanced, default off
+        bool enable_materialized_views{true};     // foundation enabled; no-op unless used
+        bool enable_mv_incremental{false};        // advanced, default off
+        bool enable_mv_concurrent_refresh{false}; // advanced, default off
+        bool enable_query_rewrite{false};         // advanced, default off
+        bool enable_global_indexes{false};        // advanced, default off
     };
 
     // Load configuration from environment or file path indicated by SB_CONFIG.
@@ -41,6 +49,13 @@ namespace scratchbird::engine
     //  - bootstrap_execute: bool (execute bootstrap SQL during create; default false writes sidecar
     //  only)
     //  - tablespaces_enabled: bool (enable tablespace management functionality; default true)
+    //  - enable_partition_pruning: bool
+    //  - enable_partition_wise_ops: bool
+    //  - enable_materialized_views: bool
+    //  - enable_mv_incremental: bool
+    //  - enable_mv_concurrent_refresh: bool
+    //  - enable_query_rewrite: bool
+    //  - enable_global_indexes: bool
     EngineConfig load_engine_config();
     const EngineConfig& get_engine_config();
 
