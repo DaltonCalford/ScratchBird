@@ -1,6 +1,6 @@
 #include "scratchbird/engine.h"
 #include "scratchbird/engine/heap_rel.h"
-#include "test_db_utils.h"
+#include "../test_db_utils.h"
 #include <chrono>
 #include <iostream>
 

@@ -743,6 +743,25 @@ if(SCRATCHBIRD_BUILD_TESTS)
 
 endif()
 
+# Register Phase 20 new tests when sources exist
+if(EXISTS ${CMAKE_SOURCE_DIR}/tests/integration/db_lifecycle_tests.cpp)
+  add_executable(db_lifecycle_tests tests/integration/db_lifecycle_tests.cpp)
+  target_link_libraries(db_lifecycle_tests scratchbird_engine)
+  add_test(NAME db_lifecycle_tests COMMAND db_lifecycle_tests)
+endif()
+
+if(EXISTS ${CMAKE_SOURCE_DIR}/tests/system/multi_connection_smoke.cpp)
+  add_executable(system_multi_connection_smoke tests/system/multi_connection_smoke.cpp)
+  target_link_libraries(system_multi_connection_smoke scratchbird_engine)
+  add_test(NAME system_multi_connection_smoke COMMAND system_multi_connection_smoke)
+endif()
+
+if(SCRATCHBIRD_FAULT_INJECT AND EXISTS ${CMAKE_SOURCE_DIR}/tests/chaos/chaos_tests_disk_io.cpp)
+  add_executable(chaos_tests_disk_io tests/chaos/chaos_tests_disk_io.cpp)
+  target_link_libraries(chaos_tests_disk_io scratchbird_engine)
+  add_test(NAME chaos_tests_disk_io COMMAND chaos_tests_disk_io)
+endif()
+
 # -----------------------------
 # Optional: Performance targets
 # -----------------------------
@@ -795,7 +814,7 @@ endif()
 # -----------------------------
 add_custom_target(
   cppcheck
-  COMMAND cppcheck --enable=warning,style,performance,portability,information \
+  COMMAND cppcheck --enable=warning,style,performance,portability,information
           --error-exitcode=2 --inline-suppr -I include src tests || true
   WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
   COMMENT "Running cppcheck static analysis"

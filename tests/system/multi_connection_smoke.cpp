@@ -1,5 +1,5 @@
 #include "scratchbird/engine.h"
-#include "test_db_utils.h"
+#include "../test_db_utils.h"
 #include <thread>
 #include <vector>
 #include <cassert>
