@@ -121,7 +121,8 @@ add_library(
   src/engine/connection_security.cpp
   src/engine/role_management.cpp
   src/engine/tcp_optimizer.cpp
-  src/engine/connection_pool.cpp)
+  src/engine/connection_pool.cpp
+  src/engine/buffer_pool.cpp)
 
 # Link OpenSSL to the engine library
 target_link_libraries(scratchbird_engine OpenSSL::SSL OpenSSL::Crypto)
@@ -462,6 +463,14 @@ if(SCRATCHBIRD_BUILD_TESTS)
   target_link_libraries(performance_optimization_tests scratchbird_engine)
   add_test(NAME performance_optimization_tests
            COMMAND performance_optimization_tests)
+
+  add_executable(buffer_pool_tests tests/buffer_pool_tests.cpp)
+  target_link_libraries(buffer_pool_tests scratchbird_engine)
+  if(GTEST_FOUND)
+    target_link_libraries(buffer_pool_tests ${GTEST_LIBRARIES})
+    target_include_directories(buffer_pool_tests PRIVATE ${GTEST_INCLUDE_DIRS})
+  endif()
+  add_test(NAME buffer_pool_tests COMMAND buffer_pool_tests)
 
   add_executable(partitioning_tests tests/partitioning_tests.cpp)
   target_link_libraries(partitioning_tests scratchbird_engine)
