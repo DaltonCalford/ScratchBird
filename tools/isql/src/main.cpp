@@ -75,6 +75,11 @@ namespace
 
     int run_sql(const Options& opts, const std::string& sql)
     {
+        // Configure database path if provided
+        if (!opts.database_path.empty()) {
+            scratchbird::engine::set_executor_db_path(opts.database_path);
+        }
+        
         auto t0 = std::chrono::steady_clock::now();
         auto r = scratchbird::engine::execute_select_sql(sql);
         auto t1 = std::chrono::steady_clock::now();

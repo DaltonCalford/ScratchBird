@@ -212,6 +212,10 @@ target_link_libraries(dbspace scratchbird_engine)
 add_executable(dbcheck src/dbcheck.cpp)
 target_link_libraries(dbcheck scratchbird_engine)
 
+# Install rules for database utilities
+install(TARGETS dbspace dbcheck
+        RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+
 # Tests
 if(SCRATCHBIRD_BUILD_TESTS)
   enable_testing()
