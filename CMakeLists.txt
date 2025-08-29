@@ -156,7 +156,9 @@ add_library(
   src/engine/tcp_optimizer.cpp
   src/engine/connection_pool.cpp
   src/engine/network_buffer.cpp
-  src/engine/buffer_pool.cpp)
+  src/engine/buffer_pool.cpp
+  src/engine/tablespace_manager.cpp
+  src/engine/ddl/tablespace_ddl.cpp)
 
 # Link OpenSSL to the engine library
 target_link_libraries(scratchbird_engine OpenSSL::SSL OpenSSL::Crypto)
@@ -812,6 +814,16 @@ if(SCRATCHBIRD_BUILD_TESTS)
     target_include_directories(buffer_pool_tests PRIVATE ${GTEST_INCLUDE_DIRS})
   endif()
   add_test(NAME buffer_pool_tests COMMAND buffer_pool_tests)
+
+  # Tablespace tests (Phase 14)
+  add_executable(tablespace_basic_tests tests/tablespace_basic_tests.cpp)
+  target_link_libraries(tablespace_basic_tests scratchbird_engine)
+  if(GTEST_FOUND)
+    target_link_libraries(tablespace_basic_tests ${GTEST_LIBRARIES})
+    target_include_directories(tablespace_basic_tests
+                               PRIVATE ${GTEST_INCLUDE_DIRS})
+  endif()
+  add_test(NAME tablespace_basic_tests COMMAND tablespace_basic_tests)
 
 endif()
 
