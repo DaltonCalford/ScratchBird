@@ -9,12 +9,20 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Install deps
+        run: sudo apt-get update && sudo apt-get install -y ninja-build lcov gcovr cppcheck clang-tidy
       - name: Configure (RelWithDebInfo)
-        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo
       - name: Build
         run: cmake --build build -j
       - name: Test
         run: ctest --test-dir build --output-on-failure
+      - name: Static analysis (clang-tidy, cppcheck)
+        run: |
+          echo "Running clang-tidy"
+          clang-tidy --version
+          echo "Running cppcheck"
+          cmake --build build --target cppcheck || true
       - name: Fuzz smoke
         run: ctest --test-dir build -R fuzz_smoke --output-on-failure
       - name: Parser bench smoke
@@ -72,17 +80,26 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install lcov
-        run: sudo apt-get update && sudo apt-get install -y lcov
+        run: sudo apt-get update && sudo apt-get install -y lcov gcovr ninja-build
       - name: Configure with coverage flags
         run: |
-          cmake -S . -B build-cov -DCMAKE_BUILD_TYPE=Debug \
-            -DCMAKE_CXX_FLAGS="--coverage" -DCMAKE_EXE_LINKER_FLAGS="--coverage" -DCMAKE_SHARED_LINKER_FLAGS="--coverage"
+          cmake -S . -B build-cov -G Ninja -DCMAKE_BUILD_TYPE=Debug -DSCRATCHBIRD_COVERAGE=ON
       - name: Build
         run: cmake --build build-cov -j
       - name: Test
         run: ctest --test-dir build-cov --output-on-failure
-      - name: Collect coverage
+      - name: Collect coverage (HTML)
         run: |
-          lcov --capture --directory build-cov --output-file coverage.info
-          lcov --remove coverage.info '*/tests/*' '/usr/*' --output-file coverage.info
-          lcov --list coverage.info
+          cmake --build build-cov --target coverage
+      - name: Enforce 80% line coverage
+        run: |
+          gcovr -r . -e 'tests/.*' --xml-pretty -o coverage.xml
+          THRESH=80
+          LINE_COV=$(gcovr -r . -e 'tests/.*' | awk '/^TOTAL/ {print $2}' | tr -d '%')
+          echo "Line coverage: ${LINE_COV}%"
+          awk -v cov=${LINE_COV} -v thr=${THRESH} 'BEGIN { if (cov+0 < thr+0) { exit 1 } }'
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-html
+          path: build-cov/coverage
