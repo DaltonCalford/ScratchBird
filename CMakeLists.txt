@@ -158,7 +158,10 @@ add_library(
   src/engine/network_buffer.cpp
   src/engine/buffer_pool.cpp
   src/engine/tablespace_manager.cpp
-  src/engine/ddl/tablespace_ddl.cpp)
+  src/engine/ddl/tablespace_ddl.cpp
+  src/audit/audit_engine.cpp
+  src/telemetry/logging.cpp
+  src/trace/trace.cpp)
 
 # Link OpenSSL to the engine library
 target_link_libraries(scratchbird_engine OpenSSL::SSL OpenSSL::Crypto)
@@ -848,6 +851,19 @@ if(SCRATCHBIRD_FAULT_INJECT
   target_link_libraries(chaos_tests_disk_io scratchbird_engine)
   add_test(NAME chaos_tests_disk_io COMMAND chaos_tests_disk_io)
 endif()
+
+# Phase 15: Audit, Logging, and Trace Tests
+add_executable(audit_engine_tests tests/audit_engine_tests.cpp)
+target_link_libraries(audit_engine_tests scratchbird_engine gtest gtest_main)
+add_test(NAME audit_engine_tests COMMAND audit_engine_tests)
+
+add_executable(logging_tests tests/logging_tests.cpp)
+target_link_libraries(logging_tests scratchbird_engine gtest gtest_main)
+add_test(NAME logging_tests COMMAND logging_tests)
+
+add_executable(trace_tests tests/trace_tests.cpp)
+target_link_libraries(trace_tests scratchbird_engine gtest gtest_main)
+add_test(NAME trace_tests COMMAND trace_tests)
 
 # -----------------------------
 # Optional: Performance targets
