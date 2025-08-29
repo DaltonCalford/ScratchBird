@@ -1,0 +1,23 @@
+name: Sanitizers
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  asan_ubsan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install deps
+        run: sudo apt-get update && sudo apt-get install -y ninja-build
+      - name: Configure
+        run: cmake -S . -B build-asan -G Ninja -DCMAKE_BUILD_TYPE=Debug -DSCRATCHBIRD_ASAN=ON -DSCRATCHBIRD_UBSAN=ON
+      - name: Build
+        run: cmake --build build-asan -j
+      - name: Test
+        env:
+          ASAN_OPTIONS: symbolize=1
+          UBSAN_OPTIONS: print_stacktrace=1
+        run: ctest --test-dir build-asan --output-on-failure
+

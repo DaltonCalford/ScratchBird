@@ -1,6 +1,9 @@
 cmake_minimum_required(VERSION 3.20)
 project(ScratchBird LANGUAGES C CXX)
 
+# Packaging options
+option(SB_ENABLE_CPACK "Enable CPack packaging" OFF)
+
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS OFF)
@@ -15,6 +18,13 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 # Options
 option(SCRATCHBIRD_BUILD_TESTS "Build unit tests" ON)
 option(SCRATCHBIRD_WARNINGS_AS_ERRORS "Treat warnings as errors" OFF)
+option(SCRATCHBIRD_COVERAGE "Enable coverage instrumentation" OFF)
+option(SCRATCHBIRD_ASAN "Enable AddressSanitizer" OFF)
+option(SCRATCHBIRD_UBSAN "Enable UndefinedBehaviorSanitizer" OFF)
+option(SCRATCHBIRD_FUZZ "Build fuzz targets" OFF)
+option(SCRATCHBIRD_FAULT_INJECT "Enable fault injection points for chaos tests"
+       OFF)
+option(SCRATCHBIRD_PERF "Build performance benchmark targets" OFF)
 
 # Warnings
 if(MSVC)
@@ -28,6 +38,29 @@ endif()
 
 # Include directories
 include_directories(include)
+
+# Instrumentation flags
+if(SCRATCHBIRD_COVERAGE)
+  if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    add_compile_options(--coverage -O0 -fno-inline -fno-inline-functions
+                        -fno-inline-small-functions)
+    add_link_options(--coverage)
+  endif()
+endif()
+
+if(SCRATCHBIRD_ASAN)
+  add_compile_options(-fsanitize=address -fno-omit-frame-pointer)
+  add_link_options(-fsanitize=address)
+endif()
+
+if(SCRATCHBIRD_UBSAN)
+  add_compile_options(-fsanitize=undefined -fno-omit-frame-pointer)
+  add_link_options(-fsanitize=undefined)
+endif()
+
+if(SCRATCHBIRD_FAULT_INJECT)
+  add_compile_definitions(SCRATCHBIRD_FAULT_INJECT=1)
+endif()
 
 # Find OpenSSL for authentication
 find_package(OpenSSL REQUIRED)
@@ -128,10 +161,75 @@ add_library(
 # Link OpenSSL to the engine library
 target_link_libraries(scratchbird_engine OpenSSL::SSL OpenSSL::Crypto)
 
+# Optional: libpq integration for PostgreSQL FDW
+option(SCRATCHBIRD_WITH_LIBPQ "Enable libpq for PostgreSQL FDW" ON)
+if(SCRATCHBIRD_WITH_LIBPQ)
+  find_library(LIBPQ_LIB pq)
+  find_path(LIBPQ_INCLUDE libpq-fe.h)
+  if(LIBPQ_LIB AND LIBPQ_INCLUDE)
+    target_compile_definitions(scratchbird_engine
+                               PRIVATE SCRATCHBIRD_WITH_LIBPQ)
+    target_include_directories(scratchbird_engine PRIVATE ${LIBPQ_INCLUDE})
+    target_link_libraries(scratchbird_engine ${LIBPQ_LIB})
+  else()
+    message(WARNING "libpq not found; building without libpq integration")
+  endif()
+endif()
+
 # Main ScratchBird executable
 add_executable(scratchbird src/main.cpp src/scratchbird.cpp)
 
 target_link_libraries(scratchbird scratchbird_engine)
+
+# Install rules for packaging
+include(GNUInstallDirs)
+
+# Binaries
+install(TARGETS scratchbird RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+install(TARGETS dbspace dbcheck RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+
+# Library (static for now) and headers
+install(TARGETS scratchbird_engine ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
+install(
+  DIRECTORY include/
+  DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+  FILES_MATCHING
+  PATTERN "*.h")
+
+# Configuration and service files (installed only if present in source tree)
+install(
+  FILES packaging/config/scratchbird.conf
+  DESTINATION ${CMAKE_INSTALL_SYSCONFDIR}/scratchbird
+  OPTIONAL)
+install(
+  FILES packaging/systemd/scratchbird.service
+  DESTINATION ${CMAKE_INSTALL_PREFIX}/lib/systemd/system
+  OPTIONAL)
+
+# CPack configuration
+if(SB_ENABLE_CPACK)
+  set(CPACK_PACKAGE_NAME "scratchbird")
+  set(CPACK_PACKAGE_VENDOR "ScratchBird Project")
+  set(CPACK_PACKAGE_CONTACT "support@scratchbird.local")
+  set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "ScratchBird database server and tools")
+  set(CPACK_PACKAGE_VERSION "${PROJECT_VERSION}")
+
+  # Fallback version if project() has no VERSION
+  if(NOT CPACK_PACKAGE_VERSION)
+    set(CPACK_PACKAGE_VERSION "0.1.0")
+  endif()
+
+  set(CPACK_GENERATOR "DEB;RPM")
+  set(CPACK_PACKAGING_INSTALL_PREFIX "/")
+  set(CPACK_DEBIAN_PACKAGE_MAINTAINER "ScratchBird Maintainers")
+  set(CPACK_DEBIAN_PACKAGE_DEPENDS "libssl3 | libssl1.1")
+  set(CPACK_RPM_PACKAGE_REQUIRES "openssl")
+
+  set(CPACK_DEBIAN_FILE_NAME DEB-DEFAULT)
+  set(CPACK_RPM_FILE_NAME RPM-DEFAULT)
+
+  include(CPack)
+endif()
 
 # Database Space Monitor Utility
 add_executable(dbspace src/dbspace.cpp)
@@ -451,6 +549,60 @@ if(SCRATCHBIRD_BUILD_TESTS)
   add_test(NAME performance_optimization_tests
            COMMAND performance_optimization_tests)
 
+  add_executable(buffer_pool_tests tests/buffer_pool_tests.cpp)
+  target_link_libraries(buffer_pool_tests scratchbird_engine)
+  if(GTEST_FOUND)
+    target_link_libraries(buffer_pool_tests ${GTEST_LIBRARIES})
+    target_include_directories(buffer_pool_tests PRIVATE ${GTEST_INCLUDE_DIRS})
+  endif()
+  add_test(NAME buffer_pool_tests COMMAND buffer_pool_tests)
+
+  add_executable(partitioning_tests tests/partitioning_tests.cpp)
+  target_link_libraries(partitioning_tests scratchbird_engine)
+  if(GTEST_FOUND)
+    target_link_libraries(partitioning_tests ${GTEST_LIBRARIES})
+    target_include_directories(partitioning_tests PRIVATE ${GTEST_INCLUDE_DIRS})
+  endif()
+  add_test(NAME partitioning_tests COMMAND partitioning_tests)
+
+  # Analytics and Time-series function tests
+  add_executable(analytics_functions_tests tests/analytics_functions_tests.cpp)
+  target_link_libraries(analytics_functions_tests scratchbird_engine)
+  if(GTEST_FOUND)
+    target_link_libraries(analytics_functions_tests ${GTEST_LIBRARIES})
+    target_include_directories(analytics_functions_tests
+                               PRIVATE ${GTEST_INCLUDE_DIRS})
+  endif()
+  add_test(NAME analytics_functions_tests COMMAND analytics_functions_tests)
+
+  add_executable(timeseries_functions_tests
+                 tests/timeseries_functions_tests.cpp)
+  target_link_libraries(timeseries_functions_tests scratchbird_engine)
+  if(GTEST_FOUND)
+    target_link_libraries(timeseries_functions_tests ${GTEST_LIBRARIES})
+    target_include_directories(timeseries_functions_tests
+                               PRIVATE ${GTEST_INCLUDE_DIRS})
+  endif()
+  add_test(NAME timeseries_functions_tests COMMAND timeseries_functions_tests)
+
+  add_executable(statistics_plan_tests tests/statistics_plan_tests.cpp)
+  target_link_libraries(statistics_plan_tests scratchbird_engine)
+  if(GTEST_FOUND)
+    target_link_libraries(statistics_plan_tests ${GTEST_LIBRARIES})
+    target_include_directories(statistics_plan_tests
+                               PRIVATE ${GTEST_INCLUDE_DIRS})
+  endif()
+  add_test(NAME statistics_plan_tests COMMAND statistics_plan_tests)
+
+  add_executable(fdw_postgresql_ssl_tests tests/fdw_postgresql_ssl_tests.cpp)
+  target_link_libraries(fdw_postgresql_ssl_tests scratchbird_engine)
+  if(GTEST_FOUND)
+    target_link_libraries(fdw_postgresql_ssl_tests ${GTEST_LIBRARIES})
+    target_include_directories(fdw_postgresql_ssl_tests
+                               PRIVATE ${GTEST_INCLUDE_DIRS})
+  endif()
+  add_test(NAME fdw_postgresql_ssl_tests COMMAND fdw_postgresql_ssl_tests)
+
   # PSQL Debugging Support Tests
   add_executable(psql_debugging_tests tests/psql_debugging_tests.cpp)
   target_link_libraries(psql_debugging_tests scratchbird_engine)
@@ -665,9 +817,108 @@ if(SCRATCHBIRD_BUILD_TESTS)
   target_link_libraries(buffer_pool_tests scratchbird_engine)
   if(GTEST_FOUND)
     target_link_libraries(buffer_pool_tests ${GTEST_LIBRARIES})
-    target_include_directories(buffer_pool_tests
-                               PRIVATE ${GTEST_INCLUDE_DIRS})
+    target_include_directories(buffer_pool_tests PRIVATE ${GTEST_INCLUDE_DIRS})
   endif()
   add_test(NAME buffer_pool_tests COMMAND buffer_pool_tests)
 
 endif()
+
+# Register Phase 20 new tests when sources exist
+if(EXISTS ${CMAKE_SOURCE_DIR}/tests/integration/db_lifecycle_tests.cpp)
+  add_executable(db_lifecycle_tests tests/integration/db_lifecycle_tests.cpp)
+  target_link_libraries(db_lifecycle_tests scratchbird_engine)
+  add_test(NAME db_lifecycle_tests COMMAND db_lifecycle_tests)
+endif()
+
+if(EXISTS ${CMAKE_SOURCE_DIR}/tests/system/multi_connection_smoke.cpp)
+  add_executable(system_multi_connection_smoke
+                 tests/system/multi_connection_smoke.cpp)
+  target_link_libraries(system_multi_connection_smoke scratchbird_engine)
+  add_test(NAME system_multi_connection_smoke
+           COMMAND system_multi_connection_smoke)
+endif()
+
+if(SCRATCHBIRD_FAULT_INJECT
+   AND EXISTS ${CMAKE_SOURCE_DIR}/tests/chaos/chaos_tests_disk_io.cpp)
+  add_executable(chaos_tests_disk_io tests/chaos/chaos_tests_disk_io.cpp)
+  target_link_libraries(chaos_tests_disk_io scratchbird_engine)
+  add_test(NAME chaos_tests_disk_io COMMAND chaos_tests_disk_io)
+endif()
+
+# -----------------------------
+# Optional: Performance targets
+# -----------------------------
+if(SCRATCHBIRD_PERF)
+  add_executable(perf_heap_insert tests/perf/perf_heap_insert.cpp)
+  target_link_libraries(perf_heap_insert scratchbird_engine)
+
+  add_executable(perf_heap_scan tests/perf/perf_heap_scan.cpp)
+  target_link_libraries(perf_heap_scan scratchbird_engine)
+
+  add_executable(perf_index_ops tests/perf/perf_index_ops.cpp)
+  target_link_libraries(perf_index_ops scratchbird_engine)
+
+  add_executable(perf_queries_tpch tests/perf/perf_queries_tpch.cpp)
+  target_link_libraries(perf_queries_tpch scratchbird_engine)
+endif()
+
+# -----------------------------
+# Optional: Fuzzing targets
+# -----------------------------
+if(SCRATCHBIRD_FUZZ)
+  if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    add_executable(fuzz_sql_parser tests/fuzz/fuzz_sql_parser.cpp)
+    target_link_libraries(fuzz_sql_parser scratchbird_engine)
+    target_compile_options(fuzz_sql_parser
+                           PRIVATE -fsanitize=fuzzer,address,undefined)
+    target_link_options(fuzz_sql_parser PRIVATE
+                        -fsanitize=fuzzer,address,undefined)
+    add_test(NAME fuzz_sql_parser_smoke COMMAND fuzz_sql_parser -runs=1000)
+    set_tests_properties(fuzz_sql_parser_smoke PROPERTIES LABELS "fuzz_smoke")
+
+    add_executable(fuzz_expr_eval tests/fuzz/fuzz_expr_eval.cpp)
+    target_link_libraries(fuzz_expr_eval scratchbird_engine)
+    target_compile_options(fuzz_expr_eval
+                           PRIVATE -fsanitize=fuzzer,address,undefined)
+    target_link_options(fuzz_expr_eval PRIVATE
+                        -fsanitize=fuzzer,address,undefined)
+    add_test(NAME fuzz_expr_eval_smoke COMMAND fuzz_expr_eval -runs=1000)
+    set_tests_properties(fuzz_expr_eval_smoke PROPERTIES LABELS "fuzz_smoke")
+
+    add_executable(fuzz_page_codec tests/fuzz/fuzz_page_codec.cpp)
+    target_link_libraries(fuzz_page_codec scratchbird_engine)
+    target_compile_options(fuzz_page_codec
+                           PRIVATE -fsanitize=fuzzer,address,undefined)
+    target_link_options(fuzz_page_codec PRIVATE
+                        -fsanitize=fuzzer,address,undefined)
+    add_test(NAME fuzz_page_codec_smoke COMMAND fuzz_page_codec -runs=1000)
+    set_tests_properties(fuzz_page_codec_smoke PROPERTIES LABELS "fuzz_smoke")
+  else()
+    message(WARNING "Fuzzing requires Clang; skipping fuzz targets")
+  endif()
+endif()
+
+# -----------------------------
+# Static analysis targets
+# -----------------------------
+add_custom_target(
+  cppcheck
+  COMMAND cppcheck --enable=warning,style,performance,portability,information
+          --error-exitcode=2 --inline-suppr -I include src tests || true
+  WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+  COMMENT "Running cppcheck static analysis")
+
+# -----------------------------
+# Coverage target (requires SCRATCHBIRD_COVERAGE=ON)
+# -----------------------------
+add_custom_target(
+  coverage
+  COMMAND ${CMAKE_COMMAND} -E echo "Running tests for coverage..."
+  COMMAND ${CMAKE_CTEST_COMMAND} --output-on-failure
+  COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_BINARY_DIR}/coverage
+  COMMAND gcovr -r ${CMAKE_SOURCE_DIR} -e '${CMAKE_SOURCE_DIR}/tests/.*'
+          --html-details -o ${CMAKE_BINARY_DIR}/coverage/index.html
+  WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+  COMMENT
+    "Generating coverage HTML report at ${CMAKE_BINARY_DIR}/coverage/index.html"
+)

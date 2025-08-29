@@ -4,6 +4,10 @@
 #include <iostream>
 #include <sstream>
 
+#ifdef SCRATCHBIRD_WITH_LIBPQ
+#include <libpq-fe.h>
+#endif
+
 namespace scratchbird::engine
 {
 
@@ -280,13 +284,26 @@ namespace scratchbird::engine
         conn->password = user_mapping.remote_password;
         conn->ssl_enabled = server_config.use_ssl;
 
+        // Try real libpq connection when available; fall back to mock
+#ifdef SCRATCHBIRD_WITH_LIBPQ
+        std::string conninfo = build_connection_string(server_config, user_mapping);
+        std::cout << "PostgreSQL FDW(libpq): Connecting with '" << conninfo << "'" << std::endl;
+        PGconn* pg = PQconnectdb(conninfo.c_str());
+        if (PQstatus(pg) != CONNECTION_OK) {
+            error_msg = PQerrorMessage(pg);
+            PQfinish(pg);
+            conn->connected = false;
+            return nullptr;
+        }
+        // In a fuller integration, we would wrap PGconn inside PgConnection
+        conn->connected = true;
+#else
         // Mock connection establishment
         std::cout << "PostgreSQL FDW: Connecting to " << conn->host << ":" << conn->port
                   << " database " << conn->database << " as " << conn->username
                   << (server_config.use_ssl ? " (SSL)" : "") << std::endl;
-
-        // In real implementation, this would use PQconnectdb() with ssl/gss options
         conn->connected = true; // Mock: assume connection always succeeds
+#endif
 
         if (!test_postgresql_connection(conn, error_msg)) {
             conn->connected = false;

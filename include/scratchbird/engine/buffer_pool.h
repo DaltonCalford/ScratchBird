@@ -3,503 +3,555 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <cstdint>
+#include <functional>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <shared_mutex>
+#include <system_error>
 #include <thread>
 #include <unordered_map>
+#include <utility>
 #include <vector>
-#include <system_error>
 
-// Basic type definitions for buffer pool
-namespace ScratchBird {
-    using RelationOid = uint32_t;
-    using BlockNumber = uint32_t;
-    using LSN = uint64_t;
-    
-    enum ForkNumber : uint8_t {
-        MAIN_FORKNUM = 0,
-        FSM_FORKNUM = 1,
-        VISIBILITY_MAP_FORKNUM = 2
-    };
-    
-    constexpr RelationOid INVALID_OID = 0;
-    constexpr BlockNumber INVALID_BLOCK_NUMBER = 0xFFFFFFFF;
-}
-
-namespace ScratchBird
+namespace scratchbird::engine
 {
-    // Forward declarations
-    class WALManager;
-    
-    /**
-     * Buffer pool configuration parameters
-     */
-    struct BufferPoolConfig {
-        // Pool size configuration
-        size_t num_buffers = 1024;                     // Number of buffer frames
-        size_t buffer_size = 8192;                     // Size of each buffer frame (8KB default)
-        
-        // Performance tuning
-        size_t hash_table_size = 2048;                 // Hash table size for buffer lookup
-        double dirty_page_threshold = 0.7;             // Threshold for background writer activation
-        std::chrono::milliseconds background_write_interval{100}; // Background writer interval
-        
-        // Monitoring and diagnostics
-        bool enable_statistics = true;                 // Enable performance statistics collection
-        bool enable_background_writer = true;          // Enable background writer thread
-        std::chrono::seconds stats_report_interval{60}; // Statistics reporting interval
-        
-        // Replacement policy parameters
-        size_t clock_hand_advance_size = 8;            // Number of buffers to check per clock sweep
-        bool use_adaptive_replacement = true;          // Enable adaptive replacement policy
-        
-        // Memory management
-        bool use_huge_pages = false;                   // Use huge pages for buffer pool memory
-        bool enable_prefetch = true;                   // Enable buffer prefetching
-    };
+
+    // Unified type definitions combining both approaches
+    using RelationOid = std::uint64_t; // Use 64-bit for compatibility
+    using BlockNumber = std::uint64_t; // Use 64-bit for compatibility
+    using LSN = std::uint64_t;
+
+    enum ForkNumber : uint8_t { MAIN_FORKNUM = 0, FSM_FORKNUM = 1, VISIBILITY_MAP_FORKNUM = 2 };
+
+    constexpr RelationOid INVALID_OID = 0;
+    constexpr BlockNumber INVALID_BLOCK_NUMBER = 0xFFFFFFFFFFFFFFFFULL;
 
     /**
-     * Buffer tag uniquely identifies a buffer page
+     * Buffer tag uniquely identifies a buffer page - unified approach
      */
     struct BufferTag {
-        RelationOid relation_oid = INVALID_OID;        // Relation (table/index) identifier  
-        ForkNumber fork_number = MAIN_FORKNUM;         // Fork type (main, FSM, VM)
+        RelationOid relation_oid = INVALID_OID;          // Relation (table/index) identifier
+        ForkNumber fork_number = MAIN_FORKNUM;           // Fork type (main, FSM, VM)
         BlockNumber block_number = INVALID_BLOCK_NUMBER; // Block number within relation
-        
+
+        // Legacy file_id/page_no compatibility
+        std::uint64_t file_id() const
+        {
+            return relation_oid;
+        }
+        std::uint64_t page_no() const
+        {
+            return block_number;
+        }
+
         BufferTag() = default;
         BufferTag(RelationOid rel_oid, ForkNumber fork_num, BlockNumber block_num)
-            : relation_oid(rel_oid), fork_number(fork_num), block_number(block_num) {}
-            
-        bool operator==(const BufferTag& other) const {
-            return relation_oid == other.relation_oid && 
-                   fork_number == other.fork_number && 
+            : relation_oid(rel_oid), fork_number(fork_num), block_number(block_num)
+        {
+        }
+        // Legacy constructor
+        BufferTag(std::uint64_t file_id, std::uint64_t page_no)
+            : relation_oid(file_id), fork_number(MAIN_FORKNUM), block_number(page_no)
+        {
+        }
+
+        bool operator==(const BufferTag& other) const
+        {
+            return relation_oid == other.relation_oid && fork_number == other.fork_number &&
                    block_number == other.block_number;
         }
-        
-        bool operator!=(const BufferTag& other) const {
+
+        bool operator!=(const BufferTag& other) const
+        {
             return !(*this == other);
         }
-        
-        bool is_valid() const {
+
+        bool is_valid() const
+        {
             return relation_oid != INVALID_OID && block_number != INVALID_BLOCK_NUMBER;
         }
     };
-    
+
     /**
-     * Hash function for BufferTag
+     * Hash function for BufferTag - unified approach with better distribution
      */
     struct BufferTagHash {
-        std::size_t operator()(const BufferTag& tag) const {
-            std::size_t h1 = std::hash<uint32_t>{}(tag.relation_oid);
-            std::size_t h2 = std::hash<uint8_t>{}(static_cast<uint8_t>(tag.fork_number));
-            std::size_t h3 = std::hash<uint32_t>{}(tag.block_number);
-            return h1 ^ (h2 << 1) ^ (h3 << 2);
+        std::size_t operator()(const BufferTag& tag) const noexcept
+        {
+            // Use improved hash from remote version
+            return static_cast<std::size_t>(
+                (tag.relation_oid * 1315423911ull) ^ (tag.block_number * 2654435761ull) ^
+                (static_cast<std::uint64_t>(tag.fork_number) * 1103515245ull));
         }
     };
 
     /**
-     * Buffer frame states
+     * Buffer frame states - enhanced from comprehensive version
      */
     enum class BufferState : uint8_t {
-        INVALID = 0,        // Buffer frame is not in use
-        READING = 1,        // Buffer is being read from disk
-        VALID = 2,          // Buffer contains valid data
-        DIRTY = 3,          // Buffer has been modified
-        WRITING = 4,        // Buffer is being written to disk
-        PINNED = 5         // Buffer is pinned in memory
+        INVALID = 0, // Buffer frame is not in use
+        READING = 1, // Buffer is being read from disk
+        VALID = 2,   // Buffer contains valid data
+        DIRTY = 3,   // Buffer has been modified
+        WRITING = 4, // Buffer is being written to disk
+        PINNED = 5   // Buffer is pinned in memory
     };
 
     /**
-     * Buffer frame descriptor - metadata for each buffer frame
+     * Unified Buffer Frame combining best of both approaches
      */
-    class BufferDescriptor {
-    public:
-        BufferDescriptor();
-        ~BufferDescriptor() = default;
-        
-        // Non-copyable, non-moveable (managed by buffer pool)
-        BufferDescriptor(const BufferDescriptor&) = delete;
-        BufferDescriptor& operator=(const BufferDescriptor&) = delete;
-        BufferDescriptor(BufferDescriptor&&) = delete;
-        BufferDescriptor& operator=(BufferDescriptor&&) = delete;
-        
-        // Buffer identification
-        BufferTag get_tag() const;
-        void set_tag(const BufferTag& tag);
-        bool matches_tag(const BufferTag& tag) const;
-        
-        // Buffer state management
-        BufferState get_state() const;
-        void set_state(BufferState state);
-        bool is_dirty() const;
-        bool is_valid() const;
-        bool is_pinned() const;
-        
-        // Reference counting and pinning
-        int get_pin_count() const;
-        void pin();
-        void unpin();
-        bool try_pin();
-        
-        // Clock-sweep algorithm support
-        bool get_usage_bit() const;
-        void set_usage_bit(bool used);
-        bool clear_usage_bit(); // Returns previous value
-        
-        // LSN tracking for WAL
-        LSN get_lsn() const;
-        void set_lsn(LSN lsn);
-        
-        // Statistics
-        std::chrono::steady_clock::time_point get_last_access_time() const;
-        void update_access_time();
-        uint64_t get_access_count() const;
-        
-    private:
-        mutable std::shared_mutex mutex_;
-        
-        BufferTag tag_;
-        std::atomic<BufferState> state_{BufferState::INVALID};
-        std::atomic<int> pin_count_{0};
-        std::atomic<bool> usage_bit_{false};
-        std::atomic<LSN> page_lsn_{0};
-        
-        std::atomic<std::chrono::steady_clock::time_point> last_access_time_;
-        std::atomic<uint64_t> access_count_{0};
-    };
+    struct BufferFrame {
+        BufferTag tag{};
+        std::vector<std::uint8_t> data;
+        std::atomic<bool> dirty{false};
+        std::atomic<int> refcount{0};
+        std::atomic<bool> valid{false};
+        std::atomic<LSN> page_lsn{0};
+        std::uint8_t clock{1}; // Clock-sweep usage bit
 
-    /**
-     * Buffer frame - actual data storage
-     */
-    class BufferFrame {
-    public:
-        BufferFrame(size_t buffer_size);
-        ~BufferFrame();
-        
-        // Non-copyable, non-moveable (managed by buffer pool)
-        BufferFrame(const BufferFrame&) = delete;
-        BufferFrame& operator=(const BufferFrame&) = delete;
-        BufferFrame(BufferFrame&&) = delete;
-        BufferFrame& operator=(BufferFrame&&) = delete;
-        
-        // Data access
-        char* get_data() { return data_; }
-        const char* get_data() const { return data_; }
-        size_t get_size() const { return size_; }
-        
-        // Data operations
-        void zero_fill();
-        void copy_from(const char* source, size_t length);
-        void copy_to(char* destination, size_t length) const;
-        
-    private:
-        char* data_;
-        size_t size_;
-    };
+        // Statistics from comprehensive version
+        std::atomic<std::chrono::steady_clock::time_point> last_access_time;
+        std::atomic<uint64_t> access_count{0};
 
-    /**
-     * Buffer pool statistics for monitoring and optimization
-     */
-    class BufferPoolStats {
-    public:
-        BufferPoolStats() = default;
-        
-        // Non-copyable due to atomic members, but provide copy functionality
-        BufferPoolStats(const BufferPoolStats& other) {
-            copy_from(other);
+        BufferFrame()
+        {
+            last_access_time.store(std::chrono::steady_clock::now());
         }
-        
-        BufferPoolStats& operator=(const BufferPoolStats& other) {
+
+        void update_access_time()
+        {
+            last_access_time.store(std::chrono::steady_clock::now());
+            access_count.fetch_add(1, std::memory_order_relaxed);
+            clock = 1; // Mark as recently used
+        }
+    };
+
+    /**
+     * Buffer pool configuration parameters - from comprehensive version
+     */
+    struct BufferPoolConfig {
+        // Pool size configuration
+        size_t num_buffers = 1024; // Number of buffer frames
+        size_t buffer_size = 8192; // Size of each buffer frame (8KB default)
+
+        // Performance tuning
+        double dirty_page_threshold = 0.7; // Threshold for background writer activation
+        std::chrono::milliseconds background_write_interval{100}; // Background writer interval
+
+        // Monitoring and diagnostics
+        bool enable_statistics = true;                  // Enable performance statistics collection
+        bool enable_background_writer = false;          // Disable by default for testing
+        std::chrono::seconds stats_report_interval{60}; // Statistics reporting interval
+
+        // Memory management
+        bool use_huge_pages = false; // Use huge pages for buffer pool memory
+        bool enable_prefetch = true; // Enable buffer prefetching
+    };
+
+    // Forward declaration
+    class BufferPool;
+
+    /**
+     * BufferHandle - RAII wrapper from elegant remote version
+     * Retains a reference on a frame while in scope.
+     * It is move-only and releases the reference on destruction.
+     */
+    class BufferHandle
+    {
+      public:
+        BufferHandle() = default;
+        BufferHandle(BufferPool* pool, int index) : pool_(pool), index_(index) {}
+        BufferHandle(BufferHandle&& other) noexcept
+        {
+            swap(other);
+        }
+        BufferHandle& operator=(BufferHandle&& other) noexcept
+        {
             if (this != &other) {
-                copy_from(other);
+                release();
+                swap(other);
             }
             return *this;
         }
-        
+        BufferHandle(const BufferHandle&) = delete;
+        BufferHandle& operator=(const BufferHandle&) = delete;
+        ~BufferHandle()
+        {
+            release();
+        }
+
+        bool valid() const
+        {
+            return pool_ != nullptr && index_ >= 0;
+        }
+        int index() const
+        {
+            return index_;
+        }
+        BufferFrame* frame();
+        const BufferFrame* frame() const;
+        void mark_dirty();
+
+      private:
+        void release();
+        void swap(BufferHandle& other) noexcept
+        {
+            std::swap(pool_, other.pool_);
+            std::swap(index_, other.index_);
+        }
+
+        BufferPool* pool_{nullptr};
+        int index_{-1};
+    };
+
+    /**
+     * Buffer pool statistics - comprehensive monitoring from detailed version
+     */
+    struct BufferPoolStats {
         // Hit ratio statistics
         std::atomic<uint64_t> buffer_hits{0};
         std::atomic<uint64_t> buffer_misses{0};
         std::atomic<uint64_t> buffer_reads{0};
         std::atomic<uint64_t> buffer_writes{0};
-        
+
         // Buffer utilization
         std::atomic<uint64_t> buffers_used{0};
         std::atomic<uint64_t> buffers_dirty{0};
         std::atomic<uint64_t> buffers_pinned{0};
-        
+
         // Eviction and replacement statistics
         std::atomic<uint64_t> evictions_clean{0};
         std::atomic<uint64_t> evictions_dirty{0};
         std::atomic<uint64_t> clock_sweeps{0};
-        
-        // Contention and performance
-        std::atomic<uint64_t> lock_waits{0};
-        std::atomic<uint64_t> lock_timeouts{0};
-        std::atomic<uint64_t> avg_lookup_time_ns{0}; // Changed from chrono::nanoseconds
-        
+
         // Background writer statistics
         std::atomic<uint64_t> background_writes{0};
-        std::atomic<uint64_t> checkpoint_writes{0};
-        
-        std::chrono::steady_clock::time_point last_reset_time;
-        
+
+        std::chrono::steady_clock::time_point last_reset_time{std::chrono::steady_clock::now()};
+
+        // Legacy compatibility with simple stats
+        uint64_t hits() const
+        {
+            return buffer_hits.load();
+        }
+        uint64_t misses() const
+        {
+            return buffer_misses.load();
+        }
+        uint64_t evictions() const
+        {
+            return evictions_clean.load() + evictions_dirty.load();
+        }
+        uint64_t flushes() const
+        {
+            return background_writes.load();
+        }
+
         // Calculated metrics
-        double get_hit_ratio() const {
+        double get_hit_ratio() const
+        {
             uint64_t hits = buffer_hits.load();
             uint64_t total = hits + buffer_misses.load();
             return total > 0 ? static_cast<double>(hits) / total : 0.0;
         }
-        
-        double get_dirty_ratio() const {
+
+        double get_dirty_ratio() const
+        {
             uint64_t used = buffers_used.load();
             return used > 0 ? static_cast<double>(buffers_dirty.load()) / used : 0.0;
         }
-        
-        void reset();
-        
-    private:
-        void copy_from(const BufferPoolStats& other) {
-            buffer_hits.store(other.buffer_hits.load());
-            buffer_misses.store(other.buffer_misses.load());
-            buffer_reads.store(other.buffer_reads.load());
-            buffer_writes.store(other.buffer_writes.load());
-            buffers_used.store(other.buffers_used.load());
-            buffers_dirty.store(other.buffers_dirty.load());
-            buffers_pinned.store(other.buffers_pinned.load());
-            evictions_clean.store(other.evictions_clean.load());
-            evictions_dirty.store(other.evictions_dirty.load());
-            clock_sweeps.store(other.clock_sweeps.load());
-            lock_waits.store(other.lock_waits.load());
-            lock_timeouts.store(other.lock_timeouts.load());
-            avg_lookup_time_ns.store(other.avg_lookup_time_ns.load());
-            background_writes.store(other.background_writes.load());
-            checkpoint_writes.store(other.checkpoint_writes.load());
-            last_reset_time = other.last_reset_time;
+
+        void reset()
+        {
+            buffer_hits = 0;
+            buffer_misses = 0;
+            buffer_reads = 0;
+            buffer_writes = 0;
+            buffers_used = 0;
+            buffers_dirty = 0;
+            buffers_pinned = 0;
+            evictions_clean = 0;
+            evictions_dirty = 0;
+            clock_sweeps = 0;
+            background_writes = 0;
+            last_reset_time = std::chrono::steady_clock::now();
         }
     };
 
     /**
-     * Shared Buffer Pool - Main buffer management system
-     * 
-     * The buffer pool manages a fixed number of buffer frames, each capable of
-     * holding one database page. It provides efficient buffer lookup, replacement,
-     * and synchronization for concurrent access.
-     * 
+     * Unified BufferPool combining elegant RAII design with comprehensive features
      * Features:
+     * - BufferHandle RAII pattern from remote version
      * - Clock-sweep LRU replacement algorithm
-     * - Hash table for O(1) buffer lookup
-     * - Fine-grained locking for high concurrency
-     * - Integrated WAL (Write-Ahead Logging) support
      * - Comprehensive statistics and monitoring
+     * - Optional background writer support
+     * - Thread-safe operations with fine-grained locking
      */
-    class BufferPool {
-    public:
-        explicit BufferPool(const BufferPoolConfig& config = {});
-        ~BufferPool();
-        
-        // Non-copyable, non-moveable (singleton-like resource manager)
+    class BufferPool
+    {
+      public:
+        using FlushCallback = std::function<void(const BufferFrame&)>;
+
+        explicit BufferPool(std::size_t capacity_pages = 1024, std::size_t page_size = 8192)
+            : config_{capacity_pages, page_size}, capacity_(capacity_pages), page_size_(page_size)
+        {
+            frames_.reserve(capacity_);
+            for (std::size_t i = 0; i < capacity_; ++i) {
+                auto f = std::make_unique<BufferFrame>();
+                f->data.resize(page_size_);
+                frames_.push_back(std::move(f));
+            }
+        }
+
+        explicit BufferPool(const BufferPoolConfig& config)
+            : config_(config), capacity_(config.num_buffers), page_size_(config.buffer_size)
+        {
+            frames_.reserve(capacity_);
+            for (std::size_t i = 0; i < capacity_; ++i) {
+                auto f = std::make_unique<BufferFrame>();
+                f->data.resize(page_size_);
+                frames_.push_back(std::move(f));
+            }
+        }
+
+        ~BufferPool()
+        {
+            shutdown();
+        }
+
+        // Non-copyable, non-moveable
         BufferPool(const BufferPool&) = delete;
         BufferPool& operator=(const BufferPool&) = delete;
         BufferPool(BufferPool&&) = delete;
         BufferPool& operator=(BufferPool&&) = delete;
-        
+
         /**
-         * Initialize buffer pool and allocate memory
-         * @return Error code, empty on success
+         * Initialize buffer pool - comprehensive version API
          */
-        std::error_code initialize();
-        
+        std::error_code initialize()
+        {
+            if (config_.enable_background_writer) {
+                start_background_writer();
+            }
+            return {};
+        }
+
         /**
          * Shutdown buffer pool and flush all dirty buffers
          */
-        void shutdown();
-        
-        /**
-         * Get a buffer for the specified page
-         * @param tag Buffer tag identifying the page
-         * @param found Set to true if buffer was found in pool
-         * @return Buffer ID, or INVALID_BUFFER_ID on error
-         */
-        int get_buffer(const BufferTag& tag, bool& found);
-        
-        /**
-         * Release a buffer (decrease pin count)
-         * @param buffer_id Buffer ID to release
-         * @param mark_dirty Mark buffer as dirty if true
-         */
-        void release_buffer(int buffer_id, bool mark_dirty = false);
-        
-        /**
-         * Pin a buffer in memory (increase pin count)
-         * @param buffer_id Buffer ID to pin
-         * @return True if successfully pinned
-         */
-        bool pin_buffer(int buffer_id);
-        
-        /**
-         * Unpin a buffer (decrease pin count)
-         * @param buffer_id Buffer ID to unpin
-         */
-        void unpin_buffer(int buffer_id);
-        
-        /**
-         * Flush a specific buffer to disk
-         * @param buffer_id Buffer ID to flush
-         * @return Error code, empty on success
-         */
-        std::error_code flush_buffer(int buffer_id);
-        
-        /**
-         * Flush all dirty buffers to disk
-         * @return Number of buffers flushed
-         */
-        size_t flush_all_buffers();
-        
-        /**
-         * Get buffer frame data
-         * @param buffer_id Buffer ID
-         * @return Pointer to buffer data, or nullptr if invalid
-         */
-        char* get_buffer_data(int buffer_id);
-        const char* get_buffer_data(int buffer_id) const;
-        
-        /**
-         * Get buffer descriptor
-         * @param buffer_id Buffer ID
-         * @return Pointer to buffer descriptor, or nullptr if invalid
-         */
-        BufferDescriptor* get_buffer_descriptor(int buffer_id);
-        const BufferDescriptor* get_buffer_descriptor(int buffer_id) const;
-        
-        /**
-         * Invalidate buffers for a specific relation
-         * @param relation_oid Relation OID to invalidate
-         * @return Number of buffers invalidated
-         */
-        size_t invalidate_relation_buffers(RelationOid relation_oid);
-        
-        /**
-         * Get buffer pool statistics
-         * @return Current buffer pool statistics
-         */
-        BufferPoolStats get_stats() const;
-        
-        /**
-         * Reset buffer pool statistics
-         */
-        void reset_stats();
-        
-        /**
-         * Get buffer pool configuration
-         */
-        const BufferPoolConfig& get_config() const { return config_; }
-        
-        /**
-         * Update buffer pool configuration
-         * @param new_config New configuration
-         * @return Error code, empty on success
-         */
-        std::error_code update_config(const BufferPoolConfig& new_config);
-        
-        /**
-         * Validate buffer pool configuration
-         * @param config Configuration to validate
-         * @return Error message, empty if valid
-         */
-        static std::string validate_config(const BufferPoolConfig& config);
-        
-        /**
-         * Get buffer pool usage information
-         */
-        struct UsageInfo {
-            size_t total_buffers;
-            size_t used_buffers;
-            size_t dirty_buffers;
-            size_t pinned_buffers;
-            double usage_percentage;
-            double hit_ratio;
-        };
-        UsageInfo get_usage_info() const;
-        
-    private:
+        void shutdown()
+        {
+            if (config_.enable_background_writer) {
+                stop_background_writer();
+            }
+            flush_dirty_batch(capacity_);
+        }
+
+        // Core API - RAII BufferHandle approach (elegant remote version)
+        BufferHandle get(const BufferTag& tag)
+        {
+            std::lock_guard<std::mutex> lock(mu_);
+            int index = find_or_create_index_locked(tag);
+            if (index >= 0) {
+                inc_ref(index);
+                frames_[index]->update_access_time();
+                stats_.buffer_hits.fetch_add(1, std::memory_order_relaxed);
+                return BufferHandle(this, index);
+            }
+            stats_.buffer_misses.fetch_add(1, std::memory_order_relaxed);
+            return BufferHandle();
+        }
+
+        // Legacy API compatibility - comprehensive version interface
+        int get_buffer(const BufferTag& tag, bool& found)
+        {
+            auto handle = get(tag);
+            found = handle.valid();
+            return found ? handle.index() : -1;
+        }
+
+        void set_flush_callback(FlushCallback cb)
+        {
+            std::lock_guard<std::mutex> lg(mu_);
+            flush_cb_ = std::move(cb);
+        }
+
+        std::size_t capacity() const
+        {
+            return capacity_;
+        }
+        std::size_t page_size() const
+        {
+            return page_size_;
+        }
+
+        // Enhanced flush operations
+        std::size_t flush_dirty_batch(std::size_t max_pages)
+        {
+            std::lock_guard<std::mutex> lock(mu_);
+            std::size_t flushed = 0;
+
+            for (std::size_t i = 0; i < capacity_ && flushed < max_pages; ++i) {
+                if (frames_[i]->dirty.load() && frames_[i]->refcount.load() == 0) {
+                    if (flush_cb_) {
+                        flush_cb_(*frames_[i]);
+                    }
+                    frames_[i]->dirty.store(false);
+                    flushed++;
+                    stats_.background_writes.fetch_add(1, std::memory_order_relaxed);
+                }
+            }
+
+            return flushed;
+        }
+
+        // Statistics - unified interface
+        BufferPoolStats get_stats() const
+        {
+            return stats_;
+        }
+
+        void reset_stats()
+        {
+            stats_.reset();
+        }
+
+        // Configuration access
+        const BufferPoolConfig& get_config() const
+        {
+            return config_;
+        }
+
+      private:
+        friend class BufferHandle;
+
         BufferPoolConfig config_;
-        
-        // Buffer storage
-        std::vector<std::unique_ptr<BufferFrame>> buffer_frames_;
-        std::vector<std::unique_ptr<BufferDescriptor>> buffer_descriptors_;
-        
-        // Hash table for buffer lookup
-        std::unordered_map<BufferTag, int, BufferTagHash> buffer_hash_table_;
-        mutable std::shared_mutex hash_table_mutex_;
-        
-        // Clock-sweep replacement algorithm
-        std::atomic<size_t> clock_hand_{0};
-        mutable std::mutex clock_mutex_;
-        
-        // Free buffer list
-        std::vector<int> free_buffers_;
-        mutable std::mutex free_list_mutex_;
-        
-        // Statistics
+        std::size_t capacity_;
+        std::size_t page_size_;
+        std::vector<std::unique_ptr<BufferFrame>> frames_;
+        std::unordered_map<BufferTag, int, BufferTagHash> tag_to_index_;
+        mutable std::mutex mu_;
+        FlushCallback flush_cb_{};
         mutable BufferPoolStats stats_;
-        
-        // Background writer
+        int clock_hand_{0};
+
+        // Background writer support
         std::thread background_writer_thread_;
         std::atomic<bool> shutdown_requested_{false};
         std::condition_variable background_writer_cv_;
         mutable std::mutex background_writer_mutex_;
-        
-        // WAL integration
-        WALManager* wal_manager_ = nullptr;
-        
-        /**
-         * Find a victim buffer for replacement using clock-sweep algorithm
-         * @return Buffer ID of victim, or -1 if none available
-         */
-        int find_victim_buffer();
-        
-        /**
-         * Allocate a new buffer from free list
-         * @return Buffer ID, or -1 if no free buffers
-         */
-        int allocate_buffer();
-        
-        /**
-         * Evict a buffer (write to disk if dirty)
-         * @param buffer_id Buffer ID to evict
-         * @return Error code, empty on success
-         */
-        std::error_code evict_buffer(int buffer_id);
-        
-        /**
-         * Background writer loop
-         */
-        void background_writer_loop();
-        
-        /**
-         * Write a dirty buffer to disk
-         * @param buffer_id Buffer ID to write
-         * @return Error code, empty on success
-         */
-        std::error_code write_buffer(int buffer_id);
-        
-        /**
-         * Update buffer pool statistics
-         */
-        void update_stats(bool hit, bool read, bool write);
-        
-        /**
-         * Validate buffer ID
-         * @param buffer_id Buffer ID to validate
-         * @return True if valid
-         */
-        bool is_valid_buffer_id(int buffer_id) const {
-            return buffer_id >= 0 && static_cast<size_t>(buffer_id) < config_.num_buffers;
+
+        int find_or_create_index_locked(const BufferTag& tag)
+        {
+            auto it = tag_to_index_.find(tag);
+            if (it != tag_to_index_.end()) {
+                return it->second;
+            }
+
+            // Need to find a victim
+            int victim_index = choose_victim_locked();
+            if (victim_index >= 0) {
+                // Evict old tag if present
+                if (frames_[victim_index]->tag.is_valid()) {
+                    tag_to_index_.erase(frames_[victim_index]->tag);
+                    if (frames_[victim_index]->dirty.load()) {
+                        stats_.evictions_dirty.fetch_add(1, std::memory_order_relaxed);
+                    } else {
+                        stats_.evictions_clean.fetch_add(1, std::memory_order_relaxed);
+                    }
+                }
+
+                // Install new tag
+                frames_[victim_index]->tag = tag;
+                frames_[victim_index]->valid.store(true);
+                frames_[victim_index]->dirty.store(false);
+                tag_to_index_[tag] = victim_index;
+
+                return victim_index;
+            }
+
+            return -1; // No victim available
+        }
+
+        int choose_victim_locked()
+        {
+            stats_.clock_sweeps.fetch_add(1, std::memory_order_relaxed);
+
+            // Clock-sweep algorithm
+            for (std::size_t attempts = 0; attempts < capacity_; ++attempts) {
+                int index = clock_hand_;
+                clock_hand_ = (clock_hand_ + 1) % static_cast<int>(capacity_);
+
+                if (frames_[index]->refcount.load() == 0) {
+                    if (frames_[index]->clock == 0) {
+                        return index; // Found victim
+                    } else {
+                        frames_[index]->clock = 0; // Give second chance
+                    }
+                }
+            }
+
+            return -1; // No victim found
+        }
+
+        void inc_ref(int index)
+        {
+            frames_[index]->refcount.fetch_add(1, std::memory_order_acq_rel);
+            frames_[index]->clock = 1;
+        }
+
+        void dec_ref(int index)
+        {
+            frames_[index]->refcount.fetch_sub(1, std::memory_order_acq_rel);
+        }
+
+        void mark_dirty(int index)
+        {
+            frames_[index]->dirty.store(true, std::memory_order_release);
+        }
+
+        void start_background_writer()
+        {
+            background_writer_thread_ = std::thread([this]() { background_writer_loop(); });
+        }
+
+        void stop_background_writer()
+        {
+            if (background_writer_thread_.joinable()) {
+                shutdown_requested_.store(true);
+                background_writer_cv_.notify_all();
+                background_writer_thread_.join();
+            }
+        }
+
+        void background_writer_loop()
+        {
+            std::unique_lock<std::mutex> lock(background_writer_mutex_);
+
+            while (!shutdown_requested_.load()) {
+                background_writer_cv_.wait_for(lock, config_.background_write_interval);
+
+                if (shutdown_requested_.load())
+                    break;
+
+                // Check if we need to write dirty pages
+                size_t dirty_count = stats_.buffers_dirty.load();
+                size_t total_used = stats_.buffers_used.load();
+
+                if (total_used > 0 &&
+                    static_cast<double>(dirty_count) / total_used > config_.dirty_page_threshold) {
+
+                    lock.unlock();
+                    flush_dirty_batch(static_cast<size_t>(capacity_ * 0.1)); // Flush 10% of pages
+                    lock.lock();
+                }
+            }
         }
     };
-    
+
     // Buffer ID constants
     constexpr int INVALID_BUFFER_ID = -1;
-    
-} // namespace ScratchBird
+
+} // namespace scratchbird::engine

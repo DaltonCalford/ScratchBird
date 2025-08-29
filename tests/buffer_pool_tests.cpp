@@ -1,33 +1,33 @@
 #include "scratchbird/engine/buffer_pool.h"
 
+#include <chrono>
+#include <cstring>
 #include <gtest/gtest.h>
+#include <random>
 #include <thread>
 #include <vector>
-#include <chrono>
-#include <random>
-#include <cstring>
 
-using namespace ScratchBird;
+using namespace scratchbird::engine;
 
-class BufferPoolTest : public ::testing::Test {
-protected:
-    void SetUp() override {
+class BufferPoolTest : public ::testing::Test
+{
+  protected:
+    void SetUp() override
+    {
         // Use test-friendly configuration
-        config_.num_buffers = 16;              // Small pool for testing
-        config_.buffer_size = 4096;            // 4KB pages for testing
-        config_.hash_table_size = 32;          // Small hash table
-        config_.dirty_page_threshold = 0.8;    // High threshold
+        config_.num_buffers = 16;           // Small pool for testing
+        config_.buffer_size = 4096;         // 4KB pages for testing
+        config_.dirty_page_threshold = 0.8; // High threshold
         config_.background_write_interval = std::chrono::milliseconds(50);
         config_.enable_statistics = true;
         config_.enable_background_writer = false; // Disable for testing
         config_.stats_report_interval = std::chrono::seconds(1);
-        config_.clock_hand_advance_size = 4;
-        config_.use_adaptive_replacement = true;
         config_.use_huge_pages = false;
         config_.enable_prefetch = false;
     }
 
-    void TearDown() override {
+    void TearDown() override
+    {
         if (buffer_pool_) {
             buffer_pool_->shutdown();
             buffer_pool_.reset();
@@ -38,463 +38,292 @@ protected:
     std::unique_ptr<BufferPool> buffer_pool_;
 };
 
-// Test 1: Configuration validation
-TEST_F(BufferPoolTest, ConfigurationValidation)
-{
-    // Valid configuration
-    EXPECT_TRUE(BufferPool::validate_config(config_).empty());
-
-    // Invalid configurations
-    BufferPoolConfig invalid_config = config_;
-    
-    invalid_config.num_buffers = 0;
-    EXPECT_FALSE(BufferPool::validate_config(invalid_config).empty());
-    
-    invalid_config = config_;
-    invalid_config.buffer_size = 0;
-    EXPECT_FALSE(BufferPool::validate_config(invalid_config).empty());
-    
-    invalid_config = config_;
-    invalid_config.hash_table_size = 0;
-    EXPECT_FALSE(BufferPool::validate_config(invalid_config).empty());
-    
-    invalid_config = config_;
-    invalid_config.dirty_page_threshold = 1.5;
-    EXPECT_FALSE(BufferPool::validate_config(invalid_config).empty());
-    
-    invalid_config = config_;
-    invalid_config.clock_hand_advance_size = 0;
-    EXPECT_FALSE(BufferPool::validate_config(invalid_config).empty());
-}
-
-// Test 2: Buffer pool initialization and shutdown
-TEST_F(BufferPoolTest, InitializationShutdown)
+// Test 1: Buffer pool initialization and basic operations
+TEST_F(BufferPoolTest, InitializationAndBasicOperations)
 {
     buffer_pool_ = std::make_unique<BufferPool>(config_);
-    
+
     // Initialize buffer pool
     std::error_code ec = buffer_pool_->initialize();
-    EXPECT_FALSE(ec) << "Buffer pool initialization failed: " << ec.message();
-    
+    EXPECT_FALSE(ec) << "Buffer pool initialization failed";
+
     // Check initial state
-    auto usage_info = buffer_pool_->get_usage_info();
-    EXPECT_EQ(usage_info.total_buffers, config_.num_buffers);
-    EXPECT_EQ(usage_info.used_buffers, 0);
-    EXPECT_EQ(usage_info.dirty_buffers, 0);
-    EXPECT_EQ(usage_info.pinned_buffers, 0);
-    EXPECT_DOUBLE_EQ(usage_info.usage_percentage, 0.0);
-    
-    // Verify configuration
-    const auto& retrieved_config = buffer_pool_->get_config();
-    EXPECT_EQ(retrieved_config.num_buffers, config_.num_buffers);
-    EXPECT_EQ(retrieved_config.buffer_size, config_.buffer_size);
-    
-    // Shutdown (will be called again in TearDown, but that's OK)
-    buffer_pool_->shutdown();
+    EXPECT_EQ(buffer_pool_->capacity(), config_.num_buffers);
+    EXPECT_EQ(buffer_pool_->page_size(), config_.buffer_size);
+
+    // Test buffer allocation
+    BufferTag tag1{1, MAIN_FORKNUM, 100};
+    auto handle1 = buffer_pool_->get(tag1);
+    EXPECT_TRUE(handle1.valid());
+
+    // Test that we can get the same buffer again
+    auto handle2 = buffer_pool_->get(tag1);
+    EXPECT_TRUE(handle2.valid());
+    EXPECT_EQ(handle1.index(), handle2.index());
+
+    // Test different buffer
+    BufferTag tag2{2, MAIN_FORKNUM, 200};
+    auto handle3 = buffer_pool_->get(tag2);
+    EXPECT_TRUE(handle3.valid());
+    EXPECT_NE(handle1.index(), handle3.index());
+
+    // Test legacy API compatibility
+    bool found;
+    int buffer_id = buffer_pool_->get_buffer(tag1, found);
+    EXPECT_TRUE(found);
+    EXPECT_GE(buffer_id, 0);
 }
 
-// Test 3: Basic buffer operations
-TEST_F(BufferPoolTest, BasicBufferOperations)
+// Test 2: BufferHandle RAII behavior
+TEST_F(BufferPoolTest, BufferHandleRAII)
 {
     buffer_pool_ = std::make_unique<BufferPool>(config_);
-    ASSERT_FALSE(buffer_pool_->initialize());
-    
-    // Create test buffer tag
-    BufferTag tag(123, MAIN_FORKNUM, 456);
-    
-    // Get buffer (should be a miss)
-    bool found = false;
-    int buffer_id = buffer_pool_->get_buffer(tag, found);
-    EXPECT_NE(buffer_id, INVALID_BUFFER_ID);
-    EXPECT_FALSE(found) << "First access should be a miss";
-    
-    // Verify buffer data access
-    char* buffer_data = buffer_pool_->get_buffer_data(buffer_id);
-    ASSERT_NE(buffer_data, nullptr);
-    
-    // Write test data
-    const char test_data[] = "Test buffer data content";
-    memcpy(buffer_data, test_data, sizeof(test_data));
-    
-    // Release buffer (mark as dirty)
-    buffer_pool_->release_buffer(buffer_id, true);
-    
-    // Get same buffer again (should be a hit)
-    found = false;
-    int buffer_id2 = buffer_pool_->get_buffer(tag, found);
-    EXPECT_EQ(buffer_id2, buffer_id) << "Should get same buffer";
-    EXPECT_TRUE(found) << "Second access should be a hit";
-    
-    // Verify data is still there
-    char* buffer_data2 = buffer_pool_->get_buffer_data(buffer_id2);
-    EXPECT_STREQ(buffer_data2, test_data);
-    
-    // Release buffer
-    buffer_pool_->release_buffer(buffer_id2, false);
-    
-    // Check statistics
-    auto stats = buffer_pool_->get_stats();
-    EXPECT_GT(stats.buffer_hits.load(), 0);
-    EXPECT_GT(stats.buffer_misses.load(), 0);
-    EXPECT_GT(stats.get_hit_ratio(), 0.0);
+    buffer_pool_->initialize();
+
+    BufferTag tag{1, MAIN_FORKNUM, 100};
+
+    // Test move semantics
+    {
+        auto handle1 = buffer_pool_->get(tag);
+        EXPECT_TRUE(handle1.valid());
+        int index = handle1.index();
+
+        // Move constructor
+        auto handle2 = std::move(handle1);
+        EXPECT_FALSE(handle1.valid());
+        EXPECT_TRUE(handle2.valid());
+        EXPECT_EQ(handle2.index(), index);
+
+        // Move assignment
+        BufferHandle handle3;
+        handle3 = std::move(handle2);
+        EXPECT_FALSE(handle2.valid());
+        EXPECT_TRUE(handle3.valid());
+        EXPECT_EQ(handle3.index(), index);
+    } // handle3 destructor should release the buffer
+
+    // Buffer should still be cached but not pinned
+    auto handle4 = buffer_pool_->get(tag);
+    EXPECT_TRUE(handle4.valid());
 }
 
-// Test 4: Buffer descriptor functionality
-TEST_F(BufferPoolTest, BufferDescriptorOperations)
-{
-    buffer_pool_ = std::make_unique<BufferPool>(config_);
-    ASSERT_FALSE(buffer_pool_->initialize());
-    
-    BufferTag tag(789, MAIN_FORKNUM, 101112);
-    
-    bool found = false;
-    int buffer_id = buffer_pool_->get_buffer(tag, found);
-    ASSERT_NE(buffer_id, INVALID_BUFFER_ID);
-    
-    // Get buffer descriptor
-    BufferDescriptor* descriptor = buffer_pool_->get_buffer_descriptor(buffer_id);
-    ASSERT_NE(descriptor, nullptr);
-    
-    // Test tag operations
-    EXPECT_TRUE(descriptor->matches_tag(tag));
-    EXPECT_EQ(descriptor->get_tag(), tag);
-    
-    // Test state operations
-    EXPECT_TRUE(descriptor->is_valid());
-    EXPECT_FALSE(descriptor->is_dirty());
-    EXPECT_TRUE(descriptor->is_pinned()); // Should be pinned from get_buffer()
-    
-    // Test pin operations
-    int initial_pin_count = descriptor->get_pin_count();
-    EXPECT_GT(initial_pin_count, 0);
-    
-    descriptor->pin();
-    EXPECT_EQ(descriptor->get_pin_count(), initial_pin_count + 1);
-    
-    descriptor->unpin();
-    EXPECT_EQ(descriptor->get_pin_count(), initial_pin_count);
-    
-    // Test usage bit operations
-    EXPECT_TRUE(descriptor->get_usage_bit()); // Should be set from access
-    
-    bool prev_usage = descriptor->clear_usage_bit();
-    EXPECT_TRUE(prev_usage);
-    EXPECT_FALSE(descriptor->get_usage_bit());
-    
-    descriptor->set_usage_bit(true);
-    EXPECT_TRUE(descriptor->get_usage_bit());
-    
-    // Test access tracking
-    uint64_t initial_access_count = descriptor->get_access_count();
-    descriptor->update_access_time();
-    EXPECT_GT(descriptor->get_access_count(), initial_access_count);
-    EXPECT_TRUE(descriptor->get_usage_bit()); // Should be set by update_access_time()
-    
-    buffer_pool_->release_buffer(buffer_id, false);
-}
-
-// Test 5: Buffer frame operations
+// Test 3: Buffer frame access and operations
 TEST_F(BufferPoolTest, BufferFrameOperations)
 {
     buffer_pool_ = std::make_unique<BufferPool>(config_);
-    ASSERT_FALSE(buffer_pool_->initialize());
-    
-    BufferTag tag(555, MAIN_FORKNUM, 777);
-    
-    bool found = false;
-    int buffer_id = buffer_pool_->get_buffer(tag, found);
-    ASSERT_NE(buffer_id, INVALID_BUFFER_ID);
-    
-    char* buffer_data = buffer_pool_->get_buffer_data(buffer_id);
-    ASSERT_NE(buffer_data, nullptr);
-    
+    buffer_pool_->initialize();
+
+    BufferTag tag{1, MAIN_FORKNUM, 100};
+    auto handle = buffer_pool_->get(tag);
+    EXPECT_TRUE(handle.valid());
+
+    // Test frame access
+    BufferFrame* frame = handle.frame();
+    ASSERT_NE(frame, nullptr);
+    EXPECT_EQ(frame->tag, tag);
+    EXPECT_EQ(frame->data.size(), config_.buffer_size);
+
     // Test data operations
-    const char test_pattern[] = "BufferFrame test data with specific pattern";
-    memcpy(buffer_data, test_pattern, sizeof(test_pattern));
-    
-    // Verify data
-    EXPECT_STREQ(buffer_data, test_pattern);
-    
-    // Test with const access
-    const char* const_buffer_data = buffer_pool_->get_buffer_data(buffer_id);
-    EXPECT_STREQ(const_buffer_data, test_pattern);
-    
-    buffer_pool_->release_buffer(buffer_id, true);
+    const char test_data[] = "Hello, Buffer Pool!";
+    size_t test_len = strlen(test_data);
+
+    std::memcpy(frame->data.data(), test_data, test_len);
+
+    // Mark buffer as dirty
+    handle.mark_dirty();
+    EXPECT_TRUE(frame->dirty.load());
+
+    // Verify data integrity
+    EXPECT_EQ(std::memcmp(frame->data.data(), test_data, test_len), 0);
 }
 
-// Test 6: Clock-sweep replacement algorithm
+// Test 4: Clock-sweep replacement algorithm
 TEST_F(BufferPoolTest, ClockSweepReplacement)
 {
-    // Use smaller buffer pool to force replacement
-    config_.num_buffers = 4;
-    buffer_pool_ = std::make_unique<BufferPool>(config_);
-    ASSERT_FALSE(buffer_pool_->initialize());
-    
-    std::vector<BufferTag> tags;
-    std::vector<int> buffer_ids;
-    
-    // Fill all buffers
-    for (int i = 0; i < 4; ++i) {
-        BufferTag tag(static_cast<RelationOid>(i), MAIN_FORKNUM, static_cast<BlockNumber>(i));
-        tags.push_back(tag);
-        
-        bool found = false;
-        int buffer_id = buffer_pool_->get_buffer(tag, found);
-        EXPECT_NE(buffer_id, INVALID_BUFFER_ID);
-        EXPECT_FALSE(found);
-        
-        buffer_ids.push_back(buffer_id);
-        buffer_pool_->release_buffer(buffer_id, false);
+    // Use small buffer pool to force replacement
+    BufferPoolConfig small_config = config_;
+    small_config.num_buffers = 4;
+    buffer_pool_ = std::make_unique<BufferPool>(small_config);
+    buffer_pool_->initialize();
+
+    std::vector<BufferHandle> handles;
+
+    // Fill buffer pool beyond capacity
+    for (int i = 0; i < 8; ++i) {
+        BufferTag tag{static_cast<RelationOid>(i), MAIN_FORKNUM, static_cast<BlockNumber>(i * 100)};
+        auto handle = buffer_pool_->get(tag);
+        EXPECT_TRUE(handle.valid());
+
+        // Keep first 4 handles to prevent their eviction
+        if (i < 4) {
+            handles.push_back(std::move(handle));
+        }
     }
-    
-    // Now request a new buffer - should cause replacement
-    BufferTag new_tag(999, MAIN_FORKNUM, 888);
-    bool found = false;
-    int new_buffer_id = buffer_pool_->get_buffer(new_tag, found);
-    EXPECT_NE(new_buffer_id, INVALID_BUFFER_ID);
-    EXPECT_FALSE(found);
-    
-    buffer_pool_->release_buffer(new_buffer_id, false);
-    
-    // Check that clock sweep occurred
+
+    // Verify statistics show evictions occurred
     auto stats = buffer_pool_->get_stats();
+    EXPECT_GT(stats.evictions(), 0);
     EXPECT_GT(stats.clock_sweeps.load(), 0);
 }
 
-// Test 7: Buffer pool statistics
-TEST_F(BufferPoolTest, BufferPoolStatistics)
+// Test 5: Statistics collection
+TEST_F(BufferPoolTest, StatisticsCollection)
 {
     buffer_pool_ = std::make_unique<BufferPool>(config_);
-    ASSERT_FALSE(buffer_pool_->initialize());
-    
-    // Initial statistics should be zero
-    auto stats = buffer_pool_->get_stats();
-    EXPECT_EQ(stats.buffer_hits.load(), 0);
-    EXPECT_EQ(stats.buffer_misses.load(), 0);
-    EXPECT_EQ(stats.buffer_reads.load(), 0);
-    
-    // Perform some operations
-    BufferTag tag1(100, MAIN_FORKNUM, 200);
-    bool found = false;
-    int buffer_id1 = buffer_pool_->get_buffer(tag1, found); // Miss
-    ASSERT_NE(buffer_id1, INVALID_BUFFER_ID);
-    buffer_pool_->release_buffer(buffer_id1, true);
-    
-    // Second access should be hit
-    int buffer_id2 = buffer_pool_->get_buffer(tag1, found); // Hit
-    EXPECT_EQ(buffer_id2, buffer_id1);
-    EXPECT_TRUE(found);
-    buffer_pool_->release_buffer(buffer_id2, false);
-    
-    // Check updated statistics
-    stats = buffer_pool_->get_stats();
-    EXPECT_EQ(stats.buffer_hits.load(), 1);
-    EXPECT_EQ(stats.buffer_misses.load(), 1);
-    EXPECT_GT(stats.buffer_reads.load(), 0);
-    EXPECT_DOUBLE_EQ(stats.get_hit_ratio(), 0.5);
-    
-    // Test statistics reset
+    buffer_pool_->initialize();
+
+    // Reset statistics
     buffer_pool_->reset_stats();
-    stats = buffer_pool_->get_stats();
-    EXPECT_EQ(stats.buffer_hits.load(), 0);
-    EXPECT_EQ(stats.buffer_misses.load(), 0);
-}
-
-// Test 8: Buffer flushing
-TEST_F(BufferPoolTest, BufferFlushing)
-{
-    buffer_pool_ = std::make_unique<BufferPool>(config_);
-    ASSERT_FALSE(buffer_pool_->initialize());
-    
-    std::vector<int> buffer_ids;
-    
-    // Create some dirty buffers
-    for (int i = 0; i < 3; ++i) {
-        BufferTag tag(static_cast<RelationOid>(i + 10), MAIN_FORKNUM, static_cast<BlockNumber>(i + 20));
-        
-        bool found = false;
-        int buffer_id = buffer_pool_->get_buffer(tag, found);
-        ASSERT_NE(buffer_id, INVALID_BUFFER_ID);
-        
-        buffer_pool_->release_buffer(buffer_id, true); // Mark as dirty
-        buffer_ids.push_back(buffer_id);
-    }
-    
-    // Test individual buffer flush
-    std::error_code ec = buffer_pool_->flush_buffer(buffer_ids[0]);
-    EXPECT_FALSE(ec) << "Buffer flush should succeed: " << ec.message();
-    
-    // Test flush all buffers
-    size_t flushed_count = buffer_pool_->flush_all_buffers();
-    EXPECT_GE(flushed_count, 2); // At least 2 dirty buffers should be flushed
-    
-    // Check statistics
     auto stats = buffer_pool_->get_stats();
-    EXPECT_GT(stats.buffer_writes.load(), 0);
+    EXPECT_EQ(stats.hits(), 0);
+    EXPECT_EQ(stats.misses(), 0);
+
+    BufferTag tag{1, MAIN_FORKNUM, 100};
+
+    // First access should be a miss
+    auto handle1 = buffer_pool_->get(tag);
+    stats = buffer_pool_->get_stats();
+    EXPECT_EQ(stats.misses(), 1);
+    EXPECT_EQ(stats.hits(), 0);
+
+    // Second access should be a hit
+    auto handle2 = buffer_pool_->get(tag);
+    stats = buffer_pool_->get_stats();
+    EXPECT_EQ(stats.misses(), 1);
+    EXPECT_EQ(stats.hits(), 1);
+
+    // Calculate hit ratio
+    EXPECT_DOUBLE_EQ(stats.get_hit_ratio(), 0.5);
 }
 
-// Test 9: Relation buffer invalidation
-TEST_F(BufferPoolTest, RelationBufferInvalidation)
+// Test 6: Flush operations
+TEST_F(BufferPoolTest, FlushOperations)
 {
     buffer_pool_ = std::make_unique<BufferPool>(config_);
-    ASSERT_FALSE(buffer_pool_->initialize());
-    
-    RelationOid test_relation = 12345;
-    std::vector<int> buffer_ids;
-    
-    // Create buffers for test relation
-    for (int i = 0; i < 3; ++i) {
-        BufferTag tag(test_relation, MAIN_FORKNUM, static_cast<BlockNumber>(i));
-        
-        bool found = false;
-        int buffer_id = buffer_pool_->get_buffer(tag, found);
-        ASSERT_NE(buffer_id, INVALID_BUFFER_ID);
-        
-        buffer_pool_->release_buffer(buffer_id, false);
-        buffer_ids.push_back(buffer_id);
-    }
-    
-    // Create buffer for different relation
-    BufferTag other_tag(99999, MAIN_FORKNUM, 1);
-    bool found = false;
-    int other_buffer_id = buffer_pool_->get_buffer(other_tag, found);
-    ASSERT_NE(other_buffer_id, INVALID_BUFFER_ID);
-    buffer_pool_->release_buffer(other_buffer_id, false);
-    
-    // Invalidate test relation buffers
-    size_t invalidated_count = buffer_pool_->invalidate_relation_buffers(test_relation);
-    EXPECT_EQ(invalidated_count, 3);
-    
-    // Verify buffers are invalidated (should be misses now)
-    for (int i = 0; i < 3; ++i) {
-        BufferTag tag(test_relation, MAIN_FORKNUM, static_cast<BlockNumber>(i));
-        found = false;
-        int buffer_id = buffer_pool_->get_buffer(tag, found);
-        EXPECT_FALSE(found) << "Buffer should be invalidated and result in miss";
-        buffer_pool_->release_buffer(buffer_id, false);
-    }
-    
-    // Other relation buffer should still be valid
-    found = false;
-    int other_buffer_id2 = buffer_pool_->get_buffer(other_tag, found);
-    EXPECT_TRUE(found) << "Other relation buffer should still be valid";
-    buffer_pool_->release_buffer(other_buffer_id2, false);
+    buffer_pool_->initialize();
+
+    std::atomic<int> flush_count{0};
+    buffer_pool_->set_flush_callback(
+        [&flush_count](const BufferFrame& frame) { flush_count.fetch_add(1); });
+
+    // Create some dirty buffers
+    std::vector<BufferTag> tags;
+    for (int i = 0; i < 4; ++i) {
+        BufferTag tag{static_cast<RelationOid>(i + 1), MAIN_FORKNUM,
+                      static_cast<BlockNumber>((i + 1) * 100)};
+        tags.push_back(tag);
+
+        auto handle = buffer_pool_->get(tag);
+        EXPECT_TRUE(handle.valid());
+        handle.mark_dirty();
+    } // Handles go out of scope, reducing refcount to 0
+
+    // Flush dirty buffers
+    size_t flushed = buffer_pool_->flush_dirty_batch(10);
+    EXPECT_GT(flushed, 0);
+    EXPECT_GT(flush_count.load(), 0);
+
+    auto stats = buffer_pool_->get_stats();
+    EXPECT_GT(stats.flushes(), 0);
 }
 
-// Test 10: Concurrent buffer access (basic thread safety)
-TEST_F(BufferPoolTest, ConcurrentBufferAccess)
+// Test 7: Legacy compatibility
+TEST_F(BufferPoolTest, LegacyCompatibility)
 {
     buffer_pool_ = std::make_unique<BufferPool>(config_);
-    ASSERT_FALSE(buffer_pool_->initialize());
-    
-    const int num_threads = 4;
-    const int operations_per_thread = 10;
+    buffer_pool_->initialize();
+
+    // Test legacy BufferTag constructors
+    BufferTag tag1{42, 1000}; // file_id, page_no constructor
+    EXPECT_EQ(tag1.file_id(), 42);
+    EXPECT_EQ(tag1.page_no(), 1000);
+    EXPECT_EQ(tag1.relation_oid, 42);
+    EXPECT_EQ(tag1.block_number, 1000);
+
+    // Test legacy statistics interface
+    auto stats = buffer_pool_->get_stats();
+    uint64_t hits = stats.hits();
+    uint64_t misses = stats.misses();
+    uint64_t evictions = stats.evictions();
+    uint64_t flushes = stats.flushes();
+
+    // Values should be accessible without error
+    EXPECT_GE(hits, 0);
+    EXPECT_GE(misses, 0);
+    EXPECT_GE(evictions, 0);
+    EXPECT_GE(flushes, 0);
+}
+
+// Test 8: Concurrent access (basic)
+TEST_F(BufferPoolTest, BasicConcurrentAccess)
+{
+    buffer_pool_ = std::make_unique<BufferPool>(config_);
+    buffer_pool_->initialize();
+
+    constexpr int num_threads = 4;
+    constexpr int operations_per_thread = 10;
     std::vector<std::thread> threads;
-    std::atomic<int> total_operations{0};
-    
-    // Start concurrent threads
+
+    std::atomic<int> success_count{0};
+
     for (int t = 0; t < num_threads; ++t) {
-        threads.emplace_back([this, t, operations_per_thread, &total_operations]() {
-            std::random_device rd;
-            std::mt19937 gen(rd());
-            std::uniform_int_distribution<> dis(1, 100);
-            
-            for (int op = 0; op < operations_per_thread; ++op) {
-                RelationOid relation_oid = static_cast<RelationOid>(t * 100 + op);
-                BlockNumber block_number = static_cast<BlockNumber>(dis(gen));
-                
-                BufferTag tag(relation_oid, MAIN_FORKNUM, block_number);
-                
-                bool found = false;
-                int buffer_id = buffer_pool_->get_buffer(tag, found);
-                if (buffer_id != INVALID_BUFFER_ID) {
+        threads.emplace_back([&, t]() {
+            for (int i = 0; i < operations_per_thread; ++i) {
+                BufferTag tag{static_cast<RelationOid>(t), MAIN_FORKNUM,
+                              static_cast<BlockNumber>(i)};
+                auto handle = buffer_pool_->get(tag);
+                if (handle.valid()) {
+                    success_count.fetch_add(1);
                     // Simulate some work
                     std::this_thread::sleep_for(std::chrono::microseconds(1));
-                    
-                    buffer_pool_->release_buffer(buffer_id, op % 2 == 0); // Some dirty
-                    total_operations.fetch_add(1);
                 }
             }
         });
     }
-    
-    // Wait for all threads to complete
+
     for (auto& thread : threads) {
         thread.join();
     }
-    
-    // Verify operations completed
-    EXPECT_EQ(total_operations.load(), num_threads * operations_per_thread);
-    
-    // Check that statistics make sense
-    auto stats = buffer_pool_->get_stats();
-    EXPECT_GT(stats.buffer_hits.load() + stats.buffer_misses.load(), 0);
+
+    EXPECT_EQ(success_count.load(), num_threads * operations_per_thread);
 }
 
-// Test 11: Configuration updates
-TEST_F(BufferPoolTest, ConfigurationUpdates)
+// Test 9: BufferTag hash function
+TEST_F(BufferPoolTest, BufferTagHashFunction)
+{
+    BufferTagHash hasher;
+
+    BufferTag tag1{1, MAIN_FORKNUM, 100};
+    BufferTag tag2{1, MAIN_FORKNUM, 101};
+    BufferTag tag3{2, MAIN_FORKNUM, 100};
+    BufferTag tag4{1, FSM_FORKNUM, 100};
+
+    size_t hash1 = hasher(tag1);
+    size_t hash2 = hasher(tag2);
+    size_t hash3 = hasher(tag3);
+    size_t hash4 = hasher(tag4);
+
+    // Different tags should have different hashes (high probability)
+    EXPECT_NE(hash1, hash2);
+    EXPECT_NE(hash1, hash3);
+    EXPECT_NE(hash1, hash4);
+    EXPECT_NE(hash2, hash3);
+
+    // Same tag should have same hash
+    BufferTag tag1_copy{1, MAIN_FORKNUM, 100};
+    size_t hash1_copy = hasher(tag1_copy);
+    EXPECT_EQ(hash1, hash1_copy);
+}
+
+// Test 10: Configuration access
+TEST_F(BufferPoolTest, ConfigurationAccess)
 {
     buffer_pool_ = std::make_unique<BufferPool>(config_);
-    ASSERT_FALSE(buffer_pool_->initialize());
-    
-    // Update runtime configuration
-    BufferPoolConfig new_config = config_;
-    new_config.dirty_page_threshold = 0.9;
-    new_config.background_write_interval = std::chrono::milliseconds(25);
-    new_config.enable_prefetch = true;
-    
-    std::error_code ec = buffer_pool_->update_config(new_config);
-    EXPECT_FALSE(ec) << "Configuration update should succeed: " << ec.message();
-    
-    // Verify configuration was updated
-    const auto& updated_config = buffer_pool_->get_config();
-    EXPECT_DOUBLE_EQ(updated_config.dirty_page_threshold, 0.9);
-    EXPECT_EQ(updated_config.background_write_interval, std::chrono::milliseconds(25));
-    EXPECT_TRUE(updated_config.enable_prefetch);
-    
-    // Try invalid configuration update
-    BufferPoolConfig invalid_config = config_;
-    invalid_config.dirty_page_threshold = 1.5; // Invalid
-    
-    ec = buffer_pool_->update_config(invalid_config);
-    EXPECT_TRUE(ec) << "Invalid configuration update should fail";
-}
+    buffer_pool_->initialize();
 
-// Test 12: Usage information reporting
-TEST_F(BufferPoolTest, UsageInformationReporting)
-{
-    buffer_pool_ = std::make_unique<BufferPool>(config_);
-    ASSERT_FALSE(buffer_pool_->initialize());
-    
-    // Initial usage should be empty
-    auto usage_info = buffer_pool_->get_usage_info();
-    EXPECT_EQ(usage_info.total_buffers, config_.num_buffers);
-    EXPECT_EQ(usage_info.used_buffers, 0);
-    EXPECT_EQ(usage_info.dirty_buffers, 0);
-    EXPECT_EQ(usage_info.pinned_buffers, 0);
-    EXPECT_DOUBLE_EQ(usage_info.usage_percentage, 0.0);
-    
-    // Use some buffers
-    std::vector<int> buffer_ids;
-    for (int i = 0; i < 5; ++i) {
-        BufferTag tag(static_cast<RelationOid>(i), MAIN_FORKNUM, static_cast<BlockNumber>(i));
-        
-        bool found = false;
-        int buffer_id = buffer_pool_->get_buffer(tag, found);
-        ASSERT_NE(buffer_id, INVALID_BUFFER_ID);
-        
-        buffer_pool_->release_buffer(buffer_id, i % 2 == 0); // Some dirty
-        buffer_ids.push_back(buffer_id);
-    }
-    
-    // Check updated usage
-    usage_info = buffer_pool_->get_usage_info();
-    EXPECT_GT(usage_info.used_buffers, 0);
-    EXPECT_GT(usage_info.usage_percentage, 0.0);
-    EXPECT_GT(usage_info.hit_ratio, 0.0);
-}
-
-int main(int argc, char **argv) {
-    ::testing::InitGoogleTest(&argc, argv);
-    return RUN_ALL_TESTS();
+    const auto& retrieved_config = buffer_pool_->get_config();
+    EXPECT_EQ(retrieved_config.num_buffers, config_.num_buffers);
+    EXPECT_EQ(retrieved_config.buffer_size, config_.buffer_size);
+    EXPECT_EQ(retrieved_config.enable_background_writer, config_.enable_background_writer);
+    EXPECT_EQ(retrieved_config.dirty_page_threshold, config_.dirty_page_threshold);
 }

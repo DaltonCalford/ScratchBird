@@ -11,6 +11,7 @@
 #include "scratchbird/engine/parser_select.h"
 #include "scratchbird/engine/psql_executor.h"
 #include "scratchbird/engine/system_oids.h"
+#include "scratchbird/engine/statistics.h"
 #include "scratchbird/engine/txn.h"
 // no planner header; local selectivity helper below for bucketing
 
@@ -22,6 +23,7 @@
 #include <iterator>
 #include <map>
 #include <set>
+#include <cmath>
 
 namespace scratchbird
 {
@@ -3264,6 +3266,116 @@ namespace scratchbird
             auto scan = relh.open_scan();
             std::vector<Value> rowv;
             ods::RowId rid{};
+            // Partition-wise execution: if a partition map exists, precompute surviving partitions
+            std::vector<PartitionRange> selected_partitions;
+            int partition_key_col_index = -1;
+            if (const PartitionMap* pm = partition_lookup(rel)) {
+                // Identify key column index
+                auto itci = std::find(colnames.begin(), colnames.end(), pm->key_column);
+                if (itci != colnames.end())
+                    partition_key_col_index = static_cast<int>(std::distance(colnames.begin(), itci));
+
+                // Start with all partitions and prune using simple WHERE parsing as in planner
+                selected_partitions = pm->ranges;
+                auto trim = [](std::string s) {
+                    auto a = s.find_first_not_of(" \t");
+                    auto b = s.find_last_not_of(" \t");
+                    if (a == std::string::npos)
+                        return std::string();
+                    return s.substr(a, b - a + 1);
+                };
+                auto parse_const = [&](const std::string& tok) -> std::string {
+                    std::string t = trim(tok);
+                    if (!t.empty() && (t.front() == '\'' || t.front() == '"')) {
+                        if (t.size() >= 2 && (t.back() == '\'' || t.back() == '"'))
+                            return t.substr(1, t.size() - 2);
+                    }
+                    return t;
+                };
+                std::string U = q.where_expr;
+                for (auto& c : U)
+                    c = (char)std::toupper((unsigned char)c);
+                std::string K = pm->key_column;
+                for (auto& c : K)
+                    c = (char)std::toupper((unsigned char)c);
+                auto prune = [&](auto pred) {
+                    std::vector<PartitionRange> kept;
+                    kept.reserve(selected_partitions.size());
+                    for (const auto& pr : selected_partitions) {
+                        if (pred(pr))
+                            kept.push_back(pr);
+                    }
+                    selected_partitions.swap(kept);
+                };
+                if (!q.where_expr.empty()) {
+                    // BETWEEN
+                    auto pos = U.find(" BETWEEN ");
+                    if (pos != std::string::npos) {
+                        auto lhs = trim(q.where_expr.substr(0, pos));
+                        if (lhs == pm->key_column) {
+                            auto rest = q.where_expr.substr(pos + 9);
+                            auto andp = rest.find(" AND ");
+                            if (andp != std::string::npos) {
+                                std::string a = parse_const(rest.substr(0, andp));
+                                std::string b = parse_const(rest.substr(andp + 5));
+                                prune([&](const PartitionRange& pr) {
+                                    if (!pr.list_values.empty())
+                                        return true; // keep list partitions; filtered later
+                                    if ((!pr.end.empty() && pr.end < a) ||
+                                        (!pr.start.empty() && pr.start > b))
+                                        return false;
+                                    return true;
+                                });
+                            }
+                        }
+                    }
+                    // Comparators
+                    for (auto op : {std::string(">="), std::string("<="), std::string(">"),
+                                    std::string("<")}) {
+                        auto p = U.find(" " + op + " ");
+                        if (p != std::string::npos) {
+                            auto lhs = trim(q.where_expr.substr(0, p));
+                            if (lhs == pm->key_column) {
+                                std::string rhs = parse_const(q.where_expr.substr(p + op.size() + 2));
+                                prune([&](const PartitionRange& pr) {
+                                    if (!pr.list_values.empty())
+                                        return true;
+                                    if (op == ">" || op == ">=") {
+                                        if (!pr.end.empty() &&
+                                            ((op == ">" && pr.end <= rhs) ||
+                                             (op == ">=" && pr.end < rhs)))
+                                            return false;
+                                    } else if (op == "<" || op == "<=") {
+                                        if (!pr.start.empty() &&
+                                            ((op == "<" && pr.start >= rhs) ||
+                                             (op == "<=" && pr.start > rhs)))
+                                            return false;
+                                    }
+                                    return true;
+                                });
+                                break;
+                            }
+                        }
+                    }
+                    // Equality for list partitions
+                    auto pe = U.find(" = ");
+                    if (pe != std::string::npos) {
+                        auto lhs = trim(q.where_expr.substr(0, pe));
+                        if (lhs == pm->key_column) {
+                            std::string rhs = parse_const(q.where_expr.substr(pe + 3));
+                            prune([&](const PartitionRange& pr) {
+                                if (!pr.list_values.empty()) {
+                                    for (const auto& v : pr.list_values)
+                                        if (v == rhs)
+                                            return true;
+                                    return false;
+                                }
+                                return true;
+                            });
+                        }
+                    }
+                }
+            }
             // WHERE filtering + projection (buffer rows for ORDER BY/LIMIT)
             std::vector<std::vector<std::string>> rows_buffer;
             // Early-exit optimization when no ORDER BY and no GROUP and LIMIT present
@@ -3287,6 +3399,35 @@ namespace scratchbird
                 if (metrics)
                     metrics->scanned_rows++;
                 scanned_here++;
+                // Partition prefilter: skip rows not in selected partitions
+                if (!selected_partitions.empty() && partition_key_col_index >= 0 &&
+                    partition_key_col_index < (int)rowv.size()) {
+                    const std::string key = rowv[partition_key_col_index].bytes;
+                    bool ok_part = false;
+                    for (const auto& pr : selected_partitions) {
+                        if (!pr.list_values.empty()) {
+                            for (const auto& v : pr.list_values) {
+                                if (v == key) {
+                                    ok_part = true;
+                                    break;
+                                }
+                            }
+                            if (ok_part)
+                                break;
+                        } else {
+                            bool ge_start = pr.start.empty() ||
+                                            (pr.start_inclusive ? key >= pr.start : key > pr.start);
+                            bool le_end = pr.end.empty() ||
+                                          (pr.end_inclusive ? key <= pr.end : key < pr.end);
+                            if (ge_start && le_end) {
+                                ok_part = true;
+                                break;
+                            }
+                        }
+                    }
+                    if (!ok_part)
+                        continue;
+                }
                 if (!q.where_expr.empty()) {
                     if (!evaluate_predicate_compiled(where_pf, col_index, rowv))
                         continue;
@@ -4183,6 +4324,7 @@ namespace scratchbird
             std::string target;
             if (is_analyze_stmt(ast, target)) {
                 IndexStats st{};
+                // Base defaults; refined below if stats/catalog available
                 st.height = 3;
                 st.leaf_pages = 128;
                 st.branch_pages = 16;
@@ -4191,6 +4333,46 @@ namespace scratchbird
                 st.correlation = 0.4;
                 st.mcv = {{"A", 0.02}, {"B", 0.015}};
                 st.histogram = {{"H1", 0.1}, {"H2", 0.2}, {"H3", 0.3}, {"H4", 0.4}, {"H5", 0.5}};
+
+                try {
+                    // Enrich with table/column stats and compute cross-index multi-ndistinct
+                    CatalogManager cm(get_executor_db_path());
+                    auto soid = cm.lookup_schema_oid_by_name("public");
+                    StatisticsCollector collector(get_executor_db_path());
+                    TableStatistics tstats = collector.get_table_statistics("public", target);
+                    double table_rows = (tstats.n_rows > 0) ? static_cast<double>(tstats.n_rows)
+                                                            : 1000000.0;
+                    auto indexes = cm.list_relation_indexes_by_name(soid, target);
+                    for (const auto& idx : indexes) {
+                        if (idx.keys.size() < 2)
+                            continue;
+                        // Build composite key name "col1,col2,..."
+                        std::string comp;
+                        comp.reserve(64);
+                        double product_nd = 1.0;
+                        bool any = false;
+                        for (std::size_t i = 0; i < idx.keys.size(); ++i) {
+                            const std::string& col = idx.keys[i].first;
+                            if (!comp.empty())
+                                comp.push_back(',');
+                            comp += col;
+                            ColumnStatistics cst =
+                                collector.get_column_statistics("public", target, col);
+                            double nd = (cst.n_distinct > 0)
+                                            ? static_cast<double>(cst.n_distinct)
+                                            : (st.ndistinct > 1.0 ? st.ndistinct : 1000.0);
+                            product_nd *= std::max(1.0, nd);
+                            any = true;
+                        }
+                        if (any) {
+                            double comp_nd = std::max(1.0, std::min(table_rows, product_nd));
+                            st.multi_ndistinct[comp] = comp_nd;
+                        }
+                    }
+                } catch (...) {
+                    // Best-effort enrichment; keep defaults on failure
+                }
+
                 stats_register(target.empty() ? std::string("<unknown>") : target, st);
                 // Invalidate any cached optimizer plans that might rely on old stats
                 invalidate_optimizer_cache();
@@ -4442,6 +4624,140 @@ namespace scratchbird
                         return out;
                     };
                     for (const auto& op : ast.ddlTable.alter_ops) {
+                        // Partitioning registration: ALTER TABLE ... SET PARTITION BY ...
+                        {
+                            auto lower = [](std::string s) {
+                                std::transform(s.begin(), s.end(), s.begin(),
+                                               [](unsigned char c) { return char(std::tolower(c)); });
+                                return s;
+                            };
+                            std::string lo = lower(op.raw);
+                            auto pos_part = lo.find(" partition by ");
+                            if (pos_part != std::string::npos) {
+                                // Determine method (range or list)
+                                std::string method;
+                                std::string tail = op.raw.substr(pos_part + 13);
+                                auto trim = [](std::string& s) {
+                                    auto not_space = [](int ch) { return !std::isspace(ch); };
+                                    s.erase(s.begin(), std::find_if(s.begin(), s.end(), not_space));
+                                    s.erase(std::find_if(s.rbegin(), s.rend(), not_space).base(), s.end());
+                                };
+                                std::string ltail = lower(tail);
+                                if (ltail.rfind("range ", 0) == 0) {
+                                    method = "RANGE";
+                                    tail = tail.substr(6);
+                                } else if (ltail.rfind("list ", 0) == 0) {
+                                    method = "LIST";
+                                    tail = tail.substr(5);
+                                }
+                                // Expect key column in parentheses
+                                auto lp = tail.find('(');
+                                auto rp = tail.find(')');
+                                if (lp == std::string::npos || rp == std::string::npos || rp <= lp) {
+                                    continue; // malformed; ignore
+                                }
+                                std::string keycol = tail.substr(lp + 1, rp - lp - 1);
+                                trim(keycol);
+                                // After key, expect a parenthesized partition spec list
+                                auto lp2 = tail.find('(', rp + 1);
+                                auto rp2 = tail.rfind(')');
+                                if (lp2 == std::string::npos || rp2 == std::string::npos || rp2 <= lp2) {
+                                    // Some formats may use the remaining of op.raw as specs; try from last '(' overall
+                                    lp2 = op.raw.find('(', op.raw.find(')', pos_part) + 1);
+                                    rp2 = op.raw.rfind(')');
+                                    if (lp2 == std::string::npos || rp2 == std::string::npos || rp2 <= lp2)
+                                        continue;
+                                }
+                                std::string specs = op.raw.substr(lp2 + 1, rp2 - lp2 - 1);
+                                // Split top-level commas
+                                auto split_csv_top = [&](const std::string& s) {
+                                    std::vector<std::string> out;
+                                    std::string cur;
+                                    int d = 0;
+                                    for (char c : s) {
+                                        if (c == '(')
+                                            d++;
+                                        else if (c == ')' && d > 0)
+                                            d--;
+                                        if (c == ',' && d == 0) {
+                                            std::string t = cur;
+                                            trim(t);
+                                            if (!t.empty())
+                                                out.push_back(t);
+                                            cur.clear();
+                                        } else
+                                            cur.push_back(c);
+                                    }
+                                    std::string t = cur;
+                                    trim(t);
+                                    if (!t.empty())
+                                        out.push_back(t);
+                                    return out;
+                                };
+                                auto unquote = [](std::string s) {
+                                    auto a = s.find_first_not_of(" \t");
+                                    auto b = s.find_last_not_of(" \t");
+                                    if (a == std::string::npos)
+                                        return std::string();
+                                    s = s.substr(a, b - a + 1);
+                                    if (!s.empty() && (s.front() == '\'' || s.front() == '"')) {
+                                        if (s.size() >= 2 && (s.back() == '\'' || s.back() == '"'))
+                                            s = s.substr(1, s.size() - 2);
+                                    }
+                                    return s;
+                                };
+                                PartitionMap pm;
+                                pm.relation = relname;
+                                pm.key_column = keycol;
+                                for (const auto& item : split_csv_top(specs)) {
+                                    std::string lit = item;
+                                    std::string ll = lower(lit);
+                                    // Expect: name FROM 'a' TO 'b'   or   name IN ('a','b')
+                                    // Extract name (first token)
+                                    std::string name;
+                                    {
+                                        std::string t = lit;
+                                        trim(t);
+                                        auto sp = t.find_first_of(" \t\n");
+                                        name = (sp == std::string::npos) ? t : t.substr(0, sp);
+                                        if (sp != std::string::npos)
+                                            lit = t.substr(sp + 1);
+                                        else
+                                            lit.clear();
+                                    }
+                                    PartitionRange pr;
+                                    pr.name = name;
+                                    std::string ll2 = lower(lit);
+                                    if (ll2.rfind("from ", 0) == 0) {
+                                        std::string after = lit.substr(5);
+                                        trim(after);
+                                        auto topos = lower(after).find(" to ");
+                                        if (topos != std::string::npos) {
+                                            std::string a = after.substr(0, topos);
+                                            std::string b = after.substr(topos + 4);
+                                            trim(a);
+                                            trim(b);
+                                            pr.start = unquote(a);
+                                            pr.end = unquote(b);
+                                        }
+                                    } else if (ll2.rfind("in ", 0) == 0) {
+                                        std::string after = lit.substr(3);
+                                        trim(after);
+                                        auto lpv = after.find('(');
+                                        auto rpv = after.rfind(')');
+                                        if (lpv != std::string::npos && rpv != std::string::npos && rpv > lpv) {
+                                            std::string vals = after.substr(lpv + 1, rpv - lpv - 1);
+                                            for (const auto& v : split_csv_top(vals))
+                                                pr.list_values.push_back(unquote(v));
+                                        }
+                                    }
+                                    pm.ranges.push_back(std::move(pr));
+                                }
+                                partition_register(pm);
+                                // proceed to next op
+                                continue;
+                            }
+                        }
                         std::string lo = lower(op.raw);
                         if (op.kind == "ADD") {
                             std::string lb = lower(op.raw);
