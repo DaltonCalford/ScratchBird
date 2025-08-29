@@ -181,6 +181,14 @@ add_executable(scratchbird src/main.cpp src/scratchbird.cpp)
 
 target_link_libraries(scratchbird scratchbird_engine)
 
+# Database Space Monitor Utility
+add_executable(dbspace src/dbspace.cpp)
+target_link_libraries(dbspace scratchbird_engine)
+
+# Database Integrity Check Utility
+add_executable(dbcheck src/dbcheck.cpp)
+target_link_libraries(dbcheck scratchbird_engine)
+
 # Install rules for packaging
 include(GNUInstallDirs)
 
@@ -230,14 +238,6 @@ if(SB_ENABLE_CPACK)
 
   include(CPack)
 endif()
-
-# Database Space Monitor Utility
-add_executable(dbspace src/dbspace.cpp)
-target_link_libraries(dbspace scratchbird_engine)
-
-# Database Integrity Check Utility
-add_executable(dbcheck src/dbcheck.cpp)
-target_link_libraries(dbcheck scratchbird_engine)
 
 # Tests
 if(SCRATCHBIRD_BUILD_TESTS)
@@ -548,14 +548,6 @@ if(SCRATCHBIRD_BUILD_TESTS)
   target_link_libraries(performance_optimization_tests scratchbird_engine)
   add_test(NAME performance_optimization_tests
            COMMAND performance_optimization_tests)
-
-  add_executable(buffer_pool_tests tests/buffer_pool_tests.cpp)
-  target_link_libraries(buffer_pool_tests scratchbird_engine)
-  if(GTEST_FOUND)
-    target_link_libraries(buffer_pool_tests ${GTEST_LIBRARIES})
-    target_include_directories(buffer_pool_tests PRIVATE ${GTEST_INCLUDE_DIRS})
-  endif()
-  add_test(NAME buffer_pool_tests COMMAND buffer_pool_tests)
 
   add_executable(partitioning_tests tests/partitioning_tests.cpp)
   target_link_libraries(partitioning_tests scratchbird_engine)

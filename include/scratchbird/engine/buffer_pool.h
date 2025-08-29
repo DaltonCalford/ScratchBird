@@ -211,56 +211,54 @@ namespace scratchbird::engine
      */
     struct BufferPoolStats {
         // Hit ratio statistics
-        std::atomic<uint64_t> buffer_hits{0};
-        std::atomic<uint64_t> buffer_misses{0};
-        std::atomic<uint64_t> buffer_reads{0};
-        std::atomic<uint64_t> buffer_writes{0};
+        uint64_t buffer_hits{0};
+        uint64_t buffer_misses{0};
+        uint64_t buffer_reads{0};
+        uint64_t buffer_writes{0};
 
         // Buffer utilization
-        std::atomic<uint64_t> buffers_used{0};
-        std::atomic<uint64_t> buffers_dirty{0};
-        std::atomic<uint64_t> buffers_pinned{0};
+        uint64_t buffers_used{0};
+        uint64_t buffers_dirty{0};
+        uint64_t buffers_pinned{0};
 
         // Eviction and replacement statistics
-        std::atomic<uint64_t> evictions_clean{0};
-        std::atomic<uint64_t> evictions_dirty{0};
-        std::atomic<uint64_t> clock_sweeps{0};
+        uint64_t evictions_clean{0};
+        uint64_t evictions_dirty{0};
+        uint64_t clock_sweeps{0};
 
         // Background writer statistics
-        std::atomic<uint64_t> background_writes{0};
+        uint64_t background_writes{0};
 
         std::chrono::steady_clock::time_point last_reset_time{std::chrono::steady_clock::now()};
 
         // Legacy compatibility with simple stats
         uint64_t hits() const
         {
-            return buffer_hits.load();
+            return buffer_hits;
         }
         uint64_t misses() const
         {
-            return buffer_misses.load();
+            return buffer_misses;
         }
         uint64_t evictions() const
         {
-            return evictions_clean.load() + evictions_dirty.load();
+            return evictions_clean + evictions_dirty;
         }
         uint64_t flushes() const
         {
-            return background_writes.load();
+            return background_writes;
         }
 
         // Calculated metrics
         double get_hit_ratio() const
         {
-            uint64_t hits = buffer_hits.load();
-            uint64_t total = hits + buffer_misses.load();
-            return total > 0 ? static_cast<double>(hits) / total : 0.0;
+            uint64_t total = buffer_hits + buffer_misses;
+            return total > 0 ? static_cast<double>(buffer_hits) / total : 0.0;
         }
 
         double get_dirty_ratio() const
         {
-            uint64_t used = buffers_used.load();
-            return used > 0 ? static_cast<double>(buffers_dirty.load()) / used : 0.0;
+            return buffers_used > 0 ? static_cast<double>(buffers_dirty) / buffers_used : 0.0;
         }
 
         void reset()
@@ -357,10 +355,10 @@ namespace scratchbird::engine
             if (index >= 0) {
                 inc_ref(index);
                 frames_[index]->update_access_time();
-                stats_.buffer_hits.fetch_add(1, std::memory_order_relaxed);
+                atomic_stats_.buffer_hits.fetch_add(1, std::memory_order_relaxed);
                 return BufferHandle(this, index);
             }
-            stats_.buffer_misses.fetch_add(1, std::memory_order_relaxed);
+            atomic_stats_.buffer_misses.fetch_add(1, std::memory_order_relaxed);
             return BufferHandle();
         }
 
@@ -400,7 +398,7 @@ namespace scratchbird::engine
                     }
                     frames_[i]->dirty.store(false);
                     flushed++;
-                    stats_.background_writes.fetch_add(1, std::memory_order_relaxed);
+                    atomic_stats_.background_writes.fetch_add(1, std::memory_order_relaxed);
                 }
             }
 
@@ -410,12 +408,36 @@ namespace scratchbird::engine
         // Statistics - unified interface
         BufferPoolStats get_stats() const
         {
-            return stats_;
+            BufferPoolStats result;
+            result.buffer_hits = atomic_stats_.buffer_hits.load();
+            result.buffer_misses = atomic_stats_.buffer_misses.load();
+            result.buffer_reads = atomic_stats_.buffer_reads.load();
+            result.buffer_writes = atomic_stats_.buffer_writes.load();
+            result.buffers_used = atomic_stats_.buffers_used.load();
+            result.buffers_dirty = atomic_stats_.buffers_dirty.load();
+            result.buffers_pinned = atomic_stats_.buffers_pinned.load();
+            result.evictions_clean = atomic_stats_.evictions_clean.load();
+            result.evictions_dirty = atomic_stats_.evictions_dirty.load();
+            result.clock_sweeps = atomic_stats_.clock_sweeps.load();
+            result.background_writes = atomic_stats_.background_writes.load();
+            result.last_reset_time = atomic_stats_.last_reset_time.load();
+            return result;
         }
 
         void reset_stats()
         {
-            stats_.reset();
+            atomic_stats_.buffer_hits.store(0);
+            atomic_stats_.buffer_misses.store(0);
+            atomic_stats_.buffer_reads.store(0);
+            atomic_stats_.buffer_writes.store(0);
+            atomic_stats_.buffers_used.store(0);
+            atomic_stats_.buffers_dirty.store(0);
+            atomic_stats_.buffers_pinned.store(0);
+            atomic_stats_.evictions_clean.store(0);
+            atomic_stats_.evictions_dirty.store(0);
+            atomic_stats_.clock_sweeps.store(0);
+            atomic_stats_.background_writes.store(0);
+            atomic_stats_.last_reset_time.store(std::chrono::steady_clock::now());
         }
 
         // Configuration access
@@ -427,6 +449,22 @@ namespace scratchbird::engine
       private:
         friend class BufferHandle;
 
+        // Internal atomic statistics for thread-safe updates
+        struct AtomicBufferPoolStats {
+            std::atomic<uint64_t> buffer_hits{0};
+            std::atomic<uint64_t> buffer_misses{0};
+            std::atomic<uint64_t> buffer_reads{0};
+            std::atomic<uint64_t> buffer_writes{0};
+            std::atomic<uint64_t> buffers_used{0};
+            std::atomic<uint64_t> buffers_dirty{0};
+            std::atomic<uint64_t> buffers_pinned{0};
+            std::atomic<uint64_t> evictions_clean{0};
+            std::atomic<uint64_t> evictions_dirty{0};
+            std::atomic<uint64_t> clock_sweeps{0};
+            std::atomic<uint64_t> background_writes{0};
+            std::atomic<std::chrono::steady_clock::time_point> last_reset_time{std::chrono::steady_clock::now()};
+        };
+
         BufferPoolConfig config_;
         std::size_t capacity_;
         std::size_t page_size_;
@@ -434,7 +472,7 @@ namespace scratchbird::engine
         std::unordered_map<BufferTag, int, BufferTagHash> tag_to_index_;
         mutable std::mutex mu_;
         FlushCallback flush_cb_{};
-        mutable BufferPoolStats stats_;
+        mutable AtomicBufferPoolStats atomic_stats_;
         int clock_hand_{0};
 
         // Background writer support
@@ -457,9 +495,9 @@ namespace scratchbird::engine
                 if (frames_[victim_index]->tag.is_valid()) {
                     tag_to_index_.erase(frames_[victim_index]->tag);
                     if (frames_[victim_index]->dirty.load()) {
-                        stats_.evictions_dirty.fetch_add(1, std::memory_order_relaxed);
+                        atomic_stats_.evictions_dirty.fetch_add(1, std::memory_order_relaxed);
                     } else {
-                        stats_.evictions_clean.fetch_add(1, std::memory_order_relaxed);
+                        atomic_stats_.evictions_clean.fetch_add(1, std::memory_order_relaxed);
                     }
                 }
 
@@ -477,7 +515,7 @@ namespace scratchbird::engine
 
         int choose_victim_locked()
         {
-            stats_.clock_sweeps.fetch_add(1, std::memory_order_relaxed);
+            atomic_stats_.clock_sweeps.fetch_add(1, std::memory_order_relaxed);
 
             // Clock-sweep algorithm
             for (std::size_t attempts = 0; attempts < capacity_; ++attempts) {
@@ -537,8 +575,8 @@ namespace scratchbird::engine
                     break;
 
                 // Check if we need to write dirty pages
-                size_t dirty_count = stats_.buffers_dirty.load();
-                size_t total_used = stats_.buffers_used.load();
+                size_t dirty_count = atomic_stats_.buffers_dirty.load();
+                size_t total_used = atomic_stats_.buffers_used.load();
 
                 if (total_used > 0 &&
                     static_cast<double>(dirty_count) / total_used > config_.dirty_page_threshold) {
