@@ -43,6 +43,7 @@ add_library(
   src/engine/catalog_manager.cpp
   src/engine/catalog_mem.cpp
   src/engine/config.cpp
+  # Phase 18 additions (no new files yet; flags only)
   src/engine/engine.cpp
   src/engine/executor.cpp
   src/engine/expr.cpp

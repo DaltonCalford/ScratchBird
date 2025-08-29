@@ -7,6 +7,7 @@
 #include "scratchbird/engine/header.h"
 #include "scratchbird/engine/heap_rel.h"
 #include "scratchbird/engine/index_btree.h"
+#include "scratchbird/engine/config.h"
 #include "scratchbird/engine/parser_dml.h"
 #include "scratchbird/engine/parser_select.h"
 #include "scratchbird/engine/psql_executor.h"
@@ -24,6 +25,7 @@
 #include <map>
 #include <set>
 #include <cmath>
+#include <optional>
 
 namespace scratchbird
 {
@@ -93,6 +95,161 @@ namespace scratchbird
         // Per-transaction pending FK keys collected when deferred (by relation key schema.rel)
         static std::unordered_map<std::string, std::vector<std::vector<std::string>>>
             g_fk_pending_keys;
+
+        // Persist/Load partition maps in catalog (SDB$STATS JSON) for restart safety
+        static void persist_partition_map(const std::string& schema_name, const std::string& rel,
+                                          const PartitionMap& pm)
+        {
+            try {
+                CatalogManager cm(get_executor_db_path());
+                auto soid = cm.lookup_schema_oid_by_name(schema_name);
+                if (!soid)
+                    return;
+                auto roid = cm.lookup_object_oid(soid, std::string("RELATION"), rel);
+                if (!roid)
+                    return;
+                // Build a compact JSON blob for partitioning metadata
+                std::string json;
+                json += "{\"partitioning\":{\"key\":\"" + pm.key_column + "\",";
+                json += "\"ranges\":[";
+                for (size_t i = 0; i < pm.ranges.size(); ++i) {
+                    const auto& pr = pm.ranges[i];
+                    if (i)
+                        json += ",";
+                    json += "{\"name\":\"" + pr.name + "\"";
+                    if (!pr.list_values.empty()) {
+                        json += ",\"list\":[";
+                        for (size_t j = 0; j < pr.list_values.size(); ++j) {
+                            if (j)
+                                json += ",";
+                            json += "\"" + pr.list_values[j] + "\"";
+                        }
+                        json += "]";
+                    } else {
+                        json += ",\"start\":\"" + pr.start + "\",\"end\":\"" + pr.end + "\"";
+                    }
+                    json += "}";
+                }
+                json += "]}}";
+                cm.set_stats(*roid, json);
+            } catch (...) {
+            }
+        }
+
+        static void load_partition_maps_from_catalog()
+        {
+            const auto& cfg = get_engine_config();
+            if (!cfg.enable_partition_pruning)
+                return;
+            try {
+                CatalogManager cm(get_executor_db_path());
+                // List all relations across schemas
+                auto rels = cm.list_relations(std::nullopt);
+                for (const auto& [roid, name] : rels) {
+                    auto js = cm.get_stats(roid);
+                    if (!js || js->empty())
+                        continue;
+                    std::string s = *js;
+                    // naive search for partitioning block
+                    auto p = s.find("\"partitioning\"");
+                    if (p == std::string::npos)
+                        continue;
+                    // key
+                    std::string key;
+                    {
+                        auto k1 = s.find("\"key\"\":\"", p);
+                        if (k1 != std::string::npos) {
+                            auto k2 = s.find("\"", k1 + 9);
+                            if (k2 != std::string::npos)
+                                key = s.substr(k1 + 9, k2 - (k1 + 9));
+                        }
+                    }
+                    if (key.empty())
+                        continue;
+                    PartitionMap pm;
+                    pm.relation = name;
+                    pm.key_column = key;
+                    // ranges
+                    auto rp = s.find("\"ranges\"\":[", p);
+                    if (rp == std::string::npos)
+                        continue;
+                    size_t idx = rp + 11;
+                    int depth = 0;
+                    std::string cur;
+                    auto flush = [&]() {
+                        if (cur.empty())
+                            return;
+                        std::string obj = cur;
+                        auto n1 = obj.find("\"name\"\":\"");
+                        if (n1 == std::string::npos)
+                            return;
+                        auto n2 = obj.find("\"", n1 + 9);
+                        if (n2 == std::string::npos)
+                            return;
+                        PartitionRange pr;
+                        pr.name = obj.substr(n1 + 9, n2 - (n1 + 9));
+                        auto lp = obj.find("\"list\"\":[");
+                        if (lp != std::string::npos) {
+                            size_t j = lp + 9;
+                            std::string val;
+                            bool in_q = false;
+                            for (; j < obj.size(); ++j) {
+                                char c = obj[j];
+                                if (c == '\"') {
+                                    if (!in_q) {
+                                        in_q = true;
+                                        val.clear();
+                                    } else {
+                                        pr.list_values.push_back(val);
+                                        in_q = false;
+                                    }
+                                } else if (in_q) {
+                                    val.push_back(c);
+                                } else if (c == ']')
+                                    break;
+                            }
+                        } else {
+                            auto a1 = obj.find("\"start\"\":\"");
+                            auto b1 = obj.find("\"end\"\":\"");
+                            if (a1 != std::string::npos) {
+                                auto a2 = obj.find("\"", a1 + 10);
+                                if (a2 != std::string::npos)
+                                    pr.start = obj.substr(a1 + 10, a2 - (a1 + 10));
+                            }
+                            if (b1 != std::string::npos) {
+                                auto b2 = obj.find("\"", b1 + 9);
+                                if (b2 != std::string::npos)
+                                    pr.end = obj.substr(b1 + 9, b2 - (b1 + 9));
+                            }
+                        }
+                        pm.ranges.push_back(std::move(pr));
+                    };
+                    for (; idx < s.size(); ++idx) {
+                        char c = s[idx];
+                        if (c == '{') {
+                            if (depth == 0)
+                                cur.clear();
+                            depth++;
+                            cur.push_back(c);
+                        } else if (c == '}') {
+                            cur.push_back(c);
+                            depth--;
+                            if (depth == 0) {
+                                flush();
+                                cur.clear();
+                            }
+                        } else if (depth > 0) {
+                            cur.push_back(c);
+                        } else if (c == ']') {
+                            break;
+                        }
+                    }
+                    if (!pm.ranges.empty())
+                        partition_register(pm);
+                }
+            } catch (...) {
+            }
+        }
 
         // Compute a naive topological order of relations by FK dependencies among the touched set
         static std::vector<std::pair<std::string, std::string>>
@@ -733,6 +890,8 @@ namespace scratchbird
         void set_executor_db_path(const std::string& path)
         {
             g_executor_db_path = path;
+            // Load any persisted partition maps for restart safety
+            load_partition_maps_from_catalog();
         }
 
         const std::string& get_executor_db_path()
@@ -3269,7 +3428,7 @@ namespace scratchbird
             // Partition-wise execution: if a partition map exists, precompute surviving partitions
             std::vector<PartitionRange> selected_partitions;
             int partition_key_col_index = -1;
-            if (const PartitionMap* pm = partition_lookup(rel)) {
+            if (get_engine_config().enable_partition_pruning) if (const PartitionMap* pm = partition_lookup(rel)) {
                 // Identify key column index
                 auto itci = std::find(colnames.begin(), colnames.end(), pm->key_column);
                 if (itci != colnames.end())
@@ -4754,6 +4913,7 @@ namespace scratchbird
                                     pm.ranges.push_back(std::move(pr));
                                 }
                                 partition_register(pm);
+                                persist_partition_map(schema, relname, pm);
                                 // proceed to next op
                                 continue;
                             }

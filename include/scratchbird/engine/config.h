@@ -23,6 +23,14 @@ namespace scratchbird::engine
         std::uint32_t prefetch_horizon_pages{128};
         // Bootstrap control
         bool bootstrap_execute{false};
+        // Phase 18 feature flags (defaults chosen for safety/back-compat)
+        bool enable_partition_pruning{true};        // safe when partitions are registered
+        bool enable_partition_wise_ops{false};      // advanced, default off
+        bool enable_materialized_views{true};       // foundation enabled; no-op unless used
+        bool enable_mv_incremental{false};          // advanced, default off
+        bool enable_mv_concurrent_refresh{false};   // advanced, default off
+        bool enable_query_rewrite{false};           // advanced, default off
+        bool enable_global_indexes{false};          // advanced, default off
     };
 
     // Load configuration from environment or file path indicated by SB_CONFIG.
@@ -38,6 +46,13 @@ namespace scratchbird::engine
     //  - prefetch_horizon_pages: int (number of pages to hint will-need starting at allocated page)
     //  - bootstrap_execute: bool (execute bootstrap SQL during create; default false writes sidecar
     //  only)
+    //  - enable_partition_pruning: bool
+    //  - enable_partition_wise_ops: bool
+    //  - enable_materialized_views: bool
+    //  - enable_mv_incremental: bool
+    //  - enable_mv_concurrent_refresh: bool
+    //  - enable_query_rewrite: bool
+    //  - enable_global_indexes: bool
     EngineConfig load_engine_config();
     const EngineConfig& get_engine_config();
 
