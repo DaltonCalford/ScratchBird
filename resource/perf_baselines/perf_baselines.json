@@ -1,0 +1,31 @@
+{
+  "heap_insert": {
+    "query_execution_time_p95_ms": 1.0,
+    "tps": 0.0,
+    "peak_mem_mb": 0.0,
+    "disk_io_ops": 0.0,
+    "cpu_pct": 0.0
+  },
+  "heap_scan": {
+    "query_execution_time_p95_ms": 1.0,
+    "tps": 0.0,
+    "peak_mem_mb": 0.0,
+    "disk_io_ops": 0.0,
+    "cpu_pct": 0.0
+  },
+  "index_ops": {
+    "query_execution_time_p95_ms": 1.0,
+    "tps": 0.0,
+    "peak_mem_mb": 0.0,
+    "disk_io_ops": 0.0,
+    "cpu_pct": 0.0
+  },
+  "tpch_queries": {
+    "query_execution_time_p95_ms": 1.0,
+    "tps": 0.0,
+    "peak_mem_mb": 0.0,
+    "disk_io_ops": 0.0,
+    "cpu_pct": 0.0
+  }
+}
+
