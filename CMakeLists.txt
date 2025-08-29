@@ -155,8 +155,14 @@ include(GNUInstallDirs)
 # Binaries
 install(TARGETS scratchbird
         RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
-install(TARGETS dbspace dbcheck
-        RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+
+########################################
+# Phase 19: Tooling targets (isql/cli/diag/bench)
+########################################
+
+add_subdirectory(tools)
+
+########################################
 
 # Library (static for now) and headers
 install(TARGETS scratchbird_engine
@@ -766,3 +772,11 @@ if(SCRATCHBIRD_BUILD_TESTS)
   add_test(NAME connection_pool_tests COMMAND connection_pool_tests)
 
 endif()
+
+# Phase 19: basic isql smoke test to ensure the tool runs
+add_test(NAME isql_smoke_select1
+  COMMAND $<TARGET_FILE:isql> -c "SELECT 1" --timing
+)
+
+# Phase 19: tooling integration tests
+add_subdirectory(tests/tooling/integration)
