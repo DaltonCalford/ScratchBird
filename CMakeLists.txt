@@ -18,6 +18,12 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 # Options
 option(SCRATCHBIRD_BUILD_TESTS "Build unit tests" ON)
 option(SCRATCHBIRD_WARNINGS_AS_ERRORS "Treat warnings as errors" OFF)
+option(SCRATCHBIRD_COVERAGE "Enable coverage instrumentation" OFF)
+option(SCRATCHBIRD_ASAN "Enable AddressSanitizer" OFF)
+option(SCRATCHBIRD_UBSAN "Enable UndefinedBehaviorSanitizer" OFF)
+option(SCRATCHBIRD_FUZZ "Build fuzz targets" OFF)
+option(SCRATCHBIRD_FAULT_INJECT "Enable fault injection points for chaos tests" OFF)
+option(SCRATCHBIRD_PERF "Build performance benchmark targets" OFF)
 
 # Warnings
 if(MSVC)
@@ -31,6 +37,28 @@ endif()
 
 # Include directories
 include_directories(include)
+
+# Instrumentation flags
+if(SCRATCHBIRD_COVERAGE)
+  if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    add_compile_options(--coverage -O0 -fno-inline -fno-inline-functions -fno-inline-small-functions)
+    add_link_options(--coverage)
+  endif()
+endif()
+
+if(SCRATCHBIRD_ASAN)
+  add_compile_options(-fsanitize=address -fno-omit-frame-pointer)
+  add_link_options(-fsanitize=address)
+endif()
+
+if(SCRATCHBIRD_UBSAN)
+  add_compile_options(-fsanitize=undefined -fno-omit-frame-pointer)
+  add_link_options(-fsanitize=undefined)
+endif()
+
+if(SCRATCHBIRD_FAULT_INJECT)
+  add_compile_definitions(SCRATCHBIRD_FAULT_INJECT=1)
+endif()
 
 # Find OpenSSL for authentication
 find_package(OpenSSL REQUIRED)
@@ -766,3 +794,93 @@ if(SCRATCHBIRD_BUILD_TESTS)
   add_test(NAME connection_pool_tests COMMAND connection_pool_tests)
 
 endif()
+
+# Register Phase 20 new tests when sources exist
+if(EXISTS ${CMAKE_SOURCE_DIR}/tests/integration/db_lifecycle_tests.cpp)
+  add_executable(db_lifecycle_tests tests/integration/db_lifecycle_tests.cpp)
+  target_link_libraries(db_lifecycle_tests scratchbird_engine)
+  add_test(NAME db_lifecycle_tests COMMAND db_lifecycle_tests)
+endif()
+
+if(EXISTS ${CMAKE_SOURCE_DIR}/tests/system/multi_connection_smoke.cpp)
+  add_executable(system_multi_connection_smoke tests/system/multi_connection_smoke.cpp)
+  target_link_libraries(system_multi_connection_smoke scratchbird_engine)
+  add_test(NAME system_multi_connection_smoke COMMAND system_multi_connection_smoke)
+endif()
+
+if(SCRATCHBIRD_FAULT_INJECT AND EXISTS ${CMAKE_SOURCE_DIR}/tests/chaos/chaos_tests_disk_io.cpp)
+  add_executable(chaos_tests_disk_io tests/chaos/chaos_tests_disk_io.cpp)
+  target_link_libraries(chaos_tests_disk_io scratchbird_engine)
+  add_test(NAME chaos_tests_disk_io COMMAND chaos_tests_disk_io)
+endif()
+
+# -----------------------------
+# Optional: Performance targets
+# -----------------------------
+if(SCRATCHBIRD_PERF)
+  add_executable(perf_heap_insert tests/perf/perf_heap_insert.cpp)
+  target_link_libraries(perf_heap_insert scratchbird_engine)
+
+  add_executable(perf_heap_scan tests/perf/perf_heap_scan.cpp)
+  target_link_libraries(perf_heap_scan scratchbird_engine)
+
+  add_executable(perf_index_ops tests/perf/perf_index_ops.cpp)
+  target_link_libraries(perf_index_ops scratchbird_engine)
+
+  add_executable(perf_queries_tpch tests/perf/perf_queries_tpch.cpp)
+  target_link_libraries(perf_queries_tpch scratchbird_engine)
+endif()
+
+# -----------------------------
+# Optional: Fuzzing targets
+# -----------------------------
+if(SCRATCHBIRD_FUZZ)
+  if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    add_executable(fuzz_sql_parser tests/fuzz/fuzz_sql_parser.cpp)
+    target_link_libraries(fuzz_sql_parser scratchbird_engine)
+    target_compile_options(fuzz_sql_parser PRIVATE -fsanitize=fuzzer,address,undefined)
+    target_link_options(fuzz_sql_parser PRIVATE -fsanitize=fuzzer,address,undefined)
+    add_test(NAME fuzz_sql_parser_smoke COMMAND fuzz_sql_parser -runs=1000)
+    set_tests_properties(fuzz_sql_parser_smoke PROPERTIES LABELS "fuzz_smoke")
+
+    add_executable(fuzz_expr_eval tests/fuzz/fuzz_expr_eval.cpp)
+    target_link_libraries(fuzz_expr_eval scratchbird_engine)
+    target_compile_options(fuzz_expr_eval PRIVATE -fsanitize=fuzzer,address,undefined)
+    target_link_options(fuzz_expr_eval PRIVATE -fsanitize=fuzzer,address,undefined)
+    add_test(NAME fuzz_expr_eval_smoke COMMAND fuzz_expr_eval -runs=1000)
+    set_tests_properties(fuzz_expr_eval_smoke PROPERTIES LABELS "fuzz_smoke")
+
+    add_executable(fuzz_page_codec tests/fuzz/fuzz_page_codec.cpp)
+    target_link_libraries(fuzz_page_codec scratchbird_engine)
+    target_compile_options(fuzz_page_codec PRIVATE -fsanitize=fuzzer,address,undefined)
+    target_link_options(fuzz_page_codec PRIVATE -fsanitize=fuzzer,address,undefined)
+    add_test(NAME fuzz_page_codec_smoke COMMAND fuzz_page_codec -runs=1000)
+    set_tests_properties(fuzz_page_codec_smoke PROPERTIES LABELS "fuzz_smoke")
+  else()
+    message(WARNING "Fuzzing requires Clang; skipping fuzz targets")
+  endif()
+endif()
+
+# -----------------------------
+# Static analysis targets
+# -----------------------------
+add_custom_target(
+  cppcheck
+  COMMAND cppcheck --enable=warning,style,performance,portability,information
+          --error-exitcode=2 --inline-suppr -I include src tests || true
+  WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+  COMMENT "Running cppcheck static analysis"
+)
+
+# -----------------------------
+# Coverage target (requires SCRATCHBIRD_COVERAGE=ON)
+# -----------------------------
+add_custom_target(
+  coverage
+  COMMAND ${CMAKE_COMMAND} -E echo "Running tests for coverage..."
+  COMMAND ${CMAKE_CTEST_COMMAND} --output-on-failure
+  COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_BINARY_DIR}/coverage
+  COMMAND gcovr -r ${CMAKE_SOURCE_DIR} -e '${CMAKE_SOURCE_DIR}/tests/.*' --html-details -o ${CMAKE_BINARY_DIR}/coverage/index.html
+  WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+  COMMENT "Generating coverage HTML report at ${CMAKE_BINARY_DIR}/coverage/index.html"
+)
