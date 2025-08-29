@@ -23,6 +23,8 @@ namespace scratchbird::engine
         std::uint32_t prefetch_horizon_pages{128};
         // Bootstrap control
         bool bootstrap_execute{false};
+        // Tablespace management (Phase 14)
+        bool tablespaces_enabled{true};
     };
 
     // Load configuration from environment or file path indicated by SB_CONFIG.
@@ -38,6 +40,7 @@ namespace scratchbird::engine
     //  - prefetch_horizon_pages: int (number of pages to hint will-need starting at allocated page)
     //  - bootstrap_execute: bool (execute bootstrap SQL during create; default false writes sidecar
     //  only)
+    //  - tablespaces_enabled: bool (enable tablespace management functionality; default true)
     EngineConfig load_engine_config();
     const EngineConfig& get_engine_config();
 
