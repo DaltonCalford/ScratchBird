@@ -163,7 +163,7 @@ TEST_F(BufferPoolTest, ClockSweepReplacement)
     // Verify statistics show evictions occurred
     auto stats = buffer_pool_->get_stats();
     EXPECT_GT(stats.evictions(), 0);
-    EXPECT_GT(stats.clock_sweeps.load(), 0);
+    EXPECT_GT(stats.clock_sweeps, 0);
 }
 
 // Test 5: Statistics collection
