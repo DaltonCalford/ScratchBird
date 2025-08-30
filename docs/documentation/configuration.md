@@ -1,5 +1,14 @@
 ### Configuration
 
+What it is
+- Engine configuration (storage/performance/feature flags) and packaging/service configuration (process/network settings).
+
+Why it matters
+- Separates engine behavior from deployment environment; enables reproducible setups and safe feature toggles.
+
+How to use it
+- Use SB_CONFIG for engine keys; use packaging config or environment for server process settings.
+
 Engine configuration (read via `SB_CONFIG`):
 - Keys and defaults from `include/scratchbird/engine/config.h` and `src/engine/config.cpp`:
   - allowed_page_sizes: comma-separated ints (bytes); default from `kAllowedPageSizesBytes`
@@ -28,4 +37,7 @@ Packaging/service configuration (environment/config file): `packaging/config/scr
 Scope:
 - Engine config controls storage and performance features
 - Packaging config controls server process environment and network binding
+
+See also
+- [Installation](./installation.md) · [Session & transaction](./session-and-transaction.md)
 
