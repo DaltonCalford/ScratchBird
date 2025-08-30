@@ -1,3 +1,5 @@
+[ScratchBird Analysis Documentation](index.md)
+
 ### Human review TODOs
 
 Ownership: Senior developer(s) familiar with transactions, optimizer, server.
@@ -25,3 +27,7 @@ Ownership: Senior developer(s) familiar with transactions, optimizer, server.
 - PSQL semantics: exception propagation, security context, package lifecycle
   - Files: `psql_executor.*`, `psql_dev_tools.*`
   - REQs: REQ-PSQL-RUNTIME-*
+
+## Related
+- [Documentation style guide](_style.md)
+- [ScratchBird Analysis Documentation](index.md)

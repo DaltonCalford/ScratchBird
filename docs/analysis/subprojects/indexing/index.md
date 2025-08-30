@@ -1,3 +1,5 @@
+[ScratchBird Analysis Documentation](../../index.md)
+
 ### Indexing
 
 This module introduces multiple index families: B-Tree, Hash, Bitmap, GIN, R-Tree, LSM-Tree, Columnstore, and TTL, along with online build support. See the Phase 9 plan for background: `ProjectPlan/Phase 9 — Index Index families and advanced options.md`.
@@ -108,3 +110,6 @@ This module introduces multiple index families: B-Tree, Hash, Bitmap, GIN, R-Tre
 
 ## Spec Trace
 - [REQ-INDEX-FAMILIES-BTREE](../../traceability/spec/requirements.md#req-index-families-btree)
+
+## Related
+- [ScratchBird Analysis Documentation](../../index.md)

@@ -1,3 +1,5 @@
+[ScratchBird Analysis Documentation](../../index.md)
+
 ### Server, protocol, and authentication
 
 Network server, sessions, protocols, provider dispatch, auth providers, TLS, pooling, buffers.
@@ -19,3 +21,6 @@ Network server, sessions, protocols, provider dispatch, auth providers, TLS, poo
 ## Spec Trace
 - [REQ-SERVER-LISTENER](../../traceability/spec/requirements.md#req-server-listener)
 - [REQ-AUTH-PASSWORD](../../traceability/spec/requirements.md#req-auth-password)
+
+## Related
+- [ScratchBird Analysis Documentation](../../index.md)

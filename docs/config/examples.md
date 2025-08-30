@@ -1,3 +1,5 @@
+[Configuration Documentation Index](index.md)
+
 ## Configuration Examples
 
 These examples demonstrate minimal and extended configurations derived from defaults in the codebase. Adjust paths and values for your environment.
@@ -124,3 +126,8 @@ code_length = 6
 expiry = 5m
 ```
 
+
+## Related
+- [Configuration Documentation Index](index.md)
+- [Configuration Options](options.md)
+- [ScratchBird Analysis Documentation](../analysis/index.md)

@@ -1,3 +1,5 @@
+[ScratchBird Analysis Documentation](../../index.md)
+
 ### Compliance coverage dashboard
 
 Total requirements: 80
@@ -34,3 +36,7 @@ Subprojects:
 - transactions: 0/5 fully covered (docs:0 code:0)
 
 More details in [Traceability coverage index](../../traceability/coverage/index.md)
+
+## Related
+- [Gaps and recommendations (initial)](gaps-and-recommendations.md)
+- [ScratchBird Analysis Documentation](../../index.md)
