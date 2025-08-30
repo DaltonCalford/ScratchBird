@@ -1,0 +1,11 @@
+# Spec → docs/code mapping (curated + generated). Status values: Implemented|Partial|Missing
+# Example:
+# REQ-CORE-HEAP-ODS:
+#   docs:
+#     - subprojects/storage/index.md
+#   code:
+#     - include/scratchbird/engine/heap.h:100-320
+#     - src/engine/heap.cpp:1-200
+#   status: Implemented
+#   notes: |
+#     Tuple header fields match spec; validator CLI pending.
