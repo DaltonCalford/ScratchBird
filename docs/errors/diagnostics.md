@@ -1,3 +1,5 @@
+[Errors and Diagnostics Index](index.md)
+
 ## Diagnostics and Warnings
 
 This document lists diagnostics strings emitted by parsers and performance systems, with locations for reference.
@@ -48,3 +50,8 @@ Implementation References:
 Behavior:
 - Emits: "[TRIGGER] RAISE: <message> (SQLSTATE: <code>)" to stderr before throwing.
 
+
+## Related
+- [Error Codes and Results](error-codes.md)
+- [Errors and Diagnostics Index](index.md)
+- [ScratchBird Analysis Documentation](../analysis/index.md)

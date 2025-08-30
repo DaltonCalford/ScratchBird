@@ -24,3 +24,8 @@ Quick links:
 - Database links and Remote provider network: see `docs/config/options.md#dblinks` and `docs/config/options.md#remote-network`
 - Authentication configs: see `docs/config/options.md#auth`
 
+
+## Related
+- [Configuration Examples](examples.md)
+- [Configuration Options](options.md)
+- [ScratchBird Analysis Documentation](../analysis/index.md)

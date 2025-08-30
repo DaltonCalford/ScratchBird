@@ -1,3 +1,5 @@
+[ScratchBird Analysis Documentation](../../index.md) / [Storage](index.md)
+
 ### On-Disk Structures (ODS)
 
 Core page types, headers, and helpers used across heap and space management.
@@ -159,3 +161,9 @@ namespace scratchbird::engine::ods
 - [REQ-CORE-SPACE-TIP-SEED](../../traceability/spec/requirements.md#req-core-space-tip-seed)
 - [REQ-CORE-SPACE-CATALOG](../../traceability/spec/requirements.md#req-core-space-catalog)
 
+
+## Related
+- [Heap: tuple and page format, visibility, codecs](heap.md)
+- [Storage](index.md)
+- [Heap lifecycle: create, open, insert, scan, truncate, drop](lifecycle.md)
+- [Space management and Allocator](space_allocator.md)

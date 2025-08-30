@@ -1,3 +1,5 @@
+[ScratchBird Analysis Documentation](../../index.md) / [Storage](index.md)
+
 ### Heap: tuple and page format, visibility, codecs
 
 Tuple encoding/decoding, heap page layout, and visibility helpers.
@@ -163,3 +165,9 @@ namespace scratchbird::engine
 - [REQ-CORE-HEAP-API](../../traceability/spec/requirements.md#req-core-heap-api)
 - [REQ-CORE-HEAP-SCAN](../../traceability/spec/requirements.md#req-core-heap-scan)
 
+
+## Related
+- [Storage](index.md)
+- [Heap lifecycle: create, open, insert, scan, truncate, drop](lifecycle.md)
+- [On-Disk Structures (ODS)](ods.md)
+- [Space management and Allocator](space_allocator.md)

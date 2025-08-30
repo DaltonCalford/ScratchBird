@@ -1,3 +1,5 @@
+[ScratchBird Analysis Documentation](index.md)
+
 ### Documentation style guide
 
 - Tone: precise, implementation-backed, neutral.
@@ -7,3 +9,7 @@
 - Sections: include “What it is”, “Why it exists”, “How it works”, “Examples”, “Limits and edge cases”, “Implementation References”, “Spec Trace”, and “Related”.
 - Diagrams: prefer Mermaid in fenced code blocks; sources live under `assets/diagrams/`.
 - Traceability: include `spec_refs: [REQ-...]` in front matter when applicable.
+
+## Related
+- [Human review TODOs](HUMAN_REVIEW_TODO.md)
+- [ScratchBird Analysis Documentation](index.md)
