@@ -666,6 +666,169 @@ namespace scratchbird::engine
                                           const std::string& predicate);
     };
 
+    /// Parallel hash join implementation
+    class ParallelHashJoin
+    {
+      public:
+        /// Join partition for parallel hash join
+        struct JoinPartition {
+            std::uint32_t partition_id;      ///< Partition identifier
+            std::uint64_t start_row;         ///< Start row for this partition
+            std::uint64_t end_row;           ///< End row for this partition
+            std::uint64_t estimated_rows;    ///< Estimated rows in partition
+            std::string partition_key_range; ///< Key range for this partition
+
+            /// Build side data for hash table
+            std::vector<std::string> build_keys; ///< Build side join keys
+            std::size_t estimated_build_size;    ///< Estimated build hash table size
+
+            /// Probe side data
+            std::vector<std::string> probe_keys; ///< Probe side join keys
+            std::size_t estimated_probe_rows;    ///< Estimated probe side rows
+        };
+
+        /// Hash join configuration
+        struct HashJoinConfig {
+            std::uint32_t max_partitions{8};        ///< Maximum join partitions
+            std::uint64_t min_partition_size{5000}; ///< Minimum rows per partition
+            std::uint64_t hash_table_memory_mb{64}; ///< Memory limit for hash tables
+            bool enable_bloom_filter{true};         ///< Use bloom filters for optimization
+            bool enable_spill_to_disk{false};       ///< Enable disk spilling for large joins
+            double load_factor{0.75};               ///< Hash table load factor
+        };
+
+        /// Hash join execution statistics
+        struct HashJoinStatistics {
+            std::uint32_t total_partitions{0};       ///< Total partitions created
+            std::uint64_t build_rows_processed{0};   ///< Build side rows processed
+            std::uint64_t probe_rows_processed{0};   ///< Probe side rows processed
+            std::uint64_t output_rows_generated{0};  ///< Output rows generated
+            std::uint64_t hash_collisions{0};        ///< Hash table collisions
+            std::chrono::microseconds build_time{0}; ///< Time spent building hash tables
+            std::chrono::microseconds probe_time{0}; ///< Time spent probing
+            double average_load_factor{0.0};         ///< Average hash table load factor
+        };
+
+        explicit ParallelHashJoin(const std::string& join_name);
+        ParallelHashJoin(const std::string& join_name, const HashJoinConfig& config);
+        ~ParallelHashJoin() = default;
+
+        /// Partition planning
+        std::vector<JoinPartition> plan_join_partitions(std::uint64_t build_table_rows,
+                                                        std::uint64_t probe_table_rows,
+                                                        std::uint32_t target_workers);
+
+        /// Work unit creation
+        std::vector<std::shared_ptr<WorkUnit>>
+        create_build_work_units(const std::vector<JoinPartition>& partitions,
+                                const std::vector<std::string>& build_keys,
+                                const std::string& build_predicate = "");
+
+        std::vector<std::shared_ptr<WorkUnit>>
+        create_probe_work_units(const std::vector<JoinPartition>& partitions,
+                                const std::vector<std::string>& probe_keys,
+                                const std::string& probe_predicate = "");
+
+        /// Execution methods
+        std::shared_ptr<WorkResult> execute_build_phase(const JoinPartition& partition,
+                                                        const std::vector<std::string>& build_keys,
+                                                        const std::string& build_predicate = "");
+
+        std::shared_ptr<WorkResult> execute_probe_phase(const JoinPartition& partition,
+                                                        const std::vector<std::string>& probe_keys,
+                                                        const std::string& probe_predicate = "");
+
+        /// Result coordination
+        std::shared_ptr<WorkResult>
+        merge_join_results(const std::vector<std::shared_ptr<WorkResult>>& build_results,
+                           const std::vector<std::shared_ptr<WorkResult>>& probe_results);
+
+        /// Statistics and monitoring
+        HashJoinStatistics get_statistics() const;
+        void reset_statistics();
+
+      private:
+        std::string join_name_;
+        HashJoinConfig config_;
+        mutable std::mutex statistics_mutex_;
+        HashJoinStatistics statistics_;
+
+        /// Helper methods
+        std::uint64_t estimate_hash_table_size(std::uint64_t build_rows);
+        double calculate_join_selectivity(const std::string& predicate);
+    };
+
+    /// Parallel nested loop join implementation
+    class ParallelNestedLoopJoin
+    {
+      public:
+        /// Nested loop join partition
+        struct NestedLoopPartition {
+            std::uint32_t partition_id;      ///< Partition identifier
+            std::uint64_t outer_start_row;   ///< Start row in outer relation
+            std::uint64_t outer_end_row;     ///< End row in outer relation
+            std::uint64_t outer_rows;        ///< Number of outer rows
+            std::uint64_t inner_table_size;  ///< Size of inner table
+            std::string partition_predicate; ///< Additional partition predicate
+        };
+
+        /// Nested loop join configuration
+        struct NestedLoopConfig {
+            std::uint32_t max_partitions{4};          ///< Maximum partitions for outer relation
+            std::uint64_t min_outer_partition{1000};  ///< Minimum outer rows per partition
+            std::uint64_t inner_scan_batch_size{500}; ///< Batch size for inner scans
+            bool enable_index_lookup{true};           ///< Use index for inner lookups if available
+            bool enable_caching{true};                ///< Cache inner relation data
+        };
+
+        /// Nested loop join statistics
+        struct NestedLoopStatistics {
+            std::uint32_t total_partitions{0};       ///< Total partitions created
+            std::uint64_t outer_rows_processed{0};   ///< Outer rows processed
+            std::uint64_t inner_scans_performed{0};  ///< Number of inner scans
+            std::uint64_t output_rows_generated{0};  ///< Output rows generated
+            std::chrono::microseconds total_time{0}; ///< Total execution time
+            double cache_hit_ratio{0.0};             ///< Inner relation cache hit ratio
+        };
+
+        explicit ParallelNestedLoopJoin(const std::string& join_name);
+        ParallelNestedLoopJoin(const std::string& join_name, const NestedLoopConfig& config);
+        ~ParallelNestedLoopJoin() = default;
+
+        /// Partition planning
+        std::vector<NestedLoopPartition> plan_nested_loop_partitions(std::uint64_t outer_table_rows,
+                                                                     std::uint64_t inner_table_rows,
+                                                                     std::uint32_t target_workers);
+
+        /// Work unit creation
+        std::vector<std::shared_ptr<WorkUnit>>
+        create_nested_loop_work_units(const std::vector<NestedLoopPartition>& partitions,
+                                      const std::string& join_predicate);
+
+        /// Execution methods
+        std::shared_ptr<WorkResult>
+        execute_nested_loop_partition(const NestedLoopPartition& partition,
+                                      const std::string& join_predicate);
+
+        /// Result coordination
+        std::shared_ptr<WorkResult> merge_nested_loop_results(
+            const std::vector<std::shared_ptr<WorkResult>>& partition_results);
+
+        /// Statistics and monitoring
+        NestedLoopStatistics get_statistics() const;
+        void reset_statistics();
+
+      private:
+        std::string join_name_;
+        NestedLoopConfig config_;
+        mutable std::mutex statistics_mutex_;
+        NestedLoopStatistics statistics_;
+
+        /// Helper methods
+        std::uint64_t estimate_inner_scans(std::uint64_t outer_rows);
+        bool should_use_index_lookup(const std::string& predicate);
+    };
+
     /// Main parallel query executor
     class ParallelQueryExecutor
     {
@@ -696,6 +859,10 @@ namespace scratchbird::engine
 
         std::shared_ptr<WorkResult> execute_parallel_hash_join(std::shared_ptr<HashJoin> join_node,
                                                                std::uint32_t worker_count);
+
+        std::shared_ptr<WorkResult>
+        execute_parallel_nested_loop_join(std::shared_ptr<NestedLoopJoin> join_node,
+                                          std::uint32_t worker_count);
 
         std::shared_ptr<WorkResult> execute_parallel_aggregate(std::shared_ptr<Aggregate> agg_node,
                                                                std::uint32_t worker_count);
