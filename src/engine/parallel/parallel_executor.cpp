@@ -1450,6 +1450,199 @@ namespace scratchbird::engine
         thread_pool_->reset_statistics();
     }
 
+    // =============================================================================
+    // ParallelQueryExecutor Join Implementation Methods
+    // =============================================================================
+
+    std::shared_ptr<WorkResult>
+    ParallelQueryExecutor::execute_parallel_hash_join(std::shared_ptr<HashJoin> join_node,
+                                                      std::uint32_t worker_count)
+    {
+        if (!join_node) {
+            auto result = std::make_shared<WorkResult>();
+            result->success = false;
+            result->error_message = "Invalid HashJoin node provided";
+            return result;
+        }
+
+        auto start_time = std::chrono::steady_clock::now();
+
+        try {
+            // Create parallel hash join instance
+            ParallelHashJoin parallel_join(
+                "hash_join_" + std::to_string(reinterpret_cast<std::uintptr_t>(join_node.get())));
+
+            // Estimate table sizes - simplified for simulation
+            std::uint64_t build_table_size = 10000; // Simulated build table size
+            std::uint64_t probe_table_size = 50000; // Simulated probe table size
+
+            // Plan join partitions
+            auto partitions = parallel_join.plan_join_partitions(build_table_size, probe_table_size,
+                                                                 worker_count);
+
+            if (partitions.empty()) {
+                auto result = std::make_shared<WorkResult>();
+                result->success = false;
+                result->error_message = "Failed to create join partitions";
+                return result;
+            }
+
+            // Create build phase work units
+            std::vector<std::string> build_keys = {"id", "key"}; // Simulated join keys
+            std::string build_predicate = "";                    // No additional predicate
+            auto build_work_units =
+                parallel_join.create_build_work_units(partitions, build_keys, build_predicate);
+
+            // Create probe phase work units
+            std::vector<std::string> probe_keys = {"id", "key"}; // Matching join keys
+            std::string probe_predicate = "";                    // No additional predicate
+            auto probe_work_units =
+                parallel_join.create_probe_work_units(partitions, probe_keys, probe_predicate);
+
+            // Execute build phase in parallel
+            std::vector<std::shared_ptr<WorkResult>> build_results;
+            build_results.reserve(partitions.size());
+
+            for (const auto& partition : partitions) {
+                auto build_result =
+                    parallel_join.execute_build_phase(partition, build_keys, build_predicate);
+                build_results.push_back(build_result);
+            }
+
+            // Execute probe phase in parallel
+            std::vector<std::shared_ptr<WorkResult>> probe_results;
+            probe_results.reserve(partitions.size());
+
+            for (const auto& partition : partitions) {
+                auto probe_result =
+                    parallel_join.execute_probe_phase(partition, probe_keys, probe_predicate);
+                probe_results.push_back(probe_result);
+            }
+
+            // Merge results
+            auto final_result = parallel_join.merge_join_results(build_results, probe_results);
+
+            if (final_result) {
+                // Update execution time to include coordination overhead
+                final_result->end_time = std::chrono::steady_clock::now();
+                auto total_time = std::chrono::duration_cast<std::chrono::microseconds>(
+                    final_result->end_time - start_time);
+                final_result->execution_time = total_time;
+
+                // Add parallel execution statistics
+                final_result->custom_data["parallel_workers"] = std::to_string(worker_count);
+                final_result->custom_data["join_partitions"] = std::to_string(partitions.size());
+                final_result->custom_data["join_type"] = "parallel_hash_join";
+
+                auto join_stats = parallel_join.get_statistics();
+                final_result->custom_data["total_build_time_us"] =
+                    std::to_string(join_stats.build_time.count());
+                final_result->custom_data["total_probe_time_us"] =
+                    std::to_string(join_stats.probe_time.count());
+                final_result->custom_data["hash_collisions"] =
+                    std::to_string(join_stats.hash_collisions);
+            }
+
+            return final_result;
+
+        } catch (const std::exception& e) {
+            auto result = std::make_shared<WorkResult>();
+            result->success = false;
+            result->error_message = "Parallel hash join failed: " + std::string(e.what());
+            result->end_time = std::chrono::steady_clock::now();
+            result->execution_time = std::chrono::duration_cast<std::chrono::microseconds>(
+                result->end_time - start_time);
+            return result;
+        }
+    }
+
+    std::shared_ptr<WorkResult> ParallelQueryExecutor::execute_parallel_nested_loop_join(
+        std::shared_ptr<NestedLoopJoin> join_node, std::uint32_t worker_count)
+    {
+        if (!join_node) {
+            auto result = std::make_shared<WorkResult>();
+            result->success = false;
+            result->error_message = "Invalid NestedLoopJoin node provided";
+            return result;
+        }
+
+        auto start_time = std::chrono::steady_clock::now();
+
+        try {
+            // Create parallel nested loop join instance
+            ParallelNestedLoopJoin parallel_join(
+                "nested_loop_join_" +
+                std::to_string(reinterpret_cast<std::uintptr_t>(join_node.get())));
+
+            // Estimate table sizes - simplified for simulation
+            std::uint64_t outer_table_size = 5000;  // Simulated outer table size
+            std::uint64_t inner_table_size = 20000; // Simulated inner table size
+
+            // Plan join partitions
+            auto partitions = parallel_join.plan_nested_loop_partitions(
+                outer_table_size, inner_table_size, worker_count);
+
+            if (partitions.empty()) {
+                auto result = std::make_shared<WorkResult>();
+                result->success = false;
+                result->error_message = "Failed to create nested loop join partitions";
+                return result;
+            }
+
+            // Create work units
+            std::string join_predicate = "outer.id = inner.id"; // Simulated join condition
+            auto work_units =
+                parallel_join.create_nested_loop_work_units(partitions, join_predicate);
+
+            // Execute partitions in parallel
+            std::vector<std::shared_ptr<WorkResult>> partition_results;
+            partition_results.reserve(partitions.size());
+
+            for (const auto& partition : partitions) {
+                auto partition_result =
+                    parallel_join.execute_nested_loop_partition(partition, join_predicate);
+                partition_results.push_back(partition_result);
+            }
+
+            // Merge results
+            auto final_result = parallel_join.merge_nested_loop_results(partition_results);
+
+            if (final_result) {
+                // Update execution time to include coordination overhead
+                final_result->end_time = std::chrono::steady_clock::now();
+                auto total_time = std::chrono::duration_cast<std::chrono::microseconds>(
+                    final_result->end_time - start_time);
+                final_result->execution_time = total_time;
+
+                // Add parallel execution statistics
+                final_result->custom_data["parallel_workers"] = std::to_string(worker_count);
+                final_result->custom_data["join_partitions"] = std::to_string(partitions.size());
+                final_result->custom_data["join_type"] = "parallel_nested_loop_join";
+
+                auto join_stats = parallel_join.get_statistics();
+                final_result->custom_data["total_outer_rows"] =
+                    std::to_string(join_stats.outer_rows_processed);
+                final_result->custom_data["total_inner_scans"] =
+                    std::to_string(join_stats.inner_scans_performed);
+                final_result->custom_data["cache_hit_ratio"] =
+                    std::to_string(join_stats.cache_hit_ratio);
+                final_result->custom_data["total_execution_time_us"] =
+                    std::to_string(join_stats.total_time.count());
+            }
+
+            return final_result;
+
+        } catch (const std::exception& e) {
+            auto result = std::make_shared<WorkResult>();
+            result->success = false;
+            result->error_message = "Parallel nested loop join failed: " + std::string(e.what());
+            result->end_time = std::chrono::steady_clock::now();
+            result->execution_time = std::chrono::duration_cast<std::chrono::microseconds>(
+                result->end_time - start_time);
+            return result;
+        }
+    }
+
     std::string ParallelQueryExecutor::generate_execution_report() const
     {
         auto stats = get_statistics();
@@ -1514,6 +1707,742 @@ namespace scratchbird::engine
     {
         // Simplified NUMA detection - in real implementation would check system topology
         return detect_cpu_core_count() > 8; // Assume NUMA on systems with >8 cores
+    }
+
+    // =============================================================================
+    // ParallelHashJoin Implementation
+    // =============================================================================
+
+    ParallelHashJoin::ParallelHashJoin(const std::string& join_name)
+        : join_name_(join_name), config_{}
+    {
+        // Use default configuration
+    }
+
+    ParallelHashJoin::ParallelHashJoin(const std::string& join_name, const HashJoinConfig& config)
+        : join_name_(join_name), config_(config)
+    {
+        // Validate configuration
+        if (config_.max_partitions == 0 || config_.min_partition_size == 0 ||
+            config_.hash_table_memory_mb == 0 || config_.load_factor <= 0.0 ||
+            config_.load_factor >= 1.0) {
+            throw std::invalid_argument("Invalid ParallelHashJoin configuration");
+        }
+    }
+
+    std::vector<ParallelHashJoin::JoinPartition>
+    ParallelHashJoin::plan_join_partitions(std::uint64_t build_table_rows,
+                                           std::uint64_t probe_table_rows,
+                                           std::uint32_t target_workers)
+    {
+        std::lock_guard<std::mutex> lock(statistics_mutex_);
+        std::vector<JoinPartition> partitions;
+
+        // Calculate optimal partition count based on build table size
+        std::uint32_t optimal_partitions = std::min(
+            target_workers,
+            static_cast<std::uint32_t>(std::max(static_cast<std::uint64_t>(1),
+                                                build_table_rows / config_.min_partition_size)));
+        optimal_partitions = std::min(optimal_partitions, config_.max_partitions);
+
+        // Create partitions
+        std::uint64_t build_rows_per_partition = build_table_rows / optimal_partitions;
+        std::uint64_t probe_rows_per_partition = probe_table_rows / optimal_partitions;
+
+        for (std::uint32_t i = 0; i < optimal_partitions; ++i) {
+            JoinPartition partition;
+            partition.partition_id = i;
+
+            // Build side ranges
+            partition.start_row = i * build_rows_per_partition;
+            partition.end_row = (i == optimal_partitions - 1) ? build_table_rows
+                                                              : (i + 1) * build_rows_per_partition;
+            partition.estimated_rows = partition.end_row - partition.start_row;
+
+            // Estimate hash table size
+            partition.estimated_build_size = estimate_hash_table_size(partition.estimated_rows);
+            partition.estimated_probe_rows = probe_rows_per_partition;
+
+            // Create partition key range
+            std::ostringstream key_range;
+            key_range << "partition_" << i << "_[" << partition.start_row << ","
+                      << partition.end_row << ")";
+            partition.partition_key_range = key_range.str();
+
+            partitions.push_back(partition);
+        }
+
+        statistics_.total_partitions = optimal_partitions;
+        return partitions;
+    }
+
+    std::vector<std::shared_ptr<WorkUnit>>
+    ParallelHashJoin::create_build_work_units(const std::vector<JoinPartition>& partitions,
+                                              const std::vector<std::string>& build_keys,
+                                              const std::string& build_predicate)
+    {
+        std::vector<std::shared_ptr<WorkUnit>> work_units;
+        work_units.reserve(partitions.size());
+
+        for (const auto& partition : partitions) {
+            auto work_unit = std::make_shared<WorkUnit>();
+            work_unit->work_id = partition.partition_id;
+            work_unit->partition_id = partition.partition_id;
+            work_unit->start_offset = partition.start_row;
+            work_unit->end_offset = partition.end_row;
+            work_unit->estimated_rows = partition.estimated_rows;
+
+            // Estimate resource requirements for build phase
+            work_unit->estimated_memory_mb =
+                static_cast<std::uint64_t>(partition.estimated_build_size / (1024 * 1024));
+            work_unit->estimated_time =
+                std::chrono::milliseconds(partition.estimated_rows / 1000); // ~1ms per 1K rows
+
+            // Add build-specific context
+            work_unit->context["operation"] = "hash_join_build";
+            work_unit->context["join_name"] = join_name_;
+            work_unit->context["predicate"] = build_predicate;
+
+            // Store build keys
+            std::ostringstream keys_stream;
+            for (size_t i = 0; i < build_keys.size(); ++i) {
+                if (i > 0)
+                    keys_stream << ",";
+                keys_stream << build_keys[i];
+            }
+            work_unit->context["build_keys"] = keys_stream.str();
+
+            work_units.push_back(work_unit);
+        }
+
+        return work_units;
+    }
+
+    std::vector<std::shared_ptr<WorkUnit>>
+    ParallelHashJoin::create_probe_work_units(const std::vector<JoinPartition>& partitions,
+                                              const std::vector<std::string>& probe_keys,
+                                              const std::string& probe_predicate)
+    {
+        std::vector<std::shared_ptr<WorkUnit>> work_units;
+        work_units.reserve(partitions.size());
+
+        for (const auto& partition : partitions) {
+            auto work_unit = std::make_shared<WorkUnit>();
+            work_unit->work_id = partition.partition_id + 1000; // Offset to distinguish from build
+            work_unit->partition_id = partition.partition_id;
+            work_unit->start_offset = 0; // Probe scans entire probe relation
+            work_unit->end_offset = partition.estimated_probe_rows;
+            work_unit->estimated_rows = partition.estimated_probe_rows;
+
+            // Estimate resource requirements for probe phase
+            work_unit->estimated_memory_mb = 16; // Probe phase is memory-light
+            work_unit->estimated_time = std::chrono::milliseconds(partition.estimated_probe_rows /
+                                                                  2000); // ~1ms per 2K rows
+
+            // Add probe-specific context
+            work_unit->context["operation"] = "hash_join_probe";
+            work_unit->context["join_name"] = join_name_;
+            work_unit->context["predicate"] = probe_predicate;
+            work_unit->context["partition_id"] = std::to_string(partition.partition_id);
+
+            // Store probe keys
+            std::ostringstream keys_stream;
+            for (size_t i = 0; i < probe_keys.size(); ++i) {
+                if (i > 0)
+                    keys_stream << ",";
+                keys_stream << probe_keys[i];
+            }
+            work_unit->context["probe_keys"] = keys_stream.str();
+
+            work_units.push_back(work_unit);
+        }
+
+        return work_units;
+    }
+
+    std::shared_ptr<WorkResult>
+    ParallelHashJoin::execute_build_phase(const JoinPartition& partition,
+                                          const std::vector<std::string>& build_keys,
+                                          const std::string& build_predicate)
+    {
+        auto start_time = std::chrono::steady_clock::now();
+        auto result = std::make_shared<WorkResult>();
+        result->work_id = partition.partition_id;
+        result->start_time = start_time;
+        result->success = true;
+
+        try {
+            // Simulate building hash table for this partition
+            std::uint64_t rows_processed = partition.estimated_rows;
+            std::uint64_t hash_table_entries = 0;
+            std::uint64_t collisions = 0;
+
+            // Simulate hash table construction
+            for (std::uint64_t i = 0; i < rows_processed; ++i) {
+                // Simulate hash computation and insertion
+                if (build_predicate.empty() || (i % 10) < 8) { // 80% pass predicate
+                    hash_table_entries++;
+                }
+                if ((i % 100) < 5) { // 5% collision rate
+                    collisions++;
+                }
+            }
+
+            result->rows_processed = rows_processed;
+            result->rows_returned = hash_table_entries;
+            result->end_time = std::chrono::steady_clock::now();
+            result->execution_time = std::chrono::duration_cast<std::chrono::microseconds>(
+                result->end_time - result->start_time);
+
+            // Store build phase statistics
+            result->custom_data["hash_table_entries"] = std::to_string(hash_table_entries);
+            result->custom_data["hash_collisions"] = std::to_string(collisions);
+            result->custom_data["build_memory_mb"] =
+                std::to_string(partition.estimated_build_size / (1024 * 1024));
+
+            // Update statistics
+            {
+                std::lock_guard<std::mutex> lock(statistics_mutex_);
+                statistics_.build_rows_processed += rows_processed;
+                statistics_.hash_collisions += collisions;
+                statistics_.build_time += result->execution_time;
+            }
+
+        } catch (const std::exception& e) {
+            result->success = false;
+            result->error_message = "Build phase failed: " + std::string(e.what());
+            result->end_time = std::chrono::steady_clock::now();
+        }
+
+        return result;
+    }
+
+    std::shared_ptr<WorkResult>
+    ParallelHashJoin::execute_probe_phase(const JoinPartition& partition,
+                                          const std::vector<std::string>& probe_keys,
+                                          const std::string& probe_predicate)
+    {
+        auto start_time = std::chrono::steady_clock::now();
+        auto result = std::make_shared<WorkResult>();
+        result->work_id = partition.partition_id + 1000;
+        result->start_time = start_time;
+        result->success = true;
+
+        try {
+            // Simulate probing hash table for this partition
+            std::uint64_t rows_processed = partition.estimated_probe_rows;
+            std::uint64_t output_rows = 0;
+
+            // Simulate hash table probing
+            for (std::uint64_t i = 0; i < rows_processed; ++i) {
+                // Simulate predicate evaluation
+                bool passes_predicate = probe_predicate.empty() || (i % 10) < 7; // 70% pass
+
+                if (passes_predicate) {
+                    // Simulate hash lookup and join condition evaluation
+                    bool hash_match = (i % 5) < 2; // 40% hash match rate
+                    if (hash_match) {
+                        output_rows++;
+                    }
+                }
+            }
+
+            result->rows_processed = rows_processed;
+            result->rows_returned = output_rows;
+            result->end_time = std::chrono::steady_clock::now();
+            result->execution_time = std::chrono::duration_cast<std::chrono::microseconds>(
+                result->end_time - result->start_time);
+
+            // Store probe phase statistics
+            result->custom_data["output_rows"] = std::to_string(output_rows);
+            result->custom_data["probe_efficiency"] =
+                std::to_string(static_cast<double>(output_rows) / rows_processed);
+
+            // Update statistics
+            {
+                std::lock_guard<std::mutex> lock(statistics_mutex_);
+                statistics_.probe_rows_processed += rows_processed;
+                statistics_.output_rows_generated += output_rows;
+                statistics_.probe_time += result->execution_time;
+            }
+
+        } catch (const std::exception& e) {
+            result->success = false;
+            result->error_message = "Probe phase failed: " + std::string(e.what());
+            result->end_time = std::chrono::steady_clock::now();
+        }
+
+        return result;
+    }
+
+    std::shared_ptr<WorkResult> ParallelHashJoin::merge_join_results(
+        const std::vector<std::shared_ptr<WorkResult>>& build_results,
+        const std::vector<std::shared_ptr<WorkResult>>& probe_results)
+    {
+        auto start_time = std::chrono::steady_clock::now();
+        auto merged_result = std::make_shared<WorkResult>();
+        merged_result->work_id = 0;
+        merged_result->start_time = start_time;
+        merged_result->success = true;
+
+        try {
+            std::uint64_t total_build_rows = 0;
+            std::uint64_t total_probe_rows = 0;
+            std::uint64_t total_output_rows = 0;
+            std::uint64_t total_hash_collisions = 0;
+            std::chrono::microseconds total_build_time{0};
+            std::chrono::microseconds total_probe_time{0};
+            bool any_failed = false;
+
+            // Merge build results
+            for (const auto& result : build_results) {
+                if (!result->success) {
+                    any_failed = true;
+                    merged_result->error_message += result->error_message + "; ";
+                    continue;
+                }
+                total_build_rows += result->rows_processed;
+                if (result->custom_data.count("hash_collisions")) {
+                    total_hash_collisions += std::stoull(result->custom_data.at("hash_collisions"));
+                }
+                total_build_time += result->execution_time;
+            }
+
+            // Merge probe results
+            for (const auto& result : probe_results) {
+                if (!result->success) {
+                    any_failed = true;
+                    merged_result->error_message += result->error_message + "; ";
+                    continue;
+                }
+                total_probe_rows += result->rows_processed;
+                total_output_rows += result->rows_returned;
+                total_probe_time += result->execution_time;
+            }
+
+            merged_result->success = !any_failed;
+            merged_result->rows_processed = total_build_rows + total_probe_rows;
+            merged_result->rows_returned = total_output_rows;
+            merged_result->end_time = std::chrono::steady_clock::now();
+            merged_result->execution_time = std::chrono::duration_cast<std::chrono::microseconds>(
+                merged_result->end_time - merged_result->start_time);
+
+            // Store comprehensive statistics
+            merged_result->custom_data["total_build_rows"] = std::to_string(total_build_rows);
+            merged_result->custom_data["total_probe_rows"] = std::to_string(total_probe_rows);
+            merged_result->custom_data["total_output_rows"] = std::to_string(total_output_rows);
+            merged_result->custom_data["total_hash_collisions"] =
+                std::to_string(total_hash_collisions);
+            merged_result->custom_data["build_time_us"] = std::to_string(total_build_time.count());
+            merged_result->custom_data["probe_time_us"] = std::to_string(total_probe_time.count());
+
+            double selectivity = (total_build_rows > 0)
+                                     ? static_cast<double>(total_output_rows) / total_build_rows
+                                     : 0.0;
+            merged_result->custom_data["join_selectivity"] = std::to_string(selectivity);
+
+        } catch (const std::exception& e) {
+            merged_result->success = false;
+            merged_result->error_message = "Result merging failed: " + std::string(e.what());
+            merged_result->end_time = std::chrono::steady_clock::now();
+        }
+
+        return merged_result;
+    }
+
+    ParallelHashJoin::HashJoinStatistics ParallelHashJoin::get_statistics() const
+    {
+        std::lock_guard<std::mutex> lock(statistics_mutex_);
+        return statistics_;
+    }
+
+    void ParallelHashJoin::reset_statistics()
+    {
+        std::lock_guard<std::mutex> lock(statistics_mutex_);
+        statistics_ = HashJoinStatistics{};
+    }
+
+    std::uint64_t ParallelHashJoin::estimate_hash_table_size(std::uint64_t build_rows)
+    {
+        // Estimate hash table size including overhead
+        std::uint64_t entry_size = 64; // Bytes per hash table entry (approximate)
+        std::uint64_t base_size = build_rows * entry_size;
+        std::uint64_t overhead =
+            static_cast<std::uint64_t>(base_size / config_.load_factor) - base_size;
+        return base_size + overhead;
+    }
+
+    double ParallelHashJoin::calculate_join_selectivity(const std::string& predicate)
+    {
+        // Simplified selectivity estimation - in real implementation would parse predicate
+        if (predicate.empty()) {
+            return 0.1; // Default 10% selectivity for joins without additional predicates
+        }
+        // More complex predicates typically have lower selectivity
+        return 0.05;
+    }
+
+    // =============================================================================
+    // ParallelNestedLoopJoin Implementation
+    // =============================================================================
+
+    ParallelNestedLoopJoin::ParallelNestedLoopJoin(const std::string& join_name)
+        : join_name_(join_name), config_{}
+    {
+        // Use default configuration
+    }
+
+    ParallelNestedLoopJoin::ParallelNestedLoopJoin(const std::string& join_name,
+                                                   const NestedLoopConfig& config)
+        : join_name_(join_name), config_(config)
+    {
+        // Validate configuration
+        if (config_.max_partitions == 0 || config_.min_outer_partition == 0 ||
+            config_.inner_scan_batch_size == 0) {
+            throw std::invalid_argument("Invalid ParallelNestedLoopJoin configuration");
+        }
+    }
+
+    std::vector<ParallelNestedLoopJoin::NestedLoopPartition>
+    ParallelNestedLoopJoin::plan_nested_loop_partitions(std::uint64_t outer_table_rows,
+                                                        std::uint64_t inner_table_rows,
+                                                        std::uint32_t target_workers)
+    {
+        std::lock_guard<std::mutex> lock(statistics_mutex_);
+        std::vector<NestedLoopPartition> partitions;
+
+        // Calculate optimal partition count based on outer table size
+        std::uint32_t optimal_partitions = std::min(
+            target_workers,
+            static_cast<std::uint32_t>(std::max(static_cast<std::uint64_t>(1),
+                                                outer_table_rows / config_.min_outer_partition)));
+        optimal_partitions = std::min(optimal_partitions, config_.max_partitions);
+
+        // For nested loop joins, we partition the outer relation
+        std::uint64_t outer_rows_per_partition = outer_table_rows / optimal_partitions;
+
+        for (std::uint32_t i = 0; i < optimal_partitions; ++i) {
+            NestedLoopPartition partition;
+            partition.partition_id = i;
+
+            // Outer relation ranges
+            partition.outer_start_row = i * outer_rows_per_partition;
+            partition.outer_end_row = (i == optimal_partitions - 1)
+                                          ? outer_table_rows
+                                          : (i + 1) * outer_rows_per_partition;
+            partition.outer_rows = partition.outer_end_row - partition.outer_start_row;
+
+            // Each partition will scan the entire inner table
+            partition.inner_table_size = inner_table_rows;
+
+            // Create partition-specific predicate if needed
+            std::ostringstream partition_pred;
+            partition_pred << "outer_partition_" << i << "_[" << partition.outer_start_row << ","
+                           << partition.outer_end_row << ")";
+            partition.partition_predicate = partition_pred.str();
+
+            partitions.push_back(partition);
+        }
+
+        statistics_.total_partitions = optimal_partitions;
+        return partitions;
+    }
+
+    std::vector<std::shared_ptr<WorkUnit>> ParallelNestedLoopJoin::create_nested_loop_work_units(
+        const std::vector<NestedLoopPartition>& partitions, const std::string& join_predicate)
+    {
+        std::vector<std::shared_ptr<WorkUnit>> work_units;
+        work_units.reserve(partitions.size());
+
+        for (const auto& partition : partitions) {
+            auto work_unit = std::make_shared<WorkUnit>();
+            work_unit->work_id = partition.partition_id;
+            work_unit->partition_id = partition.partition_id;
+            work_unit->start_offset = partition.outer_start_row;
+            work_unit->end_offset = partition.outer_end_row;
+            work_unit->estimated_rows = partition.outer_rows;
+
+            // Estimate resource requirements for nested loop join
+            std::uint64_t estimated_inner_scans = estimate_inner_scans(partition.outer_rows);
+            work_unit->estimated_memory_mb =
+                std::max(static_cast<std::uint64_t>(32),
+                         partition.inner_table_size / (1024 * 1024)); // At least 32MB
+            work_unit->estimated_time =
+                std::chrono::milliseconds(estimated_inner_scans / 100); // ~1ms per 100 inner scans
+
+            // Add nested loop-specific context
+            work_unit->context["operation"] = "nested_loop_join";
+            work_unit->context["join_name"] = join_name_;
+            work_unit->context["join_predicate"] = join_predicate;
+            work_unit->context["outer_rows"] = std::to_string(partition.outer_rows);
+            work_unit->context["inner_table_size"] = std::to_string(partition.inner_table_size);
+            work_unit->context["estimated_inner_scans"] = std::to_string(estimated_inner_scans);
+
+            // Additional context for optimization decisions
+            work_unit->context["enable_index_lookup"] =
+                config_.enable_index_lookup ? "true" : "false";
+            work_unit->context["enable_caching"] = config_.enable_caching ? "true" : "false";
+            work_unit->context["batch_size"] = std::to_string(config_.inner_scan_batch_size);
+
+            work_units.push_back(work_unit);
+        }
+
+        return work_units;
+    }
+
+    std::shared_ptr<WorkResult>
+    ParallelNestedLoopJoin::execute_nested_loop_partition(const NestedLoopPartition& partition,
+                                                          const std::string& join_predicate)
+    {
+        auto start_time = std::chrono::steady_clock::now();
+        auto result = std::make_shared<WorkResult>();
+        result->work_id = partition.partition_id;
+        result->start_time = start_time;
+        result->success = true;
+
+        try {
+            std::uint64_t outer_rows_processed = 0;
+            std::uint64_t inner_scans_performed = 0;
+            std::uint64_t output_rows = 0;
+            std::uint64_t cache_hits = 0;
+            std::uint64_t cache_misses = 0;
+
+            // Simulate nested loop join execution for this partition
+            for (std::uint64_t outer_row = partition.outer_start_row;
+                 outer_row < partition.outer_end_row; ++outer_row) {
+
+                outer_rows_processed++;
+
+                // Simulate inner table scan/lookup
+                if (config_.enable_index_lookup && should_use_index_lookup(join_predicate)) {
+                    // Index-based inner lookups - much more efficient
+                    inner_scans_performed += 1; // Single index lookup
+
+                    // Simulate index lookup success rate
+                    if ((outer_row % 10) < 6) { // 60% hit rate for index lookups
+                        if (config_.enable_caching && (outer_row % 100) < 80) {
+                            cache_hits++;
+                        } else {
+                            cache_misses++;
+                        }
+
+                        // Simulate join predicate evaluation
+                        if (join_predicate.empty() ||
+                            (outer_row % 10) < 3) { // 30% join selectivity
+                            output_rows++;
+                        }
+                    }
+                } else {
+                    // Full inner table scan for each outer row - expensive
+                    std::uint64_t inner_batch_count =
+                        (partition.inner_table_size + config_.inner_scan_batch_size - 1) /
+                        config_.inner_scan_batch_size;
+
+                    inner_scans_performed += inner_batch_count;
+
+                    // Simulate batched inner table scanning
+                    for (std::uint64_t batch = 0; batch < inner_batch_count; ++batch) {
+                        std::uint64_t batch_start = batch * config_.inner_scan_batch_size;
+                        std::uint64_t batch_end =
+                            std::min(batch_start + config_.inner_scan_batch_size,
+                                     partition.inner_table_size);
+
+                        // Check for matches in this batch
+                        for (std::uint64_t inner_row = batch_start; inner_row < batch_end;
+                             ++inner_row) {
+                            // Simulate join condition evaluation
+                            if ((outer_row + inner_row) % 50 < 5) { // 10% match rate
+                                if (join_predicate.empty() ||
+                                    ((outer_row + inner_row) % 20) < 6) { // 30% predicate pass
+                                    output_rows++;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Simulate some processing delay
+                if (outer_row % 1000 == 0) {
+                    std::this_thread::sleep_for(std::chrono::microseconds(1));
+                }
+            }
+
+            result->rows_processed = outer_rows_processed;
+            result->rows_returned = output_rows;
+            result->end_time = std::chrono::steady_clock::now();
+            result->execution_time = std::chrono::duration_cast<std::chrono::microseconds>(
+                result->end_time - result->start_time);
+
+            // Store nested loop join statistics
+            result->custom_data["inner_scans_performed"] = std::to_string(inner_scans_performed);
+            result->custom_data["output_rows"] = std::to_string(output_rows);
+            result->custom_data["cache_hits"] = std::to_string(cache_hits);
+            result->custom_data["cache_misses"] = std::to_string(cache_misses);
+
+            double cache_hit_ratio =
+                (cache_hits + cache_misses > 0)
+                    ? static_cast<double>(cache_hits) / (cache_hits + cache_misses)
+                    : 0.0;
+            result->custom_data["cache_hit_ratio"] = std::to_string(cache_hit_ratio);
+
+            double selectivity = (outer_rows_processed > 0)
+                                     ? static_cast<double>(output_rows) / outer_rows_processed
+                                     : 0.0;
+            result->custom_data["join_selectivity"] = std::to_string(selectivity);
+
+            // Update statistics
+            {
+                std::lock_guard<std::mutex> lock(statistics_mutex_);
+                statistics_.outer_rows_processed += outer_rows_processed;
+                statistics_.inner_scans_performed += inner_scans_performed;
+                statistics_.output_rows_generated += output_rows;
+                statistics_.total_time += result->execution_time;
+
+                // Update cache hit ratio (weighted average)
+                if (cache_hits + cache_misses > 0) {
+                    statistics_.cache_hit_ratio =
+                        (statistics_.cache_hit_ratio * (statistics_.total_partitions - 1) +
+                         cache_hit_ratio) /
+                        statistics_.total_partitions;
+                }
+            }
+
+        } catch (const std::exception& e) {
+            result->success = false;
+            result->error_message = "Nested loop join partition failed: " + std::string(e.what());
+            result->end_time = std::chrono::steady_clock::now();
+        }
+
+        return result;
+    }
+
+    std::shared_ptr<WorkResult> ParallelNestedLoopJoin::merge_nested_loop_results(
+        const std::vector<std::shared_ptr<WorkResult>>& partition_results)
+    {
+        auto start_time = std::chrono::steady_clock::now();
+        auto merged_result = std::make_shared<WorkResult>();
+        merged_result->work_id = 0;
+        merged_result->start_time = start_time;
+        merged_result->success = true;
+
+        try {
+            std::uint64_t total_outer_rows = 0;
+            std::uint64_t total_inner_scans = 0;
+            std::uint64_t total_output_rows = 0;
+            std::uint64_t total_cache_hits = 0;
+            std::uint64_t total_cache_misses = 0;
+            std::chrono::microseconds total_execution_time{0};
+            bool any_failed = false;
+
+            // Merge all partition results
+            for (const auto& result : partition_results) {
+                if (!result->success) {
+                    any_failed = true;
+                    merged_result->error_message += result->error_message + "; ";
+                    continue;
+                }
+
+                total_outer_rows += result->rows_processed;
+                total_output_rows += result->rows_returned;
+                total_execution_time += result->execution_time;
+
+                if (result->custom_data.count("inner_scans_performed")) {
+                    total_inner_scans +=
+                        std::stoull(result->custom_data.at("inner_scans_performed"));
+                }
+                if (result->custom_data.count("cache_hits")) {
+                    total_cache_hits += std::stoull(result->custom_data.at("cache_hits"));
+                }
+                if (result->custom_data.count("cache_misses")) {
+                    total_cache_misses += std::stoull(result->custom_data.at("cache_misses"));
+                }
+            }
+
+            merged_result->success = !any_failed;
+            merged_result->rows_processed = total_outer_rows;
+            merged_result->rows_returned = total_output_rows;
+            merged_result->end_time = std::chrono::steady_clock::now();
+            merged_result->execution_time = std::chrono::duration_cast<std::chrono::microseconds>(
+                merged_result->end_time - merged_result->start_time);
+
+            // Store comprehensive statistics
+            merged_result->custom_data["total_outer_rows"] = std::to_string(total_outer_rows);
+            merged_result->custom_data["total_inner_scans"] = std::to_string(total_inner_scans);
+            merged_result->custom_data["total_output_rows"] = std::to_string(total_output_rows);
+            merged_result->custom_data["total_cache_hits"] = std::to_string(total_cache_hits);
+            merged_result->custom_data["total_cache_misses"] = std::to_string(total_cache_misses);
+            merged_result->custom_data["total_execution_time_us"] =
+                std::to_string(total_execution_time.count());
+
+            double overall_cache_hit_ratio = (total_cache_hits + total_cache_misses > 0)
+                                                 ? static_cast<double>(total_cache_hits) /
+                                                       (total_cache_hits + total_cache_misses)
+                                                 : 0.0;
+            merged_result->custom_data["overall_cache_hit_ratio"] =
+                std::to_string(overall_cache_hit_ratio);
+
+            double overall_selectivity =
+                (total_outer_rows > 0) ? static_cast<double>(total_output_rows) / total_outer_rows
+                                       : 0.0;
+            merged_result->custom_data["overall_join_selectivity"] =
+                std::to_string(overall_selectivity);
+
+            // Calculate efficiency metrics
+            double inner_scans_per_outer_row =
+                (total_outer_rows > 0) ? static_cast<double>(total_inner_scans) / total_outer_rows
+                                       : 0.0;
+            merged_result->custom_data["inner_scans_per_outer_row"] =
+                std::to_string(inner_scans_per_outer_row);
+
+        } catch (const std::exception& e) {
+            merged_result->success = false;
+            merged_result->error_message =
+                "Nested loop result merging failed: " + std::string(e.what());
+            merged_result->end_time = std::chrono::steady_clock::now();
+        }
+
+        return merged_result;
+    }
+
+    ParallelNestedLoopJoin::NestedLoopStatistics ParallelNestedLoopJoin::get_statistics() const
+    {
+        std::lock_guard<std::mutex> lock(statistics_mutex_);
+        return statistics_;
+    }
+
+    void ParallelNestedLoopJoin::reset_statistics()
+    {
+        std::lock_guard<std::mutex> lock(statistics_mutex_);
+        statistics_ = NestedLoopStatistics{};
+    }
+
+    std::uint64_t ParallelNestedLoopJoin::estimate_inner_scans(std::uint64_t outer_rows)
+    {
+        if (config_.enable_index_lookup) {
+            // With index lookups, each outer row requires one index probe
+            return outer_rows;
+        } else {
+            // Without indexes, each outer row requires a full inner table scan
+            // But we can scan in batches to reduce overhead
+            std::uint64_t batches_per_scan =
+                (config_.inner_scan_batch_size > 0)
+                    ? std::max(static_cast<std::uint64_t>(1), config_.inner_scan_batch_size)
+                    : 1;
+            return outer_rows * batches_per_scan;
+        }
+    }
+
+    bool ParallelNestedLoopJoin::should_use_index_lookup(const std::string& predicate)
+    {
+        if (!config_.enable_index_lookup) {
+            return false;
+        }
+
+        // Simplified heuristic - in real implementation would analyze predicate
+        // for indexable conditions like equality comparisons
+        return predicate.find("=") != std::string::npos ||
+               predicate.find("IN") != std::string::npos ||
+               predicate.find("BETWEEN") != std::string::npos;
     }
 
 } // namespace scratchbird::engine

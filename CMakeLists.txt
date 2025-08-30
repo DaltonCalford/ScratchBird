@@ -948,6 +948,16 @@ if(SCRATCHBIRD_BUILD_TESTS)
   endif()
   add_test(NAME parallel_cost_model_tests COMMAND parallel_cost_model_tests)
 
+  # Phase 11.7 Performance Infrastructure - Parallel Join Tests
+  add_executable(parallel_join_tests tests/parallel_join_tests.cpp)
+  target_link_libraries(parallel_join_tests scratchbird_engine)
+  if(GTEST_FOUND)
+    target_link_libraries(parallel_join_tests ${GTEST_LIBRARIES})
+    target_include_directories(parallel_join_tests
+                               PRIVATE ${GTEST_INCLUDE_DIRS})
+  endif()
+  add_test(NAME parallel_join_tests COMMAND parallel_join_tests)
+
   # Tablespace tests (Phase 14)
   add_executable(tablespace_basic_tests tests/tablespace_basic_tests.cpp)
   target_link_libraries(tablespace_basic_tests scratchbird_engine)
