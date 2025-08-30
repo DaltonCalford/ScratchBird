@@ -1,0 +1,1620 @@
+[ScratchBird Analysis Documentation](../../index.md) / [Traceability coverage index](index.md)
+
+### Orphan public symbols (no REQ mapping)
+
+- include/scratchbird/engine/alloc.h
+  - scratchbird::engine::Allocator @ L13
+  - scratchbird::engine::Allocator::Allocator @ L16
+  - scratchbird::engine::Allocator::fmap @ L38
+  - scratchbird::engine::Allocator::page_size @ L42
+  - scratchbird::engine::Allocator::pages_per_pip @ L54
+
+- include/scratchbird/engine/alter_table_manager.h
+  - scratchbird::engine::AlterTableManager @ L118
+  - scratchbird::engine::AlterTableOperation @ L17
+  - scratchbird::engine::AlterTableSpec @ L94
+  - scratchbird::engine::ColumnDefinition @ L48
+  - scratchbird::engine::ConstraintDefinition @ L72
+
+- include/scratchbird/engine/ast.h
+  - scratchbird::engine::Ast @ L124
+  - scratchbird::engine::Ast::PsqlStmt @ L413
+  - scratchbird::engine::Ast::PsqlStmt::ExecStmtOptions @ L423
+  - scratchbird::engine::Ast::PsqlStmt::TypeDescLite @ L437
+  - scratchbird::engine::Ast::PsqlStmtKind @ L391
+  - scratchbird::engine::Ast::__anon7a5be0530108 @ L133
+  - scratchbird::engine::Ast::__anon7a5be0530108::AlterOp @ L139
+  - scratchbird::engine::Ast::__anon7a5be0530108::IdentityOptionsParsed @ L156
+  - scratchbird::engine::Ast::__anon7a5be0530108::TableConstraint @ L164
+  - scratchbird::engine::Ast::__anon7a5be0530208 @ L181
+  - scratchbird::engine::Ast::__anon7a5be0530308 @ L199
+  - scratchbird::engine::Ast::__anon7a5be0530408 @ L204
+  - scratchbird::engine::Ast::__anon7a5be0530508 @ L210
+  - scratchbird::engine::Ast::__anon7a5be0530608 @ L216
+  - scratchbird::engine::Ast::__anon7a5be0530708 @ L223
+  - scratchbird::engine::Ast::__anon7a5be0530808 @ L231
+  - scratchbird::engine::Ast::__anon7a5be0530908 @ L238
+  - scratchbird::engine::Ast::__anon7a5be0530a08 @ L244
+  - scratchbird::engine::Ast::__anon7a5be0530b08 @ L250
+  - scratchbird::engine::Ast::__anon7a5be0530c08 @ L256
+  - scratchbird::engine::Ast::__anon7a5be0530d08 @ L262
+  - scratchbird::engine::Ast::__anon7a5be0530e08 @ L268
+  - scratchbird::engine::Ast::__anon7a5be0530f08 @ L274
+  - scratchbird::engine::Ast::__anon7a5be0531008 @ L280
+  - scratchbird::engine::Ast::__anon7a5be0531108 @ L286
+  - scratchbird::engine::Ast::__anon7a5be0531208 @ L292
+  - scratchbird::engine::Ast::__anon7a5be0531308 @ L298
+  - scratchbird::engine::Ast::__anon7a5be0531408 @ L304
+  - scratchbird::engine::Ast::__anon7a5be0531508 @ L312
+  - scratchbird::engine::Ast::__anon7a5be0531608 @ L321
+  - scratchbird::engine::Ast::__anon7a5be0531708 @ L329
+  - scratchbird::engine::Ast::__anon7a5be0531808 @ L335
+  - scratchbird::engine::Ast::__anon7a5be0531908 @ L340
+  - scratchbird::engine::Ast::__anon7a5be0531a08 @ L345
+  - scratchbird::engine::Ast::__anon7a5be0531b08 @ L351
+  - scratchbird::engine::Ast::__anon7a5be0531c08 @ L357
+  - scratchbird::engine::Ast::__anon7a5be0531d08 @ L363
+  - scratchbird::engine::Ast::__anon7a5be0531e08 @ L369
+  - scratchbird::engine::Ast::__anon7a5be0531f08 @ L379
+  - scratchbird::engine::Ast::__anon7a5be0532008 @ L448
+  - scratchbird::engine::Ast::__anon7a5be0532108 @ L454
+  - scratchbird::engine::Ast::__anon7a5be0532208 @ L458
+  - scratchbird::engine::Ast::__anon7a5be0532208::ParamTypeLite @ L467
+  - scratchbird::engine::Ast::__anon7a5be0532308 @ L479
+  - scratchbird::engine::Ast::__anon7a5be0532408 @ L491
+  - scratchbird::engine::Ast::__anon7a5be0532508 @ L504
+  - scratchbird::engine::Ast::__anon7a5be0532608 @ L510
+  - scratchbird::engine::Ast::__anon7a5be0532708 @ L517
+  - scratchbird::engine::Ast::__anon7a5be0532808 @ L524
+  - scratchbird::engine::Ast::__anon7a5be0532908 @ L533
+  - scratchbird::engine::Ast::__anon7a5be0532a08 @ L538
+  - scratchbird::engine::Ast::__anon7a5be0532b08 @ L544
+  - scratchbird::engine::Ast::__anon7a5be0532c08 @ L549
+  - scratchbird::engine::NodeKind @ L13
+  - scratchbird::engine::SessionKind @ L70
+  - scratchbird::engine::SessionStmtAst @ L87
+  - scratchbird::engine::SessionStmtAst::DbOptionsRaw @ L91
+  - scratchbird::engine::SessionStmtAst::SetOptionsRaw @ L101
+  - scratchbird::engine::SourceSpan @ L65
+
+- include/scratchbird/engine/authentication.h
+  - ScratchBird::AuthenticationChallenge @ L160
+  - ScratchBird::AuthenticationChallenge::AuthenticationChallenge @ L163
+  - ScratchBird::AuthenticationChallenge::get_challenge_data @ L177
+  - ScratchBird::AuthenticationChallenge::get_challenge_id @ L169
+  - ScratchBird::AuthenticationChallenge::get_expiry @ L195
+  - ScratchBird::AuthenticationChallenge::get_method @ L173
+  - ScratchBird::AuthenticationChallenge::get_response @ L186
+  - ScratchBird::AuthenticationChallenge::is_expired @ L200
+  - ScratchBird::AuthenticationChallenge::set_expiry @ L191
+  - ScratchBird::AuthenticationChallenge::set_response @ L182
+  - ScratchBird::AuthenticationContext @ L50
+  - ScratchBird::AuthenticationContext::get_client_info @ L89
+  - ScratchBird::AuthenticationContext::get_credential @ L100
+  - ScratchBird::AuthenticationContext::get_database @ L70
+  - ScratchBird::AuthenticationContext::get_last_activity @ L121
+  - ScratchBird::AuthenticationContext::get_remote_address @ L80
+  - ScratchBird::AuthenticationContext::get_session_start @ L112
+  - ScratchBird::AuthenticationContext::get_username @ L61
+  - ScratchBird::AuthenticationContext::is_authenticated @ L131
+  - ScratchBird::AuthenticationContext::requires_2fa @ L140
+  - ScratchBird::AuthenticationContext::set_authenticated @ L127
+  - ScratchBird::AuthenticationContext::set_client_info @ L85
+  - ScratchBird::AuthenticationContext::set_credential @ L95
+  - ScratchBird::AuthenticationContext::set_database @ L66
+  - ScratchBird::AuthenticationContext::set_last_activity @ L117
+  - ScratchBird::AuthenticationContext::set_remote_address @ L76
+  - ScratchBird::AuthenticationContext::set_requires_2fa @ L136
+  - ScratchBird::AuthenticationContext::set_session_start @ L108
+  - ScratchBird::AuthenticationContext::set_username @ L57
+  - ScratchBird::AuthenticationManager @ L282
+  - ScratchBird::AuthenticationManager::AuthenticationStats @ L344
+  - ScratchBird::AuthenticationManager::enable_audit_logging @ L335
+  - ScratchBird::AuthenticationManager::set_failed_attempt_limit @ L325
+  - ScratchBird::AuthenticationManager::set_lockout_duration @ L329
+  - ScratchBird::AuthenticationManager::set_session_timeout @ L321
+  - ScratchBird::AuthenticationMethod @ L37
+  - ScratchBird::AuthenticationProvider @ L216
+  - ScratchBird::AuthenticationProvider::change_password @ L250
+  - ScratchBird::AuthenticationProvider::create_challenge @ L234
+  - ScratchBird::AuthenticationProvider::get_configuration_errors @ L273
+  - ScratchBird::AuthenticationProvider::lock_account @ L262
+  - ScratchBird::AuthenticationProvider::supports_account_management @ L258
+  - ScratchBird::AuthenticationProvider::supports_challenge_response @ L229
+  - ScratchBird::AuthenticationProvider::supports_password_management @ L246
+  - ScratchBird::AuthenticationProvider::unlock_account @ L266
+  - ScratchBird::AuthenticationProvider::validate_challenge_response @ L239
+  - ScratchBird::AuthenticationResult @ L21
+  - ScratchBird::SecurityContext @ L376
+  - ScratchBird::SecurityContext::get_authentication_method @ L420
+  - ScratchBird::SecurityContext::get_authentication_time @ L429
+  - ScratchBird::SecurityContext::get_database @ L387
+  - ScratchBird::SecurityContext::get_roles @ L393
+  - ScratchBird::SecurityContext::get_session_id @ L411
+  - ScratchBird::SecurityContext::get_username @ L383
+  - ScratchBird::SecurityContext::is_security_definer @ L439
+  - ScratchBird::SecurityContext::is_superuser @ L448
+  - ScratchBird::SecurityContext::set_authentication_method @ L416
+  - ScratchBird::SecurityContext::set_authentication_time @ L425
+  - ScratchBird::SecurityContext::set_security_definer @ L435
+  - ScratchBird::SecurityContext::set_session_id @ L407
+  - ScratchBird::SecurityContext::set_superuser @ L444
+
+- include/scratchbird/engine/background_writer.h
+  - scratchbird::engine::BackgroundWriter @ L136
+  - scratchbird::engine::BackgroundWriterConfig @ L24
+  - scratchbird::engine::BackgroundWriterStats @ L45
+  - scratchbird::engine::BackgroundWriterStatsAtomic @ L75
+  - scratchbird::engine::WriteBatch @ L105
+  - scratchbird::engine::WriteBatch::WriteBatch @ L110
+  - scratchbird::engine::WriteBatch::add_buffer @ L112
+  - scratchbird::engine::WriteBatch::clear @ L126
+  - scratchbird::engine::WriteBatch::empty @ L118
+  - scratchbird::engine::WriteBatch::size @ L122
+
+- include/scratchbird/engine/batch_operations.h
+  - scratchbird::engine::BatchCompletionCallback @ L277
+  - scratchbird::engine::BatchConfig @ L40
+  - scratchbird::engine::BatchConfig::is_valid @ L65
+  - scratchbird::engine::BatchContainer @ L283
+  - scratchbird::engine::BatchContainer::get_id @ L326
+  - scratchbird::engine::BatchContainer::get_type @ L320
+  - scratchbird::engine::BatchErrorCallback @ L279
+  - scratchbird::engine::BatchExecutionMode @ L33
+  - scratchbird::engine::BatchExecutionResult @ L119
+  - scratchbird::engine::BatchExecutionResult::get_execution_time_ms @ L141
+  - scratchbird::engine::BatchExecutionResult::get_success_rate @ L154
+  - scratchbird::engine::BatchExecutionResult::get_throughput_ops_per_sec @ L146
+  - scratchbird::engine::BatchOperation @ L75
+  - scratchbird::engine::BatchOperation::BatchOperation @ L96
+  - scratchbird::engine::BatchOperation::get_estimated_size @ L103
+  - scratchbird::engine::BatchOperationType @ L25
+  - scratchbird::engine::BatchOperationsEngine @ L383
+  - scratchbird::engine::BatchProgressCallback @ L278
+  - scratchbird::engine::BatchStatistics @ L213
+  - scratchbird::engine::BatchStatistics::reset @ L236
+  - scratchbird::engine::BatchStatistics::snapshot @ L255
+  - scratchbird::engine::BatchStatisticsSnapshot @ L163
+  - scratchbird::engine::BatchStatisticsSnapshot::get_avg_execution_time_ms @ L187
+  - scratchbird::engine::BatchStatisticsSnapshot::get_success_rate @ L204
+  - scratchbird::engine::BatchStatisticsSnapshot::get_throughput_ops_per_sec @ L195
+  - scratchbird::engine::NetworkBatchManager @ L351
+
+- include/scratchbird/engine/btree_page.h
+  - scratchbird::engine::BTreeHdrV1 @ L51
+  - scratchbird::engine::BTreePageFlags @ L38
+  - scratchbird::engine::BranchEntryV1 @ L33
+  - scratchbird::engine::CompositeKey @ L21
+  - scratchbird::engine::KeyPart @ L15
+  - scratchbird::engine::LeafRecordV1 @ L26
+  - scratchbird::engine::operator | @ L44
+
+- include/scratchbird/engine/btree_v1.h
+  - scratchbird::engine::BTreeV1 @ L21
+  - scratchbird::engine::BTreeV1::FieldOrder @ L30
+  - scratchbird::engine::BTreeV1::InsertUp @ L74
+  - scratchbird::engine::BTreeV1::PredicateFn @ L47
+  - scratchbird::engine::BTreeV1::root_is_leaf @ L68
+  - scratchbird::engine::BTreeV1::root_page @ L64
+  - scratchbird::engine::BTreeV1::set_field_orders @ L37
+  - scratchbird::engine::BTreeV1::set_include_count @ L42
+  - scratchbird::engine::BTreeV1::set_predicate @ L49
+  - scratchbird::engine::BTreeV1::set_wal @ L25
+
+- include/scratchbird/engine/buffer_pool.h
+  - scratchbird::engine::BlockNumber @ L23
+  - scratchbird::engine::BufferFrame @ L105
+  - scratchbird::engine::BufferFrame::BufferFrame @ L118
+  - scratchbird::engine::BufferFrame::update_access_time @ L123
+  - scratchbird::engine::BufferHandle @ L161
+  - scratchbird::engine::BufferHandle::BufferHandle @ L165
+  - scratchbird::engine::BufferHandle::BufferHandle @ L166
+  - scratchbird::engine::BufferHandle::index @ L189
+  - scratchbird::engine::BufferHandle::operator = @ L170
+  - scratchbird::engine::BufferHandle::swap @ L199
+  - scratchbird::engine::BufferHandle::valid @ L185
+  - scratchbird::engine::BufferHandle::~BufferHandle @ L180
+  - scratchbird::engine::BufferPool @ L290
+  - scratchbird::engine::BufferPool::AtomicBufferPoolStats @ L453
+  - scratchbird::engine::BufferPool::BufferPool @ L295
+  - scratchbird::engine::BufferPool::BufferPool @ L306
+  - scratchbird::engine::BufferPool::FlushCallback @ L293
+  - scratchbird::engine::BufferPool::background_writer_loop @ L567
+  - scratchbird::engine::BufferPool::capacity @ L379
+  - scratchbird::engine::BufferPool::choose_victim_locked @ L516
+  - scratchbird::engine::BufferPool::dec_ref @ L543
+  - scratchbird::engine::BufferPool::find_or_create_index_locked @ L484
+  - scratchbird::engine::BufferPool::flush_dirty_batch @ L389
+  - scratchbird::engine::BufferPool::get @ L351
+  - scratchbird::engine::BufferPool::get_buffer @ L366
+  - scratchbird::engine::BufferPool::get_config @ L444
+  - scratchbird::engine::BufferPool::get_stats @ L409
+  - scratchbird::engine::BufferPool::inc_ref @ L537
+  - scratchbird::engine::BufferPool::initialize @ L331
+  - scratchbird::engine::BufferPool::mark_dirty @ L548
+  - scratchbird::engine::BufferPool::page_size @ L383
+  - scratchbird::engine::BufferPool::reset_stats @ L427
+  - scratchbird::engine::BufferPool::set_flush_callback @ L373
+  - scratchbird::engine::BufferPool::shutdown @ L342
+  - scratchbird::engine::BufferPool::start_background_writer @ L553
+  - scratchbird::engine::BufferPool::stop_background_writer @ L558
+  - scratchbird::engine::BufferPool::~BufferPool @ L317
+  - scratchbird::engine::BufferPoolConfig @ L134
+  - scratchbird::engine::BufferPoolStats @ L212
+  - scratchbird::engine::BufferPoolStats::evictions @ L243
+  - scratchbird::engine::BufferPoolStats::flushes @ L247
+  - scratchbird::engine::BufferPoolStats::get_dirty_ratio @ L259
+  - scratchbird::engine::BufferPoolStats::get_hit_ratio @ L253
+  - scratchbird::engine::BufferPoolStats::hits @ L235
+  - scratchbird::engine::BufferPoolStats::misses @ L239
+  - scratchbird::engine::BufferPoolStats::reset @ L264
+  - scratchbird::engine::BufferState @ L93
+  - scratchbird::engine::BufferTag @ L34
+  - scratchbird::engine::BufferTag::BufferTag @ L50
+  - scratchbird::engine::BufferTag::BufferTag @ L55
+  - scratchbird::engine::BufferTag::file_id @ L40
+  - scratchbird::engine::BufferTag::is_valid @ L71
+  - scratchbird::engine::BufferTag::operator != @ L66
+  - scratchbird::engine::BufferTag::operator == @ L60
+  - scratchbird::engine::BufferTag::page_no @ L44
+  - scratchbird::engine::BufferTagHash @ L80
+  - scratchbird::engine::BufferTagHash::operator () @ L81
+  - scratchbird::engine::ForkNumber @ L26
+  - scratchbird::engine::LSN @ L24
+  - scratchbird::engine::RelationOid @ L22
+
+- include/scratchbird/engine/catalog_bootstrap.h
+  - scratchbird::engine::BootstrapOptions @ L9
+
+- include/scratchbird/engine/catalog_manager.h
+  - scratchbird::engine::CatalogManager @ L22
+  - scratchbird::engine::CatalogManager::ConstraintInfo @ L111
+  - scratchbird::engine::CatalogManager::DomainSpec @ L207
+  - scratchbird::engine::CatalogManager::ForeignKeyInfo @ L184
+  - scratchbird::engine::CatalogManager::IndexCatalogInfo @ L92
+  - scratchbird::engine::CatalogManager::PackageInfo @ L313
+  - scratchbird::engine::CatalogManager::RoutineInfo @ L271
+  - scratchbird::engine::CatalogManager::RoutineParamInfo @ L283
+  - scratchbird::engine::CatalogManager::TriggerInfo @ L150
+  - scratchbird::engine::CatalogVersion @ L16
+
+- include/scratchbird/engine/catalog_mem.h
+  - scratchbird::engine::CatalogMem @ L28
+  - scratchbird::engine::IndexCatalogEntry @ L12
+  - scratchbird::engine::StatsEntry @ L21
+
+- include/scratchbird/engine/config.h
+  - scratchbird::engine::ChecksumPolicy @ L11
+  - scratchbird::engine::EngineConfig @ L14
+  - scratchbird::engine::FsyncPolicy @ L12
+
+- include/scratchbird/engine/connection_pool.h
+  - ScratchBird::ConnectionFactory @ L191
+  - ScratchBird::ConnectionFactory::FactoryStats @ L210
+  - ScratchBird::ConnectionPool @ L241
+  - ScratchBird::ConnectionPool::PoolStatus @ L312
+  - ScratchBird::ConnectionPool::get_config @ L289
+  - ScratchBird::ConnectionPoolConfig @ L34
+  - ScratchBird::ConnectionPoolStats @ L56
+  - ScratchBird::ConnectionPoolStats::get_success_rate @ L75
+  - ScratchBird::ConnectionPoolStats::get_utilization_rate @ L68
+  - ScratchBird::ConnectionState @ L29
+  - ScratchBird::PooledConnection @ L92
+  - ScratchBird::PooledConnection::get_failure_count @ L143
+  - ScratchBird::PooledConnection::get_last_used @ L159
+  - ScratchBird::PooledConnection::get_socket @ L107
+  - ScratchBird::PooledConnection::get_worker_pid @ L115
+  - ScratchBird::PooledConnection::reset_failure_count @ L151
+  - ScratchBird::PooledConnection::update_last_used @ L167
+
+- include/scratchbird/engine/connection_security.h
+  - ScratchBird::ConnectionSecurityConfig @ L40
+  - ScratchBird::ConnectionSecurityConfig::RateLimiting @ L69
+  - ScratchBird::ConnectionSecurityManager @ L246
+  - ScratchBird::ConnectionSecurityManager::SecurityEventCallback @ L301
+  - ScratchBird::ConnectionSecurityManager::ValidationResult @ L267
+  - ScratchBird::ConnectionSecurityManager::get_configuration @ L261
+  - ScratchBird::ConnectionSecurityManager::is_initialized @ L255
+  - ScratchBird::ConnectionSecurityManager::set_security_event_callback @ L302
+  - ScratchBird::EncryptionPolicy @ L30
+  - ScratchBird::IPAddressValidator @ L151
+  - ScratchBird::IPAddressValidator::IPv4Address @ L182
+  - ScratchBird::IPAddressValidator::IPv6Address @ L187
+  - ScratchBird::RateLimiter @ L200
+  - ScratchBird::RateLimiter::IPConnectionInfo @ L225
+  - ScratchBird::SecurityEvent @ L120
+  - ScratchBird::SecurityEvent::Type @ L121
+  - ScratchBird::SecurityLevel @ L20
+  - ScratchBird::SecurityMetrics @ L91
+  - ScratchBird::SecurityMetrics::get_encryption_ratio @ L102
+  - ScratchBird::SecurityMetrics::get_rejection_ratio @ L109
+  - ScratchBird::SecurityPolicyTemplates @ L355
+  - ScratchBird::SecurityPolicyTemplates::ConfigBuilder @ L376
+
+- include/scratchbird/engine/database_link.h
+  - scratchbird::engine::DatabaseLinkConfig @ L19
+  - scratchbird::engine::DatabaseLinkManager @ L53
+  - scratchbird::engine::DatabaseLinkMetadata @ L43
+  - scratchbird::engine::DatabaseLinkParser @ L109
+  - scratchbird::engine::DatabaseLinkStatus @ L35
+
+- include/scratchbird/engine/database_provider.h
+  - scratchbird::engine::DatabaseProviderFactory @ L46
+  - scratchbird::engine::EmbeddedProvider @ L169
+  - scratchbird::engine::LegacyProvider @ L185
+  - scratchbird::engine::ProviderConfig @ L20
+  - scratchbird::engine::ProviderErrorHandler @ L306
+  - scratchbird::engine::ProviderErrorHandler::ErrorCategory @ L311
+  - scratchbird::engine::ProviderErrorHandler::ErrorInfo @ L322
+  - scratchbird::engine::ProviderErrorHandler::ErrorSeverity @ L309
+  - scratchbird::engine::ProviderPerformanceMonitor @ L193
+  - scratchbird::engine::ProviderPerformanceMonitor::MetricsEntry @ L235
+  - scratchbird::engine::ProviderPerformanceMonitor::PerformanceMetrics @ L205
+  - scratchbird::engine::ProviderResourceManager @ L248
+  - scratchbird::engine::ProviderResourceManager::ResourceStats @ L275
+  - scratchbird::engine::RemoteProvider @ L177
+  - scratchbird::engine::SimpleProvider @ L80
+  - scratchbird::engine::SimpleProvider::SimpleProvider @ L83
+  - scratchbird::engine::SimpleProvider::can_handle_connection @ L120
+  - scratchbird::engine::SimpleProvider::cleanup_resources @ L130
+  - scratchbird::engine::SimpleProvider::decrement_active_connections @ L151
+  - scratchbird::engine::SimpleProvider::get_active_connections @ L131
+  - scratchbird::engine::SimpleProvider::get_capabilities @ L101
+  - scratchbird::engine::SimpleProvider::get_last_error @ L139
+  - scratchbird::engine::SimpleProvider::get_provider_name @ L93
+  - scratchbird::engine::SimpleProvider::get_provider_type @ L89
+  - scratchbird::engine::SimpleProvider::get_provider_version @ L97
+  - scratchbird::engine::SimpleProvider::get_statistics @ L135
+  - scratchbird::engine::SimpleProvider::increment_active_connections @ L145
+  - scratchbird::engine::SimpleProvider::initialize @ L106
+  - scratchbird::engine::SimpleProvider::is_initialized @ L115
+  - scratchbird::engine::SimpleProvider::shutdown @ L111
+
+- include/scratchbird/engine/embedded_provider.h
+  - scratchbird::engine::EmbeddedConnectionManager @ L63
+  - scratchbird::engine::EmbeddedConnectionManager::ConnectionInfo @ L75
+  - scratchbird::engine::EmbeddedConnectionManager::SharedMemoryBlock @ L104
+  - scratchbird::engine::EmbeddedDatabaseManager @ L20
+  - scratchbird::engine::EmbeddedDatabaseManager::DatabaseStats @ L42
+  - scratchbird::engine::EmbeddedDatabaseOperations @ L284
+  - scratchbird::engine::EmbeddedDatabaseOperations::get_last_error @ L316
+  - scratchbird::engine::EmbeddedDatabaseOperations::get_last_error_code @ L320
+  - scratchbird::engine::EmbeddedSecurityOperations @ L384
+  - scratchbird::engine::EmbeddedStatementManager @ L161
+  - scratchbird::engine::EmbeddedStatementManager::StatementInfo @ L176
+  - scratchbird::engine::EmbeddedStatementOperations @ L357
+  - scratchbird::engine::EmbeddedTransactionManager @ L122
+  - scratchbird::engine::EmbeddedTransactionManager::TransactionInfo @ L134
+  - scratchbird::engine::EmbeddedTransactionOperations @ L331
+  - scratchbird::engine::EnhancedEmbeddedProvider @ L199
+  - scratchbird::engine::EnhancedEmbeddedProvider::get_connection_manager @ L251
+  - scratchbird::engine::EnhancedEmbeddedProvider::get_database_manager @ L247
+  - scratchbird::engine::EnhancedEmbeddedProvider::get_last_error @ L241
+  - scratchbird::engine::EnhancedEmbeddedProvider::get_provider_name @ L210
+  - scratchbird::engine::EnhancedEmbeddedProvider::get_provider_type @ L206
+  - scratchbird::engine::EnhancedEmbeddedProvider::get_provider_version @ L214
+  - scratchbird::engine::EnhancedEmbeddedProvider::get_statement_manager @ L259
+  - scratchbird::engine::EnhancedEmbeddedProvider::get_transaction_manager @ L255
+  - scratchbird::engine::EnhancedEmbeddedProvider::is_initialized @ L223
+
+- include/scratchbird/engine/executor.h
+  - scratchbird::engine::ExecutionResult @ L15
+  - scratchbird::engine::FdwCost @ L71
+  - scratchbird::engine::IndexStats @ L30
+  - scratchbird::engine::NodeActuals @ L22
+  - scratchbird::engine::OptimizerHints @ L134
+  - scratchbird::engine::PartitionMap @ L62
+  - scratchbird::engine::PartitionRange @ L53
+  - scratchbird::engine::set_constraints_deferred_all @ L115
+
+- include/scratchbird/engine/executor_nodes.h
+  - scratchbird::engine::AggregationNode @ L219
+  - scratchbird::engine::AggregationNode::AggregateFunction @ L222
+  - scratchbird::engine::AggregationNode::AggregateFunction::Type @ L223
+  - scratchbird::engine::AggregationNode::GroupState @ L245
+  - scratchbird::engine::ExecutorContext @ L35
+  - scratchbird::engine::ExecutorNode @ L42
+  - scratchbird::engine::ExecutorNode::get_instrumentation @ L56
+  - scratchbird::engine::FilterNode @ L167
+  - scratchbird::engine::HashJoinNode @ L96
+  - scratchbird::engine::HashJoinNode::JoinType @ L99
+  - scratchbird::engine::Instrumentation @ L23
+  - scratchbird::engine::NestedLoopJoinNode @ L137
+  - scratchbird::engine::NestedLoopJoinNode::JoinType @ L140
+  - scratchbird::engine::ProjectNode @ L270
+  - scratchbird::engine::SeqScanNode @ L66
+  - scratchbird::engine::SortNode @ L186
+  - scratchbird::engine::SortNode::SortKey @ L189
+  - scratchbird::engine::Tuple @ L20
+
+- include/scratchbird/engine/fast_path_lock.h
+  - scratchbird::engine::FastPathLockArray @ L240
+  - scratchbird::engine::FastPathLockConfig @ L212
+  - scratchbird::engine::FastPathLockConfig::is_valid @ L232
+  - scratchbird::engine::FastPathLockEntry @ L55
+  - scratchbird::engine::FastPathLockEntry::clear @ L88
+  - scratchbird::engine::FastPathLockEntry::initialize @ L75
+  - scratchbird::engine::FastPathLockEntry::is_free @ L98
+  - scratchbird::engine::FastPathLockEntry::matches @ L104
+  - scratchbird::engine::FastPathLockManager @ L309
+  - scratchbird::engine::FastPathLockStats @ L112
+  - scratchbird::engine::FastPathLockStats::FastPathLockStats @ L144
+  - scratchbird::engine::FastPathLockStats::copy_from @ L195
+  - scratchbird::engine::FastPathLockStats::get_success_ratio @ L159
+  - scratchbird::engine::FastPathLockStats::operator = @ L150
+  - scratchbird::engine::FastPathLockStats::reset @ L178
+  - scratchbird::engine::FastPathLockStats::update_timing @ L168
+  - scratchbird::engine::FastPathLockType @ L22
+  - scratchbird::engine::lock_conflicts @ L49
+
+- include/scratchbird/engine/fdw.h
+  - scratchbird::engine::ColumnDef @ L20
+  - scratchbird::engine::FdwCapability @ L29
+  - scratchbird::engine::FdwExecutionContext @ L103
+  - scratchbird::engine::FdwManager @ L229
+  - scratchbird::engine::FdwRegistry @ L206
+  - scratchbird::engine::ForeignDataWrapper @ L134
+  - scratchbird::engine::ForeignResultIterator @ L112
+  - scratchbird::engine::ForeignServerConfig @ L63
+  - scratchbird::engine::ForeignTableMetadata @ L85
+  - scratchbird::engine::RemoteSchemaInfo @ L95
+  - scratchbird::engine::UserMapping @ L77
+  - scratchbird::engine::has_capability @ L57
+  - scratchbird::engine::operator & @ L51
+  - scratchbird::engine::operator | @ L45
+
+- include/scratchbird/engine/fdw_catalog.h
+  - scratchbird::engine::DatabaseLinkCatalogEntry @ L112
+  - scratchbird::engine::FdwCatalogDDLExecutor @ L259
+  - scratchbird::engine::FdwCatalogEntry @ L29
+  - scratchbird::engine::FdwCatalogManager @ L153
+  - scratchbird::engine::FdwCatalogOptimizer @ L390
+  - scratchbird::engine::FdwCatalogOptimizer::IndexInfo @ L408
+  - scratchbird::engine::FdwCatalogOptimizer::TableStatistics @ L397
+  - scratchbird::engine::FdwInformationSchema @ L314
+  - scratchbird::engine::FdwInformationSchema::ColumnInfo @ L361
+  - scratchbird::engine::FdwInformationSchema::DatabaseLinkInfo @ L347
+  - scratchbird::engine::FdwInformationSchema::ForeignDataWrapperInfo @ L321
+  - scratchbird::engine::FdwInformationSchema::ForeignServerInfo @ L329
+  - scratchbird::engine::FdwInformationSchema::ForeignTableInfo @ L338
+  - scratchbird::engine::FdwInformationSchema::StatisticsInfo @ L374
+  - scratchbird::engine::FdwOptionsCatalogEntry @ L141
+  - scratchbird::engine::FdwStatisticsCatalogEntry @ L129
+  - scratchbird::engine::ForeignServerCatalogEntry @ L44
+  - scratchbird::engine::ForeignTableCatalogEntry @ L75
+  - scratchbird::engine::ForeignTableColumnCatalogEntry @ L92
+  - scratchbird::engine::UserMappingCatalogEntry @ L61
+
+- include/scratchbird/engine/fdw_csv.h
+  - scratchbird::engine::CsvForeignDataWrapper @ L61
+  - scratchbird::engine::CsvOptions @ L12
+  - scratchbird::engine::CsvResultIterator @ L23
+
+- include/scratchbird/engine/fdw_error_handling.h
+  - scratchbird::engine::FdwConnectionHealth @ L77
+  - scratchbird::engine::FdwConnectionMonitor @ L164
+  - scratchbird::engine::FdwConnectionStatus @ L67
+  - scratchbird::engine::FdwDiagnostics @ L208
+  - scratchbird::engine::FdwDiagnostics::ConnectionDiagnostic @ L215
+  - scratchbird::engine::FdwDiagnostics::PerformanceDiagnostic @ L231
+  - scratchbird::engine::FdwDiagnostics::QueryAnalysis @ L245
+  - scratchbird::engine::FdwDiagnosticsManager @ L283
+  - scratchbird::engine::FdwDiagnosticsManager::HealthDashboard @ L301
+  - scratchbird::engine::FdwError @ L51
+  - scratchbird::engine::FdwErrorCategory @ L15
+  - scratchbird::engine::FdwErrorHandler @ L118
+  - scratchbird::engine::FdwErrorSeverity @ L30
+  - scratchbird::engine::FdwRecoveryAction @ L39
+  - scratchbird::engine::FdwRecoveryConfig @ L105
+  - scratchbird::engine::FdwTimeoutConfig @ L93
+
+- include/scratchbird/engine/fdw_json.h
+  - scratchbird::engine::JsonForeignDataWrapper @ L70
+  - scratchbird::engine::JsonOptions @ L14
+  - scratchbird::engine::JsonResultIterator @ L28
+
+- include/scratchbird/engine/fdw_postgresql.h
+  - scratchbird::engine::PostgreSqlForeignDataWrapper @ L52
+  - scratchbird::engine::PostgreSqlResultIterator @ L15
+
+- include/scratchbird/engine/fdw_security.h
+  - scratchbird::engine::FdwAuditLogger @ L177
+  - scratchbird::engine::FdwAuditLogger::AuditEvent @ L194
+  - scratchbird::engine::FdwAuditLogger::AuditEventType @ L184
+  - scratchbird::engine::FdwCredential @ L59
+  - scratchbird::engine::FdwCredentialManager @ L96
+  - scratchbird::engine::FdwPermission @ L15
+  - scratchbird::engine::FdwPermissionGrant @ L73
+  - scratchbird::engine::FdwPermissionManager @ L133
+  - scratchbird::engine::FdwRowSecurityPolicy @ L84
+  - scratchbird::engine::FdwSecurityContext @ L49
+  - scratchbird::engine::FdwSecurityManager @ L230
+  - scratchbird::engine::has_permission @ L43
+  - scratchbird::engine::operator & @ L37
+  - scratchbird::engine::operator | @ L31
+
+- include/scratchbird/engine/file.h
+  - scratchbird::engine::FileHandle @ L19
+  - scratchbird::engine::FileHandle::FileHandle @ L23
+  - scratchbird::engine::FileHandle::fd @ L36
+  - scratchbird::engine::FileHandle::valid @ L32
+  - scratchbird::engine::FileManager @ L46
+  - scratchbird::engine::FileMap @ L73
+  - scratchbird::engine::FileMap::FileMap @ L87
+  - scratchbird::engine::FileMap::Layout @ L81
+  - scratchbird::engine::FileMap::Segment @ L76
+  - scratchbird::engine::FileMap::segments @ L102
+  - scratchbird::engine::FileOptions @ L13
+
+- include/scratchbird/engine/firebird_protocol.h
+  - scratchbird::engine::FirebirdCapabilities @ L130
+  - scratchbird::engine::FirebirdConnectionParams @ L146
+  - scratchbird::engine::FirebirdMessage @ L161
+  - scratchbird::engine::FirebirdMessage::get_operation @ L168
+  - scratchbird::engine::FirebirdMessage::get_parameter_count @ L183
+  - scratchbird::engine::FirebirdMessage::get_parameter_data @ L187
+  - scratchbird::engine::FirebirdMessage::set_operation @ L172
+  - scratchbird::engine::FirebirdMessageFramer @ L206
+  - scratchbird::engine::FirebirdMessageFramer::FrameState @ L222
+  - scratchbird::engine::FirebirdMessageFramer::set_endianness @ L216
+  - scratchbird::engine::FirebirdProtocolHandler @ L290
+  - scratchbird::engine::FirebirdProtocolVersion @ L118
+  - scratchbird::engine::FirebirdStateMachine @ L235
+  - scratchbird::engine::FirebirdVersionNegotiator @ L261
+
+- include/scratchbird/engine/firebird_protocol_handler.h
+  - scratchbird::engine::FirebirdAuthMessage @ L84
+  - scratchbird::engine::FirebirdAuthMessage::get_auth_data @ L94
+  - scratchbird::engine::FirebirdAuthMessage::get_operation @ L90
+  - scratchbird::engine::FirebirdAuthMessageFramer @ L239
+  - scratchbird::engine::FirebirdAuthenticationHandler @ L128
+  - scratchbird::engine::FirebirdAuthenticationHandler::FirebirdState @ L158
+  - scratchbird::engine::FirebirdAuthenticationHandler::is_legacy_protocol @ L220
+  - scratchbird::engine::FirebirdAuthenticationHandler::supports_continue_auth @ L228
+  - scratchbird::engine::FirebirdAuthenticationHandler::supports_trusted_auth @ L224
+  - scratchbird::engine::FirebirdPacket @ L64
+  - scratchbird::engine::FirebirdProtocolOp @ L19
+  - scratchbird::engine::FirebirdProtocolVersion @ L53
+  - scratchbird::engine::FirebirdResponseMessage @ L104
+  - scratchbird::engine::FirebirdResponseMessage::get_response_message @ L114
+  - scratchbird::engine::FirebirdResponseMessage::get_status_code @ L110
+
+- include/scratchbird/engine/generators.h
+  - scratchbird::engine::GeneratorsManager @ L12
+  - scratchbird::engine::GeneratorsManager::GeneratorsManager @ L15
+
+- include/scratchbird/engine/header.h
+  - scratchbird::engine::ClumpType @ L16
+  - scratchbird::engine::HeaderInfo @ L37
+  - scratchbird::engine::HeaderManager @ L58
+  - scratchbird::engine::HeaderManager::HeaderManager @ L61
+  - scratchbird::engine::RootPointers @ L30
+
+- include/scratchbird/engine/heap.h
+  - scratchbird::engine::AttrMeta @ L25
+  - scratchbird::engine::AttrType @ L22
+  - scratchbird::engine::HeapLayout @ L341
+  - scratchbird::engine::HeapLayout::heap_header_size @ L346
+  - scratchbird::engine::HeapLayout::page_header_size @ L342
+  - scratchbird::engine::HeapLayout::tuples_region_start @ L350
+  - scratchbird::engine::HeapOptions @ L100
+  - scratchbird::engine::HeapPageCodec @ L356
+  - scratchbird::engine::HeapPageCodec::check_heap_page_invariants @ L473
+  - scratchbird::engine::HeapPageCodec::free_bytes @ L388
+  - scratchbird::engine::HeapPageCodec::init_heap_data_page @ L360
+  - scratchbird::engine::HeapPageCodec::push_slot @ L438
+  - scratchbird::engine::HeapPageCodec::read_heap_hdr @ L374
+  - scratchbird::engine::HeapPageCodec::set_slot_offset @ L462
+  - scratchbird::engine::HeapPageCodec::write_heap_hdr @ L382
+  - scratchbird::engine::HeapPageCodec::write_raw_tuple @ L396
+  - scratchbird::engine::HeapPageCodec::write_raw_tuple_aligned @ L416
+  - scratchbird::engine::HeapPageFlagBits @ L17
+  - scratchbird::engine::HeapTupleCodec @ L124
+  - scratchbird::engine::HeapTupleCodec::decode_tuple @ L186
+  - scratchbird::engine::HeapTupleCodec::encode_tuple @ L128
+  - scratchbird::engine::HeapTupleCodec::encode_tuple_with_overflow @ L251
+  - scratchbird::engine::TupleLayout @ L32
+  - scratchbird::engine::TypeId @ L23
+  - scratchbird::engine::Value @ L36
+  - scratchbird::engine::compute_layout_format_id @ L105
+  - scratchbird::engine::is_visible_rc @ L46
+  - scratchbird::engine::is_visible_rr @ L78
+
+- include/scratchbird/engine/heap_rel.h
+  - scratchbird::engine::HeapRelation @ L27
+  - scratchbird::engine::HeapRelation::HeapRelation @ L30
+  - scratchbird::engine::HeapRelation::RelRoot @ L36
+  - scratchbird::engine::HeapRelation::create @ L43
+  - scratchbird::engine::HeapRelation::drop @ L417
+  - scratchbird::engine::HeapRelation::fetch @ L440
+  - scratchbird::engine::HeapRelation::fetch_visible @ L481
+  - scratchbird::engine::HeapRelation::find_page_with_freespace @ L626
+  - scratchbird::engine::HeapRelation::insert @ L97
+  - scratchbird::engine::HeapRelation::insert_txn @ L249
+  - scratchbird::engine::HeapRelation::open @ L83
+  - scratchbird::engine::HeapRelation::open_scan @ L797
+  - scratchbird::engine::HeapRelation::open_scan_visible @ L807
+  - scratchbird::engine::HeapRelation::open_scan_visible @ L817
+  - scratchbird::engine::HeapRelation::read_root @ L642
+  - scratchbird::engine::HeapRelation::remove @ L538
+  - scratchbird::engine::HeapRelation::remove_txn @ L596
+  - scratchbird::engine::HeapRelation::truncate @ L383
+  - scratchbird::engine::HeapRelation::update @ L492
+  - scratchbird::engine::HeapRelation::update_txn @ L558
+  - scratchbird::engine::HeapRelation::write_root @ L648
+  - scratchbird::engine::HeapScan @ L668
+  - scratchbird::engine::HeapScan::HeapScan @ L671
+  - scratchbird::engine::HeapScan::HeapScan @ L679
+  - scratchbird::engine::HeapScan::HeapScan @ L689
+  - scratchbird::engine::HeapScan::load_page @ L765
+  - scratchbird::engine::HeapScan::next @ L699
+  - scratchbird::engine::InsertResult @ L21
+
+- include/scratchbird/engine/index.h
+  - scratchbird::engine::IndexCreateOptions @ L29
+  - scratchbird::engine::IndexKeySpec @ L22
+  - scratchbird::engine::IndexMethod @ L10
+  - scratchbird::engine::ValidationMessage @ L51
+
+- include/scratchbird/engine/index_bitmap.h
+  - scratchbird::engine::BitmapEntry @ L41
+  - scratchbird::engine::BitmapIndex @ L76
+  - scratchbird::engine::BitmapIndex::get_method @ L104
+  - scratchbird::engine::BitmapIndex::root_page @ L108
+  - scratchbird::engine::BitmapIndex::set_tunables @ L82
+  - scratchbird::engine::BitmapIndexStats @ L61
+  - scratchbird::engine::BitmapIndexTunables @ L19
+  - scratchbird::engine::BitmapPageHeader @ L29
+  - scratchbird::engine::CompressionType @ L51
+
+- include/scratchbird/engine/index_btree.h
+  - scratchbird::engine::BTreeBuildResult @ L28
+  - scratchbird::engine::BTreeBuilder @ L34
+  - scratchbird::engine::BTreeIndex @ L57
+  - scratchbird::engine::BTreeIndex::LeafHdr @ L107
+  - scratchbird::engine::BTreeIndex::RootChild @ L103
+  - scratchbird::engine::BTreeIndex::open_existing @ L89
+  - scratchbird::engine::BTreeIndex::root_page @ L96
+  - scratchbird::engine::BTreeIndex::set_tunables @ L61
+  - scratchbird::engine::BTreeKeyRef @ L23
+  - scratchbird::engine::BTreeStats @ L48
+  - scratchbird::engine::BTreeTunables @ L15
+  - scratchbird::engine::BTreeTunables::SplitPolicy @ L17
+
+- include/scratchbird/engine/index_build.h
+  - scratchbird::engine::IndexBuildManager @ L37
+  - scratchbird::engine::IndexBuildOptions @ L21
+  - scratchbird::engine::IndexBuildResult @ L26
+  - scratchbird::engine::IndexDefinition @ L12
+
+- include/scratchbird/engine/index_columnstore.h
+  - scratchbird::engine::ColumnSegment @ L31
+  - scratchbird::engine::ColumnstoreIndex @ L52
+  - scratchbird::engine::ColumnstoreIndex::get_method @ L77
+  - scratchbird::engine::ColumnstoreIndex::root_page @ L81
+  - scratchbird::engine::ColumnstoreIndex::supports_parallel_scan @ L105
+  - scratchbird::engine::ColumnstoreIndex::supports_vectorized_operations @ L101
+  - scratchbird::engine::ColumnstoreScan @ L159
+  - scratchbird::engine::ColumnstoreScan::ColumnstoreScan @ L162
+  - scratchbird::engine::ColumnstoreScan::supports_vectorized_batch @ L173
+  - scratchbird::engine::CompressionAlgorithm @ L17
+
+- include/scratchbird/engine/index_family.h
+  - scratchbird::engine::BitmapIndexScan @ L160
+  - scratchbird::engine::BitmapIndexScan::BitmapIndexScan @ L163
+  - scratchbird::engine::GinIndexScan @ L181
+  - scratchbird::engine::GinIndexScan::GinIndexScan @ L184
+  - scratchbird::engine::HashIndexScan @ L138
+  - scratchbird::engine::HashIndexScan::HashIndexScan @ L141
+  - scratchbird::engine::IndexFamily @ L27
+  - scratchbird::engine::IndexFamilyConfig @ L87
+  - scratchbird::engine::IndexFamilyConfig::__anon91cf19c40108 @ L91
+  - scratchbird::engine::IndexFamilyConfig::__anon91cf19c40208 @ L98
+  - scratchbird::engine::IndexFamilyConfig::__anon91cf19c40308 @ L105
+  - scratchbird::engine::IndexFamilyConfig::__anon91cf19c40408 @ L112
+  - scratchbird::engine::IndexFamilyFactory @ L67
+  - scratchbird::engine::IndexScan @ L122
+  - scratchbird::engine::RTreeIndexScan @ L204
+  - scratchbird::engine::RTreeIndexScan::RTreeIndexScan @ L207
+  - scratchbird::engine::RTreeIndexScan::Rectangle @ L221
+
+- include/scratchbird/engine/index_gin.h
+  - scratchbird::engine::GinIndex @ L109
+  - scratchbird::engine::GinIndex::get_method @ L141
+  - scratchbird::engine::GinIndex::root_page @ L145
+  - scratchbird::engine::GinIndex::set_tokenizer @ L119
+  - scratchbird::engine::GinIndex::set_tunables @ L115
+  - scratchbird::engine::GinIndexStats @ L62
+  - scratchbird::engine::GinIndexTunables @ L20
+  - scratchbird::engine::GinMetaHeader @ L32
+  - scratchbird::engine::PostingListEntry @ L43
+  - scratchbird::engine::SimpleTokenizer @ L86
+  - scratchbird::engine::SimpleTokenizer::SimpleTokenizer @ L89
+  - scratchbird::engine::SimpleTokenizer::name @ L95
+  - scratchbird::engine::TokenInfo @ L52
+  - scratchbird::engine::Tokenizer @ L75
+
+- include/scratchbird/engine/index_hash.h
+  - scratchbird::engine::BTreeIndexFamily @ L241
+  - scratchbird::engine::BTreeIndexFamily::btree @ L277
+  - scratchbird::engine::BTreeIndexFamily::btree @ L281
+  - scratchbird::engine::BTreeIndexFamily::compact_index @ L262
+  - scratchbird::engine::BTreeIndexFamily::get_method @ L264
+  - scratchbird::engine::FNVHashFunction @ L91
+  - scratchbird::engine::FNVHashFunction::name @ L95
+  - scratchbird::engine::HashBucketHeader @ L40
+  - scratchbird::engine::HashDirEntry @ L31
+  - scratchbird::engine::HashEntry @ L52
+  - scratchbird::engine::HashFunction @ L62
+  - scratchbird::engine::HashIndex @ L125
+  - scratchbird::engine::HashIndex::get_method @ L157
+  - scratchbird::engine::HashIndex::root_page @ L161
+  - scratchbird::engine::HashIndex::set_hash_function @ L135
+  - scratchbird::engine::HashIndex::set_tunables @ L131
+  - scratchbird::engine::HashIndexStats @ L108
+  - scratchbird::engine::HashIndexTunables @ L19
+  - scratchbird::engine::UniversalHashFunction @ L73
+  - scratchbird::engine::UniversalHashFunction::name @ L78
+
+- include/scratchbird/engine/index_lsm.h
+  - scratchbird::engine::CompactionManager @ L126
+  - scratchbird::engine::CompactionStrategy @ L18
+  - scratchbird::engine::LSMTreeIndex @ L155
+  - scratchbird::engine::LSMTreeIndex::get_method @ L180
+  - scratchbird::engine::LSMTreeIndex::root_page @ L184
+  - scratchbird::engine::LSMTreeScan @ L243
+  - scratchbird::engine::LSMTreeScan::LSMTreeScan @ L246
+  - scratchbird::engine::MemTable @ L43
+  - scratchbird::engine::MemTable::Entry @ L70
+  - scratchbird::engine::MemTable::Iterator @ L59
+  - scratchbird::engine::SSTable @ L86
+  - scratchbird::engine::SSTable::Iterator @ L101
+  - scratchbird::engine::SSTableInfo @ L26
+
+- include/scratchbird/engine/index_online.h
+  - scratchbird::engine::ConcurrentIndexBuild @ L32
+  - scratchbird::engine::ConcurrentIndexBuild::result @ L60
+  - scratchbird::engine::ConcurrentIndexBuild::state @ L56
+  - scratchbird::engine::IndexBuildMonRow @ L90
+  - scratchbird::engine::IndexBuildMonitor @ L98
+  - scratchbird::engine::IndexDelta @ L22
+  - scratchbird::engine::OnlineBuildState @ L20
+
+- include/scratchbird/engine/index_rtree.h
+  - scratchbird::engine::RTreeConfig @ L115
+  - scratchbird::engine::RTreeEntry @ L92
+  - scratchbird::engine::RTreeEntry::RTreeEntry @ L99
+  - scratchbird::engine::RTreeEntry::RTreeEntry @ L100
+  - scratchbird::engine::RTreeIndex @ L220
+  - scratchbird::engine::RTreeIndex::get_method @ L227
+  - scratchbird::engine::RTreeIndex::get_nodes @ L272
+  - scratchbird::engine::RTreeIndex::get_root @ L268
+  - scratchbird::engine::RTreeInternal @ L196
+  - scratchbird::engine::RTreeInternal::RTreeInternal @ L199
+  - scratchbird::engine::RTreeInternal::set_children @ L205
+  - scratchbird::engine::RTreeLeaf @ L182
+  - scratchbird::engine::RTreeLeaf::RTreeLeaf @ L185
+  - scratchbird::engine::RTreeNode @ L122
+  - scratchbird::engine::RTreeNode::RTreeNode @ L125
+  - scratchbird::engine::RTreeNode::bounding_rect @ L150
+  - scratchbird::engine::RTreeNode::entries @ L141
+  - scratchbird::engine::RTreeNode::entries @ L145
+  - scratchbird::engine::RTreeNode::get_entries @ L166
+  - scratchbird::engine::RTreeNode::get_entries @ L170
+  - scratchbird::engine::RTreeNode::is_leaf @ L128
+  - scratchbird::engine::RTreeNode::level @ L132
+  - scratchbird::engine::RTreeNode::set_level @ L136
+  - scratchbird::engine::RTreeNodeHeader @ L104
+  - scratchbird::engine::Rectangle @ L24
+  - scratchbird::engine::Rectangle::Rectangle @ L28
+  - scratchbird::engine::Rectangle::area @ L34
+  - scratchbird::engine::Rectangle::contains @ L53
+  - scratchbird::engine::Rectangle::contains_point @ L60
+  - scratchbird::engine::Rectangle::expand @ L66
+  - scratchbird::engine::Rectangle::expansion_area @ L76
+  - scratchbird::engine::Rectangle::intersects @ L46
+  - scratchbird::engine::Rectangle::mbr @ L84
+  - scratchbird::engine::Rectangle::perimeter @ L40
+
+- include/scratchbird/engine/index_ttl.h
+  - scratchbird::engine::TTLIndex @ L24
+  - scratchbird::engine::TTLIndex::TTLConfiguration @ L36
+  - scratchbird::engine::TTLIndex::TTLEntry @ L29
+  - scratchbird::engine::TTLIndex::get_method @ L103
+  - scratchbird::engine::TTLIndex::root_page @ L107
+  - scratchbird::engine::TTLIndexScan @ L126
+  - scratchbird::engine::TTLIndexScan::TTLIndexScan @ L139
+
+- include/scratchbird/engine/latch.h
+  - scratchbird::engine::ExclusivePageGuard @ L107
+  - scratchbird::engine::ExclusivePageGuard::ExclusivePageGuard @ L111
+  - scratchbird::engine::ExclusivePageGuard::release @ L130
+  - scratchbird::engine::ExclusivePageGuard::reset @ L121
+  - scratchbird::engine::ExclusivePageGuard::~ExclusivePageGuard @ L116
+  - scratchbird::engine::LatchManager @ L15
+  - scratchbird::engine::LatchManager::get_or_create @ L54
+  - scratchbird::engine::LatchManager::lock_exclusive @ L35
+  - scratchbird::engine::LatchManager::lock_shared @ L18
+  - scratchbird::engine::LatchManager::lookup @ L64
+  - scratchbird::engine::LatchManager::try_lock_exclusive @ L41
+  - scratchbird::engine::LatchManager::try_lock_shared @ L24
+  - scratchbird::engine::LatchManager::unlock_exclusive @ L46
+  - scratchbird::engine::LatchManager::unlock_shared @ L29
+  - scratchbird::engine::SharedPageGuard @ L75
+  - scratchbird::engine::SharedPageGuard::SharedPageGuard @ L79
+  - scratchbird::engine::SharedPageGuard::release @ L98
+  - scratchbird::engine::SharedPageGuard::reset @ L89
+  - scratchbird::engine::SharedPageGuard::~SharedPageGuard @ L84
+
+- include/scratchbird/engine/lexer.h
+  - scratchbird::engine::Lexer @ L35
+  - scratchbird::engine::Token @ L28
+  - scratchbird::engine::TokenKind @ L13
+
+- include/scratchbird/engine/monitoring.h
+  - scratchbird::engine::MonCounters @ L11
+  - scratchbird::engine::Monitoring @ L20
+
+- include/scratchbird/engine/multi_segment_manager.h
+  - scratchbird::engine::MultiSegmentDatabase @ L198
+  - scratchbird::engine::MultiSegmentManager @ L64
+  - scratchbird::engine::MultiSegmentStats @ L173
+  - scratchbird::engine::SegmentAllocationStrategy @ L44
+  - scratchbird::engine::SegmentInfo @ L21
+  - scratchbird::engine::SegmentMigration @ L146
+  - scratchbird::engine::SegmentPolicy @ L53
+
+- include/scratchbird/engine/network_buffer.h
+  - ScratchBird::AggregatedBufferStats @ L103
+  - ScratchBird::BufferAlert @ L133
+  - ScratchBird::BufferAlertType @ L125
+  - ScratchBird::ManagedNetworkSocket @ L349
+  - ScratchBird::ManagedNetworkSocket::get_socket @ L364
+  - ScratchBird::ManagedNetworkSocket::is_valid @ L394
+  - ScratchBird::NetworkBufferConfig @ L28
+  - ScratchBird::NetworkBufferManager @ L156
+  - ScratchBird::NetworkBufferManager::get_config @ L258
+  - ScratchBird::NetworkBufferStats @ L54
+  - ScratchBird::NetworkBufferStats::get_recv_efficiency @ L87
+  - ScratchBird::NetworkBufferStats::get_recv_utilization @ L76
+  - ScratchBird::NetworkBufferStats::get_send_efficiency @ L93
+  - ScratchBird::NetworkBufferStats::get_send_utilization @ L81
+
+- include/scratchbird/engine/network_server.h
+  - scratchbird::engine::ConnectionManager @ L151
+  - scratchbird::engine::ConnectionStats @ L39
+  - scratchbird::engine::NetworkServer @ L193
+  - scratchbird::engine::NetworkServer::get_config @ L215
+  - scratchbird::engine::NetworkServerConfig @ L24
+  - scratchbird::engine::SessionInfo @ L50
+  - scratchbird::engine::TcpConnection @ L65
+  - scratchbird::engine::TcpConnection::get_socket @ L98
+  - scratchbird::engine::TcpListener @ L112
+  - scratchbird::engine::TcpListener::get_config @ L131
+
+- include/scratchbird/engine/ods.h
+  - scratchbird::engine::ods::HeapPageHeader @ L93
+  - scratchbird::engine::ods::HeapRootPayload @ L101
+  - scratchbird::engine::ods::OverflowRef @ L122
+  - scratchbird::engine::ods::PageHeader @ L40
+  - scratchbird::engine::ods::PageType @ L11
+  - scratchbird::engine::ods::RowId @ L70
+  - scratchbird::engine::ods::SpaceCatalogPayload @ L111
+  - scratchbird::engine::ods::TupleHeader @ L131
+  - scratchbird::engine::ods::align_up @ L64
+  - scratchbird::engine::ods::pack_rowid @ L76
+  - scratchbird::engine::ods::unpack_rowid @ L83
+
+- include/scratchbird/engine/pager.h
+  - scratchbird::engine::BufferCache @ L45
+  - scratchbird::engine::BufferCache::BufferCache @ L48
+  - scratchbird::engine::BufferCache::page_size @ L58
+  - scratchbird::engine::LatchMode @ L35
+  - scratchbird::engine::PageFrame @ L37
+  - scratchbird::engine::PageKey @ L18
+  - scratchbird::engine::PageKey::operator == @ L21
+  - scratchbird::engine::PageKeyHash @ L27
+  - scratchbird::engine::PageKeyHash::operator () @ L28
+  - scratchbird::engine::Pager @ L74
+  - scratchbird::engine::Pager::flush @ L96
+  - scratchbird::engine::Pager::mark_dirty @ L90
+
+- include/scratchbird/engine/parser_dml.h
+  - scratchbird::engine::DeleteStmt @ L48
+  - scratchbird::engine::ExecProcStmt @ L11
+  - scratchbird::engine::InsertStmt @ L24
+  - scratchbird::engine::MergeAction @ L59
+  - scratchbird::engine::MergeAction::Kind @ L60
+  - scratchbird::engine::MergeStmt @ L69
+  - scratchbird::engine::UpdateStmt @ L36
+  - scratchbird::engine::UpsertStmt @ L16
+
+- include/scratchbird/engine/parser_expr.h
+  - scratchbird::engine::Expr @ L42
+  - scratchbird::engine::ExprKind @ L28
+  - scratchbird::engine::TypeDescriptor @ L15
+
+- include/scratchbird/engine/parser_select.h
+  - scratchbird::engine::CteDef @ L25
+  - scratchbird::engine::ForUpdateSpec @ L56
+  - scratchbird::engine::FromItem @ L31
+  - scratchbird::engine::JoinClause @ L15
+  - scratchbird::engine::JoinTree @ L41
+  - scratchbird::engine::JoinType @ L13
+  - scratchbird::engine::NullsOrder @ L63
+  - scratchbird::engine::OrderItem @ L65
+  - scratchbird::engine::PlanNode @ L116
+  - scratchbird::engine::PlanOp @ L106
+  - scratchbird::engine::SelectQuery @ L122
+  - scratchbird::engine::SetTree @ L95
+  - scratchbird::engine::WindowFrame @ L72
+  - scratchbird::engine::WindowSpec @ L84
+
+- include/scratchbird/engine/partitioned_lock_manager.h
+  - scratchbird::engine::DeadlockInfo @ L43
+  - scratchbird::engine::LockPartition @ L169
+  - scratchbird::engine::LockRequest @ L26
+  - scratchbird::engine::LockRequest::LockRequest @ L35
+  - scratchbird::engine::PartitionStatistics @ L51
+  - scratchbird::engine::PartitionStatistics::PartitionStatistics @ L77
+  - scratchbird::engine::PartitionStatistics::copy_from @ L110
+  - scratchbird::engine::PartitionStatistics::operator = @ L83
+  - scratchbird::engine::PartitionStatistics::reset @ L92
+  - scratchbird::engine::PartitionedLockManager @ L283
+  - scratchbird::engine::PartitionedLockManagerConfig @ L129
+  - scratchbird::engine::PartitionedLockManagerConfig::is_valid @ L158
+
+- include/scratchbird/engine/password_auth.h
+  - ScratchBird::FilePasswordStore @ L240
+  - ScratchBird::PasswordAuthenticationProvider @ L274
+  - ScratchBird::PasswordAuthenticationProvider::get_authentication_method @ L287
+  - ScratchBird::PasswordAuthenticationProvider::get_password_policy @ L332
+  - ScratchBird::PasswordAuthenticationProvider::get_provider_name @ L283
+  - ScratchBird::PasswordAuthenticationProvider::set_password_policy @ L328
+  - ScratchBird::PasswordAuthenticationProvider::supports_account_management @ L310
+  - ScratchBird::PasswordAuthenticationProvider::supports_challenge_response @ L295
+  - ScratchBird::PasswordAuthenticationProvider::supports_password_management @ L301
+  - ScratchBird::PasswordHash @ L63
+  - ScratchBird::PasswordHashAlgorithm @ L17
+  - ScratchBird::PasswordHasher @ L105
+  - ScratchBird::PasswordHasher::get_algorithm @ L127
+  - ScratchBird::PasswordHasher::set_algorithm @ L123
+  - ScratchBird::PasswordHasher::set_argon2_iterations @ L141
+  - ScratchBird::PasswordHasher::set_argon2_memory_kb @ L137
+  - ScratchBird::PasswordHasher::set_argon2_parallelism @ L145
+  - ScratchBird::PasswordHasher::set_bcrypt_cost @ L133
+  - ScratchBird::PasswordHasher::set_pbkdf2_iterations @ L149
+  - ScratchBird::PasswordHasher::set_scrypt_n @ L153
+  - ScratchBird::PasswordHasher::set_scrypt_p @ L161
+  - ScratchBird::PasswordHasher::set_scrypt_r @ L157
+  - ScratchBird::PasswordPolicy @ L27
+  - ScratchBird::PasswordStore @ L208
+  - ScratchBird::PasswordValidationResult @ L83
+  - ScratchBird::PasswordValidationResult::add_error @ L88
+  - ScratchBird::PasswordValidationResult::add_warning @ L94
+
+- include/scratchbird/engine/performance_config.h
+  - ScratchBird::AutoTuningRecommendation @ L280
+  - ScratchBird::ConfigurationChangeCallback @ L269
+  - ScratchBird::ConfigurationValidationResult @ L240
+  - ScratchBird::ConfigurationValidationResult::add_error @ L245
+  - ScratchBird::ConfigurationValidationResult::add_warning @ L251
+  - ScratchBird::ConfigurationValidationResult::has_errors @ L256
+  - ScratchBird::ConfigurationValidationResult::has_warnings @ L260
+  - ScratchBird::PerformanceAlert @ L133
+  - ScratchBird::PerformanceAlert::PerformanceAlert @ L144
+  - ScratchBird::PerformanceAlertCallback @ L275
+  - ScratchBird::PerformanceAlertType @ L122
+  - ScratchBird::PerformanceConfiguration @ L188
+  - ScratchBird::PerformanceConfiguration::__anon41941d520108 @ L191
+  - ScratchBird::PerformanceConfiguration::__anon41941d520208 @ L196
+  - ScratchBird::PerformanceConfiguration::__anon41941d520308 @ L201
+  - ScratchBird::PerformanceConfiguration::__anon41941d520408 @ L206
+  - ScratchBird::PerformanceConfigurationManager @ L305
+  - ScratchBird::PerformanceMetrics @ L26
+  - ScratchBird::PerformanceMetrics::PerformanceMetrics @ L79
+  - ScratchBird::PerformanceMetrics::copy_from @ L96
+  - ScratchBird::PerformanceMetrics::operator = @ L84
+  - ScratchBird::PerformanceMetrics::reset @ L56
+  - ScratchBird::PerformanceThresholds @ L155
+
+- include/scratchbird/engine/plan_cache.h
+  - scratchbird::engine::CachedPlan @ L137
+  - scratchbird::engine::CachedPlan::add_flags @ L198
+  - scratchbird::engine::CachedPlan::get_access_count @ L188
+  - scratchbird::engine::CachedPlan::get_creation_time @ L176
+  - scratchbird::engine::CachedPlan::get_estimated_cost @ L227
+  - scratchbird::engine::CachedPlan::get_key @ L154
+  - scratchbird::engine::CachedPlan::get_last_access_time @ L180
+  - scratchbird::engine::CachedPlan::get_plan @ L158
+  - scratchbird::engine::CachedPlan::get_plan_size_bytes @ L184
+  - scratchbird::engine::CachedPlan::get_statistics @ L166
+  - scratchbird::engine::CachedPlan::get_statistics @ L170
+  - scratchbird::engine::CachedPlan::get_type @ L162
+  - scratchbird::engine::CachedPlan::has_flags @ L208
+  - scratchbird::engine::CachedPlan::invalidate @ L221
+  - scratchbird::engine::CachedPlan::is_valid @ L217
+  - scratchbird::engine::CachedPlan::remove_flags @ L203
+  - scratchbird::engine::CachedPlan::set_estimated_cost @ L231
+  - scratchbird::engine::CachedPlan::set_flags @ L194
+  - scratchbird::engine::CachedPlanFlags @ L127
+  - scratchbird::engine::CachedPlanType @ L119
+  - scratchbird::engine::ExecutionStatistics @ L26
+  - scratchbird::engine::ExecutionStatistics::get_avg_execution_time_us @ L62
+  - scratchbird::engine::PlanCache @ L402
+  - scratchbird::engine::PlanCache::LRUNode @ L518
+  - scratchbird::engine::PlanCache::LRUNode::LRUNode @ L524
+  - scratchbird::engine::PlanCacheConfig @ L264
+  - scratchbird::engine::PlanCacheStats @ L304
+  - scratchbird::engine::PlanCacheStats::PlanCacheStats @ L334
+  - scratchbird::engine::PlanCacheStats::copy_from @ L350
+  - scratchbird::engine::PlanCacheStats::get_hit_ratio @ L371
+  - scratchbird::engine::PlanCacheStats::operator = @ L340
+  - scratchbird::engine::PlanCacheStats::reset @ L381
+  - scratchbird::engine::PlanKey @ L72
+  - std::hash @ L569
+  - std::hash::operator () @ L570
+
+- include/scratchbird/engine/prepared_statement_cache.h
+  - scratchbird::engine::CachedPreparedStatement @ L268
+  - scratchbird::engine::CachedPreparedStatement::get_access_count @ L320
+  - scratchbird::engine::CachedPreparedStatement::get_creation_time @ L308
+  - scratchbird::engine::CachedPreparedStatement::get_key @ L286
+  - scratchbird::engine::CachedPreparedStatement::get_last_access_time @ L312
+  - scratchbird::engine::CachedPreparedStatement::get_metadata @ L294
+  - scratchbird::engine::CachedPreparedStatement::get_statement @ L290
+  - scratchbird::engine::CachedPreparedStatement::get_statement_size_bytes @ L316
+  - scratchbird::engine::CachedPreparedStatement::get_statistics @ L298
+  - scratchbird::engine::CachedPreparedStatement::get_statistics @ L302
+  - scratchbird::engine::CachedPreparedStatement::invalidate @ L333
+  - scratchbird::engine::CachedPreparedStatement::is_valid @ L329
+  - scratchbird::engine::ColumnMetadata @ L54
+  - scratchbird::engine::ColumnMetadata::ColumnMetadata @ L78
+  - scratchbird::engine::ParameterDescriptor @ L25
+  - scratchbird::engine::ParameterDescriptor::Mode @ L42
+  - scratchbird::engine::ParameterDescriptor::ParameterDescriptor @ L46
+  - scratchbird::engine::PreparedStatementCache @ L487
+  - scratchbird::engine::PreparedStatementCache::LRUNode @ L595
+  - scratchbird::engine::PreparedStatementCache::LRUNode::LRUNode @ L601
+  - scratchbird::engine::PreparedStatementCacheConfig @ L362
+  - scratchbird::engine::PreparedStatementCacheStats @ L396
+  - scratchbird::engine::PreparedStatementCacheStats::PreparedStatementCacheStats @ L424
+  - scratchbird::engine::PreparedStatementCacheStats::copy_from @ L468
+  - scratchbird::engine::PreparedStatementCacheStats::get_hit_ratio @ L439
+  - scratchbird::engine::PreparedStatementCacheStats::operator = @ L430
+  - scratchbird::engine::PreparedStatementCacheStats::reset @ L449
+  - scratchbird::engine::PreparedStatementKey @ L121
+  - scratchbird::engine::PreparedStatementKey::PreparedStatementKey @ L144
+  - scratchbird::engine::PreparedStatementKey::PreparedStatementKey @ L147
+  - scratchbird::engine::PreparedStatementKey::operator != @ L158
+  - scratchbird::engine::PreparedStatementStats @ L174
+  - scratchbird::engine::PreparedStatementStats::PreparedStatementStats @ L206
+  - scratchbird::engine::PreparedStatementStats::copy_from @ L253
+  - scratchbird::engine::PreparedStatementStats::get_avg_execution_time_us @ L234
+  - scratchbird::engine::PreparedStatementStats::get_avg_preparation_time_us @ L243
+  - scratchbird::engine::PreparedStatementStats::operator = @ L212
+  - scratchbird::engine::StatementMetadata @ L85
+  - scratchbird::engine::StatementMetadata::Complexity @ L108
+  - scratchbird::engine::StatementMetadata::StatementMetadata @ L117
+  - std::hash @ L649
+  - std::hash::operator () @ L650
+
+- include/scratchbird/engine/protocol_handler.h
+  - scratchbird::engine::CorrelationTracker @ L174
+  - scratchbird::engine::CorrelationTracker::get_total_correlations @ L191
+  - scratchbird::engine::MessageFramer @ L206
+  - scratchbird::engine::MessagePriority @ L41
+  - scratchbird::engine::MessageQueue @ L100
+  - scratchbird::engine::MessageQueue::MessageComparator @ L125
+  - scratchbird::engine::MessageQueue::MessageComparator::operator () @ L126
+  - scratchbird::engine::MessageQueue::get_total_messages_processed @ L118
+  - scratchbird::engine::ProtocolHandler @ L68
+  - scratchbird::engine::ProtocolHandlerFactory @ L228
+  - scratchbird::engine::ProtocolHandlerFactory::HandlerCreator @ L231
+  - scratchbird::engine::ProtocolHandlerManager @ L255
+  - scratchbird::engine::ProtocolHandlerManager::get_messages_processed @ L284
+  - scratchbird::engine::ProtocolHandlerManager::get_protocol_errors @ L288
+  - scratchbird::engine::ProtocolHandlerManager::is_initialized @ L264
+  - scratchbird::engine::ProtocolMessage @ L44
+  - scratchbird::engine::ProtocolResult @ L57
+  - scratchbird::engine::ProtocolStateMachine @ L148
+  - scratchbird::engine::ProtocolStateMachine::on_invalid_transition @ L163
+  - scratchbird::engine::ProtocolStateMachine::on_state_enter @ L161
+  - scratchbird::engine::ProtocolStateMachine::on_state_exit @ L162
+  - scratchbird::engine::ProtocolType @ L21
+  - scratchbird::engine::ProtocolVersion @ L30
+
+- include/scratchbird/engine/provider_dispatch.h
+  - scratchbird::engine::ConnectionInfo @ L44
+  - scratchbird::engine::ConnectionInfo::set_database_path @ L68
+  - scratchbird::engine::ConnectionInfo::set_password @ L76
+  - scratchbird::engine::ConnectionInfo::set_provider_type @ L59
+  - scratchbird::engine::ConnectionInfo::set_username @ L72
+  - scratchbird::engine::DatabaseOperations @ L159
+  - scratchbird::engine::DatabaseProvider @ L272
+  - scratchbird::engine::FailoverConfig @ L333
+  - scratchbird::engine::LoadBalancingStrategy @ L324
+  - scratchbird::engine::ProviderCapabilities @ L28
+  - scratchbird::engine::ProviderFactory @ L305
+  - scratchbird::engine::ProviderRegistration @ L308
+  - scratchbird::engine::ProviderRegistration::operator < @ L317
+  - scratchbird::engine::ProviderResult @ L144
+  - scratchbird::engine::ProviderStats @ L83
+  - scratchbird::engine::ProviderStats::ProviderStats @ L101
+  - scratchbird::engine::ProviderStats::operator = @ L116
+  - scratchbird::engine::ProviderType @ L20
+  - scratchbird::engine::SecurityOperations @ L247
+  - scratchbird::engine::StatementOperations @ L223
+  - scratchbird::engine::TransactionOperations @ L201
+  - scratchbird::engine::YValveDispatcher @ L342
+  - scratchbird::engine::YValveDispatcher::ConnectionRecord @ L391
+
+- include/scratchbird/engine/psql_dev_tools.h
+  - scratchbird::engine::PsqlCodeFormatter @ L52
+  - scratchbird::engine::PsqlCodeFormatter::FormatOptions @ L55
+  - scratchbird::engine::PsqlDependencyAnalyzer @ L18
+  - scratchbird::engine::PsqlDependencyAnalyzer::AnalysisResult @ L27
+  - scratchbird::engine::PsqlDependencyAnalyzer::Dependency @ L21
+  - scratchbird::engine::PsqlDevEnvironment @ L165
+  - scratchbird::engine::PsqlDevEnvironment::CodeAnalysis @ L171
+  - scratchbird::engine::PsqlPerformanceProfiler @ L84
+  - scratchbird::engine::PsqlPerformanceProfiler::ProfileMetrics @ L87
+  - scratchbird::engine::PsqlSyntaxValidator @ L125
+  - scratchbird::engine::PsqlSyntaxValidator::ValidationIssue @ L128
+  - scratchbird::engine::PsqlSyntaxValidator::ValidationResult @ L136
+
+- include/scratchbird/engine/psql_executor.h
+  - scratchbird::engine::CursorDirection @ L44
+  - scratchbird::engine::CursorScrollType @ L54
+  - scratchbird::engine::PsqlCursor @ L59
+  - scratchbird::engine::PsqlCursor::is_scrollable @ L69
+  - scratchbird::engine::PsqlCursor::reset @ L104
+  - scratchbird::engine::PsqlCursor::update_attributes @ L90
+  - scratchbird::engine::PsqlExecutionContext @ L143
+  - scratchbird::engine::PsqlExecutionContext::ControlFlowState @ L180
+  - scratchbird::engine::PsqlExecutionContext::clear_exception @ L192
+  - scratchbird::engine::PsqlExecutionContext::has_active_exception @ L188
+  - scratchbird::engine::PsqlExecutor @ L234
+  - scratchbird::engine::PsqlExecutor::CompiledProcedure @ L305
+  - scratchbird::engine::PsqlExecutor::DebugBreakpoint @ L341
+  - scratchbird::engine::PsqlExecutor::DebugCallFrame @ L348
+  - scratchbird::engine::PsqlExecutor::DebugState @ L356
+  - scratchbird::engine::PsqlExecutor::FunctionOverloadSet @ L476
+  - scratchbird::engine::PsqlExecutor::FunctionSignature @ L465
+  - scratchbird::engine::PsqlExecutor::PackageBody @ L407
+  - scratchbird::engine::PsqlExecutor::PackageInstance @ L420
+  - scratchbird::engine::PsqlExecutor::PackageSpecification @ L396
+  - scratchbird::engine::PsqlExecutor::RecursiveCallInfo @ L482
+  - scratchbird::engine::PsqlScope @ L117
+  - scratchbird::engine::PsqlTypeManager @ L217
+  - scratchbird::engine::PsqlVariable @ L33
+  - scratchbird::engine::PsqlVariableType @ L24
+
+- include/scratchbird/engine/query_planner.h
+  - scratchbird::engine::QueryPlan @ L16
+  - scratchbird::engine::QueryPlan::PlanNode @ L17
+  - scratchbird::engine::QueryPlan::PlanNode::PlanNode @ L32
+  - scratchbird::engine::QueryPlanner @ L47
+
+- include/scratchbird/engine/remote_provider.h
+  - scratchbird::engine::ConnectionState @ L41
+  - scratchbird::engine::EnhancedRemoteProvider @ L226
+  - scratchbird::engine::EnhancedRemoteProvider::get_connection_pool @ L274
+  - scratchbird::engine::EnhancedRemoteProvider::get_last_error @ L268
+  - scratchbird::engine::EnhancedRemoteProvider::get_network_config @ L278
+  - scratchbird::engine::EnhancedRemoteProvider::get_provider_name @ L237
+  - scratchbird::engine::EnhancedRemoteProvider::get_provider_type @ L233
+  - scratchbird::engine::EnhancedRemoteProvider::get_provider_version @ L241
+  - scratchbird::engine::EnhancedRemoteProvider::is_initialized @ L250
+  - scratchbird::engine::NetworkConfig @ L24
+  - scratchbird::engine::NetworkConnection @ L65
+  - scratchbird::engine::NetworkConnection::get_config @ L84
+  - scratchbird::engine::NetworkConnection::get_last_error @ L89
+  - scratchbird::engine::RemoteConnectionPool @ L184
+  - scratchbird::engine::RemoteConnectionPool::PoolStats @ L202
+  - scratchbird::engine::RemoteConnectionStats @ L51
+  - scratchbird::engine::RemoteDatabaseOperations @ L308
+  - scratchbird::engine::RemoteDatabaseOperations::get_last_error @ L340
+  - scratchbird::engine::RemoteDatabaseOperations::get_last_error_code @ L344
+  - scratchbird::engine::RemoteProtocolHandler @ L116
+  - scratchbird::engine::RemoteProtocolHandler::get_last_error @ L157
+  - scratchbird::engine::RemoteProtocolHandler::get_last_error_code @ L161
+  - scratchbird::engine::RemoteProtocolHandler::get_negotiated_version @ L151
+  - scratchbird::engine::RemoteProtocolHandler::get_server_version @ L147
+  - scratchbird::engine::RemoteProtocolHandler::is_authenticated @ L143
+  - scratchbird::engine::RemoteSecurityOperations @ L436
+  - scratchbird::engine::RemoteStatementOperations @ L400
+  - scratchbird::engine::RemoteTransactionOperations @ L365
+
+- include/scratchbird/engine/role_management.h
+  - ScratchBird::RoleAttribute @ L20
+  - ScratchBird::RoleAttributes @ L47
+  - ScratchBird::RoleInfo @ L81
+  - ScratchBird::RoleInfo::can_login @ L115
+  - ScratchBird::RoleInfo::has_attribute @ L101
+  - ScratchBird::RoleInfo::inherits_roles @ L120
+  - ScratchBird::RoleInfo::is_superuser @ L126
+  - ScratchBird::RoleInfo::set_attribute @ L106
+  - ScratchBird::RoleManager @ L295
+  - ScratchBird::RoleManager::AuthMapping @ L364
+  - ScratchBird::RoleManager::RoleAuditEvent @ L379
+  - ScratchBird::RoleManager::RoleAuditEvent::Type @ L380
+  - ScratchBird::RoleManager::RolePolicy @ L406
+  - ScratchBird::RoleManager::get_policy @ L416
+  - ScratchBird::RoleManager::is_initialized @ L304
+  - ScratchBird::RoleMembership @ L230
+  - ScratchBird::RoleMembership::operator < @ L237
+  - ScratchBird::RoleMembershipOptions @ L63
+  - ScratchBird::RoleMembershipOptions::operator == @ L71
+  - ScratchBird::SecurityContext @ L136
+  - ScratchBird::SecurityContext::SecurityEvent @ L194
+  - ScratchBird::SecurityContext::SecurityEvent::Type @ L195
+  - ScratchBird::SecurityContext::get_active_roles @ L157
+  - ScratchBird::SecurityContext::get_current_user @ L149
+  - ScratchBird::SecurityContext::get_default_roles @ L179
+  - ScratchBird::SecurityContext::get_security_events @ L201
+  - ScratchBird::SecurityContext::get_session_user @ L143
+  - ScratchBird::SecurityContext::get_trusted_role @ L187
+  - ScratchBird::SecurityContext::has_trusted_role @ L183
+  - ScratchBird::SystemPrivilege @ L248
+  - ScratchBird::SystemPrivileges @ L290
+  - ScratchBird::operator | @ L50
+  - ScratchBird::operator | @ L55
+
+- include/scratchbird/engine/scratchbird_protocol.h
+  - scratchbird::engine::ScratchBirdFramer @ L56
+  - scratchbird::engine::ScratchBirdFramer::FrameState @ L67
+  - scratchbird::engine::ScratchBirdMessage @ L21
+  - scratchbird::engine::ScratchBirdMessage::get_message_type_string @ L30
+  - scratchbird::engine::ScratchBirdProtocolHandler @ L78
+  - scratchbird::engine::ScratchBirdStateMachine @ L39
+
+- include/scratchbird/engine/security_manager.h
+  - scratchbird::engine::AccessControlEntry @ L84
+  - scratchbird::engine::Permission @ L73
+  - scratchbird::engine::PermissionType @ L56
+  - scratchbird::engine::RoleInfo @ L40
+  - scratchbird::engine::SecurityContext @ L96
+  - scratchbird::engine::SecurityManager @ L110
+  - scratchbird::engine::SecurityManager::set_audit_logging @ L175
+  - scratchbird::engine::SecurityManager::set_password_encryption @ L171
+  - scratchbird::engine::SecurityStatement @ L219
+  - scratchbird::engine::SecurityStatement::Type @ L220
+  - scratchbird::engine::UserInfo @ L19
+
+- include/scratchbird/engine/segment_monitor.h
+  - scratchbird::engine::DatabaseSpaceStats @ L38
+  - scratchbird::engine::SegmentMonitor @ L54
+  - scratchbird::engine::SegmentMonitor::get_average_fragmentation @ L113
+  - scratchbird::engine::SegmentMonitor::get_overall_utilization @ L104
+  - scratchbird::engine::SegmentMonitor::is_space_pressure_high @ L93
+  - scratchbird::engine::SegmentStats @ L25
+  - scratchbird::engine::SpacePressure @ L15
+
+- include/scratchbird/engine/serializable_isolation.h
+  - scratchbird::engine::DangerousStructure @ L49
+  - scratchbird::engine::DangerousStructure::Type @ L54
+  - scratchbird::engine::DangerousStructure::is_cycle @ L61
+  - scratchbird::engine::IsolationLevel @ L237
+  - scratchbird::engine::PredicateLock @ L36
+  - scratchbird::engine::PredicateLockType @ L26
+  - scratchbird::engine::SIReadLock @ L68
+  - scratchbird::engine::SerializableIsolationManager @ L80
+  - scratchbird::engine::SerializableIsolationManager::set_aggressive_cleanup @ L128
+  - scratchbird::engine::SerializableIsolationManager::set_max_predicate_locks @ L132
+  - scratchbird::engine::SerializableTransaction @ L192
+  - scratchbird::engine::SerializableTransaction::get_transaction_id @ L212
+  - scratchbird::engine::SerializableTransaction::is_active @ L216
+  - scratchbird::engine::TransactionId @ L16
+
+- include/scratchbird/engine/session.h
+  - scratchbird::engine::AuthenticationContext @ L32
+  - scratchbird::engine::AuthenticationManager @ L34
+  - scratchbird::engine::SecurityContext @ L33
+  - scratchbird::engine::Session @ L37
+  - scratchbird::engine::Session::get_auth_context @ L69
+  - scratchbird::engine::Session::get_connect_time @ L61
+  - scratchbird::engine::Session::get_database_name @ L94
+  - scratchbird::engine::Session::get_queries_executed @ L100
+  - scratchbird::engine::Session::get_security_context @ L82
+  - scratchbird::engine::Session::get_session_id @ L54
+  - scratchbird::engine::Session::get_username @ L73
+  - scratchbird::engine::Session::is_database_attached @ L90
+  - scratchbird::engine::SessionState @ L22
+
+- include/scratchbird/engine/space.h
+  - scratchbird::engine::space_create @ L16
+
+- include/scratchbird/engine/statistics.h
+  - scratchbird::engine::ColumnStatistics @ L15
+  - scratchbird::engine::ColumnStatistics::HistogramBucket @ L33
+  - scratchbird::engine::ColumnStatistics::MCV @ L25
+  - scratchbird::engine::CostEstimator @ L116
+  - scratchbird::engine::StatisticsCollector @ L70
+  - scratchbird::engine::TableStatistics @ L56
+
+- include/scratchbird/engine/storage.h
+  - scratchbird::engine::StorageConfig @ L11
+  - scratchbird::engine::StorageEngine @ L15
+  - scratchbird::engine::StorageEngine::close @ L22
+  - scratchbird::engine::StorageEngine::open @ L18
+
+- include/scratchbird/engine/system_oids.h
+  - scratchbird::engine::UuidBytes @ L10
+
+- include/scratchbird/engine/tablespace_manager.h
+  - scratchbird::engine::DatafileSpec @ L18
+  - scratchbird::engine::TablespaceManager @ L37
+  - scratchbird::engine::TablespaceManager::TablespaceManager @ L40
+  - scratchbird::engine::TablespaceManager::by_name @ L66
+  - scratchbird::engine::TablespaceSpec @ L27
+  - scratchbird::engine::TablespaceState @ L16
+
+- include/scratchbird/engine/tcp_optimizer.h
+  - ScratchBird::NetworkConfig @ L25
+  - ScratchBird::NetworkStats @ L201
+  - ScratchBird::NetworkStats::connection_success_rate @ L213
+  - ScratchBird::NetworkStatsCollector @ L223
+  - ScratchBird::OptimizedSocket @ L146
+  - ScratchBird::OptimizedSocket::config @ L169
+  - ScratchBird::OptimizedSocket::get @ L161
+  - ScratchBird::OptimizedSocket::valid @ L187
+  - ScratchBird::TCPOptimizer @ L50
+
+- include/scratchbird/engine/threading.h
+  - scratchbird::engine::AsyncEventLoop @ L294
+  - scratchbird::engine::AsyncEventLoop::EventCallback @ L297
+  - scratchbird::engine::AsyncEventLoop::EventLoopStats @ L316
+  - scratchbird::engine::AsyncEventLoop::is_running @ L305
+  - scratchbird::engine::ConcurrencyController @ L397
+  - scratchbird::engine::ConcurrencyController::ConcurrencyStats @ L429
+  - scratchbird::engine::ConcurrencyController::ResourceLock @ L404
+  - scratchbird::engine::ConcurrencyController::ResourceLock::is_locked @ L412
+  - scratchbird::engine::ConnectionWorkItem @ L79
+  - scratchbird::engine::FunctionWorkItem @ L95
+  - scratchbird::engine::FunctionWorkItem::WorkFunction @ L98
+  - scratchbird::engine::HybridThreadingCoordinator @ L341
+  - scratchbird::engine::HybridThreadingCoordinator::HybridConfig @ L344
+  - scratchbird::engine::HybridThreadingCoordinator::HybridStats @ L367
+  - scratchbird::engine::ThreadPerConnectionManager @ L246
+  - scratchbird::engine::ThreadPerConnectionManager::ConnectionStats @ L271
+  - scratchbird::engine::ThreadPerConnectionManager::get_active_connections @ L257
+  - scratchbird::engine::ThreadPerConnectionManager::get_max_connections @ L261
+  - scratchbird::engine::ThreadPerConnectionManager::is_connection_limit_reached @ L265
+  - scratchbird::engine::ThreadPool @ L190
+  - scratchbird::engine::ThreadPool::get_pool_size @ L211
+  - scratchbird::engine::ThreadPool::is_running @ L200
+  - scratchbird::engine::ThreadPoolStats @ L124
+  - scratchbird::engine::ThreadingModel @ L25
+  - scratchbird::engine::WorkItem @ L36
+  - scratchbird::engine::WorkItem::get_created_time @ L53
+  - scratchbird::engine::WorkItem::get_execution_time @ L57
+  - scratchbird::engine::WorkItem::get_priority @ L45
+  - scratchbird::engine::WorkItem::get_work_id @ L49
+  - scratchbird::engine::WorkItem::is_executed @ L61
+  - scratchbird::engine::WorkPriority @ L33
+  - scratchbird::engine::WorkerThread @ L136
+  - scratchbird::engine::WorkerThread::get_thread_id @ L158
+  - scratchbird::engine::WorkerThread::get_thread_name @ L162
+  - scratchbird::engine::WorkerThread::is_running @ L146
+  - scratchbird::engine::WorkerThreadStats @ L112
+
+- include/scratchbird/engine/tls_server.h
+  - ScratchBird::TLSCertificateInfo @ L41
+  - ScratchBird::TLSCertificateManager @ L334
+  - ScratchBird::TLSConfiguration @ L58
+  - ScratchBird::TLSContext @ L147
+  - ScratchBird::TLSContext::get_ssl_context @ L162
+  - ScratchBird::TLSContext::is_initialized @ L156
+  - ScratchBird::TLSServer @ L212
+  - ScratchBird::TLSServer::AuditCallback @ L290
+  - ScratchBird::TLSServer::ConnectionHandler @ L227
+  - ScratchBird::TLSServer::SecurityAuditEvent @ L272
+  - ScratchBird::TLSServer::SecurityAuditEvent::Type @ L273
+  - ScratchBird::TLSServer::TLSStatistics @ L250
+  - ScratchBird::TLSServer::get_configuration @ L264
+  - ScratchBird::TLSServer::is_running @ L221
+  - ScratchBird::TLSServer::set_audit_callback @ L291
+  - ScratchBird::TLSServer::set_connection_handler @ L228
+  - ScratchBird::TLSSession @ L102
+  - ScratchBird::TLSSession::get_remote_address @ L109
+  - ScratchBird::TLSVerificationMode @ L32
+  - ScratchBird::TLSVersion @ L23
+
+- include/scratchbird/engine/trigger_engine.h
+  - scratchbird::engine::AdvancedTriggerInfo @ L50
+  - scratchbird::engine::TriggerActionInterpreter @ L113
+  - scratchbird::engine::TriggerContext @ L16
+  - scratchbird::engine::TriggerEngine @ L143
+  - scratchbird::engine::TriggerEngine::set_constraint_triggers_immediate @ L175
+  - scratchbird::engine::TriggerEngine::set_trigger_execution_enabled @ L171
+  - scratchbird::engine::TriggerWhenEvaluator @ L78
+  - scratchbird::engine::TriggerWhenEvaluator::references_new_values @ L94
+  - scratchbird::engine::TriggerWhenEvaluator::references_old_values @ L90
+
+- include/scratchbird/engine/trusted_auth.h
+  - ScratchBird::KerberosAuthenticator @ L223
+  - ScratchBird::KerberosAuthenticator::get_auth_type @ L243
+  - ScratchBird::KerberosAuthenticator::get_auth_type_name @ L247
+  - ScratchBird::KerberosAuthenticator::get_kdc @ L277
+  - ScratchBird::KerberosAuthenticator::get_realm @ L268
+  - ScratchBird::KerberosAuthenticator::get_supported_domains @ L251
+  - ScratchBird::KerberosAuthenticator::set_kdc @ L273
+  - ScratchBird::KerberosAuthenticator::set_realm @ L264
+  - ScratchBird::KerberosAuthenticator::supports_domain_authentication @ L255
+  - ScratchBird::LDAPAuthenticator @ L299
+  - ScratchBird::LDAPAuthenticator::LDAPConfig @ L302
+  - ScratchBird::LDAPAuthenticator::get_auth_type @ L333
+  - ScratchBird::LDAPAuthenticator::get_auth_type_name @ L337
+  - ScratchBird::LDAPAuthenticator::get_config @ L350
+  - ScratchBird::LDAPAuthenticator::set_config @ L346
+  - ScratchBird::OSUserInfo @ L28
+  - ScratchBird::PAMAuthenticator @ L102
+  - ScratchBird::PAMAuthenticator::get_admin_groups @ L148
+  - ScratchBird::PAMAuthenticator::get_auth_type @ L122
+  - ScratchBird::PAMAuthenticator::get_auth_type_name @ L126
+  - ScratchBird::PAMAuthenticator::get_service_name @ L139
+  - ScratchBird::PAMAuthenticator::set_admin_groups @ L144
+  - ScratchBird::PAMAuthenticator::set_service_name @ L135
+  - ScratchBird::SSPIAuthenticator @ L168
+  - ScratchBird::SSPIAuthenticator::get_auth_type @ L188
+  - ScratchBird::SSPIAuthenticator::get_auth_type_name @ L192
+  - ScratchBird::SSPIAuthenticator::supports_domain_authentication @ L197
+  - ScratchBird::SSPIAuthenticator::supports_service_accounts @ L201
+  - ScratchBird::TrustedAuthType @ L16
+  - ScratchBird::TrustedOSAuthenticationProvider @ L368
+  - ScratchBird::TrustedOSAuthenticationProvider::get_authentication_method @ L379
+  - ScratchBird::TrustedOSAuthenticationProvider::get_authenticator @ L409
+  - ScratchBird::TrustedOSAuthenticationProvider::get_provider_name @ L375
+  - ScratchBird::TrustedOSAuthenticationProvider::supports_account_management @ L393
+  - ScratchBird::TrustedOSAuthenticationProvider::supports_challenge_response @ L387
+  - ScratchBird::TrustedOSAuthenticator @ L49
+  - ScratchBird::TrustedOSAuthenticator::get_configuration_errors @ L92
+  - ScratchBird::TrustedOSAuthenticator::get_supported_domains @ L77
+  - ScratchBird::TrustedOSAuthenticator::supports_domain_authentication @ L81
+  - ScratchBird::TrustedOSAuthenticator::supports_service_accounts @ L85
+  - ScratchBird::TrustedOSAuthenticatorFactory @ L430
+
+- include/scratchbird/engine/two_factor_auth.h
+  - ScratchBird::BackupCodesConfig @ L86
+  - ScratchBird::EmailProvider @ L299
+  - ScratchBird::EmailProvider::get_method @ L311
+  - ScratchBird::EmailProvider::get_provider_name @ L307
+  - ScratchBird::HardwareTokenConfig @ L76
+  - ScratchBird::MessageConfig @ L65
+  - ScratchBird::SMSProvider @ L229
+  - ScratchBird::SMSProvider::get_method @ L239
+  - ScratchBird::SMSProvider::get_provider_name @ L235
+  - ScratchBird::SMSProvider::set_api_key @ L270
+  - ScratchBird::SMSProvider::set_message_template @ L278
+  - ScratchBird::SMSProvider::set_service_url @ L274
+  - ScratchBird::TOTPConfig @ L43
+  - ScratchBird::TOTPProvider @ L143
+  - ScratchBird::TOTPProvider::get_digits @ L211
+  - ScratchBird::TOTPProvider::get_issuer @ L193
+  - ScratchBird::TOTPProvider::get_method @ L153
+  - ScratchBird::TOTPProvider::get_provider_name @ L149
+  - ScratchBird::TOTPProvider::get_time_step @ L202
+  - ScratchBird::TOTPProvider::set_digits @ L207
+  - ScratchBird::TOTPProvider::set_issuer @ L189
+  - ScratchBird::TOTPProvider::set_time_step @ L198
+  - ScratchBird::TwoFactorAuthenticationManager @ L366
+  - ScratchBird::TwoFactorAuthenticationManager::TwoFactorStats @ L463
+  - ScratchBird::TwoFactorAuthenticationManager::are_backup_codes_required @ L439
+  - ScratchBird::TwoFactorAuthenticationManager::get_lockout_duration @ L457
+  - ScratchBird::TwoFactorAuthenticationManager::get_max_failed_attempts @ L448
+  - ScratchBird::TwoFactorAuthenticationManager::is_2fa_required_for_admins @ L430
+  - ScratchBird::TwoFactorAuthenticationManager::is_2fa_required_for_all @ L421
+  - ScratchBird::TwoFactorAuthenticationManager::set_2fa_required_for_admins @ L426
+  - ScratchBird::TwoFactorAuthenticationManager::set_2fa_required_for_all @ L417
+  - ScratchBird::TwoFactorAuthenticationManager::set_backup_codes_required @ L435
+  - ScratchBird::TwoFactorAuthenticationManager::set_lockout_duration @ L453
+  - ScratchBird::TwoFactorAuthenticationManager::set_max_failed_attempts @ L444
+  - ScratchBird::TwoFactorAuthenticationProvider @ L496
+  - ScratchBird::TwoFactorAuthenticationProvider::get_authentication_method @ L507
+  - ScratchBird::TwoFactorAuthenticationProvider::get_manager @ L528
+  - ScratchBird::TwoFactorAuthenticationProvider::get_provider_name @ L503
+  - ScratchBird::TwoFactorAuthenticationProvider::supports_challenge_response @ L515
+  - ScratchBird::TwoFactorMethod @ L18
+  - ScratchBird::TwoFactorProvider @ L96
+  - ScratchBird::TwoFactorProvider::get_configuration_errors @ L134
+  - ScratchBird::TwoFactorStatus @ L32
+
+- include/scratchbird/engine/txn.h
+  - scratchbird::engine::DeadlockVictimPolicy @ L112
+  - scratchbird::engine::LockManager @ L120
+  - scratchbird::engine::SnapshotRC @ L29
+  - scratchbird::engine::SnapshotRR @ L34
+  - scratchbird::engine::Transaction @ L24
+  - scratchbird::engine::TransactionManager @ L39
+  - scratchbird::engine::TransactionManager::TransactionManager @ L42
+  - scratchbird::engine::TransactionManager::next_attachment_id @ L76
+  - scratchbird::engine::TransactionManager::next_statement_id @ L80
+  - scratchbird::engine::TransactionManager::next_transaction_id @ L72
+  - scratchbird::engine::TransactionManager::read_txn_status @ L63
+  - scratchbird::engine::TransactionManager::tip_page_no @ L85
+  - scratchbird::engine::TxnState @ L16
+
+- include/scratchbird/engine/types.h
+  - scratchbird::engine::TypeDescriptor @ L67
+  - scratchbird::engine::TypeKind @ L13
+
+- include/scratchbird/engine/wal.h
+  - scratchbird::engine::RecoveryInfo @ L132
+  - scratchbird::engine::RecoveryRecord @ L141
+  - scratchbird::engine::RecoveryRecord::is_data_record @ L153
+  - scratchbird::engine::RecoveryRecord::is_transaction_record @ L147
+  - scratchbird::engine::WalBeginRecord @ L50
+  - scratchbird::engine::WalCheckpointRecord @ L111
+  - scratchbird::engine::WalCommitRecord @ L57
+  - scratchbird::engine::WalConfig @ L161
+  - scratchbird::engine::WalHeapDeleteRecord @ L101
+  - scratchbird::engine::WalHeapInsertRecord @ L79
+  - scratchbird::engine::WalHeapUpdateRecord @ L89
+  - scratchbird::engine::WalManager @ L171
+  - scratchbird::engine::WalManager::WalStats @ L229
+  - scratchbird::engine::WalManager::append_delete @ L261
+  - scratchbird::engine::WalManager::append_insert @ L239
+  - scratchbird::engine::WalManager::append_root_update @ L254
+  - scratchbird::engine::WalManager::next_lsn @ L249
+  - scratchbird::engine::WalManager::register_global_listener @ L269
+  - scratchbird::engine::WalPageWriteRecord @ L69
+  - scratchbird::engine::WalRecKind @ L120
+  - scratchbird::engine::WalRecord @ L123
+  - scratchbird::engine::WalRecordHeader @ L38
+  - scratchbird::engine::WalRecordType @ L19
+  - scratchbird::engine::WalRollbackRecord @ L63
+
+- include/scratchbird/engine/wal_manager.h
+  - scratchbird::engine::HeapWALRecord @ L100
+  - scratchbird::engine::IndexWALRecord @ L115
+  - scratchbird::engine::LSN @ L21
+  - scratchbird::engine::LSN::LSN @ L25
+  - scratchbird::engine::LSN::operator != @ L47
+  - scratchbird::engine::LSN::operator < @ L27
+  - scratchbird::engine::LSN::operator <= @ L31
+  - scratchbird::engine::LSN::operator == @ L43
+  - scratchbird::engine::LSN::operator > @ L35
+  - scratchbird::engine::LSN::operator >= @ L39
+  - scratchbird::engine::LSN::to_string @ L52
+  - scratchbird::engine::RecoveryContext @ L264
+  - scratchbird::engine::TransactionWALRecord @ L109
+  - scratchbird::engine::WALManager @ L171
+  - scratchbird::engine::WALManager::RecoveryState @ L242
+  - scratchbird::engine::WALManager::get_current_lsn @ L212
+  - scratchbird::engine::WALManager::set_checkpoint_interval @ L222
+  - scratchbird::engine::WALManager::set_sync_commit @ L218
+  - scratchbird::engine::WALRecordHeader @ L88
+  - scratchbird::engine::WALRecordType @ L59
+  - scratchbird::engine::WALSegment @ L124
+  - scratchbird::engine::WALSegment::get_segment_id @ L154
+  - scratchbird::engine::WALSegment::get_size @ L148
+  - scratchbird::engine::WALSegment::is_full @ L142
+
+- include/scratchbird/engine/wire_compression.h
+  - scratchbird::engine::AtomicCompressionStatistics @ L81
+  - scratchbird::engine::AtomicCompressionStatistics::reset @ L99
+  - scratchbird::engine::AtomicCompressionStatistics::snapshot @ L112
+  - scratchbird::engine::CompressionAlgorithm @ L27
+  - scratchbird::engine::CompressionBenchmark @ L393
+  - scratchbird::engine::CompressionConfig @ L128
+  - scratchbird::engine::CompressionConfig::is_valid @ L151
+  - scratchbird::engine::CompressionLevel @ L19
+  - scratchbird::engine::CompressionStatistics @ L35
+  - scratchbird::engine::CompressionStatistics::get_avg_compress_time_ms @ L65
+  - scratchbird::engine::CompressionStatistics::get_avg_decompress_time_ms @ L72
+  - scratchbird::engine::CompressionStatistics::get_bandwidth_savings @ L60
+  - scratchbird::engine::CompressionStatistics::get_compression_ratio @ L53
+  - scratchbird::engine::WireCompression @ L161
+  - scratchbird::engine::WireCompressionManager @ L307
+  - scratchbird::engine::WireCompressionManager::get_connection_id @ L365
+
+
+## Related
+- [Traceability coverage index](index.md)
+- [Coverage — AUTH](ns-auth.md)
+- [Coverage — CATALOG-BOOT](ns-catalog-boot.md)
+- [Coverage — CONNECTION](ns-connection.md)
+- [Coverage — CORE-HEAP](ns-core-heap.md)
+- [Coverage — CORE-SPACE](ns-core-space.md)
+- [Coverage — DBLINK](ns-dblink.md)
