@@ -1,3 +1,5 @@
+[Errors and Diagnostics Index](index.md)
+
 ## Error Codes and Results
 
 This document lists error/result enumerations and canonical error messages used across modules, with references to their definitions and typical messages.
@@ -92,3 +94,8 @@ Implementation References:
 Enums:
 - SB_StatusCode: SB_STATUS_OK (0), SB_STATUS_NOT_IMPLEMENTED (1), SB_STATUS_ERROR (2)
 
+
+## Related
+- [Diagnostics and Warnings](diagnostics.md)
+- [Errors and Diagnostics Index](index.md)
+- [ScratchBird Analysis Documentation](../analysis/index.md)

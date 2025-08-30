@@ -190,3 +190,7 @@ References:
 
 - TLS v1.2/1.3 with client verification modes; PFS via ECDHE/DHE.
 - Account lockout and 2FA flows in `AuthenticationManager` and 2FA providers.
+
+## Related
+- [Server/Protocol/Auth compliance status](compliance.md)
+- [ScratchBird Analysis Documentation](../../analysis/index.md)

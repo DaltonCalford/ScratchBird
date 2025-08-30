@@ -1,3 +1,5 @@
+[ScratchBird Analysis Documentation](../../index.md)
+
 ### Transactions and MGA
 
 Visibility rules, TIP usage, isolation modes, and conflict detection.
@@ -10,3 +12,6 @@ Visibility rules, TIP usage, isolation modes, and conflict detection.
 ## Spec Trace
 - [REQ-TXN-MGA-TIP](../../traceability/spec/requirements.md#req-txn-mga-tip)
 - [REQ-TXN-MGA-VISIBILITY](../../traceability/spec/requirements.md#req-txn-mga-visibility)
+
+## Related
+- [ScratchBird Analysis Documentation](../../index.md)

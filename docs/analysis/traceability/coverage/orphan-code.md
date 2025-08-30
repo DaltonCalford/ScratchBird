@@ -1,3 +1,5 @@
+[ScratchBird Analysis Documentation](../../index.md) / [Traceability coverage index](index.md)
+
 ### Orphan public symbols (no REQ mapping)
 
 - include/scratchbird/engine/alloc.h
@@ -1607,3 +1609,12 @@
   - scratchbird::engine::WireCompressionManager @ L307
   - scratchbird::engine::WireCompressionManager::get_connection_id @ L365
 
+
+## Related
+- [Traceability coverage index](index.md)
+- [Coverage — AUTH](ns-auth.md)
+- [Coverage — CATALOG-BOOT](ns-catalog-boot.md)
+- [Coverage — CONNECTION](ns-connection.md)
+- [Coverage — CORE-HEAP](ns-core-heap.md)
+- [Coverage — CORE-SPACE](ns-core-space.md)
+- [Coverage — DBLINK](ns-dblink.md)

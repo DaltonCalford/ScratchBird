@@ -13,3 +13,8 @@ Quick links:
 - C API status codes: see `docs/errors/error-codes.md#capi`
 - Parser and performance diagnostics: see `docs/errors/diagnostics.md`
 
+
+## Related
+- [Diagnostics and Warnings](diagnostics.md)
+- [Error Codes and Results](error-codes.md)
+- [ScratchBird Analysis Documentation](../analysis/index.md)

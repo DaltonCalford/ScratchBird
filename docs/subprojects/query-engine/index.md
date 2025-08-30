@@ -370,3 +370,6 @@ double QueryPlanner::estimate_hash_join_cost(double left_rows, double right_rows
     return right_rows * 1.5 + left_rows * 1.0;
 }
 ```
+
+## Related
+- [ScratchBird Analysis Documentation](../../analysis/index.md)

@@ -1,3 +1,5 @@
+[ScratchBird Analysis Documentation](../../index.md) / [Storage](index.md)
+
 ### Heap lifecycle: create, open, insert, scan, truncate, drop
 
 How heap relations are created and operated on, with key code anchors.
@@ -126,3 +128,9 @@ How heap relations are created and operated on, with key code anchors.
 - [REQ-CORE-HEAP-SCAN](../../traceability/spec/requirements.md#req-core-heap-scan)
 - [REQ-CORE-SPACE-RECLAIM](../../traceability/spec/requirements.md#req-core-space-reclaim)
 
+
+## Related
+- [Heap: tuple and page format, visibility, codecs](heap.md)
+- [Storage](index.md)
+- [On-Disk Structures (ODS)](ods.md)
+- [Space management and Allocator](space_allocator.md)

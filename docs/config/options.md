@@ -1,3 +1,5 @@
+[Configuration Documentation Index](index.md)
+
 ## Configuration Options
 
 This document enumerates configurable options discovered in the codebase, grouped by component. Each section has anchors and Implementation References back to the source files.
@@ -502,3 +504,8 @@ Implementation References:
 | --- | --- | --- | --- | --- |
 | storage.path | std::string | (empty) | Global | `include/scratchbird/engine/storage.h` |
 
+
+## Related
+- [Configuration Examples](examples.md)
+- [Configuration Documentation Index](index.md)
+- [ScratchBird Analysis Documentation](../analysis/index.md)

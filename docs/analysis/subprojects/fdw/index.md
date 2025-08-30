@@ -1,3 +1,5 @@
+[ScratchBird Analysis Documentation](../../index.md)
+
 ### FDW and Database Links
 
 This document describes the FDW core SPI, builtin adapters (CSV/JSON/PostgreSQL), database links, and their catalog, security, and error-handling integration.
@@ -188,3 +190,6 @@ Subsystems (see `include/scratchbird/engine/fdw_error_handling.h`, `src/engine/f
 
 ## Spec Trace
 - [REQ-FDW-CORE](../../traceability/spec/requirements.md#req-fdw-core)
+
+## Related
+- [ScratchBird Analysis Documentation](../../index.md)
