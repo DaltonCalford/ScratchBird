@@ -1,6 +1,13 @@
 ### ScratchBird User Documentation
 
-This guide is sourced entirely from the repository. It explains what each SQL/PSQL element is, why you would use it, and how to use it, with cross-links across the docs. The code is authoritative; where parser acceptance differs from runtime semantics, that is called out explicitly.
+What it is
+- A unified, code-sourced language and operations guide for ScratchBird SQL/PSQL and tooling.
+
+Why it matters
+- Helps users and developers understand the dialect quickly, with direct links to authoritative code anchors.
+
+How to use it
+- Start with the Overview and Core language, then dive into SELECT/DML and DDL by object type. Each page has examples and See also links.
 
 Audience: end users of the SQL surface and developers extending or integrating the engine.
 

@@ -1,5 +1,14 @@
 ### DDL: Foreign Data Wrappers
 
+What it is
+- Definitions that connect to external data sources: servers, user mappings, foreign tables, and schema import.
+
+Why it matters
+- Integrates remote data into local queries; unifies access paths.
+
+How to use it
+- Create foreign servers and mappings; define foreign tables; optionally import schemas.
+
 Objects:
 - Foreign server: `ast.ddlForeignServer` (action, name, options raw)
 - User mapping: `ast.ddlUserMapping` (action, user_name, server_name, options)
@@ -15,4 +24,7 @@ IMPORT FOREIGN SCHEMA public FROM SERVER pgsrv INTO ext;
 ```
 
 Code anchors: `src/engine/parser_ddl.cpp`
+
+See also
+- [Database links](./ddl-database-links.md)
 

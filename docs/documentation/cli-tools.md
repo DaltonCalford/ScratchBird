@@ -1,5 +1,14 @@
 ### CLI Tools
 
+What it is
+- Command-line utilities packaged with the repository for diagnostics and space analysis.
+
+Why it matters
+- Enables offline validation and capacity planning without changing the database.
+
+How to use it
+- Run the tools against a database path; examine exit codes in automation.
+
 dbcheck (src/dbcheck.cpp):
 - Usage: `dbcheck <database_path> [options]`
 - Options:
@@ -16,4 +25,7 @@ dbspace (src/dbspace.cpp):
 
 isql:
 - Not available in this source tree. CMake stubs exist but sources are disabled.
+
+See also
+- [Configuration](./configuration.md) · [Installation](./installation.md)
 
