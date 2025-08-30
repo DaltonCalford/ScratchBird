@@ -2,6 +2,27 @@
 
 Network server, sessions, protocols, provider dispatch, auth providers, TLS, pooling, buffers.
 
+## Component diagram: server/provider dispatch and executor pipeline
+
+Source: `assets/diagrams/server_components.mmd`
+
+```mermaid
+flowchart TD
+  Client-->Listener
+  Listener-->ProtocolHandler
+  ProtocolHandler-->AuthProvider
+  ProtocolHandler-->ProviderDispatch
+  ProviderDispatch-->SQLExecutor
+  SQLExecutor-->Planner
+  SQLExecutor-->Executor
+  Executor-->AccessMethods[Storage/Indexes/FDW]
+  AccessMethods-->BufferMgr
+  BufferMgr-->Pager
+  Pager-->Disk
+  ProviderDispatch-->PSQLRuntime
+  ProviderDispatch-->AdminProvider
+```
+
 ## Implementation References
 - `ScratchBird/include/scratchbird/engine/network_server.h`
 - `ScratchBird/include/scratchbird/engine/protocol_handler.h`

@@ -2,6 +2,22 @@
 
 How heap relations are created and operated on, with key code anchors.
 
+## State diagram
+
+Source: `assets/diagrams/storage_lifecycle.mmd`
+
+```mermaid
+stateDiagram-v2
+  [*] --> Created
+  Created --> Registered
+  Registered --> Active
+  Active --> Modified
+  Modified --> Checkpointed
+  Active --> Dropped
+  Dropped --> GCd
+  GCd --> [*]
+```
+
 ## Implementation References
 - Relation API: `ScratchBird/include/scratchbird/engine/heap_rel.h`
 - ODS and Allocator used by relation: `ScratchBird/include/scratchbird/engine/ods.h`, `ScratchBird/src/engine/alloc.cpp`

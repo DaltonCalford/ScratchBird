@@ -7,6 +7,22 @@ Start here for on-disk structures, heap, space management, and buffer/pager.
 - [Space/Allocator](space_allocator.md): PIP/TIP/SpaceCatalog and allocation
 - [Heap lifecycle](lifecycle.md): create/open/insert/scan/truncate/drop
 
+## Sequence: Crash → Recovery
+
+Source: `assets/diagrams/crash_recovery.mmd`
+
+```mermaid
+sequenceDiagram
+  participant Server
+  participant WAL
+  participant Storage
+  participant Recovery
+  Server--x Server: crash
+  Recovery->>WAL: scan/replay
+  WAL->>Storage: redo/undo
+  Recovery-->>Server: ready
+```
+
 ## Implementation References
 - `ScratchBird/include/scratchbird/engine/heap.h`
 - `ScratchBird/include/scratchbird/engine/heap_rel.h`
