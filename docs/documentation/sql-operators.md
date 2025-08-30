@@ -1,5 +1,14 @@
 ### Operators and Precedence
 
+What it is
+- The set of operators, their precedence/associativity for parsing, and which ones are evaluated at runtime in predicates.
+
+Why it matters
+- Correct grouping avoids subtle bugs (e.g., `AND` vs `OR` precedence). Knowing runtime limits helps write predictable predicates.
+
+How to use it
+- Use the precedence list to structure expressions. For predicate evaluation semantics, rely on the subset implemented in `expr.cpp`.
+
 Parsing precedence is defined in `src/engine/parser_expr.cpp` via Pratt parser binding powers; runtime boolean evaluation is in `src/engine/expr.cpp`.
 
 - Arithmetic: `*` `/` (bp 70), `+` `-` (bp 60)
@@ -18,3 +27,6 @@ SELECT 'a' || 'b' AS s WHERE 2 >= 1 AND NOT (1 = 0);
 ```
 
 Code anchors: `src/engine/parser_expr.cpp`, `src/engine/expr.cpp`
+
+See also
+- [Lexical](./sql-lexical.md) · [Data types](./sql-data-types.md) · [SELECT](./sql-select.md)
