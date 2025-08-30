@@ -1,3 +1,5 @@
+[ScratchBird Analysis Documentation](../../index.md)
+
 ### Catalog and bootstrap
 
 System tables, UUIDs, bootstrap SQL, DDL transactional semantics, compatibility views.
@@ -9,3 +11,6 @@ System tables, UUIDs, bootstrap SQL, DDL transactional semantics, compatibility 
 
 ## Spec Trace
 - [REQ-CATALOG-BOOT-SDB-TABLES](../../traceability/spec/requirements.md#req-catalog-boot-sdb-tables)
+
+## Related
+- [ScratchBird Analysis Documentation](../../index.md)

@@ -11,3 +11,10 @@
 ### Recovery Targets
 - Restart < 30s; recovery < 5 min (simulated scale); query availability gap < 10s.
 
+
+## Related
+- [Gates](CI_Gates.md)
+- [Hardware and Environment](PerformanceMethodology.md)
+- [Progress](Progress.md)
+- [Static Analysis](SecurityHardening.md)
+- [Scope](TestPlan.md)

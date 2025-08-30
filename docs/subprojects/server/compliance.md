@@ -1,3 +1,5 @@
+[Server architecture and protocol/auth overview](index.md)
+
 ## Server/Protocol/Auth compliance status
 
 This document tracks implementation coverage against the Phase 11 overall server/protocol/auth spec.
@@ -122,3 +124,7 @@ CompressionConfig
 - TLS: Implemented core; production hardening in progress
 - Provider dispatch: Interfaces + dispatcher; provider impl/wiring pending
 - Pooling/buffers/batching/compression: APIs present; integration work remaining
+
+## Related
+- [Server architecture and protocol/auth overview](index.md)
+- [ScratchBird Analysis Documentation](../../analysis/index.md)

@@ -25,3 +25,9 @@ Conventions:
 
 - Every page includes “Implementation References” and “Spec Trace” sections.
 - Requirement IDs follow the `REQ-*` taxonomy defined in [project/plan.md](project/plan.md).
+
+## Related
+- [Human review TODOs](HUMAN_REVIEW_TODO.md)
+- [Documentation style guide](_style.md)
+- [AI task hub](ai/index.md)
+- [API Reference](api/index.md)

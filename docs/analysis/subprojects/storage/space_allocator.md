@@ -1,3 +1,5 @@
+[ScratchBird Analysis Documentation](../../index.md) / [Storage](index.md)
+
 ### Space management and Allocator
 
 Pointer/Free Page Map (PIP), TIP seed, Space Catalog, and page allocation APIs.
@@ -148,3 +150,9 @@ namespace scratchbird::engine
 - [REQ-CORE-SPACE-ALLOCATOR](../../traceability/spec/requirements.md#req-core-space-allocator)
 - [REQ-CORE-SPACE-RECLAIM](../../traceability/spec/requirements.md#req-core-space-reclaim)
 
+
+## Related
+- [Heap: tuple and page format, visibility, codecs](heap.md)
+- [Storage](index.md)
+- [Heap lifecycle: create, open, insert, scan, truncate, drop](lifecycle.md)
+- [On-Disk Structures (ODS)](ods.md)

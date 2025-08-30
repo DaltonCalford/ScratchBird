@@ -1,3 +1,5 @@
+[ScratchBird Analysis Documentation](../index.md)
+
 ### Implementation plan (tailored)
 
 This plan defines the REQ-* taxonomy, structure, parallel tracks, and AI vs developer ownership to build comprehensive documentation with traceability.
@@ -48,3 +50,6 @@ Key hubs:
 5) Author area docs in parallel; run link/anchor checks
 6) Developer review on complex areas; update gaps/recs
 7) Add CI for drift checks and link validity
+
+## Related
+- [ScratchBird Analysis Documentation](../index.md)
