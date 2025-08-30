@@ -1,0 +1,1 @@
+sequenceDiagram\n  participant Server\n  participant WAL\n  participant Storage\n  participant Recovery\n  Server--x Server: crash\n  Recovery->>WAL: scan/replay\n  WAL->>Storage: redo/undo\n  Recovery-->>Server: ready
