@@ -1,5 +1,14 @@
 ### DDL: Tables
 
+What it is
+- How to define and evolve tables: columns, constraints, identity, collations/charsets, and ALTER operations.
+
+Why it matters
+- Table definitions drive storage, indexing, and integrity. Clear constraints yield better plans and data quality.
+
+How to use it
+- Use CREATE for initial schema, ALTER for evolution; choose identity options and constraints deliberately; see examples below.
+
 CREATE/ALTER/DROP/RECREATE TABLE parsing is implemented in `src/engine/parser_ddl.cpp`.
 
 Captured attributes in AST (`include/scratchbird/engine/ast.h`):
@@ -28,4 +37,7 @@ ALTER TABLE t ALTER COLUMN name TYPE VARCHAR(200);
 ```
 
 Code anchors: `src/engine/parser_ddl.cpp` (parse_ddl_table)
+
+See also
+- [Indexes](./ddl-indexes.md) · [Domains](./ddl-domains.md) · [Tablespaces](./ddl-tablespaces.md)
 

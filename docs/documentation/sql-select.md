@@ -1,5 +1,14 @@
 ### SELECT Queries
 
+What it is
+- The read query language: projections, sources, joins, filters, ordering, limits, and set operations.
+
+Why it matters
+- SELECT is the core of data retrieval and optimization. Understanding join parsing and set op precedence helps write predictable queries.
+
+How to use it
+- Follow the supported constructs below and use examples as templates. For plan analysis, see EXPLAIN/ANALYZE.
+
 Parsing is implemented in `src/engine/parser_select.cpp` with normalized tokens from the lexer.
 
 Supported constructs:
@@ -25,4 +34,7 @@ FETCH FIRST 10 ROWS ONLY;
 ```
 
 Code anchors: `src/engine/parser_select.cpp`
+
+See also
+- [Operators](./sql-operators.md) · [DML](./sql-dml.md) · [EXPLAIN/ANALYZE](./explain-analyze.md)
 

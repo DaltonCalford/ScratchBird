@@ -1,5 +1,14 @@
 ### DML: INSERT, UPDATE, DELETE, MERGE, UPSERT
 
+What it is
+- The data modification surface and how each statement is parsed with normalized expressions and RETURNING support.
+
+Why it matters
+- DML changes data and triggers constraints/triggers/index maintenance. Understanding each form avoids surprises (e.g., MERGE actions and guards).
+
+How to use it
+- Use the examples to structure statements; add RETURNING when you need immediate results; rely on WHERE normalization for consistent predicate handling.
+
 Parsing is implemented in `src/engine/parser_dml.cpp`. RETURNING lists are captured, WHERE expressions are normalized via the expression parser.
 
 - INSERT: `INSERT INTO t [(cols)] VALUES (...)[, ...] | DEFAULT VALUES | INSERT ... SELECT ...`
@@ -20,4 +29,7 @@ UPDATE OR INSERT INTO t (id, a) VALUES (10, 2) MATCHING (id);
 ```
 
 Code anchors: `src/engine/parser_dml.cpp`
+
+See also
+- [Operators](./sql-operators.md) · [SELECT](./sql-select.md)
 

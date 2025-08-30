@@ -1,5 +1,14 @@
 ### Reserved Words and Keywords
 
+What it is
+- The set of words recognized as keywords by the lexer (either generated table, or the fallback set in this tree).
+
+Why it matters
+- Keywords influence parsing. Knowing them helps you decide when to quote identifiers and avoid ambiguous names.
+
+How to use it
+- Prefer non-keyword identifiers; quote with "..." as needed. Consult the list below for the active fallback set.
+
 The lexer checks a generated table `include/scratchbird/engine/keywords_generated.h` (if present). In this tree, keywords fall back to a built-in set in `src/engine/lexer.cpp`.
 
 Fallback keywords (verbatim):
@@ -9,4 +18,7 @@ SELECT, FROM, WHERE, GROUP, HAVING, ORDER, BY, JOIN, LEFT, RIGHT, FULL, CROSS, N
 Identifiers: unquoted identifiers remain as typed; quoted identifiers preserve case and can include otherwise invalid characters.
 
 Code anchors: `src/engine/lexer.cpp` (kFallbackKeywords)
+
+See also
+- [Lexical](./sql-lexical.md) · [Operators](./sql-operators.md)
 

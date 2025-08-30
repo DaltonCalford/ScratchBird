@@ -1,5 +1,14 @@
 ### PSQL Runtime
 
+What it is
+- The procedural engine: variables, cursors, control flow, dynamic SQL, exceptions, and security context.
+
+Why it matters
+- Encapsulates business logic close to data; enables robust error handling and controlled privileges.
+
+How to use it
+- Start with EXECUTE BLOCK for quick scripts; evolve into PROCEDUREs/FUNCTIONs; use cursors for multi-row logic and EXECUTE STATEMENT for dynamic needs.
+
 Parsing: `src/engine/parser_psql.cpp`. Runtime: `src/engine/psql_executor.cpp`.
 
 Features:
@@ -21,4 +30,7 @@ END;
 ```
 
 Code anchors: `src/engine/parser_psql.cpp`, `src/engine/psql_executor.cpp`
+
+See also
+- [Routines & triggers](./psql-routines-and-triggers.md) · [DML](./sql-dml.md)
 

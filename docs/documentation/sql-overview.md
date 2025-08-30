@@ -1,6 +1,15 @@
 ### SQL Language Overview
 
-This guide summarizes the implemented language elements. The code is the authority; see the referenced files for exact behavior.
+What it is
+- A map of the ScratchBird language surface: which statements exist and where they are parsed/executed in the codebase.
+
+Why it matters
+- Helps users discover capabilities quickly and developers locate code anchors.
+- Clarifies where parsing vs execution responsibilities live.
+
+How to use it
+- Use this page as a hub, then jump to Core SQL, SELECT/DML, DDL families, and PSQL/Session.
+- Each detailed page includes runnable examples and See also cross-links.
 
 - Router and AST: `src/engine/parser.cpp` (routes to specific parsers)
 - SELECT: `src/engine/parser_select.cpp`
@@ -14,3 +23,8 @@ Notes on semantics vs parsing:
 - Expression parser supports operators including IN/BETWEEN/LIKE/SIMILAR/COLLATE/`::` cast; boolean evaluation currently covers AND/OR/NOT, comparisons, and IS [NOT] NULL.
 - Some admin statements are accepted and routed as SetOption stubs; execution may not be implemented in this tree.
 
+See also
+- [Lexical](./sql-lexical.md) · [Operators](./sql-operators.md) · [Reserved words](./sql-reserved-words.md) · [Data types](./sql-data-types.md)
+- [SELECT](./sql-select.md) · [DML](./sql-dml.md)
+- [Session & transaction](./session-and-transaction.md)
+- [PSQL runtime](./psql-runtime.md)

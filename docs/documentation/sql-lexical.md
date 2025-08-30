@@ -1,5 +1,15 @@
 ### Lexical Structure and Literals
 
+What it is
+- The tokenizer rules: how input splits into tokens (identifiers, numbers, strings, symbols, keywords).
+
+Why it matters
+- Understanding tokens avoids surprises in parsing (e.g., how dollar-quoted strings or charset-prefixed strings behave).
+- Diagnostics (lexer warnings) help catch issues early.
+
+How to use it
+- Use the examples below to form valid literals and symbols. When in doubt, check warnings via `lexer_warnings()` in code.
+
 Tokens and kinds are defined in `include/scratchbird/engine/lexer.h` and implemented in `src/engine/lexer.cpp`.
 
 - Token kinds: Identifier, QuotedIdentifier, Integer, Decimal, String, Date, Time, Timestamp, Uuid, Symbol, Keyword, End
@@ -16,4 +26,7 @@ Tokens and kinds are defined in `include/scratchbird/engine/lexer.h` and impleme
 Warnings: the lexer accumulates warnings (thread-local) for unknown charset tags and other recoveries.
 
 Code anchors: `src/engine/lexer.cpp` (lex(), lex_string(), lex_dollar_string(), lex_symbol())
+
+See also
+- [Operators](./sql-operators.md) · [Data types](./sql-data-types.md) · [Reserved words](./sql-reserved-words.md)
 

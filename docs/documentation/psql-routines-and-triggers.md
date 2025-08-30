@@ -1,5 +1,14 @@
 ### PSQL Routines, Packages, and Triggers
 
+What it is
+- Definitions for PROCEDURE/FUNCTION/PACKAGE/TRIGGER and how their structures are captured.
+
+Why it matters
+- Encapsulation and event-driven logic enable maintainable systems. Packages organize public/private APIs.
+
+How to use it
+- Define functions for reusable computations, procedures for actions, packages to group APIs, and triggers for row/statement events.
+
 Routines:
 - CREATE/ALTER/RECREATE PROCEDURE/FUNCTION parsed into `ast.psqlRoutine` (kind, name, params, returns, param modes, attributes, body)
 - CALL and EXECUTE PROCEDURE supported in DML parser and PSQL
@@ -21,4 +30,7 @@ CREATE TRIGGER tbi BEFORE INSERT ON t AS BEGIN /* body */ END;
 ```
 
 Code anchors: `src/engine/parser.cpp` (routing), `src/engine/parser_psql.cpp` (structure)
+
+See also
+- [PSQL runtime](./psql-runtime.md) · [DML](./sql-dml.md)
 

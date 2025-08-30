@@ -1,5 +1,14 @@
 ### DDL: Indexes
 
+What it is
+- How to define and manage indexes: unique, expressions, methods, partials, rebuild/statistics.
+
+Why it matters
+- Indexes enable performance and constraints. Choosing the right keys, methods, and orderings impacts query plans.
+
+How to use it
+- Use unique indexes for integrity and acceleration; consider expression/partial indexes for selective access patterns.
+
 Parsing for CREATE/ALTER/DROP/REINDEX/VALIDATE and method options is in `src/engine/parser_ddl.cpp`.
 
 Captured attributes in AST (`ast.ddlIndex`):
@@ -16,4 +25,7 @@ ALTER INDEX ix_t_name REBUILD;
 ```
 
 Code anchors: `src/engine/parser_ddl.cpp` (parse_ddl_index)
+
+See also
+- [Tables](./ddl-tables.md) · [SELECT](./sql-select.md)
 
