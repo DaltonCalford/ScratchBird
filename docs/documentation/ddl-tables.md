@@ -41,3 +41,51 @@ Code anchors: `src/engine/parser_ddl.cpp` (parse_ddl_table)
 See also
 - [Indexes](./ddl-indexes.md) · [Domains](./ddl-domains.md) · [Tablespaces](./ddl-tablespaces.md)
 
+Lifecycle
+- CREATE TABLE: define columns, constraints, identity, collations/charsets
+- ALTER TABLE: add/alter/drop columns; add/drop table constraints; set identity options
+- DROP TABLE: remove the table and its dependent indexes/triggers
+- RECREATE TABLE: shorthand to drop (if exists) and create anew (parsed like CREATE)
+
+Detailed ALTER operations
+- ADD COLUMN name type [NOT NULL] [DEFAULT expr]
+- ALTER COLUMN name TYPE new_type
+- ALTER COLUMN name SET/DROP NOT NULL
+- ALTER COLUMN name SET DEFAULT expr / DROP DEFAULT
+- DROP COLUMN name
+- ADD CONSTRAINT name PRIMARY KEY (cols)
+- ADD CONSTRAINT name UNIQUE (cols)
+- ADD CONSTRAINT name CHECK (expr)
+- ADD CONSTRAINT name FOREIGN KEY (cols) REFERENCES ref_table(ref_cols)
+  [ON UPDATE action] [ON DELETE action] [DEFERRABLE] [INITIALLY DEFERRED]
+- DROP CONSTRAINT name
+
+More Examples
+```sql
+-- Add a NOT NULL column with a default
+ALTER TABLE t ADD COLUMN status VARCHAR(16) DEFAULT 'new' NOT NULL;
+
+-- Rename is often represented via parser/router; when available:
+-- ALTER TABLE t RENAME COLUMN name TO full_name;  -- if supported by build
+
+-- Add a table-level CHECK and a FOREIGN KEY
+ALTER TABLE t
+  ADD CONSTRAINT chk_name CHECK (char_length(name) >= 3),
+  ADD CONSTRAINT fk_dept FOREIGN KEY (dept_id)
+    REFERENCES departments(id) ON DELETE SET NULL DEFERRABLE INITIALLY DEFERRED;
+
+-- Drop a column and a constraint
+ALTER TABLE t DROP COLUMN status;
+ALTER TABLE t DROP CONSTRAINT u;
+
+-- Drop table
+DROP TABLE t;
+
+-- Recreate table
+RECREATE TABLE t (
+  id INTEGER GENERATED ALWAYS AS IDENTITY,
+  name VARCHAR(200) NOT NULL,
+  CONSTRAINT pk PRIMARY KEY (id)
+);
+```
+
