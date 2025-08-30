@@ -165,6 +165,7 @@ add_library(
   src/engine/lock/partitioned_lock_manager.cpp
   src/engine/wire_compression.cpp
   src/engine/executor/batch_operations.cpp
+  src/engine/parallel/parallel_executor.cpp
   src/engine/tablespace_manager.cpp
   src/engine/ddl/tablespace_ddl.cpp
   src/audit/audit_engine.cpp
@@ -926,6 +927,26 @@ if(SCRATCHBIRD_BUILD_TESTS)
                                PRIVATE ${GTEST_INCLUDE_DIRS})
   endif()
   add_test(NAME batch_operations_tests COMMAND batch_operations_tests)
+
+  # Phase 11.7 Performance Infrastructure - Parallel Table Scan Tests
+  add_executable(parallel_table_scan_tests tests/parallel_table_scan_tests.cpp)
+  target_link_libraries(parallel_table_scan_tests scratchbird_engine)
+  if(GTEST_FOUND)
+    target_link_libraries(parallel_table_scan_tests ${GTEST_LIBRARIES})
+    target_include_directories(parallel_table_scan_tests
+                               PRIVATE ${GTEST_INCLUDE_DIRS})
+  endif()
+  add_test(NAME parallel_table_scan_tests COMMAND parallel_table_scan_tests)
+
+  # Phase 11.7 Performance Infrastructure - Parallel Cost Model Tests
+  add_executable(parallel_cost_model_tests tests/parallel_cost_model_tests.cpp)
+  target_link_libraries(parallel_cost_model_tests scratchbird_engine)
+  if(GTEST_FOUND)
+    target_link_libraries(parallel_cost_model_tests ${GTEST_LIBRARIES})
+    target_include_directories(parallel_cost_model_tests
+                               PRIVATE ${GTEST_INCLUDE_DIRS})
+  endif()
+  add_test(NAME parallel_cost_model_tests COMMAND parallel_cost_model_tests)
 
   # Tablespace tests (Phase 14)
   add_executable(tablespace_basic_tests tests/tablespace_basic_tests.cpp)
