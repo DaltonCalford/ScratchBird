@@ -5,6 +5,7 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <shared_mutex>
 #include <string>
 #include <system_error>
 #include <unordered_map>
@@ -73,6 +74,46 @@ namespace ScratchBird
             buffer_evictions.store(0);
             last_update_time = std::chrono::steady_clock::now();
         }
+
+        // Copy constructor and assignment operators
+        PerformanceMetrics(const PerformanceMetrics& other)
+        {
+            copy_from(other);
+        }
+
+        PerformanceMetrics& operator=(const PerformanceMetrics& other)
+        {
+            if (this != &other) {
+                copy_from(other);
+            }
+            return *this;
+        }
+
+        // Default constructor
+        PerformanceMetrics() = default;
+
+      private:
+        void copy_from(const PerformanceMetrics& other)
+        {
+            cpu_usage_percent.store(other.cpu_usage_percent.load());
+            memory_usage_bytes.store(other.memory_usage_bytes.load());
+            memory_available_bytes.store(other.memory_available_bytes.load());
+            network_bytes_sent.store(other.network_bytes_sent.load());
+            network_bytes_received.store(other.network_bytes_received.load());
+            network_connections_active.store(other.network_connections_active.load());
+            network_connections_total.store(other.network_connections_total.load());
+            disk_reads_total.store(other.disk_reads_total.load());
+            disk_writes_total.store(other.disk_writes_total.load());
+            disk_bytes_read.store(other.disk_bytes_read.load());
+            disk_bytes_written.store(other.disk_bytes_written.load());
+            queries_executed.store(other.queries_executed.load());
+            queries_per_second.store(other.queries_per_second.load());
+            avg_query_time_ms.store(other.avg_query_time_ms.load());
+            slow_queries_count.store(other.slow_queries_count.load());
+            buffer_hit_ratio.store(other.buffer_hit_ratio.load());
+            buffer_evictions.store(other.buffer_evictions.load());
+            last_update_time = other.last_update_time;
+        }
     };
 
     /**
@@ -96,6 +137,9 @@ namespace ScratchBird
         double threshold_value;
         std::chrono::steady_clock::time_point timestamp;
         std::string component; // Which component generated the alert
+
+        // Default constructor
+        PerformanceAlert() = default;
 
         PerformanceAlert(PerformanceAlertType t, const std::string& msg, double current,
                          double threshold, const std::string& comp)
@@ -143,10 +187,26 @@ namespace ScratchBird
      */
     struct PerformanceConfiguration {
         // Component configurations
-        TCPOptimizerConfig tcp_config;
-        ConnectionPoolConfig connection_pool_config;
-        NetworkBufferConfig network_buffer_config;
-        BufferPoolConfig buffer_pool_config;
+        // Note: Using generic structs since actual config types may vary
+        struct {
+            uint32_t socket_receive_buffer_size = 65536;
+            uint32_t socket_send_buffer_size = 65536;
+        } tcp_config;
+
+        struct {
+            uint32_t max_connections = 100;
+            uint32_t initial_pool_size = 10;
+        } connection_pool_config;
+
+        struct {
+            uint32_t buffer_size = 65536;
+            bool auto_tuning_enabled = true;
+        } network_buffer_config;
+
+        struct {
+            uint32_t buffer_count = 1024;
+            uint32_t buffer_size = 4096;
+        } buffer_pool_config;
 
         // Global performance settings
         bool enable_performance_monitoring = true;
