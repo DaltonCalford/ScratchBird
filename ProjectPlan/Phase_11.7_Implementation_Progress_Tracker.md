@@ -905,7 +905,7 @@ git push github main
 
 **Detailed Subtasks:**
 
-- [ ] **3.1.1** Design parallel execution architecture
+- [x] **3.1.1** Design parallel execution architecture
 
   - **File**: `include/scratchbird/engine/parallel_executor.h` (new)
   - **Worker Management**: Thread pool for parallel workers
@@ -913,14 +913,14 @@ git push github main
   - **Result Coordination**: Gather and merge parallel results
   - **Acceptance Criteria**: Scalable parallel execution framework
 
-- [ ] **3.1.2** Implement parallel table scan
+- [x] **3.1.2** Implement parallel table scan
 
   - **Partitioning Strategy**: Block-range partitioning for table scans
   - **Worker Coordination**: Work-stealing for load balancing
   - **Result Merging**: Efficient result set combination
   - **Acceptance Criteria**: Linear speedup for large table scans
 
-- [ ] **3.1.3** Add cost-based parallelization decisions
+- [x] **3.1.3** Add cost-based parallelization decisions
 
   - **Cost Model**: CPU vs I/O cost analysis for parallel decisions
   - **Threshold Configuration**: Minimum table size for parallelization
