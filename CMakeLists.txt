@@ -164,6 +164,7 @@ add_library(
   src/engine/lock/fast_path_lock.cpp
   src/engine/lock/partitioned_lock_manager.cpp
   src/engine/wire_compression.cpp
+  src/engine/executor/batch_operations.cpp
   src/engine/tablespace_manager.cpp
   src/engine/ddl/tablespace_ddl.cpp
   src/audit/audit_engine.cpp
@@ -915,6 +916,16 @@ if(SCRATCHBIRD_BUILD_TESTS)
                                PRIVATE ${GTEST_INCLUDE_DIRS})
   endif()
   add_test(NAME wire_compression_tests COMMAND wire_compression_tests)
+
+  # Phase 2.6: Batch Operations Engine Tests
+  add_executable(batch_operations_tests tests/batch_operations_tests.cpp)
+  target_link_libraries(batch_operations_tests scratchbird_engine)
+  if(GTEST_FOUND)
+    target_link_libraries(batch_operations_tests ${GTEST_LIBRARIES})
+    target_include_directories(batch_operations_tests
+                               PRIVATE ${GTEST_INCLUDE_DIRS})
+  endif()
+  add_test(NAME batch_operations_tests COMMAND batch_operations_tests)
 
   # Tablespace tests (Phase 14)
   add_executable(tablespace_basic_tests tests/tablespace_basic_tests.cpp)
