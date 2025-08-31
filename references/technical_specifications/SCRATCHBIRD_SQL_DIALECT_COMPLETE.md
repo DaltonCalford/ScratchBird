@@ -26,6 +26,10 @@ This document defines the complete SQL dialect supported by ScratchBird, serving
 - Keywords only reserved where ambiguous
 - Automatic statement termination detection
 - Intelligent identifier resolution
+- **Precise error reporting with visual indicators** (see PARSER_ERROR_REPORTING_AND_COMMENTS.md)
+- Shows exact location of syntax errors with context
+- Multiple error detection in single pass
+- Helpful hints and suggestions for fixes
 
 ### Case Sensitivity
 - **Identifiers**: Case-preserving, case-insensitive (MSSQL style)
@@ -39,6 +43,13 @@ This document defines the complete SQL dialect supported by ScratchBird, serving
    comment */
 // C-style comment (supported)
 ```
+
+**Intelligent Comment Management** (MSSQL-style):
+- Comments before DDL automatically become object documentation
+- Comments before columns become column comments
+- JavaDoc-style comments parsed for metadata
+- Comments preserved through schema changes
+- See PARSER_ERROR_REPORTING_AND_COMMENTS.md for details
 
 ---
 
