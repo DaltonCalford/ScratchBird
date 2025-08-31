@@ -1,5 +1,10 @@
 # Build System and Directory Structure
 
+## ⚠️ MANDATORY REFERENCE
+**BEFORE ANY IMPLEMENTATION**: You MUST read `/workspace/references/CODING_AND_BUILD_STANDARDS.md`
+
+**AI DEVELOPERS**: Start every session by confirming you have read the coding standards.
+
 ## Directory Layout
 ```
 /workspace/
