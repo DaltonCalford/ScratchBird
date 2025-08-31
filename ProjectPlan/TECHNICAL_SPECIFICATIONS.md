@@ -22,15 +22,33 @@ Offset  Size  Field
 
 ### Page Types
 ```
-0x01  DATA_PAGE      - Heap tuple data
-0x02  INDEX_LEAF     - B-tree leaf page
-0x03  INDEX_INTERNAL - B-tree internal page
-0x04  BLOB_PAGE      - Large object data
-0x05  TIP_PAGE       - Transaction Inventory Page
-0x06  PIP_PAGE       - Page Inventory Page  
-0x07  SCN_PAGE       - System Change Number page
-0x08  ROOT_PAGE      - Database root page
-0x09  HEADER_PAGE    - Segment header page
+0x01  DATA_PAGE         - Heap tuple data
+0x02  BTREE_LEAF        - B-tree leaf page
+0x03  BTREE_INTERNAL    - B-tree internal page
+0x04  BLOB_PAGE         - Large object data
+0x05  TIP_PAGE          - Transaction Inventory Page
+0x06  PIP_PAGE          - Page Inventory Page  
+0x07  SCN_PAGE          - System Change Number page
+0x08  ROOT_PAGE         - Database root page
+0x09  HEADER_PAGE       - Segment header page
+0x0A  HASH_BUCKET       - Hash index bucket page
+0x0B  HASH_OVERFLOW     - Hash index overflow page
+0x0C  HASH_BITMAP       - Hash index bitmap page
+0x0D  BITMAP_PAGE       - Bitmap index page
+0x0E  BITMAP_META       - Bitmap index metadata
+0x0F  GIN_DATA          - GIN posting list page
+0x10  GIN_ENTRY         - GIN entry tree page
+0x11  GIN_META          - GIN metadata page
+0x12  RTREE_NODE        - R-tree node (internal/leaf)
+0x13  RTREE_META        - R-tree metadata page
+0x14  LSM_L0            - LSM tree level 0 (memtable flush)
+0x15  LSM_LN            - LSM tree level N (compacted)
+0x16  LSM_META          - LSM metadata page
+0x17  COLUMN_DATA       - Columnstore data page
+0x18  COLUMN_META       - Columnstore metadata
+0x19  COLUMN_DICT       - Columnstore dictionary
+0x1A  TTL_INDEX         - TTL index page
+0x1B  TTL_META          - TTL metadata page
 ```
 
 ### Data Page Layout
@@ -57,17 +75,109 @@ Offset  Size  Field
 22      2     Null bitmap offset (0 if no nulls)
 ```
 
-### Index Page Layout (B-tree)
+### B-tree Index Page Layout
 ```
 [Page Header - 64 bytes]
-[Index Page Special - 16 bytes]
+[B-tree Special - 16 bytes]
   - High key offset
   - Number of items
   - Level (0 = leaf)
-  - Flags
+  - Flags (LEAF, ROOT, DELETED, HAS_GARBAGE)
 [Item ID Array - grows down]
 [Free Space]
 [Index Tuples - grows up]
+```
+
+### Hash Index Page Layout
+```
+HASH_BUCKET page:
+[Page Header - 64 bytes]
+[Hash Special - 16 bytes]
+  - Bucket number
+  - Hash function version
+  - Max bucket
+  - High mask
+  - Low mask
+[Hash Items - fixed size slots]
+[Overflow pointer if needed]
+
+HASH_OVERFLOW page:
+[Page Header - 64 bytes]
+[Overflow chain pointer]
+[Hash Items continued]
+```
+
+### Bitmap Index Page Layout
+```
+BITMAP_PAGE:
+[Page Header - 64 bytes]
+[Bitmap Header - 32 bytes]
+  - Start row ID
+  - End row ID
+  - Compression type
+  - Word size
+[Compressed bitmap data]
+
+BITMAP_META:
+[Page Header - 64 bytes]
+[Number of distinct values]
+[Value-to-bitmap mappings]
+```
+
+### GIN Index Page Layout
+```
+GIN_ENTRY page (B-tree of unique values):
+[Page Header - 64 bytes]
+[Entry tree items]
+[Pointers to posting lists]
+
+GIN_DATA page (posting lists):
+[Page Header - 64 bytes]
+[Compressed TID lists]
+[Continuation pointers]
+```
+
+### R-tree Index Page Layout  
+```
+RTREE_NODE:
+[Page Header - 64 bytes]
+[R-tree Special - 32 bytes]
+  - Level (0 = leaf)
+  - Number of entries
+[Entries - each contains:]
+  - MBR (Minimum Bounding Rectangle)
+  - Child pointer or TID
+```
+
+### LSM Tree Page Layout
+```
+LSM_L0 (hot - uncompressed):
+[Page Header - 64 bytes]
+[Sorted key-value pairs]
+[Bloom filter]
+
+LSM_LN (cold - compressed):
+[Page Header - 64 bytes]
+[Compression metadata]
+[Block index]
+[Compressed blocks]
+```
+
+### Columnstore Page Layout
+```
+COLUMN_DATA:
+[Page Header - 64 bytes]
+[Column Special - 16 bytes]
+  - Column ID
+  - Compression type
+  - Min/max values
+  - Null count
+[Compressed column values]
+
+COLUMN_DICT:
+[Page Header - 64 bytes]
+[Dictionary entries]
+[Value IDs mapping]
 ```
 
 ### BLOB Page Layout
@@ -80,6 +190,58 @@ Offset  Size  Field
   - Compression type
 [BLOB Data]
 ```
+
+## Index Type Selection Guidelines
+
+### When to Use Each Index Type
+
+**B-tree** (Default):
+- General purpose, sorted access
+- Range queries, ORDER BY
+- Unique constraints
+- Primary keys
+
+**Hash**:
+- Equality lookups only (=)
+- No range support
+- Very fast for point queries
+- Fixed bucket count (rebuild to resize)
+
+**Bitmap**:
+- Low cardinality columns (<1000 distinct values)
+- Data warehouse workloads
+- Multiple bitmap indexes can be combined
+- Excellent compression
+
+**GIN** (Generalized Inverted Index):
+- Full-text search
+- Array contains operations
+- JSON/JSONB queries
+- Multi-valued attributes
+
+**R-tree**:
+- Spatial data (points, lines, polygons)
+- Geographic queries
+- Multidimensional ranges
+- Nearest neighbor searches
+
+**LSM** (Log-Structured Merge):
+- Write-heavy workloads
+- Time-series data
+- Append-mostly tables
+- Can sacrifice some read performance
+
+**Columnstore**:
+- Analytics queries
+- Aggregations over few columns
+- Compression benefits
+- Not for OLTP
+
+**TTL** (Time-To-Live):
+- Automatic data expiration
+- Session data
+- Temporary caches
+- Compliance (data retention)
 
 ## File Organization
 
