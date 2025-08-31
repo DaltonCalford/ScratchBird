@@ -1,282 +1,309 @@
-# ScratchBird Architecture Goals
+# ScratchBird Architecture Goals V2
+## Building the Ultimate Data Platform
 
-## Core Design Principles
+## Core Architectural Principles
 
-### 1. Embedded Engine as Foundation
+### 1. Universal Compatibility
+**Goal**: Any client, any protocol, zero changes required
+
+- **Multi-Protocol Native**: Clients connect using their native protocols
+- **Transparent Translation**: Y-Valve routes to appropriate parser
+- **Perfect Emulation**: Clients can't tell it's not their native database
+- **Zero Migration Cost**: Applications work without modification
+
+### 2. Layered Architecture with Clean Separation
+
 ```
-┌─────────────────────────────────────┐
-│         Applications                 │
-├─────────────────────────────────────┤
-│    Embedded ScratchBird Engine      │ ← Core (Phases 1-16)
-│         (MGA + WAL)                 │
-└─────────────────────────────────────┘
-```
-
-The embedded engine is the heart - fully functional database without any network layer.
-
-### 2. Server as Engine Consumer
-```
-┌─────────────────────────────────────┐
-│      Network Server Layer           │ ← Server (Phase 17+)
-├─────────────────────────────────────┤
-│    Embedded ScratchBird Engine      │ ← Reused, not reimplemented
-└─────────────────────────────────────┘
-```
-
-Server doesn't reimplement database logic - it wraps the embedded engine.
-
-### 3. Modular Server Architecture
-```
-┌─────────────────────────────────────┐
-│     Cluster Coordination Layer      │ ← Optional
-├─────────────────────────────────────┤
-│      Replication Layer              │ ← Optional
-├─────────────────────────────────────┤
-│      Cache Coherency Layer          │ ← Optional
-├─────────────────────────────────────┤
-│      Basic Network Server           │ ← Minimal
-├─────────────────────────────────────┤
-│    Embedded ScratchBird Engine      │ ← Always present
-└─────────────────────────────────────┘
+Application Layer    → Client applications (unchanged)
+Protocol Layer      → PostgreSQL, MySQL, MSSQL, Firebird wire protocols
+Cache Layer        → Result cache, BLR cache
+Pool Layer         → Connection pooling (dedicated layer)
+Router Layer       → Y-Valve (dialect detection and routing)
+Parser Layer       → Pluggable parsers (SQL, Python, GraphQL)
+BLR Layer         → Binary Language Representation (universal IR)
+Engine Layer      → Execution engine (MGA-based)
+Buffer Layer      → Intelligent buffer management (Direct I/O)
+Storage Layer     → Multi-tablespace, federated storage
 ```
 
-Each layer adds capabilities without modifying lower layers.
+### 3. BLR as Universal Intermediate Representation
 
-### 4. Multi-Protocol Listeners
-```
-     MySQL Client    PostgreSQL Client    MSSQL Client
-           ↓               ↓                  ↓
-    [MySQL Listener] [PG Listener]    [TDS Listener]
-           ↓               ↓                  ↓
-    ┌──────────────────────────────────────────┐
-    │            Y-Valve Router                │
-    └──────────────────────────────────────────┘
-                       ↓
-              Embedded Engine
-```
+**Concept**: Like Java bytecode or .NET IL for databases
 
-Each listener speaks native wire protocol of its database type.
+- **Parse Once**: SQL → BLR conversion happens once
+- **Execute Many**: BLR stored in procedures/triggers
+- **Language Agnostic**: Any language can compile to BLR
+- **Optimized**: BLR is pre-optimized for execution
 
-### 5. Y-Valve Translation Layer
-```cpp
-class YValve {
-    // Detect client type from initial handshake
-    ClientType detect_client(socket);
-    
-    // Create appropriate translator
-    unique_ptr<Translator> create_translator(ClientType type) {
-        switch(type) {
-            case MySQL: return make_unique<MySQLTranslator>();
-            case PostgreSQL: return make_unique<PGTranslator>();
-            case MSSQL: return make_unique<TDSTranslator>();
-            case Firebird: return make_unique<NativeTranslator>();
-        }
-    }
-    
-    // Route to engine with translation
-    Result execute(ClientRequest req) {
-        auto translator = translators[connection_id];
-        auto native_query = translator->to_native(req);
-        auto result = engine->execute(native_query);
-        return translator->from_native(result);
-    }
-};
+Benefits:
+- No re-parsing stored procedures
+- Cache compiled queries
+- Support multiple query languages
+- Consistent execution model
+
+### 4. MGA (Multi-Generational Architecture) Core
+
+**Firebird's Brilliant Design**:
+- **Lock-Free Reads**: Readers never block writers
+- **Version Chains**: Each transaction sees consistent snapshot
+- **Natural MVCC**: No separate MVCC bolt-on
+- **Garbage Collection**: Automatic old version cleanup
+
+**WAL as Secondary**:
+- WAL for durability only, not for MVCC
+- Reduces write amplification
+- Simpler recovery model
+
+### 5. Federation as First-Class Feature
+
+**Not Just Replication, But True Federation**:
+
+```sql
+-- Transparent cross-database queries
+SELECT c.name, o.total, p.status
+FROM mysql_server.customers c
+JOIN oracle_server.orders o ON c.id = o.customer_id
+JOIN postgres_server.payments p ON o.id = p.order_id
+WHERE c.region = 'US';
 ```
 
-### 6. Universal Type System
-```cpp
-// Core types support all database variants
-enum UniversalType {
-    // Numeric
-    TINYINT,     // MySQL/MSSQL
-    SMALLINT,    // All
-    INTEGER,     // All
-    BIGINT,      // All
-    DECIMAL,     // All (with precision/scale)
-    REAL,        // All
-    DOUBLE,      // All
-    
-    // String
-    CHAR,        // All (with length)
-    VARCHAR,     // All (with length)
-    TEXT,        // PostgreSQL/MySQL
-    NVARCHAR,    // MSSQL
-    BLOB,        // All
-    
-    // Temporal
-    DATE,        // All
-    TIME,        // All
-    TIMESTAMP,   // All
-    DATETIME,    // MySQL/MSSQL
-    DATETIME2,   // MSSQL
-    
-    // Special
-    UUID,        // PostgreSQL/MSSQL
-    JSON,        // PostgreSQL/MySQL
-    JSONB,       // PostgreSQL
-    XML,         // MSSQL/PostgreSQL
-    ARRAY,       // PostgreSQL
-    
-    // ... complete mapping
-};
+**Push Computation to Data**:
+- Send predicates to remote systems
+- Minimize network traffic
+- Optimal join strategies
+
+### 6. Intelligent Storage Tiering
+
+**Database-Aware Storage Management**:
+
+```sql
+-- Hot data on NVMe
+CREATE INDEX hot_idx ON orders(order_date) TABLESPACE fast_nvme;
+
+-- Warm data on SSD
+CREATE TABLE recent_orders TABLESPACE standard_ssd;
+
+-- Cold data on HDD
+CREATE TABLE archived_orders TABLESPACE slow_hdd;
+
+-- Frozen data on S3
+CREATE TABLE historical_data TABLESPACE s3_glacier;
 ```
 
-### 7. UUID-Based Schema System
-```cpp
-struct SchemaObject {
-    UUID object_id;           // Immutable identifier
-    string current_name;      // Can change
-    UUID parent_namespace;    // Hierarchical
-    ObjectType type;         // Table, View, Procedure, etc.
-};
+**Automatic Tiering**:
+- Move data based on access patterns
+- Compress cold data automatically
+- Transparent to queries
 
-// BLR references UUIDs, not names
-struct BLRInstruction {
-    OpCode op;
-    UUID target_object;  // Not affected by renames
-};
+### 7. Context-Aware Parsing Revolution
 
-// Mount remote schemas at any point
-class SchemaManager {
-    void mount_remote(UUID mount_point, RemoteSchema schema) {
-        // Remote MySQL database appears as schema branch
-        namespaces[mount_point].add_child(schema);
-    }
-    
-    // Client sees only their namespace
-    Namespace get_client_view(ClientType type, UUID root) {
-        // MySQL client sees MySQL-compatible schema
-        // PostgreSQL client sees PG-compatible schema
-        return filter_namespace(root, type);
-    }
-};
+**Minimal Reserved Words** (~10 vs ~200):
+- Keywords determined by position
+- `CREATE TABLE select (from INTEGER)` is valid!
+- Automatic statement completion
+- Intelligent error recovery
+
+**Benefits**:
+- No reserved word conflicts
+- Natural SQL writing
+- Better error messages
+- Future-proof
+
+### 8. Event-Driven Architecture Built-In
+
+**Real-Time Reactive Capabilities**:
+
+```sql
+-- Database posts events
+CREATE TRIGGER notify_order
+AFTER INSERT ON orders
+BEGIN
+    POST_EVENT 'new_order' WITH NEW.order_id;
+END;
 ```
 
-### 8. Plugin Architecture for Remote Engines
-```cpp
-class RemoteEnginePlugin {
-    virtual Connection connect(ConnectionString) = 0;
-    virtual Result execute(Query) = 0;
-    virtual Schema discover_schema() = 0;
-};
-
-class MySQLPlugin : public RemoteEnginePlugin {
-    // Connect to real MySQL and federate queries
-};
-
-class PostgreSQLPlugin : public RemoteEnginePlugin {
-    // Connect to real PostgreSQL
-};
-
-// Federation through plugins
-class FederationEngine {
-    Result execute_federated(Query q) {
-        if (q.touches_remote_table()) {
-            auto remote = plugins[q.remote_engine];
-            auto remote_result = remote->execute(q.remote_part);
-            return merge_results(local_result, remote_result);
-        }
-    }
-};
+```python
+# Applications react immediately
+async for event in db.events(['new_order']):
+    await process_order(event.payload)
 ```
 
-## Implementation Phases Restructured
+### 9. Advanced Trigger System
 
-### Foundation Phases (1-10): Embedded Engine Core
-- Pure embedded database
-- No network code
-- MGA architecture
-- Basic SQL
+**Deterministic Execution**:
+- Position-based ordering (not alphabetical)
+- Database-level triggers (ON CONNECT, ON TRANSACTION)
+- SELECT triggers for read auditing
+- Active/inactive states
 
-### Extension Phases (11-16): Advanced Embedded Features
-- Indexing, constraints, optimization
-- Still pure embedded
-- WAL for durability
-- Complete embedded engine
+### 10. Direct I/O Buffer Management
 
-### Server Foundation (17-19): Basic Network Server
-- Y-Valve framework
-- Native Firebird protocol
-- Single listener
-- Wraps embedded engine
+**Eliminate OS Cache Problems**:
+- OS doesn't understand database pages
+- Double buffering wastes memory
+- Direct I/O with O_DIRECT
+- Shared buffer pool (SuperServer style)
 
-### Multi-Protocol Support (20-23): Protocol Adapters
-- MySQL wire protocol listener
-- PostgreSQL wire protocol listener
-- TDS (MSSQL) protocol listener
-- Protocol translation layers
+**Intelligent Page Management**:
+- Never evict index root pages
+- Prefer evicting garbage pages
+- Understand page importance
 
-### Universal Features (24-27): Cross-Database Support
-- Universal type system
-- Dialect-specific parsers
-- Function/operator translation
-- Compatibility modes
+### 11. Resource Governance
 
-### UUID Schema System (28-30): Advanced Schema Management
-- UUID-based object identification
-- Hierarchical namespaces
-- Schema mounting
-- Rename without invalidation
+**Opt-In Monitoring** (Zero overhead when disabled):
+- Detailed resource tracking when needed
+- Memory, CPU, I/O limits
+- Query timeouts
+- Comprehensive reporting
 
-### Federation (31-33): Remote Engine Plugins
-- Plugin framework
-- MySQL federation plugin
-- PostgreSQL federation plugin
-- Distributed query execution
+### 12. Removing Middle Tiers
 
-### Clustering (34-36): Scale-Out
-- Cluster coordination
-- Distributed transactions
-- Cache coherency
-- Load balancing
+**Database as Application Platform**:
 
-## Key Architectural Decisions
+```sql
+CREATE PROCEDURE process_order(
+    customer_id INTEGER,
+    items JSON
+) AS BEGIN
+    -- Full business logic in database
+    -- Validation
+    -- Inventory check
+    -- Payment processing
+    -- Order creation
+    -- Event posting
+    RETURN json_result;
+END;
+```
 
-### 1. Embedded First
-- Server is optional
-- All features work embedded
-- Simplifies testing
-- Enables edge deployments
+**Benefits**:
+- Fewer moving parts
+- Lower latency
+- Simpler deployment
+- Consistent transactions
 
-### 2. Protocol Compatibility, Not Emulation
-- Speak native protocols
-- Translate to MGA model
-- Maintain Firebird advantages
-- No read locks even for MySQL clients
+## Architectural Innovations
 
-### 3. UUID Everywhere
-- Objects identified by UUID
-- Names are just labels
-- Enables seamless federation
-- Supports multiple name views
+### 1. Plugin Everything
+- **Parsers**: Add new query languages
+- **Protocols**: Add new wire protocols
+- **Storage**: Add new storage engines
+- **Auth**: Add new authentication methods
 
-### 4. Plugin-Based Federation
-- Don't reimplement other engines
-- Connect to real instances
-- Federate at query level
-- Maintain transactional semantics
+### 2. Zero-Copy Operations
+- Direct I/O for disk
+- Sendfile for network
+- Memory-mapped files where appropriate
+- Ring buffers for streaming
 
-## Benefits of This Architecture
+### 3. Adaptive Optimization
+- Learn from execution history
+- Adjust plans based on actual vs estimated
+- Cache invalidation based on statistics
+- Automatic index recommendations
 
-1. **Universal Drop-In Replacement**: Applications think they're talking to their native database
-2. **Best of All Worlds**: MGA's lock-free reads with compatibility for lock-based clients
-3. **Seamless Migration**: Can federate with existing databases during migration
-4. **Multi-Tenant Friendly**: Different tenants can use different SQL dialects
-5. **Future-Proof**: New database protocols can be added as plugins
+### 4. Distributed First Design
+- Every operation cluster-aware
+- Cost models include network latency
+- Automatic sharding
+- Tunable consistency per table
 
-## Challenges to Address
+## Non-Negotiable Requirements
 
-1. **Semantic Differences**: MySQL's AUTO_INCREMENT vs PostgreSQL's SERIAL vs MSSQL's IDENTITY
-2. **Transaction Models**: How to present MGA to clients expecting locks
-3. **Feature Gaps**: Database-specific features (e.g., PostgreSQL's LISTEN/NOTIFY)
-4. **Performance**: Translation overhead must be minimal
-5. **Testing**: Each protocol needs comprehensive compatibility testing
+### 1. Embedded Operation
+- Must work without server
+- Direct library access
+- Zero configuration
+- Single file database
+
+### 2. Backward Compatibility
+- Never break existing applications
+- Support old protocol versions
+- Maintain upgrade paths
+- Document all changes
+
+### 3. Production Quality
+- Comprehensive testing
+- Extensive documentation
+- Performance benchmarks
+- Security audits
+
+### 4. Open Architecture
+- Well-documented APIs
+- Plugin development guides
+- Extension points everywhere
+- Community-friendly
 
 ## Success Criteria
 
-- MySQL application connects and runs without modification
-- PostgreSQL application connects and runs without modification  
-- MSSQL application connects and runs without modification
-- Performance within 10% of native databases
-- Can federate queries across different database types
-- Maintains MGA advantages (no read locks) regardless of client type
+### Technical Excellence
+- **Performance**: Match or exceed native databases
+- **Compatibility**: Pass MySQL/PostgreSQL test suites
+- **Reliability**: 99.999% uptime capability
+- **Security**: Pass security audits
+
+### Developer Experience
+- **Simple**: 5-minute quickstart
+- **Powerful**: Handle complex use cases
+- **Flexible**: Adapt to any requirement
+- **Documented**: Comprehensive guides
+
+### Operational Excellence
+- **Observable**: Metrics, logs, traces
+- **Manageable**: Simple administration
+- **Scalable**: Single node to global cluster
+- **Maintainable**: Clear upgrade paths
+
+## Architecture Anti-Patterns to Avoid
+
+### 1. ❌ Monolithic Design
+- ✅ Instead: Modular, pluggable components
+
+### 2. ❌ Protocol-Specific Assumptions
+- ✅ Instead: Protocol-agnostic core
+
+### 3. ❌ Fixed Storage Model
+- ✅ Instead: Pluggable storage engines
+
+### 4. ❌ Centralized Coordination
+- ✅ Instead: Distributed consensus
+
+### 5. ❌ Synchronous Everything
+- ✅ Instead: Async where possible
+
+### 6. ❌ All-or-Nothing Features
+- ✅ Instead: Incremental, optional features
+
+## Long-Term Vision
+
+### Phase 1: Foundation (Current)
+- Single-node excellence
+- Multi-protocol support
+- Federation basics
+
+### Phase 2: Scale (Next)
+- Distributed clusters
+- Global secondary indexes
+- Cross-region replication
+
+### Phase 3: Intelligence (Future)
+- ML-driven optimization
+- Automatic tuning
+- Predictive caching
+
+### Phase 4: Beyond Relational
+- Graph capabilities
+- Time-series optimization
+- Document store features
+- Vector embeddings
+
+## Conclusion
+
+ScratchBird's architecture represents a fundamental rethinking of database design:
+
+- **Not constrained by SQL**: BLR enables any language
+- **Not limited to one protocol**: Speak all dialects
+- **Not bound to local data**: Federate everything
+- **Not just storage**: Complete data platform
+
+By combining proven concepts (MGA from Firebird, FDW from PostgreSQL) with revolutionary features (context-aware parsing, event system), ScratchBird will define the next generation of data platforms.
