@@ -18,6 +18,7 @@ set(TEST_CATEGORIES
     performance
     tools
     integration
+    phases  # Project plan phase-specific tests
 )
 
 # Create test executable for each category
