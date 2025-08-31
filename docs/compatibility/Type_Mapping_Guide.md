@@ -11,10 +11,13 @@ ScratchBird uses a universal type system that maps to all supported databases.
 | ScratchBird | PostgreSQL | MySQL | MSSQL | Firebird | Range |
 |-------------|------------|-------|-------|----------|-------|
 | INT8 | - | TINYINT | tinyint | - | -128 to 127 |
-| UINT8 | - | TINYINT UNSIGNED | - | - | 0 to 255 |
+| UINT8 | uint8 (domain) | TINYINT UNSIGNED | uint8 (domain) | UINT8 (domain) | 0 to 255 |
 | INT16 | smallint | SMALLINT | smallint | SMALLINT | -32,768 to 32,767 |
+| UINT16 | uint16 (domain) | SMALLINT UNSIGNED | uint16 (domain) | UINT16 (domain) | 0 to 65,535 |
 | INT32 | integer | INT | int | INTEGER | -2^31 to 2^31-1 |
+| UINT32 | uint32 (domain) | INT UNSIGNED | uint32 (domain) | UINT32 (domain) | 0 to 2^32-1 |
 | INT64 | bigint | BIGINT | bigint | BIGINT | -2^63 to 2^63-1 |
+| UINT64 | uint64 (domain) | BIGINT UNSIGNED | uint64 (domain) | UINT64 (domain) | 0 to 2^64-1 |
 
 ### Conversion Rules
 ```cpp
