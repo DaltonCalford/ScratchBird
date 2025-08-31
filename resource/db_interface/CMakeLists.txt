@@ -21,6 +21,9 @@ option(ENABLE_MYSQL "Enable MySQL support" ON)
 option(ENABLE_MARIADB "Enable MariaDB support" ON)
 option(ENABLE_POSTGRESQL "Enable PostgreSQL support" ON)
 option(ENABLE_MSSQL "Enable Microsoft SQL Server support" ON)
+option(ENABLE_FIREBIRD "Enable Firebird SQL support" ON)
+option(ENABLE_ODBC "Enable generic ODBC support" ON)
+option(ENABLE_JDBC "Enable JDBC via JNI support" ON)
 option(BUILD_EXAMPLES "Build example programs" ON)
 option(BUILD_TESTS "Build unit tests" OFF)
 
@@ -115,6 +118,62 @@ if(ENABLE_MSSQL)
     endif()
 endif()
 
+if(ENABLE_FIREBIRD)
+    # Find Firebird
+    find_path(FIREBIRD_INCLUDE_DIR ibase.h
+        PATHS /usr/include /usr/include/firebird /opt/firebird/include
+        PATH_SUFFIXES firebird)
+    
+    find_library(FIREBIRD_LIBRARY
+        NAMES fbclient fbembed
+        PATHS /usr/lib /usr/lib/x86_64-linux-gnu /opt/firebird/lib)
+    
+    if(FIREBIRD_INCLUDE_DIR AND FIREBIRD_LIBRARY)
+        set(FIREBIRD_FOUND TRUE)
+        message(STATUS "Found Firebird: ${FIREBIRD_LIBRARY}")
+    endif()
+    
+    # Try to find IBPP
+    find_path(IBPP_INCLUDE_DIR ibpp.h
+        PATHS /usr/include /usr/local/include ${CMAKE_CURRENT_SOURCE_DIR}/ibpp)
+    
+    if(IBPP_INCLUDE_DIR)
+        set(IBPP_FOUND TRUE)
+        message(STATUS "Found IBPP: ${IBPP_INCLUDE_DIR}")
+    endif()
+endif()
+
+# ODBC is already handled above for MSSQL, but ensure it's available generically
+if(ENABLE_ODBC AND NOT ODBC_FOUND)
+    if(WIN32)
+        set(ODBC_FOUND TRUE)
+        set(ODBC_LIBRARIES odbc32 odbccp32)
+        message(STATUS "Using Windows ODBC")
+    else()
+        find_path(ODBC_INCLUDE_DIR sql.h
+            PATHS /usr/include /usr/local/include
+            PATH_SUFFIXES odbc iodbc)
+        
+        find_library(ODBC_LIBRARY
+            NAMES odbc iodbc unixodbc
+            PATHS /usr/lib /usr/local/lib)
+        
+        if(ODBC_INCLUDE_DIR AND ODBC_LIBRARY)
+            set(ODBC_FOUND TRUE)
+            set(ODBC_LIBRARIES ${ODBC_LIBRARY})
+            message(STATUS "Found ODBC: ${ODBC_LIBRARY}")
+        endif()
+    endif()
+endif()
+
+if(ENABLE_JDBC)
+    # Find JNI
+    find_package(JNI)
+    if(JNI_FOUND)
+        message(STATUS "Found JNI: ${JNI_LIBRARIES}")
+        message(STATUS "JNI Include Dirs: ${JNI_INCLUDE_DIRS}")
+    endif()
+endif()
 # Create interface library for database support
 add_library(dbinterface INTERFACE)
 
@@ -163,6 +222,22 @@ if(FREETDS_FOUND)
     target_include_directories(dbinterface INTERFACE ${FREETDS_INCLUDE_DIR})
 endif()
 
+if(FIREBIRD_FOUND)
+    target_compile_definitions(dbinterface INTERFACE HAS_FIREBIRD)
+    target_link_libraries(dbinterface INTERFACE ${FIREBIRD_LIBRARY})
+    target_include_directories(dbinterface INTERFACE ${FIREBIRD_INCLUDE_DIR})
+    
+    if(IBPP_FOUND)
+        target_compile_definitions(dbinterface INTERFACE HAS_IBPP)
+        target_include_directories(dbinterface INTERFACE ${IBPP_INCLUDE_DIR})
+    endif()
+endif()
+
+if(JNI_FOUND)
+    target_compile_definitions(dbinterface INTERFACE HAS_JDBC_JNI)
+    target_link_libraries(dbinterface INTERFACE ${JNI_LIBRARIES})
+    target_include_directories(dbinterface INTERFACE ${JNI_INCLUDE_DIRS})
+endif()
 # Build examples
 if(BUILD_EXAMPLES)
     add_subdirectory(examples)
@@ -227,6 +302,9 @@ message(STATUS "  MySQL/MariaDB: ${MARIADB_FOUND}${MYSQL_FOUND}")
 message(STATUS "  PostgreSQL: ${PostgreSQL_FOUND} (libpqxx: ${PQXX_FOUND})")
 message(STATUS "  MSSQL (ODBC): ${ODBC_FOUND}")
 message(STATUS "  MSSQL (FreeTDS): ${FREETDS_FOUND}")
+message(STATUS "  Firebird: ${FIREBIRD_FOUND} (IBPP: ${IBPP_FOUND})")
+message(STATUS "  Generic ODBC: ${ODBC_FOUND}")
+message(STATUS "  JDBC/JNI: ${JNI_FOUND}")
 message(STATUS "")
 message(STATUS "Options:")
 message(STATUS "  Build Examples: ${BUILD_EXAMPLES}")
