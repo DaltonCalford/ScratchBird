@@ -1,0 +1,362 @@
+# ScratchBird Replication and Shadow Database Specifications
+
+## Shadow Database (Physical/Block-Level Replication)
+
+### Overview
+Shadow databases are **exact physical copies** maintained through page-level replication. They provide near-instant failover capability with zero data loss.
+
+### Shadow Database Characteristics
+```
+- Read-only until promoted
+- Physically identical to primary (same page layout, same file structure)
+- Cannot accept client connections (except monitoring)
+- Sub-second lag from primary
+- Automatic failover capability
+- No logical interpretation of changes
+```
+
+### Shadow Page Header Extension
+```
+Shadow-Specific Fields (in reserved area):
+Offset  Size  Field
+56      8     Source Database UUID
+64      8     Last Applied LSN
+72      8     Shadow Creation Timestamp
+80      4     Shadow State (RECEIVING/PROMOTING/PROMOTED/FAILED)
+84      4     Replication Lag (microseconds)
+```
+
+### Shadow Database States
+```
+INITIALIZING:
+  - Creating shadow structure
+  - Copying initial database snapshot
+  - Not accepting page updates yet
+
+RECEIVING:
+  - Actively receiving page updates
+  - Applying changes at page level
+  - No client connections allowed
+
+PROMOTING:
+  - Transitioning to primary
+  - Finishing pending page applications
+  - Preparing to accept connections
+
+PROMOTED:
+  - Now a primary database
+  - Accepting client connections
+  - Can have its own shadows
+
+FAILED:
+  - Replication broken
+  - Requires resynchronization
+  - May need complete rebuild
+```
+
+### Shadow Replication Protocol
+```
+1. Page Change Detection:
+   Primary -> Detect modified page -> Add to replication queue
+
+2. Page Transmission:
+   [Header: 32 bytes]
+     - Magic: "SHDW"
+     - Source DB UUID
+     - LSN
+     - Page Count
+     - Checksum
+   [Page Data: N * page_size]
+     - Raw page bytes
+     - Page-level checksum
+
+3. Page Application:
+   Shadow -> Receive pages -> Verify checksum -> Write to exact file position
+
+4. Acknowledgment:
+   Shadow -> Send ACK with LSN -> Primary updates replication status
+```
+
+### Shadow File Structure
+```
+shadow.sbd          - Identical to primary.sbd
+shadow.sbd.1        - Identical to primary.sbd.1
+shadow.sbd.shadow   - Shadow-specific metadata
+  - Source connection info
+  - Replication state
+  - Promotion history
+  - Lag statistics
+```
+
+### Shadow Operations
+
+#### Creating a Shadow
+```sql
+-- On primary
+CREATE SHADOW shadow1 
+  AT 'server2.domain.com:5432'
+  AUTHENTICATION KEY 'encrypted_key'
+  COMPRESSION ZSTD
+  ASYNC;  -- or SYNC for synchronous replication
+
+-- On shadow server (command line)
+scratchbird --shadow-receive \
+  --from primary.domain.com:5432 \
+  --path /data/shadow/db.sbd \
+  --auth-key encrypted_key
+```
+
+#### Monitoring Shadow
+```sql
+-- On primary
+SELECT * FROM sys.shadow_databases;
+SELECT * FROM sys.shadow_replication_status;
+
+-- Returns:
+-- shadow_name, target_host, lag_bytes, lag_time, state, last_lsn
+```
+
+#### Promoting Shadow
+```sql
+-- On shadow (requires physical/console access)
+ALTER DATABASE PROMOTE FROM SHADOW;
+
+-- Or emergency promotion (if primary is dead)
+ALTER DATABASE FORCE PROMOTE FROM SHADOW;
+```
+
+### Multiple Shadow Support
+```
+Primary Database
+    ├── Shadow 1 (same datacenter, synchronous)
+    ├── Shadow 2 (remote DC, asynchronous) 
+    └── Shadow 3 (DR site, asynchronous)
+
+Cascade Shadows:
+Primary -> Shadow 1 -> Shadow 1.1
+                    -> Shadow 1.2
+```
+
+## Logical Replication (Table-Level)
+
+### Overview
+Logical replication operates at the SQL/row level, allowing:
+- Selective table replication
+- Cross-version replication
+- Bi-directional replication
+- Multi-master configurations
+- Different schemas between databases
+
+### Logical Replication Types
+
+#### 1. One-Way Replication (Master-Slave)
+```sql
+-- On source
+CREATE PUBLICATION sales_pub 
+  FOR TABLE orders, customers, products
+  WITH (publish = 'insert,update,delete');
+
+-- On target
+CREATE SUBSCRIPTION sales_sub
+  CONNECTION 'host=primary.com dbname=sales'
+  PUBLICATION sales_pub
+  WITH (slot_name = 'sales_slot');
+```
+
+#### 2. Bi-Directional Replication
+```sql
+-- Both servers publish and subscribe
+-- Requires conflict resolution
+
+CREATE PUBLICATION bi_pub FOR ALL TABLES;
+
+CREATE SUBSCRIPTION bi_sub
+  CONNECTION 'host=peer.com dbname=db'
+  PUBLICATION bi_pub
+  WITH (
+    conflict_resolution = 'last_write_wins',
+    track_commit_timestamp = on
+  );
+```
+
+#### 3. Multi-Master (N-Way)
+```
+     Node A
+      /  \
+     /    \
+  Node B--Node C
+
+Each node publishes to and subscribes from others
+Requires vector clocks or CRDT for conflict resolution
+```
+
+### Logical Replication Components
+
+#### Change Data Capture (CDC)
+```
+Transaction Log Entry:
+  - Operation: INSERT/UPDATE/DELETE
+  - Table UUID
+  - Old values (for UPDATE/DELETE)
+  - New values (for INSERT/UPDATE)
+  - Transaction ID
+  - Timestamp
+  - User/Application context
+```
+
+#### Replication Slots
+```
+Slot = {
+  Name: "regional_replication"
+  Type: LOGICAL/PHYSICAL
+  Plugin: "scratchbird_output"
+  LSN: Current position
+  Active: true/false
+  Retained_WAL_Size: bytes
+}
+```
+
+#### Conflict Resolution Strategies
+```
+1. LAST_WRITE_WINS:
+   - Use commit timestamp
+   - Simple but may lose updates
+
+2. FIRST_WRITE_WINS:
+   - Earlier timestamp prevails
+   - Rejects later updates
+
+3. CUSTOM_FUNCTION:
+   - User-defined resolution
+   - Can merge changes
+
+4. MANUAL_RESOLUTION:
+   - Queue conflicts
+   - Administrator resolves
+
+5. CRDT (Conflict-free Replicated Data Types):
+   - Automatic merging
+   - Eventually consistent
+```
+
+### Logical Replication Metadata Tables
+```sql
+sys.publications
+  - publication_id (UUID)
+  - publication_name
+  - owner
+  - all_tables (boolean)
+  - publish_insert/update/delete/truncate
+
+sys.subscriptions  
+  - subscription_id (UUID)
+  - subscription_name
+  - connection_string
+  - slot_name
+  - publications[]
+  - enabled
+
+sys.replication_conflicts
+  - conflict_id
+  - timestamp
+  - table_name
+  - operation
+  - local_values
+  - remote_values
+  - resolution_status
+```
+
+## Comparison: Shadow vs Logical Replication
+
+| Feature | Shadow Database | Logical Replication |
+|---------|----------------|-------------------|
+| Granularity | Page/Block level | Row level |
+| Schema changes | Automatically replicated | Manual coordination |
+| Selective replication | No (entire DB) | Yes (specific tables) |
+| Cross-version | No | Yes |
+| Failover time | Seconds | Minutes |
+| Network bandwidth | High | Lower |
+| Conflict resolution | N/A | Required for bi-directional |
+| Use case | DR/HA failover | Load distribution, reporting |
+
+## Hybrid Approach
+
+### Best Practice Configuration
+```
+Production Primary
+    ├── Shadow (same DC)         -- Instant failover
+    ├── Shadow (remote DC)        -- DR failover
+    ├── Logical Replica (reporting) -- Read queries
+    └── Logical Replica (analytics) -- Heavy queries
+
+Benefits:
+- Shadow for HA/DR (RPO=0, RTO<1min)
+- Logical for scaling reads
+- Logical for data warehouse ETL
+```
+
+## Implementation Phases
+
+### Phase 1: Shadow Database (Physical)
+- Page-level replication protocol
+- Shadow state management
+- Promotion mechanism
+- Basic monitoring
+
+### Phase 2: Logical Replication (One-Way)
+- Change data capture
+- Publication/Subscription
+- Initial data sync
+- Basic conflict detection
+
+### Phase 3: Advanced Replication
+- Bi-directional logical
+- Multi-master support
+- Conflict resolution strategies
+- Hybrid shadow+logical
+
+## Testing Requirements
+
+### Shadow Database Tests
+1. Create shadow, verify byte-identical pages
+2. Apply 1000 page changes, verify application
+3. Promote shadow, verify becomes primary
+4. Cascade shadow (shadow of shadow)
+5. Network failure handling
+6. Corruption detection and handling
+
+### Logical Replication Tests
+1. Single table replication
+2. Schema change handling
+3. Conflict resolution (all strategies)
+4. Initial sync of large table
+5. Bi-directional updates
+6. Circular replication prevention
+
+## Security Considerations
+
+### Shadow Replication
+- Encrypted page transmission (TLS)
+- Authentication keys (not passwords)
+- IP whitelist for shadow sources
+- Separate port from client connections
+
+### Logical Replication
+- Row-level security preservation
+- Encrypted logical change stream
+- Publication access control
+- Subscription authentication
+
+## Performance Targets
+
+### Shadow Database
+- Lag: < 1 second (same DC)
+- Lag: < 5 seconds (cross-DC)
+- Promotion time: < 10 seconds
+- Page application: > 10,000 pages/second
+
+### Logical Replication
+- Change capture overhead: < 5%
+- Apply rate: > 50,000 rows/second
+- Initial sync: > 1GB/minute
+- Conflict resolution: < 10ms per conflict
