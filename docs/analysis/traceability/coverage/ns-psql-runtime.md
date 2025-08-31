@@ -1,5 +1,3 @@
-[ScratchBird Analysis Documentation](../../index.md) / [Traceability coverage index](index.md)
-
 ### Coverage — PSQL-RUNTIME
 
 Summary: 0/11 fully covered (docs:0 code:0)
@@ -17,13 +15,4 @@ Requirements:
 - REQ-PSQL-RUNTIME-SECURITY-CONTEXT — status: Unknown; docs: no (none); code: no
 - REQ-PSQL-RUNTIME-VARS — status: Unknown; docs: no (none); code: no
 
-Back to [coverage index](index.md)
-
-## Related
-- [Traceability coverage index](index.md)
-- [Coverage — AUTH](ns-auth.md)
-- [Coverage — CATALOG-BOOT](ns-catalog-boot.md)
-- [Coverage — CONNECTION](ns-connection.md)
-- [Coverage — CORE-HEAP](ns-core-heap.md)
-- [Coverage — CORE-SPACE](ns-core-space.md)
-- [Coverage — DBLINK](ns-dblink.md)
+Back to [coverage index](../../../traceability/coverage/index.md)
