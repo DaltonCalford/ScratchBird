@@ -504,7 +504,8 @@ DROP SEQUENCE [IF EXISTS] sequence_name [, ...] [CASCADE | RESTRICT];
 
 ```sql
 -- Complete SELECT syntax
-[WITH [RECURSIVE] cte_name [(column_list)] AS (select_statement) [, ...]]
+[WITH [RECURSIVE] cte_name [(column_list)] AS [MATERIALIZED | NOT MATERIALIZED] (select_statement) 
+  [INDEXED BY (index_definition [, ...])] [, ...]]
 SELECT [ALL | DISTINCT [ON (expression [, ...])]]
   [* | expression [[AS] alias] [, ...]]
   [FROM from_item [, ...]]
@@ -694,6 +695,23 @@ DROP ROLE [IF EXISTS] role_name [, ...];
 -- Grant/revoke role membership
 GRANT role_name [, ...] TO role_spec [, ...] [WITH ADMIN OPTION];
 REVOKE [ADMIN OPTION FOR] role_name [, ...] FROM role_spec [, ...];
+
+-- ROLE COMPOSITION (ScratchBird Enhanced)
+-- See ROLE_COMPOSITION_AND_HIERARCHIES.md for complete specification
+
+-- Grant roles to other roles to create hierarchies
+GRANT role_name TO role_name;  -- Creates role composition
+
+-- Example: Building composite roles
+CREATE ROLE read_only;
+CREATE ROLE data_entry; 
+CREATE ROLE developer;
+GRANT read_only TO developer;   -- developer inherits read_only
+GRANT data_entry TO developer;  -- developer inherits data_entry
+
+-- Changes to base roles propagate automatically
+GRANT DELETE ON table TO data_entry;
+-- Now developer (and any role with data_entry) has DELETE
 ```
 
 ### Privileges
