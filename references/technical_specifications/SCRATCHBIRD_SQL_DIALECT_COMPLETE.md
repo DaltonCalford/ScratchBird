@@ -338,11 +338,33 @@ SELECT
     EXTRACT(last_name FROM name) AS last
 FROM customers;
 
--- Enum arithmetic
+-- Enum SQL-style operations (ScratchBird Preferred)
 DECLARE @hex hex_digit = 'F';
+
+-- Get value and position
+GET VALUE FOR @hex;  -- Returns 'F'
+GET POSITION FOR @hex;  -- Returns 15
+
+-- Navigate enum values
+SET NEXT VALUE FOR @hex;  -- Advances to next
+SET PRIOR VALUE FOR @hex;  -- Goes to previous
+ADVANCE @hex BY 3;  -- Move forward 3 positions
+
+-- With arithmetic (alternative)
 SELECT @hex + 3;  -- Returns '2' (with WRAP=TRUE)
-SELECT POSITION(@hex);  -- Returns 15
 SELECT CAST(15 AS hex_digit);  -- Returns 'F'
+
+-- POLYMORPHIC VARIABLES (for procedures/functions)
+DECLARE @data VARIANT;  -- Can hold any type
+SET @data = 42;  -- Integer
+SET @data = 'text';  -- String
+SET @data = CURRENT_DATE;  -- Date
+
+-- Extract type information
+EXTRACT(DATATYPE FROM @data);  -- Returns 'INTEGER', 'VARCHAR', etc.
+IF @data IS OF TYPE INTEGER THEN
+    SET @data = @data * 2;
+END IF;
 
 -- Alter domain
 ALTER DOMAIN domain_name
@@ -447,11 +469,28 @@ ALTER SEQUENCE [IF EXISTS] sequence_name
   [[NO] CYCLE]
   [OWNED BY {table_name.column_name | NONE}];
 
--- Sequence functions
-NEXT VALUE FOR sequence_name
-CURRVAL('sequence_name')
-LASTVAL()
-SETVAL('sequence_name', value [, is_called])
+-- SQL-STYLE SEQUENCE OPERATIONS (ScratchBird Preferred)
+-- See SQL_STYLE_SYNTAX_AND_POLYMORPHIC_TYPES.md for complete specification
+
+-- Get next value (SQL-style preferred)
+GET NEXT VALUE FOR sequence_name;
+NEXT VALUE FOR sequence_name;
+
+-- Get current value (SQL-style preferred)  
+GET CURRENT VALUE FOR sequence_name;
+CURRENT VALUE FOR sequence_name;
+
+-- Set value (SQL-style preferred)
+SET CURRENT VALUE FOR sequence_name TO value;
+SET sequence_name TO value;
+
+-- Get last value in session
+GET LAST VALUE;
+
+-- Legacy function syntax (supported but not preferred)
+CURRVAL('sequence_name')  -- Use: CURRENT VALUE FOR sequence_name
+LASTVAL()  -- Use: GET LAST VALUE
+SETVAL('sequence_name', value)  -- Use: SET sequence_name TO value
 
 -- Drop sequence
 DROP SEQUENCE [IF EXISTS] sequence_name [, ...] [CASCADE | RESTRICT];
