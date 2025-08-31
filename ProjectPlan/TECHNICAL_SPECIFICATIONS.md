@@ -2,14 +2,14 @@
 
 ## Page Layout Specifications
 
-### Common Page Header (64 bytes)
+### Common Page Header (96 bytes)
 ```
 Offset  Size  Field
-0       8     Page ID (unique within database)
+0       8     Page ID (unique within filespace)
 8       8     LSN (Log Sequence Number for WAL)
 16      4     Checksum (CRC32C)
 20      2     Page Type (see below)
-22      2     Page Flags
+22      2     Page Flags (see below)
 24      2     Free Space Start
 26      2     Free Space End  
 28      2     Special Space Offset
@@ -17,7 +17,40 @@ Offset  Size  Field
 32      8     Transaction ID (last modifier)
 40      8     Previous Page ID (for chains)
 48      8     Next Page ID (for chains)
-56      8     Reserved for future use
+56      16    Filespace UUID (location of this page)
+72      8     Shadow LSN (last replicated LSN)
+80      4     Replication Flags
+84      4     Compression Type (for page-level compression)
+88      8     Reserved for future use
+```
+
+### Page Flags (16 bits)
+```
+Bit  Flag
+0    DIRTY           - Page modified since last flush
+1    REPLICATED      - Page sent to shadow
+2    WAL_LOGGED      - Changes are in WAL
+3    COMPRESSED      - Page data is compressed
+4    ENCRYPTED       - Page data is encrypted
+5    PINNED          - Page pinned in buffer
+6    HOT             - Frequently accessed page
+7    COLD            - Candidate for archive
+8    MIGRATING       - Being moved to different filespace
+9    SHADOW_DIVERGED - Shadow page differs (promotion occurred)
+10   CHECKSUM_VALID  - Checksum has been verified
+11   PARTIAL_WRITE   - Page partially written (torn page)
+12-15 Reserved
+```
+
+### Replication Flags (32 bits)
+```
+Bit  Flag
+0-1  REPL_STATE      - 00=None, 01=Pending, 10=Sent, 11=Confirmed
+2    KAFKA_LOGGED    - WAL sent to Kafka
+3    SHADOW_ONLY     - Page exists only on shadow
+4-7  SHADOW_COUNT    - Number of shadows (0-15)
+8-15 PRIORITY        - Replication priority (0-255)
+16-31 Reserved
 ```
 
 ### Page Types
@@ -49,11 +82,16 @@ Offset  Size  Field
 0x19  COLUMN_DICT       - Columnstore dictionary
 0x1A  TTL_INDEX         - TTL index page
 0x1B  TTL_META          - TTL metadata page
+0x1C  REPL_STATUS       - Replication status page
+0x1D  SHADOW_MAP        - Shadow mapping page
+0x1E  WAL_BUFFER        - Buffered WAL records
+0x1F  KAFKA_CHECKPOINT  - Kafka offset tracking
+0x20  FILESPACE_MAP     - Filespace mapping page
 ```
 
 ### Data Page Layout
 ```
-[Page Header - 64 bytes]
+[Page Header - 96 bytes]
 [Line Pointer Array - grows down]
 [Free Space]
 [Tuple Data - grows up]
@@ -77,7 +115,7 @@ Offset  Size  Field
 
 ### B-tree Index Page Layout
 ```
-[Page Header - 64 bytes]
+[Page Header - 96 bytes]
 [B-tree Special - 16 bytes]
   - High key offset
   - Number of items
@@ -91,7 +129,7 @@ Offset  Size  Field
 ### Hash Index Page Layout
 ```
 HASH_BUCKET page:
-[Page Header - 64 bytes]
+[Page Header - 96 bytes]
 [Hash Special - 16 bytes]
   - Bucket number
   - Hash function version
@@ -102,7 +140,7 @@ HASH_BUCKET page:
 [Overflow pointer if needed]
 
 HASH_OVERFLOW page:
-[Page Header - 64 bytes]
+[Page Header - 96 bytes]
 [Overflow chain pointer]
 [Hash Items continued]
 ```
@@ -110,7 +148,7 @@ HASH_OVERFLOW page:
 ### Bitmap Index Page Layout
 ```
 BITMAP_PAGE:
-[Page Header - 64 bytes]
+[Page Header - 96 bytes]
 [Bitmap Header - 32 bytes]
   - Start row ID
   - End row ID
@@ -119,7 +157,7 @@ BITMAP_PAGE:
 [Compressed bitmap data]
 
 BITMAP_META:
-[Page Header - 64 bytes]
+[Page Header - 96 bytes]
 [Number of distinct values]
 [Value-to-bitmap mappings]
 ```
@@ -127,12 +165,12 @@ BITMAP_META:
 ### GIN Index Page Layout
 ```
 GIN_ENTRY page (B-tree of unique values):
-[Page Header - 64 bytes]
+[Page Header - 96 bytes]
 [Entry tree items]
 [Pointers to posting lists]
 
 GIN_DATA page (posting lists):
-[Page Header - 64 bytes]
+[Page Header - 96 bytes]
 [Compressed TID lists]
 [Continuation pointers]
 ```
@@ -140,7 +178,7 @@ GIN_DATA page (posting lists):
 ### R-tree Index Page Layout  
 ```
 RTREE_NODE:
-[Page Header - 64 bytes]
+[Page Header - 96 bytes]
 [R-tree Special - 32 bytes]
   - Level (0 = leaf)
   - Number of entries
@@ -152,12 +190,12 @@ RTREE_NODE:
 ### LSM Tree Page Layout
 ```
 LSM_L0 (hot - uncompressed):
-[Page Header - 64 bytes]
+[Page Header - 96 bytes]
 [Sorted key-value pairs]
 [Bloom filter]
 
 LSM_LN (cold - compressed):
-[Page Header - 64 bytes]
+[Page Header - 96 bytes]
 [Compression metadata]
 [Block index]
 [Compressed blocks]
@@ -166,7 +204,7 @@ LSM_LN (cold - compressed):
 ### Columnstore Page Layout
 ```
 COLUMN_DATA:
-[Page Header - 64 bytes]
+[Page Header - 96 bytes]
 [Column Special - 16 bytes]
   - Column ID
   - Compression type
@@ -175,20 +213,107 @@ COLUMN_DATA:
 [Compressed column values]
 
 COLUMN_DICT:
-[Page Header - 64 bytes]
+[Page Header - 96 bytes]
 [Dictionary entries]
 [Value IDs mapping]
 ```
 
 ### BLOB Page Layout
 ```
-[Page Header - 64 bytes]
+[Page Header - 96 bytes]
 [BLOB Header - 32 bytes]
   - Total BLOB size
   - Chunk number  
   - Chunks total
   - Compression type
 [BLOB Data]
+```
+
+### Replication Status Page Layout
+```
+[Page Header - 96 bytes]
+[Replication Status - 64 bytes]
+  - Primary Database UUID (16 bytes)
+  - Current LSN (8 bytes)
+  - Last Replicated LSN (8 bytes)
+  - Last Kafka Offset (8 bytes)
+  - Shadow Count (4 bytes)
+  - Replication Mode (4 bytes)
+  - Lag Bytes (8 bytes)
+  - Lag Time (8 bytes)
+[Shadow Entries - each 128 bytes]
+  - Shadow UUID (16 bytes)
+  - Shadow Host (64 bytes)
+  - Last Confirmed LSN (8 bytes)
+  - State (4 bytes)
+  - Lag (8 bytes)
+  - Priority (4 bytes)
+  - Flags (4 bytes)
+  - Reserved (20 bytes)
+```
+
+### Shadow Map Page Layout
+```
+[Page Header - 96 bytes]
+[Shadow Map Header - 32 bytes]
+  - Map Version (8 bytes)
+  - Entry Count (4 bytes)
+  - Last Update (8 bytes)
+  - Flags (4 bytes)
+  - Reserved (8 bytes)
+[Page Mappings - each 32 bytes]
+  - Original Page ID (8 bytes)
+  - Shadow Page ID (8 bytes)
+  - Filespace UUID (16 bytes)
+```
+
+### WAL Buffer Page Layout
+```
+[Page Header - 96 bytes]
+[WAL Buffer Header - 32 bytes]
+  - First LSN (8 bytes)
+  - Last LSN (8 bytes)
+  - Record Count (4 bytes)
+  - Total Size (4 bytes)
+  - Compression (4 bytes)
+  - Reserved (4 bytes)
+[WAL Records - variable size]
+  - Each prefixed with length (4 bytes)
+  - WAL record data
+```
+
+### Kafka Checkpoint Page Layout
+```
+[Page Header - 96 bytes]
+[Kafka Header - 64 bytes]
+  - Topic Name (32 bytes)
+  - Consumer Group (32 bytes)
+[Partition Checkpoints - each 24 bytes]
+  - Partition ID (4 bytes)
+  - Offset (8 bytes)
+  - Timestamp (8 bytes)
+  - Flags (4 bytes)
+```
+
+### Filespace Map Page Layout
+```
+[Page Header - 96 bytes]
+[Filespace Count - 4 bytes]
+[Filespace Entries - each 512 bytes]
+  - UUID (16 bytes)
+  - Name (64 bytes)
+  - Status (4 bytes): ONLINE/OFFLINE/READONLY/MAINTENANCE
+  - OS Type (4 bytes)
+  - Device ID (64 bytes)
+  - Path (256 bytes)
+  - Pattern (64 bytes)
+  - Current Files (4 bytes)
+  - Total Size (8 bytes)
+  - Used Size (8 bytes)
+  - Priority (4 bytes)
+  - Shadow State (4 bytes)
+  - Replication Lag (8 bytes)
+  - Reserved (16 bytes)
 ```
 
 ## Index Type Selection Guidelines
@@ -337,7 +462,7 @@ ALTER TABLE customers SET TABLESPACE fast_data;
 #### Filespace Metadata Page
 ```
 FILESPACE_META page (in main file):
-[Page Header - 64 bytes]
+[Page Header - 96 bytes]
 [Filespace Count - 4 bytes]
 [Filespace Entries - each 512 bytes]:
   - UUID (16 bytes)
