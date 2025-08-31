@@ -226,6 +226,10 @@ XML
 data_type[]                        -- Array of any type
 data_type[n]                       -- Fixed-size array
 
+-- Set types (ScratchBird Enhanced)
+SET OF data_type                   -- Unordered collection
+SET OF domain_name                 -- Domain-based set
+
 -- Special types
 SERIAL | SERIAL4                   -- Auto-incrementing int
 BIGSERIAL | SERIAL8                -- Auto-incrementing bigint
@@ -304,6 +308,41 @@ CREATE DOMAIN domain_name [AS] data_type
   [NOT NULL]
   [CHECK (expression)]
   [COLLATE collation_name];
+
+-- ADVANCED DOMAIN TYPES (ScratchBird Enhanced)
+-- See ADVANCED_DOMAIN_TYPES.md for complete specification
+
+-- Record domains (complex types)
+CREATE DOMAIN person_name AS RECORD (
+    first_name VARCHAR(50) NOT NULL,
+    middle_name VARCHAR(50),
+    last_name VARCHAR(50) NOT NULL
+);
+
+-- Enum domains with positional arithmetic
+CREATE DOMAIN hex_digit AS ENUM (
+    '0','1','2','3','4','5','6','7',
+    '8','9','A','B','C','D','E','F'
+) WITH OPTIONS (WRAP = TRUE);
+
+-- Using domains in tables
+CREATE TABLE customers (
+    id UUID GENERATED ALWAYS AS IDENTITY,
+    name person_name NOT NULL,
+    status order_state DEFAULT 'Draft'
+);
+
+-- Extract from record domains
+SELECT 
+    EXTRACT(first_name FROM name) AS first,
+    EXTRACT(last_name FROM name) AS last
+FROM customers;
+
+-- Enum arithmetic
+DECLARE @hex hex_digit = 'F';
+SELECT @hex + 3;  -- Returns '2' (with WRAP=TRUE)
+SELECT POSITION(@hex);  -- Returns 15
+SELECT CAST(15 AS hex_digit);  -- Returns 'F'
 
 -- Alter domain
 ALTER DOMAIN domain_name
