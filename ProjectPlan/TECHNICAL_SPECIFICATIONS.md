@@ -259,13 +259,212 @@ database.sbd (main file):
 [Data Pages...]
 ```
 
-### Multi-File Support
+### Tablespace/Filespace Support
+
+#### Filespace Definition
 ```
-database.sbd      - Main file
-database.sbd.1    - Overflow file 1 (when > 1GB)
-database.sbd.2    - Overflow file 2
-database.wal      - Write-ahead log
-database.tip      - Transaction inventory (separate file)
+Filespace = {
+    UUID         - Unique identifier (UUID v7)
+    Name         - User-friendly name
+    OS           - Operating system (Windows/Linux/MacOS)
+    Device       - Device/Volume identifier
+    Path         - Full path to directory
+    Pattern      - Filename pattern (e.g., "mydata_*.sbd")
+    MaxFileSize  - Maximum size per file (default 1GB)
+    AutoExtend   - Allow automatic file creation
+    Priority     - Storage tier (1=fast SSD, 2=SSD, 3=HDD, 4=archive)
+}
+```
+
+#### Default Filespaces
+```
+MAIN (Filespace 0):
+  - Always exists, cannot be dropped
+  - Contains system catalog, root page, TIP
+  - Default location for all objects unless specified
+  - Example: /data/scratchbird/main.sbd
+
+TEMP (Filespace 1):
+  - For temporary tables and sort operations
+  - Can be on faster/volatile storage
+  - Example: /ramdisk/scratchbird/temp.sbd
+
+USER-DEFINED:
+  - Custom filespaces for specific purposes
+  - Can span multiple devices/paths
+  - Examples:
+    - FAST_INDEXES: /nvme/indexes/idx_*.sbd
+    - ARCHIVE: /slowdisk/archive/old_*.sbd
+    - LOGS: /logvolume/logs/log_*.sbd
+```
+
+#### File Naming Convention
+```
+Main filespace:
+  [path]/database.sbd         - Primary file
+  [path]/database.sbd.1       - Extension 1
+  [path]/database.sbd.2       - Extension 2
+
+Custom filespace:
+  [path]/[pattern]            - User-defined pattern
+  [path]/[pattern].1          - Extension 1
+  [path]/[pattern].2          - Extension 2
+
+Examples:
+  Windows: C:\DBFiles\Production\sales.sbd
+  Linux:   /mnt/fast-ssd/indexes/idx_customer.sbd
+  Network: \\NAS\backup\archive\historical.sbd
+```
+
+#### Object Storage Assignment
+```sql
+-- Create tablespace
+CREATE TABLESPACE fast_data 
+  LOCATION '/nvme/data'
+  PATTERN 'fast_*.sbd'
+  MAXSIZE 10GB
+  AUTOEXTEND ON;
+
+-- Assign objects to tablespaces
+CREATE TABLE orders (...) TABLESPACE fast_data;
+CREATE INDEX idx_orders ON orders (...) TABLESPACE fast_indexes;
+ALTER TABLE old_records SET TABLESPACE archive;
+
+-- Move existing objects
+ALTER TABLE customers SET TABLESPACE fast_data;
+```
+
+#### Filespace Metadata Page
+```
+FILESPACE_META page (in main file):
+[Page Header - 64 bytes]
+[Filespace Count - 4 bytes]
+[Filespace Entries - each 512 bytes]:
+  - UUID (16 bytes)
+  - Name (64 bytes)
+  - Status (4 bytes): ONLINE/OFFLINE/READONLY/MAINTENANCE
+  - OS Type (4 bytes)
+  - Device ID (64 bytes)
+  - Path (256 bytes)
+  - Pattern (64 bytes)
+  - Current Files (4 bytes)
+  - Total Size (8 bytes)
+  - Used Size (8 bytes)
+  - Priority (4 bytes)
+  - Flags (4 bytes)
+  - Reserved (24 bytes)
+```
+
+#### Cross-Filespace References
+```
+Extended Page ID (16 bytes):
+  - Filespace UUID (16 bytes) OR
+  - Filespace ID (2 bytes) + Page Number (6 bytes) + Reserved (8 bytes)
+
+This allows any page to reference any other page in any filespace
+```
+
+#### Storage Tiering
+```
+Priority Levels:
+  1 - Critical (NVMe/Optane)     - Hot indexes, active OLTP
+  2 - Fast (SSD)                  - Normal operations
+  3 - Standard (HDD RAID)         - Bulk data
+  4 - Archive (HDD/Tape)          - Historical data
+  5 - Remote (Network/Cloud)      - Backup/DR
+
+Automatic Migration:
+  - Statistics track page temperature
+  - Background process migrates cold pages to slower storage
+  - Hot pages promoted to faster storage
+  - Transparent to queries
+```
+
+#### Detach/Attach Operations
+```sql
+-- Detach a tablespace (makes it portable)
+ALTER TABLESPACE archive DETACH;
+-- Creates archive.sbd.manifest with metadata
+
+-- Attach a tablespace to different database
+ALTER DATABASE ADD TABLESPACE archive 
+  FROM '/backup/archive.sbd'
+  READONLY;  -- Optional: attach as read-only
+
+-- Clone a tablespace (for testing)
+CREATE TABLESPACE test_data 
+  AS COPY OF production_data
+  LOCATION '/test/data';
+```
+
+#### Filespace Management Operations
+
+##### Space Allocation Strategy
+```
+1. Object Creation:
+   - Check if tablespace specified
+   - If not, use default (MAIN)
+   - Allocate initial extent in target filespace
+   - Record in system catalog
+
+2. Space Extension:
+   - Try current filespace first
+   - If full and AutoExtend=ON, create new file
+   - If MaxFileSize reached, error or overflow to MAIN
+
+3. Cross-Filespace Transactions:
+   - Single transaction can span multiple filespaces
+   - WAL records include filespace ID
+   - Recovery replays to correct filespace
+```
+
+##### Monitoring and Maintenance
+```sql
+-- View filespace usage
+SELECT * FROM sys.filespaces;
+SELECT * FROM sys.filespace_usage;
+
+-- Rebalance data across filespaces
+ALTER TABLESPACE fast_data REBALANCE;
+
+-- Shrink filespace (remove empty files)
+ALTER TABLESPACE archive SHRINK;
+
+-- Change filespace location (offline operation)
+ALTER TABLESPACE old_data 
+  SET LOCATION '/new/path'
+  PATTERN 'newdata_*.sbd';
+```
+
+##### Backup and Recovery
+```
+Filespace-Aware Backup:
+  - Can backup individual filespaces
+  - Parallel backup of multiple filespaces
+  - Point-in-time recovery per filespace
+
+Example:
+  BACKUP TABLESPACE fast_data TO '/backup/fast_data.sbk';
+  RESTORE TABLESPACE fast_data FROM '/backup/fast_data.sbk'
+    AS OF TIMESTAMP '2024-01-15 10:00:00';
+```
+
+##### Platform-Specific Paths
+```
+Windows:
+  - Drive letters: C:\, D:\, E:\
+  - UNC paths: \\server\share\path
+  - Long paths: \\?\C:\very\long\path
+
+Linux/Unix:
+  - Mount points: /mnt/disk1, /data
+  - Symbolic links supported
+  - NFS mounts: /nfs/remote/path
+
+Cloud Storage (future):
+  - S3: s3://bucket/prefix/
+  - Azure: azure://container/path/
+  - GCS: gs://bucket/path/
 ```
 
 ## Directory Structure
