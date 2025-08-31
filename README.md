@@ -1,21 +1,51 @@
-# ScratchBird
+# ScratchBird Database Engine
 
-Modernized C/C++ refactor workspace for Firebird-related experiments and tooling.
+## Status: Planning Phase
 
-## Build
+This project is currently in the planning and specification phase. No implementation has begun.
+
+## Project Structure
+
+- **`ProjectPlan/`** - Complete project specifications and phase breakdown
+  - Phase specifications (what needs to be built)
+  - Architecture documents
+  - Progress tracking logs
+  
+- **`docs/`** - Architecture and design documentation
+  - Architecture decision records
+  - Compatibility specifications
+  - Feature specifications
+
+- **`references/`** - External reference materials and specifications
+
+- **`src/`** - Placeholder for source code (minimal main.cpp only)
+
+- **`tests/`** - Placeholder for test suite (will be created during implementation)
+
+## Development Process
+
+1. Review specifications in `ProjectPlan/COMPLETE_PHASE_BREAKDOWN.md`
+2. Implementation follows phases sequentially
+3. Progress tracked in `ProjectPlan/progress/` logs
+4. Tests created alongside implementation
+
+## Building (Planning Phase)
 
 ```bash
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build -j
-ctest --test-dir build
+mkdir build
+cd build
+cmake ..
+make
 ```
 
-## Layout
-- `src/`: library and app sources
-- `include/`: public headers
-- `tests/`: unit tests (CTest + GoogleTest or Catch2)
-- `cmake/`: CMake modules
+This will create a minimal executable that displays version information.
 
-## Requirements
-- CMake 3.20+
-- gcc/clang toolchain
+## Next Steps
+
+Begin implementation of Alpha 1.01.1 as specified in:
+- `ProjectPlan/Alpha_101_Specification.md`
+- `ProjectPlan/COMPLETE_PHASE_BREAKDOWN.md`
+
+## License
+
+See LICENSE file for details.

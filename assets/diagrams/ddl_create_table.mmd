@@ -1,1 +1,0 @@
-sequenceDiagram\n  participant Client\n  participant Parser\n  participant Catalog\n  participant Storage\n  Client->>Parser: CREATE TABLE ...\n  Parser->>Catalog: validate DDL\n  Catalog->>Storage: allocate relation pages\n  Storage-->>Catalog: root/page info\n  Catalog->>Catalog: write catalog rows\n  Catalog-->>Client: success
