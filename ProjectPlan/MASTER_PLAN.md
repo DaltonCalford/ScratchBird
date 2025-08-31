@@ -1,173 +1,352 @@
-# ScratchBird Master Implementation Plan
+# ScratchBird Master Implementation Plan V3
+## Revolutionary Universal Data Platform
 
-## Project Structure
+## Executive Vision
 
-### Phase Documents
-- 24 phases defined in `Phase_XX_*.md` files
-- Each phase builds on previous phases
-- No forward references allowed
-- Clear prerequisites stated
+ScratchBird is not just a database - it's a **Universal Data Platform** that:
+1. **Speaks every dialect**: MySQL, PostgreSQL, MSSQL, Firebird clients connect transparently
+2. **Unifies all data**: Federate across Oracle, PostgreSQL, MySQL, MSSQL, and other ScratchBirds
+3. **Eliminates middle tiers**: Rich stored procedures replace application servers
+4. **Optimizes storage**: Multi-tablespace with intelligent tiering (NVMe → SSD → HDD → Archive)
+5. **Scales seamlessly**: Single embedded instance to distributed global clusters
+6. **Parses intelligently**: Context-aware parser with minimal reserved words
+7. **Reacts in real-time**: Event notification system for reactive architectures
 
-### Progress Tracking
-- Progress recorded in `progress/Phase_XX_progress.md`
-- Append-only logs
-- Timestamp all entries
-- Document both successes and failures
+## Core Architecture
 
-### Test Verification
-- Tests defined in `TEST_SPECIFICATION.md`
-- Implementation in `tests/verification_suite/phases/`
-- Must pass before phase is complete
-- No mocking allowed - real implementation required
+```
+┌─────────────────────────────────────────────────────────────┐
+│                     Client Applications                      │
+│        (Any SQL client thinks it's their native DB)         │
+├─────────────────────────────────────────────────────────────┤
+│                  Network Protocol Layer                      │
+│     [PostgreSQL] [MySQL] [TDS/MSSQL] [Firebird] [HTTP]     │
+├─────────────────────────────────────────────────────────────┤
+│                    Result Cache Layer                        │
+├─────────────────────────────────────────────────────────────┤
+│                 Connection Pool Manager                      │
+├─────────────────────────────────────────────────────────────┤
+│                     Y-Valve Router                          │
+│         (Dialect detection, Parser selection)               │
+├─────────────────────────────────────────────────────────────┤
+│                  Parser Plugin System                        │
+│   [Context-Aware SQL] [Python] [JavaScript] [GraphQL]       │
+├─────────────────────────────────────────────────────────────┤
+│              BLR (Binary Language Representation)            │
+│                 (Universal execution format)                 │
+├─────────────────────────────────────────────────────────────┤
+│                    Execution Engine                          │
+│         (MGA Core, Query Optimizer, Plan Executor)          │
+├─────────────────────────────────────────────────────────────┤
+│                   Buffer Pool Manager                        │
+│          (Direct I/O, Intelligent Page Management)          │
+├─────────────────────────────────────────────────────────────┤
+│                    Storage Engine                            │
+│      (Multi-tablespace, MGA, Indexes, WAL Secondary)        │
+├─────────────────────────────────────────────────────────────┤
+│                  Federation Layer                            │
+│      [Oracle FDW] [PostgreSQL] [MySQL] [ScratchBird]        │
+└─────────────────────────────────────────────────────────────┘
+```
 
-## Implementation Rules
+## Revolutionary Features
 
-1. **Sequential Execution**
-   - Complete phases in order
-   - Cannot skip phases
-   - Failed phase blocks progress
+### 1. Context-Aware Parser
+- **~10 reserved words** instead of ~200
+- Keywords as identifiers: `CREATE TABLE select (from INTEGER)`
+- Automatic statement termination
+- Intelligent error recovery
 
-2. **No Fake Implementation**
-   - All functions must work
-   - No stub returns
-   - No hardcoded test passes
+### 2. Event Notification System
+- `POST_EVENT` in triggers/procedures
+- Client applications subscribe and wait
+- Rich payloads (JSON, binary, structured)
+- Pattern matching and filtering
 
-3. **Test-Driven Verification**
-   - Write tests first
-   - Implementation must pass tests
-   - Performance targets must be met
+### 3. Advanced Triggers
+- **Position-based ordering** (execute by position number)
+- **Database-level triggers** (ON CONNECT, ON TRANSACTION)
+- **SELECT triggers** for read auditing
+- Active/inactive states
 
-4. **Progress Documentation**
-   - Update progress file after each task
-   - Include git commit hashes
-   - Document time spent
+### 4. Multi-Tablespace Storage
+```sql
+CREATE TABLESPACE fast_nvme LOCATION '/mnt/nvme';
+CREATE TABLESPACE archive_s3 LOCATION 's3://bucket/archive';
+CREATE INDEX hot_idx TABLESPACE fast_nvme;
+```
 
-5. **Error Handling**
-   - All errors must be handled
-   - No silent failures
-   - Clear error messages
+### 5. Distributed Architecture
+- Transparent federation across databases
+- Push computation to data
+- Two-phase commit
+- Tunable consistency (CP/AP per table)
 
-## Phase Summary
+### 6. Extended Type System
+- **128-bit integers** (INT128, UINT128)
+- **Unsigned integers** (UINT8-UINT64)
+- **Firebird domains** (custom types with methods)
+- **Temporary tables** with various scopes
+- **Result sets as first-class types**
 
-| Phase | Component | Dependencies | Complexity |
-|-------|-----------|--------------|------------|
-| 1 | Core Entry | None | Low |
-| 2 | Database Lifecycle | 1 | Low |
-| 3 | Page Management | 2 | Medium |
-| 4 | Heap Storage | 3 | Medium |
-| 5 | Space Allocation | 4 | Medium |
-| 6 | Transactions | 5 | High |
-| 7 | Isolation/MVCC | 6 | High |
-| 8 | System Catalog | 7 | Medium |
-| 9 | SQL Parser | 8 | High |
-| 10 | Query Executor | 9 | High |
-| 11 | B-Tree Indexing | 10 | High |
-| 12 | Constraints | 11 | Medium |
-| 13 | Optimization | 12 | High |
-| 14 | Joins | 13 | High |
-| 15 | Aggregation | 14 | Medium |
-| 16 | WAL/Recovery | 15 | High |
-| 17 | Authentication | 16 | Medium |
-| 18 | Permissions | 17 | Medium |
-| 19 | Network Server | 18 | High |
-| 20 | Backup/Restore | 19 | High |
-| 21 | Advanced SQL | 20 | High |
-| 22 | Performance Tools | 21 | Medium |
-| 23 | Client Libraries | 22 | Medium |
-| 24 | Final Integration | 23 | Low |
+### 7. User Defined Routines (UDR)
+- External functions in C/C++/Rust/Python/Java/.NET
+- Sandboxed execution
+- Hot reload capability
 
-## Estimated Timeline
+## Implementation Phases
 
-Assuming full-time development:
+### Phase 1-5: Foundation
+| Phase | Component | Features |
+|-------|-----------|----------|
+| 1 | Core Entry | Main executable, version system |
+| 2 | Database Lifecycle | Create/open/close, direct I/O |
+| 3 | Page Management | 8KB pages, checksums, buffer pool |
+| 4 | Heap Storage | Tuple storage, MVCC foundation |
+| 5 | Space Management | PIP/TIP, multi-segment, tablespaces |
 
-- **Phases 1-5**: 2 weeks (Foundation)
-- **Phases 6-10**: 4 weeks (Core Database)
-- **Phases 11-15**: 4 weeks (SQL Features)
-- **Phases 16-20**: 4 weeks (Enterprise Features)
-- **Phases 21-24**: 2 weeks (Polish)
+### Phase 6-10: MGA Core (Firebird-style)
+| Phase | Component | Features |
+|-------|-----------|----------|
+| 6 | MGA Transactions | Version chains, lock-free reads |
+| 7 | MGA MVCC | Isolation levels, garbage collection |
+| 8 | Catalog System | UUID-based objects, recursive namespaces |
+| 9 | BLR System | Binary language representation |
+| 10 | BLR Executor | Interpret BLR programs |
 
-**Total**: 16 weeks minimum for basic implementation
+### Phase 11-15: Context-Aware Parser
+| Phase | Component | Features |
+|-------|-----------|----------|
+| 11 | Token System | Context-aware classification |
+| 12 | State Machine | Parse context tracking |
+| 13 | Parser Core | Minimal reserved words |
+| 14 | Auto-completion | Statement termination detection |
+| 15 | Error Recovery | Intelligent suggestions |
 
-## Success Criteria
+### Phase 16-20: Query Processing
+| Phase | Component | Features |
+|-------|-----------|----------|
+| 16 | Query Executor | CRUD operations on BLR |
+| 17 | B-Tree Indexing | Primary, unique, bitmap indexes |
+| 18 | Query Optimizer | Cost-based, network-aware |
+| 19 | Joins | Hash, nested loop, merge, distributed |
+| 20 | Aggregation | GROUP BY, window functions |
 
-### Minimum Viable Product (Phase 10)
-- Database creates and opens
-- Tables created and queried
-- Basic SQL works
-- Data persists
+### Phase 21-25: Advanced SQL
+| Phase | Component | Features |
+|-------|-----------|----------|
+| 21 | Constraints | FK, CHECK, NOT NULL, domains |
+| 22 | Triggers | Position-based, all levels |
+| 23 | Stored Procedures | BLR storage, multiple languages |
+| 24 | Events | POST_EVENT, subscriptions |
+| 25 | Bulk Operations | Multi-row INSERT optimization |
 
-### Beta Release (Phase 20)
-- All SQL operations
-- ACID compliance
-- Network access
-- Backup/restore
-- Authentication
+### Phase 26-30: Multi-Protocol Server
+| Phase | Component | Features |
+|-------|-----------|----------|
+| 26 | Y-Valve Router | Protocol detection, parser selection |
+| 27 | PostgreSQL Wire | Full protocol emulation |
+| 28 | MySQL Wire | Full protocol emulation |
+| 29 | TDS (MSSQL) | Full protocol emulation |
+| 30 | HTTP/REST API | JSON queries, GraphQL |
 
-### Production Release (Phase 24)
-- All tests pass
-- Performance targets met
-- Documentation complete
-- Client libraries available
-- Monitoring integrated
+### Phase 31-35: Storage Tiers
+| Phase | Component | Features |
+|-------|-----------|----------|
+| 31 | Tablespace Manager | Multiple storage locations |
+| 32 | Storage Tiering | Hot/warm/cold data placement |
+| 33 | Direct I/O | Bypass OS cache, O_DIRECT |
+| 34 | Compression | Per-tablespace compression |
+| 35 | WAL Secondary | Durability layer (not primary) |
 
-## Verification Process
+### Phase 36-40: Security & Auth
+| Phase | Component | Features |
+|-------|-----------|----------|
+| 36 | Authentication | Password, certificate, 2FA |
+| 37 | Authorization | GRANT/REVOKE, roles, row-level |
+| 38 | Encryption | TLS, at-rest encryption |
+| 39 | Audit | Complete audit including SELECTs |
+| 40 | Compliance | GDPR, HIPAA, SOX support |
 
-### For Each Phase:
-1. Read phase specification
-2. Write comprehensive tests
-3. Implement functionality
-4. Run tests until all pass
-5. Update progress log
-6. Commit and push
-7. Move to next phase
+### Phase 41-45: Federation
+| Phase | Component | Features |
+|-------|-----------|----------|
+| 41 | FDW Framework | Foreign data wrapper base |
+| 42 | PostgreSQL FDW | Connect to PostgreSQL |
+| 43 | MySQL FDW | Connect to MySQL/MariaDB |
+| 44 | Oracle FDW | Connect to Oracle |
+| 45 | ScratchBird Federation | Native node-to-node |
 
-### Final Verification:
-1. Run complete test suite
-2. Performance benchmarks
-3. Security audit
-4. Documentation review
-5. Package and deploy
+### Phase 46-50: Distributed
+| Phase | Component | Features |
+|-------|-----------|----------|
+| 46 | Cluster Manager | Node discovery, health |
+| 47 | Distributed Query | Cross-node execution |
+| 48 | Distributed Transactions | 2PC, saga patterns |
+| 49 | Consistency Models | Tunable CP/AP |
+| 50 | Global Secondary Indexes | Cross-shard indexes |
 
-## Common Pitfalls to Avoid
+### Phase 51-55: Performance
+| Phase | Component | Features |
+|-------|-----------|----------|
+| 51 | Connection Pooling | Dedicated pool layer |
+| 52 | Result Caching | Query result cache |
+| 53 | Plan Cache | Compiled plan reuse |
+| 54 | Parallel Execution | Multi-core queries |
+| 55 | Resource Governor | Memory/CPU limits |
 
-1. **Skipping Tests**: Every feature needs tests
-2. **Partial Implementation**: Complete each phase fully
-3. **Ignoring Errors**: Handle all error cases
-4. **Poor Performance**: Meet performance targets
-5. **Missing Documentation**: Document as you go
-6. **Breaking Changes**: Maintain compatibility
+### Phase 56-60: Operations
+| Phase | Component | Features |
+|-------|-----------|----------|
+| 56 | Backup/Restore | Online, incremental |
+| 57 | Replication | Async, sync, multi-master |
+| 58 | Monitoring | Metrics, tracing, profiling |
+| 59 | Schema Evolution | Online DDL, migrations |
+| 60 | Final Integration | Production ready |
 
-## Quality Gates
+## Key Architectural Decisions
 
-Each phase must pass:
-- [ ] All unit tests
-- [ ] Integration tests with previous phases
-- [ ] Performance benchmarks
-- [ ] Memory leak checks
-- [ ] Static analysis
-- [ ] Code review
+### 1. BLR-Centric Design
+- Parse SQL once → BLR
+- Store BLR in procedures/triggers
+- Execute BLR, not SQL
+- Any language can compile to BLR
 
-## Resources
+### 2. MGA-First, WAL-Second
+- Firebird's Multi-Generational Architecture for MVCC
+- WAL only for durability, not for MVCC
+- Lock-free reads always
 
-- Build instructions: `00_BUILD_AND_STRUCTURE.md`
-- Test specification: `TEST_SPECIFICATION.md`
-- Progress template: `progress/PROGRESS_TEMPLATE.md`
-- Old specifications: `old_spec/` (for reference only)
+### 3. Direct I/O Buffer Management
+- Bypass OS cache with O_DIRECT
+- Database-controlled page priorities
+- Shared buffer pool (SuperServer style)
 
-## Getting Started
+### 4. Plugin Everything
+- Parsers as plugins (SQL, Python, GraphQL)
+- Protocols as plugins
+- Storage engines as plugins
+- Authentication as plugins
 
-1. Set up development environment per `00_BUILD_AND_STRUCTURE.md`
-2. Start with Phase 1
-3. Create progress file: `progress/Phase_01_progress.md`
-4. Implement and test
-5. Continue sequentially
+### 5. Federation First-Class
+- Not an afterthought
+- Push predicates to remote
+- Distributed cost optimization
+- Transparent to applications
 
-## Important Notes
+## Success Metrics
 
-- **No Shortcuts**: Full implementation required
-- **No Mocking**: Real functionality only
-- **No Skipping**: Sequential phases only
-- **No Lying**: Honest progress reporting
-- **No Breaking**: Maintain compatibility
+### Performance Targets
+- Single-row INSERT: 10,000/sec
+- Bulk INSERT: 1,000,000/sec
+- Point queries: < 1ms
+- Complex joins: Linear scaling
+- Network overhead: < 10% for distributed
 
-This plan ensures a systematic, verifiable implementation of a complete database system.
+### Compatibility Goals
+- 100% MySQL wire protocol
+- 100% PostgreSQL wire protocol
+- 95% SQL compatibility each dialect
+- Zero application changes required
+
+### Operational Excellence
+- 5-minute cluster setup
+- Zero-downtime upgrades
+- Automatic failover < 10 seconds
+- Point-in-time recovery
+- Cross-region replication
+
+## Development Priorities
+
+### Must Have (Core)
+1. MGA engine with BLR
+2. Context-aware parser
+3. Multi-protocol support
+4. Federation framework
+5. Tablespace management
+
+### Should Have (Differentiation)
+1. Event notification system
+2. SELECT triggers
+3. 128-bit integers
+4. UDR support
+5. Result caching
+
+### Nice to Have (Future)
+1. GraphQL support
+2. Time-series optimizations
+3. Vector/ML datatypes
+4. Blockchain integration
+5. Quantum-resistant crypto
+
+## Testing Strategy
+
+### Unit Tests
+- Every component isolated
+- Mock dependencies
+- 90% code coverage minimum
+
+### Integration Tests
+- Component interaction
+- Protocol compliance
+- Federation functionality
+
+### Compatibility Tests
+- MySQL test suite
+- PostgreSQL test suite
+- Application compatibility
+
+### Performance Tests
+- Benchmarks per phase
+- Regression detection
+- Distributed performance
+
+### Chaos Testing
+- Network partitions
+- Node failures
+- Data corruption
+- Resource exhaustion
+
+## Documentation Requirements
+
+### User Documentation
+- Getting Started Guide
+- SQL Reference (per dialect)
+- Administration Guide
+- Migration Guides (from MySQL/PostgreSQL/etc)
+
+### Developer Documentation
+- Architecture Deep Dive
+- BLR Specification
+- Plugin Development Guide
+- Contributing Guidelines
+
+### Operational Documentation
+- Deployment Patterns
+- Monitoring Setup
+- Troubleshooting Guide
+- Performance Tuning
+
+## Risk Mitigation
+
+### Technical Risks
+- **Complexity**: Mitigate with phased approach
+- **Performance**: Continuous benchmarking
+- **Compatibility**: Extensive test suites
+- **Security**: Security review each phase
+
+### Project Risks
+- **Scope Creep**: Strict phase boundaries
+- **Technical Debt**: Refactoring phases built-in
+- **Testing Burden**: Automated everything
+- **Documentation**: Document as we build
+
+## Conclusion
+
+ScratchBird represents a fundamental reimagining of database architecture:
+- **Not just multi-model, but multi-protocol**
+- **Not just distributed, but federated**
+- **Not just SQL, but any language**
+- **Not just a database, but a data platform**
+
+By combining the best ideas from Firebird (MGA), PostgreSQL (extensibility), MySQL (protocol), and adding revolutionary features (context-aware parsing, event system), ScratchBird will be the ultimate data platform for the next generation of applications.
