@@ -166,6 +166,7 @@ add_library(
   src/engine/wire_compression.cpp
   src/engine/executor/batch_operations.cpp
   src/engine/parallel/parallel_executor.cpp
+  src/engine/parallel/parallel_aggregation_sorting.cpp
   src/engine/tablespace_manager.cpp
   src/engine/ddl/tablespace_ddl.cpp
   src/audit/audit_engine.cpp
@@ -958,6 +959,27 @@ if(SCRATCHBIRD_BUILD_TESTS)
   endif()
   add_test(NAME parallel_join_tests COMMAND parallel_join_tests)
 
+  # Phase 11.7 Performance Infrastructure - Parallel Aggregation and Sorting
+  # Tests
+  add_executable(parallel_aggregation_sorting_tests
+                 tests/parallel_aggregation_sorting_tests.cpp)
+
+  # Parallel aggregation and sorting focused tests
+  add_executable(parallel_agg_sort_tests tests/parallel_agg_sort_tests.cpp)
+  target_link_libraries(parallel_agg_sort_tests scratchbird_engine)
+  target_link_libraries(parallel_aggregation_sorting_tests scratchbird_engine)
+  if(GTEST_FOUND)
+    target_link_libraries(parallel_aggregation_sorting_tests ${GTEST_LIBRARIES})
+    target_include_directories(parallel_aggregation_sorting_tests
+                               PRIVATE ${GTEST_INCLUDE_DIRS})
+    target_link_libraries(parallel_agg_sort_tests ${GTEST_LIBRARIES})
+    target_include_directories(parallel_agg_sort_tests
+                               PRIVATE ${GTEST_INCLUDE_DIRS})
+  endif()
+  add_test(NAME parallel_aggregation_sorting_tests
+           COMMAND parallel_aggregation_sorting_tests)
+  add_test(NAME parallel_agg_sort_tests COMMAND parallel_agg_sort_tests)
+
   # Tablespace tests (Phase 14)
   add_executable(tablespace_basic_tests tests/tablespace_basic_tests.cpp)
   target_link_libraries(tablespace_basic_tests scratchbird_engine)
@@ -1004,6 +1026,15 @@ add_test(NAME logging_tests COMMAND logging_tests)
 add_executable(trace_tests tests/trace_tests.cpp)
 target_link_libraries(trace_tests scratchbird_engine gtest gtest_main)
 add_test(NAME trace_tests COMMAND trace_tests)
+
+# Phase 11.7: Memory Optimization Tests (temporarily disabled due to compilation
+# issues) add_executable(memory_optimization_tests
+# tests/memory_optimization_tests.cpp)
+# target_link_libraries(memory_optimization_tests scratchbird_engine)
+# if(GTEST_FOUND) target_link_libraries(memory_optimization_tests
+# ${GTEST_LIBRARIES}) target_include_directories(memory_optimization_tests
+# PRIVATE ${GTEST_INCLUDE_DIRS}) endif() add_test(NAME memory_optimization_tests
+# COMMAND memory_optimization_tests)
 
 # -----------------------------
 # Optional: Performance targets

@@ -829,6 +829,191 @@ namespace scratchbird::engine
         bool should_use_index_lookup(const std::string& predicate);
     };
 
+    /// Parallel aggregation implementation
+    class ParallelAggregation
+    {
+      public:
+        /// Aggregation partition for parallel processing
+        struct AggregationPartition {
+            std::uint32_t partition_id;               ///< Partition identifier
+            std::uint64_t start_row;                  ///< Start row for this partition
+            std::uint64_t end_row;                    ///< End row for this partition
+            std::uint64_t estimated_rows;             ///< Estimated rows in partition
+            std::string partition_key_range;          ///< Key range for this partition
+            std::vector<std::string> group_by_keys;   ///< GROUP BY columns
+            std::vector<std::string> aggregate_exprs; ///< Aggregate expressions (SUM, COUNT, etc.)
+            std::uint64_t estimated_memory_mb;        ///< Estimated memory requirement
+        };
+
+        /// Aggregation configuration
+        struct AggregationConfig {
+            std::uint32_t max_partitions{8};         ///< Maximum aggregation partitions
+            std::uint64_t min_partition_size{5000};  ///< Minimum rows per partition
+            std::uint64_t hash_table_memory_mb{128}; ///< Memory limit for aggregation hash tables
+            std::uint32_t partial_agg_batch_size{1000}; ///< Batch size for partial aggregation
+            bool enable_two_phase_agg{true};  ///< Enable two-phase aggregation (partial + final)
+            bool enable_preaggregation{true}; ///< Enable pre-aggregation optimization
+            double group_cardinality_threshold{0.1}; ///< Threshold for enabling partial aggregation
+        };
+
+        /// Aggregation execution statistics
+        struct AggregationStatistics {
+            std::uint32_t total_partitions{0};       ///< Total partitions created
+            std::uint64_t input_rows_processed{0};   ///< Input rows processed
+            std::uint64_t partial_groups_created{0}; ///< Partial groups created
+            std::uint64_t final_groups_output{0};    ///< Final aggregated groups output
+            std::uint64_t hash_table_collisions{0};  ///< Hash table collisions during grouping
+            std::chrono::microseconds partial_agg_time{0}; ///< Time spent in partial aggregation
+            std::chrono::microseconds final_agg_time{0};   ///< Time spent in final aggregation
+            double average_group_cardinality{0.0}; ///< Average group cardinality per partition
+            std::uint64_t memory_spilled_mb{0};    ///< Memory spilled to disk (if applicable)
+        };
+
+        explicit ParallelAggregation(const std::string& agg_name);
+        ParallelAggregation(const std::string& agg_name, const AggregationConfig& config);
+        ~ParallelAggregation() = default;
+
+        /// Partition planning
+        std::vector<AggregationPartition> plan_aggregation_partitions(
+            std::uint64_t input_rows, const std::vector<std::string>& group_by_keys,
+            const std::vector<std::string>& aggregate_exprs, std::uint32_t target_workers);
+
+        /// Work unit creation
+        std::vector<std::shared_ptr<WorkUnit>>
+        create_partial_aggregation_work_units(const std::vector<AggregationPartition>& partitions);
+
+        std::vector<std::shared_ptr<WorkUnit>>
+        create_final_aggregation_work_units(const std::vector<AggregationPartition>& partitions);
+
+        /// Execution methods
+        std::shared_ptr<WorkResult>
+        execute_partial_aggregation(const AggregationPartition& partition);
+
+        std::shared_ptr<WorkResult>
+        execute_final_aggregation(const AggregationPartition& partition,
+                                  const std::vector<std::shared_ptr<WorkResult>>& partial_results);
+
+        /// Result coordination
+        std::shared_ptr<WorkResult>
+        merge_aggregation_results(const std::vector<std::shared_ptr<WorkResult>>& partial_results,
+                                  const std::vector<std::string>& group_by_keys,
+                                  const std::vector<std::string>& aggregate_exprs);
+
+        /// Statistics and monitoring
+        AggregationStatistics get_statistics() const;
+        void reset_statistics();
+
+        /// Helper methods (made public for executor integration)
+        std::uint64_t estimate_group_cardinality(const std::vector<std::string>& group_by_keys,
+                                                 std::uint64_t input_rows);
+        double calculate_aggregation_selectivity(const std::vector<std::string>& aggregate_exprs);
+        bool should_use_two_phase_aggregation(std::uint64_t input_rows, double group_cardinality);
+
+      private:
+        std::string agg_name_;
+        AggregationConfig config_;
+        mutable std::mutex statistics_mutex_;
+        AggregationStatistics statistics_;
+    };
+
+    /// Parallel sorting implementation
+    class ParallelSort
+    {
+      public:
+        /// Sort partition for parallel processing
+        struct SortPartition {
+            std::uint32_t partition_id;         ///< Partition identifier
+            std::uint64_t start_row;            ///< Start row for this partition
+            std::uint64_t end_row;              ///< End row for this partition
+            std::uint64_t estimated_rows;       ///< Estimated rows in partition
+            std::vector<std::string> sort_keys; ///< Sort key columns
+            std::vector<bool>
+                sort_ascending; ///< Sort direction for each key (true = ASC, false = DESC)
+            std::uint64_t estimated_memory_mb; ///< Estimated memory requirement
+            std::string key_range_min;         ///< Minimum key value in partition
+            std::string key_range_max;         ///< Maximum key value in partition
+        };
+
+        /// Sort configuration
+        struct SortConfig {
+            std::uint32_t max_partitions{8};         ///< Maximum sort partitions
+            std::uint64_t min_partition_size{10000}; ///< Minimum rows per partition
+            std::uint64_t sort_memory_mb{256};       ///< Memory limit for sorting
+            std::uint32_t merge_batch_size{10000};   ///< Batch size for merge operations
+            bool enable_external_sort{true};         ///< Enable external sorting for large datasets
+            bool enable_quicksort_hybrid{
+                true}; ///< Use quicksort for small partitions, mergesort for large
+            std::uint32_t quicksort_threshold{
+                50000}; ///< Row threshold for switching from quicksort to mergesort
+            std::uint32_t max_merge_ways{16}; ///< Maximum ways for multi-way merge
+        };
+
+        /// Sort execution statistics
+        struct SortStatistics {
+            std::uint32_t total_partitions{0};            ///< Total partitions created
+            std::uint64_t input_rows_processed{0};        ///< Input rows processed
+            std::uint64_t output_rows_generated{0};       ///< Output rows generated
+            std::uint64_t comparisons_performed{0};       ///< Total key comparisons performed
+            std::chrono::microseconds local_sort_time{0}; ///< Time spent in local sorting
+            std::chrono::microseconds merge_time{0};      ///< Time spent in merging phases
+            std::uint64_t memory_spilled_mb{0};    ///< Memory spilled to disk for external sort
+            std::uint32_t merge_passes{0};         ///< Number of merge passes required
+            double average_partition_size_mb{0.0}; ///< Average partition size in memory
+        };
+
+        explicit ParallelSort(const std::string& sort_name);
+        ParallelSort(const std::string& sort_name, const SortConfig& config);
+        ~ParallelSort() = default;
+
+        /// Partition planning
+        std::vector<SortPartition> plan_sort_partitions(std::uint64_t input_rows,
+                                                        const std::vector<std::string>& sort_keys,
+                                                        const std::vector<bool>& sort_ascending,
+                                                        std::uint32_t target_workers);
+
+        /// Work unit creation
+        std::vector<std::shared_ptr<WorkUnit>>
+        create_local_sort_work_units(const std::vector<SortPartition>& partitions);
+
+        std::vector<std::shared_ptr<WorkUnit>>
+        create_merge_work_units(const std::vector<SortPartition>& partitions,
+                                std::uint32_t merge_level);
+
+        /// Execution methods
+        std::shared_ptr<WorkResult> execute_local_sort(const SortPartition& partition);
+
+        std::shared_ptr<WorkResult>
+        execute_merge_phase(const std::vector<SortPartition>& partitions,
+                            const std::vector<std::shared_ptr<WorkResult>>& local_results,
+                            std::uint32_t merge_level);
+
+        /// Result coordination - multi-way merge of sorted partitions
+        std::shared_ptr<WorkResult>
+        merge_sorted_results(const std::vector<std::shared_ptr<WorkResult>>& sorted_results,
+                             const std::vector<std::string>& sort_keys,
+                             const std::vector<bool>& sort_ascending);
+
+        /// Statistics and monitoring
+        SortStatistics get_statistics() const;
+        void reset_statistics();
+
+        /// Helper methods (made public for testing)
+        std::uint64_t estimate_sort_memory(std::uint64_t input_rows,
+                                           const std::vector<std::string>& sort_keys);
+        bool should_use_external_sort(std::uint64_t estimated_memory_mb);
+        std::uint32_t calculate_optimal_merge_ways(std::uint32_t num_partitions,
+                                                   std::uint64_t available_memory_mb);
+        std::vector<std::string>
+        determine_partition_ranges(const std::vector<std::string>& sort_keys,
+                                   std::uint64_t input_rows, std::uint32_t target_partitions);
+
+      private:
+        std::string sort_name_;
+        SortConfig config_;
+        mutable std::mutex statistics_mutex_;
+        SortStatistics statistics_;
+    };
+
     /// Main parallel query executor
     class ParallelQueryExecutor
     {

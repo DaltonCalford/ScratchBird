@@ -1,5 +1,3 @@
-[ScratchBird Analysis Documentation](../../index.md)
-
 ### Traceability coverage index
 
 Per-namespace pages:
@@ -24,12 +22,3 @@ Per-namespace pages:
 - [TXN-MGA](ns-txn-mga.md)
 
 Also see: [orphan-code.md](orphan-code.md)
-
-## Related
-- [Coverage — AUTH](ns-auth.md)
-- [Coverage — CATALOG-BOOT](ns-catalog-boot.md)
-- [Coverage — CONNECTION](ns-connection.md)
-- [Coverage — CORE-HEAP](ns-core-heap.md)
-- [Coverage — CORE-SPACE](ns-core-space.md)
-- [Coverage — DBLINK](ns-dblink.md)
-- [Coverage — EXEC-ENGINE](ns-exec-engine.md)

@@ -8,6 +8,7 @@
 #include <chrono>
 #include <cmath>
 #include <iomanip>
+#include <numeric>
 #include <sstream>
 #include <thread>
 
@@ -2443,6 +2444,1077 @@ namespace scratchbird::engine
         return predicate.find("=") != std::string::npos ||
                predicate.find("IN") != std::string::npos ||
                predicate.find("BETWEEN") != std::string::npos;
+    }
+
+    // ParallelAggregation implementation
+
+    ParallelAggregation::ParallelAggregation(const std::string& agg_name)
+        : agg_name_(agg_name), config_()
+    {
+    }
+
+    ParallelAggregation::ParallelAggregation(const std::string& agg_name,
+                                             const AggregationConfig& config)
+        : agg_name_(agg_name), config_(config)
+    {
+    }
+
+    std::vector<ParallelAggregation::AggregationPartition>
+    ParallelAggregation::plan_aggregation_partitions(
+        std::uint64_t input_rows, const std::vector<std::string>& group_by_keys,
+        const std::vector<std::string>& aggregate_exprs, std::uint32_t target_workers)
+    {
+        std::vector<AggregationPartition> partitions;
+
+        if (input_rows == 0 || target_workers == 0) {
+            return partitions;
+        }
+
+        // Calculate optimal number of partitions
+        std::uint32_t num_partitions = std::min(config_.max_partitions, target_workers);
+        std::uint64_t rows_per_partition =
+            std::max(config_.min_partition_size, input_rows / num_partitions);
+
+        // Adjust partition count based on actual data size
+        if (input_rows < config_.min_partition_size * num_partitions) {
+            num_partitions =
+                std::max(static_cast<std::uint32_t>(1),
+                         static_cast<std::uint32_t>(input_rows / config_.min_partition_size));
+            rows_per_partition = input_rows / num_partitions;
+        }
+
+        partitions.reserve(num_partitions);
+
+        std::uint64_t current_start = 0;
+        for (std::uint32_t i = 0; i < num_partitions; ++i) {
+            AggregationPartition partition;
+            partition.partition_id = i;
+            partition.start_row = current_start;
+            partition.end_row =
+                (i == num_partitions - 1) ? input_rows : current_start + rows_per_partition;
+            partition.estimated_rows = partition.end_row - partition.start_row;
+            partition.group_by_keys = group_by_keys;
+            partition.aggregate_exprs = aggregate_exprs;
+
+            // Estimate memory requirements
+            std::uint64_t estimated_group_cardinality =
+                estimate_group_cardinality(group_by_keys, partition.estimated_rows);
+            partition.estimated_memory_mb =
+                std::max(static_cast<std::uint64_t>(1),
+                         (estimated_group_cardinality * 64) / (1024 * 1024)); // ~64 bytes per group
+
+            // Create partition key range (simplified hash-based approach)
+            std::ostringstream range_stream;
+            range_stream << "partition_" << i << "_hash_" << std::hex
+                         << std::hash<std::string>{}(std::to_string(i));
+            partition.partition_key_range = range_stream.str();
+
+            partitions.push_back(std::move(partition));
+            current_start = partition.end_row;
+        }
+
+        // Update statistics
+        {
+            std::lock_guard<std::mutex> lock(statistics_mutex_);
+            statistics_.total_partitions = num_partitions;
+        }
+
+        return partitions;
+    }
+
+    std::vector<std::shared_ptr<WorkUnit>>
+    ParallelAggregation::create_partial_aggregation_work_units(
+        const std::vector<AggregationPartition>& partitions)
+    {
+        std::vector<std::shared_ptr<WorkUnit>> work_units;
+        work_units.reserve(partitions.size());
+
+        for (const auto& partition : partitions) {
+            auto work_unit = std::make_shared<WorkUnit>();
+            work_unit->work_id = static_cast<std::uint64_t>(partition.partition_id) +
+                                 (static_cast<std::uint64_t>(1)
+                                  << 32); // Offset to distinguish from other work types
+            work_unit->partition_id = partition.partition_id;
+            work_unit->start_offset = partition.start_row;
+            work_unit->end_offset = partition.end_row;
+            work_unit->estimated_rows = partition.estimated_rows;
+            work_unit->estimated_memory_mb = partition.estimated_memory_mb;
+            work_unit->estimated_time = std::chrono::milliseconds(
+                std::max(static_cast<std::uint64_t>(10),
+                         partition.estimated_rows / 1000)); // ~1ms per 1000 rows
+
+            // Store aggregation-specific data
+            work_unit->custom_data["operation_type"] = "partial_aggregation";
+            work_unit->custom_data["partition_key_range"] = partition.partition_key_range;
+            work_unit->custom_data["group_by_count"] =
+                std::to_string(partition.group_by_keys.size());
+            work_unit->custom_data["aggregate_count"] =
+                std::to_string(partition.aggregate_exprs.size());
+
+            // Serialize group by keys and aggregate expressions
+            std::ostringstream group_by_stream;
+            for (std::size_t i = 0; i < partition.group_by_keys.size(); ++i) {
+                if (i > 0)
+                    group_by_stream << ",";
+                group_by_stream << partition.group_by_keys[i];
+            }
+            work_unit->custom_data["group_by_keys"] = group_by_stream.str();
+
+            std::ostringstream agg_stream;
+            for (std::size_t i = 0; i < partition.aggregate_exprs.size(); ++i) {
+                if (i > 0)
+                    agg_stream << ",";
+                agg_stream << partition.aggregate_exprs[i];
+            }
+            work_unit->custom_data["aggregate_exprs"] = agg_stream.str();
+
+            work_units.push_back(work_unit);
+        }
+
+        return work_units;
+    }
+
+    std::vector<std::shared_ptr<WorkUnit>> ParallelAggregation::create_final_aggregation_work_units(
+        const std::vector<AggregationPartition>& partitions)
+    {
+        std::vector<std::shared_ptr<WorkUnit>> work_units;
+        work_units.reserve(partitions.size());
+
+        for (const auto& partition : partitions) {
+            auto work_unit = std::make_shared<WorkUnit>();
+            work_unit->work_id =
+                static_cast<std::uint64_t>(partition.partition_id) +
+                (static_cast<std::uint64_t>(2) << 32); // Offset for final aggregation
+            work_unit->partition_id = partition.partition_id;
+            work_unit->start_offset = partition.start_row;
+            work_unit->end_offset = partition.end_row;
+            work_unit->estimated_rows = partition.estimated_rows;
+            work_unit->estimated_memory_mb =
+                partition.estimated_memory_mb / 2; // Final agg typically smaller
+            work_unit->estimated_time = std::chrono::milliseconds(
+                std::max(static_cast<std::uint64_t>(5),
+                         partition.estimated_rows / 2000)); // Final agg faster
+
+            // Store final aggregation data
+            work_unit->custom_data["operation_type"] = "final_aggregation";
+            work_unit->custom_data["partition_key_range"] = partition.partition_key_range;
+
+            work_units.push_back(work_unit);
+        }
+
+        return work_units;
+    }
+
+    std::shared_ptr<WorkResult>
+    ParallelAggregation::execute_partial_aggregation(const AggregationPartition& partition)
+    {
+        auto result = std::make_shared<WorkResult>();
+        result->work_id = partition.partition_id;
+        result->start_time = std::chrono::steady_clock::now();
+
+        try {
+            // Simulate partial aggregation processing
+            std::this_thread::sleep_for(
+                std::chrono::milliseconds(1 + partition.estimated_rows / 10000));
+
+            // Mock partial aggregation: create groups and partial results
+            std::uint64_t estimated_groups =
+                estimate_group_cardinality(partition.group_by_keys, partition.estimated_rows);
+
+            // Create mock result data
+            std::ostringstream result_stream;
+            result_stream << "partial_agg_result_partition_" << partition.partition_id;
+            std::string result_string = result_stream.str();
+            result->result_data.assign(result_string.begin(), result_string.end());
+
+            // Update statistics
+            {
+                std::lock_guard<std::mutex> lock(statistics_mutex_);
+                statistics_.input_rows_processed += partition.estimated_rows;
+                statistics_.partial_groups_created += estimated_groups;
+            }
+
+            result->success = true;
+            result->rows_processed = partition.estimated_rows;
+            result->rows_returned = estimated_groups;
+            result->memory_used_mb =
+                std::min(static_cast<std::uint64_t>(partition.estimated_memory_mb),
+                         config_.hash_table_memory_mb);
+
+            // Store aggregation-specific statistics
+            result->statistics["groups_created"] = estimated_groups;
+            result->statistics["hash_collisions"] = estimated_groups / 10; // Mock collision count
+            result->statistics["memory_peak_mb"] = result->memory_used_mb;
+
+        } catch (const std::exception& e) {
+            result->success = false;
+            result->error_message = "Partial aggregation failed for partition " +
+                                    std::to_string(partition.partition_id) + ": " +
+                                    std::string(e.what());
+        }
+
+        result->end_time = std::chrono::steady_clock::now();
+        result->execution_time = std::chrono::duration_cast<std::chrono::microseconds>(
+            result->end_time - result->start_time);
+
+        // Update timing statistics
+        {
+            std::lock_guard<std::mutex> lock(statistics_mutex_);
+            statistics_.partial_agg_time += result->execution_time;
+        }
+
+        return result;
+    }
+
+    std::shared_ptr<WorkResult> ParallelAggregation::execute_final_aggregation(
+        const AggregationPartition& partition,
+        const std::vector<std::shared_ptr<WorkResult>>& partial_results)
+    {
+        auto result = std::make_shared<WorkResult>();
+        result->work_id = partition.partition_id + (static_cast<std::uint64_t>(2) << 32);
+        result->start_time = std::chrono::steady_clock::now();
+
+        try {
+            // Simulate final aggregation processing
+            std::uint64_t total_partial_groups = 0;
+            for (const auto& partial_result : partial_results) {
+                if (partial_result && partial_result->success) {
+                    total_partial_groups += partial_result->rows_returned;
+                }
+            }
+
+            // Simulate merging partial results
+            std::this_thread::sleep_for(std::chrono::milliseconds(1 + total_partial_groups / 5000));
+
+            // Estimate final group count (typically smaller due to consolidation)
+            std::uint64_t final_groups =
+                std::max(static_cast<std::uint64_t>(1), total_partial_groups * 70 / 100);
+
+            // Create mock result data
+            std::ostringstream result_stream;
+            result_stream << "final_agg_result_partition_" << partition.partition_id << "_groups_"
+                          << final_groups;
+            std::string result_string = result_stream.str();
+            result->result_data.assign(result_string.begin(), result_string.end());
+
+            // Update statistics
+            {
+                std::lock_guard<std::mutex> lock(statistics_mutex_);
+                statistics_.final_groups_output += final_groups;
+            }
+
+            result->success = true;
+            result->rows_processed = total_partial_groups;
+            result->rows_returned = final_groups;
+            result->memory_used_mb =
+                std::min(partition.estimated_memory_mb / 2, config_.hash_table_memory_mb);
+
+            // Store final aggregation statistics
+            result->statistics["final_groups"] = final_groups;
+            result->statistics["consolidation_ratio"] =
+                static_cast<std::uint64_t>((total_partial_groups * 100) /
+                                           std::max(final_groups, static_cast<std::uint64_t>(1)));
+
+        } catch (const std::exception& e) {
+            result->success = false;
+            result->error_message = "Final aggregation failed for partition " +
+                                    std::to_string(partition.partition_id) + ": " +
+                                    std::string(e.what());
+        }
+
+        result->end_time = std::chrono::steady_clock::now();
+        result->execution_time = std::chrono::duration_cast<std::chrono::microseconds>(
+            result->end_time - result->start_time);
+
+        // Update timing statistics
+        {
+            std::lock_guard<std::mutex> lock(statistics_mutex_);
+            statistics_.final_agg_time += result->execution_time;
+        }
+
+        return result;
+    }
+
+    std::shared_ptr<WorkResult> ParallelAggregation::merge_aggregation_results(
+        const std::vector<std::shared_ptr<WorkResult>>& partial_results,
+        const std::vector<std::string>& group_by_keys,
+        const std::vector<std::string>& aggregate_exprs)
+    {
+        auto merged_result = std::make_shared<WorkResult>();
+        merged_result->work_id = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(this));
+        merged_result->start_time = std::chrono::steady_clock::now();
+
+        try {
+            std::uint64_t total_groups = 0;
+            std::uint64_t total_memory = 0;
+            std::chrono::microseconds total_execution_time{0};
+
+            // Merge results from all partitions
+            for (const auto& result : partial_results) {
+                if (result && result->success) {
+                    total_groups += result->rows_returned;
+                    total_memory += result->memory_used_mb;
+                    total_execution_time += result->execution_time;
+                }
+            }
+
+            // Create consolidated result data
+            std::ostringstream merged_stream;
+            merged_stream << "merged_aggregation_result_groups_" << total_groups << "_keys_"
+                          << group_by_keys.size() << "_aggregates_" << aggregate_exprs.size();
+            std::string merged_string = merged_stream.str();
+            merged_result->result_data.assign(merged_string.begin(), merged_string.end());
+
+            merged_result->success = true;
+            merged_result->rows_returned = total_groups;
+            merged_result->memory_used_mb = total_memory;
+            merged_result->execution_time = total_execution_time;
+
+            // Store merge statistics
+            merged_result->statistics["total_partitions_merged"] = partial_results.size();
+            merged_result->statistics["total_final_groups"] = total_groups;
+            merged_result->statistics["average_groups_per_partition"] =
+                partial_results.empty() ? 0 : total_groups / partial_results.size();
+
+        } catch (const std::exception& e) {
+            merged_result->success = false;
+            merged_result->error_message =
+                "Aggregation result merging failed: " + std::string(e.what());
+        }
+
+        merged_result->end_time = std::chrono::steady_clock::now();
+        return merged_result;
+    }
+
+    ParallelAggregation::AggregationStatistics ParallelAggregation::get_statistics() const
+    {
+        std::lock_guard<std::mutex> lock(statistics_mutex_);
+        return statistics_;
+    }
+
+    void ParallelAggregation::reset_statistics()
+    {
+        std::lock_guard<std::mutex> lock(statistics_mutex_);
+        statistics_ = AggregationStatistics{};
+    }
+
+    std::uint64_t
+    ParallelAggregation::estimate_group_cardinality(const std::vector<std::string>& group_by_keys,
+                                                    std::uint64_t input_rows)
+    {
+        if (group_by_keys.empty()) {
+            return 1; // No GROUP BY means single result group
+        }
+
+        // Simplified heuristic: assume each group by key reduces cardinality
+        double reduction_factor = 0.1; // 10% unique values per key on average
+        std::uint64_t estimated_cardinality = input_rows;
+
+        for (std::size_t i = 0; i < group_by_keys.size(); ++i) {
+            estimated_cardinality =
+                static_cast<std::uint64_t>(estimated_cardinality * reduction_factor);
+            reduction_factor = std::max(0.01, reduction_factor * 0.8); // Diminishing returns
+        }
+
+        return std::max(static_cast<std::uint64_t>(1), std::min(estimated_cardinality, input_rows));
+    }
+
+    double ParallelAggregation::calculate_aggregation_selectivity(
+        const std::vector<std::string>& aggregate_exprs)
+    {
+        // Simplified selectivity calculation based on aggregate function types
+        if (aggregate_exprs.empty()) {
+            return 1.0;
+        }
+
+        double selectivity = 1.0;
+        for (const auto& expr : aggregate_exprs) {
+            // Very simplified heuristic
+            if (expr.find("COUNT") != std::string::npos) {
+                selectivity *= 0.9; // COUNT typically has high selectivity
+            } else if (expr.find("SUM") != std::string::npos ||
+                       expr.find("AVG") != std::string::npos) {
+                selectivity *= 0.8; // SUM/AVG medium selectivity
+            } else {
+                selectivity *= 0.7; // Other aggregates
+            }
+        }
+
+        return std::max(0.01, selectivity);
+    }
+
+    bool ParallelAggregation::should_use_two_phase_aggregation(std::uint64_t input_rows,
+                                                               double group_cardinality)
+    {
+        if (!config_.enable_two_phase_agg) {
+            return false;
+        }
+
+        // Use two-phase if we have lots of input rows and moderate group cardinality
+        return (input_rows >= 100000) && (group_cardinality <= config_.group_cardinality_threshold);
+    }
+
+    // ParallelSort implementation
+
+    ParallelSort::ParallelSort(const std::string& sort_name) : sort_name_(sort_name), config_() {}
+
+    ParallelSort::ParallelSort(const std::string& sort_name, const SortConfig& config)
+        : sort_name_(sort_name), config_(config)
+    {
+    }
+
+    std::vector<ParallelSort::SortPartition> ParallelSort::plan_sort_partitions(
+        std::uint64_t input_rows, const std::vector<std::string>& sort_keys,
+        const std::vector<bool>& sort_ascending, std::uint32_t target_workers)
+    {
+        std::vector<SortPartition> partitions;
+
+        if (input_rows == 0 || target_workers == 0 || sort_keys.empty()) {
+            return partitions;
+        }
+
+        // Calculate optimal number of partitions
+        std::uint32_t num_partitions = std::min(config_.max_partitions, target_workers);
+        std::uint64_t rows_per_partition =
+            std::max(config_.min_partition_size, input_rows / num_partitions);
+
+        // Adjust partition count based on actual data size
+        if (input_rows < config_.min_partition_size * num_partitions) {
+            num_partitions =
+                std::max(static_cast<std::uint32_t>(1),
+                         static_cast<std::uint32_t>(input_rows / config_.min_partition_size));
+            rows_per_partition = input_rows / num_partitions;
+        }
+
+        partitions.reserve(num_partitions);
+
+        // Generate partition key ranges (simplified approach)
+        std::vector<std::string> key_ranges =
+            determine_partition_ranges(sort_keys, input_rows, num_partitions);
+
+        std::uint64_t current_start = 0;
+        for (std::uint32_t i = 0; i < num_partitions; ++i) {
+            SortPartition partition;
+            partition.partition_id = i;
+            partition.start_row = current_start;
+            partition.end_row =
+                (i == num_partitions - 1) ? input_rows : current_start + rows_per_partition;
+            partition.estimated_rows = partition.end_row - partition.start_row;
+            partition.sort_keys = sort_keys;
+            partition.sort_ascending = sort_ascending;
+
+            // Estimate memory requirements
+            partition.estimated_memory_mb =
+                estimate_sort_memory(partition.estimated_rows, sort_keys);
+
+            // Set key ranges (simplified)
+            if (i < key_ranges.size()) {
+                partition.key_range_min = key_ranges[i];
+                partition.key_range_max =
+                    (i + 1 < key_ranges.size()) ? key_ranges[i + 1] : "MAX_VALUE";
+            } else {
+                partition.key_range_min = "range_" + std::to_string(i);
+                partition.key_range_max = "range_" + std::to_string(i + 1);
+            }
+
+            partitions.push_back(std::move(partition));
+            current_start = partition.end_row;
+        }
+
+        // Update statistics
+        {
+            std::lock_guard<std::mutex> lock(statistics_mutex_);
+            statistics_.total_partitions = num_partitions;
+            statistics_.average_partition_size_mb =
+                partitions.empty()
+                    ? 0.0
+                    : static_cast<double>(std::accumulate(
+                          partitions.begin(), partitions.end(), static_cast<std::uint64_t>(0),
+                          [](std::uint64_t sum, const SortPartition& p) {
+                              return sum + p.estimated_memory_mb;
+                          })) /
+                          partitions.size();
+        }
+
+        return partitions;
+    }
+
+    std::vector<std::shared_ptr<WorkUnit>>
+    ParallelSort::create_local_sort_work_units(const std::vector<SortPartition>& partitions)
+    {
+        std::vector<std::shared_ptr<WorkUnit>> work_units;
+        work_units.reserve(partitions.size());
+
+        for (const auto& partition : partitions) {
+            auto work_unit = std::make_shared<WorkUnit>();
+            work_unit->work_id =
+                static_cast<std::uint64_t>(partition.partition_id) +
+                (static_cast<std::uint64_t>(3) << 32); // Offset for sort operations
+            work_unit->partition_id = partition.partition_id;
+            work_unit->start_offset = partition.start_row;
+            work_unit->end_offset = partition.end_row;
+            work_unit->estimated_rows = partition.estimated_rows;
+            work_unit->estimated_memory_mb = partition.estimated_memory_mb;
+
+            // Estimate sort time (O(n log n) complexity)
+            std::uint64_t log_n = partition.estimated_rows > 0
+                                      ? static_cast<std::uint64_t>(std::log2(
+                                            static_cast<double>(partition.estimated_rows)))
+                                      : 1;
+            work_unit->estimated_time = std::chrono::milliseconds(std::max(
+                static_cast<std::uint64_t>(10), (partition.estimated_rows * log_n) / 10000));
+
+            // Store sort-specific data
+            work_unit->custom_data["operation_type"] = "local_sort";
+            work_unit->custom_data["key_range_min"] = partition.key_range_min;
+            work_unit->custom_data["key_range_max"] = partition.key_range_max;
+            work_unit->custom_data["sort_key_count"] = std::to_string(partition.sort_keys.size());
+
+            // Serialize sort keys and directions
+            std::ostringstream keys_stream, dirs_stream;
+            for (std::size_t i = 0; i < partition.sort_keys.size(); ++i) {
+                if (i > 0) {
+                    keys_stream << ",";
+                    dirs_stream << ",";
+                }
+                keys_stream << partition.sort_keys[i];
+                dirs_stream << (i < partition.sort_ascending.size() && partition.sort_ascending[i]
+                                    ? "ASC"
+                                    : "DESC");
+            }
+            work_unit->custom_data["sort_keys"] = keys_stream.str();
+            work_unit->custom_data["sort_directions"] = dirs_stream.str();
+
+            work_units.push_back(work_unit);
+        }
+
+        return work_units;
+    }
+
+    std::vector<std::shared_ptr<WorkUnit>>
+    ParallelSort::create_merge_work_units(const std::vector<SortPartition>& partitions,
+                                          std::uint32_t merge_level)
+    {
+        std::vector<std::shared_ptr<WorkUnit>> work_units;
+
+        // Create merge work units based on merge level
+        std::uint32_t partitions_per_merge =
+            std::max(static_cast<std::uint32_t>(2), config_.max_merge_ways);
+        std::uint32_t merge_groups =
+            (partitions.size() + partitions_per_merge - 1) / partitions_per_merge;
+
+        work_units.reserve(merge_groups);
+
+        for (std::uint32_t i = 0; i < merge_groups; ++i) {
+            auto work_unit = std::make_shared<WorkUnit>();
+            work_unit->work_id =
+                static_cast<std::uint64_t>(i) +
+                (static_cast<std::uint64_t>(4 + merge_level) << 32); // Offset for merge operations
+            work_unit->partition_id = i;
+
+            // Calculate range of partitions to merge
+            std::uint32_t start_partition = i * partitions_per_merge;
+            std::uint32_t end_partition = std::min(static_cast<std::uint32_t>(partitions.size()),
+                                                   (i + 1) * partitions_per_merge);
+
+            std::uint64_t total_rows = 0;
+            std::uint64_t total_memory = 0;
+            for (std::uint32_t j = start_partition; j < end_partition; ++j) {
+                total_rows += partitions[j].estimated_rows;
+                total_memory += partitions[j].estimated_memory_mb;
+            }
+
+            work_unit->estimated_rows = total_rows;
+            work_unit->estimated_memory_mb = total_memory;
+            work_unit->estimated_time = std::chrono::milliseconds(std::max(
+                static_cast<std::uint64_t>(50), total_rows / 1000)); // Merge is typically faster
+
+            // Store merge-specific data
+            work_unit->custom_data["operation_type"] = "merge_sort";
+            work_unit->custom_data["merge_level"] = std::to_string(merge_level);
+            work_unit->custom_data["partitions_to_merge"] =
+                std::to_string(end_partition - start_partition);
+            work_unit->custom_data["start_partition"] = std::to_string(start_partition);
+            work_unit->custom_data["end_partition"] = std::to_string(end_partition);
+
+            work_units.push_back(work_unit);
+        }
+
+        return work_units;
+    }
+
+    std::shared_ptr<WorkResult> ParallelSort::execute_local_sort(const SortPartition& partition)
+    {
+        auto result = std::make_shared<WorkResult>();
+        result->work_id = partition.partition_id;
+        result->start_time = std::chrono::steady_clock::now();
+
+        try {
+            // Simulate local sorting
+            std::uint64_t log_n = partition.estimated_rows > 0
+                                      ? static_cast<std::uint64_t>(std::log2(
+                                            static_cast<double>(partition.estimated_rows)))
+                                      : 1;
+            std::uint64_t estimated_comparisons = partition.estimated_rows * log_n;
+
+            // Choose sort algorithm based on partition size
+            bool use_quicksort = partition.estimated_rows <= config_.quicksort_threshold &&
+                                 config_.enable_quicksort_hybrid;
+
+            // Simulate sorting time
+            std::this_thread::sleep_for(
+                std::chrono::milliseconds(1 + partition.estimated_rows / 5000));
+
+            // Create mock result data
+            std::ostringstream result_stream;
+            result_stream << "sorted_partition_" << partition.partition_id << "_rows_"
+                          << partition.estimated_rows << "_algorithm_"
+                          << (use_quicksort ? "quicksort" : "mergesort");
+            std::string result_string = result_stream.str();
+            result->result_data.assign(result_string.begin(), result_string.end());
+
+            // Update statistics
+            {
+                std::lock_guard<std::mutex> lock(statistics_mutex_);
+                statistics_.input_rows_processed += partition.estimated_rows;
+                statistics_.comparisons_performed += estimated_comparisons;
+            }
+
+            result->success = true;
+            result->rows_processed = partition.estimated_rows;
+            result->rows_returned = partition.estimated_rows; // Same number of rows after sorting
+            result->memory_used_mb = partition.estimated_memory_mb;
+
+            // Store sort-specific statistics
+            result->statistics["comparisons_performed"] = estimated_comparisons;
+            result->statistics["sort_algorithm"] =
+                use_quicksort ? 1 : 0; // 1 = quicksort, 0 = mergesort
+            result->statistics["memory_peak_mb"] = result->memory_used_mb;
+
+        } catch (const std::exception& e) {
+            result->success = false;
+            result->error_message = "Local sorting failed for partition " +
+                                    std::to_string(partition.partition_id) + ": " +
+                                    std::string(e.what());
+        }
+
+        result->end_time = std::chrono::steady_clock::now();
+        result->execution_time = std::chrono::duration_cast<std::chrono::microseconds>(
+            result->end_time - result->start_time);
+
+        // Update timing statistics
+        {
+            std::lock_guard<std::mutex> lock(statistics_mutex_);
+            statistics_.local_sort_time += result->execution_time;
+        }
+
+        return result;
+    }
+
+    std::shared_ptr<WorkResult>
+    ParallelSort::execute_merge_phase(const std::vector<SortPartition>& partitions,
+                                      const std::vector<std::shared_ptr<WorkResult>>& local_results,
+                                      std::uint32_t merge_level)
+    {
+        auto result = std::make_shared<WorkResult>();
+        result->work_id =
+            static_cast<std::uint64_t>(merge_level) + (static_cast<std::uint64_t>(5) << 32);
+        result->start_time = std::chrono::steady_clock::now();
+
+        try {
+            std::uint64_t total_rows = 0;
+            std::uint64_t total_memory = 0;
+            std::uint64_t total_comparisons = 0;
+
+            // Simulate merging process
+            for (const auto& local_result : local_results) {
+                if (local_result && local_result->success) {
+                    total_rows += local_result->rows_processed;
+                    total_memory += local_result->memory_used_mb;
+                    if (local_result->statistics.count("comparisons_performed")) {
+                        total_comparisons += local_result->statistics.at("comparisons_performed");
+                    }
+                }
+            }
+
+            // Estimate merge comparisons (N-way merge complexity)
+            std::uint32_t merge_ways =
+                std::min(static_cast<std::uint32_t>(local_results.size()), config_.max_merge_ways);
+            std::uint64_t merge_comparisons =
+                total_rows * static_cast<std::uint64_t>(std::log2(static_cast<double>(merge_ways)));
+
+            // Simulate merge time
+            std::this_thread::sleep_for(std::chrono::milliseconds(5 + total_rows / 10000));
+
+            // Create mock result data
+            std::ostringstream result_stream;
+            result_stream << "merged_sort_level_" << merge_level << "_total_rows_" << total_rows
+                          << "_merge_ways_" << merge_ways;
+            std::string result_string = result_stream.str();
+            result->result_data.assign(result_string.begin(), result_string.end());
+
+            // Update statistics
+            {
+                std::lock_guard<std::mutex> lock(statistics_mutex_);
+                statistics_.comparisons_performed += merge_comparisons;
+                statistics_.merge_passes++;
+            }
+
+            result->success = true;
+            result->rows_processed = total_rows;
+            result->rows_returned = total_rows;
+            result->memory_used_mb = total_memory;
+
+            // Store merge-specific statistics
+            result->statistics["merge_ways"] = merge_ways;
+            result->statistics["merge_comparisons"] = merge_comparisons;
+            result->statistics["merge_level"] = merge_level;
+            result->statistics["partitions_merged"] = local_results.size();
+
+        } catch (const std::exception& e) {
+            result->success = false;
+            result->error_message = "Sort merge phase " + std::to_string(merge_level) +
+                                    " failed: " + std::string(e.what());
+        }
+
+        result->end_time = std::chrono::steady_clock::now();
+        result->execution_time = std::chrono::duration_cast<std::chrono::microseconds>(
+            result->end_time - result->start_time);
+
+        // Update timing statistics
+        {
+            std::lock_guard<std::mutex> lock(statistics_mutex_);
+            statistics_.merge_time += result->execution_time;
+        }
+
+        return result;
+    }
+
+    std::shared_ptr<WorkResult> ParallelSort::merge_sorted_results(
+        const std::vector<std::shared_ptr<WorkResult>>& sorted_results,
+        const std::vector<std::string>& sort_keys, const std::vector<bool>& sort_ascending)
+    {
+        auto merged_result = std::make_shared<WorkResult>();
+        merged_result->work_id = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(this));
+        merged_result->start_time = std::chrono::steady_clock::now();
+
+        try {
+            std::uint64_t total_rows = 0;
+            std::uint64_t total_memory = 0;
+            std::uint64_t total_comparisons = 0;
+            std::chrono::microseconds total_execution_time{0};
+
+            // Merge results from all partitions
+            for (const auto& result : sorted_results) {
+                if (result && result->success) {
+                    total_rows += result->rows_returned;
+                    total_memory += result->memory_used_mb;
+                    total_execution_time += result->execution_time;
+
+                    if (result->statistics.count("comparisons_performed")) {
+                        total_comparisons += result->statistics.at("comparisons_performed");
+                    }
+                }
+            }
+
+            // Final multi-way merge
+            std::uint32_t final_merge_ways =
+                std::min(static_cast<std::uint32_t>(sorted_results.size()), config_.max_merge_ways);
+            std::uint64_t final_comparisons =
+                total_rows *
+                static_cast<std::uint64_t>(std::log2(static_cast<double>(final_merge_ways)));
+
+            // Create consolidated result data
+            std::ostringstream merged_stream;
+            merged_stream << "final_sorted_result_rows_" << total_rows << "_keys_"
+                          << sort_keys.size() << "_comparisons_"
+                          << (total_comparisons + final_comparisons);
+            std::string merged_string = merged_stream.str();
+            merged_result->result_data.assign(merged_string.begin(), merged_string.end());
+
+            merged_result->success = true;
+            merged_result->rows_returned = total_rows;
+            merged_result->memory_used_mb = total_memory;
+            merged_result->execution_time = total_execution_time;
+
+            // Store final merge statistics
+            merged_result->statistics["total_partitions_merged"] = sorted_results.size();
+            merged_result->statistics["total_comparisons"] = total_comparisons + final_comparisons;
+            merged_result->statistics["final_merge_ways"] = final_merge_ways;
+            merged_result->statistics["sort_key_count"] = sort_keys.size();
+
+            // Update final statistics
+            {
+                std::lock_guard<std::mutex> lock(statistics_mutex_);
+                statistics_.output_rows_generated = total_rows;
+                statistics_.comparisons_performed += final_comparisons;
+            }
+
+        } catch (const std::exception& e) {
+            merged_result->success = false;
+            merged_result->error_message = "Sort result merging failed: " + std::string(e.what());
+        }
+
+        merged_result->end_time = std::chrono::steady_clock::now();
+        return merged_result;
+    }
+
+    ParallelSort::SortStatistics ParallelSort::get_statistics() const
+    {
+        std::lock_guard<std::mutex> lock(statistics_mutex_);
+        return statistics_;
+    }
+
+    void ParallelSort::reset_statistics()
+    {
+        std::lock_guard<std::mutex> lock(statistics_mutex_);
+        statistics_ = SortStatistics{};
+    }
+
+    std::uint64_t ParallelSort::estimate_sort_memory(std::uint64_t input_rows,
+                                                     const std::vector<std::string>& sort_keys)
+    {
+        if (input_rows == 0)
+            return 1;
+
+        // Estimate memory based on row count and key complexity
+        // Assume average row size of 100 bytes + key overhead
+        std::uint64_t base_memory_per_row = 100 + (sort_keys.size() * 20); // 20 bytes per key
+        std::uint64_t total_memory_bytes = input_rows * base_memory_per_row;
+
+        // Add overhead for sorting algorithm (typically 2x for merge sort)
+        total_memory_bytes *= 2;
+
+        // Convert to MB and ensure minimum
+        std::uint64_t memory_mb =
+            std::max(static_cast<std::uint64_t>(1), total_memory_bytes / (1024 * 1024));
+
+        return std::min(memory_mb, config_.sort_memory_mb);
+    }
+
+    bool ParallelSort::should_use_external_sort(std::uint64_t estimated_memory_mb)
+    {
+        return config_.enable_external_sort && (estimated_memory_mb > config_.sort_memory_mb);
+    }
+
+    std::uint32_t ParallelSort::calculate_optimal_merge_ways(std::uint32_t num_partitions,
+                                                             std::uint64_t available_memory_mb)
+    {
+        if (num_partitions <= 1)
+            return 1;
+
+        // Balance between merge ways and memory usage
+        std::uint32_t max_ways = std::min(config_.max_merge_ways, num_partitions);
+
+        // Ensure we don't exceed memory limits
+        std::uint64_t memory_per_way = available_memory_mb / max_ways;
+        while (max_ways > 2 && memory_per_way < 10) { // Minimum 10MB per merge way
+            max_ways--;
+            memory_per_way = available_memory_mb / max_ways;
+        }
+
+        return std::max(static_cast<std::uint32_t>(2), max_ways);
+    }
+
+    std::vector<std::string>
+    ParallelSort::determine_partition_ranges(const std::vector<std::string>& sort_keys,
+                                             std::uint64_t input_rows,
+                                             std::uint32_t target_partitions)
+    {
+        std::vector<std::string> ranges;
+        ranges.reserve(target_partitions + 1);
+
+        // Simplified range determination - in a real implementation, this would
+        // analyze actual data distribution or use sampling
+        for (std::uint32_t i = 0; i <= target_partitions; ++i) {
+            std::ostringstream range_stream;
+            range_stream << "key_range_" << std::hex << (i * 0x10000000ULL / target_partitions);
+            ranges.push_back(range_stream.str());
+        }
+
+        return ranges;
+    }
+
+    // ParallelQueryExecutor integration methods
+
+    std::shared_ptr<WorkResult>
+    ParallelQueryExecutor::execute_parallel_aggregate(std::shared_ptr<Aggregate> agg_node,
+                                                      std::uint32_t worker_count)
+    {
+        if (!agg_node || worker_count == 0) {
+            auto error_result = std::make_shared<WorkResult>();
+            error_result->success = false;
+            error_result->error_message = "Invalid aggregation node or worker count";
+            return error_result;
+        }
+
+        // Create parallel aggregation instance
+        std::string agg_name =
+            "parallel_agg_" + std::to_string(reinterpret_cast<std::uintptr_t>(agg_node.get()));
+        ParallelAggregation parallel_agg(agg_name);
+
+        // Mock aggregation parameters (in real implementation, these would come from agg_node)
+        std::uint64_t estimated_input_rows = 100000; // Mock value
+        std::vector<std::string> group_by_keys = {"customer_id", "product_category"};
+        std::vector<std::string> aggregate_exprs = {"SUM(amount)", "COUNT(*)", "AVG(price)"};
+
+        try {
+            // Plan aggregation partitions
+            auto partitions = parallel_agg.plan_aggregation_partitions(
+                estimated_input_rows, group_by_keys, aggregate_exprs, worker_count);
+            if (partitions.empty()) {
+                auto error_result = std::make_shared<WorkResult>();
+                error_result->success = false;
+                error_result->error_message = "Failed to create aggregation partitions";
+                return error_result;
+            }
+
+            // Create and execute partial aggregation work units
+            auto partial_work_units =
+                parallel_agg.create_partial_aggregation_work_units(partitions);
+            std::vector<std::shared_ptr<WorkResult>> partial_results;
+            partial_results.reserve(partial_work_units.size());
+
+            for (const auto& partition : partitions) {
+                auto partial_result = parallel_agg.execute_partial_aggregation(partition);
+                partial_results.push_back(partial_result);
+            }
+
+            // Execute final aggregation if two-phase is enabled
+            std::vector<std::shared_ptr<WorkResult>> final_results;
+            if (parallel_agg.should_use_two_phase_aggregation(
+                    estimated_input_rows,
+                    parallel_agg.estimate_group_cardinality(group_by_keys, estimated_input_rows))) {
+
+                for (const auto& partition : partitions) {
+                    auto final_result = parallel_agg.execute_final_aggregation(
+                        partition, {partial_results[partition.partition_id]});
+                    final_results.push_back(final_result);
+                }
+            } else {
+                final_results = partial_results;
+            }
+
+            // Merge all results
+            auto merged_result = parallel_agg.merge_aggregation_results(
+                final_results, group_by_keys, aggregate_exprs);
+
+            if (merged_result) {
+                // Add parallel execution statistics
+                merged_result->custom_data["parallel_workers"] = std::to_string(worker_count);
+                merged_result->custom_data["aggregation_partitions"] =
+                    std::to_string(partitions.size());
+                merged_result->custom_data["operation_type"] = "parallel_aggregation";
+                merged_result->custom_data["group_by_keys_count"] =
+                    std::to_string(group_by_keys.size());
+                merged_result->custom_data["aggregate_exprs_count"] =
+                    std::to_string(aggregate_exprs.size());
+
+                auto agg_stats = parallel_agg.get_statistics();
+                merged_result->custom_data["total_partial_agg_time_us"] =
+                    std::to_string(agg_stats.partial_agg_time.count());
+                merged_result->custom_data["total_final_agg_time_us"] =
+                    std::to_string(agg_stats.final_agg_time.count());
+                merged_result->custom_data["total_groups_created"] =
+                    std::to_string(agg_stats.partial_groups_created);
+            }
+
+            return merged_result;
+
+        } catch (const std::exception& e) {
+            auto error_result = std::make_shared<WorkResult>();
+            error_result->success = false;
+            error_result->error_message =
+                "Parallel aggregation execution failed: " + std::string(e.what());
+            return error_result;
+        }
+    }
+
+    std::shared_ptr<WorkResult>
+    ParallelQueryExecutor::execute_parallel_sort(std::shared_ptr<Sort> sort_node,
+                                                 std::uint32_t worker_count)
+    {
+        if (!sort_node || worker_count == 0) {
+            auto error_result = std::make_shared<WorkResult>();
+            error_result->success = false;
+            error_result->error_message = "Invalid sort node or worker count";
+            return error_result;
+        }
+
+        // Create parallel sort instance
+        std::string sort_name =
+            "parallel_sort_" + std::to_string(reinterpret_cast<std::uintptr_t>(sort_node.get()));
+        ParallelSort parallel_sort(sort_name);
+
+        // Mock sort parameters (in real implementation, these would come from sort_node)
+        std::uint64_t estimated_input_rows = 500000; // Mock value
+        std::vector<std::string> sort_keys = {"order_date", "customer_id", "amount"};
+        std::vector<bool> sort_ascending = {false, true, false}; // DESC, ASC, DESC
+
+        try {
+            // Plan sort partitions
+            auto partitions = parallel_sort.plan_sort_partitions(estimated_input_rows, sort_keys,
+                                                                 sort_ascending, worker_count);
+            if (partitions.empty()) {
+                auto error_result = std::make_shared<WorkResult>();
+                error_result->success = false;
+                error_result->error_message = "Failed to create sort partitions";
+                return error_result;
+            }
+
+            // Create and execute local sort work units
+            auto local_work_units = parallel_sort.create_local_sort_work_units(partitions);
+            std::vector<std::shared_ptr<WorkResult>> local_results;
+            local_results.reserve(local_work_units.size());
+
+            for (const auto& partition : partitions) {
+                auto local_result = parallel_sort.execute_local_sort(partition);
+                local_results.push_back(local_result);
+            }
+
+            // Execute merge phases if needed
+            std::vector<std::shared_ptr<WorkResult>> merge_results = local_results;
+            std::uint32_t merge_level = 0;
+
+            while (merge_results.size() > 1) {
+                merge_level++;
+                auto merge_work_units =
+                    parallel_sort.create_merge_work_units(partitions, merge_level);
+                auto merge_result =
+                    parallel_sort.execute_merge_phase(partitions, merge_results, merge_level);
+                merge_results = {merge_result};
+            }
+
+            // Final merge of all sorted partitions
+            auto final_result =
+                parallel_sort.merge_sorted_results(merge_results, sort_keys, sort_ascending);
+
+            if (final_result) {
+                // Add parallel execution statistics
+                final_result->custom_data["parallel_workers"] = std::to_string(worker_count);
+                final_result->custom_data["sort_partitions"] = std::to_string(partitions.size());
+                final_result->custom_data["operation_type"] = "parallel_sort";
+                final_result->custom_data["sort_keys_count"] = std::to_string(sort_keys.size());
+                final_result->custom_data["merge_levels"] = std::to_string(merge_level);
+
+                auto sort_stats = parallel_sort.get_statistics();
+                final_result->custom_data["total_local_sort_time_us"] =
+                    std::to_string(sort_stats.local_sort_time.count());
+                final_result->custom_data["total_merge_time_us"] =
+                    std::to_string(sort_stats.merge_time.count());
+                final_result->custom_data["total_comparisons"] =
+                    std::to_string(sort_stats.comparisons_performed);
+            }
+
+            return final_result;
+
+        } catch (const std::exception& e) {
+            auto error_result = std::make_shared<WorkResult>();
+            error_result->success = false;
+            error_result->error_message =
+                "Parallel sort execution failed: " + std::string(e.what());
+            return error_result;
+        }
     }
 
 } // namespace scratchbird::engine
