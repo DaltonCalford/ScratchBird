@@ -2,7 +2,7 @@
 
 ## Version 1.0.0
 
-This comprehensive specification provides complete technical details for implementing a C++ interface to connect to multiple database engines: MySQL, MariaDB, PostgreSQL, and Microsoft SQL Server (MSSQL).
+This comprehensive specification provides complete technical details for implementing a C++ interface to connect to multiple database engines: MySQL, MariaDB, PostgreSQL, Microsoft SQL Server (MSSQL), Firebird SQL, and generic databases through ODBC and JDBC/JNI.
 
 ## Table of Contents
 
@@ -35,6 +35,9 @@ The multi-database interface follows a three-layer architecture:
 1. [MySQL/MariaDB Specification](mysql_mariadb_spec.md)
 2. [PostgreSQL Specification](postgresql_spec.md)
 3. [Microsoft SQL Server Specification](mssql_spec.md)
+4. [Firebird SQL Specification](firebird_spec.md)
+5. [Generic ODBC Specification](odbc_generic_spec.md)
+6. [JDBC/JNI Specification](jdbc_jni_spec.md)
 
 ## Unified Interface Design
 
@@ -62,6 +65,20 @@ See [Unified Interface Specification](unified_interface_spec.md) for the complet
 - ODBC Driver 17 for SQL Server
 - FreeTDS 1.0 or later (Linux/Unix)
 - Windows SDK (Windows only)
+
+#### Firebird SQL
+- Firebird 3.0 or later
+- IBPP library (optional C++ wrapper)
+
+#### Generic ODBC
+- unixODBC 2.3 or later (Linux/Unix)
+- Windows ODBC (built-in on Windows)
+- Database-specific ODBC drivers
+
+#### JDBC/JNI
+- JDK 8 or later
+- Database-specific JDBC drivers (JAR files)
+- JNI headers and libraries
 
 ## Security Considerations
 
@@ -124,6 +141,9 @@ db_interface/
 ├── mysql_mariadb_spec.md             # MySQL/MariaDB detailed specification
 ├── postgresql_spec.md                 # PostgreSQL detailed specification
 ├── mssql_spec.md                     # MSSQL detailed specification
+├── firebird_spec.md                  # Firebird SQL detailed specification
+├── odbc_generic_spec.md              # Generic ODBC specification
+├── jdbc_jni_spec.md                  # JDBC/JNI specification
 ├── unified_interface_spec.md         # Unified interface specification
 ├── examples/                          # Complete example implementations
 │   ├── mysql_example.cpp
