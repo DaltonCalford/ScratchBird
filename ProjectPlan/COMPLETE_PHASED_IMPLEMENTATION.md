@@ -555,4 +555,44 @@ INSTANTIATE_TEST_SUITE_P(
 7. **Performance Awareness** - Measure everything
 8. **Documentation Parallel** - Document as we build
 
+## Progress Tracking
+
+### READ-ONLY Plan vs Progress Logs
+
+This implementation plan is **READ-ONLY** - it defines what needs to be built but is never modified based on progress.
+
+Actual implementation progress is tracked in:
+- `progress/` directory - Contains all work logs
+- `progress/alpha_X_XX_X.log.md` - One log file per version
+- `progress/PROGRESS_LOG_TEMPLATE.md` - Template for new logs
+
+### How to Track Progress
+
+1. **Before starting work**: Read the relevant section of this plan
+2. **Create progress log**: Copy template to new version log
+3. **During work**: Append progress to the log file
+4. **After each session**: Commit the updated log
+5. **Never modify**: This plan or previous log entries
+
+### Progress Structure
+
+```
+ProjectPlan/
+├── COMPLETE_PHASED_IMPLEMENTATION.md  # This file (READ-ONLY)
+├── Alpha_101_Specification.md         # Detailed specs (READ-ONLY)
+└── progress/                          # All progress tracking
+    ├── README.md                      # How to use progress logs
+    ├── PROGRESS_LOG_TEMPLATE.md       # Template for new logs
+    ├── alpha_1_01_1.log.md           # Actual work log
+    └── ...                           # One log per version
+```
+
+### Key Rules
+
+- **Plan = WHERE we're going** (this document)
+- **Logs = WHERE we are** (progress directory)
+- **Plan is immutable** - Never changes based on reality
+- **Logs are append-only** - Never modify past entries
+- **File verification mandatory** - Every log must verify database changes
+
 This incremental approach ensures solid foundation at each step!
