@@ -66,6 +66,21 @@ target_link_libraries(test_verification_all
     Threads::Threads
 )
 
+# Create ordered test executable that respects dependencies
+add_executable(test_verification_ordered
+    run_ordered_tests.cpp
+)
+
+target_link_libraries(test_verification_ordered
+    scratchbird_engine
+    GTest::gtest
+    Threads::Threads
+)
+
+target_include_directories(test_verification_ordered PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+)
+
 # Add master test
 add_test(NAME verification_all
          COMMAND test_verification_all
