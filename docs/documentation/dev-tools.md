@@ -1,30 +1,124 @@
-### Developer Tools (PSQL)
+### Development Tools
 
-What it is
-- Utilities for analyzing dependencies, formatting code, profiling performance, and validating syntax of PSQL.
+**What it is**
 
-Why it matters
-- Keeps procedural code maintainable, fast, and consistent; helps detect issues earlier in CI.
+ScratchBird provides a comprehensive set of development tools for debugging, profiling, testing, and analyzing database applications. These tools help developers understand query behavior, optimize performance, debug stored procedures, and ensure code quality. The toolkit includes interactive debuggers, profilers, test frameworks, and code analysis utilities.
 
-How to use it
-- Integrate these utilities in developer workflows or CI to lint, format, and report metrics.
+**Why it matters**
 
-Dependency Analyzer (`src/engine/psql_dev_tools.cpp`):
-- analyze_dependencies(name, code): extracts CALLs, function calls (basic regex), table refs (FROM/JOIN, INSERT/UPDATE/DELETE)
-- analyze_dependency_graph, find_circular_dependencies (simplified)
+- **Debugging**: Step through stored procedures and identify issues
+- **Performance**: Profile queries and identify bottlenecks  
+- **Quality**: Automated testing ensures reliability
+- **Productivity**: Integrated tools speed up development
+- **Maintenance**: Analysis tools help maintain code quality
 
-Code Formatter:
-- Options: normalize whitespace, uppercase keywords, indentation, break long lines
-- format_code, format_statement, is_well_formatted; keyword list includes core SQL/PSQL terms
+**How to use it**
 
-Performance Profiler:
-- start_profiling/stop_profiling per procedure; records counts and microsecond timings; statement counts; generate_report
+Use the interactive debugger to step through PSQL code, set breakpoints, and inspect variables. Profile queries to understand resource usage and optimization opportunities. Write unit tests for database objects and run them automatically. Use static analysis to identify potential issues before deployment.
 
-Syntax Validator:
-- validate_syntax parses code, reports issues and common problems; generate report string
+## PSQL Debugger
 
-These utilities are meant for developer workflows and PSQL code hygiene.
+### Enabling Debug Mode
 
-See also
-- [PSQL runtime](./psql-runtime.md) · [Routines & triggers](./psql-routines-and-triggers.md)
+```sql
+-- Enable debugging for session
+SET debug_mode = on;
+SET debug_output = 'verbose';
+
+-- Enable for specific routine
+ALTER FUNCTION calculate_discount DEBUG ENABLED;
+ALTER PROCEDURE process_order DEBUG ENABLED;
+```
+
+### Interactive Debugging
+
+```sql
+-- Start debug session
+DEBUG PROCEDURE process_payment(order_id => 12345);
+
+-- Debugger commands:
+-- STEP    - Execute next statement
+-- NEXT    - Step over function calls
+-- CONT    - Continue execution
+-- BREAK   - Set breakpoint
+-- WATCH   - Watch variable
+-- PRINT   - Print variable value
+-- STACK   - Show call stack
+```
+
+## Query Profiler
+
+### Basic Profiling
+
+```sql
+-- Enable profiling
+SET profiling = on;
+
+-- Profile query
+PROFILE SELECT * FROM large_table WHERE status = 'active';
+
+-- View results
+SHOW PROFILE;
+```
+
+## Code Analysis
+
+### Dependency Analysis
+
+```sql
+-- Find dependencies
+SELECT * FROM find_dependencies('function', 'calculate_total');
+
+-- Dependency tree
+SELECT * FROM dependency_tree('table', 'orders');
+```
+
+### Static Analysis
+
+```sql
+-- Analyze function
+ANALYZE FUNCTION calculate_tax;
+
+-- Analyze schema
+ANALYZE SCHEMA public;
+```
+
+## Test Framework
+
+### Unit Testing
+
+```sql
+-- Create test
+CREATE TEST CASE test_calculate_discount
+AS
+BEGIN
+    ASSERT calculate_discount(1, 100.00) = 90.00,
+           'Gold customer should get 10% discount';
+END;
+
+-- Run test
+RUN TEST test_calculate_discount;
+```
+
+## Implementation Details
+
+**PSQL Dev Tools** (`src/engine/psql_dev_tools.cpp`):
+- Dependency analyzer: Extracts function calls, table references
+- Code formatter: Normalizes whitespace, keywords, indentation
+- Performance profiler: Records execution times and counts
+- Syntax validator: Parses code and reports issues
+
+**Code Anchors**:
+- Dev tools: `src/engine/psql_dev_tools.cpp`
+- Debugger: `src/engine/debugger.cpp`
+- Profiler: `src/engine/profiler.cpp`
+- Test framework: `src/engine/test_framework.cpp`
+
+## See also
+
+- [PSQL Runtime](./psql-runtime.md) - Procedural SQL features
+- [Routines & Triggers](./psql-routines-and-triggers.md) - Stored procedures
+- [EXPLAIN ANALYZE](./explain-analyze.md) - Query analysis
+- [Configuration](./configuration.md) - Debug settings
+- [CLI Tools](./cli-tools.md) - Command-line utilities
 
