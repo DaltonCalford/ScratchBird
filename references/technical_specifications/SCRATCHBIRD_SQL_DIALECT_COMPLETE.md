@@ -921,6 +921,38 @@ ALTER TABLE table_name {ENABLE | DISABLE} TRIGGER {trigger_name | ALL | USER};
 
 -- Drop trigger
 DROP TRIGGER [IF EXISTS] trigger_name ON table_name [CASCADE | RESTRICT];
+
+-- TRIGGER CONTEXT VARIABLES (ScratchBird Enhanced)
+-- See TRIGGER_CONTEXT_VARIABLES.md for complete specification
+
+-- Inside trigger functions, access context via SQL-style:
+CREATE FUNCTION my_trigger() RETURNS TRIGGER AS $$
+DECLARE
+    @event VARCHAR;
+    @changed TEXT[];
+BEGIN
+    -- Get trigger context
+    SET @event = GET TRIGGER_EVENT;  -- 'INSERT', 'UPDATE', 'DELETE', 'SELECT'
+    SET @changed = GET CHANGED_COLUMNS;  -- Array of changed columns
+    
+    -- Access row values
+    IF NEW.price != OLD.price THEN  -- Compare new vs old
+        INSERT INTO price_history VALUES (OLD.price, NEW.price);
+    END IF;
+    
+    -- Check specific changes
+    IF IS COLUMN CHANGED(status) THEN
+        -- Status column was modified
+    END IF;
+    
+    -- Get change metrics
+    IF GET COLUMN_CHANGE_PERCENT(price) > 10 THEN
+        -- Price increased by more than 10%
+    END IF;
+    
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
 ```
 
 ### Control Structures
