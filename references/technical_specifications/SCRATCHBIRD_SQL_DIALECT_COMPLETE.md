@@ -1018,7 +1018,7 @@ END LOOP;
 ### Exception Handling
 
 ```sql
--- Exception block
+-- Traditional exception block
 BEGIN
   -- Statements that might raise exceptions
 EXCEPTION
@@ -1033,6 +1033,39 @@ EXCEPTION
       error_detail = PG_EXCEPTION_DETAIL;
     RAISE NOTICE 'Error: %', error_text;
 END;
+
+-- TRY/EXCEPT BLOCKS (ScratchBird Enhanced)
+-- See EXCEPTION_HANDLING_AND_CURSORS.md for complete specification
+
+-- TRY/EXCEPT with specific handlers
+TRY
+    -- Protected code
+    UPDATE accounts SET balance = balance - 100;
+    PERFORM charge_credit_card();
+    
+EXCEPT WHEN payment_failed THEN
+    -- Handle custom exception
+    SET @error = GET EXCEPTION_INFO;
+    INSERT INTO failed_payments VALUES (@error.context);
+    
+EXCEPT WHEN SQLSTATE '23505' THEN
+    -- Handle duplicate key
+    RAISE WARNING 'Duplicate transaction';
+    
+EXCEPT WHEN OTHERS THEN
+    -- Catch all
+    ROLLBACK;
+    RAISE;  -- Re-raise
+END TRY;
+
+-- Define custom exceptions
+CREATE EXCEPTION payment_failed (
+    amount MONEY,
+    reason VARCHAR
+) WITH MESSAGE TEMPLATE 'Payment of {amount} failed: {reason}';
+
+-- Raise custom exception
+RAISE payment_failed (amount := 99.99, reason := 'Insufficient funds');
 
 -- Raise exceptions
 RAISE [level] 'format_string' [, expression [, ...]];
@@ -1056,6 +1089,16 @@ DECLARE cursor_name [BINARY] [INSENSITIVE] [NO SCROLL | SCROLL]
   FOR select_statement
   [FOR {READ ONLY | UPDATE [OF column_name [, ...]]}];
 
+-- UNIVERSAL CURSOR SUPPORT (ScratchBird Enhanced)
+-- See EXCEPTION_HANDLING_AND_CURSORS.md for complete specification
+
+-- Cursor for ANY multi-record source
+DECLARE cursor_name CURSOR FOR table_name;  -- Direct table
+DECLARE cursor_name CURSOR FOR view_name;   -- View
+DECLARE cursor_name CURSOR FOR @set_variable;  -- SET type variable
+DECLARE cursor_name CURSOR FOR CALL procedure();  -- Procedure results
+DECLARE cursor_name CURSOR FOR function();  -- Set-returning function
+
 -- Open cursor
 OPEN cursor_name [(parameters)];
 
@@ -1065,6 +1108,9 @@ FETCH [direction] FROM cursor_name [INTO target];
 --            ABSOLUTE count | RELATIVE count | 
 --            count | ALL | FORWARD [count | ALL] | 
 --            BACKWARD [count | ALL]
+
+-- Bulk fetch (ScratchBird Enhanced)
+FETCH FORWARD 100 FROM cursor BULK COLLECT INTO @array;
 
 -- Move cursor
 MOVE [direction] IN cursor_name;
