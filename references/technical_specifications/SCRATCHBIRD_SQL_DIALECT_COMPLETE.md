@@ -839,6 +839,70 @@ SELECT pg_advisory_unlock(key);
 
 ## PSQL - Procedural SQL
 
+### EXECUTE BLOCK (Anonymous Blocks)
+
+```sql
+-- EXECUTE BLOCK (ScratchBird Enhanced)
+-- See EXECUTE_BLOCKS_AND_AUTONOMOUS_TRANSACTIONS.md for complete specification
+
+-- Basic anonymous block
+EXECUTE BLOCK
+AS
+DECLARE i INT = 0;
+BEGIN
+    WHILE (i < 128) DO
+    BEGIN
+        INSERT INTO ascii_table VALUES (i, ascii_char(i));
+        i = i + 1;
+    END
+END;
+
+-- Parameterized block
+EXECUTE BLOCK (
+    start_date DATE = ?,
+    end_date DATE = ?
+)
+AS
+BEGIN
+    DELETE FROM temp WHERE date BETWEEN start_date AND end_date;
+END;
+
+-- Block with return values
+EXECUTE BLOCK
+RETURNS (id INT, name VARCHAR(100))
+AS
+BEGIN
+    FOR SELECT id, name FROM users INTO :id, :name DO
+        SUSPEND;
+END;
+
+-- Autonomous transaction block
+EXECUTE BLOCK
+WITH AUTONOMOUS TRANSACTION
+AS
+BEGIN
+    -- Runs in separate transaction
+    INSERT INTO audit_log VALUES (...);
+    COMMIT;  -- Only commits this transaction
+END;
+
+-- Block with triggers
+EXECUTE BLOCK
+WITH AUTONOMOUS TRANSACTION
+AS
+BEGIN
+    ON COMMIT DO
+        INSERT INTO success_log VALUES (CURRENT_TIMESTAMP);
+    
+    ON ROLLBACK DO
+        INSERT INTO failure_log VALUES (CURRENT_TIMESTAMP);
+    
+    -- Main logic
+    PERFORM critical_operation();
+    COMMIT;
+END;
+```
+
 ### Stored Procedures
 
 ```sql
