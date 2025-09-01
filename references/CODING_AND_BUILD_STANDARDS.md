@@ -259,9 +259,9 @@ TEST_F(PageManagerTest, CreatePage) {
     // Test implementation
 }
 
-TEST_F(PageManagerTest, AllPageSizes) {
-    // MUST test all 5 page sizes
-    for (auto page_size : {8192, 16384, 32768, 65536, 131072}) {
+TEST_F(PageManagerTest, AllAlphaPageSizes) {
+    // Alpha MUST test 3 page sizes; Beta extends to 5
+    for (auto page_size : {8192, 16384, 32768}) {
         // Test with each size
     }
 }

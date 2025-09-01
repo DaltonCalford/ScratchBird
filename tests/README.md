@@ -25,7 +25,7 @@ tests/
 ```
 
 Each phase will test:
-- All 5 page sizes (8K, 16K, 32K, 64K, 128K)
+- Alpha: 3 page sizes (8K, 16K, 32K). 64K/128K tested in Beta.
 - File structure verification
 - API functionality
 - Error conditions
