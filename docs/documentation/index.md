@@ -33,7 +33,9 @@ The engine follows a clear pipeline from SQL text to execution:
 - **Expression Parsing** (`include/scratchbird/engine/expr.h`): Handles operators, predicates, projections
 - **AST Construction** (`include/scratchbird/engine/ast.h`): Builds abstract syntax trees for statements
 - **Statement Routing** (`src/engine/parser.cpp`): Dispatches to specialized parsers (SELECT, DML, DDL, PSQL)
-- **Execution** (`src/engine/psql_executor.cpp`): Runtime evaluation and data manipulation
+- **Bytecode Compilation** (`src/engine/sblr_compiler.cpp`): Compiles AST to SBLR bytecode (see [Complete SBLR/BLR Specification](/workspace/docs/scratchbird-bytecode-complete-specification.md))
+- **Optimization** (`src/engine/sblr_optimizer.cpp`): Applies optimization passes to bytecode
+- **Execution** (`src/engine/sblr_vm.cpp`): Stack-based VM with adaptive specialization and JIT compilation
 
 **Documentation Structure**
 
@@ -90,6 +92,7 @@ This documentation is organized into logical sections that mirror how you'll use
 - [Developer Tools](./dev-tools.md) - Dependency analyzer, SQL formatter, profiler, syntax validator
 
 **Reference**:
+- [Complete SBLR/BLR Bytecode Specification](/workspace/docs/scratchbird-bytecode-complete-specification.md) - Unified bytecode specification with BLR compatibility
 - [Missing and Future](./missing-and-future.md) - Known limitations, parser-only features, roadmap items
 
 **Quick Examples**

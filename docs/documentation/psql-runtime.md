@@ -19,317 +19,384 @@ Start with EXECUTE BLOCK for ad-hoc procedural code, then create stored procedur
 ## Core PSQL Features
 
 **Parser**: `src/engine/parser_psql.cpp` - Parses PSQL syntax into AST  
-**Runtime**: `src/engine/psql_executor.cpp` - Executes PSQL code  
+**Compiler**: `src/engine/sblr_compiler.cpp` - Compiles to SBLR bytecode  
+**Runtime**: `src/engine/sblr_vm.cpp` - Executes bytecode  
+**Bytecode**: See [Complete SBLR/BLR Specification](/workspace/docs/scratchbird-bytecode-complete-specification.md)  
 **Dev Tools**: `src/engine/psql_dev_tools.cpp` - Development utilities
 
 ### Supported Statements
 
-- **EXECUTE BLOCK**: Anonymous code blocks with parameters and return values
+- **EXECUTE BLOCK**: Anonymous code blocks with optional parameters and returns
 - **Control Flow**: IF/THEN/ELSE, WHILE, FOR SELECT, LEAVE, CONTINUE
-- **Variables**: DECLARE with types, assignments, scope management
-- **Cursors**: Declare, open, fetch, close; scrollable cursor support
-- **Exceptions**: System and custom exceptions, WHEN handlers
+- **Variables**: DECLARE with types and defaults, assignment, scope management
+- **Cursors**: DECLARE, OPEN, FETCH, CLOSE with scrollable support
+- **Exceptions**: EXCEPTION/WHEN blocks, system exceptions, custom exceptions
 - **Dynamic SQL**: EXECUTE STATEMENT with various options
-- **Security**: DEFINER/INVOKER rights, privilege control
-- **Parameters**: IN/OUT/INOUT parameter passing
+- **Security**: DEFINER/INVOKER contexts, caller privileges
 
-## EXECUTE BLOCK Examples
+### EXECUTE BLOCK
 
-### Basic Block
+Anonymous procedural blocks for immediate execution:
+
 ```sql
--- Simple execution
+-- Simple block with variables
 EXECUTE BLOCK
 AS
+DECLARE i INTEGER = 0;
+DECLARE total DECIMAL(10,2) = 0.00;
 BEGIN
-    UPDATE products SET price = price * 1.10;
-END;
-```
-
-### With Parameters
-```sql
-EXECUTE BLOCK (input_val INTEGER = 10) 
-RETURNS (output_val INTEGER) 
-AS
-BEGIN
-    output_val = input_val * 2;
-    SUSPEND;
-END;
-```
-
-### Complex Example
-```sql
-EXECUTE BLOCK (category_id INTEGER = 5)
-RETURNS (product_name VARCHAR(100), new_price DECIMAL(10,2))
-AS
-DECLARE VARIABLE old_price DECIMAL(10,2);
-BEGIN
-    FOR SELECT name, price
-        FROM products
-        WHERE category_id = :category_id
-        INTO :product_name, :old_price
-    DO
+    WHILE (i < 10) DO
     BEGIN
-        new_price = old_price * 0.9;  -- 10% discount
-        UPDATE products SET price = :new_price
-        WHERE name = :product_name;
-        SUSPEND;  -- Return row
+        total = total + i * 1.5;
+        i = i + 1;
     END
-END;
+    
+    -- Return result
+    SUSPEND;
+END
 ```
 
-## Variables and Data Types
+With parameters and returns:
 
-### Declaration Syntax
 ```sql
-DECLARE [VARIABLE] var_name type [= initial_value];
-DECLARE var_name TYPE OF COLUMN table.column;
-DECLARE var_name TYPE OF domain_name;
+EXECUTE BLOCK (min_salary DECIMAL(10,2) = 50000)
+RETURNS (dept_name VARCHAR(50), avg_salary DECIMAL(10,2))
+AS
+BEGIN
+    FOR SELECT d.name, AVG(e.salary)
+        FROM departments d
+        JOIN employees e ON e.dept_id = d.id
+        WHERE e.salary >= :min_salary
+        GROUP BY d.name
+        INTO :dept_name, :avg_salary
+    DO
+        SUSPEND;
+END
 ```
 
-### Examples
+### Variables and Types
+
+PSQL supports all SQL data types plus special procedural types:
+
 ```sql
 EXECUTE BLOCK
 AS
-DECLARE VARIABLE counter INTEGER = 0;
-DECLARE VARIABLE total DECIMAL(10,2);
-DECLARE VARIABLE status VARCHAR(20) = 'pending';
-DECLARE VARIABLE customer_id TYPE OF COLUMN customers.id;
+DECLARE i INTEGER = 0;                    -- Integer with default
+DECLARE name VARCHAR(100);                -- String, NULL default
+DECLARE price DECIMAL(10,2) = 99.99;     -- Decimal with precision
+DECLARE created_at TIMESTAMP;             -- Timestamp
+DECLARE is_active BOOLEAN = TRUE;         -- Boolean
+DECLARE data BLOB SUB_TYPE TEXT;         -- BLOB with subtype
+DECLARE items INTEGER ARRAY[10];         -- Array type
 BEGIN
-    -- Variable usage
-    counter = counter + 1;
+    -- Variable assignment
+    name = 'Product';
+    created_at = CURRENT_TIMESTAMP;
     
-    SELECT SUM(amount) FROM orders INTO :total;
+    -- Type coercion
+    price = i * 1.5;  -- Integer to decimal
     
-    IF (total > 1000) THEN
-        status = 'premium';
-END;
+    -- Array access
+    items[0] = 100;
+    items[1] = 200;
+END
 ```
 
-## Control Flow
+### Control Flow
 
-### IF/THEN/ELSE
+#### IF Statement
+
 ```sql
 IF (condition) THEN
     statement;
-ELSE IF (condition) THEN
+ELSE IF (other_condition) THEN
     statement;
 ELSE
     statement;
 ```
 
-### WHILE Loop
+#### WHILE Loop
+
 ```sql
-WHILE (condition) DO
+WHILE (i < 100) DO
 BEGIN
-    statements;
-    IF (exit_condition) THEN
-        LEAVE;  -- Exit loop
+    -- Loop body
+    i = i + 1;
+    
+    IF (i MOD 10 = 0) THEN
+        CONTINUE;  -- Skip to next iteration
+        
+    IF (i > 50) THEN
+        LEAVE;     -- Exit loop
 END
 ```
 
-### FOR SELECT Loop
+#### FOR SELECT Loop
+
 ```sql
-FOR SELECT columns
-    FROM table
-    WHERE condition
-    INTO :variables
+FOR SELECT id, name, price
+    FROM products
+    WHERE category_id = :cat_id
+    ORDER BY price DESC
+    INTO :prod_id, :prod_name, :prod_price
 DO
 BEGIN
     -- Process each row
-    SUSPEND;  -- Return row if RETURNS clause present
+    total = total + prod_price;
+    
+    -- Can use SUSPEND to return rows
+    IF (prod_price > 100) THEN
+        SUSPEND;
 END
 ```
 
-## Cursors
+### Cursors
 
-### Cursor Operations
-```sql
-DECLARE cursor_name CURSOR FOR (SELECT ...);
+Explicit cursor management for complex row processing:
 
-OPEN cursor_name;
-
-FETCH cursor_name INTO :variables;
-FETCH NEXT FROM cursor_name INTO :variables;
-FETCH PRIOR FROM cursor_name INTO :variables;
-
-CLOSE cursor_name;
-```
-
-### Cursor Example
 ```sql
 EXECUTE BLOCK
 RETURNS (id INTEGER, name VARCHAR(100))
 AS
-DECLARE cust_cursor CURSOR FOR (
+DECLARE cur CURSOR FOR (
     SELECT id, name FROM customers
+    WHERE status = 'ACTIVE'
+    ORDER BY created_at
 );
+DECLARE cur_id INTEGER;
+DECLARE cur_name VARCHAR(100);
 BEGIN
-    OPEN cust_cursor;
+    OPEN cur;
     
-    WHILE (1 = 1) DO
+    FETCH cur INTO :cur_id, :cur_name;
+    WHILE (ROW_COUNT > 0) DO
     BEGIN
-        FETCH cust_cursor INTO :id, :name;
-        IF (ROW_COUNT = 0) THEN LEAVE;
+        -- Process row
+        id = cur_id;
+        name = UPPER(cur_name);
         SUSPEND;
+        
+        FETCH cur INTO :cur_id, :cur_name;
     END
     
-    CLOSE cust_cursor;
-END;
+    CLOSE cur;
+END
 ```
 
-## Exception Handling
+Scrollable cursors:
 
-### System Exceptions
-- `ZERO_DIVIDE` - Division by zero
-- `NUMERIC_OVERFLOW` - Numeric overflow
-- `STRING_TRUNCATION` - String too long
-- `FOREIGN_KEY_VIOLATION` - FK constraint violation
-- `UNIQUE_VIOLATION` - Unique constraint violation
-- `CHECK_VIOLATION` - Check constraint violation
-
-### Exception Syntax
 ```sql
+DECLARE cur SCROLL CURSOR FOR (SELECT * FROM large_table);
 BEGIN
-    -- Code that might fail
+    OPEN cur;
     
-    WHEN exception_name DO
+    -- Position cursor
+    FETCH FIRST FROM cur INTO ...;
+    FETCH LAST FROM cur INTO ...;
+    FETCH ABSOLUTE 100 FROM cur INTO ...;
+    FETCH RELATIVE -5 FROM cur INTO ...;
+    FETCH PRIOR FROM cur INTO ...;
+    
+    CLOSE cur;
+END
+```
+
+### Exception Handling
+
+Robust error management with system and custom exceptions:
+
+```sql
+EXECUTE BLOCK
+AS
+DECLARE custom_error EXCEPTION 'Custom error occurred';
+BEGIN
+    -- Protected code
+    INSERT INTO accounts (id, balance)
+    VALUES (1, 100.00);
+    
+    IF (some_condition) THEN
+        EXCEPTION custom_error;
+        
+    -- May cause division by zero
+    result = value / divisor;
+    
+    WHEN SQLCODE -803 DO  -- Duplicate key
     BEGIN
-        -- Handle specific exception
+        -- Handle duplicate
+        UPDATE accounts SET balance = balance + 100
+        WHERE id = 1;
     END
     
-    WHEN ANY DO
+    WHEN GDSCODE unique_key_violation DO
     BEGIN
-        -- Handle any exception
-        -- Use SQLCODE and GDSCODE for details
+        -- Alternative handling
+        LOG_ERROR('Duplicate key on insert');
+    END
+    
+    WHEN custom_error DO
+    BEGIN
+        -- Handle custom exception
+        EXECUTE PROCEDURE log_custom_error();
+    END
+    
+    WHEN ANY DO  -- Catch all
+    BEGIN
+        -- Log unknown error
+        IN AUTONOMOUS TRANSACTION DO
+            INSERT INTO error_log (error_code, error_msg, occurred_at)
+            VALUES (SQLCODE, RDB$ERROR_MESSAGE, CURRENT_TIMESTAMP);
+            
+        -- Re-raise the exception
+        EXCEPTION;
     END
 END
 ```
 
-### Exception Example
+### Dynamic SQL
+
+Execute dynamically constructed SQL statements:
+
 ```sql
-EXECUTE BLOCK (divisor INTEGER)
-RETURNS (result DOUBLE PRECISION)
-AS
-BEGIN
-    result = 100.0 / divisor;
-    SUSPEND;
-    
-    WHEN ZERO_DIVIDE DO
-    BEGIN
-        result = 0;
-        SUSPEND;
-    END
-END;
-```
-
-## Dynamic SQL (EXECUTE STATEMENT)
-
-### Basic Syntax
-```sql
-EXECUTE STATEMENT sql_string
-    [INTO :variables]
-    [WITH options];
-```
-
-### Options
-- `WITH CALLER PRIVILEGES` - Use caller's privileges
-- `AS USER 'username' PASSWORD 'password'` - Specific credentials
-- `ON EXTERNAL DATA SOURCE 'name'` - External database
-- `WITH BIND (parameters)` - Bind parameters
-- `WITH TIMEOUT seconds` - Execution timeout
-
-### Dynamic SQL Example
-```sql
-EXECUTE BLOCK (table_name VARCHAR(50))
+EXECUTE BLOCK (table_name VARCHAR(31) = 'products')
 RETURNS (row_count INTEGER)
 AS
-DECLARE VARIABLE sql_text VARCHAR(500);
+DECLARE sql_stmt VARCHAR(1000);
 BEGIN
-    sql_text = 'SELECT COUNT(*) FROM ' || table_name;
+    -- Build dynamic SQL
+    sql_stmt = 'SELECT COUNT(*) FROM ' || table_name;
     
-    EXECUTE STATEMENT sql_text
-        WITH CALLER PRIVILEGES
-        INTO :row_count;
+    -- Execute and get result
+    EXECUTE STATEMENT sql_stmt INTO :row_count;
     
+    -- With parameters
+    sql_stmt = 'UPDATE ' || table_name || ' SET status = ? WHERE id = ?';
+    EXECUTE STATEMENT sql_stmt ('ACTIVE', 123);
+    
+    -- With named parameters
+    EXECUTE STATEMENT 'INSERT INTO logs (msg, created_by) VALUES (:msg, :user)'
+        (msg := 'Action performed', user := CURRENT_USER);
+    
+    -- On external database
+    EXECUTE STATEMENT sql_stmt
+        ON EXTERNAL 'server:/path/to/database.fdb'
+        AS USER 'remote_user' PASSWORD 'secret';
+    
+    -- With transaction control
+    EXECUTE STATEMENT sql_stmt
+        WITH AUTONOMOUS TRANSACTION;
+        
     SUSPEND;
-END;
+END
 ```
 
-## SUSPEND and RETURN
+### Security Contexts
 
-- **SUSPEND**: Returns current row and continues execution
-- **RETURN**: Returns value and exits (functions only)
+Control execution privileges:
 
 ```sql
--- SUSPEND in EXECUTE BLOCK
-EXECUTE BLOCK
-RETURNS (n INTEGER, square INTEGER)
+-- Execute with definer's rights (default)
+CREATE PROCEDURE secure_proc
 AS
 BEGIN
-    n = 1;
-    WHILE (n <= 5) DO
-    BEGIN
-        square = n * n;
-        SUSPEND;  -- Return row and continue
-        n = n + 1;
-    END
+    -- Runs with procedure owner's privileges
+    DELETE FROM sensitive_table WHERE expired = TRUE;
 END;
--- Returns 5 rows
-```
 
-## Security Context
+-- Execute with caller's rights
+CREATE PROCEDURE flexible_proc
+SQL SECURITY INVOKER
+AS
+BEGIN
+    -- Runs with calling user's privileges
+    SELECT * FROM user_visible_table;
+END;
 
-### DEFINER vs INVOKER
-- **DEFINER** (default): Runs with creator's privileges
-- **INVOKER**: Runs with caller's privileges
-
-```sql
--- In EXECUTE BLOCK
-EXECUTE STATEMENT 'DELETE FROM sensitive_table'
+-- Dynamic SQL with caller privileges
+EXECUTE STATEMENT 'DELETE FROM table WHERE id = ?'
     WITH CALLER PRIVILEGES;
 ```
 
-## Development Tools
+### Performance Features
 
-### Available Utilities
-- **Dependency Analyzer**: Find object dependencies
-- **Code Formatter**: Format PSQL code
-- **Performance Profiler**: Profile execution
-- **Syntax Validator**: Validate without executing
+PSQL procedures are compiled to SBLR bytecode with several optimization levels:
+
+- **Bytecode Compilation**: PSQL → AST → SBLR bytecode
+- **Adaptive Optimization**: Hot paths are specialized based on runtime types
+- **JIT Compilation**: Frequently executed code compiled to native machine code
+- **Inline Caching**: Method and field lookups cached for performance
+- **Loop Optimization**: Loop unrolling and invariant hoisting
+
+### Examples
+
+#### Recursive CTE in PSQL
 
 ```sql
--- Analyze dependencies
-SELECT * FROM analyze_psql_dependencies('procedure_name');
-
--- Format code
-SELECT format_psql_code('EXECUTE BLOCK AS BEGIN IF(x>0)THEN y=1;END');
-
--- Validate syntax
-SELECT validate_psql_syntax('EXECUTE BLOCK AS BEGIN INVALID END');
+EXECUTE BLOCK
+RETURNS (level INTEGER, name VARCHAR(100))
+AS
+BEGIN
+    FOR WITH RECURSIVE tree AS (
+            SELECT 1 as level, name, id
+            FROM categories
+            WHERE parent_id IS NULL
+            
+            UNION ALL
+            
+            SELECT t.level + 1, c.name, c.id
+            FROM categories c
+            JOIN tree t ON c.parent_id = t.id
+        )
+        SELECT level, name FROM tree
+        INTO :level, :name
+    DO
+        SUSPEND;
+END
 ```
 
-## Best Practices
+#### Batch Processing with Error Recovery
 
-1. **Always handle exceptions** in production code
-2. **Use parameters** instead of string concatenation for dynamic SQL
-3. **Close cursors** explicitly to free resources
-4. **Use SUSPEND** for multi-row results
-5. **Declare variables** at the beginning of blocks
-6. **Use meaningful variable names** for maintainability
+```sql
+EXECUTE BLOCK
+AS
+DECLARE batch_id INTEGER;
+DECLARE processed INTEGER = 0;
+DECLARE failed INTEGER = 0;
+BEGIN
+    FOR SELECT id FROM pending_orders
+        INTO :batch_id
+    DO
+    BEGIN
+        BEGIN
+            EXECUTE PROCEDURE process_order(:batch_id);
+            processed = processed + 1;
+            
+            WHEN ANY DO
+            BEGIN
+                failed = failed + 1;
+                INSERT INTO failed_orders (order_id, error_msg)
+                VALUES (:batch_id, RDB$ERROR_MESSAGE);
+            END
+        END
+    END
+    
+    -- Log results
+    INSERT INTO batch_log (processed, failed, run_date)
+    VALUES (:processed, :failed, CURRENT_TIMESTAMP);
+END
+```
 
 ## Implementation Details
 
 **Code Anchors**:
-- Parser: `src/engine/parser_psql.cpp` (parse_psql_block)
-- Executor: `src/engine/psql_executor.cpp` (execute_psql_block)
-- Dev Tools: `src/engine/psql_dev_tools.cpp`
-- Exception Map: `src/engine/psql_executor.cpp` (system_exception_map)
+- Parser: `src/engine/parser_psql.cpp::parse_psql_block()`
+- Compiler: `src/engine/sblr_compiler.cpp::compile_psql()`
+- VM: `src/engine/sblr_vm.cpp::execute_bytecode()`
+- Types: `include/scratchbird/engine/psql_types.h`
+- Exceptions: `include/scratchbird/engine/psql_exceptions.h`
 
-## See also
+## See Also
 
 - [Routines & Triggers](./psql-routines-and-triggers.md) - Stored procedures and functions
 - [Session & Transaction](./session-and-transaction.md) - Transaction control
-- [Exceptions & Comments](./ddl-exceptions-and-comments.md) - Custom exceptions
-- [DML Operations](./sql-dml.md) - Data manipulation in PSQL
-- [Developer Tools](./dev-tools.md) - PSQL development utilities
-
+- [SQL DML](./sql-dml.md) - Data manipulation statements
+- [Complete SBLR/BLR Specification](/workspace/docs/scratchbird-bytecode-complete-specification.md) - Bytecode details
