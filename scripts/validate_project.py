@@ -81,7 +81,13 @@ class ProjectValidator:
                 for pattern, expected_dir in patterns:
                     matches = re.findall(pattern, content)
                     for match in matches:
-                        full_path = self.root / "references" / expected_dir / match
+                        # Build correct absolute path for each expected_dir mapping
+                        if expected_dir == 'references':
+                            # Path like /workspace/references/<file>
+                            full_path = self.root / 'references' / match
+                        else:
+                            # Path like /workspace/references/technical_specifications/<file>
+                            full_path = self.root / 'references' / expected_dir / match
                         if not full_path.exists():
                             # Try alternative locations
                             alt_path = self.root / "references" / "technical_specifications" / match

@@ -22,5 +22,8 @@ set(CMAKE_CXX_FLAGS_RELEASE "-O3 -DNDEBUG")
 # Add source directory
 add_subdirectory(src)
 
-# Future: Tests will be added when implementation begins
-# add_subdirectory(tests)
+# Tests
+include(CTest)
+if(BUILD_TESTING)
+    add_subdirectory(tests)
+endif()
