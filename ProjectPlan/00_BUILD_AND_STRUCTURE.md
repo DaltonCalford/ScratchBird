@@ -69,7 +69,7 @@ make test
 ### All Page Sizes Test
 ```bash
 # Tests MUST verify all page sizes
-for size in 8K 16K 32K 64K 128K; do
+for size in 8K 16K 32K; do
     ./tests/test_database_creation --page-size=$size
 done
 ```
@@ -124,7 +124,7 @@ echo "2024-01-15 14:30 1.01.1 TESTED sb_create_database 8K PASS" >> progress/tes
 
 ## Critical Requirements
 
-1. **Page Sizes**: MUST support 8K, 16K, 32K, 64K, 128K
+1. **Page Sizes**: Alpha MUST support 8K, 16K, 32K (64K/128K in Beta)
 2. **Thread Safety**: All API functions must be thread-safe
 3. **Error Handling**: Rich error information with chains
 4. **Memory Management**: No leaks, use RAII

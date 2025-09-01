@@ -24,7 +24,7 @@ I will:
 #### Step 3: Confirm Testing Approach
 ```
 I will test:
-- [ ] All 5 page sizes (8K, 16K, 32K, 64K, 128K)
+- [ ] Alpha: 3 page sizes (8K, 16K, 32K). 64K/128K deferred to Beta.
 - [ ] Using Google Test framework
 - [ ] Through the CMake/CTest system
 - [ ] With proper test organization (tests/phase_X_XX/)
@@ -176,8 +176,8 @@ TEST(HeapTest, AllocatePage) {
 }
 
 // CORRECT - Test all sizes
-TEST(HeapTest, AllocatePageAllSizes) {
-    for (auto size : {8192, 16384, 32768, 65536, 131072}) {
+TEST(HeapTest, AllocatePageAllAlphaSizes) {
+    for (auto size : {8192, 16384, 32768}) {
         HeapManager hm(size);
         // ...
     }
