@@ -3,7 +3,7 @@
 ## Status: Planning Phase
 
 Tests will be created alongside implementation following:
-- `/workspace/AUTHORITATIVE_IMPLEMENTATION_PLAN.md`
+- `AUTHORITATIVE_IMPLEMENTATION_PLAN.md`
 
 ## Test Development Process
 
@@ -11,8 +11,8 @@ Tests will be created alongside implementation following:
 2. **Test Developer** creates tests to verify the implementation
 3. **Security Reviewer** proposes hardening changes and change requests
 3. Progress tracked in:
-   - `/workspace/ProjectPlan/progress/implementation.log`
-   - `/workspace/ProjectPlan/progress/test.log`
+   - `ProjectPlan/progress/implementation.log`
+   - `ProjectPlan/progress/test.log`
 
 ## Test Structure (Future)
 
