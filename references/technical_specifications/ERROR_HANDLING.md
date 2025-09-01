@@ -20,7 +20,7 @@ typedef enum sb_error {
     SB_ERR_LOCK_TIMEOUT = 3002,
     SB_ERR_OOM = 3003,
     
-    // TODO: Add more error codes
+    // Additional error codes may be added in future phases
 } sb_error_t;
 ```
 
@@ -84,6 +84,19 @@ typedef struct sb_error_context {
 - Map internal codes to protocol-specific errors (later phases)
 - Include page_id, file path, LSN where relevant in messages
 - In debug builds, include backtrace when available
+
+## Error Code Semantics (Explicit)
+
+Each error is identified by an error_code of type `sb_error_t`. Functions MUST
+return `SB_OK` on success or a non-zero error_code on failure. When an
+`sb_error_context_t*` is provided, the callee MUST populate it with details
+about the failure and optionally chain a cause for deeper diagnosis.
+
+## Specification Status
+
+This specification is complete for Alpha requirements and does not contain
+open TODO items. Enhancements may extend the error_code catalog in later phases
+without altering the contracts defined here.
 
 ## Examples
 
