@@ -9,7 +9,7 @@ Why it matters
 How to use it
 - Start with EXECUTE BLOCK for quick scripts; evolve into PROCEDUREs/FUNCTIONs; use cursors for multi-row logic and EXECUTE STATEMENT for dynamic needs.
 
-Parsing: `src/engine/parser_psql.cpp`. Runtime: `src/engine/psql_executor.cpp`. Bytecode: See [SBLR Specification](/workspace/docs/scratchbird-bytecode-specification.md).
+Parsing: `src/engine/parser_psql.cpp`. Runtime: `src/engine/psql_executor.cpp`. Bytecode: See [Complete SBLR/BLR Specification](/workspace/docs/scratchbird-bytecode-complete-specification.md).
 
 Features:
 - EXECUTE BLOCK with optional `(params)` and `RETURNS(...)`, body `AS BEGIN ... END`
