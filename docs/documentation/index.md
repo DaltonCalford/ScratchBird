@@ -92,6 +92,7 @@ This documentation is organized into logical sections that mirror how you'll use
 - [Developer Tools](./dev-tools.md) - Dependency analyzer, SQL formatter, profiler, syntax validator
 
 **Reference**:
+- [Complete SBLR/BLR Bytecode Specification](/workspace/docs/scratchbird-bytecode-complete-specification.md) - Unified bytecode specification with BLR compatibility
 - [Missing and Future](./missing-and-future.md) - Known limitations, parser-only features, roadmap items
 
 **Quick Examples**
