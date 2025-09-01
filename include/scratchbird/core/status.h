@@ -10,10 +10,14 @@ enum class Status : uint32_t {
 	FileNotFound = 1001,
 	FileExists = 1002,
 	IoError = 1003,
+	InvalidPath = 1004,
+	PermissionDenied = 1005,
+	InvalidArgument = 1006,
 	PageCorrupt = 2001,
 	ChecksumMismatch = 2002,
 	Deadlock = 3001,
 	LockTimeout = 3002,
+	OOM = 3003,  // Out of memory per ERROR_HANDLING.md
 };
 
 } // namespace core
