@@ -32,6 +32,15 @@ typedef enum sb_error {
         sb_error_t err = (expr); \
         if (err != SB_OK) return err; \
     } while(0)
+
+#define TRY_OR_CLEANUP(expr, cleanup) \
+    do { \
+        sb_error_t _err = (expr); \
+        if (_err != SB_OK) { \
+            cleanup; \
+            return _err; \
+        } \
+    } while(0)
 ```
 
 ## Error Context Structure
@@ -75,3 +84,30 @@ typedef struct sb_error_context {
 - Map internal codes to protocol-specific errors (later phases)
 - Include page_id, file path, LSN where relevant in messages
 - In debug builds, include backtrace when available
+
+## Examples
+
+```c
+sb_error_t read_page_checked(int fd, uint32_t page_id, uint8_t* buf, uint32_t ps, sb_error_context_t* ctx) {
+    off_t off = (off_t)page_id * ps;
+    if (lseek(fd, off, SEEK_SET) != off) {
+        SB_MAKE_ERROR(ctx, SB_ERR_IO_ERROR, "seek failed");
+        return SB_ERR_IO_ERROR;
+    }
+    ssize_t n = read(fd, buf, ps);
+    if (n != (ssize_t)ps) {
+        SB_MAKE_ERROR(ctx, SB_ERR_IO_ERROR, "short read");
+        return SB_ERR_IO_ERROR;
+    }
+    const PageHeader* h = (const PageHeader*)buf;
+    if (h->magic != 0x53425244) {
+        SB_MAKE_ERROR(ctx, SB_ERR_PAGE_CORRUPT, "bad magic");
+        return SB_ERR_PAGE_CORRUPT;
+    }
+    if (!validate_page_checksum(buf, ps)) {
+        SB_MAKE_ERROR(ctx, SB_ERR_CHECKSUM_MISMATCH, "checksum mismatch");
+        return SB_ERR_CHECKSUM_MISMATCH;
+    }
+    return SB_OK;
+}
+```
