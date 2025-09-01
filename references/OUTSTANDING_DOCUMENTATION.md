@@ -76,29 +76,35 @@ blr_delete
 
 ### 3.1 MGA Implementation Specification
 **Priority: CRITICAL**
-- Transaction ID generation
-- Version chain management
-- Garbage collection algorithm
-- Transaction Inventory Page (TIP) format
-- Oldest Active Transaction (OAT) tracking
-- Oldest Snapshot Transaction (OST) tracking
+**Status: ✅ COMPLETE**
+- See `technical_specifications/TRANSACTION_MGA_CORE.md`
+- Transaction ID generation (§1.1 - 64-bit XIDs)
+- Version chain management (§4)
+- Garbage collection algorithm (§5)
+- Transaction Inventory Page (TIP) format (§1.2)
+- Oldest Active Transaction (OAT) tracking (§1.1)
+- Oldest Snapshot Transaction (OST) tracking (§1.1)
 
 ### 3.2 Isolation Level Semantics
 **Priority: HIGH**
+**Status: ✅ COMPLETE**
+- See `technical_specifications/TRANSACTION_MAIN.md` §2
 ```
 READ UNCOMMITTED - Not supported (use READ COMMITTED)
 READ COMMITTED   - See latest committed version
 REPEATABLE READ  - Snapshot at statement start
-SERIALIZABLE     - Snapshot at transaction start
+SERIALIZABLE     - Snapshot at transaction start + predicate locks
 ```
 
 ### 3.3 Lock Manager Specification
 **Priority: HIGH**
-- Lock types (shared, exclusive, intent)
-- Lock granularity (row, page, table)
-- Deadlock detection algorithm
-- Lock escalation rules
-- Timeout handling
+**Status: ✅ COMPLETE**
+- See `technical_specifications/TRANSACTION_LOCK_MANAGER.md`
+- Lock types (9 modes with compatibility matrix) (§1.2)
+- Lock granularity (database, relation, page, tuple, predicate) (§1.1)
+- Deadlock detection algorithms (wait-for graph, wound-wait, wait-die) (§3)
+- Lock escalation rules (§2.1)
+- Timeout handling (§2.1)
 
 ## 4. Index Implementation Details
 
@@ -193,27 +199,33 @@ cpu_operator_cost = 0.0025
 
 ### 7.1 Buffer Pool Management
 **Priority: HIGH**
-- Page replacement algorithm (Clock-Sweep)
-- Dirty page tracking
-- Checkpoint algorithm
-- Read-ahead strategies
-- Ring buffer for sequential scans
+**Status: ✅ COMPLETE**
+- See `technical_specifications/STORAGE_ENGINE_BUFFER_POOL.md`
+- Page replacement algorithm (Clock-Sweep) (§2.2)
+- Dirty page tracking (§1.2)
+- Checkpoint algorithm (§4.2)
+- Read-ahead strategies (§4)
+- Ring buffer for sequential scans (§1.3)
 
 ### 7.2 Free Space Management
 **Priority: HIGH**
-- Free space map structure
-- Visibility map structure
-- Page allocation algorithm
-- Space reclamation
-- Autovacuum triggers
+**Status: ✅ COMPLETE**
+- See `technical_specifications/STORAGE_ENGINE_PAGE_MANAGEMENT.md`
+- Free space map structure (§2.1)
+- Visibility map structure (§2.2)
+- Page allocation algorithm (§1.3)
+- Space reclamation (§1.3)
+- Autovacuum triggers (See TRANSACTION_MGA_CORE.md §5)
 
 ### 7.3 TOAST/LOB Management
 **Priority: MEDIUM**
-- Compression threshold
-- Chunk size selection
-- Out-of-line storage
-- Compression algorithms
-- Deduplication
+**Status: ✅ COMPLETE**
+- See `technical_specifications/STORAGE_ENGINE_PAGE_MANAGEMENT.md` §5
+- Compression threshold (§5.1)
+- Chunk size selection (§5.1)
+- Out-of-line storage (§5.1)
+- Compression algorithms (§3.1)
+- Deduplication (Future enhancement)
 
 ## 8. Backup and Recovery
 

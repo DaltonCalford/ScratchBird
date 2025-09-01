@@ -6,6 +6,9 @@ Implement cost-based query optimizer.
 ## Prerequisites
 - Phase 12 complete (constraints)
 
+## Technical Specifications
+- **Complete Query Optimizer**: See `/references/technical_specifications/QUERY_OPTIMIZER_SPEC.md`
+
 ## Tasks
 
 ### 13.1 Statistics Collection

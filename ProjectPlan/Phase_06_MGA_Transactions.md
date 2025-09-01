@@ -9,6 +9,11 @@ Implement Multi-Generational Architecture for transactions - the PRIMARY mechani
 ## Architecture Note
 **MGA is PRIMARY**: This phase implements Firebird-style MGA which provides Atomicity, Consistency, and Isolation WITHOUT needing WAL. WAL will be added later ONLY for durability.
 
+## Technical Specifications
+- **MGA Core**: See `/references/technical_specifications/TRANSACTION_MGA_CORE.md`
+- **Lock Manager**: See `/references/technical_specifications/TRANSACTION_LOCK_MANAGER.md`
+- **Main Integration**: See `/references/technical_specifications/TRANSACTION_MAIN.md`
+
 ## Tasks
 
 ### 6.1 Transaction Inventory Pages (TIP)

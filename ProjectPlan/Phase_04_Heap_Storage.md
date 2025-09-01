@@ -6,6 +6,10 @@ Implement heap pages for storing table rows.
 ## Prerequisites
 - Phase 3 complete (page management)
 
+## Technical Specifications
+- **Page Management**: See `/references/technical_specifications/STORAGE_ENGINE_PAGE_MANAGEMENT.md`
+- **Storage Main**: See `/references/technical_specifications/STORAGE_ENGINE_MAIN.md`
+
 ## Tasks
 
 ### 4.1 Heap Page Structure

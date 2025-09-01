@@ -6,6 +6,9 @@ Implement network server for remote connections.
 ## Prerequisites
 - Phase 18 complete (permissions)
 
+## Technical Specifications
+- **Complete Network Layer**: See `/references/technical_specifications/NETWORK_LAYER_SPEC.md`
+
 ## Tasks
 
 ### 19.1 Server Architecture
