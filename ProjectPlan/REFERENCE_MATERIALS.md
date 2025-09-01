@@ -7,7 +7,7 @@ These references have been gathered and documented:
 ### Technical Specifications
 - **Wire Protocols**: PostgreSQL, MySQL, Firebird, TDS - `/references/wire_protocols/`
 - **Data Types**: Complete type system for all databases - `/references/data_types/`
-- **Page Layouts**: All 27 page types specified - `/references/technical_specifications/PAGE_LAYOUTS_AND_STRUCTURES.md`
+- **Page Layouts**: All 27 page types specified - `/workspace/references/archive/technical_specifications/PAGE_LAYOUTS_AND_STRUCTURES.md`
 - **BLR Specification**: Complete instruction set - `/references/technical_specifications/BLR_SPECIFICATION.md`
 - **SQL Grammar**: Full BNF/EBNF - `/references/technical_specifications/SQL_GRAMMAR_BNF.md`
 - **MGA Implementation**: Based on Firebird with enhancements - `/references/technical_specifications/MGA_IMPLEMENTATION.md`

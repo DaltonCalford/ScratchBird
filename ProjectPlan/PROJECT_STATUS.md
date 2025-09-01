@@ -10,7 +10,7 @@ All critical documentation for Alpha implementation is complete:
 |-----------|--------|----------|
 | Wire Protocols | ✅ Complete | `/workspace/references/wire_protocols/` |
 | Data Types | ✅ Complete | `/workspace/references/data_types/` |
-| Page Layouts | ✅ Complete | `/workspace/references/technical_specifications/PAGE_LAYOUTS_AND_STRUCTURES.md` |
+| Page Layouts | ✅ Complete | `/workspace/references/archive/technical_specifications/PAGE_LAYOUTS_AND_STRUCTURES.md` |
 | SBLR Bytecode Spec | ✅ Complete | `/workspace/references/technical_specifications/SBLR_BYTECODE_SPECIFICATION.md` |
 | SQL Grammar | ✅ Complete | `/workspace/references/technical_specifications/SQL_GRAMMAR_BNF.md` |
 | Y-Valve Architecture | ✅ Complete | `/workspace/references/technical_specifications/Y_VALVE_ARCHITECTURE.md` |

@@ -5,7 +5,7 @@ This document links to the technical specifications in the `/references/` direct
 ## Core Technical Specifications
 
 ### Storage and Page Management
-**Reference**: `/workspace/references/technical_specifications/PAGE_LAYOUTS_AND_STRUCTURES.md`
+**Reference**: `/workspace/references/archive/technical_specifications/PAGE_LAYOUTS_AND_STRUCTURES.md`
 
 Key specifications:
 - 96-byte page header format
