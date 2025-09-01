@@ -2,6 +2,8 @@
 
 ## Version 1.0
 
+> **Note**: This is the initial SBLR specification. For the complete unified BLR/SBLR specification with full FirebirdSQL BLR compatibility, see [Complete Bytecode Specification](./scratchbird-bytecode-complete-specification.md)
+
 ### Table of Contents
 1. [Overview](#overview)
 2. [Design Principles](#design-principles)
