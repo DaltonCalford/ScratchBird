@@ -1,3 +1,8 @@
+# ⚠️ DEPRECATED DOCUMENT ⚠️
+## This document is OBSOLETE. Use AUTHORITATIVE_IMPLEMENTATION_PLAN.md instead.
+
+---
+
 # ScratchBird Complete Phased Implementation Plan
 ## Incremental API-First Development Strategy
 
