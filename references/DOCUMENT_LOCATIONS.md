@@ -9,7 +9,8 @@
 | **C_API_IMPLEMENTATION_GUIDE.md** | Implementation strategy for C API | ✅ This session |
 | **MGA_IMPLEMENTATION.md** | Multi-Generational Architecture spec | ✅ This session |
 | **BLR_SPECIFICATION.md** | Binary Language Representation spec | ✅ This session |
-| **SQL_GRAMMAR_BNF.md** | Complete SQL grammar in BNF/EBNF | ✅ This session |
+| **SQL_GRAMMAR_BNF.md** | Initial SQL grammar in BNF/EBNF | ✅ This session |
+| **SCRATCHBIRD_SQL_COMPLETE_BNF.md** | Complete comprehensive SQL BNF/EBNF grammar | ✅ This session |
 | **Y_VALVE_ARCHITECTURE.md** | Y-Valve multi-protocol router design | ✅ This session |
 | **Y_VALVE_DESIGN_PRINCIPLES.md** | Lean Y-Valve design philosophy | ✅ This session |
 | **POSTGRESQL_PARSER_IMPLEMENTATION.md** | PostgreSQL parser implementation guide | ✅ This session |
@@ -25,6 +26,10 @@
 | **TRANSACTION_LOCK_MANAGER.md** | Lock manager with deadlock detection | ✅ This session |
 | **TRANSACTION_DISTRIBUTED.md** | Distributed transactions (2PC/3PC/Raft) | ✅ This session |
 | **TRANSACTION_MAIN.md** | Transaction system master specification | ✅ This session |
+| **BLR_ADVANCED_FEATURES.md** | Advanced BLR features and extensions | ✅ This session |
+| **SELECT_INTO_AND_SET_CONVERSION.md** | SELECT INTO and automatic SET conversion | ✅ This session |
+| **EXECUTE_BLOCKS_AND_AUTONOMOUS_TRANSACTIONS.md** | EXECUTE BLOCK and autonomous transactions | ✅ This session |
+| **SCRATCHBIRD_SQL_DIALECT_COMPLETE.md** | Complete SQL dialect specification | ✅ This session |
 
 ## Wire Protocol Specifications
 **Location: `/workspace/references/wire_protocols/`**
@@ -101,13 +106,13 @@
 ## Summary Statistics
 
 ### Documents Created/Enhanced This Session:
-- **Technical Specifications**: 20 new, 2 enhanced (10 new core specs added)
+- **Technical Specifications**: 25 new, 2 enhanced (includes all core specs + SQL/BLR)
 - **Wire Protocols**: 5 new
 - **Architecture Documents**: 6 new
 - **Feature Specifications**: 12 new
 - **Implementation Guides**: 1 new
-- **Project Management**: 3 new/updated + 6 phase documents updated
-- **Reference Management**: 2 new + OUTSTANDING_DOCUMENTATION updated
+- **Project Management**: 3 new/updated + 7 phase documents updated
+- **Reference Management**: 2 new + OUTSTANDING_DOCUMENTATION fully updated
 
 ### Total New Documentation: ~45 documents
 
