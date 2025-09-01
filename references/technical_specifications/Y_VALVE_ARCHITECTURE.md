@@ -69,6 +69,36 @@ Control plane: Y‑Valve manages lifecycles (spawn, monitor, restart), observabi
 - Add per‑protocol parser processes with full wire compliance tiers.
 - Maintain identical engine API usage; only translators differ.
 
+## Process Spawning & Lifecycle (Beta)
+
+Parser process strategies:
+- Pre-fork pool (Unix): listener pre-forks a pool of idle parser workers per protocol; Y‑Valve assigns a worker and hands off the socket.
+- On-demand fork/exec (Unix): Y‑Valve spawns the parser on connection if pool is empty.
+- Windows: CreateProcess with inherited/duplicated handle; maintain a warm pool when practical.
+
+Control messages:
+- Y‑Valve passes connection metadata (protocol type, negotiated params, auth hints) over a control channel (pipe or domain socket) at handoff time.
+- Parser acknowledges handoff, assumes ownership of the socket, and reports lifecycle events (ready, auth-complete, error, exit code) for observability.
+
+Failure policy:
+- If parser spawn fails, Y‑Valve returns a protocol‑appropriate error to the client and logs telemetry.
+- Crash handling: Y‑Valve reclaims the connection if spawn or init fails; otherwise the parser process owns the connection until close.
+
+## Cross‑Platform Socket Handoff
+
+Unix:
+- Use `sendmsg()` with `SCM_RIGHTS` to pass the connected socket fd to the parser worker.
+- Control channel: UNIX domain socket or pipe for metadata; validate pid/uid/gid as needed.
+
+Windows:
+- Use `WSADuplicateSocket()` to create a `WSAPROTOCOL_INFO` and transmit it to the child process via an inherited/IPC channel.
+- The parser reconstructs a `SOCKET` via `WSASocket()` using the duplicated protocol info.
+
+Security considerations:
+- Validate parser binary path/signature; restrict spawn directories.
+- Drop privileges (Unix) after bind/accept; run parsers under least-privileged accounts.
+- Audit log: connection id, parser pid, protocol, and handoff timestamp.
+
 ## Connection Handoff Structure
 
 ```c

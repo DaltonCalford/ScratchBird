@@ -206,6 +206,8 @@ Control plane: Listener/Y‑Valve supervise lifecycles, policy, observability
 - [ ] No critical bugs
 - [ ] Performance: 100 TPS minimum
 
+See `references/technical_specifications/PERFORMANCE_BENCHMARKS.md` for hardware baselines, workload definitions, and acceptance thresholds.
+
 ### Beta Complete When:
 - [ ] All Beta 2.0x milestones complete
 - [ ] PostgreSQL wire protocol 80% compatible
