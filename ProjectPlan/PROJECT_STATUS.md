@@ -19,9 +19,7 @@ All critical documentation for Alpha implementation is complete:
 
 ### Key Documents in ProjectPlan
 
-1. **MASTER_PLAN.md** - High-level project vision and 60-phase roadmap
-2. **COMPLETE_PHASED_IMPLEMENTATION.md** - Detailed implementation strategy
-3. **COMPLETE_PHASE_BREAKDOWN.md** - Granular phase-by-phase breakdown
+1. **AUTHORITATIVE_IMPLEMENTATION_PLAN.md** - Single source of truth for phases
 4. **TEST_SPECIFICATION.md** - Comprehensive testing requirements
 5. **ARCHITECTURE_GOALS.md** - Core architectural principles
 6. **Phase_01-27_*.md** - Individual phase specifications

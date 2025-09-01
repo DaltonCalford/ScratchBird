@@ -2,8 +2,8 @@
 
 ## Status: Planning Phase
 
-Tests will be created alongside implementation following the phases defined in:
-- `/workspace/ProjectPlan/COMPLETE_PHASE_BREAKDOWN.md`
+Tests will be created alongside implementation following:
+- `/workspace/AUTHORITATIVE_IMPLEMENTATION_PLAN.md`
 
 ## Test Development Process
 
