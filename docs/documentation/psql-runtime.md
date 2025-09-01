@@ -9,7 +9,7 @@ Why it matters
 How to use it
 - Start with EXECUTE BLOCK for quick scripts; evolve into PROCEDUREs/FUNCTIONs; use cursors for multi-row logic and EXECUTE STATEMENT for dynamic needs.
 
-Parsing: `src/engine/parser_psql.cpp`. Runtime: `src/engine/psql_executor.cpp`.
+Parsing: `src/engine/parser_psql.cpp`. Runtime: `src/engine/psql_executor.cpp`. Bytecode: See [SBLR Specification](/workspace/docs/scratchbird-bytecode-specification.md).
 
 Features:
 - EXECUTE BLOCK with optional `(params)` and `RETURNS(...)`, body `AS BEGIN ... END`
@@ -20,6 +20,7 @@ Features:
 - Security context: DEFINER/INVOKER switching; caller privileges
 - Parameters: IN/OUT/INOUT binding and retrieval of output parameters
 - Utilities: dependency analyzer, code formatter, performance profiler, syntax validator
+- **Bytecode compilation**: PSQL procedures are compiled to SBLR bytecode for efficient execution with adaptive optimization and optional JIT compilation for hot code paths
 
 Examples:
 ```sql
@@ -29,7 +30,7 @@ BEGIN
 END;
 ```
 
-Code anchors: `src/engine/parser_psql.cpp`, `src/engine/psql_executor.cpp`
+Code anchors: `src/engine/parser_psql.cpp`, `src/engine/psql_executor.cpp`, `src/engine/sblr_compiler.cpp` (bytecode generation), `src/engine/sblr_vm.cpp` (bytecode execution)
 
 See also
 - [Routines & triggers](./psql-routines-and-triggers.md) · [DML](./sql-dml.md)

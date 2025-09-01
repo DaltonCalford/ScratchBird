@@ -23,6 +23,13 @@ Performance Profiler:
 Syntax Validator:
 - validate_syntax parses code, reports issues and common problems; generate report string
 
+Bytecode Tools (`src/engine/sblr_tools.cpp`):
+- **Disassembler**: Convert SBLR bytecode back to readable assembly format for debugging
+- **Bytecode Inspector**: Analyze bytecode modules for optimization opportunities, hot paths, and type patterns
+- **Profile Analyzer**: Process runtime profiling data to identify JIT compilation candidates
+- **Bytecode Verifier**: Validate bytecode integrity, type safety, and stack balance
+- **Optimization Reporter**: Generate reports on applied optimizations and their effectiveness
+
 These utilities are meant for developer workflows and PSQL code hygiene.
 
 See also

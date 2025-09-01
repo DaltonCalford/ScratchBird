@@ -33,7 +33,9 @@ The engine follows a clear pipeline from SQL text to execution:
 - **Expression Parsing** (`include/scratchbird/engine/expr.h`): Handles operators, predicates, projections
 - **AST Construction** (`include/scratchbird/engine/ast.h`): Builds abstract syntax trees for statements
 - **Statement Routing** (`src/engine/parser.cpp`): Dispatches to specialized parsers (SELECT, DML, DDL, PSQL)
-- **Execution** (`src/engine/psql_executor.cpp`): Runtime evaluation and data manipulation
+- **Bytecode Compilation** (`src/engine/sblr_compiler.cpp`): Compiles AST to SBLR bytecode (see [SBLR Specification](/workspace/docs/scratchbird-bytecode-specification.md))
+- **Optimization** (`src/engine/sblr_optimizer.cpp`): Applies optimization passes to bytecode
+- **Execution** (`src/engine/sblr_vm.cpp`): Stack-based VM with adaptive specialization and JIT compilation
 
 **Documentation Structure**
 
