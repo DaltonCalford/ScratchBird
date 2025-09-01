@@ -68,3 +68,11 @@
 *End of session log - DO NOT MODIFY ABOVE THIS LINE*
 *Next session starts below*
 ---
+
+## Failure/Restart Record (if applicable)
+- **Broken Phase**: [PHASE_ID]
+- **Failing Test**: [TEST_NAME]
+- **Commit**: [HASH]
+- **Summary**: [Short description]
+- **Action**: Handoff to recovery cycle starting at broken phase, then re-run downstream phases sequentially.
+---

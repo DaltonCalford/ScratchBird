@@ -29,6 +29,12 @@ progress/
 3. **Session-based entries** - Each work session adds a new entry
 4. **Chronological order** - Newest entries at the bottom
 
+### Failure/Restart Policy
+If a current phase’s tests uncover a failure in an earlier phase, STOP the current work:
+- Append a failure entry to the current version log with the failing phase id, test name, and commit.
+- Hand off to a new AI cycle starting at the broken phase. After the fix, re‑run subsequent phases in order until returning to the original phase.
+- AI A must always check existing work and resume from current status.
+
 ### What to Track
 - Every API method implemented
 - Every test written
