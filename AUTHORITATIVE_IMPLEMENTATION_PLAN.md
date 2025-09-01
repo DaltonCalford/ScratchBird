@@ -151,6 +151,30 @@ TEST(Alpha101, ValidateHeader) {
 - The Y‑Valve/listener are not in the steady‑state data path after handoff.
 - First delivery: ScratchBird native parser & protocol; others (PostgreSQL/MySQL/Firebird) follow in later phases.
 
+#### Connection Flow Diagram
+
+```
+Client App (PG/MySQL/Firebird/SB)
+        |
+        v
+  [ Listener ]  --accept-->  (socket fd)
+        |
+        v
+   [ Y‑Valve ] --detect route--> [ spawn/assign Parser Process ]
+        |                                 |
+        |   (SCM_RIGHTS/eqv)              |  Frontend: native wire protocol
+        +-- socket handoff --------------> |  Backend: SB Engine API
+                                          |
+                                          v
+                                   [ ScratchBird Engine ]
+                                          |
+                                          v
+                                   [ Execution / Storage ]
+
+Data plane: Client <-> Parser Process <-> Engine (Y‑Valve not in hot path)
+Control plane: Listener/Y‑Valve supervise lifecycles, policy, observability
+```
+
 ---
 
 ## Beta Phase (Future)
