@@ -65,7 +65,7 @@ Planned (defined later phases):
 - Page sizes: **8192, 16384, 32768 ONLY** (64K/128K deferred to Beta)
 - UUID: **v7 ONLY** (no v4 support)
 - Checksum: **CRC32C (Castagnoli)** with little-endian storage
-- File format: See `/workspace/references/technical_specifications/ON_DISK_FORMAT.md`
+- File format: See `references/technical_specifications/ON_DISK_FORMAT.md`
 
 **Success Criteria**:
 1. Database file created with valid header (Page 0)
@@ -244,7 +244,7 @@ See `references/technical_specifications/PERFORMANCE_BENCHMARKS.md` for hardware
 ## Appendix: Deprecated Plans
 
 The following documents are kept for historical reference only:
-- `/workspace/ProjectPlan/archive/` - Old planning documents
+- `ProjectPlan/archive/` - Old planning documents
 - Individual `Phase_XX.md` files - Superseded by this document
 
 When in doubt, THIS DOCUMENT is the authority.
