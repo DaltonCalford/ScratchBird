@@ -11,6 +11,11 @@
 | **BLR_SPECIFICATION.md** | Binary Language Representation spec | ✅ This session |
 | **SQL_GRAMMAR_BNF.md** | Initial SQL grammar in BNF/EBNF | ✅ This session |
 | **SCRATCHBIRD_SQL_COMPLETE_BNF.md** | Complete comprehensive SQL BNF/EBNF grammar | ✅ This session |
+| **AUTH_CORE_FRAMEWORK.md** | Core authentication framework and architecture | ✅ This session |
+| **AUTH_PASSWORD_METHODS.md** | Password authentication (PBKDF2, SCRAM, MD5) | ✅ This session |
+| **AUTH_CERTIFICATE_TLS.md** | Certificate and TLS authentication | ✅ This session |
+| **AUTH_ENTERPRISE_LDAP_KERBEROS.md** | Enterprise authentication (LDAP/Kerberos) | ✅ This session |
+| **AUTH_MODERN_OAUTH_MFA.md** | Modern authentication (OAuth 2.0/OIDC/MFA) | ✅ This session |
 | **Y_VALVE_ARCHITECTURE.md** | Y-Valve multi-protocol router design | ✅ This session |
 | **Y_VALVE_DESIGN_PRINCIPLES.md** | Lean Y-Valve design philosophy | ✅ This session |
 | **POSTGRESQL_PARSER_IMPLEMENTATION.md** | PostgreSQL parser implementation guide | ✅ This session |
@@ -106,7 +111,7 @@
 ## Summary Statistics
 
 ### Documents Created/Enhanced This Session:
-- **Technical Specifications**: 25 new, 2 enhanced (includes all core specs + SQL/BLR)
+- **Technical Specifications**: 30 new, 2 enhanced (includes all core specs + SQL/BLR + 5 auth specs)
 - **Wire Protocols**: 5 new
 - **Architecture Documents**: 6 new
 - **Feature Specifications**: 12 new

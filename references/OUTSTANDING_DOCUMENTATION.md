@@ -269,14 +269,12 @@ cpu_operator_cost = 0.0025
 
 ### 9.1 Authentication Methods
 **Priority: HIGH**
-```
-password     - PBKDF2 specification
-md5          - For compatibility only
-scram-sha256 - SCRAM implementation
-certificate  - X.509 validation
-kerberos     - GSSAPI integration
-ldap         - LDAP bind specification
-```
+**Status: ✅ COMPLETE**
+- See `technical_specifications/AUTH_CORE_FRAMEWORK.md` - Core authentication framework
+- See `technical_specifications/AUTH_PASSWORD_METHODS.md` - Password methods (PBKDF2, SCRAM, MD5)
+- See `technical_specifications/AUTH_CERTIFICATE_TLS.md` - Certificate and TLS authentication
+- See `technical_specifications/AUTH_ENTERPRISE_LDAP_KERBEROS.md` - Enterprise (LDAP/Kerberos)
+- See `technical_specifications/AUTH_MODERN_OAUTH_MFA.md` - Modern (OAuth 2.0/OIDC/MFA)
 
 ### 9.2 Row-Level Security
 **Priority: MEDIUM**
