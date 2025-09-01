@@ -4,7 +4,7 @@
 ## Lead Developer: [DEVELOPER_NAME]
 
 ## Specification Reference
-- **Spec Document**: ../Alpha_101_Specification.md
+- **Spec Document**: ../../AUTHORITATIVE_IMPLEMENTATION_PLAN.md
 - **Primary Goal**: Create database files with proper structure
 - **Page Sizes**: 8192, 16384, 32768
 

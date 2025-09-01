@@ -24,7 +24,7 @@ This project is currently in the planning and specification phase. No implementa
 
 ## Development Process
 
-1. Review specifications in `ProjectPlan/COMPLETE_PHASE_BREAKDOWN.md`
+1. Review `AUTHORITATIVE_IMPLEMENTATION_PLAN.md`
 2. Implementation follows phases sequentially
 3. Progress tracked in `ProjectPlan/progress/` logs
 4. Tests created alongside implementation
@@ -42,9 +42,9 @@ This will create a minimal executable that displays version information.
 
 ## Next Steps
 
-Begin implementation of Alpha 1.01.1 as specified in:
-- `ProjectPlan/Alpha_101_Specification.md`
-- `ProjectPlan/COMPLETE_PHASE_BREAKDOWN.md`
+Begin implementation of Alpha 1.01.1 using:
+- `AUTHORITATIVE_IMPLEMENTATION_PLAN.md`
+- `references/technical_specifications/ON_DISK_FORMAT.md`
 
 ## License
 

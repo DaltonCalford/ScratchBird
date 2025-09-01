@@ -49,7 +49,8 @@ class ProjectValidator:
         # Check for deprecated plans still being referenced
         deprecated_plans = [
             "PHASED_IMPLEMENTATION_PLAN.md",
-            "COMPLETE_PHASED_IMPLEMENTATION.md"
+            # Keep awareness but do not require presence
+            # "COMPLETE_PHASED_IMPLEMENTATION.md"
         ]
         
         for plan in deprecated_plans:

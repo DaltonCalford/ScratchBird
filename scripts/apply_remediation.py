@@ -114,7 +114,8 @@ class RemediationApplier:
         
         deprecated_files = [
             "ProjectPlan/PHASED_IMPLEMENTATION_PLAN.md",
-            "ProjectPlan/COMPLETE_PHASED_IMPLEMENTATION.md",
+            # Deprecated; kept for reference in archive only
+            # "ProjectPlan/COMPLETE_PHASED_IMPLEMENTATION.md",
         ]
         
         for file_path in deprecated_files:
