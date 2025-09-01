@@ -6,6 +6,9 @@ Implement B-Tree indexes for efficient data access.
 ## Prerequisites
 - Phase 10 complete (query executor)
 
+## Technical Specifications
+- **Complete Index Implementation**: See `/references/technical_specifications/INDEX_IMPLEMENTATION_SPEC.md`
+
 ## Tasks
 
 ### 11.1 B-Tree Structure

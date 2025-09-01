@@ -6,6 +6,11 @@ Implement page-based storage with headers and checksums.
 ## Prerequisites
 - Phase 2 complete (database lifecycle)
 
+## Technical Specifications
+- **Buffer Pool**: See `/references/technical_specifications/STORAGE_ENGINE_BUFFER_POOL.md`
+- **Page Management**: See `/references/technical_specifications/STORAGE_ENGINE_PAGE_MANAGEMENT.md`
+- **Storage Main**: See `/references/technical_specifications/STORAGE_ENGINE_MAIN.md`
+
 ## Tasks
 
 ### 3.1 Page Header Structure
