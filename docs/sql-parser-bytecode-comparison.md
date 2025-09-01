@@ -1,5 +1,7 @@
 # SQL Parser and Bytecode Compilation: Comparative Analysis
 
+> **Note**: The BLR implementation details from this document have been incorporated into the [Complete SBLR/BLR Specification](./scratchbird-bytecode-complete-specification.md), which provides the authoritative bytecode specification for the ScratchBird project.
+
 ## Table of Contents
 1. [FirebirdSQL BLR Implementation](#firebirdsql-blr-implementation)
 2. [PostgreSQL Parse Tree and Plan Trees](#postgresql-parse-tree-and-plan-trees)
