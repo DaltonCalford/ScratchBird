@@ -1,16 +1,16 @@
-### EXPLAIN and EXPLAIN ANALYZE
+### EXPLAIN ANALYZE
 
 **What it is**
 
-EXPLAIN and EXPLAIN ANALYZE are diagnostic tools that reveal how the database query planner and executor process SQL statements. EXPLAIN shows the execution plan without running the query, while EXPLAIN ANALYZE executes the query and provides actual runtime statistics. These tools are essential for understanding query performance and optimization opportunities.
+EXPLAIN ANALYZE is a powerful diagnostic tool that reveals how ScratchBird executes queries. EXPLAIN shows the query execution plan without running the query, while EXPLAIN ANALYZE actually executes the query and provides real runtime statistics. This includes row counts, timing information, buffer usage, and optimization decisions, helping you understand and optimize query performance.
 
 **Why it matters**
 
 - **Performance Tuning**: Identify bottlenecks and inefficient operations
-- **Index Optimization**: Verify index usage and effectiveness
-- **Query Optimization**: Understand join strategies and data flow
-- **Cost Estimation**: Compare estimated vs actual row counts and costs
-- **Resource Usage**: Monitor buffer usage and I/O operations
+- **Index Optimization**: Discover missing indexes or unused existing ones
+- **Query Optimization**: Understand join orders and algorithm choices
+- **Resource Planning**: Estimate memory and I/O requirements
+- **Debugging**: Diagnose why queries perform differently than expected
 
 **How to use it**
 
@@ -28,255 +28,165 @@ EXPLAIN ANALYZE [options] statement;
 -- VERBOSE - Show additional details
 -- BUFFERS - Include buffer usage statistics
 -- FORMAT {TEXT|JSON|XML|YAML} - Output format
+-- BYTECODE - Show compiled SBLR bytecode
+-- ADAPTIVE - Show adaptive optimization status
 ```
 
-### Basic EXPLAIN
+### Output Types
+
+- **Text Format**: Human-readable tree structure (default)
+- **JSON Format**: Machine-parseable detailed information
+- **EXPLAIN ANALYZE**: Includes actual execution metrics
+- **EXPLAIN BYTECODE**: Shows compiled SBLR bytecode for the query
+- **EXPLAIN ADAPTIVE**: Shows adaptive specialization and JIT status
+
+### Basic Examples
 
 ```sql
--- Show query plan without execution
-EXPLAIN SELECT * FROM customers WHERE city = 'New York';
+-- Standard query plan
+EXPLAIN SELECT name FROM employees WHERE id > 1;
 
--- Output:
--- Seq Scan on customers  (cost=0.00..155.00 rows=50 width=84)
---   Filter: (city = 'New York'::text)
-```
+-- Plan with execution statistics
+EXPLAIN ANALYZE SELECT name FROM employees WHERE id > 1;
 
-### EXPLAIN ANALYZE
+-- Verbose output with buffer information
+EXPLAIN (ANALYZE, VERBOSE, BUFFERS) 
+SELECT * FROM orders WHERE customer_id = 123;
 
-```sql
--- Execute query and show actual statistics
-EXPLAIN ANALYZE SELECT * FROM customers WHERE city = 'New York';
+-- JSON format for programmatic analysis
+EXPLAIN (FORMAT JSON) 
+SELECT * FROM products WHERE price > 100;
 
--- Output:
--- Seq Scan on customers  (cost=0.00..155.00 rows=50 width=84) (actual time=0.015..1.234 rows=47 loops=1)
---   Filter: (city = 'New York'::text)
---   Rows Removed by Filter: 953
--- Planning Time: 0.123 ms
--- Execution Time: 1.456 ms
+-- Show bytecode compilation
+EXPLAIN BYTECODE SELECT name FROM employees WHERE id > 1;
+-- Output: SBLR bytecode instructions for the query
+
+-- Show adaptive optimization status
+EXPLAIN ADAPTIVE SELECT name FROM employees WHERE id > 1;
+-- Output: Specialization statistics, JIT compilation status
 ```
 
 ## Understanding Query Plans
 
-### Plan Node Types
+### Plan Nodes
+
+Each operation in the query plan is represented as a node:
 
 ```sql
--- Sequential Scan
+EXPLAIN SELECT e.name, d.dept_name
+FROM employees e
+JOIN departments d ON e.dept_id = d.id
+WHERE e.salary > 50000;
+
+-- Output:
+Hash Join  (cost=25.45..53.25 rows=40 width=64)
+  Hash Cond: (e.dept_id = d.id)
+  ->  Seq Scan on employees e  (cost=0.00..22.50 rows=100 width=36)
+        Filter: (salary > 50000)
+  ->  Hash  (cost=15.20..15.20 rows=20 width=36)
+        ->  Seq Scan on departments d  (cost=0.00..15.20 rows=20 width=36)
+```
+
+### Cost Estimates
+
+- **startup cost**: Cost before first row can be returned
+- **total cost**: Total cost to return all rows
+- **rows**: Estimated number of rows
+- **width**: Average row width in bytes
+
+### Common Node Types
+
+#### Sequential Scan
+```sql
 EXPLAIN SELECT * FROM large_table;
--- Seq Scan on large_table
 
--- Index Scan
-EXPLAIN SELECT * FROM users WHERE id = 123;
--- Index Scan using users_pkey on users
-
--- Index Only Scan
-EXPLAIN SELECT id FROM users WHERE id < 100;
--- Index Only Scan using users_pkey on users
-
--- Bitmap Scan
-EXPLAIN SELECT * FROM orders WHERE status IN ('pending', 'processing');
--- Bitmap Heap Scan on orders
---   ->  Bitmap Index Scan on idx_orders_status
-
--- Filter
-EXPLAIN SELECT * FROM products WHERE price > 100 AND category = 'Electronics';
--- Seq Scan on products
---   Filter: ((price > 100) AND (category = 'Electronics'))
+-- Output:
+Seq Scan on large_table  (cost=0.00..1234.00 rows=50000 width=100)
 ```
 
-### Join Operations
-
+#### Index Scan
 ```sql
--- Nested Loop Join
-EXPLAIN SELECT * FROM orders o 
-JOIN customers c ON o.customer_id = c.id 
-WHERE c.id = 123;
--- Nested Loop
---   ->  Index Scan using customers_pkey on customers c
---   ->  Index Scan using idx_orders_customer on orders o
+EXPLAIN SELECT * FROM users WHERE id = 42;
 
--- Hash Join
-EXPLAIN SELECT * FROM orders o 
-JOIN products p ON o.product_id = p.id;
--- Hash Join
---   Hash Cond: (o.product_id = p.id)
---   ->  Seq Scan on orders o
---   ->  Hash
---         ->  Seq Scan on products p
-
--- Merge Join
-EXPLAIN SELECT * FROM sorted_table1 t1
-JOIN sorted_table2 t2 ON t1.id = t2.id;
--- Merge Join
---   Merge Cond: (t1.id = t2.id)
---   ->  Index Scan using sorted_table1_pkey on sorted_table1 t1
---   ->  Index Scan using sorted_table2_pkey on sorted_table2 t2
+-- Output:
+Index Scan using users_pkey on users  (cost=0.29..8.31 rows=1 width=100)
+  Index Cond: (id = 42)
 ```
 
-### Aggregation and Grouping
-
+#### Nested Loop Join
 ```sql
--- HashAggregate
-EXPLAIN SELECT category, COUNT(*) 
-FROM products 
-GROUP BY category;
--- HashAggregate
---   Group Key: category
---   ->  Seq Scan on products
+EXPLAIN SELECT * FROM orders o, customers c 
+WHERE o.customer_id = c.id AND c.country = 'USA';
 
--- GroupAggregate (sorted)
-EXPLAIN SELECT customer_id, SUM(total)
-FROM orders
-GROUP BY customer_id
-ORDER BY customer_id;
--- GroupAggregate
---   Group Key: customer_id
---   ->  Index Scan using idx_orders_customer on orders
-
--- WindowAgg
-EXPLAIN SELECT name, salary,
-       AVG(salary) OVER (PARTITION BY department)
-FROM employees;
--- WindowAgg
---   ->  Sort
---         Sort Key: department
---         ->  Seq Scan on employees
-```
-
-## Cost Estimation
-
-### Understanding Costs
-
-```sql
-EXPLAIN SELECT * FROM users WHERE age > 25;
--- Seq Scan on users  (cost=0.00..155.00 rows=500 width=84)
---                           ^startup ^total ^estimated rows ^avg row size
-
--- cost=0.00..155.00
--- - First number: Startup cost (before first row returned)
--- - Second number: Total cost (arbitrary units)
-
--- rows=500
--- - Estimated number of rows returned
-
--- width=84
--- - Average row size in bytes
-```
-
-### Cost Factors
-
-```sql
--- Sequential scan cost
-EXPLAIN SELECT * FROM large_table;
--- Cost = seq_page_cost * pages + cpu_tuple_cost * rows
-
--- Index scan cost
-EXPLAIN SELECT * FROM users WHERE id = 123;
--- Cost = random_page_cost * index_pages + cpu_index_tuple_cost * index_tuples
-
--- Join cost comparison
-EXPLAIN SELECT * FROM t1 JOIN t2 ON t1.id = t2.id;
--- Planner chooses lowest cost among:
--- - Nested Loop: O(n*m) comparisons
--- - Hash Join: O(n+m) with hash table overhead
--- - Merge Join: O(n log n + m log m) sorting cost
+-- Output:
+Nested Loop  (cost=0.29..1678.00 rows=500 width=200)
+  ->  Seq Scan on customers c  (cost=0.00..25.00 rows=50 width=100)
+        Filter: (country = 'USA'::text)
+  ->  Index Scan using idx_orders_customer on orders o  (cost=0.29..32.50 rows=10 width=100)
+        Index Cond: (customer_id = c.id)
 ```
 
 ## EXPLAIN ANALYZE Details
 
 ### Actual vs Estimated
 
-```sql
-EXPLAIN ANALYZE SELECT * FROM orders WHERE order_date = '2024-01-15';
-
--- Seq Scan on orders  (cost=0.00..250.00 rows=10 width=100) 
---                      (actual time=0.025..5.123 rows=45 loops=1)
---   Filter: (order_date = '2024-01-15'::date)
---   Rows Removed by Filter: 9955
-
--- Comparison:
--- Estimated: 10 rows
--- Actual: 45 rows
--- This indicates statistics may need updating
-```
-
-### Timing Information
+EXPLAIN ANALYZE shows both estimates and actual values:
 
 ```sql
-EXPLAIN (ANALYZE, TIMING) SELECT * FROM products WHERE price > 100;
+EXPLAIN ANALYZE SELECT * FROM products WHERE price > 100;
 
--- Seq Scan on products  (actual time=0.015..2.345 rows=234 loops=1)
---                              ^first row  ^total time
---   Filter: (price > 100)
---   Rows Removed by Filter: 766
--- Planning Time: 0.234 ms
--- Execution Time: 2.567 ms
+-- Output:
+Seq Scan on products  (cost=0.00..25.00 rows=100 width=50) 
+                      (actual time=0.015..0.201 rows=87 loops=1)
+  Filter: (price > 100)
+  Rows Removed by Filter: 413
+Planning Time: 0.082 ms
+Execution Time: 0.234 ms
 ```
+
+Key metrics:
+- **actual time**: Actual time in milliseconds (startup..total)
+- **rows**: Actual rows returned
+- **loops**: Number of times node was executed
+- **Rows Removed**: Rows filtered out
 
 ### Buffer Usage
+
+With BUFFERS option:
 
 ```sql
 EXPLAIN (ANALYZE, BUFFERS) SELECT * FROM large_table WHERE status = 'active';
 
--- Seq Scan on large_table  (actual time=0.025..10.234 rows=1234 loops=1)
---   Filter: (status = 'active')
---   Rows Removed by Filter: 8766
---   Buffers: shared hit=85 read=15
---            ^from cache  ^from disk
--- Planning Time: 0.345 ms
--- Execution Time: 10.567 ms
+-- Output:
+Seq Scan on large_table  (cost=0.00..5234.00 rows=25000 width=100)
+                         (actual time=0.023..45.234 rows=24567 loops=1)
+  Filter: (status = 'active'::text)
+  Rows Removed by Filter: 75433
+  Buffers: shared hit=234 read=4567
+    I/O Timings: read=35.234
+Planning Time: 0.123 ms
+Execution Time: 47.567 ms
 ```
 
-## Output Formats
+Buffer metrics:
+- **shared hit**: Pages found in buffer cache
+- **read**: Pages read from disk
+- **written**: Pages written
+- **I/O Timings**: Time spent on I/O operations
 
-### JSON Format
+## Optimization Techniques
 
-```sql
-EXPLAIN (FORMAT JSON) SELECT * FROM users WHERE id = 123;
-
--- [
---   {
---     "Plan": {
---       "Node Type": "Index Scan",
---       "Scan Direction": "Forward",
---       "Index Name": "users_pkey",
---       "Relation Name": "users",
---       "Startup Cost": 0.28,
---       "Total Cost": 8.29,
---       "Plan Rows": 1,
---       "Plan Width": 84
---     }
---   }
--- ]
-```
-
-### VERBOSE Output
+### Index Usage Analysis
 
 ```sql
-EXPLAIN (VERBOSE) SELECT id, name FROM users WHERE age > 25;
+-- Check if index is being used
+EXPLAIN ANALYZE SELECT * FROM orders 
+WHERE order_date BETWEEN '2024-01-01' AND '2024-01-31';
 
--- Seq Scan on public.users  (cost=0.00..155.00 rows=500 width=36)
---   Output: id, name
---   Filter: (users.age > 25)
-```
+-- If showing Seq Scan, consider creating index:
+CREATE INDEX idx_orders_date ON orders(order_date);
 
-## Optimization Examples
-
-### Missing Index
-
-```sql
--- Before optimization
-EXPLAIN ANALYZE SELECT * FROM orders WHERE customer_id = 123;
--- Seq Scan on orders  (cost=0.00..2500.00 rows=50 width=100) 
---                      (actual time=0.025..25.123 rows=47 loops=1)
---   Filter: (customer_id = 123)
---   Rows Removed by Filter: 99953
-
--- After adding index
-CREATE INDEX idx_orders_customer ON orders(customer_id);
-
-EXPLAIN ANALYZE SELECT * FROM orders WHERE customer_id = 123;
--- Index Scan using idx_orders_customer  (cost=0.42..51.23 rows=50 width=100)
---                                       (actual time=0.015..0.234 rows=47 loops=1)
+-- Re-run EXPLAIN to verify index usage
 ```
 
 ### Join Order Optimization
@@ -284,145 +194,191 @@ EXPLAIN ANALYZE SELECT * FROM orders WHERE customer_id = 123;
 ```sql
 -- Inefficient join order
 EXPLAIN ANALYZE
-SELECT * FROM large_table l
-JOIN small_table s ON l.id = s.large_id
-WHERE s.status = 'active';
--- Hash Join (cost=10000.00..50000.00 rows=100)
---   ->  Seq Scan on large_table l (1M rows)
---   ->  Hash
---         ->  Seq Scan on small_table s
---               Filter: (status = 'active')
+SELECT *
+FROM small_table s
+JOIN large_table l ON s.id = l.small_id
+JOIN huge_table h ON l.id = h.large_id;
 
--- Better with proper statistics
-ANALYZE large_table, small_table;
-
--- Now planner chooses better order
+-- Force better join order with explicit JOIN syntax or hints
 EXPLAIN ANALYZE
-SELECT * FROM large_table l
-JOIN small_table s ON l.id = s.large_id
-WHERE s.status = 'active';
--- Nested Loop (cost=0.42..500.00 rows=100)
---   ->  Index Scan on small_table s
---         Filter: (status = 'active')
---   ->  Index Scan on large_table l
---         Index Cond: (id = s.large_id)
+SELECT *
+FROM huge_table h
+JOIN large_table l ON h.large_id = l.id
+JOIN small_table s ON l.small_id = s.id;
 ```
 
-### Covering Index
+### Subquery vs JOIN
 
 ```sql
--- Without covering index
-EXPLAIN ANALYZE SELECT id, name, email FROM users WHERE status = 'active';
--- Index Scan using idx_users_status  (cost=0.42..234.56 rows=500)
---   -- Requires heap fetches for name and email
+-- Subquery approach
+EXPLAIN ANALYZE
+SELECT name FROM employees
+WHERE dept_id IN (SELECT id FROM departments WHERE location = 'NYC');
 
--- With covering index
-CREATE INDEX idx_users_status_covering ON users(status) INCLUDE (name, email);
-
-EXPLAIN ANALYZE SELECT id, name, email FROM users WHERE status = 'active';
--- Index Only Scan using idx_users_status_covering  (cost=0.42..134.56 rows=500)
---   -- No heap fetches needed
+-- JOIN approach (often more efficient)
+EXPLAIN ANALYZE
+SELECT DISTINCT e.name 
+FROM employees e
+JOIN departments d ON e.dept_id = d.id
+WHERE d.location = 'NYC';
 ```
 
-## Common Patterns
+## Advanced Features
 
-### N+1 Query Problem
+### Parallel Query Execution
 
 ```sql
--- Inefficient: N+1 queries
-EXPLAIN ANALYZE
-SELECT * FROM orders WHERE customer_id = 123;
--- Then for each order:
-EXPLAIN ANALYZE
-SELECT * FROM order_items WHERE order_id = ?;
+EXPLAIN (ANALYZE, VERBOSE)
+SELECT count(*), category
+FROM large_products_table
+GROUP BY category;
 
--- Better: Single query with join
-EXPLAIN ANALYZE
-SELECT o.*, oi.*
-FROM orders o
-JOIN order_items oi ON o.id = oi.order_id
-WHERE o.customer_id = 123;
+-- Output might show:
+Finalize GroupAggregate  (cost=...) (actual time=...)
+  ->  Gather Merge  (cost=...) (actual time=...)
+        Workers Planned: 2
+        Workers Launched: 2
+        ->  Partial GroupAggregate  (cost=...) (actual time=...)
+              ->  Parallel Seq Scan on large_products_table
 ```
 
-### Pagination Optimization
+### Partition Pruning
 
 ```sql
--- Inefficient for large offsets
-EXPLAIN ANALYZE
-SELECT * FROM products ORDER BY created_at LIMIT 10 OFFSET 10000;
--- Sort  (cost=2500.00..2750.00 rows=10)
---   ->  Seq Scan on products (reads all 10010 rows)
+-- Table partitioned by date
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT * FROM sales_partitioned
+WHERE sale_date >= '2024-01-01' AND sale_date < '2024-02-01';
 
--- Better with keyset pagination
+-- Output shows only relevant partitions scanned:
+Append  (cost=0.00..123.45 rows=1000 width=100)
+  ->  Seq Scan on sales_2024_01  (cost=0.00..123.45 rows=1000 width=100)
+        Filter: ((sale_date >= '2024-01-01') AND (sale_date < '2024-02-01'))
+-- Note: Other partitions not listed (pruned)
+```
+
+### CTE Optimization
+
+```sql
+EXPLAIN ANALYZE
+WITH regional_sales AS (
+    SELECT region, SUM(amount) as total
+    FROM sales
+    GROUP BY region
+)
+SELECT * FROM regional_sales WHERE total > 10000;
+
+-- Check if CTE is materialized or inlined
+-- Output shows CTE Scan or inlined operations
+```
+
+## Bytecode Analysis
+
+### EXPLAIN BYTECODE
+
+Shows the compiled SBLR bytecode:
+
+```sql
+EXPLAIN BYTECODE SELECT id, name FROM users WHERE age > 18;
+
+-- Output:
+SBLR Bytecode:
+0000: SBLR_RSE           ; Start record selection
+0001: SBLR_RELATION2     ; Table: users
+0005: SBLR_BOOLEAN       ; WHERE clause
+0006: SBLR_FIELD2        ; Field: age
+0009: SBLR_LITERAL       ; Value: 18
+000D: SBLR_GTR           ; Greater than comparison
+000E: SBLR_PROJECT       ; SELECT clause
+000F: SBLR_FIELD2        ; Field: id
+0012: SBLR_FIELD2        ; Field: name
+0015: SBLR_END           ; End of bytecode
+```
+
+### EXPLAIN ADAPTIVE
+
+Shows runtime optimization status:
+
+```sql
+EXPLAIN ADAPTIVE SELECT * FROM orders WHERE status = 'pending';
+
+-- Output:
+Adaptive Optimization Status:
+- Execution Count: 1523
+- Type Specialization: ENABLED
+  - Field 'status': STRING_FAST (100% string type)
+  - Comparison: CMP_STRING_FAST
+- JIT Compilation: PENDING (threshold: 2000)
+- Cache Hits: 1520/1523 (99.8%)
+- Specialized Instructions: 3
+```
+
+## Performance Patterns
+
+### Common Anti-patterns
+
+1. **Missing Index on Foreign Keys**
+```sql
+-- Slow: Full table scan for each parent row
+EXPLAIN ANALYZE
+SELECT * FROM parent p
+JOIN child c ON p.id = c.parent_id;
+-- Look for: Nested Loop with Seq Scan on child
+```
+
+2. **Function Calls on Indexed Columns**
+```sql
+-- Index not used due to function
+EXPLAIN ANALYZE
+SELECT * FROM users WHERE UPPER(email) = 'USER@EXAMPLE.COM';
+-- Better: Use functional index or case-insensitive collation
+```
+
+3. **OR Conditions Preventing Index Use**
+```sql
+-- May not use index efficiently
 EXPLAIN ANALYZE
 SELECT * FROM products 
-WHERE created_at > '2024-01-15 12:00:00'
-ORDER BY created_at 
-LIMIT 10;
--- Index Scan using idx_products_created  (cost=0.42..50.00 rows=10)
+WHERE category = 'Electronics' OR price > 1000;
+-- Consider: UNION of two indexed queries
 ```
 
-## Monitoring and Maintenance
+### Optimization Checklist
 
-### Update Statistics
+1. **Check Seq Scans on Large Tables**
+   - Add appropriate indexes
+   - Consider partial indexes for filtered queries
 
-```sql
--- Update table statistics for better plans
-ANALYZE customers;
-ANALYZE orders;
+2. **Review Join Methods**
+   - Nested Loop: Good for small result sets
+   - Hash Join: Good for larger unsorted data
+   - Merge Join: Good for pre-sorted data
 
--- Verbose analyze
-ANALYZE VERBOSE products;
--- INFO:  analyzing "public.products"
--- INFO:  "products": scanned 300 of 300 pages, containing 10000 live rows
-```
+3. **Analyze Row Estimates**
+   - Large discrepancies indicate stale statistics
+   - Run ANALYZE to update statistics
 
-### Plan Cache
+4. **Monitor Buffer Usage**
+   - High disk reads indicate insufficient cache
+   - Consider increasing shared_buffers
 
-```sql
--- View cached plans (if available)
-SELECT * FROM pg_prepared_statements;
-
--- Reset plan cache
-DISCARD PLANS;
-```
-
-## Best Practices
-
-1. **Regular ANALYZE**: Keep statistics up-to-date
-2. **Test with Production Data**: Plans differ with data volume
-3. **Check Both EXPLAIN and EXPLAIN ANALYZE**: Estimates vs reality
-4. **Monitor Slow Queries**: Log and analyze slow query plans
-5. **Index Wisely**: Balance read performance vs write overhead
+5. **Look for Sort Operations**
+   - Add indexes for ORDER BY columns
+   - Consider covering indexes
 
 ## Implementation Details
 
-**Parser** (`src/engine/parser_session.cpp`):
-- Routes EXPLAIN statements
-- Captures ANALYZE option
-
-**Planner** (`src/engine/query_planner.cpp`):
-- Generates logical query plans
-- Estimates costs and row counts
-
-**Executor** (`src/engine/executor*.cpp`):
-- Instruments nodes for ANALYZE
-- Collects runtime statistics
-
-**Output** (`tests/explain_analyze_tests.cpp`):
-- Text and JSON formatters
-- Node type representations
-
 **Code Anchors**:
-- EXPLAIN parser: `src/engine/parser_session.cpp`
-- Query planner: `src/engine/query_planner.cpp`
-- Executor instrumentation: `src/engine/executor.cpp`
-- Test examples: `tests/explain_analyze_tests.cpp`
+- Query Planner: `src/engine/planner.cpp`
+- Plan Executor: `src/engine/executor.cpp`
+- Statistics: `src/engine/statistics.cpp`
+- Cost Model: `src/engine/cost_model.cpp`
+- EXPLAIN Handler: `src/engine/explain.cpp`
 
-## See also
+## See Also
 
-- [SELECT Queries](./sql-select.md) - Query construction
-- [Indexes](./ddl-indexes.md) - Index types and usage
-- [Session & Transaction](./session-and-transaction.md) - SET options for planning
-- [Configuration](./configuration.md) - Planner configuration
-- [Performance](./missing-and-future.md) - Performance tuning
+- [SQL SELECT](./sql-select.md) - Query syntax and features
+- [DDL Indexes](./ddl-indexes.md) - Index creation and management
+- [Configuration](./configuration.md) - Performance tuning parameters
+- [Dev Tools](./dev-tools.md) - Query profiling tools
+- [Complete SBLR/BLR Specification](/workspace/docs/scratchbird-bytecode-complete-specification.md) - Bytecode details

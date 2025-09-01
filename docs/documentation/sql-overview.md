@@ -15,6 +15,16 @@ ScratchBird implements a comprehensive SQL dialect that combines standard SQL fe
 
 This overview provides a map of the SQL surface area. Each statement type links to detailed documentation with examples. Use this page to understand the overall architecture, then dive into specific features as needed.
 
+## Compilation and Execution Model
+
+ScratchBird uses a multi-stage compilation pipeline:
+
+1. **Parsing**: SQL text → Abstract Syntax Tree (AST)
+2. **Analysis**: AST → Semantic validation and type checking
+3. **Bytecode Generation**: AST → SBLR bytecode (see [Complete SBLR/BLR Specification](/workspace/docs/scratchbird-bytecode-complete-specification.md))
+4. **Optimization**: Bytecode optimization passes (constant folding, dead code elimination)
+5. **Execution**: Stack-based VM with adaptive specialization and optional JIT compilation
+
 ## Statement Categories and Routing
 
 The main SQL router (`src/engine/parser.cpp`) examines the beginning of each statement and dispatches to specialized parsers:
@@ -83,7 +93,9 @@ The main SQL router (`src/engine/parser.cpp`) examines the beginning of each sta
 ### 5. Procedural SQL (PSQL)
 **Parser**: `src/engine/parser_psql.cpp`  
 **Executor**: `src/engine/psql_executor.cpp`  
-**Headers**: `include/scratchbird/engine/parser_psql.h`, `include/scratchbird/engine/psql_executor.h`
+**Bytecode Compiler**: `src/engine/sblr_compiler.cpp`  
+**Bytecode VM**: `src/engine/sblr_vm.cpp`  
+**Headers**: `include/scratchbird/engine/parser_psql.h`, `include/scratchbird/engine/psql_executor.h`, `include/scratchbird/engine/sblr.h`
 
 - **EXECUTE BLOCK**: Anonymous code blocks
 - **Stored Procedures/Functions**: CREATE/ALTER/DROP PROCEDURE/FUNCTION

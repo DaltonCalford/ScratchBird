@@ -16,6 +16,18 @@ ScratchBird provides a comprehensive set of development tools for debugging, pro
 
 Use the interactive debugger to step through PSQL code, set breakpoints, and inspect variables. Profile queries to understand resource usage and optimization opportunities. Write unit tests for database objects and run them automatically. Use static analysis to identify potential issues before deployment.
 
+## Bytecode Tools
+
+**Source**: `src/engine/sblr_tools.cpp`
+
+- **Disassembler**: Convert SBLR bytecode back to readable assembly format for debugging
+- **Bytecode Inspector**: Analyze bytecode modules for optimization opportunities, hot paths, and type patterns
+- **Profile Analyzer**: Process runtime profiling data to identify JIT compilation candidates
+- **Bytecode Verifier**: Validate bytecode integrity, type safety, and stack balance
+- **Optimization Reporter**: Generate reports on applied optimizations and their effectiveness
+
+These utilities are meant for developer workflows and PSQL code hygiene.
+
 ## PSQL Debugger
 
 ### Enabling Debug Mode
