@@ -44,7 +44,7 @@ ctest --output-on-failure
 
 ### Source Code Organization
 ```
-/workspace/
+.
 ├── src/
 │   ├── engine/          # Core engine code ONLY
 │   │   ├── storage/     # Storage subsystem

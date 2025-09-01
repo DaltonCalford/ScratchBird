@@ -7,9 +7,9 @@
 #### Step 1: Confirm Standards Review
 ```
 I have read and will follow:
-- [ ] /workspace/references/CODING_AND_BUILD_STANDARDS.md
-- [ ] /workspace/ProjectPlan/00_BUILD_AND_STRUCTURE.md
-- [ ] /workspace/references/technical_specifications/PAGE_LAYOUTS_AND_STRUCTURES.md (if relevant)
+- [ ] references/CODING_AND_BUILD_STANDARDS.md
+- [ ] ProjectPlan/00_BUILD_AND_STRUCTURE.md
+- [ ] references/technical_specifications/PAGE_LAYOUTS_AND_STRUCTURES.md (if relevant)
 ```
 
 #### Step 2: Confirm Build System Usage

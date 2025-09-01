@@ -27,10 +27,8 @@ void consume_buffer(char* buffer);  // Function will free()
 const char* get_name(void);  // Caller must NOT free()
 ```
 
-## TODO: Complete specification
-- Add memory pool design
-- Define allocation failure handling
-- Add leak detection strategy
+## Status
+This specification is complete for Alpha. Memory pools and additional allocators may be introduced in later phases without changing the ownership contracts.
 
 ## Memory Contexts (Alpha)
 
@@ -94,5 +92,4 @@ void dbg_free(MemoryContext* ctx, void* p) {
 - Transaction/Temp contexts are thread-local
 
 ## Specification Status
-
-This specification is complete for Alpha and contains no open TODO sections.
+This specification is complete for Alpha and contains no open items.
