@@ -2,7 +2,7 @@
 
 ## Overview
 
-For ScratchBird to act as a drop-in replacement for multiple database engines, the Y-Valve must implement native wire protocols. This document outlines the specific protocol information needed.
+For ScratchBird to act as a drop-in replacement for multiple database engines, per‑connection parser processes implement native wire protocols. The Y‑Valve selects the appropriate parser and transfers the client socket; thereafter the parser handles the full wire protocol lifecycle and communicates with the engine via the internal API. This document outlines protocol specifics for each parser.
 
 ## Required Wire Protocol Specifications
 

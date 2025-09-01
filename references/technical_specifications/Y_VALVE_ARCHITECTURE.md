@@ -45,6 +45,30 @@ The Y-Valve is ScratchBird's universal connection router and protocol abstractio
 └─────────────────────────────────────────────────┘
 ```
 
+## Process/Connection Model (Authoritative)
+
+- Listener: accepts TCP connections on protocol ports; performs minimal detection (protocol preface/handshake), then hands off the connection.
+- Y‑Valve: control-plane router; selects the parser type; spawns or assigns a parser process for the connection; transfers the client socket to the parser (e.g., via SCM_RIGHTS on Unix or equivalent on Windows).
+- Parser Process (per connection):
+  - Frontend: speaks the client's native wire protocol (PostgreSQL/MySQL/Firebird/ScratchBird native).
+  - Translation: parses SQL into ScratchBird BLR bytecode.
+  - Backend: issues API calls to the ScratchBird engine; receives results; formats responses on the wire.
+- Engine: executes BLR/queries; provides a stable C/C++ API boundary; no direct wire protocol handling.
+
+Data plane: After handoff, all client I/O flows directly between client <-> parser process. The Y‑Valve and listener are not on the hot path.
+
+Control plane: Y‑Valve manages lifecycles (spawn, monitor, restart), observability, and admission control.
+
+## Phasing
+
+1) Phase A: ScratchBird Native Parser & Protocol
+- Implement a single process‑per‑connection parser for the native protocol.
+- Showcase context-aware parsing and minimal reserved words.
+
+2) Phase B: PostgreSQL/MySQL/Firebird Parsers
+- Add per‑protocol parser processes with full wire compliance tiers.
+- Maintain identical engine API usage; only translators differ.
+
 ## Connection Handoff Structure
 
 ```c
