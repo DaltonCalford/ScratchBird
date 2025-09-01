@@ -143,6 +143,14 @@ TEST(Alpha101, ValidateHeader) {
 
 **Parser Mode**: Traditional with reserved words (context-aware deferred)
 
+### Parser/Router Architecture (Authoritative Summary)
+
+- The ScratchBird listener accepts connections and performs minimal protocol detection.
+- The Y‑Valve routes the connection by spawning/assigning a per‑connection parser process and transferring the socket to it.
+- The parser process speaks the client's native protocol on the frontend, translates to BLR, and invokes the engine API on the backend.
+- The Y‑Valve/listener are not in the steady‑state data path after handoff.
+- First delivery: ScratchBird native parser & protocol; others (PostgreSQL/MySQL/Firebird) follow in later phases.
+
 ---
 
 ## Beta Phase (Future)
