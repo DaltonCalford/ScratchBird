@@ -94,9 +94,7 @@ about the failure and optionally chain a cause for deeper diagnosis.
 
 ## Specification Status
 
-This specification is complete for Alpha requirements and does not contain
-open TODO items. Enhancements may extend the error_code catalog in later phases
-without altering the contracts defined here.
+This specification is complete for Alpha requirements. Enhancements may extend the error_code catalog in later phases without altering the contracts defined here.
 
 ## Examples
 

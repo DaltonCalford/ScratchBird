@@ -5,19 +5,19 @@
 These references have been gathered and documented:
 
 ### Technical Specifications
-- **Wire Protocols**: PostgreSQL, MySQL, Firebird, TDS - `/references/wire_protocols/`
-- **Data Types**: Complete type system for all databases - `/references/data_types/`
-- **Page Layouts**: All 27 page types specified - `/workspace/references/archive/technical_specifications/PAGE_LAYOUTS_AND_STRUCTURES.md`
-- **BLR Specification**: Complete instruction set - `/references/technical_specifications/BLR_SPECIFICATION.md`
-- **SQL Grammar**: Full BNF/EBNF - `/references/technical_specifications/SQL_GRAMMAR_BNF.md`
-- **MGA Implementation**: Based on Firebird with enhancements - `/references/technical_specifications/MGA_IMPLEMENTATION.md`
-- **C API**: Complete specification - `/references/technical_specifications/C_API_SPECIFICATION.md`
-- **Y-Valve Architecture**: Multi-protocol router - `/references/technical_specifications/Y_VALVE_ARCHITECTURE.md`
+- **Wire Protocols**: PostgreSQL, MySQL, Firebird, TDS - `references/wire_protocols/`
+- **Data Types**: Complete type system for all databases - `references/data_types/`
+- **Page Layouts**: All 27 page types specified - `references/archive/technical_specifications/PAGE_LAYOUTS_AND_STRUCTURES.md`
+- **BLR Specification**: Complete instruction set - `references/technical_specifications/BLR_SPECIFICATION.md`
+- **SQL Grammar**: Full BNF/EBNF - `references/technical_specifications/SQL_GRAMMAR_BNF.md`
+- **MGA Implementation**: Based on Firebird with enhancements - `references/technical_specifications/MGA_IMPLEMENTATION.md`
+- **C API**: Complete specification - `references/technical_specifications/C_API_SPECIFICATION.md`
+- **Y-Valve Architecture**: Multi-protocol router - `references/technical_specifications/Y_VALVE_ARCHITECTURE.md`
 
 ### Architecture Documents
-- **ADR-001**: MGA Over Traditional MVCC - `/docs/architecture/ADR-001-MGA-Over-Traditional-MVCC.md`
-- **ADR-002**: UUID-Based Schema System - `/docs/architecture/ADR-002-UUID-Based-Schema.md`
-- **ADR-003**: Y-Valve Multi-Protocol Router - `/docs/architecture/ADR-003-YValve-Multi-Protocol-Router.md`
+- **ADR-001**: MGA Over Traditional MVCC - `docs/architecture/ADR-001-MGA-Over-Traditional-MVCC.md`
+- **ADR-002**: UUID-Based Schema System - `docs/architecture/ADR-002-UUID-Based-Schema.md`
+- **ADR-003**: Y-Valve Multi-Protocol Router - `docs/architecture/ADR-003-YValve-Multi-Protocol-Router.md`
 
 ## 📚 Additional References Needed (Future)
 
@@ -95,4 +95,4 @@ No additional references needed until Beta phase.
 
 ---
 
-**Note**: The `/references/SOURCE_CODE_STRATEGY.md` document outlines our approach to using external source code (extract concepts, not copy code).
+**Note**: The `references/SOURCE_CODE_STRATEGY.md` document outlines our approach to using external source code (extract concepts, not copy code).

@@ -5,7 +5,7 @@ This document links to the technical specifications in the `/references/` direct
 ## Core Technical Specifications
 
 ### Storage and Page Management
-**Reference**: `/workspace/references/archive/technical_specifications/PAGE_LAYOUTS_AND_STRUCTURES.md`
+**Reference**: `references/archive/technical_specifications/PAGE_LAYOUTS_AND_STRUCTURES.md`
 
 Key specifications:
 - 96-byte page header format
@@ -15,7 +15,7 @@ Key specifications:
 - Filespace and tablespace structures
 
 ### Replication and High Availability
-**Reference**: `/workspace/references/technical_specifications/REPLICATION_AND_SHADOW_PROTOCOLS.md`
+**Reference**: `references/technical_specifications/REPLICATION_AND_SHADOW_PROTOCOLS.md`
 
 Key specifications:
 - Shadow database (physical replication)
@@ -24,7 +24,7 @@ Key specifications:
 - Failover and promotion procedures
 
 ### Wire Protocols and Compatibility
-**Reference**: `/workspace/references/technical_specifications/WIRE_PROTOCOL_SPECIFICATIONS.md`
+**Reference**: `references/technical_specifications/WIRE_PROTOCOL_SPECIFICATIONS.md`
 
 Key specifications:
 - PostgreSQL wire protocol v3 requirements
@@ -121,7 +121,7 @@ Consult:
 
 All technical specifications are maintained in:
 ```
-/workspace/references/
+references/
 ├── technical_specifications/
 │   ├── PAGE_LAYOUTS_AND_STRUCTURES.md
 │   ├── REPLICATION_AND_SHADOW_PROTOCOLS.md
