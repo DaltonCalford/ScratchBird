@@ -18,6 +18,7 @@ typedef enum sb_error {
     // Transaction errors (3000-3999)
     SB_ERR_DEADLOCK = 3001,
     SB_ERR_LOCK_TIMEOUT = 3002,
+    SB_ERR_OOM = 3003,
     
     // TODO: Add more error codes
 } sb_error_t;
@@ -33,7 +34,44 @@ typedef enum sb_error {
     } while(0)
 ```
 
-## TODO: Complete specification
-- Add error context structure
-- Define error propagation rules
-- Add recovery strategies
+## Error Context Structure
+
+```c
+typedef struct sb_error_context {
+    sb_error_t   code;           // Error code
+    const char*  message;        // Human-readable description
+    const char*  file;           // Source file
+    int          line;           // Line number
+    const char*  function;       // Function name
+    struct sb_error_context* cause; // Optional chained cause
+} sb_error_context_t;
+
+#define SB_MAKE_ERROR(ctx_ptr, err_code, msg) \
+    do { \
+        (ctx_ptr)->code = (err_code); \
+        (ctx_ptr)->message = (msg); \
+        (ctx_ptr)->file = __FILE__; \
+        (ctx_ptr)->line = __LINE__; \
+        (ctx_ptr)->function = __func__; \
+        (ctx_ptr)->cause = NULL; \
+    } while(0)
+```
+
+## Propagation Rules
+
+- Functions MAY accept an optional `sb_error_context_t* out_ctx`
+- On failure, set out_ctx (if non-null) with SB_MAKE_ERROR and return non-SB_OK
+- If an error occurs inside a callee, set `ctx.cause = callee_ctx`
+- Always preserve the original root cause when rewrapping
+
+## Recovery Classes
+
+- Retryable: SB_ERR_IO_ERROR (transient), SB_ERR_LOCK_TIMEOUT
+- Irrecoverable: SB_ERR_PAGE_CORRUPT, SB_ERR_CHECKSUM_MISMATCH, SB_ERR_OOM
+- Policy: Callers decide to retry based on class + operation idempotency
+
+## Mapping and Logging (Guidance)
+
+- Map internal codes to protocol-specific errors (later phases)
+- Include page_id, file path, LSN where relevant in messages
+- In debug builds, include backtrace when available
