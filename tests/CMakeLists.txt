@@ -25,3 +25,6 @@ target_link_libraries(scratchbird_tests
 # Register tests
 include(GoogleTest)
 gtest_discover_tests(scratchbird_tests)
+
+# Explicit add_test for validator
+add_test(NAME scratchbird_tests COMMAND scratchbird_tests)
