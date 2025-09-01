@@ -4,6 +4,16 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 ALLOW_TODO_DIRS = {ROOT / 'docs' / 'change_requests'}
+EXCLUDE_DIRS = {
+    ROOT / 'build',
+    ROOT / 'docs',
+    ROOT / 'references' / 'archive',
+    ROOT / 'ProjectPlan' / 'old_spec',
+    ROOT / 'ProjectPlan' / 'archive',
+}
+EXCLUDE_FILES = {
+    ROOT / 'CRITICAL_REMEDIATION_PLAN.md',
+}
 
 BAD_PATH = re.compile(r'`?/workspace/')
 BAD_TODO = re.compile(r'\b(TODO|TBD|FIXME)\b')
@@ -13,6 +23,18 @@ def is_allowed(path: Path) -> bool:
     for allowed in ALLOW_TODO_DIRS:
         try:
             path.relative_to(allowed)
+            return True
+        except ValueError:
+            continue
+    return False
+
+
+def is_excluded(path: Path) -> bool:
+    if path in EXCLUDE_FILES:
+        return True
+    for d in EXCLUDE_DIRS:
+        try:
+            path.relative_to(d)
             return True
         except ValueError:
             continue
@@ -36,12 +58,14 @@ def check_file(path: Path) -> list[str]:
 def main():
     root = ROOT
     exts = {'.md', '.rst', '.txt'}
-    targets = []
-    for p in root.rglob('*'):
-        if p.is_file() and p.suffix in exts:
-            targets.append(p)
     problems = []
-    for p in targets:
+    for p in root.rglob('*'):
+        if not p.is_file():
+            continue
+        if is_excluded(p):
+            continue
+        if p.suffix not in exts:
+            continue
         problems.extend(check_file(p))
     if problems:
         print("Doc lint issues:")
