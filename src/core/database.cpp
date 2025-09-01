@@ -25,32 +25,48 @@ void Database::close() {
     }
 }
 
-Status Database::create(const std::string& path, uint32_t page_size) {
+Status Database::create(const std::string& path, uint32_t page_size, ErrorContext* ctx) {
+    // Validate path for traversal attacks
+    if (path.empty() || path.find("../") != std::string::npos) {
+        SET_ERROR_CONTEXT(ctx, Status::InvalidPath, "Invalid path: contains traversal or empty");
+        return Status::InvalidPath;
+    }
+    
     // Validate page size
     if (!is_valid_alpha_page_size(page_size)) {
-        return Status::IoError;
+        SET_ERROR_CONTEXT(ctx, Status::InvalidArgument, "Invalid page size: must be 8192, 16384, or 32768");
+        return Status::InvalidArgument;
     }
     
     // Check if file already exists
     struct stat st;
     if (stat(path.c_str(), &st) == 0) {
+        SET_ERROR_CONTEXT(ctx, Status::FileExists, "Database file already exists");
         return Status::FileExists;
     }
     
     // Create and open file with exclusive create
     int fd = ::open(path.c_str(), O_RDWR | O_CREAT | O_EXCL, 0644);
     if (fd < 0) {
+        SET_ERROR_CONTEXT(ctx, Status::IoError, "Failed to create database file");
         return Status::IoError;
     }
     
     // Lock file for exclusive access
     if (flock(fd, LOCK_EX | LOCK_NB) != 0) {
         ::close(fd);
+        SET_ERROR_CONTEXT(ctx, Status::IoError, "Failed to lock database file");
         return Status::IoError;
     }
     
-    // Allocate buffer for header page
-    uint8_t* page_buffer = new uint8_t[page_size];
+    // Allocate buffer for header page with OOM check
+    uint8_t* page_buffer = new(std::nothrow) uint8_t[page_size];
+    if (!page_buffer) {
+        ::close(fd);
+        unlink(path.c_str());  // Clean up file on failure
+        SET_ERROR_CONTEXT(ctx, Status::OOM, "Failed to allocate memory for page buffer");
+        return Status::OOM;
+    }
     memset(page_buffer, 0, page_size);
     
     // Create database header
@@ -76,8 +92,10 @@ Status Database::create(const std::string& path, uint32_t page_size) {
     header->page_header.free_offset = sizeof(DatabaseHeader);
     header->page_header.special_size = 0;
     
-    // Initialize database identification
-    strncpy(header->db_name, "scratchbird.db", 31);
+    // Initialize database identification with actual filename
+    size_t last_slash = path.find_last_of("/\\");
+    std::string db_name = (last_slash != std::string::npos) ? path.substr(last_slash + 1) : path;
+    strncpy(header->db_name, db_name.c_str(), 31);
     header->db_name[31] = '\0';
     header->db_version = 0x00010001;  // v0.1.0.1
     header->db_compat_version = 0x00010001;
@@ -117,6 +135,7 @@ Status Database::create(const std::string& path, uint32_t page_size) {
         delete[] page_buffer;
         ::close(fd);
         unlink(path.c_str());
+        SET_ERROR_CONTEXT(ctx, Status::IoError, "Failed to write header page");
         return Status::IoError;
     }
     
@@ -178,6 +197,7 @@ Status Database::create(const std::string& path, uint32_t page_size) {
         delete[] page_buffer;
         ::close(fd);
         unlink(path.c_str());
+        SET_ERROR_CONTEXT(ctx, Status::IoError, "Failed to write catalog page");
         return Status::IoError;
     }
     
@@ -190,13 +210,20 @@ Status Database::create(const std::string& path, uint32_t page_size) {
     return Status::Ok;
 }
 
-Status Database::open(const std::string& path) {
+Status Database::open(const std::string& path, ErrorContext* ctx) {
+    // Validate path for traversal attacks
+    if (path.empty() || path.find("../") != std::string::npos) {
+        SET_ERROR_CONTEXT(ctx, Status::InvalidPath, "Invalid path: contains traversal or empty");
+        return Status::InvalidPath;
+    }
+    
     // Close if already open
     close();
     
     // Open file
     fd_ = ::open(path.c_str(), O_RDWR);
     if (fd_ < 0) {
+        SET_ERROR_CONTEXT(ctx, Status::FileNotFound, "Database file not found");
         return Status::FileNotFound;
     }
     
@@ -204,16 +231,24 @@ Status Database::open(const std::string& path) {
     if (flock(fd_, LOCK_EX | LOCK_NB) != 0) {
         ::close(fd_);
         fd_ = -1;
+        SET_ERROR_CONTEXT(ctx, Status::IoError, "Failed to lock database file");
         return Status::IoError;
     }
     
     // Read header to determine page size
     uint8_t temp_header[64];
     ssize_t bytes_read = ::read(fd_, temp_header, 64);
-    if (bytes_read != 64) {
+    if (bytes_read < 0) {
         ::close(fd_);
         fd_ = -1;
+        SET_ERROR_CONTEXT(ctx, Status::IoError, "Failed to read database header");
         return Status::IoError;
+    }
+    if (bytes_read < 64) {
+        ::close(fd_);
+        fd_ = -1;
+        SET_ERROR_CONTEXT(ctx, Status::IoError, "Short read: database file truncated");
+        return Status::IoError;  // Short read
     }
     
     PageHeader* ph = reinterpret_cast<PageHeader*>(temp_header);
@@ -222,6 +257,7 @@ Status Database::open(const std::string& path) {
     if (ph->magic != kMagicSBRD) {
         ::close(fd_);
         fd_ = -1;
+        SET_ERROR_CONTEXT(ctx, Status::PageCorrupt, "Invalid magic number in database header");
         return Status::PageCorrupt;
     }
     
@@ -229,13 +265,20 @@ Status Database::open(const std::string& path) {
     if (!is_valid_alpha_page_size(ph->page_size)) {
         ::close(fd_);
         fd_ = -1;
+        SET_ERROR_CONTEXT(ctx, Status::PageCorrupt, "Invalid page size in database header");
         return Status::PageCorrupt;
     }
     
     page_size_ = ph->page_size;
     
-    // Allocate full header buffer
-    header_ = reinterpret_cast<DatabaseHeader*>(new uint8_t[page_size_]);
+    // Allocate full header buffer with OOM check
+    header_ = reinterpret_cast<DatabaseHeader*>(new(std::nothrow) uint8_t[page_size_]);
+    if (!header_) {
+        ::close(fd_);
+        fd_ = -1;
+        SET_ERROR_CONTEXT(ctx, Status::OOM, "Failed to allocate memory for database header");
+        return Status::OOM;
+    }
     
     // Read full header page
     lseek(fd_, 0, SEEK_SET);
@@ -292,9 +335,10 @@ Status Database::validate_header() {
     return Status::Ok;
 }
 
-Status Database::read_page(uint32_t page_id, void* buffer) {
-    if (fd_ < 0) {
-        return Status::IoError;
+Status Database::read_page(uint32_t page_id, void* buffer, ErrorContext* ctx) {
+    if (fd_ < 0 || !buffer) {
+        SET_ERROR_CONTEXT(ctx, Status::InvalidArgument, "Invalid arguments to read_page");
+        return Status::InvalidArgument;
     }
     
     off_t offset = static_cast<off_t>(page_id) * page_size_;
@@ -325,12 +369,13 @@ Status Database::read_page(uint32_t page_id, void* buffer) {
     return Status::Ok;
 }
 
-Status Database::write_page(uint32_t page_id, const void* buffer) {
-    if (fd_ < 0) {
-        return Status::IoError;
+Status Database::write_page(uint32_t page_id, const void* buffer, ErrorContext* ctx) {
+    if (fd_ < 0 || !buffer) {
+        SET_ERROR_CONTEXT(ctx, Status::InvalidArgument, "Invalid arguments to write_page");
+        return Status::InvalidArgument;
     }
     
-    // Update checksum before writing
+    // Update checksum before writing (const_cast is safe here as we own the buffer)
     uint8_t* page = const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>(buffer));
     PageHeader* header = reinterpret_cast<PageHeader*>(page);
     header->checksum = calculate_page_checksum(page, page_size_);

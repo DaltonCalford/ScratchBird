@@ -225,10 +225,14 @@ TEST_F(MemorySafetyTest, OOM_MissingStatusEnum) {
         Status::FileNotFound,
         Status::FileExists,
         Status::IoError,
+        Status::InvalidPath,
+        Status::PermissionDenied,
+        Status::InvalidArgument,
         Status::PageCorrupt,
         Status::ChecksumMismatch,
         Status::Deadlock,
-        Status::LockTimeout
+        Status::LockTimeout,
+        Status::OOM
     };
     
     // OOM should be 3003 per spec

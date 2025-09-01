@@ -6,6 +6,7 @@
 #include "scratchbird/core/status.h"
 #include "scratchbird/core/ondisk.h"
 #include "scratchbird/core/uuidv7.h"
+#include "scratchbird/core/error_context.h"
 
 namespace scratchbird {
 namespace core {
@@ -69,10 +70,10 @@ public:
     ~Database();
     
     // Create a new database file
-    static Status create(const std::string& path, uint32_t page_size = 16384);
+    static Status create(const std::string& path, uint32_t page_size = 16384, ErrorContext* ctx = nullptr);
     
     // Open an existing database file
-    Status open(const std::string& path);
+    Status open(const std::string& path, ErrorContext* ctx = nullptr);
     
     // Close the database
     void close();
@@ -83,8 +84,8 @@ public:
     const UuidV7Bytes& uuid() const { return db_uuid_; }
     
     // Read/write pages
-    Status read_page(uint32_t page_id, void* buffer);
-    Status write_page(uint32_t page_id, const void* buffer);
+    Status read_page(uint32_t page_id, void* buffer, ErrorContext* ctx = nullptr);
+    Status write_page(uint32_t page_id, const void* buffer, ErrorContext* ctx = nullptr);
     
 private:
     int fd_ = -1;                    // File descriptor
