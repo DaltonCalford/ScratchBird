@@ -9,7 +9,7 @@
 I have read and will follow:
 - [ ] /workspace/references/CODING_AND_BUILD_STANDARDS.md
 - [ ] /workspace/ProjectPlan/00_BUILD_AND_STRUCTURE.md
-- [ ] /workspace/references/archive/technical_specifications/PAGE_LAYOUTS_AND_STRUCTURES.md (if relevant)
+- [ ] /workspace/references/technical_specifications/PAGE_LAYOUTS_AND_STRUCTURES.md (if relevant)
 ```
 
 #### Step 2: Confirm Build System Usage
@@ -24,11 +24,22 @@ I will:
 #### Step 3: Confirm Testing Approach
 ```
 I will test:
-- [ ] Alpha: 3 page sizes (8K, 16K, 32K). 64K/128K deferred to Beta.
+- [ ] Alpha: 3 page sizes (8K, 16K, 32K)
 - [ ] Using Google Test framework
 - [ ] Through the CMake/CTest system
 - [ ] With proper test organization (tests/phase_X_XX/)
 ```
+
+### Phase/Substep Index
+
+- Phase IDs are compact and ordered to fit small contexts and incremental merges.
+- Example (Alpha 1.01):
+  - ALPHA-1.01.1: Database header page & file create/open
+  - ALPHA-1.01.2: System catalog root page
+  - ALPHA-1.01.3: Validation & error paths (bad magic, checksum)
+  - ALPHA-1.01.4: Lock file and atomic creation semantics
+
+Each substep is independently testable and reviewed.
 
 ### Implementation Workflow
 
@@ -122,9 +133,7 @@ valgrind --leak-check=full ./tests/test_heap_manager
 #### 7. Log Progress
 ```bash
 # Add to implementation log
-echo "$(date '+%Y-%m-%d %H:%M') 1.03.1 CREATED heap_manager.h" >> /workspace/ProjectPlan/progress/implementation.log
-echo "$(date '+%Y-%m-%d %H:%M') 1.03.2 IMPLEMENTED HeapManager::allocatePage()" >> /workspace/ProjectPlan/progress/implementation.log
-echo "$(date '+%Y-%m-%d %H:%M') 1.03.3 TESTED heap allocation for all page sizes" >> /workspace/ProjectPlan/progress/test.log
+# Use PROGRESS_LOG_TEMPLATE.md and append entries
 ```
 
 ### Common Mistakes to Avoid
@@ -142,7 +151,7 @@ int main() {
 #### ❌ NEVER: Compile Directly
 ```bash
 # WRONG - Don't bypass CMake
-g++ -o test test.cpp
+g++ -std=c++17 test.cpp -o test
 ./test
 ```
 
@@ -175,8 +184,8 @@ TEST(HeapTest, AllocatePage) {
     // ...
 }
 
-// CORRECT - Test all sizes
-TEST(HeapTest, AllocatePageAllAlphaSizes) {
+// CORRECT - Test all alpha sizes
+TEST(HeapTest, AllocatePageAllSizes) {
     for (auto size : {8192, 16384, 32768}) {
         HeapManager hm(size);
         // ...

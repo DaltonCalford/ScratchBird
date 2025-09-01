@@ -9,6 +9,7 @@ Tests will be created alongside implementation following:
 
 1. **Implementation Developer** creates functionality per phase specification
 2. **Test Developer** creates tests to verify the implementation
+3. **Security Reviewer** proposes hardening changes and change requests
 3. Progress tracked in:
    - `/workspace/ProjectPlan/progress/implementation.log`
    - `/workspace/ProjectPlan/progress/test.log`
