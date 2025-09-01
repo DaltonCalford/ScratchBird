@@ -32,8 +32,8 @@ ScratchBird is not just a database - it's a **Universal Data Platform** that:
 │                  Parser Plugin System                        │
 │   [Context-Aware SQL] [Python] [JavaScript] [GraphQL]       │
 ├─────────────────────────────────────────────────────────────┤
-│              BLR (Binary Language Representation)            │
-│                 (Universal execution format)                 │
+│           SBLR (ScratchBird Bytecode Language Rep)          │
+│         (Advanced bytecode with JIT & optimization)          │
 ├─────────────────────────────────────────────────────────────┤
 │                    Execution Engine                          │
 │         (MGA Core, Query Optimizer, Plan Executor)          │

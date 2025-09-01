@@ -18,6 +18,8 @@
 **Priority: CRITICAL**
 **Status: ✅ COMPLETE**
 - See `technical_specifications/SCRATCHBIRD_SQL_COMPLETE_BNF.md`
+- See `technical_specifications/SQL_LANGUAGE_OVERVIEW.md` - Complete SQL language overview with parser routing
+- See `technical_specifications/PSQL_RUNTIME_SPECIFICATION.md` - Procedural SQL runtime specification
 - Complete SQL grammar in BNF/EBNF format (§1-20)
 - Precedence rules for operators (§18)
 - Reserved word list (minimal due to context-aware parsing) (§19)
@@ -47,11 +49,12 @@
 
 ## 2. Binary Language Representation (BLR)
 
-### 2.1 BLR Instruction Set
+### 2.1 SBLR/BLR Instruction Set
 **Priority: CRITICAL**
 **Status: ✅ COMPLETE**
-- See `technical_specifications/BLR_SPECIFICATION.md`
-- See `technical_specifications/BLR_ADVANCED_FEATURES.md`
+- See `technical_specifications/SBLR_BYTECODE_SPECIFICATION.md` - Complete SBLR specification with adaptive optimization
+- See `technical_specifications/archived/BLR_SPECIFICATION.md` (archived - superseded by SBLR)
+- See `technical_specifications/archived/BLR_ADVANCED_FEATURES.md` (archived - superseded by SBLR)
 ```
 blr_version
 blr_begin
