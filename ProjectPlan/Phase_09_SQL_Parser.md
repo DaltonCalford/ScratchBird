@@ -6,6 +6,11 @@ Implement SQL parser for DDL and DML statements.
 ## Prerequisites
 - Phase 8 complete (catalog system)
 
+## Technical Specifications
+- **Complete BNF/EBNF Grammar**: See `/references/technical_specifications/SCRATCHBIRD_SQL_COMPLETE_BNF.md`
+- **SQL Dialect**: See `/references/technical_specifications/SCRATCHBIRD_SQL_DIALECT_COMPLETE.md`
+- **Parser Implementation**: See `/references/technical_specifications/POSTGRESQL_PARSER_IMPLEMENTATION.md`
+
 ## Tasks
 
 ### 9.1 Lexer Implementation
