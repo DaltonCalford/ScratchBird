@@ -58,7 +58,7 @@ Rules:
 
 ## Allocation Failure (OOM) Policy
 
-- All allocators must check for NULL and return SB_ERR_OOM (or throw)
+- All allocators must check for NULL from malloc/calloc/realloc/new and return SB_ERR_OOM (or throw)
 - Provide TRY_OR_CLEANUP-style macros/RAII guards to unwind partial work
 - Never terminate process on OOM in library code; propagate upward
 
@@ -66,6 +66,22 @@ Rules:
 
 - Enable AddressSanitizer in CI (-DENABLE_ASAN=ON)
 - Optional debug allocator: track outstanding allocations per-context and assert 0 at reset/destroy
+
+Example (debug build):
+```c
+void* dbg_alloc(MemoryContext* ctx, size_t n) {
+    void* p = malloc(n);  // malloc
+    if (!p) { /* set error SB_ERR_OOM */ return NULL; }
+    ctx->active_allocations++;
+    return p;
+}
+
+void dbg_free(MemoryContext* ctx, void* p) {
+    if (!p) return;
+    free(p);  // free
+    ctx->active_allocations--;
+}
+```
 
 ## Ownership Transitions
 
