@@ -37,6 +37,30 @@ Pages: 2
 UUID: 018b9f3a-7d4e-7f3a-9c5d-1234567890ab (v7)
 ```
 
+### System Schemas (Purpose and Scope)
+
+The following base schemas exist to organize core functionality and future features:
+- [root]: top-level namespace; owner of base system structures
+- [sys]: system catalog objects (schemas, tables, columns, indexes)
+- [sec]: security objects (users, roles, grants) — metadata only in Alpha
+- [agents]: reserved for agent automation metadata/logs (future)
+- [app]: application-owned default schema placeholder
+- [remote]: mount points for foreign schemas (future)
+- [users]: per-user namespaces (future)
+- [roles]: role-based namespaces (future)
+
+### System Tables (Minimal Alpha Set)
+
+Alpha must create and minimally populate:
+- sys.schemas(schema_uuid, parent_uuid, path, name, level, created_time, owner_uuid, object_count)
+- sys.tables(table_uuid, schema_uuid, table_name, full_path, column_count, row_count, data_pages, index_pages, created_time)
+- sys.columns(column_uuid, table_uuid, column_name, column_position, data_type, max_length, is_nullable, is_primary_key, default_value)
+
+Planned (defined later phases):
+- sys.indexes (index_uuid, table_uuid, name, is_unique, type)
+- sys.procedures (proc_uuid, schema_uuid, name, language)
+- sys.version_control_log (object_uuid, version, change_time, author, summary)
+
 **Technical Requirements**:
 - Page sizes: **8192, 16384, 32768 ONLY** (64K/128K deferred to Beta)
 - UUID: **v7 ONLY** (no v4 support)

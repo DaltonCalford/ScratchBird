@@ -75,7 +75,7 @@ enum PageType {
 #include <crc32c/crc32c.h>  // Hardware-accelerated CRC32C
 
 uint32_t calculate_page_checksum(const uint8_t* page, uint32_t page_size) {
-    // CRITICAL: Skip the checksum field itself (bytes 0x0C-0x0F)
+    // CRITICAL: The checksum field itself (bytes 0x0C-0x0F) MUST be excluded
     uint32_t crc = 0xFFFFFFFF;  // Initial value per CRC32C spec
     
     // Process header before checksum field
@@ -341,6 +341,16 @@ Every page operation MUST:
        return SB_OK;
    }
    ```
+
+## Variable-Length Structures and Limits
+
+- ItemPointer array starts immediately after PageHeader and grows downward into free space as tuples are added.
+- Maximum number of ItemPointers per page is implementation-defined by available free space:
+  - max_item_pointers = floor((free_offset - sizeof(PageHeader)) / sizeof(ItemPointer))
+- When insufficient space exists to add a new ItemPointer or tuple payload:
+  - Return SB_ERR_PAGE_FULL and let the caller allocate a new page (Alpha). Splitting/compaction policies will be introduced later.
+- System Catalog Growth:
+  - The system catalog root may point to additional catalog pages when full; Alpha may store only minimal entries and expand in later phases.
 
 ---
 
