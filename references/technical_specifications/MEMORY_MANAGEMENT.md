@@ -92,3 +92,7 @@ void dbg_free(MemoryContext* ctx, void* p) {
 
 - Global/Database contexts must be thread-safe (mutex or per-thread arenas)
 - Transaction/Temp contexts are thread-local
+
+## Specification Status
+
+This specification is complete for Alpha and contains no open TODO sections.
