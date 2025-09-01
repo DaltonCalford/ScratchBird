@@ -8,7 +8,7 @@
 | **C_API_SPECIFICATION.md** | Complete C API specification | ✅ This session |
 | **C_API_IMPLEMENTATION_GUIDE.md** | Implementation strategy for C API | ✅ This session |
 | **MGA_IMPLEMENTATION.md** | Multi-Generational Architecture spec | ✅ This session |
-| **BLR_SPECIFICATION.md** | Binary Language Representation spec | ✅ This session |
+| **SBLR_BYTECODE_SPECIFICATION.md** | Complete SBLR bytecode spec with JIT | ✅ This session |
 | **SQL_GRAMMAR_BNF.md** | Initial SQL grammar in BNF/EBNF | ✅ This session |
 | **SCRATCHBIRD_SQL_COMPLETE_BNF.md** | Complete comprehensive SQL BNF/EBNF grammar | ✅ This session |
 | **AUTH_CORE_FRAMEWORK.md** | Core authentication framework and architecture | ✅ This session |
@@ -31,7 +31,8 @@
 | **TRANSACTION_LOCK_MANAGER.md** | Lock manager with deadlock detection | ✅ This session |
 | **TRANSACTION_DISTRIBUTED.md** | Distributed transactions (2PC/3PC/Raft) | ✅ This session |
 | **TRANSACTION_MAIN.md** | Transaction system master specification | ✅ This session |
-| **BLR_ADVANCED_FEATURES.md** | Advanced BLR features and extensions | ✅ This session |
+| **SQL_LANGUAGE_OVERVIEW.md** | SQL language overview with parser routing | ✅ This session |
+| **PSQL_RUNTIME_SPECIFICATION.md** | Procedural SQL runtime specification | ✅ This session |
 | **SELECT_INTO_AND_SET_CONVERSION.md** | SELECT INTO and automatic SET conversion | ✅ This session |
 | **EXECUTE_BLOCKS_AND_AUTONOMOUS_TRANSACTIONS.md** | EXECUTE BLOCK and autonomous transactions | ✅ This session |
 | **SCRATCHBIRD_SQL_DIALECT_COMPLETE.md** | Complete SQL dialect specification | ✅ This session |
@@ -108,10 +109,21 @@
 | **OUTSTANDING_DOCUMENTATION.md** | What documentation still needed | ✅ This session |
 | **CODING_AND_BUILD_STANDARDS.md** | Mandatory coding standards | ✅ This session |
 
+## Database Internals Analysis
+
+| Document | Purpose | Created |
+|----------|---------|---------|
+| **database-internals-indexes.md** | FirebirdSQL B-Tree implementation | ✅ Previous |
+| **database-internals-network.md** | Connection pooling analysis | ✅ Previous |
+| **database-internals-query-optimizer.md** | Statistics and cost models | ✅ Previous |
+| **database-internals-storage.md** | Buffer pool algorithms | ✅ Previous |
+| **database-internals-transaction-lock.md** | Lock manager and deadlock detection | ✅ Previous |
+| **bytecode-comparison-study.md** | Comparative analysis of bytecode implementations | ✅ This session |
+
 ## Summary Statistics
 
 ### Documents Created/Enhanced This Session:
-- **Technical Specifications**: 30 new, 2 enhanced (includes all core specs + SQL/BLR + 5 auth specs)
+- **Technical Specifications**: 33 new, 2 enhanced (includes all core specs + SBLR/SQL + 5 auth specs)
 - **Wire Protocols**: 5 new
 - **Architecture Documents**: 6 new
 - **Feature Specifications**: 12 new

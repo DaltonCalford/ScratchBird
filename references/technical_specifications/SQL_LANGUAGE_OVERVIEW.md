@@ -21,7 +21,7 @@ ScratchBird uses a multi-stage compilation pipeline:
 
 1. **Parsing**: SQL text → Abstract Syntax Tree (AST)
 2. **Analysis**: AST → Semantic validation and type checking
-3. **Bytecode Generation**: AST → SBLR bytecode (see [Complete SBLR/BLR Specification](/workspace/docs/scratchbird-bytecode-complete-specification.md))
+3. **Bytecode Generation**: AST → SBLR bytecode (see [Complete SBLR/BLR Specification](./SBLR_BYTECODE_SPECIFICATION.md))
 4. **Optimization**: Bytecode optimization passes (constant folding, dead code elimination)
 5. **Execution**: Stack-based VM with adaptive specialization and optional JIT compilation
 
