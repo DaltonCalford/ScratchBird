@@ -11,6 +11,10 @@
 namespace scratchbird {
 namespace core {
 
+// Forward declarations
+class PageManager;
+class BufferPool;
+
 // Database header structure for Page 0
 #pragma pack(push, 1)
 struct DatabaseHeader {
@@ -67,7 +71,7 @@ struct SystemCatalogEntry {
 class Database {
 public:
     Database() = default;
-    ~Database();
+    ~Database();  // Defined in cpp file due to unique_ptr of forward declared types
     
     // Create a new database file
     static Status create(const std::string& path, uint32_t page_size = 16384, ErrorContext* ctx = nullptr);
@@ -87,12 +91,28 @@ public:
     Status read_page(uint32_t page_id, void* buffer, ErrorContext* ctx = nullptr);
     Status write_page(uint32_t page_id, const void* buffer, ErrorContext* ctx = nullptr);
     
+    // Get page manager
+    PageManager* page_manager() { return page_manager_; }
+    
+    // Get buffer pool
+    BufferPool* buffer_pool() { return buffer_pool_; }
+    
+    // Get file descriptor (for internal use)
+    int fd() const { return fd_; }
+    
+    // Sync database file to disk
+    Status sync(ErrorContext* ctx = nullptr);
+    
 private:
     int fd_ = -1;                    // File descriptor
     std::string path_;               // Database file path
     uint32_t page_size_ = 0;         // Page size
     UuidV7Bytes db_uuid_;            // Database UUID
     DatabaseHeader* header_ = nullptr; // Cached header
+    
+    // Forward declared pointers - managed manually to avoid header dependencies
+    PageManager* page_manager_ = nullptr;  // Page allocation manager (owned)
+    BufferPool* buffer_pool_ = nullptr;    // Buffer pool manager (owned)
     
     // Initialize system catalog on new database
     Status init_system_catalog();
