@@ -7,6 +7,7 @@
 #include <filesystem>
 #include <cstring>
 #include <algorithm>
+#include <fstream>
 
 using namespace scratchbird::core;
 namespace fs = std::filesystem;
@@ -406,4 +407,171 @@ TEST_F(StorageEngineTest, ReuseDeletedSlots) {
     TestTuple* data = reinterpret_cast<TestTuple*>(retrieved.data.data());
     EXPECT_EQ(1000, data->id);
     EXPECT_STREQ("Replacement", data->name);
+}
+
+// Test: Corrupt Page Header - As requested by Agent A
+TEST_F(StorageEngineTest, CorruptPageHeader) {
+    ErrorContext ctx;
+    
+    // Create and open database
+    ASSERT_EQ(Status::Ok, Database::create(test_db_, 8192, &ctx));
+    db_ = std::make_unique<Database>();
+    ASSERT_EQ(Status::Ok, db_->open(test_db_, &ctx));
+    
+    StorageEngine engine(db_.get());
+    
+    // Insert some data first
+    std::vector<uint8_t> tuple_data(100, 0xAA);
+    uint32_t page_id;
+    uint16_t item_id;
+    ASSERT_EQ(Status::Ok, engine.insert_tuple(1, 
+                                             tuple_data.data(),
+                                             tuple_data.size() + sizeof(TupleHeader),
+                                             &page_id, &item_id, &ctx));
+    
+    // Sync to ensure it's written
+    db_->sync(&ctx);
+    
+    // Close database to manipulate file
+    db_.reset();
+    
+    // Corrupt the page header
+    std::fstream file(test_db_, std::ios::binary | std::ios::in | std::ios::out);
+    ASSERT_TRUE(file.is_open());
+    
+    // Seek to the heap page (assuming it's page 7)
+    file.seekp(7 * 8192);
+    
+    // Write bad magic number
+    uint32_t bad_magic = 0xDEADBEEF;
+    file.write(reinterpret_cast<char*>(&bad_magic), sizeof(bad_magic));
+    file.close();
+    
+    // Try to reopen and read
+    db_ = std::make_unique<Database>();
+    ASSERT_EQ(Status::Ok, db_->open(test_db_, &ctx));
+    
+    StorageEngine engine2(db_.get());
+    
+    // Try to scan - should detect corruption
+    auto iterator = engine2.create_scan(1, &ctx);
+    ASSERT_NE(nullptr, iterator);
+    
+    Tuple corrupted_tuple;
+    Status status = iterator->next(&corrupted_tuple, &ctx);
+    
+    // Should detect the corruption
+    EXPECT_NE(Status::Ok, status) << "Should detect corrupted page header";
+    EXPECT_EQ(Status::PageCorrupt, status) << "Should return PageCorrupt status";
+}
+
+// Test: Invalid Item Pointer - As requested by Agent A  
+TEST_F(StorageEngineTest, InvalidItemPointer) {
+    ErrorContext ctx;
+    
+    // Create and open database
+    ASSERT_EQ(Status::Ok, Database::create(test_db_, 8192, &ctx));
+    db_ = std::make_unique<Database>();
+    ASSERT_EQ(Status::Ok, db_->open(test_db_, &ctx));
+    
+    StorageEngine engine(db_.get());
+    
+    // Insert data
+    std::vector<uint8_t> tuple_data(100, 0xBB);
+    uint32_t page_id;
+    uint16_t item_id;
+    ASSERT_EQ(Status::Ok, engine.insert_tuple(1,
+                                             tuple_data.data(),
+                                             tuple_data.size() + sizeof(TupleHeader),
+                                             &page_id, &item_id, &ctx));
+    
+    db_->sync(&ctx);
+    
+    // Close database
+    db_.reset();
+    
+    // Corrupt an item pointer
+    std::fstream file(test_db_, std::ios::binary | std::ios::in | std::ios::out);
+    ASSERT_TRUE(file.is_open());
+    
+    // Seek to item pointer location (page 7 + PageHeader + item_id * ItemPointer)
+    size_t offset = page_id * 8192 + sizeof(PageHeader) + item_id * sizeof(ItemPointer);
+    file.seekp(offset);
+    
+    // Write invalid item pointer
+    ItemPointer bad_item;
+    bad_item.offset = 9000; // Beyond page size
+    bad_item.length = 100;
+    bad_item.flags = 0;
+    
+    file.write(reinterpret_cast<char*>(&bad_item), sizeof(ItemPointer));
+    file.close();
+    
+    // Reopen and try to read the tuple
+    db_ = std::make_unique<Database>();
+    ASSERT_EQ(Status::Ok, db_->open(test_db_, &ctx));
+    
+    StorageEngine engine2(db_.get());
+    
+    Tuple retrieved;
+    Status status = engine2.get_tuple(page_id, item_id, &retrieved, &ctx);
+    
+    // Should detect invalid pointer
+    EXPECT_NE(Status::Ok, status) << "Should detect invalid item pointer";
+}
+
+// Test: Checksum Mismatch - As requested by Agent A
+TEST_F(StorageEngineTest, ChecksumMismatch) {
+    ErrorContext ctx;
+    
+    // Create and open database
+    ASSERT_EQ(Status::Ok, Database::create(test_db_, 8192, &ctx));
+    db_ = std::make_unique<Database>();
+    ASSERT_EQ(Status::Ok, db_->open(test_db_, &ctx));
+    
+    StorageEngine engine(db_.get());
+    
+    // Insert data
+    std::vector<uint8_t> tuple_data(100, 0xCC);
+    uint32_t page_id;
+    uint16_t item_id;
+    ASSERT_EQ(Status::Ok, engine.insert_tuple(1,
+                                             tuple_data.data(),
+                                             tuple_data.size() + sizeof(TupleHeader),
+                                             &page_id, &item_id, &ctx));
+    
+    db_->sync(&ctx);
+    
+    // Close database
+    db_.reset();
+    
+    // Corrupt data but not checksum
+    std::fstream file(test_db_, std::ios::binary | std::ios::in | std::ios::out);
+    ASSERT_TRUE(file.is_open());
+    
+    // Corrupt some data in the middle of the page
+    file.seekp(page_id * 8192 + 1000);
+    char corruption[] = "CORRUPTED_DATA";
+    file.write(corruption, sizeof(corruption));
+    file.close();
+    
+    // Try to reopen and read
+    db_ = std::make_unique<Database>();
+    Status open_status = db_->open(test_db_, &ctx);
+    
+    // Database might detect on open or on page read
+    if (open_status == Status::Ok) {
+        // Try to read the page
+        uint8_t* buffer = new uint8_t[8192];
+        Status read_status = db_->read_page(page_id, buffer, &ctx);
+        
+        // Should detect checksum mismatch
+        EXPECT_EQ(Status::PageCorrupt, read_status) 
+            << "Should detect checksum mismatch when reading corrupted page";
+        
+        delete[] buffer;
+    } else {
+        EXPECT_EQ(Status::PageCorrupt, open_status)
+            << "Should detect corruption during database open";
+    }
 }
