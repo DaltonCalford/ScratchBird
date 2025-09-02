@@ -14,6 +14,7 @@ namespace core {
 // Forward declarations
 class PageManager;
 class BufferPool;
+class CatalogManager;
 
 // Database header structure for Page 0
 #pragma pack(push, 1)
@@ -97,6 +98,9 @@ public:
     // Get buffer pool
     BufferPool* buffer_pool() { return buffer_pool_; }
     
+    // Get catalog manager
+    CatalogManager* catalog_manager() { return catalog_manager_; }
+    
     // Get file descriptor (for internal use)
     int fd() const { return fd_; }
     
@@ -113,9 +117,9 @@ private:
     // Forward declared pointers - managed manually to avoid header dependencies
     PageManager* page_manager_ = nullptr;  // Page allocation manager (owned)
     BufferPool* buffer_pool_ = nullptr;    // Buffer pool manager (owned)
+    CatalogManager* catalog_manager_ = nullptr; // System catalog manager (owned)
     
-    // Initialize system catalog on new database
-    Status init_system_catalog();
+
     
     // Validate database header
     Status validate_header();

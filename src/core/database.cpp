@@ -1,6 +1,8 @@
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/page_manager.h"
 #include "scratchbird/core/buffer_pool.h"
+#include "scratchbird/core/catalog_manager.h"
+#include "scratchbird/core/debug.h"
 #include <fcntl.h>
 #include <unistd.h>
 #include <sys/stat.h>
@@ -17,7 +19,13 @@ Database::~Database() {
 }
 
 void Database::close() {
-    // Shut down buffer pool first (flushes dirty pages)
+    // Shut down catalog manager first
+    if (catalog_manager_) {
+        delete catalog_manager_;
+        catalog_manager_ = nullptr;
+    }
+    
+    // Shut down buffer pool (flushes dirty pages)
     if (buffer_pool_) {
         buffer_pool_->shutdown();
         delete buffer_pool_;
@@ -399,6 +407,21 @@ Status Database::open(const std::string& path, ErrorContext* ctx) {
         return status;
     }
     
+    // Initialize catalog manager
+    catalog_manager_ = new(std::nothrow) CatalogManager(this);
+    if (!catalog_manager_) {
+        close();
+        SET_ERROR_CONTEXT(ctx, Status::OOM, "Failed to allocate CatalogManager");
+        return Status::OOM;
+    }
+    status = catalog_manager_->load(ctx);
+    if (status != Status::Ok && status != Status::PageCorrupt) {
+        // PageCorrupt means catalog not initialized yet, which is OK
+        close();
+        return status;
+    }
+    
+    DEBUG_LOG_DB("Database opened successfully");
     return Status::Ok;
 }
 
