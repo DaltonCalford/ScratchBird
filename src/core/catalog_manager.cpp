@@ -75,6 +75,7 @@ CatalogManager::CatalogManager(Database* db) : db_(db) {
 
 CatalogManager::~CatalogManager() {
     DEBUG_LOG_DB("CatalogManager destroyed");
+
 }
 
 Status CatalogManager::initialize(ErrorContext* ctx) {
@@ -183,24 +184,22 @@ Status CatalogManager::initialize(ErrorContext* ctx) {
 
 Status CatalogManager::load(ErrorContext* ctx) {
     DEBUG_LOG_DB("Loading system catalog");
-    std::cerr << "CatalogManager::load called" << std::endl;
+
     
     // Try to read catalog root
     Status status = read_catalog_root(ctx);
-    std::cerr << "read_catalog_root returned: " << static_cast<int>(status) << std::endl;
+
     if (status == Status::PageCorrupt) {
         // Catalog not initialized yet, initialize it
         DEBUG_LOG_DB("Catalog not found, initializing");
-        std::cerr << "Catalog not found, calling initialize" << std::endl;
+
         return initialize(ctx);
     } else if (status != Status::Ok) {
         return status;
     }
     
     // If we successfully read catalog root, load the data
-    std::cerr << "Catalog load: schemas_page=" << schemas_table_page_ 
-              << ", tables_page=" << tables_table_page_ 
-              << ", columns_page=" << columns_table_page_ << std::endl;
+
     
     // Load schemas
     status = read_schema_records(ctx);
@@ -493,6 +492,7 @@ Status CatalogManager::write_catalog_root(ErrorContext* ctx) {
     if (pm && !pm->is_allocated(CATALOG_ROOT_PAGE)) {
         uint32_t allocated_page;
         Status alloc_status = pm->allocate_page(allocated_page, ctx);
+
         if (alloc_status != Status::Ok || allocated_page != CATALOG_ROOT_PAGE) {
             // We need page 3 specifically, if we can't get it there's a problem
             SET_ERROR_CONTEXT(ctx, Status::InvalidArgument, "Could not allocate catalog root page");
@@ -513,12 +513,13 @@ Status CatalogManager::write_catalog_root(ErrorContext* ctx) {
         memset(page_buffer, 0, db_->page_size());
         root->header.magic = kMagicSBRD;
         root->header.version = 1;
-        root->header.page_type = PAGE_TYPE_CATALOG_ROOT;
         root->header.page_size = db_->page_size();
         root->header.page_id = CATALOG_ROOT_PAGE;
         memcpy(root->header.database_uuid, db_->uuid().bytes.data(), 16);
     }
     
+    // Always ensure page type is correct
+    root->header.page_type = PAGE_TYPE_CATALOG_ROOT;
     root->header.generation++;
     root->schema_count = schema_count_;
     root->table_count = table_count_;
@@ -528,6 +529,8 @@ Status CatalogManager::write_catalog_root(ErrorContext* ctx) {
     root->schemas_page = schemas_table_page_;
     root->tables_page = tables_table_page_;
     root->columns_page = columns_table_page_;
+    
+
     
     return bp->unpin_page(CATALOG_ROOT_PAGE, true, ctx);
 }
@@ -543,13 +546,17 @@ Status CatalogManager::read_catalog_root(ErrorContext* ctx) {
     Status status = bp->pin_page(CATALOG_ROOT_PAGE, &page_buffer, ctx);
     if (status == Status::IoError) {
         // Page doesn't exist yet - catalog not initialized
+
         SET_ERROR_CONTEXT(ctx, Status::PageCorrupt, "Catalog root page not found");
         return Status::PageCorrupt;
     } else if (status != Status::Ok) {
+
         return status;
     }
     
     CatalogRootPage* root = reinterpret_cast<CatalogRootPage*>(page_buffer);
+    
+
     
     // Validate catalog root
     if (root->header.page_type != PAGE_TYPE_CATALOG_ROOT) {
@@ -606,7 +613,7 @@ Status CatalogManager::write_schema_record(const SchemaInfo& schema, ErrorContex
     heap->header.free_space -= sizeof(SchemaRecord);
     heap->header.generation++;
     
-    std::cerr << "Wrote schema record, total records: " << heap->record_count << " on page " << schemas_table_page_ << std::endl;
+
     
     return bp->unpin_page(schemas_table_page_, true, ctx);
 }
@@ -625,7 +632,7 @@ Status CatalogManager::read_schema_records(ErrorContext* ctx) {
     schema_cache_.clear();
     uint32_t offset = sizeof(CatalogHeapPage);
     
-    std::cerr << "Reading " << heap->record_count << " schema records from page " << schemas_table_page_ << std::endl;
+
     
     for (uint32_t i = 0; i < heap->record_count; i++) {
         SchemaRecord* record = reinterpret_cast<SchemaRecord*>(
