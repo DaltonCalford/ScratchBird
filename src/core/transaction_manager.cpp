@@ -26,6 +26,19 @@ Status TransactionManager::initialize(ErrorContext* ctx) {
         return status;
     }
     
+    // Update database header with TIP root page
+    void* header_buffer;
+    status = buffer_pool_->pin_page(0, &header_buffer, ctx);
+    if (status != Status::Ok) {
+        return status;
+    }
+    
+    DatabaseHeader* db_header = static_cast<DatabaseHeader*>(header_buffer);
+    db_header->tip_root_page = tip_root_page_;
+    
+    // Mark header page as dirty
+    buffer_pool_->unpin_page(0, true, ctx);
+    
     // Initialize special transactions
     transaction_cache_[BOOTSTRAP_XID] = TransactionState::COMMITTED;
     transaction_cache_[FROZEN_XID] = TransactionState::COMMITTED;
@@ -48,18 +61,43 @@ Status TransactionManager::initialize(ErrorContext* ctx) {
 Status TransactionManager::load(ErrorContext* ctx) {
     std::lock_guard<std::mutex> lock(mutex_);
     
-    // Try to find existing TIP pages
-    // For Alpha phase, we'll use a simple approach: TIP pages start at page 10
-    tip_root_page_ = 10;
+    // Read database header to get TIP root page
+    void* header_buffer;
+    Status status = buffer_pool_->pin_page(0, &header_buffer, ctx);
+    if (status != Status::Ok) {
+        SET_ERROR_CONTEXT(ctx, status, "Failed to read database header");
+        return status;
+    }
     
-    void* page_buffer;
-    Status status = buffer_pool_->pin_page(tip_root_page_, &page_buffer, ctx);
-    if (status == Status::IoError) {
-        // No TIP pages exist yet, initialize
+    DatabaseHeader* db_header = static_cast<DatabaseHeader*>(header_buffer);
+    tip_root_page_ = db_header->tip_root_page;
+    
+    // Get next transaction ID from header
+    next_xid_ = db_header->next_transaction_id;
+    
+    // Save total_pages before unpinning
+    uint32_t total_pages = db_header->total_pages;
+    
+    buffer_pool_->unpin_page(0, false, ctx);
+    
+    // If no TIP pages allocated yet, initialize
+    if (tip_root_page_ == 0) {
         return initialize(ctx);
     }
     
+    // Check if TIP page is within file bounds
+    if (tip_root_page_ >= total_pages) {
+        SET_ERROR_CONTEXT(ctx, Status::CorruptDatabase, 
+                         "TIP root page beyond file bounds");
+        return Status::CorruptDatabase;
+    }
+    
+    // Load the TIP page
+    void* page_buffer;
+    status = buffer_pool_->pin_page(tip_root_page_, &page_buffer, ctx);
     if (status != Status::Ok) {
+        // TIP page should exist if tip_root_page_ is non-zero
+        SET_ERROR_CONTEXT(ctx, status, "Failed to load TIP page");
         return status;
     }
     
@@ -67,8 +105,9 @@ Status TransactionManager::load(ErrorContext* ctx) {
     TIPPageHeader* tip_header = static_cast<TIPPageHeader*>(page_buffer);
     if (tip_header->page_header.page_type != PAGE_TYPE_TRANSACTION_MAP) {
         buffer_pool_->unpin_page(tip_root_page_, false, ctx);
-        // Page exists but isn't a TIP page, initialize
-        return initialize(ctx);
+        SET_ERROR_CONTEXT(ctx, Status::CorruptDatabase, 
+                         "Invalid page type for TIP page");
+        return Status::CorruptDatabase;
     }
     
     // Load transaction states into cache
@@ -79,7 +118,7 @@ Status TransactionManager::load(ErrorContext* ctx) {
         transaction_cache_[entries[i].xid] = 
             static_cast<TransactionState>(entries[i].state);
         
-        // Track highest XID
+        // Track highest XID (in case it's higher than header's next_xid)
         if (entries[i].xid >= next_xid_) {
             next_xid_ = entries[i].xid + 1;
         }
@@ -119,6 +158,18 @@ Status TransactionManager::begin_transaction(uint64_t& xid_out, ErrorContext* ct
         transaction_cache_.erase(new_xid);
         active_xid_ = 0;
         return status;
+    }
+    
+    // Update database header with new next_xid periodically (every 100 XIDs)
+    if (next_xid_ % 100 == 0) {
+        void* header_buffer;
+        status = buffer_pool_->pin_page(0, &header_buffer, ctx);
+        if (status == Status::Ok) {
+            DatabaseHeader* db_header = static_cast<DatabaseHeader*>(header_buffer);
+            db_header->next_transaction_id = next_xid_;
+            buffer_pool_->unpin_page(0, true, ctx);
+        }
+        // Ignore errors - this is just an optimization
     }
     
     xid_out = new_xid;

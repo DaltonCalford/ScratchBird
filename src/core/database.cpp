@@ -163,6 +163,7 @@ Status Database::create(const std::string& path, uint32_t page_size, ErrorContex
     header->next_transaction_id = 1;
     header->oldest_active_xid = 0;
     header->latest_completed_xid = 0;
+    header->tip_root_page = 0;  // 0 means no TIP pages allocated yet
     
     // Calculate and set checksum
     header->page_header.checksum = calculate_page_checksum(page_buffer, page_size);
