@@ -101,26 +101,27 @@ TEST_F(StorageCriticalFixesTest, HeapPage_InsertTuple_BufferOverflowProtection) 
     
     StorageEngine engine(&db);
     
-    // Test Case 1: Tuple data that INCLUDES space for TupleHeader
-    // Current implementation assumes this and subtracts sizeof(TupleHeader)
+    // Test Case 1: Correct API usage - tuple_size includes TupleHeader
     {
-        // Create data that includes TupleHeader size
-        std::vector<uint8_t> data_with_header(sizeof(TupleHeader) + 50, 0xBB);
+        // Create raw data
+        std::vector<uint8_t> raw_data(50, 0xBB);
         
         uint32_t page_id;
         uint16_t item_id;
-        Status status = engine.insert_tuple(1, data_with_header.data(), 
-                                           data_with_header.size(),
+        // Pass raw data but size includes header
+        Status status = engine.insert_tuple(1, raw_data.data(), 
+                                           raw_data.size() + sizeof(TupleHeader),
                                            &page_id, &item_id, nullptr);
         
-        // Should succeed with current implementation
-        EXPECT_EQ(status, Status::Ok) << "Current API expects tuple_size to include header";
+        // Should succeed with fixed implementation
+        EXPECT_EQ(status, Status::Ok) << "API expects tuple_size to include header";
         
         // Verify the data was stored correctly
         Tuple read_tuple;
         status = engine.get_tuple(page_id, item_id, &read_tuple, nullptr);
         EXPECT_EQ(status, Status::Ok);
-        EXPECT_EQ(read_tuple.size, data_with_header.size());
+        // The returned size should be the full size including header
+        EXPECT_EQ(read_tuple.size, raw_data.size() + sizeof(TupleHeader));
     }
     
     // Test Case 2: Tuple data that does NOT include space for TupleHeader
