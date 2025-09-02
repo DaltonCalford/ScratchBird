@@ -100,6 +100,9 @@ public:
     // Get file descriptor (for internal use)
     int fd() const { return fd_; }
     
+    // Sync database file to disk
+    Status sync(ErrorContext* ctx = nullptr);
+    
 private:
     int fd_ = -1;                    // File descriptor
     std::string path_;               // Database file path

@@ -268,9 +268,21 @@ TEST_F(PageManagementEdgeTest, PageManager_FSMCorruption_Bitmap) {
     // Corrupt the FSM bitmap area
     corrupt_page("test_corrupt.db", 2, 128);  // Corrupt bitmap data
     
-    // Reopen and try operations
+    // Reopen should detect corruption
     Database db;
-    ASSERT_EQ(db.open("test_corrupt.db"), Status::Ok);
+    Status open_status = db.open("test_corrupt.db");
+    
+    // With improved validation, we should detect corruption during load
+    if (open_status == Status::PageCorrupt || open_status == Status::ChecksumMismatch) {
+        // Good! Corruption detected early
+        std::cout << "PASS: FSM corruption detected during load (status: " 
+                  << static_cast<uint32_t>(open_status) << ")\n";
+        return;
+    }
+    
+    // If open succeeded, try operations that might reveal corruption
+    ASSERT_EQ(open_status, Status::Ok) << "Unexpected open failure: " 
+                                       << static_cast<uint32_t>(open_status);
     
     PageManager* pm = db.page_manager();
     
@@ -445,22 +457,26 @@ TEST_F(PageManagementEdgeTest, BufferPool_DirtyPageEviction) {
         ASSERT_EQ(pm->allocate_page(page_ids[i]), Status::Ok);
     }
     
-    // Write to first page
+    // Write to first page (preserve header)
     void* buffer1;
     ASSERT_EQ(pool.pin_page(page_ids[0], &buffer1), Status::Ok);
-    memset(buffer1, 0xAA, 16384);
+    // Write pattern after the page header
+    uint8_t* data1 = static_cast<uint8_t*>(buffer1) + sizeof(PageHeader);
+    memset(data1, 0xAA, 100); // Write pattern to data area only
     ASSERT_EQ(pool.unpin_page(page_ids[0], true), Status::Ok);  // Mark dirty
     
-    // Write to second page
+    // Write to second page (preserve header)
     void* buffer2;
     ASSERT_EQ(pool.pin_page(page_ids[1], &buffer2), Status::Ok);
-    memset(buffer2, 0xBB, 16384);
+    uint8_t* data2 = static_cast<uint8_t*>(buffer2) + sizeof(PageHeader);
+    memset(data2, 0xBB, 100); // Write pattern to data area only
     ASSERT_EQ(pool.unpin_page(page_ids[1], true), Status::Ok);  // Mark dirty
     
     // Access third page - should evict one of the dirty pages
     void* buffer3;
     ASSERT_EQ(pool.pin_page(page_ids[2], &buffer3), Status::Ok);
-    memset(buffer3, 0xCC, 16384);
+    uint8_t* data3 = static_cast<uint8_t*>(buffer3) + sizeof(PageHeader);
+    memset(data3, 0xCC, 100); // Write pattern to data area only
     ASSERT_EQ(pool.unpin_page(page_ids[2], false), Status::Ok);
     
     // Flush and close
@@ -474,14 +490,16 @@ TEST_F(PageManagementEdgeTest, BufferPool_DirtyPageEviction) {
     // Check first page
     void* check1;
     ASSERT_EQ(pool2.pin_page(page_ids[0], &check1), Status::Ok);
-    EXPECT_EQ(static_cast<uint8_t*>(check1)[0], 0xAA)
+    uint8_t* check_data1 = static_cast<uint8_t*>(check1) + sizeof(PageHeader);
+    EXPECT_EQ(check_data1[0], 0xAA)
         << "First page data should be persisted";
     pool2.unpin_page(page_ids[0], false);
     
     // Check second page
     void* check2;
     ASSERT_EQ(pool2.pin_page(page_ids[1], &check2), Status::Ok);
-    EXPECT_EQ(static_cast<uint8_t*>(check2)[0], 0xBB)
+    uint8_t* check_data2 = static_cast<uint8_t*>(check2) + sizeof(PageHeader);
+    EXPECT_EQ(check_data2[0], 0xBB)
         << "Second page data should be persisted";
     pool2.unpin_page(page_ids[1], false);
     
@@ -498,6 +516,7 @@ TEST_F(PageManagementEdgeTest, PageManager_FSMDurability) {
     ASSERT_EQ(Database::create("test_edge.db", 16384), Status::Ok);
     
     uint32_t allocated_page;
+    uint32_t initial_total;
     {
         Database db;
         ASSERT_EQ(db.open("test_edge.db"), Status::Ok);
@@ -505,13 +524,19 @@ TEST_F(PageManagementEdgeTest, PageManager_FSMDurability) {
         PageManager* pm = db.page_manager();
         
         // Note initial state
+        initial_total = pm->total_pages();
         uint32_t initial_free = pm->free_pages();
         
         // Allocate a page
         ASSERT_EQ(pm->allocate_page(allocated_page), Status::Ok);
         
-        // Free count should decrease
-        EXPECT_EQ(pm->free_pages(), initial_free - 1);
+        // If there were no free pages, file was extended
+        if (initial_free == 0) {
+            EXPECT_EQ(pm->total_pages(), initial_total + 1);
+            EXPECT_EQ(pm->free_pages(), 0); // Still no free pages after allocating the new one
+        } else {
+            EXPECT_EQ(pm->free_pages(), initial_free - 1);
+        }
         
         // Database destructor should ensure FSM is synced
     }
@@ -523,7 +548,15 @@ TEST_F(PageManagementEdgeTest, PageManager_FSMDurability) {
         
         PageManager* pm = db.page_manager();
         
-        // Try to allocate same page - should get a different one
+        // Verify the page count persisted
+        EXPECT_EQ(pm->total_pages(), initial_total + 1)
+            << "Total pages should be persisted";
+        
+        // Verify the allocated page is marked as allocated
+        EXPECT_TRUE(pm->is_allocated(allocated_page))
+            << "Allocated page should remain allocated after reopen";
+        
+        // Try to allocate another page - should get a different one
         uint32_t new_page;
         ASSERT_EQ(pm->allocate_page(new_page), Status::Ok);
         
