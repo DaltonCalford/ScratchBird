@@ -52,18 +52,19 @@ TEST_F(PageManagementTest, PageAllocation) {
     PageManager* pm = db.page_manager();
     ASSERT_NE(pm, nullptr);
     
-    // Initial state: 3 pages total, 0 free
-    EXPECT_EQ(pm->total_pages(), 3);
+    // Initial state: 7 pages total (0-6), 0 free
+    // Pages: 0=header, 1=system_catalog, 2=FSM, 3=catalog_root, 4-6=catalog tables
+    EXPECT_EQ(pm->total_pages(), 7);
     EXPECT_EQ(pm->free_pages(), 0);
     
     // Allocate a new page
     uint32_t page_id;
     ASSERT_EQ(pm->allocate_page(page_id), Status::Ok);
-    EXPECT_EQ(page_id, 3);  // Should be page 3
+    EXPECT_EQ(page_id, 7);  // Should be page 7
     
     // Verify allocation
     EXPECT_TRUE(pm->is_allocated(page_id));
-    EXPECT_EQ(pm->total_pages(), 4);  // File extended
+    EXPECT_EQ(pm->total_pages(), 8);  // File extended
     EXPECT_EQ(pm->free_pages(), 0);   // New page was allocated
 }
 

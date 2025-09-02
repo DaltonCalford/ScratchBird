@@ -1,9 +1,11 @@
 /**
- * @file test_memory_safety_updated.cpp
- * @brief Updated memory safety tests for Alpha 1.03
+ * @file test_memory_safety.cpp
+ * @brief Memory safety tests for Alpha 1.01 - Priority 0 (Critical) Issues
  * 
- * Tests updated to work with new(std::nothrow) allocation pattern
- * instead of expecting exceptions.
+ * Tests for critical memory issues identified in Agent B's review:
+ * - OOM handling for allocations at lines 53 and 238
+ * - Memory leak detection on error paths
+ * - Resource cleanup verification
  */
 
 #include <gtest/gtest.h>
@@ -14,12 +16,12 @@
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <sys/resource.h>
+#include <dlfcn.h>
 #include <new>
 #include <atomic>
 #include <vector>
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/status.h"
-#include "scratchbird/core/error_context.h"
 
 using namespace scratchbird::core;
 
@@ -29,6 +31,7 @@ using namespace scratchbird::core;
 
 /**
  * Global allocation failure injector for testing OOM conditions
+ * This allows us to simulate allocation failures at specific points
  */
 class AllocationFailureInjector {
 public:
@@ -63,19 +66,23 @@ private:
     std::atomic<int> current_allocation_{0};
 };
 
-// Override operator new to inject failures for nothrow allocations
-void* operator new(std::size_t size, const std::nothrow_t&) noexcept {
+// Override operator new to inject failures
+void* operator new(std::size_t size) {
     if (AllocationFailureInjector::instance().should_fail()) {
-        return nullptr;
+        throw std::bad_alloc();
     }
-    return malloc(size);
+    void* ptr = malloc(size);
+    if (!ptr) throw std::bad_alloc();
+    return ptr;
 }
 
-void* operator new[](std::size_t size, const std::nothrow_t&) noexcept {
+void* operator new[](std::size_t size) {
     if (AllocationFailureInjector::instance().should_fail()) {
-        return nullptr;
+        throw std::bad_alloc();
     }
-    return malloc(size);
+    void* ptr = malloc(size);
+    if (!ptr) throw std::bad_alloc();
+    return ptr;
 }
 
 void operator delete(void* ptr) noexcept {
@@ -83,14 +90,6 @@ void operator delete(void* ptr) noexcept {
 }
 
 void operator delete[](void* ptr) noexcept {
-    free(ptr);
-}
-
-void operator delete(void* ptr, const std::nothrow_t&) noexcept {
-    free(ptr);
-}
-
-void operator delete[](void* ptr, const std::nothrow_t&) noexcept {
     free(ptr);
 }
 
@@ -146,198 +145,180 @@ protected:
 };
 
 // ============================================================================
-// OOM Handling Tests - Updated for new(std::nothrow)
+// Priority 0: OOM Handling Tests (Critical)
 // ============================================================================
 
 /**
- * Test: OOM during page buffer allocation in Database::create()
- * Expected: Should return Status::OOM and clean up properly
+ * Test: OOM at line 53 - new uint8_t[page_size] in Database::create()
+ * Issue: No nullptr check after allocation
+ * Expected: Should return Status::OOM (but enum value doesn't exist)
+ * Current: Will crash with uncaught exception
  */
-TEST_F(MemorySafetyTest, OOM_CreatePageBufferAllocation) {
+TEST_F(MemorySafetyTest, OOM_CreateHeaderAllocation_Line53) {
     Database db;
     
-    // Enable failure at first allocation (page buffer)
+    // Enable failure at first allocation (line 53)
     AllocationFailureInjector::instance().enable_failure_at(1);
     
-    // Should handle OOM gracefully and return Status::OOM
-    ErrorContext ctx;
-    Status status = db.create("test_oom.db", 8192, &ctx);
+    // This will throw std::bad_alloc because there's no try-catch
+    // Demonstrating the critical issue
+    EXPECT_THROW({
+        Status status = db.create("test_oom.db", 8192);
+    }, std::bad_alloc) << "CRITICAL: Uncaught allocation failure at line 53";
     
     AllocationFailureInjector::instance().disable();
-    
-    // Verify proper OOM handling
-    EXPECT_EQ(status, Status::OOM) 
-        << "Should return Status::OOM when page buffer allocation fails";
-    
-    // Verify error context is populated
-    EXPECT_FALSE(ctx.message.empty())
-        << "Should provide error context for OOM";
-    EXPECT_TRUE(ctx.message.find("page buffer") != std::string::npos)
-        << "Error message should mention page buffer";
     
     // Verify no file was created
     struct stat st;
     EXPECT_NE(stat("test_oom.db", &st), 0) 
         << "Database file should not exist after allocation failure";
+    
+    ADD_FAILURE() << "P0 ISSUE: No OOM handling for allocation at line 53";
 }
 
 /**
- * Test: OOM during header buffer allocation in Database::open()
+ * Test: OOM at line 238 - new uint8_t[page_size_] in Database::open()
+ * Issue: No nullptr check after allocation
  * Expected: Should return Status::OOM and clean up resources
+ * Current: Will crash with uncaught exception
  */
-TEST_F(MemorySafetyTest, OOM_OpenHeaderAllocation) {
+TEST_F(MemorySafetyTest, OOM_OpenHeaderAllocation_Line238) {
     // First create a valid database
     {
         Database db;
         ASSERT_EQ(db.create("test_oom.db", 8192), Status::Ok);
+        db.close();
     }
     
     Database db;
     
-    // Enable failure at the header allocation in open()
+    // Enable failure at the allocation in open() (line 238)
+    // Note: May need to adjust the allocation number based on actual execution
     AllocationFailureInjector::instance().enable_failure_at(1);
     
-    // Should handle OOM gracefully
-    ErrorContext ctx;
-    Status status = db.open("test_oom.db", &ctx);
+    // This will throw std::bad_alloc because there's no try-catch
+    EXPECT_THROW({
+        Status status = db.open("test_oom.db");
+    }, std::bad_alloc) << "CRITICAL: Uncaught allocation failure at line 238";
     
     AllocationFailureInjector::instance().disable();
     
-    // Verify proper OOM handling
-    EXPECT_EQ(status, Status::OOM)
-        << "Should return Status::OOM when header allocation fails";
-    
-    // Verify error context
-    EXPECT_FALSE(ctx.message.empty())
-        << "Should provide error context";
-    EXPECT_TRUE(ctx.message.find("header buffer") != std::string::npos)
-        << "Error message should mention header buffer";
+    ADD_FAILURE() << "P0 ISSUE: No OOM handling for allocation at line 238";
 }
 
 /**
- * Test: OOM during PageManager allocation
- * Expected: Should return Status::OOM and clean up
+ * Test: Missing Status::OOM enum value
+ * Issue: Status enum doesn't include OOM error code
+ * Expected: Should have Status::OOM = 3003 per spec
  */
-TEST_F(MemorySafetyTest, OOM_PageManagerAllocation) {
-    // Create a valid database first
-    {
-        Database db;
-        ASSERT_EQ(db.create("test_oom.db", 8192), Status::Ok);
+TEST_F(MemorySafetyTest, OOM_MissingStatusEnum) {
+    // Check if Status::OOM exists
+    // This will fail to compile if uncommented, proving the issue
+    // Status status = Status::OOM;  // COMPILATION ERROR
+    
+    // Verify the enum doesn't have the value
+    bool has_oom = false;
+    
+    // Check all defined status values
+    std::vector<Status> all_statuses = {
+        Status::Ok,
+        Status::FileNotFound,
+        Status::FileExists,
+        Status::IoError,
+        Status::InvalidPath,
+        Status::PermissionDenied,
+        Status::InvalidArgument,
+        Status::PageCorrupt,
+        Status::ChecksumMismatch,
+        Status::Deadlock,
+        Status::LockTimeout,
+        Status::OOM
+    };
+    
+    // OOM should be 3003 per spec
+    for (auto status : all_statuses) {
+        if (static_cast<uint32_t>(status) == 3003) {
+            has_oom = true;
+            break;
+        }
     }
     
-    Database db;
+    EXPECT_TRUE(has_oom) << "P0 ISSUE: Status::OOM (3003) is missing from enum";
     
-    // Fail at PageManager allocation (after header allocation)
-    AllocationFailureInjector::instance().enable_failure_at(2);
-    
-    ErrorContext ctx;
-    Status status = db.open("test_oom.db", &ctx);
-    
-    AllocationFailureInjector::instance().disable();
-    
-    EXPECT_EQ(status, Status::OOM)
-        << "Should return Status::OOM when PageManager allocation fails";
-    
-    EXPECT_TRUE(ctx.message.find("PageManager") != std::string::npos)
-        << "Error message should mention PageManager";
-}
-
-/**
- * Test: OOM during BufferPool allocation
- * Expected: Should return Status::OOM and clean up
- */
-TEST_F(MemorySafetyTest, OOM_BufferPoolAllocation) {
-    // Create a valid database first
-    {
-        Database db;
-        ASSERT_EQ(db.create("test_oom.db", 8192), Status::Ok);
+    if (!has_oom) {
+        ADD_FAILURE() << "CRITICAL: Cannot properly handle OOM without Status::OOM";
     }
-    
-    Database db;
-    
-    // Fail at BufferPool allocation (after PageManager)
-    AllocationFailureInjector::instance().enable_failure_at(3);
-    
-    ErrorContext ctx;
-    Status status = db.open("test_oom.db", &ctx);
-    
-    AllocationFailureInjector::instance().disable();
-    
-    EXPECT_EQ(status, Status::OOM)
-        << "Should return Status::OOM when BufferPool allocation fails";
-    
-    EXPECT_TRUE(ctx.message.find("BufferPool") != std::string::npos)
-        << "Error message should mention BufferPool";
-}
-
-/**
- * Test: OOM during CatalogManager allocation
- * Expected: Should return Status::OOM and clean up
- */
-TEST_F(MemorySafetyTest, OOM_CatalogManagerAllocation) {
-    // Create a valid database first
-    {
-        Database db;
-        ASSERT_EQ(db.create("test_oom.db", 8192), Status::Ok);
-    }
-    
-    Database db;
-    
-    // Fail at CatalogManager allocation (after BufferPool)
-    AllocationFailureInjector::instance().enable_failure_at(4);
-    
-    ErrorContext ctx;
-    Status status = db.open("test_oom.db", &ctx);
-    
-    AllocationFailureInjector::instance().disable();
-    
-    EXPECT_EQ(status, Status::OOM)
-        << "Should return Status::OOM when CatalogManager allocation fails";
-    
-    EXPECT_TRUE(ctx.message.find("CatalogManager") != std::string::npos)
-        << "Error message should mention CatalogManager";
 }
 
 // ============================================================================
-// Memory Leak Detection Tests
+// Priority 0: Memory Leak Detection Tests (Critical)
 // ============================================================================
 
 /**
- * Test: Verify no file descriptor leaks on allocation failures
- * Expected: FDs should be closed on all error paths
+ * Test: File descriptor leak on error path
+ * Issue: FD not closed if allocation fails in open()
+ * Expected: FD should be closed on all error paths
  */
 TEST_F(MemorySafetyTest, MemoryLeak_FileDescriptorOnError) {
     // Create a valid database first
     {
         Database db;
         ASSERT_EQ(db.create("test_leak.db", 8192), Status::Ok);
+        db.close();
     }
     
     int initial_fds = count_open_fds();
     
-    // Try multiple allocation failures
-    for (int fail_point = 1; fail_point <= 4; fail_point++) {
+    // Try to open with simulated allocation failure
+    for (int i = 0; i < 5; i++) {
         Database db;
-        AllocationFailureInjector::instance().enable_failure_at(fail_point);
+        AllocationFailureInjector::instance().enable_failure_at(1);
         
-        ErrorContext ctx;
-        Status status = db.open("test_leak.db", &ctx);
-        
-        EXPECT_EQ(status, Status::OOM)
-            << "Should return OOM at failure point " << fail_point;
+        try {
+            db.open("test_leak.db");
+        } catch (const std::bad_alloc&) {
+            // Expected due to missing OOM handling
+        }
         
         AllocationFailureInjector::instance().disable();
     }
     
     int final_fds = count_open_fds();
     
-    EXPECT_EQ(final_fds, initial_fds)
-        << "No file descriptors should leak on allocation failures";
+    // Check for FD leak
+    if (final_fds > initial_fds) {
+        ADD_FAILURE() << "P0 ISSUE: File descriptor leak detected - "
+                      << (final_fds - initial_fds) << " FDs leaked "
+                      << "when allocation fails in open()";
+    }
 }
 
 /**
- * Test: Verify proper cleanup in destructor
- * Expected: All resources should be freed
+ * Test: Memory leak when allocation fails
+ * Issue: First allocation not freed if second allocation fails
+ * Expected: All allocations should be cleaned up on error
+ */
+TEST_F(MemorySafetyTest, MemoryLeak_AllocationCleanup) {
+    // This test would require valgrind or AddressSanitizer to fully verify
+    // Here we document the issue for manual verification
+    
+    std::cout << "\n=== Memory Leak Verification Required ===\n";
+    std::cout << "Run with valgrind to verify:\n";
+    std::cout << "  valgrind --leak-check=full ./scratchbird_tests "
+              << "--gtest_filter=MemorySafetyTest.MemoryLeak_AllocationCleanup\n";
+    std::cout << "\nExpected issue at line 238:\n";
+    std::cout << "  If allocation fails, previously allocated memory not freed\n";
+    std::cout << "  File descriptor not closed\n";
+    std::cout << "=========================================\n\n";
+    
+    ADD_FAILURE() << "P0 ISSUE: Manual verification needed - "
+                  << "potential memory leak on allocation failure";
+}
+
+/**
+ * Test: Resource cleanup in destructor
+ * Issue: Verify destructor properly cleans up resources
+ * Expected: Destructor should free all allocated memory
  */
 TEST_F(MemorySafetyTest, MemoryLeak_DestructorCleanup) {
     // Test that destructor cleans up properly
@@ -353,6 +334,10 @@ TEST_F(MemorySafetyTest, MemoryLeak_DestructorCleanup) {
         Status status = db2.open("test_cleanup.db");
         EXPECT_EQ(status, Status::Ok) 
             << "Lock should be released in destructor";
+        
+        if (status == Status::Ok) {
+            db2.close();
+        }
     }
 }
 
@@ -361,8 +346,9 @@ TEST_F(MemorySafetyTest, MemoryLeak_DestructorCleanup) {
 // ============================================================================
 
 /**
- * Test: Verify page size validation
- * Expected: Should accept valid page sizes
+ * Test: Buffer overflow protection
+ * Issue: Verify bounds checking in memory operations
+ * Expected: No buffer overflows in page operations
  */
 TEST_F(MemorySafetyTest, BufferOverflow_PageOperations) {
     Database db;
@@ -376,11 +362,14 @@ TEST_F(MemorySafetyTest, BufferOverflow_PageOperations) {
                 page_size == 16384 ||
                 page_size == 32768)
         << "Page size should be validated";
+    
+    db.close();
 }
 
 /**
- * Test: Database state after close
- * Expected: Should be properly closed
+ * Test: Use-after-free protection
+ * Issue: Verify pointers are nullified after free
+ * Expected: No use-after-free vulnerabilities
  */
 TEST_F(MemorySafetyTest, UseAfterFree_CloseDatabase) {
     Database db;
@@ -403,6 +392,7 @@ TEST_F(MemorySafetyTest, UseAfterFree_CloseDatabase) {
 
 /**
  * Test: Rapid open/close cycles
+ * Issue: Verify no memory leaks in repeated operations
  * Expected: No resource leaks after many cycles
  */
 TEST_F(MemorySafetyTest, Stress_RapidOpenClose) {
@@ -410,21 +400,20 @@ TEST_F(MemorySafetyTest, Stress_RapidOpenClose) {
     
     int initial_fds = count_open_fds();
     
-    // Create database once
-    {
-        Database db;
-        ASSERT_EQ(db.create("test_cleanup.db", 8192), Status::Ok);
-    }
-    
     for (int i = 0; i < iterations; i++) {
         Database db;
-        ASSERT_EQ(db.open("test_cleanup.db"), Status::Ok);
+        
+        if (i == 0) {
+            ASSERT_EQ(db.create("test_cleanup.db", 8192), Status::Ok);
+        } else {
+            ASSERT_EQ(db.open("test_cleanup.db"), Status::Ok);
+        }
         
         // Perform some operations
         EXPECT_TRUE(db.is_open());
         EXPECT_GT(db.page_size(), 0u);
         
-        // Close happens in destructor
+        db.close();
     }
     
     int final_fds = count_open_fds();
@@ -435,6 +424,7 @@ TEST_F(MemorySafetyTest, Stress_RapidOpenClose) {
 
 /**
  * Test: Large page size allocation
+ * Issue: Verify large allocations are handled
  * Expected: Should handle 32KB pages without issues
  */
 TEST_F(MemorySafetyTest, Stress_LargePageSize) {
@@ -447,25 +437,31 @@ TEST_F(MemorySafetyTest, Stress_LargePageSize) {
     if (status == Status::Ok) {
         EXPECT_EQ(db.page_size(), 32768u);
         EXPECT_TRUE(db.is_open());
+        db.close();
     }
 }
 
 // ============================================================================
-// Test Summary
+// Test Execution Summary
 // ============================================================================
 
 /**
  * Memory Safety Test Summary:
  * 
- * These tests verify proper OOM handling with new(std::nothrow):
- * - Page buffer allocation failure
- * - Header buffer allocation failure  
- * - PageManager allocation failure
- * - BufferPool allocation failure
- * - CatalogManager allocation failure
- * - File descriptor leak prevention
- * - Proper cleanup in destructor
+ * Priority 0 (Critical) Issues - These tests WILL FAIL:
  * 
- * All tests expect Status::OOM returns and proper cleanup,
- * not exceptions as in the original tests.
+ * 1. OOM_CreateHeaderAllocation_Line53 - FAILS (throws exception)
+ * 2. OOM_OpenHeaderAllocation_Line238 - FAILS (throws exception)  
+ * 3. OOM_MissingStatusEnum - FAILS (Status::OOM doesn't exist)
+ * 4. MemoryLeak_FileDescriptorOnError - FAILS (FD leak on error)
+ * 5. MemoryLeak_AllocationCleanup - FAILS (needs manual verification)
+ * 
+ * These failures demonstrate the critical issues that must be fixed:
+ * - Add try-catch blocks around allocations
+ * - Add Status::OOM = 3003 to the enum
+ * - Ensure all resources are cleaned up on error paths
+ * 
+ * Run with AddressSanitizer or Valgrind for complete memory verification:
+ *   cmake -DCMAKE_CXX_FLAGS="-fsanitize=address -g" ..
+ *   valgrind --leak-check=full ./scratchbird_tests
  */
