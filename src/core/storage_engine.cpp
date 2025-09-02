@@ -132,10 +132,10 @@ std::unique_ptr<HeapScanIterator> StorageEngine::create_scan(uint32_t table_id,
     uint32_t start_page = 7;  // First heap page
     
     return std::unique_ptr<HeapScanIterator>(
-        new(std::nothrow) HeapScanIterator(db_, table_id, start_page));
+        new(std::nothrow) HeapScanIterator(db_, this, table_id, start_page));
 }
 
-bool StorageEngine::is_visible(uint32_t xmin, uint32_t xmax, uint32_t current_xid) {
+bool StorageEngine::is_visible(uint64_t xmin, uint64_t xmax, uint64_t current_xid) {
     // Simple visibility rules for single connection:
     // - Tuple is visible if xmin <= current_xid
     // - Tuple is not visible if xmax > 0 and xmax <= current_xid
@@ -226,9 +226,9 @@ Status StorageEngine::allocate_heap_page(uint32_t table_id, uint32_t* page_id_ou
 
 // HeapScanIterator implementation
 
-HeapScanIterator::HeapScanIterator(Database* db, uint32_t table_id,
-                                   uint32_t start_page)
-    : db_(db), table_id_(table_id), current_page_(start_page),
+HeapScanIterator::HeapScanIterator(Database* db, StorageEngine* engine,
+                                   uint32_t table_id, uint32_t start_page)
+    : db_(db), engine_(engine), table_id_(table_id), current_page_(start_page),
       current_item_(0), last_page_(100), done_(false) {}  // Arbitrary limit
 
 HeapScanIterator::~HeapScanIterator() {
@@ -284,13 +284,8 @@ Status HeapScanIterator::next(Tuple* tuple_out, ErrorContext* ctx) {
             if (status == Status::Ok) {
                 // Check visibility
                 const TupleHeader* hdr = reinterpret_cast<const TupleHeader*>(tuple_data);
-                StorageEngine* engine = new(std::nothrow) StorageEngine(db_);
-                if (!engine) {
-                    SET_ERROR_CONTEXT(ctx, Status::OOM, "Failed to create StorageEngine");
-                    return Status::OOM;
-                }
                 
-                if (engine->is_visible(hdr->xmin, hdr->xmax, engine->get_current_xid())) {
+                if (engine_->is_visible(hdr->xmin, hdr->xmax, engine_->get_current_xid())) {
                     // Found visible tuple
                     if (tuple_out) {
                         tuple_out->data.resize(tuple_size - sizeof(TupleHeader));
@@ -301,10 +296,8 @@ Status HeapScanIterator::next(Tuple* tuple_out, ErrorContext* ctx) {
                         tuple_out->item_id = current_item_ - 1;
                         tuple_out->page_id = current_page_;
                     }
-                    delete engine;
                     return Status::Ok;
                 }
-                delete engine;
             }
         }
         

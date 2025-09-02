@@ -29,8 +29,8 @@ struct ItemPointer {
 // Tuple header - metadata for each tuple
 #pragma pack(push, 1)
 struct TupleHeader {
-    uint32_t xmin;       // Transaction ID that inserted this tuple
-    uint32_t xmax;       // Transaction ID that deleted this tuple (or 0)
+    uint64_t xmin;       // Transaction ID that inserted this tuple
+    uint64_t xmax;       // Transaction ID that deleted this tuple (or 0)
     uint16_t flags;      // Various flags
     uint16_t null_bitmap_offset; // Offset to null bitmap (0 if no nulls)
     
@@ -49,7 +49,7 @@ struct HeapPageSpecial {
     uint16_t pd_lower;      // Offset to start of free space
     uint16_t pd_upper;      // Offset to end of free space
     uint16_t pd_special;    // Offset to start of special area
-    uint32_t pd_prune_xid;  // Oldest XID for pruning
+    uint64_t pd_prune_xid;  // Oldest XID for pruning
 };
 #pragma pack(pop)
 
@@ -65,7 +65,7 @@ public:
     // Insert a tuple into the page
     // Returns the item ID (slot number) on success
     Status insert_tuple(const uint8_t* tuple_data, uint32_t tuple_size,
-                       uint32_t xmin, uint16_t* item_id_out,
+                       uint64_t xmin, uint16_t* item_id_out,
                        ErrorContext* ctx = nullptr);
     
     // Get tuple data by item ID
@@ -73,7 +73,7 @@ public:
                     uint32_t* size_out, ErrorContext* ctx = nullptr);
     
     // Mark tuple as deleted
-    Status delete_tuple(uint16_t item_id, uint32_t xmax,
+    Status delete_tuple(uint16_t item_id, uint64_t xmax,
                        ErrorContext* ctx = nullptr);
     
     // Check if there's enough space for a tuple
