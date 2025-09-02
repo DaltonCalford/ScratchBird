@@ -160,7 +160,7 @@ Status Database::create(const std::string& path, uint32_t page_size, ErrorContex
     header->system_catalog_page = 1;
     
     // Initialize transaction info
-    header->next_transaction_id = 1;
+    header->next_transaction_id = 3;  // Start after FROZEN_XID (2)
     header->oldest_active_xid = 0;
     header->latest_completed_xid = 0;
     header->tip_root_page = 0;  // 0 means no TIP pages allocated yet

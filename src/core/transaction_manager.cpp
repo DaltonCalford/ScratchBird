@@ -6,6 +6,7 @@
 #include <chrono>
 #include <cstring>
 #include <new>
+#include <unistd.h>
 
 namespace scratchbird {
 namespace core {
@@ -18,13 +19,19 @@ TransactionManager::TransactionManager(Database* db)
 TransactionManager::~TransactionManager() {}
 
 Status TransactionManager::initialize(ErrorContext* ctx) {
-    std::lock_guard<std::mutex> lock(mutex_);
+    // Note: This is called from load() which already holds the lock
+    // Don't lock again to avoid deadlock
+    
+    // fprintf(stderr, "TransactionManager::initialize() called\n");
     
     // Allocate the first TIP page
+    // fprintf(stderr, "About to allocate TIP page\n");
     Status status = allocate_tip_page(tip_root_page_, ctx);
     if (status != Status::Ok) {
+        // fprintf(stderr, "Failed to allocate TIP page: %d\n", static_cast<int>(status));
         return status;
     }
+    // fprintf(stderr, "Allocated TIP page: %u\n", tip_root_page_);
     
     // Update database header with TIP root page
     void* header_buffer;
@@ -61,19 +68,29 @@ Status TransactionManager::initialize(ErrorContext* ctx) {
 Status TransactionManager::load(ErrorContext* ctx) {
     std::lock_guard<std::mutex> lock(mutex_);
     
+
+    
     // Read database header to get TIP root page
     void* header_buffer;
+    // fprintf(stderr, "About to pin page 0 for database header\n");
     Status status = buffer_pool_->pin_page(0, &header_buffer, ctx);
     if (status != Status::Ok) {
         SET_ERROR_CONTEXT(ctx, status, "Failed to read database header");
         return status;
     }
+    // fprintf(stderr, "Successfully pinned page 0\n");
     
     DatabaseHeader* db_header = static_cast<DatabaseHeader*>(header_buffer);
     tip_root_page_ = db_header->tip_root_page;
+    // fprintf(stderr, "TIP root page from header: %u\n", tip_root_page_);
     
     // Get next transaction ID from header
     next_xid_ = db_header->next_transaction_id;
+    
+    // Ensure XIDs start after reserved values
+    if (next_xid_ <= FROZEN_XID) {
+        next_xid_ = FROZEN_XID + 1;
+    }
     
     // Save total_pages before unpinning
     uint32_t total_pages = db_header->total_pages;
@@ -82,14 +99,15 @@ Status TransactionManager::load(ErrorContext* ctx) {
     
     // If no TIP pages allocated yet, initialize
     if (tip_root_page_ == 0) {
+        // fprintf(stderr, "No TIP pages allocated, calling initialize()\n");
         return initialize(ctx);
     }
     
     // Check if TIP page is within file bounds
     if (tip_root_page_ >= total_pages) {
-        SET_ERROR_CONTEXT(ctx, Status::CorruptDatabase, 
+        SET_ERROR_CONTEXT(ctx, Status::PageCorrupt, 
                          "TIP root page beyond file bounds");
-        return Status::CorruptDatabase;
+        return Status::PageCorrupt;
     }
     
     // Load the TIP page
@@ -105,9 +123,9 @@ Status TransactionManager::load(ErrorContext* ctx) {
     TIPPageHeader* tip_header = static_cast<TIPPageHeader*>(page_buffer);
     if (tip_header->page_header.page_type != PAGE_TYPE_TRANSACTION_MAP) {
         buffer_pool_->unpin_page(tip_root_page_, false, ctx);
-        SET_ERROR_CONTEXT(ctx, Status::CorruptDatabase, 
+        SET_ERROR_CONTEXT(ctx, Status::PageCorrupt, 
                          "Invalid page type for TIP page");
-        return Status::CorruptDatabase;
+        return Status::PageCorrupt;
     }
     
     // Load transaction states into cache
@@ -300,12 +318,47 @@ Status TransactionManager::get_snapshot(Snapshot& snapshot_out, ErrorContext* ct
 
 Status TransactionManager::allocate_tip_page(uint32_t& page_id_out, ErrorContext* ctx) {
     // Allocate a new page for TIP
+    // fprintf(stderr, "allocate_tip_page: calling page_manager_->allocate_page\n");
     Status status = page_manager_->allocate_page(page_id_out, ctx);
     if (status != Status::Ok) {
+        // fprintf(stderr, "allocate_tip_page: allocate_page failed: %d\n", static_cast<int>(status));
         return status;
     }
+    // fprintf(stderr, "allocate_tip_page: allocated page %u\n", page_id_out);
     
-    // Pin and initialize the page
+    // The newly allocated page needs to be written to disk first
+    // Create a buffer for the new page
+    uint8_t* new_page = new uint8_t[db_->page_size()];
+    memset(new_page, 0, db_->page_size());
+    
+    // Initialize the page header
+    PageHeader* ph = reinterpret_cast<PageHeader*>(new_page);
+    ph->magic = kMagicSBRD;
+    ph->version = 1;
+    ph->page_type = PAGE_TYPE_TRANSACTION_MAP;
+    ph->page_size = db_->page_size();
+    ph->page_id = page_id_out;
+    ph->checksum = 0;  // Will be set later
+    
+    // Calculate checksum before writing
+    ph->checksum = calculate_page_checksum(new_page, db_->page_size());
+    
+    // Write the page to disk at the correct offset
+    off_t offset = static_cast<off_t>(page_id_out) * db_->page_size();
+    if (lseek(db_->fd(), offset, SEEK_SET) < 0 ||
+        write(db_->fd(), new_page, db_->page_size()) != static_cast<ssize_t>(db_->page_size())) {
+        delete[] new_page;
+        page_manager_->free_page(page_id_out, ctx);
+        SET_ERROR_CONTEXT(ctx, Status::IoError, "Failed to write TIP page");
+        return Status::IoError;
+    }
+    
+    // Sync to ensure page is on disk before BufferPool reads it
+    fsync(db_->fd());
+    
+    delete[] new_page;
+    
+    // Now pin and initialize the page properly
     void* page_buffer;
     status = buffer_pool_->pin_page(page_id_out, &page_buffer, ctx);
     if (status != Status::Ok) {
