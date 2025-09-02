@@ -15,6 +15,7 @@ namespace core {
 class PageManager;
 class BufferPool;
 class CatalogManager;
+class StorageEngine;
 
 // Database header structure for Page 0
 #pragma pack(push, 1)
@@ -101,6 +102,9 @@ public:
     // Get catalog manager
     CatalogManager* catalog_manager() { return catalog_manager_; }
     
+    // Get storage engine
+    StorageEngine* storage_engine() { return storage_engine_; }
+    
     // Get file descriptor (for internal use)
     int fd() const { return fd_; }
     
@@ -118,6 +122,7 @@ private:
     PageManager* page_manager_ = nullptr;  // Page allocation manager (owned)
     BufferPool* buffer_pool_ = nullptr;    // Buffer pool manager (owned)
     CatalogManager* catalog_manager_ = nullptr; // System catalog manager (owned)
+    StorageEngine* storage_engine_ = nullptr; // Storage engine (owned)
     
 
     

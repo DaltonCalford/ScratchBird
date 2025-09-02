@@ -18,6 +18,8 @@ enum class Status : uint32_t {
 	Deadlock = 3001,
 	LockTimeout = 3002,
 	OOM = 3003,  // Out of memory per ERROR_HANDLING.md
+	PageFull = 4001,  // No space available in page
+	NotFound = 4002,  // Tuple/item not found
 };
 
 } // namespace core
