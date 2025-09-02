@@ -50,7 +50,8 @@ struct DatabaseHeader {
     uint64_t next_transaction_id; // Next transaction ID to assign
     uint64_t oldest_active_xid;   // Oldest active transaction
     uint64_t latest_completed_xid; // Latest completed transaction
-    uint64_t reserved3[1];        // Reserved
+    uint32_t tip_root_page;       // Root page of Transaction Inventory Pages
+    uint32_t reserved3;           // Reserved
     
     // Checksums for critical data (16 bytes)
     uint32_t catalog_checksum;   // Checksum of system catalog
