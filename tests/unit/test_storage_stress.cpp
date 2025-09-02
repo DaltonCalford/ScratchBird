@@ -171,7 +171,7 @@ TEST_F(StorageStressTest, RandomDeletePattern) {
               << format_duration(duration_cast<duration<double>>(delete_end - delete_start)) << "\n";
     
     // Count visible tuples after deletion
-    engine.begin_transaction(); // New transaction to see deletes
+    // Transaction management is now handled by TransactionManager // New transaction to see deletes
     auto iterator = engine.create_scan(1, nullptr);
     int visible_count = 0;
     Tuple tuple;
@@ -365,7 +365,7 @@ TEST_F(StorageStressTest, TransactionIDStress) {
     std::vector<std::pair<uint32_t, uint16_t>> tuple_ids;
     
     for (int i = 0; i < num_transactions; i++) {
-        engine.begin_transaction(); // Increment XID
+        // Transaction management is now handled by TransactionManager // Increment XID
         
         uint32_t page_id;
         uint16_t item_id;
@@ -377,7 +377,7 @@ TEST_F(StorageStressTest, TransactionIDStress) {
         
         // Every 100 transactions, delete some old tuples
         if (i % 100 == 99 && i > 200) {
-            engine.begin_transaction(); // Delete in new transaction
+            // Transaction management is now handled by TransactionManager // Delete in new transaction
             
             // Delete tuples from 200 transactions ago
             int delete_idx = i - 200;
@@ -388,7 +388,7 @@ TEST_F(StorageStressTest, TransactionIDStress) {
     }
     
     // Check visibility rules after many transactions
-    engine.begin_transaction();
+    // Transaction management is now handled by TransactionManager
     uint64_t final_xid = engine.get_current_xid();
     
     std::cout << "\nTransaction ID Stress Test:\n";
@@ -450,7 +450,7 @@ TEST_F(StorageStressTest, ConcurrentAccessPattern) {
         Session& session = sessions[session_idx];
         int op_type = op_dis(gen);
         
-        engine.begin_transaction(); // Each operation in new transaction
+        // Transaction management is now handled by TransactionManager // Each operation in new transaction
         
         switch (op_type) {
             case 0: { // Insert

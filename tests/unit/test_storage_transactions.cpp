@@ -52,7 +52,7 @@ TEST_F(StorageTransactionTest, TransactionIDWrapAround) {
     // Perform many transactions to increment XID
     const int num_transactions = 10000;
     for (int i = 0; i < num_transactions; i++) {
-        engine.begin_transaction();
+        // Transaction management is now handled by TransactionManager
     }
     
     uint64_t current_xid = engine.get_current_xid();
@@ -97,7 +97,7 @@ TEST_F(StorageTransactionTest, ConcurrentVisibility) {
     StorageEngine engine(&db);
     
     // Transaction 1: Insert tuples
-    engine.begin_transaction();
+    // Transaction management is now handled by TransactionManager
     uint64_t xid1 = engine.get_current_xid();
     
     std::vector<uint8_t> tuple_data_1(100, 0x11);
@@ -108,7 +108,7 @@ TEST_F(StorageTransactionTest, ConcurrentVisibility) {
                                  &page_id_1, &item_id_1, nullptr), Status::Ok);
     
     // Transaction 2: Different XID
-    engine.begin_transaction();
+    // Transaction management is now handled by TransactionManager
     uint64_t xid2 = engine.get_current_xid();
     
     std::vector<uint8_t> tuple_data_2(100, 0x22);
@@ -119,7 +119,7 @@ TEST_F(StorageTransactionTest, ConcurrentVisibility) {
                                  &page_id_2, &item_id_2, nullptr), Status::Ok);
     
     // Transaction 3: Even newer
-    engine.begin_transaction();
+    // Transaction management is now handled by TransactionManager
     uint64_t xid3 = engine.get_current_xid();
     
     // Test visibility from different transaction perspectives
@@ -190,7 +190,7 @@ TEST_F(StorageTransactionTest, ReadCommittedIsolation) {
     StorageEngine engine(&db);
     
     // Transaction A: Insert and "commit"
-    engine.begin_transaction();
+    // Transaction management is now handled by TransactionManager
     uint64_t xid_a = engine.get_current_xid();
     
     std::vector<uint8_t> tuple_a(100, 0xAA);
@@ -201,7 +201,7 @@ TEST_F(StorageTransactionTest, ReadCommittedIsolation) {
                                  &page_id_a, &item_id_a, nullptr), Status::Ok);
     
     // Transaction B starts after A
-    engine.begin_transaction();
+    // Transaction management is now handled by TransactionManager
     uint64_t xid_b = engine.get_current_xid();
     
     // B should see A's work (simulating committed read)
@@ -217,7 +217,7 @@ TEST_F(StorageTransactionTest, ReadCommittedIsolation) {
                                  &page_id_b, &item_id_b, nullptr), Status::Ok);
     
     // Transaction C starts
-    engine.begin_transaction();
+    // Transaction management is now handled by TransactionManager
     uint64_t xid_c = engine.get_current_xid();
     
     // C should see A's work but not B's uncommitted work
@@ -237,7 +237,7 @@ TEST_F(StorageTransactionTest, MultipleDeleteVisibility) {
     StorageEngine engine(&db);
     
     // Insert a tuple
-    engine.begin_transaction();
+    // Transaction management is now handled by TransactionManager
     uint64_t xid_insert = engine.get_current_xid();
     
     std::vector<uint8_t> tuple_data(100, 0xDD);
@@ -248,7 +248,7 @@ TEST_F(StorageTransactionTest, MultipleDeleteVisibility) {
                                  &page_id, &item_id, nullptr), Status::Ok);
     
     // Multiple transactions try to delete the same tuple
-    engine.begin_transaction();
+    // Transaction management is now handled by TransactionManager
     uint64_t xid_delete1 = engine.get_current_xid();
     ASSERT_EQ(engine.delete_tuple(page_id, item_id, nullptr), Status::Ok);
     
@@ -278,7 +278,7 @@ TEST_F(StorageTransactionTest, TransactionIDOrdering) {
     // Collect a sequence of XIDs
     std::vector<uint64_t> xids;
     for (int i = 0; i < 100; i++) {
-        engine.begin_transaction();
+        // Transaction management is now handled by TransactionManager
         xids.push_back(engine.get_current_xid());
     }
     
