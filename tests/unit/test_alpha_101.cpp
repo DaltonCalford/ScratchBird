@@ -44,19 +44,19 @@ protected:
 TEST_F(Alpha101Test, CreateDatabase_8K) {
     ASSERT_EQ(Database::create("test_8k.db", 8192), Status::Ok);
     ASSERT_TRUE(file_exists("test_8k.db"));
-    ASSERT_EQ(get_file_size("test_8k.db"), 8192 * 2);  // 2 pages minimum
+    ASSERT_EQ(get_file_size("test_8k.db"), 8192 * 3);  // 3 pages: header, catalog, FSM
 }
 
 TEST_F(Alpha101Test, CreateDatabase_16K) {
     ASSERT_EQ(Database::create("test_16k.db", 16384), Status::Ok);
     ASSERT_TRUE(file_exists("test_16k.db"));
-    ASSERT_EQ(get_file_size("test_16k.db"), 16384 * 2);  // 2 pages minimum
+    ASSERT_EQ(get_file_size("test_16k.db"), 16384 * 3);  // 3 pages: header, catalog, FSM
 }
 
 TEST_F(Alpha101Test, CreateDatabase_32K) {
     ASSERT_EQ(Database::create("test_32k.db", 32768), Status::Ok);
     ASSERT_TRUE(file_exists("test_32k.db"));
-    ASSERT_EQ(get_file_size("test_32k.db"), 32768 * 2);  // 2 pages minimum
+    ASSERT_EQ(get_file_size("test_32k.db"), 32768 * 3);  // 3 pages: header, catalog, FSM
 }
 
 // Test header validation for each page size
