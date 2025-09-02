@@ -84,14 +84,14 @@ TEST_F(HeapPageTest, ChecksumMismatch) {
     Status status = page.validate(&ctx);
     
     // Note: HeapPage::validate might not check CRC, so let's manually verify
-    uint32_t computed_crc = compute_page_crc32c(page_buffer_, page_size_);
+    uint32_t computed_crc = calculate_page_checksum(page_buffer_, page_size_);
     EXPECT_NE(computed_crc, original_checksum) << "Checksum should have changed after corruption";
     
     // Restore original checksum to test detection
     header->checksum = original_checksum;
     
     // Now the stored checksum doesn't match the data
-    uint32_t new_computed_crc = compute_page_crc32c(page_buffer_, page_size_);
+    uint32_t new_computed_crc = calculate_page_checksum(page_buffer_, page_size_);
     EXPECT_NE(new_computed_crc, header->checksum) << "Stored checksum should not match corrupted data";
 }
 

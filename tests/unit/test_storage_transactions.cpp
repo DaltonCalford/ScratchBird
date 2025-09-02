@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/storage_engine.h"
+#include "scratchbird/core/heap_page.h"
 #include "scratchbird/core/error_context.h"
 #include <vector>
 #include <thread>
