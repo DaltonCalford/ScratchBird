@@ -2,6 +2,7 @@
 #include "scratchbird/core/page_manager.h"
 #include "scratchbird/core/buffer_pool.h"
 #include "scratchbird/core/catalog_manager.h"
+#include "scratchbird/core/storage_engine.h"
 #include "scratchbird/core/debug.h"
 #include <fcntl.h>
 #include <unistd.h>
@@ -19,7 +20,13 @@ Database::~Database() {
 }
 
 void Database::close() {
-    // Shut down catalog manager first
+    // Shut down storage engine first
+    if (storage_engine_) {
+        delete storage_engine_;
+        storage_engine_ = nullptr;
+    }
+    
+    // Shut down catalog manager
     if (catalog_manager_) {
         delete catalog_manager_;
         catalog_manager_ = nullptr;
@@ -419,6 +426,14 @@ Status Database::open(const std::string& path, ErrorContext* ctx) {
         // PageCorrupt means catalog not initialized yet, which is OK
         close();
         return status;
+    }
+    
+    // Initialize storage engine
+    storage_engine_ = new(std::nothrow) StorageEngine(this);
+    if (!storage_engine_) {
+        close();
+        SET_ERROR_CONTEXT(ctx, Status::OOM, "Failed to allocate StorageEngine");
+        return Status::OOM;
     }
     
     DEBUG_LOG_DB("Database opened successfully");
