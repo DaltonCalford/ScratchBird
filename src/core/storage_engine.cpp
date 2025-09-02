@@ -4,6 +4,7 @@
 #include "scratchbird/core/buffer_pool.h"
 #include "scratchbird/core/page_manager.h"
 #include "scratchbird/core/catalog_manager.h"
+#include "scratchbird/core/transaction_manager.h"
 #include "scratchbird/core/error_context.h"
 #include <cstring>
 #include <new>
@@ -40,7 +41,17 @@ Status StorageEngine::insert_tuple(uint32_t table_id, const uint8_t* tuple_data,
     // Insert tuple
     HeapPage heap_page(page_data, db_->page_size());
     uint16_t item_id;
-    status = heap_page.insert_tuple(tuple_data, tuple_size, current_xid_,
+    
+    // Get current XID from transaction manager
+    uint64_t current_xid = db_->transaction_manager() ? 
+        db_->transaction_manager()->get_active_xid() : 0;
+    if (current_xid == 0) {
+        // No active transaction, use a default
+        current_xid = db_->transaction_manager() ?
+            db_->transaction_manager()->get_current_xid() : 100;
+    }
+    
+    status = heap_page.insert_tuple(tuple_data, tuple_size, current_xid,
                                    &item_id, ctx);
     
     if (status == Status::Ok) {
@@ -77,7 +88,7 @@ Status StorageEngine::get_tuple(uint32_t page_id, uint16_t item_id,
     if (status == Status::Ok && tuple_out) {
         // Check visibility
         const TupleHeader* hdr = reinterpret_cast<const TupleHeader*>(tuple_data);
-        if (!is_visible(hdr->xmin, hdr->xmax, current_xid_)) {
+        if (!is_visible(hdr->xmin, hdr->xmax, get_current_xid())) {
             status = Status::NotFound;
             SET_ERROR_CONTEXT(ctx, status, "Tuple not visible");
         } else {
@@ -109,7 +120,17 @@ Status StorageEngine::delete_tuple(uint32_t page_id, uint16_t item_id,
     
     // Delete tuple
     HeapPage heap_page(page_data, db_->page_size());
-    status = heap_page.delete_tuple(item_id, current_xid_, ctx);
+    
+    // Get current XID from transaction manager
+    uint64_t current_xid = db_->transaction_manager() ? 
+        db_->transaction_manager()->get_active_xid() : 0;
+    if (current_xid == 0) {
+        // No active transaction, use a default
+        current_xid = db_->transaction_manager() ?
+            db_->transaction_manager()->get_current_xid() : 100;
+    }
+    
+    status = heap_page.delete_tuple(item_id, current_xid, ctx);
     
     if (status == Status::Ok) {
         // Mark page as dirty
@@ -136,10 +157,24 @@ std::unique_ptr<HeapScanIterator> StorageEngine::create_scan(uint32_t table_id,
 }
 
 bool StorageEngine::is_visible(uint64_t xmin, uint64_t xmax, uint64_t current_xid) {
-    // Simple visibility rules for single connection:
-    // - Tuple is visible if xmin <= current_xid
-    // - Tuple is not visible if xmax > 0 and xmax <= current_xid
+    // Use transaction manager for visibility if available
+    if (db_->transaction_manager()) {
+        TransactionManager* tm = db_->transaction_manager();
+        
+        // Check if creating transaction is visible
+        if (!tm->is_transaction_visible(xmin, current_xid)) {
+            return false;
+        }
+        
+        // If deleted, check if deleting transaction is visible
+        if (xmax != 0 && tm->is_transaction_visible(xmax, current_xid)) {
+            return false;
+        }
+        
+        return true;
+    }
     
+    // Fallback to simple visibility rules
     if (xmin > current_xid) {
         return false;  // Created by future transaction
     }
@@ -149,6 +184,17 @@ bool StorageEngine::is_visible(uint64_t xmin, uint64_t xmax, uint64_t current_xi
     }
     
     return true;
+}
+
+uint64_t StorageEngine::get_current_xid() const {
+    if (db_->transaction_manager()) {
+        uint64_t xid = db_->transaction_manager()->get_active_xid();
+        if (xid != 0) {
+            return xid;
+        }
+        return db_->transaction_manager()->get_current_xid();
+    }
+    return 100;  // Default if no transaction manager
 }
 
 Status StorageEngine::find_free_page(uint32_t table_id, uint32_t tuple_size,

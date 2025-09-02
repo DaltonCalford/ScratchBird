@@ -176,11 +176,9 @@ TEST_F(StorageCriticalFixesTest, HeapScanIterator_ProperEngineUsage) {
     uint16_t item_id;
     
     // Insert with different transaction IDs to test visibility
-    engine.begin_transaction(); // xid = 101
+    // Note: begin_transaction is now handled by TransactionManager
     ASSERT_EQ(engine.insert_tuple(1, tuple_data.data(), tuple_data.size(),
                                   &page_id, &item_id, nullptr), Status::Ok);
-    
-    engine.begin_transaction(); // xid = 102
     
     // Create iterator
     auto iterator = engine.create_scan(1, nullptr);

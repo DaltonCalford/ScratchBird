@@ -81,20 +81,14 @@ public:
     // Check if a tuple is visible (basic visibility for single connection)
     bool is_visible(uint64_t xmin, uint64_t xmax, uint64_t current_xid);
     
-    // Get current transaction ID (for now, just a simple counter)
-    uint64_t get_current_xid() const { return current_xid_; }
-    
-    // Start a new "transaction" (increment XID)
-    void begin_transaction() { current_xid_++; }
+    // Get current transaction ID from TransactionManager
+    uint64_t get_current_xid() const;
     
 private:
     Database* db_;
     BufferPool* buffer_pool_;
     PageManager* page_manager_;
     CatalogManager* catalog_manager_;
-    
-    // Simple transaction ID counter (single connection only)
-    uint64_t current_xid_ = 100;  // Start at 100 to avoid special values
     
     // Find a page with free space for a tuple
     Status find_free_page(uint32_t table_id, uint32_t tuple_size,
