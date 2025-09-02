@@ -1,4 +1,6 @@
 #include "scratchbird/core/database.h"
+#include "scratchbird/core/page_manager.h"
+#include "scratchbird/core/buffer_pool.h"
 #include <fcntl.h>
 #include <unistd.h>
 #include <sys/stat.h>
@@ -15,6 +17,20 @@ Database::~Database() {
 }
 
 void Database::close() {
+    // Shut down buffer pool first (flushes dirty pages)
+    if (buffer_pool_) {
+        buffer_pool_->shutdown();
+        delete buffer_pool_;
+        buffer_pool_ = nullptr;
+    }
+    
+    // Flush page manager
+    if (page_manager_) {
+        page_manager_->flush();
+        delete page_manager_;
+        page_manager_ = nullptr;
+    }
+    
     if (header_) {
         delete[] reinterpret_cast<uint8_t*>(header_);
         header_ = nullptr;
@@ -201,6 +217,61 @@ Status Database::create(const std::string& path, uint32_t page_size, ErrorContex
         return Status::IoError;
     }
     
+    // Create FSM page (Page 2)
+    memset(page_buffer, 0, page_size);
+    PageHeader* fsm_header = reinterpret_cast<PageHeader*>(page_buffer);
+    
+    fsm_header->magic = kMagicSBRD;
+    fsm_header->version = 1;
+    fsm_header->page_type = PAGE_TYPE_FREE_SPACE_MAP;
+    fsm_header->page_size = page_size;
+    fsm_header->page_id = 2;
+    fsm_header->flags = 0;
+    fsm_header->lsn = 0;
+    memcpy(fsm_header->database_uuid, db_uuid.bytes.data(), 16);
+    fsm_header->generation = 1;
+    
+    // Initialize FSM data
+    struct {
+        uint32_t total_pages;
+        uint32_t free_pages;
+        uint32_t next_fsm_page;
+        uint8_t bitmap[1];  // First byte of bitmap
+    } *fsm_data = reinterpret_cast<decltype(fsm_data)>(page_buffer + sizeof(PageHeader));
+    
+    fsm_data->total_pages = 3;  // Header, catalog, FSM
+    fsm_data->free_pages = 0;   // All system pages allocated
+    fsm_data->next_fsm_page = 0;
+    fsm_data->bitmap[0] = 0x07; // First 3 bits set (pages 0,1,2 allocated)
+    
+    // Update header fields
+    fsm_header->free_space = page_size - sizeof(PageHeader) - sizeof(uint32_t) * 3 - 1;
+    fsm_header->item_count = 1;
+    fsm_header->free_offset = sizeof(PageHeader) + sizeof(uint32_t) * 3 + 1;
+    fsm_header->special_size = 0;
+    
+    // Calculate checksum for FSM page
+    fsm_header->checksum = calculate_page_checksum(page_buffer, page_size);
+    
+    // Write FSM page
+    written = ::write(fd, page_buffer, page_size);
+    if (written != static_cast<ssize_t>(page_size)) {
+        delete[] page_buffer;
+        ::close(fd);
+        unlink(path.c_str());
+        SET_ERROR_CONTEXT(ctx, Status::IoError, "Failed to write FSM page");
+        return Status::IoError;
+    }
+    
+    // Update database header with correct page count
+    lseek(fd, 0, SEEK_SET);
+    ::read(fd, page_buffer, page_size);
+    header = reinterpret_cast<DatabaseHeader*>(page_buffer);
+    header->total_pages = 3;  // Now we have 3 pages
+    header->page_header.checksum = calculate_page_checksum(page_buffer, page_size);
+    lseek(fd, 0, SEEK_SET);
+    ::write(fd, page_buffer, page_size);
+    
     // Sync to disk
     fsync(fd);
     
@@ -298,6 +369,35 @@ Status Database::open(const std::string& path, ErrorContext* ctx) {
     // Store database UUID
     memcpy(db_uuid_.bytes.data(), header_->page_header.database_uuid, 16);
     path_ = path;
+    
+    // Initialize page manager
+    page_manager_ = new(std::nothrow) PageManager(this, page_size_);
+    if (!page_manager_) {
+        close();
+        SET_ERROR_CONTEXT(ctx, Status::OOM, "Failed to allocate PageManager");
+        return Status::OOM;
+    }
+    status = page_manager_->load(ctx);
+    if (status != Status::Ok) {
+        close();
+        return status;
+    }
+    
+    // Initialize buffer pool
+    BufferPool::Config bp_config;
+    bp_config.pool_size = 32;  // Minimum 32 pages as per spec
+    bp_config.page_size = page_size_;
+    buffer_pool_ = new(std::nothrow) BufferPool(this, bp_config);
+    if (!buffer_pool_) {
+        close();
+        SET_ERROR_CONTEXT(ctx, Status::OOM, "Failed to allocate BufferPool");
+        return Status::OOM;
+    }
+    status = buffer_pool_->initialize(ctx);
+    if (status != Status::Ok) {
+        close();
+        return status;
+    }
     
     return Status::Ok;
 }
