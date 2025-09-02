@@ -147,7 +147,7 @@ TEST_F(StorageEngineTest, TupleRetrieval) {
         sizeof(TestTuple) + sizeof(TupleHeader), &page_id, &item_id, &ctx));
     
     // Start a new transaction to ensure visibility
-    engine->begin_transaction();
+    // Transaction management is now handled by TransactionManager
     
     // Retrieve the tuple
     Tuple retrieved;
@@ -189,13 +189,13 @@ TEST_F(StorageEngineTest, TupleDeletion) {
         sizeof(TestTuple) + sizeof(TupleHeader), &page_id, &item_id, &ctx));
     
     // Start new transaction
-    engine->begin_transaction();
+    // Transaction management is now handled by TransactionManager
     
     // Delete the tuple
     ASSERT_EQ(Status::Ok, engine->delete_tuple(page_id, item_id, &ctx));
     
     // Start another transaction
-    engine->begin_transaction();
+    // Transaction management is now handled by TransactionManager
     
     // Try to retrieve - should not be visible
     Tuple retrieved;
@@ -240,7 +240,7 @@ TEST_F(StorageEngineTest, SequentialScan) {
     }
     
     // Start new transaction for visibility
-    engine->begin_transaction();
+    // Transaction management is now handled by TransactionManager
     
     // Create scan iterator
     auto scanner = engine->create_scan(table_id, &ctx);
@@ -340,7 +340,7 @@ TEST_F(StorageEngineTest, PageFull) {
     EXPECT_GT(last_page_id, tuple_locations[0].first);
     
     // Verify all tuples are retrievable
-    engine->begin_transaction();
+    // Transaction management is now handled by TransactionManager
     
     for (size_t i = 0; i < tuple_locations.size(); i++) {
         Tuple retrieved;
@@ -381,7 +381,7 @@ TEST_F(StorageEngineTest, ReuseDeletedSlots) {
         sizeof(TestTuple) + sizeof(TupleHeader), &page_id, &item_id, &ctx));
     
     // Delete it
-    engine->begin_transaction();
+    // Transaction management is now handled by TransactionManager
     ASSERT_EQ(Status::Ok, engine->delete_tuple(page_id, item_id, &ctx));
     
     // Insert a new tuple - should reuse the slot
@@ -400,7 +400,7 @@ TEST_F(StorageEngineTest, ReuseDeletedSlots) {
     EXPECT_EQ(item_id, new_item_id);
     
     // Verify the new data
-    engine->begin_transaction();
+    // Transaction management is now handled by TransactionManager
     Tuple retrieved;
     ASSERT_EQ(Status::Ok, engine->get_tuple(new_page_id, new_item_id, &retrieved, &ctx));
     

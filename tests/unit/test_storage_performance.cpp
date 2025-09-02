@@ -417,7 +417,7 @@ TEST_F(StoragePerformanceTest, TransactionOverheadBenchmark) {
     auto start1 = high_resolution_clock::now();
     
     for (int i = 0; i < num_operations; i++) {
-        engine.begin_transaction();
+        // Transaction management is now handled by TransactionManager
         
         uint32_t page_id;
         uint16_t item_id;
@@ -441,7 +441,7 @@ TEST_F(StoragePerformanceTest, TransactionOverheadBenchmark) {
     
     for (int i = 0; i < num_operations; i++) {
         if (i % batch_size == 0) {
-            engine2.begin_transaction();
+            // Transaction management is now handled by TransactionManager
         }
         
         uint32_t page_id;

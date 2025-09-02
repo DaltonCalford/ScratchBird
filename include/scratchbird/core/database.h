@@ -16,6 +16,7 @@ class PageManager;
 class BufferPool;
 class CatalogManager;
 class StorageEngine;
+class TransactionManager;
 
 // Database header structure for Page 0
 #pragma pack(push, 1)
@@ -49,7 +50,8 @@ struct DatabaseHeader {
     uint64_t next_transaction_id; // Next transaction ID to assign
     uint64_t oldest_active_xid;   // Oldest active transaction
     uint64_t latest_completed_xid; // Latest completed transaction
-    uint64_t reserved3[1];        // Reserved
+    uint32_t tip_root_page;       // Root page of Transaction Inventory Pages
+    uint32_t reserved3;           // Reserved
     
     // Checksums for critical data (16 bytes)
     uint32_t catalog_checksum;   // Checksum of system catalog
@@ -105,6 +107,9 @@ public:
     // Get storage engine
     StorageEngine* storage_engine() { return storage_engine_; }
     
+    // Get transaction manager
+    TransactionManager* transaction_manager() { return transaction_manager_; }
+    
     // Get file descriptor (for internal use)
     int fd() const { return fd_; }
     
@@ -123,6 +128,7 @@ private:
     BufferPool* buffer_pool_ = nullptr;    // Buffer pool manager (owned)
     CatalogManager* catalog_manager_ = nullptr; // System catalog manager (owned)
     StorageEngine* storage_engine_ = nullptr; // Storage engine (owned)
+    TransactionManager* transaction_manager_ = nullptr; // Transaction manager (owned)
     
 
     

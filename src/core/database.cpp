@@ -3,6 +3,7 @@
 #include "scratchbird/core/buffer_pool.h"
 #include "scratchbird/core/catalog_manager.h"
 #include "scratchbird/core/storage_engine.h"
+#include "scratchbird/core/transaction_manager.h"
 #include "scratchbird/core/debug.h"
 #include <fcntl.h>
 #include <unistd.h>
@@ -20,7 +21,13 @@ Database::~Database() {
 }
 
 void Database::close() {
-    // Shut down storage engine first
+    // Shut down transaction manager first
+    if (transaction_manager_) {
+        delete transaction_manager_;
+        transaction_manager_ = nullptr;
+    }
+    
+    // Shut down storage engine
     if (storage_engine_) {
         delete storage_engine_;
         storage_engine_ = nullptr;
@@ -153,9 +160,10 @@ Status Database::create(const std::string& path, uint32_t page_size, ErrorContex
     header->system_catalog_page = 1;
     
     // Initialize transaction info
-    header->next_transaction_id = 1;
+    header->next_transaction_id = 3;  // Start after FROZEN_XID (2)
     header->oldest_active_xid = 0;
     header->latest_completed_xid = 0;
+    header->tip_root_page = 0;  // 0 means no TIP pages allocated yet
     
     // Calculate and set checksum
     header->page_header.checksum = calculate_page_checksum(page_buffer, page_size);
@@ -434,6 +442,19 @@ Status Database::open(const std::string& path, ErrorContext* ctx) {
         close();
         SET_ERROR_CONTEXT(ctx, Status::OOM, "Failed to allocate StorageEngine");
         return Status::OOM;
+    }
+    
+    // Initialize transaction manager
+    transaction_manager_ = new(std::nothrow) TransactionManager(this);
+    if (!transaction_manager_) {
+        close();
+        SET_ERROR_CONTEXT(ctx, Status::OOM, "Failed to allocate TransactionManager");
+        return Status::OOM;
+    }
+    status = transaction_manager_->load(ctx);
+    if (status != Status::Ok) {
+        close();
+        return status;
     }
     
     DEBUG_LOG_DB("Database opened successfully");
