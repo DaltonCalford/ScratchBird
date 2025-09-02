@@ -493,5 +493,19 @@ Status Database::write_page(uint32_t page_id, const void* buffer, ErrorContext* 
     return Status::Ok;
 }
 
+Status Database::sync(ErrorContext* ctx) {
+    if (fd_ < 0) {
+        SET_ERROR_CONTEXT(ctx, Status::InvalidArgument, "Database not open");
+        return Status::InvalidArgument;
+    }
+    
+    if (fsync(fd_) != 0) {
+        SET_ERROR_CONTEXT(ctx, Status::IoError, "Failed to sync database file");
+        return Status::IoError;
+    }
+    
+    return Status::Ok;
+}
+
 } // namespace core
 } // namespace scratchbird

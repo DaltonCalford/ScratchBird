@@ -1,5 +1,6 @@
 #include "scratchbird/core/page_manager.h"
 #include "scratchbird/core/database.h"
+#include "scratchbird/core/debug.h"
 #include <cstring>
 #include <algorithm>
 
@@ -61,6 +62,19 @@ Status PageManager::load(ErrorContext* ctx) {
         return Status::PageCorrupt;
     }
     
+    // Validate FSM metadata consistency
+    if (fsm->total_pages == 0 || fsm->total_pages > (1ULL << 32) / page_size_) {
+        delete[] buffer;
+        SET_ERROR_CONTEXT(ctx, Status::PageCorrupt, "Invalid FSM total_pages");
+        return Status::PageCorrupt;
+    }
+    
+    if (fsm->free_pages > fsm->total_pages) {
+        delete[] buffer;
+        SET_ERROR_CONTEXT(ctx, Status::PageCorrupt, "Invalid FSM free_pages count");
+        return Status::PageCorrupt;
+    }
+    
     total_pages_ = fsm->total_pages;
     free_pages_ = fsm->free_pages;
     
@@ -68,6 +82,22 @@ Status PageManager::load(ErrorContext* ctx) {
     size_t bitmap_bytes = (total_pages_ + 7) / 8;
     bitmap_.resize(bitmap_bytes);
     memcpy(bitmap_.data(), fsm->bitmap, bitmap_bytes);
+    
+    // Validate bitmap consistency - count allocated pages
+    uint32_t allocated_count = 0;
+    for (uint32_t i = 0; i < total_pages_; i++) {
+        if (get_bit(i)) {
+            allocated_count++;
+        }
+    }
+    
+    uint32_t expected_allocated = total_pages_ - free_pages_;
+    if (allocated_count != expected_allocated) {
+        delete[] buffer;
+        SET_ERROR_CONTEXT(ctx, Status::PageCorrupt, 
+            "FSM bitmap inconsistent with free_pages count");
+        return Status::PageCorrupt;
+    }
     
     delete[] buffer;
     dirty_ = false;
@@ -77,10 +107,13 @@ Status PageManager::load(ErrorContext* ctx) {
 Status PageManager::allocate_page(uint32_t& page_id, ErrorContext* ctx) {
     std::lock_guard<std::mutex> lock(mutex_);
     
+    DEBUG_LOG_PM("allocate_page: total=" << total_pages_ << " free=" << free_pages_);
+    
     // Find a free page
     uint32_t free_page = find_free_page();
     if (free_page == total_pages_) {
         // No free pages, need to extend file
+        DEBUG_LOG_PM("No free pages, extending file");
         Status status = extend_file(1, ctx);
         if (status != Status::Ok) {
             return status;
@@ -94,6 +127,7 @@ Status PageManager::allocate_page(uint32_t& page_id, ErrorContext* ctx) {
     dirty_ = true;
     
     page_id = free_page;
+    DEBUG_LOG_PM("Allocated page " << page_id << ", free pages now: " << free_pages_);
     return Status::Ok;
 }
 
@@ -240,7 +274,11 @@ Status PageManager::flush(ErrorContext* ctx) {
     delete[] buffer;
     
     if (status == Status::Ok) {
-        dirty_ = false;
+        // Sync to ensure FSM durability
+        status = db_->sync(ctx);
+        if (status == Status::Ok) {
+            dirty_ = false;
+        }
     }
     
     return status;
