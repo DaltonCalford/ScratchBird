@@ -42,8 +42,15 @@ Status HeapPage::initialize(uint32_t page_id, ErrorContext* ctx) {
 }
 
 Status HeapPage::insert_tuple(const uint8_t* tuple_data, uint32_t tuple_size,
-                             uint32_t xmin, uint16_t* item_id_out,
+                             uint64_t xmin, uint16_t* item_id_out,
                              ErrorContext* ctx) {
+    // Validate input: tuple_size must include space for TupleHeader
+    if (tuple_size < sizeof(TupleHeader)) {
+        SET_ERROR_CONTEXT(ctx, Status::InvalidArgument, 
+                         "Tuple size must be at least sizeof(TupleHeader)");
+        return Status::InvalidArgument;
+    }
+    
     // Check if we have space
     if (!has_free_space(tuple_size + sizeof(ItemPointer))) {
         SET_ERROR_CONTEXT(ctx, Status::PageFull, "No space for tuple");
@@ -74,8 +81,13 @@ Status HeapPage::insert_tuple(const uint8_t* tuple_data, uint32_t tuple_size,
     
     // Copy tuple header and data
     memcpy(page_data_ + tuple_offset, &tuple_hdr, sizeof(TupleHeader));
-    memcpy(page_data_ + tuple_offset + sizeof(TupleHeader), 
-           tuple_data, tuple_size - sizeof(TupleHeader));
+    
+    // Calculate actual data size after header
+    uint32_t data_size = tuple_size - sizeof(TupleHeader);
+    if (data_size > 0) {
+        memcpy(page_data_ + tuple_offset + sizeof(TupleHeader), 
+               tuple_data, data_size);
+    }
     
     // Update item pointer
     if (item_id == header()->item_count) {
@@ -124,7 +136,7 @@ Status HeapPage::get_tuple(uint16_t item_id, const uint8_t** data_out,
     return Status::Ok;
 }
 
-Status HeapPage::delete_tuple(uint16_t item_id, uint32_t xmax, ErrorContext* ctx) {
+Status HeapPage::delete_tuple(uint16_t item_id, uint64_t xmax, ErrorContext* ctx) {
     if (item_id >= header()->item_count) {
         SET_ERROR_CONTEXT(ctx, Status::InvalidArgument, "Invalid item ID");
         return Status::InvalidArgument;

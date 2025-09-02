@@ -14,6 +14,7 @@ class BufferPool;
 class PageManager;
 class CatalogManager;
 class HeapPage;
+class StorageEngine;
 struct ErrorContext;
 struct TableInfo;
 
@@ -28,7 +29,7 @@ struct Tuple {
 // Iterator for sequential scan
 class HeapScanIterator {
 public:
-    HeapScanIterator(Database* db, uint32_t table_id, uint32_t start_page);
+    HeapScanIterator(Database* db, StorageEngine* engine, uint32_t table_id, uint32_t start_page);
     ~HeapScanIterator();
     
     // Move to next tuple
@@ -39,6 +40,7 @@ public:
     
 private:
     Database* db_;
+    StorageEngine* engine_;
     uint32_t table_id_;
     uint32_t current_page_;
     uint16_t current_item_;
@@ -77,10 +79,10 @@ public:
                                                   ErrorContext* ctx = nullptr);
     
     // Check if a tuple is visible (basic visibility for single connection)
-    bool is_visible(uint32_t xmin, uint32_t xmax, uint32_t current_xid);
+    bool is_visible(uint64_t xmin, uint64_t xmax, uint64_t current_xid);
     
     // Get current transaction ID (for now, just a simple counter)
-    uint32_t get_current_xid() const { return current_xid_; }
+    uint64_t get_current_xid() const { return current_xid_; }
     
     // Start a new "transaction" (increment XID)
     void begin_transaction() { current_xid_++; }
@@ -92,7 +94,7 @@ private:
     CatalogManager* catalog_manager_;
     
     // Simple transaction ID counter (single connection only)
-    uint32_t current_xid_ = 100;  // Start at 100 to avoid special values
+    uint64_t current_xid_ = 100;  // Start at 100 to avoid special values
     
     // Find a page with free space for a tuple
     Status find_free_page(uint32_t table_id, uint32_t tuple_size,
