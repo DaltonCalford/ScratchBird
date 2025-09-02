@@ -16,6 +16,7 @@ enum PageType : uint16_t {
 	PAGE_TYPE_BTREE_INTERNAL  = 5,
 	PAGE_TYPE_BTREE_LEAF      = 6,
 	PAGE_TYPE_TRANSACTION_MAP = 7,
+	PAGE_TYPE_CATALOG_ROOT    = 8,  // Root page for system catalog
 };
 
 // Fixed 64-byte page header; little-endian integers assumed
