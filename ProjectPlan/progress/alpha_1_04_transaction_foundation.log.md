@@ -12,15 +12,9 @@
 4. Commit/Rollback
 
 ## Note on Numbering
-There has been some confusion in phase numbering:
-- The AUTHORITATIVE_IMPLEMENTATION_PLAN.md lists:
-  - Alpha 1.03 as "Storage Engine"
-  - Alpha 1.04 as "Transaction Foundation"
-- We implemented:
-  - System Catalog (called it Alpha 1.03)
-  - Storage Engine (called it Alpha 1.04)
-
-Regardless of numbering, the next logical step is Transaction Foundation.
+Phase numbering has been reconciled with AUTHORITATIVE_IMPLEMENTATION_PLAN.md.
+See /workspace/ProjectPlan/PHASE_NUMBERING_RECONCILIATION.md for details.
+This is correctly Alpha 1.04 - Transaction Foundation.
 
 ## Design Considerations
 

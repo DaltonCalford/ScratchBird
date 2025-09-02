@@ -1,4 +1,4 @@
-# Alpha 1.04 - Storage Engine Progress Log
+# Alpha 1.03 - Storage Engine Progress Log
 
 ## Phase Overview
 - **Goal**: Store and retrieve tuples
