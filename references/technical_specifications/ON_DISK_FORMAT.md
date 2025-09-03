@@ -5,6 +5,7 @@
 - v1.0.0 - Initial specification for Alpha 1.01
 - v1.1.0 - Stage 1.1: Added 64KB/128KB page support with extended structures
 - v1.2.0 - Stage 1.1: Added compression support with LZ4 baseline
+- v1.3.0 - Stage 1.1: Added TOAST/LOB storage for large attributes
 
 ---
 
@@ -489,4 +490,58 @@ When a page is compressed:
    ```c
    uint32_t checksum = crc32c_compute(compressed_data, compressed_size, 0xFFFFFFFF) ^ 0xFFFFFFFF;
    ```
+
+---
+
+## TOAST (The Oversized-Attribute Storage Technique)
+
+### Overview
+TOAST allows storage of large attributes that exceed normal tuple size limits by storing them out-of-line in a separate TOAST table.
+
+### TOAST Pointer
+When a value is TOASTed, the main tuple contains a TOAST pointer instead of the actual data:
+
+```c
+#pragma pack(push, 1)
+struct ToastPointer {
+    uint8_t  va_header;      // 0x01 = TOAST marker
+    uint8_t  va_tag;         // ToastStrategy value
+    uint32_t va_rawsize;     // Original (uncompressed) data size
+    uint32_t va_extsize;     // External stored size
+    uint32_t va_valueid;     // Unique identifier for this TOAST value
+    uint32_t va_toastrelid;  // TOAST table ID
+};
+#pragma pack(pop)
+```
+
+### TOAST Strategies
+```c
+enum class ToastStrategy : uint8_t {
+    PLAIN = 0,      // Store inline (no TOAST)
+    EXTENDED = 1,   // Store out-of-line, uncompressed
+    COMPRESSED = 2, // Store inline, compressed (future)
+    EXTERNAL = 3,   // Store out-of-line, compressed
+};
+```
+
+### TOAST Chunk Format
+Large values are split into chunks and stored in the TOAST table:
+
+```
+Chunk Tuple Format:
+[chunk_id: 4 bytes][chunk_seq: 4 bytes][chunk_size: 4 bytes][chunk_data: variable]
+```
+
+### TOAST Rules
+1. Values > 2000 bytes are candidates for TOASTing
+2. Values > page_size/4 must be TOASTed
+3. Chunks are limited to 1996 bytes each
+4. TOAST tables are named `pg_toast_<table_id>`
+5. Compression is optional (EXTERNAL strategy)
+
+### TOAST Table Schema
+- chunk_id (INT32): TOAST value identifier
+- chunk_seq (INT32): Chunk sequence number (0-based)
+- chunk_data (BYTEA): Actual chunk data
+
 - UUID: 018b9f3a-7d4e-7f3a-9c5d-1234567890ab (v7)

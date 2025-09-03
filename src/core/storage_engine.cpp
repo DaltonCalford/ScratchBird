@@ -92,13 +92,12 @@ Status StorageEngine::get_tuple(uint32_t page_id, uint16_t item_id,
             status = Status::NotFound;
             SET_ERROR_CONTEXT(ctx, status, "Tuple not visible");
         } else {
-            // Copy tuple data (skip header for user data)
-            tuple_out->data.resize(tuple_size - sizeof(TupleHeader));
-            memcpy(tuple_out->data.data(), tuple_data + sizeof(TupleHeader),
-                   tuple_size - sizeof(TupleHeader));
-            tuple_out->size = tuple_size - sizeof(TupleHeader);
+            // Set tuple data pointer (includes header for now)
+            tuple_out->data = tuple_data;
+            tuple_out->data_size = tuple_size;
             tuple_out->item_id = item_id;
             tuple_out->page_id = page_id;
+            tuple_out->tid = (static_cast<uint64_t>(page_id) << 16) | item_id;
         }
     }
     
@@ -334,13 +333,11 @@ Status HeapScanIterator::next(Tuple* tuple_out, ErrorContext* ctx) {
                 if (engine_->is_visible(hdr->xmin, hdr->xmax, engine_->get_current_xid())) {
                     // Found visible tuple
                     if (tuple_out) {
-                        tuple_out->data.resize(tuple_size - sizeof(TupleHeader));
-                        memcpy(tuple_out->data.data(),
-                               tuple_data + sizeof(TupleHeader),
-                               tuple_size - sizeof(TupleHeader));
-                        tuple_out->size = tuple_size - sizeof(TupleHeader);
+                        tuple_out->data = tuple_data;
+                        tuple_out->data_size = tuple_size;
                         tuple_out->item_id = current_item_ - 1;
                         tuple_out->page_id = current_page_;
+                        tuple_out->tid = (static_cast<uint64_t>(current_page_) << 16) | (current_item_ - 1);
                     }
                     return Status::Ok;
                 }
@@ -365,6 +362,25 @@ Status HeapScanIterator::load_page(uint32_t page_id, ErrorContext* ctx) {
         page_data_ = static_cast<uint8_t*>(page_buffer);
     }
     return status;
+}
+
+Status StorageEngine::delete_tuple(uint32_t table_id, uint64_t tid, uint64_t xmax,
+                                 ErrorContext* ctx) {
+    // Extract page_id and item_id from TID
+    uint32_t page_id = tid >> 16;
+    uint16_t item_id = tid & 0xFFFF;
+    
+    // Use existing delete_tuple method
+    return delete_tuple(page_id, item_id, ctx);
+}
+
+std::unique_ptr<HeapScanIterator> StorageEngine::sequential_scan(uint32_t table_id,
+                                                                const std::vector<uint32_t>& columns,
+                                                                uint64_t xmin,
+                                                                ErrorContext* ctx) {
+    // For now, just use the existing create_scan method
+    // In a real implementation, we would filter by columns and visibility
+    return create_scan(table_id, ctx);
 }
 
 } // namespace core

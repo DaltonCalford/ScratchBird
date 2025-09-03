@@ -154,8 +154,10 @@ TEST_F(StorageEngineTest, TupleRetrieval) {
     ASSERT_EQ(Status::Ok, engine->get_tuple(page_id, item_id, &retrieved, &ctx));
     
     // Verify data
-    ASSERT_EQ(sizeof(TestTuple), retrieved.size);
-    TestTuple* retrieved_data = reinterpret_cast<TestTuple*>(retrieved.data.data());
+    ASSERT_EQ(sizeof(TestTuple) + sizeof(TupleHeader), retrieved.data_size);
+    // Skip TupleHeader to get to actual data
+    TestTuple* retrieved_data = reinterpret_cast<TestTuple*>(
+        const_cast<uint8_t*>(retrieved.data) + sizeof(TupleHeader));
     EXPECT_EQ(123, retrieved_data->id);
     EXPECT_STREQ("Retrieval Test", retrieved_data->name);
     EXPECT_FLOAT_EQ(2.718f, retrieved_data->value);
@@ -252,8 +254,9 @@ TEST_F(StorageEngineTest, SequentialScan) {
     
     Tuple tuple;
     while (scanner->next(&tuple, &ctx) == Status::Ok) {
-        ASSERT_EQ(sizeof(TestTuple), tuple.size);
-        TestTuple* data = reinterpret_cast<TestTuple*>(tuple.data.data());
+        ASSERT_EQ(sizeof(TestTuple) + sizeof(TupleHeader), tuple.data_size);
+        TestTuple* data = reinterpret_cast<TestTuple*>(
+            const_cast<uint8_t*>(tuple.data) + sizeof(TupleHeader));
         found_ids.push_back(data->id);
         count++;
     }
@@ -353,8 +356,9 @@ TEST_F(StorageEngineTest, PageFull) {
         ASSERT_EQ(Status::Ok, engine->get_tuple(
             tuple_locations[i].first, tuple_locations[i].second, &retrieved, &ctx));
         
-        ASSERT_EQ(sizeof(LargeTuple), retrieved.size);
-        LargeTuple* data = reinterpret_cast<LargeTuple*>(retrieved.data.data());
+        ASSERT_EQ(sizeof(LargeTuple) + sizeof(TupleHeader), retrieved.data_size);
+        LargeTuple* data = reinterpret_cast<LargeTuple*>(
+            const_cast<uint8_t*>(retrieved.data) + sizeof(TupleHeader));
         EXPECT_EQ(static_cast<int32_t>(i), data->id);
     }
 }
@@ -410,7 +414,8 @@ TEST_F(StorageEngineTest, ReuseDeletedSlots) {
     Tuple retrieved;
     ASSERT_EQ(Status::Ok, engine->get_tuple(new_page_id, new_item_id, &retrieved, &ctx));
     
-    TestTuple* data = reinterpret_cast<TestTuple*>(retrieved.data.data());
+    TestTuple* data = reinterpret_cast<TestTuple*>(
+        const_cast<uint8_t*>(retrieved.data) + sizeof(TupleHeader));
     EXPECT_EQ(1000, data->id);
     EXPECT_STREQ("Replacement", data->name);
 }

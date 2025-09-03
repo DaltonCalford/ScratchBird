@@ -164,6 +164,7 @@ enum class DataType : uint16_t {
     Int8 = 1,
     Int16 = 2,
     Int32 = 3,
+    Int = 3,        // Alias for Int32
     Int64 = 4,
     Float32 = 5,
     Float64 = 6,
@@ -178,6 +179,7 @@ enum class DataType : uint16_t {
     Binary = 20,    // Fixed length
     Varbinary = 21, // Variable length
     Blob = 22,      // Binary large object
+    Bytea = 23,     // PostgreSQL-style binary data
     
     // Date/Time types
     Date = 30,
