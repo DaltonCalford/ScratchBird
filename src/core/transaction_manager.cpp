@@ -287,13 +287,21 @@ bool TransactionManager::is_transaction_visible(uint64_t xid, uint64_t snapshot_
         return true;  // See own changes
     }
     
-    if (xid >= snapshot_xid) {
+    if (xid > snapshot_xid) {
         return false;  // Future transaction
+    }
+    
+    // Frozen tuples are always visible
+    if (xid <= FROZEN_XID) {
+        return true;
     }
     
     TransactionState state;
     if (get_transaction_state(xid, state, nullptr) != Status::Ok) {
-        // Error getting state, assume not visible
+        // Error getting state, for old transactions assume committed
+        if (xid < snapshot_xid) {
+            return true;  // Old transaction, assume committed
+        }
         return false;
     }
     

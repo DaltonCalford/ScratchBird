@@ -179,7 +179,7 @@ bool StorageEngine::is_visible(uint64_t xmin, uint64_t xmax, uint64_t current_xi
         return false;  // Created by future transaction
     }
     
-    if (xmax > 0 && xmax <= current_xid) {
+    if (xmax > 0 && xmax < current_xid) {
         return false;  // Deleted by committed transaction
     }
     
