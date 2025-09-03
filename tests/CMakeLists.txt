@@ -18,6 +18,7 @@ add_executable(scratchbird_tests ${TEST_SOURCES})
 # Link libraries
 target_link_libraries(scratchbird_tests
     scratchbird_core
+    scratchbird_parser
     GTest::gtest
     GTest::gtest_main
 )
