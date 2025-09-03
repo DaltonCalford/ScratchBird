@@ -121,7 +121,7 @@ TEST_F(StorageCriticalFixesTest, HeapPage_InsertTuple_BufferOverflowProtection) 
         status = engine.get_tuple(page_id, item_id, &read_tuple, nullptr);
         EXPECT_EQ(status, Status::Ok);
         // The returned size should be the full size including header
-        EXPECT_EQ(read_tuple.size, raw_data.size() + sizeof(TupleHeader));
+        EXPECT_EQ(read_tuple.data_size, raw_data.size() + sizeof(TupleHeader));
     }
     
     // Test Case 2: Tuple data that does NOT include space for TupleHeader
@@ -359,7 +359,7 @@ TEST_F(StorageCriticalFixesTest, CombinedFixes_ScanAndInsert) {
             if (iterator->next(&tuple, nullptr) == Status::Ok) {
                 count++;
                 // Verify tuple data is valid
-                EXPECT_GT(tuple.size, sizeof(TupleHeader));
+                EXPECT_GT(tuple.data_size, sizeof(TupleHeader));
             }
         }
         

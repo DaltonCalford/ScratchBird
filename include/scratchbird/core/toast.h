@@ -1,0 +1,149 @@
+#pragma once
+
+#include "scratchbird/core/status.h"
+#include "scratchbird/core/ondisk.h"
+#include <cstdint>
+#include <vector>
+#include <memory>
+
+namespace scratchbird {
+namespace core {
+
+// Forward declarations
+class Database;
+class BufferPool;
+class PageManager;
+struct ErrorContext;
+
+// TOAST (The Oversized-Attribute Storage Technique) constants
+constexpr uint32_t TOAST_TUPLE_THRESHOLD = 2000;  // Minimum size to consider TOASTing
+constexpr uint32_t TOAST_TUPLE_TARGET = 2000;     // Target size after TOASTing
+constexpr uint32_t TOAST_MAX_CHUNK_SIZE = 1996;   // Max chunk size (leaves room for headers)
+
+// TOAST strategies
+enum class ToastStrategy : uint8_t {
+    PLAIN = 0,      // Store inline (no TOAST)
+    EXTENDED = 1,   // Store out-of-line, uncompressed
+    COMPRESSED = 2, // Store inline, compressed
+    EXTERNAL = 3,   // Store out-of-line, compressed
+};
+
+// TOAST pointer - stored in main tuple instead of actual data
+#pragma pack(push, 1)
+struct ToastPointer {
+    uint8_t  va_header;      // Varlena header byte (0x01 = TOAST)
+    uint8_t  va_tag;         // Type tag and compression info
+    uint32_t va_rawsize;     // Original (uncompressed) data size
+    uint32_t va_extsize;     // External stored size
+    uint32_t va_valueid;     // Unique identifier for this TOAST value
+    uint32_t va_toastrelid;  // TOAST table ID
+};
+#pragma pack(pop)
+
+// TOAST chunk - one piece of a large value
+#pragma pack(push, 1)
+struct ToastChunk {
+    uint32_t chunk_id;       // Unique ID of the owning TOAST value
+    uint32_t chunk_seq;      // Sequence number (0-based)
+    uint32_t chunk_size;     // Size of data in this chunk
+    uint8_t  chunk_data[TOAST_MAX_CHUNK_SIZE]; // Actual data
+};
+#pragma pack(pop)
+
+// TOAST table entry - stored in TOAST table
+struct ToastTableEntry {
+    uint64_t xmin;           // Transaction that created this
+    uint64_t xmax;           // Transaction that deleted this (or 0)
+    uint32_t value_id;       // Unique TOAST value ID
+    uint32_t chunk_seq;      // Chunk sequence number
+    uint32_t chunk_size;     // Size of this chunk
+    std::vector<uint8_t> data; // Chunk data
+};
+
+// TOAST value header for compressed data
+#pragma pack(push, 1)
+struct ToastCompressHeader {
+    uint32_t rawsize;        // Uncompressed size
+    uint8_t  compression;    // Compression algorithm used
+};
+#pragma pack(pop)
+
+// TOAST manager - handles large attribute storage
+class ToastManager {
+public:
+    ToastManager(Database* db, uint32_t table_id);
+    ~ToastManager();
+    
+    // Initialize TOAST subsystem for a table
+    Status initialize(ErrorContext* ctx = nullptr);
+    
+    // Create TOAST table for a regular table
+    Status create_toast_table(ErrorContext* ctx = nullptr);
+    
+    // TOAST a large value
+    // Returns the ToastPointer to store in the main tuple
+    Status toast_value(const uint8_t* data, uint32_t size,
+                      ToastStrategy strategy, uint64_t xmin,
+                      ToastPointer* pointer_out,
+                      ErrorContext* ctx = nullptr);
+    
+    // Detoast a value
+    // Returns the reconstructed data
+    Status detoast_value(const ToastPointer* pointer,
+                        std::vector<uint8_t>* data_out,
+                        uint64_t xmin,
+                        ErrorContext* ctx = nullptr);
+    
+    // Delete TOASTed value
+    Status delete_toast_value(uint32_t value_id, uint64_t xmax,
+                             ErrorContext* ctx = nullptr);
+    
+    // Check if a value should be TOASTed
+    static bool should_toast(uint32_t size, uint32_t page_size);
+    
+    // Determine best TOAST strategy for a value
+    static ToastStrategy choose_strategy(const uint8_t* data, uint32_t size,
+                                       bool compress_enabled = true);
+    
+    // Get TOAST table ID for a regular table
+    uint32_t toast_table_id() const { return toast_table_id_; }
+    
+private:
+    Database* db_;
+    uint32_t table_id_;          // Regular table ID
+    uint32_t toast_table_id_;    // Associated TOAST table ID
+    uint32_t next_value_id_;     // Next TOAST value ID to assign
+    
+    // Helper methods
+    Status write_toast_chunks(uint32_t value_id, const uint8_t* data,
+                            uint32_t size, uint64_t xmin,
+                            ErrorContext* ctx);
+    
+    Status read_toast_chunks(uint32_t value_id, std::vector<uint8_t>* data_out,
+                           uint64_t xmin, ErrorContext* ctx);
+    
+    Status compress_data(const uint8_t* src, uint32_t src_size,
+                        std::vector<uint8_t>* dst,
+                        ErrorContext* ctx);
+    
+    Status decompress_data(const uint8_t* src, uint32_t src_size,
+                          uint32_t uncompressed_size,
+                          std::vector<uint8_t>* dst,
+                          ErrorContext* ctx);
+};
+
+// Inline functions
+inline bool ToastManager::should_toast(uint32_t size, uint32_t page_size) {
+    // TOAST if value is larger than threshold or
+    // if it would make tuple too large for page
+    return size > TOAST_TUPLE_THRESHOLD || 
+           size > (page_size / 4);  // Conservative: 1/4 of page
+}
+
+// Check if a varlena header indicates TOAST
+inline bool is_toast_pointer(const uint8_t* data) {
+    return data[0] == 0x01;  // Special TOAST marker
+}
+
+} // namespace core
+} // namespace scratchbird

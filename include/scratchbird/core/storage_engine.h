@@ -20,10 +20,11 @@ struct TableInfo;
 
 // Tuple data structure
 struct Tuple {
-    std::vector<uint8_t> data;
-    uint32_t size;
-    uint16_t item_id;  // Item ID within the page
-    uint32_t page_id;  // Page containing this tuple
+    const uint8_t* data;     // Pointer to tuple data
+    uint32_t data_size;      // Size of tuple data
+    uint64_t tid;            // Tuple ID (page_id << 16 | item_id)
+    uint16_t item_id;        // Item ID within the page
+    uint32_t page_id;        // Page containing this tuple
 };
 
 // Iterator for sequential scan
@@ -74,9 +75,19 @@ public:
     Status delete_tuple(uint32_t page_id, uint16_t item_id,
                        ErrorContext* ctx = nullptr);
     
+    // Delete a tuple by TID
+    Status delete_tuple(uint32_t table_id, uint64_t tid, uint64_t xmax,
+                       ErrorContext* ctx = nullptr);
+    
     // Create a sequential scan iterator
     std::unique_ptr<HeapScanIterator> create_scan(uint32_t table_id,
                                                   ErrorContext* ctx = nullptr);
+    
+    // Create a sequential scan iterator with visibility
+    std::unique_ptr<HeapScanIterator> sequential_scan(uint32_t table_id,
+                                                      const std::vector<uint32_t>& columns,
+                                                      uint64_t xmin,
+                                                      ErrorContext* ctx = nullptr);
     
     // Check if a tuple is visible (basic visibility for single connection)
     bool is_visible(uint64_t xmin, uint64_t xmax, uint64_t current_xid);
