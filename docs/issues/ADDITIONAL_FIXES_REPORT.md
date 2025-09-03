@@ -64,11 +64,11 @@ if (offset >= page_size_ || offset + length > page_size_) {
 
 3. **Cascading Fixes**: Fixing one issue (TIP corruption) led to discovering other issues, showing the value of comprehensive testing.
 
-## Remaining Issues
+## Remaining Test Failures
 
 The 24 remaining test failures are primarily in:
 - Lexer (12 tests) - edge cases, security, stress tests
 - Parser (11 tests) - missing SQL features like JOINs, constraints, aliases
 - Other (1 test) - minor issues
 
-These require more substantial implementation work to add missing features rather than just fixing bugs.
+**Important Note**: These parser/lexer tests are for Stage 1.2 features. The parser is an external client component, not part of the core engine. These failures don't block Stage 1.1 progress.
