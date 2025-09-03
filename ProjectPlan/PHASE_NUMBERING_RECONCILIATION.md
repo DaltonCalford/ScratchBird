@@ -1,67 +1,36 @@
-# Phase Numbering Reconciliation
+# Phase Numbering Reconciliation (Stage Format)
 
 ## Issue
-There has been confusion in phase numbering between what's documented in AUTHORITATIVE_IMPLEMENTATION_PLAN.md and what we've been using in implementation.
+Phase numbering mixed content across core, parser, and network. We are adopting a Stage-based scheme: 1.x.yy where 1=Alpha, x=Stage, yy=phase within Stage.
 
-## Official Plan vs Actual Implementation
+## Mapping to Stage 0 (Completed Foundation)
+| Old Label | Actual Content | New Stage.Code | Status |
+|---|---|---|---|
+| Alpha 1.01.1 | Database Core (create/open, header, base schemas) | 1.0.01–1.0.02 | ✅ Complete |
+| Alpha 1.01.2 | Page Management (FSM, buffer pool, LRU, dirty) | 1.0.03 | ✅ Complete |
+| Alpha 1.02 | System Catalog (schemas/tables/columns) | 1.0.04 | ✅ Complete |
+| Alpha 1.03 (aka 1.04) | Storage Engine (heap, tuples, scans) | 1.0.05 | ✅ Complete |
+| Alpha 1.04 | Transaction Foundation (XID, TIP, MVCC, C/R) | 1.0.06 | ✅ Complete |
+| Alpha 1.05 | Basic SQL Parser (baseline statements) | 1.0.07 | ✅ Complete |
 
-| AUTHORITATIVE_IMPLEMENTATION_PLAN.md | What We Called It | Actual Content | Status |
-|-------------------------------------|-------------------|----------------|---------|
-| Alpha 1.01 - Database Core | Alpha 1.01.1 + 1.01.2 | Database header, file creation, basic operations | ✅ Complete |
-| Alpha 1.02 - Page Management | (included in 1.01.2) | FSM, Buffer Pool, Page allocation | ✅ Complete |
-| Alpha 1.03 - Storage Engine | Alpha 1.04 | Heap pages, tuple storage, scanning | ✅ Complete |
-| Alpha 1.04 - Transaction Foundation | TBD | Transaction IDs, MVCC, Commit/Rollback | ✅ Next |
-| Alpha 1.05 - SQL Parser | - | SQL parsing, basic statements | 🔲 Current |
+## Stage 1 Overview (Planned)
+- 1.1: Extended Storage (64K/128K, compression, TOAST/LOB)
+- 1.2: Advanced SBLR (joins, subqueries, window functions)
+- 1.3: Concurrency (multi-threaded buffer pool, lock manager, deadlock)
+- 1.4: Advanced Indexes (bitmap, hash, parity path)
+- 1.5: Embedded API
+- 1.6: SBSQL Context-Aware Parser
+- 1.7: sb_isql_a embedded CLI
+- 1.8/1.9: Catch-up and hardening
 
-## What Actually Happened
-
-1. **Alpha 1.01** was split into two parts:
-   - **1.01.1**: Database Core (header, file creation)
-   - **1.01.2**: Page Management (which is actually Alpha 1.02 content)
-
-2. **System Catalog** was implemented:
-   - Not explicitly in the original plan as a separate phase
-   - We called it Alpha 1.03
-   - Contains schemas, tables, columns management
-
-3. **Storage Engine** was implemented:
-   - This is officially Alpha 1.03
-   - We incorrectly called it Alpha 1.04
-   - Contains heap pages, tuple operations
-
-## Going Forward
-
-To avoid further confusion, we should:
-
-### Option 1: Align with AUTHORITATIVE_IMPLEMENTATION_PLAN.md
-- Retroactively renumber our completed work
-- Call the next phase Alpha 1.04 (Transaction Foundation)
-- Update all documentation
-
-### Option 2: Continue with Our Numbering
-- Document the deviation clearly
-- Call the next phase Alpha 1.05 (Transaction Foundation)
-- Keep historical logs as-is
-
-### Recommendation: Option 1
-Align with the authoritative plan to reduce confusion:
-- Storage Engine = Alpha 1.03 (not 1.04)
-- Transaction Foundation = Alpha 1.04 (not 1.05)
-- SQL Parser = Alpha 1.05
+## Guidance
+- Use Stage codes going forward. Keep historical logs unchanged; reference this mapping.
+- Update documents to use Stage 0 for completed foundation and Stage 1 for upcoming work.
 
 ## Action Items
-1. Update progress logs to reflect correct numbering
-2. Use correct phase numbers going forward
-3. Reference this document when confusion arises
+1. Adjust `AUTHORITATIVE_IMPLEMENTATION_PLAN.md` to reference Stage 0 completion and Stage 1 plan.
+2. Update `PROJECT_STATUS.md` to Stage 0 complete, Stage 1 planning.
+3. Ensure tests and CI labels use Stage codes for new work.
 
 ## Summary for All Agents
-
-**Completed Phases:**
-- ✅ Alpha 1.01 - Database Core (including basic page management)
-- ✅ Alpha 1.02 - System Catalog (added, not in original plan)
-- ✅ Alpha 1.03 - Storage Engine (we called it 1.04)
-
-**Next Phase:**
-- 🎯 Alpha 1.04 - Transaction Foundation
-
-**Note**: The implementation is correct, only the numbering was confused.
+Completed foundation work is consolidated under Stage 0 (1.0.xx). Stage 1 planning is approved.
