@@ -73,6 +73,34 @@ From the plan:
 - All basic SQL functionality working correctly
 - Ready for Week 3: Semantic Analysis
 
+### December 2024 - Week 3: Semantic Analysis Implementation
+- Designed and implemented symbol table:
+  - Scope-based symbol management
+  - Table and column symbol tracking
+  - Hierarchical scope resolution
+- Implemented type checker:
+  - Type compatibility checking
+  - Type promotion rules (INTEGER→BIGINT→DOUBLE)
+  - Expression type inference
+  - Binary operation result types
+- Added semantic validation:
+  - CREATE TABLE: Duplicate table/column detection
+  - INSERT: Column existence, type checking, NOT NULL validation
+  - SELECT: Table/column resolution, expression validation
+  - WHERE clause type validation
+- Created comprehensive tests (17 tests, all passing)
+- Integrated into build system
+
+**Completed Tasks**:
+- ✓ Design symbol table for name resolution
+- ✓ Implement type checker
+- ✓ Validate CREATE TABLE statements
+- ✓ Validate INSERT statements  
+- ✓ Validate SELECT statements
+- ✓ Type checking and constraint validation
+
+**Status**: Semantic Analysis complete and tested ✓
+
 ## Test Requirements
 - [ ] Parse CREATE TABLE statements
 - [ ] Parse INSERT statements (single row)
