@@ -42,6 +42,31 @@ From the plan:
 
 **Status**: Lexer complete and tested ✓
 
+### December 2024 - Week 2: Parser and AST Implementation
+- Designed AST node hierarchy:
+  - Base classes: ASTNode, Statement, Expression
+  - Statement nodes: CreateTableStmt, InsertStmt, SelectStmt
+  - Expression nodes: LiteralExpr, IdentifierExpr, BinaryOpExpr
+  - Helper nodes: ColumnDef, SelectItem
+  - Arena allocator for memory management
+- Implemented recursive descent parser:
+  - Statement parsing for CREATE TABLE, INSERT, SELECT
+  - Expression parsing with proper precedence
+  - Error recovery and synchronization
+  - Location tracking for all nodes
+- Created AST visitor pattern with printer
+- Comprehensive parser tests (19/20 passing)
+- Integrated into build system
+
+**Completed Tasks**:
+- ✓ Design AST node hierarchy
+- ✓ Implement recursive descent parser
+- ✓ Parse CREATE TABLE statements
+- ✓ Parse INSERT statements
+- ✓ Parse SELECT statements
+
+**Status**: Parser complete and tested ✓
+
 ## Test Requirements
 - [ ] Parse CREATE TABLE statements
 - [ ] Parse INSERT statements (single row)
