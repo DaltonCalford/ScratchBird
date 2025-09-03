@@ -515,14 +515,19 @@ Status Database::read_page(uint32_t page_id, void* buffer, ErrorContext* ctx) {
     PageHeader* header = reinterpret_cast<PageHeader*>(buffer);
     
     if (header->magic != kMagicSBRD) {
+        SET_ERROR_CONTEXT(ctx, Status::PageCorrupt, "Invalid magic number");
         return Status::PageCorrupt;
     }
     
     if (header->page_id != page_id) {
+        char msg[256];
+        snprintf(msg, sizeof(msg), "Page ID mismatch: expected %u, got %u", page_id, header->page_id);
+        SET_ERROR_CONTEXT(ctx, Status::PageCorrupt, msg);
         return Status::PageCorrupt;
     }
     
     if (!validate_page_checksum(reinterpret_cast<uint8_t*>(buffer), page_size_)) {
+        SET_ERROR_CONTEXT(ctx, Status::ChecksumMismatch, "Checksum validation failed");
         return Status::ChecksumMismatch;
     }
     

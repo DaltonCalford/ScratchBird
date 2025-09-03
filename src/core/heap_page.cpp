@@ -126,11 +126,20 @@ Status HeapPage::get_tuple(uint16_t item_id, const uint8_t** data_out,
         return Status::NotFound;
     }
     
+    // Validate item pointer is within page bounds
+    uint32_t offset = items[item_id].offset;
+    uint32_t length = items[item_id].length;
+    
+    if (offset >= page_size_ || offset + length > page_size_) {
+        SET_ERROR_CONTEXT(ctx, Status::PageCorrupt, "Item pointer extends beyond page boundary");
+        return Status::PageCorrupt;
+    }
+    
     if (data_out) {
-        *data_out = page_data_ + items[item_id].offset;
+        *data_out = page_data_ + offset;
     }
     if (size_out) {
-        *size_out = items[item_id].length;
+        *size_out = length;
     }
     
     return Status::Ok;

@@ -232,15 +232,14 @@ TEST_F(PageManagementTest, BufferPoolDirtyPages) {
     uint32_t page_id;
     ASSERT_EQ(pm->allocate_page(page_id, &ctx), Status::Ok);
     
-    // Debug: print allocated page ID
-    std::cout << "Allocated page ID: " << page_id << std::endl;
-    
     // Pin and modify
     void* buffer;
     ASSERT_EQ(bp->pin_page(page_id, &buffer, &ctx), Status::Ok);
     
-    // Write some data
-    memset(buffer, 0xAB, 16384);
+    // Write some data (but preserve the page header!)
+    uint8_t* data_start = static_cast<uint8_t*>(buffer) + sizeof(PageHeader);
+    size_t data_size = 16384 - sizeof(PageHeader);
+    memset(data_start, 0xAB, data_size);
     
     // Unpin as dirty
     ASSERT_EQ(bp->unpin_page(page_id, true), Status::Ok);
@@ -250,8 +249,12 @@ TEST_F(PageManagementTest, BufferPoolDirtyPages) {
     
     // Verify data persisted
     uint8_t verify_buffer[16384];
-    ASSERT_EQ(db.read_page(page_id, verify_buffer, nullptr), Status::Ok);
-    EXPECT_EQ(verify_buffer[0], 0xAB);
+    ErrorContext read_ctx;
+    Status read_status = db.read_page(page_id, verify_buffer, &read_ctx);
+    ASSERT_EQ(read_status, Status::Ok) << "Failed to read page " << page_id << ": " << read_ctx.message;
+    
+    // Check data starts after header
+    EXPECT_EQ(verify_buffer[sizeof(PageHeader)], 0xAB);
     EXPECT_EQ(verify_buffer[16383], 0xAB);
 }
 
