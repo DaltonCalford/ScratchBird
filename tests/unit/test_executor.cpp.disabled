@@ -1,0 +1,266 @@
+#include <gtest/gtest.h>
+#include "scratchbird/core/database.h"
+#include "scratchbird/parser/parser.h"
+#include "scratchbird/sblr/bytecode_generator.h"
+#include "scratchbird/sblr/executor.h"
+#include <filesystem>
+
+using namespace scratchbird::core;
+using namespace scratchbird::parser;
+using namespace scratchbird::sblr;
+
+class ExecutorTest : public ::testing::Test {
+protected:
+    void SetUp() override {
+        // Create test database
+        test_db_path_ = std::filesystem::temp_directory_path() / "test_executor.db";
+        std::filesystem::remove(test_db_path_);
+        
+        ErrorContext ctx;
+        db_ = std::make_unique<Database>();
+        ASSERT_EQ(db_->create(test_db_path_.string(), &ctx), Status::Ok)
+            << ctx.error_message;
+    }
+    
+    void TearDown() override {
+        db_.reset();
+        std::filesystem::remove(test_db_path_);
+    }
+    
+    std::vector<uint8_t> compileSQL(const std::string& sql) {
+        Lexer lexer(sql);
+        ASTArena arena;
+        Parser parser(lexer, arena);
+        
+        auto parse_result = parser.parseStatement();
+        if (!parse_result.success()) {
+            return {};
+        }
+        
+        BytecodeGenerator generator(parser.stringPool());
+        auto bytecode_result = generator.generate(parse_result.statement());
+        
+        return bytecode_result.bytecode();
+    }
+    
+    ExecutionResult executeSQL(const std::string& sql) {
+        auto bytecode = compileSQL(sql);
+        if (bytecode.empty()) {
+            return ExecutionResult("Failed to compile SQL");
+        }
+        
+        Executor executor(db_.get());
+        return executor.execute(bytecode);
+    }
+    
+protected:
+    std::filesystem::path test_db_path_;
+    std::unique_ptr<Database> db_;
+};
+
+// ===== CREATE TABLE Tests =====
+
+TEST_F(ExecutorTest, CreateTableSimple) {
+    auto result = executeSQL("CREATE TABLE users (id INTEGER NOT NULL)");
+    EXPECT_TRUE(result.success()) << result.error();
+    
+    // Verify table was created
+    ErrorContext ctx;
+    CatalogManager::TableInfo table_info;
+    EXPECT_EQ(db_->catalog_manager()->get_table("main", "users", table_info, &ctx), Status::Ok);
+    EXPECT_EQ(table_info.table_name, "users");
+    EXPECT_EQ(table_info.columns.size(), 1u);
+    EXPECT_EQ(table_info.columns[0].name, "id");
+    EXPECT_EQ(table_info.columns[0].type, CatalogManager::DataType::INTEGER);
+    EXPECT_FALSE(table_info.columns[0].nullable);
+}
+
+TEST_F(ExecutorTest, CreateTableMultipleColumns) {
+    auto result = executeSQL("CREATE TABLE products ("
+                           "id BIGINT NOT NULL, "
+                           "name VARCHAR(100), "
+                           "price DOUBLE"
+                           ")");
+    EXPECT_TRUE(result.success()) << result.error();
+    
+    ErrorContext ctx;
+    CatalogManager::TableInfo table_info;
+    EXPECT_EQ(db_->catalog_manager()->get_table("main", "products", table_info, &ctx), Status::Ok);
+    EXPECT_EQ(table_info.columns.size(), 3u);
+}
+
+TEST_F(ExecutorTest, CreateTableDuplicate) {
+    auto result1 = executeSQL("CREATE TABLE test (id INTEGER)");
+    EXPECT_TRUE(result1.success());
+    
+    auto result2 = executeSQL("CREATE TABLE test (id INTEGER)");
+    EXPECT_FALSE(result2.success());
+    EXPECT_NE(result2.error().find("already exists"), std::string::npos);
+}
+
+// ===== INSERT Tests =====
+
+TEST_F(ExecutorTest, InsertSimple) {
+    // Create table first
+    auto create_result = executeSQL("CREATE TABLE users (id INTEGER, name VARCHAR(50))");
+    ASSERT_TRUE(create_result.success());
+    
+    // Insert row
+    auto insert_result = executeSQL("INSERT INTO users (id, name) VALUES (1, 'John')");
+    EXPECT_TRUE(insert_result.success()) << insert_result.error();
+}
+
+TEST_F(ExecutorTest, InsertAllTypes) {
+    auto create_result = executeSQL("CREATE TABLE test ("
+                                  "i INTEGER, "
+                                  "b BIGINT, "
+                                  "d DOUBLE, "
+                                  "s VARCHAR(100)"
+                                  ")");
+    ASSERT_TRUE(create_result.success());
+    
+    auto insert_result = executeSQL("INSERT INTO test (i, b, d, s) "
+                                  "VALUES (42, 9999999999, 3.14159, 'Hello World')");
+    EXPECT_TRUE(insert_result.success()) << insert_result.error();
+}
+
+TEST_F(ExecutorTest, InsertNull) {
+    auto create_result = executeSQL("CREATE TABLE nullable (id INTEGER, data VARCHAR(50))");
+    ASSERT_TRUE(create_result.success());
+    
+    auto insert_result = executeSQL("INSERT INTO nullable (id, data) VALUES (1, NULL)");
+    EXPECT_TRUE(insert_result.success()) << insert_result.error();
+}
+
+TEST_F(ExecutorTest, InsertExpressions) {
+    auto create_result = executeSQL("CREATE TABLE calc (result INTEGER)");
+    ASSERT_TRUE(create_result.success());
+    
+    auto insert_result = executeSQL("INSERT INTO calc (result) VALUES (10 + 20 * 3)");
+    EXPECT_TRUE(insert_result.success()) << insert_result.error();
+}
+
+TEST_F(ExecutorTest, InsertTableNotFound) {
+    auto result = executeSQL("INSERT INTO nonexistent (id) VALUES (1)");
+    EXPECT_FALSE(result.success());
+    EXPECT_NE(result.error().find("not found"), std::string::npos);
+}
+
+// ===== SELECT Tests =====
+
+TEST_F(ExecutorTest, SelectEmpty) {
+    auto create_result = executeSQL("CREATE TABLE empty (id INTEGER)");
+    ASSERT_TRUE(create_result.success());
+    
+    auto select_result = executeSQL("SELECT * FROM empty");
+    ASSERT_TRUE(select_result.success()) << select_result.error();
+    ASSERT_TRUE(select_result.hasResultSet());
+    
+    auto* rs = select_result.resultSet();
+    EXPECT_EQ(rs->columnCount(), 1u);
+    EXPECT_EQ(rs->columnName(0), "id");
+    EXPECT_EQ(rs->rowCount(), 0u);
+}
+
+TEST_F(ExecutorTest, SelectWithData) {
+    // Create and populate table
+    ASSERT_TRUE(executeSQL("CREATE TABLE users (id INTEGER, name VARCHAR(50))").success());
+    ASSERT_TRUE(executeSQL("INSERT INTO users (id, name) VALUES (1, 'Alice')").success());
+    ASSERT_TRUE(executeSQL("INSERT INTO users (id, name) VALUES (2, 'Bob')").success());
+    
+    // Select all
+    auto result = executeSQL("SELECT * FROM users");
+    ASSERT_TRUE(result.success()) << result.error();
+    ASSERT_TRUE(result.hasResultSet());
+    
+    auto* rs = result.resultSet();
+    EXPECT_EQ(rs->columnCount(), 2u);
+    EXPECT_EQ(rs->rowCount(), 2u);
+    
+    // Check first row
+    EXPECT_EQ(rs->getValue(0, 0).toInt64(), 1);
+    EXPECT_EQ(rs->getValue(0, 1).toString(), "Alice");
+    
+    // Check second row
+    EXPECT_EQ(rs->getValue(1, 0).toInt64(), 2);
+    EXPECT_EQ(rs->getValue(1, 1).toString(), "Bob");
+}
+
+TEST_F(ExecutorTest, SelectSpecificColumns) {
+    ASSERT_TRUE(executeSQL("CREATE TABLE test (a INTEGER, b INTEGER, c INTEGER)").success());
+    ASSERT_TRUE(executeSQL("INSERT INTO test (a, b, c) VALUES (1, 2, 3)").success());
+    
+    auto result = executeSQL("SELECT a, c FROM test");
+    ASSERT_TRUE(result.success()) << result.error();
+    ASSERT_TRUE(result.hasResultSet());
+    
+    auto* rs = result.resultSet();
+    EXPECT_EQ(rs->columnCount(), 2u);
+    EXPECT_EQ(rs->columnName(0), "a");
+    EXPECT_EQ(rs->columnName(1), "c");
+    EXPECT_EQ(rs->getValue(0, 0).toInt64(), 1);
+    EXPECT_EQ(rs->getValue(0, 1).toInt64(), 3);
+}
+
+// ===== Integration Tests =====
+
+TEST_F(ExecutorTest, CompleteWorkflow) {
+    // Create table
+    auto create = executeSQL("CREATE TABLE employees ("
+                           "id INTEGER NOT NULL, "
+                           "name VARCHAR(100), "
+                           "salary DOUBLE"
+                           ")");
+    ASSERT_TRUE(create.success()) << create.error();
+    
+    // Insert data
+    std::vector<std::string> inserts = {
+        "INSERT INTO employees (id, name, salary) VALUES (1, 'Alice', 50000.0)",
+        "INSERT INTO employees (id, name, salary) VALUES (2, 'Bob', 60000.0)",
+        "INSERT INTO employees (id, name, salary) VALUES (3, 'Charlie', 55000.0)"
+    };
+    
+    for (const auto& sql : inserts) {
+        auto result = executeSQL(sql);
+        ASSERT_TRUE(result.success()) << sql << " failed: " << result.error();
+    }
+    
+    // Select and verify
+    auto select = executeSQL("SELECT * FROM employees");
+    ASSERT_TRUE(select.success()) << select.error();
+    ASSERT_TRUE(select.hasResultSet());
+    
+    auto* rs = select.resultSet();
+    EXPECT_EQ(rs->rowCount(), 3u);
+    
+    // Print results
+    std::stringstream ss;
+    rs->print(ss);
+    std::cout << "\nQuery Results:\n" << ss.str() << std::endl;
+}
+
+TEST_F(ExecutorTest, MixedDataTypes) {
+    auto create = executeSQL("CREATE TABLE mixed ("
+                           "int_col INTEGER, "
+                           "bigint_col BIGINT, "
+                           "double_col DOUBLE, "
+                           "string_col VARCHAR(50)"
+                           ")");
+    ASSERT_TRUE(create.success());
+    
+    auto insert = executeSQL("INSERT INTO mixed (int_col, bigint_col, double_col, string_col) "
+                           "VALUES (42, 1234567890123, 3.14159, 'Test String')");
+    ASSERT_TRUE(insert.success());
+    
+    auto select = executeSQL("SELECT * FROM mixed");
+    ASSERT_TRUE(select.success());
+    ASSERT_TRUE(select.hasResultSet());
+    
+    auto* rs = select.resultSet();
+    ASSERT_EQ(rs->rowCount(), 1u);
+    
+    EXPECT_EQ(rs->getValue(0, 0).toInt64(), 42);
+    EXPECT_EQ(rs->getValue(0, 1).toInt64(), 1234567890123);
+    EXPECT_NEAR(rs->getValue(0, 2).toDouble(), 3.14159, 0.00001);
+    EXPECT_EQ(rs->getValue(0, 3).toString(), "Test String");
+}
