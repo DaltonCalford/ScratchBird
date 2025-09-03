@@ -25,7 +25,7 @@ struct PageHeader {
 	uint32_t magic;        // 0x00 'SBRD'
 	uint16_t version;      // 0x04 format version
 	uint16_t page_type;    // 0x06 PageType
-	uint32_t page_size;    // 0x08 8192|16384|32768
+	uint32_t page_size;    // 0x08 8192|16384|32768|65536|131072
 	uint32_t checksum;     // 0x0C CRC32C of [0x10..page_size)
 
 	uint64_t lsn;          // 0x10
@@ -61,7 +61,8 @@ inline bool validate_page_checksum(const uint8_t* page, uint32_t page_size) {
 }
 
 inline bool is_valid_alpha_page_size(uint32_t page_size) {
-	return page_size == 8192u || page_size == 16384u || page_size == 32768u;
+	return page_size == 8192u || page_size == 16384u || page_size == 32768u ||
+	       page_size == 65536u || page_size == 131072u;
 }
 
 } // namespace core

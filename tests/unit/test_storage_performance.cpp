@@ -61,7 +61,7 @@ protected:
 TEST_F(StoragePerformanceTest, SequentialInsertBenchmark) {
     print_benchmark_header();
     
-    const std::vector<uint32_t> page_sizes = {8192, 16384, 32768};
+    const std::vector<uint32_t> page_sizes = {8192, 16384, 32768, 65536, 131072};
     const std::vector<size_t> tuple_sizes = {100, 500, 1000, 2000};
     const int num_tuples = 5000;
     
@@ -341,7 +341,7 @@ TEST_F(StoragePerformanceTest, MixedWorkloadBenchmark) {
 TEST_F(StoragePerformanceTest, PageFillEfficiencyBenchmark) {
     std::cout << "\n\n=== Page Fill Efficiency Benchmark ===\n";
     
-    const std::vector<uint32_t> page_sizes = {8192, 16384, 32768};
+    const std::vector<uint32_t> page_sizes = {8192, 16384, 32768, 65536, 131072};
     const std::vector<size_t> tuple_sizes = {50, 100, 200, 500, 1000};
     
     for (uint32_t page_size : page_sizes) {

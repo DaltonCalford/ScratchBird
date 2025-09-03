@@ -189,7 +189,7 @@ TEST_F(StorageBoundaryTest, TupleOffsetBoundaries) {
 
 // Test page size boundaries (8KB, 16KB, 32KB)
 TEST_F(StorageBoundaryTest, AllValidPageSizes) {
-    const uint32_t page_sizes[] = {8192, 16384, 32768};
+    const uint32_t page_sizes[] = {8192, 16384, 32768, 65536, 131072};
     
     for (uint32_t page_size : page_sizes) {
         std::string db_name = "test_boundary_" + std::to_string(page_size) + ".db";

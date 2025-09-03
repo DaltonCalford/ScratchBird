@@ -73,7 +73,7 @@ Status Database::create(const std::string& path, uint32_t page_size, ErrorContex
     
     // Validate page size
     if (!is_valid_alpha_page_size(page_size)) {
-        SET_ERROR_CONTEXT(ctx, Status::InvalidArgument, "Invalid page size: must be 8192, 16384, or 32768");
+        SET_ERROR_CONTEXT(ctx, Status::InvalidArgument, "Invalid page size: must be 8192, 16384, 32768, 65536, or 131072");
         return Status::InvalidArgument;
     }
     
