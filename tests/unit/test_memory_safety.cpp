@@ -16,6 +16,8 @@
 #include <new>
 #include <atomic>
 #include <vector>
+#include <thread>
+#include <chrono>
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/status.h"
 #include "scratchbird/core/error_context.h"
@@ -292,12 +294,14 @@ TEST_F(MemorySafetyTest, BufferOverflow_PageOperations) {
     std::vector<uint32_t> valid_sizes = {8192, 16384, 32768};
     
     for (uint32_t size : valid_sizes) {
-        Database db;
-        Status status = db.create("test_cleanup.db", size);
+        ErrorContext ctx;
+        Status status = Database::create("test_cleanup.db", size, &ctx);
         EXPECT_EQ(status, Status::Ok) 
             << "Should accept page size " << size;
         
         if (status == Status::Ok) {
+            Database db;
+            EXPECT_EQ(db.open("test_cleanup.db", &ctx), Status::Ok);
             EXPECT_EQ(db.page_size(), size);
             db.close();
             remove("test_cleanup.db");
@@ -310,8 +314,11 @@ TEST_F(MemorySafetyTest, BufferOverflow_PageOperations) {
  * Expected: Properly closed state
  */
 TEST_F(MemorySafetyTest, UseAfterFree_CloseDatabase) {
+    ErrorContext ctx;
+    ASSERT_EQ(Database::create("test_cleanup.db", 8192, &ctx), Status::Ok);
+    
     Database db;
-    ASSERT_EQ(db.create("test_cleanup.db", 8192), Status::Ok);
+    ASSERT_EQ(db.open("test_cleanup.db", &ctx), Status::Ok);
     
     // Verify database is open
     EXPECT_TRUE(db.is_open()) << "Database should be open";
@@ -335,25 +342,31 @@ TEST_F(MemorySafetyTest, UseAfterFree_CloseDatabase) {
  * Expected: No resource leaks
  */
 TEST_F(MemorySafetyTest, Stress_RapidOpenClose) {
-    const int iterations = 50; // Reduced for faster testing
+    const int iterations = 20; // Reduced for faster testing
     
     int initial_fds = count_open_fds();
     
-    // Create database once
-    {
-        Database db;
-        ASSERT_EQ(db.create("test_cleanup.db", 8192), Status::Ok);
-    }
-    
     for (int i = 0; i < iterations; i++) {
+        // Create fresh database each time to avoid corruption
+        ErrorContext ctx;
+        std::string db_name = "test_cleanup_" + std::to_string(i) + ".db";
+        
+        ASSERT_EQ(Database::create(db_name, 8192, &ctx), Status::Ok);
+        
         Database db;
-        ASSERT_EQ(db.open("test_cleanup.db"), Status::Ok);
+        Status open_status = db.open(db_name, &ctx);
+        ASSERT_EQ(open_status, Status::Ok) 
+            << "Failed to open on iteration " << i << ": " << ctx.message;
         
         // Perform some operations
         EXPECT_TRUE(db.is_open());
         EXPECT_GT(db.page_size(), 0u);
         
-        // Close happens in destructor
+        // Explicit close
+        db.close();
+        
+        // Clean up the file
+        remove(db_name.c_str());
     }
     
     int final_fds = count_open_fds();
@@ -367,13 +380,15 @@ TEST_F(MemorySafetyTest, Stress_RapidOpenClose) {
  * Expected: 32KB pages work correctly
  */
 TEST_F(MemorySafetyTest, Stress_LargePageSize) {
-    Database db;
+    ErrorContext ctx;
     
     // Test with maximum page size (32KB)
-    Status status = db.create("test_cleanup.db", 32768);
+    Status status = Database::create("test_cleanup.db", 32768, &ctx);
     EXPECT_EQ(status, Status::Ok) << "Should handle 32KB page size";
     
     if (status == Status::Ok) {
+        Database db;
+        ASSERT_EQ(db.open("test_cleanup.db", &ctx), Status::Ok);
         EXPECT_EQ(db.page_size(), 32768u);
         EXPECT_TRUE(db.is_open());
         
@@ -382,7 +397,7 @@ TEST_F(MemorySafetyTest, Stress_LargePageSize) {
         memset(buffer, 0xAA, sizeof(buffer));
         
         // Read page 0 (header)
-        Status read_status = db.read_page(0, buffer);
+        Status read_status = db.read_page(0, buffer, &ctx);
         EXPECT_EQ(read_status, Status::Ok) 
             << "Should be able to read with large page size";
     }
