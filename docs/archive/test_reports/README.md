@@ -33,4 +33,4 @@ As of the latest fixes:
 - Database corruption on reopen fixed
 - ErrorContext properly implemented throughout
 
-For current test status, see the main test reports in the parent directory.
+For current test status, see the reports in docs/issues/ directory.
