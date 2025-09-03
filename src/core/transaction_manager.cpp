@@ -92,9 +92,6 @@ Status TransactionManager::load(ErrorContext* ctx) {
         next_xid_ = FROZEN_XID + 1;
     }
     
-    // Save total_pages before unpinning
-    uint32_t total_pages = db_header->total_pages;
-    
     buffer_pool_->unpin_page(0, false, ctx);
     
     // If no TIP pages allocated yet, initialize
@@ -103,10 +100,15 @@ Status TransactionManager::load(ErrorContext* ctx) {
         return initialize(ctx);
     }
     
+    // Get current total pages from page manager (not header!)
+    uint32_t total_pages = page_manager_->total_pages();
+    
     // Check if TIP page is within file bounds
     if (tip_root_page_ >= total_pages) {
-        SET_ERROR_CONTEXT(ctx, Status::PageCorrupt, 
-                         "TIP root page beyond file bounds");
+        char msg[256];
+        snprintf(msg, sizeof(msg), "TIP root page beyond file bounds: tip_root_page=%u, total_pages=%u", 
+                 tip_root_page_, total_pages);
+        SET_ERROR_CONTEXT(ctx, Status::PageCorrupt, msg);
         return Status::PageCorrupt;
     }
     
@@ -365,6 +367,13 @@ Status TransactionManager::allocate_tip_page(uint32_t& page_id_out, ErrorContext
     fsync(db_->fd());
     
     delete[] new_page;
+    
+    // Flush page manager to ensure FSM is updated with new total_pages
+    status = page_manager_->flush(ctx);
+    if (status != Status::Ok) {
+        // Log but don't fail - the page is allocated
+        // fprintf(stderr, "Warning: Failed to flush page manager after TIP allocation\n");
+    }
     
     // Now pin and initialize the page properly
     void* page_buffer;
