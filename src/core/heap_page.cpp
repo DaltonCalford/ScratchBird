@@ -1,5 +1,6 @@
 #include "scratchbird/core/heap_page.h"
 #include "scratchbird/core/error_context.h"
+#include "scratchbird/core/ondisk.h"
 #include <cstring>
 #include <algorithm>
 
@@ -10,6 +11,13 @@ HeapPage::HeapPage(uint8_t* page_data, uint32_t page_size)
     : page_data_(page_data), page_size_(page_size) {}
 
 Status HeapPage::initialize(uint32_t page_id, ErrorContext* ctx) {
+    // Validate page size
+    if (!is_valid_alpha_page_size(page_size_)) {
+        SET_ERROR_CONTEXT(ctx, Status::InvalidArgument, 
+                         "Invalid page size for heap page: " + std::to_string(page_size_));
+        return Status::InvalidArgument;
+    }
+    
     // Initialize page header
     PageHeader* hdr = header();
     
