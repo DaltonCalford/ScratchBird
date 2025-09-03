@@ -14,7 +14,7 @@ Status HeapPage::initialize(uint32_t page_id, ErrorContext* ctx) {
     // Validate page size
     if (!is_valid_alpha_page_size(page_size_)) {
         SET_ERROR_CONTEXT(ctx, Status::InvalidArgument, 
-                         "Invalid page size for heap page: " + std::to_string(page_size_));
+                         "Invalid page size for heap page");
         return Status::InvalidArgument;
     }
     
@@ -34,6 +34,12 @@ Status HeapPage::initialize(uint32_t page_id, ErrorContext* ctx) {
         hdr->free_space = 0;  // Will be calculated
         hdr->free_offset = sizeof(PageHeader);
         hdr->special_size = sizeof(HeapPageSpecial);
+    } else {
+        // Page already initialized - validate and correct page size if needed
+        if (hdr->page_size != page_size_) {
+            // Correct the mismatch - the buffer size is authoritative
+            hdr->page_size = page_size_;
+        }
     }
     
     // Initialize special area
