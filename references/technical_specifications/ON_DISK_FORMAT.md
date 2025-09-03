@@ -3,6 +3,7 @@
 
 ### Version History
 - v1.0.0 - Initial specification for Alpha 1.01
+- v1.1.0 - Stage 1.1: Added 64KB/128KB page support with extended structures
 
 ---
 
@@ -28,7 +29,7 @@ typedef struct PageHeader {
     uint32_t magic;           // 0x00: Must be 0x53425244 ('SBRD')
     uint16_t version;         // 0x04: Format version (1 for Alpha)
     uint16_t page_type;       // 0x06: PageType enum value
-    uint32_t page_size;       // 0x08: 8192|16384|32768 ONLY in Alpha
+    uint32_t page_size;       // 0x08: 8192|16384|32768|65536|131072 (Stage 1.1 added 64K/128K)
     uint32_t checksum;        // 0x0C: CRC32C of bytes [0x10..page_size)
     
     // Location (16 bytes)
@@ -179,14 +180,42 @@ typedef struct HeapPage {
     ItemPointer items[];         // Array of item pointers
     // ... free space ...
     // ... tuple data grows backward from end ...
+    HeapPageSpecial special;     // Special area at page end
 } HeapPage;
 
+// Special area at the end of heap pages (Stage 0)
+typedef struct HeapPageSpecial {
+    uint16_t pd_flags;      // Page flags
+    uint16_t pd_lower;      // Offset to start of free space
+    uint16_t pd_upper;      // Offset to end of free space  
+    uint16_t pd_special;    // Offset to start of special area
+    uint64_t pd_prune_xid;  // Oldest XID for pruning
+} HeapPageSpecial;
+
+// Stage 1.1 Extended HeapPageSpecial for pages > 64KB
+typedef struct HeapPageSpecialExtended {
+    uint16_t pd_flags;      // Page flags
+    uint16_t reserved;      // Reserved for alignment
+    uint32_t pd_lower;      // Offset to start of free space (supports up to 4GB)
+    uint32_t pd_upper;      // Offset to end of free space
+    uint32_t pd_special;    // Offset to start of special area
+    uint64_t pd_prune_xid;  // Oldest XID for pruning
+} HeapPageSpecialExtended;
+
 // Item pointer - points to tuple on page
+// NOTE: Stage 1.1 extends this to 32-bit fields for 64KB/128KB page support
 typedef struct ItemPointer {
     uint16_t offset;    // Offset from page start (must be >= sizeof(PageHeader))
-    uint16_t length;    // Length of tuple data
+    uint16_t length;    // Length of tuple data  
     uint16_t flags;     // Item flags
 } ItemPointer;
+
+// Stage 1.1 Extended ItemPointer for pages > 64KB
+typedef struct ItemPointerExtended {
+    uint32_t offset;    // Offset from page start (supports up to 4GB pages)
+    uint32_t length: 31;// Length of tuple data (max ~2GB)
+    uint32_t flags: 1;  // 0 = normal, 1 = deleted
+} ItemPointerExtended;
 
 // Item flags
 #define ITEM_FLAG_NORMAL  0x0000  // Normal tuple

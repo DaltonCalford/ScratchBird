@@ -15,11 +15,11 @@ struct ErrorContext;
 // Points to actual tuple data within the page
 #pragma pack(push, 1)
 struct ItemPointer {
-    uint16_t offset;     // Offset from start of page
-    uint16_t length : 15; // Length of tuple (max ~32KB)
-    uint16_t flags : 1;   // 0 = normal, 1 = deleted
+    uint32_t offset;     // Offset from start of page (supports up to 4GB pages)
+    uint32_t length : 31; // Length of tuple (max ~2GB)
+    uint32_t flags : 1;   // 0 = normal, 1 = deleted
     
-    static constexpr uint16_t FLAG_DELETED = 0x8000;
+    static constexpr uint32_t FLAG_DELETED = 0x80000000;
     
     bool is_deleted() const { return flags & 1; }
     void set_deleted(bool deleted) { flags = deleted ? 1 : 0; }
@@ -46,9 +46,10 @@ struct TupleHeader {
 #pragma pack(push, 1)
 struct HeapPageSpecial {
     uint16_t pd_flags;      // Page flags
-    uint16_t pd_lower;      // Offset to start of free space
-    uint16_t pd_upper;      // Offset to end of free space
-    uint16_t pd_special;    // Offset to start of special area
+    uint16_t reserved;      // Reserved for alignment
+    uint32_t pd_lower;      // Offset to start of free space (supports up to 4GB pages)
+    uint32_t pd_upper;      // Offset to end of free space
+    uint32_t pd_special;    // Offset to start of special area
     uint64_t pd_prune_xid;  // Oldest XID for pruning
 };
 #pragma pack(pop)

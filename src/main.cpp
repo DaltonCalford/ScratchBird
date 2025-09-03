@@ -5,6 +5,7 @@
 #include <sstream>
 #include <iomanip>
 #include "scratchbird/core/database.h"
+#include "scratchbird/core/ondisk.h"
 #include "scratchbird/version.h"
 
 using namespace scratchbird::core;
@@ -53,8 +54,8 @@ int main(int argc, char* argv[]) {
         }
         
         // Validate page size
-        if (page_size != 8192 && page_size != 16384 && page_size != 32768) {
-            std::cerr << "Error: Invalid page size. Must be 8192, 16384, or 32768\n";
+        if (!is_valid_alpha_page_size(page_size)) {
+            std::cerr << "Error: Invalid page size. Must be 8192, 16384, 32768, 65536, or 131072\n";
             return 1;
         }
         
