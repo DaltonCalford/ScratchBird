@@ -10,8 +10,8 @@ There has been confusion in phase numbering between what's documented in AUTHORI
 | Alpha 1.01 - Database Core | Alpha 1.01.1 + 1.01.2 | Database header, file creation, basic operations | ✅ Complete |
 | Alpha 1.02 - Page Management | (included in 1.01.2) | FSM, Buffer Pool, Page allocation | ✅ Complete |
 | Alpha 1.03 - Storage Engine | Alpha 1.04 | Heap pages, tuple storage, scanning | ✅ Complete |
-| Alpha 1.04 - Transaction Foundation | TBD | Transaction IDs, MVCC, Commit/Rollback | 🔲 Next |
-| Alpha 1.05 - SQL Parser | - | SQL parsing, basic statements | 🔲 Future |
+| Alpha 1.04 - Transaction Foundation | TBD | Transaction IDs, MVCC, Commit/Rollback | ✅ Next |
+| Alpha 1.05 - SQL Parser | - | SQL parsing, basic statements | 🔲 Current |
 
 ## What Actually Happened
 
