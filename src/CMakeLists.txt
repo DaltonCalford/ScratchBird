@@ -41,10 +41,34 @@ set_target_properties(scratchbird_parser PROPERTIES
     POSITION_INDEPENDENT_CODE ON
 )
 
+# SBLR library: scratchbird_sblr
+file(GLOB_RECURSE SCRATCHBIRD_SBLR_SOURCES
+    sblr/*.cpp
+)
+
+add_library(scratchbird_sblr STATIC
+    ${SCRATCHBIRD_SBLR_SOURCES}
+)
+
+target_include_directories(scratchbird_sblr PUBLIC
+    ${CMAKE_SOURCE_DIR}/include
+)
+
+target_link_libraries(scratchbird_sblr PUBLIC
+    scratchbird_parser
+)
+
+set_target_properties(scratchbird_sblr PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED YES
+    CXX_EXTENSIONS NO
+    POSITION_INDEPENDENT_CODE ON
+)
+
 # Main executable (placeholder)
 add_executable(scratchbird main.cpp)
 
-target_link_libraries(scratchbird PRIVATE scratchbird_core scratchbird_parser)
+target_link_libraries(scratchbird PRIVATE scratchbird_core scratchbird_parser scratchbird_sblr)
 
 set_target_properties(scratchbird PROPERTIES
     CXX_STANDARD 17
@@ -53,7 +77,7 @@ set_target_properties(scratchbird PROPERTIES
 )
 
 # Installation (for future use)
-install(TARGETS scratchbird scratchbird_core scratchbird_parser
+install(TARGETS scratchbird scratchbird_core scratchbird_parser scratchbird_sblr
     RUNTIME DESTINATION bin
     ARCHIVE DESTINATION lib
     LIBRARY DESTINATION lib
