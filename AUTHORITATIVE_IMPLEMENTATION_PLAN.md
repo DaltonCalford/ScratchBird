@@ -15,9 +15,23 @@ Any implementation MUST follow this plan. All other planning documents are DEPRE
 
 ---
 
-## Alpha Phase (Current Focus)
+## Alpha Phase (Stage Model)
 
-### Alpha 1.01 - Foundation ✅ CURRENT TARGET
+### Stage Adoption
+- We adopt a Stage-based numbering: `1.x.yy` where `1`=Alpha, `x`=Stage, `yy`=phase.
+- Stage 0 (1.0.xx) consolidates completed foundation work.
+- Stage 1 (1.1–1.9) prepares for Beta by completing embedded, non-network capabilities.
+
+### Stage 0 Summary — Foundation (Completed)
+The following Alpha foundations were implemented under Stage 0 (1.0.xx):
+- 1.0.01–1.0.02: Database Core (create/open, header, base schemas)
+- 1.0.03: Page Management (FSM, buffer pool, LRU, dirty pages)
+- 1.0.04: System Catalog (schemas/tables/columns)
+- 1.0.05: Storage Engine (heap, tuples, scans)
+- 1.0.06: Transaction Foundation (XID, TIP, MVCC, commit/rollback)
+- 1.0.07: Basic SQL Parser (baseline statements)
+
+### Alpha 1.01 - Foundation
 **Goal**: Create and open database files with proper structure
 
 **Deliverables**:
@@ -62,7 +76,8 @@ Planned (defined later phases):
 - sys.version_control_log (object_uuid, version, change_time, author, summary)
 
 **Technical Requirements**:
-- Page sizes: **8192, 16384, 32768 ONLY** (64K/128K deferred to Beta)
+- Stage 0 page sizes: **8192, 16384, 32768**
+- Stage 1.1 adds: **65536, 131072** (64K, 128K)
 - UUID: **v7 ONLY** (no v4 support)
 - Checksum: **CRC32C (Castagnoli)** with little-endian storage
 - File format: See `references/technical_specifications/ON_DISK_FORMAT.md`
@@ -145,11 +160,12 @@ TEST(Alpha101, ValidateHeader) {
 
 ### Parser/Router Architecture (Authoritative Summary)
 
+- Network listener and Y‑Valve are out of scope for Stage 1 (embedded focus). The below architecture remains a long-term target.
 - The ScratchBird listener accepts connections and performs minimal protocol detection.
 - The Y‑Valve routes the connection by spawning/assigning a per‑connection parser process and transferring the socket to it.
 - The parser process speaks the client's native protocol on the frontend, translates to BLR, and invokes the engine API on the backend.
 - The Y‑Valve/listener are not in the steady‑state data path after handoff.
-- First delivery: ScratchBird native parser & protocol; others (PostgreSQL/MySQL/Firebird) follow in later phases.
+- First delivery for networking occurs post‑Stage 1: ScratchBird native parser & protocol; others (PostgreSQL/MySQL/Firebird) follow later.
 
 #### Connection Flow Diagram
 
@@ -179,21 +195,18 @@ Control plane: Listener/Y‑Valve supervise lifecycles, policy, observability
 
 ## Beta Phase (Future)
 
-### Beta 2.01 - Extended Storage
-- 64KB and 128KB page sizes
-- Compression
-- TOAST/LOB support
+### Beta 2.01 - Networking & Protocol Routing
+- Listener and Y‑Valve enable network access
+- Native ScratchBird wire protocol
+- Observability and supervision for parser processes
 
-### Beta 2.02 - Concurrency
-- Multi-threaded buffer pool
-- Lock manager
-- Deadlock detection
+### Beta 2.02 - Cross‑Protocol Parsers
+- PostgreSQL wire compatibility (target 80%)
+- MySQL and Firebird protocol adapters (incremental)
 
-### Beta 2.03 - Advanced SQL
-- Joins
-- Subqueries
-- Window functions
-- CTEs
+### Beta 2.03 - Distributed & Replication Foundations
+- WAL integration strategy and durability guarantees
+- Replication protocol outline and initial tooling
 
 ---
 
@@ -225,19 +238,19 @@ See `references/technical_specifications/PERFORMANCE_BENCHMARKS.md` for hardware
 4. Update METRICS.md weekly
 
 ### MUST NOT:
-1. Implement Beta features in Alpha
+1. Implement network/distributed features in Stage 1
 2. Use UUID v4 (v7 only)
-3. Support 64K/128K pages in Alpha
+3. Introduce incompatible on‑disk changes without migration notes
 4. Add distributed features before Release 3.0
 
 ---
 
 ## Quick Reference
 
-### Current Phase: Alpha 1.01
-### Next Milestone: Database file creation
+### Current Phase: Stage 1 Planning
+### Next Milestone: Stage 1.1 — Extended Storage (64K/128K, compression, TOAST/LOB)
 ### Blocking Issues: See CRITICAL_REMEDIATION_PLAN.md
-### Test Command: `ctest --test-dir build -R Alpha101`
+### Test Command: `ctest --test-dir build`
 
 ---
 
@@ -246,5 +259,10 @@ See `references/technical_specifications/PERFORMANCE_BENCHMARKS.md` for hardware
 The following documents are kept for historical reference only:
 - `ProjectPlan/archive/` - Old planning documents
 - Individual `Phase_XX.md` files - Superseded by this document
+
+Additional references adopted with Stage model:
+- `ProjectPlan/ALPHA_STAGE_1_PLAN.md` — Stage 1 breakdown and criteria
+- `ProjectPlan/PHASE_NUMBERING_RECONCILIATION.md` — Mapping old numbering to Stage codes
+- `ProjectPlan/STAGE_RESTRUCTURE_REPORT.md` — Rationale and impact of the change
 
 When in doubt, THIS DOCUMENT is the authority.
