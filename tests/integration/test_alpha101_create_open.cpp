@@ -58,7 +58,7 @@ static void init_db_header_page(std::vector<uint8_t>& page, uint32_t page_size) 
 }
 
 TEST(Alpha101, CreateDatabaseFileStructure) {
-	for (uint32_t ps : {8192u, 16384u, 32768u}) {
+	for (uint32_t ps : {8192u, 16384u, 32768u, 65536u, 131072u}) {
 		std::string path = "/tmp/sb_alpha101_" + std::to_string(ps) + ".db";
 		::unlink(path.c_str());
 

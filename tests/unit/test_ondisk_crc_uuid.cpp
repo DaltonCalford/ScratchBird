@@ -40,15 +40,23 @@ TEST(Version, VersionStringPrefix) {
 }
 
 TEST(OnDiskFormat, AlphaPageSizes) {
+	// Stage 0 page sizes
 	EXPECT_TRUE(is_valid_alpha_page_size(8192));
 	EXPECT_TRUE(is_valid_alpha_page_size(16384));
 	EXPECT_TRUE(is_valid_alpha_page_size(32768));
-	EXPECT_FALSE(is_valid_alpha_page_size(65536));
-	EXPECT_FALSE(is_valid_alpha_page_size(131072));
+	
+	// Stage 1.1 extended page sizes (now valid)
+	EXPECT_TRUE(is_valid_alpha_page_size(65536));
+	EXPECT_TRUE(is_valid_alpha_page_size(131072));
+	
+	// Invalid page sizes
+	EXPECT_FALSE(is_valid_alpha_page_size(0));
+	EXPECT_FALSE(is_valid_alpha_page_size(4096));
+	EXPECT_FALSE(is_valid_alpha_page_size(262144));
 }
 
 TEST(OnDiskFormat, HeaderLayoutAndChecksum) {
-	for (uint32_t size : {8192u, 16384u, 32768u}) {
+	for (uint32_t size : {8192u, 16384u, 32768u, 65536u, 131072u}) {
 		std::vector<uint8_t> page;
 		fill_page(page, size, 0, PAGE_TYPE_DATABASE_HEADER);
 		auto* header = reinterpret_cast<const PageHeader*>(page.data());

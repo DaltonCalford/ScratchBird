@@ -1,5 +1,6 @@
 #include "scratchbird/core/heap_page.h"
 #include "scratchbird/core/error_context.h"
+#include "scratchbird/core/ondisk.h"
 #include <cstring>
 #include <algorithm>
 
@@ -10,6 +11,13 @@ HeapPage::HeapPage(uint8_t* page_data, uint32_t page_size)
     : page_data_(page_data), page_size_(page_size) {}
 
 Status HeapPage::initialize(uint32_t page_id, ErrorContext* ctx) {
+    // Validate page size
+    if (!is_valid_alpha_page_size(page_size_)) {
+        SET_ERROR_CONTEXT(ctx, Status::InvalidArgument, 
+                         "Invalid page size for heap page");
+        return Status::InvalidArgument;
+    }
+    
     // Initialize page header
     PageHeader* hdr = header();
     
@@ -26,15 +34,37 @@ Status HeapPage::initialize(uint32_t page_id, ErrorContext* ctx) {
         hdr->free_space = 0;  // Will be calculated
         hdr->free_offset = sizeof(PageHeader);
         hdr->special_size = sizeof(HeapPageSpecial);
+        
+        // Initialize special area only for new pages
+        HeapPageSpecial* special = get_special();
+        special->pd_flags = 0;
+        special->pd_lower = sizeof(PageHeader);  // After header
+        special->pd_upper = page_size_ - sizeof(HeapPageSpecial);  // Before special
+        special->pd_special = page_size_ - sizeof(HeapPageSpecial);
+        special->pd_prune_xid = 0;
+    } else {
+        // Page already initialized - validate and correct page size if needed
+        if (hdr->page_size != page_size_) {
+            // Correct the mismatch - the buffer size is authoritative
+            hdr->page_size = page_size_;
+        }
+        
+        // Validate special area is sane
+        HeapPageSpecial* special = get_special();
+        bool special_valid = (special->pd_lower >= sizeof(PageHeader) &&
+                             special->pd_upper <= page_size_ - sizeof(HeapPageSpecial) &&
+                             special->pd_lower <= special->pd_upper &&
+                             special->pd_special == page_size_ - sizeof(HeapPageSpecial));
+        
+        if (!special_valid) {
+            // Special area is corrupt - reinitialize it
+            special->pd_flags = 0;
+            special->pd_lower = sizeof(PageHeader);
+            special->pd_upper = page_size_ - sizeof(HeapPageSpecial);
+            special->pd_special = page_size_ - sizeof(HeapPageSpecial);
+            special->pd_prune_xid = 0;
+        }
     }
-    
-    // Initialize special area
-    HeapPageSpecial* special = get_special();
-    special->pd_flags = 0;
-    special->pd_lower = sizeof(PageHeader);  // After header
-    special->pd_upper = page_size_ - sizeof(HeapPageSpecial);  // Before special
-    special->pd_special = page_size_ - sizeof(HeapPageSpecial);
-    special->pd_prune_xid = 0;
     
     update_header_stats();
     
@@ -174,6 +204,12 @@ Status HeapPage::delete_tuple(uint16_t item_id, uint64_t xmax, ErrorContext* ctx
 
 bool HeapPage::has_free_space(uint32_t tuple_size) const {
     const HeapPageSpecial* special = get_special();
+    
+    // Sanity check - if pd_upper < pd_lower, page is corrupt
+    if (special->pd_upper < special->pd_lower) {
+        return false;
+    }
+    
     uint32_t free_space = special->pd_upper - special->pd_lower;
     
     // Need space for tuple and potentially a new item pointer
