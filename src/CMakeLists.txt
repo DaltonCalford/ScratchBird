@@ -21,10 +21,30 @@ set_target_properties(scratchbird_core PROPERTIES
     POSITION_INDEPENDENT_CODE ON
 )
 
+# Parser library: scratchbird_parser
+file(GLOB_RECURSE SCRATCHBIRD_PARSER_SOURCES
+    parser/*.cpp
+)
+
+add_library(scratchbird_parser STATIC
+    ${SCRATCHBIRD_PARSER_SOURCES}
+)
+
+target_include_directories(scratchbird_parser PUBLIC
+    ${CMAKE_SOURCE_DIR}/include
+)
+
+set_target_properties(scratchbird_parser PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED YES
+    CXX_EXTENSIONS NO
+    POSITION_INDEPENDENT_CODE ON
+)
+
 # Main executable (placeholder)
 add_executable(scratchbird main.cpp)
 
-target_link_libraries(scratchbird PRIVATE scratchbird_core)
+target_link_libraries(scratchbird PRIVATE scratchbird_core scratchbird_parser)
 
 set_target_properties(scratchbird PROPERTIES
     CXX_STANDARD 17
@@ -33,7 +53,7 @@ set_target_properties(scratchbird PROPERTIES
 )
 
 # Installation (for future use)
-install(TARGETS scratchbird scratchbird_core
+install(TARGETS scratchbird scratchbird_core scratchbird_parser
     RUNTIME DESTINATION bin
     ARCHIVE DESTINATION lib
     LIBRARY DESTINATION lib

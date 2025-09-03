@@ -59,6 +59,7 @@ enum PageType {
     PAGE_TYPE_BTREE_INTERNAL  = 5,  // B-tree internal nodes
     PAGE_TYPE_BTREE_LEAF      = 6,  // B-tree leaf nodes
     PAGE_TYPE_TRANSACTION_MAP = 7,  // TIP pages
+    PAGE_TYPE_CATALOG_ROOT    = 8,  // System catalog root page
     // ... more types
 };
 

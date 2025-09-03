@@ -26,6 +26,22 @@ From the plan:
 - Created progress log
 - Ready to begin implementation
 
+### December 2024 - Week 1: Lexer Implementation
+- Created feature branch: `feature/alpha-1-05-sql-parser`
+- Updated on-disk spec to include PAGE_TYPE_CATALOG_ROOT
+- Implemented hand-written lexer with:
+  - Token types for SQL subset
+  - String interning for identifiers
+  - Case-insensitive keyword detection
+  - Support for integers, floats, strings
+  - Comment handling (-- and /* */)
+  - Location tracking (line, column, offset)
+  - Error reporting interface
+- Created comprehensive lexer tests (16 tests, all passing)
+- Integrated into build system as `scratchbird_parser` library
+
+**Status**: Lexer complete and tested ✓
+
 ## Test Requirements
 - [ ] Parse CREATE TABLE statements
 - [ ] Parse INSERT statements (single row)
