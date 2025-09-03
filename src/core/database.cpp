@@ -572,6 +572,31 @@ Status Database::sync(ErrorContext* ctx) {
     return Status::Ok;
 }
 
+Status Database::read_page_partial(uint32_t page_id, void* buffer, uint32_t size, 
+                                 uint32_t offset, ErrorContext* ctx) {
+    if (fd_ < 0 || !buffer) {
+        SET_ERROR_CONTEXT(ctx, Status::InvalidArgument, "Invalid arguments to read_page_partial");
+        return Status::InvalidArgument;
+    }
+    
+    if (offset + size > page_size_) {
+        SET_ERROR_CONTEXT(ctx, Status::InvalidArgument, "Partial read exceeds page boundary");
+        return Status::InvalidArgument;
+    }
+    
+    off_t file_offset = static_cast<off_t>(page_id) * page_size_ + offset;
+    if (lseek(fd_, file_offset, SEEK_SET) != file_offset) {
+        return Status::IoError;
+    }
+    
+    ssize_t bytes_read = ::read(fd_, buffer, size);
+    if (bytes_read != static_cast<ssize_t>(size)) {
+        return Status::IoError;
+    }
+    
+    return Status::Ok;
+}
+
 Status Database::update_header_total_pages(uint32_t total_pages, ErrorContext* ctx) {
     if (fd_ < 0) {
         SET_ERROR_CONTEXT(ctx, Status::InvalidArgument, "Database not open");

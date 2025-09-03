@@ -20,6 +20,7 @@ enum class Status : uint32_t {
 	OOM = 3003,  // Out of memory per ERROR_HANDLING.md
 	PageFull = 4001,  // No space available in page
 	NotFound = 4002,  // Tuple/item not found
+	CompressionError = 5001,  // Compression/decompression failed
 };
 
 } // namespace core

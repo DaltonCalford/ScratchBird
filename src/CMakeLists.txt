@@ -14,6 +14,11 @@ target_include_directories(scratchbird_core PUBLIC
     ${CMAKE_SOURCE_DIR}/include
 )
 
+if(LZ4_FOUND)
+    target_include_directories(scratchbird_core PUBLIC ${LZ4_INCLUDE_DIRS})
+    target_link_libraries(scratchbird_core PUBLIC ${LZ4_LIBRARIES})
+endif()
+
 set_target_properties(scratchbird_core PROPERTIES
     CXX_STANDARD 17
     CXX_STANDARD_REQUIRED YES

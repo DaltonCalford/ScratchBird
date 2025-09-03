@@ -19,6 +19,12 @@ enum PageType : uint16_t {
 	PAGE_TYPE_CATALOG_ROOT    = 8,  // Root page for system catalog
 };
 
+// Page flags (bitwise OR)
+constexpr uint32_t PAGE_FLAG_DIRTY      = 0x0001;  // Page has uncommitted changes
+constexpr uint32_t PAGE_FLAG_PINNED     = 0x0002;  // Page is pinned in buffer
+constexpr uint32_t PAGE_FLAG_COMPRESSED = 0x0004;  // Page data is compressed
+constexpr uint32_t PAGE_FLAG_ENCRYPTED  = 0x0008;  // Page data is encrypted
+
 // Fixed 64-byte page header; little-endian integers assumed
 #pragma pack(push, 1)
 struct PageHeader {

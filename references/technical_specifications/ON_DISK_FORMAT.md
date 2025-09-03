@@ -4,6 +4,7 @@
 ### Version History
 - v1.0.0 - Initial specification for Alpha 1.01
 - v1.1.0 - Stage 1.1: Added 64KB/128KB page support with extended structures
+- v1.2.0 - Stage 1.1: Added compression support with LZ4 baseline
 
 ---
 
@@ -429,4 +430,63 @@ This represents:
 - Page Type: 0 (DATABASE_HEADER)
 - Page Size: 8192 (0x2000)
 - Checksum: 0x12EFCDAB (example)
+
+---
+
+## Page Compression
+
+### Overview
+Pages can be transparently compressed to reduce I/O and storage requirements. Compression is applied at the page level during write operations and decompression occurs during read operations.
+
+### Compression Header
+When a page is compressed, the compressed data is prefixed with a compression header:
+
+```c
+#pragma pack(push, 1)
+struct CompressedPageHeader {
+    uint32_t uncompressed_size;  // Original page size
+    uint32_t compressed_size;    // Compressed data size (excluding this header)
+    uint8_t  compression_type;   // CompressionType enum value
+    uint8_t  reserved[3];        // Reserved for alignment
+    uint32_t checksum;          // CRC32C of compressed data
+};
+#pragma pack(pop)
+```
+
+### Compression Types
+```c
+enum class CompressionType : uint8_t {
+    NONE = 0,       // No compression
+    LZ4 = 1,        // LZ4 compression (baseline)
+    ZSTD = 2,       // Zstandard compression (future)
+    SNAPPY = 3,     // Snappy compression (future)
+};
+```
+
+### Compressed Page Layout
+When a page is compressed:
+1. The PageHeader.flags has PAGE_FLAG_COMPRESSED (0x0004) set
+2. After the PageHeader comes the CompressedPageHeader
+3. After the CompressedPageHeader comes the compressed page data
+
+```
+[PageHeader - 64 bytes]
+[CompressedPageHeader - 16 bytes]
+[Compressed Data - variable size]
+[Padding to page_size]
+```
+
+### Compression Rules
+1. System pages (0-2) are NEVER compressed
+2. Compression is only applied if it saves at least 10% space
+3. The compressed page (including headers) must fit within page_size
+4. Compression type must match what was configured for the database
+5. Both compressed and uncompressed pages can coexist in the same database
+
+### Checksum Calculation for Compressed Pages
+1. The PageHeader checksum covers the entire page as normal
+2. The CompressedPageHeader checksum covers only the compressed data:
+   ```c
+   uint32_t checksum = crc32c_compute(compressed_data, compressed_size, 0xFFFFFFFF) ^ 0xFFFFFFFF;
+   ```
 - UUID: 018b9f3a-7d4e-7f3a-9c5d-1234567890ab (v7)
