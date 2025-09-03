@@ -95,6 +95,10 @@ public:
     Status read_page(uint32_t page_id, void* buffer, ErrorContext* ctx = nullptr);
     Status write_page(uint32_t page_id, const void* buffer, ErrorContext* ctx = nullptr);
     
+    // Read partial page data
+    Status read_page_partial(uint32_t page_id, void* buffer, uint32_t size, 
+                           uint32_t offset, ErrorContext* ctx = nullptr);
+    
     // Get page manager
     PageManager* page_manager() { return page_manager_; }
     

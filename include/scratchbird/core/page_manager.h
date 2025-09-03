@@ -53,9 +53,11 @@ public:
     // Flush FSM to disk
     Status flush(ErrorContext* ctx = nullptr);
     
-private:
+protected:
     Database* db_;                    // Database instance
     uint32_t page_size_;             // Page size
+    
+private:
     uint32_t total_pages_;           // Total pages in database
     uint32_t free_pages_;            // Number of free pages
     std::vector<uint8_t> bitmap_;    // Allocation bitmap
