@@ -104,7 +104,6 @@ TEST_F(PageManagementTest, PageFreeing) {
 
 // FSM persistence test - simplified
 TEST_F(PageManagementTest, FSMPersistence) {
-    GTEST_SKIP() << "Skipping due to TIP page issues - needs investigation";
     // Clean up any existing file
     remove("test_fsm_persist.db");
     
@@ -220,7 +219,6 @@ TEST_F(PageManagementTest, BufferPoolCacheHit) {
 
 // Test buffer pool dirty page handling - unchanged
 TEST_F(PageManagementTest, BufferPoolDirtyPages) {
-    GTEST_SKIP() << "Skipping due to page corruption issues - needs investigation";
     ErrorContext ctx;
     Database::create("test_bp.db", 16384, &ctx);
     
@@ -233,6 +231,9 @@ TEST_F(PageManagementTest, BufferPoolDirtyPages) {
     // Allocate a new page
     uint32_t page_id;
     ASSERT_EQ(pm->allocate_page(page_id, &ctx), Status::Ok);
+    
+    // Debug: print allocated page ID
+    std::cout << "Allocated page ID: " << page_id << std::endl;
     
     // Pin and modify
     void* buffer;

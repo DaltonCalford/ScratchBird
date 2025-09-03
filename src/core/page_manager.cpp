@@ -14,7 +14,9 @@ PageManager::PageManager(Database* db, uint32_t page_size)
 PageManager::~PageManager() {
     // Flush if dirty
     if (dirty_) {
-        flush();
+        ErrorContext ctx;
+        flush(&ctx);
+        // Can't do much if flush fails in destructor
     }
 }
 
@@ -78,10 +80,19 @@ Status PageManager::load(ErrorContext* ctx) {
     total_pages_ = fsm->total_pages;
     free_pages_ = fsm->free_pages;
     
+
+    
     // Load bitmap
     size_t bitmap_bytes = (total_pages_ + 7) / 8;
     bitmap_.resize(bitmap_bytes);
     memcpy(bitmap_.data(), fsm->bitmap, bitmap_bytes);
+    
+    // Update database header to ensure it matches FSM
+    Status update_status = db_->update_header_total_pages(total_pages_, ctx);
+    if (update_status != Status::Ok) {
+        // Log but continue - FSM is authoritative
+        // fprintf(stderr, "Warning: Failed to sync header total_pages with FSM\n");
+    }
     
     // Validate bitmap consistency - count allocated pages
     uint32_t allocated_count = 0;
@@ -221,6 +232,13 @@ Status PageManager::extend_file(uint32_t num_pages, ErrorContext* ctx) {
     free_pages_ += num_pages;
     dirty_ = true;
     
+    // Update database header with new total pages
+    Status update_status = db_->update_header_total_pages(total_pages_, ctx);
+    if (update_status != Status::Ok) {
+        // Log but don't fail - the pages are allocated
+        // fprintf(stderr, "Warning: Failed to update header total_pages\n");
+    }
+    
     return Status::Ok;
 }
 
@@ -257,6 +275,8 @@ Status PageManager::flush(ErrorContext* ctx) {
     fsm->total_pages = total_pages_;
     fsm->free_pages = free_pages_;
     fsm->next_fsm_page = 0;  // No chaining yet
+    
+
     
     // Copy bitmap
     size_t bitmap_bytes = (total_pages_ + 7) / 8;

@@ -116,6 +116,9 @@ public:
     // Sync database file to disk
     Status sync(ErrorContext* ctx = nullptr);
     
+    // Update header total pages (for internal use by PageManager)
+    Status update_header_total_pages(uint32_t total_pages, ErrorContext* ctx = nullptr);
+    
 private:
     int fd_ = -1;                    // File descriptor
     std::string path_;               // Database file path

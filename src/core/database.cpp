@@ -48,7 +48,8 @@ void Database::close() {
     
     // Flush page manager
     if (page_manager_) {
-        page_manager_->flush();
+        ErrorContext ctx;
+        page_manager_->flush(&ctx);
         delete page_manager_;
         page_manager_ = nullptr;
     }
@@ -561,6 +562,35 @@ Status Database::sync(ErrorContext* ctx) {
     if (fsync(fd_) != 0) {
         SET_ERROR_CONTEXT(ctx, Status::IoError, "Failed to sync database file");
         return Status::IoError;
+    }
+    
+    return Status::Ok;
+}
+
+Status Database::update_header_total_pages(uint32_t total_pages, ErrorContext* ctx) {
+    if (fd_ < 0) {
+        SET_ERROR_CONTEXT(ctx, Status::InvalidArgument, "Database not open");
+        return Status::InvalidArgument;
+    }
+    
+    // Update in-memory header
+    if (header_) {
+        header_->total_pages = total_pages;
+    }
+    
+    // Pin header page through buffer pool to update it
+    if (buffer_pool_) {
+        void* header_buffer;
+        Status status = buffer_pool_->pin_page(0, &header_buffer, ctx);
+        if (status != Status::Ok) {
+            return status;
+        }
+        
+        DatabaseHeader* db_header = static_cast<DatabaseHeader*>(header_buffer);
+        db_header->total_pages = total_pages;
+        
+        // Unpin as dirty
+        buffer_pool_->unpin_page(0, true, ctx);
     }
     
     return Status::Ok;
