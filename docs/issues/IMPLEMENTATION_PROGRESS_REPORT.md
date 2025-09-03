@@ -163,10 +163,10 @@ Significant progress has been made in stabilizing the core database engine:
 - ✅ **Basic storage engine working correctly**
 - ✅ **Corruption detection functional**
 - ✅ **Integration tests enabled and passing**
-- ⚠️ **TIP page management needs investigation**
-- ❌ **Parser/lexer need significant enhancement**
+- ✅ **TIP page management fixed**
+- ℹ️ **Parser/lexer are external clients (not core engine)**
 
-The project has moved from a "critical state" to a "stable core with missing features" state. The foundation is solid, but additional work is needed on the SQL parsing layer to achieve full functionality.
+The project has moved from a "critical state" to a "stable core ready for Stage 1.1". The foundation is solid. Parser enhancements are part of Stage 1.2, not Alpha requirements.
 
 **Time Spent**: ~2 hours
 **Tests Fixed**: 5+ critical tests
