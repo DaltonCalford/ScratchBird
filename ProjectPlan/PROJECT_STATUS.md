@@ -1,104 +1,59 @@
 # ScratchBird Project Status
 
-## Current Phase: Planning Complete, Ready for Alpha Implementation
+## Current Status: Stage 0 COMPLETE; Stage 1 Planning In Progress
 
-### Documentation Status: ✅ COMPLETE
+### Completed (Stage 0 — 1.0.xx)
+- 1.0.01–1.0.02: Database Core (create/open, header, base schemas)
+- 1.0.03: Page Management (FSM, buffer pool, LRU, dirty)
+- 1.0.04: System Catalog (schemas/tables/columns)
+- 1.0.05: Storage Engine (heap, tuples, scans)
+- 1.0.06: Transaction Foundation (XID, TIP, MVCC, commit/rollback)
+- 1.0.07: Basic SQL Parser (baseline statements)
 
-All critical documentation for Alpha implementation is complete:
+### Documentation Status
+- Authoritative plan present: `AUTHORITATIVE_IMPLEMENTATION_PLAN.md`
+- Stage 1 plan: `ProjectPlan/ALPHA_STAGE_1_PLAN.md`
+- Restructure mapping: `ProjectPlan/PHASE_NUMBERING_RECONCILIATION.md`, `ProjectPlan/STAGE_RESTRUCTURE_REPORT.md`
 
-| Component | Status | Location |
-|-----------|--------|----------|
-| Wire Protocols | ✅ Complete | `references/wire_protocols/` |
-| Data Types | ✅ Complete | `references/data_types/` |
-| Page Layouts | ✅ Complete | `references/archive/technical_specifications/PAGE_LAYOUTS_AND_STRUCTURES.md` |
-| SBLR Bytecode Spec | ✅ Complete | `references/technical_specifications/SBLR_BYTECODE_SPECIFICATION.md` |
-| SQL Grammar | ✅ Complete | `references/technical_specifications/SQL_GRAMMAR_BNF.md` |
-| Y-Valve Architecture | ✅ Complete | `references/technical_specifications/Y_VALVE_ARCHITECTURE.md` |
-| MGA/MVCC | ✅ Complete | `references/technical_specifications/MGA_IMPLEMENTATION.md` |
-| C API | ✅ Complete | `references/technical_specifications/C_API_SPECIFICATION.md` |
+### Implementation Approach (Stage 1)
+1. Embedded-first; no network routing
+2. Test-driven with sanitizers (ASAN/TSAN/UBSAN) in CI
+3. Expand to 64K/128K in Stage 1.1 (was Beta in earlier docs)
+4. Maintain UUID v7 and MGA/MVCC principles
 
-### Key Documents in ProjectPlan
-
-1. **AUTHORITATIVE_IMPLEMENTATION_PLAN.md** - Single source of truth for phases
-4. **TEST_SPECIFICATION.md** - Comprehensive testing requirements
-5. **ARCHITECTURE_GOALS.md** - Core architectural principles
-6. **Phase_01-27_*.md** - Individual phase specifications
-
-### Implementation Approach
-
-1. **API-First Development**: Build through C API layers
-2. **Test-Driven**: Test each component before proceeding
-3. **Multi-Page-Size**: Support 8K, 16K, 32K, 64K, 128K from start
-4. **MGA-Based**: Multi-Generational Architecture as primary MVCC
-5. **UUID-Based**: All object references use UUID v7
-
-### Alpha 1.01 Starting Point
-
-**First Implementation Task**: Database file creation with version response
-
-```c
-// First API calls to implement:
-sb_init()           // Initialize environment
-sb_version()        // Return version string
-sb_create_database() // Create database file with specified page size
-```
-
-### Progress Tracking
-
-- Implementation progress: `ProjectPlan/progress/implementation.log`
-- Test progress: `ProjectPlan/progress/test.log`
-- Use one-line format as specified in `progress/LOG_FORMAT.md`
-
-### Build System
-
-- **MANDATORY**: Read `references/CODING_AND_BUILD_STANDARDS.md` before implementation
-- Use CMake for build system
-- Direct compilation for tests
-- Support all 5 page sizes in every test
-
-### Next Steps
-
-1. Begin Alpha 1.01.1 implementation (database file creation)
-2. Create test suite for file creation with all page sizes
-3. Log progress in standardized format
-4. Proceed to Alpha 1.01.2 after tests pass
-
-### Critical Design Decisions
-
-1. **64-bit Transaction IDs** - No wraparound issues
-2. **UUID v7** - For all object identifiers
-3. **Page Sizes** - 8K, 16K, 32K, 64K, 128K
-4. **MGA First** - WAL is secondary for durability
-5. **Y-Valve Router** - Multi-protocol support from start
-6. **C API** - Primary interface for embedded use
+### Stage 1 Next Steps
+1. Execute Stage 1.1: 64K/128K, compression, TOAST/LOB
+2. Execute Stage 1.2: Advanced SBLR (joins, subqueries, windows)
+3. Execute Stage 1.3: Concurrency (multi-threaded buffer pool, locks, deadlock)
+4. Execute Stage 1.4: Advanced indexes (bitmap, hash)
+5. Execute Stage 1.5–1.7: Embedded API, context-aware parser, sb_isql_a
 
 ### Repository Structure
-
 ```
 .
-├── ProjectPlan/          # Planning documents (THIS DIRECTORY)
-│   ├── progress/         # Progress tracking logs
-│   ├── old_spec/         # Historical documents
-│   └── archive/          # Superseded versions
-├── references/           # Technical specifications
-│   ├── wire_protocols/   # Protocol specifications
-│   ├── data_types/       # Type system documentation
-│   └── technical_specifications/  # Core specs
-├── docs/                 # Architecture and design docs
-├── src/                  # Source code (minimal currently)
-├── include/              # Header files
-└── tests/                # Test suites
+├── ProjectPlan/
+│   ├── progress/
+│   ├── reviews/
+│   ├── ALPHA_STAGE_1_PLAN.md
+│   ├── PHASE_NUMBERING_RECONCILIATION.md
+│   └── STAGE_RESTRUCTURE_REPORT.md
+├── references/
+│   ├── data_types/
+│   └── technical_specifications/
+├── docs/
+├── src/
+├── include/
+└── tests/
 ```
 
 ### Quality Standards
-
-- All code must compile without warnings
-- All tests must pass for all 5 page sizes
-- Memory leaks must be detected and fixed
-- Thread safety must be verified
-- Documentation must be updated with code
+- Compile clean, no warnings
+- Tests pass across all configured page sizes
+- Memory/resource safety proven (sanitizers)
+- Thread safety verified (TSAN)
+- Documentation updated with code changes
 
 ---
 
-**Last Updated**: 2024 (Current Session)
-**Status**: Ready for Alpha 1.01.1 Implementation
+Last Updated: 2025-01 (Current Session)
+Status: Stage 1 Planning In Progress
