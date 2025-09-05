@@ -4,12 +4,15 @@
 #include "scratchbird/core/status.h"
 #include <cstdint>
 #include <vector>
+#include <memory>
 
 namespace scratchbird {
 namespace core {
 
 // Forward declarations
 struct ErrorContext;
+class ToastManager;
+class Database;
 
 // Heap page item pointer (line pointer)
 // Points to actual tuple data within the page
@@ -60,20 +63,28 @@ public:
     // Constructor wraps an existing page buffer
     explicit HeapPage(uint8_t* page_data, uint32_t page_size);
     
+    // Constructor with TOAST support
+    HeapPage(uint8_t* page_data, uint32_t page_size, 
+             ToastManager* toast_mgr, Database* db, uint32_t table_id);
+    
     // Initialize a new heap page
     Status initialize(uint32_t page_id, ErrorContext* ctx = nullptr);
     
-    // Insert a tuple into the page
+    // Insert a tuple into the page (with automatic TOASTing)
     // Returns the item ID (slot number) on success
     Status insert_tuple(const uint8_t* tuple_data, uint32_t tuple_size,
                        uint64_t xmin, uint16_t* item_id_out,
                        ErrorContext* ctx = nullptr);
     
-    // Get tuple data by item ID
+    // Get tuple data by item ID (with automatic detoasting)
     Status get_tuple(uint16_t item_id, const uint8_t** data_out,
                     uint32_t* size_out, ErrorContext* ctx = nullptr);
     
-    // Mark tuple as deleted
+    // Get tuple data by item ID with detoasting into provided buffer
+    Status get_tuple_detoasted(uint16_t item_id, std::vector<uint8_t>* buffer,
+                              uint64_t xmin, ErrorContext* ctx = nullptr);
+    
+    // Mark tuple as deleted (and clean up TOAST if present)
     Status delete_tuple(uint16_t item_id, uint64_t xmax,
                        ErrorContext* ctx = nullptr);
     
@@ -96,6 +107,9 @@ public:
 private:
     uint8_t* page_data_;
     uint32_t page_size_;
+    ToastManager* toast_mgr_;   // Optional TOAST manager
+    Database* db_;              // Database for TOAST operations
+    uint32_t table_id_;         // Table ID for TOAST operations
     
     // Get pointer to item array (starts after PageHeader)
     ItemPointer* get_item_array() {
