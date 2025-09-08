@@ -141,12 +141,24 @@ private:
     Status write_catalog_root(ErrorContext* ctx);
     Status read_catalog_root(ErrorContext* ctx);
     
+    // Helper to write a record to a catalog heap page
+    template<typename RecordType>
+    Status write_record_to_heap_page(uint32_t page_id, const RecordType& record, ErrorContext* ctx);
+
+    // Helper to read records from a catalog heap page
+    template<typename RecordType, typename InfoType>
+    Status read_records_from_heap_page(uint32_t page_id, std::unordered_map<uint32_t, InfoType>& cache, 
+                                       std::function<void(const RecordType&, InfoType&)> converter, ErrorContext* ctx);
+
+    // Specific converters for read_records_from_heap_page
+    static void convert_schema_record(const SchemaRecord& record, SchemaInfo& info);
+    static void convert_table_record(const TableRecord& record, TableInfo& info);
+
+    // Specific write/read methods using the generic helpers
     Status write_schema_record(const SchemaInfo& schema, ErrorContext* ctx);
     Status read_schema_records(ErrorContext* ctx);
-    
     Status write_table_record(const TableInfo& table, ErrorContext* ctx);
     Status read_table_records(ErrorContext* ctx);
-    
     Status write_column_records(uint32_t table_id, 
                                const std::vector<ColumnInfo>& columns,
                                ErrorContext* ctx);

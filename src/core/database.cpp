@@ -102,6 +102,7 @@ Status Database::create(const std::string& path, uint32_t page_size, ErrorContex
     uint8_t* page_buffer = new(std::nothrow) uint8_t[page_size];
     if (!page_buffer) {
         ::close(fd);
+        ::close(fd); // Close fd before unlinking
         unlink(path.c_str());  // Clean up file on failure
         SET_ERROR_CONTEXT(ctx, Status::OOM, "Failed to allocate memory for page buffer");
         return Status::OOM;
@@ -136,14 +137,13 @@ Status Database::create(const std::string& path, uint32_t page_size, ErrorContex
     std::string db_name = (last_slash != std::string::npos) ? path.substr(last_slash + 1) : path;
     strncpy(header->db_name, db_name.c_str(), 31);
     header->db_name[31] = '\0';
-    header->db_version = 0x00010001;  // v0.1.0.1
-    header->db_compat_version = 0x00010001;
+    header->db_version = DB_VERSION_ALPHA_1_0_1;
+    header->db_compat_version = DB_COMPAT_VERSION_ALPHA_1_0_1;
     
     // Get current time in microseconds
-    auto now = std::chrono::system_clock::now();
-    auto micros = std::chrono::duration_cast<std::chrono::microseconds>(
-        now.time_since_epoch()).count();
-    header->creation_time = static_cast<uint64_t>(micros);
+    uint64_t micros = std::chrono::duration_cast<std::chrono::microseconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
+    header->creation_time = micros;
     header->last_checkpoint = 0;
     
     // Set configuration
@@ -173,7 +173,7 @@ Status Database::create(const std::string& path, uint32_t page_size, ErrorContex
     ssize_t written = ::write(fd, page_buffer, page_size);
     if (written != static_cast<ssize_t>(page_size)) {
         delete[] page_buffer;
-        ::close(fd);
+        ::close(fd); // Close fd before unlinking
         unlink(path.c_str());
         SET_ERROR_CONTEXT(ctx, Status::IoError, "Failed to write header page");
         return Status::IoError;
@@ -235,7 +235,7 @@ Status Database::create(const std::string& path, uint32_t page_size, ErrorContex
     written = ::write(fd, page_buffer, page_size);
     if (written != static_cast<ssize_t>(page_size)) {
         delete[] page_buffer;
-        ::close(fd);
+        ::close(fd); // Close fd before unlinking
         unlink(path.c_str());
         SET_ERROR_CONTEXT(ctx, Status::IoError, "Failed to write catalog page");
         return Status::IoError;
@@ -281,7 +281,7 @@ Status Database::create(const std::string& path, uint32_t page_size, ErrorContex
     written = ::write(fd, page_buffer, page_size);
     if (written != static_cast<ssize_t>(page_size)) {
         delete[] page_buffer;
-        ::close(fd);
+        ::close(fd); // Close fd before unlinking
         unlink(path.c_str());
         SET_ERROR_CONTEXT(ctx, Status::IoError, "Failed to write FSM page");
         return Status::IoError;
