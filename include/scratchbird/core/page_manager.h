@@ -68,6 +68,7 @@ private:
     void set_bit(uint32_t page_id, bool allocated);
     bool get_bit(uint32_t page_id) const;
     uint32_t find_free_page() const;
+    void build_fsm_page_buffer(uint8_t* buffer);
     
     // FSM page structure
     struct FSMPage {

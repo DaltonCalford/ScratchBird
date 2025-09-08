@@ -256,6 +256,26 @@ Status PageManager::flush(ErrorContext* ctx) {
         return Status::OOM;
     }
     
+    // Build FSM page
+    build_fsm_page_buffer(buffer);
+    
+    // Write FSM page
+    Status status = db_->write_page(FSM_PAGE_ID, buffer, ctx);
+    
+    delete[] buffer;
+    
+    if (status == Status::Ok) {
+        // Sync to ensure FSM durability
+        status = db_->sync(ctx);
+        if (status == Status::Ok) {
+            dirty_ = false;
+        }
+    }
+    
+    return status;
+}
+
+void PageManager::build_fsm_page_buffer(uint8_t* buffer) {
     memset(buffer, 0, page_size_);
     
     // Build FSM page
@@ -276,8 +296,6 @@ Status PageManager::flush(ErrorContext* ctx) {
     fsm->free_pages = free_pages_;
     fsm->next_fsm_page = 0;  // No chaining yet
     
-
-    
     // Copy bitmap
     size_t bitmap_bytes = (total_pages_ + 7) / 8;
     memcpy(fsm->bitmap, bitmap_.data(), bitmap_bytes);
@@ -287,21 +305,9 @@ Status PageManager::flush(ErrorContext* ctx) {
     fsm->header.item_count = 1;  // One logical item (the bitmap)
     fsm->header.free_offset = sizeof(PageHeader) + sizeof(uint32_t) * 3 + bitmap_bytes;
     fsm->header.special_size = 0;
-    
-    // Write FSM page
-    Status status = db_->write_page(FSM_PAGE_ID, buffer, ctx);
-    
-    delete[] buffer;
-    
-    if (status == Status::Ok) {
-        // Sync to ensure FSM durability
-        status = db_->sync(ctx);
-        if (status == Status::Ok) {
-            dirty_ = false;
-        }
-    }
-    
-    return status;
+
+    // Calculate checksum for FSM page
+    fsm->header.checksum = calculate_page_checksum(buffer, page_size_);
 }
 
 void PageManager::set_bit(uint32_t page_id, bool allocated) {

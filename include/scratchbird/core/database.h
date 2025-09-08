@@ -11,6 +11,10 @@
 namespace scratchbird {
 namespace core {
 
+// Database version constants
+constexpr uint32_t DB_VERSION_ALPHA_1_0_1 = 0x00010001; // v0.1.0.1
+constexpr uint32_t DB_COMPAT_VERSION_ALPHA_1_0_1 = 0x00010001; // v0.1.0.1
+
 // Forward declarations
 class PageManager;
 class BufferPool;

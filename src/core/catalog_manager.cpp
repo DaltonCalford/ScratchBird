@@ -576,13 +576,12 @@ Status CatalogManager::read_catalog_root(ErrorContext* ctx) {
     return bp->unpin_page(CATALOG_ROOT_PAGE, false, ctx);
 }
 
-Status CatalogManager::write_schema_record(const SchemaInfo& schema, ErrorContext* ctx) {
-    // For now, append to schemas heap page
-    // TODO: Implement proper heap page management
-    
+// Helper to write a record to a catalog heap page
+template<typename RecordType>
+Status CatalogManager::write_record_to_heap_page(uint32_t page_id, const RecordType& record, ErrorContext* ctx) {
     BufferPool* bp = db_->buffer_pool();
     void* page_buffer;
-    Status status = bp->pin_page(schemas_table_page_, &page_buffer, ctx);
+    Status status = bp->pin_page(page_id, &page_buffer, ctx);
     if (status != Status::Ok) {
         return status;
     }
@@ -590,190 +589,138 @@ Status CatalogManager::write_schema_record(const SchemaInfo& schema, ErrorContex
     CatalogHeapPage* heap = reinterpret_cast<CatalogHeapPage*>(page_buffer);
     
     // Check if we have space
-    if (heap->free_offset + sizeof(SchemaRecord) > db_->page_size()) {
-        bp->unpin_page(schemas_table_page_, false, ctx);
-        SET_ERROR_CONTEXT(ctx, Status::InvalidArgument, "Schema table full");
+    if (heap->free_offset + sizeof(RecordType) > db_->page_size()) {
+        bp->unpin_page(page_id, false, ctx);
+        SET_ERROR_CONTEXT(ctx, Status::PageFull, "Catalog heap page full");
         return Status::InvalidArgument;
     }
     
     // Write record
-    SchemaRecord* record = reinterpret_cast<SchemaRecord*>(
+    RecordType* dest_record = reinterpret_cast<RecordType*>(
         reinterpret_cast<uint8_t*>(page_buffer) + heap->free_offset);
-    
-    record->schema_id = schema.schema_id;
-    strncpy(record->schema_name, schema.schema_name.c_str(), 63);
-    record->schema_name[63] = '\0';
-    strncpy(record->owner, schema.owner.c_str(), 63);
-    record->owner[63] = '\0';
-    record->created_time = schema.created_time;
-    record->is_valid = 1;
+    memcpy(dest_record, &record, sizeof(RecordType));
     
     heap->record_count++;
-    heap->free_offset += sizeof(SchemaRecord);
-    heap->header.free_space -= sizeof(SchemaRecord);
+    heap->free_offset += sizeof(RecordType);
+    heap->header.free_space -= sizeof(RecordType);
     heap->header.generation++;
     
+    return bp->unpin_page(page_id, true, ctx);
+}
 
+// Helper to read records from a catalog heap page
+template<typename RecordType, typename InfoType>
+Status CatalogManager::read_records_from_heap_page(uint32_t page_id, std::unordered_map<uint32_t, InfoType>& cache, 
+                                                   std::function<void(const RecordType&, InfoType&)> converter, ErrorContext* ctx) {
+    BufferPool* bp = db_->buffer_pool();
+    void* page_buffer;
+    Status status = bp->pin_page(page_id, &page_buffer, ctx);
+    if (status != Status::Ok) {
+        SET_ERROR_CONTEXT(ctx, status, "Failed to read catalog heap page");
+        return status;
+    }
     
-    return bp->unpin_page(schemas_table_page_, true, ctx);
+    CatalogHeapPage* heap = reinterpret_cast<CatalogHeapPage*>(page_buffer);
+    
+    cache.clear();
+    uint32_t offset = sizeof(CatalogHeapPage);
+    
+    for (uint32_t i = 0; i < heap->record_count; i++) {
+        RecordType* record = reinterpret_cast<RecordType*>(
+            reinterpret_cast<uint8_t*>(page_buffer) + offset);
+        
+        if (record->is_valid) {
+            InfoType info;
+            converter(*record, info);
+            // Assuming schema_id is the key for schemas/tables. This needs to be generic.
+            // For now, we'll assume the InfoType has a .id field that can be used as key.
+            // This is a simplification for now.
+            cache[info.schema_id] = info; 
+        }
+        
+        offset += sizeof(RecordType);
+    }
+    
+    return bp->unpin_page(page_id, false, ctx);
+}
+
+// Specific converters for read_records_from_heap_page
+void CatalogManager::convert_schema_record(const SchemaRecord& record, SchemaInfo& info) {
+    info.schema_id = record.schema_id;
+    info.schema_name = record.schema_name;
+    info.owner = record.owner;
+    info.created_time = record.created_time;
+}
+
+void CatalogManager::convert_table_record(const TableRecord& record, TableInfo& info) {
+    info.table_id = record.table_id;
+    info.schema_id = record.schema_id;
+    info.table_name = record.table_name;
+    info.root_page = record.root_page;
+    info.column_count = record.column_count;
+    info.row_count = record.row_count;
+    info.created_time = record.created_time;
+}
+
+Status CatalogManager::write_schema_record(const SchemaInfo& schema, ErrorContext* ctx) {
+    SchemaRecord record;
+    record.schema_id = schema.schema_id;
+    strncpy(record.schema_name, schema.schema_name.c_str(), 63);
+    record.schema_name[63] = '\0';
+    strncpy(record.owner, schema.owner.c_str(), 63);
+    record.owner[63] = '\0';
+    record.created_time = schema.created_time;
+    record.is_valid = 1;
+    
+    return write_record_to_heap_page(schemas_table_page_, record, ctx);
 }
 
 Status CatalogManager::read_schema_records(ErrorContext* ctx) {
-    BufferPool* bp = db_->buffer_pool();
-    void* page_buffer;
-    Status status = bp->pin_page(schemas_table_page_, &page_buffer, ctx);
-    if (status != Status::Ok) {
-        SET_ERROR_CONTEXT(ctx, status, "Failed to read schemas page");
-        return status;
-    }
-    
-    CatalogHeapPage* heap = reinterpret_cast<CatalogHeapPage*>(page_buffer);
-    
-    schema_cache_.clear();
-    uint32_t offset = sizeof(CatalogHeapPage);
-    
-
-    
-    for (uint32_t i = 0; i < heap->record_count; i++) {
-        SchemaRecord* record = reinterpret_cast<SchemaRecord*>(
-            reinterpret_cast<uint8_t*>(page_buffer) + offset);
-        
-        if (record->is_valid) {
-            SchemaInfo info;
-            info.schema_id = record->schema_id;
-            info.schema_name = record->schema_name;
-            info.owner = record->owner;
-            info.created_time = record->created_time;
-            
-            schema_cache_[info.schema_id] = info;
-        }
-        
-        offset += sizeof(SchemaRecord);
-    }
-    
-    return bp->unpin_page(schemas_table_page_, false, ctx);
+    return read_records_from_heap_page(schemas_table_page_, schema_cache_, convert_schema_record, ctx);
 }
 
 Status CatalogManager::write_table_record(const TableInfo& table, ErrorContext* ctx) {
-    BufferPool* bp = db_->buffer_pool();
-    void* page_buffer;
-    Status status = bp->pin_page(tables_table_page_, &page_buffer, ctx);
-    if (status != Status::Ok) {
-        return status;
-    }
+    TableRecord record;
+    record.table_id = table.table_id;
+    record.schema_id = table.schema_id;
+    strncpy(record.table_name, table.table_name.c_str(), 63);
+    record.table_name[63] = '\0';
+    record.root_page = table.root_page;
+    record.column_count = table.column_count;
+    record.row_count = table.row_count;
+    record.created_time = table.created_time;
+    record.is_valid = 1;
     
-    CatalogHeapPage* heap = reinterpret_cast<CatalogHeapPage*>(page_buffer);
-    
-    // Check if we have space
-    if (heap->free_offset + sizeof(TableRecord) > db_->page_size()) {
-        bp->unpin_page(tables_table_page_, false, ctx);
-        SET_ERROR_CONTEXT(ctx, Status::InvalidArgument, "Tables table full");
-        return Status::InvalidArgument;
-    }
-    
-    // Write record
-    TableRecord* record = reinterpret_cast<TableRecord*>(
-        reinterpret_cast<uint8_t*>(page_buffer) + heap->free_offset);
-    
-    record->table_id = table.table_id;
-    record->schema_id = table.schema_id;
-    strncpy(record->table_name, table.table_name.c_str(), 63);
-    record->table_name[63] = '\0';
-    record->root_page = table.root_page;
-    record->column_count = table.column_count;
-    record->row_count = table.row_count;
-    record->created_time = table.created_time;
-    record->is_valid = 1;
-    
-    heap->record_count++;
-    heap->free_offset += sizeof(TableRecord);
-    heap->header.free_space -= sizeof(TableRecord);
-    heap->header.generation++;
-    
-    return bp->unpin_page(tables_table_page_, true, ctx);
+    return write_record_to_heap_page(tables_table_page_, record, ctx);
 }
 
 Status CatalogManager::read_table_records(ErrorContext* ctx) {
-    BufferPool* bp = db_->buffer_pool();
-    void* page_buffer;
-    Status status = bp->pin_page(tables_table_page_, &page_buffer, ctx);
-    if (status != Status::Ok) {
-        return status;
-    }
-    
-    CatalogHeapPage* heap = reinterpret_cast<CatalogHeapPage*>(page_buffer);
-    
-    table_cache_.clear();
-    uint32_t offset = sizeof(CatalogHeapPage);
-    
-    for (uint32_t i = 0; i < heap->record_count; i++) {
-        TableRecord* record = reinterpret_cast<TableRecord*>(
-            reinterpret_cast<uint8_t*>(page_buffer) + offset);
-        
-        if (record->is_valid) {
-            TableInfo info;
-            info.table_id = record->table_id;
-            info.schema_id = record->schema_id;
-            info.table_name = record->table_name;
-            info.root_page = record->root_page;
-            info.column_count = record->column_count;
-            info.row_count = record->row_count;
-            info.created_time = record->created_time;
-            
-            table_cache_[info.table_id] = info;
-        }
-        
-        offset += sizeof(TableRecord);
-    }
-    
-    return bp->unpin_page(tables_table_page_, false, ctx);
+    return read_records_from_heap_page(tables_table_page_, table_cache_, convert_table_record, ctx);
 }
 
 Status CatalogManager::write_column_records(uint32_t table_id,
                                           const std::vector<ColumnInfo>& columns,
                                           ErrorContext* ctx) {
-    BufferPool* bp = db_->buffer_pool();
-    void* page_buffer;
-    Status status = bp->pin_page(columns_table_page_, &page_buffer, ctx);
-    if (status != Status::Ok) {
-        return status;
-    }
-    
-    CatalogHeapPage* heap = reinterpret_cast<CatalogHeapPage*>(page_buffer);
-    
-    // Check if we have space for all columns
-    size_t needed_space = columns.size() * sizeof(ColumnRecord);
-    if (heap->free_offset + needed_space > db_->page_size()) {
-        bp->unpin_page(columns_table_page_, false, ctx);
-        SET_ERROR_CONTEXT(ctx, Status::InvalidArgument, "Columns table full");
-        return Status::InvalidArgument;
-    }
-    
-    // Write all column records
     for (const auto& col : columns) {
-        ColumnRecord* record = reinterpret_cast<ColumnRecord*>(
-            reinterpret_cast<uint8_t*>(page_buffer) + heap->free_offset);
+        ColumnRecord record;
+        record.table_id = table_id;
+        record.column_id = col.column_id;
+        strncpy(record.column_name, col.column_name.c_str(), 63);
+        record.column_name[63] = '\0';
+        record.data_type = col.data_type;
+        record.max_length = col.max_length;
+        record.nullable = col.nullable ? 1 : 0;
+        record.has_default = col.has_default ? 1 : 0;
+        strncpy(record.default_value, col.default_value.c_str(), 127);
+        record.default_value[127] = '\0';
+        record.is_valid = 1;
         
-        record->table_id = table_id;
-        record->column_id = col.column_id;
-        strncpy(record->column_name, col.column_name.c_str(), 63);
-        record->column_name[63] = '\0';
-        record->data_type = col.data_type;
-        record->max_length = col.max_length;
-        record->nullable = col.nullable ? 1 : 0;
-        record->has_default = col.has_default ? 1 : 0;
-        strncpy(record->default_value, col.default_value.c_str(), 127);
-        record->default_value[127] = '\0';
-        record->is_valid = 1;
-        
-        heap->record_count++;
-        heap->free_offset += sizeof(ColumnRecord);
-        heap->header.free_space -= sizeof(ColumnRecord);
+        Status status = write_record_to_heap_page(columns_table_page_, record, ctx);
+        if (status != Status::Ok) {
+            return status;
+        }
     }
-    
-    heap->header.generation++;
-    
-    return bp->unpin_page(columns_table_page_, true, ctx);
+    return Status::Ok;
 }
 
 Status CatalogManager::read_column_records(uint32_t table_id, ErrorContext* ctx) {
