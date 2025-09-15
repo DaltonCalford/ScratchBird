@@ -11,10 +11,10 @@ namespace core {
 
 HeapPage::HeapPage(uint8_t* page_data, uint32_t page_size)
     : page_data_(page_data), page_size_(page_size), 
-      toast_mgr_(nullptr), db_(nullptr), table_id_(0) {}
+      toast_mgr_(nullptr), db_(nullptr) {}
 
 HeapPage::HeapPage(uint8_t* page_data, uint32_t page_size,
-                   ToastManager* toast_mgr, Database* db, uint32_t table_id)
+                   ToastManager* toast_mgr, Database* db, const UuidV7Bytes& table_id)
     : page_data_(page_data), page_size_(page_size),
       toast_mgr_(toast_mgr), db_(db), table_id_(table_id) {}
 
@@ -255,7 +255,12 @@ Status HeapPage::get_tuple_detoasted(uint16_t item_id, std::vector<uint8_t>* buf
             }
             
             // Reconstruct the full tuple with detoasted data
-            buffer->resize(sizeof(TupleHeader) + detoasted_data.size());
+            try {
+                buffer->resize(sizeof(TupleHeader) + detoasted_data.size());
+            } catch (const std::bad_alloc&) {
+                SET_ERROR_CONTEXT(ctx, Status::OOM, "Failed to allocate buffer for detoasted tuple");
+                return Status::OOM;
+            }
             
             // Copy tuple header
             memcpy(buffer->data(), raw_data, sizeof(TupleHeader));
@@ -269,7 +274,12 @@ Status HeapPage::get_tuple_detoasted(uint16_t item_id, std::vector<uint8_t>* buf
     }
     
     // Not a TOAST pointer, just copy the raw data
-    buffer->resize(raw_size);
+    try {
+        buffer->resize(raw_size);
+    } catch (const std::bad_alloc&) {
+        SET_ERROR_CONTEXT(ctx, Status::OOM, "Failed to allocate buffer for tuple");
+        return Status::OOM;
+    }
     memcpy(buffer->data(), raw_data, raw_size);
     
     return Status::Ok;
@@ -304,8 +314,7 @@ Status HeapPage::delete_tuple(uint16_t item_id, uint64_t xmax, ErrorContext* ctx
                 // Delete the TOAST data
                 Status s = toast_mgr_->delete_toast_value(toast_ptr->va_valueid, xmax, ctx);
                 if (s != Status::Ok && s != Status::NotFound) {
-                    // Log warning but continue with deletion
-                    // In production, you might want to handle this differently
+                    return s;
                 }
             }
         }

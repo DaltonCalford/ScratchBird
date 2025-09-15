@@ -2,6 +2,7 @@
 
 #include "scratchbird/core/status.h"
 #include "scratchbird/core/ondisk.h"
+#include "scratchbird/core/catalog_manager.h"
 #include <cstdint>
 #include <vector>
 #include <memory>
@@ -71,7 +72,7 @@ struct ToastCompressHeader {
 // TOAST manager - handles large attribute storage
 class ToastManager {
 public:
-    ToastManager(Database* db, uint32_t table_id);
+    ToastManager(Database* db, const ID& table_id);
     ~ToastManager();
     
     // Initialize TOAST subsystem for a table
@@ -97,6 +98,10 @@ public:
     // Delete TOASTed value
     Status delete_toast_value(uint32_t value_id, uint64_t xmax,
                              ErrorContext* ctx = nullptr);
+
+    // Delete TOASTed value using heap scan (fallback)
+    Status delete_toast_value_heap_scan(uint32_t value_id, uint64_t xmax,
+                                        ErrorContext* ctx = nullptr);
     
     // Check if a value should be TOASTed
     static bool should_toast(uint32_t size, uint32_t page_size);
@@ -106,12 +111,12 @@ public:
                                        bool compress_enabled = true);
     
     // Get TOAST table ID for a regular table
-    uint32_t toast_table_id() const { return toast_table_id_; }
+    const ID& toast_table_id() const { return toast_table_id_; }
     
 private:
     Database* db_;
-    uint32_t table_id_;          // Regular table ID
-    uint32_t toast_table_id_;    // Associated TOAST table ID
+    ID table_id_;          // Regular table ID
+    ID toast_table_id_;    // Associated TOAST table ID
     uint32_t next_value_id_;     // Next TOAST value ID to assign
     
     // Helper methods
@@ -121,6 +126,9 @@ private:
     
     Status read_toast_chunks(uint32_t value_id, std::vector<uint8_t>* data_out,
                            uint64_t xmin, ErrorContext* ctx);
+
+    Status read_toast_chunks_heap_scan(uint32_t value_id, std::vector<uint8_t>* data_out,
+                                     uint64_t xmin, ErrorContext* ctx);
     
     Status compress_data(const uint8_t* src, uint32_t src_size,
                         std::vector<uint8_t>* dst,

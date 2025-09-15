@@ -861,13 +861,3 @@ void index_advisor_analyze(IndexAdvisor* advisor) {
 }
 ```
 
-## Implementation Timeline
-
-Following the ProjectPlan phases:
-
-1. **Phase 11**: Basic B-Tree implementation with compression
-2. **Phase 13**: Integration with query optimizer
-3. **Phase 14+**: Additional index types (Hash, Bitmap, GIN)
-4. **Future**: Adaptive indexing and auto-tuning
-
-This specification provides a complete blueprint for ScratchBird's index implementation, combining proven techniques with innovative optimizations for modern workloads.

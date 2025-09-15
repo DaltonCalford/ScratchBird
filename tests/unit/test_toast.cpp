@@ -49,7 +49,7 @@ protected:
     std::filesystem::path test_dir_;
     std::filesystem::path db_path_;
     std::unique_ptr<Database> db_;
-    uint32_t schema_id_;
+    ID schema_id_;
 };
 
 TEST_F(ToastTest, BasicToastOperations) {
@@ -73,7 +73,7 @@ TEST_F(ToastTest, BasicToastOperations) {
     col2.nullable = true;
     columns.push_back(col2);
     
-    uint32_t table_id;
+    ID table_id;
     Status status = catalog->create_table(schema_id_, "test_table", columns, table_id);
     ASSERT_EQ(status, Status::Ok);
     
@@ -129,7 +129,7 @@ TEST_F(ToastTest, CompressedToast) {
     col.nullable = false;
     columns.push_back(col);
     
-    uint32_t table_id;
+    ID table_id;
     Status status = catalog->create_table(schema_id_, "compress_test", columns, table_id);
     ASSERT_EQ(status, Status::Ok);
     
@@ -172,7 +172,7 @@ TEST_F(ToastTest, MultipleChunks) {
     col.nullable = false;
     columns.push_back(col);
     
-    uint32_t table_id;
+    ID table_id;
     Status status = catalog->create_table(schema_id_, "chunk_test", columns, table_id);
     ASSERT_EQ(status, Status::Ok);
     
@@ -211,7 +211,7 @@ TEST_F(ToastTest, ToastDelete) {
     col.nullable = false;
     columns.push_back(col);
     
-    uint32_t table_id;
+    ID table_id;
     Status status = catalog->create_table(schema_id_, "delete_test", columns, table_id);
     ASSERT_EQ(status, Status::Ok);
     
@@ -270,7 +270,7 @@ TEST_F(ToastTest, EdgeCases) {
     col.nullable = false;
     columns.push_back(col);
     
-    uint32_t table_id;
+    ID table_id;
     Status status = catalog->create_table(schema_id_, "edge_test", columns, table_id);
     ASSERT_EQ(status, Status::Ok);
     

@@ -2,6 +2,7 @@
 
 #include "scratchbird/core/ondisk.h"
 #include "scratchbird/core/status.h"
+#include "scratchbird/core/uuidv7.h"
 #include <cstdint>
 #include <vector>
 #include <memory>
@@ -65,7 +66,7 @@ public:
     
     // Constructor with TOAST support
     HeapPage(uint8_t* page_data, uint32_t page_size, 
-             ToastManager* toast_mgr, Database* db, uint32_t table_id);
+             ToastManager* toast_mgr, Database* db, const UuidV7Bytes& table_id);
     
     // Initialize a new heap page
     Status initialize(uint32_t page_id, ErrorContext* ctx = nullptr);
@@ -109,7 +110,7 @@ private:
     uint32_t page_size_;
     ToastManager* toast_mgr_;   // Optional TOAST manager
     Database* db_;              // Database for TOAST operations
-    uint32_t table_id_;         // Table ID for TOAST operations
+    UuidV7Bytes table_id_;         // Table ID for TOAST operations
     
     // Get pointer to item array (starts after PageHeader)
     ItemPointer* get_item_array() {

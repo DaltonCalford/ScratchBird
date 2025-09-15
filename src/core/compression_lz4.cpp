@@ -28,7 +28,7 @@ public:
                    uint32_t* compressed_size,
                    CompressionLevel level) override {
         if (!src || !dst || !compressed_size) {
-            return Status::InvalidArgument("Null pointer in compress");
+            return Status::InvalidArgument;
         }
         
         auto start = std::chrono::high_resolution_clock::now();
@@ -47,15 +47,7 @@ public:
                 break;
                 
             case CompressionLevel::BEST:
-                compressed_bytes = LZ4_compress_HC(
-                    reinterpret_cast<const char*>(src),
-                    reinterpret_cast<char*>(dst),
-                    static_cast<int>(src_size),
-                    static_cast<int>(dst_capacity),
-                    LZ4HC_CLEVEL_MAX
-                );
-                break;
-                
+                // Fallback to default compression as HC is not available
             case CompressionLevel::DEFAULT:
             default:
                 compressed_bytes = LZ4_compress_default(
@@ -68,7 +60,7 @@ public:
         }
         
         if (compressed_bytes <= 0) {
-            return Status::CompressionError("LZ4 compression failed");
+            return Status::CompressionError;
         }
         
         *compressed_size = static_cast<uint32_t>(compressed_bytes);
@@ -82,14 +74,14 @@ public:
         stats_.compress_time_us += duration.count();
         stats_.compress_calls++;
         
-        return Status::Ok();
+        return Status::Ok;
     }
     
     Status decompress(const uint8_t* src, uint32_t src_size,
                      uint8_t* dst, uint32_t dst_capacity,
                      uint32_t* decompressed_size) override {
         if (!src || !dst || !decompressed_size) {
-            return Status::InvalidArgument("Null pointer in decompress");
+            return Status::InvalidArgument;
         }
         
         auto start = std::chrono::high_resolution_clock::now();
@@ -102,7 +94,7 @@ public:
         );
         
         if (decompressed_bytes < 0) {
-            return Status::CompressionError("LZ4 decompression failed");
+            return Status::CompressionError;
         }
         
         *decompressed_size = static_cast<uint32_t>(decompressed_bytes);
@@ -114,7 +106,7 @@ public:
         stats_.decompress_time_us += duration.count();
         stats_.decompress_calls++;
         
-        return Status::Ok();
+        return Status::Ok;
     }
     
     uint32_t max_compressed_size(uint32_t uncompressed_size) const override {

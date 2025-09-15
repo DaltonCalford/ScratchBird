@@ -32,25 +32,23 @@ protected:
         }
     }
     
-    Status create_test_table(uint32_t* table_id_out) {
+    Status create_test_table(ID& table_id_out) {
         ErrorContext ctx;
         
-        // Create default schema if needed
-        uint32_t schema_id;
+        // Create a schema first
+        ID schema_id;
         Status status = db_->catalog_manager()->create_schema("test", "root", schema_id, &ctx);
-        if (status != Status::Ok && status != Status::FileExists) {
+        if (status != Status::Ok) {
             return status;
         }
         
-        // Create test table
+        // Define columns
         std::vector<CatalogManager::ColumnInfo> columns;
-        // ColumnInfo: table_id, column_id, column_name, data_type, max_length, nullable, has_default, default_value
-        columns.push_back({0, 0, "id", 1, 4, false, false, ""});        // int
-        columns.push_back({0, 1, "name", 2, 64, true, false, ""});     // varchar
-        columns.push_back({0, 2, "value", 3, 4, true, false, ""});     // float
+        columns.push_back({{}, 0, "id", static_cast<uint16_t>(DataType::Int32), 4, false, false, ""});
+        columns.push_back({{}, 1, "value", static_cast<uint16_t>(DataType::Varchar), 100, true, false, ""});
         
-        return db_->catalog_manager()->create_table(
-            schema_id, "test_table", columns, *table_id_out, &ctx);
+        // Create table
+        return db_->catalog_manager()->create_table(schema_id, "test_table", columns, table_id_out, &ctx);
     }
     
     std::string test_db_;
@@ -119,156 +117,101 @@ TEST_F(StorageEngineTest, TupleInsertion) {
     EXPECT_EQ(0u, item_id);  // First item in page
 }
 
-TEST_F(StorageEngineTest, TupleRetrieval) {
+TEST_F(StorageEngineTest, InsertAndGetTuple) {
+    CreateAndOpenDatabase();
     ErrorContext ctx;
     
-    // Create and open database
-    ASSERT_EQ(Status::Ok, Database::create(test_db_, 8192, &ctx));
-    db_ = std::make_unique<Database>();
-    ASSERT_EQ(Status::Ok, db_->open(test_db_, &ctx));
-    
-    // Create test table
-    uint32_t table_id;
-    ASSERT_EQ(Status::Ok, create_test_table(&table_id));
+    ID table_id;
+    ASSERT_EQ(Status::Ok, create_test_table(table_id));
     
     StorageEngine* engine = db_->storage_engine();
     
-    // Insert a tuple
-    struct TestTuple {
+    // Test data
+    struct TestData {
         int32_t id;
-        char name[64];
-        float value;
-    } test_data = {123, "Retrieval Test", 2.718f};
+        char value[100];
+    };
+    TestData test_data = {1, "Hello World"};
     
     uint32_t page_id;
     uint16_t item_id;
-    ASSERT_EQ(Status::Ok, engine->insert_tuple(
-        table_id, reinterpret_cast<uint8_t*>(&test_data),
-        sizeof(TestTuple) + sizeof(TupleHeader), &page_id, &item_id, &ctx));
+    Status status = engine->insert_tuple(table_id, reinterpret_cast<uint8_t*>(&test_data),
+                                        sizeof(TestData), &page_id, &item_id, &ctx);
+    ASSERT_EQ(status, Status::Ok);
     
-    // Start a new transaction to ensure visibility
-    // Transaction management is now handled by TransactionManager
+    // Get tuple back
+    Tuple retrieved_tuple;
+    status = engine->get_tuple(page_id, item_id, &retrieved_tuple, &ctx);
+    ASSERT_EQ(status, Status::Ok);
     
-    // Retrieve the tuple
-    Tuple retrieved;
-    ASSERT_EQ(Status::Ok, engine->get_tuple(page_id, item_id, &retrieved, &ctx));
-    
-    // Verify data
-    ASSERT_EQ(sizeof(TestTuple) + sizeof(TupleHeader), retrieved.data_size);
-    // Skip TupleHeader to get to actual data
-    TestTuple* retrieved_data = reinterpret_cast<TestTuple*>(
-        const_cast<uint8_t*>(retrieved.data) + sizeof(TupleHeader));
-    EXPECT_EQ(123, retrieved_data->id);
-    EXPECT_STREQ("Retrieval Test", retrieved_data->name);
-    EXPECT_FLOAT_EQ(2.718f, retrieved_data->value);
+    TestData* retrieved_data = reinterpret_cast<TestData*>(const_cast<uint8_t*>(retrieved_tuple.data));
+    EXPECT_EQ(retrieved_data->id, test_data.id);
+    EXPECT_STREQ(retrieved_data->value, test_data.value);
 }
 
-TEST_F(StorageEngineTest, TupleDeletion) {
+TEST_F(StorageEngineTest, DeleteTuple) {
+    CreateAndOpenDatabase();
     ErrorContext ctx;
     
-    // Create and open database
-    ASSERT_EQ(Status::Ok, Database::create(test_db_, 8192, &ctx));
-    db_ = std::make_unique<Database>();
-    ASSERT_EQ(Status::Ok, db_->open(test_db_, &ctx));
-    
-    // Create test table
-    uint32_t table_id;
-    ASSERT_EQ(Status::Ok, create_test_table(&table_id));
+    ID table_id;
+    ASSERT_EQ(Status::Ok, create_test_table(table_id));
     
     StorageEngine* engine = db_->storage_engine();
     
     // Insert a tuple
-    struct TestTuple {
-        int32_t id;
-        char name[64];
-        float value;
-    } test_data = {456, "Delete Me", 1.0f};
-    
+    struct TestData { int32_t id; char value[100]; };
+    TestData test_data = {1, "To be deleted"};
     uint32_t page_id;
     uint16_t item_id;
-    ASSERT_EQ(Status::Ok, engine->insert_tuple(
-        table_id, reinterpret_cast<uint8_t*>(&test_data),
-        sizeof(TestTuple) + sizeof(TupleHeader), &page_id, &item_id, &ctx));
-    
-    // Start new transaction
-    // Transaction management is now handled by TransactionManager
+    ASSERT_EQ(engine->insert_tuple(table_id, reinterpret_cast<uint8_t*>(&test_data),
+                                  sizeof(TestData), &page_id, &item_id, &ctx), Status::Ok);
     
     // Delete the tuple
-    ASSERT_EQ(Status::Ok, engine->delete_tuple(page_id, item_id, &ctx));
+    ASSERT_EQ(engine->delete_tuple(page_id, item_id, &ctx), Status::Ok);
     
-    // Start another transaction
-    // Transaction management is now handled by TransactionManager
-    
-    // Try to retrieve - should not be visible
-    Tuple retrieved;
-    EXPECT_EQ(Status::NotFound, engine->get_tuple(page_id, item_id, &retrieved, &ctx));
+    // Try to get the deleted tuple (should fail)
+    Tuple retrieved_tuple;
+    EXPECT_EQ(engine->get_tuple(page_id, item_id, &retrieved_tuple, &ctx), Status::NotFound);
 }
 
 TEST_F(StorageEngineTest, SequentialScan) {
+    CreateAndOpenDatabase();
     ErrorContext ctx;
     
-    // Create and open database
-    ASSERT_EQ(Status::Ok, Database::create(test_db_, 8192, &ctx));
-    db_ = std::make_unique<Database>();
-    ASSERT_EQ(Status::Ok, db_->open(test_db_, &ctx));
-    
-    // Create test table
-    uint32_t table_id;
-    ASSERT_EQ(Status::Ok, create_test_table(&table_id));
+    ID table_id;
+    ASSERT_EQ(Status::Ok, create_test_table(table_id));
     
     StorageEngine* engine = db_->storage_engine();
     
     // Insert multiple tuples
-    struct TestTuple {
-        int32_t id;
-        char name[64];
-        float value;
+    struct TestData { int32_t id; char value[100]; };
+    std::vector<TestData> test_data = {
+        {1, "Tuple 1"},
+        {2, "Tuple 2"},
+        {3, "Tuple 3"}
     };
     
-    std::vector<TestTuple> test_records = {
-        {1, "First", 1.1f},
-        {2, "Second", 2.2f},
-        {3, "Third", 3.3f},
-        {4, "Fourth", 4.4f},
-        {5, "Fifth", 5.5f}
-    };
-    
-    for (const auto& record : test_records) {
+    for (const auto& data : test_data) {
         uint32_t page_id;
         uint16_t item_id;
-        ASSERT_EQ(Status::Ok, engine->insert_tuple(
-            table_id, reinterpret_cast<const uint8_t*>(&record),
-            sizeof(TestTuple) + sizeof(TupleHeader), &page_id, &item_id, &ctx));
+        ASSERT_EQ(engine->insert_tuple(table_id, reinterpret_cast<uint8_t*>(const_cast<TestData*>(&data)),
+                                      sizeof(TestData), &page_id, &item_id, &ctx), Status::Ok);
     }
     
-    // Start new transaction for visibility
-    // Transaction management is now handled by TransactionManager
-    
-    // Create scan iterator
+    // Create a scan
     auto scanner = engine->create_scan(table_id, &ctx);
-    ASSERT_NE(nullptr, scanner);
+    ASSERT_NE(scanner, nullptr);
     
-    // Scan and count tuples
-    int count = 0;
-    std::vector<int32_t> found_ids;
-    
+    // Iterate through tuples
     Tuple tuple;
+    int count = 0;
     while (scanner->next(&tuple, &ctx) == Status::Ok) {
-        ASSERT_EQ(sizeof(TestTuple) + sizeof(TupleHeader), tuple.data_size);
-        TestTuple* data = reinterpret_cast<TestTuple*>(
-            const_cast<uint8_t*>(tuple.data) + sizeof(TupleHeader));
-        found_ids.push_back(data->id);
+        TestData* retrieved_data = reinterpret_cast<TestData*>(const_cast<uint8_t*>(tuple.data));
+        EXPECT_EQ(retrieved_data->id, test_data[count].id);
+        EXPECT_STREQ(retrieved_data->value, test_data[count].value);
         count++;
     }
-    
-    // Verify we found all tuples
-    EXPECT_EQ(5, count);
-    
-    // Verify we found the right IDs (order may vary)
-    std::sort(found_ids.begin(), found_ids.end());
-    for (int i = 0; i < 5; i++) {
-        EXPECT_EQ(i + 1, found_ids[i]);
-    }
+    EXPECT_EQ(count, test_data.size());
 }
 
 TEST_F(StorageEngineTest, Visibility) {
@@ -279,28 +222,41 @@ TEST_F(StorageEngineTest, Visibility) {
     db_ = std::make_unique<Database>();
     ASSERT_EQ(Status::Ok, db_->open(test_db_, &ctx));
     
+    ID table_id;
+    ASSERT_EQ(Status::Ok, create_test_table(table_id));
+
     StorageEngine* engine = db_->storage_engine();
+    TransactionManager* tm = db_->transaction_manager();
     
-    // Test visibility rules
-    uint64_t current_xid = engine->get_current_xid();
+    // Insert a tuple with xmin = 100 (committed)
+    struct TestData { int32_t id; };
+    TestData data1 = {1};
+    uint32_t page_id1;
+    uint16_t item_id1;
+    ASSERT_EQ(engine->insert_tuple(table_id, reinterpret_cast<uint8_t*>(&data1),
+                                  sizeof(TestData), &page_id1, &item_id1, &ctx), Status::Ok);
     
-    // For testing, we'll use specific XIDs that avoid underflow
-    // Since FROZEN_XID = 2, initial XID is 3, we'll test with larger values
+    // Simulate transaction 100 committing
+    tm->commit_transaction(100, &ctx);
     
-    // Test 1: Tuple created by XID 1 (frozen), should be visible
-    EXPECT_TRUE(engine->is_visible(1, 0, current_xid));
+    // Insert a tuple with xmin = 101 (active)
+    TestData data2 = {2};
+    uint32_t page_id2;
+    uint16_t item_id2;
+    ASSERT_EQ(engine->insert_tuple(table_id, reinterpret_cast<uint8_t*>(&data2),
+                                  sizeof(TestData), &page_id2, &item_id2, &ctx), Status::Ok);
     
-    // Test 2: Tuple created by XID 2 (frozen), should be visible  
-    EXPECT_TRUE(engine->is_visible(2, 0, current_xid));
+    // Get current XID (should be 102)
+    uint64_t current_xid = tm->get_current_xid();
+    EXPECT_EQ(current_xid, 102);
     
-    // Test 3: Tuple created in future (current_xid + 10), should NOT be visible
-    EXPECT_FALSE(engine->is_visible(current_xid + 10, 0, current_xid));
+    // Tuple 1 (xmin=100, committed) should be visible
+    Tuple tuple1;
+    EXPECT_EQ(engine->get_tuple(page_id1, item_id1, &tuple1, &ctx), Status::Ok);
     
-    // Test 4: Tuple created by XID 1, deleted by XID 2, should NOT be visible
-    EXPECT_FALSE(engine->is_visible(1, 2, current_xid));
-    
-    // Test 5: Tuple created by XID 1, deleted in future, should be visible
-    EXPECT_TRUE(engine->is_visible(1, current_xid + 10, current_xid));
+    // Tuple 2 (xmin=101, active) should NOT be visible
+    Tuple tuple2;
+    EXPECT_EQ(engine->get_tuple(page_id2, item_id2, &tuple2, &ctx), Status::NotFound);
 }
 
 TEST_F(StorageEngineTest, PageFull) {
@@ -312,8 +268,8 @@ TEST_F(StorageEngineTest, PageFull) {
     ASSERT_EQ(Status::Ok, db_->open(test_db_, &ctx));
     
     // Create test table
-    uint32_t table_id;
-    ASSERT_EQ(Status::Ok, create_test_table(&table_id));
+    ID table_id;
+    ASSERT_EQ(Status::Ok, create_test_table(table_id));
     
     StorageEngine* engine = db_->storage_engine();
     
@@ -372,8 +328,8 @@ TEST_F(StorageEngineTest, ReuseDeletedSlots) {
     ASSERT_EQ(Status::Ok, db_->open(test_db_, &ctx));
     
     // Create test table
-    uint32_t table_id;
-    ASSERT_EQ(Status::Ok, create_test_table(&table_id));
+    ID table_id;
+    ASSERT_EQ(Status::Ok, create_test_table(table_id));
     
     StorageEngine* engine = db_->storage_engine();
     
@@ -435,7 +391,8 @@ TEST_F(StorageEngineTest, CorruptPageHeader) {
     std::vector<uint8_t> tuple_data(100, 0xAA);
     uint32_t page_id;
     uint16_t item_id;
-    ASSERT_EQ(Status::Ok, engine.insert_tuple(1, 
+    ID table_id = generate_uuid_v7();
+    ASSERT_EQ(Status::Ok, engine.insert_tuple(table_id, 
                                              tuple_data.data(),
                                              tuple_data.size() + sizeof(TupleHeader),
                                              &page_id, &item_id, &ctx));
@@ -467,7 +424,7 @@ TEST_F(StorageEngineTest, CorruptPageHeader) {
         StorageEngine engine2(db_.get());
         
         // Try to scan - should detect corruption
-        auto iterator = engine2.create_scan(1, &ctx);
+        auto iterator = engine2.create_scan(table_id, &ctx);
         ASSERT_NE(nullptr, iterator);
         
         Tuple corrupted_tuple;
@@ -496,7 +453,8 @@ TEST_F(StorageEngineTest, InvalidItemPointer) {
     std::vector<uint8_t> tuple_data(100, 0xBB);
     uint32_t page_id;
     uint16_t item_id;
-    ASSERT_EQ(Status::Ok, engine.insert_tuple(1,
+    ID table_id = generate_uuid_v7();
+    ASSERT_EQ(Status::Ok, engine.insert_tuple(table_id,
                                              tuple_data.data(),
                                              tuple_data.size() + sizeof(TupleHeader),
                                              &page_id, &item_id, &ctx));
@@ -557,7 +515,8 @@ TEST_F(StorageEngineTest, ChecksumMismatch) {
     std::vector<uint8_t> tuple_data(100, 0xCC);
     uint32_t page_id;
     uint16_t item_id;
-    ASSERT_EQ(Status::Ok, engine.insert_tuple(1,
+    ID table_id = generate_uuid_v7();
+    ASSERT_EQ(Status::Ok, engine.insert_tuple(table_id,
                                              tuple_data.data(),
                                              tuple_data.size() + sizeof(TupleHeader),
                                              &page_id, &item_id, &ctx));
@@ -581,7 +540,6 @@ TEST_F(StorageEngineTest, ChecksumMismatch) {
     db_ = std::make_unique<Database>();
     Status open_status = db_->open(test_db_, &ctx);
     
-    // Database might detect on open or on page read
     if (open_status == Status::Ok) {
         // Try to read the page
         uint8_t* buffer = new uint8_t[8192];

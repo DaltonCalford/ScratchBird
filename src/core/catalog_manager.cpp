@@ -17,17 +17,16 @@ struct CatalogRootPage {
     PageHeader header;
     uint32_t schema_count;
     uint32_t table_count;
-    uint32_t next_schema_id;
-    uint32_t next_table_id;
     uint32_t schemas_page;    // Page containing schemas table
     uint32_t tables_page;     // Page containing tables table  
     uint32_t columns_page;    // Page containing columns table
-    uint8_t reserved[4060];   // Padding for 16KB page
+    uint32_t indexes_page;    // Page containing indexes table
+    uint8_t reserved[4064];   // Padding for 16KB page
 };
 
 // Schema record on disk
 struct SchemaRecord {
-    uint32_t schema_id;
+    ID schema_id;
     char schema_name[64];
     char owner[64];
     uint64_t created_time;
@@ -36,8 +35,8 @@ struct SchemaRecord {
 
 // Table record on disk
 struct TableRecord {
-    uint32_t table_id;
-    uint32_t schema_id;
+    ID table_id;
+    ID schema_id;
     char table_name[64];
     uint32_t root_page;
     uint32_t column_count;
@@ -48,7 +47,7 @@ struct TableRecord {
 
 // Column record on disk
 struct ColumnRecord {
-    uint32_t table_id;
+    ID table_id;
     uint16_t column_id;
     char column_name[64];
     uint16_t data_type;
@@ -59,15 +58,20 @@ struct ColumnRecord {
     uint32_t is_valid;
 };
 
-#pragma pack(pop)
-
-// Simple heap page for catalog tables
-struct CatalogHeapPage {
-    PageHeader header;
-    uint32_t record_count;
-    uint32_t free_offset;
-    uint8_t data[];  // Variable length records
+// Index record on disk
+struct IndexRecord {
+    ID index_id;
+    ID table_id;
+    char index_name[64];
+    uint32_t root_page;
+    uint8_t is_unique;
+    uint16_t column_count;
+    uint16_t column_ids[16]; // Max 16 columns per index
+    uint64_t created_time;
+    uint32_t is_valid;
 };
+
+#pragma pack(pop)
 
 CatalogManager::CatalogManager(Database* db) : db_(db) {
     DEBUG_LOG_DB("CatalogManager created");
@@ -79,6 +83,7 @@ CatalogManager::~CatalogManager() {
 }
 
 Status CatalogManager::initialize(ErrorContext* ctx) {
+    std::lock_guard<std::mutex> lock(mutex_);
     DEBUG_LOG_DB("Initializing system catalog");
     
     // Write catalog root page
@@ -103,14 +108,14 @@ Status CatalogManager::initialize(ErrorContext* ctx) {
     }
     
     // Initialize schemas table page
-    uint8_t* page_buffer = new(std::nothrow) uint8_t[db_->page_size()];
+    auto page_buffer = std::make_unique<uint8_t[]>(db_->page_size());
     if (!page_buffer) {
         SET_ERROR_CONTEXT(ctx, Status::OOM, "Failed to allocate page buffer");
         return Status::OOM;
     }
     
-    memset(page_buffer, 0, db_->page_size());
-    CatalogHeapPage* heap = reinterpret_cast<CatalogHeapPage*>(page_buffer);
+    memset(page_buffer.get(), 0, db_->page_size());
+    CatalogHeapPage* heap = reinterpret_cast<CatalogHeapPage*>(page_buffer.get());
     
     heap->header.magic = kMagicSBRD;
     heap->header.version = 1;
@@ -126,41 +131,46 @@ Status CatalogManager::initialize(ErrorContext* ctx) {
     heap->header.item_count = 0;
     heap->header.free_offset = sizeof(CatalogHeapPage);
     
-    status = db_->write_page(schemas_table_page_, page_buffer, ctx);
+    status = db_->write_page(schemas_table_page_, page_buffer.get(), ctx);
     if (status != Status::Ok) {
-        delete[] page_buffer;
         return status;
     }
     
     // Allocate and initialize tables page
     status = pm->allocate_page(tables_table_page_, ctx);
     if (status != Status::Ok) {
-        delete[] page_buffer;
         return status;
     }
     
     heap->header.page_id = tables_table_page_;
-    status = db_->write_page(tables_table_page_, page_buffer, ctx);
+    status = db_->write_page(tables_table_page_, page_buffer.get(), ctx);
     if (status != Status::Ok) {
-        delete[] page_buffer;
         return status;
     }
     
     // Allocate and initialize columns page
     status = pm->allocate_page(columns_table_page_, ctx);
     if (status != Status::Ok) {
-        delete[] page_buffer;
         return status;
     }
     
     heap->header.page_id = columns_table_page_;
-    status = db_->write_page(columns_table_page_, page_buffer, ctx);
+    status = db_->write_page(columns_table_page_, page_buffer.get(), ctx);
     if (status != Status::Ok) {
-        delete[] page_buffer;
         return status;
     }
-    
-    delete[] page_buffer;
+
+    // Allocate and initialize indexes page
+    status = pm->allocate_page(indexes_table_page_, ctx);
+    if (status != Status::Ok) {
+        return status;
+    }
+
+    heap->header.page_id = indexes_table_page_;
+    status = db_->write_page(indexes_table_page_, page_buffer.get(), ctx);
+    if (status != Status::Ok) {
+        return status;
+    }
     
     // Update root page with table locations
     status = write_catalog_root(ctx);
@@ -169,7 +179,7 @@ Status CatalogManager::initialize(ErrorContext* ctx) {
     }
     
     // Create default schemas
-    uint32_t schema_id;
+    ID schema_id;
     status = create_schema("[sys]", "[root]", schema_id, ctx);
     if (status != Status::Ok) {
         return status;
@@ -183,6 +193,7 @@ Status CatalogManager::initialize(ErrorContext* ctx) {
 }
 
 Status CatalogManager::load(ErrorContext* ctx) {
+    std::lock_guard<std::mutex> lock(mutex_);
     DEBUG_LOG_DB("Loading system catalog");
 
     
@@ -215,10 +226,16 @@ Status CatalogManager::load(ErrorContext* ctx) {
     
     // Load columns for each table
     for (const auto& [table_id, table_info] : table_cache_) {
-        status = read_column_records(table_id, ctx);
+        status = read_column_records(table_info.table_id, ctx);
         if (status != Status::Ok) {
             return status;
         }
+    }
+    
+    // Load indexes
+    status = read_index_records(ctx);
+    if (status != Status::Ok) {
+        return status;
     }
     
     DEBUG_LOG_DB("Catalog loaded: " << schema_count_ << " schemas, " 
@@ -229,8 +246,9 @@ Status CatalogManager::load(ErrorContext* ctx) {
 
 Status CatalogManager::create_schema(const std::string& schema_name,
                                    const std::string& owner,
-                                   uint32_t& schema_id,
+                                   ID& schema_id,
                                    ErrorContext* ctx) {
+    std::lock_guard<std::mutex> lock(mutex_);
     // Check if schema already exists
     for (const auto& [id, info] : schema_cache_) {
         if (info.schema_name == schema_name) {
@@ -242,7 +260,7 @@ Status CatalogManager::create_schema(const std::string& schema_name,
     
     // Create new schema
     SchemaInfo schema;
-    schema.schema_id = next_schema_id_++;
+    schema.schema_id = generate_uuid_v7();
     schema.schema_name = schema_name;
     schema.owner = owner;
     schema.created_time = std::chrono::duration_cast<std::chrono::microseconds>(
@@ -251,7 +269,6 @@ Status CatalogManager::create_schema(const std::string& schema_name,
     // Write to disk
     Status status = write_schema_record(schema, ctx);
     if (status != Status::Ok) {
-        next_schema_id_--;  // Rollback ID
         return status;
     }
     
@@ -267,17 +284,18 @@ Status CatalogManager::create_schema(const std::string& schema_name,
         db_->sync(ctx);
     }
     
-    DEBUG_LOG_DB("Created schema: " << schema_name << " (ID: " << schema_id << ")");
+    DEBUG_LOG_DB("Created schema: " << schema_name << " (ID: " << schema_id.to_string() << ")");
     
     return status;
 }
 
-Status CatalogManager::get_schema(uint32_t schema_id, SchemaInfo& info,
+Status CatalogManager::get_schema(const ID& schema_id, SchemaInfo& info,
                                 ErrorContext* ctx) {
+    std::lock_guard<std::mutex> lock(mutex_);
     auto it = schema_cache_.find(schema_id);
     if (it == schema_cache_.end()) {
         SET_ERROR_CONTEXT(ctx, Status::InvalidArgument, 
-                         ("Schema not found: " + std::to_string(schema_id)).c_str());
+                         ("Schema not found: " + schema_id.to_string()).c_str());
         return Status::InvalidArgument;
     }
     
@@ -287,6 +305,7 @@ Status CatalogManager::get_schema(uint32_t schema_id, SchemaInfo& info,
 
 Status CatalogManager::get_schema(const std::string& schema_name, SchemaInfo& info,
                                 ErrorContext* ctx) {
+    std::lock_guard<std::mutex> lock(mutex_);
     for (const auto& [id, schema_info] : schema_cache_) {
         if (schema_info.schema_name == schema_name) {
             info = schema_info;
@@ -301,6 +320,7 @@ Status CatalogManager::get_schema(const std::string& schema_name, SchemaInfo& in
 
 Status CatalogManager::list_schemas(std::vector<SchemaInfo>& schemas,
                                   ErrorContext* ctx) {
+    std::lock_guard<std::mutex> lock(mutex_);
     schemas.clear();
     schemas.reserve(schema_cache_.size());
     
@@ -317,15 +337,16 @@ Status CatalogManager::list_schemas(std::vector<SchemaInfo>& schemas,
     return Status::Ok;
 }
 
-Status CatalogManager::create_table(uint32_t schema_id,
+Status CatalogManager::create_table(const ID& schema_id,
                                   const std::string& table_name,
                                   const std::vector<ColumnInfo>& columns,
-                                  uint32_t& table_id,
+                                  ID& table_id,
                                   ErrorContext* ctx) {
+    std::lock_guard<std::mutex> lock(mutex_);
     // Verify schema exists
     if (schema_cache_.find(schema_id) == schema_cache_.end()) {
         SET_ERROR_CONTEXT(ctx, Status::InvalidArgument, 
-                         ("Schema not found: " + std::to_string(schema_id)).c_str());
+                         ("Schema not found: " + schema_id.to_string()).c_str());
         return Status::InvalidArgument;
     }
     
@@ -348,7 +369,7 @@ Status CatalogManager::create_table(uint32_t schema_id,
     
     // Create table info
     TableInfo table;
-    table.table_id = next_table_id_++;
+    table.table_id = generate_uuid_v7();
     table.schema_id = schema_id;
     table.table_name = table_name;
     table.root_page = root_page;
@@ -360,7 +381,6 @@ Status CatalogManager::create_table(uint32_t schema_id,
     // Write table record
     status = write_table_record(table, ctx);
     if (status != Status::Ok) {
-        next_table_id_--;  // Rollback
         pm->free_page(root_page, ctx);  // Free allocated page
         return status;
     }
@@ -369,7 +389,6 @@ Status CatalogManager::create_table(uint32_t schema_id,
     status = write_column_records(table.table_id, columns, ctx);
     if (status != Status::Ok) {
         // TODO: Rollback table record
-        next_table_id_--;
         pm->free_page(root_page, ctx);
         return status;
     }
@@ -387,18 +406,19 @@ Status CatalogManager::create_table(uint32_t schema_id,
         db_->sync(ctx);
     }
     
-    DEBUG_LOG_DB("Created table: " << table_name << " (ID: " << table_id 
+    DEBUG_LOG_DB("Created table: " << table_name << " (ID: " << table_id.to_string() 
                  << ") with " << columns.size() << " columns");
     
     return status;
 }
 
-Status CatalogManager::get_table(uint32_t table_id, TableInfo& info,
+Status CatalogManager::get_table(const ID& table_id, TableInfo& info,
                                ErrorContext* ctx) {
+    std::lock_guard<std::mutex> lock(mutex_);
     auto it = table_cache_.find(table_id);
     if (it == table_cache_.end()) {
         SET_ERROR_CONTEXT(ctx, Status::InvalidArgument, 
-                         ("Table not found: " + std::to_string(table_id)).c_str());
+                         ("Table not found: " + table_id.to_string()).c_str());
         return Status::InvalidArgument;
     }
     
@@ -406,8 +426,9 @@ Status CatalogManager::get_table(uint32_t table_id, TableInfo& info,
     return Status::Ok;
 }
 
-Status CatalogManager::get_table(uint32_t schema_id, const std::string& table_name,
+Status CatalogManager::get_table(const ID& schema_id, const std::string& table_name,
                                TableInfo& info, ErrorContext* ctx) {
+    std::lock_guard<std::mutex> lock(mutex_);
     for (const auto& [id, table_info] : table_cache_) {
         if (table_info.schema_id == schema_id && table_info.table_name == table_name) {
             info = table_info;
@@ -420,8 +441,9 @@ Status CatalogManager::get_table(uint32_t schema_id, const std::string& table_na
     return Status::InvalidArgument;
 }
 
-Status CatalogManager::list_tables(uint32_t schema_id, std::vector<TableInfo>& tables,
+Status CatalogManager::list_tables(const ID& schema_id, std::vector<TableInfo>& tables,
                                  ErrorContext* ctx) {
+    std::lock_guard<std::mutex> lock(mutex_);
     tables.clear();
     
     for (const auto& [id, info] : table_cache_) {
@@ -439,12 +461,13 @@ Status CatalogManager::list_tables(uint32_t schema_id, std::vector<TableInfo>& t
     return Status::Ok;
 }
 
-Status CatalogManager::get_columns(uint32_t table_id, std::vector<ColumnInfo>& columns,
+Status CatalogManager::get_columns(const ID& table_id, std::vector<ColumnInfo>& columns,
                                  ErrorContext* ctx) {
+    std::lock_guard<std::mutex> lock(mutex_);
     auto it = column_cache_.find(table_id);
     if (it == column_cache_.end()) {
         SET_ERROR_CONTEXT(ctx, Status::InvalidArgument, 
-                         ("Columns not found for table: " + std::to_string(table_id)).c_str());
+                         ("Columns not found for table: " + table_id.to_string()).c_str());
         return Status::InvalidArgument;
     }
     
@@ -459,12 +482,13 @@ Status CatalogManager::get_columns(uint32_t table_id, std::vector<ColumnInfo>& c
     return Status::Ok;
 }
 
-Status CatalogManager::get_column(uint32_t table_id, const std::string& column_name,
+Status CatalogManager::get_column(const ID& table_id, const std::string& column_name,
                                 ColumnInfo& info, ErrorContext* ctx) {
+    std::lock_guard<std::mutex> lock(mutex_);
     auto it = column_cache_.find(table_id);
     if (it == column_cache_.end()) {
         SET_ERROR_CONTEXT(ctx, Status::InvalidArgument, 
-                         ("Table not found: " + std::to_string(table_id)).c_str());
+                         ("Table not found: " + table_id.to_string()).c_str());
         return Status::InvalidArgument;
     }
     
@@ -478,6 +502,130 @@ Status CatalogManager::get_column(uint32_t table_id, const std::string& column_n
     SET_ERROR_CONTEXT(ctx, Status::InvalidArgument, 
                      ("Column not found: " + column_name).c_str());
     return Status::InvalidArgument;
+}
+
+Status CatalogManager::create_index(const ID& table_id,
+                                  const std::string& index_name,
+                                  const std::vector<std::string>& column_names,
+                                  ID& index_id,
+                                  bool is_unique,
+                                  ErrorContext* ctx) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    // Verify table exists
+    if (table_cache_.find(table_id) == table_cache_.end()) {
+        SET_ERROR_CONTEXT(ctx, Status::InvalidArgument,
+                         ("Table not found: " + table_id.to_string()).c_str());
+        return Status::InvalidArgument;
+    }
+
+    // Check if index already exists
+    for (const auto& [id, info] : index_cache_) {
+        if (info.table_id == table_id && info.index_name == index_name) {
+            SET_ERROR_CONTEXT(ctx, Status::InvalidArgument,
+                            ("Index already exists: " + index_name).c_str());
+            return Status::InvalidArgument;
+        }
+    }
+
+    // Resolve column names to column IDs
+    std::vector<uint16_t> column_ids;
+    for (const auto& col_name : column_names) {
+        ColumnInfo col_info;
+        Status status = get_column(table_id, col_name, col_info, ctx);
+        if (status != Status::Ok) {
+            return status;
+        }
+        column_ids.push_back(col_info.column_id);
+    }
+
+    // Allocate root page for index data
+    PageManager* pm = db_->page_manager();
+    uint32_t root_page;
+    Status status = pm->allocate_page(root_page, ctx);
+    if (status != Status::Ok) {
+        return status;
+    }
+
+    // Create index info
+    IndexInfo index;
+    index.index_id = generate_uuid_v7();
+    index.table_id = table_id;
+    index.index_name = index_name;
+    index.root_page = root_page;
+    index.is_unique = is_unique;
+    index.column_ids = column_ids;
+    index.created_time = std::chrono::duration_cast<std::chrono::microseconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
+
+    // Write index record
+    status = write_index_record(index, ctx);
+    if (status != Status::Ok) {
+        pm->free_page(root_page, ctx);
+        return status;
+    }
+
+    // Update cache
+    index_cache_[index.index_id] = index;
+    index_id = index.index_id;
+
+    // TODO: Update root page with index count
+    // status = write_catalog_root(ctx);
+    // if (status == Status::Ok) {
+    //     db_->sync(ctx);
+    // }
+
+    DEBUG_LOG_DB("Created index: " << index_name << " (ID: " << index_id.to_string() << ")");
+
+    return status;
+}
+
+Status CatalogManager::get_index(const ID& index_id, IndexInfo& info,
+                               ErrorContext* ctx) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = index_cache_.find(index_id);
+    if (it == index_cache_.end()) {
+        SET_ERROR_CONTEXT(ctx, Status::InvalidArgument,
+                         ("Index not found: " + index_id.to_string()).c_str());
+        return Status::InvalidArgument;
+    }
+
+    info = it->second;
+    return Status::Ok;
+}
+
+Status CatalogManager::get_index(const ID& table_id, const std::string& index_name,
+                               IndexInfo& info, ErrorContext* ctx) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    for (const auto& [id, index_info] : index_cache_) {
+        if (index_info.table_id == table_id && index_info.index_name == index_name) {
+            info = index_info;
+            return Status::Ok;
+        }
+    }
+
+    SET_ERROR_CONTEXT(ctx, Status::InvalidArgument,
+                     ("Index not found: " + index_name).c_str());
+    return Status::InvalidArgument;
+}
+
+Status CatalogManager::list_indexes_for_table(const ID& table_id,
+                                              std::vector<IndexInfo>& indexes,
+                                              ErrorContext* ctx) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    indexes.clear();
+
+    for (const auto& [id, info] : index_cache_) {
+        if (info.table_id == table_id) {
+            indexes.push_back(info);
+        }
+    }
+
+    std::sort(indexes.begin(), indexes.end(),
+              [](const IndexInfo& a, const IndexInfo& b) {
+                  return a.index_name < b.index_name;
+              });
+
+    return Status::Ok;
 }
 
 Status CatalogManager::write_catalog_root(ErrorContext* ctx) {
@@ -523,12 +671,11 @@ Status CatalogManager::write_catalog_root(ErrorContext* ctx) {
     root->header.generation++;
     root->schema_count = schema_count_;
     root->table_count = table_count_;
-    root->next_schema_id = next_schema_id_;
-    root->next_table_id = next_table_id_;
     
     root->schemas_page = schemas_table_page_;
     root->tables_page = tables_table_page_;
     root->columns_page = columns_table_page_;
+    root->indexes_page = indexes_table_page_;
     
 
     
@@ -567,11 +714,10 @@ Status CatalogManager::read_catalog_root(ErrorContext* ctx) {
     
     schema_count_ = root->schema_count;
     table_count_ = root->table_count;
-    next_schema_id_ = root->next_schema_id;
-    next_table_id_ = root->next_table_id;
     schemas_table_page_ = root->schemas_page;
     tables_table_page_ = root->tables_page;
     columns_table_page_ = root->columns_page;
+    indexes_table_page_ = root->indexes_page;
     
     return bp->unpin_page(CATALOG_ROOT_PAGE, false, ctx);
 }
@@ -608,10 +754,11 @@ Status CatalogManager::write_record_to_heap_page(uint32_t page_id, const RecordT
     return bp->unpin_page(page_id, true, ctx);
 }
 
-// Helper to read records from a catalog heap page
 template<typename RecordType, typename InfoType>
-Status CatalogManager::read_records_from_heap_page(uint32_t page_id, std::unordered_map<uint32_t, InfoType>& cache, 
-                                                   std::function<void(const RecordType&, InfoType&)> converter, ErrorContext* ctx) {
+Status CatalogManager::read_records_to_vector(uint32_t page_id, std::vector<InfoType>& results,
+                                              std::function<bool(const RecordType&)> filter,
+                                              std::function<void(const RecordType&, InfoType&)> converter,
+                                              ErrorContext* ctx) {
     BufferPool* bp = db_->buffer_pool();
     void* page_buffer;
     Status status = bp->pin_page(page_id, &page_buffer, ctx);
@@ -619,47 +766,26 @@ Status CatalogManager::read_records_from_heap_page(uint32_t page_id, std::unorde
         SET_ERROR_CONTEXT(ctx, status, "Failed to read catalog heap page");
         return status;
     }
-    
+
     CatalogHeapPage* heap = reinterpret_cast<CatalogHeapPage*>(page_buffer);
-    
-    cache.clear();
+
+    results.clear();
     uint32_t offset = sizeof(CatalogHeapPage);
-    
+
     for (uint32_t i = 0; i < heap->record_count; i++) {
         RecordType* record = reinterpret_cast<RecordType*>(
             reinterpret_cast<uint8_t*>(page_buffer) + offset);
-        
-        if (record->is_valid) {
+
+        if (record->is_valid && filter(*record)) {
             InfoType info;
             converter(*record, info);
-            // Assuming schema_id is the key for schemas/tables. This needs to be generic.
-            // For now, we'll assume the InfoType has a .id field that can be used as key.
-            // This is a simplification for now.
-            cache[info.schema_id] = info; 
+            results.push_back(info);
         }
-        
+
         offset += sizeof(RecordType);
     }
-    
+
     return bp->unpin_page(page_id, false, ctx);
-}
-
-// Specific converters for read_records_from_heap_page
-void CatalogManager::convert_schema_record(const SchemaRecord& record, SchemaInfo& info) {
-    info.schema_id = record.schema_id;
-    info.schema_name = record.schema_name;
-    info.owner = record.owner;
-    info.created_time = record.created_time;
-}
-
-void CatalogManager::convert_table_record(const TableRecord& record, TableInfo& info) {
-    info.table_id = record.table_id;
-    info.schema_id = record.schema_id;
-    info.table_name = record.table_name;
-    info.root_page = record.root_page;
-    info.column_count = record.column_count;
-    info.row_count = record.row_count;
-    info.created_time = record.created_time;
 }
 
 Status CatalogManager::write_schema_record(const SchemaInfo& schema, ErrorContext* ctx) {
@@ -676,7 +802,14 @@ Status CatalogManager::write_schema_record(const SchemaInfo& schema, ErrorContex
 }
 
 Status CatalogManager::read_schema_records(ErrorContext* ctx) {
-    return read_records_from_heap_page(schemas_table_page_, schema_cache_, convert_schema_record, ctx);
+    auto converter = [](const SchemaRecord& record, SchemaInfo& info) {
+        info.schema_id = record.schema_id;
+        info.schema_name = record.schema_name;
+        info.owner = record.owner;
+        info.created_time = record.created_time;
+    };
+    auto key_extractor = [](const SchemaInfo& info) { return info.schema_id; };
+    return read_records_from_heap_page<SchemaRecord, SchemaInfo, ID>(schemas_table_page_, schema_cache_, converter, key_extractor, ctx);
 }
 
 Status CatalogManager::write_table_record(const TableInfo& table, ErrorContext* ctx) {
@@ -695,10 +828,20 @@ Status CatalogManager::write_table_record(const TableInfo& table, ErrorContext* 
 }
 
 Status CatalogManager::read_table_records(ErrorContext* ctx) {
-    return read_records_from_heap_page(tables_table_page_, table_cache_, convert_table_record, ctx);
+    auto converter = [](const TableRecord& record, TableInfo& info) {
+        info.table_id = record.table_id;
+        info.schema_id = record.schema_id;
+        info.table_name = record.table_name;
+        info.root_page = record.root_page;
+        info.column_count = record.column_count;
+        info.row_count = record.row_count;
+        info.created_time = record.created_time;
+    };
+    auto key_extractor = [](const TableInfo& info) { return info.table_id; };
+    return read_records_from_heap_page<TableRecord, TableInfo, ID>(tables_table_page_, table_cache_, converter, key_extractor, ctx);
 }
 
-Status CatalogManager::write_column_records(uint32_t table_id,
+Status CatalogManager::write_column_records(const ID& table_id,
                                           const std::vector<ColumnInfo>& columns,
                                           ErrorContext* ctx) {
     for (const auto& col : columns) {
@@ -723,45 +866,63 @@ Status CatalogManager::write_column_records(uint32_t table_id,
     return Status::Ok;
 }
 
-Status CatalogManager::read_column_records(uint32_t table_id, ErrorContext* ctx) {
-    BufferPool* bp = db_->buffer_pool();
-    void* page_buffer;
-    Status status = bp->pin_page(columns_table_page_, &page_buffer, ctx);
-    if (status != Status::Ok) {
-        return status;
-    }
-    
-    CatalogHeapPage* heap = reinterpret_cast<CatalogHeapPage*>(page_buffer);
-    
+Status CatalogManager::read_column_records(const ID& table_id, ErrorContext* ctx) {
+    auto filter = [table_id](const ColumnRecord& record) {
+        return record.table_id == table_id;
+    };
+
+    auto converter = [](const ColumnRecord& record, ColumnInfo& info) {
+        info.table_id = record.table_id;
+        info.column_id = record.column_id;
+        info.column_name = record.column_name;
+        info.data_type = record.data_type;
+        info.max_length = record.max_length;
+        info.nullable = record.nullable != 0;
+        info.has_default = record.has_default != 0;
+        info.default_value = record.default_value;
+    };
+
     std::vector<ColumnInfo> columns;
-    uint32_t offset = sizeof(CatalogHeapPage);
-    
-    for (uint32_t i = 0; i < heap->record_count; i++) {
-        ColumnRecord* record = reinterpret_cast<ColumnRecord*>(
-            reinterpret_cast<uint8_t*>(page_buffer) + offset);
-        
-        if (record->is_valid && record->table_id == table_id) {
-            ColumnInfo info;
-            info.table_id = record->table_id;
-            info.column_id = record->column_id;
-            info.column_name = record->column_name;
-            info.data_type = record->data_type;
-            info.max_length = record->max_length;
-            info.nullable = record->nullable != 0;
-            info.has_default = record->has_default != 0;
-            info.default_value = record->default_value;
-            
-            columns.push_back(info);
-        }
-        
-        offset += sizeof(ColumnRecord);
-    }
-    
-    if (!columns.empty()) {
+    Status status = read_records_to_vector<ColumnRecord, ColumnInfo>(
+        columns_table_page_, columns, filter, converter, ctx);
+
+    if (status == Status::Ok && !columns.empty()) {
         column_cache_[table_id] = columns;
     }
-    
-    return bp->unpin_page(columns_table_page_, false, ctx);
+
+    return status;
+}
+
+Status CatalogManager::write_index_record(const IndexInfo& index, ErrorContext* ctx) {
+    IndexRecord record;
+    record.index_id = index.index_id;
+    record.table_id = index.table_id;
+    strncpy(record.index_name, index.index_name.c_str(), 63);
+    record.index_name[63] = '\0';
+    record.root_page = index.root_page;
+    record.is_unique = index.is_unique;
+    record.column_count = index.column_ids.size();
+    for (size_t i = 0; i < index.column_ids.size(); ++i) {
+        record.column_ids[i] = index.column_ids[i];
+    }
+    record.created_time = index.created_time;
+    record.is_valid = 1;
+
+    return write_record_to_heap_page(indexes_table_page_, record, ctx);
+}
+
+Status CatalogManager::read_index_records(ErrorContext* ctx) {
+    auto converter = [](const IndexRecord& record, IndexInfo& info) {
+        info.index_id = record.index_id;
+        info.table_id = record.table_id;
+        info.index_name = record.index_name;
+        info.root_page = record.root_page;
+        info.is_unique = record.is_unique;
+        info.column_ids.assign(record.column_ids, record.column_ids + record.column_count);
+        info.created_time = record.created_time;
+    };
+    auto key_extractor = [](const IndexInfo& info) { return info.index_id; };
+    return read_records_from_heap_page<IndexRecord, IndexInfo, ID>(indexes_table_page_, index_cache_, converter, key_extractor, ctx);
 }
 
 } // namespace core

@@ -145,6 +145,12 @@ private:
     
     // Validate database header
     Status validate_header();
+
+    // Create helpers
+    static Status init_header_page(int fd, const std::string& path, uint32_t page_size, uint8_t* page_buffer, ErrorContext* ctx);
+    static Status create_catalog_page(int fd, uint32_t page_size, uint8_t* page_buffer, const UuidV7Bytes& db_uuid, uint64_t micros, ErrorContext* ctx);
+    static Status create_fsm_page(int fd, uint32_t page_size, uint8_t* page_buffer, const UuidV7Bytes& db_uuid, ErrorContext* ctx);
+    static Status validate_db_path(const std::string& path, std::string& canonical_path, ErrorContext* ctx);
 };
 
 } // namespace core

@@ -67,7 +67,7 @@ When `delete_tuple()` is called:
 
 ```cpp
 // Assume we have initialized database, buffer pool, etc.
-ToastManager toast_mgr(db, storage_engine, buffer_pool, page_manager);
+ToastManager toast_mgr(db, test_table_id_);
 std::vector<uint8_t> page_buffer(PAGE_SIZE);
 
 // Create heap page with TOAST support
@@ -160,4 +160,4 @@ Comprehensive tests are provided in `test_heap_toast_integration.cpp`:
 1. **Inline Compression**: Support COMPRESSED strategy for in-page compression
 2. **Partial Detoasting**: Retrieve only portions of toasted values
 3. **TOAST Prefetching**: Predictive loading of TOAST chunks
-4. **Alternative Storage**: Support for external storage backends
+4. **Alternative Storage**: Support for external storage backendsrt for external storage backends

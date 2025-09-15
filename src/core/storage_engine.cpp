@@ -1,3 +1,4 @@
+#include "scratchbird/core/config.h"
 #include "scratchbird/core/storage_engine.h"
 #include "scratchbird/core/heap_page.h"
 #include "scratchbird/core/database.h"
@@ -20,7 +21,7 @@ StorageEngine::StorageEngine(Database* db)
 
 StorageEngine::~StorageEngine() {}
 
-Status StorageEngine::insert_tuple(uint32_t table_id, const uint8_t* tuple_data,
+Status StorageEngine::insert_tuple(const ID& table_id, const uint8_t* tuple_data,
                                   uint32_t tuple_size, uint32_t* page_id_out,
                                   uint16_t* item_id_out, ErrorContext* ctx) {
     // Find a page with free space
@@ -142,14 +143,14 @@ Status StorageEngine::delete_tuple(uint32_t page_id, uint16_t item_id,
     return status;
 }
 
-std::unique_ptr<HeapScanIterator> StorageEngine::create_scan(uint32_t table_id,
+std::unique_ptr<HeapScanIterator> StorageEngine::create_scan(const ID& table_id,
                                                             ErrorContext* ctx) {
     // For now, we don't need table info - just return a scanner
     // In a real system, we'd track heap pages per table in the catalog
     
     // For now, assume heap pages start at page 7 (after catalog pages)
     // In a real system, we'd track this in the catalog
-    uint32_t start_page = 7;  // First heap page
+    uint32_t start_page = config::HEAP_SCAN_START_PAGE;  // First heap page
     
     return std::unique_ptr<HeapScanIterator>(
         new(std::nothrow) HeapScanIterator(db_, this, table_id, start_page));
@@ -196,13 +197,14 @@ uint64_t StorageEngine::get_current_xid() const {
     return 100;  // Default if no transaction manager
 }
 
-Status StorageEngine::find_free_page(uint32_t table_id, uint32_t tuple_size,
+Status StorageEngine::find_free_page(const ID& table_id, uint32_t tuple_size,
                                     uint32_t* page_id_out, ErrorContext* ctx) {
     // For simplicity, we'll scan existing heap pages linearly
     // In a real system, we'd maintain a free space map per table
     
+    uint32_t total_pages = page_manager_->total_pages();
     // Start scanning from page 7 (after catalog pages)
-    for (uint32_t page_id = 7; page_id < 100; page_id++) {  // Arbitrary limit
+    for (uint32_t page_id = config::HEAP_SCAN_START_PAGE; page_id < total_pages; page_id++) {  // Arbitrary limit
         void* page_buffer;
         Status status = buffer_pool_->pin_page(page_id, &page_buffer, ctx);
         uint8_t* page_data = static_cast<uint8_t*>(page_buffer);
@@ -236,7 +238,7 @@ Status StorageEngine::find_free_page(uint32_t table_id, uint32_t tuple_size,
     return allocate_heap_page(table_id, page_id_out, ctx);
 }
 
-Status StorageEngine::allocate_heap_page(uint32_t table_id, uint32_t* page_id_out,
+Status StorageEngine::allocate_heap_page(const ID& table_id, uint32_t* page_id_out,
                                         ErrorContext* ctx) {
     // Allocate a new page
     uint32_t page_id;
@@ -272,7 +274,7 @@ Status StorageEngine::allocate_heap_page(uint32_t table_id, uint32_t* page_id_ou
 // HeapScanIterator implementation
 
 HeapScanIterator::HeapScanIterator(Database* db, StorageEngine* engine,
-                                   uint32_t table_id, uint32_t start_page)
+                                   const ID& table_id, uint32_t start_page)
     : db_(db), engine_(engine), table_id_(table_id), current_page_(start_page),
       current_item_(0), last_page_(100), done_(false) {}  // Arbitrary limit
 
@@ -364,7 +366,7 @@ Status HeapScanIterator::load_page(uint32_t page_id, ErrorContext* ctx) {
     return status;
 }
 
-Status StorageEngine::delete_tuple(uint32_t table_id, uint64_t tid, uint64_t xmax,
+Status StorageEngine::delete_tuple(const ID& table_id, uint64_t tid, uint64_t xmax,
                                  ErrorContext* ctx) {
     // Extract page_id and item_id from TID
     uint32_t page_id = tid >> 16;
@@ -374,13 +376,37 @@ Status StorageEngine::delete_tuple(uint32_t table_id, uint64_t tid, uint64_t xma
     return delete_tuple(page_id, item_id, ctx);
 }
 
-std::unique_ptr<HeapScanIterator> StorageEngine::sequential_scan(uint32_t table_id,
+std::unique_ptr<HeapScanIterator> StorageEngine::sequential_scan(const ID& table_id,
                                                                 const std::vector<uint32_t>& columns,
                                                                 uint64_t xmin,
                                                                 ErrorContext* ctx) {
     // For now, just use the existing create_scan method
     // In a real implementation, we would filter by columns and visibility
     return create_scan(table_id, ctx);
+}
+
+// IndexScanIterator implementation
+
+IndexScanIterator::IndexScanIterator(Database* db, StorageEngine* engine, const ID& index_id)
+    : db_(db), engine_(engine), index_id_(index_id), done_(false) {}
+
+IndexScanIterator::~IndexScanIterator() {}
+
+Status IndexScanIterator::seek(const std::vector<uint8_t>& key, ErrorContext* ctx) {
+    // TODO: Implement B-tree seek
+    done_ = true;
+    return Status::NotImplemented;
+}
+
+Status IndexScanIterator::next(Tuple* tuple_out, ErrorContext* ctx) {
+    // TODO: Implement B-tree next
+    done_ = true;
+    return Status::NotImplemented;
+}
+
+std::unique_ptr<IndexScanIterator> StorageEngine::create_index_scan(const ID& index_id,
+                                                                  ErrorContext* ctx) {
+    return std::make_unique<IndexScanIterator>(db_, this, index_id);
 }
 
 } // namespace core
