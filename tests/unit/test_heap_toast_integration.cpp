@@ -59,10 +59,17 @@ protected:
         catalog_manager = std::make_unique<CatalogManager>(db.get());
         ASSERT_EQ(catalog_manager->initialize(&error_ctx), Status::Ok);
         
+        // Create default schema and table for TOAST manager
+        ID schema_id;
+        ASSERT_EQ(catalog_manager->create_schema("public", "test", schema_id, &error_ctx), Status::Ok);
+        
+        std::vector<CatalogManager::ColumnInfo> columns;
+        columns.push_back({{}, 0, "id", static_cast<uint16_t>(DataType::Int), 4, false, false, ""});
+        columns.push_back({{}, 1, "data", static_cast<uint16_t>(DataType::Bytea), 0, true, false, ""});
+        ASSERT_EQ(catalog_manager->create_table(schema_id, "test_table", columns, test_table_id_, &error_ctx), Status::Ok);
+
         // Create TOAST manager
-        // Note: For testing, we'll use ToastManager directly without full initialization
-        // since that requires a complete database setup with catalog_manager
-        toast_manager = std::make_unique<ToastManager>(db.get(), TABLE_ID);
+        toast_manager = std::make_unique<ToastManager>(db.get(), test_table_id_);
         
         // Allocate page buffer
         page_buffer.resize(PAGE_SIZE);
@@ -93,7 +100,7 @@ TEST_F(HeapToastIntegrationTest, BasicToastInsertAndRetrieve) {
     
     // Create a heap page with TOAST support
     HeapPage heap_page(page_buffer.data(), PAGE_SIZE, toast_manager.get(), 
-                      db.get(), TABLE_ID);
+                      db.get(), test_table_id_);
     ASSERT_EQ(heap_page.initialize(1, &error_ctx), Status::Ok);
     
     // Create a large tuple that should trigger TOAST
@@ -130,7 +137,7 @@ TEST_F(HeapToastIntegrationTest, SmallTupleNoToast) {
     
     // Create a heap page with TOAST support
     HeapPage heap_page(page_buffer.data(), PAGE_SIZE, toast_manager.get(), 
-                      db.get(), TABLE_ID);
+                      db.get(), test_table_id_);
     ASSERT_EQ(heap_page.initialize(1, &error_ctx), Status::Ok);
     
     // Create a small tuple that should NOT trigger TOAST
@@ -167,7 +174,7 @@ TEST_F(HeapToastIntegrationTest, ToastDeleteCleansUp) {
     
     // Create a heap page with TOAST support
     HeapPage heap_page(page_buffer.data(), PAGE_SIZE, toast_manager.get(), 
-                      db.get(), TABLE_ID);
+                      db.get(), test_table_id_);
     ASSERT_EQ(heap_page.initialize(1, &error_ctx), Status::Ok);
     
     // Create and insert a large tuple
@@ -205,7 +212,7 @@ TEST_F(HeapToastIntegrationTest, MultipleToastedTuples) {
     
     // Create a heap page with TOAST support
     HeapPage heap_page(page_buffer.data(), PAGE_SIZE, toast_manager.get(), 
-                      db.get(), TABLE_ID);
+                      db.get(), test_table_id_);
     ASSERT_EQ(heap_page.initialize(1, &error_ctx), Status::Ok);
     
     // Insert multiple large tuples
@@ -263,7 +270,7 @@ TEST_F(HeapToastIntegrationTest, CompressedToastIntegration) {
     
     // Create a heap page with TOAST support
     HeapPage heap_page(page_buffer.data(), PAGE_SIZE, toast_manager.get(), 
-                      db.get(), TABLE_ID);
+                      db.get(), test_table_id_);
     ASSERT_EQ(heap_page.initialize(1, &error_ctx), Status::Ok);
     
     // Create highly compressible data

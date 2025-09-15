@@ -118,7 +118,7 @@ valgrind --leak-check=full ./tests/scratchbird_tests --gtest_filter="StorageCrit
 ### Fix 1: HeapScanIterator Memory Leak
 ```cpp
 // In HeapScanIterator constructor:
-HeapScanIterator(Database* db, StorageEngine* engine, uint32_t table_id, uint32_t start_page)
+HeapScanIterator(Database* db, StorageEngine* engine, ID table_id, uint32_t start_page)
     : db_(db), engine_(engine), table_id_(table_id), ... {
     // Store reference to parent engine
 }

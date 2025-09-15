@@ -536,7 +536,7 @@ Chunk Tuple Format:
 1. Values > 2000 bytes are candidates for TOASTing
 2. Values > page_size/4 must be TOASTed
 3. Chunks are limited to 1996 bytes each
-4. TOAST tables are named `pg_toast_<table_id>`
+4. TOAST tables are named `pg_toast_<UUID>`
 5. Compression is optional (EXTERNAL strategy)
 
 ### TOAST Table Schema

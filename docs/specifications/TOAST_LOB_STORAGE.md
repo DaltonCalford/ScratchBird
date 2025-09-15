@@ -177,7 +177,7 @@ When `ToastStrategy::EXTERNAL` is used:
 
 ### With Catalog Manager
 - TOAST tables created in same schema
-- Named systematically: `pg_toast_<table_id>`
+- Named systematically: `pg_toast_<UUID>`
 - Tracked in system catalog
 
 ### With Buffer Pool

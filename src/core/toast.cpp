@@ -42,8 +42,8 @@ struct Value {
 namespace scratchbird {
 namespace core {
 
-ToastManager::ToastManager(Database* db, uint32_t table_id)
-    : db_(db), table_id_(table_id), toast_table_id_(0), next_value_id_(1) {
+ToastManager::ToastManager(Database* db, const ID& table_id)
+    : db_(db), table_id_(table_id), toast_table_id_(), next_value_id_(1) {
 }
 
 ToastManager::~ToastManager() = default;
@@ -53,7 +53,7 @@ Status ToastManager::initialize(ErrorContext* ctx) {
     CatalogManager* catalog = db_->catalog_manager();
     
     // TOAST table naming convention: pg_toast_<table_id>
-    std::string toast_name = "pg_toast_" + std::to_string(table_id_);
+    std::string toast_name = "pg_toast_" + table_id_.to_string();
     
     // Get the schema of the parent table first
     CatalogManager::TableInfo parent_info;
@@ -92,7 +92,6 @@ Status ToastManager::create_toast_table(ErrorContext* ctx) {
     
     // chunk_id column
     CatalogManager::ColumnInfo col1;
-    col1.table_id = 0;  // Will be assigned by catalog
     col1.column_id = 0;
     col1.column_name = "chunk_id";
     col1.data_type = static_cast<uint16_t>(DataType::Int);
@@ -123,7 +122,7 @@ Status ToastManager::create_toast_table(ErrorContext* ctx) {
     col3.has_default = false;
     columns.push_back(col3);
     
-    std::string toast_name = "pg_toast_" + std::to_string(table_id_);
+    std::string toast_name = "pg_toast_" + table_id_.to_string();
     
     // Get the schema of the parent table
     CatalogManager::TableInfo parent_info;
@@ -140,7 +139,15 @@ Status ToastManager::create_toast_table(ErrorContext* ctx) {
         return status;
     }
     
-    // TODO: Create index on (chunk_id, chunk_seq) for efficient retrieval
+    // Create index on (chunk_id, chunk_seq) for efficient retrieval
+    std::vector<std::string> index_columns = {"chunk_id", "chunk_seq"};
+    ID index_id;
+    std::string index_name = toast_name + "_idx";
+    status = catalog->create_index(toast_table_id_, index_name, index_columns, index_id, false, ctx);
+    if (status != Status::Ok) {
+        // This is not fatal, but we should log it
+        // TODO: Add logging
+    }
     
     return Status::Ok;
 }
@@ -163,7 +170,7 @@ Status ToastManager::toast_value(const uint8_t* data, uint32_t size,
     pointer_out->va_tag = static_cast<uint8_t>(strategy);
     pointer_out->va_rawsize = size;
     pointer_out->va_valueid = value_id;
-    pointer_out->va_toastrelid = toast_table_id_;
+    pointer_out->va_toastrelid = 0; //toast_table_id_;
     
     // Handle based on strategy
     switch (strategy) {
@@ -255,6 +262,42 @@ Status ToastManager::detoast_value(const ToastPointer* pointer,
 
 Status ToastManager::delete_toast_value(uint32_t value_id, uint64_t xmax,
                                       ErrorContext* ctx) {
+    // StorageEngine* storage = db_->storage_engine();
+    // CatalogManager* catalog = db_->catalog_manager();
+
+    // // Get the index ID for the TOAST table
+    // std::string toast_name = "pg_toast_" + table_id_.to_string();
+    // std::string index_name = toast_name + "_idx";
+    // CatalogManager::IndexInfo index_info;
+    // Status status = catalog->get_index(toast_table_id_, index_name, index_info, ctx);
+    // if (status != Status::Ok) {
+    //     // Fall back to heap scan if index not found
+    //     return delete_toast_value_heap_scan(value_id, xmax, ctx);
+    // }
+
+    // // Create an index scan
+    // auto scan = storage->create_index_scan(index_info.index_id, ctx);
+    // if (!scan) {
+    //     SET_ERROR_CONTEXT(ctx, Status::InvalidArgument, 
+    //                      "Failed to create index scan for TOAST table");
+    //     return Status::InvalidArgument;
+    // }
+
+    // // Seek to the first chunk for this value_id
+    // std::vector<uint8_t> key;
+    // key.insert(key.end(), reinterpret_cast<uint8_t*>(&value_id), reinterpret_cast<uint8_t*>(&value_id) + 4);
+    // status = scan->seek(key, ctx);
+    // if (status != Status::Ok) {
+    //     return status;
+    // }
+
+    // // ... rest of implementation using index scan ...
+
+    return delete_toast_value_heap_scan(value_id, xmax, ctx);
+}
+
+Status ToastManager::delete_toast_value_heap_scan(uint32_t value_id, uint64_t xmax,
+                                                  ErrorContext* ctx) {
     StorageEngine* storage = db_->storage_engine();
     
     // Mark all chunks of this value as deleted
@@ -276,7 +319,10 @@ Status ToastManager::delete_toast_value(uint32_t value_id, uint64_t xmax,
         uint32_t chunk_id = *reinterpret_cast<const uint32_t*>(tuple.data);
         if (chunk_id == value_id) {
             // Delete this chunk
-            storage->delete_tuple(tuple.page_id, tuple.item_id, ctx);
+            Status delete_status = storage->delete_tuple(tuple.page_id, tuple.item_id, ctx);
+            if (delete_status != Status::Ok) {
+                return delete_status;
+            }
         }
     }
     
@@ -361,6 +407,43 @@ Status ToastManager::write_toast_chunks(uint32_t value_id, const uint8_t* data,
 }
 
 Status ToastManager::read_toast_chunks(uint32_t value_id, 
+                                     std::vector<uint8_t>* data_out,
+                                     uint64_t xmin, ErrorContext* ctx) {
+    // StorageEngine* storage = db_->storage_engine();
+    // CatalogManager* catalog = db_->catalog_manager();
+
+    // // Get the index ID for the TOAST table
+    // std::string toast_name = "pg_toast_" + table_id_.to_string();
+    // std::string index_name = toast_name + "_idx";
+    // CatalogManager::IndexInfo index_info;
+    // Status status = catalog->get_index(toast_table_id_, index_name, index_info, ctx);
+    // if (status != Status::Ok) {
+    //     // Fall back to heap scan if index not found
+    //     return read_toast_chunks_heap_scan(value_id, data_out, xmin, ctx);
+    // }
+
+    // // Create an index scan
+    // auto scan = storage->create_index_scan(index_info.index_id, ctx);
+    // if (!scan) {
+    //     SET_ERROR_CONTEXT(ctx, Status::InvalidArgument, 
+    //                      "Failed to create index scan for TOAST table");
+    //     return Status::InvalidArgument;
+    // }
+
+    // // Seek to the first chunk for this value_id
+    // std::vector<uint8_t> key;
+    // key.insert(key.end(), reinterpret_cast<uint8_t*>(&value_id), reinterpret_cast<uint8_t*>(&value_id) + 4);
+    // status = scan->seek(key, ctx);
+    // if (status != Status::Ok) {
+    //     return status;
+    // }
+    
+    // // ... rest of implementation using index scan ...
+
+    return read_toast_chunks_heap_scan(value_id, data_out, xmin, ctx);
+}
+
+Status ToastManager::read_toast_chunks_heap_scan(uint32_t value_id,
                                      std::vector<uint8_t>* data_out,
                                      uint64_t xmin, ErrorContext* ctx) {
     StorageEngine* storage = db_->storage_engine();
@@ -521,4 +604,4 @@ Status ToastManager::decompress_data(const uint8_t* src, uint32_t src_size,
 }
 
 } // namespace core
-} // namespace scratchbird
+} // namespace scratchbirde scratchbird

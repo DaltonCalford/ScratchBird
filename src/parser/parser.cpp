@@ -90,9 +90,9 @@ ParseResult Parser::parseStatement() {
         } else if (match(TokenType::KW_SELECT)) {
             stmt = parseSelect();
         } else if (isAtEnd()) {
-            error("Expected SQL statement");
+            error("Expected SQL statement, but got end of file");
         } else {
-            error("Unexpected token at start of statement");
+            error("Unexpected token at start of statement: " + current().toString());
             synchronize();
         }
         
@@ -122,7 +122,7 @@ Statement* Parser::parseCreateTable() {
     }
     
     if (!check(TokenType::IDENTIFIER)) {
-        error("Expected table name");
+        error("Expected table name after CREATE TABLE, but got " + current().toString());
         synchronize();
         return nullptr;
     }
@@ -162,7 +162,7 @@ ColumnDef* Parser::parseColumnDef() {
     auto start_loc = current().location;
     
     if (!check(TokenType::IDENTIFIER)) {
-        error("Expected column name");
+        error("Expected column name, but got " + current().toString());
         return nullptr;
     }
     
@@ -220,7 +220,7 @@ TypeName Parser::parseTypeName() {
             return TypeName(type, precision);
         }
     } else {
-        error("Expected data type");
+        error("Expected data type, but got " + current().toString());
         type = DataType::INTEGER; // Default
     }
     
@@ -236,7 +236,7 @@ Statement* Parser::parseInsert() {
     }
     
     if (!check(TokenType::IDENTIFIER)) {
-        error("Expected table name");
+        error("Expected table name after INSERT INTO, but got " + current().toString());
         synchronize();
         return nullptr;
     }
@@ -254,7 +254,7 @@ Statement* Parser::parseInsert() {
     
     do {
         if (!check(TokenType::IDENTIFIER)) {
-            error("Expected column name");
+            error("Expected column name, but got " + current().toString());
             synchronize();
             return nullptr;
         }
@@ -333,7 +333,7 @@ Statement* Parser::parseSelect() {
     }
     
     if (!check(TokenType::IDENTIFIER)) {
-        error("Expected table name");
+        error("Expected table name after FROM, but got " + current().toString());
         synchronize();
         return nullptr;
     }
@@ -483,7 +483,7 @@ Expression* Parser::parsePrimary() {
         return expr;
     }
     
-    error("Expected expression");
+    error("Expected expression, but got " + current().toString());
     return nullptr;
 }
 

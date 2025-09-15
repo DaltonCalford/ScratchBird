@@ -25,7 +25,7 @@ For the current status of the project, please see the [STATUS.md](STATUS.md) fil
 
 ## Development Process
 
-1. Review the `AUTHORITATIVE_IMPLEMENTATION_PLAN.md` in the `project/plan` directory.
+1. Review the `IMPLEMENTATION_PLAN.md` in the `project/plan` directory.
 2. Begin implementation of the next Alpha phase.
 3. Progress is tracked in the `project/progress` directory.
 4. Tests are created alongside implementation.

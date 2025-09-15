@@ -21,6 +21,7 @@ PageManager::~PageManager() {
 }
 
 Status PageManager::initialize(ErrorContext* ctx) {
+    std::lock_guard<std::mutex> lock(mutex_);
     // For a new database, we start with header (0), catalog (1), and FSM (2)
     total_pages_ = 3;
     free_pages_ = 0;
@@ -40,39 +41,36 @@ Status PageManager::initialize(ErrorContext* ctx) {
 }
 
 Status PageManager::load(ErrorContext* ctx) {
+    std::lock_guard<std::mutex> lock(mutex_);
     // Allocate buffer for FSM page
-    uint8_t* buffer = new(std::nothrow) uint8_t[page_size_];
+    auto buffer = std::make_unique<uint8_t[]>(page_size_);
     if (!buffer) {
         SET_ERROR_CONTEXT(ctx, Status::OOM, "Failed to allocate buffer for FSM page");
         return Status::OOM;
     }
     
     // Read FSM page
-    Status status = db_->read_page(FSM_PAGE_ID, buffer, ctx);
+    Status status = db_->read_page(FSM_PAGE_ID, buffer.get(), ctx);
     if (status != Status::Ok) {
-        delete[] buffer;
         return status;
     }
     
     // Parse FSM page
-    FSMPage* fsm = reinterpret_cast<FSMPage*>(buffer);
+    FSMPage* fsm = reinterpret_cast<FSMPage*>(buffer.get());
     
     // Validate page type
     if (fsm->header.page_type != PAGE_TYPE_FREE_SPACE_MAP) {
-        delete[] buffer;
         SET_ERROR_CONTEXT(ctx, Status::PageCorrupt, "Invalid FSM page type");
         return Status::PageCorrupt;
     }
     
     // Validate FSM metadata consistency
     if (fsm->total_pages == 0 || fsm->total_pages > (1ULL << 32) / page_size_) {
-        delete[] buffer;
         SET_ERROR_CONTEXT(ctx, Status::PageCorrupt, "Invalid FSM total_pages");
         return Status::PageCorrupt;
     }
     
     if (fsm->free_pages > fsm->total_pages) {
-        delete[] buffer;
         SET_ERROR_CONTEXT(ctx, Status::PageCorrupt, "Invalid FSM free_pages count");
         return Status::PageCorrupt;
     }
@@ -104,13 +102,11 @@ Status PageManager::load(ErrorContext* ctx) {
     
     uint32_t expected_allocated = total_pages_ - free_pages_;
     if (allocated_count != expected_allocated) {
-        delete[] buffer;
         SET_ERROR_CONTEXT(ctx, Status::PageCorrupt, 
             "FSM bitmap inconsistent with free_pages count");
         return Status::PageCorrupt;
     }
     
-    delete[] buffer;
     dirty_ = false;
     return Status::Ok;
 }
@@ -183,7 +179,7 @@ bool PageManager::is_allocated(uint32_t page_id) const {
 
 Status PageManager::extend_file(uint32_t num_pages, ErrorContext* ctx) {
     // Allocate buffer for new pages
-    uint8_t* buffer = new(std::nothrow) uint8_t[page_size_];
+    auto buffer = std::make_unique<uint8_t[]>(page_size_);
     if (!buffer) {
         SET_ERROR_CONTEXT(ctx, Status::OOM, "Failed to allocate buffer for page extension");
         return Status::OOM;
@@ -191,10 +187,10 @@ Status PageManager::extend_file(uint32_t num_pages, ErrorContext* ctx) {
     
     // Write empty pages to extend file
     for (uint32_t i = 0; i < num_pages; i++) {
-        memset(buffer, 0, page_size_);
+        memset(buffer.get(), 0, page_size_);
         
         // Initialize page header
-        PageHeader* header = reinterpret_cast<PageHeader*>(buffer);
+        PageHeader* header = reinterpret_cast<PageHeader*>(buffer.get());
         header->magic = kMagicSBRD;
         header->version = 1;
         header->page_type = PAGE_TYPE_HEAP;  // Default to heap page
@@ -209,18 +205,21 @@ Status PageManager::extend_file(uint32_t num_pages, ErrorContext* ctx) {
         header->special_size = 0;
         
         // Write page
-        Status status = db_->write_page(total_pages_ + i, buffer, ctx);
+        Status status = db_->write_page(total_pages_ + i, buffer.get(), ctx);
         if (status != Status::Ok) {
-            delete[] buffer;
             return status;
         }
     }
     
-    delete[] buffer;
-    
     // Update bitmap
     size_t old_size = bitmap_.size();
     size_t new_total = total_pages_ + num_pages;
+
+    if (new_total > (SIZE_MAX - 7)) {
+        SET_ERROR_CONTEXT(ctx, Status::OOM, "Database size exceeds addressable space.");
+        return Status::OOM;
+    }
+
     size_t new_bitmap_bytes = (new_total + 7) / 8;
     
     if (new_bitmap_bytes > old_size) {
@@ -249,27 +248,22 @@ Status PageManager::flush(ErrorContext* ctx) {
     
     std::lock_guard<std::mutex> lock(mutex_);
     
-    // Allocate buffer for FSM page
-    uint8_t* buffer = new(std::nothrow) uint8_t[page_size_];
+    auto buffer = std::make_unique<uint8_t[]>(page_size_);
     if (!buffer) {
         SET_ERROR_CONTEXT(ctx, Status::OOM, "Failed to allocate buffer for FSM flush");
         return Status::OOM;
     }
     
-    // Build FSM page
-    build_fsm_page_buffer(buffer);
+    build_fsm_page_buffer(buffer.get());
     
-    // Write FSM page
-    Status status = db_->write_page(FSM_PAGE_ID, buffer, ctx);
+    Status status = db_->write_page(FSM_PAGE_ID, buffer.get(), ctx);
+    if (status != Status::Ok) {
+        return status;
+    }
     
-    delete[] buffer;
-    
+    status = db_->sync(ctx);
     if (status == Status::Ok) {
-        // Sync to ensure FSM durability
-        status = db_->sync(ctx);
-        if (status == Status::Ok) {
-            dirty_ = false;
-        }
+        dirty_ = false;
     }
     
     return status;

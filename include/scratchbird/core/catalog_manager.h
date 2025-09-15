@@ -5,17 +5,30 @@
 #include <vector>
 #include <memory>
 #include <unordered_map>
+#include <mutex>
 #include "scratchbird/core/status.h"
 #include "scratchbird/core/ondisk.h"
 #include "scratchbird/core/error_context.h"
+#include "scratchbird/core/uuidv7.h"
+#include "scratchbird/core/database.h"
+#include "scratchbird/core/buffer_pool.h"
+
 
 namespace scratchbird {
 namespace core {
 
 // Forward declarations
-class Database;
-class BufferPool;
 class PageManager;
+
+using ID = UuidV7Bytes;
+
+// Simple heap page for catalog tables
+struct CatalogHeapPage {
+    PageHeader header;
+    uint32_t record_count;
+    uint32_t free_offset;
+    uint8_t data[];  // Variable length records
+};
 
 /**
  * System Catalog Manager
@@ -31,7 +44,7 @@ class CatalogManager {
 public:
     // Schema information
     struct SchemaInfo {
-        uint32_t schema_id;
+        ID schema_id;
         std::string schema_name;
         std::string owner;
         uint64_t created_time;
@@ -39,8 +52,8 @@ public:
     
     // Table information
     struct TableInfo {
-        uint32_t table_id;
-        uint32_t schema_id;
+        ID table_id;
+        ID schema_id;
         std::string table_name;
         uint32_t root_page;     // Root page of table data
         uint32_t column_count;
@@ -50,7 +63,7 @@ public:
     
     // Column information
     struct ColumnInfo {
-        uint32_t table_id;
+        ID table_id;
         uint16_t column_id;
         std::string column_name;
         uint16_t data_type;     // Type code
@@ -58,6 +71,17 @@ public:
         bool nullable;
         bool has_default;
         std::string default_value;  // Serialized default
+    };
+    
+    // Index information
+    struct IndexInfo {
+        ID index_id;
+        ID table_id;
+        std::string index_name;
+        uint32_t root_page;
+        bool is_unique;
+        std::vector<uint16_t> column_ids;
+        uint64_t created_time;
     };
     
     CatalogManager(Database* db);
@@ -72,10 +96,10 @@ public:
     // Schema operations
     Status create_schema(const std::string& schema_name, 
                         const std::string& owner,
-                        uint32_t& schema_id,
+                        ID& schema_id,
                         ErrorContext* ctx = nullptr);
     
-    Status get_schema(uint32_t schema_id, SchemaInfo& info, 
+    Status get_schema(const ID& schema_id, SchemaInfo& info, 
                      ErrorContext* ctx = nullptr);
     
     Status get_schema(const std::string& schema_name, SchemaInfo& info,
@@ -85,34 +109,59 @@ public:
                        ErrorContext* ctx = nullptr);
     
     // Table operations
-    Status create_table(uint32_t schema_id,
+    Status create_table(const ID& schema_id,
                        const std::string& table_name,
                        const std::vector<ColumnInfo>& columns,
-                       uint32_t& table_id,
+                       ID& table_id,
                        ErrorContext* ctx = nullptr);
     
-    Status get_table(uint32_t table_id, TableInfo& info,
+    Status get_table(const ID& table_id, TableInfo& info,
                     ErrorContext* ctx = nullptr);
     
-    Status get_table(uint32_t schema_id, const std::string& table_name,
+    Status get_table(const ID& schema_id, const std::string& table_name,
                     TableInfo& info, ErrorContext* ctx = nullptr);
     
-    Status list_tables(uint32_t schema_id, std::vector<TableInfo>& tables,
+    Status list_tables(const ID& schema_id, std::vector<TableInfo>& tables,
                       ErrorContext* ctx = nullptr);
     
     // Column operations
-    Status get_columns(uint32_t table_id, std::vector<ColumnInfo>& columns,
+    Status get_columns(const ID& table_id, std::vector<ColumnInfo>& columns,
                       ErrorContext* ctx = nullptr);
     
-    Status get_column(uint32_t table_id, const std::string& column_name,
+    Status get_column(const ID& table_id, const std::string& column_name,
                      ColumnInfo& info, ErrorContext* ctx = nullptr);
     
+    // Index operations
+    Status create_index(const ID& table_id,
+                        const std::string& index_name,
+                        const std::vector<std::string>& column_names,
+                        ID& index_id,
+                        bool is_unique = false,
+                        ErrorContext* ctx = nullptr);
+
+    Status get_index(const ID& index_id, IndexInfo& info,
+                     ErrorContext* ctx = nullptr);
+
+    Status get_index(const ID& table_id, const std::string& index_name,
+                     IndexInfo& info, ErrorContext* ctx = nullptr);
+
+    Status list_indexes_for_table(const ID& table_id,
+                                  std::vector<IndexInfo>& indexes,
+                                  ErrorContext* ctx = nullptr);
+    
     // Catalog statistics
-    uint32_t schema_count() const { return schema_count_; }
-    uint32_t table_count() const { return table_count_; }
+    uint32_t schema_count() const {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return schema_count_;
+    }
+    uint32_t table_count() const {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return table_count_;
+    }
     
 private:
     Database* db_;
+    mutable std::mutex mutex_;
     
     // Catalog page layout - using higher page numbers to avoid conflict
     // with existing system catalog on page 1
@@ -120,22 +169,23 @@ private:
     static constexpr uint32_t SCHEMAS_TABLE_PAGE = 4;
     static constexpr uint32_t TABLES_TABLE_PAGE = 5;
     static constexpr uint32_t COLUMNS_TABLE_PAGE = 6;
+    static constexpr uint32_t INDEXES_TABLE_PAGE = 7;
     
     // In-memory cache of catalog data
-    std::unordered_map<uint32_t, SchemaInfo> schema_cache_;
-    std::unordered_map<uint32_t, TableInfo> table_cache_;
-    std::unordered_map<uint32_t, std::vector<ColumnInfo>> column_cache_;
+    std::unordered_map<ID, SchemaInfo> schema_cache_;
+    std::unordered_map<ID, TableInfo> table_cache_;
+    std::unordered_map<ID, std::vector<ColumnInfo>> column_cache_;
+    std::unordered_map<ID, IndexInfo> index_cache_;
     
     // Counters
     uint32_t schema_count_ = 0;
     uint32_t table_count_ = 0;
-    uint32_t next_schema_id_ = 1000;  // Start user schemas at 1000
-    uint32_t next_table_id_ = 1000;   // Start user tables at 1000
     
     // Actual page numbers (may differ from constants during init)
     uint32_t schemas_table_page_ = SCHEMAS_TABLE_PAGE;
     uint32_t tables_table_page_ = TABLES_TABLE_PAGE;
     uint32_t columns_table_page_ = COLUMNS_TABLE_PAGE;
+    uint32_t indexes_table_page_ = INDEXES_TABLE_PAGE;
     
     // Internal methods
     Status write_catalog_root(ErrorContext* ctx);
@@ -146,23 +196,57 @@ private:
     Status write_record_to_heap_page(uint32_t page_id, const RecordType& record, ErrorContext* ctx);
 
     // Helper to read records from a catalog heap page
-    template<typename RecordType, typename InfoType>
-    Status read_records_from_heap_page(uint32_t page_id, std::unordered_map<uint32_t, InfoType>& cache, 
-                                       std::function<void(const RecordType&, InfoType&)> converter, ErrorContext* ctx);
+    template<typename RecordType, typename InfoType, typename KeyType, typename Converter, typename KeyExtractor>
+    Status read_records_from_heap_page(uint32_t page_id, std::unordered_map<KeyType, InfoType>& cache,
+                                       Converter converter,
+                                       KeyExtractor key_extractor, ErrorContext* ctx) {
+        BufferPool* bp = db_->buffer_pool();
+        void* page_buffer;
+        Status status = bp->pin_page(page_id, &page_buffer, ctx);
+        if (status != Status::Ok) {
+            SET_ERROR_CONTEXT(ctx, status, "Failed to read catalog heap page");
+            return status;
+        }
 
-    // Specific converters for read_records_from_heap_page
-    static void convert_schema_record(const SchemaRecord& record, SchemaInfo& info);
-    static void convert_table_record(const TableRecord& record, TableInfo& info);
+        CatalogHeapPage* heap = reinterpret_cast<CatalogHeapPage*>(page_buffer);
+
+        cache.clear();
+        uint32_t offset = sizeof(CatalogHeapPage);
+
+        for (uint32_t i = 0; i < heap->record_count; i++) {
+            RecordType* record = reinterpret_cast<RecordType*>(
+                reinterpret_cast<uint8_t*>(page_buffer) + offset);
+
+            if (record->is_valid) {
+                InfoType info;
+                converter(*record, info);
+                cache[key_extractor(info)] = info;
+            }
+
+            offset += sizeof(RecordType);
+        }
+
+        return bp->unpin_page(page_id, false, ctx);
+    }
+
+    // Helper to read records from a catalog heap page
+    template<typename RecordType, typename InfoType>
+    Status read_records_to_vector(uint32_t page_id, std::vector<InfoType>& results,
+                                  std::function<bool(const RecordType&)> filter,
+                                  std::function<void(const RecordType&, InfoType&)> converter,
+                                  ErrorContext* ctx);
 
     // Specific write/read methods using the generic helpers
     Status write_schema_record(const SchemaInfo& schema, ErrorContext* ctx);
     Status read_schema_records(ErrorContext* ctx);
     Status write_table_record(const TableInfo& table, ErrorContext* ctx);
     Status read_table_records(ErrorContext* ctx);
-    Status write_column_records(uint32_t table_id, 
+    Status write_column_records(const ID& table_id, 
                                const std::vector<ColumnInfo>& columns,
                                ErrorContext* ctx);
-    Status read_column_records(uint32_t table_id, ErrorContext* ctx);
+    Status read_column_records(const ID& table_id, ErrorContext* ctx);
+    Status write_index_record(const IndexInfo& index, ErrorContext* ctx);
+    Status read_index_records(ErrorContext* ctx);
     
     // Helper to allocate catalog pages
     Status allocate_catalog_page(uint32_t& page_id, ErrorContext* ctx);

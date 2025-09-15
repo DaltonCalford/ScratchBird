@@ -20,13 +20,9 @@ Status BufferPool::initialize(ErrorContext* ctx) {
     
     // Allocate memory for each frame
     for (uint32_t i = 0; i < config_.pool_size; i++) {
-        frames_[i].data = new(std::nothrow) uint8_t[config_.page_size];
-        if (!frames_[i].data) {
-            // Clean up already allocated frames
-            for (uint32_t j = 0; j < i; j++) {
-                delete[] frames_[j].data;
-                frames_[j].data = nullptr;
-            }
+        try {
+            frames_[i].data = std::make_unique<uint8_t[]>(config_.page_size);
+        } catch (const std::bad_alloc&) {
             SET_ERROR_CONTEXT(ctx, Status::OOM, "Failed to allocate buffer pool memory");
             return Status::OOM;
         }
@@ -49,13 +45,7 @@ Status BufferPool::shutdown(ErrorContext* ctx) {
     // Flush all dirty pages
     Status status = flush_all(ctx);
     
-    // Free all frame memory
-    for (auto& frame : frames_) {
-        if (frame.data) {
-            delete[] frame.data;
-            frame.data = nullptr;
-        }
-    }
+    // Memory is freed automatically by unique_ptr
     
     // Clear data structures
     lru_list_.clear();
@@ -78,7 +68,7 @@ Status BufferPool::pin_page(uint32_t page_id, void** buffer, ErrorContext* ctx) 
         // Cache hit
         uint32_t frame_index = it->second;
         frames_[frame_index].pin_count++;
-        *buffer = frames_[frame_index].data;
+        *buffer = frames_[frame_index].data.get();
         
         // Update LRU
         update_lru(frame_index);
@@ -112,7 +102,7 @@ Status BufferPool::pin_page(uint32_t page_id, void** buffer, ErrorContext* ctx) 
     }
     
     // Read page from disk
-    Status status = read_page_from_disk(page_id, frames_[frame_index].data, ctx);
+    Status status = read_page_from_disk(page_id, frames_[frame_index].data.get(), ctx);
     if (status != Status::Ok) {
         return status;
     }
@@ -128,7 +118,7 @@ Status BufferPool::pin_page(uint32_t page_id, void** buffer, ErrorContext* ctx) 
     // Update LRU
     update_lru(frame_index);
     
-    *buffer = frames_[frame_index].data;
+    *buffer = frames_[frame_index].data.get();
     return Status::Ok;
 }
 
@@ -180,7 +170,7 @@ Status BufferPool::flush_page(uint32_t page_id, ErrorContext* ctx) {
     }
     
     // Write to disk
-    Status status = write_page_to_disk(page_id, frames_[frame_index].data, ctx);
+    Status status = write_page_to_disk(page_id, frames_[frame_index].data.get(), ctx);
     if (status == Status::Ok) {
         frames_[frame_index].is_dirty = false;
         stats_.flushes++;
@@ -194,7 +184,7 @@ Status BufferPool::flush_all(ErrorContext* ctx) {
     
     for (uint32_t i = 0; i < config_.pool_size; i++) {
         if (frames_[i].page_id != Frame::INVALID_PAGE_ID && frames_[i].is_dirty) {
-            Status status = write_page_to_disk(frames_[i].page_id, frames_[i].data, ctx);
+            Status status = write_page_to_disk(frames_[i].page_id, frames_[i].data.get(), ctx);
             if (status != Status::Ok) {
                 return status;
             }
@@ -219,7 +209,7 @@ Status BufferPool::evict_page(uint32_t& evicted_frame, ErrorContext* ctx) {
             // If dirty, flush first
             if (frames_[frame_index].is_dirty) {
                 Status status = write_page_to_disk(frames_[frame_index].page_id, 
-                                                  frames_[frame_index].data, ctx);
+                                                  frames_[frame_index].data.get(), ctx);
                 if (status != Status::Ok) {
                     return status;
                 }

@@ -147,7 +147,7 @@ TEST_F(SecurityTest, Catalog_Idempotency) {
         ASSERT_NE(catalog, nullptr);
         
         // Create a test schema
-        uint32_t schema_id;
+        ID schema_id;
         ASSERT_EQ(catalog->create_schema("test_schema", "test_user", schema_id), Status::Ok);
         
         // Database closes automatically
@@ -166,7 +166,7 @@ TEST_F(SecurityTest, Catalog_Idempotency) {
         EXPECT_EQ(catalog->get_schema("test_schema", schema), Status::Ok);
         
         // Try to create same schema - should fail
-        uint32_t dup_id;
+        ID dup_id;
         EXPECT_NE(catalog->create_schema("test_schema", "test_user", dup_id), Status::Ok)
             << "Should not allow duplicate schema creation";
     }
@@ -215,7 +215,7 @@ TEST_F(SecurityTest, Catalog_ConcurrentAccess) {
     // Create schemas sequentially (single-threaded)
     for (int i = 0; i < 5; i++) {
         std::string schema_name = "schema_" + std::to_string(i);
-        uint32_t schema_id;
+        ID schema_id;
         EXPECT_EQ(catalog->create_schema(schema_name, "test_user", schema_id), Status::Ok);
     }
     

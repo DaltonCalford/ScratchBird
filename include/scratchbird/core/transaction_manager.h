@@ -84,10 +84,16 @@ public:
     bool is_transaction_visible(uint64_t xid, uint64_t snapshot_xid);
     
     // Get current transaction ID (for read-only operations)
-    uint64_t get_current_xid() const { return next_xid_; }
+    uint64_t get_current_xid() const {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return next_xid_;
+    }
     
     // Get active transaction (single connection for now)
-    uint64_t get_active_xid() const { return active_xid_; }
+    uint64_t get_active_xid() const {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return active_xid_;
+    }
     
     // Snapshot isolation support (future)
     struct Snapshot {
@@ -123,6 +129,7 @@ private:
         (8192 - sizeof(TIPPageHeader)) / sizeof(TIPEntry);  // For 8KB pages
     
     // Helper methods
+    Status load_tip_page(uint32_t page_id, ErrorContext* ctx);
     Status allocate_tip_page(uint32_t& page_id_out, ErrorContext* ctx);
     Status write_tip_entry(uint64_t xid, TransactionState state, ErrorContext* ctx);
     Status find_tip_entry(uint64_t xid, TIPEntry& entry_out, ErrorContext* ctx);

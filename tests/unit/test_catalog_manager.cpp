@@ -61,10 +61,9 @@ TEST_F(CatalogManagerTest, CreateAndGetSchema) {
     CatalogManager* catalog = db->catalog_manager();
     
     // Create a schema
-    uint32_t schema_id;
+    ID schema_id;
     ASSERT_EQ(catalog->create_schema("test_schema", "test_user", schema_id, &ctx), 
               Status::Ok);
-    EXPECT_GE(schema_id, 1000); // User schemas start at 1000
     
     // Get schema by ID
     CatalogManager::SchemaInfo info;
@@ -87,7 +86,7 @@ TEST_F(CatalogManagerTest, ListSchemas) {
     CatalogManager* catalog = db->catalog_manager();
     
     // Create multiple schemas
-    uint32_t id1, id2, id3;
+    ID id1, id2, id3;
     ASSERT_EQ(catalog->create_schema("schema1", "user1", id1, &ctx), Status::Ok);
     ASSERT_EQ(catalog->create_schema("schema2", "user2", id2, &ctx), Status::Ok);
     ASSERT_EQ(catalog->create_schema("schema3", "user3", id3, &ctx), Status::Ok);
@@ -118,12 +117,12 @@ TEST_F(CatalogManagerTest, CreateDuplicateSchema) {
     CatalogManager* catalog = db->catalog_manager();
     
     // Create a schema
-    uint32_t schema_id;
+    ID schema_id;
     ASSERT_EQ(catalog->create_schema("test_schema", "test_user", schema_id, &ctx), 
               Status::Ok);
     
     // Try to create duplicate
-    uint32_t duplicate_id;
+    ID duplicate_id;
     Status status = catalog->create_schema("test_schema", "test_user", duplicate_id, &ctx);
     EXPECT_EQ(status, Status::InvalidArgument);
     EXPECT_NE(std::string(ctx.message).find("already exists"), std::string::npos);
@@ -136,21 +135,20 @@ TEST_F(CatalogManagerTest, CreateAndGetTable) {
     CatalogManager* catalog = db->catalog_manager();
     
     // Create a schema first
-    uint32_t schema_id;
+    ID schema_id;
     ASSERT_EQ(catalog->create_schema("test_schema", "test_user", schema_id, &ctx), 
               Status::Ok);
     
     // Define columns
     std::vector<CatalogManager::ColumnInfo> columns;
-    columns.push_back({0, 0, "id", static_cast<uint16_t>(DataType::Int32), 4, false, false, ""});
-    columns.push_back({0, 1, "name", static_cast<uint16_t>(DataType::Varchar), 100, true, false, ""});
-    columns.push_back({0, 2, "created", static_cast<uint16_t>(DataType::Timestamp), 8, false, true, "now()"});
+    columns.push_back({{}, 0, "id", static_cast<uint16_t>(DataType::Int32), 4, false, false, ""});
+    columns.push_back({{}, 1, "name", static_cast<uint16_t>(DataType::Varchar), 100, true, false, ""});
+    columns.push_back({{}, 2, "created", static_cast<uint16_t>(DataType::Timestamp), 8, false, true, "now()"});
     
     // Create table
-    uint32_t table_id;
+    ID table_id;
     ASSERT_EQ(catalog->create_table(schema_id, "test_table", columns, table_id, &ctx), 
               Status::Ok);
-    EXPECT_GE(table_id, 1000); // User tables start at 1000
     
     // Get table by ID
     CatalogManager::TableInfo info;
@@ -174,15 +172,15 @@ TEST_F(CatalogManagerTest, ListTables) {
     CatalogManager* catalog = db->catalog_manager();
     
     // Create a schema
-    uint32_t schema_id;
+    ID schema_id;
     ASSERT_EQ(catalog->create_schema("test_schema", "test_user", schema_id, &ctx), 
               Status::Ok);
     
     // Create multiple tables
     std::vector<CatalogManager::ColumnInfo> columns;
-    columns.push_back({0, 0, "id", static_cast<uint16_t>(DataType::Int32), 4, false, false, ""});
+    columns.push_back({{}, 0, "id", static_cast<uint16_t>(DataType::Int32), 4, false, false, ""});
     
-    uint32_t id1, id2, id3;
+    ID id1, id2, id3;
     ASSERT_EQ(catalog->create_table(schema_id, "table1", columns, id1, &ctx), Status::Ok);
     ASSERT_EQ(catalog->create_table(schema_id, "table2", columns, id2, &ctx), Status::Ok);
     ASSERT_EQ(catalog->create_table(schema_id, "table3", columns, id3, &ctx), Status::Ok);
@@ -206,20 +204,20 @@ TEST_F(CatalogManagerTest, GetColumns) {
     CatalogManager* catalog = db->catalog_manager();
     
     // Create a schema
-    uint32_t schema_id;
+    ID schema_id;
     ASSERT_EQ(catalog->create_schema("test_schema", "test_user", schema_id, &ctx), 
               Status::Ok);
     
     // Define columns with various types
     std::vector<CatalogManager::ColumnInfo> columns;
-    columns.push_back({0, 0, "id", static_cast<uint16_t>(DataType::Int32), 4, false, false, ""});
-    columns.push_back({0, 1, "name", static_cast<uint16_t>(DataType::Varchar), 100, true, false, ""});
-    columns.push_back({0, 2, "age", static_cast<uint16_t>(DataType::Int16), 2, true, true, "0"});
-    columns.push_back({0, 3, "active", static_cast<uint16_t>(DataType::Boolean), 1, false, true, "true"});
-    columns.push_back({0, 4, "created", static_cast<uint16_t>(DataType::Timestamp), 8, false, true, "now()"});
+    columns.push_back({{}, 0, "id", static_cast<uint16_t>(DataType::Int32), 4, false, false, ""});
+    columns.push_back({{}, 1, "name", static_cast<uint16_t>(DataType::Varchar), 100, true, false, ""});
+    columns.push_back({{}, 2, "age", static_cast<uint16_t>(DataType::Int16), 2, true, true, "0"});
+    columns.push_back({{}, 3, "active", static_cast<uint16_t>(DataType::Boolean), 1, false, true, "true"});
+    columns.push_back({{}, 4, "created", static_cast<uint16_t>(DataType::Timestamp), 8, false, true, "now()"});
     
     // Create table
-    uint32_t table_id;
+    ID table_id;
     ASSERT_EQ(catalog->create_table(schema_id, "test_table", columns, table_id, &ctx), 
               Status::Ok);
     
@@ -249,15 +247,15 @@ TEST_F(CatalogManagerTest, GetColumnByName) {
     CatalogManager* catalog = db->catalog_manager();
     
     // Create schema and table
-    uint32_t schema_id;
+    ID schema_id;
     ASSERT_EQ(catalog->create_schema("test_schema", "test_user", schema_id, &ctx), 
               Status::Ok);
     
     std::vector<CatalogManager::ColumnInfo> columns;
-    columns.push_back({0, 0, "id", static_cast<uint16_t>(DataType::Int32), 4, false, false, ""});
-    columns.push_back({0, 1, "name", static_cast<uint16_t>(DataType::Varchar), 100, true, false, ""});
+    columns.push_back({{}, 0, "id", static_cast<uint16_t>(DataType::Int32), 4, false, false, ""});
+    columns.push_back({{}, 1, "name", static_cast<uint16_t>(DataType::Varchar), 100, true, false, ""});
     
-    uint32_t table_id;
+    ID table_id;
     ASSERT_EQ(catalog->create_table(schema_id, "test_table", columns, table_id, &ctx), 
               Status::Ok);
     
@@ -284,20 +282,22 @@ TEST_F(CatalogManagerTest, InvalidOperations) {
     
     // Try to create table in non-existent schema
     std::vector<CatalogManager::ColumnInfo> columns;
-    columns.push_back({0, 0, "id", static_cast<uint16_t>(DataType::Int32), 4, false, false, ""});
+    columns.push_back({{}, 0, "id", static_cast<uint16_t>(DataType::Int32), 4, false, false, ""});
     
-    uint32_t table_id;
-    Status status = catalog->create_table(9999, "test_table", columns, table_id, &ctx);
+    ID table_id;
+    ID non_existent_schema_id = generate_uuid_v7();
+    Status status = catalog->create_table(non_existent_schema_id, "test_table", columns, table_id, &ctx);
     EXPECT_EQ(status, Status::InvalidArgument);
     
     // Try to get non-existent schema
     CatalogManager::SchemaInfo schema_info;
-    status = catalog->get_schema(9999, schema_info, &ctx);
+    status = catalog->get_schema(non_existent_schema_id, schema_info, &ctx);
     EXPECT_EQ(status, Status::InvalidArgument);
     
     // Try to get non-existent table
     CatalogManager::TableInfo table_info;
-    status = catalog->get_table(9999, table_info, &ctx);
+    ID non_existent_table_id = generate_uuid_v7();
+    status = catalog->get_table(non_existent_table_id, table_info, &ctx);
     EXPECT_EQ(status, Status::InvalidArgument);
 }
 
@@ -310,16 +310,16 @@ TEST_F(CatalogManagerTest, CatalogPersistence) {
         CatalogManager* catalog = db->catalog_manager();
         
         // Create schema
-        uint32_t schema_id;
+        ID schema_id;
         ASSERT_EQ(catalog->create_schema("persistent_schema", "owner1", schema_id, &ctx), 
                   Status::Ok);
         
         // Create table
         std::vector<CatalogManager::ColumnInfo> columns;
-        columns.push_back({0, 0, "id", static_cast<uint16_t>(DataType::Int64), 8, false, false, ""});
-        columns.push_back({0, 1, "data", static_cast<uint16_t>(DataType::Text), 0, true, false, ""});
+        columns.push_back({{}, 0, "id", static_cast<uint16_t>(DataType::Int64), 8, false, false, ""});
+        columns.push_back({{}, 1, "data", static_cast<uint16_t>(DataType::Text), 0, true, false, ""});
         
-        uint32_t table_id;
+        ID table_id;
         ASSERT_EQ(catalog->create_table(schema_id, "persistent_table", columns, table_id, &ctx), 
                   Status::Ok);
         
@@ -369,20 +369,20 @@ TEST_F(CatalogManagerTest, LargeNumberOfTables) {
     CatalogManager* catalog = db->catalog_manager();
     
     // Create schema
-    uint32_t schema_id;
+    ID schema_id;
     ASSERT_EQ(catalog->create_schema("load_test", "test_user", schema_id, &ctx), 
               Status::Ok);
     
     // Create many tables
     std::vector<CatalogManager::ColumnInfo> columns;
-    columns.push_back({0, 0, "id", static_cast<uint16_t>(DataType::Int32), 4, false, false, ""});
+    columns.push_back({{}, 0, "id", static_cast<uint16_t>(DataType::Int32), 4, false, false, ""});
     
     const int num_tables = 50;
-    std::vector<uint32_t> table_ids;
+    std::vector<ID> table_ids;
     
     for (int i = 0; i < num_tables; i++) {
         std::string table_name = "table_" + std::to_string(i);
-        uint32_t table_id;
+        ID table_id;
         ASSERT_EQ(catalog->create_table(schema_id, table_name, columns, table_id, &ctx), 
                   Status::Ok);
         table_ids.push_back(table_id);

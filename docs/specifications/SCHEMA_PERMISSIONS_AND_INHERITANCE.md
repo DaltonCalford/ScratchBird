@@ -369,10 +369,10 @@ CREATE TABLE sys.schema_permission_audit (
 ```sql
 -- Check if user has permission
 CREATE FUNCTION has_schema_permission(
-    p_user_id UUID,
+    p_user_id ID,
     p_schema_path TEXT,
     p_permission TEXT
-) RETURNS BOOLEAN AS $$
+) RETURNS BOOLEAN AS $
 BEGIN
     -- Check cache first
     -- Then check explicit grants
@@ -380,13 +380,13 @@ BEGIN
     -- Then check role permissions
     RETURN check_permission_cascade(p_user_id, p_schema_path, p_permission);
 END;
-$$ LANGUAGE plpgsql;
+$ LANGUAGE plpgsql;
 
 -- Get all permissions for user on schema
 CREATE FUNCTION get_schema_permissions(
-    p_user_id UUID,
+    p_user_id ID,
     p_schema_path TEXT
-) RETURNS TABLE(permission_type TEXT, source TEXT) AS $$
+) RETURNS TABLE(permission_type TEXT, source TEXT) AS $
 BEGIN
     RETURN QUERY
     SELECT 
@@ -400,7 +400,7 @@ BEGIN
       AND schema_id = get_schema_id(p_schema_path)
       AND is_granted = true;
 END;
-$$ LANGUAGE plpgsql;
+$ LANGUAGE plpgsql;
 
 -- Grant with cascade
 CREATE PROCEDURE grant_schema_permission_cascade(

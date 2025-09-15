@@ -75,7 +75,10 @@ public:
         uint64_t flushes = 0;       // Pages flushed
     };
     
-    Stats get_stats() const { return stats_; }
+    Stats get_stats() const {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return stats_;
+    }
     
 private:
     // Frame metadata
@@ -83,7 +86,7 @@ private:
         uint32_t page_id = INVALID_PAGE_ID;
         uint32_t pin_count = 0;
         bool is_dirty = false;
-        uint8_t* data = nullptr;
+        std::unique_ptr<uint8_t[]> data = nullptr;
         
         static constexpr uint32_t INVALID_PAGE_ID = 0xFFFFFFFF;
     };

@@ -42,10 +42,16 @@ public:
     bool is_allocated(uint32_t page_id) const;
     
     // Get total number of pages
-    uint32_t total_pages() const { return total_pages_; }
+    uint32_t total_pages() const {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return total_pages_;
+    }
     
     // Get number of free pages
-    uint32_t free_pages() const { return free_pages_; }
+    uint32_t free_pages() const {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return free_pages_;
+    }
     
     // Extend the database file
     Status extend_file(uint32_t num_pages, ErrorContext* ctx = nullptr);
