@@ -67,7 +67,9 @@ When `delete_tuple()` is called:
 
 ```cpp
 // Assume we have initialized database, buffer pool, etc.
-ToastManager toast_mgr(db, test_table_id_);
+// UuidV7Generator uuid_gen; // Assume uuid_gen is a UuidV7Generator instance
+UuidV7Bytes table_id = generate_uuid_v7(); // Use a generated UUID
+ToastManager toast_mgr(db, table_id);
 std::vector<uint8_t> page_buffer(PAGE_SIZE);
 
 // Create heap page with TOAST support
@@ -107,7 +109,7 @@ heap_page.get_tuple_detoasted(item_id, &detoasted_buffer, xmin);
 ## Performance Considerations
 
 ### Benefits
-1. **Space Efficiency**: Large tuples don't consume entire pages
+1. **Space Efficiency**: Large tuples don\'t consume entire pages
 2. **More Tuples per Page**: Toasted tuples are tiny (~34 bytes)
 3. **Selective Detoasting**: Only detoast when actually needed
 4. **Compression**: TOAST can compress data for additional savings
@@ -119,7 +121,7 @@ heap_page.get_tuple_detoasted(item_id, &detoasted_buffer, xmin);
 
 ## Best Practices
 
-1. **Use get_tuple() when possible**: If you don't need the full data, avoid detoasting
+1. **Use get_tuple() when possible**: If you don\'t need the full data, avoid detoasting
 2. **Batch Operations**: When scanning, consider if you really need all large attributes
 3. **Monitor TOAST Tables**: TOAST tables can grow large and may need maintenance
 4. **Consider Page Size**: Larger pages reduce the need for TOASTing
