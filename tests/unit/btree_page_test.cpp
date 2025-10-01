@@ -5,9 +5,11 @@
 
 using namespace scratchbird::core;
 
-class BTreePageTest : public ::testing::Test {
+class BTreePageTest : public ::testing::Test
+{
 protected:
-    void SetUp() override {
+    void SetUp() override
+    {
         page_size_ = 8192;
         page_data_.resize(page_size_);
         btree_page_ = std::make_unique<BTreePage>(page_data_.data(), page_size_);
@@ -18,11 +20,12 @@ protected:
     std::unique_ptr<BTreePage> btree_page_;
 };
 
-TEST_F(BTreePageTest, Initialization) {
-    UuidV7Bytes index_uuid = uuidv7();
-    UuidV7Bytes table_uuid = uuidv7();
+TEST_F(BTreePageTest, Initialization)
+{
+    ID index_uuid = generateUuidV7();
+    ID table_uuid = generateUuidV7();
     uint16_t level = 0;
-    uint16_t flags = BTR_FLAG_LEAF;
+    uint16_t flags = static_cast<uint16_t>(BTreeFlags::LEAF);
 
     btree_page_->initialize(index_uuid, table_uuid, level, flags);
 
@@ -31,25 +34,27 @@ TEST_F(BTreePageTest, Initialization) {
     EXPECT_TRUE(btree_page_->has_sufficient_space(100));
 }
 
-TEST_F(BTreePageTest, AddNode) {
-    UuidV7Bytes index_uuid = uuidv7();
-    UuidV7Bytes table_uuid = uuidv7();
-    btree_page_->initialize(index_uuid, table_uuid, 0, BTR_FLAG_LEAF);
+TEST_F(BTreePageTest, AddNode)
+{
+    ID index_uuid = generateUuidV7();
+    ID table_uuid = generateUuidV7();
+    btree_page_->initialize(index_uuid, table_uuid, 0, static_cast<uint16_t>(BTreeFlags::LEAF));
 
     std::vector<uint8_t> key = {'k', 'e', 'y', '1'};
     Tuple value = {nullptr, 0, 12345, 0, 0};
 
     Status s = btree_page_->add_node(key, value);
-    ASSERT_TRUE(s.is_ok());
+    ASSERT_EQ(s, Status::OK);
 
     EXPECT_EQ(btree_page_->get_node_count(), 1);
 
-    SBBTreeNode* node = btree_page_->get_node(0);
+    SBBTreeNode *node = btree_page_->get_node(0);
     ASSERT_NE(node, nullptr);
     EXPECT_EQ(node->btn_key_len, key.size());
 }
 
-int main(int argc, char **argv) {
+int main(int argc, char **argv)
+{
     ::testing::InitGoogleTest(&argc, argv);
     return RUN_ALL_TESTS();
 }

@@ -1,9 +1,27 @@
 # ScratchBird Transaction and Lock Management - Main Specification
 ## Master Document for Transaction and Lock Management Implementation
 
+---
+
+## IMPLEMENTATION STATUS: 🔴 MOSTLY NOT IMPLEMENTED - DESIGN SPECIFICATION
+
+**Current Alpha Implementation:**
+- Basic 32-bit XID tracking only
+- No MGA/MVCC implementation
+- No distributed transactions
+- No lock manager (uses std::mutex for page-level locking)
+- No savepoints
+- Single-threaded operation
+
+**This specification describes the target architecture for Phase 2+.**
+
+See `include/scratchbird/core/transaction_manager.h` for current basic implementation.
+
+---
+
 ## Overview
 
-ScratchBird's transaction and lock management system provides ACID guarantees through a Multi-Generational Architecture (MGA/MVCC) foundation, comprehensive locking mechanisms, and distributed transaction support. This document serves as the main specification, integrating all transaction management components.
+ScratchBird's transaction and lock management system (PLANNED) will provide ACID guarantees through a Multi-Generational Architecture (MGA/MVCC) foundation, comprehensive locking mechanisms, and distributed transaction support. This document serves as the main specification, integrating all transaction management components.
 
 ## Architecture Overview
 

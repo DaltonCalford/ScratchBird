@@ -11,7 +11,7 @@ The Heap-TOAST integration provides automatic handling of large attributes durin
 The `HeapPage` class has been extended with an optional constructor that accepts:
 - `ToastManager*`: For handling TOAST operations
 - `Database*`: For database operations
-- `uint32_t table_id`: To identify the table for TOAST storage
+- `UuidV7Bytes table_id`: To identify the table for TOAST storage
 
 ```cpp
 // Standard constructor (no TOAST support)
@@ -19,7 +19,7 @@ HeapPage(uint8_t* page_data, uint32_t page_size);
 
 // Constructor with TOAST support
 HeapPage(uint8_t* page_data, uint32_t page_size, 
-         ToastManager* toast_mgr, Database* db, uint32_t table_id);
+         ToastManager* toast_mgr, Database* db, UuidV7Bytes table_id);
 ```
 
 ### Automatic TOASTing During Insert

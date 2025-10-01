@@ -9,6 +9,7 @@ message(STATUS "See ProjectPlan/ directory for specifications")
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 # Build type
 if(NOT CMAKE_BUILD_TYPE)
@@ -40,6 +41,25 @@ if(LZ4_FOUND)
     message(STATUS "LZ4 compression support: ENABLED")
 else()
     message(STATUS "LZ4 compression support: DISABLED (install liblz4-dev to enable)")
+endif()
+
+# Add clang-tidy and clang-format integration
+find_program(CLANG_TIDY clang-tidy)
+if(CLANG_TIDY)
+    set(CMAKE_CXX_CLANG_TIDY ${CLANG_TIDY} -p=${CMAKE_BINARY_DIR})
+    message(STATUS "clang-tidy found, will be used for linting.")
+else()
+    message(WARNING "clang-tidy not found. Linting will be skipped.")
+endif()
+
+find_program(CLANG_FORMAT clang-format)
+if(CLANG_FORMAT)
+    add_custom_target(format
+        COMMAND ${CLANG_FORMAT} -i -style=file ${PROJECT_SOURCE_DIR}/src/*.cpp ${PROJECT_SOURCE_DIR}/src/core/*.cpp ${PROJECT_SOURCE_DIR}/src/parser/*.cpp ${PROJECT_SOURCE_DIR}/src/sblr/*.cpp ${PROJECT_SOURCE_DIR}/include/scratchbird/core/*.h ${PROJECT_SOURCE_DIR}/include/scratchbird/parser/*.h ${PROJECT_SOURCE_DIR}/include/scratchbird/sblr/*.h ${PROJECT_SOURCE_DIR}/tests/unit/*.cpp ${PROJECT_SOURCE_DIR}/tests/integration/*.cpp
+        COMMENT "Formatting C++ source files with clang-format")
+    message(STATUS "clang-format found. Use 'make format' to format the code.")
+else()
+    message(WARNING "clang-format not found. 'make format' target will not be available.")
 endif()
 
 # Add source directory

@@ -1,8 +1,23 @@
 # Y-Valve Router Architecture and Specification
 
+---
+
+## IMPLEMENTATION STATUS: 🔴 NOT IMPLEMENTED - DESIGN SPECIFICATION ONLY
+
+**Current Alpha Implementation:**
+- No Y-Valve implementation exists
+- Single-process, direct API only
+- No multi-protocol support
+- No wire protocol handlers
+- No connection routing
+
+**This specification describes a future Phase 2+ architecture.**
+
+---
+
 ## Overview
 
-The Y-Valve is ScratchBird's universal connection router and protocol abstraction layer. Unlike Firebird's Y-Valve (which simply routes between embedded/server modes), ScratchBird's Y-Valve is a sophisticated multi-protocol router that:
+The Y-Valve (PLANNED) is ScratchBird's universal connection router and protocol abstraction layer. Unlike Firebird's Y-Valve (which simply routes between embedded/server modes), ScratchBird's Y-Valve is a sophisticated multi-protocol router that:
 
 1. Accepts connections from any supported database client
 2. Detects and validates the protocol

@@ -1,9 +1,28 @@
 # ScratchBird Storage Engine - Buffer Pool Management
 ## Part 1 of Storage Engine Specification
 
+---
+
+## IMPLEMENTATION STATUS: 🔴 MOSTLY NOT IMPLEMENTED - DESIGN SPECIFICATION
+
+**Current Alpha Implementation:**
+- Simple 32-page LRU buffer pool only
+- Single buffer pool (no multiple pools)
+- No adaptive hash index
+- No ring buffers
+- No read-ahead capabilities
+- No background workers
+- Basic page caching only
+
+**This specification describes the target architecture for Phase 2+.**
+
+See `include/scratchbird/core/buffer_pool.h` for current simple implementation.
+
+---
+
 ## Overview
 
-ScratchBird's buffer pool management combines PostgreSQL's ring buffer concept, MySQL InnoDB's adaptive hash index, Firebird's efficient page management, and SQL Server's read-ahead capabilities. The system supports multiple page sizes (8K-128K) and provides workload-specific buffer pools.
+ScratchBird's buffer pool management (PLANNED) will combine PostgreSQL's ring buffer concept, MySQL InnoDB's adaptive hash index, Firebird's efficient page management, and SQL Server's read-ahead capabilities. The system will support multiple page sizes (8K-128K) and provide workload-specific buffer pools.
 
 ## 1. Buffer Pool Architecture
 

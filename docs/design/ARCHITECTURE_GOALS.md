@@ -1,6 +1,24 @@
 # ScratchBird Architecture Goals V2
 ## Building the Ultimate Data Platform
 
+---
+
+## IMPLEMENTATION STATUS: FUTURE VISION / PHASE 2+ DESIGN
+
+**IMPORTANT:** This document describes the long-term architectural vision for ScratchBird. Most features described here are **NOT YET IMPLEMENTED** in the current Alpha release.
+
+**Current Alpha Implementation Status:**
+- Single-threaded, single-process operation
+- Basic SQL parser (no wire protocols)
+- Simple 32-page LRU buffer pool
+- Basic transaction XID tracking (no MGA)
+- Direct API only (no Y-Valve, no multi-protocol support)
+- See `docs/specifications/thread_safety.md` for accurate current implementation details
+
+This document serves as the design roadmap for future phases.
+
+---
+
 ## Core Architectural Principles
 
 ### 1. Universal Compatibility
@@ -43,13 +61,21 @@ Benefits:
 
 ### 4. MGA (Multi-Generational Architecture) Core
 
-**Firebird's Brilliant Design**:
-- **Lock-Free Reads**: Readers never block writers
-- **Version Chains**: Each transaction sees consistent snapshot
-- **Natural MVCC**: No separate MVCC bolt-on
-- **Garbage Collection**: Automatic old version cleanup
+**FUTURE FEATURE - NOT IMPLEMENTED IN ALPHA**
 
-**WAL as Secondary**:
+**Firebird's Brilliant Design (Target for Phase 2+)**:
+- **Lock-Free Reads**: Readers never block writers (NOT in Alpha - uses std::mutex)
+- **Version Chains**: Each transaction sees consistent snapshot (NOT in Alpha)
+- **Natural MVCC**: No separate MVCC bolt-on (NOT in Alpha)
+- **Garbage Collection**: Automatic old version cleanup (NOT in Alpha)
+
+**Current Alpha Reality:**
+- Single-threaded operation with mutex protection
+- Basic XID tracking only
+- No MVCC implementation yet
+- See `docs/specifications/thread_safety.md` for details
+
+**WAL as Secondary (Future)**:
 - WAL for durability only, not for MVCC
 - Reduces write amplification
 - Simpler recovery model

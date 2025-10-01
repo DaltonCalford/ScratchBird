@@ -6,13 +6,16 @@
 
 The theoretical maximum database size is determined by:
 - Page ID: 32-bit unsigned integer (4,294,967,295 pages max)
-- Page Size: Configurable (8KB, 16KB, 32KB for Alpha)
+- Page Size: Configurable (8KB, 16KB, 32KB, 64KB, 128KB)
+- **Stage 1.1 (September 2025)**: Added support for 64KB and 128KB page sizes
 
 | Page Size | Maximum Pages | Maximum Database Size |
 |-----------|---------------|----------------------|
 | 8 KB      | 4,294,967,295 | ~32 TB              |
 | 16 KB     | 4,294,967,295 | ~64 TB              |
 | 32 KB     | 4,294,967,295 | ~128 TB             |
+| 64 KB     | 4,294,967,295 | ~256 TB             |
+| 128 KB    | 4,294,967,295 | ~512 TB             |
 
 ### Practical Limits
 
@@ -33,6 +36,8 @@ While the theoretical limits are large, practical limits include:
 | 8 KB      | 64 bytes    | 8,128 bytes  |
 | 16 KB     | 64 bytes    | 16,320 bytes |
 | 32 KB     | 64 bytes    | 32,704 bytes |
+| 64 KB     | 64 bytes    | 65,472 bytes |
+| 128 KB    | 64 bytes    | 131,008 bytes |
 
 ## Free Space Map (FSM) Limits
 
@@ -45,6 +50,8 @@ While the theoretical limits are large, practical limits include:
 | 8 KB      | 8,116 bytes     | 64,928 pages    |
 | 16 KB     | 16,308 bytes    | 130,464 pages   |
 | 32 KB     | 32,692 bytes    | 261,536 pages   |
+| 64 KB     | 65,460 bytes    | 523,680 pages   |
+| 128 KB    | 131,004 bytes   | 1,048,032 pages |
 
 ### FSM Chaining
 - Currently not implemented (Alpha)
@@ -116,6 +123,8 @@ While the theoretical limits are large, practical limits include:
 - **8 KB**: Good for OLTP, many small records
 - **16 KB**: Balanced choice (default)
 - **32 KB**: Good for OLAP, large records
+- **64 KB**: Good for very large records, data warehousing (Stage 1.1+)
+- **128 KB**: Good for massive records, archival storage (Stage 1.1+)
 
 ### Monitoring Limits
 

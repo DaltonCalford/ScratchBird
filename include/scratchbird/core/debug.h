@@ -4,30 +4,31 @@
 #include <sstream>
 #include <string>
 
-namespace scratchbird {
-namespace core {
+
+    namespace scratchbird::core
+    {
 
 // Debug logging configuration
 #ifndef SCRATCHBIRD_DEBUG
-    #ifdef DEBUG
-        #define SCRATCHBIRD_DEBUG 1
-    #else
-        #define SCRATCHBIRD_DEBUG 0
-    #endif
+#ifdef DEBUG
+#define SCRATCHBIRD_DEBUG 1
+#else
+#define SCRATCHBIRD_DEBUG 0
+#endif
 #endif
 
 // Debug log macro - only compiles in debug builds
 #if SCRATCHBIRD_DEBUG
-    #define DEBUG_LOG(component, message) \
-        do { \
-            std::ostringstream _debug_oss; \
-            _debug_oss << "[DEBUG][" << component << "] " \
-                      << __FILE__ << ":" << __LINE__ << " " \
-                      << __func__ << "() - " << message; \
-            std::cerr << _debug_oss.str() << std::endl; \
-        } while(0)
+#define DEBUG_LOG(component, message)                                                       \
+    do                                                                                      \
+    {                                                                                       \
+        std::ostringstream _debug_oss;                                                      \
+        _debug_oss << "[DEBUG][" << component << "] " << __FILE__ << ":" << __LINE__ << " " \
+                   << __func__ << "() - " << message;                                       \
+        std::cerr << _debug_oss.str() << std::endl;                                         \
+    } while (0)
 #else
-    #define DEBUG_LOG(component, message) ((void)0)
+#define DEBUG_LOG(component, message) ((void)0)
 #endif
 
 // Component-specific debug macros
@@ -35,5 +36,4 @@ namespace core {
 #define DEBUG_LOG_BP(message) DEBUG_LOG("BufferPool", message)
 #define DEBUG_LOG_DB(message) DEBUG_LOG("Database", message)
 
-} // namespace core
-} // namespace scratchbird
+    } // namespace scratchbird::core
