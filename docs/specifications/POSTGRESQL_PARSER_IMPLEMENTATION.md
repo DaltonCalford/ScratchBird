@@ -1,12 +1,28 @@
 # PostgreSQL Parser Implementation Guide
 
+---
+
+## IMPLEMENTATION STATUS: 🔴 NOT IMPLEMENTED - DESIGN SPECIFICATION ONLY
+
+**Current Alpha Implementation:**
+- Basic SQL parser exists (see `src/parser/parser.cpp`)
+- Parses SQL syntax only (no wire protocol)
+- **No PostgreSQL wire protocol support**
+- No system catalog emulation
+- No Y-Valve integration (Y-Valve doesn't exist)
+- Direct API only
+
+**This specification describes a future Phase 2+ feature.**
+
+---
+
 ## Overview
 
-This document provides the complete implementation specification for the PostgreSQL parser module that interfaces with the Y-Valve. The parser handles ALL PostgreSQL-specific logic, keeping the Y-Valve core lean.
+This document provides the complete implementation specification for the PostgreSQL parser module (PLANNED) that will interface with the Y-Valve. The parser will handle ALL PostgreSQL-specific logic, keeping the Y-Valve core lean.
 
-## Parser Responsibilities
+## Parser Responsibilities (PLANNED)
 
-The PostgreSQL parser is responsible for:
+The PostgreSQL parser will be responsible for:
 1. PostgreSQL wire protocol handling (v3.0)
 2. System catalog emulation (pg_catalog, information_schema)
 3. SQL dialect translation

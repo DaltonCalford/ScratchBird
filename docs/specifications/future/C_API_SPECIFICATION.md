@@ -1,8 +1,26 @@
 # ScratchBird C API Specification
 
+---
+
+## IMPLEMENTATION STATUS: NOT IMPLEMENTED - FUTURE/DESIGN ONLY
+
+**IMPORTANT:** This specification is for a **FUTURE C API** that does **NOT CURRENTLY EXIST** in the ScratchBird codebase.
+
+**Current Implementation:**
+- ScratchBird currently uses C++ classes and APIs
+- No C API wrapper exists
+- All types/functions documented here are aspirational
+- Implementation estimated at 40-80 hours of work
+
+**This document has been moved to `docs/specifications/future/` to clearly indicate it is a design specification, not current functionality.**
+
+**For current API documentation, see the C++ header files in `include/scratchbird/`**
+
+---
+
 ## Overview
 
-The ScratchBird C API provides low-level access to the database engine, designed for:
+The ScratchBird C API (PLANNED) will provide low-level access to the database engine, designed for:
 - Direct embedding (no network overhead)
 - Language binding development (Python, Java, etc.)
 - High-performance applications

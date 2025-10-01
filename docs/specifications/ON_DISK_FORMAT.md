@@ -160,10 +160,12 @@ bool validate_database_header(const DatabaseHeader* header) {
     // Check block size consistency
     if (header->block_size != header->page_header.page_size) return false;
     
-    // Check supported page sizes for Alpha
-    if (header->block_size != 8192 && 
-        header->block_size != 16384 && 
-        header->block_size != 32768) return false;
+    // Check supported page sizes (Stage 1.1 added 64KB and 128KB)
+    if (header->block_size != 8192 &&
+        header->block_size != 16384 &&
+        header->block_size != 32768 &&
+        header->block_size != 65536 &&
+        header->block_size != 131072) return false;
     
     // Validate checksum
     return validate_page_checksum((uint8_t*)header, header->block_size);
