@@ -1,6 +1,21 @@
 # Error Handling Specification
 
-## Error Codes
+---
+
+## IMPLEMENTATION STATUS: NOT IMPLEMENTED - C API DESIGN ONLY
+
+**IMPORTANT:** This specification describes C-style error handling using `sb_error_t` enums. This **DOES NOT MATCH** the current C++ implementation.
+
+**Current Implementation:**
+- ScratchBird uses C++ `enum class Status` (see `include/scratchbird/core/status.h`)
+- Uses different error codes and semantics
+- This C-style API does not exist
+
+**This document is for the future C API only.** For current error handling, see the C++ Status class implementation.
+
+---
+
+## Error Codes (C API - NOT IMPLEMENTED)
 
 ```c
 typedef enum sb_error {
