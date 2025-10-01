@@ -1,5 +1,18 @@
 # C API Implementation Guide
 
+---
+
+## IMPLEMENTATION STATUS: NOT IMPLEMENTED - FUTURE/DESIGN ONLY
+
+**IMPORTANT:** This is a guide for implementing a C API that **DOES NOT CURRENTLY EXIST**. This document is aspirational/planning only.
+
+**Current Status:**
+- No C API implementation exists
+- This guide is for future development work
+- See C_API_SPECIFICATION.md in this directory for the design
+
+---
+
 ## Implementation Strategy
 
 ### Phase 1: Core Infrastructure (Alpha 1.02)

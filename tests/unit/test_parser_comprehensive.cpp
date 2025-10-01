@@ -1,7 +1,7 @@
 /**
  * @file test_parser_comprehensive.cpp
  * @brief Comprehensive tests for SQL Parser Alpha 1.05
- * 
+ *
  * Tests covering various aspects of the parser including
  * AST generation, error handling, and edge cases.
  */
@@ -13,37 +13,41 @@
 
 using namespace scratchbird::parser;
 
-class ParserComprehensiveTest : public ::testing::Test {
+class ParserComprehensiveTest : public ::testing::Test
+{
 protected:
-    ParseResult parse(const std::string& sql) {
+    ParseResult parse(const std::string &sql)
+    {
         lexer_ = std::make_unique<Lexer>(sql);
         arena_ = std::make_unique<ASTArena>();
         parser_ = std::make_unique<Parser>(*lexer_, *arena_);
         return parser_->parseStatement();
     }
-    
-    void expectSuccess(const std::string& sql, const std::string& context = "") {
+
+    void expectSuccess(const std::string &sql, const std::string &context = "")
+    {
         auto result = parse(sql);
-        EXPECT_TRUE(result.success()) 
-            << "Parse failed for " << context << "\n"
-            << "SQL: " << sql << "\n"
-            << "Errors: " << result.errors().size();
-        
-        if (!result.success() && !result.errors().empty()) {
-            for (const auto& err : result.errors()) {
-                std::cerr << "  Error at " << err.location.line << ":" 
-                         << err.location.column << " - " << err.message << "\n";
+        EXPECT_TRUE(result.success()) << "Parse failed for " << context << "\n"
+                                      << "SQL: " << sql << "\n"
+                                      << "Errors: " << result.errors().size();
+
+        if (!result.success() && !result.errors().empty())
+        {
+            for (const auto &err : result.errors())
+            {
+                std::cerr << "  Error at " << err.location.line << ":" << err.location.column
+                          << " - " << err.message << "\n";
             }
         }
     }
-    
-    void expectError(const std::string& sql, const std::string& context = "") {
+
+    void expectError(const std::string &sql, const std::string &context = "")
+    {
         auto result = parse(sql);
-        EXPECT_FALSE(result.success()) 
-            << "Expected parse to fail for " << context << "\n"
-            << "SQL: " << sql;
+        EXPECT_FALSE(result.success()) << "Expected parse to fail for " << context << "\n"
+                                       << "SQL: " << sql;
     }
-    
+
 private:
     std::unique_ptr<Lexer> lexer_;
     std::unique_ptr<ASTArena> arena_;
@@ -54,218 +58,188 @@ private:
 // Basic Statement Tests
 // ============================================================================
 
-TEST_F(ParserComprehensiveTest, CreateTable_Simple) {
-    expectSuccess(
-        "CREATE TABLE users (id INTEGER, name VARCHAR(50))",
-        "simple CREATE TABLE"
-    );
+TEST_F(ParserComprehensiveTest, CreateTable_Simple)
+{
+    expectSuccess("CREATE TABLE users (id INTEGER, name VARCHAR(50))", "simple CREATE TABLE");
 }
 
-TEST_F(ParserComprehensiveTest, CreateTable_WithConstraints) {
-    expectSuccess(
-        "CREATE TABLE products ("
-        "  id INTEGER PRIMARY KEY,"
-        "  name VARCHAR(100) NOT NULL,"
-        "  price DOUBLE DEFAULT 0.0"
-        ")",
-        "CREATE TABLE with constraints"
-    );
+TEST_F(ParserComprehensiveTest, CreateTable_WithConstraints)
+{
+    expectSuccess("CREATE TABLE products ("
+                  "  id INTEGER PRIMARY KEY,"
+                  "  name VARCHAR(100) NOT NULL,"
+                  "  price DOUBLE DEFAULT 0.0"
+                  ")",
+                  "CREATE TABLE with constraints");
 }
 
-TEST_F(ParserComprehensiveTest, Insert_WithColumns) {
-    expectSuccess(
-        "INSERT INTO users (id, name) VALUES (1, 'Alice')",
-        "INSERT with column list"
-    );
+TEST_F(ParserComprehensiveTest, Insert_WithColumns)
+{
+    expectSuccess("INSERT INTO users (id, name) VALUES (1, 'Alice')", "INSERT with column list");
 }
 
-TEST_F(ParserComprehensiveTest, Insert_WithoutColumns) {
-    expectSuccess(
-        "INSERT INTO users VALUES (1, 'Bob', 25)",
-        "INSERT without column list"
-    );
+TEST_F(ParserComprehensiveTest, Insert_WithoutColumns)
+{
+    expectSuccess("INSERT INTO users VALUES (1, 'Bob', 25)", "INSERT without column list");
 }
 
-TEST_F(ParserComprehensiveTest, Select_Simple) {
-    expectSuccess(
-        "SELECT * FROM users",
-        "simple SELECT"
-    );
+TEST_F(ParserComprehensiveTest, Select_Simple)
+{
+    expectSuccess("SELECT * FROM users", "simple SELECT");
 }
 
-TEST_F(ParserComprehensiveTest, Select_WithWhere) {
-    expectSuccess(
-        "SELECT id, name FROM users WHERE age > 18",
-        "SELECT with WHERE"
-    );
+TEST_F(ParserComprehensiveTest, Select_WithWhere)
+{
+    expectSuccess("SELECT id, name FROM users WHERE age > 18", "SELECT with WHERE");
 }
 
-TEST_F(ParserComprehensiveTest, Select_Complex) {
-    expectSuccess(
-        "SELECT u.id, u.name, COUNT(o.id) as order_count "
-        "FROM users u "
-        "WHERE u.status = 'active' AND u.created_at > 1234567890",
-        "complex SELECT"
-    );
+TEST_F(ParserComprehensiveTest, Select_Complex)
+{
+    expectSuccess("SELECT u.id, u.name, COUNT(o.id) as order_count "
+                  "FROM users u "
+                  "WHERE u.status = 'active' AND u.created_at > 1234567890",
+                  "complex SELECT");
 }
 
 // ============================================================================
 // Expression Tests
 // ============================================================================
 
-TEST_F(ParserComprehensiveTest, Expression_Arithmetic) {
-    expectSuccess(
-        "SELECT price * quantity + tax FROM orders",
-        "arithmetic expression"
-    );
+TEST_F(ParserComprehensiveTest, Expression_Arithmetic)
+{
+    expectSuccess("SELECT price * quantity + tax FROM orders", "arithmetic expression");
 }
 
-TEST_F(ParserComprehensiveTest, Expression_Comparison) {
-    expectSuccess(
-        "SELECT * FROM users WHERE age >= 21 AND status = 'active'",
-        "comparison expression"
-    );
+TEST_F(ParserComprehensiveTest, Expression_Comparison)
+{
+    expectSuccess("SELECT * FROM users WHERE age >= 21 AND status = 'active'",
+                  "comparison expression");
 }
 
-TEST_F(ParserComprehensiveTest, Expression_Precedence) {
-    expectSuccess(
-        "SELECT 1 + 2 * 3 - 4 / 2 FROM dual",
-        "expression precedence"
-    );
+TEST_F(ParserComprehensiveTest, Expression_Precedence)
+{
+    expectSuccess("SELECT 1 + 2 * 3 - 4 / 2 FROM dual", "expression precedence");
 }
 
 // ============================================================================
 // Error Handling Tests
 // ============================================================================
 
-TEST_F(ParserComprehensiveTest, Error_MissingTableName) {
-    expectError(
-        "CREATE TABLE (id INTEGER)",
-        "missing table name"
-    );
+TEST_F(ParserComprehensiveTest, Error_MissingTableName)
+{
+    expectError("CREATE TABLE (id INTEGER)", "missing table name");
 }
 
-TEST_F(ParserComprehensiveTest, Error_InvalidSyntax) {
-    expectError(
-        "SELECT FROM WHERE",
-        "invalid syntax"
-    );
+TEST_F(ParserComprehensiveTest, Error_InvalidSyntax)
+{
+    expectError("SELECT FROM WHERE", "invalid syntax");
 }
 
-TEST_F(ParserComprehensiveTest, Error_UnterminatedString) {
-    expectError(
-        "SELECT * FROM users WHERE name = 'unclosed",
-        "unterminated string"
-    );
+TEST_F(ParserComprehensiveTest, Error_UnterminatedString)
+{
+    expectError("SELECT * FROM users WHERE name = 'unclosed", "unterminated string");
 }
 
 // ============================================================================
 // Edge Case Tests
 // ============================================================================
 
-TEST_F(ParserComprehensiveTest, EdgeCase_EmptyColumnList) {
-    expectError(
-        "CREATE TABLE test ()",
-        "empty column list"
-    );
+TEST_F(ParserComprehensiveTest, EdgeCase_EmptyColumnList)
+{
+    expectError("CREATE TABLE test ()", "empty column list");
 }
 
-TEST_F(ParserComprehensiveTest, EdgeCase_TrailingComma) {
-    expectError(
-        "SELECT id, name, FROM users",
-        "trailing comma"
-    );
+TEST_F(ParserComprehensiveTest, EdgeCase_TrailingComma)
+{
+    expectError("SELECT id, name, FROM users", "trailing comma");
 }
 
-TEST_F(ParserComprehensiveTest, EdgeCase_ReservedWords) {
+TEST_F(ParserComprehensiveTest, EdgeCase_ReservedWords)
+{
     // Some reserved words might be allowed as identifiers in certain contexts
-    expectSuccess(
-        "CREATE TABLE \"table\" (\"select\" INTEGER, \"from\" VARCHAR(50))",
-        "reserved words as quoted identifiers"
-    );
+    expectSuccess("CREATE TABLE \"table\" (\"select\" INTEGER, \"from\" VARCHAR(50))",
+                  "reserved words as quoted identifiers");
 }
 
 // ============================================================================
 // Data Type Tests
 // ============================================================================
 
-TEST_F(ParserComprehensiveTest, DataTypes_AllSupported) {
-    expectSuccess(
-        "CREATE TABLE test_types ("
-        "  col1 INTEGER,"
-        "  col2 BIGINT,"
-        "  col3 DOUBLE,"
-        "  col4 VARCHAR(255)"
-        ")",
-        "all supported data types"
-    );
+TEST_F(ParserComprehensiveTest, DataTypes_AllSupported)
+{
+    expectSuccess("CREATE TABLE test_types ("
+                  "  col1 INTEGER,"
+                  "  col2 BIGINT,"
+                  "  col3 DOUBLE,"
+                  "  col4 VARCHAR(255)"
+                  ")",
+                  "all supported data types");
 }
 
-TEST_F(ParserComprehensiveTest, DataTypes_VarcharLength) {
-    expectSuccess(
-        "CREATE TABLE test (name VARCHAR(50))",
-        "VARCHAR with length"
-    );
-    
+TEST_F(ParserComprehensiveTest, DataTypes_VarcharLength)
+{
+    expectSuccess("CREATE TABLE test (name VARCHAR(50))", "VARCHAR with length");
+
     // VARCHAR without length might be an error
-    expectError(
-        "CREATE TABLE test (name VARCHAR)",
-        "VARCHAR without length"
-    );
+    expectError("CREATE TABLE test (name VARCHAR)", "VARCHAR without length");
 }
 
 // ============================================================================
 // Real-World Patterns
 // ============================================================================
 
-TEST_F(ParserComprehensiveTest, RealWorld_UserTable) {
-    expectSuccess(
-        "CREATE TABLE users ("
-        "  id INTEGER PRIMARY KEY,"
-        "  email VARCHAR(255) NOT NULL,"
-        "  username VARCHAR(50) NOT NULL,"
-        "  created_at BIGINT NOT NULL,"
-        "  is_active INTEGER DEFAULT 1"
-        ")",
-        "typical user table"
-    );
+TEST_F(ParserComprehensiveTest, RealWorld_UserTable)
+{
+    expectSuccess("CREATE TABLE users ("
+                  "  id INTEGER PRIMARY KEY,"
+                  "  email VARCHAR(255) NOT NULL,"
+                  "  username VARCHAR(50) NOT NULL,"
+                  "  created_at BIGINT NOT NULL,"
+                  "  is_active INTEGER DEFAULT 1"
+                  ")",
+                  "typical user table");
 }
 
-TEST_F(ParserComprehensiveTest, RealWorld_QueryWithAliases) {
-    expectSuccess(
-        "SELECT u.id, u.name, COUNT(o.id) AS order_count "
-        "FROM users u "
-        "WHERE u.created_at > 1234567890",
-        "query with table and column aliases"
-    );
+TEST_F(ParserComprehensiveTest, RealWorld_QueryWithAliases)
+{
+    expectSuccess("SELECT u.id, u.name, COUNT(o.id) AS order_count "
+                  "FROM users u "
+                  "WHERE u.created_at > 1234567890",
+                  "query with table and column aliases");
 }
 
 // ============================================================================
 // Performance and Stress Tests
 // ============================================================================
 
-TEST_F(ParserComprehensiveTest, Stress_ManyColumns) {
+TEST_F(ParserComprehensiveTest, Stress_ManyColumns)
+{
     std::string sql = "CREATE TABLE big_table (";
-    for (int i = 0; i < 100; i++) {
-        if (i > 0) sql += ", ";
+    for (int i = 0; i < 100; i++)
+    {
+        if (i > 0)
+            sql += ", ";
         sql += "col" + std::to_string(i) + " INTEGER";
     }
     sql += ")";
-    
+
     expectSuccess(sql, "table with 100 columns");
 }
 
-TEST_F(ParserComprehensiveTest, Stress_DeepExpression) {
+TEST_F(ParserComprehensiveTest, Stress_DeepExpression)
+{
     std::string sql = "SELECT ";
-    for (int i = 0; i < 20; i++) {
+    for (int i = 0; i < 20; i++)
+    {
         sql += "(";
     }
     sql += "1";
-    for (int i = 0; i < 20; i++) {
+    for (int i = 0; i < 20; i++)
+    {
         sql += " + 1)";
     }
     sql += " FROM dual";
-    
+
     expectSuccess(sql, "deeply nested expression");
 }
 
@@ -273,41 +247,38 @@ TEST_F(ParserComprehensiveTest, Stress_DeepExpression) {
 // Special Character Handling
 // ============================================================================
 
-TEST_F(ParserComprehensiveTest, SpecialChars_InStrings) {
-    expectSuccess(
-        "INSERT INTO logs VALUES ('Error: Can''t connect to server')",
-        "escaped quotes in string"
-    );
-    
-    expectSuccess(
-        "SELECT * FROM users WHERE bio LIKE '%@%' AND email LIKE '%@example.com'",
-        "special characters in strings"
-    );
+TEST_F(ParserComprehensiveTest, SpecialChars_InStrings)
+{
+    expectSuccess("INSERT INTO logs VALUES ('Error: Can''t connect to server')",
+                  "escaped quotes in string");
+
+    expectSuccess("SELECT * FROM users WHERE bio LIKE '%@%' AND email LIKE '%@example.com'",
+                  "special characters in strings");
 }
 
-TEST_F(ParserComprehensiveTest, SpecialChars_Identifiers) {
-    expectSuccess(
-        "CREATE TABLE \"user-data\" (\"first-name\" VARCHAR(50))",
-        "identifiers with special characters"
-    );
+TEST_F(ParserComprehensiveTest, SpecialChars_Identifiers)
+{
+    expectSuccess("CREATE TABLE \"user-data\" (\"first-name\" VARCHAR(50))",
+                  "identifiers with special characters");
 }
 
 // ============================================================================
 // AST Validation Tests
 // ============================================================================
 
-TEST_F(ParserComprehensiveTest, AST_StatementTypes) {
+TEST_F(ParserComprehensiveTest, AST_StatementTypes)
+{
     // Test that we get the correct statement types
     auto result = parse("CREATE TABLE test (id INTEGER)");
     ASSERT_TRUE(result.success());
     ASSERT_NE(result.statement(), nullptr);
     EXPECT_EQ(result.statement()->kind(), ASTKind::CREATE_TABLE);
-    
+
     result = parse("INSERT INTO test VALUES (1)");
     ASSERT_TRUE(result.success());
     ASSERT_NE(result.statement(), nullptr);
     EXPECT_EQ(result.statement()->kind(), ASTKind::INSERT);
-    
+
     result = parse("SELECT * FROM test");
     ASSERT_TRUE(result.success());
     ASSERT_NE(result.statement(), nullptr);
@@ -318,21 +289,20 @@ TEST_F(ParserComprehensiveTest, AST_StatementTypes) {
 // Integration with Lexer
 // ============================================================================
 
-TEST_F(ParserComprehensiveTest, Integration_TokenizationAndParsing) {
+TEST_F(ParserComprehensiveTest, Integration_TokenizationAndParsing)
+{
     // Complex query that tests lexer and parser integration
-    expectSuccess(
-        "SELECT /* comment */ "
-        "  u.id AS user_id, "
-        "  u.name AS user_name, "
-        "  SUM(o.total) AS total_spent "
-        "FROM users u "
-        "LEFT JOIN orders o ON u.id = o.user_id "
-        "WHERE u.created_at >= 1640995200000 -- 2022-01-01 "
-        "  AND u.status != 'deleted' "
-        "GROUP BY u.id, u.name "
-        "HAVING SUM(o.total) > 1000.50 "
-        "ORDER BY total_spent DESC "
-        "LIMIT 10",
-        "complex query with comments and various tokens"
-    );
+    expectSuccess("SELECT /* comment */ "
+                  "  u.id AS user_id, "
+                  "  u.name AS user_name, "
+                  "  SUM(o.total) AS total_spent "
+                  "FROM users u "
+                  "LEFT JOIN orders o ON u.id = o.user_id "
+                  "WHERE u.created_at >= 1640995200000 -- 2022-01-01 "
+                  "  AND u.status != 'deleted' "
+                  "GROUP BY u.id, u.name "
+                  "HAVING SUM(o.total) > 1000.50 "
+                  "ORDER BY total_spent DESC "
+                  "LIMIT 10",
+                  "complex query with comments and various tokens");
 }

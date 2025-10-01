@@ -1,11 +1,12 @@
 // Core placeholder to ensure scratchbird_core builds
-namespace scratchbird {
-namespace core {
 
-int placeholder() {
-	return 0;
-}
+    namespace scratchbird::core
+    {
 
-} // namespace core
-} // namespace scratchbird
+        auto placeholder() -> int
+        {
+            return 0;
+        }
+
+    } // namespace scratchbird::core
 

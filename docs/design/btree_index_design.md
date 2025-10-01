@@ -1,5 +1,22 @@
 # B-Tree Index Design
 
+---
+
+## IMPLEMENTATION STATUS: 🔵 DESIGN COMPLETE, IMPLEMENTATION INCOMPLETE
+
+**Current Status:**
+- Design is well-specified and complete
+- Data structures defined in code
+- **Core algorithms NOT implemented** (insert, remove, search are stubs)
+- Only basic initialization functions exist
+
+**From 2025-09-15 analysis:**
+> "The B-Tree system is not logically inconsistent or broken, but rather severely incomplete... the core algorithmic logic required to operate the B-Tree—such as insertion, searching, and page splitting—is entirely missing."
+
+See `src/core/btree.cpp` for current stub implementations.
+
+---
+
 ## 1. Introduction
 
 This document outlines the design of a B-tree index for the ScratchBird database engine. The B-tree index will be used to provide efficient retrieval of data from tables, and will be used to implement the index on the TOAST table.
