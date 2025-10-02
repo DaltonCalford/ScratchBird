@@ -1,5 +1,21 @@
 # Heap-TOAST Integration
 
+## IMPLEMENTATION STATUS: 🟢 FULLY IMPLEMENTED (Updated 2025-10-01)
+
+**All TOAST functionality is now complete and operational:**
+- ✅ Value ID recovery on database reopen (fixes data corruption risk)
+- ✅ Chunk cleanup on partial write failures (fixes storage leaks)
+- ✅ B-tree index scan for efficient deletion (O(log n) instead of O(n))
+- ✅ All TOAST strategies working (PLAIN, EXTENDED, EXTERNAL)
+- ✅ LZ4 compression support
+- ✅ Automatic chunking and reassembly
+- ✅ Integration with heap storage
+
+**Key Fixes (October 2025):**
+- `ToastManager::initialize()` now scans TOAST table to find max value_id (line 89-90)
+- `ToastManager::write_to_toast()` tracks inserted chunks and cleans up on failure (lines 460-508)
+- `ToastManager::delete_toast_value()` uses B-tree index scan when available (lines 324-357)
+
 ## Overview
 
 The Heap-TOAST integration provides automatic handling of large attributes during tuple operations. When tuples contain data that exceeds the TOAST threshold (2KB) or would not fit comfortably in a page, the HeapPage class automatically TOASTs the data during insertion and detoasts it during retrieval.
