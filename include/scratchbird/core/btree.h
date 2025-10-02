@@ -140,6 +140,21 @@ enum class BTreeNodeFlags : uint16_t {
             BTree(Database *db, SBBTreeIndex index_info);
             ~BTree();
 
+            // Static factory methods
+            static Status create(
+                Database* db,
+                const UuidV7Bytes& index_uuid,
+                const UuidV7Bytes& table_uuid,
+                const std::vector<UuidV7Bytes>& column_uuids,
+                uint32_t* root_page_out,
+                ErrorContext* ctx = nullptr);
+
+            static std::unique_ptr<BTree> open(
+                Database* db,
+                const UuidV7Bytes& index_uuid,
+                uint32_t root_page,
+                ErrorContext* ctx = nullptr);
+
             Status insert(const std::vector<uint8_t> &key, uint64_t tuple_id,
                           ErrorContext *ctx = nullptr);
             Status search(const std::vector<uint8_t> &key, std::vector<uint64_t> *tuple_ids_out,
