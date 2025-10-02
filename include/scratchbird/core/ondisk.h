@@ -18,7 +18,10 @@
             PAGE_TYPE_BTREE_INTERNAL = 5,
             PAGE_TYPE_BTREE_LEAF = 6,
             PAGE_TYPE_TRANSACTION_MAP = 7,
-            PAGE_TYPE_CATALOG_ROOT = 8, // Root page for system catalog
+            PAGE_TYPE_CATALOG_ROOT = 8,      // Root page for system catalog
+            HASH_INDEX_META = 9,             // Hash index meta page
+            HASH_INDEX_DIRECTORY = 10,       // Hash index directory page
+            HASH_INDEX_BUCKET = 11,          // Hash index bucket page
         };
 
         // Page flags (bitwise OR)
