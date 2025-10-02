@@ -119,6 +119,10 @@ namespace scratchbird
             {
                 return db_uuid_;
             }
+            uint64_t total_pages() const
+            {
+                return header_ ? header_->total_pages : 0;
+            }
 
             // Read/write pages
             Status read_page(uint32_t page_id, void *buffer, ErrorContext *ctx = nullptr) const;

@@ -59,7 +59,15 @@ int main(int argc, char *argv[])
             std::string arg = argv[i];
             if (arg.find("--page-size=") == 0)
             {
-                page_size = std::stoul(arg.substr(12));
+                try
+                {
+                    page_size = std::stoul(arg.substr(12));
+                }
+                catch (const std::exception &e)
+                {
+                    std::cerr << "Error: Invalid page size value\n";
+                    return 1;
+                }
             }
         }
 
@@ -126,7 +134,7 @@ int main(int argc, char *argv[])
             {
                 std::cout << "Database: " << db_path << "\n";
                 std::cout << "Page Size: " << db.page_size() << "\n";
-                std::cout << "Pages: 2\n"; // Fixed for Alpha 1.01
+                std::cout << "Pages: " << db.total_pages() << "\n";
                 std::cout << "UUID: ";
                 print_uuid(db.uuid());
                 std::cout << " (v7)\n";
@@ -137,6 +145,8 @@ int main(int argc, char *argv[])
             }
             else if (!line.empty())
             {
+                // Limited command set is intentional for minimal Alpha 1.01 REPL
+                // Full SQL execution will be added in future releases
                 std::cout << "Unknown command. Try .info or .quit\n";
             }
             std::cout << "ScratchBird> ";
