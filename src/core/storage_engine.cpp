@@ -439,6 +439,83 @@
             return deleteTuple(page_id, item_id, ctx);
         }
 
+        // MGA Phase 3: Version Chains
+
+        auto StorageEngine::updateTuple(uint32_t page_id, uint16_t item_id,
+                                        const uint8_t *new_tuple_data, uint32_t new_tuple_size,
+                                        uint32_t *new_page_id_out, uint16_t *new_item_id_out,
+                                        ErrorContext *ctx) -> Status
+        {
+            // TODO: Get proc_id and table_id from thread-local storage or connection context
+            // Future: uint32_t proc_id = ConnectionContext::getCurrentProcId();
+            // Future: ID table_id = ConnectionContext::getCurrentTableId();
+
+            // Future lock acquisition (same tuple):
+            // Status lock_status = acquireTupleLock(table_id, page_id, item_id, proc_id, true, ctx);
+            // if (lock_status != Status::OK) {
+            //     return lock_status;
+            // }
+
+            // Get current XID from transaction manager
+            uint64_t xmax = (db_->transaction_manager() != nullptr)
+                               ? db_->transaction_manager()->getCurrentXid()
+                               : 100;
+            uint64_t new_xmin = xmax; // New version gets same XID as update
+
+            // Pin the page
+            void *page_buffer;
+            Status status = buffer_pool_->pinPage(page_id, &page_buffer, ctx);
+            auto *page_data = static_cast<uint8_t *>(page_buffer);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+
+            // Try to update tuple on same page
+            HeapPage heap_page(page_data, db_->page_size());
+            uint16_t new_item_id;
+
+            status = heap_page.updateTuple(item_id, new_tuple_data, new_tuple_size,
+                                          xmax, new_xmin, &new_item_id, ctx);
+
+            if (status == Status::OK)
+            {
+                // Success - new version on same page
+                if (new_page_id_out != nullptr)
+                {
+                    *new_page_id_out = page_id;
+                }
+                if (new_item_id_out != nullptr)
+                {
+                    *new_item_id_out = new_item_id;
+                }
+
+                // Unpin with dirty flag
+                buffer_pool_->unpinPage(page_id, true, ctx);
+                return Status::OK;
+            }
+            else if (status == Status::PAGE_FULL)
+            {
+                // TODO: Implement cross-page update
+                // For Phase 3, we only support same-page updates
+                // Cross-page updates require:
+                // 1. Allocate new page or find page with free space
+                // 2. Insert new version on new page
+                // 3. Update old tuple's next_version_tid to point to new page
+                // 4. Handle lock acquisition on new tuple
+                buffer_pool_->unpinPage(page_id, false, ctx);
+                SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED,
+                                 "Cross-page tuple updates not yet implemented");
+                return Status::NOT_IMPLEMENTED;
+            }
+            else
+            {
+                // Other error
+                buffer_pool_->unpinPage(page_id, false, ctx);
+                return status;
+            }
+        }
+
         auto
         StorageEngine::sequentialScan(const ID &table_id, const std::vector<uint32_t> &columns,
                                        uint64_t xmin, ErrorContext *ctx) -> std::unique_ptr<HeapScanIterator>
