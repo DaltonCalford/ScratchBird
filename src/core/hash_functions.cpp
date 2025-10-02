@@ -1,12 +1,11 @@
 #include "scratchbird/core/hash_functions.h"
 #include <cstring>
 
-namespace scratchbird
+namespace scratchbird::core  // NOLINT(modernize-concat-nested-namespaces)
 {
-    namespace core
-    {
         // MurmurHash3 was written by Austin Appleby, and is placed in the public domain.
         // The author hereby disclaims copyright to this source code.
+        // NOLINTBEGIN(readability-*,modernize-*,readability-magic-numbers,readability-identifier-length)
 
         // Platform-specific functions and macros
         #define ROTL64(x, r) (((x) << (r)) | ((x) >> (64 - (r))))
@@ -120,6 +119,6 @@ namespace scratchbird
             // Return only the first 64 bits
             return h1;
         }
+        // NOLINTEND(readability-*,modernize-*,readability-magic-numbers,readability-identifier-length)
 
-    } // namespace core
-} // namespace scratchbird
+} // namespace scratchbird::core

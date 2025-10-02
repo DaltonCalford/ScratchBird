@@ -4,6 +4,7 @@
 #include "scratchbird/core/hash_functions.h"
 #include <cstring>
 #include <filesystem>
+#include <algorithm>
 
 using namespace scratchbird::core;
 
@@ -27,8 +28,9 @@ protected:
         ASSERT_EQ(status, Status::OK) << "Failed to create database: " << ctx.message;
 
         // Open database
-        db = Database::open(test_db_path.c_str(), &ctx);
-        ASSERT_NE(db, nullptr) << "Failed to open database: " << ctx.message;
+        db = std::make_unique<Database>();
+        status = db->open(test_db_path, &ctx);
+        ASSERT_EQ(status, Status::OK) << "Failed to open database: " << ctx.message;
     }
 
     void TearDown() override
@@ -54,7 +56,7 @@ protected:
 TEST_F(HashIndexTest, CreateIndex)
 {
     ErrorContext ctx;
-    ID index_uuid = generate_uuid_v7();
+    UuidV7Bytes index_uuid = generateUuidV7();
     uint32_t meta_page = 0;
 
     Status status = HashIndex::create(db.get(), index_uuid, &meta_page, &ctx);
@@ -66,7 +68,7 @@ TEST_F(HashIndexTest, CreateIndex)
 TEST_F(HashIndexTest, OpenIndex)
 {
     ErrorContext ctx;
-    ID index_uuid = generate_uuid_v7();
+    UuidV7Bytes index_uuid = generateUuidV7();
     uint32_t meta_page = 0;
 
     // Create index
@@ -84,7 +86,7 @@ TEST_F(HashIndexTest, OpenIndex)
 TEST_F(HashIndexTest, InsertSingle)
 {
     ErrorContext ctx;
-    ID index_uuid = generate_uuid_v7();
+    UuidV7Bytes index_uuid = generateUuidV7();
     uint32_t meta_page = 0;
 
     Status status = HashIndex::create(db.get(), index_uuid, &meta_page, &ctx);
@@ -110,7 +112,7 @@ TEST_F(HashIndexTest, InsertSingle)
 TEST_F(HashIndexTest, InsertAndFind)
 {
     ErrorContext ctx;
-    ID index_uuid = generate_uuid_v7();
+    UuidV7Bytes index_uuid = generateUuidV7();
     uint32_t meta_page = 0;
 
     Status status = HashIndex::create(db.get(), index_uuid, &meta_page, &ctx);
@@ -155,7 +157,7 @@ TEST_F(HashIndexTest, InsertAndFind)
 TEST_F(HashIndexTest, InsertDuplicates)
 {
     ErrorContext ctx;
-    ID index_uuid = generate_uuid_v7();
+    UuidV7Bytes index_uuid = generateUuidV7();
     uint32_t meta_page = 0;
 
     Status status = HashIndex::create(db.get(), index_uuid, &meta_page, &ctx);
@@ -188,7 +190,7 @@ TEST_F(HashIndexTest, InsertDuplicates)
 TEST_F(HashIndexTest, DeleteEntry)
 {
     ErrorContext ctx;
-    ID index_uuid = generate_uuid_v7();
+    UuidV7Bytes index_uuid = generateUuidV7();
     uint32_t meta_page = 0;
 
     Status status = HashIndex::create(db.get(), index_uuid, &meta_page, &ctx);
@@ -224,7 +226,7 @@ TEST_F(HashIndexTest, DeleteEntry)
 TEST_F(HashIndexTest, BucketSplit)
 {
     ErrorContext ctx;
-    ID index_uuid = generate_uuid_v7();
+    UuidV7Bytes index_uuid = generateUuidV7();
     uint32_t meta_page = 0;
 
     Status status = HashIndex::create(db.get(), index_uuid, &meta_page, &ctx);
@@ -267,7 +269,7 @@ TEST_F(HashIndexTest, BucketSplit)
 TEST_F(HashIndexTest, Vacuum)
 {
     ErrorContext ctx;
-    ID index_uuid = generate_uuid_v7();
+    UuidV7Bytes index_uuid = generateUuidV7();
     uint32_t meta_page = 0;
 
     Status status = HashIndex::create(db.get(), index_uuid, &meta_page, &ctx);
@@ -339,7 +341,7 @@ TEST_F(HashIndexTest, HashFunctionConsistency)
 TEST_F(HashIndexTest, LargeDataset)
 {
     ErrorContext ctx;
-    ID index_uuid = generate_uuid_v7();
+    UuidV7Bytes index_uuid = generateUuidV7();
     uint32_t meta_page = 0;
 
     Status status = HashIndex::create(db.get(), index_uuid, &meta_page, &ctx);
@@ -379,7 +381,7 @@ TEST_F(HashIndexTest, LargeDataset)
 TEST_F(HashIndexTest, StatisticsAccuracy)
 {
     ErrorContext ctx;
-    ID index_uuid = generate_uuid_v7();
+    UuidV7Bytes index_uuid = generateUuidV7();
     uint32_t meta_page = 0;
 
     Status status = HashIndex::create(db.get(), index_uuid, &meta_page, &ctx);
@@ -414,7 +416,7 @@ TEST_F(HashIndexTest, StatisticsAccuracy)
 TEST_F(HashIndexTest, InvalidOperations)
 {
     ErrorContext ctx;
-    ID index_uuid = generate_uuid_v7();
+    UuidV7Bytes index_uuid = generateUuidV7();
     uint32_t meta_page = 0;
 
     Status status = HashIndex::create(db.get(), index_uuid, &meta_page, &ctx);
