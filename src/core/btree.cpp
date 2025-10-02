@@ -22,6 +22,206 @@
             // Destructor implementation
         }
 
+        auto BTree::create(
+            Database* db,
+            const UuidV7Bytes& index_uuid,
+            const UuidV7Bytes& table_uuid,
+            const std::vector<UuidV7Bytes>& column_uuids,
+            uint32_t* root_page_out,
+            ErrorContext* ctx) -> Status
+        {
+            if (!db || !root_page_out)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Invalid arguments to BTree::create");
+                return Status::INVALID_ARGUMENT;
+            }
+
+            BufferPool* buffer_pool = db->buffer_pool();
+            if (!buffer_pool)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Database has no buffer pool");
+                return Status::INVALID_ARGUMENT;
+            }
+
+            PageManager* page_manager = db->page_manager();
+            if (!page_manager)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Database has no page manager");
+                return Status::INVALID_ARGUMENT;
+            }
+
+            // Step 1: Allocate root page
+            uint32_t root_page = 0;
+            Status status = page_manager->allocatePage(root_page, ctx);
+            if (status != Status::OK)
+            {
+                SET_ERROR_CONTEXT(ctx, status, "Failed to allocate root page for B-tree");
+                return status;
+            }
+
+            // Step 2: Pin root page
+            void* root_page_data_ptr = nullptr;
+            status = buffer_pool->pinPage(root_page, &root_page_data_ptr, ctx);
+            if (status != Status::OK)
+            {
+                SET_ERROR_CONTEXT(ctx, status, "Failed to pin root page for B-tree");
+                return status;
+            }
+
+            // Step 3: Initialize as leaf page (single page tree initially)
+            auto* page = reinterpret_cast<SBBTreePage*>(root_page_data_ptr);
+            uint32_t page_size = db->page_size();
+
+            // Zero out the page
+            std::memset(page, 0, page_size);
+
+            // Step 4: Set page header
+            page->btr_header.magic = K_MAGIC_SBRD;
+            page->btr_header.version = static_cast<uint16_t>(DB_VERSION_ALPHA_1_0_1);
+            page->btr_header.page_type = static_cast<uint16_t>(PageType::PAGE_TYPE_BTREE_LEAF);
+            page->btr_header.page_size = page_size;
+            page->btr_header.page_id = root_page;
+            page->btr_header.checksum = 0;  // Will be set on flush
+            page->btr_header.lsn = 0;
+            page->btr_header.flags = 0;
+            std::memcpy(page->btr_header.database_uuid, db->uuid().bytes.data(), 16);
+            page->btr_header.generation = 0;
+            page->btr_header.free_space = 0;  // Will be calculated below
+            page->btr_header.item_count = 0;
+            page->btr_header.free_offset = 0;
+            page->btr_header.special_size = 0;
+
+            // Set index and table UUIDs
+            std::memcpy(page->btr_index_uuid.bytes.data(), index_uuid.bytes.data(), 16);
+            std::memcpy(page->btr_table_uuid.bytes.data(), table_uuid.bytes.data(), 16);
+
+            // Step 5: Set flags: ROOT | LEAF | LEFTMOST | RIGHTMOST
+            page->btr_level = 0;  // Leaf level
+            page->btr_flags = static_cast<uint16_t>(BTreeFlags::ROOT) |
+                             static_cast<uint16_t>(BTreeFlags::LEAF) |
+                             static_cast<uint16_t>(BTreeFlags::LEFTMOST) |
+                             static_cast<uint16_t>(BTreeFlags::RIGHTMOST);
+            page->btr_count = 0;  // No entries yet
+
+            // Initialize sibling pointers
+            page->btr_left_sibling = 0;
+            page->btr_right_sibling = 0;
+            page->btr_parent_page = 0;
+
+            // Initialize compression metadata
+            page->btr_prefix_total = 0;
+            page->btr_suffix_total = 0;
+            page->btr_compression = static_cast<uint8_t>(BTreeCompressionType::NONE);
+            page->btr_min_prefix_len = 0;
+
+            // Initialize multi-version support
+            page->btr_xmin = 0;
+            page->btr_xmax = 0;
+            page->btr_lsn = 0;
+
+            // Step 6: Initialize BTreePage helper and call initialize()
+            try
+            {
+                BTreePage btree_page(reinterpret_cast<uint8_t*>(root_page_data_ptr), page_size);
+                status = btree_page.initialize(index_uuid, table_uuid, 0, page->btr_flags);
+                if (status != Status::OK)
+                {
+                    buffer_pool->unpinPage(root_page, false, ctx);
+                    SET_ERROR_CONTEXT(ctx, status, "Failed to initialize B-tree page");
+                    return status;
+                }
+            }
+            catch (const std::exception& e)
+            {
+                buffer_pool->unpinPage(root_page, false, ctx);
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, e.what());
+                return Status::INVALID_ARGUMENT;
+            }
+
+            // Step 7: Unpin page (mark dirty)
+            buffer_pool->unpinPage(root_page, true, ctx);
+
+            // Step 8: Return root page number
+            *root_page_out = root_page;
+            return Status::OK;
+        }
+
+        auto BTree::open(
+            Database* db,
+            const UuidV7Bytes& index_uuid,
+            uint32_t root_page,
+            ErrorContext* ctx) -> std::unique_ptr<BTree>
+        {
+            if (!db)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Invalid database");
+                return nullptr;
+            }
+
+            BufferPool* buffer_pool = db->buffer_pool();
+            if (!buffer_pool)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Database has no buffer pool");
+                return nullptr;
+            }
+
+            // Step 1: Pin root page to validate
+            void* root_page_data_ptr = nullptr;
+            Status status = buffer_pool->pinPage(root_page, &root_page_data_ptr, ctx);
+            if (status != Status::OK)
+            {
+                SET_ERROR_CONTEXT(ctx, status, "Failed to pin root page");
+                return nullptr;
+            }
+
+            auto* page = reinterpret_cast<SBBTreePage*>(root_page_data_ptr);
+
+            // Step 2: Verify it's a B-tree page (check page_type)
+            if (page->btr_header.page_type != static_cast<uint16_t>(PageType::PAGE_TYPE_BTREE_LEAF) &&
+                page->btr_header.page_type != static_cast<uint16_t>(PageType::PAGE_TYPE_BTREE_INTERNAL))
+            {
+                buffer_pool->unpinPage(root_page, false, ctx);
+                SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "Invalid B-tree page type");
+                return nullptr;
+            }
+
+            // Step 3: Verify index_uuid matches
+            if (std::memcmp(page->btr_index_uuid.bytes.data(), index_uuid.bytes.data(), 16) != 0)
+            {
+                buffer_pool->unpinPage(root_page, false, ctx);
+                SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "B-tree index UUID mismatch");
+                return nullptr;
+            }
+
+            // Step 4: Load SBBTreeIndex structure from page
+            SBBTreeIndex index_info;
+            std::memcpy(index_info.idx_uuid.bytes.data(), page->btr_index_uuid.bytes.data(), 16);
+            std::memcpy(index_info.idx_table_uuid.bytes.data(), page->btr_table_uuid.bytes.data(), 16);
+
+            // Note: column_ids are not stored on the B-tree page itself,
+            // they would typically be retrieved from the catalog.
+            // For now, we initialize with an empty vector.
+            index_info.idx_column_ids.clear();
+
+            index_info.idx_flags = 0;
+            index_info.idx_root_page = root_page;
+
+            // Calculate tree height by traversing from root
+            // For now, we'll set it based on the root's level
+            index_info.idx_height = page->btr_level + 1;
+
+            // Initialize statistics (would need to be calculated by scanning)
+            index_info.idx_tuple_count = 0;
+            index_info.idx_page_count = 1;  // At least the root page
+            index_info.idx_deleted_count = 0;
+
+            // Step 5: Unpin page
+            buffer_pool->unpinPage(root_page, false, ctx);
+
+            // Step 6: Create and return BTree instance
+            return std::make_unique<BTree>(db, index_info);
+        }
+
         auto BTree::insert(const std::vector<uint8_t> &key, uint64_t tuple_id, ErrorContext *ctx) -> Status
         {
             // Find the appropriate leaf page for this key
