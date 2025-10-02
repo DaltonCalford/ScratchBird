@@ -5,6 +5,7 @@
 #include "scratchbird/core/catalog_manager.h"
 #include "scratchbird/core/storage_engine.h"
 #include "scratchbird/core/transaction_manager.h"
+#include "scratchbird/core/lock_manager.h"
 #include "scratchbird/core/proc_array.h"
 #include "scratchbird/core/system_uuids.h"
 #include "scratchbird/core/debug.h"
@@ -35,7 +36,10 @@
 
         void Database::close()
         {
-            // Shut down ProcArray first (before transaction manager)
+            // Shut down lock manager first (before transaction manager)
+            lock_manager_.reset();
+
+            // Shut down ProcArray (before transaction manager)
             if (header_ && header_->proc_array_initialized) {
                 ErrorContext ctx;
                 shutdownProcArray(&ctx);
@@ -546,6 +550,21 @@
                 return Status::OOM;
             }
             status = transaction_manager_->load(ctx);
+            if (status != Status::OK)
+            {
+                close();
+                return status;
+            }
+
+            // Initialize lock manager
+            try {
+                lock_manager_ = std::make_unique<LockManager>(this);
+            } catch (const std::bad_alloc&) {
+                close();
+                SET_ERROR_CONTEXT(ctx, Status::OOM, "Failed to allocate LockManager");
+                return Status::OOM;
+            }
+            status = lock_manager_->initialize(ctx);
             if (status != Status::OK)
             {
                 close();

@@ -26,6 +26,7 @@ namespace scratchbird
         class StorageEngine;
         class TransactionManager;
         class ProcArrayManager;
+        class LockManager;
 
 // Database header structure for Page 0
 #pragma pack(push, 1)
@@ -165,6 +166,12 @@ namespace scratchbird
                 return transaction_manager_.get();
             }
 
+            // Get lock manager
+            LockManager *lock_manager()
+            {
+                return lock_manager_.get();
+            }
+
             // Initialize ProcArray for multi-connection support
             Status initializeProcArray(uint32_t max_backends, ErrorContext *ctx = nullptr);
 
@@ -196,6 +203,7 @@ namespace scratchbird
             std::unique_ptr<CatalogManager> catalog_manager_;         // System catalog manager (owned)
             std::unique_ptr<StorageEngine> storage_engine_;           // Storage engine (owned)
             std::unique_ptr<TransactionManager> transaction_manager_; // Transaction manager (owned)
+            std::unique_ptr<LockManager> lock_manager_;               // Lock manager (owned)
 
             // Validate database header
             Status validate_header();
