@@ -453,6 +453,8 @@ namespace scratchbird
         Expression *Parser::parseComparison()
         {
             auto *expr = parseTerm();
+            if (!expr)
+                return nullptr;
 
             while (true)
             {
@@ -500,6 +502,8 @@ namespace scratchbird
         Expression *Parser::parseTerm()
         {
             auto *expr = parseFactor();
+            if (!expr)
+                return nullptr;
 
             while (true)
             {
@@ -531,6 +535,8 @@ namespace scratchbird
         Expression *Parser::parseFactor()
         {
             auto *expr = parsePrimary();
+            if (!expr)
+                return nullptr;
 
             while (true)
             {

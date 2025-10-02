@@ -72,11 +72,13 @@ namespace scratchbird
 
         void SymbolTable::popScope()
         {
+            // Never pop the global scope (invariant: global scope always remains)
             if (scopes_.size() > 1)
             {
                 scopes_.pop_back();
-                current_scope_ = scopes_.empty() ? nullptr : scopes_.back().get();
+                current_scope_ = scopes_.back().get();
             }
+            // If scopes_.size() <= 1, we're at global scope and don't pop
         }
 
         // ===== TypeChecker Implementation =====

@@ -28,7 +28,13 @@ namespace scratchbird
 
         std::string_view StringPool::get(StringId id) const
         {
-            assert(id < strings_.size());
+            // Bounds check instead of assert (works in release builds)
+            if (id >= strings_.size())
+            {
+                // Return empty string_view for invalid IDs instead of crashing
+                static const std::string empty_str;
+                return std::string_view(empty_str);
+            }
             return strings_[id];
         }
 

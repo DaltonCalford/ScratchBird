@@ -58,7 +58,39 @@
         {
         }
 
-        
+        auto ToastManager::initializeNextValueId(ErrorContext *ctx) -> Status
+        {
+            StorageEngine *storage = db_->storage_engine();
+
+            // Scan TOAST table to find maximum value_id
+            auto scan = storage->createScan(toast_table_id_, ctx);
+            if (!scan)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Failed to scan TOAST table");
+                return Status::INVALID_ARGUMENT;
+            }
+
+            uint32_t max_value_id = 0;
+            Tuple tuple;
+            Status status;
+            while ((status = scan->next(&tuple, ctx)) == Status::OK)
+            {
+                // Parse tuple format: chunk_id | chunk_seq | chunk_size | data
+                if ((tuple.data != nullptr) && tuple.data_size >= 4)
+                {
+                    uint32_t chunk_id = *reinterpret_cast<const uint32_t *>(tuple.data);
+                    if (chunk_id > max_value_id)
+                    {
+                        max_value_id = chunk_id;
+                    }
+                }
+            }
+
+            // Set next_value_id_ to one more than the maximum found
+            next_value_id_ = max_value_id + 1;
+
+            return Status::OK;
+        }
 
         auto ToastManager::initialize(ErrorContext *ctx) -> Status
         {
@@ -85,9 +117,13 @@
                 // TOAST table already exists
                 toast_table_id_ = info.table_id;
 
-                // TODO: Read max value_id from TOAST table to set next_value_id_
-                // For now, start from a high number to avoid conflicts
-                next_value_id_ = 1000000;
+                // Read max value_id from TOAST table to prevent collisions
+                status = initializeNextValueId(ctx);
+                if (status != Status::OK)
+                {
+                    SET_ERROR_CONTEXT(ctx, status, "Failed to initialize next_value_id");
+                    return status;
+                }
 
                 return Status::OK;
             }
@@ -282,38 +318,70 @@
 
         auto ToastManager::deleteToastValue(uint32_t value_id, uint64_t xmax, ErrorContext *ctx) -> Status
         {
-            // StorageEngine* storage = db_->storage_engine();
-            // CatalogManager* catalog = db_->catalog_manager();
+            StorageEngine *storage = db_->storage_engine();
+            CatalogManager *catalog = db_->catalog_manager();
 
-            // // Get the index ID for the TOAST table
-            // std::string toast_name = "pg_toast_" + table_id_.toString();
-            // std::string index_name = toast_name + "_idx";
-            // CatalogManager::IndexInfo index_info;
-            // Status status = catalog->get_index(toast_table_id_, index_name, index_info, ctx);
-            // if (status != Status::OK) {
-            //     // Fall back to heap scan if index not found
-            //     return deleteToastValueHeapScan(value_id, xmax, ctx);
-            // }
+            // Get the index ID for the TOAST table
+            std::string toast_name = "pg_toast_" + table_id_.toString();
+            std::string index_name = toast_name + "_idx";
+            CatalogManager::IndexInfo index_info;
+            Status status = catalog->getIndex(toast_table_id_, index_name, index_info, ctx);
+            if (status != Status::OK)
+            {
+                // Fall back to heap scan if index not found
+                return deleteToastValueHeapScan(value_id, xmax, ctx);
+            }
 
-            // // Create an index scan
-            // auto scan = storage->create_index_scan(index_info.index_id, ctx);
-            // if (!scan) {
-            //     SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
-            //                      "Failed to create index scan for TOAST table");
-            //     return Status::INVALID_ARGUMENT;
-            // }
+            // Create an index scan
+            auto scan = storage->createIndexScan(index_info.index_id, ctx);
+            if (!scan)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                  "Failed to create index scan for TOAST table");
+                return Status::INVALID_ARGUMENT;
+            }
 
-            // // Seek to the first chunk for this value_id
-            // std::vector<uint8_t> key;
-            // key.insert(key.end(), reinterpret_cast<uint8_t*>(&value_id),
-            // reinterpret_cast<uint8_t*>(&value_id) + 4); status = scan->seek(key, ctx); if (status
-            // != Status::OK) {
-            //     return status;
-            // }
+            // Seek to the first chunk for this value_id
+            std::vector<uint8_t> key;
+            key.insert(key.end(), reinterpret_cast<const uint8_t *>(&value_id),
+                       reinterpret_cast<const uint8_t *>(&value_id) + 4);
+            status = scan->seek(key, ctx);
+            if (status != Status::OK)
+            {
+                // Value not found is OK - might have been already deleted
+                if (status == Status::NOT_FOUND)
+                {
+                    return Status::OK;
+                }
+                return status;
+            }
 
-            // // ... rest of implementation using index scan ...
+            // Delete all chunks with this value_id
+            Tuple tuple;
+            while ((status = scan->next(&tuple, ctx)) == Status::OK)
+            {
+                // Parse tuple to verify it's for our value_id
+                if ((tuple.data == nullptr) || tuple.data_size < 4)
+                {
+                    continue;
+                }
 
-            return deleteToastValueHeapScan(value_id, xmax, ctx);
+                uint32_t chunk_id = *reinterpret_cast<const uint32_t *>(tuple.data);
+                if (chunk_id != value_id)
+                {
+                    // We've moved past our value_id in the index
+                    break;
+                }
+
+                // Delete this chunk
+                Status delete_status = storage->deleteTuple(tuple.page_id, tuple.item_id, ctx);
+                if (delete_status != Status::OK)
+                {
+                    return delete_status;
+                }
+            }
+
+            return Status::OK;
         }
 
         auto ToastManager::deleteToastValueHeapScan(uint32_t value_id, uint64_t xmax,
@@ -389,6 +457,10 @@
             uint32_t chunks_needed = (size + TOAST_MAX_CHUNK_SIZE - 1) / TOAST_MAX_CHUNK_SIZE;
             uint32_t offset = 0;
 
+            // Track inserted chunks for cleanup on failure
+            std::vector<std::pair<uint32_t, uint16_t>> inserted_chunks;
+            inserted_chunks.reserve(chunks_needed);
+
             for (uint32_t seq = 0; seq < chunks_needed; seq++)
             {
                 uint32_t chunk_size = std::min(TOAST_MAX_CHUNK_SIZE, size - offset);
@@ -422,9 +494,18 @@
                 if (status != Status::OK)
                 {
                     SET_ERROR_CONTEXT(ctx, status, "Failed to insert TOAST chunk");
-                    // TODO: Clean up any chunks we already inserted
+
+                    // Clean up any chunks we already inserted
+                    for (const auto &chunk : inserted_chunks)
+                    {
+                        storage->deleteTuple(chunk.first, chunk.second, ctx);
+                    }
+
                     return status;
                 }
+
+                // Track this chunk for potential cleanup
+                inserted_chunks.push_back({page_id, item_id});
 
                 offset += chunk_size;
             }
@@ -435,38 +516,103 @@
         auto ToastManager::readToastChunks(uint32_t value_id, std::vector<uint8_t> *data_out,
                                                uint64_t xmin, ErrorContext *ctx) -> Status
         {
-            // StorageEngine* storage = db_->storage_engine();
-            // CatalogManager* catalog = db_->catalog_manager();
+            StorageEngine *storage = db_->storage_engine();
+            CatalogManager *catalog = db_->catalog_manager();
 
-            // // Get the index ID for the TOAST table
-            // std::string toast_name = "pg_toast_" + table_id_.toString();
-            // std::string index_name = toast_name + "_idx";
-            // CatalogManager::IndexInfo index_info;
-            // Status status = catalog->get_index(toast_table_id_, index_name, index_info, ctx);
-            // if (status != Status::OK) {
-            //     // Fall back to heap scan if index not found
-            //     return readToastChunksHeapScan(value_id, data_out, xmin, ctx);
-            // }
+            // Get the index ID for the TOAST table
+            std::string toast_name = "pg_toast_" + table_id_.toString();
+            std::string index_name = toast_name + "_idx";
+            CatalogManager::IndexInfo index_info;
+            Status status = catalog->getIndex(toast_table_id_, index_name, index_info, ctx);
+            if (status != Status::OK)
+            {
+                // Fall back to heap scan if index not found
+                return readToastChunksHeapScan(value_id, data_out, xmin, ctx);
+            }
 
-            // // Create an index scan
-            // auto scan = storage->create_index_scan(index_info.index_id, ctx);
-            // if (!scan) {
-            //     SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
-            //                      "Failed to create index scan for TOAST table");
-            //     return Status::INVALID_ARGUMENT;
-            // }
+            // Create an index scan
+            auto scan = storage->createIndexScan(index_info.index_id, ctx);
+            if (!scan)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                  "Failed to create index scan for TOAST table");
+                return Status::INVALID_ARGUMENT;
+            }
 
-            // // Seek to the first chunk for this value_id
-            // std::vector<uint8_t> key;
-            // key.insert(key.end(), reinterpret_cast<uint8_t*>(&value_id),
-            // reinterpret_cast<uint8_t*>(&value_id) + 4); status = scan->seek(key, ctx); if (status
-            // != Status::OK) {
-            //     return status;
-            // }
+            // Seek to the first chunk for this value_id
+            std::vector<uint8_t> key;
+            key.insert(key.end(), reinterpret_cast<const uint8_t *>(&value_id),
+                       reinterpret_cast<const uint8_t *>(&value_id) + 4);
+            status = scan->seek(key, ctx);
+            if (status != Status::OK)
+            {
+                SET_ERROR_CONTEXT(ctx, status, "TOAST value not found");
+                return status;
+            }
 
-            // // ... rest of implementation using index scan ...
+            // Collect chunks in order
+            struct ChunkData
+            {
+                uint32_t seq;
+                std::vector<uint8_t> data;
+            };
+            std::vector<ChunkData> chunks;
 
-            return readToastChunksHeapScan(value_id, data_out, xmin, ctx);
+            Tuple tuple;
+            while ((status = scan->next(&tuple, ctx)) == Status::OK)
+            {
+                // Parse tuple format: chunk_id | chunk_seq | chunk_size | data
+                if ((tuple.data == nullptr) || tuple.data_size < 12)
+                {
+                    continue;
+                }
+
+                const uint8_t *ptr = tuple.data;
+                uint32_t chunk_id = *reinterpret_cast<const uint32_t *>(ptr);
+
+                if (chunk_id != value_id)
+                {
+                    // We've moved past our value_id in the index
+                    break;
+                }
+
+                ptr += 4;
+                uint32_t chunk_seq = *reinterpret_cast<const uint32_t *>(ptr);
+                ptr += 4;
+                uint32_t chunk_size = *reinterpret_cast<const uint32_t *>(ptr);
+                ptr += 4;
+
+                // Validate chunk size
+                if (chunk_size > TOAST_MAX_CHUNK_SIZE || 12 + chunk_size > tuple.data_size)
+                {
+                    continue;
+                }
+
+                // Extract chunk data
+                std::vector<uint8_t> chunk_data(chunk_size);
+                memcpy(chunk_data.data(), ptr, chunk_size);
+
+                chunks.push_back({chunk_seq, std::move(chunk_data)});
+            }
+
+            if (chunks.empty())
+            {
+                SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "TOAST value not found");
+                return Status::NOT_FOUND;
+            }
+
+            // Sort chunks by sequence number (index should return them in order, but be safe)
+            std::sort(chunks.begin(), chunks.end(),
+                      [](const ChunkData &a, const ChunkData &b) { return a.seq < b.seq; });
+
+            // Reassemble data
+            data_out->clear();
+            for (const auto &chunk : chunks)
+            {
+                data_out->insert(data_out->end(), chunk.data.begin(), chunk.data.end());
+            }
+
+            return Status::OK;
         }
 
         auto ToastManager::readToastChunksHeapScan(uint32_t value_id,

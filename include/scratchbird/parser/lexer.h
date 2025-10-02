@@ -88,7 +88,7 @@ namespace scratchbird
             Token scanNumber();
             Token scanString();
             Token scanOperator();
-            Token scanComment();
+            void scanComment();
 
             // Keyword detection
             TokenType checkKeyword(std::string_view text) const;

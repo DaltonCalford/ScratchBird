@@ -82,10 +82,47 @@
             auto *tid_location = reinterpret_cast<uint64_t *>(key_location + key.size());
             *tid_location = value.tid;
 
-            // TODO: Insert the node into the sorted position in the offsets array.
-            // For now, just append to the end.
+            // Insert the node into the sorted position in the offsets array
             auto *offsets = reinterpret_cast<uint16_t *>(page_data_ + sizeof(SBBTreePage));
-            offsets[page_header_->btr_count] = page_header_->btr_high_water;
+
+            // Find the correct insertion position using binary search
+            uint16_t insert_pos = 0;
+            int left = 0;
+            int right = page_header_->btr_count - 1;
+
+            while (left <= right)
+            {
+                int mid = left + (right - left) / 2;
+                const auto *existing_node = reinterpret_cast<const SBBTreeNode *>(
+                    page_data_ + offsets[mid]);
+
+                // Extract existing node's key
+                const uint8_t *existing_key_data = reinterpret_cast<const uint8_t *>(existing_node) +
+                    sizeof(SBBTreeNode);
+                std::vector<uint8_t> existing_key(existing_key_data,
+                    existing_key_data + existing_node->btn_key_len);
+
+                // Compare keys
+                if (key < existing_key)
+                {
+                    right = mid - 1;
+                    insert_pos = mid;
+                }
+                else
+                {
+                    left = mid + 1;
+                    insert_pos = mid + 1;
+                }
+            }
+
+            // Shift existing offsets to make room for new entry
+            for (uint16_t i = page_header_->btr_count; i > insert_pos; --i)
+            {
+                offsets[i] = offsets[i - 1];
+            }
+
+            // Insert the new offset at the correct position
+            offsets[insert_pos] = page_header_->btr_high_water;
 
             // Update header
             page_header_->btr_count++;
@@ -107,7 +144,46 @@
 
         void BTreePage::remove_node(uint16_t node_index)
         {
-            // TODO: Implement node removal
+            if (node_index >= page_header_->btr_count)
+            {
+                return; // Invalid index
+            }
+
+            auto *offsets = reinterpret_cast<uint16_t *>(page_data_ + sizeof(SBBTreePage));
+
+            // Get the node to be removed
+            auto *node = reinterpret_cast<SBBTreeNode *>(page_data_ + offsets[node_index]);
+
+            // Calculate the size of the node being removed
+            uint32_t node_size = sizeof(SBBTreeNode) + node->btn_key_len;
+            if (is_leaf())
+            {
+                node_size += node->btn_tuple_count * sizeof(uint64_t);
+            }
+            else
+            {
+                node_size += sizeof(uint64_t); // child pointer
+            }
+
+            // Instead of physically removing the node (which would require compacting),
+            // we'll mark it as deleted. Physical compaction can happen during vacuum/maintenance.
+            node->btn_flags |= static_cast<uint16_t>(BTreeNodeFlags::DELETED);
+
+            // Remove the offset entry by shifting remaining offsets left
+            for (uint16_t i = node_index; i < page_header_->btr_count - 1; ++i)
+            {
+                offsets[i] = offsets[i + 1];
+            }
+
+            // Update header
+            page_header_->btr_count--;
+
+            // Mark page as having garbage for future compaction
+            page_header_->btr_flags |= static_cast<uint16_t>(BTreeFlags::HAS_GARBAGE);
+
+            // Note: Free space is not reclaimed immediately. It will be reclaimed during
+            // page compaction/vacuum. This is a common approach in B-tree implementations
+            // to avoid expensive page reorganization on every delete.
         }
 
         auto BTreePage::has_sufficient_space(uint32_t required_space) const -> bool
@@ -128,8 +204,77 @@
 
         auto BTreePage::find_split_point()  -> uint16_t
         {
-            // TODO: Implement split point calculation
-            return 0;
+            // Calculate the split point to divide the page roughly in half by size
+            // This helps maintain balanced B-tree structure
+
+            if (page_header_->btr_count < 2)
+            {
+                // Can't split a page with less than 2 nodes
+                return 0;
+            }
+
+            auto *offsets = reinterpret_cast<uint16_t *>(page_data_ + sizeof(SBBTreePage));
+
+            // Calculate total used space
+            uint32_t total_used_space = 0;
+            for (uint16_t i = 0; i < page_header_->btr_count; ++i)
+            {
+                const auto *node = reinterpret_cast<const SBBTreeNode *>(page_data_ + offsets[i]);
+
+                // Calculate node size: header + key + tuple IDs (for leaf) or child pointer (for internal)
+                uint32_t node_size = sizeof(SBBTreeNode) + node->btn_key_len;
+                if (is_leaf())
+                {
+                    node_size += node->btn_tuple_count * sizeof(uint64_t);
+                }
+                else
+                {
+                    node_size += sizeof(uint64_t); // child pointer
+                }
+
+                total_used_space += node_size;
+            }
+
+            // Find the split point that divides space roughly in half
+            uint32_t target_size = total_used_space / 2;
+            uint32_t accumulated_size = 0;
+            uint16_t split_point = page_header_->btr_count / 2; // Default to middle
+
+            for (uint16_t i = 0; i < page_header_->btr_count; ++i)
+            {
+                const auto *node = reinterpret_cast<const SBBTreeNode *>(page_data_ + offsets[i]);
+
+                uint32_t node_size = sizeof(SBBTreeNode) + node->btn_key_len;
+                if (is_leaf())
+                {
+                    node_size += node->btn_tuple_count * sizeof(uint64_t);
+                }
+                else
+                {
+                    node_size += sizeof(uint64_t);
+                }
+
+                accumulated_size += node_size;
+
+                if (accumulated_size >= target_size)
+                {
+                    // Split after this node
+                    split_point = i + 1;
+                    break;
+                }
+            }
+
+            // Ensure we don't split at the beginning or end
+            if (split_point == 0)
+            {
+                split_point = 1;
+            }
+            if (split_point >= page_header_->btr_count)
+            {
+                split_point = page_header_->btr_count - 1;
+            }
+
+            return split_point;
         }
 
     } // namespace scratchbird::core

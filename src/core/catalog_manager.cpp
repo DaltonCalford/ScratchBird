@@ -2,6 +2,7 @@
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/buffer_pool.h"
 #include "scratchbird/core/page_manager.h"
+#include "scratchbird/core/heap_page.h"
 #include "scratchbird/core/debug.h"
 #include <cstring>
 #include <algorithm>
@@ -438,7 +439,8 @@
             status = writeColumnRecords(table.table_id, columns_with_ids, ctx);
             if (status != Status::OK)
             {
-                // TODO: Rollback table record
+                // Rollback: mark table record as invalid (logical delete)
+                deleteTableRecord(table.table_id, ctx);
                 pm->freePage(root_page, ctx);
                 return status;
             }
@@ -919,6 +921,56 @@
             record.is_valid = 1;
 
             return writeRecordToHeapPage(tables_table_page_, record, ctx);
+        }
+
+        auto CatalogManager::deleteTableRecord(const ID &table_id, ErrorContext *ctx) -> Status
+        {
+            // Mark the table record as invalid (logical delete) by setting is_valid = 0
+            // This is a simple implementation that scans for the table ID and marks it invalid
+
+            BufferPool *bp = db_->buffer_pool();
+            void *page_data;
+            Status status = bp->pinPage(tables_table_page_, &page_data, ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+
+            HeapPage heap_page(static_cast<uint8_t *>(page_data), db_->page_size());
+
+            // Scan through all records to find the matching table_id
+            uint16_t item_count = heap_page.getItemCount();
+            bool found = false;
+
+            for (uint16_t i = 0; i < item_count; ++i)
+            {
+                const uint8_t *tuple_data;
+                uint32_t tuple_size;
+
+                if (heap_page.getTuple(i, &tuple_data, &tuple_size, ctx) == Status::OK)
+                {
+                    if (tuple_size >= sizeof(TupleHeader) + sizeof(TableRecord))
+                    {
+                        const auto *record = reinterpret_cast<const TableRecord *>(
+                            tuple_data + sizeof(TupleHeader));
+
+                        if (record->table_id == table_id && record->is_valid == 1)
+                        {
+                            // Found the record - mark it as invalid
+                            // We need to update the record in place
+                            auto *mutable_record = const_cast<TableRecord *>(record);
+                            mutable_record->is_valid = 0;
+                            found = true;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            // Mark page as dirty if we found and updated the record
+            bp->unpinPage(tables_table_page_, found, ctx);
+
+            return found ? Status::OK : Status::NOT_FOUND;
         }
 
         auto CatalogManager::readTableRecords(ErrorContext *ctx) -> Status

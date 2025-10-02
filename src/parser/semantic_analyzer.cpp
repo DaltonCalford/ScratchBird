@@ -21,7 +21,14 @@ namespace scratchbird
             expression_types_.clear();
 
             // Visit the statement
-            stmt->accept(this);
+            if (stmt)
+            {
+                stmt->accept(this);
+            }
+            else
+            {
+                reportError(SourceLocation(), "Null statement passed to analyzer");
+            }
 
             current_result_ = nullptr;
             return result;
@@ -45,11 +52,10 @@ namespace scratchbird
             expression_types_[expr] = type;
         }
 
-        const ExpressionType &SemanticAnalyzer::getExpressionType(Expression *expr) const
+        const ExpressionType *SemanticAnalyzer::getExpressionType(Expression *expr) const
         {
-            static ExpressionType unknown_type;
             auto it = expression_types_.find(expr);
-            return (it != expression_types_.end()) ? it->second : unknown_type;
+            return (it != expression_types_.end()) ? &it->second : nullptr;
         }
 
         TableSymbol *SemanticAnalyzer::resolveTable(StringPool::StringId name)
@@ -164,12 +170,14 @@ namespace scratchbird
                 checkExpression(value);
 
                 // Check type compatibility
-                const ExpressionType &expr_type = getExpressionType(value);
-                if (!TypeChecker::canAssign(col->type, expr_type.type))
+                const ExpressionType *expr_type = getExpressionType(value);
+                if (!expr_type || !TypeChecker::canAssign(col->type, expr_type->type))
                 {
                     std::stringstream ss;
                     ss << "Cannot assign ";
-                    switch (expr_type.type.type)
+                    if (expr_type)
+                    {
+                        switch (expr_type->type.type)
                     {
                         case DataType::INTEGER:
                             ss << "INTEGER";
@@ -183,6 +191,11 @@ namespace scratchbird
                         case DataType::VARCHAR:
                             ss << "VARCHAR";
                             break;
+                    }
+                    }
+                    else
+                    {
+                        ss << "unknown type";
                     }
                     ss << " to column '" << string_pool_.get(col->name) << "' of type ";
                     switch (col->type.type)
@@ -204,7 +217,7 @@ namespace scratchbird
                 }
 
                 // Check nullable constraint
-                if (!col->nullable && expr_type.is_nullable)
+                if (expr_type && !col->nullable && expr_type->is_nullable)
                 {
                     std::stringstream ss;
                     ss << "Column '" << string_pool_.get(col->name) << "' cannot be NULL";
@@ -251,8 +264,8 @@ namespace scratchbird
                 checkExpression(node->whereClause());
 
                 // WHERE clause must be boolean (INTEGER for now)
-                const ExpressionType &where_type = getExpressionType(node->whereClause());
-                if (where_type.type.type != DataType::INTEGER)
+                const ExpressionType *where_type = getExpressionType(node->whereClause());
+                if (!where_type || where_type->type.type != DataType::INTEGER)
                 {
                     reportError(node->whereClause(), "WHERE clause must evaluate to boolean");
                 }
@@ -317,8 +330,15 @@ namespace scratchbird
             checkExpression(node->left());
             checkExpression(node->right());
 
-            const ExpressionType &left_type = getExpressionType(node->left());
-            const ExpressionType &right_type = getExpressionType(node->right());
+            const ExpressionType *left_type = getExpressionType(node->left());
+            const ExpressionType *right_type = getExpressionType(node->right());
+
+            if (!left_type || !right_type)
+            {
+                // Can't determine types, report error
+                reportError(node, "Cannot determine operand types");
+                return;
+            }
 
             // Check type compatibility
             switch (node->op())
@@ -329,12 +349,12 @@ namespace scratchbird
                 case BinaryOp::DIVIDE:
                 case BinaryOp::MODULO:
                     // Arithmetic operators
-                    if (!TypeChecker::supportsArithmetic(left_type.type))
+                    if (!TypeChecker::supportsArithmetic(left_type->type))
                     {
                         reportError(node->left(),
                                     "Left operand does not support arithmetic operations");
                     }
-                    if (!TypeChecker::supportsArithmetic(right_type.type))
+                    if (!TypeChecker::supportsArithmetic(right_type->type))
                     {
                         reportError(node->right(),
                                     "Right operand does not support arithmetic operations");
@@ -348,7 +368,7 @@ namespace scratchbird
                 case BinaryOp::LE:
                 case BinaryOp::GE:
                     // Comparison operators
-                    if (!TypeChecker::areCompatible(left_type.type, right_type.type))
+                    if (!TypeChecker::areCompatible(left_type->type, right_type->type))
                     {
                         reportError(node, "Operands are not type compatible for comparison");
                     }
@@ -356,12 +376,12 @@ namespace scratchbird
 
                 case BinaryOp::AND:
                 case BinaryOp::OR:
-                    // Logical operators (not implemented in parser yet)
-                    if (left_type.type.type != DataType::INTEGER)
+                    // Logical operators
+                    if (left_type->type.type != DataType::INTEGER)
                     {
                         reportError(node->left(), "Left operand must be boolean");
                     }
-                    if (right_type.type.type != DataType::INTEGER)
+                    if (right_type->type.type != DataType::INTEGER)
                     {
                         reportError(node->right(), "Right operand must be boolean");
                     }
@@ -370,8 +390,8 @@ namespace scratchbird
 
             // Determine result type
             TypeName result_type =
-                TypeChecker::getBinaryOpResultType(node->op(), left_type.type, right_type.type);
-            bool result_nullable = left_type.is_nullable || right_type.is_nullable;
+                TypeChecker::getBinaryOpResultType(node->op(), left_type->type, right_type->type);
+            bool result_nullable = left_type->is_nullable || right_type->is_nullable;
 
             setExpressionType(node, ExpressionType(result_type, result_nullable));
         }

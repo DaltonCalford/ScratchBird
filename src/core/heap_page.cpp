@@ -159,29 +159,24 @@
             // Allocate space for tuple from upper area
             uint32_t tuple_offset = special->pd_upper - actual_tuple_size;
 
-            // If not using TOAST, prepare the tuple header
+            // If not using TOAST, update the xmin in the existing tuple header
             if (data_to_insert == tuple_data)
             {
-                // Add tuple header for non-toasted data
-                TupleHeader tuple_hdr;
-                tuple_hdr.xmin = xmin;
-                tuple_hdr.xmax = 0;
-                tuple_hdr.flags = 0;
-                tuple_hdr.null_bitmap_offset = 0;
+                // tuple_data already includes TupleHeader (validated at function entry)
+                // Copy the entire tuple including the header
+                memcpy(page_data_ + tuple_offset, tuple_data, tuple_size);
 
-                // Copy tuple header and data
-                memcpy(page_data_ + tuple_offset, &tuple_hdr, sizeof(TupleHeader));
-
-                // Calculate actual data size after header
-                uint32_t data_size = tuple_size - sizeof(TupleHeader);
-                if (data_size > 0)
+                // Update the xmin field in the tuple header
+                auto *tuple_hdr = reinterpret_cast<TupleHeader *>(page_data_ + tuple_offset);
+                tuple_hdr->xmin = xmin;
+                if (tuple_hdr->xmax == 0)
                 {
-                    memcpy(page_data_ + tuple_offset + sizeof(TupleHeader), tuple_data, data_size);
+                    tuple_hdr->xmax = 0; // Ensure xmax is 0 for new tuples
                 }
             }
             else
             {
-                // Copy the already prepared toasted tuple
+                // Copy the already prepared toasted tuple (header already set correctly)
                 memcpy(page_data_ + tuple_offset, data_to_insert, actual_tuple_size);
             }
 

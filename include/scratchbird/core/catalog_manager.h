@@ -244,6 +244,7 @@
             auto writeSchemaRecord(const SchemaInfo &schema, ErrorContext *ctx) -> Status;
             auto readSchemaRecords(ErrorContext *ctx) -> Status;
             auto writeTableRecord(const TableInfo &table, ErrorContext *ctx) -> Status;
+            auto deleteTableRecord(const ID &table_id, ErrorContext *ctx) -> Status;
             auto readTableRecords(ErrorContext *ctx) -> Status;
             auto writeColumnRecords(const ID &table_id, const std::vector<ColumnInfo> &columns,
                                         ErrorContext *ctx) -> Status;

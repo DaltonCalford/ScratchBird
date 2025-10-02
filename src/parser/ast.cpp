@@ -20,7 +20,19 @@ namespace scratchbird
 
         ASTArena::~ASTArena()
         {
+            // Call destructors for all objects with non-trivial destructors
+            // Iterate in reverse order (LIFO) for proper destruction order
+            for (auto it = destructors_.rbegin(); it != destructors_.rend(); ++it)
+            {
+                it->second(it->first); // Call destructor function pointer
+            }
+
             // Blocks are automatically freed by unique_ptr
+        }
+
+        void ASTArena::registerDestructor(void *obj, void (*destructor)(void *))
+        {
+            destructors_.emplace_back(obj, destructor);
         }
 
         void *ASTArena::allocate(size_t size)

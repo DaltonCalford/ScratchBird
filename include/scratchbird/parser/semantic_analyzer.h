@@ -78,7 +78,7 @@ namespace scratchbird
             void visit(ColumnDef *node) override;
 
             // Get expression type after analysis
-            const ExpressionType &getExpressionType(Expression *expr) const;
+            const ExpressionType *getExpressionType(Expression *expr) const;
 
         private:
             const StringPool &string_pool_;

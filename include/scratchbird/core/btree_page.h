@@ -30,7 +30,7 @@ namespace scratchbird
             bool is_leaf() const;
 
             // Split logic
-            static uint16_t find_split_point() ;
+            uint16_t find_split_point();
 
         private:
             uint8_t *page_data_;

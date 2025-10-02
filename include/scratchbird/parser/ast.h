@@ -82,7 +82,15 @@ namespace scratchbird
             template <typename T, typename... Args> T *make(Args &&...args)
             {
                 void *ptr = allocate(sizeof(T));
-                return new (ptr) T(std::forward<Args>(args)...);
+                T *obj = new (ptr) T(std::forward<Args>(args)...);
+
+                // Track objects that need destruction if they have non-trivial destructors
+                if constexpr (!std::is_trivially_destructible_v<T>)
+                {
+                    registerDestructor(obj, [](void *p) { static_cast<T *>(p)->~T(); });
+                }
+
+                return obj;
             }
 
             void reset();
@@ -98,7 +106,11 @@ namespace scratchbird
             std::vector<Block> blocks_;
             static constexpr size_t BLOCK_SIZE = 64 * 1024; // 64KB blocks
 
+            // Track objects that need destructors called
+            std::vector<std::pair<void *, void (*)(void *)>> destructors_;
+
             void *allocate(size_t size);
+            void registerDestructor(void *obj, void (*destructor)(void *));
         };
 
         // Data types
@@ -139,8 +151,10 @@ namespace scratchbird
             };
 
             LiteralExpr(const SourceSpan &span, LiteralType type)
-                : Expression(ASTKind::LITERAL, span), literal_type_(type)
+                : Expression(ASTKind::LITERAL, span), literal_type_(type), int_value_(0)
             {
+                // Initialize union to a safe default (int_value_ = 0)
+                // Caller must use appropriate setter for the actual type
             }
 
             LiteralType literalType() const
