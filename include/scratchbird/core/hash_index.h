@@ -3,7 +3,7 @@
 #include "scratchbird/core/ondisk.h"
 #include "scratchbird/core/status.h"
 #include "scratchbird/core/error_context.h"
-#include "scratchbird/core/id.h"
+#include "scratchbird/core/uuidv7.h"
 #include <cstdint>
 #include <vector>
 #include <memory>
@@ -31,13 +31,13 @@ namespace scratchbird
         struct SBHashIndexMetaPage
         {
             PageHeader      hip_header;           // Standard page header (64 bytes)
-            ID              hip_index_uuid;       // Index UUID (16 bytes)
+            uint8_t         hip_index_uuid[16];   // Index UUID bytes (16 bytes)
             uint32_t        hip_hash_func_id;     // Hash function ID (4 bytes) - always HASH_FUNC_MURMUR3
             uint32_t        hip_global_depth;     // Global depth (4 bytes) - max 20
             uint64_t        hip_directory_page;   // First directory page number (8 bytes)
             uint64_t        hip_num_tuples;       // Total number of indexed tuples (8 bytes)
             uint64_t        hip_num_deleted;      // Number of deleted entries (8 bytes)
-            uint8_t         hip_reserved[8104];   // Reserved for future use
+            uint8_t         hip_reserved[8080];   // Reserved for future use (8192 - 112 = 8080)
         } __attribute__((packed));
 
         static_assert(sizeof(SBHashIndexMetaPage) == 8192, "Meta page must be exactly 8KB");
@@ -70,14 +70,14 @@ namespace scratchbird
             uint16_t        hbp_local_depth;      // Local depth of this bucket (2 bytes)
             uint32_t        hbp_deleted_count;    // Number of deleted entries (4 bytes)
             uint64_t        hbp_overflow_page;    // Next overflow page (0 if none) (8 bytes)
-            uint8_t         hbp_reserved[12];     // Reserved for alignment (12 bytes)
-            HashEntry       hbp_entries[(8192 - 92) / 16]; // Hash entries (506 entries)
+            uint8_t         hbp_reserved[16];     // Reserved for alignment (16 bytes)
+            HashEntry       hbp_entries[(8192 - 96) / 16]; // Hash entries (506 entries)
         } __attribute__((packed));
 
         static_assert(sizeof(SBHashBucketPage) == 8192, "Bucket page must be exactly 8KB");
 
         // Maximum entries per bucket page
-        constexpr uint16_t MAX_ENTRIES_PER_BUCKET = (8192 - 92) / 16;
+        constexpr uint16_t MAX_ENTRIES_PER_BUCKET = (8192 - 96) / 16;
 
         // ===== Hash Index Class =====
 
@@ -86,15 +86,15 @@ namespace scratchbird
         public:
             // Constructor - requires database and index UUID
             // The index must already exist (pages allocated)
-            HashIndex(Database* db, const ID& index_uuid);
+            HashIndex(Database* db, const UuidV7Bytes& index_uuid);
 
             // Create a new hash index
             // Allocates meta page, initial directory, and initial bucket pages
-            static Status create(Database* db, const ID& index_uuid,
+            static Status create(Database* db, const UuidV7Bytes& index_uuid,
                                uint32_t* meta_page_out, ErrorContext* ctx = nullptr);
 
             // Open an existing hash index
-            static std::unique_ptr<HashIndex> open(Database* db, const ID& index_uuid,
+            static std::unique_ptr<HashIndex> open(Database* db, const UuidV7Bytes& index_uuid,
                                                    uint32_t meta_page, ErrorContext* ctx = nullptr);
 
             // Destructor
@@ -135,7 +135,7 @@ namespace scratchbird
             Statistics getStatistics(ErrorContext* ctx = nullptr);
 
             // Get index UUID
-            const ID& getIndexUuid() const { return index_uuid_; }
+            const UuidV7Bytes& getIndexUuid() const { return index_uuid_; }
 
             // Get meta page number
             uint32_t getMetaPage() const { return meta_page_; }
@@ -143,7 +143,7 @@ namespace scratchbird
         private:
             Database*       db_;
             BufferPool*     buffer_pool_;
-            ID              index_uuid_;
+            UuidV7Bytes     index_uuid_;
             uint32_t        meta_page_;
 
             // Helper methods
