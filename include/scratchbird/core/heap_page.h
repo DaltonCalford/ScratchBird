@@ -59,25 +59,77 @@
         };
 #pragma pack(pop)
 
-// Tuple header - metadata for each tuple
+// Tuple header - metadata for each tuple (MGA Phase 3: Version Chains)
 #pragma pack(push, 1)
         struct TupleHeader
         {
+            // Transaction info (16 bytes)
             uint64_t xmin;               // Transaction ID that inserted this tuple
-            uint64_t xmax;               // Transaction ID that deleted this tuple (or 0)
-            uint16_t flags;              // Various flags
-            uint16_t null_bitmap_offset; // Offset to null bitmap (0 if no nulls)
+            uint64_t xmax;               // Transaction ID that deleted/updated this tuple (or 0)
 
-            static constexpr uint16_t FLAG_HAS_NULLS = 0x0001;
-            static constexpr uint16_t FLAG_DELETED = 0x0002;
+            // Version chain (8 bytes)
+            uint64_t next_version_tid;   // TID of next version (0 if latest)
+                                         // Format: (page_id << 32) | (item_id << 16)
+
+            // Tuple metadata (8 bytes)
+            uint32_t ctid_page;          // Current tuple ID: page number
+            uint16_t ctid_item;          // Current tuple ID: item number
+            uint16_t infomask;           // Tuple state flags (replaces old 'flags')
+
+            // Null bitmap (4 bytes)
+            uint16_t null_bitmap_offset; // Offset to null bitmap (0 if no nulls)
+            uint16_t padding;            // Alignment padding
+
+            // Total: 36 bytes (up from 18 bytes)
+
+            // Infomask flags (PostgreSQL-compatible)
+            static constexpr uint16_t HEAP_HAS_NULLS       = 0x0001;
+            static constexpr uint16_t HEAP_XMIN_COMMITTED  = 0x0002;
+            static constexpr uint16_t HEAP_XMIN_INVALID    = 0x0004;
+            static constexpr uint16_t HEAP_XMAX_COMMITTED  = 0x0008;
+            static constexpr uint16_t HEAP_XMAX_INVALID    = 0x0010;
+            static constexpr uint16_t HEAP_XMAX_IS_MULTI   = 0x0020; // Future: Multi-XID
+            static constexpr uint16_t HEAP_UPDATED         = 0x0040; // Tuple was updated
+            static constexpr uint16_t HEAP_MOVED           = 0x0080; // Tuple moved to new page
+
+            // Backward compatibility
+            static constexpr uint16_t FLAG_HAS_NULLS = HEAP_HAS_NULLS;
+            static constexpr uint16_t FLAG_DELETED = HEAP_XMAX_COMMITTED;
 
             [[nodiscard]] auto hasNulls() const -> bool
             {
-                return (flags & FLAG_HAS_NULLS) != 0;
+                return (infomask & HEAP_HAS_NULLS) != 0;
             }
+
             [[nodiscard]] auto isDeleted() const -> bool
             {
-                return (flags & FLAG_DELETED) != 0;
+                // Deleted if xmax is committed and not an update
+                return (infomask & HEAP_XMAX_COMMITTED) != 0 &&
+                       (infomask & HEAP_UPDATED) == 0;
+            }
+
+            [[nodiscard]] auto isUpdated() const -> bool
+            {
+                return (infomask & HEAP_UPDATED) != 0;
+            }
+
+            [[nodiscard]] auto hasNextVersion() const -> bool
+            {
+                return next_version_tid != 0;
+            }
+
+            // Get TID of this tuple
+            [[nodiscard]] auto getTID() const -> uint64_t
+            {
+                return (static_cast<uint64_t>(ctid_page) << 32) |
+                       (static_cast<uint64_t>(ctid_item) << 16);
+            }
+
+            // Set TID of this tuple
+            void setTID(uint32_t page_id, uint16_t item_id)
+            {
+                ctid_page = page_id;
+                ctid_item = item_id;
             }
         };
 #pragma pack(pop)
@@ -124,6 +176,18 @@
 
             // Mark tuple as deleted (and clean up TOAST if present)
             auto deleteTuple(uint16_t item_id, uint64_t xmax, ErrorContext *ctx = nullptr) -> Status;
+
+            // Update tuple (MGA Phase 3: Version Chains)
+            // Creates a new version and links it to the old version
+            // Returns the new tuple's item_id
+            auto updateTuple(uint16_t old_item_id, const uint8_t *new_tuple_data,
+                            uint32_t new_tuple_size, uint64_t xmax, uint64_t new_xmin,
+                            uint16_t *new_item_id_out, ErrorContext *ctx = nullptr) -> Status;
+
+            // Find visible version of tuple by traversing version chain
+            auto findVisibleVersion(uint16_t item_id, uint64_t snapshot_xid,
+                                   const uint8_t **data_out, uint32_t *size_out,
+                                   ErrorContext *ctx = nullptr) -> Status;
 
             // Check if there's enough space for a tuple
             [[nodiscard]] auto hasFreeSpace(uint32_t tuple_size) const -> bool;

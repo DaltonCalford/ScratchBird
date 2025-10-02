@@ -114,8 +114,12 @@
                 auto *new_hdr = reinterpret_cast<TupleHeader *>(toasted_data.data());
                 new_hdr->xmin = xmin;
                 new_hdr->xmax = 0;
-                new_hdr->flags = 0;
+                new_hdr->next_version_tid = 0;
+                new_hdr->ctid_page = 0;  // Will be set after insertion
+                new_hdr->ctid_item = 0;
+                new_hdr->infomask = 0;
                 new_hdr->null_bitmap_offset = 0;
+                new_hdr->padding = 0;
 
                 // TOAST the data portion (after TupleHeader)
                 ToastPointer toast_ptr;
@@ -159,25 +163,18 @@
             // Allocate space for tuple from upper area
             uint32_t tuple_offset = special->pd_upper - actual_tuple_size;
 
-            // If not using TOAST, update the xmin in the existing tuple header
-            if (data_to_insert == tuple_data)
-            {
-                // tuple_data already includes TupleHeader (validated at function entry)
-                // Copy the entire tuple including the header
-                memcpy(page_data_ + tuple_offset, tuple_data, tuple_size);
+            // Copy tuple data and initialize header
+            memcpy(page_data_ + tuple_offset, data_to_insert, actual_tuple_size);
 
-                // Update the xmin field in the tuple header
-                auto *tuple_hdr = reinterpret_cast<TupleHeader *>(page_data_ + tuple_offset);
-                tuple_hdr->xmin = xmin;
-                if (tuple_hdr->xmax == 0)
-                {
-                    tuple_hdr->xmax = 0; // Ensure xmax is 0 for new tuples
-                }
-            }
-            else
-            {
-                // Copy the already prepared toasted tuple (header already set correctly)
-                memcpy(page_data_ + tuple_offset, data_to_insert, actual_tuple_size);
+            // Initialize/update tuple header fields
+            auto *tuple_hdr = reinterpret_cast<TupleHeader *>(page_data_ + tuple_offset);
+            tuple_hdr->xmin = xmin;
+            tuple_hdr->xmax = 0;
+            tuple_hdr->next_version_tid = 0;
+            // ctid will be set after we know the final item_id
+            tuple_hdr->setTID(header()->page_id, item_id);
+            if (tuple_hdr->infomask == 0) {
+                tuple_hdr->infomask = 0;  // Initialize if not already set
             }
 
             // Update item pointer
@@ -380,7 +377,7 @@
             auto *tuple_hdr =
                 reinterpret_cast<TupleHeader *>(page_data_ + items[item_id].offset);
             tuple_hdr->xmax = xmax;
-            tuple_hdr->flags |= TupleHeader::FLAG_DELETED;
+            tuple_hdr->infomask |= TupleHeader::FLAG_DELETED;
 
             updateHeaderStats();
 
@@ -486,6 +483,157 @@
 
             hdr->free_space = special->pd_upper - special->pd_lower;
             hdr->free_offset = special->pd_lower;
+        }
+
+        // MGA Phase 3: Version Chains
+
+        auto HeapPage::updateTuple(uint16_t old_item_id, const uint8_t *new_tuple_data,
+                                   uint32_t new_tuple_size, uint64_t xmax, uint64_t new_xmin,
+                                   uint16_t *new_item_id_out, ErrorContext *ctx) -> Status
+        {
+            // Validate old tuple exists
+            if (old_item_id >= header()->item_count)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Invalid old item ID");
+                return Status::INVALID_ARGUMENT;
+            }
+
+            ItemPointer *items = getItemArray();
+            if (items[old_item_id].isDeleted())
+            {
+                SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Old tuple already deleted");
+                return Status::NOT_FOUND;
+            }
+
+            // Get old tuple to update its xmax and version chain
+            uint32_t old_offset = items[old_item_id].offset;
+            auto *old_tuple_hdr = reinterpret_cast<TupleHeader *>(page_data_ + old_offset);
+
+            // Insert new version (this will allocate space and create new item pointer)
+            uint16_t new_item_id;
+            Status status = insertTuple(new_tuple_data, new_tuple_size, new_xmin, &new_item_id, ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+
+            // Get new tuple to set up version chain
+            uint32_t new_offset = items[new_item_id].offset;
+            auto *new_tuple_hdr = reinterpret_cast<TupleHeader *>(page_data_ + new_offset);
+
+            // Build TID for new tuple
+            uint32_t page_id = header()->page_id;
+            uint64_t new_tid = (static_cast<uint64_t>(page_id) << 32) |
+                              (static_cast<uint64_t>(new_item_id) << 16);
+
+            // Update old tuple to point to new version
+            old_tuple_hdr->xmax = xmax;
+            old_tuple_hdr->next_version_tid = new_tid;
+            old_tuple_hdr->infomask |= TupleHeader::HEAP_UPDATED;
+            old_tuple_hdr->infomask |= TupleHeader::HEAP_XMAX_COMMITTED;
+
+            // Set new tuple's ctid to point to itself
+            new_tuple_hdr->setTID(page_id, new_item_id);
+            new_tuple_hdr->next_version_tid = 0; // Latest version
+
+            if (new_item_id_out != nullptr)
+            {
+                *new_item_id_out = new_item_id;
+            }
+
+            return Status::OK;
+        }
+
+        auto HeapPage::findVisibleVersion(uint16_t item_id, uint64_t snapshot_xid,
+                                          const uint8_t **data_out, uint32_t *size_out,
+                                          ErrorContext *ctx) -> Status
+        {
+            // Start with the requested tuple
+            uint16_t current_item_id = item_id;
+            uint32_t current_page_id = header()->page_id;
+
+            // Follow version chain looking for visible version
+            // Limit chain traversal to prevent infinite loops
+            constexpr uint32_t MAX_CHAIN_LENGTH = 100;
+            uint32_t chain_length = 0;
+
+            while (chain_length < MAX_CHAIN_LENGTH)
+            {
+                // Get current tuple
+                if (current_item_id >= header()->item_count)
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Version chain broken");
+                    return Status::NOT_FOUND;
+                }
+
+                ItemPointer *items = getItemArray();
+                if (items[current_item_id].isDeleted())
+                {
+                    // Skip to next version if available
+                    // For now, return NOT_FOUND (full chain traversal needs cross-page support)
+                    SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Version deleted");
+                    return Status::NOT_FOUND;
+                }
+
+                uint32_t offset = items[current_item_id].offset;
+                uint32_t length = items[current_item_id].length;
+                auto *tuple_hdr = reinterpret_cast<TupleHeader *>(page_data_ + offset);
+
+                // Check visibility of this version
+                // Simple visibility: xmin <= snapshot_xid < xmax
+                bool visible = false;
+                if (tuple_hdr->xmin <= snapshot_xid)
+                {
+                    if (tuple_hdr->xmax == 0 || tuple_hdr->xmax > snapshot_xid)
+                    {
+                        visible = true;
+                    }
+                }
+
+                if (visible)
+                {
+                    // Found visible version
+                    if (data_out != nullptr)
+                    {
+                        *data_out = page_data_ + offset;
+                    }
+                    if (size_out != nullptr)
+                    {
+                        *size_out = length;
+                    }
+                    return Status::OK;
+                }
+
+                // Not visible, try next version
+                if (tuple_hdr->hasNextVersion())
+                {
+                    uint64_t next_tid = tuple_hdr->next_version_tid;
+                    uint32_t next_page_id = static_cast<uint32_t>(next_tid >> 32);
+                    uint16_t next_item_id = static_cast<uint16_t>((next_tid >> 16) & 0xFFFF);
+
+                    // For Phase 3, only support same-page version chains
+                    // Cross-page chains require Database/BufferPool integration
+                    if (next_page_id != current_page_id)
+                    {
+                        SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED,
+                                         "Cross-page version chains not yet supported");
+                        return Status::NOT_IMPLEMENTED;
+                    }
+
+                    current_item_id = next_item_id;
+                    chain_length++;
+                }
+                else
+                {
+                    // End of chain, no visible version found
+                    SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "No visible version in chain");
+                    return Status::NOT_FOUND;
+                }
+            }
+
+            // Chain too long
+            SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "Version chain too long or cyclic");
+            return Status::PAGE_CORRUPT;
         }
 
     } // namespace scratchbird::core

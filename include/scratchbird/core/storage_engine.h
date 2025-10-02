@@ -121,6 +121,12 @@
             auto deleteTuple(const ID &table_id, uint64_t tid, uint64_t xmax,
                                 ErrorContext *ctx = nullptr) -> Status;
 
+            // Update a tuple (MGA Phase 3: Version Chains)
+            // Creates a new version and links it to the old version
+            auto updateTuple(uint32_t page_id, uint16_t item_id, const uint8_t *new_tuple_data,
+                            uint32_t new_tuple_size, uint32_t *new_page_id_out,
+                            uint16_t *new_item_id_out, ErrorContext *ctx = nullptr) -> Status;
+
             // Create a sequential scan iterator
             auto createScan(const ID &table_id,
                                                           ErrorContext *ctx = nullptr) -> std::unique_ptr<HeapScanIterator>;
