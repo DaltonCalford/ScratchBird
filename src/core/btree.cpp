@@ -1,9 +1,11 @@
 #include <utility>
+#include <cstring>
 
 #include "scratchbird/core/btree.h"
 #include "scratchbird/core/btree_page.h"
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/buffer_pool.h"
+#include "scratchbird/core/page_manager.h"
 
 
     namespace scratchbird::core
@@ -57,12 +59,18 @@
                 status = btree_page.add_node(key, tuple, ctx);
                 if (status == Status::PAGE_FULL)
                 {
-                    // Page is full - would need to split
-                    // For now, return an error indicating split is needed
+                    // Page is full - need to split
                     bp->unpinPage(leaf_page_num, false, ctx);
-                    SET_ERROR_CONTEXT(ctx, Status::PAGE_FULL,
-                                      "B-tree page is full, split not yet implemented");
-                    return Status::PAGE_FULL;
+
+                    // Split the leaf page
+                    status = split_leaf_page(leaf_page_num, key, tuple_id, ctx);
+                    if (status != Status::OK)
+                    {
+                        return status;
+                    }
+
+                    // After split, retry the insert
+                    return insert(key, tuple_id, ctx);
                 }
                 else if (status != Status::OK)
                 {
@@ -346,6 +354,557 @@
             // Mark page as dirty since we modified it
             bp->unpinPage(leaf_page_num, true, ctx);
             return Status::OK;
+        }
+
+        auto BTree::split_leaf_page(uint64_t left_page_num, const std::vector<uint8_t> &new_key,
+                                      uint64_t new_tuple_id, ErrorContext *ctx) -> Status
+        {
+            BufferPool *bp = db_->buffer_pool();
+            PageManager *pm = db_->page_manager();
+
+            // Allocate new right page
+            uint32_t right_page_num_u32;
+            Status status = pm->allocatePage(right_page_num_u32, ctx);
+            if (status != Status::OK)
+            {
+                SET_ERROR_CONTEXT(ctx, status, "Failed to allocate new page for split");
+                return status;
+            }
+            uint64_t right_page_num = right_page_num_u32;
+
+            // Pin both pages
+            void *left_page_data_ptr;
+            void *right_page_data_ptr;
+
+            status = bp->pinPage(left_page_num, &left_page_data_ptr, ctx);
+            if (status != Status::OK)
+            {
+                pm->freePage(right_page_num_u32, ctx);
+                return status;
+            }
+
+            status = bp->pinPage(right_page_num, &right_page_data_ptr, ctx);
+            if (status != Status::OK)
+            {
+                bp->unpinPage(left_page_num, false, ctx);
+                pm->freePage(right_page_num_u32, ctx);
+                return status;
+            }
+
+            auto *left_page = reinterpret_cast<SBBTreePage *>(left_page_data_ptr);
+            auto *right_page = reinterpret_cast<SBBTreePage *>(right_page_data_ptr);
+            uint32_t page_size = left_page->btr_header.page_size;
+
+            try
+            {
+                // Initialize right page as leaf
+                BTreePage right_btree_page(reinterpret_cast<uint8_t *>(right_page_data_ptr), page_size);
+                right_btree_page.initialize(left_page->btr_index_uuid, left_page->btr_table_uuid,
+                                            left_page->btr_level, left_page->btr_flags);
+
+                // Calculate split point
+                BTreePage left_btree_page(reinterpret_cast<uint8_t *>(left_page_data_ptr), page_size);
+                uint16_t split_point = left_btree_page.find_split_point();
+
+                // Get left page node offsets
+                auto *left_offsets = reinterpret_cast<uint16_t *>(
+                    reinterpret_cast<uint8_t *>(left_page_data_ptr) + sizeof(SBBTreePage));
+
+                // Move second half of nodes to right page
+                for (uint16_t i = split_point; i < left_page->btr_count; ++i)
+                {
+                    const auto *node = reinterpret_cast<const SBBTreeNode *>(
+                        reinterpret_cast<uint8_t *>(left_page_data_ptr) + left_offsets[i]);
+
+                    // Extract key
+                    const uint8_t *node_key_data = reinterpret_cast<const uint8_t *>(node) + sizeof(SBBTreeNode);
+                    std::vector<uint8_t> node_key(node_key_data, node_key_data + node->btn_key_len);
+
+                    // Extract tuple IDs
+                    const auto *tuple_ids_ptr = reinterpret_cast<const uint64_t *>(
+                        node_key_data + node->btn_key_len);
+
+                    // Add each tuple to right page
+                    for (uint32_t j = 0; j < node->btn_tuple_count; ++j)
+                    {
+                        Tuple tuple;
+                        tuple.tid = tuple_ids_ptr[j];
+                        tuple.page_id = 0;
+                        tuple.item_id = 0;
+                        tuple.data = nullptr;
+                        tuple.data_size = 0;
+
+                        status = right_btree_page.add_node(node_key, tuple, ctx);
+                        if (status != Status::OK)
+                        {
+                            bp->unpinPage(left_page_num, false, ctx);
+                            bp->unpinPage(right_page_num, false, ctx);
+                            pm->freePage(right_page_num_u32, ctx);
+                            return status;
+                        }
+                    }
+                }
+
+                // Update left page count (remove moved nodes)
+                left_page->btr_count = split_point;
+
+                // Recalculate left page free space
+                uint32_t left_used_space = sizeof(SBBTreePage) + (split_point * sizeof(uint16_t));
+                for (uint16_t i = 0; i < split_point; ++i)
+                {
+                    const auto *node = reinterpret_cast<const SBBTreeNode *>(
+                        reinterpret_cast<uint8_t *>(left_page_data_ptr) + left_offsets[i]);
+                    uint32_t node_size = sizeof(SBBTreeNode) + node->btn_key_len +
+                                        (node->btn_tuple_count * sizeof(uint64_t));
+                    left_used_space += node_size;
+                }
+                left_page->btr_free_space = page_size - left_used_space;
+
+                // Update sibling pointers
+                uint64_t old_right_sibling = left_page->btr_right_sibling;
+                left_page->btr_right_sibling = right_page_num;
+                right_page->btr_left_sibling = left_page_num;
+                right_page->btr_right_sibling = old_right_sibling;
+                right_page->btr_parent_page = left_page->btr_parent_page;
+
+                // Update old right sibling's left pointer if it exists
+                if (old_right_sibling != 0)
+                {
+                    void *old_right_data_ptr;
+                    status = bp->pinPage(old_right_sibling, &old_right_data_ptr, ctx);
+                    if (status == Status::OK)
+                    {
+                        auto *old_right_page = reinterpret_cast<SBBTreePage *>(old_right_data_ptr);
+                        old_right_page->btr_left_sibling = right_page_num;
+                        bp->unpinPage(old_right_sibling, true, ctx);
+                    }
+                }
+
+                // Update rightmost flag
+                if ((left_page->btr_flags & static_cast<uint16_t>(BTreeFlags::RIGHTMOST)) != 0)
+                {
+                    left_page->btr_flags &= ~static_cast<uint16_t>(BTreeFlags::RIGHTMOST);
+                    right_page->btr_flags |= static_cast<uint16_t>(BTreeFlags::RIGHTMOST);
+                }
+
+                // Get separator key (first key on right page)
+                auto *right_offsets = reinterpret_cast<uint16_t *>(
+                    reinterpret_cast<uint8_t *>(right_page_data_ptr) + sizeof(SBBTreePage));
+                const auto *separator_node = reinterpret_cast<const SBBTreeNode *>(
+                    reinterpret_cast<uint8_t *>(right_page_data_ptr) + right_offsets[0]);
+                const uint8_t *sep_key_data = reinterpret_cast<const uint8_t *>(separator_node) + sizeof(SBBTreeNode);
+                std::vector<uint8_t> separator_key(sep_key_data, sep_key_data + separator_node->btn_key_len);
+
+                // Unpin both pages (mark as dirty)
+                bp->unpinPage(left_page_num, true, ctx);
+                bp->unpinPage(right_page_num, true, ctx);
+
+                // Insert separator key into parent
+                return insert_into_parent(left_page_num, separator_key, right_page_num, ctx);
+            }
+            catch (const std::exception &e)
+            {
+                bp->unpinPage(left_page_num, false, ctx);
+                bp->unpinPage(right_page_num, false, ctx);
+                pm->freePage(right_page_num_u32, ctx);
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, e.what());
+                return Status::INVALID_ARGUMENT;
+            }
+        }
+
+        auto BTree::split_internal_page(uint64_t left_page_num, const std::vector<uint8_t> &separator_key,
+                                          uint64_t right_page_num, ErrorContext *ctx) -> Status
+        {
+            BufferPool *bp = db_->buffer_pool();
+            PageManager *pm = db_->page_manager();
+
+            // Allocate new right internal page
+            uint32_t new_right_page_num_u32;
+            Status status = pm->allocatePage(new_right_page_num_u32, ctx);
+            if (status != Status::OK)
+            {
+                SET_ERROR_CONTEXT(ctx, status, "Failed to allocate new internal page for split");
+                return status;
+            }
+            uint64_t new_right_page_num = new_right_page_num_u32;
+
+            // Pin both pages
+            void *left_page_data_ptr;
+            void *new_right_page_data_ptr;
+
+            status = bp->pinPage(left_page_num, &left_page_data_ptr, ctx);
+            if (status != Status::OK)
+            {
+                pm->freePage(new_right_page_num_u32, ctx);
+                return status;
+            }
+
+            status = bp->pinPage(new_right_page_num, &new_right_page_data_ptr, ctx);
+            if (status != Status::OK)
+            {
+                bp->unpinPage(left_page_num, false, ctx);
+                pm->freePage(new_right_page_num_u32, ctx);
+                return status;
+            }
+
+            auto *left_page = reinterpret_cast<SBBTreePage *>(left_page_data_ptr);
+            auto *new_right_page = reinterpret_cast<SBBTreePage *>(new_right_page_data_ptr);
+            uint32_t page_size = left_page->btr_header.page_size;
+
+            try
+            {
+                // Initialize new right page as internal (not leaf)
+                BTreePage new_right_btree_page(reinterpret_cast<uint8_t *>(new_right_page_data_ptr), page_size);
+                uint16_t internal_flags = left_page->btr_flags & ~static_cast<uint16_t>(BTreeFlags::LEAF);
+                new_right_btree_page.initialize(left_page->btr_index_uuid, left_page->btr_table_uuid,
+                                                left_page->btr_level, internal_flags);
+
+                // Calculate split point
+                BTreePage left_btree_page(reinterpret_cast<uint8_t *>(left_page_data_ptr), page_size);
+                uint16_t split_point = left_btree_page.find_split_point();
+
+                // Get left page node offsets
+                auto *left_offsets = reinterpret_cast<uint16_t *>(
+                    reinterpret_cast<uint8_t *>(left_page_data_ptr) + sizeof(SBBTreePage));
+
+                // Get the promoted separator key (key at split point)
+                const auto *promoted_node = reinterpret_cast<const SBBTreeNode *>(
+                    reinterpret_cast<uint8_t *>(left_page_data_ptr) + left_offsets[split_point]);
+                const uint8_t *promoted_key_data = reinterpret_cast<const uint8_t *>(promoted_node) + sizeof(SBBTreeNode);
+                std::vector<uint8_t> promoted_key(promoted_key_data, promoted_key_data + promoted_node->btn_key_len);
+
+                // Move nodes after split point to new right page
+                // For internal nodes, the separator is promoted (not copied)
+                for (uint16_t i = split_point + 1; i < left_page->btr_count; ++i)
+                {
+                    const auto *node = reinterpret_cast<const SBBTreeNode *>(
+                        reinterpret_cast<uint8_t *>(left_page_data_ptr) + left_offsets[i]);
+
+                    // Extract key and child pointer
+                    const uint8_t *node_key_data = reinterpret_cast<const uint8_t *>(node) + sizeof(SBBTreeNode);
+                    std::vector<uint8_t> node_key(node_key_data, node_key_data + node->btn_key_len);
+                    uint64_t child_page = node->btn_child_page;
+
+                    // Add node to right page by directly manipulating page structure
+                    // (Note: BTreePage::add_node is for leaf nodes, so we do this manually)
+                    uint32_t node_size = sizeof(SBBTreeNode) + node_key.size() + sizeof(uint64_t);
+
+                    // Allocate space from end of page
+                    new_right_page->btr_high_water -= node_size;
+                    auto *new_node = reinterpret_cast<SBBTreeNode *>(
+                        reinterpret_cast<uint8_t *>(new_right_page_data_ptr) + new_right_page->btr_high_water);
+
+                    // Copy node data
+                    new_node->btn_flags = node->btn_flags;
+                    new_node->btn_prefix_len = 0;
+                    new_node->btn_suffix_trunc = 0;
+                    new_node->btn_key_len = node_key.size();
+                    new_node->btn_tuple_count = 0;
+                    new_node->btn_child_page = child_page;
+                    new_node->btn_xmin = 0;
+                    new_node->btn_xmax = 0;
+
+                    // Copy key
+                    uint8_t *new_key_location = reinterpret_cast<uint8_t *>(new_node) + sizeof(SBBTreeNode);
+                    memcpy(new_key_location, node_key.data(), node_key.size());
+
+                    // Update offset array
+                    auto *new_right_offsets = reinterpret_cast<uint16_t *>(
+                        reinterpret_cast<uint8_t *>(new_right_page_data_ptr) + sizeof(SBBTreePage));
+                    new_right_offsets[new_right_page->btr_count] = new_right_page->btr_high_water;
+
+                    // Update header
+                    new_right_page->btr_count++;
+                    new_right_page->btr_free_space -= (node_size + sizeof(uint16_t));
+
+                    // Update child's parent pointer
+                    void *child_page_data_ptr;
+                    if (bp->pinPage(child_page, &child_page_data_ptr, ctx) == Status::OK)
+                    {
+                        auto *child_page_ptr = reinterpret_cast<SBBTreePage *>(child_page_data_ptr);
+                        child_page_ptr->btr_parent_page = new_right_page_num;
+                        bp->unpinPage(child_page, true, ctx);
+                    }
+                }
+
+                // Update left page count
+                left_page->btr_count = split_point;
+
+                // Recalculate left page free space
+                uint32_t left_used_space = sizeof(SBBTreePage) + (split_point * sizeof(uint16_t));
+                for (uint16_t i = 0; i < split_point; ++i)
+                {
+                    const auto *node = reinterpret_cast<const SBBTreeNode *>(
+                        reinterpret_cast<uint8_t *>(left_page_data_ptr) + left_offsets[i]);
+                    uint32_t node_size = sizeof(SBBTreeNode) + node->btn_key_len + sizeof(uint64_t);
+                    left_used_space += node_size;
+                }
+                left_page->btr_free_space = page_size - left_used_space;
+
+                // Update sibling pointers
+                uint64_t old_right_sibling = left_page->btr_right_sibling;
+                left_page->btr_right_sibling = new_right_page_num;
+                new_right_page->btr_left_sibling = left_page_num;
+                new_right_page->btr_right_sibling = old_right_sibling;
+                new_right_page->btr_parent_page = left_page->btr_parent_page;
+
+                // Update old right sibling's left pointer if it exists
+                if (old_right_sibling != 0)
+                {
+                    void *old_right_data_ptr;
+                    status = bp->pinPage(old_right_sibling, &old_right_data_ptr, ctx);
+                    if (status == Status::OK)
+                    {
+                        auto *old_right_page = reinterpret_cast<SBBTreePage *>(old_right_data_ptr);
+                        old_right_page->btr_left_sibling = new_right_page_num;
+                        bp->unpinPage(old_right_sibling, true, ctx);
+                    }
+                }
+
+                // Unpin both pages (mark as dirty)
+                bp->unpinPage(left_page_num, true, ctx);
+                bp->unpinPage(new_right_page_num, true, ctx);
+
+                // Insert promoted key into parent
+                return insert_into_parent(left_page_num, promoted_key, new_right_page_num, ctx);
+            }
+            catch (const std::exception &e)
+            {
+                bp->unpinPage(left_page_num, false, ctx);
+                bp->unpinPage(new_right_page_num, false, ctx);
+                pm->freePage(new_right_page_num_u32, ctx);
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, e.what());
+                return Status::INVALID_ARGUMENT;
+            }
+        }
+
+        auto BTree::insert_into_parent(uint64_t left_page_num, const std::vector<uint8_t> &separator_key,
+                                         uint64_t right_page_num, ErrorContext *ctx) -> Status
+        {
+            BufferPool *bp = db_->buffer_pool();
+
+            // Pin left page to get parent info
+            void *left_page_data_ptr;
+            Status status = bp->pinPage(left_page_num, &left_page_data_ptr, ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+
+            auto *left_page = reinterpret_cast<SBBTreePage *>(left_page_data_ptr);
+            uint64_t parent_page_num = left_page->btr_parent_page;
+            bool left_is_root = (left_page->btr_flags & static_cast<uint16_t>(BTreeFlags::ROOT)) != 0;
+
+            bp->unpinPage(left_page_num, false, ctx);
+
+            // If no parent (was root), create new root
+            if (parent_page_num == 0 || left_is_root)
+            {
+                return create_new_root(left_page_num, separator_key, right_page_num, ctx);
+            }
+
+            // Pin parent page
+            void *parent_page_data_ptr;
+            status = bp->pinPage(parent_page_num, &parent_page_data_ptr, ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+
+            auto *parent_page = reinterpret_cast<SBBTreePage *>(parent_page_data_ptr);
+            uint32_t page_size = parent_page->btr_header.page_size;
+
+            // Check if parent has space for new entry
+            uint32_t required_space = sizeof(SBBTreeNode) + separator_key.size() + sizeof(uint64_t);
+
+            if (parent_page->btr_free_space < (required_space + sizeof(uint16_t)))
+            {
+                // Parent is full, need to split it
+                bp->unpinPage(parent_page_num, false, ctx);
+                return split_internal_page(parent_page_num, separator_key, right_page_num, ctx);
+            }
+
+            // Add entry to parent: separator_key points to right_page_num
+            // Allocate space from end of page
+            parent_page->btr_high_water -= required_space;
+            auto *new_node = reinterpret_cast<SBBTreeNode *>(
+                reinterpret_cast<uint8_t *>(parent_page_data_ptr) + parent_page->btr_high_water);
+
+            // Populate new node
+            new_node->btn_flags = 0;
+            new_node->btn_prefix_len = 0;
+            new_node->btn_suffix_trunc = 0;
+            new_node->btn_key_len = separator_key.size();
+            new_node->btn_tuple_count = 0;
+            new_node->btn_child_page = right_page_num;
+            new_node->btn_xmin = 0;
+            new_node->btn_xmax = 0;
+
+            // Copy key
+            uint8_t *key_location = reinterpret_cast<uint8_t *>(new_node) + sizeof(SBBTreeNode);
+            memcpy(key_location, separator_key.data(), separator_key.size());
+
+            // Find insertion position in parent's offset array
+            auto *parent_offsets = reinterpret_cast<uint16_t *>(
+                reinterpret_cast<uint8_t *>(parent_page_data_ptr) + sizeof(SBBTreePage));
+
+            uint16_t insert_pos = 0;
+            for (uint16_t i = 0; i < parent_page->btr_count; ++i)
+            {
+                const auto *existing_node = reinterpret_cast<const SBBTreeNode *>(
+                    reinterpret_cast<uint8_t *>(parent_page_data_ptr) + parent_offsets[i]);
+                const uint8_t *existing_key_data = reinterpret_cast<const uint8_t *>(existing_node) + sizeof(SBBTreeNode);
+                std::vector<uint8_t> existing_key(existing_key_data, existing_key_data + existing_node->btn_key_len);
+
+                if (separator_key < existing_key)
+                {
+                    insert_pos = i;
+                    break;
+                }
+                insert_pos = i + 1;
+            }
+
+            // Shift existing offsets to make room
+            for (uint16_t i = parent_page->btr_count; i > insert_pos; --i)
+            {
+                parent_offsets[i] = parent_offsets[i - 1];
+            }
+
+            // Insert new offset
+            parent_offsets[insert_pos] = parent_page->btr_high_water;
+
+            // Update parent header
+            parent_page->btr_count++;
+            parent_page->btr_free_space -= (required_space + sizeof(uint16_t));
+
+            // Unpin parent (mark as dirty)
+            bp->unpinPage(parent_page_num, true, ctx);
+
+            return Status::OK;
+        }
+
+        auto BTree::create_new_root(uint64_t left_page_num, const std::vector<uint8_t> &separator_key,
+                                      uint64_t right_page_num, ErrorContext *ctx) -> Status
+        {
+            BufferPool *bp = db_->buffer_pool();
+            PageManager *pm = db_->page_manager();
+
+            // Allocate new root page
+            uint32_t new_root_page_num_u32;
+            Status status = pm->allocatePage(new_root_page_num_u32, ctx);
+            if (status != Status::OK)
+            {
+                SET_ERROR_CONTEXT(ctx, status, "Failed to allocate new root page");
+                return status;
+            }
+            uint64_t new_root_page_num = new_root_page_num_u32;
+
+            // Pin all three pages
+            void *left_page_data_ptr;
+            void *right_page_data_ptr;
+            void *new_root_page_data_ptr;
+
+            status = bp->pinPage(left_page_num, &left_page_data_ptr, ctx);
+            if (status != Status::OK)
+            {
+                pm->freePage(new_root_page_num_u32, ctx);
+                return status;
+            }
+
+            status = bp->pinPage(right_page_num, &right_page_data_ptr, ctx);
+            if (status != Status::OK)
+            {
+                bp->unpinPage(left_page_num, false, ctx);
+                pm->freePage(new_root_page_num_u32, ctx);
+                return status;
+            }
+
+            status = bp->pinPage(new_root_page_num, &new_root_page_data_ptr, ctx);
+            if (status != Status::OK)
+            {
+                bp->unpinPage(left_page_num, false, ctx);
+                bp->unpinPage(right_page_num, false, ctx);
+                pm->freePage(new_root_page_num_u32, ctx);
+                return status;
+            }
+
+            auto *left_page = reinterpret_cast<SBBTreePage *>(left_page_data_ptr);
+            auto *right_page = reinterpret_cast<SBBTreePage *>(right_page_data_ptr);
+            auto *new_root_page = reinterpret_cast<SBBTreePage *>(new_root_page_data_ptr);
+            uint32_t page_size = left_page->btr_header.page_size;
+
+            try
+            {
+                // Initialize new root as internal page at level+1
+                BTreePage new_root_btree_page(reinterpret_cast<uint8_t *>(new_root_page_data_ptr), page_size);
+                uint16_t root_flags = static_cast<uint16_t>(BTreeFlags::ROOT) |
+                                     static_cast<uint16_t>(BTreeFlags::LEFTMOST) |
+                                     static_cast<uint16_t>(BTreeFlags::RIGHTMOST);
+                new_root_btree_page.initialize(left_page->btr_index_uuid, left_page->btr_table_uuid,
+                                               left_page->btr_level + 1, root_flags);
+
+                // Add single entry: left_child (implicitly first), separator_key -> right_child
+                uint32_t node_size = sizeof(SBBTreeNode) + separator_key.size() + sizeof(uint64_t);
+
+                // For the first (leftmost) child, we typically store a dummy entry or special handling
+                // In this implementation, we'll store the separator key with right_child pointer
+                // The leftmost child is implicitly handled through tree traversal
+
+                // Allocate space from end of page
+                new_root_page->btr_high_water -= node_size;
+                auto *new_node = reinterpret_cast<SBBTreeNode *>(
+                    reinterpret_cast<uint8_t *>(new_root_page_data_ptr) + new_root_page->btr_high_water);
+
+                // Populate node
+                new_node->btn_flags = 0;
+                new_node->btn_prefix_len = 0;
+                new_node->btn_suffix_trunc = 0;
+                new_node->btn_key_len = separator_key.size();
+                new_node->btn_tuple_count = 0;
+                new_node->btn_child_page = left_page_num; // Left child for this key
+                new_node->btn_xmin = 0;
+                new_node->btn_xmax = 0;
+
+                // Copy key
+                uint8_t *key_location = reinterpret_cast<uint8_t *>(new_node) + sizeof(SBBTreeNode);
+                memcpy(key_location, separator_key.data(), separator_key.size());
+
+                // Update offset array
+                auto *root_offsets = reinterpret_cast<uint16_t *>(
+                    reinterpret_cast<uint8_t *>(new_root_page_data_ptr) + sizeof(SBBTreePage));
+                root_offsets[0] = new_root_page->btr_high_water;
+
+                // Update root header
+                new_root_page->btr_count = 1;
+                new_root_page->btr_free_space -= (node_size + sizeof(uint16_t));
+
+                // Remove ROOT flag from left page, update parent
+                left_page->btr_flags &= ~static_cast<uint16_t>(BTreeFlags::ROOT);
+                left_page->btr_parent_page = new_root_page_num;
+
+                // Update right page parent
+                right_page->btr_parent_page = new_root_page_num;
+
+                // Update index info with new root page
+                index_info_.idx_root_page = new_root_page_num;
+                index_info_.idx_height++;
+
+                // Unpin all pages (mark as dirty)
+                bp->unpinPage(left_page_num, true, ctx);
+                bp->unpinPage(right_page_num, true, ctx);
+                bp->unpinPage(new_root_page_num, true, ctx);
+
+                return Status::OK;
+            }
+            catch (const std::exception &e)
+            {
+                bp->unpinPage(left_page_num, false, ctx);
+                bp->unpinPage(right_page_num, false, ctx);
+                bp->unpinPage(new_root_page_num, false, ctx);
+                pm->freePage(new_root_page_num_u32, ctx);
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, e.what());
+                return Status::INVALID_ARGUMENT;
+            }
         }
 
     } // namespace scratchbird::core

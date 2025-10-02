@@ -154,6 +154,16 @@ enum class BTreeNodeFlags : uint16_t {
             // Traverses the B-Tree to find the correct leaf page for a given key.
             Status find_leaf_page(const std::vector<uint8_t> &key, uint64_t *page_num_out,
                                   bool write_lock, ErrorContext *ctx);
+
+            // Page split operations
+            Status split_leaf_page(uint64_t left_page_num, const std::vector<uint8_t> &new_key,
+                                   uint64_t new_tuple_id, ErrorContext *ctx);
+            Status split_internal_page(uint64_t left_page_num, const std::vector<uint8_t> &separator_key,
+                                       uint64_t right_page_num, ErrorContext *ctx);
+            Status insert_into_parent(uint64_t left_page_num, const std::vector<uint8_t> &separator_key,
+                                      uint64_t right_page_num, ErrorContext *ctx);
+            Status create_new_root(uint64_t left_page_num, const std::vector<uint8_t> &separator_key,
+                                   uint64_t right_page_num, ErrorContext *ctx);
         };
 
     } // namespace core
