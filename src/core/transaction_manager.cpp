@@ -2,6 +2,7 @@
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/buffer_pool.h"
 #include "scratchbird/core/page_manager.h"
+#include "scratchbird/core/proc_array.h"
 #include "scratchbird/core/error_context.h"
 #include <algorithm>
 #include <chrono>
@@ -162,16 +163,11 @@
             return Status::OK;
         }
 
-        auto TransactionManager::beginTransaction(uint64_t &xid_out, ErrorContext *ctx) -> Status
+        auto TransactionManager::beginTransaction(uint32_t proc_id, uint64_t &xid_out, ErrorContext *ctx) -> Status
         {
             std::lock_guard<std::mutex> lock(mutex_);
 
-            // For single connection, only one active transaction allowed
-            if (active_xid_ != 0)
-            {
-                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Transaction already active");
-                return Status::INVALID_ARGUMENT;
-            }
+            // No longer check for active_xid_ - allow multiple active transactions
 
             // Allocate new XID
             uint64_t new_xid = next_xid_++;
@@ -184,15 +180,23 @@
 
             // Record transaction as active
             transaction_cache_[new_xid] = TransactionState::ACTIVE;
-            active_xid_ = new_xid;
 
-            // Write to TIP
-            Status status = writeTipEntry(new_xid, TransactionState::ACTIVE, ctx);
+            // Register in ProcArray
+            Status status = ProcArrayManager::setTransactionId(proc_id, new_xid, ctx);
             if (status != Status::OK)
             {
                 // Rollback on failure
                 transaction_cache_.erase(new_xid);
-                active_xid_ = 0;
+                return status;
+            }
+
+            // Write to TIP
+            status = writeTipEntry(new_xid, TransactionState::ACTIVE, ctx);
+            if (status != Status::OK)
+            {
+                // Rollback on failure
+                transaction_cache_.erase(new_xid);
+                ProcArrayManager::clearTransactionId(proc_id, ctx);
                 return status;
             }
 
@@ -214,23 +218,24 @@
             return Status::OK;
         }
 
-        auto TransactionManager::commitTransaction(uint64_t xid, ErrorContext *ctx) -> Status
+        auto TransactionManager::commitTransaction(uint32_t proc_id, uint64_t xid, ErrorContext *ctx) -> Status
         {
             std::lock_guard<std::mutex> lock(mutex_);
 
-            // Verify this is the active transaction
-            if (xid != active_xid_)
-            {
-                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Transaction not active");
-                return Status::INVALID_ARGUMENT;
-            }
+            // No longer verify against single active_xid_
 
             // Update state
             transaction_cache_[xid] = TransactionState::COMMITTED;
-            active_xid_ = 0;
+
+            // Clear from ProcArray
+            Status status = ProcArrayManager::clearTransactionId(proc_id, ctx);
+            if (status != Status::OK)
+            {
+                // Continue anyway - state update is more critical
+            }
 
             // Write to TIP
-            Status status = writeTipEntry(xid, TransactionState::COMMITTED, ctx);
+            status = writeTipEntry(xid, TransactionState::COMMITTED, ctx);
             if (status != Status::OK)
             {
                 // Try to rollback on failure
@@ -242,23 +247,24 @@
             return db_->sync(ctx);
         }
 
-        auto TransactionManager::rollbackTransaction(uint64_t xid, ErrorContext *ctx) -> Status
+        auto TransactionManager::rollbackTransaction(uint32_t proc_id, uint64_t xid, ErrorContext *ctx) -> Status
         {
             std::lock_guard<std::mutex> lock(mutex_);
 
-            // Verify this is the active transaction
-            if (xid != active_xid_)
-            {
-                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Transaction not active");
-                return Status::INVALID_ARGUMENT;
-            }
+            // No longer verify against single active_xid_
 
             // Update state
             transaction_cache_[xid] = TransactionState::ABORTED;
-            active_xid_ = 0;
+
+            // Clear from ProcArray
+            Status status = ProcArrayManager::clearTransactionId(proc_id, ctx);
+            if (status != Status::OK)
+            {
+                // Continue anyway - state update is more critical
+            }
 
             // Write to TIP
-            Status status = writeTipEntry(xid, TransactionState::ABORTED, ctx);
+            status = writeTipEntry(xid, TransactionState::ABORTED, ctx);
             if (status != Status::OK)
             {
                 return status;
@@ -341,20 +347,40 @@
             return state == TransactionState::COMMITTED;
         }
 
+        auto TransactionManager::getBackendXid(uint32_t proc_id) const -> uint64_t
+        {
+            // Get XID from ProcArray
+            ProcessControlBlock* pcb = ProcArrayManager::getInstance() ?
+                reinterpret_cast<ProcessControlBlock*>(
+                    reinterpret_cast<uint8_t*>(ProcArrayManager::getInstance()) +
+                    sizeof(ProcArray)) + proc_id : nullptr;
+
+            if (!pcb || !pcb->is_active) {
+                return 0;
+            }
+
+            return pcb->xid;
+        }
+
         auto TransactionManager::getSnapshot(Snapshot &snapshot_out, ErrorContext *ctx) -> Status
         {
             std::lock_guard<std::mutex> lock(mutex_);
 
-            snapshot_out.xmin = FROZEN_XID + 1; // Oldest possible active XID
             snapshot_out.xmax = next_xid_;
             snapshot_out.active_xids.clear();
 
-            // For single connection, only one active transaction
-            if (active_xid_ != 0)
+            // Get active transactions from ProcArray
+            uint64_t oldest_xmin = 0;
+            Status status = ProcArrayManager::getActiveTransactions(&snapshot_out.active_xids,
+                                                                     &oldest_xmin, ctx);
+            if (status != Status::OK)
             {
-                snapshot_out.active_xids.push_back(active_xid_);
-                snapshot_out.xmin = active_xid_;
+                // Fallback to simple snapshot if ProcArray not available
+                snapshot_out.xmin = FROZEN_XID + 1;
+                return Status::OK;
             }
+
+            snapshot_out.xmin = (oldest_xmin != 0) ? oldest_xmin : FROZEN_XID + 1;
 
             return Status::OK;
         }

@@ -5,6 +5,7 @@
 #include "scratchbird/core/catalog_manager.h"
 #include "scratchbird/core/storage_engine.h"
 #include "scratchbird/core/transaction_manager.h"
+#include "scratchbird/core/proc_array.h"
 #include "scratchbird/core/system_uuids.h"
 #include "scratchbird/core/debug.h"
 #include <fcntl.h>
@@ -34,7 +35,13 @@
 
         void Database::close()
         {
-            // Shut down transaction manager first
+            // Shut down ProcArray first (before transaction manager)
+            if (header_ && header_->proc_array_initialized) {
+                ErrorContext ctx;
+                shutdownProcArray(&ctx);
+            }
+
+            // Shut down transaction manager
             transaction_manager_.reset();
 
             // Shut down storage engine
@@ -804,6 +811,62 @@
                 // Unpin as dirty
                 buffer_pool_->unpinPage(0, true, ctx);
             }
+
+            return Status::OK;
+        }
+
+        auto Database::initializeProcArray(uint32_t max_backends, ErrorContext* ctx) -> Status
+        {
+            if (!is_open()) {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Database not open");
+                return Status::INVALID_ARGUMENT;
+            }
+
+            if (header_->proc_array_initialized) {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "ProcArray already initialized");
+                return Status::INVALID_ARGUMENT;
+            }
+
+            // Initialize ProcArray
+            Status status = ProcArrayManager::initialize(this, max_backends, ctx);
+            if (status != Status::OK) {
+                return status;
+            }
+
+            // Update database header
+            header_->max_backends = max_backends;
+            header_->proc_array_initialized = 1;
+
+            // Persist header changes
+            void *header_buffer;
+            status = buffer_pool_->pinPage(0, &header_buffer, ctx);
+            if (status != Status::OK) {
+                ProcArrayManager::shutdown(ctx);
+                return status;
+            }
+
+            auto *db_header = static_cast<DatabaseHeader *>(header_buffer);
+            db_header->max_backends = max_backends;
+            db_header->proc_array_initialized = 1;
+
+            buffer_pool_->unpinPage(0, true, ctx);
+
+            return sync(ctx);
+        }
+
+        auto Database::shutdownProcArray(ErrorContext* ctx) -> Status
+        {
+            if (!header_->proc_array_initialized) {
+                return Status::OK;
+            }
+
+            Status status = ProcArrayManager::shutdown(ctx);
+            if (status != Status::OK) {
+                return status;
+            }
+
+            // Update header
+            header_->proc_array_initialized = 0;
 
             return Status::OK;
         }
