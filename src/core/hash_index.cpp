@@ -785,8 +785,133 @@ namespace scratchbird
         // Vacuum operation - remove deleted entries and consolidate
         Status HashIndex::vacuum(ErrorContext* ctx)
         {
-            // TODO: Implement comprehensive vacuum
-            // For now, just a placeholder
+            // Pin meta page to get directory info
+            uint8_t* meta_data = nullptr;
+            Status status = buffer_pool_->pinPage(meta_page_, &meta_data, ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+
+            auto* meta = reinterpret_cast<SBHashIndexMetaPage*>(meta_data);
+            uint32_t global_depth = meta->hip_global_depth;
+            uint64_t dir_page = meta->hip_directory_page;
+            uint64_t deleted_before = meta->hip_num_deleted;
+
+            buffer_pool_->unpinPage(meta_page_, false, ctx);
+
+            // Pin directory page
+            uint8_t* dir_data = nullptr;
+            status = buffer_pool_->pinPage(dir_page, &dir_data, ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+
+            auto* dir = reinterpret_cast<SBHashDirectoryPage*>(dir_data);
+            uint32_t num_buckets = (1U << global_depth);
+
+            // Track unique bucket pages (directory may have duplicates)
+            std::vector<uint32_t> unique_buckets;
+            for (uint32_t i = 0; i < num_buckets; i++)
+            {
+                uint32_t bucket_page = dir->hdp_bucket_pointers[i];
+
+                // Check if we've already processed this bucket
+                bool already_processed = false;
+                for (uint32_t processed : unique_buckets)
+                {
+                    if (processed == bucket_page)
+                    {
+                        already_processed = true;
+                        break;
+                    }
+                }
+
+                if (!already_processed)
+                {
+                    unique_buckets.push_back(bucket_page);
+                }
+            }
+
+            buffer_pool_->unpinPage(dir_page, false, ctx);
+
+            // Vacuum each unique bucket
+            uint64_t total_deleted_removed = 0;
+
+            for (uint32_t bucket_page : unique_buckets)
+            {
+                // Vacuum this bucket and its overflow chain
+                uint32_t current_page = bucket_page;
+
+                while (current_page != 0)
+                {
+                    uint8_t* page_data = nullptr;
+                    status = buffer_pool_->pinPage(current_page, &page_data, ctx);
+                    if (status != Status::OK)
+                    {
+                        continue;
+                    }
+
+                    auto* bucket = reinterpret_cast<SBHashBucketPage*>(page_data);
+
+                    // Compact entries by removing deleted ones
+                    if (bucket->hbp_deleted_count > 0)
+                    {
+                        uint16_t write_idx = 0;
+                        for (uint16_t read_idx = 0; read_idx < bucket->hbp_entry_count; read_idx++)
+                        {
+                            const HashEntry& entry = bucket->hbp_entries[read_idx];
+
+                            // Keep non-deleted entries
+                            if (entry.he_tuple_id != 0)
+                            {
+                                if (write_idx != read_idx)
+                                {
+                                    bucket->hbp_entries[write_idx] = entry;
+                                }
+                                write_idx++;
+                            }
+                            else
+                            {
+                                total_deleted_removed++;
+                            }
+                        }
+
+                        // Update counts
+                        bucket->hbp_entry_count = write_idx;
+                        bucket->hbp_deleted_count = 0;
+                    }
+
+                    uint32_t next_page = bucket->hbp_overflow_page;
+
+                    // If this overflow page is now empty, we could free it
+                    // For now, just mark it dirty
+                    buffer_pool_->unpinPage(current_page, true, ctx);
+
+                    current_page = next_page;
+                }
+            }
+
+            // Update meta page with new deleted count
+            status = buffer_pool_->pinPage(meta_page_, &meta_data, ctx);
+            if (status == Status::OK)
+            {
+                meta = reinterpret_cast<SBHashIndexMetaPage*>(meta_data);
+
+                // Reduce deleted count by amount removed
+                if (total_deleted_removed <= meta->hip_num_deleted)
+                {
+                    meta->hip_num_deleted -= total_deleted_removed;
+                }
+                else
+                {
+                    meta->hip_num_deleted = 0;
+                }
+
+                buffer_pool_->unpinPage(meta_page_, true, ctx);
+            }
+
             return Status::OK;
         }
 
