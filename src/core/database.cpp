@@ -6,6 +6,7 @@
 #include "scratchbird/core/storage_engine.h"
 #include "scratchbird/core/transaction_manager.h"
 #include "scratchbird/core/lock_manager.h"
+#include "scratchbird/core/vacuum.h"
 #include "scratchbird/core/proc_array.h"
 #include "scratchbird/core/system_uuids.h"
 #include "scratchbird/core/debug.h"
@@ -569,6 +570,15 @@
             {
                 close();
                 return status;
+            }
+
+            // Initialize vacuum manager
+            try {
+                vacuum_ = std::make_unique<Vacuum>(this);
+            } catch (const std::bad_alloc&) {
+                close();
+                SET_ERROR_CONTEXT(ctx, Status::OOM, "Failed to allocate Vacuum");
+                return Status::OOM;
             }
 
             DEBUG_LOG_DB("Database opened successfully");
