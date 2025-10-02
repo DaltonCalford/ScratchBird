@@ -144,9 +144,13 @@ namespace scratchbird
         };
 
         // SBLR Bytecode Executor
+        // NOTE: The executor does not take ownership of the Database pointer.
+        // The caller must ensure the Database remains valid for the executor's lifetime.
         class Executor
         {
         public:
+            // Constructor takes a non-null Database pointer
+            // The Database must remain valid for the lifetime of this Executor
             Executor(core::Database *db);
             ~Executor();
 
@@ -157,16 +161,20 @@ namespace scratchbird
             core::Database *db_;
 
             // Execution state
+            // Note: bytecode_ is a raw pointer that must remain valid during execute()
             const uint8_t *bytecode_;
             size_t bytecode_size_;
             size_t pc_; // Program counter
             std::stack<Value> stack_;
-            std::vector<std::string> strings_; // String constants
 
             // Current statement context
             std::string current_table_;
             std::vector<std::string> current_columns_;
             std::unique_ptr<ResultSet> current_result_set_;
+
+            // Row context for expression evaluation (during SELECT WHERE)
+            const std::vector<Value> *current_row_values_ = nullptr;
+            const std::vector<core::CatalogManager::ColumnInfo> *current_row_columns_ = nullptr;
 
             // Execution helpers
             uint8_t readByte();
@@ -192,6 +200,11 @@ namespace scratchbird
 
             // Error handling
             void error(const std::string &msg);
+
+            // Tuple deserialization helper
+            bool deserializeTuple(const uint8_t *tuple_data, uint32_t tuple_size,
+                                   const std::vector<core::CatalogManager::ColumnInfo> &columns,
+                                   std::vector<Value> &values_out);
         };
 
     } // namespace sblr

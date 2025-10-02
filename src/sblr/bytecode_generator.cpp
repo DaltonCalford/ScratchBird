@@ -20,6 +20,13 @@ namespace scratchbird
             BytecodeResult result;
             current_result_ = &result;
 
+            if (!stmt)
+            {
+                result.addError("Null statement passed to generator");
+                current_result_ = nullptr;
+                return result;
+            }
+
             // Write version header
             result.writeOpcode(Opcode::VERSION);
             result.writeByte(SBLR_VERSION);
@@ -62,6 +69,11 @@ namespace scratchbird
 
         void BytecodeGenerator::generateExpression(parser::Expression *expr)
         {
+            if (!expr)
+            {
+                current_result_->addError("Null expression in bytecode generation");
+                return;
+            }
             expr->accept(this);
         }
 
@@ -75,13 +87,25 @@ namespace scratchbird
             current_result_->writeOpcode(Opcode::TABLE_REF);
             writeStringId(node->tableName());
 
-            // Write column count
+            // Write column count with overflow check
+            size_t col_count = node->columns().size();
+            if (col_count > UINT32_MAX)
+            {
+                current_result_->addError("Column count exceeds maximum (4 billion)");
+                return;
+            }
+
             current_result_->writeOpcode(Opcode::BEGIN_LIST);
-            current_result_->writeInt32(static_cast<uint32_t>(node->columns().size()));
+            current_result_->writeInt32(static_cast<uint32_t>(col_count));
 
             // Write each column definition
             for (auto *col : node->columns())
             {
+                if (!col)
+                {
+                    current_result_->addError("Null column definition in CREATE TABLE");
+                    continue;
+                }
                 col->accept(this);
             }
 
@@ -96,9 +120,16 @@ namespace scratchbird
             current_result_->writeOpcode(Opcode::TABLE_REF);
             writeStringId(node->tableName());
 
-            // Write column list
+            // Write column list with overflow check
+            size_t col_count = node->columns().size();
+            if (col_count > UINT32_MAX)
+            {
+                current_result_->addError("Column count exceeds maximum (4 billion)");
+                return;
+            }
+
             current_result_->writeOpcode(Opcode::BEGIN_LIST);
-            current_result_->writeInt32(static_cast<uint32_t>(node->columns().size()));
+            current_result_->writeInt32(static_cast<uint32_t>(col_count));
 
             for (auto col_id : node->columns())
             {
@@ -108,12 +139,20 @@ namespace scratchbird
 
             current_result_->writeOpcode(Opcode::END_LIST);
 
-            // Write value list
+            // Write value list with overflow check
+            size_t val_count = node->values().size();
+            if (val_count > UINT32_MAX)
+            {
+                current_result_->addError("Value count exceeds maximum (4 billion)");
+                return;
+            }
+
             current_result_->writeOpcode(Opcode::BEGIN_LIST);
-            current_result_->writeInt32(static_cast<uint32_t>(node->values().size()));
+            current_result_->writeInt32(static_cast<uint32_t>(val_count));
 
             for (auto *value : node->values())
             {
+                // Null check handled in generateExpression
                 generateExpression(value);
             }
 
@@ -124,9 +163,16 @@ namespace scratchbird
         {
             current_result_->writeOpcode(Opcode::SELECT);
 
-            // Write select list
+            // Write select list with overflow check
+            size_t select_count = node->selectList().size();
+            if (select_count > UINT32_MAX)
+            {
+                current_result_->addError("SELECT list count exceeds maximum (4 billion)");
+                return;
+            }
+
             current_result_->writeOpcode(Opcode::BEGIN_LIST);
-            current_result_->writeInt32(static_cast<uint32_t>(node->selectList().size()));
+            current_result_->writeInt32(static_cast<uint32_t>(select_count));
 
             for (const auto &item : node->selectList())
             {
@@ -137,7 +183,13 @@ namespace scratchbird
                 else
                 {
                     generateExpression(item.expr);
-                    // TODO: Handle aliases
+
+                    // Handle aliases - write alias string ID if present
+                    if (item.alias != 0)
+                    {
+                        current_result_->writeOpcode(Opcode::COLUMN_REF);
+                        writeStringId(item.alias);
+                    }
                 }
             }
 
@@ -151,6 +203,7 @@ namespace scratchbird
             if (node->whereClause())
             {
                 current_result_->writeOpcode(Opcode::WHERE_CLAUSE);
+                // Null check handled in generateExpression
                 generateExpression(node->whereClause());
             }
         }
@@ -265,6 +318,7 @@ namespace scratchbird
         {
             std::stringstream ss;
             size_t pos = 0;
+            bool incomplete = false;
 
             while (pos < bytecode.size())
             {
@@ -283,6 +337,11 @@ namespace scratchbird
                             ss << " " << static_cast<int>(bytecode[pos]);
                             pos++;
                         }
+                        else
+                        {
+                            ss << " <INCOMPLETE>";
+                            incomplete = true;
+                        }
                         break;
 
                     case Opcode::LITERAL_INT32:
@@ -291,6 +350,11 @@ namespace scratchbird
                             uint32_t val = readInt32(&bytecode[pos]);
                             ss << " " << val;
                             pos += 4;
+                        }
+                        else
+                        {
+                            ss << " <INCOMPLETE>";
+                            incomplete = true;
                         }
                         break;
 
@@ -301,6 +365,11 @@ namespace scratchbird
                             ss << " " << val;
                             pos += 8;
                         }
+                        else
+                        {
+                            ss << " <INCOMPLETE>";
+                            incomplete = true;
+                        }
                         break;
 
                     case Opcode::LITERAL_DOUBLE:
@@ -310,6 +379,11 @@ namespace scratchbird
                             memcpy(&val, &bytecode[pos], 8);
                             ss << " " << val;
                             pos += 8;
+                        }
+                        else
+                        {
+                            ss << " <INCOMPLETE>";
+                            incomplete = true;
                         }
                         break;
 
@@ -327,6 +401,16 @@ namespace scratchbird
                                 ss << " \"" << str << "\"";
                                 pos += len;
                             }
+                            else
+                            {
+                                ss << " <INCOMPLETE STRING>";
+                                incomplete = true;
+                            }
+                        }
+                        else
+                        {
+                            ss << " <INCOMPLETE>";
+                            incomplete = true;
                         }
                         break;
 
@@ -337,6 +421,11 @@ namespace scratchbird
                             ss << " count=" << count;
                             pos += 4;
                         }
+                        else
+                        {
+                            ss << " <INCOMPLETE>";
+                            incomplete = true;
+                        }
                         break;
 
                     case Opcode::TYPE_VARCHAR:
@@ -346,6 +435,11 @@ namespace scratchbird
                             ss << " (" << precision << ")";
                             pos += 4;
                         }
+                        else
+                        {
+                            ss << " <INCOMPLETE>";
+                            incomplete = true;
+                        }
                         break;
 
                     default:
@@ -354,6 +448,11 @@ namespace scratchbird
                 }
 
                 ss << "\n";
+            }
+
+            if (incomplete)
+            {
+                ss << "\nWARNING: Bytecode appears incomplete or malformed\n";
             }
 
             return ss.str();

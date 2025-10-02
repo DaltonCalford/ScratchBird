@@ -4,6 +4,7 @@
 #include "scratchbird/sblr/opcodes.h"
 #include <vector>
 #include <memory>
+#include <cstring>
 
 namespace scratchbird
 {
@@ -16,7 +17,8 @@ namespace scratchbird
         public:
             bool success() const
             {
-                return errors_.empty();
+                // Success requires no errors AND bytecode was generated
+                return errors_.empty() && !bytecode_.empty();
             }
             const std::vector<uint8_t> &bytecode() const
             {
@@ -56,16 +58,23 @@ namespace scratchbird
 
             void writeDouble(double value)
             {
-                // Write as raw bytes
-                const uint8_t *bytes = reinterpret_cast<const uint8_t *>(&value);
-                for (int i = 0; i < 8; i++)
-                {
-                    bytecode_.push_back(bytes[i]);
-                }
+                // Write as 64-bit little-endian (IEEE 754 double)
+                // Use memcpy to avoid aliasing issues, then serialize bytes
+                uint64_t bits;
+                std::memcpy(&bits, &value, sizeof(double));
+                bytecode_.resize(bytecode_.size() + 8);
+                sblr::writeInt64(&bytecode_[bytecode_.size() - 8], bits);
             }
 
             void writeString(const std::string &str)
             {
+                // Check for overflow when converting size_t to uint32_t
+                if (str.size() > UINT32_MAX)
+                {
+                    addError("String length exceeds maximum allowed size (4GB)");
+                    writeInt32(0);
+                    return;
+                }
                 // Write length as 32-bit value
                 writeInt32(static_cast<uint32_t>(str.size()));
                 // Write string data
