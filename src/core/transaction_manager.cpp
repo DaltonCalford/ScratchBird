@@ -557,8 +557,9 @@
                     }
                 }
 
+                uint32_t page_to_unpin = current_page;
                 current_page = tip_header->next_tip_page;
-                buffer_pool_->unpinPage(current_page, false, ctx);
+                buffer_pool_->unpinPage(page_to_unpin, false, ctx);
             }
 
             return Status::NOT_FOUND;

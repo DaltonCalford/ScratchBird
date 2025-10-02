@@ -106,6 +106,12 @@ namespace scratchbird
                 uint8_t keyword_code;           // For specific keywords
             } value;
 
+            // Default constructor - initializes to safe state
+            Token() : type(TokenType::ERROR), location(), length(0)
+            {
+                value.int_value = 0; // Initialize union to zero
+            }
+
             // Constructor helpers
             static Token makeEOF(const SourceLocation &loc)
             {
@@ -113,6 +119,7 @@ namespace scratchbird
                 t.type = TokenType::END_OF_FILE;
                 t.location = loc;
                 t.length = 0;
+                t.value.int_value = 0; // Initialize union
                 return t;
             }
 
@@ -122,6 +129,7 @@ namespace scratchbird
                 t.type = TokenType::ERROR;
                 t.location = loc;
                 t.length = len;
+                t.value.int_value = 0; // Initialize union
                 return t;
             }
 
@@ -173,6 +181,7 @@ namespace scratchbird
                 t.type = kwType;
                 t.location = loc;
                 t.length = len;
+                t.value.int_value = 0; // Initialize union
                 return t;
             }
 
@@ -182,6 +191,7 @@ namespace scratchbird
                 t.type = opType;
                 t.location = loc;
                 t.length = len;
+                t.value.int_value = 0; // Initialize union
                 return t;
             }
         };

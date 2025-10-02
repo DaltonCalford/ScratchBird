@@ -89,7 +89,12 @@
             StorageEngine *engine_;
             ID index_id_;
             bool done_;
-            // TODO: Add B-tree traversal state
+
+            // B-tree traversal state
+            std::vector<uint64_t> current_tuple_ids_;  // Tuple IDs from current key
+            size_t current_tuple_index_;                 // Index within current_tuple_ids_
+            std::vector<uint8_t> current_key_;          // Current key being scanned
+            bool initialized_;                           // Whether seek() has been called
         };
 
         // Storage engine for heap storage

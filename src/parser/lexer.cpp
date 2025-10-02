@@ -378,7 +378,7 @@ namespace scratchbird
             }
         }
 
-        Token Lexer::scanComment()
+        void Lexer::scanComment()
         {
             if (currentChar() == '-' && peekChar() == '-')
             {
@@ -395,7 +395,8 @@ namespace scratchbird
                 // Block comment
                 advance();
                 advance(); // Skip /*
-                while (current_pos_ < input_.size() - 1)
+                // Safe check: ensure input_.size() >= 2 before subtracting
+                while (input_.size() > 1 && current_pos_ < input_.size() - 1)
                 {
                     if (currentChar() == '*' && peekChar() == '/')
                     {
@@ -406,9 +407,6 @@ namespace scratchbird
                     advance();
                 }
             }
-
-            // Comments are not returned as tokens
-            return Token();
         }
 
         TokenType Lexer::checkKeyword(std::string_view text) const

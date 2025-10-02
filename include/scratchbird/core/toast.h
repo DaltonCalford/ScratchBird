@@ -127,6 +127,8 @@
             uint32_t next_value_id_; // Next TOAST value ID to assign
 
             // Helper methods
+            auto initializeNextValueId(ErrorContext *ctx) -> Status;
+
             auto writeToastChunks(uint32_t value_id, const uint8_t *data, uint32_t size,
                                       uint64_t xmin, ErrorContext *ctx) -> Status;
 

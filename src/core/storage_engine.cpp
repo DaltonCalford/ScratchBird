@@ -7,6 +7,7 @@
 #include "scratchbird/core/catalog_manager.h"
 #include "scratchbird/core/transaction_manager.h"
 #include "scratchbird/core/error_context.h"
+#include "scratchbird/core/btree.h"
 #include <cstring>
 #include <new>
 
@@ -448,7 +449,8 @@
 
         IndexScanIterator::IndexScanIterator(Database *db, StorageEngine *engine,
                                              const ID &index_id)
-            : db_(db), engine_(engine), index_id_(index_id), done_(false)
+            : db_(db), engine_(engine), index_id_(index_id), done_(false),
+              current_tuple_index_(0), initialized_(false)
         {
         }
 
@@ -456,16 +458,87 @@
 
         auto IndexScanIterator::seek(const std::vector<uint8_t> &key, ErrorContext *ctx) -> Status
         {
-            // TODO: Implement B-tree seek
-            done_ = true;
-            return Status::NOT_IMPLEMENTED;
+            // Get index information from catalog
+            CatalogManager::IndexInfo index_info;
+            Status status = db_->catalog_manager()->getIndex(index_id_, index_info, ctx);
+            if (status != Status::OK)
+            {
+                done_ = true;
+                return status;
+            }
+
+            // Create a BTree instance for this index
+            SBBTreeIndex btree_info;
+            btree_info.idx_uuid = index_info.index_id;
+            btree_info.idx_table_uuid = index_info.table_id;
+            btree_info.idx_root_page = index_info.root_page;
+
+            BTree btree(db_, btree_info);
+
+            // Search for the key in the B-tree
+            current_tuple_ids_.clear();
+            current_tuple_index_ = 0;
+            current_key_ = key;
+
+            status = btree.search(key, &current_tuple_ids_, ctx);
+            if (status == Status::NOT_FOUND)
+            {
+                // No matching key found, mark as done
+                done_ = true;
+                initialized_ = true;
+                return Status::OK;
+            }
+            else if (status != Status::OK)
+            {
+                done_ = true;
+                return status;
+            }
+
+            initialized_ = true;
+            done_ = current_tuple_ids_.empty();
+            return Status::OK;
         }
 
         auto IndexScanIterator::next(Tuple *tuple_out, ErrorContext *ctx) -> Status
         {
-            // TODO: Implement B-tree next
-            done_ = true;
-            return Status::NOT_IMPLEMENTED;
+            if (!initialized_)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                  "Must call seek() before next()");
+                return Status::INVALID_ARGUMENT;
+            }
+
+            if (done_ || current_tuple_index_ >= current_tuple_ids_.size())
+            {
+                done_ = true;
+                return Status::NOT_FOUND;
+            }
+
+            // Get the next tuple ID
+            uint64_t tid = current_tuple_ids_[current_tuple_index_++];
+
+            // Extract page_id and item_id from tuple ID
+            // Assuming tuple ID format: upper 32 bits = page_id, lower 32 bits = item_id
+            uint32_t page_id = static_cast<uint32_t>(tid >> 32);
+            uint16_t item_id = static_cast<uint16_t>(tid & 0xFFFF);
+
+            // Fill tuple_out with the location information
+            if (tuple_out != nullptr)
+            {
+                tuple_out->tid = tid;
+                tuple_out->page_id = page_id;
+                tuple_out->item_id = item_id;
+                tuple_out->data = nullptr;  // Caller must fetch actual tuple data
+                tuple_out->data_size = 0;
+            }
+
+            // Check if we've exhausted this key's tuples
+            if (current_tuple_index_ >= current_tuple_ids_.size())
+            {
+                done_ = true;
+            }
+
+            return Status::OK;
         }
 
         auto StorageEngine::createIndexScan(const ID &index_id,
