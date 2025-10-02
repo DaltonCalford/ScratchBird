@@ -49,15 +49,10 @@
             uint16_t item_id;
 
             // Get current XID from transaction manager
-            uint64_t current_xid =
-                (db_->transaction_manager() != nullptr) ? db_->transaction_manager()->getActiveXid() : 0;
-            if (current_xid == 0)
-            {
-                // No active transaction, use a default
-                current_xid = (db_->transaction_manager() != nullptr)
-                                  ? db_->transaction_manager()->getCurrentXid()
-                                  : 100;
-            }
+            // TODO: Get proc_id from thread-local storage or connection context
+            uint64_t current_xid = (db_->transaction_manager() != nullptr)
+                                      ? db_->transaction_manager()->getCurrentXid()
+                                      : 100;
 
             status = heap_page.insertTuple(tuple_data, tuple_size, current_xid, &item_id, ctx);
 
@@ -140,15 +135,10 @@
             HeapPage heap_page(page_data, db_->page_size());
 
             // Get current XID from transaction manager
-            uint64_t current_xid =
-                (db_->transaction_manager() != nullptr) ? db_->transaction_manager()->getActiveXid() : 0;
-            if (current_xid == 0)
-            {
-                // No active transaction, use a default
-                current_xid = (db_->transaction_manager() != nullptr)
-                                  ? db_->transaction_manager()->getCurrentXid()
-                                  : 100;
-            }
+            // TODO: Get proc_id from thread-local storage or connection context
+            uint64_t current_xid = (db_->transaction_manager() != nullptr)
+                                      ? db_->transaction_manager()->getCurrentXid()
+                                      : 100;
 
             status = heap_page.deleteTuple(item_id, current_xid, ctx);
 
@@ -218,11 +208,8 @@
         {
             if (db_->transaction_manager() != nullptr)
             {
-                uint64_t xid = db_->transaction_manager()->getActiveXid();
-                if (xid != 0)
-                {
-                    return xid;
-                }
+                // TODO: Need proc_id to get backend XID
+                // For now, just return next XID
                 return db_->transaction_manager()->getCurrentXid();
             }
             return 100; // Default if no transaction manager

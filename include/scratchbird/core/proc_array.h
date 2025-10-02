@@ -1,0 +1,122 @@
+#pragma once
+
+#include "scratchbird/core/status.h"
+#include <cstdint>
+#include <vector>
+#include <pthread.h>
+
+namespace scratchbird::core
+{
+    // Forward declarations
+    class Database;
+    struct ErrorContext;
+
+    // Process control block (per connection/backend)
+    struct ProcessControlBlock
+    {
+        uint32_t proc_id;              // Process ID (slot number)
+        pid_t backend_pid;             // OS process ID
+        bool is_active;                // Is this slot active?
+
+        // Transaction state
+        uint64_t xid;                  // Current transaction XID (0 = none)
+        uint64_t backend_xmin;         // Snapshot horizon for this backend
+        uint64_t xmin;                 // Oldest XID visible to this backend
+
+        // Locking state (for future lock manager)
+        uint32_t wait_lock_id;         // Lock waiting for (0 = none)
+        bool deadlock_check_pending;   // Needs deadlock check
+
+        // Statistics
+        uint64_t start_time;           // Backend start timestamp (microseconds)
+        uint64_t query_start_time;     // Current query start (0 = idle)
+
+        // Padding for cache line alignment
+        uint8_t padding[48];
+    };
+
+    // Process array (shared memory structure)
+    struct ProcArray
+    {
+        // Configuration
+        uint32_t max_backends;         // Maximum number of backends
+
+        // Global transaction state
+        uint64_t latest_completed_xid; // Latest completed XID
+        uint64_t oldest_xmin;          // Oldest xmin across all backends
+
+        // Free list management
+        uint32_t first_free;           // First free slot (linked via proc_id)
+        uint32_t num_active;           // Number of active backends
+
+        // Synchronization
+        pthread_rwlock_t array_lock;   // Read-write lock for array
+        pthread_mutex_t alloc_lock;    // Lock for slot allocation
+
+        // Process control blocks follow this header
+        // ProcessControlBlock procs[max_backends];
+    };
+
+    // ProcArray Manager - manages backend registration and transaction tracking
+    class ProcArrayManager
+    {
+    public:
+        // Initialize ProcArray in shared memory
+        static auto initialize(Database* db, uint32_t max_backends,
+                              ErrorContext* ctx = nullptr) -> Status;
+
+        // Shutdown and cleanup
+        static auto shutdown(ErrorContext* ctx = nullptr) -> Status;
+
+        // Backend registration
+        static auto registerBackend(uint32_t* proc_id_out,
+                                   ErrorContext* ctx = nullptr) -> Status;
+
+        static auto unregisterBackend(uint32_t proc_id,
+                                     ErrorContext* ctx = nullptr) -> Status;
+
+        // Transaction tracking
+        static auto setTransactionId(uint32_t proc_id, uint64_t xid,
+                                    ErrorContext* ctx = nullptr) -> Status;
+
+        static auto clearTransactionId(uint32_t proc_id,
+                                      ErrorContext* ctx = nullptr) -> Status;
+
+        // Snapshot support
+        static auto getActiveTransactions(std::vector<uint64_t>* xids_out,
+                                         uint64_t* oldest_xmin_out,
+                                         ErrorContext* ctx = nullptr) -> Status;
+
+        // Vacuum support
+        static auto getVacuumHorizon(uint64_t* horizon_out,
+                                    ErrorContext* ctx = nullptr) -> Status;
+
+        // Backend info queries
+        static auto getBackendXmin(uint32_t proc_id, uint64_t* xmin_out,
+                                  ErrorContext* ctx = nullptr) -> Status;
+
+        static auto setBackendXmin(uint32_t proc_id, uint64_t xmin,
+                                  ErrorContext* ctx = nullptr) -> Status;
+
+        // Statistics
+        static auto getNumActiveBackends(uint32_t* count_out,
+                                        ErrorContext* ctx = nullptr) -> Status;
+
+        // Get ProcArray instance (for internal use)
+        static auto getInstance() -> ProcArray*;
+
+    private:
+        static ProcArray* proc_array_;
+        static Database* database_;
+
+        // Helper: Get PCB by proc_id
+        static auto getPCB(uint32_t proc_id) -> ProcessControlBlock*;
+
+        // Helper: Allocate free slot
+        static auto allocateSlot(uint32_t* proc_id_out) -> Status;
+
+        // Helper: Free slot
+        static auto freeSlot(uint32_t proc_id) -> Status;
+    };
+
+} // namespace scratchbird::core

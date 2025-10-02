@@ -74,13 +74,13 @@
             auto load(ErrorContext *ctx = nullptr) -> Status;
 
             // Begin a new transaction
-            auto beginTransaction(uint64_t &xid_out, ErrorContext *ctx = nullptr) -> Status;
+            auto beginTransaction(uint32_t proc_id, uint64_t &xid_out, ErrorContext *ctx = nullptr) -> Status;
 
             // Commit a transaction
-            auto commitTransaction(uint64_t xid, ErrorContext *ctx = nullptr) -> Status;
+            auto commitTransaction(uint32_t proc_id, uint64_t xid, ErrorContext *ctx = nullptr) -> Status;
 
             // Rollback a transaction
-            auto rollbackTransaction(uint64_t xid, ErrorContext *ctx = nullptr) -> Status;
+            auto rollbackTransaction(uint32_t proc_id, uint64_t xid, ErrorContext *ctx = nullptr) -> Status;
 
             // Get transaction state
             auto getTransactionState(uint64_t xid, TransactionState &state_out,
@@ -96,12 +96,8 @@
                 return next_xid_;
             }
 
-            // Get active transaction (single connection for now)
-            auto getActiveXid() const -> uint64_t
-            {
-                std::lock_guard<std::mutex> lock(mutex_);
-                return active_xid_;
-            }
+            // Get active transaction for a specific backend
+            auto getBackendXid(uint32_t proc_id) const -> uint64_t;
 
             // Snapshot isolation support (future)
             struct Snapshot
@@ -121,7 +117,6 @@
 
             // Transaction state
             uint64_t next_xid_ = 100;    // Next XID to allocate (start at 100)
-            uint64_t active_xid_ = 0;    // Currently active transaction (single connection)
             uint32_t tip_root_page_ = 0; // Root TIP page ID
 
             // In-memory cache of recent transactions

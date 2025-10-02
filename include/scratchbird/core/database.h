@@ -25,6 +25,7 @@ namespace scratchbird
         class CatalogManager;
         class StorageEngine;
         class TransactionManager;
+        class ProcArrayManager;
 
 // Database header structure for Page 0
 #pragma pack(push, 1)
@@ -55,11 +56,13 @@ namespace scratchbird
             uint64_t next_page_id;        // Next page ID to allocate
             uint64_t system_catalog_page; // Root of system catalog (usually 1)
 
-            // Transaction info (32 bytes)
+            // Transaction info (40 bytes)
             uint64_t next_transaction_id;  // Next transaction ID to assign
             uint64_t oldest_active_xid;    // Oldest active transaction
             uint64_t latest_completed_xid; // Latest completed transaction
             uint32_t tip_root_page;        // Root page of Transaction Inventory Pages
+            uint32_t max_backends;         // Maximum concurrent backends
+            uint32_t proc_array_initialized; // 1 if ProcArray initialized
             uint32_t reserved3;            // Reserved
 
             // Checksums for critical data (16 bytes)
@@ -161,6 +164,12 @@ namespace scratchbird
             {
                 return transaction_manager_.get();
             }
+
+            // Initialize ProcArray for multi-connection support
+            Status initializeProcArray(uint32_t max_backends, ErrorContext *ctx = nullptr);
+
+            // Shutdown ProcArray
+            Status shutdownProcArray(ErrorContext *ctx = nullptr);
 
             // Get file descriptor (for internal use)
             int fd() const
