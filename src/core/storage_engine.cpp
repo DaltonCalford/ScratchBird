@@ -6,6 +6,7 @@
 #include "scratchbird/core/page_manager.h"
 #include "scratchbird/core/catalog_manager.h"
 #include "scratchbird/core/transaction_manager.h"
+#include "scratchbird/core/lock_manager.h"
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/core/btree.h"
 #include <cstring>
@@ -122,6 +123,17 @@
 
         auto StorageEngine::deleteTuple(uint32_t page_id, uint16_t item_id, ErrorContext *ctx) -> Status
         {
+            // TODO: Get proc_id and table_id from thread-local storage or connection context
+            // For now, locking is disabled (requires connection context refactoring)
+            // Future: uint32_t proc_id = ConnectionContext::getCurrentProcId();
+            // Future: ID table_id = ConnectionContext::getCurrentTableId();
+
+            // Future lock acquisition:
+            // Status lock_status = acquireTupleLock(table_id, page_id, item_id, proc_id, true, ctx);
+            // if (lock_status != Status::OK) {
+            //     return lock_status;
+            // }
+
             // Pin the page
             void *page_buffer;
             Status status = buffer_pool_->pinPage(page_id, &page_buffer, ctx);
@@ -150,6 +162,10 @@
 
             // Unpin the page
             buffer_pool_->unpinPage(page_id, status == Status::OK, ctx);
+
+            // Future lock release:
+            // releaseTupleLock(table_id, page_id, item_id, proc_id, ctx);
+            // Note: Locks are normally held until transaction end, not released here
 
             return status;
         }
@@ -532,6 +548,55 @@
                                                                             ErrorContext *ctx) -> std::unique_ptr<IndexScanIterator>
         {
             return std::make_unique<IndexScanIterator>(db_, this, index_id);
+        }
+
+        // Lock management helpers
+
+        auto StorageEngine::acquireTupleLock(const ID &table_id, uint32_t page_id,
+                                             uint16_t item_id, uint32_t proc_id, bool wait,
+                                             ErrorContext *ctx) -> Status
+        {
+            // Build lock tag for tuple
+            LockTag tag{};
+            tag.target_type = LockTarget::LOCK_TARGET_TUPLE;
+            tag.object_uuid = table_id;
+            tag.page_num = page_id;
+            tag.offset_num = item_id;
+            tag.padding = 0;
+
+            // Acquire ROW_EXCLUSIVE lock (for UPDATE/DELETE)
+            LockManager *lock_mgr = db_->lock_manager();
+            if (lock_mgr == nullptr)
+            {
+                // No lock manager, skip locking (single-connection mode)
+                return Status::OK;
+            }
+
+            return lock_mgr->acquireLock(proc_id, tag, LockMode::LOCK_ROW_EXCLUSIVE, wait,
+                                        0, ctx);
+        }
+
+        auto StorageEngine::releaseTupleLock(const ID &table_id, uint32_t page_id,
+                                             uint16_t item_id, uint32_t proc_id,
+                                             ErrorContext *ctx) -> Status
+        {
+            // Build lock tag for tuple
+            LockTag tag{};
+            tag.target_type = LockTarget::LOCK_TARGET_TUPLE;
+            tag.object_uuid = table_id;
+            tag.page_num = page_id;
+            tag.offset_num = item_id;
+            tag.padding = 0;
+
+            // Release ROW_EXCLUSIVE lock
+            LockManager *lock_mgr = db_->lock_manager();
+            if (lock_mgr == nullptr)
+            {
+                // No lock manager, nothing to release
+                return Status::OK;
+            }
+
+            return lock_mgr->releaseLock(proc_id, tag, LockMode::LOCK_ROW_EXCLUSIVE, ctx);
         }
 
     } // namespace scratchbird::core

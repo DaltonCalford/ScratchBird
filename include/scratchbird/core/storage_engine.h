@@ -153,6 +153,12 @@
 
             // Allocate a new heap page for a table
             auto allocateHeapPage(const ID &table_id, uint32_t *page_id_out, ErrorContext *ctx) -> Status;
+
+            // Lock management helpers
+            auto acquireTupleLock(const ID &table_id, uint32_t page_id, uint16_t item_id,
+                                 uint32_t proc_id, bool wait, ErrorContext *ctx) -> Status;
+            auto releaseTupleLock(const ID &table_id, uint32_t page_id, uint16_t item_id,
+                                 uint32_t proc_id, ErrorContext *ctx) -> Status;
         };
 
     } // namespace scratchbird::core
