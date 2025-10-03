@@ -362,6 +362,26 @@ namespace scratchbird
             {
                 func_opcode = Opcode::AGG_COUNT;
             }
+            else if (func_name == "DATE_ADD")
+            {
+                func_opcode = Opcode::FUNC_DATE_ADD;
+            }
+            else if (func_name == "DATE_SUB")
+            {
+                func_opcode = Opcode::FUNC_DATE_SUB;
+            }
+            else if (func_name == "DATE_DIFF" || func_name == "DATEDIFF")
+            {
+                func_opcode = Opcode::FUNC_DATE_DIFF;
+            }
+            else if (func_name == "NOW")
+            {
+                func_opcode = Opcode::FUNC_NOW;
+            }
+            else if (func_name == "CURRENT_DATE")
+            {
+                func_opcode = Opcode::FUNC_CURRENT_DATE;
+            }
             else
             {
                 current_result_->addError("Unknown function: " + std::string(func_name));
@@ -544,6 +564,11 @@ namespace scratchbird
                     case Opcode::AGG_MIN:
                     case Opcode::AGG_MAX:
                     case Opcode::AGG_COUNT:
+                    case Opcode::FUNC_DATE_ADD:
+                    case Opcode::FUNC_DATE_SUB:
+                    case Opcode::FUNC_DATE_DIFF:
+                    case Opcode::FUNC_NOW:
+                    case Opcode::FUNC_CURRENT_DATE:
                         if (pos < bytecode.size())
                         {
                             uint8_t arg_count = bytecode[pos];
@@ -663,6 +688,16 @@ namespace scratchbird
                     return "AGG_MAX";
                 case Opcode::AGG_COUNT:
                     return "AGG_COUNT";
+                case Opcode::FUNC_DATE_ADD:
+                    return "FUNC_DATE_ADD";
+                case Opcode::FUNC_DATE_SUB:
+                    return "FUNC_DATE_SUB";
+                case Opcode::FUNC_DATE_DIFF:
+                    return "FUNC_DATE_DIFF";
+                case Opcode::FUNC_NOW:
+                    return "FUNC_NOW";
+                case Opcode::FUNC_CURRENT_DATE:
+                    return "FUNC_CURRENT_DATE";
                 case Opcode::BEGIN_LIST:
                     return "BEGIN_LIST";
                 case Opcode::END_LIST:

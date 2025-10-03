@@ -511,6 +511,62 @@ namespace scratchbird
                 // Result is INT64
                 setExpressionType(node, ExpressionType(TypeName(DataType::INT64), false));
             }
+            else if (func_name == "DATE_ADD")
+            {
+                if (node->args().size() != 2)
+                {
+                    reportError(node, "DATE_ADD expects 2 arguments (date, days)");
+                    return;
+                }
+                checkExpression(node->args()[0]);
+                checkExpression(node->args()[1]);
+                // Result is DATE or TIMESTAMP
+                setExpressionType(node, ExpressionType(TypeName(DataType::TIMESTAMP), false));
+            }
+            else if (func_name == "DATE_SUB")
+            {
+                if (node->args().size() != 2)
+                {
+                    reportError(node, "DATE_SUB expects 2 arguments (date, days)");
+                    return;
+                }
+                checkExpression(node->args()[0]);
+                checkExpression(node->args()[1]);
+                // Result is DATE or TIMESTAMP
+                setExpressionType(node, ExpressionType(TypeName(DataType::TIMESTAMP), false));
+            }
+            else if (func_name == "DATE_DIFF" || func_name == "DATEDIFF")
+            {
+                if (node->args().size() != 2)
+                {
+                    reportError(node, "DATE_DIFF expects 2 arguments (date1, date2)");
+                    return;
+                }
+                checkExpression(node->args()[0]);
+                checkExpression(node->args()[1]);
+                // Result is INT64 (number of days)
+                setExpressionType(node, ExpressionType(TypeName(DataType::INT64), false));
+            }
+            else if (func_name == "NOW")
+            {
+                if (node->args().size() != 0)
+                {
+                    reportError(node, "NOW expects 0 arguments");
+                    return;
+                }
+                // Result is TIMESTAMP
+                setExpressionType(node, ExpressionType(TypeName(DataType::TIMESTAMP), false));
+            }
+            else if (func_name == "CURRENT_DATE")
+            {
+                if (node->args().size() != 0)
+                {
+                    reportError(node, "CURRENT_DATE expects 0 arguments");
+                    return;
+                }
+                // Result is DATE
+                setExpressionType(node, ExpressionType(TypeName(DataType::DATE), false));
+            }
             else
             {
                 reportError(node, "Unknown function: " + std::string(func_name));

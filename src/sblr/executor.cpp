@@ -6,6 +6,7 @@
 #include <iomanip>
 #include <cstring>
 #include <algorithm>
+#include <chrono>
 
 namespace scratchbird
 {
@@ -1107,6 +1108,118 @@ namespace scratchbird
                     // Full aggregation support requires refactoring SELECT execution
                     // to accumulate values across rows
                     error("Aggregate functions require full aggregation support (not yet implemented in executor)");
+                    break;
+                }
+
+                // Temporal functions
+                case Opcode::FUNC_DATE_ADD:
+                {
+                    uint8_t arg_count = readByte();
+                    if (arg_count != 2)
+                    {
+                        error("DATE_ADD expects 2 arguments");
+                    }
+
+                    Value days_val = pop();
+                    Value date_val = pop();
+
+                    if (date_val.isNull() || days_val.isNull())
+                    {
+                        push(Value::makeNull());
+                    }
+                    else
+                    {
+                        // Treat date as Unix timestamp (seconds since epoch)
+                        // Add days * 86400 seconds
+                        int64_t timestamp = date_val.toInt64();
+                        int64_t days = days_val.toInt64();
+                        int64_t result = timestamp + (days * 86400);
+                        push(Value::makeInt64(result));
+                    }
+                    break;
+                }
+
+                case Opcode::FUNC_DATE_SUB:
+                {
+                    uint8_t arg_count = readByte();
+                    if (arg_count != 2)
+                    {
+                        error("DATE_SUB expects 2 arguments");
+                    }
+
+                    Value days_val = pop();
+                    Value date_val = pop();
+
+                    if (date_val.isNull() || days_val.isNull())
+                    {
+                        push(Value::makeNull());
+                    }
+                    else
+                    {
+                        int64_t timestamp = date_val.toInt64();
+                        int64_t days = days_val.toInt64();
+                        int64_t result = timestamp - (days * 86400);
+                        push(Value::makeInt64(result));
+                    }
+                    break;
+                }
+
+                case Opcode::FUNC_DATE_DIFF:
+                {
+                    uint8_t arg_count = readByte();
+                    if (arg_count != 2)
+                    {
+                        error("DATE_DIFF expects 2 arguments");
+                    }
+
+                    Value date2_val = pop();
+                    Value date1_val = pop();
+
+                    if (date1_val.isNull() || date2_val.isNull())
+                    {
+                        push(Value::makeNull());
+                    }
+                    else
+                    {
+                        int64_t timestamp1 = date1_val.toInt64();
+                        int64_t timestamp2 = date2_val.toInt64();
+                        int64_t diff_days = (timestamp1 - timestamp2) / 86400;
+                        push(Value::makeInt64(diff_days));
+                    }
+                    break;
+                }
+
+                case Opcode::FUNC_NOW:
+                {
+                    uint8_t arg_count = readByte();
+                    if (arg_count != 0)
+                    {
+                        error("NOW expects 0 arguments");
+                    }
+
+                    // Return current Unix timestamp
+                    auto now = std::chrono::system_clock::now();
+                    auto timestamp = std::chrono::duration_cast<std::chrono::seconds>(
+                        now.time_since_epoch()).count();
+                    push(Value::makeInt64(timestamp));
+                    break;
+                }
+
+                case Opcode::FUNC_CURRENT_DATE:
+                {
+                    uint8_t arg_count = readByte();
+                    if (arg_count != 0)
+                    {
+                        error("CURRENT_DATE expects 0 arguments");
+                    }
+
+                    // Return current date as Unix timestamp (midnight)
+                    auto now = std::chrono::system_clock::now();
+                    auto timestamp = std::chrono::duration_cast<std::chrono::seconds>(
+                        now.time_since_epoch()).count();
+                    // Round down to midnight
+                    timestamp = (timestamp / 86400) * 86400;
+                    push(Value::makeInt64(timestamp));
                     break;
                 }
 
