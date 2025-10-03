@@ -51,7 +51,8 @@ namespace scratchbird
             {"UUID", TokenType::KW_UUID},       {"JSON", TokenType::KW_JSON},
 
             // Type conversion
-            {"CAST", TokenType::KW_CAST},       {"AS", TokenType::KW_AS},
+            {"CAST", TokenType::KW_CAST},       {"TRY_CAST", TokenType::KW_TRY_CAST},
+            {"AS", TokenType::KW_AS},
         };
 
         // Case-insensitive string comparison

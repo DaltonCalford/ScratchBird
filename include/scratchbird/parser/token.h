@@ -100,6 +100,7 @@ namespace scratchbird
 
             // Type conversion
             KW_CAST,
+            KW_TRY_CAST,
             KW_AS,
         };
 

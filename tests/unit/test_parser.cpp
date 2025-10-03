@@ -222,6 +222,16 @@ TEST_F(ParserTest, CastExpression)
     expectParseSuccess("SELECT CAST(a + b AS DOUBLE) FROM t");
 }
 
+TEST_F(ParserTest, TryCastExpression)
+{
+    expectParseSuccess("SELECT TRY_CAST(123 AS INTEGER) FROM t");
+    expectParseSuccess("SELECT TRY_CAST(123 AS BIGINT) FROM t");
+    expectParseSuccess("SELECT TRY_CAST(123 AS DOUBLE) FROM t");
+    expectParseSuccess("SELECT TRY_CAST(123 AS VARCHAR(10)) FROM t");
+    expectParseSuccess("SELECT TRY_CAST(col AS INTEGER) FROM t");
+    expectParseSuccess("SELECT TRY_CAST(a + b AS DOUBLE) FROM t");
+}
+
 // ===== Semicolon Tests =====
 
 TEST_F(ParserTest, OptionalSemicolon)

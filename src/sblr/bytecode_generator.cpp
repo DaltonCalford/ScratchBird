@@ -302,6 +302,9 @@ namespace scratchbird
             // Write CAST opcode
             current_result_->writeOpcode(Opcode::EXPR_CAST);
 
+            // Write try_cast flag (1 byte: 0 = CAST, 1 = TRY_CAST)
+            current_result_->writeByte(node->isTryCast() ? 1 : 0);
+
             // Write target type
             writeDataType(node->targetType());
         }
