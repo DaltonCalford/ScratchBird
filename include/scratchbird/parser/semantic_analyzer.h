@@ -76,6 +76,7 @@ namespace scratchbird
             void visit(IdentifierExpr *node) override;
             void visit(BinaryOpExpr *node) override;
             void visit(CastExpr *node) override;
+            void visit(FunctionCallExpr *node) override;
             void visit(ColumnDef *node) override;
 
             // Get expression type after analysis

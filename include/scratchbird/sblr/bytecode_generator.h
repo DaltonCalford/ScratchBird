@@ -104,6 +104,7 @@ namespace scratchbird
             void visit(parser::IdentifierExpr *node) override;
             void visit(parser::BinaryOpExpr *node) override;
             void visit(parser::CastExpr *node) override;
+            void visit(parser::FunctionCallExpr *node) override;
             void visit(parser::ColumnDef *node) override;
 
         private:

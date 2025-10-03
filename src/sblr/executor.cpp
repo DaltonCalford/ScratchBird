@@ -939,6 +939,156 @@ namespace scratchbird
                     break;
                 }
 
+                // String functions
+                case Opcode::FUNC_LENGTH:
+                {
+                    uint8_t arg_count = readByte();
+                    if (arg_count != 1)
+                    {
+                        error("LENGTH expects 1 argument, got " + std::to_string(arg_count));
+                    }
+
+                    Value arg = pop();
+                    if (arg.isNull())
+                    {
+                        push(Value::makeNull());
+                    }
+                    else
+                    {
+                        std::string str = arg.toString();
+                        push(Value::makeInt32(static_cast<int32_t>(str.length())));
+                    }
+                    break;
+                }
+
+                case Opcode::FUNC_SUBSTRING:
+                {
+                    uint8_t arg_count = readByte();
+                    if (arg_count != 3)
+                    {
+                        error("SUBSTRING expects 3 arguments, got " + std::to_string(arg_count));
+                    }
+
+                    // Pop args in reverse order (length, start, str)
+                    Value length_val = pop();
+                    Value start_val = pop();
+                    Value str_val = pop();
+
+                    if (str_val.isNull() || start_val.isNull() || length_val.isNull())
+                    {
+                        push(Value::makeNull());
+                    }
+                    else
+                    {
+                        std::string str = str_val.toString();
+                        int32_t start = static_cast<int32_t>(start_val.toInt64());
+                        int32_t length = static_cast<int32_t>(length_val.toInt64());
+
+                        // SQL uses 1-based indexing
+                        if (start < 1)
+                            start = 1;
+                        start--; // Convert to 0-based
+
+                        if (start >= static_cast<int32_t>(str.length()) || length <= 0)
+                        {
+                            push(Value::makeVarchar(""));
+                        }
+                        else
+                        {
+                            std::string result = str.substr(start, length);
+                            push(Value::makeVarchar(result));
+                        }
+                    }
+                    break;
+                }
+
+                case Opcode::FUNC_UPPER:
+                {
+                    uint8_t arg_count = readByte();
+                    if (arg_count != 1)
+                    {
+                        error("UPPER expects 1 argument, got " + std::to_string(arg_count));
+                    }
+
+                    Value arg = pop();
+                    if (arg.isNull())
+                    {
+                        push(Value::makeNull());
+                    }
+                    else
+                    {
+                        std::string str = arg.toString();
+                        for (char &c : str)
+                        {
+                            c = std::toupper(static_cast<unsigned char>(c));
+                        }
+                        push(Value::makeVarchar(str));
+                    }
+                    break;
+                }
+
+                case Opcode::FUNC_LOWER:
+                {
+                    uint8_t arg_count = readByte();
+                    if (arg_count != 1)
+                    {
+                        error("LOWER expects 1 argument, got " + std::to_string(arg_count));
+                    }
+
+                    Value arg = pop();
+                    if (arg.isNull())
+                    {
+                        push(Value::makeNull());
+                    }
+                    else
+                    {
+                        std::string str = arg.toString();
+                        for (char &c : str)
+                        {
+                            c = std::tolower(static_cast<unsigned char>(c));
+                        }
+                        push(Value::makeVarchar(str));
+                    }
+                    break;
+                }
+
+                case Opcode::FUNC_TRIM:
+                {
+                    uint8_t arg_count = readByte();
+                    if (arg_count != 1)
+                    {
+                        error("TRIM expects 1 argument, got " + std::to_string(arg_count));
+                    }
+
+                    Value arg = pop();
+                    if (arg.isNull())
+                    {
+                        push(Value::makeNull());
+                    }
+                    else
+                    {
+                        std::string str = arg.toString();
+
+                        // Trim leading whitespace
+                        size_t start = 0;
+                        while (start < str.length() && std::isspace(static_cast<unsigned char>(str[start])))
+                        {
+                            start++;
+                        }
+
+                        // Trim trailing whitespace
+                        size_t end = str.length();
+                        while (end > start && std::isspace(static_cast<unsigned char>(str[end - 1])))
+                        {
+                            end--;
+                        }
+
+                        std::string result = str.substr(start, end - start);
+                        push(Value::makeVarchar(result));
+                    }
+                    break;
+                }
+
                 default:
                     error("Unknown expression opcode: " + std::to_string(static_cast<int>(op)));
             }

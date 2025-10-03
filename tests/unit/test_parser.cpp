@@ -232,6 +232,44 @@ TEST_F(ParserTest, TryCastExpression)
     expectParseSuccess("SELECT TRY_CAST(a + b AS DOUBLE) FROM t");
 }
 
+// ===== String Function Tests =====
+
+TEST_F(ParserTest, StringFunctionLength)
+{
+    expectParseSuccess("SELECT LENGTH(name) FROM t");
+    expectParseSuccess("SELECT LENGTH('hello') FROM t");
+    std::string sql = "SELECT LENGTH('test') FROM t";
+    std::string expected = "SELECT LENGTH('test') FROM t";
+    EXPECT_EQ(parseAndPrint(sql), expected);
+}
+
+TEST_F(ParserTest, StringFunctionSubstring)
+{
+    expectParseSuccess("SELECT SUBSTRING(name, 1, 5) FROM t");
+    expectParseSuccess("SELECT SUBSTRING('hello world', 7, 5) FROM t");
+}
+
+TEST_F(ParserTest, StringFunctionUpperLower)
+{
+    expectParseSuccess("SELECT UPPER(name) FROM t");
+    expectParseSuccess("SELECT LOWER(name) FROM t");
+    expectParseSuccess("SELECT UPPER('hello') FROM t");
+    expectParseSuccess("SELECT LOWER('WORLD') FROM t");
+}
+
+TEST_F(ParserTest, StringFunctionTrim)
+{
+    expectParseSuccess("SELECT TRIM(name) FROM t");
+    expectParseSuccess("SELECT TRIM('  hello  ') FROM t");
+}
+
+TEST_F(ParserTest, StringFunctionsNested)
+{
+    expectParseSuccess("SELECT UPPER(TRIM(name)) FROM t");
+    expectParseSuccess("SELECT LENGTH(UPPER(name)) FROM t");
+    expectParseSuccess("SELECT SUBSTRING(LOWER(name), 1, 3) FROM t");
+}
+
 // ===== Semicolon Tests =====
 
 TEST_F(ParserTest, OptionalSemicolon)

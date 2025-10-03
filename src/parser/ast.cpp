@@ -309,6 +309,11 @@ namespace scratchbird
             visitor->visit(this);
         }
 
+        void FunctionCallExpr::accept(ASTVisitor *visitor)
+        {
+            visitor->visit(this);
+        }
+
         void ASTPrinter::visit(CastExpr *node)
         {
             out_ << (node->isTryCast() ? "TRY_CAST(" : "CAST(");
@@ -325,6 +330,22 @@ namespace scratchbird
                     out_ << ", " << type.scale;
                 out_ << ")";
             }
+            out_ << ")";
+        }
+
+        void ASTPrinter::visit(FunctionCallExpr *node)
+        {
+            out_ << pool_.get(node->name()) << "(";
+
+            bool first = true;
+            for (auto *arg : node->args())
+            {
+                if (!first)
+                    out_ << ", ";
+                arg->accept(this);
+                first = false;
+            }
+
             out_ << ")";
         }
 

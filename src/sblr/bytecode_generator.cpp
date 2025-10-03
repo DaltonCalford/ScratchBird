@@ -309,6 +309,57 @@ namespace scratchbird
             writeDataType(node->targetType());
         }
 
+        void BytecodeGenerator::visit(parser::FunctionCallExpr *node)
+        {
+            // Get function name
+            std::string_view func_name = string_pool_.get(node->name());
+
+            // Map function names to opcodes
+            Opcode func_opcode;
+            if (func_name == "LENGTH")
+            {
+                func_opcode = Opcode::FUNC_LENGTH;
+            }
+            else if (func_name == "SUBSTRING")
+            {
+                func_opcode = Opcode::FUNC_SUBSTRING;
+            }
+            else if (func_name == "UPPER")
+            {
+                func_opcode = Opcode::FUNC_UPPER;
+            }
+            else if (func_name == "LOWER")
+            {
+                func_opcode = Opcode::FUNC_LOWER;
+            }
+            else if (func_name == "TRIM")
+            {
+                func_opcode = Opcode::FUNC_TRIM;
+            }
+            else
+            {
+                current_result_->addError("Unknown function: " + std::string(func_name));
+                return;
+            }
+
+            // Generate arguments first (reverse Polish notation)
+            for (auto *arg : node->args())
+            {
+                generateExpression(arg);
+            }
+
+            // Write function opcode
+            current_result_->writeOpcode(func_opcode);
+
+            // Write argument count for validation
+            if (node->args().size() > UINT8_MAX)
+            {
+                current_result_->addError("Function has too many arguments (max 255)");
+                return;
+            }
+            current_result_->writeByte(static_cast<uint8_t>(node->args().size()));
+        }
+
         void BytecodeGenerator::visit(parser::ColumnDef *node)
         {
             current_result_->writeOpcode(Opcode::COLUMN_DEF);
@@ -457,6 +508,24 @@ namespace scratchbird
                         }
                         break;
 
+                    case Opcode::FUNC_LENGTH:
+                    case Opcode::FUNC_SUBSTRING:
+                    case Opcode::FUNC_UPPER:
+                    case Opcode::FUNC_LOWER:
+                    case Opcode::FUNC_TRIM:
+                        if (pos < bytecode.size())
+                        {
+                            uint8_t arg_count = bytecode[pos];
+                            ss << " argc=" << static_cast<int>(arg_count);
+                            pos++;
+                        }
+                        else
+                        {
+                            ss << " <INCOMPLETE>";
+                            incomplete = true;
+                        }
+                        break;
+
                     default:
                         // No operands
                         break;
@@ -539,6 +608,16 @@ namespace scratchbird
                     return "EXPR_OR";
                 case Opcode::EXPR_CAST:
                     return "EXPR_CAST";
+                case Opcode::FUNC_LENGTH:
+                    return "FUNC_LENGTH";
+                case Opcode::FUNC_SUBSTRING:
+                    return "FUNC_SUBSTRING";
+                case Opcode::FUNC_UPPER:
+                    return "FUNC_UPPER";
+                case Opcode::FUNC_LOWER:
+                    return "FUNC_LOWER";
+                case Opcode::FUNC_TRIM:
+                    return "FUNC_TRIM";
                 case Opcode::BEGIN_LIST:
                     return "BEGIN_LIST";
                 case Opcode::END_LIST:
