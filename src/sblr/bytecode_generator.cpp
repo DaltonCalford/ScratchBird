@@ -342,6 +342,26 @@ namespace scratchbird
             {
                 func_opcode = Opcode::FUNC_TRIM;
             }
+            else if (func_name == "SUM")
+            {
+                func_opcode = Opcode::AGG_SUM;
+            }
+            else if (func_name == "AVG")
+            {
+                func_opcode = Opcode::AGG_AVG;
+            }
+            else if (func_name == "MIN")
+            {
+                func_opcode = Opcode::AGG_MIN;
+            }
+            else if (func_name == "MAX")
+            {
+                func_opcode = Opcode::AGG_MAX;
+            }
+            else if (func_name == "COUNT")
+            {
+                func_opcode = Opcode::AGG_COUNT;
+            }
             else
             {
                 current_result_->addError("Unknown function: " + std::string(func_name));
@@ -519,6 +539,11 @@ namespace scratchbird
                     case Opcode::FUNC_UPPER:
                     case Opcode::FUNC_LOWER:
                     case Opcode::FUNC_TRIM:
+                    case Opcode::AGG_SUM:
+                    case Opcode::AGG_AVG:
+                    case Opcode::AGG_MIN:
+                    case Opcode::AGG_MAX:
+                    case Opcode::AGG_COUNT:
                         if (pos < bytecode.size())
                         {
                             uint8_t arg_count = bytecode[pos];
@@ -628,6 +653,16 @@ namespace scratchbird
                     return "FUNC_LOWER";
                 case Opcode::FUNC_TRIM:
                     return "FUNC_TRIM";
+                case Opcode::AGG_SUM:
+                    return "AGG_SUM";
+                case Opcode::AGG_AVG:
+                    return "AGG_AVG";
+                case Opcode::AGG_MIN:
+                    return "AGG_MIN";
+                case Opcode::AGG_MAX:
+                    return "AGG_MAX";
+                case Opcode::AGG_COUNT:
+                    return "AGG_COUNT";
                 case Opcode::BEGIN_LIST:
                     return "BEGIN_LIST";
                 case Opcode::END_LIST:

@@ -458,6 +458,59 @@ namespace scratchbird
                 // Result is VARCHAR
                 setExpressionType(node, ExpressionType(TypeName(DataType::VARCHAR, 255), false));
             }
+            else if (func_name == "SUM")
+            {
+                if (node->args().size() != 1)
+                {
+                    reportError(node, "SUM expects 1 argument");
+                    return;
+                }
+                checkExpression(node->args()[0]);
+                // Result is numeric (use FLOAT64 for general compatibility)
+                setExpressionType(node, ExpressionType(TypeName(DataType::FLOAT64), false));
+            }
+            else if (func_name == "AVG")
+            {
+                if (node->args().size() != 1)
+                {
+                    reportError(node, "AVG expects 1 argument");
+                    return;
+                }
+                checkExpression(node->args()[0]);
+                // Result is FLOAT64
+                setExpressionType(node, ExpressionType(TypeName(DataType::FLOAT64), false));
+            }
+            else if (func_name == "MIN" || func_name == "MAX")
+            {
+                if (node->args().size() != 1)
+                {
+                    reportError(node, std::string(func_name) + " expects 1 argument");
+                    return;
+                }
+                checkExpression(node->args()[0]);
+                auto *arg_type = getExpressionType(node->args()[0]);
+                if (arg_type)
+                {
+                    // MIN/MAX return same type as argument
+                    setExpressionType(node, *arg_type);
+                }
+                else
+                {
+                    // Default to FLOAT64
+                    setExpressionType(node, ExpressionType(TypeName(DataType::FLOAT64), false));
+                }
+            }
+            else if (func_name == "COUNT")
+            {
+                if (node->args().size() != 1)
+                {
+                    reportError(node, "COUNT expects 1 argument");
+                    return;
+                }
+                checkExpression(node->args()[0]);
+                // Result is INT64
+                setExpressionType(node, ExpressionType(TypeName(DataType::INT64), false));
+            }
             else
             {
                 reportError(node, "Unknown function: " + std::string(func_name));
