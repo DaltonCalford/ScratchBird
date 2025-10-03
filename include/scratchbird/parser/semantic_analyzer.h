@@ -51,7 +51,7 @@ namespace scratchbird
             TypeName type;
             bool is_nullable;
 
-            ExpressionType() : type(DataType::INTEGER), is_nullable(true) {}
+            ExpressionType() : type(DataType::INT32), is_nullable(true) {}
             ExpressionType(const TypeName &t, bool nullable = false)
                 : type(t), is_nullable(nullable)
             {
@@ -75,6 +75,7 @@ namespace scratchbird
             void visit(LiteralExpr *node) override;
             void visit(IdentifierExpr *node) override;
             void visit(BinaryOpExpr *node) override;
+            void visit(CastExpr *node) override;
             void visit(ColumnDef *node) override;
 
             // Get expression type after analysis

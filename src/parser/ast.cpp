@@ -284,13 +284,13 @@ namespace scratchbird
 
             switch (node->type().type)
             {
-                case DataType::INTEGER:
+                case DataType::INT32:
                     out_ << "INTEGER";
                     break;
-                case DataType::BIGINT:
+                case DataType::INT64:
                     out_ << "BIGINT";
                     break;
-                case DataType::DOUBLE:
+                case DataType::FLOAT64:
                     out_ << "DOUBLE";
                     break;
                 case DataType::VARCHAR:
@@ -302,6 +302,30 @@ namespace scratchbird
             {
                 out_ << " NOT NULL";
             }
+        }
+
+        void CastExpr::accept(ASTVisitor *visitor)
+        {
+            visitor->visit(this);
+        }
+
+        void ASTPrinter::visit(CastExpr *node)
+        {
+            out_ << "CAST(";
+            node->expr()->accept(this);
+            out_ << " AS ";
+
+            auto& type = node->targetType();
+            out_ << core::TypeSystem::getTypeName(type.type);
+
+            if (type.precision > 0)
+            {
+                out_ << "(" << type.precision;
+                if (type.scale > 0)
+                    out_ << ", " << type.scale;
+                out_ << ")";
+            }
+            out_ << ")";
         }
 
     } // namespace parser

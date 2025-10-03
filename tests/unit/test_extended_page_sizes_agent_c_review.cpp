@@ -66,7 +66,11 @@ TEST_F(ExtendedPageSizesAgentCReviewTest, ItemCountBoundary)
     TupleHeader *hdr = reinterpret_cast<TupleHeader *>(small_tuple.data());
     hdr->xmin = 1;
     hdr->xmax = 0;
-    hdr->flags = 0;
+    hdr->next_version_tid = 0;
+    hdr->ctid_page = 0;
+    hdr->ctid_item = 0;
+    hdr->infomask = 0;
+    hdr->padding = 0;
     hdr->null_bitmap_offset = 0;
     small_tuple[sizeof(TupleHeader)] = 'X';
 
@@ -113,7 +117,11 @@ TEST_F(ExtendedPageSizesAgentCReviewTest, ItemCountBoundary)
     hdr = reinterpret_cast<TupleHeader *>(medium_tuple.data());
     hdr->xmin = 1;
     hdr->xmax = 0;
-    hdr->flags = 0;
+    hdr->next_version_tid = 0;
+    hdr->ctid_page = 0;
+    hdr->ctid_item = 0;
+    hdr->infomask = 0;
+    hdr->padding = 0;
     hdr->null_bitmap_offset = 0;
     memset(medium_tuple.data() + sizeof(TupleHeader), 'Y',
            medium_tuple.size() - sizeof(TupleHeader));
@@ -286,7 +294,11 @@ TEST_F(ExtendedPageSizesAgentCReviewTest, OffsetArithmeticSafety)
     TupleHeader *hdr = reinterpret_cast<TupleHeader *>(large_tuple.data());
     hdr->xmin = 1;
     hdr->xmax = 0;
-    hdr->flags = 0;
+    hdr->next_version_tid = 0;
+    hdr->ctid_page = 0;
+    hdr->ctid_item = 0;
+    hdr->infomask = 0;
+    hdr->padding = 0;
     hdr->null_bitmap_offset = 0;
     memset(large_tuple.data() + sizeof(TupleHeader), 'Z', large_tuple_size - sizeof(TupleHeader));
 
@@ -421,7 +433,11 @@ TEST_F(ExtendedPageSizesAgentCReviewTest, ConcurrentLargePageAccess)
                         TupleHeader *thdr = reinterpret_cast<TupleHeader *>(tuple.data());
                         thdr->xmin = thread_id;
                         thdr->xmax = 0;
-                        thdr->flags = 0;
+                        thdr->next_version_tid = 0;
+                        thdr->ctid_page = 0;
+                        thdr->ctid_item = 0;
+                        thdr->infomask = 0;
+                        thdr->padding = 0;
                         thdr->null_bitmap_offset = 0;
 
                         HeapPage heap_page(reinterpret_cast<uint8_t *>(buffer), page_size);
@@ -500,7 +516,11 @@ TEST_F(ExtendedPageSizesAgentCReviewTest, PageSizeValidationEntryPoints)
     TupleHeader *hdr = reinterpret_cast<TupleHeader *>(tuple.data());
     hdr->xmin = 1;
     hdr->xmax = 0;
-    hdr->flags = 0;
+    hdr->next_version_tid = 0;
+    hdr->ctid_page = 0;
+    hdr->ctid_item = 0;
+    hdr->infomask = 0;
+    hdr->padding = 0;
     hdr->null_bitmap_offset = 0;
 
     uint16_t item_id;
@@ -563,7 +583,11 @@ TEST_F(ExtendedPageSizesAgentCReviewTest, RegressionExistingPageSizes)
         TupleHeader *hdr = reinterpret_cast<TupleHeader *>(tuple.data());
         hdr->xmin = 1;
         hdr->xmax = 0;
-        hdr->flags = 0;
+        hdr->next_version_tid = 0;
+    hdr->ctid_page = 0;
+    hdr->ctid_item = 0;
+    hdr->infomask = 0;
+    hdr->padding = 0;
         hdr->null_bitmap_offset = 0;
         memset(tuple.data() + sizeof(TupleHeader), 'R', tuple.size() - sizeof(TupleHeader));
 
@@ -625,7 +649,11 @@ TEST_F(ExtendedPageSizesAgentCReviewTest, MemoryUsageRegression)
         TupleHeader *hdr = reinterpret_cast<TupleHeader *>(test_tuple.data());
         hdr->xmin = 1;
         hdr->xmax = 0;
-        hdr->flags = 0;
+        hdr->next_version_tid = 0;
+    hdr->ctid_page = 0;
+    hdr->ctid_item = 0;
+    hdr->infomask = 0;
+    hdr->padding = 0;
         hdr->null_bitmap_offset = 0;
 
         m.max_tuples = 0;
@@ -758,8 +786,12 @@ TEST_F(ExtendedPageSizesAgentCReviewTest, CorruptedPageHeaderDetection)
         TupleHeader *thdr = reinterpret_cast<TupleHeader *>(tuple.data());
         thdr->xmin = 1;
         thdr->xmax = 0;
-        thdr->flags = 0;
+        thdr->next_version_tid = 0;
+        thdr->ctid_page = 0;
+        thdr->ctid_item = 0;
+        thdr->infomask = 0;
         thdr->null_bitmap_offset = 0;
+        thdr->padding = 0;
 
         uint16_t item_id;
         // This might fail, but shouldn't crash

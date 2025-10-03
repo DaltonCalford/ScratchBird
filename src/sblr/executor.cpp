@@ -13,86 +13,7 @@ namespace scratchbird
     {
 
         // ===== Value Implementation =====
-
-        int64_t Value::toInt64() const
-        {
-            switch (type)
-            {
-                case INTEGER:
-                    return std::get<int32_t>(data);
-                case BIGINT:
-                    return std::get<int64_t>(data);
-                case DOUBLE:
-                    return static_cast<int64_t>(std::get<double>(data));
-                case BOOLEAN:
-                    return std::get<bool>(data) ? 1 : 0;
-                default:
-                    return 0;
-            }
-        }
-
-        double Value::toDouble() const
-        {
-            switch (type)
-            {
-                case INTEGER:
-                    return std::get<int32_t>(data);
-                case BIGINT:
-                    return std::get<int64_t>(data);
-                case DOUBLE:
-                    return std::get<double>(data);
-                case BOOLEAN:
-                    return std::get<bool>(data) ? 1.0 : 0.0;
-                default:
-                    return 0.0;
-            }
-        }
-
-        std::string Value::toString() const
-        {
-            switch (type)
-            {
-                case NULL_VALUE:
-                    return "NULL";
-                case INTEGER:
-                    return std::to_string(std::get<int32_t>(data));
-                case BIGINT:
-                    return std::to_string(std::get<int64_t>(data));
-                case DOUBLE:
-                {
-                    std::stringstream ss;
-                    ss << std::fixed << std::setprecision(6) << std::get<double>(data);
-                    return ss.str();
-                }
-                case STRING:
-                    return std::get<std::string>(data);
-                case BOOLEAN:
-                    return std::get<bool>(data) ? "true" : "false";
-                default:
-                    return "";
-            }
-        }
-
-        bool Value::toBoolean() const
-        {
-            switch (type)
-            {
-                case NULL_VALUE:
-                    return false;
-                case INTEGER:
-                    return std::get<int32_t>(data) != 0;
-                case BIGINT:
-                    return std::get<int64_t>(data) != 0;
-                case DOUBLE:
-                    return std::get<double>(data) != 0.0;
-                case STRING:
-                    return !std::get<std::string>(data).empty();
-                case BOOLEAN:
-                    return std::get<bool>(data);
-                default:
-                    return false;
-            }
-        }
+        // Value is now an alias for core::TypedValue, so no implementation needed here
 
         // ===== ResultSet Implementation =====
 
@@ -606,7 +527,7 @@ namespace scratchbird
             auto *header = reinterpret_cast<core::TupleHeader *>(&tuple_data[header_offset]);
             header->xmin = 1; // Transaction ID (simplified - use 1 for now)
             header->xmax = 0; // Not deleted
-            header->flags = has_nulls ? core::TupleHeader::FLAG_HAS_NULLS : 0;
+            header->infomask = has_nulls ? core::TupleHeader::HEAP_HAS_NULLS : 0;
             header->null_bitmap_offset =
                 has_nulls ? static_cast<uint16_t>(null_bitmap_offset) : 0;
 
@@ -791,6 +712,17 @@ namespace scratchbird
                     {
                         depth--; // Net effect: consume 2, produce 1 = -1
                     }
+                    // CAST consumes 1, produces 1, plus reads type
+                    else if (op == Opcode::EXPR_CAST)
+                    {
+                        // Read and skip type opcode
+                        Opcode type_op = static_cast<Opcode>(readByte());
+                        if (type_op == Opcode::TYPE_VARCHAR)
+                        {
+                            pc_ += 4; // Skip precision
+                        }
+                        // depth unchanged (consume 1, produce 1)
+                    }
                 }
                 where_end_pc = pc_;
             }
@@ -885,23 +817,23 @@ namespace scratchbird
             switch (op)
             {
                 case Opcode::LITERAL_NULL:
-                    push(Value());
+                    push(Value::makeNull());
                     break;
 
                 case Opcode::LITERAL_INT32:
-                    push(Value(static_cast<int32_t>(readInt32())));
+                    push(Value::makeInt32(static_cast<int32_t>(readInt32())));
                     break;
 
                 case Opcode::LITERAL_INT64:
-                    push(Value(static_cast<int64_t>(readInt64())));
+                    push(Value::makeInt64(static_cast<int64_t>(readInt64())));
                     break;
 
                 case Opcode::LITERAL_DOUBLE:
-                    push(Value(readDouble()));
+                    push(Value::makeFloat64(readDouble()));
                     break;
 
                 case Opcode::LITERAL_STRING:
-                    push(Value(readString()));
+                    push(Value::makeVarchar(readString()));
                     break;
 
                 case Opcode::COLUMN_REF:
@@ -948,6 +880,49 @@ namespace scratchbird
                     executeBinaryOp(op);
                     break;
 
+                // Type conversion
+                case Opcode::EXPR_CAST:
+                {
+                    // Read target type
+                    Opcode type_op = static_cast<Opcode>(readByte());
+                    core::DataType target_type = core::DataType::UNKNOWN;
+                    uint32_t precision = 0;
+
+                    switch (type_op)
+                    {
+                        case Opcode::TYPE_INTEGER:
+                            target_type = core::DataType::INT32;
+                            break;
+                        case Opcode::TYPE_BIGINT:
+                            target_type = core::DataType::INT64;
+                            break;
+                        case Opcode::TYPE_DOUBLE:
+                            target_type = core::DataType::FLOAT64;
+                            break;
+                        case Opcode::TYPE_VARCHAR:
+                            target_type = core::DataType::VARCHAR;
+                            precision = readInt32();
+                            break;
+                        default:
+                            error("Unknown type in CAST");
+                    }
+
+                    // Pop value to cast (Value is already TypedValue)
+                    Value value = pop();
+
+                    // Perform cast using TypedValue conversion
+                    auto converted = value.convertTo(target_type);
+
+                    if (!converted)
+                    {
+                        error("Failed to cast value to target type");
+                    }
+
+                    // Push converted value
+                    push(*converted);
+                    break;
+                }
+
                 default:
                     error("Unknown expression opcode: " + std::to_string(static_cast<int>(op)));
             }
@@ -962,7 +937,7 @@ namespace scratchbird
             // Handle NULL propagation
             if (left.isNull() || right.isNull())
             {
-                push(Value()); // NULL result
+                push(Value::makeNull()); // NULL result
                 return;
             }
 
@@ -970,43 +945,43 @@ namespace scratchbird
             {
                 case Opcode::EXPR_ADD:
                 {
-                    if (left.type == Value::DOUBLE || right.type == Value::DOUBLE)
-                        push(Value(left.toDouble() + right.toDouble()));
+                    if (left.type() == core::DataType::FLOAT64 || right.type() == core::DataType::FLOAT64)
+                        push(Value::makeFloat64(left.toDouble() + right.toDouble()));
                     else
-                        push(Value(left.toInt64() + right.toInt64()));
+                        push(Value::makeInt64(left.toInt64() + right.toInt64()));
                     break;
                 }
                 case Opcode::EXPR_SUBTRACT:
                 {
-                    if (left.type == Value::DOUBLE || right.type == Value::DOUBLE)
-                        push(Value(left.toDouble() - right.toDouble()));
+                    if (left.type() == core::DataType::FLOAT64 || right.type() == core::DataType::FLOAT64)
+                        push(Value::makeFloat64(left.toDouble() - right.toDouble()));
                     else
-                        push(Value(left.toInt64() - right.toInt64()));
+                        push(Value::makeInt64(left.toInt64() - right.toInt64()));
                     break;
                 }
                 case Opcode::EXPR_MULTIPLY:
                 {
-                    if (left.type == Value::DOUBLE || right.type == Value::DOUBLE)
-                        push(Value(left.toDouble() * right.toDouble()));
+                    if (left.type() == core::DataType::FLOAT64 || right.type() == core::DataType::FLOAT64)
+                        push(Value::makeFloat64(left.toDouble() * right.toDouble()));
                     else
-                        push(Value(left.toInt64() * right.toInt64()));
+                        push(Value::makeInt64(left.toInt64() * right.toInt64()));
                     break;
                 }
                 case Opcode::EXPR_DIVIDE:
                 {
                     if (right.toDouble() == 0.0)
                         error("Division by zero");
-                    if (left.type == Value::DOUBLE || right.type == Value::DOUBLE)
-                        push(Value(left.toDouble() / right.toDouble()));
+                    if (left.type() == core::DataType::FLOAT64 || right.type() == core::DataType::FLOAT64)
+                        push(Value::makeFloat64(left.toDouble() / right.toDouble()));
                     else
-                        push(Value(left.toInt64() / right.toInt64()));
+                        push(Value::makeInt64(left.toInt64() / right.toInt64()));
                     break;
                 }
                 case Opcode::EXPR_MODULO:
                 {
                     if (right.toInt64() == 0)
                         error("Modulo by zero");
-                    push(Value(left.toInt64() % right.toInt64()));
+                    push(Value::makeInt64(left.toInt64() % right.toInt64()));
                     break;
                 }
 
@@ -1014,82 +989,82 @@ namespace scratchbird
                 case Opcode::EXPR_EQ:
                 {
                     bool result;
-                    if (left.type == Value::STRING || right.type == Value::STRING)
+                    if (core::TypeSystem::isString(left.type()) || core::TypeSystem::isString(right.type()))
                         result = left.toString() == right.toString();
-                    else if (left.type == Value::DOUBLE || right.type == Value::DOUBLE)
+                    else if (left.type() == core::DataType::FLOAT64 || right.type() == core::DataType::FLOAT64)
                         result = left.toDouble() == right.toDouble();
                     else
                         result = left.toInt64() == right.toInt64();
-                    push(Value(result));
+                    push(Value::makeBoolean(result));
                     break;
                 }
                 case Opcode::EXPR_NE:
                 {
                     bool result;
-                    if (left.type == Value::STRING || right.type == Value::STRING)
+                    if (core::TypeSystem::isString(left.type()) || core::TypeSystem::isString(right.type()))
                         result = left.toString() != right.toString();
-                    else if (left.type == Value::DOUBLE || right.type == Value::DOUBLE)
+                    else if (left.type() == core::DataType::FLOAT64 || right.type() == core::DataType::FLOAT64)
                         result = left.toDouble() != right.toDouble();
                     else
                         result = left.toInt64() != right.toInt64();
-                    push(Value(result));
+                    push(Value::makeBoolean(result));
                     break;
                 }
                 case Opcode::EXPR_LT:
                 {
                     bool result;
-                    if (left.type == Value::STRING || right.type == Value::STRING)
+                    if (core::TypeSystem::isString(left.type()) || core::TypeSystem::isString(right.type()))
                         result = left.toString() < right.toString();
-                    else if (left.type == Value::DOUBLE || right.type == Value::DOUBLE)
+                    else if (left.type() == core::DataType::FLOAT64 || right.type() == core::DataType::FLOAT64)
                         result = left.toDouble() < right.toDouble();
                     else
                         result = left.toInt64() < right.toInt64();
-                    push(Value(result));
+                    push(Value::makeBoolean(result));
                     break;
                 }
                 case Opcode::EXPR_GT:
                 {
                     bool result;
-                    if (left.type == Value::STRING || right.type == Value::STRING)
+                    if (core::TypeSystem::isString(left.type()) || core::TypeSystem::isString(right.type()))
                         result = left.toString() > right.toString();
-                    else if (left.type == Value::DOUBLE || right.type == Value::DOUBLE)
+                    else if (left.type() == core::DataType::FLOAT64 || right.type() == core::DataType::FLOAT64)
                         result = left.toDouble() > right.toDouble();
                     else
                         result = left.toInt64() > right.toInt64();
-                    push(Value(result));
+                    push(Value::makeBoolean(result));
                     break;
                 }
                 case Opcode::EXPR_LE:
                 {
                     bool result;
-                    if (left.type == Value::STRING || right.type == Value::STRING)
+                    if (core::TypeSystem::isString(left.type()) || core::TypeSystem::isString(right.type()))
                         result = left.toString() <= right.toString();
-                    else if (left.type == Value::DOUBLE || right.type == Value::DOUBLE)
+                    else if (left.type() == core::DataType::FLOAT64 || right.type() == core::DataType::FLOAT64)
                         result = left.toDouble() <= right.toDouble();
                     else
                         result = left.toInt64() <= right.toInt64();
-                    push(Value(result));
+                    push(Value::makeBoolean(result));
                     break;
                 }
                 case Opcode::EXPR_GE:
                 {
                     bool result;
-                    if (left.type == Value::STRING || right.type == Value::STRING)
+                    if (core::TypeSystem::isString(left.type()) || core::TypeSystem::isString(right.type()))
                         result = left.toString() >= right.toString();
-                    else if (left.type == Value::DOUBLE || right.type == Value::DOUBLE)
+                    else if (left.type() == core::DataType::FLOAT64 || right.type() == core::DataType::FLOAT64)
                         result = left.toDouble() >= right.toDouble();
                     else
                         result = left.toInt64() >= right.toInt64();
-                    push(Value(result));
+                    push(Value::makeBoolean(result));
                     break;
                 }
 
                 // Logical operators
                 case Opcode::EXPR_AND:
-                    push(Value(left.toBoolean() && right.toBoolean()));
+                    push(Value::makeBoolean(left.toBoolean() && right.toBoolean()));
                     break;
                 case Opcode::EXPR_OR:
-                    push(Value(left.toBoolean() || right.toBoolean()));
+                    push(Value::makeBoolean(left.toBoolean() || right.toBoolean()));
                     break;
 
                 default:
@@ -1149,7 +1124,7 @@ namespace scratchbird
                     size_t bit_pos = i % 8;
                     if (null_bitmap[byte_offset] & (1 << bit_pos))
                     {
-                        values_out.push_back(Value()); // NULL value
+                        values_out.push_back(Value::makeNull()); // NULL value
                         continue;
                     }
                 }
@@ -1166,7 +1141,7 @@ namespace scratchbird
 
                         int32_t val;
                         std::memcpy(&val, tuple_data + data_offset, sizeof(int32_t));
-                        values_out.push_back(Value(val));
+                        values_out.push_back(Value::makeInt32(val));
                         data_offset += sizeof(int32_t);
                         break;
                     }
@@ -1177,7 +1152,7 @@ namespace scratchbird
 
                         int64_t val;
                         std::memcpy(&val, tuple_data + data_offset, sizeof(int64_t));
-                        values_out.push_back(Value(val));
+                        values_out.push_back(Value::makeInt64(val));
                         data_offset += sizeof(int64_t);
                         break;
                     }
@@ -1188,7 +1163,7 @@ namespace scratchbird
 
                         double val;
                         std::memcpy(&val, tuple_data + data_offset, sizeof(double));
-                        values_out.push_back(Value(val));
+                        values_out.push_back(Value::makeFloat64(val));
                         data_offset += sizeof(double);
                         break;
                     }
@@ -1205,7 +1180,7 @@ namespace scratchbird
                             return false;
 
                         std::string str(reinterpret_cast<const char *>(tuple_data + data_offset), len);
-                        values_out.push_back(Value(str));
+                        values_out.push_back(Value::makeVarchar(str));
                         data_offset += len;
                         break;
                     }

@@ -277,4 +277,131 @@
             return split_point;
         }
 
+        // Static method to get node with decompression support
+        auto BTreePage::get_node(
+            const uint8_t* page_data,
+            uint32_t page_size,
+            uint16_t node_index,
+            std::vector<uint8_t>& key_out,
+            std::vector<uint64_t>& tuple_ids_out) -> Status
+        {
+            if (!page_data)
+            {
+                return Status::INVALID_ARGUMENT;
+            }
+
+            auto* page = reinterpret_cast<const SBBTreePage*>(page_data);
+
+            if (node_index >= page->btr_count)
+            {
+                return Status::INVALID_ARGUMENT;
+            }
+
+            // Get node offset
+            auto* offsets = reinterpret_cast<const uint16_t*>(page_data + sizeof(SBBTreePage));
+            uint16_t node_offset = offsets[node_index];
+
+            auto* node = reinterpret_cast<const SBBTreeNode*>(page_data + node_offset);
+
+            // Extract compressed key (suffix only if prefix compression enabled)
+            const uint8_t* key_data = reinterpret_cast<const uint8_t*>(node) + sizeof(SBBTreeNode);
+            std::vector<uint8_t> compressed_key(key_data, key_data + node->btn_key_len);
+
+            // Decompress key if needed
+            if (node->btn_prefix_len > 0)
+            {
+                // Page has prefix compression - reconstruct full key
+                // The page prefix is stored after the page header (implementation detail)
+                // For now, we'll return the compressed key and let caller handle it
+                // Full implementation would extract page prefix and concatenate
+                key_out = compressed_key;  // TODO: Add full decompression
+            }
+            else
+            {
+                key_out = compressed_key;
+            }
+
+            // Extract tuple IDs
+            const uint8_t* tuple_data = key_data + node->btn_key_len;
+            auto* tuple_ids = reinterpret_cast<const uint64_t*>(tuple_data);
+
+            tuple_ids_out.clear();
+            tuple_ids_out.reserve(node->btn_tuple_count);
+
+            for (uint32_t i = 0; i < node->btn_tuple_count; i++)
+            {
+                tuple_ids_out.push_back(tuple_ids[i]);
+            }
+
+            return Status::OK;
+        }
+
+        void BTreePage::enableCompression(const std::vector<uint8_t>& page_prefix)
+        {
+            if (page_prefix.empty())
+            {
+                return;
+            }
+
+            // Mark page as compressed
+            page_header_->btr_flags |= static_cast<uint16_t>(BTreeFlags::COMPRESSED);
+
+            // Store prefix length
+            page_header_->btr_min_prefix_len = page_prefix.size();
+
+            // Store the prefix in the page (after nodes area, before high water)
+            // For Alpha implementation, we'll store it in a reserved area
+            // Full implementation would use special_size region
+        }
+
+        bool BTreePage::isCompressionEnabled() const
+        {
+            return (page_header_->btr_flags & static_cast<uint16_t>(BTreeFlags::COMPRESSED)) != 0;
+        }
+
+        std::vector<uint8_t> BTreePage::getPagePrefix() const
+        {
+            if (!isCompressionEnabled())
+            {
+                return {};
+            }
+
+            // Return the page prefix
+            // For Alpha, return empty - full implementation would extract from page
+            return {};
+        }
+
+        uint16_t BTreePage::calculateNodePrefix(
+            uint16_t node_index,
+            const std::vector<uint8_t>& key) const
+        {
+            if (node_index == 0)
+            {
+                // First node on page - no prefix compression
+                return 0;
+            }
+
+            // Get previous key
+            auto* offsets = reinterpret_cast<const uint16_t*>(page_data_ + sizeof(SBBTreePage));
+            auto* prev_node = reinterpret_cast<const SBBTreeNode*>(page_data_ + offsets[node_index - 1]);
+
+            const uint8_t* prev_key_data = reinterpret_cast<const uint8_t*>(prev_node) + sizeof(SBBTreeNode);
+            std::vector<uint8_t> prev_key(prev_key_data, prev_key_data + prev_node->btn_key_len);
+
+            // Calculate common prefix
+            size_t min_len = std::min(prev_key.size(), key.size());
+            uint16_t prefix_len = 0;
+
+            for (size_t i = 0; i < min_len; i++)
+            {
+                if (prev_key[i] != key[i])
+                {
+                    break;
+                }
+                prefix_len++;
+            }
+
+            return prefix_len;
+        }
+
     } // namespace scratchbird::core

@@ -138,7 +138,11 @@ TEST_F(ExtendedPageSizesTest, HeapPageOperationsLargePages)
         TupleHeader *hdr = reinterpret_cast<TupleHeader *>(tuple_data.data());
         hdr->xmin = 1;
         hdr->xmax = 0;
-        hdr->flags = 0;
+        hdr->next_version_tid = 0;
+        hdr->ctid_page = 0;
+        hdr->ctid_item = 0;
+        hdr->infomask = 0;
+        hdr->padding = 0;
         hdr->null_bitmap_offset = 0;
 
         uint16_t item_id;
@@ -220,7 +224,11 @@ TEST_F(ExtendedPageSizesTest, MaxTupleSizeForLargePages)
         TupleHeader *hdr = reinterpret_cast<TupleHeader *>(tuple_data.data());
         hdr->xmin = 1;
         hdr->xmax = 0;
-        hdr->flags = 0;
+        hdr->next_version_tid = 0;
+        hdr->ctid_page = 0;
+        hdr->ctid_item = 0;
+        hdr->infomask = 0;
+        hdr->padding = 0;
         hdr->null_bitmap_offset = 0;
 
         // Fill rest with data

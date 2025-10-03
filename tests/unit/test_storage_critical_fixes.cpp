@@ -3,6 +3,7 @@
 #include "scratchbird/core/storage_engine.h"
 #include "scratchbird/core/heap_page.h"
 #include "scratchbird/core/error_context.h"
+#include "scratchbird/core/uuidv7.h"
 #include <cstring>
 #include <filesystem>
 #include <vector>
@@ -10,6 +11,13 @@
 #include <sys/resource.h>
 
 using namespace scratchbird::core;
+
+// Helper to create a test UUID
+static inline UuidV7Bytes makeTestUUID(uint8_t value = 0xAB) {
+    UuidV7Bytes uuid;
+    memset(uuid.bytes.data(), value, 16);
+    return uuid;
+}
 
 class StorageCriticalFixesTest : public ::testing::Test
 {
@@ -56,7 +64,7 @@ TEST_F(StorageCriticalFixesTest, HeapScanIterator_NoMemoryLeak)
     {
         uint32_t page_id;
         uint16_t item_id;
-        Status status = engine.insertTuple(1, tuple_data.data(), tuple_data.size(), &page_id,
+        Status status = engine.insertTuple(makeTestUUID(1), tuple_data.data(), tuple_data.size(), &page_id,
                                             &item_id, nullptr);
         ASSERT_EQ(status, Status::OK) << "Failed to insert tuple " << i;
     }
@@ -67,12 +75,12 @@ TEST_F(StorageCriticalFixesTest, HeapScanIterator_NoMemoryLeak)
     // Perform multiple scans to amplify memory leak
     for (int scan = 0; scan < 10; scan++)
     {
-        auto iterator = engine.create_scan(1, nullptr);
+        auto iterator = engine.createScan(makeTestUUID(1), nullptr);
         ASSERT_NE(iterator, nullptr);
 
         int count = 0;
         Tuple tuple;
-        while (!iterator->is_done())
+        while (!iterator->isDone())
         {
             Status status = iterator->next(&tuple, nullptr);
             if (status == Status::OK)
@@ -121,7 +129,7 @@ TEST_F(StorageCriticalFixesTest, HeapPage_InsertTuple_BufferOverflowProtection)
         uint16_t item_id;
         // Pass raw data but size includes header
         Status status = engine.insertTuple(
-            1, raw_data.data(), raw_data.size() + sizeof(TupleHeader), &page_id, &item_id, nullptr);
+            makeTestUUID(1), raw_data.data(), raw_data.size() + sizeof(TupleHeader), &page_id, &item_id, nullptr);
 
         // Should succeed with fixed implementation
         EXPECT_EQ(status, Status::OK) << "API expects tuple_size to include header";
@@ -159,7 +167,7 @@ TEST_F(StorageCriticalFixesTest, HeapPage_InsertTuple_BufferOverflowProtection)
         uint32_t page_id;
         uint16_t item_id;
         Status status =
-            engine.insertTuple(1, tiny_data.data(), tiny_data.size(), &page_id, &item_id, nullptr);
+            engine.insertTuple(makeTestUUID(1), tiny_data.data(), tiny_data.size(), &page_id, &item_id, nullptr);
 
         // CURRENT BEHAVIOR: This will cause integer underflow
         // tuple_size(5) - sizeof(TupleHeader)(12) = -7 wrapped to huge number
@@ -188,11 +196,11 @@ TEST_F(StorageCriticalFixesTest, HeapScanIterator_ProperEngineUsage)
     // Insert with different transaction IDs to test visibility
     // Note: begin_transaction is now handled by TransactionManager
     ASSERT_EQ(
-        engine.insertTuple(1, tuple_data.data(), tuple_data.size(), &page_id, &item_id, nullptr),
+        engine.insertTuple(makeTestUUID(1), tuple_data.data(), tuple_data.size(), &page_id, &item_id, nullptr),
         Status::OK);
 
     // Create iterator
-    auto iterator = engine.create_scan(1, nullptr);
+    auto iterator = engine.createScan(makeTestUUID(1), nullptr);
     ASSERT_NE(iterator, nullptr);
 
     // The iterator should use the parent engine's transaction context
@@ -223,7 +231,7 @@ TEST_F(StorageCriticalFixesTest, HeapScanIterator_StressTestMemoryLeak)
     {
         uint32_t page_id;
         uint16_t item_id;
-        Status status = engine.insertTuple(1, tuple_data.data(), tuple_data.size(), &page_id,
+        Status status = engine.insertTuple(makeTestUUID(1), tuple_data.data(), tuple_data.size(), &page_id,
                                             &item_id, nullptr);
         ASSERT_EQ(status, Status::OK);
     }
@@ -234,11 +242,11 @@ TEST_F(StorageCriticalFixesTest, HeapScanIterator_StressTestMemoryLeak)
     // Perform many sequential scans
     for (int iteration = 0; iteration < 100; iteration++)
     {
-        auto iterator = engine.create_scan(1, nullptr);
+        auto iterator = engine.createScan(makeTestUUID(1), nullptr);
 
         int count = 0;
         Tuple tuple;
-        while (!iterator->is_done())
+        while (!iterator->isDone())
         {
             if (iterator->next(&tuple, nullptr) == Status::OK)
             {
@@ -353,7 +361,7 @@ TEST_F(StorageCriticalFixesTest, CombinedFixes_ScanAndInsert)
         // Clear API usage - if it expects size with header
         size_t total_size = data.size() + sizeof(TupleHeader);
         Status status =
-            engine.insertTuple(1, data.data(), total_size, &page_id, &item_id, nullptr);
+            engine.insertTuple(makeTestUUID(1), data.data(), total_size, &page_id, &item_id, nullptr);
 
         // Should validate the size properly
         if (status == Status::OK)
@@ -369,11 +377,11 @@ TEST_F(StorageCriticalFixesTest, CombinedFixes_ScanAndInsert)
 
     for (int i = 0; i < 50; i++)
     {
-        auto iterator = engine.create_scan(1, nullptr);
+        auto iterator = engine.createScan(makeTestUUID(1), nullptr);
 
         int count = 0;
         Tuple tuple;
-        while (!iterator->is_done())
+        while (!iterator->isDone())
         {
             if (iterator->next(&tuple, nullptr) == Status::OK)
             {

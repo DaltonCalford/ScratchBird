@@ -177,42 +177,14 @@ namespace scratchbird
                     ss << "Cannot assign ";
                     if (expr_type)
                     {
-                        switch (expr_type->type.type)
-                    {
-                        case DataType::INTEGER:
-                            ss << "INTEGER";
-                            break;
-                        case DataType::BIGINT:
-                            ss << "BIGINT";
-                            break;
-                        case DataType::DOUBLE:
-                            ss << "DOUBLE";
-                            break;
-                        case DataType::VARCHAR:
-                            ss << "VARCHAR";
-                            break;
-                    }
+                        ss << core::TypeSystem::getTypeName(expr_type->type.type);
                     }
                     else
                     {
                         ss << "unknown type";
                     }
                     ss << " to column '" << string_pool_.get(col->name) << "' of type ";
-                    switch (col->type.type)
-                    {
-                        case DataType::INTEGER:
-                            ss << "INTEGER";
-                            break;
-                        case DataType::BIGINT:
-                            ss << "BIGINT";
-                            break;
-                        case DataType::DOUBLE:
-                            ss << "DOUBLE";
-                            break;
-                        case DataType::VARCHAR:
-                            ss << "VARCHAR";
-                            break;
-                    }
+                    ss << core::TypeSystem::getTypeName(col->type.type);
                     reportError(value, ss.str());
                 }
 
@@ -263,9 +235,10 @@ namespace scratchbird
             {
                 checkExpression(node->whereClause());
 
-                // WHERE clause must be boolean (INTEGER for now)
+                // WHERE clause must be boolean
                 const ExpressionType *where_type = getExpressionType(node->whereClause());
-                if (!where_type || where_type->type.type != DataType::INTEGER)
+                if (!where_type || (where_type->type.type != DataType::BOOLEAN &&
+                                     where_type->type.type != DataType::INT32))
                 {
                     reportError(node->whereClause(), "WHERE clause must evaluate to boolean");
                 }
@@ -290,10 +263,10 @@ namespace scratchbird
             switch (node->literalType())
             {
                 case LiteralExpr::INTEGER:
-                    type = ExpressionType(TypeName(DataType::INTEGER), false);
+                    type = ExpressionType(TypeName(DataType::INT32), false);
                     break;
                 case LiteralExpr::FLOAT:
-                    type = ExpressionType(TypeName(DataType::DOUBLE), false);
+                    type = ExpressionType(TypeName(DataType::FLOAT64), false);
                     break;
                 case LiteralExpr::STRING:
                     // Assume VARCHAR with unknown precision
@@ -301,7 +274,7 @@ namespace scratchbird
                     break;
                 case LiteralExpr::NULL_LITERAL:
                     // NULL can be any type
-                    type = ExpressionType(TypeName(DataType::INTEGER), true);
+                    type = ExpressionType(TypeName(DataType::NULL_TYPE), true);
                     break;
             }
 
@@ -376,12 +349,14 @@ namespace scratchbird
 
                 case BinaryOp::AND:
                 case BinaryOp::OR:
-                    // Logical operators
-                    if (left_type->type.type != DataType::INTEGER)
+                    // Logical operators - accept BOOLEAN or INT32 (for compatibility)
+                    if (left_type->type.type != DataType::BOOLEAN &&
+                        left_type->type.type != DataType::INT32)
                     {
                         reportError(node->left(), "Left operand must be boolean");
                     }
-                    if (right_type->type.type != DataType::INTEGER)
+                    if (right_type->type.type != DataType::BOOLEAN &&
+                        right_type->type.type != DataType::INT32)
                     {
                         reportError(node->right(), "Right operand must be boolean");
                     }
@@ -394,6 +369,38 @@ namespace scratchbird
             bool result_nullable = left_type->is_nullable || right_type->is_nullable;
 
             setExpressionType(node, ExpressionType(result_type, result_nullable));
+        }
+
+        void SemanticAnalyzer::visit(CastExpr *node)
+        {
+            // Check the expression being cast
+            checkExpression(node->expr());
+
+            const ExpressionType *expr_type = getExpressionType(node->expr());
+            if (!expr_type)
+            {
+                reportError(node, "Cannot determine type of expression being cast");
+                return;
+            }
+
+            // Validate target type
+            const TypeName &target_type = node->targetType();
+            if (target_type.type == DataType::VARCHAR && target_type.precision == 0)
+            {
+                reportError(node, "VARCHAR type requires precision in CAST");
+            }
+
+            // Check if cast is valid using TypeSystem
+            if (!core::TypeSystem::isExplicitlyConvertible(expr_type->type.type, target_type.type))
+            {
+                std::stringstream ss;
+                ss << "Cannot cast from " << core::TypeSystem::getTypeName(expr_type->type.type)
+                   << " to " << core::TypeSystem::getTypeName(target_type.type);
+                reportError(node, ss.str());
+            }
+
+            // Set result type to target type (CAST always produces non-nullable unless explicitly nullable)
+            setExpressionType(node, ExpressionType(target_type, false));
         }
 
         void SemanticAnalyzer::visit(ColumnDef *node)

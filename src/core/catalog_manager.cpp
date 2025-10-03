@@ -92,7 +92,7 @@
 
         auto CatalogManager::initialize(ErrorContext *ctx) -> Status
         {
-            std::lock_guard<std::mutex> lock(mutex_);
+            // NOTE: Assumes mutex_ is already held by caller (load())
             DEBUG_LOG_DB("Initializing system catalog");
 
             // Write catalog root page
@@ -201,7 +201,7 @@
 
             // Create default schemas
             ID schema_id;
-            status = createSchema("[sys]", "[root]", schema_id, ctx);
+            status = createSchemaInternal("[sys]", "[root]", schema_id, ctx);
             if (status != Status::OK)
             {
                 return status;
@@ -273,11 +273,11 @@
             return Status::OK;
         }
 
-        auto CatalogManager::createSchema(const std::string &schema_name,
+        // Internal version without lock (assumes caller holds mutex_)
+        auto CatalogManager::createSchemaInternal(const std::string &schema_name,
                                              const std::string &owner, ID &schema_id,
                                              ErrorContext *ctx) -> Status
         {
-            std::lock_guard<std::mutex> lock(mutex_);
             // Check if schema already exists
             for (const auto &[id, info] : schema_cache_)
             {
@@ -322,6 +322,14 @@
                                             << ")");
 
             return status;
+        }
+
+        auto CatalogManager::createSchema(const std::string &schema_name,
+                                             const std::string &owner, ID &schema_id,
+                                             ErrorContext *ctx) -> Status
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            return createSchemaInternal(schema_name, owner, schema_id, ctx);
         }
 
         auto CatalogManager::getSchema(const ID &schema_id, SchemaInfo &info, ErrorContext *ctx) -> Status

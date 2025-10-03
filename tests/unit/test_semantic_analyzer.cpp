@@ -109,8 +109,8 @@ TEST_F(SemanticAnalyzerTest, CreateTableDuplicateColumn)
 
 TEST_F(SemanticAnalyzerTest, CreateTableInvalidVarchar)
 {
-    // Parser requires parentheses, so this test checks parser error not semantic
-    expectError("CREATE TABLE t1 (name VARCHAR)", "Expected '(' after VARCHAR");
+    // Semantic analyzer requires VARCHAR to have precision
+    expectError("CREATE TABLE t1 (name VARCHAR)", "VARCHAR type requires precision");
 }
 
 TEST_F(SemanticAnalyzerTest, CreateTableDuplicateTable)

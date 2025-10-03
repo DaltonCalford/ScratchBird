@@ -3,6 +3,7 @@
 #include "scratchbird/core/buffer_pool.h"
 #include "scratchbird/core/page_manager.h"
 #include "scratchbird/core/proc_array.h"
+#include "scratchbird/core/clog.h"
 #include "scratchbird/core/error_context.h"
 #include <algorithm>
 #include <chrono>
@@ -234,8 +235,8 @@
                 // Continue anyway - state update is more critical
             }
 
-            // Write to TIP
-            status = writeTipEntry(xid, TransactionState::COMMITTED, ctx);
+            // Write to CLOG (commit log)
+            status = db_->clog()->setStatus(xid, ClogStatus::COMMITTED, ctx);
             if (status != Status::OK)
             {
                 // Try to rollback on failure
@@ -263,8 +264,8 @@
                 // Continue anyway - state update is more critical
             }
 
-            // Write to TIP
-            status = writeTipEntry(xid, TransactionState::ABORTED, ctx);
+            // Write to CLOG (commit log)
+            status = db_->clog()->setStatus(xid, ClogStatus::ABORTED, ctx);
             if (status != Status::OK)
             {
                 return status;
@@ -287,9 +288,9 @@
                 return Status::OK;
             }
 
-            // Not in cache, check TIP pages
-            TIPEntry entry;
-            Status status = findTipEntry(xid, entry, ctx);
+            // Not in cache, check CLOG
+            ClogStatus clog_status;
+            Status status = db_->clog()->getStatus(xid, &clog_status, ctx);
             if (status == Status::NOT_FOUND)
             {
                 // Transaction not found, assume it's too old and committed
@@ -303,7 +304,23 @@
                 return status;
             }
 
-            state_out = static_cast<TransactionState>(entry.state);
+            // Convert CLOG status to TransactionState
+            switch (clog_status)
+            {
+                case ClogStatus::IN_PROGRESS:
+                    state_out = TransactionState::ACTIVE;
+                    break;
+                case ClogStatus::COMMITTED:
+                    state_out = TransactionState::COMMITTED;
+                    break;
+                case ClogStatus::ABORTED:
+                    state_out = TransactionState::ABORTED;
+                    break;
+                case ClogStatus::SUB_COMMITTED:
+                    // For now, treat sub-committed as committed
+                    state_out = TransactionState::COMMITTED;
+                    break;
+            }
             transaction_cache_[xid] = state_out;
 
             return Status::OK;

@@ -22,6 +22,7 @@
             HASH_INDEX_META = 9,             // Hash index meta page
             HASH_INDEX_DIRECTORY = 10,       // Hash index directory page
             HASH_INDEX_BUCKET = 11,          // Hash index bucket page
+            PAGE_TYPE_CLOG = 12,             // Commit log page (2-bit transaction status)
         };
 
         // Page flags (bitwise OR)

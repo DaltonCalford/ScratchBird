@@ -93,10 +93,10 @@ namespace scratchbird
             }
 
             // Numeric types are compatible
-            if ((t1.type == DataType::INTEGER || t1.type == DataType::BIGINT ||
-                 t1.type == DataType::DOUBLE) &&
-                (t2.type == DataType::INTEGER || t2.type == DataType::BIGINT ||
-                 t2.type == DataType::DOUBLE))
+            if ((t1.type == DataType::INT32 || t1.type == DataType::INT64 ||
+                 t1.type == DataType::FLOAT64) &&
+                (t2.type == DataType::INT32 || t2.type == DataType::INT64 ||
+                 t2.type == DataType::FLOAT64))
             {
                 return true;
             }
@@ -121,10 +121,10 @@ namespace scratchbird
             // Allow numeric promotions
             switch (target.type)
             {
-                case DataType::BIGINT:
-                    return source.type == DataType::INTEGER;
-                case DataType::DOUBLE:
-                    return source.type == DataType::INTEGER || source.type == DataType::BIGINT;
+                case DataType::INT64:
+                    return source.type == DataType::INT32;
+                case DataType::FLOAT64:
+                    return source.type == DataType::INT32 || source.type == DataType::INT64;
                 default:
                     return false;
             }
@@ -144,26 +144,26 @@ namespace scratchbird
                 case BinaryOp::GE:
                 case BinaryOp::AND:
                 case BinaryOp::OR:
-                    return TypeName(DataType::INTEGER); // Boolean type
+                    return TypeName(DataType::INT32); // Boolean type
                 default:
                     break;
             }
 
             // Arithmetic operators
             // If either operand is DOUBLE, result is DOUBLE
-            if (left.type == DataType::DOUBLE || right.type == DataType::DOUBLE)
+            if (left.type == DataType::FLOAT64 || right.type == DataType::FLOAT64)
             {
-                return TypeName(DataType::DOUBLE);
+                return TypeName(DataType::FLOAT64);
             }
 
             // If either operand is BIGINT, result is BIGINT
-            if (left.type == DataType::BIGINT || right.type == DataType::BIGINT)
+            if (left.type == DataType::INT64 || right.type == DataType::INT64)
             {
-                return TypeName(DataType::BIGINT);
+                return TypeName(DataType::INT64);
             }
 
             // Otherwise, result is INTEGER
-            return TypeName(DataType::INTEGER);
+            return TypeName(DataType::INT32);
         }
 
         bool TypeChecker::supportsComparison(const TypeName &type)
@@ -174,8 +174,8 @@ namespace scratchbird
 
         bool TypeChecker::supportsArithmetic(const TypeName &type)
         {
-            return type.type == DataType::INTEGER || type.type == DataType::BIGINT ||
-                   type.type == DataType::DOUBLE;
+            return type.type == DataType::INT32 || type.type == DataType::INT64 ||
+                   type.type == DataType::FLOAT64;
         }
 
     } // namespace parser

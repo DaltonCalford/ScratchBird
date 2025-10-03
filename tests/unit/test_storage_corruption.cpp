@@ -4,11 +4,19 @@
 #include "scratchbird/core/heap_page.h"
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/core/ondisk.h"
+#include "scratchbird/core/uuidv7.h"
 #include <cstring>
 #include <filesystem>
 #include <fstream>
 
 using namespace scratchbird::core;
+
+// Helper to create a test UUID
+static inline UuidV7Bytes makeTestUUID(uint8_t value = 0xAB) {
+    UuidV7Bytes uuid;
+    memset(uuid.bytes.data(), value, 16);
+    return uuid;
+}
 
 class StorageCorruptionTest : public ::testing::Test
 {
@@ -64,7 +72,7 @@ TEST_F(StorageCorruptionTest, CorruptPageHeaderMagic)
 
         uint32_t page_id;
         uint16_t item_id;
-        ASSERT_EQ(engine.insertTuple(1, tuple_data.data(), tuple_data.size() + sizeof(TupleHeader),
+        ASSERT_EQ(engine.insertTuple(makeTestUUID(1), tuple_data.data(), tuple_data.size() + sizeof(TupleHeader),
                                       &page_id, &item_id, nullptr),
                   Status::OK);
 
@@ -81,7 +89,7 @@ TEST_F(StorageCorruptionTest, CorruptPageHeaderMagic)
     ASSERT_EQ(db.open("test_corrupt.db"), Status::OK);
 
     StorageEngine engine(&db);
-    auto iterator = engine.createScan(1, nullptr);
+    auto iterator = engine.createScan(makeTestUUID(1), nullptr);
 
     // Should detect corruption when trying to read the page
     Tuple tuple;
@@ -108,7 +116,7 @@ TEST_F(StorageCorruptionTest, CorruptPageChecksum)
 
         uint32_t page_id;
         uint16_t item_id;
-        ASSERT_EQ(engine.insertTuple(1, tuple_data.data(), tuple_data.size() + sizeof(TupleHeader),
+        ASSERT_EQ(engine.insertTuple(makeTestUUID(1), tuple_data.data(), tuple_data.size() + sizeof(TupleHeader),
                                       &page_id, &item_id, nullptr),
                   Status::OK);
 
@@ -162,7 +170,7 @@ TEST_F(StorageCorruptionTest, CorruptItemPointer)
         StorageEngine engine(&db);
         std::vector<uint8_t> tuple_data(100, 0xCC);
 
-        ASSERT_EQ(engine.insertTuple(1, tuple_data.data(), tuple_data.size() + sizeof(TupleHeader),
+        ASSERT_EQ(engine.insertTuple(makeTestUUID(1), tuple_data.data(), tuple_data.size() + sizeof(TupleHeader),
                                       &stored_page_id, &stored_item_id, nullptr),
                   Status::OK);
 
@@ -214,7 +222,7 @@ TEST_F(StorageCorruptionTest, CorruptTupleHeader)
         {
             uint32_t page_id;
             uint16_t item_id;
-            ASSERT_EQ(engine.insertTuple(1, tuple_data.data(),
+            ASSERT_EQ(engine.insertTuple(makeTestUUID(1), tuple_data.data(),
                                           tuple_data.size() + sizeof(TupleHeader), &page_id,
                                           &item_id, nullptr),
                       Status::OK);
@@ -228,8 +236,12 @@ TEST_F(StorageCorruptionTest, CorruptTupleHeader)
     TupleHeader bad_header;
     bad_header.xmin = UINT64_MAX; // Invalid transaction ID
     bad_header.xmax = UINT64_MAX - 1;
-    bad_header.flags = 0xFFFF; // All flags set
+    bad_header.next_version_tid = 0;
+    bad_header.ctid_page = 0;
+    bad_header.ctid_item = 0;
+    bad_header.infomask = 0xFFFF; // All flags set
     bad_header.null_bitmap_offset = 0xFFFF;
+    bad_header.padding = 0;
 
     // Corrupt somewhere in the middle of page 7
     corrupt_file("test_corrupt.db", 7 * 8192 + 4000, reinterpret_cast<uint8_t *>(&bad_header),
@@ -240,13 +252,13 @@ TEST_F(StorageCorruptionTest, CorruptTupleHeader)
     ASSERT_EQ(db.open("test_corrupt.db"), Status::OK);
 
     StorageEngine engine(&db);
-    auto iterator = engine.createScan(1, nullptr);
+    auto iterator = engine.createScan(makeTestUUID(1), nullptr);
 
     int valid_tuples = 0;
     int errors = 0;
     Tuple tuple;
 
-    while (!iterator->is_done())
+    while (!iterator->isDone())
     {
         Status status = iterator->next(&tuple, nullptr);
         if (status == Status::OK)
@@ -282,7 +294,7 @@ TEST_F(StorageCorruptionTest, CorruptPageSpecialArea)
 
         uint32_t page_id;
         uint16_t item_id;
-        ASSERT_EQ(engine.insertTuple(1, tuple_data.data(), tuple_data.size() + sizeof(TupleHeader),
+        ASSERT_EQ(engine.insertTuple(makeTestUUID(1), tuple_data.data(), tuple_data.size() + sizeof(TupleHeader),
                                       &page_id, &item_id, nullptr),
                   Status::OK);
 
@@ -315,7 +327,7 @@ TEST_F(StorageCorruptionTest, CorruptPageSpecialArea)
 
     // This might allocate a new page or detect corruption
     Status status = engine.insertTuple(
-        1, tuple_data.data(), tuple_data.size() + sizeof(TupleHeader), &page_id, &item_id, &ctx);
+        makeTestUUID(1), tuple_data.data(), tuple_data.size() + sizeof(TupleHeader), &page_id, &item_id, &ctx);
 
     // Should either detect corruption or allocate new page
     if (status == Status::OK)
@@ -343,7 +355,7 @@ TEST_F(StorageCorruptionTest, TruncatedFile)
         {
             uint32_t page_id;
             uint16_t item_id;
-            engine.insertTuple(1, tuple_data.data(), tuple_data.size() + sizeof(TupleHeader),
+            engine.insertTuple(makeTestUUID(1), tuple_data.data(), tuple_data.size() + sizeof(TupleHeader),
                                 &page_id, &item_id, nullptr);
         }
 
@@ -363,13 +375,13 @@ TEST_F(StorageCorruptionTest, TruncatedFile)
     if (status == Status::OK)
     {
         StorageEngine engine(&db);
-        auto iterator = engine.createScan(1, nullptr);
+        auto iterator = engine.createScan(makeTestUUID(1), nullptr);
 
         int tuples_read = 0;
         bool hit_error = false;
         Tuple tuple;
 
-        while (!iterator->is_done() && !hit_error)
+        while (!iterator->isDone() && !hit_error)
         {
             status = iterator->next(&tuple, &ctx);
             if (status == Status::OK)
@@ -401,7 +413,7 @@ TEST_F(StorageCorruptionTest, ZeroFilledPage)
 
         uint32_t page_id;
         uint16_t item_id;
-        ASSERT_EQ(engine.insertTuple(1, tuple_data.data(), tuple_data.size() + sizeof(TupleHeader),
+        ASSERT_EQ(engine.insertTuple(makeTestUUID(1), tuple_data.data(), tuple_data.size() + sizeof(TupleHeader),
                                       &page_id, &item_id, nullptr),
                   Status::OK);
 
@@ -442,7 +454,7 @@ TEST_F(StorageCorruptionTest, PageTypeMismatch)
 
         uint32_t page_id;
         uint16_t item_id;
-        ASSERT_EQ(engine.insertTuple(1, tuple_data.data(), tuple_data.size() + sizeof(TupleHeader),
+        ASSERT_EQ(engine.insertTuple(makeTestUUID(1), tuple_data.data(), tuple_data.size() + sizeof(TupleHeader),
                                       &page_id, &item_id, nullptr),
                   Status::OK);
 
@@ -460,7 +472,7 @@ TEST_F(StorageCorruptionTest, PageTypeMismatch)
     ASSERT_EQ(db.open("test_corrupt.db"), Status::OK);
 
     StorageEngine engine(&db);
-    auto iterator = engine.createScan(1, nullptr);
+    auto iterator = engine.createScan(makeTestUUID(1), nullptr);
 
     Tuple tuple;
     ErrorContext ctx;
@@ -489,7 +501,7 @@ TEST_F(StorageCorruptionTest, RecoveryFromCorruption)
         {
             uint32_t page_id;
             uint16_t item_id;
-            engine.insertTuple(1, tuple_data.data(), tuple_data.size() + sizeof(TupleHeader),
+            engine.insertTuple(makeTestUUID(1), tuple_data.data(), tuple_data.size() + sizeof(TupleHeader),
                                 &page_id, &item_id, nullptr);
         }
 
@@ -512,18 +524,18 @@ TEST_F(StorageCorruptionTest, RecoveryFromCorruption)
     std::vector<uint8_t> new_data(100, 0x55);
     uint32_t page_id;
     uint16_t item_id;
-    Status status = engine.insertTuple(1, new_data.data(), new_data.size() + sizeof(TupleHeader),
+    Status status = engine.insertTuple(makeTestUUID(1), new_data.data(), new_data.size() + sizeof(TupleHeader),
                                         &page_id, &item_id, nullptr);
 
     EXPECT_EQ(status, Status::OK) << "Should be able to insert despite corruption";
 
     // Scan should work but skip corrupted pages
-    auto iterator = engine.createScan(1, nullptr);
+    auto iterator = engine.createScan(makeTestUUID(1), nullptr);
     int valid_tuples = 0;
     int errors = 0;
     Tuple tuple;
 
-    while (!iterator->is_done())
+    while (!iterator->isDone())
     {
         status = iterator->next(&tuple, nullptr);
         if (status == Status::OK)

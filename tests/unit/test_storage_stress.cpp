@@ -1,8 +1,10 @@
 #include <gtest/gtest.h>
+#include <cstring>
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/storage_engine.h"
 #include "scratchbird/core/heap_page.h"
 #include "scratchbird/core/error_context.h"
+#include "scratchbird/core/uuidv7.h"
 #include <chrono>
 #include <random>
 #include <thread>
@@ -13,6 +15,13 @@
 #include <cstdio>
 
 using namespace scratchbird::core;
+
+// Helper to create a test UUID
+static inline UuidV7Bytes makeTestUUID(uint8_t value = 0xAB) {
+    UuidV7Bytes uuid;
+    memset(uuid.bytes.data(), value, 16);
+    return uuid;
+}
 using namespace std::chrono;
 
 class StorageStressTest : public ::testing::Test
@@ -82,7 +91,7 @@ TEST_F(StorageStressTest, Insert10000Tuples)
         uint32_t page_id;
         uint16_t item_id;
         Status status =
-            engine.insertTuple(1, tuple_data.data(), tuple_data.size() + sizeof(TupleHeader),
+            engine.insertTuple(makeTestUUID(1), tuple_data.data(), tuple_data.size() + sizeof(TupleHeader),
                                 &page_id, &item_id, nullptr);
         ASSERT_EQ(status, Status::OK) << "Failed at tuple " << i;
 
@@ -108,10 +117,10 @@ TEST_F(StorageStressTest, Insert10000Tuples)
 
     // Verify all tuples with scan
     auto scan_start = high_resolution_clock::now();
-    auto iterator = engine.create_scan(1, nullptr);
+    auto iterator = engine.createScan(makeTestUUID(1), nullptr);
     int count = 0;
     Tuple tuple;
-    while (!iterator->is_done())
+    while (!iterator->isDone())
     {
         if (iterator->next(&tuple, nullptr) == Status::OK)
         {
@@ -153,7 +162,7 @@ TEST_F(StorageStressTest, RandomDeletePattern)
         uint32_t page_id;
         uint16_t item_id;
         Status status =
-            engine.insertTuple(1, tuple_data.data(), tuple_data.size() + sizeof(TupleHeader),
+            engine.insertTuple(makeTestUUID(1), tuple_data.data(), tuple_data.size() + sizeof(TupleHeader),
                                 &page_id, &item_id, nullptr);
         ASSERT_EQ(status, Status::OK);
         tuple_ids.push_back({page_id, item_id});
@@ -189,10 +198,10 @@ TEST_F(StorageStressTest, RandomDeletePattern)
 
     // Count visible tuples after deletion
     // Transaction management is now handled by TransactionManager // New transaction to see deletes
-    auto iterator = engine.create_scan(1, nullptr);
+    auto iterator = engine.createScan(makeTestUUID(1), nullptr);
     int visible_count = 0;
     Tuple tuple;
-    while (!iterator->is_done())
+    while (!iterator->isDone())
     {
         if (iterator->next(&tuple, nullptr) == Status::OK)
         {
@@ -210,7 +219,7 @@ TEST_F(StorageStressTest, RandomDeletePattern)
         uint32_t page_id;
         uint16_t item_id;
         Status status =
-            engine.insertTuple(1, tuple_data.data(), tuple_data.size() + sizeof(TupleHeader),
+            engine.insertTuple(makeTestUUID(1), tuple_data.data(), tuple_data.size() + sizeof(TupleHeader),
                                 &page_id, &item_id, nullptr);
         ASSERT_EQ(status, Status::OK);
 
@@ -256,13 +265,13 @@ TEST_F(StorageStressTest, FragmentationHandling)
 
         // Small tuple
         Status status =
-            engine.insertTuple(1, small_tuple.data(), small_tuple.size() + sizeof(TupleHeader),
+            engine.insertTuple(makeTestUUID(1), small_tuple.data(), small_tuple.size() + sizeof(TupleHeader),
                                 &page_id, &item_id, nullptr);
         ASSERT_EQ(status, Status::OK);
 
         // Large tuple
         status =
-            engine.insertTuple(1, large_tuple.data(), large_tuple.size() + sizeof(TupleHeader),
+            engine.insertTuple(makeTestUUID(1), large_tuple.data(), large_tuple.size() + sizeof(TupleHeader),
                                 &page_id, &item_id, nullptr);
         ASSERT_EQ(status, Status::OK);
         large_tuple_ids.push_back({page_id, item_id});
@@ -285,7 +294,7 @@ TEST_F(StorageStressTest, FragmentationHandling)
         uint32_t page_id;
         uint16_t item_id;
         Status status =
-            engine.insertTuple(1, medium_tuple.data(), medium_tuple.size() + sizeof(TupleHeader),
+            engine.insertTuple(makeTestUUID(1), medium_tuple.data(), medium_tuple.size() + sizeof(TupleHeader),
                                 &page_id, &item_id, nullptr);
         if (status == Status::OK)
         {
@@ -332,7 +341,7 @@ TEST_F(StorageStressTest, LargeDatabaseGrowth)
         uint32_t page_id;
         uint16_t item_id;
         Status status =
-            engine.insertTuple(1, tuple_data.data(), tuple_data.size() + sizeof(TupleHeader),
+            engine.insertTuple(makeTestUUID(1), tuple_data.data(), tuple_data.size() + sizeof(TupleHeader),
                                 &page_id, &item_id, nullptr);
         if (status != Status::OK)
         {
@@ -406,7 +415,7 @@ TEST_F(StorageStressTest, TransactionIDStress)
         uint32_t page_id;
         uint16_t item_id;
         Status status =
-            engine.insertTuple(1, tuple_data.data(), tuple_data.size() + sizeof(TupleHeader),
+            engine.insertTuple(makeTestUUID(1), tuple_data.data(), tuple_data.size() + sizeof(TupleHeader),
                                 &page_id, &item_id, nullptr);
         ASSERT_EQ(status, Status::OK);
         tuple_ids.push_back({page_id, item_id});
@@ -427,7 +436,7 @@ TEST_F(StorageStressTest, TransactionIDStress)
 
     // Check visibility rules after many transactions
     // Transaction management is now handled by TransactionManager
-    uint64_t final_xid = engine.get_current_xid();
+    uint64_t final_xid = engine.getCurrentXid();
 
     std::cout << "\nTransaction ID Stress Test:\n";
     std::cout << "  Transactions executed: " << num_transactions << "\n";
@@ -435,10 +444,10 @@ TEST_F(StorageStressTest, TransactionIDStress)
     std::cout << "  XID is 64-bit: " << (sizeof(final_xid) == 8 ? "YES" : "NO") << "\n";
 
     // Scan and count visible tuples
-    auto iterator = engine.create_scan(1, nullptr);
+    auto iterator = engine.createScan(makeTestUUID(1), nullptr);
     int visible_count = 0;
     Tuple tuple;
-    while (!iterator->is_done())
+    while (!iterator->isDone())
     {
         if (iterator->next(&tuple, nullptr) == Status::OK)
         {
@@ -505,7 +514,7 @@ TEST_F(StorageStressTest, ConcurrentAccessPattern)
                 uint32_t page_id;
                 uint16_t item_id;
                 Status status = engine.insertTuple(
-                    1, data.data(), data.size() + sizeof(TupleHeader), &page_id, &item_id, nullptr);
+                    makeTestUUID(1), data.data(), data.size() + sizeof(TupleHeader), &page_id, &item_id, nullptr);
                 if (status == Status::OK)
                 {
                     session.my_tuples.push_back({page_id, item_id});
@@ -530,10 +539,10 @@ TEST_F(StorageStressTest, ConcurrentAccessPattern)
             }
             case 2:
             { // Scan
-                auto iterator = engine.create_scan(1, nullptr);
+                auto iterator = engine.createScan(makeTestUUID(1), nullptr);
                 int count = 0;
                 Tuple tuple;
-                while (!iterator->is_done() && count < 100)
+                while (!iterator->isDone() && count < 100)
                 { // Limit scan
                     if (iterator->next(&tuple, nullptr) == Status::OK)
                     {

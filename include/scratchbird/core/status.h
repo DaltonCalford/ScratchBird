@@ -19,7 +19,8 @@
             CHECKSUM_MISMATCH = 2002,
             DEADLOCK = 3001,
             LOCK_TIMEOUT = 3002,
-            OOM = 3003,              // Out of memory per ERROR_HANDLING.md
+            LOCK_CONFLICT = 3003,
+            OOM = 3004,              // Out of memory per ERROR_HANDLING.md
             PAGE_FULL = 4001,         // No space available in page
             NOT_FOUND = 4002,         // Tuple/item not found
             NOT_IMPLEMENTED = 4003,   // Feature not implemented

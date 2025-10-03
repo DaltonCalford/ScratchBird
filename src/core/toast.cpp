@@ -145,7 +145,7 @@
             // chunk_id column
             CatalogManager::ColumnInfo col1;
             col1.column_name = "chunk_id";
-            col1.data_type = static_cast<uint16_t>(DataType::INT);
+            col1.data_type = static_cast<uint16_t>(DataType::INT32);
             col1.max_length = 4;
             col1.nullable = false;
             col1.has_default = false;
@@ -154,7 +154,7 @@
             // chunk_seq column
             CatalogManager::ColumnInfo col2;
             col2.column_name = "chunk_seq";
-            col2.data_type = static_cast<uint16_t>(DataType::INT);
+            col2.data_type = static_cast<uint16_t>(DataType::INT32);
             col2.max_length = 4;
             col2.nullable = false;
             col2.has_default = false;

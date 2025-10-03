@@ -17,13 +17,41 @@ namespace scratchbird
         };
 
         static const KeywordEntry KEYWORDS[] = {
+            // SQL keywords
             {"CREATE", TokenType::KW_CREATE},   {"TABLE", TokenType::KW_TABLE},
             {"INSERT", TokenType::KW_INSERT},   {"INTO", TokenType::KW_INTO},
             {"VALUES", TokenType::KW_VALUES},   {"SELECT", TokenType::KW_SELECT},
             {"FROM", TokenType::KW_FROM},       {"WHERE", TokenType::KW_WHERE},
             {"NULL", TokenType::KW_NULL},       {"NOT", TokenType::KW_NOT},
-            {"INTEGER", TokenType::KW_INTEGER}, {"BIGINT", TokenType::KW_BIGINT},
-            {"DOUBLE", TokenType::KW_DOUBLE},   {"VARCHAR", TokenType::KW_VARCHAR},
+
+            // Numeric types
+            {"INT", TokenType::KW_INT},         {"INTEGER", TokenType::KW_INTEGER},
+            {"SMALLINT", TokenType::KW_SMALLINT}, {"BIGINT", TokenType::KW_BIGINT},
+            {"TINYINT", TokenType::KW_TINYINT},
+            {"REAL", TokenType::KW_REAL},       {"FLOAT", TokenType::KW_FLOAT},
+            {"DOUBLE", TokenType::KW_DOUBLE},
+            {"DECIMAL", TokenType::KW_DECIMAL}, {"NUMERIC", TokenType::KW_NUMERIC},
+
+            // String types
+            {"CHAR", TokenType::KW_CHAR},       {"CHARACTER", TokenType::KW_CHARACTER},
+            {"VARCHAR", TokenType::KW_VARCHAR}, {"TEXT", TokenType::KW_TEXT},
+
+            // Binary types
+            {"BINARY", TokenType::KW_BINARY},   {"VARBINARY", TokenType::KW_VARBINARY},
+            {"BLOB", TokenType::KW_BLOB},       {"BYTEA", TokenType::KW_BYTEA},
+
+            // Date/Time types
+            {"DATE", TokenType::KW_DATE},       {"TIME", TokenType::KW_TIME},
+            {"TIMESTAMP", TokenType::KW_TIMESTAMP}, {"INTERVAL", TokenType::KW_INTERVAL},
+
+            // Boolean
+            {"BOOLEAN", TokenType::KW_BOOLEAN}, {"BOOL", TokenType::KW_BOOL},
+
+            // Special types
+            {"UUID", TokenType::KW_UUID},       {"JSON", TokenType::KW_JSON},
+
+            // Type conversion
+            {"CAST", TokenType::KW_CAST},       {"AS", TokenType::KW_AS},
         };
 
         // Case-insensitive string comparison

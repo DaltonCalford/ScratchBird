@@ -3,6 +3,7 @@
 #include "scratchbird/core/storage_engine.h"
 #include "scratchbird/core/heap_page.h"
 #include "scratchbird/core/error_context.h"
+#include "scratchbird/core/uuidv7.h"
 #include <chrono>
 #include <vector>
 #include <random>
@@ -10,9 +11,17 @@
 #include <sstream>
 #include <filesystem>
 #include <cstdio>
+#include <cstring>
 
 using namespace scratchbird::core;
 using namespace std::chrono;
+
+// Helper to create a test UUID
+static inline UuidV7Bytes makeTestUUID(uint8_t value = 0xAB) {
+    UuidV7Bytes uuid;
+    memset(uuid.bytes.data(), value, 16);
+    return uuid;
+}
 
 class StoragePerformanceTest : public ::testing::Test
 {
@@ -100,7 +109,7 @@ TEST_F(StoragePerformanceTest, SequentialInsertBenchmark)
 
                 uint32_t page_id;
                 uint16_t item_id;
-                Status status = engine.insertTuple(1, tuple_data.data(),
+                Status status = engine.insertTuple(makeTestUUID(1), tuple_data.data(),
                                                     tuple_data.size() + sizeof(TupleHeader),
                                                     &page_id, &item_id, nullptr);
                 ASSERT_EQ(status, Status::OK);
@@ -155,7 +164,7 @@ TEST_F(StoragePerformanceTest, SequentialScanBenchmark)
             uint32_t page_id;
             uint16_t item_id;
             Status status =
-                engine.insertTuple(1, tuple_data.data(), tuple_data.size() + sizeof(TupleHeader),
+                engine.insertTuple(makeTestUUID(1), tuple_data.data(), tuple_data.size() + sizeof(TupleHeader),
                                     &page_id, &item_id, nullptr);
             ASSERT_EQ(status, Status::OK);
         }
@@ -169,9 +178,9 @@ TEST_F(StoragePerformanceTest, SequentialScanBenchmark)
         int total_tuples_scanned = 0;
         for (int scan = 0; scan < num_scans; scan++)
         {
-            auto iterator = engine.create_scan(1, nullptr);
+            auto iterator = engine.createScan(makeTestUUID(1), nullptr);
             Tuple tuple;
-            while (!iterator->is_done())
+            while (!iterator->isDone())
             {
                 if (iterator->next(&tuple, nullptr) == Status::OK)
                 {
@@ -224,7 +233,7 @@ TEST_F(StoragePerformanceTest, RandomAccessBenchmark)
         uint32_t page_id;
         uint16_t item_id;
         Status status =
-            engine.insertTuple(1, tuple_data.data(), tuple_data.size() + sizeof(TupleHeader),
+            engine.insertTuple(makeTestUUID(1), tuple_data.data(), tuple_data.size() + sizeof(TupleHeader),
                                 &page_id, &item_id, nullptr);
         ASSERT_EQ(status, Status::OK);
         tuple_ids.push_back({page_id, item_id});
@@ -289,7 +298,7 @@ TEST_F(StoragePerformanceTest, MixedWorkloadBenchmark)
         uint32_t page_id;
         uint16_t item_id;
         Status status =
-            engine.insertTuple(1, tuple_data.data(), tuple_data.size() + sizeof(TupleHeader),
+            engine.insertTuple(makeTestUUID(1), tuple_data.data(), tuple_data.size() + sizeof(TupleHeader),
                                 &page_id, &item_id, nullptr);
         ASSERT_EQ(status, Status::OK);
         tuple_ids.push_back({page_id, item_id});
@@ -325,7 +334,7 @@ TEST_F(StoragePerformanceTest, MixedWorkloadBenchmark)
             uint32_t page_id;
             uint16_t item_id;
             Status status =
-                engine.insertTuple(1, tuple_data.data(), tuple_data.size() + sizeof(TupleHeader),
+                engine.insertTuple(makeTestUUID(1), tuple_data.data(), tuple_data.size() + sizeof(TupleHeader),
                                     &page_id, &item_id, nullptr);
             if (status == Status::OK)
             {
@@ -406,7 +415,7 @@ TEST_F(StoragePerformanceTest, PageFillEfficiencyBenchmark)
             {
                 uint32_t page_id;
                 uint16_t item_id;
-                Status status = engine.insertTuple(1, tuple_data.data(),
+                Status status = engine.insertTuple(makeTestUUID(1), tuple_data.data(),
                                                     tuple_data.size() + sizeof(TupleHeader),
                                                     &page_id, &item_id, nullptr);
 
@@ -462,7 +471,7 @@ TEST_F(StoragePerformanceTest, TransactionOverheadBenchmark)
 
         uint32_t page_id;
         uint16_t item_id;
-        engine.insertTuple(1, tuple_data.data(), tuple_data.size() + sizeof(TupleHeader), &page_id,
+        engine.insertTuple(makeTestUUID(1), tuple_data.data(), tuple_data.size() + sizeof(TupleHeader), &page_id,
                             &item_id, nullptr);
     }
 
@@ -488,7 +497,7 @@ TEST_F(StoragePerformanceTest, TransactionOverheadBenchmark)
 
         uint32_t page_id;
         uint16_t item_id;
-        engine2.insertTuple(1, tuple_data.data(), tuple_data.size() + sizeof(TupleHeader),
+        engine2.insertTuple(makeTestUUID(1), tuple_data.data(), tuple_data.size() + sizeof(TupleHeader),
                              &page_id, &item_id, nullptr);
     }
 

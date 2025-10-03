@@ -51,13 +51,13 @@ namespace scratchbird
         {
             switch (type.type)
             {
-                case parser::DataType::INTEGER:
+                case parser::DataType::INT32:
                     current_result_->writeOpcode(Opcode::TYPE_INTEGER);
                     break;
-                case parser::DataType::BIGINT:
+                case parser::DataType::INT64:
                     current_result_->writeOpcode(Opcode::TYPE_BIGINT);
                     break;
-                case parser::DataType::DOUBLE:
+                case parser::DataType::FLOAT64:
                     current_result_->writeOpcode(Opcode::TYPE_DOUBLE);
                     break;
                 case parser::DataType::VARCHAR:
@@ -294,6 +294,18 @@ namespace scratchbird
             }
         }
 
+        void BytecodeGenerator::visit(parser::CastExpr *node)
+        {
+            // Generate the expression being cast
+            generateExpression(node->expr());
+
+            // Write CAST opcode
+            current_result_->writeOpcode(Opcode::EXPR_CAST);
+
+            // Write target type
+            writeDataType(node->targetType());
+        }
+
         void BytecodeGenerator::visit(parser::ColumnDef *node)
         {
             current_result_->writeOpcode(Opcode::COLUMN_DEF);
@@ -522,6 +534,8 @@ namespace scratchbird
                     return "EXPR_AND";
                 case Opcode::EXPR_OR:
                     return "EXPR_OR";
+                case Opcode::EXPR_CAST:
+                    return "EXPR_CAST";
                 case Opcode::BEGIN_LIST:
                     return "BEGIN_LIST";
                 case Opcode::END_LIST:

@@ -212,6 +212,16 @@ TEST_F(ParserTest, MixedExpressions)
     expectParseSuccess(sql);
 }
 
+TEST_F(ParserTest, CastExpression)
+{
+    expectParseSuccess("SELECT CAST(123 AS INTEGER) FROM t");
+    expectParseSuccess("SELECT CAST(123 AS BIGINT) FROM t");
+    expectParseSuccess("SELECT CAST(123 AS DOUBLE) FROM t");
+    expectParseSuccess("SELECT CAST(123 AS VARCHAR(10)) FROM t");
+    expectParseSuccess("SELECT CAST(col AS INTEGER) FROM t");
+    expectParseSuccess("SELECT CAST(a + b AS DOUBLE) FROM t");
+}
+
 // ===== Semicolon Tests =====
 
 TEST_F(ParserTest, OptionalSemicolon)
