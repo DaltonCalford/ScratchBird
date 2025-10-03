@@ -102,6 +102,10 @@ namespace scratchbird
             KW_CAST,
             KW_TRY_CAST,
             KW_AS,
+
+            // Pattern matching
+            KW_LIKE,
+            KW_ILIKE,
         };
 
         // Location in source file

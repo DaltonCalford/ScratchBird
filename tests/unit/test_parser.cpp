@@ -270,6 +270,31 @@ TEST_F(ParserTest, StringFunctionsNested)
     expectParseSuccess("SELECT SUBSTRING(LOWER(name), 1, 3) FROM t");
 }
 
+// ===== Pattern Matching Tests =====
+
+TEST_F(ParserTest, LikeOperator)
+{
+    expectParseSuccess("SELECT * FROM t WHERE name LIKE 'John%'");
+    expectParseSuccess("SELECT * FROM t WHERE name LIKE '%Smith'");
+    expectParseSuccess("SELECT * FROM t WHERE name LIKE '%middle%'");
+    expectParseSuccess("SELECT * FROM t WHERE name LIKE 'J_hn'");
+    expectParseSuccess("SELECT * FROM t WHERE name LIKE 'J%n'");
+}
+
+TEST_F(ParserTest, ILikeOperator)
+{
+    expectParseSuccess("SELECT * FROM t WHERE name ILIKE 'john%'");
+    expectParseSuccess("SELECT * FROM t WHERE name ILIKE '%SMITH'");
+    expectParseSuccess("SELECT * FROM t WHERE name ILIKE '%MiDdLe%'");
+}
+
+TEST_F(ParserTest, LikePrinting)
+{
+    std::string sql = "SELECT * FROM t WHERE name LIKE 'test%'";
+    std::string expected = "SELECT * FROM t WHERE (name LIKE 'test%')";
+    EXPECT_EQ(parseAndPrint(sql), expected);
+}
+
 // ===== Semicolon Tests =====
 
 TEST_F(ParserTest, OptionalSemicolon)

@@ -168,6 +168,11 @@ namespace scratchbird
             void evaluateExpression();
             void executeBinaryOp(Opcode op);
 
+            // Pattern matching helpers
+            bool matchPattern(const std::string &text, const std::string &pattern, bool case_insensitive);
+            bool matchPatternRecursive(const std::string &text, size_t text_pos,
+                                      const std::string &pattern, size_t pattern_pos);
+
             // Error handling
             void error(const std::string &msg);
 

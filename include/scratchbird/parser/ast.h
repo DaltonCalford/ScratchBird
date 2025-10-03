@@ -244,7 +244,9 @@ namespace scratchbird
             LE,
             GE,
             AND,
-            OR
+            OR,
+            LIKE,
+            ILIKE
         };
 
         class BinaryOpExpr : public Expression
