@@ -61,6 +61,10 @@ namespace scratchbird
             // Type conversion
             EXPR_CAST = 0x72, // Type cast (expr + target type)
 
+            // Pattern matching
+            EXPR_LIKE = 0x78,  // LIKE pattern match
+            EXPR_ILIKE = 0x79, // ILIKE case-insensitive pattern match
+
             // String functions
             FUNC_LENGTH = 0x73,    // LENGTH(str)
             FUNC_SUBSTRING = 0x74, // SUBSTRING(str, start, length)

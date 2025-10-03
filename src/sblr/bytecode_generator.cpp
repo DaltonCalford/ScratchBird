@@ -291,6 +291,12 @@ namespace scratchbird
                 case parser::BinaryOp::OR:
                     current_result_->writeOpcode(Opcode::EXPR_OR);
                     break;
+                case parser::BinaryOp::LIKE:
+                    current_result_->writeOpcode(Opcode::EXPR_LIKE);
+                    break;
+                case parser::BinaryOp::ILIKE:
+                    current_result_->writeOpcode(Opcode::EXPR_ILIKE);
+                    break;
             }
         }
 
@@ -608,6 +614,10 @@ namespace scratchbird
                     return "EXPR_OR";
                 case Opcode::EXPR_CAST:
                     return "EXPR_CAST";
+                case Opcode::EXPR_LIKE:
+                    return "EXPR_LIKE";
+                case Opcode::EXPR_ILIKE:
+                    return "EXPR_ILIKE";
                 case Opcode::FUNC_LENGTH:
                     return "FUNC_LENGTH";
                 case Opcode::FUNC_SUBSTRING:

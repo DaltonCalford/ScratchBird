@@ -594,6 +594,14 @@ namespace scratchbird
                 {
                     op = BinaryOp::GE;
                 }
+                else if (match(TokenType::KW_LIKE))
+                {
+                    op = BinaryOp::LIKE;
+                }
+                else if (match(TokenType::KW_ILIKE))
+                {
+                    op = BinaryOp::ILIKE;
+                }
                 else
                 {
                     break;

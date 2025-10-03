@@ -271,6 +271,12 @@ namespace scratchbird
                 case BinaryOp::OR:
                     out_ << " OR ";
                     break;
+                case BinaryOp::LIKE:
+                    out_ << " LIKE ";
+                    break;
+                case BinaryOp::ILIKE:
+                    out_ << " ILIKE ";
+                    break;
             }
 
             node->right()->accept(this);

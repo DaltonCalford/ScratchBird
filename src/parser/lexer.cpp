@@ -53,6 +53,9 @@ namespace scratchbird
             // Type conversion
             {"CAST", TokenType::KW_CAST},       {"TRY_CAST", TokenType::KW_TRY_CAST},
             {"AS", TokenType::KW_AS},
+
+            // Pattern matching
+            {"LIKE", TokenType::KW_LIKE},       {"ILIKE", TokenType::KW_ILIKE},
         };
 
         // Case-insensitive string comparison

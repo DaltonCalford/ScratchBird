@@ -1233,6 +1233,24 @@ namespace scratchbird
                     push(Value::makeBoolean(left.toBoolean() || right.toBoolean()));
                     break;
 
+                // Pattern matching
+                case Opcode::EXPR_LIKE:
+                {
+                    std::string text = left.toString();
+                    std::string pattern = right.toString();
+                    bool result = matchPattern(text, pattern, false);
+                    push(Value::makeBoolean(result));
+                    break;
+                }
+                case Opcode::EXPR_ILIKE:
+                {
+                    std::string text = left.toString();
+                    std::string pattern = right.toString();
+                    bool result = matchPattern(text, pattern, true);
+                    push(Value::makeBoolean(result));
+                    break;
+                }
+
                 default:
                     error("Unknown binary operator: " + std::to_string(static_cast<int>(op)));
             }
@@ -1241,6 +1259,80 @@ namespace scratchbird
         void Executor::error(const std::string &msg)
         {
             throw std::runtime_error(msg);
+        }
+
+        bool Executor::matchPattern(const std::string &text, const std::string &pattern, bool case_insensitive)
+        {
+            // Convert to lowercase for case-insensitive matching
+            std::string t = text;
+            std::string p = pattern;
+
+            if (case_insensitive)
+            {
+                for (char &c : t)
+                    c = std::tolower(static_cast<unsigned char>(c));
+                for (char &c : p)
+                    c = std::tolower(static_cast<unsigned char>(c));
+            }
+
+            // Simple pattern matching with % (any chars) and _ (single char)
+            return matchPatternRecursive(t, 0, p, 0);
+        }
+
+        bool Executor::matchPatternRecursive(const std::string &text, size_t text_pos,
+                                             const std::string &pattern, size_t pattern_pos)
+        {
+            // End of pattern
+            if (pattern_pos == pattern.length())
+            {
+                return text_pos == text.length();
+            }
+
+            // % wildcard - matches zero or more characters
+            if (pattern[pattern_pos] == '%')
+            {
+                // Skip consecutive % wildcards
+                while (pattern_pos < pattern.length() && pattern[pattern_pos] == '%')
+                {
+                    pattern_pos++;
+                }
+
+                // If % is at the end, match rest of text
+                if (pattern_pos == pattern.length())
+                {
+                    return true;
+                }
+
+                // Try matching at different positions
+                for (size_t i = text_pos; i <= text.length(); i++)
+                {
+                    if (matchPatternRecursive(text, i, pattern, pattern_pos))
+                    {
+                        return true;
+                    }
+                }
+                return false;
+            }
+
+            // End of text but pattern remains
+            if (text_pos == text.length())
+            {
+                return false;
+            }
+
+            // _ wildcard - matches exactly one character
+            if (pattern[pattern_pos] == '_')
+            {
+                return matchPatternRecursive(text, text_pos + 1, pattern, pattern_pos + 1);
+            }
+
+            // Regular character match
+            if (text[text_pos] == pattern[pattern_pos])
+            {
+                return matchPatternRecursive(text, text_pos + 1, pattern, pattern_pos + 1);
+            }
+
+            return false;
         }
 
         bool Executor::deserializeTuple(const uint8_t *tuple_data, uint32_t tuple_size,
