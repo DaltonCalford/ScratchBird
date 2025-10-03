@@ -38,6 +38,7 @@ namespace scratchbird
             IDENTIFIER,
             BINARY_OP,
             CAST,
+            FUNCTION_CALL,
 
             // Types
             TYPE_NAME,
@@ -296,6 +297,25 @@ namespace scratchbird
             bool is_try_cast_;
         };
 
+        // Function call: func_name(arg1, arg2, ...)
+        class FunctionCallExpr : public Expression
+        {
+        public:
+            FunctionCallExpr(const SourceSpan &span, StringPool::StringId name, std::vector<Expression *> args)
+                : Expression(ASTKind::FUNCTION_CALL, span), name_(name), args_(std::move(args))
+            {
+            }
+
+            StringPool::StringId name() const { return name_; }
+            const std::vector<Expression *> &args() const { return args_; }
+
+            void accept(ASTVisitor *visitor) override;
+
+        private:
+            StringPool::StringId name_;
+            std::vector<Expression *> args_;
+        };
+
         // ===== Statement Nodes =====
 
         class Statement : public ASTNode
@@ -457,6 +477,7 @@ namespace scratchbird
             virtual void visit(IdentifierExpr *node) = 0;
             virtual void visit(BinaryOpExpr *node) = 0;
             virtual void visit(CastExpr *node) = 0;
+            virtual void visit(FunctionCallExpr *node) = 0;
 
             // Other nodes
             virtual void visit(ColumnDef *node) = 0;
@@ -478,6 +499,7 @@ namespace scratchbird
             void visit(IdentifierExpr *node) override;
             void visit(BinaryOpExpr *node) override;
             void visit(CastExpr *node) override;
+            void visit(FunctionCallExpr *node) override;
             void visit(ColumnDef *node) override;
 
         private:

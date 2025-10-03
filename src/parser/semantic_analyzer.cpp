@@ -403,6 +403,67 @@ namespace scratchbird
             setExpressionType(node, ExpressionType(target_type, false));
         }
 
+        void SemanticAnalyzer::visit(FunctionCallExpr *node)
+        {
+            // Get function name
+            std::string_view func_name = string_pool_.get(node->name());
+
+            // Validate arguments for each function
+            if (func_name == "LENGTH")
+            {
+                if (node->args().size() != 1)
+                {
+                    reportError(node, "LENGTH expects 1 argument");
+                    return;
+                }
+                // Check argument
+                checkExpression(node->args()[0]);
+                // Result is INT32
+                setExpressionType(node, ExpressionType(TypeName(DataType::INT32), false));
+            }
+            else if (func_name == "SUBSTRING")
+            {
+                if (node->args().size() != 3)
+                {
+                    reportError(node, "SUBSTRING expects 3 arguments (string, start, length)");
+                    return;
+                }
+                // Check all arguments
+                for (auto *arg : node->args())
+                {
+                    checkExpression(arg);
+                }
+                // Result is VARCHAR
+                setExpressionType(node, ExpressionType(TypeName(DataType::VARCHAR, 255), false));
+            }
+            else if (func_name == "UPPER" || func_name == "LOWER")
+            {
+                if (node->args().size() != 1)
+                {
+                    reportError(node, std::string(func_name) + " expects 1 argument");
+                    return;
+                }
+                checkExpression(node->args()[0]);
+                // Result is VARCHAR
+                setExpressionType(node, ExpressionType(TypeName(DataType::VARCHAR, 255), false));
+            }
+            else if (func_name == "TRIM")
+            {
+                if (node->args().size() != 1)
+                {
+                    reportError(node, "TRIM expects 1 argument");
+                    return;
+                }
+                checkExpression(node->args()[0]);
+                // Result is VARCHAR
+                setExpressionType(node, ExpressionType(TypeName(DataType::VARCHAR, 255), false));
+            }
+            else
+            {
+                reportError(node, "Unknown function: " + std::string(func_name));
+            }
+        }
+
         void SemanticAnalyzer::visit(ColumnDef *node)
         {
             // Validate column definition

@@ -61,6 +61,13 @@ namespace scratchbird
             // Type conversion
             EXPR_CAST = 0x72, // Type cast (expr + target type)
 
+            // String functions
+            FUNC_LENGTH = 0x73,    // LENGTH(str)
+            FUNC_SUBSTRING = 0x74, // SUBSTRING(str, start, length)
+            FUNC_UPPER = 0x75,     // UPPER(str)
+            FUNC_LOWER = 0x76,     // LOWER(str)
+            FUNC_TRIM = 0x77,      // TRIM(str)
+
             // Lists
             BEGIN_LIST = 0x80, // Start of list (followed by count)
             END_LIST = 0x81,   // End of list

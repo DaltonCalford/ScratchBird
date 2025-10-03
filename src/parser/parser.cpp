@@ -742,10 +742,40 @@ namespace scratchbird
 
             if (check(TokenType::IDENTIFIER))
             {
-                auto span = makeSpan(start_loc, current().location);
                 auto name = current().value.string_id;
                 advance();
-                return arena_.make<IdentifierExpr>(span, name);
+
+                // Check if this is a function call
+                if (match(TokenType::LEFT_PAREN))
+                {
+                    // Parse function arguments
+                    std::vector<Expression *> args;
+
+                    // Handle empty argument list
+                    if (!check(TokenType::RIGHT_PAREN))
+                    {
+                        do
+                        {
+                            auto *arg = parseExpression();
+                            if (!arg)
+                                return nullptr;
+                            args.push_back(arg);
+                        } while (match(TokenType::COMMA));
+                    }
+
+                    auto end_loc = current().location;
+                    if (!consume(TokenType::RIGHT_PAREN, "Expected ')' after function arguments"))
+                        return nullptr;
+
+                    auto span = makeSpan(start_loc, end_loc);
+                    return arena_.make<FunctionCallExpr>(span, name, std::move(args));
+                }
+                else
+                {
+                    // Just an identifier
+                    auto span = makeSpan(start_loc, previous().location);
+                    return arena_.make<IdentifierExpr>(span, name);
+                }
             }
 
             if (match(TokenType::LEFT_PAREN))
