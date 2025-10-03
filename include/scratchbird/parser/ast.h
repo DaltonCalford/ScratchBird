@@ -1,6 +1,7 @@
 #pragma once
 
 #include "scratchbird/parser/token.h"
+#include "scratchbird/core/types.h"
 #include <memory>
 #include <vector>
 #include <string>
@@ -36,6 +37,7 @@ namespace scratchbird
             LITERAL,
             IDENTIFIER,
             BINARY_OP,
+            CAST,
 
             // Types
             TYPE_NAME,
@@ -113,21 +115,25 @@ namespace scratchbird
             void registerDestructor(void *obj, void (*destructor)(void *));
         };
 
-        // Data types
-        enum class DataType : uint8_t
-        {
-            INTEGER,
-            BIGINT,
-            DOUBLE,
-            VARCHAR,
-        };
+        // Data types - now using unified type system
+        using DataType = core::DataType;
+        using TypeInfo = core::TypeInfo;
 
+        // For backward compatibility during migration
         struct TypeName
         {
             DataType type;
-            uint32_t precision; // For VARCHAR(n)
+            uint32_t precision; // For VARCHAR(n), CHAR(n)
+            uint32_t scale;     // For DECIMAL(p,s)
 
-            TypeName(DataType t, uint32_t p = 0) : type(t), precision(p) {}
+            TypeName(DataType t, uint32_t p = 0, uint32_t s = 0)
+                : type(t), precision(p), scale(s) {}
+
+            // Convert to TypeInfo
+            TypeInfo toTypeInfo() const
+            {
+                return TypeInfo(type, precision, scale);
+            }
         };
 
         // ===== Expression Nodes =====
@@ -267,6 +273,25 @@ namespace scratchbird
             BinaryOp op_;
             Expression *left_;
             Expression *right_;
+        };
+
+        // CAST expression: CAST(expr AS type)
+        class CastExpr : public Expression
+        {
+        public:
+            CastExpr(const SourceSpan &span, Expression *expr, const TypeName &target_type)
+                : Expression(ASTKind::CAST, span), expr_(expr), target_type_(target_type)
+            {
+            }
+
+            Expression *expr() const { return expr_; }
+            const TypeName &targetType() const { return target_type_; }
+
+            void accept(ASTVisitor *visitor) override;
+
+        private:
+            Expression *expr_;
+            TypeName target_type_;
         };
 
         // ===== Statement Nodes =====
@@ -429,6 +454,7 @@ namespace scratchbird
             virtual void visit(LiteralExpr *node) = 0;
             virtual void visit(IdentifierExpr *node) = 0;
             virtual void visit(BinaryOpExpr *node) = 0;
+            virtual void visit(CastExpr *node) = 0;
 
             // Other nodes
             virtual void visit(ColumnDef *node) = 0;
@@ -449,6 +475,7 @@ namespace scratchbird
             void visit(LiteralExpr *node) override;
             void visit(IdentifierExpr *node) override;
             void visit(BinaryOpExpr *node) override;
+            void visit(CastExpr *node) override;
             void visit(ColumnDef *node) override;
 
         private:

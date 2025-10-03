@@ -4,12 +4,20 @@
 #include "scratchbird/core/heap_page.h"
 #include "scratchbird/core/catalog_manager.h"
 #include "scratchbird/core/error_context.h"
+#include "scratchbird/core/uuidv7.h"
 #include <filesystem>
 #include <cstring>
 #include <algorithm>
 #include <fstream>
 
 using namespace scratchbird::core;
+
+// Helper to create a test UUID
+static inline UuidV7Bytes makeTestUUID(uint8_t value = 0xAB) {
+    UuidV7Bytes uuid;
+    memset(uuid.bytes.data(), value, 16);
+    return uuid;
+}
 namespace fs = std::filesystem;
 
 class StorageEngineTest : public ::testing::Test
@@ -226,7 +234,7 @@ TEST_F(StorageEngineTest, SequentialScan)
     }
 
     // Create a scan
-    auto scanner = engine->create_scan(table_id, &ctx);
+    auto scanner = engine->createScan(table_id, &ctx);
     ASSERT_NE(scanner, nullptr);
 
     // Iterate through tuples
@@ -466,7 +474,7 @@ TEST_F(StorageEngineTest, CorruptPageHeader)
         StorageEngine engine2(db_.get());
 
         // Try to scan - should detect corruption
-        auto iterator = engine2.create_scan(table_id, &ctx);
+        auto iterator = engine2.createScan(table_id, &ctx);
         ASSERT_NE(nullptr, iterator);
 
         Tuple corrupted_tuple;

@@ -10,6 +10,13 @@
 
 using namespace scratchbird::core;
 
+// Helper to create a test UUID
+static inline UuidV7Bytes makeTestUUID(uint8_t value = 0xAB) {
+    UuidV7Bytes uuid;
+    memset(uuid.bytes.data(), value, 16);
+    return uuid;
+}
+
 class ToastTest : public ::testing::Test
 {
 protected:
@@ -98,7 +105,7 @@ TEST_F(ToastTest, BasicToastOperations)
 
     // TOAST the large value
     ToastPointer pointer;
-    status = toast_mgr.toast_value(large_data.data(), large_data.size(), ToastStrategy::EXTENDED,
+    status = toast_mgr.toastValue(large_data.data(), large_data.size(), ToastStrategy::EXTENDED,
                                    1000, &pointer);
     ASSERT_EQ(status, Status::OK);
 
@@ -150,7 +157,7 @@ TEST_F(ToastTest, CompressedToast)
     // TOAST with compression
     ToastPointer pointer;
     status =
-        toast_mgr.toast_value(data.data(), data.size(), ToastStrategy::EXTERNAL, 2000, &pointer);
+        toast_mgr.toastValue(data.data(), data.size(), ToastStrategy::EXTERNAL, 2000, &pointer);
     ASSERT_EQ(status, Status::OK);
 
     // Verify it was compressed
@@ -195,7 +202,7 @@ TEST_F(ToastTest, MultipleChunks)
     // TOAST the value
     ToastPointer pointer;
     status =
-        toast_mgr.toast_value(data.data(), data.size(), ToastStrategy::EXTENDED, 3000, &pointer);
+        toast_mgr.toastValue(data.data(), data.size(), ToastStrategy::EXTENDED, 3000, &pointer);
     ASSERT_EQ(status, Status::OK);
 
     // Detoast and verify
@@ -232,7 +239,7 @@ TEST_F(ToastTest, ToastDelete)
     auto data = generate_data(5000);
     ToastPointer pointer;
     status =
-        toast_mgr.toast_value(data.data(), data.size(), ToastStrategy::EXTENDED, 4000, &pointer);
+        toast_mgr.toastValue(data.data(), data.size(), ToastStrategy::EXTENDED, 4000, &pointer);
     ASSERT_EQ(status, Status::OK);
 
     // Verify we can read it
@@ -241,7 +248,7 @@ TEST_F(ToastTest, ToastDelete)
     ASSERT_EQ(status, Status::OK);
 
     // Delete the TOAST value
-    status = toast_mgr.delete_toast_value(pointer.va_valueid, 4001);
+    status = toast_mgr.delete_toastValue(pointer.va_valueid, 4001);
     ASSERT_EQ(status, Status::OK);
 
     // Try to read it again - should fail
@@ -254,17 +261,17 @@ TEST_F(ToastTest, StrategySelection)
 
     // Small data - should use PLAIN
     auto small_data = generate_data(100);
-    EXPECT_EQ(ToastManager::choose_strategy(small_data.data(), small_data.size()),
+    EXPECT_EQ(ToastManager::chooseStrategy(small_data.data(), small_data.size()),
               ToastStrategy::PLAIN);
 
     // Medium data - should use EXTENDED
     auto medium_data = generate_data(3000);
-    EXPECT_EQ(ToastManager::choose_strategy(medium_data.data(), medium_data.size(), false),
+    EXPECT_EQ(ToastManager::chooseStrategy(medium_data.data(), medium_data.size(), false),
               ToastStrategy::EXTENDED);
 
     // Large data with compression - should use EXTERNAL
     auto large_data = generate_data(10000);
-    EXPECT_EQ(ToastManager::choose_strategy(large_data.data(), large_data.size(), true),
+    EXPECT_EQ(ToastManager::chooseStrategy(large_data.data(), large_data.size(), true),
               ToastStrategy::EXTERNAL);
 }
 
@@ -292,20 +299,20 @@ TEST_F(ToastTest, EdgeCases)
     // Test exact chunk boundary
     auto exact_chunk = generate_data(TOAST_MAX_CHUNK_SIZE);
     ToastPointer pointer1;
-    status = toast_mgr.toast_value(exact_chunk.data(), exact_chunk.size(), ToastStrategy::EXTENDED,
+    status = toast_mgr.toastValue(exact_chunk.data(), exact_chunk.size(), ToastStrategy::EXTENDED,
                                    5000, &pointer1);
     ASSERT_EQ(status, Status::OK);
 
     // Test empty data
     ToastPointer pointer2;
-    status = toast_mgr.toast_value(nullptr, 0, ToastStrategy::EXTENDED, 5001, &pointer2);
+    status = toast_mgr.toastValue(nullptr, 0, ToastStrategy::EXTENDED, 5001, &pointer2);
     EXPECT_NE(status, Status::OK); // Should fail
 
     // Test maximum size
     size_t max_size = TOAST_MAX_CHUNK_SIZE * 100; // 100 chunks
     auto max_data = generate_data(max_size);
     ToastPointer pointer3;
-    status = toast_mgr.toast_value(max_data.data(), max_data.size(), ToastStrategy::EXTENDED, 5002,
+    status = toast_mgr.toastValue(max_data.data(), max_data.size(), ToastStrategy::EXTENDED, 5002,
                                    &pointer3);
     ASSERT_EQ(status, Status::OK);
 

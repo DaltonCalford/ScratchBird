@@ -7,6 +7,7 @@
 #include "scratchbird/core/transaction_manager.h"
 #include "scratchbird/core/lock_manager.h"
 #include "scratchbird/core/vacuum.h"
+#include "scratchbird/core/clog.h"
 #include "scratchbird/core/proc_array.h"
 #include "scratchbird/core/system_uuids.h"
 #include "scratchbird/core/debug.h"
@@ -579,6 +580,20 @@
                 close();
                 SET_ERROR_CONTEXT(ctx, Status::OOM, "Failed to allocate Vacuum");
                 return Status::OOM;
+            }
+
+            // Initialize CLOG manager
+            try {
+                clog_ = std::make_unique<Clog>(this);
+            } catch (const std::bad_alloc&) {
+                close();
+                SET_ERROR_CONTEXT(ctx, Status::OOM, "Failed to allocate Clog");
+                return Status::OOM;
+            }
+            status = clog_->initialize(ctx);
+            if (status != Status::OK) {
+                close();
+                return status;
             }
 
             DEBUG_LOG_DB("Database opened successfully");

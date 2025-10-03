@@ -222,3 +222,27 @@ TEST_F(BytecodeGeneratorTest, InvalidSQL)
     auto bytecode = generateBytecode("INVALID SQL");
     EXPECT_TRUE(bytecode.empty());
 }
+
+// ===== CAST Expression Tests =====
+
+TEST_F(BytecodeGeneratorTest, CastExpression)
+{
+    std::string sql = "SELECT CAST(123 AS VARCHAR(10)) FROM t";
+    std::string disasm = generateAndDisassemble(sql);
+
+    EXPECT_NE(disasm.find("VERSION 1"), std::string::npos);
+    EXPECT_NE(disasm.find("SELECT"), std::string::npos);
+    EXPECT_NE(disasm.find("LITERAL_INT64 123"), std::string::npos);
+    EXPECT_NE(disasm.find("EXPR_CAST"), std::string::npos);
+    EXPECT_NE(disasm.find("TYPE_VARCHAR"), std::string::npos);
+}
+
+TEST_F(BytecodeGeneratorTest, CastToInteger)
+{
+    std::string sql = "SELECT CAST(col AS INTEGER) FROM t";
+    std::string disasm = generateAndDisassemble(sql);
+
+    EXPECT_NE(disasm.find("COLUMN_REF"), std::string::npos);
+    EXPECT_NE(disasm.find("EXPR_CAST"), std::string::npos);
+    EXPECT_NE(disasm.find("TYPE_INTEGER"), std::string::npos);
+}

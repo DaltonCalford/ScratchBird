@@ -240,56 +240,167 @@ namespace scratchbird
 
         TypeName Parser::parseTypeName()
         {
-            DataType type;
+            DataType type = DataType::UNKNOWN;
             uint32_t precision = 0;
+            uint32_t scale = 0;
 
-            if (match(TokenType::KW_INTEGER))
+            // Numeric types
+            if (match(TokenType::KW_TINYINT))
             {
-                type = DataType::INTEGER;
+                type = DataType::INT8;
+            }
+            else if (match(TokenType::KW_SMALLINT))
+            {
+                type = DataType::INT16;
+            }
+            else if (match(TokenType::KW_INT) || match(TokenType::KW_INTEGER))
+            {
+                type = DataType::INT32;
             }
             else if (match(TokenType::KW_BIGINT))
             {
-                type = DataType::BIGINT;
+                type = DataType::INT64;
+            }
+            else if (match(TokenType::KW_REAL) || match(TokenType::KW_FLOAT))
+            {
+                type = DataType::FLOAT32;
             }
             else if (match(TokenType::KW_DOUBLE))
             {
-                type = DataType::DOUBLE;
+                type = DataType::FLOAT64;
+            }
+            else if (match(TokenType::KW_DECIMAL) || match(TokenType::KW_NUMERIC))
+            {
+                type = DataType::DECIMAL;
+                // Parse precision and scale: DECIMAL(p, s)
+                if (match(TokenType::LEFT_PAREN))
+                {
+                    if (check(TokenType::INTEGER_LITERAL))
+                    {
+                        precision = static_cast<uint32_t>(current().value.int_value);
+                        advance();
+
+                        if (match(TokenType::COMMA))
+                        {
+                            if (check(TokenType::INTEGER_LITERAL))
+                            {
+                                scale = static_cast<uint32_t>(current().value.int_value);
+                                advance();
+                            }
+                        }
+                    }
+                    consume(TokenType::RIGHT_PAREN, "Expected ')' after DECIMAL precision/scale");
+                }
+            }
+            // String types
+            else if (match(TokenType::KW_CHAR) || match(TokenType::KW_CHARACTER))
+            {
+                type = DataType::CHAR;
+                if (match(TokenType::LEFT_PAREN))
+                {
+                    if (check(TokenType::INTEGER_LITERAL))
+                    {
+                        precision = static_cast<uint32_t>(current().value.int_value);
+                        advance();
+                    }
+                    consume(TokenType::RIGHT_PAREN, "Expected ')' after CHAR length");
+                }
             }
             else if (match(TokenType::KW_VARCHAR))
             {
                 type = DataType::VARCHAR;
-
-                if (!consume(TokenType::LEFT_PAREN, "Expected '(' after VARCHAR"))
+                if (match(TokenType::LEFT_PAREN))
                 {
-                    return TypeName(type, 0);
+                    if (check(TokenType::INTEGER_LITERAL))
+                    {
+                        precision = static_cast<uint32_t>(current().value.int_value);
+                        if (precision == 0 || precision > 65535)
+                        {
+                            error("VARCHAR precision must be between 1 and 65535");
+                        }
+                        advance();
+                    }
+                    consume(TokenType::RIGHT_PAREN, "Expected ')' after VARCHAR length");
                 }
-
-                if (!check(TokenType::INTEGER_LITERAL))
+            }
+            else if (match(TokenType::KW_TEXT))
+            {
+                type = DataType::TEXT;
+            }
+            // Binary types
+            else if (match(TokenType::KW_BINARY))
+            {
+                type = DataType::BINARY;
+                if (match(TokenType::LEFT_PAREN))
                 {
-                    error("Expected integer for VARCHAR precision");
-                    return TypeName(type, 0);
+                    if (check(TokenType::INTEGER_LITERAL))
+                    {
+                        precision = static_cast<uint32_t>(current().value.int_value);
+                        advance();
+                    }
+                    consume(TokenType::RIGHT_PAREN, "Expected ')' after BINARY length");
                 }
-
-                precision = static_cast<uint32_t>(current().value.int_value);
-                if (precision == 0 || precision > 65535)
+            }
+            else if (match(TokenType::KW_VARBINARY))
+            {
+                type = DataType::VARBINARY;
+                if (match(TokenType::LEFT_PAREN))
                 {
-                    error("VARCHAR precision must be between 1 and 65535");
+                    if (check(TokenType::INTEGER_LITERAL))
+                    {
+                        precision = static_cast<uint32_t>(current().value.int_value);
+                        advance();
+                    }
+                    consume(TokenType::RIGHT_PAREN, "Expected ')' after VARBINARY length");
                 }
-                advance();
-
-                if (!consume(TokenType::RIGHT_PAREN, "Expected ')' after VARCHAR precision"))
-                {
-                    return TypeName(type, precision);
-                }
+            }
+            else if (match(TokenType::KW_BLOB))
+            {
+                type = DataType::BLOB;
+            }
+            else if (match(TokenType::KW_BYTEA))
+            {
+                type = DataType::BYTEA;
+            }
+            // Date/Time types
+            else if (match(TokenType::KW_DATE))
+            {
+                type = DataType::DATE;
+            }
+            else if (match(TokenType::KW_TIME))
+            {
+                type = DataType::TIME;
+            }
+            else if (match(TokenType::KW_TIMESTAMP))
+            {
+                type = DataType::TIMESTAMP;
+            }
+            else if (match(TokenType::KW_INTERVAL))
+            {
+                type = DataType::INTERVAL;
+            }
+            // Boolean
+            else if (match(TokenType::KW_BOOLEAN) || match(TokenType::KW_BOOL))
+            {
+                type = DataType::BOOLEAN;
+            }
+            // Special types
+            else if (match(TokenType::KW_UUID))
+            {
+                type = DataType::UUID;
+            }
+            else if (match(TokenType::KW_JSON))
+            {
+                type = DataType::JSON;
             }
             else
             {
                 error("Expected data type, but got " +
                       std::string(tokenTypeToString(current().type)));
-                type = DataType::INTEGER; // Default
+                type = DataType::INT32; // Default
             }
 
-            return TypeName(type, precision);
+            return TypeName(type, precision, scale);
         }
 
         Statement *Parser::parseInsert()
@@ -601,6 +712,29 @@ namespace scratchbird
             {
                 auto span = makeSpan(start_loc, previous().location);
                 return arena_.make<LiteralExpr>(span, LiteralExpr::NULL_LITERAL);
+            }
+
+            // CAST(expr AS type)
+            if (match(TokenType::KW_CAST))
+            {
+                if (!consume(TokenType::LEFT_PAREN, "Expected '(' after CAST"))
+                    return nullptr;
+
+                auto *expr = parseExpression();
+                if (!expr)
+                    return nullptr;
+
+                if (!consume(TokenType::KW_AS, "Expected AS in CAST expression"))
+                    return nullptr;
+
+                auto target_type = parseTypeName();
+
+                auto end_loc = current().location;
+                if (!consume(TokenType::RIGHT_PAREN, "Expected ')' after CAST"))
+                    return nullptr;
+
+                auto span = makeSpan(start_loc, end_loc);
+                return arena_.make<CastExpr>(span, expr, target_type);
             }
 
             if (check(TokenType::IDENTIFIER))

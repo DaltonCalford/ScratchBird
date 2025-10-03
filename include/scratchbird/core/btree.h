@@ -133,6 +133,9 @@ enum class BTreeNodeFlags : uint16_t {
             uint64_t idx_deleted_count;
         };
 
+        // Forward declaration for iterator
+        class BTreeIterator;
+
         // B-tree implementation
         class BTree
         {
@@ -162,6 +165,26 @@ enum class BTreeNodeFlags : uint16_t {
             Status remove(const std::vector<uint8_t> &key, uint64_t tuple_id,
                           ErrorContext *ctx = nullptr);
 
+            // Range scan operations
+            std::unique_ptr<BTreeIterator> rangeScan(
+                const std::vector<uint8_t>* start_key,  // nullptr for beginning
+                const std::vector<uint8_t>* end_key,    // nullptr for end
+                bool start_inclusive = true,
+                bool end_inclusive = false,
+                ErrorContext* ctx = nullptr);
+
+            // Vacuum operations
+            struct VacuumStats
+            {
+                uint64_t pages_visited;
+                uint64_t pages_vacuumed;
+                uint64_t nodes_removed;
+                uint64_t bytes_reclaimed;
+                uint64_t pages_merged;
+            };
+
+            Status vacuum(VacuumStats* stats_out = nullptr, ErrorContext* ctx = nullptr);
+
         private:
             Database *db_;
             SBBTreeIndex index_info_;
@@ -179,6 +202,64 @@ enum class BTreeNodeFlags : uint16_t {
                                       uint64_t right_page_num, ErrorContext *ctx);
             Status create_new_root(uint64_t left_page_num, const std::vector<uint8_t> &separator_key,
                                    uint64_t right_page_num, ErrorContext *ctx);
+
+            // Allow iterator to access internal members
+            friend class BTreeIterator;
+
+            // Vacuum helpers
+            Status vacuumPage(uint32_t page_id, VacuumStats& stats, ErrorContext* ctx);
+            Status compactPage(uint8_t* page_data, uint32_t page_size, VacuumStats& stats);
+            bool shouldMergePages(const SBBTreePage* page1, const SBBTreePage* page2) const;
+            Status mergePages(uint32_t left_page, uint32_t right_page, VacuumStats& stats, ErrorContext* ctx);
+        };
+
+        // B-tree range scan iterator
+        class BTreeIterator
+        {
+        public:
+            BTreeIterator(BTree* btree,
+                         const std::vector<uint8_t>* start_key,
+                         const std::vector<uint8_t>* end_key,
+                         bool start_inclusive,
+                         bool end_inclusive);
+            ~BTreeIterator();
+
+            // Iterator operations
+            bool hasNext();
+            Status next(std::vector<uint8_t>* key_out, uint64_t* tuple_id_out, ErrorContext* ctx = nullptr);
+
+            // Get current position
+            Status getCurrentKey(std::vector<uint8_t>* key_out) const;
+            uint64_t getScannedCount() const { return scanned_count_; }
+
+        private:
+            BTree* btree_;
+            Database* db_;
+
+            // Range bounds
+            std::vector<uint8_t> start_key_;
+            std::vector<uint8_t> end_key_;
+            bool has_start_;
+            bool has_end_;
+            bool start_inclusive_;
+            bool end_inclusive_;
+
+            // Current position
+            uint32_t current_page_;
+            uint16_t current_slot_;
+            uint16_t current_tuple_index_;  // For duplicate keys
+            bool initialized_;
+            bool exhausted_;
+
+            // Statistics
+            uint64_t scanned_count_;
+
+            // Internal navigation
+            Status initialize(ErrorContext* ctx);
+            Status moveToNextSlot(ErrorContext* ctx);
+            Status moveToNextPage(ErrorContext* ctx);
+            bool isKeyInRange(const std::vector<uint8_t>& key) const;
+            int compareKeys(const std::vector<uint8_t>& k1, const std::vector<uint8_t>& k2) const;
         };
 
     } // namespace core

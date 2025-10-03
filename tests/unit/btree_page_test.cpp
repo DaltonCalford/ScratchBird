@@ -52,9 +52,3 @@ TEST_F(BTreePageTest, AddNode)
     ASSERT_NE(node, nullptr);
     EXPECT_EQ(node->btn_key_len, key.size());
 }
-
-int main(int argc, char **argv)
-{
-    ::testing::InitGoogleTest(&argc, argv);
-    return RUN_ALL_TESTS();
-}

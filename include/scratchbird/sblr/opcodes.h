@@ -58,6 +58,9 @@ namespace scratchbird
             EXPR_AND = 0x70, // Logical AND
             EXPR_OR = 0x71,  // Logical OR
 
+            // Type conversion
+            EXPR_CAST = 0x72, // Type cast (expr + target type)
+
             // Lists
             BEGIN_LIST = 0x80, // Start of list (followed by count)
             END_LIST = 0x81,   // End of list

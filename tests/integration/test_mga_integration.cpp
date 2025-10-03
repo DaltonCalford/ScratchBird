@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 #include <cstdio>
+#include <cstring>
 #include <vector>
 #include <thread>
 #include <chrono>
@@ -96,8 +97,8 @@ TEST_F(MGAIntegrationTest, MultipleTransactions) {
     EXPECT_NE(xid1, xid3);
 
     // Get snapshot from transaction 2
-    Snapshot snapshot;
-    ASSERT_EQ(db.transaction_manager()->getSnapshot(proc_id2, snapshot, &ctx), Status::OK);
+    TransactionManager::Snapshot snapshot;
+    ASSERT_EQ(db.transaction_manager()->getSnapshot(snapshot, &ctx), Status::OK);
 
     // Snapshot should see transaction 1 as active
     bool found_xid1 = false;
@@ -139,7 +140,7 @@ TEST_F(MGAIntegrationTest, LockManagerBasicLocks) {
     LockTag tag{};
     tag.target_type = LockTarget::LOCK_TARGET_TABLE;
     // Use a dummy UUID
-    memset(tag.object_uuid.bytes, 0xAB, 16);
+    memset(tag.object_uuid.bytes.data(), 0xAB, 16);
     tag.page_num = 0;
     tag.offset_num = 0;
     tag.padding = 0;
@@ -173,7 +174,7 @@ TEST_F(MGAIntegrationTest, LockManagerConflicts) {
 
     LockTag tag{};
     tag.target_type = LockTarget::LOCK_TARGET_TABLE;
-    memset(tag.object_uuid.bytes, 0xCD, 16);
+    memset(tag.object_uuid.bytes.data(), 0xCD, 16);
     tag.page_num = 0;
     tag.offset_num = 0;
     tag.padding = 0;
@@ -240,7 +241,7 @@ TEST_F(MGAIntegrationTest, VersionChainsBasicUpdate) {
     }
 
     ID table_id;
-    memset(table_id.bytes, 0xEF, 16);
+    memset(table_id.bytes.data(), 0xEF, 16);
 
     // Insert initial tuple
     uint32_t page_id;
@@ -319,7 +320,7 @@ TEST_F(MGAIntegrationTest, VacuumTableStats) {
     ASSERT_EQ(db.initializeProcArray(10, &ctx), Status::OK);
 
     ID table_id;
-    memset(table_id.bytes, 0x12, 16);
+    memset(table_id.bytes.data(), 0x12, 16);
 
     VacuumStats stats;
     ASSERT_EQ(db.vacuum()->vacuumTable(table_id, &stats, &ctx), Status::OK);
@@ -358,7 +359,7 @@ TEST_F(MGAIntegrationTest, FullCRUDWithTransactions) {
     hdr->infomask = 0;
 
     ID table_id;
-    memset(table_id.bytes, 0x34, 16);
+    memset(table_id.bytes.data(), 0x34, 16);
 
     uint32_t page_id;
     uint16_t item_id;
@@ -439,7 +440,7 @@ TEST_F(MGAIntegrationTest, LockManagerStatistics) {
     // Acquire and release a lock
     LockTag tag{};
     tag.target_type = LockTarget::LOCK_TARGET_TABLE;
-    memset(tag.object_uuid.bytes, 0x56, 16);
+    memset(tag.object_uuid.bytes.data(), 0x56, 16);
 
     ASSERT_EQ(db.lock_manager()->acquireLock(proc_id, tag,
                                              LockMode::LOCK_ACCESS_SHARE,

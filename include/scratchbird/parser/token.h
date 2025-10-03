@@ -59,10 +59,48 @@ namespace scratchbird
             KW_WHERE,
             KW_NULL,
             KW_NOT,
+
+            // Numeric types
+            KW_INT,
             KW_INTEGER,
+            KW_SMALLINT,
             KW_BIGINT,
+            KW_TINYINT,
+            KW_REAL,
+            KW_FLOAT,
             KW_DOUBLE,
+            KW_DECIMAL,
+            KW_NUMERIC,
+
+            // String types
+            KW_CHAR,
+            KW_CHARACTER,
             KW_VARCHAR,
+            KW_TEXT,
+
+            // Binary types
+            KW_BINARY,
+            KW_VARBINARY,
+            KW_BLOB,
+            KW_BYTEA,
+
+            // Date/Time types
+            KW_DATE,
+            KW_TIME,
+            KW_TIMESTAMP,
+            KW_INTERVAL,
+
+            // Boolean
+            KW_BOOLEAN,
+            KW_BOOL,
+
+            // Special types
+            KW_UUID,
+            KW_JSON,
+
+            // Type conversion
+            KW_CAST,
+            KW_AS,
         };
 
         // Location in source file

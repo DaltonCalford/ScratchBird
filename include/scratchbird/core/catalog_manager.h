@@ -12,6 +12,7 @@
 #include "scratchbird/core/uuidv7.h"
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/buffer_pool.h"
+#include "scratchbird/core/types.h"
 
 
     namespace scratchbird::core
@@ -159,6 +160,10 @@
             Database *db_;
             mutable std::mutex mutex_;
 
+            // Internal helper methods (assume mutex_ is already held by caller)
+            auto createSchemaInternal(const std::string &schema_name, const std::string &owner,
+                                 ID &schema_id, ErrorContext *ctx = nullptr) -> Status;
+
             // Catalog page layout - using higher page numbers to avoid conflict
             // with existing system catalog on page 1
             static constexpr uint32_t CATALOG_ROOT_PAGE = 3;
@@ -256,46 +261,7 @@
             auto allocateCatalogPage(uint32_t &page_id, ErrorContext *ctx) -> Status;
         };
 
-        // Data type codes
-        enum class DataType : uint16_t
-        {
-            UNKNOWN = 0,
-
-            // Numeric types
-            INT8 = 1,
-            INT16 = 2,
-            INT32 = 3,
-            INT = 3, // Alias for Int32
-            INT64 = 4,
-            FLOAT32 = 5,
-            FLOAT64 = 6,
-            DECIMAL = 7,
-
-            // String types
-            CHAR = 10,    // Fixed length
-            VARCHAR = 11, // Variable length
-            TEXT = 12,    // Unlimited length
-
-            // Binary types
-            BINARY = 20,    // Fixed length
-            VARBINARY = 21, // Variable length
-            BLOB = 22,      // Binary large object
-            BYTEA = 23,     // PostgreSQL-style binary data
-
-            // Date/Time types
-            DATE = 30,
-            TIME = 31,
-            TIMESTAMP = 32,
-
-            // Boolean
-            BOOLEAN = 40,
-
-            // Special types
-            UUID = 50,
-            JSON = 51,
-
-            // Future types...
-        };
+        // DataType enum is now defined in types.h
 
     } // namespace scratchbird::core
 

@@ -4,6 +4,7 @@
 #include "scratchbird/parser/token.h"
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/catalog_manager.h"
+#include "scratchbird/core/types.h"
 #include <vector>
 #include <memory>
 #include <variant>
@@ -15,39 +16,8 @@ namespace scratchbird
     {
 
         // Value types that can be on the execution stack
-        struct Value
-        {
-            enum Type
-            {
-                NULL_VALUE,
-                INTEGER,
-                BIGINT,
-                DOUBLE,
-                STRING,
-                BOOLEAN
-            };
-
-            Type type;
-            std::variant<std::monostate, int32_t, int64_t, double, std::string, bool> data;
-
-            Value() : type(NULL_VALUE), data(std::monostate{}) {}
-            Value(int32_t v) : type(INTEGER), data(v) {}
-            Value(int64_t v) : type(BIGINT), data(v) {}
-            Value(double v) : type(DOUBLE), data(v) {}
-            Value(const std::string &v) : type(STRING), data(v) {}
-            Value(bool v) : type(BOOLEAN), data(v) {}
-
-            bool isNull() const
-            {
-                return type == NULL_VALUE;
-            }
-
-            // Type conversions
-            int64_t toInt64() const;
-            double toDouble() const;
-            std::string toString() const;
-            bool toBoolean() const;
-        };
+        // Now using the unified type system
+        using Value = core::TypedValue;
 
         // Result of executing a SELECT statement
         class ResultSet

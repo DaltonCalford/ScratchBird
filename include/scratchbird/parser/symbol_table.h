@@ -27,7 +27,7 @@ namespace scratchbird
             bool nullable;
             uint32_t column_index; // Position in table
 
-            ColumnSymbol() : name(0), type(DataType::INTEGER), nullable(true), column_index(0) {}
+            ColumnSymbol() : name(0), type(DataType::INT32), nullable(true), column_index(0) {}
             ColumnSymbol(StringPool::StringId n, const TypeName &t, bool null, uint32_t idx)
                 : name(n), type(t), nullable(null), column_index(idx)
             {

@@ -1,27 +1,50 @@
 # ScratchBird Database Engine
 
-## Status
+A modern relational database engine built from scratch with MVCC transactions, flexible indexing, and clean architecture.
 
-For the current status of the project, please see the [STATUS.md](STATUS.md) file.
+## Quick Start
+
+```bash
+# Build
+mkdir build && cd build
+cmake .. && make
+
+# Run tests
+ctest --output-on-failure
+```
+
+## Current Status
+
+**Version:** Alpha 1.0.1 (75% complete)
+**Latest:** See [Overall Project Status](docs/status/OVERALL_PROJECT_STATUS.md)
+
+### Recent Milestones ✅
+- B-Tree index complete (2,256 lines) - Range scans, compression, vacuum
+- Hash index complete (2,254 lines) - All tests passing
+- MVCC/MGA complete (~1,800 lines) - Full transaction support with CLOG
+- Storage engine production-ready (~3,500 lines)
+
+### Active Work 🔧
+- Fixing database initialization hang
+- Resolving executor compilation errors
+- Enabling comprehensive test suite
 
 ## Project Structure
 
-- **`docs/`** - Documentation, including design documents, specifications, and reference materials.
-  - `design/` - High-level design and architecture documents.
-  - `specifications/` - Detailed technical specifications for features.
-  - `reference/` - External reference materials and examples.
-- **`project/`** - Project management files.
-  - `plan/` - The authoritative implementation plan.
-  - `progress/` - Progress logs and status reports.
-  - `reviews/` - Code reviews.
-  - `tests/` - Test reports.
+- **`docs/`** - All documentation
+  - `status/` - Implementation status and completion reports
+  - `planning/` - Implementation plans and roadmaps
+  - `development/` - Development notes and analysis
+  - `design/` - Architecture and design documents
+  - `specifications/` - Technical specifications
 - **`src/`** - Source code
-  - `core/` - Database engine
+  - `core/` - Storage engine, indexes, transactions
   - `parser/` - SQL parser
-  - `sblr/` - Bytecode system
+  - `sblr/` - Query executor
 - **`tests/`** - Test suites
   - `unit/` - Unit tests
   - `integration/` - Integration tests
+- **`include/`** - Public headers
 
 ## Development Process
 

@@ -1,14 +1,23 @@
 #include <gtest/gtest.h>
+#include <cstring>
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/storage_engine.h"
 #include "scratchbird/core/heap_page.h"
 #include "scratchbird/core/error_context.h"
+#include "scratchbird/core/uuidv7.h"
 #include <vector>
 #include <thread>
 #include <atomic>
 #include <filesystem>
 
 using namespace scratchbird::core;
+
+// Helper to create a test UUID
+static inline UuidV7Bytes makeTestUUID(uint8_t value = 0xAB) {
+    UuidV7Bytes uuid;
+    memset(uuid.bytes.data(), value, 16);
+    return uuid;
+}
 
 class StorageTransactionTest : public ::testing::Test
 {
@@ -46,7 +55,7 @@ TEST_F(StorageTransactionTest, TransactionIDWrapAround)
     std::vector<uint8_t> tuple_data(100, 0xAA);
     uint32_t page_id_1;
     uint16_t item_id_1;
-    ASSERT_EQ(engine.insertTuple(1, tuple_data.data(), tuple_data.size() + sizeof(TupleHeader),
+    ASSERT_EQ(engine.insertTuple(makeTestUUID(1), tuple_data.data(), tuple_data.size() + sizeof(TupleHeader),
                                   &page_id_1, &item_id_1, nullptr),
               Status::OK);
 
@@ -67,7 +76,7 @@ TEST_F(StorageTransactionTest, TransactionIDWrapAround)
     // Insert another tuple with much higher XID
     uint32_t page_id_2;
     uint16_t item_id_2;
-    ASSERT_EQ(engine.insertTuple(1, tuple_data.data(), tuple_data.size() + sizeof(TupleHeader),
+    ASSERT_EQ(engine.insertTuple(makeTestUUID(1), tuple_data.data(), tuple_data.size() + sizeof(TupleHeader),
                                   &page_id_2, &item_id_2, nullptr),
               Status::OK);
 
@@ -109,7 +118,7 @@ TEST_F(StorageTransactionTest, ConcurrentVisibility)
     std::vector<uint8_t> tuple_data_1(100, 0x11);
     uint32_t page_id_1;
     uint16_t item_id_1;
-    ASSERT_EQ(engine.insertTuple(1, tuple_data_1.data(), tuple_data_1.size() + sizeof(TupleHeader),
+    ASSERT_EQ(engine.insertTuple(makeTestUUID(1), tuple_data_1.data(), tuple_data_1.size() + sizeof(TupleHeader),
                                   &page_id_1, &item_id_1, nullptr),
               Status::OK);
 
@@ -120,7 +129,7 @@ TEST_F(StorageTransactionTest, ConcurrentVisibility)
     std::vector<uint8_t> tuple_data_2(100, 0x22);
     uint32_t page_id_2;
     uint16_t item_id_2;
-    ASSERT_EQ(engine.insertTuple(1, tuple_data_2.data(), tuple_data_2.size() + sizeof(TupleHeader),
+    ASSERT_EQ(engine.insertTuple(makeTestUUID(1), tuple_data_2.data(), tuple_data_2.size() + sizeof(TupleHeader),
                                   &page_id_2, &item_id_2, nullptr),
               Status::OK);
 
@@ -205,7 +214,7 @@ TEST_F(StorageTransactionTest, ReadCommittedIsolation)
     std::vector<uint8_t> tuple_a(100, 0xAA);
     uint32_t page_id_a;
     uint16_t item_id_a;
-    ASSERT_EQ(engine.insertTuple(1, tuple_a.data(), tuple_a.size() + sizeof(TupleHeader),
+    ASSERT_EQ(engine.insertTuple(makeTestUUID(1), tuple_a.data(), tuple_a.size() + sizeof(TupleHeader),
                                   &page_id_a, &item_id_a, nullptr),
               Status::OK);
 
@@ -220,7 +229,7 @@ TEST_F(StorageTransactionTest, ReadCommittedIsolation)
     std::vector<uint8_t> tuple_b(100, 0xBB);
     uint32_t page_id_b;
     uint16_t item_id_b;
-    ASSERT_EQ(engine.insertTuple(1, tuple_b.data(), tuple_b.size() + sizeof(TupleHeader),
+    ASSERT_EQ(engine.insertTuple(makeTestUUID(1), tuple_b.data(), tuple_b.size() + sizeof(TupleHeader),
                                   &page_id_b, &item_id_b, nullptr),
               Status::OK);
 
@@ -252,7 +261,7 @@ TEST_F(StorageTransactionTest, MultipleDeleteVisibility)
     std::vector<uint8_t> tuple_data(100, 0xDD);
     uint32_t page_id;
     uint16_t item_id;
-    ASSERT_EQ(engine.insertTuple(1, tuple_data.data(), tuple_data.size() + sizeof(TupleHeader),
+    ASSERT_EQ(engine.insertTuple(makeTestUUID(1), tuple_data.data(), tuple_data.size() + sizeof(TupleHeader),
                                   &page_id, &item_id, nullptr),
               Status::OK);
 
