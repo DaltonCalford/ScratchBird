@@ -712,9 +712,11 @@ namespace scratchbird
                     {
                         depth--; // Net effect: consume 2, produce 1 = -1
                     }
-                    // CAST consumes 1, produces 1, plus reads type
+                    // CAST consumes 1, produces 1, plus reads try_cast flag and type
                     else if (op == Opcode::EXPR_CAST)
                     {
+                        // Skip try_cast flag (1 byte)
+                        readByte();
                         // Read and skip type opcode
                         Opcode type_op = static_cast<Opcode>(readByte());
                         if (type_op == Opcode::TYPE_VARCHAR)
@@ -883,6 +885,9 @@ namespace scratchbird
                 // Type conversion
                 case Opcode::EXPR_CAST:
                 {
+                    // Read try_cast flag
+                    bool is_try_cast = readByte() != 0;
+
                     // Read target type
                     Opcode type_op = static_cast<Opcode>(readByte());
                     core::DataType target_type = core::DataType::UNKNOWN;
@@ -915,11 +920,22 @@ namespace scratchbird
 
                     if (!converted)
                     {
-                        error("Failed to cast value to target type");
+                        if (is_try_cast)
+                        {
+                            // TRY_CAST returns NULL on failure
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            // CAST throws error on failure
+                            error("Failed to cast value to target type");
+                        }
                     }
-
-                    // Push converted value
-                    push(*converted);
+                    else
+                    {
+                        // Push converted value
+                        push(*converted);
+                    }
                     break;
                 }
 

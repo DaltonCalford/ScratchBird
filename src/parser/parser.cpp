@@ -714,27 +714,30 @@ namespace scratchbird
                 return arena_.make<LiteralExpr>(span, LiteralExpr::NULL_LITERAL);
             }
 
-            // CAST(expr AS type)
-            if (match(TokenType::KW_CAST))
+            // CAST(expr AS type) or TRY_CAST(expr AS type)
+            if (match(TokenType::KW_CAST) || match(TokenType::KW_TRY_CAST))
             {
-                if (!consume(TokenType::LEFT_PAREN, "Expected '(' after CAST"))
+                bool is_try_cast = previous().type == TokenType::KW_TRY_CAST;
+                const char *keyword_name = is_try_cast ? "TRY_CAST" : "CAST";
+
+                if (!consume(TokenType::LEFT_PAREN, std::string("Expected '(' after ") + keyword_name))
                     return nullptr;
 
                 auto *expr = parseExpression();
                 if (!expr)
                     return nullptr;
 
-                if (!consume(TokenType::KW_AS, "Expected AS in CAST expression"))
+                if (!consume(TokenType::KW_AS, std::string("Expected AS in ") + keyword_name + " expression"))
                     return nullptr;
 
                 auto target_type = parseTypeName();
 
                 auto end_loc = current().location;
-                if (!consume(TokenType::RIGHT_PAREN, "Expected ')' after CAST"))
+                if (!consume(TokenType::RIGHT_PAREN, std::string("Expected ')' after ") + keyword_name))
                     return nullptr;
 
                 auto span = makeSpan(start_loc, end_loc);
-                return arena_.make<CastExpr>(span, expr, target_type);
+                return arena_.make<CastExpr>(span, expr, target_type, is_try_cast);
             }
 
             if (check(TokenType::IDENTIFIER))

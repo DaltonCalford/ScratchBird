@@ -311,7 +311,7 @@ namespace scratchbird
 
         void ASTPrinter::visit(CastExpr *node)
         {
-            out_ << "CAST(";
+            out_ << (node->isTryCast() ? "TRY_CAST(" : "CAST(");
             node->expr()->accept(this);
             out_ << " AS ";
 

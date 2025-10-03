@@ -275,23 +275,25 @@ namespace scratchbird
             Expression *right_;
         };
 
-        // CAST expression: CAST(expr AS type)
+        // CAST expression: CAST(expr AS type) or TRY_CAST(expr AS type)
         class CastExpr : public Expression
         {
         public:
-            CastExpr(const SourceSpan &span, Expression *expr, const TypeName &target_type)
-                : Expression(ASTKind::CAST, span), expr_(expr), target_type_(target_type)
+            CastExpr(const SourceSpan &span, Expression *expr, const TypeName &target_type, bool is_try_cast = false)
+                : Expression(ASTKind::CAST, span), expr_(expr), target_type_(target_type), is_try_cast_(is_try_cast)
             {
             }
 
             Expression *expr() const { return expr_; }
             const TypeName &targetType() const { return target_type_; }
+            bool isTryCast() const { return is_try_cast_; }
 
             void accept(ASTVisitor *visitor) override;
 
         private:
             Expression *expr_;
             TypeName target_type_;
+            bool is_try_cast_;
         };
 
         // ===== Statement Nodes =====
