@@ -79,6 +79,13 @@ namespace scratchbird
             AGG_MAX = 0x7D,   // MAX(expr)
             AGG_COUNT = 0x7E, // COUNT(expr) or COUNT(*)
 
+            // Temporal functions
+            FUNC_DATE_ADD = 0x84,      // DATE_ADD(date, days)
+            FUNC_DATE_SUB = 0x85,      // DATE_SUB(date, days)
+            FUNC_DATE_DIFF = 0x86,     // DATE_DIFF(date1, date2) - returns days
+            FUNC_NOW = 0x87,           // NOW() - current timestamp
+            FUNC_CURRENT_DATE = 0x88,  // CURRENT_DATE() - current date
+
             // Lists
             BEGIN_LIST = 0x80, // Start of list (followed by count)
             END_LIST = 0x81,   // End of list

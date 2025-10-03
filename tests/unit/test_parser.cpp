@@ -319,6 +319,29 @@ TEST_F(ParserTest, AggregatePrinting)
     EXPECT_EQ(parseAndPrint(sql), expected);
 }
 
+// ===== Temporal Function Tests =====
+
+TEST_F(ParserTest, TemporalFunctions)
+{
+    expectParseSuccess("SELECT DATE_ADD(created_at, 7) FROM events");
+    expectParseSuccess("SELECT DATE_SUB(expires_at, 30) FROM subscriptions");
+    expectParseSuccess("SELECT DATE_DIFF(end_date, start_date) FROM projects");
+    expectParseSuccess("SELECT DATEDIFF(end_date, start_date) FROM projects");
+}
+
+TEST_F(ParserTest, TemporalCurrentFunctions)
+{
+    expectParseSuccess("SELECT NOW() FROM t");
+    expectParseSuccess("SELECT CURRENT_DATE() FROM t");
+}
+
+TEST_F(ParserTest, TemporalPrinting)
+{
+    std::string sql = "SELECT DATE_ADD(created_at, 7) FROM events";
+    std::string expected = "SELECT DATE_ADD(created_at, 7) FROM events";
+    EXPECT_EQ(parseAndPrint(sql), expected);
+}
+
 // ===== Semicolon Tests =====
 
 TEST_F(ParserTest, OptionalSemicolon)
