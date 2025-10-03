@@ -72,6 +72,13 @@ namespace scratchbird
             FUNC_LOWER = 0x76,     // LOWER(str)
             FUNC_TRIM = 0x77,      // TRIM(str)
 
+            // Aggregate functions
+            AGG_SUM = 0x7A,   // SUM(expr)
+            AGG_AVG = 0x7B,   // AVG(expr)
+            AGG_MIN = 0x7C,   // MIN(expr)
+            AGG_MAX = 0x7D,   // MAX(expr)
+            AGG_COUNT = 0x7E, // COUNT(expr) or COUNT(*)
+
             // Lists
             BEGIN_LIST = 0x80, // Start of list (followed by count)
             END_LIST = 0x81,   // End of list

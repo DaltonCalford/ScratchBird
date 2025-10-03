@@ -1089,6 +1089,27 @@ namespace scratchbird
                     break;
                 }
 
+                // Aggregate functions (Note: proper aggregation requires SELECT-level support)
+                // These implementations assume aggregation context is handled by caller
+                case Opcode::AGG_SUM:
+                case Opcode::AGG_AVG:
+                case Opcode::AGG_MIN:
+                case Opcode::AGG_MAX:
+                case Opcode::AGG_COUNT:
+                {
+                    uint8_t arg_count = readByte();
+                    if (arg_count != 1)
+                    {
+                        error("Aggregate function expects 1 argument");
+                    }
+
+                    // For now, just evaluate the argument expression
+                    // Full aggregation support requires refactoring SELECT execution
+                    // to accumulate values across rows
+                    error("Aggregate functions require full aggregation support (not yet implemented in executor)");
+                    break;
+                }
+
                 default:
                     error("Unknown expression opcode: " + std::to_string(static_cast<int>(op)));
             }

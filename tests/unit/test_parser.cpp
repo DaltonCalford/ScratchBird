@@ -295,6 +295,30 @@ TEST_F(ParserTest, LikePrinting)
     EXPECT_EQ(parseAndPrint(sql), expected);
 }
 
+// ===== Aggregate Function Tests =====
+
+TEST_F(ParserTest, AggregateFunctions)
+{
+    expectParseSuccess("SELECT SUM(price) FROM products");
+    expectParseSuccess("SELECT AVG(price) FROM products");
+    expectParseSuccess("SELECT MIN(price) FROM products");
+    expectParseSuccess("SELECT MAX(price) FROM products");
+    expectParseSuccess("SELECT COUNT(id) FROM products");
+}
+
+TEST_F(ParserTest, MultipleAggregates)
+{
+    expectParseSuccess("SELECT COUNT(id), SUM(price), AVG(price) FROM products");
+    expectParseSuccess("SELECT MIN(price), MAX(price) FROM products");
+}
+
+TEST_F(ParserTest, AggregatePrinting)
+{
+    std::string sql = "SELECT SUM(price) FROM products";
+    std::string expected = "SELECT SUM(price) FROM products";
+    EXPECT_EQ(parseAndPrint(sql), expected);
+}
+
 // ===== Semicolon Tests =====
 
 TEST_F(ParserTest, OptionalSemicolon)
