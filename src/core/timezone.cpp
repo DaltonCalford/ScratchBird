@@ -83,17 +83,29 @@ namespace scratchbird::core
             minutes = std::stoi(str.substr(pos + 2, 2));
         }
 
-        if (hours < -12 || hours > 14 || minutes < 0 || minutes > 59)
+        // Validate individual components
+        if (hours < 0 || minutes < 0 || minutes > 59)
         {
             if (ctx)
             {
                 SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
-                                  "Timezone offset out of range");
+                                  "Timezone offset component out of range");
             }
             return std::nullopt;
         }
 
+        // Validate total offset: -12:00 to +14:00 (-720 to +840 minutes)
         int total_minutes = sign * (hours * 60 + minutes);
+        if (total_minutes < -720 || total_minutes > 840)
+        {
+            if (ctx)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                  "Timezone offset out of range (must be between -12:00 and +14:00)");
+            }
+            return std::nullopt;
+        }
+
         return TimezoneOffset(total_minutes, false);
     }
 
