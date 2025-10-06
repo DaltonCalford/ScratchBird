@@ -488,9 +488,41 @@ namespace scratchbird::core
             int month = std::stoi(str.substr(5, 2));
             int day = std::stoi(str.substr(8, 2));
 
-            if (month < 1 || month > 12 || day < 1 || day > 31)
+            // Validate month range
+            if (month < 1 || month > 12)
             {
-                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Invalid date values");
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Invalid month (must be 1-12)");
+                return std::nullopt;
+            }
+
+            // Validate day range (basic)
+            if (day < 1 || day > 31)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Invalid day (must be 1-31)");
+                return std::nullopt;
+            }
+
+            // Validate day for specific month
+            // Days per month: Jan=31, Feb=28/29, Mar=31, Apr=30, May=31, Jun=30, Jul=31, Aug=31, Sep=30, Oct=31, Nov=30, Dec=31
+            const int days_in_month[] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
+            int max_day = days_in_month[month - 1];
+
+            // Check for leap year if February
+            if (month == 2)
+            {
+                // Leap year: divisible by 4 AND (NOT divisible by 100 OR divisible by 400)
+                bool is_leap_year = (year % 4 == 0) && ((year % 100 != 0) || (year % 400 == 0));
+                if (is_leap_year)
+                {
+                    max_day = 29;
+                }
+            }
+
+            if (day > max_day)
+            {
+                std::string error_msg = "Invalid day for month (month " + std::to_string(month) +
+                                      " has at most " + std::to_string(max_day) + " days)";
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, error_msg.c_str());
                 return std::nullopt;
             }
 
