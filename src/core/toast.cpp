@@ -192,6 +192,8 @@
             }
 
             // Create index on (chunk_id, chunk_seq) for efficient retrieval
+            // CRITICAL: Index is required for performance - TOAST lookups without index
+            // would degrade to O(N) heap scans instead of O(log N) index lookups
             std::vector<std::string> index_columns = {"chunk_id", "chunk_seq"};
             ID index_id;
             std::string index_name = toast_name + "_idx";
@@ -199,8 +201,8 @@
                                            false, IndexType::BTREE, ctx);
             if (status != Status::OK)
             {
-                // This is not fatal, but we should log it
-                // TODO: Add logging
+                SET_ERROR_CONTEXT(ctx, status, "Failed to create TOAST index - index is required for performance");
+                return status;
             }
 
             return Status::OK;
