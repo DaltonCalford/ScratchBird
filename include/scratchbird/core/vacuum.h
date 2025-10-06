@@ -22,12 +22,13 @@ namespace scratchbird::core
         uint64_t version_chains_pruned;
         uint64_t pages_compacted;
         uint64_t free_space_recovered;  // bytes
+        uint64_t tuples_frozen;         // tuples frozen to prevent wraparound
         uint64_t vacuum_time_us;        // microseconds
 
         VacuumStats()
             : pages_scanned(0), tuples_scanned(0), dead_tuples_found(0),
               dead_tuples_removed(0), version_chains_pruned(0), pages_compacted(0),
-              free_space_recovered(0), vacuum_time_us(0)
+              free_space_recovered(0), tuples_frozen(0), vacuum_time_us(0)
         {
         }
     };
@@ -52,6 +53,11 @@ namespace scratchbird::core
 
         // Get vacuum horizon (oldest XID that might still see a tuple)
         Status getVacuumHorizon(uint64_t* horizon_out, ErrorContext* ctx = nullptr);
+
+        // Freeze old tuples to prevent XID wraparound
+        // freeze_limit: tuples with xmin < freeze_limit will be frozen
+        Status freezeTable(const ID& table_id, uint64_t freeze_limit,
+                          VacuumStats* stats_out, ErrorContext* ctx = nullptr);
 
     private:
         Database* db_;

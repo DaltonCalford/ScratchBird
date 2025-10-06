@@ -93,6 +93,7 @@
             static constexpr uint16_t HEAP_XMAX_IS_MULTI   = 0x0020; // Future: Multi-XID
             static constexpr uint16_t HEAP_UPDATED         = 0x0040; // Tuple was updated
             static constexpr uint16_t HEAP_MOVED           = 0x0080; // Tuple moved to new page
+            static constexpr uint16_t HEAP_XMIN_FROZEN     = 0x0100; // xmin is frozen (FROZEN_XID)
 
             // Backward compatibility
             static constexpr uint16_t FLAG_HAS_NULLS = HEAP_HAS_NULLS;
@@ -205,6 +206,12 @@
 
             // Validate page structure
             auto validate(ErrorContext *ctx = nullptr) const -> Status;
+
+            // Freeze old tuples to prevent XID wraparound
+            // Sets xmin to FROZEN_XID for tuples older than freeze_limit
+            // Returns number of tuples frozen
+            auto freezeTuples(uint64_t freeze_limit, uint32_t *frozen_count_out,
+                             ErrorContext *ctx = nullptr) -> Status;
 
             // Get page header
             auto header() -> PageHeader *
