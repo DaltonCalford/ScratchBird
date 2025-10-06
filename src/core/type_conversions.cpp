@@ -565,7 +565,8 @@ namespace scratchbird::core
                 microsecond = std::stoi(frac);
             }
 
-            if (hour < 0 || hour > 23 || minute < 0 || minute > 59 || second < 0 || second > 59)
+            // Allow second = 60 for leap seconds (ISO 8601)
+            if (hour < 0 || hour > 23 || minute < 0 || minute > 59 || second < 0 || second > 60)
             {
                 SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Invalid time values");
                 return std::nullopt;
