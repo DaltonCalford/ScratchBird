@@ -61,23 +61,30 @@ namespace scratchbird
 
         void Parser::synchronize()
         {
-            advance();
-
+            // Check if current token is already a recovery point before advancing
+            // This prevents skipping over statement keywords when they are the error token
             while (!isAtEnd())
             {
-                if (previous().type == TokenType::SEMICOLON)
+                // Check if we've reached a statement boundary (semicolon)
+                if (current().type == TokenType::SEMICOLON)
+                {
+                    advance(); // Consume the semicolon
                     return;
+                }
 
+                // Check if current token is a statement-starting keyword
                 switch (current().type)
                 {
                     case TokenType::KW_CREATE:
                     case TokenType::KW_INSERT:
                     case TokenType::KW_SELECT:
+                        // Found a recovery point - don't consume it, let normal parsing continue
                         return;
                     default:
                         break;
                 }
 
+                // Not at a recovery point, consume this token and continue
                 advance();
             }
         }
