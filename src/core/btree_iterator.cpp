@@ -72,6 +72,27 @@ namespace scratchbird::core
             }
         }
 
+        // Check if current position has valid data
+        void* page_buffer;
+        ErrorContext ctx;
+        Status status = db_->buffer_pool()->pinPage(current_page_, &page_buffer, &ctx);
+        if (status != Status::OK)
+        {
+            exhausted_ = true;
+            return false;
+        }
+
+        auto* page = reinterpret_cast<SBBTreePage*>(page_buffer);
+        bool has_data = (current_slot_ < page->btr_count);
+
+        db_->buffer_pool()->unpinPage(current_page_, false, &ctx);
+
+        if (!has_data)
+        {
+            exhausted_ = true;
+            return false;
+        }
+
         return !exhausted_;
     }
 
