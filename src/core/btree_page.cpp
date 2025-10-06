@@ -44,7 +44,8 @@
             page_header_->btr_xmin = 0; // TODO: Integrate with transaction manager
             page_header_->btr_xmax = 0;
             page_header_->btr_lsn = 0;
-            page_header_->btr_high_water = sizeof(SBBTreePage);
+            // btr_high_water starts at end of page, nodes grow downward from there
+            page_header_->btr_high_water = page_size_;
             return Status::OK;
         }
 
