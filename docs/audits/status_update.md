@@ -16,16 +16,16 @@ This report provides a comprehensive status update on the 67 issues identified i
 | Severity | Total | Fixed | Partial | Outstanding | Unable to Verify |
 |----------|-------|-------|---------|-------------|------------------|
 | **Critical** | 9 | 9 (100%) | 0 (0%) | 0 (0%) | 0 (0%) |
-| **High** | 25 | 9 (36%) | 1 (4%) | 12 (48%) | 3 (12%) |
+| **High** | 25 | 10 (40%) | 1 (4%) | 12 (48%) | 2 (8%) |
 | **Medium** | 33 | 8 (24%) | 5 (15%) | 17 (52%) | 3 (9%) |
 | **Low** | 13 | 2 (15%) | 1 (8%) | 9 (69%) | 1 (8%) |
-| **TOTAL** | **67** | **28 (42%)** | **7 (10%)** | **37 (55%)** | **7 (10%)** |
+| **TOTAL** | **67** | **29 (43%)** | **7 (10%)** | **37 (55%)** | **6 (9%)** |
 
 ### Overall Status
-- **Fixed Issues:** 28 (42%)
+- **Fixed Issues:** 29 (43%)
 - **Partially Fixed:** 7 (10%)
 - **Outstanding Issues:** 37 (55%)
-- **Unable to Verify:** 7 (10%)
+- **Unable to Verify:** 6 (9%)
 
 ---
 
@@ -384,14 +384,20 @@ This report provides a comprehensive status update on the 67 issues identified i
 
 ---
 
-### ❌ ISSUE #4: B-Tree Iterator Internal Node Traversal [UNABLE TO VERIFY]
-- **File:** `src/core/btree_iterator.cpp:227-258`
-- **Status:** ⚠️ **UNABLE TO VERIFY**
-- **Current State:**
-  - Code calls `BTreePage::get_node()` at lines 232-237
-  - Cannot verify if function handles both leaf and internal nodes correctly
-  - btree_page.cpp not included in this analysis
-- **Recommendation:** Verify `BTreePage::get_node()` implementation
+### ✅ ISSUE #4: B-Tree Iterator Internal Node Traversal [RESOLVED]
+- **File:** `src/core/btree_page.cpp:283-353`, `src/core/btree_iterator.cpp:227-258`
+- **Status:** ✅ **RESOLVED** (2025-10-06)
+- **Resolution:**
+  - ✅ Fixed `BTreePage::get_node()` to distinguish between leaf and internal nodes
+  - ✅ Leaf nodes: Extract tuple IDs from after key data (as before)
+  - ✅ Internal nodes: Extract child page pointer from `btn_child_page` header field
+- **Implementation Details:**
+  - Added page type check: `(page->btr_flags & BTreeFlags::LEAF)`
+  - For internal nodes, correctly reads child pointer from node header
+  - For leaf nodes, maintains original behavior reading tuple IDs array
+  - Iterator can now correctly traverse multi-level B-trees
+- **Testing:** FullScanMultiplePages and other iterator tests now pass
+- **Impact:** B-tree iterator can now correctly navigate internal nodes during range scans
 
 ---
 
@@ -585,14 +591,15 @@ This report provides a comprehensive status update on the 67 issues identified i
 
 ### Storage Layer (B-Tree, Heap, TOAST)
 - **Total Issues:** 15
-- **Fixed:** 7 (47%)
+- **Fixed:** 8 (53%)
 - **Partial:** 1 (7%)
 - **Outstanding:** 6 (40%)
-- **Unable to Verify:** 1 (7%)
+- **Unable to Verify:** 0 (0%)
 
 **Key Improvements:**
 - ✅ B-tree navigation correctness (#1, #2)
 - ✅ B-tree vacuum operations (#3)
+- ✅ B-tree iterator internal node traversal (#4)
 - ✅ TOAST thread safety (#62)
 - ✅ TOAST wraparound protection (#12)
 - ✅ Cross-page version chains (#9)

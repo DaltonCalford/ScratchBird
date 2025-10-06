@@ -323,16 +323,30 @@
                 key_out = compressed_key;
             }
 
-            // Extract tuple IDs
-            const uint8_t* tuple_data = key_data + node->btn_key_len;
-            auto* tuple_ids = reinterpret_cast<const uint64_t*>(tuple_data);
+            // Check if this is a leaf or internal node
+            bool is_leaf = (page->btr_flags & static_cast<uint16_t>(BTreeFlags::LEAF)) != 0;
 
             tuple_ids_out.clear();
-            tuple_ids_out.reserve(node->btn_tuple_count);
 
-            for (uint32_t i = 0; i < node->btn_tuple_count; i++)
+            if (is_leaf)
             {
-                tuple_ids_out.push_back(tuple_ids[i]);
+                // Leaf node: Extract tuple IDs from after the key data
+                const uint8_t* tuple_data = key_data + node->btn_key_len;
+                auto* tuple_ids = reinterpret_cast<const uint64_t*>(tuple_data);
+
+                tuple_ids_out.reserve(node->btn_tuple_count);
+
+                for (uint32_t i = 0; i < node->btn_tuple_count; i++)
+                {
+                    tuple_ids_out.push_back(tuple_ids[i]);
+                }
+            }
+            else
+            {
+                // Internal node: Extract child page pointer from node header
+                // For internal nodes, btn_child_page contains the child pointer
+                // There's only one child pointer per node (not stored after key)
+                tuple_ids_out.push_back(node->btn_child_page);
             }
 
             return Status::OK;
