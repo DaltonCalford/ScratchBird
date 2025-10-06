@@ -137,6 +137,9 @@ enum class BTreeNodeFlags : uint16_t {
             uint64_t idx_tuple_count;
             uint64_t idx_page_count;
             uint64_t idx_deleted_count;
+
+            uint32_t idx_collation_id = 101; // Default: utf8_general_ci
+                                             // TODO(Issue #50): Use for collation-aware key comparisons
         };
 
         // Forward declaration for iterator
@@ -194,6 +197,23 @@ enum class BTreeNodeFlags : uint16_t {
         private:
             Database *db_;
             SBBTreeIndex index_info_;
+
+            // TODO(Issue #50): Helper for collation-aware key comparison
+            // Currently returns binary comparison. Full integration requires:
+            // 1. Using CharsetManager::compare() with index_info_.idx_collation_id
+            // 2. Converting throughout find/insert/delete operations
+            // 3. Updating WHERE clause evaluation to use collation
+            int compare_keys(const std::vector<uint8_t>& key1,
+                           const std::vector<uint8_t>& key2) const
+            {
+                // For now, use binary comparison (lexicographic)
+                // TODO: Replace with CharsetManager::compare(key1.data(), key1.size(),
+                //                                            key2.data(), key2.size(),
+                //                                            index_info_.idx_collation_id)
+                if (key1 < key2) return -1;
+                if (key1 > key2) return 1;
+                return 0;
+            }
 
             // Traverses the B-Tree to find the correct leaf page for a given key.
             Status find_leaf_page(const std::vector<uint8_t> &key, uint64_t *page_num_out,
