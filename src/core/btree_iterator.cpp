@@ -484,32 +484,8 @@ namespace scratchbird::core
         const std::vector<uint8_t>& k1,
         const std::vector<uint8_t>& k2) const
     {
-        // TODO(charset): For collation-aware indexes, keys should be normalized at insertion time
-        // (e.g., lowercase for case-insensitive collations). The B-tree itself uses binary comparison
-        // for performance. Full collation support would require:
-        // 1. Normalizing keys based on column collation before insertion
-        // 2. Storing normalized keys in index, original values in heap
-        // 3. Using collation for WHERE clause comparison, binary for index lookups
-        // For now, binary comparison is used (consistent with many database systems for performance)
-
-        size_t min_len = std::min(k1.size(), k2.size());
-
-        int cmp = memcmp(k1.data(), k2.data(), min_len);
-        if (cmp != 0)
-        {
-            return cmp;
-        }
-
-        // Equal up to min_len - compare lengths
-        if (k1.size() < k2.size())
-        {
-            return -1;
-        }
-        if (k1.size() > k2.size())
-        {
-            return 1;
-        }
-        return 0;
+        // Use the BTree's collation-aware comparison
+        return btree_->compare_keys(k1, k2);
     }
 
 } // namespace scratchbird::core
