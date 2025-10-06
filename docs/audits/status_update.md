@@ -16,15 +16,15 @@ This report provides a comprehensive status update on the 67 issues identified i
 | Severity | Total | Fixed | Partial | Outstanding | Unable to Verify |
 |----------|-------|-------|---------|-------------|------------------|
 | **Critical** | 9 | 9 (100%) | 0 (0%) | 0 (0%) | 0 (0%) |
-| **High** | 25 | 11 (44%) | 1 (4%) | 11 (44%) | 2 (8%) |
+| **High** | 25 | 12 (48%) | 1 (4%) | 10 (40%) | 2 (8%) |
 | **Medium** | 33 | 8 (24%) | 5 (15%) | 17 (52%) | 3 (9%) |
 | **Low** | 13 | 2 (15%) | 1 (8%) | 9 (69%) | 1 (8%) |
-| **TOTAL** | **67** | **30 (45%)** | **7 (10%)** | **36 (54%)** | **6 (9%)** |
+| **TOTAL** | **67** | **31 (46%)** | **7 (10%)** | **35 (52%)** | **6 (9%)** |
 
 ### Overall Status
-- **Fixed Issues:** 30 (45%)
+- **Fixed Issues:** 31 (46%)
 - **Partially Fixed:** 7 (10%)
-- **Outstanding Issues:** 36 (54%)
+- **Outstanding Issues:** 35 (52%)
 - **Unable to Verify:** 6 (9%)
 
 ---
@@ -419,14 +419,22 @@ This report provides a comprehensive status update on the 67 issues identified i
 
 ---
 
-### ❌ ISSUE #10: updateTuple() Doesn't Handle TOAST [OUTSTANDING]
-- **File:** `src/core/heap_page.cpp:490-545`
-- **Status:** ❌ **OUTSTANDING**
-- **Current State:**
-  - `updateTuple()` doesn't delete old TOAST chunks or create new ones
-  - TOAST cleanup logic missing
-- **Impact:** TOAST storage leak, orphaned chunks
-- **Recommendation:** **MEDIUM PRIORITY** - Add TOAST cleanup to update operations
+### ✅ ISSUE #10: updateTuple() Doesn't Handle TOAST [RESOLVED]
+- **File:** `src/core/heap_page.cpp:539-565`
+- **Status:** ✅ **RESOLVED** (2025-10-05)
+- **Resolution:**
+  - ✅ Added TOAST cleanup logic before updating tuple
+  - ✅ Checks if old tuple contains TOAST pointer
+  - ✅ Deletes old TOAST chunks via `toast_mgr_->deleteToastValue()`
+  - ✅ New tuple TOASTing handled automatically by `insertTuple()`
+- **Implementation Details:**
+  - Validates old_length >= sizeof(TupleHeader) + sizeof(ToastPointer)
+  - Uses `isToastPointer()` to detect TOASTed tuples
+  - Extracts va_valueid from ToastPointer and deletes chunks
+  - Gracefully handles NOT_FOUND (already cleaned up)
+  - Fails on other errors to maintain integrity
+- **Testing:** Prevents TOAST storage leaks on UPDATE operations
+- **Impact:** Eliminates unbounded TOAST storage growth from repeated updates
 
 ---
 
@@ -598,9 +606,9 @@ This report provides a comprehensive status update on the 67 issues identified i
 
 ### Storage Layer (B-Tree, Heap, TOAST)
 - **Total Issues:** 15
-- **Fixed:** 9 (60%)
+- **Fixed:** 10 (67%)
 - **Partial:** 1 (7%)
-- **Outstanding:** 5 (33%)
+- **Outstanding:** 4 (27%)
 - **Unable to Verify:** 0 (0%)
 
 **Key Improvements:**
@@ -610,11 +618,12 @@ This report provides a comprehensive status update on the 67 issues identified i
 - ✅ B-tree page split race condition (#6)
 - ✅ TOAST thread safety (#62)
 - ✅ TOAST wraparound protection (#12)
+- ✅ TOAST cleanup in updateTuple (#10)
 - ✅ Cross-page version chains (#9)
 
 **Critical Gaps:**
 - ❌ Page locking (#7)
-- ❌ TOAST cleanup in updateTuple (#10)
+- ❌ TOAST index not guaranteed (#14)
 
 ---
 
