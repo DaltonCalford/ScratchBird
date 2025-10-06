@@ -18,13 +18,13 @@ This report provides a comprehensive status update on the 67 issues identified i
 | **Critical** | 9 | 9 (100%) | 0 (0%) | 0 (0%) | 0 (0%) |
 | **High** | 25 | 13 (52%) | 0 (0%) | 10 (40%) | 2 (8%) |
 | **Medium** | 33 | 14 (42%) | 5 (15%) | 11 (33%) | 3 (9%) |
-| **Low** | 13 | 2 (15%) | 1 (8%) | 9 (69%) | 1 (8%) |
-| **TOTAL** | **67** | **38 (57%)** | **6 (9%)** | **30 (45%)** | **6 (9%)** |
+| **Low** | 13 | 3 (23%) | 1 (8%) | 8 (62%) | 1 (8%) |
+| **TOTAL** | **67** | **39 (58%)** | **6 (9%)** | **29 (43%)** | **6 (9%)** |
 
 ### Overall Status
-- **Fixed Issues:** 38 (57%)
+- **Fixed Issues:** 39 (58%)
 - **Partially Fixed:** 6 (9%)
-- **Outstanding Issues:** 30 (45%)
+- **Outstanding Issues:** 29 (43%)
 - **Unable to Verify:** 6 (9%)
 
 ---
@@ -630,15 +630,34 @@ This report provides a comprehensive status update on the 67 issues identified i
 
 ---
 
-### ❌ ISSUE #35: Number Parsing Edge Case [OUTSTANDING]
-- **File:** `src/parser/lexer.cpp:243-250`
-- **Status:** ❌ **OUTSTANDING**
-- **Current State:**
-  - Requires digit after decimal point: `std::isdigit(peekChar())`
-  - "123." not recognized as valid number
-  - PostgreSQL and most SQL dialects allow trailing decimal points
-- **Impact:** SQL incompatibility
-- **Recommendation:** **LOW PRIORITY** - Allow trailing decimal points
+### ✅ ISSUE #35: Number Parsing Edge Case [RESOLVED]
+- **File:** `src/parser/lexer.cpp:242-253`, `tests/unit/test_lexer_edge_cases.cpp:175-188`
+- **Status:** ✅ **RESOLVED** (2025-10-06)
+- **Resolution Details:**
+  - ✅ Removed requirement for digit after decimal point
+  - ✅ Now accepts trailing decimal points like PostgreSQL (e.g., "123.")
+  - ✅ Prevents ambiguity with range operator ".." by checking `peekChar() != '.'`
+  - ✅ Updated test to expect new PostgreSQL-compatible behavior
+- **Implementation:**
+  - Changed condition from `currentChar() == '.' && std::isdigit(peekChar())`
+  - To: `currentChar() == '.' && peekChar() != '.'`
+  - Allows decimal point with optional following digits
+  - Properly handles edge cases:
+    - "123." → FLOAT_LITERAL (123.0)
+    - "123.456" → FLOAT_LITERAL (123.456)
+    - "123" → INTEGER_LITERAL (123)
+    - "123.." → INTEGER "123" followed by ".."
+- **Previous Behavior:**
+  ```
+  Input: "123."
+  Tokens: INTEGER_LITERAL(123), DOT
+  ```
+- **Fixed Behavior:**
+  ```
+  Input: "123."
+  Tokens: FLOAT_LITERAL(123.0)
+  ```
+- **Impact:** SQL compatibility with PostgreSQL and other dialects that allow trailing decimals
 
 ---
 
