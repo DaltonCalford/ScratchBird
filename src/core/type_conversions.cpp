@@ -596,15 +596,41 @@ namespace scratchbird::core
     auto TypeConverter::stringToUUID(const std::string &str, ErrorContext *ctx) -> std::optional<std::vector<uint8_t>>
     {
         // Parse UUID format: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+        // First validate format with hyphens (if present)
+        if (str.size() == 36)
+        {
+            // Validate hyphen positions for standard UUID format
+            if (str[8] != '-' || str[13] != '-' || str[18] != '-' || str[23] != '-')
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Invalid UUID format (hyphens must be at positions 8, 13, 18, 23)");
+                return std::nullopt;
+            }
+        }
+
         std::string cleaned = str;
         cleaned.erase(std::remove(cleaned.begin(), cleaned.end(), '-'), cleaned.end());
 
         if (cleaned.size() != 32)
         {
-            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Invalid UUID format");
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Invalid UUID format (must be 32 hex digits)");
             return std::nullopt;
         }
 
+        // Validate all characters are valid hex digits (0-9, a-f, A-F)
+        for (size_t i = 0; i < cleaned.size(); ++i)
+        {
+            char c = cleaned[i];
+            bool is_hex = (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
+            if (!is_hex)
+            {
+                std::string error_msg = "Invalid UUID: character '" + std::string(1, c) +
+                                      "' at position " + std::to_string(i) + " is not a valid hex digit (0-9, a-f, A-F)";
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, error_msg.c_str());
+                return std::nullopt;
+            }
+        }
+
+        // Parse the validated hex string
         std::vector<uint8_t> result(16);
         for (size_t i = 0; i < 16; i++)
         {
