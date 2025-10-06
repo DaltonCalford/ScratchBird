@@ -575,17 +575,10 @@
 
         auto TransactionManager::getBackendXid(uint32_t proc_id) const -> uint64_t
         {
-            // Get XID from ProcArray
-            ProcessControlBlock* pcb = ProcArrayManager::getInstance() ?
-                reinterpret_cast<ProcessControlBlock*>(
-                    reinterpret_cast<uint8_t*>(ProcArrayManager::getInstance()) +
-                    sizeof(ProcArray)) + proc_id : nullptr;
-
-            if (!pcb || !pcb->is_active) {
-                return 0;
-            }
-
-            return pcb->xid;
+            // Use ProcArray API to safely get backend XID
+            uint64_t xid = 0;
+            ProcArrayManager::getBackendXid(proc_id, &xid, nullptr);
+            return xid;
         }
 
         auto TransactionManager::getSnapshot(Snapshot &snapshot_out, ErrorContext *ctx) -> Status

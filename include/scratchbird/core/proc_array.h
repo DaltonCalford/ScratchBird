@@ -98,6 +98,9 @@ namespace scratchbird::core
         static auto setBackendXmin(uint32_t proc_id, uint64_t xmin,
                                   ErrorContext* ctx = nullptr) -> Status;
 
+        static auto getBackendXid(uint32_t proc_id, uint64_t* xid_out,
+                                 ErrorContext* ctx = nullptr) -> Status;
+
         // Statistics
         static auto getNumActiveBackends(uint32_t* count_out,
                                         ErrorContext* ctx = nullptr) -> Status;

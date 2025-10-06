@@ -409,6 +409,33 @@ namespace scratchbird::core
         return Status::OK;
     }
 
+    auto ProcArrayManager::getBackendXid(uint32_t proc_id, uint64_t* xid_out,
+                                        ErrorContext* ctx) -> Status
+    {
+        if (!proc_array_) {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "ProcArray not initialized");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        if (!xid_out) {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "xid_out is null");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        ProcessControlBlock* pcb = getPCB(proc_id);
+        if (!pcb || !pcb->is_active) {
+            // For inactive backends, return 0 (no transaction)
+            *xid_out = 0;
+            return Status::OK;
+        }
+
+        pthread_rwlock_rdlock(&proc_array_->array_lock);
+        *xid_out = pcb->xid;
+        pthread_rwlock_unlock(&proc_array_->array_lock);
+
+        return Status::OK;
+    }
+
     auto ProcArrayManager::getNumActiveBackends(uint32_t* count_out,
                                                ErrorContext* ctx) -> Status
     {
