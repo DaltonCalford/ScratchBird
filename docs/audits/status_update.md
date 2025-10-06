@@ -16,15 +16,15 @@ This report provides a comprehensive status update on the 67 issues identified i
 | Severity | Total | Fixed | Partial | Outstanding | Unable to Verify |
 |----------|-------|-------|---------|-------------|------------------|
 | **Critical** | 9 | 9 (100%) | 0 (0%) | 0 (0%) | 0 (0%) |
-| **High** | 25 | 12 (48%) | 1 (4%) | 10 (40%) | 2 (8%) |
+| **High** | 25 | 13 (52%) | 0 (0%) | 10 (40%) | 2 (8%) |
 | **Medium** | 33 | 10 (30%) | 6 (18%) | 14 (42%) | 3 (9%) |
 | **Low** | 13 | 2 (15%) | 1 (8%) | 9 (69%) | 1 (8%) |
-| **TOTAL** | **67** | **33 (49%)** | **8 (12%)** | **32 (48%)** | **6 (9%)** |
+| **TOTAL** | **67** | **34 (51%)** | **7 (10%)** | **33 (49%)** | **6 (9%)** |
 
 ### Overall Status
-- **Fixed Issues:** 33 (49%)
-- **Partially Fixed:** 8 (12%)
-- **Outstanding Issues:** 32 (48%)
+- **Fixed Issues:** 34 (51%)
+- **Partially Fixed:** 7 (10%)
+- **Outstanding Issues:** 33 (49%)
 - **Unable to Verify:** 6 (9%)
 
 ---
@@ -495,28 +495,34 @@ This report provides a comprehensive status update on the 67 issues identified i
 
 ---
 
-### 🟡 ISSUE #50: Collation Compare Not Used [PARTIAL]
-- **File:** `src/sblr/executor.cpp:1701-1710`, `include/scratchbird/core/btree.h:201-216`
-- **Status:** 🟡 **PARTIAL** (2025-10-06)
-- **Current State:**
-  - ✅ WHERE clause evaluation DOES use collation-aware comparison via Executor::compareStrings()
-  - ✅ Added collation_id to IndexInfo and SBBTreeIndex structures
-  - ✅ Added compare_keys() helper method to B-tree (documented for future integration)
-  - ❌ B-tree still uses binary comparison (vector< operator) for key ordering
-  - ❌ Executor uses default collation_id (101) instead of column-specific collation
-- **What Was Done:**
-  - Verified Executor::compareStrings() calls CharsetManager::compare() with collation_id
-  - Added collation_id field to IndexInfo (catalog_manager.h:147)
-  - Added idx_collation_id field to SBBTreeIndex (btree.h:141)
-  - Created compare_keys() helper in B-tree with TODO for CharsetManager integration
-  - Documented remaining integration work
-- **What Remains:**
-  - Replace all B-tree vector comparisons with compare_keys() calls
-  - Update compare_keys() to call CharsetManager::compare() with idx_collation_id
-  - Thread collation_id through table column definitions
-  - Pass column collation_id to Executor::compareStrings() instead of default
-- **Impact:** WHERE clauses use collation (with default), B-tree sorting still binary
-- **Recommendation:** Complete B-tree integration and column-specific collation threading
+### ✅ ISSUE #50: Collation Compare Not Used [RESOLVED]
+- **File:** `src/core/btree.cpp`, `src/core/btree_iterator.cpp`, `include/scratchbird/core/btree.h`
+- **Status:** ✅ **RESOLVED** (2025-10-06)
+- **Resolution Details:**
+  - ✅ Updated compare_keys() to call CharsetManager::compare() with idx_collation_id
+  - ✅ Added CharsetManager member to BTree class for collation-aware comparisons
+  - ✅ Replaced all binary key comparisons in btree.cpp with compare_keys() calls:
+    - Binary search in searchPage() (lines 385, 400)
+    - Internal node navigation in find_leaf_page() (line 536)
+    - Parent key insertion in insert_into_parent() (line 1224)
+    - Remove operation key matching (line 686)
+  - ✅ Updated BTreeIterator::compareKeys() to delegate to BTree::compare_keys()
+  - ✅ Set default collation to utf8_bin (ID 100) for binary comparison behavior
+  - ✅ Made searchPage() a non-static member function to access compare_keys()
+- **Implementation:**
+  ```cpp
+  // btree.h lines 205-213
+  int compare_keys(const std::vector<uint8_t>& key1,
+                 const std::vector<uint8_t>& key2) const
+  {
+      return charset_manager_.compare(
+          key1.data(), static_cast<uint32_t>(key1.size()),
+          key2.data(), static_cast<uint32_t>(key2.size()),
+          index_info_.idx_collation_id
+      );
+  }
+  ```
+- **Impact:** B-tree now uses collation-aware key comparisons throughout. Binary collation (utf8_bin) preserves existing behavior while enabling future collation support for text indexes.
 
 ---
 

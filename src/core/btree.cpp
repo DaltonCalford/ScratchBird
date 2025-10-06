@@ -348,7 +348,7 @@
         }
 
         // Searches for a key within a single B-Tree page using binary search.
-        static auto searchPage(const SBBTreePage *page, const std::vector<uint8_t> &key,
+        auto BTree::searchPage(const SBBTreePage *page, const std::vector<uint8_t> &key,
                                 std::vector<uint64_t> *tuple_ids_out) -> bool
         {
             const auto *page_data = reinterpret_cast<const uint8_t *>(page);
@@ -382,7 +382,8 @@
                         const uint8_t *node_key_data = reinterpret_cast<const uint8_t *>(n) + sizeof(SBBTreeNode);
                         std::vector<uint8_t> node_key(node_key_data, node_key_data + n->btn_key_len);
 
-                        if (key == node_key)
+                        int cmp = compare_keys(key, node_key);
+                        if (cmp == 0)
                         {
                             found_index = i;
                             break;
@@ -395,13 +396,14 @@
                 const uint8_t *node_key_data = reinterpret_cast<const uint8_t *>(node) + sizeof(SBBTreeNode);
                 std::vector<uint8_t> node_key(node_key_data, node_key_data + node->btn_key_len);
 
-                // Compare keys
-                if (key == node_key)
+                // Compare keys using collation-aware comparison
+                int cmp = compare_keys(key, node_key);
+                if (cmp == 0)
                 {
                     found_index = mid;
                     break;
                 }
-                else if (key < node_key)
+                else if (cmp < 0)
                 {
                     right = mid - 1;
                 }
@@ -532,7 +534,8 @@
                     std::vector<uint8_t> node_key(node_key_data, node_key_data + node->btn_key_len);
 
                     // If our search key is less than this node's key, go to this node's left child
-                    if (key < node_key)
+                    int cmp = compare_keys(key, node_key);
+                    if (cmp < 0)
                     {
                         next_page_num = node->btn_child_page;
                         break;
@@ -680,7 +683,8 @@
                 const uint8_t *node_key_data = reinterpret_cast<const uint8_t *>(node) + sizeof(SBBTreeNode);
                 std::vector<uint8_t> node_key(node_key_data, node_key_data + node->btn_key_len);
 
-                if (key == node_key)
+                int cmp = compare_keys(key, node_key);
+                if (cmp == 0)
                 {
                     // Check if the tuple_id matches
                     const auto *tuple_ids_ptr = reinterpret_cast<const uint64_t *>(
@@ -1219,7 +1223,8 @@
                 const uint8_t *existing_key_data = reinterpret_cast<const uint8_t *>(existing_node) + sizeof(SBBTreeNode);
                 std::vector<uint8_t> existing_key(existing_key_data, existing_key_data + existing_node->btn_key_len);
 
-                if (separator_key < existing_key)
+                int cmp = compare_keys(separator_key, existing_key);
+                if (cmp < 0)
                 {
                     insert_pos = i;
                     break;

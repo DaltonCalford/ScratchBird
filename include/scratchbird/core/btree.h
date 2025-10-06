@@ -4,6 +4,7 @@
 #include "scratchbird/core/ondisk.h"
 #include "scratchbird/core/storage_engine.h"
 #include "scratchbird/core/uuidv7.h"
+#include "scratchbird/core/charset.h"
 #include <cstdint>
 #include <vector>
 #include <memory>
@@ -138,8 +139,8 @@ enum class BTreeNodeFlags : uint16_t {
             uint64_t idx_page_count;
             uint64_t idx_deleted_count;
 
-            uint32_t idx_collation_id = 101; // Default: utf8_general_ci
-                                             // TODO(Issue #50): Use for collation-aware key comparisons
+            uint32_t idx_collation_id = 100; // Default: utf8_bin (binary comparison)
+                                             // Use column's collation for text indexes
         };
 
         // Forward declaration for iterator
@@ -197,27 +198,27 @@ enum class BTreeNodeFlags : uint16_t {
         private:
             Database *db_;
             SBBTreeIndex index_info_;
+            CharsetManager charset_manager_;  // For collation-aware key comparisons
 
-            // TODO(Issue #50): Helper for collation-aware key comparison
-            // Currently returns binary comparison. Full integration requires:
-            // 1. Using CharsetManager::compare() with index_info_.idx_collation_id
-            // 2. Converting throughout find/insert/delete operations
-            // 3. Updating WHERE clause evaluation to use collation
+            // Collation-aware key comparison using CharsetManager
+            // Returns: -1 if key1 < key2, 0 if equal, 1 if key1 > key2
             int compare_keys(const std::vector<uint8_t>& key1,
                            const std::vector<uint8_t>& key2) const
             {
-                // For now, use binary comparison (lexicographic)
-                // TODO: Replace with CharsetManager::compare(key1.data(), key1.size(),
-                //                                            key2.data(), key2.size(),
-                //                                            index_info_.idx_collation_id)
-                if (key1 < key2) return -1;
-                if (key1 > key2) return 1;
-                return 0;
+                return charset_manager_.compare(
+                    key1.data(), static_cast<uint32_t>(key1.size()),
+                    key2.data(), static_cast<uint32_t>(key2.size()),
+                    index_info_.idx_collation_id
+                );
             }
 
             // Traverses the B-Tree to find the correct leaf page for a given key.
             Status find_leaf_page(const std::vector<uint8_t> &key, uint64_t *page_num_out,
                                   bool write_lock, ErrorContext *ctx);
+
+            // Searches for a key within a single B-Tree page using binary search.
+            bool searchPage(const SBBTreePage *page, const std::vector<uint8_t> &key,
+                           std::vector<uint64_t> *tuple_ids_out);
 
             // Page split operations
             Status split_leaf_page(uint64_t left_page_num, const std::vector<uint8_t> &new_key,
