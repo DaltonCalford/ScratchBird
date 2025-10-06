@@ -4,6 +4,7 @@
 #include "scratchbird/core/heap_page.h"
 #include "scratchbird/core/proc_array.h"
 #include "scratchbird/core/catalog_manager.h"
+#include "scratchbird/core/transaction_manager.h"
 #include "scratchbird/core/error_context.h"
 #include <chrono>
 #include <cstring>
@@ -550,6 +551,114 @@ namespace scratchbird::core
 
         // Update is committed and old enough to be invisible to all transactions
         return true;
+    }
+
+    auto Vacuum::freezeTable(const ID& table_id, uint64_t freeze_limit,
+                            VacuumStats* stats_out, ErrorContext* ctx) -> Status
+    {
+        // Freeze tuples with xmin < freeze_limit to prevent XID wraparound
+        VacuumStats stats;
+
+        // Get table metadata from catalog
+        CatalogManager* catalog = db_->catalog_manager();
+        if (catalog == nullptr)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Catalog manager not available");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        CatalogManager::TableInfo table_info;
+        Status status = catalog->getTable(table_id, table_info, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        uint32_t start_page = table_info.root_page;
+        if (start_page == 0)
+        {
+            // Empty table
+            if (stats_out != nullptr)
+            {
+                *stats_out = stats;
+            }
+            return Status::OK;
+        }
+
+        // Scan all pages in the table
+        BufferPool* bp = db_->buffer_pool();
+        if (bp == nullptr)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Buffer pool not available");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        // Scan sequentially from root page until IO_ERROR
+        for (uint32_t page_id = start_page; ; ++page_id)
+        {
+            // Pin the page
+            void* page_buffer;
+            status = bp->pinPage(page_id, &page_buffer, ctx);
+            if (status == Status::IO_ERROR)
+            {
+                // Page doesn't exist, we've reached the end
+                break;
+            }
+            if (status != Status::OK)
+            {
+                // Continue with next page
+                continue;
+            }
+
+            auto* page_data = static_cast<uint8_t*>(page_buffer);
+            auto* page_hdr = reinterpret_cast<PageHeader*>(page_data);
+
+            // Check if this is a heap page
+            if (page_hdr->page_type != PAGE_TYPE_HEAP)
+            {
+                bp->unpinPage(page_id, false, ctx);
+                continue;
+            }
+
+            stats.pages_scanned++;
+
+            HeapPage heap_page(page_data, db_->page_size());
+
+            // Freeze tuples on this page
+            uint32_t frozen_count = 0;
+            status = heap_page.freezeTuples(freeze_limit, &frozen_count, ctx);
+
+            bool page_modified = (frozen_count > 0);
+            stats.tuples_frozen += frozen_count;
+
+            // Unpin with dirty flag if we modified the page
+            bp->unpinPage(page_id, page_modified, ctx);
+
+            if (status != Status::OK)
+            {
+                // Continue with next page even if freeze failed
+                continue;
+            }
+        }
+
+        // Advance oldest_xid to freeze_limit after successful freeze
+        // This allows old XIDs to be reclaimed
+        if (stats.tuples_frozen > 0)
+        {
+            TransactionManager* txn_mgr = db_->transaction_manager();
+            if (txn_mgr != nullptr)
+            {
+                status = txn_mgr->setOldestXid(freeze_limit, ctx);
+                // Continue even if this fails - freezing already succeeded
+            }
+        }
+
+        if (stats_out != nullptr)
+        {
+            *stats_out = stats;
+        }
+
+        return Status::OK;
     }
 
 } // namespace scratchbird::core

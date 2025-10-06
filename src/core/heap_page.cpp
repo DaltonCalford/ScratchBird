@@ -819,4 +819,64 @@
             return Status::PAGE_CORRUPT;
         }
 
+        auto HeapPage::freezeTuples(uint64_t freeze_limit, uint32_t *frozen_count_out,
+                                   ErrorContext *ctx) -> Status
+        {
+            // Freeze tuples with xmin < freeze_limit by setting xmin to FROZEN_XID
+            // This prevents XID wraparound by allowing oldest_xid to advance
+
+            static constexpr uint64_t FROZEN_XID = 2; // From transaction_manager.h
+
+            auto *page_hdr = header();
+            auto *special = reinterpret_cast<HeapPageSpecial *>(
+                page_data_ + page_size_ - sizeof(HeapPageSpecial));
+
+            uint32_t frozen_count = 0;
+
+            // Iterate through all items
+            for (uint16_t i = 0; i < page_hdr->item_count; ++i)
+            {
+                auto *item = reinterpret_cast<ItemPointer *>(
+                    page_data_ + sizeof(PageHeader) + i * sizeof(ItemPointer));
+
+                // Skip unused or redirect items
+                if (item->offset == 0)
+                {
+                    continue;
+                }
+
+                // Get tuple header
+                auto *tuple_hdr = reinterpret_cast<TupleHeader *>(page_data_ + item->offset);
+
+                // Skip already frozen tuples
+                if ((tuple_hdr->infomask & TupleHeader::HEAP_XMIN_FROZEN) != 0)
+                {
+                    continue;
+                }
+
+                // Skip tuples with invalid xmin
+                if ((tuple_hdr->infomask & TupleHeader::HEAP_XMIN_INVALID) != 0)
+                {
+                    continue;
+                }
+
+                // Freeze if xmin is old enough and committed
+                if (tuple_hdr->xmin < freeze_limit &&
+                    (tuple_hdr->infomask & TupleHeader::HEAP_XMIN_COMMITTED) != 0)
+                {
+                    // Freeze the tuple
+                    tuple_hdr->xmin = FROZEN_XID;
+                    tuple_hdr->infomask |= TupleHeader::HEAP_XMIN_FROZEN;
+                    frozen_count++;
+                }
+            }
+
+            if (frozen_count_out != nullptr)
+            {
+                *frozen_count_out = frozen_count;
+            }
+
+            return Status::OK;
+        }
+
     } // namespace scratchbird::core
