@@ -3,6 +3,7 @@
 #include "scratchbird/core/ondisk.h"
 #include "scratchbird/core/status.h"
 #include "scratchbird/core/uuidv7.h"
+#include "scratchbird/core/transaction_manager.h"
 #include <cstdint>
 #include <vector>
 #include <memory>
@@ -15,6 +16,7 @@
         struct ErrorContext;
         class ToastManager;
         class Database;
+        class TransactionManager;
 
         // Type alias for UUID-based IDs
         using ID = UuidV7Bytes;
@@ -185,8 +187,11 @@
                             uint16_t *new_item_id_out, ErrorContext *ctx = nullptr) -> Status;
 
             // Find visible version of tuple by traversing version chain
+            // REQUIRES: snapshot must not be null - cross-page pins are registered with it (Option 3: MVCC Snapshot)
+            // Snapshot owns all cross-page pins and cleans them up on transaction commit/rollback
             auto findVisibleVersion(uint16_t item_id, uint64_t snapshot_xid,
                                    const uint8_t **data_out, uint32_t *size_out,
+                                   TransactionManager::Snapshot *snapshot,
                                    ErrorContext *ctx = nullptr) -> Status;
 
             // Check if there's enough space for a tuple

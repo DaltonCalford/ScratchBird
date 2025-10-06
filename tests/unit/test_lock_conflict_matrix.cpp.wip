@@ -1,0 +1,278 @@
+/**
+ * @file test_lock_conflict_matrix.cpp
+ * @brief Lock Manager Conflict Matrix Test
+ *
+ * Suite 4 (MGA & Concurrency Control) Compliance Test
+ *
+ * This test systematically validates the lock conflict matrix by testing
+ * all 64 combinations of lock mode pairs (8×8) to ensure that the lock
+ * manager correctly grants or conflicts locks according to PostgreSQL
+ * compatibility rules.
+ */
+
+#include <gtest/gtest.h>
+#include "scratchbird/core/database.h"
+#include "scratchbird/core/lock_manager.h"
+#include "scratchbird/core/error_context.h"
+#include <filesystem>
+#include <string>
+
+using namespace scratchbird::core;
+
+class LockConflictMatrixTest : public ::testing::Test
+{
+protected:
+    void SetUp() override
+    {
+        test_db_path_ = std::filesystem::temp_directory_path() / "test_lock_matrix.db";
+        std::filesystem::remove(test_db_path_);
+
+        ErrorContext ctx;
+        ASSERT_EQ(Database::create(test_db_path_.string(), 8192, &ctx), Status::OK)
+            << ctx.error_message;
+
+        db_ = std::make_unique<Database>();
+        ASSERT_EQ(db_->open(test_db_path_.string(), &ctx), Status::OK)
+            << ctx.error_message;
+
+        lock_mgr_ = db_->lock_manager();
+        ASSERT_NE(lock_mgr_, nullptr);
+
+        // Register two backends for testing
+        backend1_ = lock_mgr_->register_backend(1001);
+        backend2_ = lock_mgr_->register_backend(1002);
+    }
+
+    void TearDown() override
+    {
+        if (lock_mgr_) {
+            lock_mgr_->unregister_backend(backend1_);
+            lock_mgr_->unregister_backend(backend2_);
+        }
+        db_.reset();
+        std::filesystem::remove(test_db_path_);
+    }
+
+    // Lock modes being tested (PostgreSQL compatible)
+    const std::vector<LockMode> lock_modes_ = {
+        LockMode::ACCESS_SHARE,
+        LockMode::ROW_SHARE,
+        LockMode::ROW_EXCLUSIVE,
+        LockMode::SHARE_UPDATE_EXCLUSIVE,
+        LockMode::SHARE,
+        LockMode::SHARE_ROW_EXCLUSIVE,
+        LockMode::EXCLUSIVE,
+        LockMode::ACCESS_EXCLUSIVE
+    };
+
+    const char* lockModeToString(LockMode mode)
+    {
+        switch (mode) {
+            case LockMode::ACCESS_SHARE: return "ACCESS_SHARE";
+            case LockMode::ROW_SHARE: return "ROW_SHARE";
+            case LockMode::ROW_EXCLUSIVE: return "ROW_EXCLUSIVE";
+            case LockMode::SHARE_UPDATE_EXCLUSIVE: return "SHARE_UPDATE_EXCLUSIVE";
+            case LockMode::SHARE: return "SHARE";
+            case LockMode::SHARE_ROW_EXCLUSIVE: return "SHARE_ROW_EXCLUSIVE";
+            case LockMode::EXCLUSIVE: return "EXCLUSIVE";
+            case LockMode::ACCESS_EXCLUSIVE: return "ACCESS_EXCLUSIVE";
+            default: return "UNKNOWN";
+        }
+    }
+
+    /**
+     * PostgreSQL Lock Conflict Matrix
+     * Returns true if modes conflict, false if compatible
+     *
+     * Based on PostgreSQL src/include/storage/lockdefs.h
+     */
+    bool shouldConflict(LockMode mode1, LockMode mode2)
+    {
+        // Conflict matrix (true = conflict, false = compatible)
+        // Rows: existing lock, Columns: requested lock
+        static const bool conflict_matrix[8][8] = {
+            // AS   RS   RX   SUE  SH   SRX  EX   AX   (requested)
+            {false, false, false, false, false, false, false, true},   // ACCESS_SHARE
+            {false, false, false, false, false, false, true,  true},   // ROW_SHARE
+            {false, false, false, false, true,  true,  true,  true},   // ROW_EXCLUSIVE
+            {false, false, false, true,  true,  true,  true,  true},   // SHARE_UPDATE_EXCLUSIVE
+            {false, false, true,  true,  false, true,  true,  true},   // SHARE
+            {false, false, true,  true,  true,  true,  true,  true},   // SHARE_ROW_EXCLUSIVE
+            {false, true,  true,  true,  true,  true,  true,  true},   // EXCLUSIVE
+            {true,  true,  true,  true,  true,  true,  true,  true}    // ACCESS_EXCLUSIVE
+        };
+
+        int idx1 = static_cast<int>(mode1);
+        int idx2 = static_cast<int>(mode2);
+
+        return conflict_matrix[idx1][idx2];
+    }
+
+    std::filesystem::path test_db_path_;
+    std::unique_ptr<Database> db_;
+    LockManager* lock_mgr_ = nullptr;
+    BackendID backend1_;
+    BackendID backend2_;
+};
+
+/**
+ * Test: Complete Lock Conflict Matrix
+ *
+ * Tests all 64 combinations of lock modes (8×8 matrix) to ensure
+ * the lock manager correctly handles lock compatibility and conflicts.
+ */
+TEST_F(LockConflictMatrixTest, CompleteLockMatrix)
+{
+    int test_count = 0;
+    int conflict_count = 0;
+    int compatible_count = 0;
+
+    // Test object ID
+    ID test_object_id = {0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+                         0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10};
+
+    for (LockMode mode1 : lock_modes_) {
+        for (LockMode mode2 : lock_modes_) {
+            test_count++;
+
+            // Backend 1 acquires lock in mode1
+            Status status1 = lock_mgr_->acquire_lock(backend1_, test_object_id,
+                                                      LockType::TUPLE, mode1);
+
+            ASSERT_EQ(status1, Status::OK)
+                << "Backend1 failed to acquire " << lockModeToString(mode1)
+                << " lock (test " << test_count << "/64)";
+
+            // Backend 2 attempts to acquire lock in mode2
+            Status status2 = lock_mgr_->acquire_lock(backend2_, test_object_id,
+                                                      LockType::TUPLE, mode2,
+                                                      false); // non-blocking
+
+            bool expected_conflict = shouldConflict(mode1, mode2);
+
+            if (expected_conflict) {
+                // Should conflict - lock should not be granted
+                EXPECT_NE(status2, Status::OK)
+                    << "Lock should CONFLICT: Backend1 has " << lockModeToString(mode1)
+                    << ", Backend2 requests " << lockModeToString(mode2)
+                    << " (test " << test_count << "/64)";
+
+                if (status2 != Status::OK) {
+                    conflict_count++;
+                }
+            } else {
+                // Should be compatible - lock should be granted
+                EXPECT_EQ(status2, Status::OK)
+                    << "Lock should be COMPATIBLE: Backend1 has " << lockModeToString(mode1)
+                    << ", Backend2 requests " << lockModeToString(mode2)
+                    << " (test " << test_count << "/64)";
+
+                if (status2 == Status::OK) {
+                    compatible_count++;
+                    // Release backend2's lock
+                    lock_mgr_->release_lock(backend2_, test_object_id, LockType::TUPLE);
+                }
+            }
+
+            // Release backend1's lock for next iteration
+            lock_mgr_->release_lock(backend1_, test_object_id, LockType::TUPLE);
+        }
+    }
+
+    // Verify we tested all 64 combinations
+    EXPECT_EQ(test_count, 64) << "Should test all 64 lock mode combinations";
+
+    // Summary statistics
+    std::cout << "\nLock Conflict Matrix Test Summary:\n";
+    std::cout << "  Total combinations tested: " << test_count << "\n";
+    std::cout << "  Compatible combinations: " << compatible_count << "\n";
+    std::cout << "  Conflicting combinations: " << conflict_count << "\n";
+
+    // Ensure we tested a reasonable mix (not all conflicts or all compatible)
+    EXPECT_GT(conflict_count, 0) << "Should have some conflicting lock combinations";
+    EXPECT_GT(compatible_count, 0) << "Should have some compatible lock combinations";
+}
+
+/**
+ * Test: Self-Compatibility
+ *
+ * Verifies that a single backend can acquire the same lock multiple times
+ * in compatible modes (lock promotion/demotion scenarios).
+ */
+TEST_F(LockConflictMatrixTest, SelfCompatibility)
+{
+    ID test_object_id = {0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+                         0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10};
+
+    // A backend should be able to acquire ACCESS_SHARE multiple times
+    EXPECT_EQ(lock_mgr_->acquire_lock(backend1_, test_object_id, LockType::TUPLE,
+                                       LockMode::ACCESS_SHARE), Status::OK);
+
+    EXPECT_EQ(lock_mgr_->acquire_lock(backend1_, test_object_id, LockType::TUPLE,
+                                       LockMode::ACCESS_SHARE), Status::OK)
+        << "Same backend should be able to acquire compatible lock multiple times";
+
+    lock_mgr_->release_lock(backend1_, test_object_id, LockType::TUPLE);
+}
+
+/**
+ * Test: ACCESS_EXCLUSIVE Blocks Everything
+ *
+ * Verifies that ACCESS_EXCLUSIVE lock mode conflicts with all other modes,
+ * including itself.
+ */
+TEST_F(LockConflictMatrixTest, AccessExclusiveBlocksAll)
+{
+    ID test_object_id = {0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+                         0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10};
+
+    // Backend 1 acquires ACCESS_EXCLUSIVE
+    ASSERT_EQ(lock_mgr_->acquire_lock(backend1_, test_object_id, LockType::TUPLE,
+                                       LockMode::ACCESS_EXCLUSIVE), Status::OK);
+
+    // Backend 2 should be blocked by every lock mode
+    for (LockMode mode : lock_modes_) {
+        Status status = lock_mgr_->acquire_lock(backend2_, test_object_id,
+                                                 LockType::TUPLE, mode, false);
+
+        EXPECT_NE(status, Status::OK)
+            << "ACCESS_EXCLUSIVE should block " << lockModeToString(mode);
+    }
+
+    lock_mgr_->release_lock(backend1_, test_object_id, LockType::TUPLE);
+}
+
+/**
+ * Test: ACCESS_SHARE Most Permissive
+ *
+ * Verifies that ACCESS_SHARE only conflicts with ACCESS_EXCLUSIVE.
+ */
+TEST_F(LockConflictMatrixTest, AccessShareMostPermissive)
+{
+    ID test_object_id = {0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+                         0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10};
+
+    // Backend 1 holds ACCESS_SHARE
+    ASSERT_EQ(lock_mgr_->acquire_lock(backend1_, test_object_id, LockType::TUPLE,
+                                       LockMode::ACCESS_SHARE), Status::OK);
+
+    // All modes except ACCESS_EXCLUSIVE should be compatible
+    for (LockMode mode : lock_modes_) {
+        Status status = lock_mgr_->acquire_lock(backend2_, test_object_id,
+                                                 LockType::TUPLE, mode, false);
+
+        if (mode == LockMode::ACCESS_EXCLUSIVE) {
+            EXPECT_NE(status, Status::OK)
+                << "ACCESS_SHARE should conflict with ACCESS_EXCLUSIVE";
+        } else {
+            EXPECT_EQ(status, Status::OK)
+                << "ACCESS_SHARE should be compatible with " << lockModeToString(mode);
+
+            if (status == Status::OK) {
+                lock_mgr_->release_lock(backend2_, test_object_id, LockType::TUPLE);
+            }
+        }
+    }
+
+    lock_mgr_->release_lock(backend1_, test_object_id, LockType::TUPLE);
+}

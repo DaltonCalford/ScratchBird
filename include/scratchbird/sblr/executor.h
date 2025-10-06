@@ -4,6 +4,8 @@
 #include "scratchbird/parser/token.h"
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/catalog_manager.h"
+#include "scratchbird/core/charset.h"
+#include "scratchbird/core/timezone.h"
 #include "scratchbird/core/types.h"
 #include <vector>
 #include <memory>
@@ -129,6 +131,8 @@ namespace scratchbird
 
         private:
             core::Database *db_;
+            core::CharsetManager charset_manager_;
+            core::TimezoneManager timezone_manager_;
 
             // Execution state
             // Note: bytecode_ is a raw pointer that must remain valid during execute()
@@ -148,6 +152,7 @@ namespace scratchbird
 
             // Execution helpers
             uint8_t readByte();
+            uint16_t readInt16();
             uint32_t readInt32();
             uint64_t readInt64();
             double readDouble();
@@ -172,6 +177,9 @@ namespace scratchbird
             bool matchPattern(const std::string &text, const std::string &pattern, bool case_insensitive);
             bool matchPatternRecursive(const std::string &text, size_t text_pos,
                                       const std::string &pattern, size_t pattern_pos);
+
+            // Collation-aware string comparison helper
+            int compareStrings(const std::string& left, const std::string& right, uint32_t collation_id = 101) const;
 
             // Error handling
             void error(const std::string &msg);

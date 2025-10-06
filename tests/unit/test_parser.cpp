@@ -100,6 +100,43 @@ TEST_F(ParserTest, CreateTableErrors)
     expectParseError("CREATE TABLE t1 (id INTEGER,)"); // Trailing comma
 }
 
+TEST_F(ParserTest, CreateTableNewNumericTypes)
+{
+    expectParseSuccess("CREATE TABLE t1 (a INT128)");
+    expectParseSuccess("CREATE TABLE t1 (a UINT8, b UINT16)");
+    expectParseSuccess("CREATE TABLE t1 (a UINT32, b UINT64)");
+    expectParseSuccess("CREATE TABLE t1 (price MONEY NOT NULL)");
+    expectParseSuccess("CREATE TABLE t1 (a INT128, b UINT32, c MONEY)");
+}
+
+TEST_F(ParserTest, CreateTableNewSpecialTypes)
+{
+    expectParseSuccess("CREATE TABLE t1 (data JSONB)");
+    expectParseSuccess("CREATE TABLE t1 (doc XML)");
+    expectParseSuccess("CREATE TABLE t1 (data JSONB, doc XML NOT NULL)");
+}
+
+TEST_F(ParserTest, CreateTableVectorType)
+{
+    expectParseSuccess("CREATE TABLE t1 (embedding VECTOR(1536))");
+    expectParseSuccess("CREATE TABLE t1 (embedding VECTOR(768) NOT NULL)");
+    expectParseSuccess("CREATE TABLE t1 (v1 VECTOR(128), v2 VECTOR(256))");
+    expectParseSuccess("CREATE TABLE embeddings (id INTEGER, vec VECTOR(1536))");
+}
+
+TEST_F(ParserTest, CastToNewTypes)
+{
+    expectParseSuccess("SELECT CAST(123 AS INT128) FROM t");
+    expectParseSuccess("SELECT CAST(456 AS UINT8) FROM t");
+    expectParseSuccess("SELECT CAST(789 AS UINT16) FROM t");
+    expectParseSuccess("SELECT CAST(999 AS UINT32) FROM t");
+    expectParseSuccess("SELECT CAST(111 AS UINT64) FROM t");
+    expectParseSuccess("SELECT CAST(99.99 AS MONEY) FROM t");
+    expectParseSuccess("SELECT CAST('{\"key\":\"value\"}' AS JSONB) FROM t");
+    expectParseSuccess("SELECT CAST('<root/>' AS XML) FROM t");
+    expectParseSuccess("SELECT CAST('[0.1, 0.2, 0.3]' AS VECTOR(3)) FROM t");
+}
+
 // ===== INSERT Tests =====
 
 TEST_F(ParserTest, InsertBasic)

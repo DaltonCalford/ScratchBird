@@ -15,10 +15,13 @@ protected:
         // Create test database
         test_db_path_ = std::filesystem::temp_directory_path() / "test_executor.db";
         std::filesystem::remove(test_db_path_);
-        
+
         ErrorContext ctx;
+        ASSERT_EQ(Database::create(test_db_path_.string(), 8192, &ctx), Status::OK)
+            << ctx.error_message;
+
         db_ = std::make_unique<Database>();
-        ASSERT_EQ(db_->create(test_db_path_.string(), &ctx), Status::Ok)
+        ASSERT_EQ(db_->open(test_db_path_.string(), &ctx), Status::OK)
             << ctx.error_message;
     }
     

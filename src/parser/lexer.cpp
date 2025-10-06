@@ -27,10 +27,13 @@ namespace scratchbird
             // Numeric types
             {"INT", TokenType::KW_INT},         {"INTEGER", TokenType::KW_INTEGER},
             {"SMALLINT", TokenType::KW_SMALLINT}, {"BIGINT", TokenType::KW_BIGINT},
-            {"TINYINT", TokenType::KW_TINYINT},
+            {"TINYINT", TokenType::KW_TINYINT}, {"INT128", TokenType::KW_INT128},
+            {"UINT8", TokenType::KW_UINT8},     {"UINT16", TokenType::KW_UINT16},
+            {"UINT32", TokenType::KW_UINT32},   {"UINT64", TokenType::KW_UINT64},
             {"REAL", TokenType::KW_REAL},       {"FLOAT", TokenType::KW_FLOAT},
             {"DOUBLE", TokenType::KW_DOUBLE},
             {"DECIMAL", TokenType::KW_DECIMAL}, {"NUMERIC", TokenType::KW_NUMERIC},
+            {"MONEY", TokenType::KW_MONEY},
 
             // String types
             {"CHAR", TokenType::KW_CHAR},       {"CHARACTER", TokenType::KW_CHARACTER},
@@ -49,6 +52,8 @@ namespace scratchbird
 
             // Special types
             {"UUID", TokenType::KW_UUID},       {"JSON", TokenType::KW_JSON},
+            {"JSONB", TokenType::KW_JSONB},     {"XML", TokenType::KW_XML},
+            {"VECTOR", TokenType::KW_VECTOR},
 
             // Type conversion
             {"CAST", TokenType::KW_CAST},       {"TRY_CAST", TokenType::KW_TRY_CAST},
@@ -56,6 +61,14 @@ namespace scratchbird
 
             // Pattern matching
             {"LIKE", TokenType::KW_LIKE},       {"ILIKE", TokenType::KW_ILIKE},
+
+            // Character set and collation
+            {"SET", TokenType::KW_SET},         {"COLLATE", TokenType::KW_COLLATE},
+            {"COLLATION", TokenType::KW_COLLATION}, {"DEFAULT", TokenType::KW_DEFAULT},
+
+            // Timezone
+            {"ZONE", TokenType::KW_ZONE},       {"WITH", TokenType::KW_WITH},
+            {"WITHOUT", TokenType::KW_WITHOUT}, {"AT", TokenType::KW_AT},
         };
 
         // Case-insensitive string comparison

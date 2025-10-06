@@ -66,11 +66,17 @@ namespace scratchbird
             KW_SMALLINT,
             KW_BIGINT,
             KW_TINYINT,
+            KW_INT128,
+            KW_UINT8,
+            KW_UINT16,
+            KW_UINT32,
+            KW_UINT64,
             KW_REAL,
             KW_FLOAT,
             KW_DOUBLE,
             KW_DECIMAL,
             KW_NUMERIC,
+            KW_MONEY,
 
             // String types
             KW_CHAR,
@@ -97,6 +103,9 @@ namespace scratchbird
             // Special types
             KW_UUID,
             KW_JSON,
+            KW_JSONB,
+            KW_XML,
+            KW_VECTOR,
 
             // Type conversion
             KW_CAST,
@@ -106,6 +115,18 @@ namespace scratchbird
             // Pattern matching
             KW_LIKE,
             KW_ILIKE,
+
+            // Character set and collation
+            KW_SET,
+            KW_COLLATE,
+            KW_COLLATION,
+            KW_DEFAULT,
+
+            // Timezone
+            KW_ZONE,
+            KW_WITH,
+            KW_WITHOUT,
+            KW_AT,
         };
 
         // Location in source file

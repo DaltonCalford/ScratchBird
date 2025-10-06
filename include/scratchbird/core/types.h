@@ -23,40 +23,49 @@ namespace scratchbird::core
 
         // Numeric types (1-9)
         INT8 = 1,     // 1-byte signed integer (-128 to 127)
-        INT16 = 2,    // 2-byte signed integer
+        INT16 = 2,    // 2-byte signed integer (alias: SMALLINT)
         INT32 = 3,    // 4-byte signed integer (alias: INTEGER, INT)
         INT64 = 4,    // 8-byte signed integer (alias: BIGINT)
-        FLOAT32 = 5,  // 4-byte IEEE 754 float (alias: REAL, FLOAT)
-        FLOAT64 = 6,  // 8-byte IEEE 754 double (alias: DOUBLE)
-        DECIMAL = 7,  // Fixed-precision decimal (precision, scale)
+        INT128 = 5,   // 16-byte signed integer
+        UINT8 = 6,    // 1-byte unsigned integer (0 to 255)
+        UINT16 = 7,   // 2-byte unsigned integer
+        UINT32 = 8,   // 4-byte unsigned integer
+        UINT64 = 9,   // 8-byte unsigned integer
+        FLOAT32 = 10, // 4-byte IEEE 754 float (alias: REAL, FLOAT)
+        FLOAT64 = 11, // 8-byte IEEE 754 double (alias: DOUBLE)
+        DECIMAL = 12, // Fixed-precision decimal (precision, scale)
+        MONEY = 13,   // Fixed-precision currency type
 
-        // String types (10-19)
-        CHAR = 10,    // Fixed-length string (padded with spaces)
-        VARCHAR = 11, // Variable-length string (max length specified)
-        TEXT = 12,    // Unlimited variable-length string
+        // String types (20-29)
+        CHAR = 20,    // Fixed-length string (padded with spaces)
+        VARCHAR = 21, // Variable-length string (max length specified)
+        TEXT = 22,    // Unlimited variable-length string
 
-        // Binary types (20-29)
-        BINARY = 20,    // Fixed-length binary data
-        VARBINARY = 21, // Variable-length binary data
-        BLOB = 22,      // Binary large object
-        BYTEA = 23,     // PostgreSQL-style binary data
+        // Binary types (30-39)
+        BINARY = 30,    // Fixed-length binary data
+        VARBINARY = 31, // Variable-length binary data
+        BLOB = 32,      // Binary large object
+        BYTEA = 33,     // PostgreSQL-style binary data
 
-        // Date/Time types (30-39)
-        DATE = 30,      // Date (year, month, day)
-        TIME = 31,      // Time of day (hour, minute, second, microsecond)
-        TIMESTAMP = 32, // Date + time (with optional timezone)
-        INTERVAL = 33,  // Time interval (years, months, days, hours, etc.)
+        // Date/Time types (40-49)
+        DATE = 40,      // Date (year, month, day)
+        TIME = 41,      // Time of day (hour, minute, second, microsecond)
+        TIMESTAMP = 42, // Date + time (with optional timezone)
+        INTERVAL = 43,  // Time interval (years, months, days, hours, etc.)
 
-        // Boolean (40-49)
-        BOOLEAN = 40, // True/false
+        // Boolean (50-59)
+        BOOLEAN = 50, // True/false
 
-        // Special types (50-59)
-        UUID = 50, // 128-bit UUID (RFC 4122)
-        JSON = 51, // JSON document (stored as text, validated)
+        // Special types (60-69)
+        UUID = 60,   // 128-bit UUID (RFC 4122)
+        JSON = 61,   // JSON document (stored as text, validated)
+        JSONB = 62,  // Binary JSON (optimized storage and indexing)
+        XML = 63,    // XML document
+        VECTOR = 64, // Vector embeddings for similarity search (variable dimensions)
 
-        // Array and composite types (60-69)
-        ARRAY = 60,     // Array of elements (homogeneous type)
-        COMPOSITE = 61, // Record/struct type (heterogeneous types)
+        // Array and composite types (70-79)
+        ARRAY = 70,     // Array of elements (homogeneous type)
+        COMPOSITE = 71, // Record/struct type (heterogeneous types)
 
         // Null type (255)
         NULL_TYPE = 255, // SQL NULL
@@ -72,22 +81,23 @@ namespace scratchbird::core
         uint32_t scale;     // For DECIMAL
         DataType element_type; // For ARRAY
         bool with_timezone; // For TIMESTAMP
+        uint16_t timezone_hint; // Display timezone ID for TIMESTAMP WITH TIME ZONE (0 = use connection default)
 
         TypeInfo()
             : type(DataType::UNKNOWN), precision(0), scale(0),
-              element_type(DataType::UNKNOWN), with_timezone(false) {}
+              element_type(DataType::UNKNOWN), with_timezone(false), timezone_hint(0) {}
 
         TypeInfo(DataType t)
             : type(t), precision(0), scale(0),
-              element_type(DataType::UNKNOWN), with_timezone(false) {}
+              element_type(DataType::UNKNOWN), with_timezone(false), timezone_hint(0) {}
 
         TypeInfo(DataType t, uint32_t p)
             : type(t), precision(p), scale(0),
-              element_type(DataType::UNKNOWN), with_timezone(false) {}
+              element_type(DataType::UNKNOWN), with_timezone(false), timezone_hint(0) {}
 
         TypeInfo(DataType t, uint32_t p, uint32_t s)
             : type(t), precision(p), scale(s),
-              element_type(DataType::UNKNOWN), with_timezone(false) {}
+              element_type(DataType::UNKNOWN), with_timezone(false), timezone_hint(0) {}
     };
 
     /**
@@ -186,9 +196,17 @@ namespace scratchbird::core
     private:
         DataType type_;
         VariantType data_;
+        std::optional<TypeInfo> type_info_; // Optional type metadata (for VARCHAR max_length, DECIMAL precision/scale, etc.)
 
-        TypedValue(DataType type, VariantType data) : type_(type), data_(std::move(data)) {}
+        TypedValue(DataType type, VariantType data) : type_(type), data_(std::move(data)), type_info_(std::nullopt) {}
 
+    public:
+        // Get/set type info (for preserving constraints like VARCHAR max_length)
+        auto getTypeInfo() const -> const std::optional<TypeInfo>& { return type_info_; }
+        void setTypeInfo(const TypeInfo& info) { type_info_ = info; }
+        bool hasTypeInfo() const { return type_info_.has_value(); }
+
+    private:
         // Helper methods for conversion
         auto convertNumericTo(DataType target_type, ErrorContext *ctx = nullptr) const -> std::optional<TypedValue>;
         auto convertStringTo(DataType target_type, ErrorContext *ctx = nullptr) const -> std::optional<TypedValue>;

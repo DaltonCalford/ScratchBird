@@ -2,6 +2,8 @@
 #include "scratchbird/core/catalog_manager.h"
 #include "scratchbird/core/storage_engine.h"
 #include "scratchbird/core/heap_page.h"
+#include "scratchbird/core/charset.h"
+#include "scratchbird/core/timezone.h"
 #include <sstream>
 #include <iomanip>
 #include <cstring>
@@ -149,6 +151,17 @@ namespace scratchbird
             return bytecode_[pc_++];
         }
 
+        uint16_t Executor::readInt16()
+        {
+            if (pc_ + 2 > bytecode_size_)
+            {
+                throw std::runtime_error("Bytecode underflow");
+            }
+            uint16_t value = sblr::readInt16(&bytecode_[pc_]);
+            pc_ += 2;
+            return value;
+        }
+
         uint32_t Executor::readInt32()
         {
             if (pc_ + 4 > bytecode_size_)
@@ -222,14 +235,60 @@ namespace scratchbird
         {
             switch (type_opcode)
             {
+                // Integer types
+                case Opcode::TYPE_INT8:
+                    return core::DataType::INT8;
+                case Opcode::TYPE_INT16:
+                    return core::DataType::INT16;
                 case Opcode::TYPE_INTEGER:
                     return core::DataType::INT32;
                 case Opcode::TYPE_BIGINT:
                     return core::DataType::INT64;
+
+                // Floating point types
+                case Opcode::TYPE_FLOAT32:
+                    return core::DataType::FLOAT32;
                 case Opcode::TYPE_DOUBLE:
                     return core::DataType::FLOAT64;
+
+                // Boolean
+                case Opcode::TYPE_BOOLEAN:
+                    return core::DataType::BOOLEAN;
+
+                // String types
+                case Opcode::TYPE_CHAR:
+                    return core::DataType::CHAR;
                 case Opcode::TYPE_VARCHAR:
                     return core::DataType::VARCHAR;
+                case Opcode::TYPE_TEXT:
+                    return core::DataType::TEXT;
+
+                // Date/Time types
+                case Opcode::TYPE_DATE:
+                    return core::DataType::DATE;
+                case Opcode::TYPE_TIME:
+                    return core::DataType::TIME;
+                case Opcode::TYPE_TIMESTAMP:
+                    return core::DataType::TIMESTAMP;
+
+                // Binary types
+                case Opcode::TYPE_BINARY:
+                    return core::DataType::BINARY;
+                case Opcode::TYPE_VARBINARY:
+                    return core::DataType::VARBINARY;
+                case Opcode::TYPE_BLOB:
+                    return core::DataType::BLOB;
+                case Opcode::TYPE_BYTEA:
+                    return core::DataType::BYTEA;
+
+                // Other types
+                case Opcode::TYPE_UUID:
+                    return core::DataType::UUID;
+                case Opcode::TYPE_DECIMAL:
+                    return core::DataType::DECIMAL;
+                case Opcode::TYPE_JSON:
+                    return core::DataType::JSON;
+
                 default:
                     throw std::runtime_error("Unknown data type opcode");
             }
@@ -431,10 +490,11 @@ namespace scratchbird
             }
 
             // Build tuple in binary format
-            // Tuple format: TupleHeader + null bitmap (if needed) + column data
+            // Format: TupleHeader + null bitmap (if needed) + column data
+            // HeapPage will overwrite some TupleHeader fields (xmin, xmax, ctid, etc.)
             std::vector<uint8_t> tuple_data;
 
-            // Reserve space for TupleHeader
+            // Reserve space for TupleHeader (HeapPage expects it)
             size_t header_offset = tuple_data.size();
             tuple_data.resize(tuple_data.size() + sizeof(core::TupleHeader));
 
@@ -524,13 +584,20 @@ namespace scratchbird
                 }
             }
 
-            // Fill in TupleHeader
+            // Initialize TupleHeader (HeapPage will overwrite xmin, xmax, ctid later)
             auto *header = reinterpret_cast<core::TupleHeader *>(&tuple_data[header_offset]);
-            header->xmin = 1; // Transaction ID (simplified - use 1 for now)
-            header->xmax = 0; // Not deleted
+            // Initialize all fields to zero first
+            std::memset(header, 0, sizeof(core::TupleHeader));
+
+            // Set the fields we know about
             header->infomask = has_nulls ? core::TupleHeader::HEAP_HAS_NULLS : 0;
-            header->null_bitmap_offset =
-                has_nulls ? static_cast<uint16_t>(null_bitmap_offset) : 0;
+            header->null_bitmap_offset = has_nulls ? static_cast<uint16_t>(null_bitmap_offset) : 0;
+
+            // HeapPage::insertTuple() will set:
+            // - xmin (from transaction manager)
+            // - xmax = 0
+            // - next_version_tid = 0
+            // - ctid_page, ctid_item (from final item position)
 
             // Insert tuple via storage engine
             uint32_t page_id;
@@ -943,6 +1010,7 @@ namespace scratchbird
                 // String functions
                 case Opcode::FUNC_LENGTH:
                 {
+                    // LENGTH returns character count (charset-aware)
                     uint8_t arg_count = readByte();
                     if (arg_count != 1)
                     {
@@ -957,7 +1025,13 @@ namespace scratchbird
                     else
                     {
                         std::string str = arg.toString();
-                        push(Value::makeInt32(static_cast<int32_t>(str.length())));
+                        // Default to UTF-8 for string values
+                        uint32_t char_len = charset_manager_.getCharLength(
+                            reinterpret_cast<const uint8_t*>(str.data()),
+                            str.length(),
+                            core::CharacterSet::UTF8
+                        );
+                        push(Value::makeInt32(static_cast<int32_t>(char_len)));
                     }
                     break;
                 }
@@ -982,21 +1056,36 @@ namespace scratchbird
                     else
                     {
                         std::string str = str_val.toString();
-                        int32_t start = static_cast<int32_t>(start_val.toInt64());
-                        int32_t length = static_cast<int32_t>(length_val.toInt64());
+                        int32_t char_start = static_cast<int32_t>(start_val.toInt64());
+                        int32_t char_length = static_cast<int32_t>(length_val.toInt64());
 
                         // SQL uses 1-based indexing
-                        if (start < 1)
-                            start = 1;
-                        start--; // Convert to 0-based
+                        if (char_start < 1)
+                            char_start = 1;
+                        char_start--; // Convert to 0-based
 
-                        if (start >= static_cast<int32_t>(str.length()) || length <= 0)
+                        const uint8_t* str_bytes = reinterpret_cast<const uint8_t*>(str.data());
+                        uint32_t total_chars = charset_manager_.getCharLength(
+                            str_bytes, str.length(), core::CharacterSet::UTF8);
+
+                        if (char_start >= static_cast<int32_t>(total_chars) || char_length <= 0)
                         {
                             push(Value::makeVarchar(""));
                         }
                         else
                         {
-                            std::string result = str.substr(start, length);
+                            // Find byte offset for start position
+                            uint32_t byte_start = core::utf8::byte_length(str_bytes, char_start);
+
+                            // Find byte length for the substring
+                            uint32_t remaining_chars = std::min(
+                                static_cast<uint32_t>(char_length),
+                                total_chars - char_start
+                            );
+                            uint32_t byte_length = core::utf8::byte_length(
+                                str_bytes + byte_start, remaining_chars);
+
+                            std::string result = str.substr(byte_start, byte_length);
                             push(Value::makeVarchar(result));
                         }
                     }
@@ -1019,11 +1108,9 @@ namespace scratchbird
                     else
                     {
                         std::string str = arg.toString();
-                        for (char &c : str)
-                        {
-                            c = std::toupper(static_cast<unsigned char>(c));
-                        }
-                        push(Value::makeVarchar(str));
+                        // Use UTF-8 aware uppercase function
+                        std::string result = core::utf8::to_upper(str);
+                        push(Value::makeVarchar(result));
                     }
                     break;
                 }
@@ -1044,11 +1131,9 @@ namespace scratchbird
                     else
                     {
                         std::string str = arg.toString();
-                        for (char &c : str)
-                        {
-                            c = std::tolower(static_cast<unsigned char>(c));
-                        }
-                        push(Value::makeVarchar(str));
+                        // Use UTF-8 aware lowercase function
+                        std::string result = core::utf8::to_lower(str);
+                        push(Value::makeVarchar(result));
                     }
                     break;
                 }
@@ -1087,6 +1172,119 @@ namespace scratchbird
                         std::string result = str.substr(start, end - start);
                         push(Value::makeVarchar(result));
                     }
+                    break;
+                }
+
+                case Opcode::FUNC_CHAR_LENGTH:
+                {
+                    // CHAR_LENGTH returns character count (same as LENGTH for now)
+                    uint8_t arg_count = readByte();
+                    if (arg_count != 1)
+                    {
+                        error("CHAR_LENGTH expects 1 argument, got " + std::to_string(arg_count));
+                    }
+
+                    Value arg = pop();
+                    if (arg.isNull())
+                    {
+                        push(Value::makeNull());
+                    }
+                    else
+                    {
+                        std::string str = arg.toString();
+                        uint32_t char_len = charset_manager_.getCharLength(
+                            reinterpret_cast<const uint8_t*>(str.data()),
+                            str.length(),
+                            core::CharacterSet::UTF8
+                        );
+                        push(Value::makeInt32(static_cast<int32_t>(char_len)));
+                    }
+                    break;
+                }
+
+                case Opcode::FUNC_OCTET_LENGTH:
+                {
+                    // OCTET_LENGTH returns byte count
+                    uint8_t arg_count = readByte();
+                    if (arg_count != 1)
+                    {
+                        error("OCTET_LENGTH expects 1 argument, got " + std::to_string(arg_count));
+                    }
+
+                    Value arg = pop();
+                    if (arg.isNull())
+                    {
+                        push(Value::makeNull());
+                    }
+                    else
+                    {
+                        std::string str = arg.toString();
+                        push(Value::makeInt32(static_cast<int32_t>(str.length())));
+                    }
+                    break;
+                }
+
+                case Opcode::FUNC_CONVERT:
+                {
+                    // CONVERT(str, from_charset, to_charset)
+                    uint8_t arg_count = readByte();
+                    if (arg_count != 3)
+                    {
+                        error("CONVERT expects 3 arguments, got " + std::to_string(arg_count));
+                    }
+
+                    // Pop args: to_charset, from_charset, str
+                    Value to_cs_val = pop();
+                    Value from_cs_val = pop();
+                    Value str_val = pop();
+
+                    if (str_val.isNull())
+                    {
+                        push(Value::makeNull());
+                    }
+                    else
+                    {
+                        std::string str = str_val.toString();
+                        auto from_cs = static_cast<core::CharacterSet>(from_cs_val.toInt64());
+                        auto to_cs = static_cast<core::CharacterSet>(to_cs_val.toInt64());
+
+                        std::vector<uint8_t> output;
+                        auto status = charset_manager_.convert(
+                            reinterpret_cast<const uint8_t*>(str.data()),
+                            str.length(),
+                            from_cs,
+                            output,
+                            to_cs,
+                            nullptr
+                        );
+
+                        if (status != core::Status::OK)
+                        {
+                            error("Character set conversion failed");
+                        }
+
+                        std::string result(output.begin(), output.end());
+                        push(Value::makeVarchar(result));
+                    }
+                    break;
+                }
+
+                case Opcode::FUNC_COLLATE:
+                {
+                    // COLLATE applies a collation to an expression (metadata only, actual comparison elsewhere)
+                    // For now, we'll just pass through the value but could store collation metadata
+                    uint8_t arg_count = readByte();
+                    if (arg_count != 2)
+                    {
+                        error("COLLATE expects 2 arguments (expr, collation_id), got " + std::to_string(arg_count));
+                    }
+
+                    Value collation_id = pop();
+                    Value expr = pop();
+
+                    // For now, just return the expression value
+                    // In a full implementation, we'd attach collation metadata to the value
+                    push(expr);
                     break;
                 }
 
@@ -1205,6 +1403,37 @@ namespace scratchbird
                     break;
                 }
 
+                case Opcode::FUNC_AT_TIME_ZONE:
+                {
+                    // timestamp AT TIME ZONE timezone_id
+                    // Converts GMT timestamp to specified timezone for display
+                    // Returns formatted string in target timezone
+                    uint8_t arg_count = readByte();
+                    if (arg_count != 2)
+                    {
+                        error("AT TIME ZONE expects 2 arguments (timestamp, timezone_id)");
+                    }
+
+                    Value tz_val = pop();        // timezone_id
+                    Value timestamp_val = pop(); // timestamp in GMT
+
+                    if (timestamp_val.isNull() || tz_val.isNull())
+                    {
+                        push(Value::makeNull());
+                    }
+                    else
+                    {
+                        int64_t gmt_microseconds = timestamp_val.toInt64();
+                        uint16_t timezone_id = static_cast<uint16_t>(tz_val.toInt64());
+
+                        // Format timestamp in target timezone
+                        std::string result = timezone_manager_.formatTimestamp(
+                            gmt_microseconds, timezone_id, true);
+                        push(Value::makeVarchar(result));
+                    }
+                    break;
+                }
+
                 case Opcode::FUNC_CURRENT_DATE:
                 {
                     uint8_t arg_count = readByte();
@@ -1285,12 +1514,12 @@ namespace scratchbird
                     break;
                 }
 
-                // Comparison operators
+                // Comparison operators (collation-aware for strings)
                 case Opcode::EXPR_EQ:
                 {
                     bool result;
                     if (core::TypeSystem::isString(left.type()) || core::TypeSystem::isString(right.type()))
-                        result = left.toString() == right.toString();
+                        result = compareStrings(left.toString(), right.toString()) == 0;
                     else if (left.type() == core::DataType::FLOAT64 || right.type() == core::DataType::FLOAT64)
                         result = left.toDouble() == right.toDouble();
                     else
@@ -1302,7 +1531,7 @@ namespace scratchbird
                 {
                     bool result;
                     if (core::TypeSystem::isString(left.type()) || core::TypeSystem::isString(right.type()))
-                        result = left.toString() != right.toString();
+                        result = compareStrings(left.toString(), right.toString()) != 0;
                     else if (left.type() == core::DataType::FLOAT64 || right.type() == core::DataType::FLOAT64)
                         result = left.toDouble() != right.toDouble();
                     else
@@ -1314,7 +1543,7 @@ namespace scratchbird
                 {
                     bool result;
                     if (core::TypeSystem::isString(left.type()) || core::TypeSystem::isString(right.type()))
-                        result = left.toString() < right.toString();
+                        result = compareStrings(left.toString(), right.toString()) < 0;
                     else if (left.type() == core::DataType::FLOAT64 || right.type() == core::DataType::FLOAT64)
                         result = left.toDouble() < right.toDouble();
                     else
@@ -1326,7 +1555,7 @@ namespace scratchbird
                 {
                     bool result;
                     if (core::TypeSystem::isString(left.type()) || core::TypeSystem::isString(right.type()))
-                        result = left.toString() > right.toString();
+                        result = compareStrings(left.toString(), right.toString()) > 0;
                     else if (left.type() == core::DataType::FLOAT64 || right.type() == core::DataType::FLOAT64)
                         result = left.toDouble() > right.toDouble();
                     else
@@ -1338,7 +1567,7 @@ namespace scratchbird
                 {
                     bool result;
                     if (core::TypeSystem::isString(left.type()) || core::TypeSystem::isString(right.type()))
-                        result = left.toString() <= right.toString();
+                        result = compareStrings(left.toString(), right.toString()) <= 0;
                     else if (left.type() == core::DataType::FLOAT64 || right.type() == core::DataType::FLOAT64)
                         result = left.toDouble() <= right.toDouble();
                     else
@@ -1350,7 +1579,7 @@ namespace scratchbird
                 {
                     bool result;
                     if (core::TypeSystem::isString(left.type()) || core::TypeSystem::isString(right.type()))
-                        result = left.toString() >= right.toString();
+                        result = compareStrings(left.toString(), right.toString()) >= 0;
                     else if (left.type() == core::DataType::FLOAT64 || right.type() == core::DataType::FLOAT64)
                         result = left.toDouble() >= right.toDouble();
                     else
@@ -1467,6 +1696,17 @@ namespace scratchbird
             }
 
             return false;
+        }
+
+        int Executor::compareStrings(const std::string& left, const std::string& right, uint32_t collation_id) const
+        {
+            // Use charset manager for collation-aware comparison
+            // Default collation_id = 101 (utf8_general_ci - case insensitive)
+            return charset_manager_.compare(
+                reinterpret_cast<const uint8_t*>(left.data()), left.length(),
+                reinterpret_cast<const uint8_t*>(right.data()), right.length(),
+                collation_id
+            );
         }
 
         bool Executor::deserializeTuple(const uint8_t *tuple_data, uint32_t tuple_size,

@@ -5,6 +5,8 @@
 #include <cstdint>
 #include <memory>
 #include <vector>
+#include <unordered_map>
+#include <mutex>
 
 
     namespace scratchbird::core
@@ -19,6 +21,7 @@
         class CatalogManager;
         class HeapPage;
         class StorageEngine;
+        class ToastManager;
         struct ErrorContext;
         struct TableInfo;
 
@@ -153,12 +156,19 @@
             PageManager *page_manager_;
             CatalogManager *catalog_manager_;
 
+            // ToastManager cache (per-table)
+            std::unordered_map<ID, std::unique_ptr<ToastManager>> toast_managers_;
+            std::mutex toast_mutex_; // Protects toast_managers_ map
+
             // Find a page with free space for a tuple
             auto findFreePage(const ID &table_id, uint32_t tuple_size, uint32_t *page_id_out,
                                   ErrorContext *ctx) -> Status;
 
             // Allocate a new heap page for a table
             auto allocateHeapPage(const ID &table_id, uint32_t *page_id_out, ErrorContext *ctx) -> Status;
+
+            // Get or create ToastManager for a table
+            auto getOrCreateToastManager(const ID &table_id, ErrorContext *ctx) -> ToastManager*;
 
             // Lock management helpers
             auto acquireTupleLock(const ID &table_id, uint32_t page_id, uint16_t item_id,

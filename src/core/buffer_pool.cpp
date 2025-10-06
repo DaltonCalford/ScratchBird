@@ -225,6 +225,61 @@
             return Status::OK;
         }
 
+        auto BufferPool::lockPage(uint32_t page_id, ErrorContext *ctx) -> Status
+        {
+            uint32_t frame_index;
+
+            // Find the frame index while holding buffer pool mutex
+            {
+                std::lock_guard<std::mutex> lock(mutex_);
+
+                auto it = page_table_.find(page_id);
+                if (it == page_table_.end())
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Page not in buffer pool - must pin first");
+                    return Status::NOT_FOUND;
+                }
+
+                frame_index = it->second;
+
+                // Page must be pinned before locking
+                if (frames_[frame_index].pin_count == 0)
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Cannot lock unpinned page");
+                    return Status::INVALID_ARGUMENT;
+                }
+            }
+
+            // Acquire the content mutex for this page (outside buffer pool mutex to avoid deadlock)
+            frames_[frame_index].content_mutex->lock();
+
+            return Status::OK;
+        }
+
+        auto BufferPool::unlockPage(uint32_t page_id, ErrorContext *ctx) -> Status
+        {
+            uint32_t frame_index;
+
+            // Find the frame index while holding buffer pool mutex
+            {
+                std::lock_guard<std::mutex> lock(mutex_);
+
+                auto it = page_table_.find(page_id);
+                if (it == page_table_.end())
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Page not in buffer pool");
+                    return Status::NOT_FOUND;
+                }
+
+                frame_index = it->second;
+            }
+
+            // Release the content mutex for this page
+            frames_[frame_index].content_mutex->unlock();
+
+            return Status::OK;
+        }
+
         auto BufferPool::evictPage(uint32_t &evicted_frame, ErrorContext *ctx) -> Status
         {
             // Find a page to evict using LRU

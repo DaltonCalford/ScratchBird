@@ -1,9 +1,13 @@
 #include "scratchbird/core/types.h"
+#include "scratchbird/core/timezone.h"
 #include <algorithm>
 #include <cctype>
 
 namespace scratchbird::core
 {
+
+    // Thread-local timezone manager for parsing/formatting
+    static thread_local TimezoneManager g_timezone_manager;
 
     /**
      * Type conversion implementation for TypedValue
@@ -549,21 +553,12 @@ namespace scratchbird::core
 
     auto TypeConverter::stringToTimestamp(const std::string &str, ErrorContext *ctx) -> std::optional<int64_t>
     {
-        // Parse ISO 8601 timestamp: YYYY-MM-DD HH:MM:SS[.ffffff]
-        size_t space_pos = str.find(' ');
-        if (space_pos == std::string::npos)
-        {
-            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Invalid timestamp format (expected YYYY-MM-DD HH:MM:SS)");
-            return std::nullopt;
-        }
-
-        auto date_part = stringToDate(str.substr(0, space_pos), ctx);
-        auto time_part = stringToTime(str.substr(space_pos + 1), ctx);
-
-        if (!date_part || !time_part)
-            return std::nullopt;
-
-        return *date_part * 86400LL * 1000000 + *time_part;
+        // Use TimezoneManager for timezone-aware parsing
+        // Default to UTC for backward compatibility
+        // Format: YYYY-MM-DD HH:MM:SS[.ffffff][+/-HH:MM or timezone name]
+        // Result is always stored in GMT
+        auto result = g_timezone_manager.parseTimestamp(str, TimezoneManager::TZ_UTC, ctx);
+        return result;
     }
 
     auto TypeConverter::stringToUUID(const std::string &str, ErrorContext *ctx) -> std::optional<std::vector<uint8_t>>

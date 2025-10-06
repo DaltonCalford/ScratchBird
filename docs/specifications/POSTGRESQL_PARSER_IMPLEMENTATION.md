@@ -588,6 +588,77 @@ TEST(PostgreSQLParser, VersionCompatibility) {
 4. **Fast Path for Simple Queries**: Skip full parsing for simple SELECT/INSERT
 5. **Batch Insert Optimization**: Use COPY protocol for bulk inserts
 
+## Character Set and Timezone Handling
+
+### Character Sets
+External parsers must handle character set conversion between client and database:
+
+**References**:
+- [character_sets_and_collations.md](character_sets_and_collations.md) - Character set and collation system
+- Character set specification at connection, table, and column levels
+- UTF-8 as default for all system objects
+- Collation-aware string operations
+
+**Client Responsibilities**:
+```cpp
+// Query connection charset
+SELECT current_setting('client_encoding');
+
+// Convert client data to database charset
+auto converted = charset_manager.convert(
+    client_data, client_charset,
+    output, db_charset, &ctx
+);
+```
+
+### Timezone Support
+External parsers must handle timezone-aware timestamp operations:
+
+**References**:
+- [TIMEZONE_SYSTEM_CATALOG.md](TIMEZONE_SYSTEM_CATALOG.md) - Complete timezone specification
+- `pg_timezone` system catalog table
+- `TIMESTAMP WITH TIME ZONE` type support
+- `AT TIME ZONE` operator
+
+**Key Implementation Points**:
+1. **Storage**: All timestamps stored as GMT (int64_t microseconds since epoch)
+2. **Display**: Use `timezone_hint` from column metadata or connection default
+3. **Parsing**: Support ISO 8601 with timezone offsets (e.g., "2025-10-04 15:30:00-05:00")
+4. **Formatting**: Apply timezone conversion only at presentation layer
+
+**Client Responsibilities**:
+```cpp
+// Load timezone definitions
+std::vector<CatalogManager::TimezoneInfo> timezones;
+catalog->listTimezones(timezones, &ctx);
+
+// Parse timestamp with timezone
+auto gmt_ts = tz_manager.parseTimestamp(
+    "2025-10-04 10:30:00-05:00",  // EST input
+    conn_default_tz,               // Fallback
+    &ctx
+);
+
+// Format for display
+std::string display = tz_manager.formatTimestamp(
+    gmt_ts,
+    column_tz_hint != 0 ? column_tz_hint : conn_tz,
+    true  // show offset
+);
+```
+
+**SQL Commands for Timezone Management** (to be implemented):
+```sql
+-- Create timezone
+CREATE TIMEZONE 'Custom/Zone' ABBREVIATION 'CZ' OFFSET +05:30;
+
+-- Query timezones
+SELECT * FROM pg_timezone WHERE observes_dst = true;
+
+-- Use in queries
+SELECT event_time AT TIME ZONE 'America/New_York' FROM events;
+```
+
 ## Summary
 
 This PostgreSQL parser implementation:
@@ -597,3 +668,5 @@ This PostgreSQL parser implementation:
 - Supports current version (15.x) with framework for older versions
 - Enables transparent migration from PostgreSQL
 - Maintains high performance through caching and optimization
+- **Includes character set and timezone handling for internationalization**
+- **References complete specifications for charset/collation and timezone systems**

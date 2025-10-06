@@ -1,4 +1,5 @@
 #include "scratchbird/core/types.h"
+#include "scratchbird/core/timezone.h"
 #include <cstring>
 #include <cmath>
 #include <sstream>
@@ -9,6 +10,8 @@
 
 namespace scratchbird::core
 {
+    // Thread-local timezone manager for formatting
+    static thread_local TimezoneManager g_tz_manager;
 
     // ===== TypedValue Implementation =====
 
@@ -281,13 +284,17 @@ namespace scratchbird::core
 
     bool TypeSystem::isNumeric(DataType type)
     {
-        return isInteger(type) || isFloatingPoint(type) || type == DataType::DECIMAL;
+        return isInteger(type) || isFloatingPoint(type) ||
+               type == DataType::DECIMAL || type == DataType::MONEY;
     }
 
     bool TypeSystem::isInteger(DataType type)
     {
         return type == DataType::INT8 || type == DataType::INT16 ||
-               type == DataType::INT32 || type == DataType::INT64;
+               type == DataType::INT32 || type == DataType::INT64 ||
+               type == DataType::INT128 ||
+               type == DataType::UINT8 || type == DataType::UINT16 ||
+               type == DataType::UINT32 || type == DataType::UINT64;
     }
 
     bool TypeSystem::isFloatingPoint(DataType type)
@@ -403,12 +410,24 @@ namespace scratchbird::core
             return "INT32";
         case DataType::INT64:
             return "INT64";
+        case DataType::INT128:
+            return "INT128";
+        case DataType::UINT8:
+            return "UINT8";
+        case DataType::UINT16:
+            return "UINT16";
+        case DataType::UINT32:
+            return "UINT32";
+        case DataType::UINT64:
+            return "UINT64";
         case DataType::FLOAT32:
             return "FLOAT32";
         case DataType::FLOAT64:
             return "FLOAT64";
         case DataType::DECIMAL:
             return "DECIMAL";
+        case DataType::MONEY:
+            return "MONEY";
         case DataType::CHAR:
             return "CHAR";
         case DataType::VARCHAR:
@@ -437,6 +456,12 @@ namespace scratchbird::core
             return "UUID";
         case DataType::JSON:
             return "JSON";
+        case DataType::JSONB:
+            return "JSONB";
+        case DataType::XML:
+            return "XML";
+        case DataType::VECTOR:
+            return "VECTOR";
         case DataType::ARRAY:
             return "ARRAY";
         case DataType::COMPOSITE:
@@ -461,12 +486,24 @@ namespace scratchbird::core
             return DataType::INT32;
         if (upper == "INT64" || upper == "BIGINT")
             return DataType::INT64;
+        if (upper == "INT128")
+            return DataType::INT128;
+        if (upper == "UINT8")
+            return DataType::UINT8;
+        if (upper == "UINT16")
+            return DataType::UINT16;
+        if (upper == "UINT32")
+            return DataType::UINT32;
+        if (upper == "UINT64")
+            return DataType::UINT64;
         if (upper == "FLOAT32" || upper == "REAL" || upper == "FLOAT")
             return DataType::FLOAT32;
         if (upper == "FLOAT64" || upper == "DOUBLE")
             return DataType::FLOAT64;
         if (upper == "DECIMAL" || upper == "NUMERIC")
             return DataType::DECIMAL;
+        if (upper == "MONEY")
+            return DataType::MONEY;
         if (upper == "CHAR" || upper == "CHARACTER")
             return DataType::CHAR;
         if (upper == "VARCHAR" || upper == "CHARACTER VARYING")
@@ -495,6 +532,12 @@ namespace scratchbird::core
             return DataType::UUID;
         if (upper == "JSON")
             return DataType::JSON;
+        if (upper == "JSONB")
+            return DataType::JSONB;
+        if (upper == "XML")
+            return DataType::XML;
+        if (upper == "VECTOR")
+            return DataType::VECTOR;
 
         return std::nullopt;
     }
@@ -813,9 +856,10 @@ namespace scratchbird::core
 
     auto TypeConverter::timestampToString(int64_t microseconds) -> std::string
     {
-        int64_t days = microseconds / (86400LL * 1000000);
-        int64_t time_us = microseconds % (86400LL * 1000000);
-        return dateToString(days) + " " + timeToString(time_us);
+        // Input is always in GMT (microseconds since epoch)
+        // Output in UTC with timezone offset for backward compatibility
+        // Use TimezoneManager for proper formatting
+        return g_tz_manager.formatTimestamp(microseconds, TimezoneManager::TZ_UTC, true);
     }
 
     auto TypeConverter::uuidToString(const std::vector<uint8_t> &uuid) -> std::string

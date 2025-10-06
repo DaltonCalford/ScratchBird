@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <vector>
 #include <memory>
+#include <atomic>
 
 
     namespace scratchbird::core
@@ -122,9 +123,9 @@
 
         private:
             Database *db_;
-            ID table_id_;            // Regular table ID
-            ID toast_table_id_;      // Associated TOAST table ID
-            uint32_t next_value_id_; // Next TOAST value ID to assign
+            ID table_id_;                      // Regular table ID
+            ID toast_table_id_;                // Associated TOAST table ID
+            std::atomic<uint32_t> next_value_id_; // Next TOAST value ID to assign (atomic for thread safety)
 
             // Helper methods
             auto initializeNextValueId(ErrorContext *ctx) -> Status;

@@ -9,6 +9,7 @@
 #include "scratchbird/core/lock_manager.h"
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/core/btree.h"
+#include "scratchbird/core/toast.h"
 #include <cstring>
 #include <new>
 
@@ -45,8 +46,13 @@
                 return status;
             }
 
-            // Insert tuple
-            HeapPage heap_page(page_data, db_->page_size());
+            // Get or create ToastManager for this table
+            ToastManager* toast_mgr = getOrCreateToastManager(table_id, ctx);
+            // Note: toast_mgr can be nullptr if TOAST table doesn't exist
+            // HeapPage will handle this gracefully by not TOASTing
+
+            // Insert tuple with TOAST support
+            HeapPage heap_page(page_data, db_->page_size(), toast_mgr, db_, table_id);
             uint16_t item_id;
 
             // Get current XID from transaction manager
@@ -191,6 +197,22 @@
             {
                 TransactionManager *tm = db_->transaction_manager();
 
+                // VALIDATE XIDs FIRST - protect against corrupted tuple headers
+                if (!tm->isXidInRange(xmin))
+                {
+                    // CORRUPTION LOGGING: Invalid xmin detected
+                    fprintf(stderr, "[ERROR] Invalid xmin %lu in StorageEngine::isVisible\n", xmin);
+                    return false; // Invalid xmin - tuple is invisible
+                }
+
+                if (xmax != 0 && !tm->isXidInRange(xmax))
+                {
+                    // CORRUPTION LOGGING: Invalid xmax detected
+                    fprintf(stderr, "[WARNING] Invalid xmax %lu in StorageEngine::isVisible - treating as not deleted\n", xmax);
+                    // Invalid xmax - treat as if not deleted
+                    xmax = 0;
+                }
+
                 // Check if creating transaction is visible
                 if (!tm->isTransactionVisible(xmin, current_xid))
                 {
@@ -206,7 +228,21 @@
                 return true;
             }
 
-            // Fallback to simple visibility rules
+            // Fallback to simple visibility rules (still validate XIDs)
+            if (!TransactionManager::isValidXid(xmin))
+            {
+                // CORRUPTION LOGGING: Invalid xmin in fallback path
+                fprintf(stderr, "[ERROR] Invalid xmin %lu in fallback visibility check\n", xmin);
+                return false; // Invalid xmin
+            }
+
+            if (xmax != 0 && !TransactionManager::isValidXid(xmax))
+            {
+                // CORRUPTION LOGGING: Invalid xmax in fallback path
+                fprintf(stderr, "[WARNING] Invalid xmax %lu in fallback visibility check - treating as not deleted\n", xmax);
+                xmax = 0; // Invalid xmax - treat as not deleted
+            }
+
             if (xmin > current_xid)
             {
                 return false; // Created by future transaction
@@ -674,6 +710,47 @@
             }
 
             return lock_mgr->releaseLock(proc_id, tag, LockMode::LOCK_ROW_EXCLUSIVE, ctx);
+        }
+
+        auto StorageEngine::getOrCreateToastManager(const ID &table_id, ErrorContext *ctx) -> ToastManager*
+        {
+            // Check if we already have a ToastManager for this table
+            {
+                std::lock_guard<std::mutex> lock(toast_mutex_);
+                auto it = toast_managers_.find(table_id);
+                if (it != toast_managers_.end())
+                {
+                    return it->second.get();
+                }
+            }
+
+            // Create new ToastManager (outside the lock to avoid holding it during initialization)
+            auto toast_mgr = std::make_unique<ToastManager>(db_, table_id);
+
+            // Initialize the ToastManager
+            Status status = toast_mgr->initialize(ctx);
+            if (status != Status::OK)
+            {
+                // Initialization failed - return nullptr
+                // This can happen if TOAST table doesn't exist yet
+                // In production, we might want to create it automatically
+                return nullptr;
+            }
+
+            // Store it in the map
+            ToastManager* result = toast_mgr.get();
+            {
+                std::lock_guard<std::mutex> lock(toast_mutex_);
+                // Check again in case another thread created it
+                auto it = toast_managers_.find(table_id);
+                if (it != toast_managers_.end())
+                {
+                    return it->second.get();
+                }
+                toast_managers_[table_id] = std::move(toast_mgr);
+            }
+
+            return result;
         }
 
     } // namespace scratchbird::core

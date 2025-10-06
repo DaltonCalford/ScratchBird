@@ -13,6 +13,7 @@
 
     namespace scratchbird::core
     {
+        using IndexType = CatalogManager::IndexType;
 
         struct Value
         {
@@ -57,6 +58,8 @@
             : db_(db), table_id_(table_id), toast_table_id_(), next_value_id_(1)
         {
         }
+
+        ToastManager::~ToastManager() = default;
 
         auto ToastManager::initializeNextValueId(ErrorContext *ctx) -> Status
         {
@@ -193,7 +196,7 @@
             ID index_id;
             std::string index_name = toast_name + "_idx";
             status = catalog->createIndex(toast_table_id_, index_name, index_columns, index_id,
-                                           false, ctx);
+                                           false, IndexType::BTREE, ctx);
             if (status != Status::OK)
             {
                 // This is not fatal, but we should log it
@@ -213,8 +216,18 @@
                 return Status::INVALID_ARGUMENT;
             }
 
-            // Assign unique value ID
-            uint32_t value_id = next_value_id_++;
+            // Assign unique value ID with atomic fetch_add for thread safety
+            // Check for wraparound - if we're approaching UINT32_MAX, we need to handle it
+            uint32_t value_id = next_value_id_.fetch_add(1, std::memory_order_relaxed);
+
+            // Overflow protection: Check if we've wrapped around to 0
+            // Value ID 0 is reserved/invalid, so if we hit it, we have a problem
+            if (value_id == 0 || value_id == UINT32_MAX)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::PAGE_FULL,
+                                  "TOAST value ID exhausted - too many TOAST values created");
+                return Status::PAGE_FULL;
+            }
 
             // Initialize pointer
             pointer_out->va_header = 0x01; // TOAST marker

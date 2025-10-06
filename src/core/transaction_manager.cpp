@@ -15,6 +15,25 @@
     namespace scratchbird::core
     {
 
+        // Snapshot cleanup implementation
+        void TransactionManager::Snapshot::cleanup()
+        {
+            if (buffer_pool != nullptr)
+            {
+                for (uint32_t page_id : pinned_pages)
+                {
+                    buffer_pool->unpinPage(page_id, false, nullptr);
+                }
+                pinned_pages.clear();
+                buffer_pool = nullptr;
+            }
+        }
+
+        TransactionManager::Snapshot::~Snapshot()
+        {
+            cleanup();
+        }
+
         TransactionManager::TransactionManager(Database *db)
             : db_(db), buffer_pool_(db->buffer_pool()), page_manager_(db->page_manager())
         {
@@ -95,10 +114,57 @@
             auto *db_header = static_cast<DatabaseHeader *>(header_buffer);
             tip_root_page_ = db_header->tip_root_page;
             next_xid_ = db_header->next_transaction_id;
+            oldest_xid_ = db_header->oldest_transaction_id;
 
+            // DATABASE HEADER VALIDATION: Validate next_xid is sane
+            if (next_xid_ > MAX_SAFE_XID)
+            {
+                buffer_pool_->unpinPage(0, false, ctx);
+                char msg[256];
+                snprintf(msg, sizeof(msg),
+                         "Database next_xid approaching wraparound: next_xid=%lu, max_safe=%lu",
+                         next_xid_, MAX_SAFE_XID);
+                SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, msg);
+                // WARNING: Database needs immediate VACUUM to prevent wraparound
+                // For now, allow loading but transactions will be blocked
+            }
+
+            // Validate next_xid is not corrupted
+            if (next_xid_ == UINT64_MAX)
+            {
+                buffer_pool_->unpinPage(0, false, ctx);
+                SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT,
+                                  "Database next_xid is UINT64_MAX - corrupted database");
+                return Status::PAGE_CORRUPT;
+            }
+
+            // Ensure next_xid is at least beyond reserved XIDs
             if (next_xid_ <= FROZEN_XID)
             {
                 next_xid_ = FROZEN_XID + 1;
+            }
+
+            // Validate oldest_xid is sane
+            if (oldest_xid_ == 0)
+            {
+                // Not set - initialize to safe default
+                oldest_xid_ = FROZEN_XID + 1;
+            }
+            else if (oldest_xid_ <= FROZEN_XID)
+            {
+                // Invalid - reset to safe default
+                oldest_xid_ = FROZEN_XID + 1;
+            }
+            else if (oldest_xid_ > next_xid_)
+            {
+                // Corrupted - oldest_xid should never exceed next_xid
+                char msg[256];
+                snprintf(msg, sizeof(msg),
+                         "Database oldest_xid > next_xid: oldest=%lu, next=%lu",
+                         oldest_xid_, next_xid_);
+                buffer_pool_->unpinPage(0, false, ctx);
+                SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, msg);
+                return Status::PAGE_CORRUPT;
             }
 
             buffer_pool_->unpinPage(0, false, ctx);
@@ -170,10 +236,28 @@
 
             // No longer check for active_xid_ - allow multiple active transactions
 
-            // Allocate new XID
+            // WRAPAROUND PROTECTION: Check if approaching UINT64_MAX
+            if (next_xid_ > MAX_SAFE_XID)
+            {
+                // Critical: Database is approaching XID wraparound
+                // VACUUM must be run to freeze old tuples before continuing
+                SET_ERROR_CONTEXT(ctx, Status::PAGE_FULL,
+                                  "XID wraparound imminent - VACUUM required to freeze old transactions");
+                return Status::PAGE_FULL;
+            }
+
+            // Allocate new XID (check for overflow BEFORE increment)
+            if (next_xid_ == UINT64_MAX)
+            {
+                // Catastrophic: Wraparound occurred
+                SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT,
+                                  "XID overflow - database is corrupted");
+                return Status::PAGE_CORRUPT;
+            }
+
             uint64_t new_xid = next_xid_++;
 
-            // Prevent wraparound to reserved XIDs
+            // Prevent wraparound to reserved XIDs (should never happen with above checks)
             if (next_xid_ <= FROZEN_XID)
             {
                 next_xid_ = FROZEN_XID + 1;
@@ -326,8 +410,108 @@
             return Status::OK;
         }
 
+        auto TransactionManager::isValidXid(uint64_t xid) -> bool
+        {
+            // INVALID_XID (0) is never valid for tuple headers
+            if (xid == INVALID_XID)
+            {
+                return false;
+            }
+
+            // All other XIDs are structurally valid
+            // (BOOTSTRAP_XID, FROZEN_XID, and user XIDs)
+            return true;
+        }
+
+        auto TransactionManager::isXidInRange(uint64_t xid) const -> bool
+        {
+            // Check structural validity first
+            if (!isValidXid(xid))
+            {
+                return false;
+            }
+
+            // Reserved XIDs are always in range
+            if (xid <= FROZEN_XID)
+            {
+                return true;
+            }
+
+            std::lock_guard<std::mutex> lock(mutex_);
+
+            // User XIDs must be less than next_xid (no future transactions)
+            if (xid >= next_xid_)
+            {
+                return false; // Future XID - invalid!
+            }
+
+            // Check if XID is too old (has been vacuumed)
+            // XIDs older than oldest_xid_ should have been frozen by VACUUM
+            if (xid < oldest_xid_)
+            {
+                // Old XID that should have been frozen
+                // CORRUPTION LOGGING: This indicates the tuple wasn't frozen by VACUUM
+                // Log to stderr for now (future: proper logging system)
+                fprintf(stderr, "[WARNING] XID %lu is older than oldest_xid %lu - tuple should have been frozen by VACUUM\n",
+                        xid, oldest_xid_);
+                // Allow it for now (graceful degradation)
+                // In strict mode, this should return false
+            }
+
+            // XID is in valid range
+            return true;
+        }
+
+        auto TransactionManager::setOldestXid(uint64_t xid, ErrorContext *ctx) -> Status
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+
+            // Validate new oldest XID is sane
+            if (xid > next_xid_)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                  "Cannot set oldest_xid beyond next_xid");
+                return Status::INVALID_ARGUMENT;
+            }
+
+            if (xid <= FROZEN_XID)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                  "oldest_xid must be > FROZEN_XID");
+                return Status::INVALID_ARGUMENT;
+            }
+
+            oldest_xid_ = xid;
+
+            // Update database header with new oldest XID
+            void *header_buffer;
+            Status status = buffer_pool_->pinPage(0, &header_buffer, ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+
+            auto *db_header = static_cast<DatabaseHeader *>(header_buffer);
+            db_header->oldest_transaction_id = oldest_xid_;
+
+            buffer_pool_->unpinPage(0, true, ctx);
+
+            return Status::OK;
+        }
+
         auto TransactionManager::isTransactionVisible(uint64_t xid, uint64_t snapshot_xid) -> bool
         {
+            // VALIDATE XID FIRST - Critical security check
+            if (!isXidInRange(xid))
+            {
+                // Invalid XID - treat as invisible
+                // This protects against corrupted tuple headers
+                // CORRUPTION LOGGING: Log invalid XID
+                fprintf(stderr, "[ERROR] Invalid XID %lu in visibility check (next_xid=%lu, oldest_xid=%lu)\n",
+                        xid, next_xid_, oldest_xid_);
+                return false;
+            }
+
             // Simple visibility rules for single connection:
             // - Transaction sees its own changes
             // - Transaction sees all committed changes with XID < snapshot_xid
@@ -492,11 +676,58 @@
         auto TransactionManager::writeTipEntry(uint64_t xid, TransactionState state,
                                                    ErrorContext *ctx) -> Status
         {
-            // For simplicity, we'll append to the current TIP page
-            // In production, we'd handle page overflow and chaining
+            // Find the appropriate TIP page for this XID
+            // We need to search the chain to find existing entries or the last page
+            uint32_t current_page = tip_root_page_;
+            uint32_t last_page = tip_root_page_;
+            bool found_entry = false;
 
+            while (current_page != 0)
+            {
+                void *page_buffer;
+                Status status = buffer_pool_->pinPage(current_page, &page_buffer, ctx);
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+
+                auto *tip_header = static_cast<TIPPageHeader *>(page_buffer);
+
+                // Check if this XID already exists in this page (for updates)
+                auto *entries = reinterpret_cast<TIPEntry *>(
+                    reinterpret_cast<uint8_t *>(page_buffer) + sizeof(TIPPageHeader));
+
+                for (uint32_t i = 0; i < tip_header->num_transactions; i++)
+                {
+                    if (entries[i].xid == xid)
+                    {
+                        // Update existing entry
+                        entries[i].state = static_cast<uint8_t>(state);
+                        entries[i].commit_time =
+                            (state != TransactionState::ACTIVE)
+                                ? std::chrono::duration_cast<std::chrono::microseconds>(
+                                      std::chrono::system_clock::now().time_since_epoch())
+                                      .count()
+                                : 0;
+
+                        // Update checksum
+                        tip_header->page_header.checksum =
+                            calculatePageChecksum(reinterpret_cast<uint8_t *>(page_buffer), db_->page_size());
+
+                        buffer_pool_->unpinPage(current_page, true, ctx);
+                        return Status::OK;
+                    }
+                }
+
+                last_page = current_page;
+                current_page = tip_header->next_tip_page;
+                buffer_pool_->unpinPage(last_page, false, ctx);
+            }
+
+            // XID not found - need to add new entry to the last page
+            // Re-pin the last page
             void *page_buffer;
-            Status status = buffer_pool_->pinPage(tip_root_page_, &page_buffer, ctx);
+            Status status = buffer_pool_->pinPage(last_page, &page_buffer, ctx);
             if (status != Status::OK)
             {
                 return status;
@@ -504,64 +735,63 @@
 
             auto *tip_header = static_cast<TIPPageHeader *>(page_buffer);
 
-            // Check if there's space
+            // Check if there's space on the last page
             if (tip_header->num_transactions >= getTipEntriesPerPage())
             {
-                buffer_pool_->unpinPage(tip_root_page_, false, ctx);
-                SET_ERROR_CONTEXT(ctx, Status::PAGE_FULL, "TIP page full");
-                return Status::PAGE_FULL;
+                // Page is full - need to allocate a new page and chain it
+                uint32_t new_page_id;
+                status = allocateTipPage(new_page_id, ctx);
+                if (status != Status::OK)
+                {
+                    buffer_pool_->unpinPage(last_page, false, ctx);
+                    SET_ERROR_CONTEXT(ctx, status, "Failed to allocate new TIP page for chaining");
+                    return status;
+                }
+
+                // Update the last page's next pointer
+                tip_header->next_tip_page = new_page_id;
+                tip_header->page_header.checksum =
+                    calculatePageChecksum(reinterpret_cast<uint8_t *>(page_buffer), db_->page_size());
+                buffer_pool_->unpinPage(last_page, true, ctx);
+
+                // Now use the new page
+                last_page = new_page_id;
+                status = buffer_pool_->pinPage(last_page, &page_buffer, ctx);
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+                tip_header = static_cast<TIPPageHeader *>(page_buffer);
             }
 
-            // Find or add entry
+            // Add new entry (we already checked it doesn't exist in the chain)
             auto *entries = reinterpret_cast<TIPEntry *>(
                 reinterpret_cast<uint8_t *>(page_buffer) + sizeof(TIPPageHeader));
 
-            bool found = false;
-            for (uint32_t i = 0; i < tip_header->num_transactions; i++)
-            {
-                if (entries[i].xid == xid)
-                {
-                    // Update existing entry
-                    entries[i].state = static_cast<uint8_t>(state);
-                    entries[i].commit_time =
-                        (state != TransactionState::ACTIVE)
-                            ? std::chrono::duration_cast<std::chrono::microseconds>(
-                                  std::chrono::system_clock::now().time_since_epoch())
-                                  .count()
-                            : 0;
-                    found = true;
-                    break;
-                }
-            }
+            uint32_t idx = tip_header->num_transactions++;
+            entries[idx].xid = xid;
+            entries[idx].state = static_cast<uint8_t>(state);
+            entries[idx].flags = 0;
+            entries[idx].reserved = 0;
+            entries[idx].commit_time =
+                (state != TransactionState::ACTIVE)
+                    ? std::chrono::duration_cast<std::chrono::microseconds>(
+                          std::chrono::system_clock::now().time_since_epoch())
+                          .count()
+                    : 0;
 
-            if (!found)
+            // Update min/max XIDs
+            if (tip_header->min_xid == 0 || xid < tip_header->min_xid)
             {
-                // Add new entry
-                uint32_t idx = tip_header->num_transactions++;
-                entries[idx].xid = xid;
-                entries[idx].state = static_cast<uint8_t>(state);
-                entries[idx].flags = 0;
-                entries[idx].reserved = 0;
-                entries[idx].commit_time =
-                    (state != TransactionState::ACTIVE)
-                        ? std::chrono::duration_cast<std::chrono::microseconds>(
-                              std::chrono::system_clock::now().time_since_epoch())
-                              .count()
-                        : 0;
-
-                // Update min/max XIDs
-                if (tip_header->min_xid == 0 || xid < tip_header->min_xid)
-                {
-                    tip_header->min_xid = xid;
-                }
-                tip_header->max_xid = std::max(xid, tip_header->max_xid);
+                tip_header->min_xid = xid;
             }
+            tip_header->max_xid = std::max(xid, tip_header->max_xid);
 
             // Update checksum
             tip_header->page_header.checksum =
                 calculatePageChecksum(reinterpret_cast<uint8_t *>(page_buffer), db_->page_size());
 
-            buffer_pool_->unpinPage(tip_root_page_, true, ctx);
+            buffer_pool_->unpinPage(last_page, true, ctx);
 
             return Status::OK;
         }

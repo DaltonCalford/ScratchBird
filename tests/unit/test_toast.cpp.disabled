@@ -74,7 +74,7 @@ TEST_F(ToastTest, BasicToastOperations)
 
     CatalogManager::ColumnInfo col1;
     col1.column_name = "id";
-    col1.data_type = static_cast<uint16_t>(DataType::INT);
+    col1.data_type = static_cast<uint16_t>(DataType::INT32);
     col1.max_length = 4;
     col1.nullable = false;
     columns.push_back(col1);
@@ -97,11 +97,11 @@ TEST_F(ToastTest, BasicToastOperations)
 
     // Test small value (should not be TOASTed)
     auto small_data = generate_data(100);
-    EXPECT_FALSE(ToastManager::should_toast(small_data.size(), 8192));
+    EXPECT_FALSE(ToastManager::shouldToast(small_data.size(), 8192));
 
     // Test large value (should be TOASTed)
     auto large_data = generate_data(5000);
-    EXPECT_TRUE(ToastManager::should_toast(large_data.size(), 8192));
+    EXPECT_TRUE(ToastManager::shouldToast(large_data.size(), 8192));
 
     // TOAST the large value
     ToastPointer pointer;
@@ -248,7 +248,7 @@ TEST_F(ToastTest, ToastDelete)
     ASSERT_EQ(status, Status::OK);
 
     // Delete the TOAST value
-    status = toast_mgr.delete_toastValue(pointer.va_valueid, 4001);
+    status = toast_mgr.deleteToastValue(pointer.va_valueid, 4001);
     ASSERT_EQ(status, Status::OK);
 
     // Try to read it again - should fail
