@@ -6,6 +6,7 @@
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/buffer_pool.h"
 #include "scratchbird/core/page_manager.h"
+#include "scratchbird/core/lock_manager.h"
 
 
     namespace scratchbird::core
@@ -232,11 +233,24 @@
                 return status;
             }
 
+            // TODO(concurrency): Get proc_id from thread-local storage or connection context
+            const uint32_t proc_id = 0;
+            LockManager *lock_mgr = db_->lock_manager();
+
             BufferPool *bp = db_->buffer_pool();
             void *page_data_ptr;
             status = bp->pinPage(leaf_page_num, &page_data_ptr, ctx);
             if (status != Status::OK)
             {
+                // Release lock acquired by find_leaf_page
+                if (lock_mgr != nullptr)
+                {
+                    LockTag leaf_tag{};
+                    leaf_tag.target_type = LockTarget::LOCK_TARGET_PAGE;
+                    leaf_tag.object_uuid = index_info_.idx_uuid;
+                    leaf_tag.page_num = leaf_page_num;
+                    lock_mgr->releaseLock(proc_id, leaf_tag, LockMode::LOCK_EXCLUSIVE, ctx);
+                }
                 return status;
             }
 
@@ -262,6 +276,16 @@
                     // Page is full - need to split
                     bp->unpinPage(leaf_page_num, false, ctx);
 
+                    // Release lock before split (split will re-acquire locks)
+                    if (lock_mgr != nullptr)
+                    {
+                        LockTag leaf_tag{};
+                        leaf_tag.target_type = LockTarget::LOCK_TARGET_PAGE;
+                        leaf_tag.object_uuid = index_info_.idx_uuid;
+                        leaf_tag.page_num = leaf_page_num;
+                        lock_mgr->releaseLock(proc_id, leaf_tag, LockMode::LOCK_EXCLUSIVE, ctx);
+                    }
+
                     // Split the leaf page
                     status = split_leaf_page(leaf_page_num, key, tuple_id, ctx);
                     if (status != Status::OK)
@@ -269,22 +293,55 @@
                         return status;
                     }
 
-                    // After split, retry the insert
+                    // After split, retry the insert (will re-acquire locks)
                     return insert(key, tuple_id, ctx);
                 }
                 else if (status != Status::OK)
                 {
                     bp->unpinPage(leaf_page_num, false, ctx);
+
+                    // Release lock on error
+                    if (lock_mgr != nullptr)
+                    {
+                        LockTag leaf_tag{};
+                        leaf_tag.target_type = LockTarget::LOCK_TARGET_PAGE;
+                        leaf_tag.object_uuid = index_info_.idx_uuid;
+                        leaf_tag.page_num = leaf_page_num;
+                        lock_mgr->releaseLock(proc_id, leaf_tag, LockMode::LOCK_EXCLUSIVE, ctx);
+                    }
+
                     return status;
                 }
 
                 // Mark page as dirty since we modified it
                 bp->unpinPage(leaf_page_num, true, ctx);
+
+                // Release lock after successful insert
+                if (lock_mgr != nullptr)
+                {
+                    LockTag leaf_tag{};
+                    leaf_tag.target_type = LockTarget::LOCK_TARGET_PAGE;
+                    leaf_tag.object_uuid = index_info_.idx_uuid;
+                    leaf_tag.page_num = leaf_page_num;
+                    lock_mgr->releaseLock(proc_id, leaf_tag, LockMode::LOCK_EXCLUSIVE, ctx);
+                }
+
                 return Status::OK;
             }
             catch (const std::exception &e)
             {
                 bp->unpinPage(leaf_page_num, false, ctx);
+
+                // Release lock on exception
+                if (lock_mgr != nullptr)
+                {
+                    LockTag leaf_tag{};
+                    leaf_tag.target_type = LockTarget::LOCK_TARGET_PAGE;
+                    leaf_tag.object_uuid = index_info_.idx_uuid;
+                    leaf_tag.page_num = leaf_page_num;
+                    lock_mgr->releaseLock(proc_id, leaf_tag, LockMode::LOCK_EXCLUSIVE, ctx);
+                }
+
                 SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, e.what());
                 return Status::INVALID_ARGUMENT;
             }
@@ -378,6 +435,13 @@
         {
             uint64_t current_page_num = index_info_.idx_root_page;
             BufferPool *bp = db_->buffer_pool();
+            LockManager *lock_mgr = db_->lock_manager();
+
+            // TODO(concurrency): Get proc_id from thread-local storage or connection context
+            // For now, use proc_id=0 for single-user mode (Alpha implementation)
+            const uint32_t proc_id = 0;
+
+            uint64_t previous_page_num = 0; // For lock coupling
 
             while (true)
             {
@@ -385,15 +449,68 @@
                 Status status = bp->pinPage(current_page_num, &page_data_ptr, ctx);
                 if (status != Status::OK)
                 {
+                    // Release previous lock if held
+                    if (previous_page_num != 0 && lock_mgr != nullptr)
+                    {
+                        LockTag prev_tag{};
+                        prev_tag.target_type = LockTarget::LOCK_TARGET_PAGE;
+                        prev_tag.object_uuid = index_info_.idx_uuid;
+                        prev_tag.page_num = previous_page_num;
+                        lock_mgr->releaseLock(proc_id, prev_tag, write_lock ? LockMode::LOCK_EXCLUSIVE : LockMode::LOCK_SHARE, ctx);
+                    }
                     return status;
+                }
+
+                // Acquire lock on current page using lock coupling
+                if (lock_mgr != nullptr)
+                {
+                    LockTag page_tag{};
+                    page_tag.target_type = LockTarget::LOCK_TARGET_PAGE;
+                    page_tag.object_uuid = index_info_.idx_uuid;
+                    page_tag.page_num = current_page_num;
+                    page_tag.offset_num = 0;
+                    page_tag.padding = 0;
+
+                    LockMode lock_mode = write_lock ? LockMode::LOCK_EXCLUSIVE : LockMode::LOCK_SHARE;
+
+                    status = lock_mgr->acquireLock(proc_id, page_tag, lock_mode, true, 0, ctx);
+                    if (status != Status::OK)
+                    {
+                        bp->unpinPage(current_page_num, false, ctx);
+
+                        // Release previous lock if held
+                        if (previous_page_num != 0)
+                        {
+                            LockTag prev_tag{};
+                            prev_tag.target_type = LockTarget::LOCK_TARGET_PAGE;
+                            prev_tag.object_uuid = index_info_.idx_uuid;
+                            prev_tag.page_num = previous_page_num;
+                            lock_mgr->releaseLock(proc_id, prev_tag, lock_mode, ctx);
+                        }
+
+                        SET_ERROR_CONTEXT(ctx, status, "Failed to acquire page lock during B-tree traversal");
+                        return status;
+                    }
+
+                    // Release lock on previous page (lock coupling)
+                    if (previous_page_num != 0)
+                    {
+                        LockTag prev_tag{};
+                        prev_tag.target_type = LockTarget::LOCK_TARGET_PAGE;
+                        prev_tag.object_uuid = index_info_.idx_uuid;
+                        prev_tag.page_num = previous_page_num;
+                        lock_mgr->releaseLock(proc_id, prev_tag, lock_mode, ctx);
+                    }
                 }
 
                 const auto *page = reinterpret_cast<const SBBTreePage *>(page_data_ptr);
 
                 if ((page->btr_flags & static_cast<uint16_t>(BTreeFlags::LEAF)) != 0)
                 {
+                    // Found leaf page - keep lock held and return
                     *page_num_out = current_page_num;
                     bp->unpinPage(current_page_num, false, ctx);
+                    // Note: Lock is kept held on leaf page for caller
                     return Status::OK;
                 }
 
@@ -433,6 +550,17 @@
                     {
                         // Missing rightmost child pointer - this is a corruption issue
                         bp->unpinPage(current_page_num, false, ctx);
+
+                        // Release lock on current page before returning error
+                        if (lock_mgr != nullptr)
+                        {
+                            LockTag page_tag{};
+                            page_tag.target_type = LockTarget::LOCK_TARGET_PAGE;
+                            page_tag.object_uuid = index_info_.idx_uuid;
+                            page_tag.page_num = current_page_num;
+                            lock_mgr->releaseLock(proc_id, page_tag, write_lock ? LockMode::LOCK_EXCLUSIVE : LockMode::LOCK_SHARE, ctx);
+                        }
+
                         SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT,
                                         "Internal node missing rightmost child pointer");
                         return Status::PAGE_CORRUPT;
@@ -440,6 +568,9 @@
                 }
 
                 bp->unpinPage(current_page_num, false, ctx);
+
+                // Track previous page for lock coupling
+                previous_page_num = current_page_num;
                 current_page_num = next_page_num;
             }
         }
@@ -454,11 +585,24 @@
                 return status;
             }
 
+            // TODO(concurrency): Get proc_id from thread-local storage or connection context
+            const uint32_t proc_id = 0;
+            LockManager *lock_mgr = db_->lock_manager();
+
             BufferPool *bp = db_->buffer_pool();
             void *page_data_ptr;
             status = bp->pinPage(leaf_page_num, &page_data_ptr, ctx);
             if (status != Status::OK)
             {
+                // Release lock acquired by find_leaf_page
+                if (lock_mgr != nullptr)
+                {
+                    LockTag leaf_tag{};
+                    leaf_tag.target_type = LockTarget::LOCK_TARGET_PAGE;
+                    leaf_tag.object_uuid = index_info_.idx_uuid;
+                    leaf_tag.page_num = leaf_page_num;
+                    lock_mgr->releaseLock(proc_id, leaf_tag, LockMode::LOCK_SHARE, ctx);
+                }
                 return status;
             }
 
@@ -468,13 +612,22 @@
 
             bp->unpinPage(leaf_page_num, false, ctx);
 
+            // Release lock after search
+            if (lock_mgr != nullptr)
+            {
+                LockTag leaf_tag{};
+                leaf_tag.target_type = LockTarget::LOCK_TARGET_PAGE;
+                leaf_tag.object_uuid = index_info_.idx_uuid;
+                leaf_tag.page_num = leaf_page_num;
+                lock_mgr->releaseLock(proc_id, leaf_tag, LockMode::LOCK_SHARE, ctx);
+            }
+
             if (found)
             {
                 return Status::OK;
             }
-            
-                            return Status::NOT_FOUND;
-           
+
+            return Status::NOT_FOUND;
         }
 
         auto BTree::remove(const std::vector<uint8_t> &key, uint64_t tuple_id, ErrorContext *ctx) -> Status
@@ -487,11 +640,24 @@
                 return status;
             }
 
+            // TODO(concurrency): Get proc_id from thread-local storage or connection context
+            const uint32_t proc_id = 0;
+            LockManager *lock_mgr = db_->lock_manager();
+
             BufferPool *bp = db_->buffer_pool();
             void *page_data_ptr;
             status = bp->pinPage(leaf_page_num, &page_data_ptr, ctx);
             if (status != Status::OK)
             {
+                // Release lock acquired by find_leaf_page
+                if (lock_mgr != nullptr)
+                {
+                    LockTag leaf_tag{};
+                    leaf_tag.target_type = LockTarget::LOCK_TARGET_PAGE;
+                    leaf_tag.object_uuid = index_info_.idx_uuid;
+                    leaf_tag.page_num = leaf_page_num;
+                    lock_mgr->releaseLock(proc_id, leaf_tag, LockMode::LOCK_EXCLUSIVE, ctx);
+                }
                 return status;
             }
 
@@ -540,6 +706,17 @@
             if (!found)
             {
                 bp->unpinPage(leaf_page_num, false, ctx);
+
+                // Release lock on not found
+                if (lock_mgr != nullptr)
+                {
+                    LockTag leaf_tag{};
+                    leaf_tag.target_type = LockTarget::LOCK_TARGET_PAGE;
+                    leaf_tag.object_uuid = index_info_.idx_uuid;
+                    leaf_tag.page_num = leaf_page_num;
+                    lock_mgr->releaseLock(proc_id, leaf_tag, LockMode::LOCK_EXCLUSIVE, ctx);
+                }
+
                 return Status::NOT_FOUND;
             }
 
@@ -553,6 +730,17 @@
 
             // Mark page as dirty since we modified it
             bp->unpinPage(leaf_page_num, true, ctx);
+
+            // Release lock after successful remove
+            if (lock_mgr != nullptr)
+            {
+                LockTag leaf_tag{};
+                leaf_tag.target_type = LockTarget::LOCK_TARGET_PAGE;
+                leaf_tag.object_uuid = index_info_.idx_uuid;
+                leaf_tag.page_num = leaf_page_num;
+                lock_mgr->releaseLock(proc_id, leaf_tag, LockMode::LOCK_EXCLUSIVE, ctx);
+            }
+
             return Status::OK;
         }
 
