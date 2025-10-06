@@ -18,13 +18,13 @@ This report provides a comprehensive status update on the 67 issues identified i
 | **Critical** | 9 | 9 (100%) | 0 (0%) | 0 (0%) | 0 (0%) |
 | **High** | 25 | 13 (52%) | 0 (0%) | 10 (40%) | 2 (8%) |
 | **Medium** | 33 | 15 (45%) | 5 (15%) | 10 (30%) | 3 (9%) |
-| **Low** | 13 | 3 (23%) | 1 (8%) | 8 (62%) | 1 (8%) |
-| **TOTAL** | **67** | **40 (60%)** | **6 (9%)** | **28 (42%)** | **6 (9%)** |
+| **Low** | 13 | 4 (31%) | 1 (8%) | 7 (54%) | 1 (8%) |
+| **TOTAL** | **67** | **41 (61%)** | **6 (9%)** | **27 (40%)** | **6 (9%)** |
 
 ### Overall Status
-- **Fixed Issues:** 40 (60%)
+- **Fixed Issues:** 41 (61%)
 - **Partially Fixed:** 6 (9%)
-- **Outstanding Issues:** 28 (42%)
+- **Outstanding Issues:** 27 (40%)
 - **Unable to Verify:** 6 (9%)
 
 ---
@@ -695,14 +695,19 @@ This report provides a comprehensive status update on the 67 issues identified i
 
 ## LOW SEVERITY ISSUES
 
-### ❌ ISSUE #39: Timestamp Leap Second Validation [OUTSTANDING]
-- **File:** `src/core/type_conversions.cpp:523-534`
-- **Status:** ❌ **OUTSTANDING**
-- **Current State:**
-  - Validates `second >= 0 && second <= 59`
-  - Doesn't allow leap seconds (second = 60) valid in ISO 8601
-- **Impact:** Leap second rejection in edge cases
-- **Recommendation:** **LOW PRIORITY** - Add leap second support if needed
+### ✅ ISSUE #39: Timestamp Leap Second Validation [RESOLVED]
+- **File:** `src/core/type_conversions.cpp:568-573`, `src/core/timezone.cpp:520-532`
+- **Status:** ✅ **RESOLVED** (2025-10-06)
+- **Resolution Details:**
+  - ✅ Updated validation to allow second = 60 for leap seconds
+  - ✅ Changed from `second > 59` to `second > 60` in both locations
+  - ✅ Added comments explaining ISO 8601 leap second support
+  - ✅ Timestamps like "23:59:60" are now accepted
+- **Implementation:**
+  - Fixed stringToTime() in type_conversions.cpp line 569
+  - Fixed parseTimestamp() in timezone.cpp line 524
+  - Both now accept second values from 0 to 60 (inclusive)
+- **Impact:** ISO 8601 compliant - leap seconds like 2015-06-30T23:59:60Z are now accepted
 
 ---
 

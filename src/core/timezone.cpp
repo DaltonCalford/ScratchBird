@@ -518,9 +518,10 @@ namespace scratchbird::core
         }
 
         // Validate ranges
+        // Allow second = 60 for leap seconds (ISO 8601)
         if (month < 1 || month > 12 || day < 1 || day > 31 ||
             hour < 0 || hour > 23 || minute < 0 || minute > 59 ||
-            second < 0 || second > 59 || microseconds < 0 || microseconds > 999999)
+            second < 0 || second > 60 || microseconds < 0 || microseconds > 999999)
         {
             if (ctx)
             {
