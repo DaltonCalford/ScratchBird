@@ -166,9 +166,15 @@ namespace scratchbird
             return current_pos_ < input_.size() ? input_[current_pos_] : '\0';
         }
 
-        char Lexer::peekChar(size_t offset) const
+        char Lexer::peekChar() const
         {
-            size_t pos = current_pos_ + offset;
+            size_t pos = current_pos_ + 1;
+            return pos < input_.size() ? input_[pos] : '\0';
+        }
+
+        char Lexer::peekChar2() const
+        {
+            size_t pos = current_pos_ + 2;
             return pos < input_.size() ? input_[pos] : '\0';
         }
 
@@ -255,7 +261,7 @@ namespace scratchbird
             // Check for exponent
             if ((currentChar() == 'e' || currentChar() == 'E') &&
                 (std::isdigit(peekChar()) ||
-                 ((peekChar() == '+' || peekChar() == '-') && std::isdigit(peekChar(2)))))
+                 ((peekChar() == '+' || peekChar() == '-') && std::isdigit(peekChar2()))))
             {
                 has_exponent = true;
                 advance(); // Skip 'e' or 'E'

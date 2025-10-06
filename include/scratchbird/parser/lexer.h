@@ -79,7 +79,8 @@ namespace scratchbird
 
             // Helper methods
             char currentChar() const;
-            char peekChar(size_t offset = 1) const;
+            char peekChar() const;   // Look ahead 1 character
+            char peekChar2() const;  // Look ahead 2 characters
             void advance();
             void skipWhitespace();
 
