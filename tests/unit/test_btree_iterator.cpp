@@ -15,10 +15,12 @@
 #include <gtest/gtest.h>
 #include "scratchbird/core/btree.h"
 #include "scratchbird/core/database.h"
+#include "scratchbird/core/buffer_pool.h"
 #include "scratchbird/core/error_context.h"
 #include <filesystem>
 #include <vector>
 #include <algorithm>
+#include <iostream>
 
 using namespace scratchbird::core;
 
@@ -142,6 +144,19 @@ TEST_F(BTreeIteratorTest, FullScanSinglePage)
 
     // Full scan
     ErrorContext ctx;
+
+    // Debug: Check root page btr_count before scanning
+    void* page_buffer;
+    ASSERT_EQ(db_->buffer_pool()->pinPage(root_page, &page_buffer, &ctx), Status::OK);
+    auto* page = reinterpret_cast<const SBBTreePage*>(page_buffer);
+    uint16_t actual_count = page->btr_count;
+    db_->buffer_pool()->unpinPage(root_page, false, &ctx);
+
+    // Debug output
+    if (actual_count != 10) {
+        std::cout << "WARNING: Root page btr_count = " << actual_count << " (expected 10)" << std::endl;
+    }
+
     auto iter = btree_->rangeScan(nullptr, nullptr, true, false, &ctx);
     ASSERT_NE(iter, nullptr);
 
