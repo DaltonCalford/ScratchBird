@@ -18,13 +18,13 @@ This report provides a comprehensive status update on the 67 issues identified i
 | **Critical** | 9 | 9 (100%) | 0 (0%) | 0 (0%) | 0 (0%) |
 | **High** | 25 | 13 (52%) | 0 (0%) | 10 (40%) | 2 (8%) |
 | **Medium** | 33 | 15 (45%) | 5 (15%) | 10 (30%) | 3 (9%) |
-| **Low** | 13 | 5 (38%) | 1 (8%) | 6 (46%) | 1 (8%) |
-| **TOTAL** | **67** | **42 (63%)** | **6 (9%)** | **26 (39%)** | **6 (9%)** |
+| **Low** | 13 | 6 (46%) | 1 (8%) | 5 (38%) | 1 (8%) |
+| **TOTAL** | **67** | **43 (64%)** | **6 (9%)** | **25 (37%)** | **6 (9%)** |
 
 ### Overall Status
-- **Fixed Issues:** 42 (63%)
+- **Fixed Issues:** 43 (64%)
 - **Partially Fixed:** 6 (9%)
-- **Outstanding Issues:** 26 (39%)
+- **Outstanding Issues:** 25 (37%)
 - **Unable to Verify:** 6 (9%)
 
 ---
@@ -731,14 +731,20 @@ This report provides a comprehensive status update on the 67 issues identified i
 
 ---
 
-### ❌ ISSUE #34: peekChar Offset Parameter [OUTSTANDING]
-- **File:** `src/parser/lexer.cpp:169-173`
-- **Status:** ❌ **OUTSTANDING**
-- **Current State:**
-  - General offset parameter provided but only offset 1 and 2 used
-  - Unnecessary complexity
-- **Impact:** Code maintainability issue
-- **Recommendation:** **LOW PRIORITY** - Simplify to two functions or document use
+### ✅ ISSUE #34: peekChar Offset Parameter [RESOLVED]
+- **File:** `src/parser/lexer.cpp:169-179`, `include/scratchbird/parser/lexer.h:82-83`
+- **Status:** ✅ **RESOLVED** (2025-10-06)
+- **Resolution Details:**
+  - ✅ Replaced general offset parameter with two specific functions
+  - ✅ Created peekChar() for 1-character lookahead
+  - ✅ Created peekChar2() for 2-character lookahead
+  - ✅ Updated all call sites to use appropriate function
+- **Implementation:**
+  - Previous: `char peekChar(size_t offset = 1) const` with general parameter
+  - Fixed: Two functions - `char peekChar() const` and `char peekChar2() const`
+  - Updated call site at line 264: `peekChar(2)` → `peekChar2()`
+  - Makes lookahead explicit and reduces unnecessary complexity
+- **Impact:** Improved code clarity and maintainability - lookahead distance now explicit at call sites
 
 ---
 
