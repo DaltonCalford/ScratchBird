@@ -196,6 +196,83 @@ namespace scratchbird::core
         return it != abbr_to_id_.end() ? it->second : 1; // Default to UTC
     }
 
+    // Helper function: Check if a given time falls within DST for US timezones
+    // US DST rules (since 2007):
+    // - Start: Second Sunday in March at 2:00 AM local standard time
+    // - End: First Sunday in November at 2:00 AM local daylight time
+    static bool isWithinDST_US(int year, int month, int day, int hour)
+    {
+        // DST only applies March through November
+        if (month < 3 || month > 11)
+        {
+            return false; // January, February, December are always standard time
+        }
+
+        if (month > 3 && month < 11)
+        {
+            return true; // April through October are always DST
+        }
+
+        // Calculate second Sunday in March
+        // Start DST: Second Sunday in March at 2:00 AM
+        if (month == 3)
+        {
+            // Find first day of March
+            // Calculate what day of week March 1st falls on
+            // Using Zeller's congruence for Gregorian calendar
+            int march_1_dow = (1 + (13 * 1) / 5 + year + year / 4 - year / 100 + year / 400) % 7;
+            // Adjust: 0=Saturday, 1=Sunday, 2=Monday, ..., 6=Friday
+
+            // Days until first Sunday (0 if March 1 is Sunday)
+            int days_to_first_sunday = (7 - march_1_dow + 1) % 7;
+            if (days_to_first_sunday == 0) days_to_first_sunday = 7; // If March 1 is Sunday, first Sunday is March 1, second is March 8
+
+            // Second Sunday is first Sunday + 7 days
+            int second_sunday = days_to_first_sunday == 0 ? 8 : days_to_first_sunday + 7;
+
+            if (day < second_sunday)
+            {
+                return false; // Before DST start
+            }
+            else if (day > second_sunday)
+            {
+                return true; // After DST start
+            }
+            else // day == second_sunday
+            {
+                return hour >= 2; // DST starts at 2:00 AM
+            }
+        }
+
+        // Calculate first Sunday in November
+        // End DST: First Sunday in November at 2:00 AM
+        if (month == 11)
+        {
+            // Find first day of November
+            int nov_1_dow = (1 + (13 * 9) / 5 + year + year / 4 - year / 100 + year / 400) % 7;
+
+            // Days until first Sunday
+            int days_to_first_sunday = (7 - nov_1_dow + 1) % 7;
+            if (days_to_first_sunday == 0) days_to_first_sunday = 7;
+            int first_sunday = days_to_first_sunday;
+
+            if (day < first_sunday)
+            {
+                return true; // Before DST end, still in DST
+            }
+            else if (day > first_sunday)
+            {
+                return false; // After DST end
+            }
+            else // day == first_sunday
+            {
+                return hour < 2; // DST ends at 2:00 AM
+            }
+        }
+
+        return false; // Fallback
+    }
+
     auto TimezoneManager::getOffset(uint16_t timezone_id, int64_t gmt_microseconds) const
         -> TimezoneOffset
     {
@@ -205,10 +282,84 @@ namespace scratchbird::core
             return TimezoneOffset(0, false); // Default to UTC
         }
 
-        // For now, return the standard offset
-        // Full DST support would require checking the date against DST rules
-        // TODO(timezone): Implement full DST calculation based on date
-        return info->offset;
+        // If timezone doesn't observe DST, return standard offset
+        if (!info->observes_dst)
+        {
+            return info->offset;
+        }
+
+        // Convert GMT timestamp to local time components for DST calculation
+        // First, convert microseconds to seconds
+        int64_t seconds = gmt_microseconds / 1000000;
+
+        // Add standard offset to get local time
+        int64_t local_seconds = seconds + (info->offset.offset_minutes * 60);
+
+        // Convert to date components (simplified epoch-based calculation)
+        // Unix epoch: 1970-01-01 00:00:00 UTC
+        int64_t days_since_epoch = local_seconds / 86400;
+        int64_t seconds_today = local_seconds % 86400;
+        if (seconds_today < 0)
+        {
+            days_since_epoch--;
+            seconds_today += 86400;
+        }
+
+        // Calculate year, month, day from days since epoch
+        // This is a simplified version - good enough for DST calculation
+        int year = 1970;
+        int64_t remaining_days = days_since_epoch;
+
+        // Skip to approximate year
+        int years_elapsed = static_cast<int>(remaining_days / 365);
+        year += years_elapsed;
+        remaining_days -= years_elapsed * 365;
+        remaining_days -= years_elapsed / 4; // Leap years
+
+        // Refine year
+        while (remaining_days < 0)
+        {
+            year--;
+            remaining_days += 365 + ((year % 4 == 0 && (year % 100 != 0 || year % 400 == 0)) ? 1 : 0);
+        }
+
+        while (remaining_days >= 365 + ((year % 4 == 0 && (year % 100 != 0 || year % 400 == 0)) ? 1 : 0))
+        {
+            remaining_days -= 365 + ((year % 4 == 0 && (year % 100 != 0 || year % 400 == 0)) ? 1 : 0);
+            year++;
+        }
+
+        // Calculate month and day
+        bool is_leap = (year % 4 == 0 && (year % 100 != 0 || year % 400 == 0));
+        int days_in_month[] = {31, is_leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
+
+        int month = 1;
+        int day = 1;
+        for (int m = 0; m < 12; m++)
+        {
+            if (remaining_days < days_in_month[m])
+            {
+                month = m + 1;
+                day = static_cast<int>(remaining_days) + 1;
+                break;
+            }
+            remaining_days -= days_in_month[m];
+        }
+
+        int hour = static_cast<int>(seconds_today / 3600);
+
+        // Check if within DST period (currently only US timezones supported)
+        bool in_dst = isWithinDST_US(year, month, day, hour);
+
+        if (in_dst)
+        {
+            // Add 1 hour (60 minutes) for DST
+            return TimezoneOffset(info->offset.offset_minutes + 60, true);
+        }
+        else
+        {
+            return info->offset;
+        }
     }
 
     auto TimezoneManager::toGMT(int64_t local_microseconds, uint16_t from_timezone,

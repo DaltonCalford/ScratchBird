@@ -227,10 +227,10 @@ TEST_F(TimezoneTest, FormatTimestamp_UTC)
 
 TEST_F(TimezoneTest, FormatTimestamp_EST)
 {
-    // Create GMT timestamp: 2025-10-04 15:30:00
+    // Create GMT timestamp: 2025-01-04 15:30:00 (January - standard time, not DST)
     struct tm timeinfo = {};
     timeinfo.tm_year = 2025 - 1900;
-    timeinfo.tm_mon = 10 - 1;
+    timeinfo.tm_mon = 1 - 1;  // January (month 0)
     timeinfo.tm_mday = 4;
     timeinfo.tm_hour = 15;
     timeinfo.tm_min = 30;
@@ -241,7 +241,7 @@ TEST_F(TimezoneTest, FormatTimestamp_EST)
 
     std::string result = tz_manager.formatTimestamp(gmt_microseconds, TimezoneManager::TZ_EST, true);
 
-    // Should convert to EST: 10:30:00-05:00
+    // Should convert to EST: 10:30:00-05:00 (January is standard time, not DST)
     EXPECT_TRUE(result.find("10:30:00") != std::string::npos);
     EXPECT_TRUE(result.find("-05:00") != std::string::npos);
 }
@@ -328,8 +328,8 @@ TEST_F(TimezoneTest, RoundTrip_ParseAndFormat)
 
 TEST_F(TimezoneTest, RoundTrip_CrossTimezone)
 {
-    // Parse in EST
-    auto ts = tz_manager.parseTimestamp("2025-10-04 10:30:00-05:00",
+    // Parse in EST (using January date for standard time, not DST)
+    auto ts = tz_manager.parseTimestamp("2025-01-04 10:30:00-05:00",
                                         TimezoneManager::TZ_UTC, &error_ctx);
     ASSERT_TRUE(ts.has_value());
 
@@ -337,7 +337,7 @@ TEST_F(TimezoneTest, RoundTrip_CrossTimezone)
     std::string utc_result = tz_manager.formatTimestamp(*ts, TimezoneManager::TZ_UTC, true);
     EXPECT_TRUE(utc_result.find("15:30:00") != std::string::npos);
 
-    // Format in PST - should show 07:30:00 (15:00 - 8 hours)
+    // Format in PST - should show 07:30:00 (15:00 - 8 hours, January is standard time)
     std::string pst_result = tz_manager.formatTimestamp(*ts, TimezoneManager::TZ_PST, true);
     EXPECT_TRUE(pst_result.find("07:30:00") != std::string::npos);
 }
