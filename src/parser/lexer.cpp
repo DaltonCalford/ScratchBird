@@ -239,11 +239,13 @@ namespace scratchbird
                 advance();
             }
 
-            // Check for decimal point
-            if (currentChar() == '.' && std::isdigit(peekChar()))
+            // Check for decimal point (allow trailing decimal like PostgreSQL: "123.")
+            // But reject ".." to avoid ambiguity with range operators
+            if (currentChar() == '.' && peekChar() != '.')
             {
                 has_decimal = true;
                 advance(); // Skip '.'
+                // Optionally consume digits after decimal point
                 while (std::isdigit(currentChar()))
                 {
                     advance();

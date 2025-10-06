@@ -176,13 +176,15 @@ TEST_F(LexerEdgeCaseTest, NumbersWithTrailingDot)
 {
     Lexer lexer("123.");
 
-    // The lexer requires a digit after the decimal point for floats
+    // PostgreSQL-compatible: allow trailing decimal point
+    // "123." is parsed as a FLOAT_LITERAL with value 123.0
     Token tok = lexer.nextToken();
-    EXPECT_EQ(tok.type, TokenType::INTEGER_LITERAL);
-    EXPECT_EQ(tok.value.int_value, 123);
+    EXPECT_EQ(tok.type, TokenType::FLOAT_LITERAL);
+    EXPECT_DOUBLE_EQ(tok.value.float_value, 123.0);
 
+    // Should only be one token (the number), not followed by a DOT
     tok = lexer.nextToken();
-    EXPECT_EQ(tok.type, TokenType::DOT);
+    EXPECT_EQ(tok.type, TokenType::END_OF_FILE);
 }
 
 TEST_F(LexerEdgeCaseTest, NumbersWithLeadingDot)
