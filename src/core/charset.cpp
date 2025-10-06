@@ -413,6 +413,14 @@ namespace scratchbird::core
         {
             return utf8::char_length(str, byte_len);
         }
+        else if (charset == CharacterSet::UTF16)
+        {
+            return utf16::char_length(str, byte_len);
+        }
+        else if (charset == CharacterSet::UTF32)
+        {
+            return utf32::char_length(str, byte_len);
+        }
         // For fixed-width encodings, char count = byte count / bytes_per_char
         const auto* info = getCharsetInfo(charset);
         if (info && !info->variable_width)
@@ -427,6 +435,14 @@ namespace scratchbird::core
         if (charset == CharacterSet::UTF8 || charset == CharacterSet::UTF8MB4)
         {
             return utf8::byte_length(str, char_count);
+        }
+        else if (charset == CharacterSet::UTF16)
+        {
+            return utf16::byte_length(str, char_count);
+        }
+        else if (charset == CharacterSet::UTF32)
+        {
+            return utf32::byte_length(str, char_count);
         }
         const auto* info = getCharsetInfo(charset);
         if (info && !info->variable_width)
@@ -450,6 +466,22 @@ namespace scratchbird::core
             if (!utf8::validate(str, byte_len))
             {
                 SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Invalid UTF-8 sequence");
+                return Status::INVALID_ARGUMENT;
+            }
+        }
+        else if (charset == CharacterSet::UTF16)
+        {
+            if (!utf16::validate(str, byte_len))
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Invalid UTF-16 sequence");
+                return Status::INVALID_ARGUMENT;
+            }
+        }
+        else if (charset == CharacterSet::UTF32)
+        {
+            if (!utf32::validate(str, byte_len))
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Invalid UTF-32 sequence");
                 return Status::INVALID_ARGUMENT;
             }
         }
@@ -812,5 +844,195 @@ namespace scratchbird::core
         }
 
     } // namespace utf8
+
+    // UTF-16 utility functions (little-endian)
+    namespace utf16
+    {
+        auto validate(const uint8_t* str, uint32_t byte_len) -> bool
+        {
+            // UTF-16 must have even number of bytes
+            if (byte_len % 2 != 0)
+            {
+                return false;
+            }
+
+            uint32_t i = 0;
+            while (i < byte_len)
+            {
+                // Read 16-bit code unit (little-endian)
+                uint16_t unit = static_cast<uint16_t>(str[i]) | (static_cast<uint16_t>(str[i + 1]) << 8);
+
+                // Check for high surrogate (0xD800-0xDBFF)
+                if (unit >= 0xD800 && unit <= 0xDBFF)
+                {
+                    // Must be followed by low surrogate
+                    if (i + 3 >= byte_len)
+                    {
+                        return false; // Incomplete surrogate pair
+                    }
+
+                    uint16_t low_unit = static_cast<uint16_t>(str[i + 2]) | (static_cast<uint16_t>(str[i + 3]) << 8);
+
+                    // Validate low surrogate (0xDC00-0xDFFF)
+                    if (low_unit < 0xDC00 || low_unit > 0xDFFF)
+                    {
+                        return false; // Invalid surrogate pair
+                    }
+
+                    i += 4; // Surrogate pair is 4 bytes
+                }
+                // Check for low surrogate without high surrogate (invalid)
+                else if (unit >= 0xDC00 && unit <= 0xDFFF)
+                {
+                    return false; // Unpaired low surrogate
+                }
+                else
+                {
+                    // Regular BMP character
+                    i += 2;
+                }
+            }
+
+            return true;
+        }
+
+        auto char_length(const uint8_t* str, uint32_t byte_len) -> uint32_t
+        {
+            if (byte_len % 2 != 0)
+            {
+                return 0; // Invalid UTF-16
+            }
+
+            uint32_t char_count = 0;
+            uint32_t i = 0;
+
+            while (i < byte_len)
+            {
+                uint16_t unit = static_cast<uint16_t>(str[i]) | (static_cast<uint16_t>(str[i + 1]) << 8);
+
+                if (unit >= 0xD800 && unit <= 0xDBFF)
+                {
+                    // High surrogate - surrogate pair (1 character, 4 bytes)
+                    i += 4;
+                }
+                else
+                {
+                    // BMP character (1 character, 2 bytes)
+                    i += 2;
+                }
+
+                char_count++;
+            }
+
+            return char_count;
+        }
+
+        auto byte_length(const uint8_t* str, uint32_t char_count) -> uint32_t
+        {
+            uint32_t byte_count = 0;
+            uint32_t chars_seen = 0;
+            uint32_t i = 0;
+
+            while (chars_seen < char_count && i < 10000) // Safety limit
+            {
+                uint16_t unit = static_cast<uint16_t>(str[i]) | (static_cast<uint16_t>(str[i + 1]) << 8);
+
+                if (unit >= 0xD800 && unit <= 0xDBFF)
+                {
+                    // Surrogate pair - 4 bytes
+                    byte_count += 4;
+                    i += 4;
+                }
+                else
+                {
+                    // BMP character - 2 bytes
+                    byte_count += 2;
+                    i += 2;
+                }
+
+                chars_seen++;
+            }
+
+            return byte_count;
+        }
+
+        auto char_byte_length(const uint8_t* str) -> uint32_t
+        {
+            uint16_t unit = static_cast<uint16_t>(str[0]) | (static_cast<uint16_t>(str[1]) << 8);
+
+            // Check if high surrogate (surrogate pair = 4 bytes)
+            if (unit >= 0xD800 && unit <= 0xDBFF)
+            {
+                return 4;
+            }
+
+            // Regular BMP character = 2 bytes
+            return 2;
+        }
+
+    } // namespace utf16
+
+    // UTF-32 utility functions (little-endian)
+    namespace utf32
+    {
+        auto validate(const uint8_t* str, uint32_t byte_len) -> bool
+        {
+            // UTF-32 must have multiple of 4 bytes
+            if (byte_len % 4 != 0)
+            {
+                return false;
+            }
+
+            uint32_t i = 0;
+            while (i < byte_len)
+            {
+                // Read 32-bit code point (little-endian)
+                uint32_t codepoint = static_cast<uint32_t>(str[i]) |
+                                    (static_cast<uint32_t>(str[i + 1]) << 8) |
+                                    (static_cast<uint32_t>(str[i + 2]) << 16) |
+                                    (static_cast<uint32_t>(str[i + 3]) << 24);
+
+                // Valid Unicode range: U+0000 to U+10FFFF
+                if (codepoint > 0x10FFFF)
+                {
+                    return false;
+                }
+
+                // Surrogate pairs (U+D800 to U+DFFF) are invalid in UTF-32
+                if (codepoint >= 0xD800 && codepoint <= 0xDFFF)
+                {
+                    return false;
+                }
+
+                i += 4;
+            }
+
+            return true;
+        }
+
+        auto char_length(const uint8_t* str, uint32_t byte_len) -> uint32_t
+        {
+            // UTF-32 is fixed-width: 4 bytes per character
+            if (byte_len % 4 != 0)
+            {
+                return 0; // Invalid UTF-32
+            }
+
+            return byte_len / 4;
+        }
+
+        auto byte_length(const uint8_t* str, uint32_t char_count) -> uint32_t
+        {
+            // UTF-32 is fixed-width: 4 bytes per character
+            return char_count * 4;
+        }
+
+        auto char_byte_length(const uint8_t* str) -> uint32_t
+        {
+            // UTF-32 is always 4 bytes per character
+            return 4;
+        }
+
+    } // namespace utf32
 
 } // namespace scratchbird::core

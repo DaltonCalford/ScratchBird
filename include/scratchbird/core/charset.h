@@ -186,4 +186,36 @@ namespace scratchbird::core
                          const uint8_t* s2, uint32_t len2) -> int;
     }
 
+    // UTF-16 utility functions
+    namespace utf16
+    {
+        // Validate UTF-16 byte sequence (little-endian)
+        auto validate(const uint8_t* str, uint32_t byte_len) -> bool;
+
+        // Get character count from UTF-16 byte sequence
+        auto char_length(const uint8_t* str, uint32_t byte_len) -> uint32_t;
+
+        // Get byte length for N characters
+        auto byte_length(const uint8_t* str, uint32_t char_count) -> uint32_t;
+
+        // Get length of first character in bytes (2 or 4)
+        auto char_byte_length(const uint8_t* str) -> uint32_t;
+    }
+
+    // UTF-32 utility functions
+    namespace utf32
+    {
+        // Validate UTF-32 byte sequence (little-endian)
+        auto validate(const uint8_t* str, uint32_t byte_len) -> bool;
+
+        // Get character count from UTF-32 byte sequence
+        auto char_length(const uint8_t* str, uint32_t byte_len) -> uint32_t;
+
+        // Get byte length for N characters (always char_count * 4)
+        auto byte_length(const uint8_t* str, uint32_t char_count) -> uint32_t;
+
+        // Get length of first character in bytes (always 4)
+        auto char_byte_length(const uint8_t* str) -> uint32_t;
+    }
+
 } // namespace scratchbird::core

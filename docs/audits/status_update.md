@@ -17,14 +17,14 @@ This report provides a comprehensive status update on the 67 issues identified i
 |----------|-------|-------|---------|-------------|------------------|
 | **Critical** | 9 | 9 (100%) | 0 (0%) | 0 (0%) | 0 (0%) |
 | **High** | 25 | 12 (48%) | 1 (4%) | 10 (40%) | 2 (8%) |
-| **Medium** | 33 | 9 (27%) | 5 (15%) | 16 (48%) | 3 (9%) |
+| **Medium** | 33 | 10 (30%) | 5 (15%) | 15 (45%) | 3 (9%) |
 | **Low** | 13 | 2 (15%) | 1 (8%) | 9 (69%) | 1 (8%) |
-| **TOTAL** | **67** | **32 (48%)** | **7 (10%)** | **34 (51%)** | **6 (9%)** |
+| **TOTAL** | **67** | **33 (49%)** | **7 (10%)** | **33 (49%)** | **6 (9%)** |
 
 ### Overall Status
-- **Fixed Issues:** 32 (48%)
+- **Fixed Issues:** 33 (49%)
 - **Partially Fixed:** 7 (10%)
-- **Outstanding Issues:** 34 (51%)
+- **Outstanding Issues:** 33 (49%)
 - **Unable to Verify:** 6 (9%)
 
 ---
@@ -470,14 +470,28 @@ This report provides a comprehensive status update on the 67 issues identified i
 
 ---
 
-### ❌ ISSUE #48: UTF-16 and UTF-32 Not Implemented [OUTSTANDING]
-- **File:** `src/core/charset.cpp:583-630`
-- **Status:** ❌ **OUTSTANDING**
-- **Current State:**
-  - `validateUTF16()`, `getUTF16CharLength()`, `validateUTF32()`, `getUTF32CharLength()` are stubs
-  - Return false/1 unconditionally
-- **Impact:** UTF-16 and UTF-32 character sets non-functional
-- **Recommendation:** **LOW PRIORITY** - Complete if these encodings are needed
+### ✅ ISSUE #48: UTF-16 and UTF-32 Not Implemented [RESOLVED]
+- **File:** `src/core/charset.cpp:816-1004`, `include/scratchbird/core/charset.h:189-219`
+- **Status:** ✅ **RESOLVED** (2025-10-06)
+- **Resolution:**
+  - ✅ Implemented utf16 namespace with full validation and character length functions
+  - ✅ Implemented utf32 namespace with full validation and character length functions
+  - ✅ Updated CharsetManager::validate() to call utf16/utf32 validation
+  - ✅ Updated CharsetManager::getCharLength() to handle UTF-16/32
+  - ✅ Updated CharsetManager::getByteLength() to handle UTF-16/32
+- **Implementation Details:**
+  - **UTF-16**: Variable-width encoding (2-4 bytes per character)
+    - BMP characters (U+0000-U+FFFF): 2 bytes
+    - Non-BMP characters (U+10000-U+10FFFF): 4 bytes (surrogate pairs)
+    - Validates surrogate pairs (high: 0xD800-0xDBFF, low: 0xDC00-0xDFFF)
+    - Detects unpaired surrogates and truncated sequences
+  - **UTF-32**: Fixed-width encoding (4 bytes per character)
+    - Direct Unicode codepoint representation
+    - Validates range U+0000 to U+10FFFF
+    - Rejects surrogate range (U+D800-U+DFFF) and values > 0x10FFFF
+  - Both implementations assume little-endian byte order
+- **Testing:** All 30 CharsetTest tests pass, build successful
+- **Impact:** UTF-16 and UTF-32 character sets now fully functional
 
 ---
 
@@ -687,16 +701,16 @@ This report provides a comprehensive status update on the 67 issues identified i
 
 ### Character Sets & Timezones
 - **Total Issues:** 9
-- **Fixed:** 2 (22%)
+- **Fixed:** 3 (33%)
 - **Partial:** 0 (0%)
-- **Outstanding:** 7 (78%)
+- **Outstanding:** 6 (67%)
 
 **Key Improvements:**
 - ✅ Latin1 to UTF-8 conversion (#47)
 - ✅ DST implemented for US timezones (#51)
+- ✅ UTF-16 and UTF-32 implemented (#48)
 
 **Critical Gaps:**
-- ❌ UTF-16/UTF-32 stubs (#48)
 - ❌ Collation not integrated (#50)
 
 ---
