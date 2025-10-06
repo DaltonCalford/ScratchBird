@@ -7,6 +7,7 @@
 #include <unordered_map>
 #include <mutex>
 #include <vector>
+#include <list>
 
 
     namespace scratchbird::core
@@ -153,14 +154,19 @@
             uint64_t oldest_xid_ = FROZEN_XID + 1; // Oldest non-frozen XID (for VACUUM tracking)
             uint32_t tip_root_page_ = 0; // Root TIP page ID
 
-            // In-memory cache of recent transactions
+            // In-memory cache of recent transactions (LRU cache)
             std::unordered_map<uint64_t, TransactionState> transaction_cache_;
+            std::list<uint64_t> cache_lru_list_; // LRU list: front = most recent, back = least recent
+            std::unordered_map<uint64_t, std::list<uint64_t>::iterator> cache_lru_map_; // XID -> position in LRU list
             mutable std::mutex mutex_; // Thread safety for future
 
             // Special transaction IDs
             static constexpr uint64_t INVALID_XID = 0;
             static constexpr uint64_t BOOTSTRAP_XID = 1;
             static constexpr uint64_t FROZEN_XID = 2;
+
+            // Cache limits
+            static constexpr size_t MAX_CACHE_SIZE = 10000; // Maximum number of cached transactions
 
             // XID wraparound protection
             static constexpr uint64_t XID_WRAPAROUND_THRESHOLD = 1000000; // Trigger autovacuum when this close to UINT64_MAX
@@ -175,6 +181,12 @@
             auto writeTipEntry(uint64_t xid, TransactionState state, ErrorContext *ctx) -> Status;
             auto findTipEntry(uint64_t xid, TIPEntry &entry_out, ErrorContext *ctx) -> Status;
             auto flushTransactionState(ErrorContext *ctx) -> Status;
+
+            // LRU cache management
+            void touchCacheEntry(uint64_t xid); // Move entry to front of LRU
+            void evictOldestCacheEntry(); // Remove least recently used entry
+            void addToCacheLRU(uint64_t xid, TransactionState state); // Add with LRU tracking
+            void removeFromCacheLRU(uint64_t xid); // Remove with LRU cleanup
         };
 
     } // namespace scratchbird::core

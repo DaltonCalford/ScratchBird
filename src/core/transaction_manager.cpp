@@ -77,9 +77,9 @@
             // Mark header page as dirty
             buffer_pool_->unpinPage(0, true, ctx);
 
-            // Initialize special transactions
-            transaction_cache_[BOOTSTRAP_XID] = TransactionState::COMMITTED;
-            transaction_cache_[FROZEN_XID] = TransactionState::COMMITTED;
+            // Initialize special transactions (with LRU tracking)
+            addToCacheLRU(BOOTSTRAP_XID, TransactionState::COMMITTED);
+            addToCacheLRU(FROZEN_XID, TransactionState::COMMITTED);
 
             // Write bootstrap transaction to TIP
             status = writeTipEntry(BOOTSTRAP_XID, TransactionState::COMMITTED, ctx);
@@ -215,8 +215,7 @@
 
             for (uint32_t i = 0; i < tip_header->num_transactions; i++)
             {
-                transaction_cache_[entries[i].xid] =
-                    static_cast<TransactionState>(entries[i].state);
+                addToCacheLRU(entries[i].xid, static_cast<TransactionState>(entries[i].state));
 
                 // Track highest XID (in case it's higher than header's next_xid)
                 if (entries[i].xid >= next_xid_)
@@ -263,15 +262,15 @@
                 next_xid_ = FROZEN_XID + 1;
             }
 
-            // Record transaction as active
-            transaction_cache_[new_xid] = TransactionState::ACTIVE;
+            // Record transaction as active (with LRU tracking)
+            addToCacheLRU(new_xid, TransactionState::ACTIVE);
 
             // Register in ProcArray
             Status status = ProcArrayManager::setTransactionId(proc_id, new_xid, ctx);
             if (status != Status::OK)
             {
                 // Rollback on failure
-                transaction_cache_.erase(new_xid);
+                removeFromCacheLRU(new_xid);
                 return status;
             }
 
@@ -280,7 +279,7 @@
             if (status != Status::OK)
             {
                 // Rollback on failure
-                transaction_cache_.erase(new_xid);
+                removeFromCacheLRU(new_xid);
                 ProcArrayManager::clearTransactionId(proc_id, ctx);
                 return status;
             }
@@ -309,8 +308,18 @@
 
             // No longer verify against single active_xid_
 
-            // Update state
-            transaction_cache_[xid] = TransactionState::COMMITTED;
+            // Update state (updates existing entry, marking as used)
+            auto cache_it = transaction_cache_.find(xid);
+            if (cache_it != transaction_cache_.end())
+            {
+                cache_it->second = TransactionState::COMMITTED;
+                touchCacheEntry(xid); // Mark as recently used
+            }
+            else
+            {
+                // Not in cache, add it
+                addToCacheLRU(xid, TransactionState::COMMITTED);
+            }
 
             // Clear from ProcArray
             Status status = ProcArrayManager::clearTransactionId(proc_id, ctx);
@@ -324,7 +333,12 @@
             if (status != Status::OK)
             {
                 // Try to rollback on failure
-                transaction_cache_[xid] = TransactionState::ABORTED;
+                auto it = transaction_cache_.find(xid);
+                if (it != transaction_cache_.end())
+                {
+                    it->second = TransactionState::ABORTED;
+                    touchCacheEntry(xid);
+                }
                 return status;
             }
 
@@ -338,8 +352,18 @@
 
             // No longer verify against single active_xid_
 
-            // Update state
-            transaction_cache_[xid] = TransactionState::ABORTED;
+            // Update state (updates existing entry, marking as used)
+            auto cache_it = transaction_cache_.find(xid);
+            if (cache_it != transaction_cache_.end())
+            {
+                cache_it->second = TransactionState::ABORTED;
+                touchCacheEntry(xid);
+            }
+            else
+            {
+                // Not in cache, add it
+                addToCacheLRU(xid, TransactionState::ABORTED);
+            }
 
             // Clear from ProcArray
             Status status = ProcArrayManager::clearTransactionId(proc_id, ctx);
@@ -369,6 +393,7 @@
             if (it != transaction_cache_.end())
             {
                 state_out = it->second;
+                touchCacheEntry(xid); // Mark as recently used
                 return Status::OK;
             }
 
@@ -379,7 +404,7 @@
             {
                 // Transaction not found, assume it's too old and committed
                 state_out = TransactionState::COMMITTED;
-                transaction_cache_[xid] = TransactionState::COMMITTED;
+                addToCacheLRU(xid, TransactionState::COMMITTED);
                 return Status::OK;
             }
 
@@ -842,6 +867,79 @@
         {
             // Ensure all transaction state is persisted
             return db_->sync(ctx);
+        }
+
+        void TransactionManager::touchCacheEntry(uint64_t xid)
+        {
+            // Move entry to front of LRU list (most recently used)
+            // Assumes mutex_ is already held by caller
+
+            auto lru_it = cache_lru_map_.find(xid);
+            if (lru_it == cache_lru_map_.end())
+            {
+                return; // Not in cache
+            }
+
+            // Remove from current position
+            cache_lru_list_.erase(lru_it->second);
+
+            // Add to front
+            cache_lru_list_.push_front(xid);
+
+            // Update map
+            cache_lru_map_[xid] = cache_lru_list_.begin();
+        }
+
+        void TransactionManager::evictOldestCacheEntry()
+        {
+            // Remove least recently used entry (back of list)
+            // Assumes mutex_ is already held by caller
+
+            if (cache_lru_list_.empty())
+            {
+                return;
+            }
+
+            uint64_t oldest_xid = cache_lru_list_.back();
+
+            // Remove from all structures
+            cache_lru_list_.pop_back();
+            cache_lru_map_.erase(oldest_xid);
+            transaction_cache_.erase(oldest_xid);
+        }
+
+        void TransactionManager::addToCacheLRU(uint64_t xid, TransactionState state)
+        {
+            // Add entry with LRU tracking
+            // Assumes mutex_ is already held by caller
+
+            // Check if cache is full
+            if (transaction_cache_.size() >= MAX_CACHE_SIZE)
+            {
+                evictOldestCacheEntry();
+            }
+
+            // Add to cache
+            transaction_cache_[xid] = state;
+
+            // Add to front of LRU list
+            cache_lru_list_.push_front(xid);
+            cache_lru_map_[xid] = cache_lru_list_.begin();
+        }
+
+        void TransactionManager::removeFromCacheLRU(uint64_t xid)
+        {
+            // Remove entry with LRU cleanup
+            // Assumes mutex_ is already held by caller
+
+            auto lru_it = cache_lru_map_.find(xid);
+            if (lru_it != cache_lru_map_.end())
+            {
+                cache_lru_list_.erase(lru_it->second);
+                cache_lru_map_.erase(lru_it);
+            }
+
+            transaction_cache_.erase(xid);
         }
 
     } // namespace scratchbird::core
