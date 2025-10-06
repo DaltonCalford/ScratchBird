@@ -18,13 +18,13 @@ This report provides a comprehensive status update on the 67 issues identified i
 | **Critical** | 9 | 9 (100%) | 0 (0%) | 0 (0%) | 0 (0%) |
 | **High** | 25 | 13 (52%) | 0 (0%) | 10 (40%) | 2 (8%) |
 | **Medium** | 33 | 15 (45%) | 5 (15%) | 10 (30%) | 3 (9%) |
-| **Low** | 13 | 6 (46%) | 1 (8%) | 5 (38%) | 1 (8%) |
-| **TOTAL** | **67** | **43 (64%)** | **6 (9%)** | **25 (37%)** | **6 (9%)** |
+| **Low** | 13 | 7 (54%) | 1 (8%) | 4 (31%) | 1 (8%) |
+| **TOTAL** | **67** | **44 (66%)** | **6 (9%)** | **24 (36%)** | **6 (9%)** |
 
 ### Overall Status
-- **Fixed Issues:** 43 (64%)
+- **Fixed Issues:** 44 (66%)
 - **Partially Fixed:** 6 (9%)
-- **Outstanding Issues:** 25 (37%)
+- **Outstanding Issues:** 24 (36%)
 - **Unable to Verify:** 6 (9%)
 
 ---
@@ -748,15 +748,24 @@ This report provides a comprehensive status update on the 67 issues identified i
 
 ---
 
-### ❌ ISSUE #33: Peek Token Unused [OUTSTANDING]
-- **File:** `src/parser/parser.cpp:10-14`
-- **Status:** ❌ **OUTSTANDING**
-- **Current State:**
-  - Constructor initializes `peek_token_` for LL(2) parsing
-  - `check()` only looks at `current_token_`
-  - Two-token lookahead not actually used
-- **Impact:** Wasted memory
-- **Recommendation:** **LOW PRIORITY** - Remove peek_token or use for LL(2)
+### ✅ ISSUE #33: Peek Token Unused [RESOLVED]
+- **File:** `src/parser/parser.cpp:9-25`, `include/scratchbird/parser/parser.h:76-99`
+- **Status:** ✅ **RESOLVED** (2025-10-06)
+- **Resolution Details:**
+  - ✅ Renamed member variables to match their actual semantics
+  - ✅ Clarified confusing naming that suggested unused lookahead
+  - ✅ Token variables now have clear, accurate names
+  - ✅ Comments added to explain purpose
+- **Implementation:**
+  - Previous: `current_token_` (previous) and `peek_token_` (current) - confusing names
+  - Fixed: `previous_token_` (previous) and `current_token_` (current) - clear names
+  - Updated all references in parser.cpp and parser.h
+  - Methods already had correct names: previous() and current()
+- **Root Cause:**
+  - Naming confusion: `peek_token_` was actually the current lookahead token
+  - `current_token_` was actually the previously consumed token
+  - The variables were used correctly, just named poorly
+- **Impact:** Improved code clarity - variable names now match their actual purpose and the method names that access them
 
 ---
 

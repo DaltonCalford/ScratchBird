@@ -73,8 +73,8 @@ namespace scratchbird
         private:
             Lexer &lexer_;
             ASTArena &arena_;
-            Token current_token_;
-            Token peek_token_;
+            Token previous_token_;  // Previously consumed token
+            Token current_token_;   // Current lookahead token
             std::vector<Error> errors_;
 
             // Token management
@@ -83,19 +83,19 @@ namespace scratchbird
             bool consume(TokenType type, const std::string &message);
             Token previous() const
             {
-                return current_token_;
+                return previous_token_;
             }
             Token current() const
             {
-                return peek_token_;
+                return current_token_;
             }
             bool isAtEnd() const
             {
-                return peek_token_.type == TokenType::END_OF_FILE;
+                return current_token_.type == TokenType::END_OF_FILE;
             }
             bool check(TokenType type) const
             {
-                return peek_token_.type == type;
+                return current_token_.type == type;
             }
 
             // Error handling

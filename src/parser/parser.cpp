@@ -8,19 +8,19 @@ namespace scratchbird
 
         Parser::Parser(Lexer &lexer, ASTArena &arena) : lexer_(lexer), arena_(arena)
         {
-            // Initialize with first two tokens
-            current_token_ = Token::makeEOF(SourceLocation());
-            peek_token_ = lexer_.nextToken();
+            // Initialize: previous is EOF, current is first real token
+            previous_token_ = Token::makeEOF(SourceLocation());
+            current_token_ = lexer_.nextToken();
         }
 
         Parser::~Parser() = default;
 
         void Parser::advance()
         {
-            current_token_ = peek_token_;
+            previous_token_ = current_token_;
             if (!isAtEnd())
             {
-                peek_token_ = lexer_.nextToken();
+                current_token_ = lexer_.nextToken();
             }
         }
 
@@ -91,7 +91,7 @@ namespace scratchbird
 
         SourceSpan Parser::makeSpan(const SourceLocation &start) const
         {
-            return SourceSpan(start, current_token_.location);
+            return SourceSpan(start, previous_token_.location);
         }
 
         SourceSpan Parser::makeSpan(const SourceLocation &start, const SourceLocation &end) const
