@@ -17,14 +17,14 @@ This report provides a comprehensive status update on the 67 issues identified i
 |----------|-------|-------|---------|-------------|------------------|
 | **Critical** | 9 | 9 (100%) | 0 (0%) | 0 (0%) | 0 (0%) |
 | **High** | 25 | 12 (48%) | 1 (4%) | 10 (40%) | 2 (8%) |
-| **Medium** | 33 | 10 (30%) | 5 (15%) | 15 (45%) | 3 (9%) |
+| **Medium** | 33 | 10 (30%) | 6 (18%) | 14 (42%) | 3 (9%) |
 | **Low** | 13 | 2 (15%) | 1 (8%) | 9 (69%) | 1 (8%) |
-| **TOTAL** | **67** | **33 (49%)** | **7 (10%)** | **33 (49%)** | **6 (9%)** |
+| **TOTAL** | **67** | **33 (49%)** | **8 (12%)** | **32 (48%)** | **6 (9%)** |
 
 ### Overall Status
 - **Fixed Issues:** 33 (49%)
-- **Partially Fixed:** 7 (10%)
-- **Outstanding Issues:** 33 (49%)
+- **Partially Fixed:** 8 (12%)
+- **Outstanding Issues:** 32 (48%)
 - **Unable to Verify:** 6 (9%)
 
 ---
@@ -495,15 +495,28 @@ This report provides a comprehensive status update on the 67 issues identified i
 
 ---
 
-### ❌ ISSUE #50: Collation Compare Not Used [OUTSTANDING]
-- **File:** `src/core/charset.cpp:238-294`
-- **Status:** ❌ **OUTSTANDING**
+### 🟡 ISSUE #50: Collation Compare Not Used [PARTIAL]
+- **File:** `src/sblr/executor.cpp:1701-1710`, `include/scratchbird/core/btree.h:201-216`
+- **Status:** 🟡 **PARTIAL** (2025-10-06)
 - **Current State:**
-  - `compareStrings()` implements collation-aware comparison
-  - Never called from B-tree or WHERE clause evaluation
-  - Binary comparison used everywhere
-- **Impact:** Collations don't work for sorting/comparisons
-- **Recommendation:** **MEDIUM PRIORITY** - Integrate with comparison operations
+  - ✅ WHERE clause evaluation DOES use collation-aware comparison via Executor::compareStrings()
+  - ✅ Added collation_id to IndexInfo and SBBTreeIndex structures
+  - ✅ Added compare_keys() helper method to B-tree (documented for future integration)
+  - ❌ B-tree still uses binary comparison (vector< operator) for key ordering
+  - ❌ Executor uses default collation_id (101) instead of column-specific collation
+- **What Was Done:**
+  - Verified Executor::compareStrings() calls CharsetManager::compare() with collation_id
+  - Added collation_id field to IndexInfo (catalog_manager.h:147)
+  - Added idx_collation_id field to SBBTreeIndex (btree.h:141)
+  - Created compare_keys() helper in B-tree with TODO for CharsetManager integration
+  - Documented remaining integration work
+- **What Remains:**
+  - Replace all B-tree vector comparisons with compare_keys() calls
+  - Update compare_keys() to call CharsetManager::compare() with idx_collation_id
+  - Thread collation_id through table column definitions
+  - Pass column collation_id to Executor::compareStrings() instead of default
+- **Impact:** WHERE clauses use collation (with default), B-tree sorting still binary
+- **Recommendation:** Complete B-tree integration and column-specific collation threading
 
 ---
 
@@ -702,16 +715,17 @@ This report provides a comprehensive status update on the 67 issues identified i
 ### Character Sets & Timezones
 - **Total Issues:** 9
 - **Fixed:** 3 (33%)
-- **Partial:** 0 (0%)
-- **Outstanding:** 6 (67%)
+- **Partial:** 1 (11%)
+- **Outstanding:** 5 (56%)
 
 **Key Improvements:**
 - ✅ Latin1 to UTF-8 conversion (#47)
 - ✅ DST implemented for US timezones (#51)
 - ✅ UTF-16 and UTF-32 implemented (#48)
+- 🟡 Collation infrastructure added, B-tree integration remains (#50)
 
 **Critical Gaps:**
-- ❌ Collation not integrated (#50)
+- 🟡 Complete B-tree collation integration needed (#50)
 
 ---
 

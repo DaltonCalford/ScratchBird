@@ -144,6 +144,9 @@
                 std::vector<ID> column_ids;
                 uint32_t index_params_oid = 0; // TOAST reference for index parameters
                 uint64_t created_time = 0;
+                uint32_t collation_id = 101; // Default: utf8_general_ci (binary comparison)
+                                             // TODO(Issue #50): Full integration of collation-aware
+                                             // comparisons throughout B-tree and query evaluation
             };
 
             CatalogManager(Database *db);
