@@ -17,14 +17,14 @@ This report provides a comprehensive status update on the 67 issues identified i
 |----------|-------|-------|---------|-------------|------------------|
 | **Critical** | 9 | 9 (100%) | 0 (0%) | 0 (0%) | 0 (0%) |
 | **High** | 25 | 12 (48%) | 1 (4%) | 10 (40%) | 2 (8%) |
-| **Medium** | 33 | 8 (24%) | 5 (15%) | 17 (52%) | 3 (9%) |
+| **Medium** | 33 | 9 (27%) | 5 (15%) | 16 (48%) | 3 (9%) |
 | **Low** | 13 | 2 (15%) | 1 (8%) | 9 (69%) | 1 (8%) |
-| **TOTAL** | **67** | **31 (46%)** | **7 (10%)** | **35 (52%)** | **6 (9%)** |
+| **TOTAL** | **67** | **32 (48%)** | **7 (10%)** | **34 (51%)** | **6 (9%)** |
 
 ### Overall Status
-- **Fixed Issues:** 31 (46%)
+- **Fixed Issues:** 32 (48%)
 - **Partially Fixed:** 7 (10%)
-- **Outstanding Issues:** 35 (52%)
+- **Outstanding Issues:** 34 (51%)
 - **Unable to Verify:** 6 (9%)
 
 ---
@@ -451,15 +451,22 @@ This report provides a comprehensive status update on the 67 issues identified i
 
 ---
 
-### ❌ ISSUE #51: DST Not Implemented [OUTSTANDING]
-- **File:** `src/core/timezone.cpp:207-212`
-- **Status:** ❌ **OUTSTANDING**
-- **Current State:**
-  - Comment on line 209: "TODO(timezone): Implement full DST calculation based on date"
-  - All timezones return standard offset regardless of date
-  - DST never applied
-- **Impact:** Incorrect time conversions during DST periods
-- **Recommendation:** **MEDIUM PRIORITY** - Implement DST rules for supported timezones
+### ✅ ISSUE #51: DST Not Implemented [RESOLVED]
+- **File:** `src/core/timezone.cpp:199-363`
+- **Status:** ✅ **RESOLVED** (2025-10-06)
+- **Resolution:**
+  - ✅ Implemented DST calculation for US timezones (EST, PST, CST, MST)
+  - ✅ Added `isWithinDST_US()` helper function
+  - ✅ US DST rules (since 2007): Start 2nd Sunday in March at 2 AM, End 1st Sunday in November at 2 AM
+  - ✅ Updated `getOffset()` to check DST status and apply +60 minute offset when in DST period
+- **Implementation Details:**
+  - Converts GMT timestamp to local time components (year, month, day, hour)
+  - Uses Zeller's congruence to calculate day of week for DST boundary detection
+  - Returns `TimezoneOffset` with `is_dst=true` and adjusted offset during DST periods
+  - For timezones that don't observe DST (like UTC), returns standard offset
+  - DST adds 60 minutes to standard offset (e.g., EST -5h becomes EDT -4h)
+- **Testing:** All 22 timezone tests pass, including cross-timezone conversions
+- **Impact:** Correct time conversions during DST periods for US timezones
 
 ---
 
@@ -680,15 +687,15 @@ This report provides a comprehensive status update on the 67 issues identified i
 
 ### Character Sets & Timezones
 - **Total Issues:** 9
-- **Fixed:** 1 (11%)
+- **Fixed:** 2 (22%)
 - **Partial:** 0 (0%)
-- **Outstanding:** 8 (89%)
+- **Outstanding:** 7 (78%)
 
 **Key Improvements:**
 - ✅ Latin1 to UTF-8 conversion (#47)
+- ✅ DST implemented for US timezones (#51)
 
 **Critical Gaps:**
-- ❌ DST not implemented (#51)
 - ❌ UTF-16/UTF-32 stubs (#48)
 - ❌ Collation not integrated (#50)
 
