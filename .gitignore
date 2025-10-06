@@ -6,6 +6,20 @@ CMakeCache.txt
 cmake-build-*/
 compile_commands.json
 
+# Object files and compiled artifacts
+*.o
+*.a
+*.so
+*.dylib
+*.dll
+*.exe
+
+# Test databases and temporary test files
+test_*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
 # IDE/editor
 .vscode/
 .idea/
@@ -25,3 +39,14 @@ ctest-
 # Python venvs (if used)
 .venv/
 venv/
+
+# Temporary files
+*.tmp
+*.swp
+*.swo
+*~
+
+# Analysis and work-in-progress files in root
+/*.wip
+/ANALYSIS_*.md
+/AUDIT_*.md
