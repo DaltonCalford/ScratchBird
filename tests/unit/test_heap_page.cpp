@@ -269,3 +269,50 @@ TEST_F(HeapPageTest, PageValidation)
 
     EXPECT_NE(page.validate(&ctx), Status::OK) << "Should detect invalid special area";
 }
+
+// Test: Minimum tuple size boundary (Suite 1 compliance requirement)
+TEST_F(HeapPageTest, MinimumTupleSizeBoundary)
+{
+    HeapPage page(page_buffer_, page_size_);
+    ASSERT_EQ(page.initialize(1, nullptr), Status::OK);
+
+    // Test inserting minimum valid tuple - just the TupleHeader with no data
+    // TupleHeader contains: xmin, xmax, flags, and other metadata
+    uint16_t item_id;
+
+    // Create minimal tuple: allocate space for TupleHeader but no payload
+    std::vector<uint8_t> empty_tuple_data(sizeof(TupleHeader), 0);
+
+    // The insertTuple function expects data_size to include the TupleHeader
+    // So minimum size is sizeof(TupleHeader) + 0 bytes of actual data
+    Status status = page.insertTuple(empty_tuple_data.data(), sizeof(TupleHeader), 100,
+                                      &item_id, nullptr);
+
+    // Should succeed - even an empty tuple is valid
+    EXPECT_EQ(status, Status::OK) << "Should be able to insert minimum size tuple (just TupleHeader)";
+
+    if (status == Status::OK) {
+        // Verify we can retrieve it
+        const uint8_t *data;
+        uint32_t size;
+        EXPECT_EQ(page.getTuple(item_id, &data, &size, nullptr), Status::OK);
+
+        // The tuple should have at least the TupleHeader
+        EXPECT_GE(size, sizeof(TupleHeader)) << "Retrieved tuple should have at least TupleHeader size";
+    }
+
+    // Test with 1-byte data (smallest non-empty tuple)
+    std::vector<uint8_t> one_byte_data = {0x42};
+    uint16_t item_id2;
+    status = page.insertTuple(one_byte_data.data(), one_byte_data.size() + sizeof(TupleHeader),
+                              101, &item_id2, nullptr);
+    EXPECT_EQ(status, Status::OK) << "Should be able to insert 1-byte data tuple";
+
+    if (status == Status::OK) {
+        // Verify retrieval
+        const uint8_t *data2;
+        uint32_t size2;
+        EXPECT_EQ(page.getTuple(item_id2, &data2, &size2, nullptr), Status::OK);
+        EXPECT_GE(size2, sizeof(TupleHeader) + 1) << "Should have TupleHeader + 1 byte";
+    }
+}
