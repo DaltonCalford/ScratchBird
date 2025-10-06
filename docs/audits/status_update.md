@@ -16,15 +16,15 @@ This report provides a comprehensive status update on the 67 issues identified i
 | Severity | Total | Fixed | Partial | Outstanding | Unable to Verify |
 |----------|-------|-------|---------|-------------|------------------|
 | **Critical** | 9 | 9 (100%) | 0 (0%) | 0 (0%) | 0 (0%) |
-| **High** | 25 | 7 (28%) | 2 (8%) | 13 (52%) | 3 (12%) |
+| **High** | 25 | 8 (32%) | 2 (8%) | 12 (48%) | 3 (12%) |
 | **Medium** | 33 | 8 (24%) | 5 (15%) | 17 (52%) | 3 (9%) |
 | **Low** | 13 | 2 (15%) | 1 (8%) | 9 (69%) | 1 (8%) |
-| **TOTAL** | **67** | **26 (39%)** | **8 (12%)** | **38 (57%)** | **7 (10%)** |
+| **TOTAL** | **67** | **27 (40%)** | **8 (12%)** | **37 (55%)** | **7 (10%)** |
 
 ### Overall Status
-- **Fixed Issues:** 26 (39%)
+- **Fixed Issues:** 27 (40%)
 - **Partially Fixed:** 8 (12%)
-- **Outstanding Issues:** 38 (57%)
+- **Outstanding Issues:** 37 (55%)
 - **Unable to Verify:** 7 (10%)
 
 ---
@@ -321,15 +321,25 @@ This report provides a comprehensive status update on the 67 issues identified i
 
 ---
 
-### ❌ ISSUE #20: Transaction Cache Growth [OUTSTANDING]
-- **File:** `src/core/transaction_manager.cpp:62, 229, 258, 298`
-- **Status:** ❌ **OUTSTANDING**
-- **Current State:**
-  - `transaction_cache_` map populated at lines 267, 313, 342, 408
-  - **No eviction policy implemented**
-  - Grows unbounded over time
-- **Impact:** Memory exhaustion in long-running systems
-- **Recommendation:** **HIGH PRIORITY** - Implement LRU eviction or time-based cleanup
+### ✅ ISSUE #20: Transaction Cache Growth [RESOLVED]
+- **File:** `src/core/transaction_manager.cpp`, `include/scratchbird/core/transaction_manager.h`
+- **Status:** ✅ **RESOLVED** (2025-10-06)
+- **Resolution:**
+  - ✅ Implemented LRU (Least Recently Used) eviction policy
+  - ✅ Added MAX_CACHE_SIZE limit of 10,000 transactions
+  - ✅ Automatic eviction when cache full
+  - ✅ O(1) cache operations using hash map + doubly-linked list
+- **Implementation Details:**
+  - cache_lru_list_: Tracks access order (front=MRU, back=LRU)
+  - cache_lru_map_: Fast lookup of position in LRU list
+  - touchCacheEntry(): Moves accessed entry to front
+  - evictOldestCacheEntry(): Removes LRU entry when cache full
+  - All cache access points updated (begin/commit/rollback/getState)
+- **Memory Impact:**
+  - Bounded at ~160KB for 10,000 cached transactions
+  - Prevents unbounded growth in long-running systems
+  - Evicted entries fetched from CLOG if needed later
+- **Commit:** 909ea64 "Implement LRU cache eviction for transaction cache"
 
 ---
 
