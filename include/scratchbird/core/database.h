@@ -59,8 +59,9 @@ namespace scratchbird
             uint64_t next_page_id;        // Next page ID to allocate
             uint64_t system_catalog_page; // Root of system catalog (usually 1)
 
-            // Transaction info (40 bytes)
+            // Transaction info (48 bytes)
             uint64_t next_transaction_id;  // Next transaction ID to assign
+            uint64_t oldest_transaction_id; // Oldest non-frozen XID (for VACUUM tracking)
             uint64_t oldest_active_xid;    // Oldest active transaction
             uint64_t latest_completed_xid; // Latest completed transaction
             uint32_t tip_root_page;        // Root page of Transaction Inventory Pages
@@ -168,6 +169,12 @@ namespace scratchbird
                 return transaction_manager_.get();
             }
 
+            // Timezone context for connections
+            // Get/set connection timezone (defaults to database timezone, then UTC)
+            uint16_t getConnectionTimezone() const { return connection_timezone_; }
+            void setConnectionTimezone(uint16_t tz_id) { connection_timezone_ = tz_id; }
+            uint16_t getDatabaseTimezone() const { return header_ ? header_->timezone : 1; } // 1 = UTC
+
             // Get lock manager
             LockManager *lock_manager()
             {
@@ -210,6 +217,7 @@ namespace scratchbird
             uint32_t page_size_ = 0;           // Page size
                         ID db_uuid_;              // Database UUID
             DatabaseHeader *header_ = nullptr; // Cached header
+            uint16_t connection_timezone_ = 1; // Connection timezone (1 = UTC)
 
             // Forward declared pointers - managed via unique_ptr for RAII
             std::unique_ptr<PageManager> page_manager_;               // Page allocation manager (owned)

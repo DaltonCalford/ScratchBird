@@ -3,9 +3,11 @@
 #include "scratchbird/core/buffer_pool.h"
 #include "scratchbird/core/heap_page.h"
 #include "scratchbird/core/proc_array.h"
+#include "scratchbird/core/catalog_manager.h"
 #include "scratchbird/core/error_context.h"
 #include <chrono>
 #include <cstring>
+#include <unordered_map>
 
 namespace scratchbird::core
 {
@@ -105,13 +107,75 @@ namespace scratchbird::core
 
     auto Vacuum::vacuumDatabase(VacuumStats* stats_out, ErrorContext* ctx) -> Status
     {
-        // TODO: Iterate over all tables and vacuum each one
-        // For now, just return OK (requires catalog iteration)
-        VacuumStats stats;
+        VacuumStats total_stats;
+        auto start_time = std::chrono::high_resolution_clock::now();
+
+        // Get catalog manager
+        auto* catalog = db_->catalog_manager();
+        if (catalog == nullptr)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Catalog manager not available");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        // Get the default schema (public schema)
+        // For simplicity, we'll vacuum all tables in all schemas
+        std::vector<CatalogManager::SchemaInfo> schemas;
+        Status status = catalog->listSchemas(schemas, ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, status, "Failed to list schemas for vacuum");
+            return status;
+        }
+
+        // Iterate over all schemas
+        for (const auto& schema : schemas)
+        {
+            // Get all tables in this schema
+            std::vector<CatalogManager::TableInfo> tables;
+            status = catalog->listTables(schema.schema_id, tables, ctx);
+            if (status != Status::OK)
+            {
+                // Continue with other schemas even if one fails
+                continue;
+            }
+
+            // Vacuum each table
+            for (const auto& table : tables)
+            {
+                // Skip TOAST tables and system tables
+                if (table.table_type == CatalogManager::TableType::TOAST)
+                {
+                    continue;
+                }
+
+                // Vacuum this table
+                VacuumStats table_stats;
+                status = vacuumTable(table.table_id, &table_stats, ctx);
+                if (status == Status::OK)
+                {
+                    // Accumulate statistics
+                    total_stats.pages_scanned += table_stats.pages_scanned;
+                    total_stats.tuples_scanned += table_stats.tuples_scanned;
+                    total_stats.dead_tuples_found += table_stats.dead_tuples_found;
+                    total_stats.dead_tuples_removed += table_stats.dead_tuples_removed;
+                    total_stats.version_chains_pruned += table_stats.version_chains_pruned;
+                    total_stats.pages_compacted += table_stats.pages_compacted;
+                    total_stats.free_space_recovered += table_stats.free_space_recovered;
+                }
+                // Continue with other tables even if one fails
+            }
+        }
+
+        auto end_time = std::chrono::high_resolution_clock::now();
+        total_stats.vacuum_time_us = std::chrono::duration_cast<std::chrono::microseconds>(
+                                         end_time - start_time).count();
+
         if (stats_out != nullptr)
         {
-            *stats_out = stats;
+            *stats_out = total_stats;
         }
+
         return Status::OK;
     }
 
@@ -154,12 +218,35 @@ namespace scratchbird::core
                                       std::vector<uint64_t>* dead_tids_out,
                                       VacuumStats* stats, ErrorContext* ctx) -> Status
     {
-        // TODO: Get table page range from catalog
-        // For Phase 4, we'll scan a fixed range of pages
-        constexpr uint32_t START_PAGE = 7;   // First heap page
-        constexpr uint32_t MAX_PAGES = 1000; // Scan up to 1000 pages
+        // Get table information from catalog
+        auto* catalog = db_->catalog_manager();
+        if (catalog == nullptr)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Catalog manager not available");
+            return Status::INVALID_ARGUMENT;
+        }
 
-        for (uint32_t page_id = START_PAGE; page_id < START_PAGE + MAX_PAGES; ++page_id)
+        // Get table info to find root page
+        CatalogManager::TableInfo table_info;
+        Status status = catalog->getTable(table_id, table_info, ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, status, "Failed to get table info for vacuum");
+            return status;
+        }
+
+        // Start from the root page (first heap page for this table)
+        // We'll scan all pages until we hit an IO_ERROR (page doesn't exist)
+        uint32_t start_page = table_info.root_page;
+        if (start_page == 0)
+        {
+            // Empty table
+            return Status::OK;
+        }
+
+        // Scan all pages of this table
+        // We scan sequentially from the root page until we encounter a non-existent page
+        for (uint32_t page_id = start_page; ; ++page_id)
         {
             void* page_buffer;
             Status status = db_->buffer_pool()->pinPage(page_id, &page_buffer, ctx);
@@ -308,16 +395,98 @@ namespace scratchbird::core
     auto Vacuum::compactPage(uint32_t page_id, VacuumStats* stats,
                             ErrorContext* ctx) -> Status
     {
-        // TODO: Implement page compaction
-        // This would:
-        // 1. Pin page
-        // 2. Rebuild item array, removing deleted items
-        // 3. Defragment tuple storage area
-        // 4. Update free space pointers
-        // 5. Mark page dirty and unpin
-        //
-        // For Phase 4, we defer this to avoid complexity
-        return Status::NOT_IMPLEMENTED;
+        // Pin the page
+        void* page_buffer;
+        Status status = db_->buffer_pool()->pinPage(page_id, &page_buffer, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        auto* page_data = static_cast<uint8_t*>(page_buffer);
+        uint32_t page_size = db_->page_size();
+
+        // Create a temporary buffer for compaction
+        std::vector<uint8_t> temp_buffer(page_size);
+        uint8_t* temp_data = temp_buffer.data();
+
+        // Copy page header
+        auto* old_page_hdr = reinterpret_cast<PageHeader*>(page_data);
+        auto* temp_page_hdr = reinterpret_cast<PageHeader*>(temp_data);
+        std::memcpy(temp_page_hdr, old_page_hdr, sizeof(PageHeader));
+
+        // Get item arrays (starts right after PageHeader)
+        auto* old_items = reinterpret_cast<ItemPointer*>(page_data + sizeof(PageHeader));
+        auto* new_items = reinterpret_cast<ItemPointer*>(temp_data + sizeof(PageHeader));
+
+        uint16_t old_item_count = old_page_hdr->item_count;
+        uint16_t new_item_count = 0;
+
+        // Calculate starting position for tuple data (from end of page, before special area)
+        uint32_t tuple_data_offset = page_size - sizeof(HeapPageSpecial);
+
+        // Track space reclaimed
+        uint32_t old_free_space = old_page_hdr->free_space;
+
+        // Pass 1: Copy non-deleted tuples and build new item array
+        for (uint16_t i = 0; i < old_item_count; ++i)
+        {
+            const ItemPointer& old_item = old_items[i];
+
+            // Skip deleted/unused items
+            if (old_item.isDeleted() || old_item.offset == 0)
+            {
+                continue;
+            }
+
+            // Get tuple data
+            const uint8_t* tuple_src = page_data + old_item.offset;
+            uint32_t tuple_size = old_item.length;
+
+            // Allocate space from end of page (before special area)
+            tuple_data_offset -= tuple_size;
+
+            // Copy tuple data to new location
+            std::memcpy(temp_data + tuple_data_offset, tuple_src, tuple_size);
+
+            // Create new item pointing to compacted location
+            new_items[new_item_count].offset = tuple_data_offset;
+            new_items[new_item_count].length = tuple_size;
+            new_items[new_item_count].flags = old_item.flags;
+
+            new_item_count++;
+        }
+
+        // Update header with new counts and free space
+        temp_page_hdr->item_count = new_item_count;
+
+        // Calculate new free space
+        uint32_t items_size = new_item_count * sizeof(ItemPointer);
+        uint32_t header_size = sizeof(PageHeader);
+        uint32_t used_space = header_size + items_size + (page_size - sizeof(HeapPageSpecial) - tuple_data_offset);
+        uint32_t new_free_space = page_size - sizeof(HeapPageSpecial) - used_space;
+
+        temp_page_hdr->free_space = static_cast<uint16_t>(new_free_space);
+
+        // Copy special area
+        auto* old_special = reinterpret_cast<HeapPageSpecial*>(page_data + page_size - sizeof(HeapPageSpecial));
+        auto* temp_special = reinterpret_cast<HeapPageSpecial*>(temp_data + page_size - sizeof(HeapPageSpecial));
+        std::memcpy(temp_special, old_special, sizeof(HeapPageSpecial));
+
+        // Update statistics
+        stats->pages_compacted++;
+        if (new_free_space > old_free_space)
+        {
+            stats->free_space_recovered += (new_free_space - old_free_space);
+        }
+
+        // Copy compacted page back to original buffer
+        std::memcpy(page_data, temp_data, page_size);
+
+        // Unpin page as dirty
+        db_->buffer_pool()->unpinPage(page_id, true, ctx);
+
+        return Status::OK;
     }
 
     bool Vacuum::isTupleDead(const uint8_t* tuple_data, uint64_t horizon)

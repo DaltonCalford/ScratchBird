@@ -3,8 +3,11 @@
 #include "scratchbird/core/ondisk.h"
 #include "scratchbird/core/toast.h"
 #include "scratchbird/core/database.h"
+#include "scratchbird/core/buffer_pool.h"
+#include "scratchbird/core/transaction_manager.h"
 #include <cstring>
 #include <algorithm>
+#include <vector>
 
 
     namespace scratchbird::core
@@ -161,7 +164,22 @@
             }
 
             // Allocate space for tuple from upper area
+            // Validate no underflow
+            if (actual_tuple_size > special->pd_upper)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT,
+                                  "Tuple size exceeds available space (underflow risk)");
+                return Status::PAGE_CORRUPT;
+            }
             uint32_t tuple_offset = special->pd_upper - actual_tuple_size;
+
+            // Validate offset is within page bounds
+            if (tuple_offset + actual_tuple_size > page_size_)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT,
+                                  "Tuple offset out of bounds");
+                return Status::PAGE_CORRUPT;
+            }
 
             // Copy tuple data and initialize header
             memcpy(page_data_ + tuple_offset, data_to_insert, actual_tuple_size);
@@ -505,16 +523,62 @@
                 return Status::NOT_FOUND;
             }
 
+            // Validate old item pointer bounds
+            if (!items[old_item_id].isValid(page_size_))
+            {
+                SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT,
+                                  "Old item pointer out of bounds or invalid");
+                return Status::PAGE_CORRUPT;
+            }
+
             // Get old tuple to update its xmax and version chain
             uint32_t old_offset = items[old_item_id].offset;
+            uint32_t old_length = items[old_item_id].length;
             auto *old_tuple_hdr = reinterpret_cast<TupleHeader *>(page_data_ + old_offset);
 
+            // TOAST CLEANUP: Check if old tuple has TOAST data that needs to be deleted
+            // This is critical to prevent TOAST storage leaks on UPDATE operations
+            if ((toast_mgr_ != nullptr) && (db_ != nullptr))
+            {
+                if (old_length >= sizeof(TupleHeader) + sizeof(ToastPointer))
+                {
+                    const uint8_t *old_data_ptr = page_data_ + old_offset + sizeof(TupleHeader);
+
+                    // Check if old tuple is TOASTed
+                    if (isToastPointer(old_data_ptr))
+                    {
+                        const auto *old_toast_ptr =
+                            reinterpret_cast<const ToastPointer *>(old_data_ptr);
+
+                        // Delete the old TOAST data
+                        // Use xmax as the deleting transaction ID
+                        Status toast_status = toast_mgr_->deleteToastValue(
+                            old_toast_ptr->va_valueid, xmax, ctx);
+
+                        // Tolerate NOT_FOUND in case TOAST data was already cleaned up
+                        if (toast_status != Status::OK && toast_status != Status::NOT_FOUND)
+                        {
+                            return toast_status;
+                        }
+                    }
+                }
+            }
+
             // Insert new version (this will allocate space and create new item pointer)
+            // NOTE: If new tuple needs TOASTing, insertTuple() will handle it automatically
             uint16_t new_item_id;
             Status status = insertTuple(new_tuple_data, new_tuple_size, new_xmin, &new_item_id, ctx);
             if (status != Status::OK)
             {
                 return status;
+            }
+
+            // Validate new item pointer bounds (should always be valid after insertTuple, but check defensively)
+            if (!items[new_item_id].isValid(page_size_))
+            {
+                SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT,
+                                  "New item pointer out of bounds after insert");
+                return Status::PAGE_CORRUPT;
             }
 
             // Get new tuple to set up version chain
@@ -546,45 +610,130 @@
 
         auto HeapPage::findVisibleVersion(uint16_t item_id, uint64_t snapshot_xid,
                                           const uint8_t **data_out, uint32_t *size_out,
+                                          TransactionManager::Snapshot *snapshot,
                                           ErrorContext *ctx) -> Status
         {
+            // Snapshot is required for Option 3: MVCC Snapshot Pin Management
+            if (snapshot == nullptr)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                "findVisibleVersion requires a snapshot for MVCC pin management");
+                return Status::INVALID_ARGUMENT;
+            }
+
             // Start with the requested tuple
             uint16_t current_item_id = item_id;
             uint32_t current_page_id = header()->page_id;
+
+            // Current page pointers
+            uint8_t *current_page_data = page_data_;
+            uint32_t current_page_size = page_size_;
 
             // Follow version chain looking for visible version
             // Limit chain traversal to prevent infinite loops
             constexpr uint32_t MAX_CHAIN_LENGTH = 100;
             uint32_t chain_length = 0;
 
+            BufferPool *buffer_pool = (db_ != nullptr) ? db_->buffer_pool() : nullptr;
+
             while (chain_length < MAX_CHAIN_LENGTH)
             {
+                // Get item array from current page
+                auto *page_header = reinterpret_cast<PageHeader *>(current_page_data);
+                auto *items = reinterpret_cast<ItemPointer *>(current_page_data + sizeof(PageHeader));
+
                 // Get current tuple
-                if (current_item_id >= header()->item_count)
+                if (current_item_id >= page_header->item_count)
                 {
+                    // Snapshot owns all cross-page pins - it will clean up
                     SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Version chain broken");
                     return Status::NOT_FOUND;
                 }
 
-                ItemPointer *items = getItemArray();
                 if (items[current_item_id].isDeleted())
                 {
-                    // Skip to next version if available
-                    // For now, return NOT_FOUND (full chain traversal needs cross-page support)
-                    SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Version deleted");
-                    return Status::NOT_FOUND;
+                    // Validate item pointer bounds before accessing deleted tuple
+                    if (!items[current_item_id].isValid(current_page_size))
+                    {
+                        SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT,
+                                          "Deleted item pointer out of bounds");
+                        return Status::PAGE_CORRUPT;
+                    }
+
+                    // Tuple is deleted - check if there's a next version
+                    uint32_t offset = items[current_item_id].offset;
+                    auto *tuple_hdr = reinterpret_cast<TupleHeader *>(current_page_data + offset);
+
+                    if (!tuple_hdr->hasNextVersion())
+                    {
+                        // Snapshot owns all cross-page pins - it will clean up
+                        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Version deleted, no next version");
+                        return Status::NOT_FOUND;
+                    }
+                    // Fall through to follow next_version_tid
+                }
+
+                // Validate item pointer bounds before accessing tuple
+                if (!items[current_item_id].isValid(current_page_size))
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT,
+                                      "Item pointer out of bounds in version chain");
+                    return Status::PAGE_CORRUPT;
                 }
 
                 uint32_t offset = items[current_item_id].offset;
                 uint32_t length = items[current_item_id].length;
-                auto *tuple_hdr = reinterpret_cast<TupleHeader *>(page_data_ + offset);
+                auto *tuple_hdr = reinterpret_cast<TupleHeader *>(current_page_data + offset);
+
+                // VALIDATE XIDs FIRST - protect against corrupted tuple headers
+                bool xmin_valid = TransactionManager::isValidXid(tuple_hdr->xmin);
+                bool xmax_valid = (tuple_hdr->xmax == 0) || TransactionManager::isValidXid(tuple_hdr->xmax);
+
+                if (!xmin_valid)
+                {
+                    // Invalid xmin - skip this version and try next
+                    // This protects against corrupted data
+                    // CORRUPTION LOGGING: Invalid xmin in version chain
+                    fprintf(stderr, "[ERROR] Invalid xmin %lu in version chain at page %u item %u - skipping to next version\n",
+                            tuple_hdr->xmin, current_page_id, current_item_id);
+
+                    if (tuple_hdr->hasNextVersion())
+                    {
+                        // Continue to next version
+                        chain_length++;
+                        uint64_t next_tid = tuple_hdr->next_version_tid;
+                        uint32_t next_page_id = static_cast<uint32_t>(next_tid >> 32);
+                        current_item_id = static_cast<uint16_t>((next_tid >> 16) & 0xFFFF);
+
+                        if (next_page_id != current_page_id && buffer_pool != nullptr)
+                        {
+                            void *buffer;
+                            if (buffer_pool->pinPage(next_page_id, &buffer, ctx) == Status::OK)
+                            {
+                                snapshot->pinned_pages.push_back(next_page_id);
+                                snapshot->buffer_pool = buffer_pool;
+                                current_page_data = static_cast<uint8_t *>(buffer);
+                                current_page_id = next_page_id;
+                            }
+                        }
+                        continue;
+                    }
+                    else
+                    {
+                        SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "Invalid xmin and no next version");
+                        return Status::PAGE_CORRUPT;
+                    }
+                }
+
+                // Treat invalid xmax as 0 (not deleted)
+                uint64_t effective_xmax = xmax_valid ? tuple_hdr->xmax : 0;
 
                 // Check visibility of this version
                 // Simple visibility: xmin <= snapshot_xid < xmax
                 bool visible = false;
                 if (tuple_hdr->xmin <= snapshot_xid)
                 {
-                    if (tuple_hdr->xmax == 0 || tuple_hdr->xmax > snapshot_xid)
+                    if (effective_xmax == 0 || effective_xmax > snapshot_xid)
                     {
                         visible = true;
                     }
@@ -592,15 +741,18 @@
 
                 if (visible)
                 {
-                    // Found visible version
+                    // Found visible version - return data pointer
                     if (data_out != nullptr)
                     {
-                        *data_out = page_data_ + offset;
+                        *data_out = current_page_data + offset;
                     }
                     if (size_out != nullptr)
                     {
                         *size_out = length;
                     }
+
+                    // Safe to return pointer because snapshot owns all cross-page pins
+                    // Pins will be cleaned up when transaction commits/rollbacks
                     return Status::OK;
                 }
 
@@ -611,27 +763,58 @@
                     uint32_t next_page_id = static_cast<uint32_t>(next_tid >> 32);
                     uint16_t next_item_id = static_cast<uint16_t>((next_tid >> 16) & 0xFFFF);
 
-                    // For Phase 3, only support same-page version chains
-                    // Cross-page chains require Database/BufferPool integration
+                    // Check if we need to follow version chain to another page
                     if (next_page_id != current_page_id)
                     {
-                        SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED,
-                                         "Cross-page version chains not yet supported");
-                        return Status::NOT_IMPLEMENTED;
+                        // Cross-page version chain - need to pin the next page
+                        if (buffer_pool == nullptr)
+                        {
+                            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                            "Cross-page version chain requires Database/BufferPool");
+                            return Status::INVALID_ARGUMENT;
+                        }
+
+                        // Pin the next page
+                        void *next_page_buffer = nullptr;
+                        Status status = buffer_pool->pinPage(next_page_id, &next_page_buffer, ctx);
+                        if (status != Status::OK)
+                        {
+                            SET_ERROR_CONTEXT(ctx, status, "Failed to pin next page in version chain");
+                            return status;
+                        }
+
+                        // Register pin with snapshot (Option 3: MVCC Snapshot)
+                        // Snapshot owns the pin and will clean up on transaction commit/rollback
+                        snapshot->pinned_pages.push_back(next_page_id);
+                        if (snapshot->buffer_pool == nullptr)
+                        {
+                            snapshot->buffer_pool = buffer_pool;
+                        }
+
+                        // Switch to the next page
+                        current_page_data = static_cast<uint8_t *>(next_page_buffer);
+                        current_page_size = page_size_; // Assume same page size
+                        current_page_id = next_page_id;
+                        current_item_id = next_item_id;
+                    }
+                    else
+                    {
+                        // Same-page version chain - just update item_id
+                        current_item_id = next_item_id;
                     }
 
-                    current_item_id = next_item_id;
                     chain_length++;
                 }
                 else
                 {
                     // End of chain, no visible version found
+                    // Snapshot owns all cross-page pins - it will clean up
                     SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "No visible version in chain");
                     return Status::NOT_FOUND;
                 }
             }
 
-            // Chain too long
+            // Chain too long - snapshot will clean up pins
             SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "Version chain too long or cyclic");
             return Status::PAGE_CORRUPT;
         }

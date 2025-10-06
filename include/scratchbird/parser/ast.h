@@ -126,14 +126,19 @@ namespace scratchbird
             DataType type;
             uint32_t precision; // For VARCHAR(n), CHAR(n)
             uint32_t scale;     // For DECIMAL(p,s)
+            bool with_timezone; // For TIMESTAMP WITH TIME ZONE
+            uint16_t timezone_hint; // Timezone ID for display
 
-            TypeName(DataType t, uint32_t p = 0, uint32_t s = 0)
-                : type(t), precision(p), scale(s) {}
+            TypeName(DataType t, uint32_t p = 0, uint32_t s = 0, bool tz = false, uint16_t tz_hint = 0)
+                : type(t), precision(p), scale(s), with_timezone(tz), timezone_hint(tz_hint) {}
 
             // Convert to TypeInfo
             TypeInfo toTypeInfo() const
             {
-                return TypeInfo(type, precision, scale);
+                TypeInfo info(type, precision, scale);
+                info.with_timezone = with_timezone;
+                info.timezone_hint = timezone_hint;
+                return info;
             }
         };
 
@@ -331,8 +336,10 @@ namespace scratchbird
         {
         public:
             ColumnDef(const SourceSpan &span, StringPool::StringId name, const TypeName &type,
-                      bool nullable)
-                : ASTNode(ASTKind::COLUMN_DEF, span), name_(name), type_(type), nullable_(nullable)
+                      bool nullable, StringPool::StringId charset = 0,
+                      StringPool::StringId collation = 0)
+                : ASTNode(ASTKind::COLUMN_DEF, span), name_(name), type_(type), nullable_(nullable),
+                  charset_(charset), collation_(collation)
             {
             }
 
@@ -348,6 +355,14 @@ namespace scratchbird
             {
                 return nullable_;
             }
+            StringPool::StringId charset() const
+            {
+                return charset_;
+            }
+            StringPool::StringId collation() const
+            {
+                return collation_;
+            }
 
             void accept(ASTVisitor *visitor) override;
 
@@ -355,6 +370,8 @@ namespace scratchbird
             StringPool::StringId name_;
             TypeName type_;
             bool nullable_;
+            StringPool::StringId charset_;    // CHARACTER SET clause
+            StringPool::StringId collation_;  // COLLATE clause
         };
 
         // CREATE TABLE statement
@@ -362,9 +379,11 @@ namespace scratchbird
         {
         public:
             CreateTableStmt(const SourceSpan &span, StringPool::StringId table_name,
-                            std::vector<ColumnDef *> columns)
+                            std::vector<ColumnDef *> columns,
+                            StringPool::StringId charset = 0,
+                            StringPool::StringId collation = 0)
                 : Statement(ASTKind::CREATE_TABLE, span), table_name_(table_name),
-                  columns_(std::move(columns))
+                  columns_(std::move(columns)), charset_(charset), collation_(collation)
             {
             }
 
@@ -376,12 +395,22 @@ namespace scratchbird
             {
                 return columns_;
             }
+            StringPool::StringId charset() const
+            {
+                return charset_;
+            }
+            StringPool::StringId collation() const
+            {
+                return collation_;
+            }
 
             void accept(ASTVisitor *visitor) override;
 
         private:
             StringPool::StringId table_name_;
             std::vector<ColumnDef *> columns_;
+            StringPool::StringId charset_;    // DEFAULT CHARACTER SET clause
+            StringPool::StringId collation_;  // DEFAULT COLLATE clause
         };
 
         // INSERT statement

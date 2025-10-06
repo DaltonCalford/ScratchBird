@@ -73,12 +73,83 @@ While the theoretical limits are large, practical limits include:
 - Pin count per page: 32-bit unsigned (4,294,967,295)
 - Overflow protection: Not implemented (would require uint64_t)
 
+## Table and Column Limits
+
+### Maximum Columns per Table
+
+**Hard Limit**: 4,096 columns (MySQL-compatible)
+**Practical Limit**: 1,024 columns (SQL Server-compatible)
+**Recommended**: < 200 columns for optimal performance
+
+The actual maximum depends on:
+- Page size in use
+- Column data types
+- Null bitmap size (1 bit per column)
+- Tuple header overhead (36 bytes)
+
+**Theoretical maximums for 16KB pages** (most common):
+| Column Type | Theoretical Max Columns |
+|-------------|------------------------|
+| BOOLEAN/INT8 | ~14,000 |
+| INT16 | ~7,600 |
+| INT32 | ~3,900 |
+| INT64 | ~2,000 |
+| UUID | ~1,000 |
+| VARCHAR(1) | ~3,100 |
+
+### Maximum Record Size
+
+The maximum record (tuple) size is constrained by:
+- Page size
+- Tuple header: 36 bytes
+- Item pointer: 8 bytes
+- Null bitmap: (num_columns + 7) / 8 bytes
+
+**Maximum single tuple sizes** (absolute maximum, not recommended):
+| Page Size | Max Tuple Size | Recommended Max |
+|-----------|---------------|-----------------|
+| 8 KB | 8,084 bytes | 768 bytes |
+| 16 KB | 16,276 bytes | 1,588 bytes |
+| 32 KB | 32,660 bytes | 3,226 bytes |
+| 64 KB | 65,428 bytes | 6,503 bytes |
+| 128 KB | 130,964 bytes | 13,056 bytes |
+
+**TOAST Support**: Values exceeding threshold are automatically moved to TOAST storage, allowing:
+- TEXT/VARCHAR: Up to **4 GB** (theoretical), **1 GB recommended** (PostgreSQL-compatible)
+- BLOB/BYTEA: Up to **4 GB** (theoretical), **1 GB recommended** (PostgreSQL-compatible)
+- JSON/JSONB: Up to **4 GB** (theoretical), **1 GB recommended** (PostgreSQL-compatible)
+- VECTOR: Up to **4 GB** (theoretical), **1 GB recommended** (PostgreSQL-compatible)
+
+**TOAST Technical Details**:
+- Chunk size: 1,996 bytes per chunk
+- Size field: `uint32_t` (4,294,967,295 bytes max = ~4 GB)
+- Theoretical maximum: ~4 GB per value
+- Practical limit: **1 GB per value** (for PostgreSQL compatibility)
+- Compression: Automatic LZ4 compression for compressible data
+- Storage strategy: Automatically chosen based on value size and compressibility
+
+**SQL Server Compatibility**:
+- In-row limit: 8,060 bytes (similar to SQL Server)
+- Overflow data automatically moved to TOAST (like SQL Server's ROW_OVERFLOW_DATA)
+
 ## System Catalog Limits
 
 ### Maximum Objects per Type
-- Schemas: Limited by page size and catalog structure
-- Tables per schema: ~1000s (depending on name length)
-- Columns per table: ~100s (depending on definitions)
+
+**Updated for SQL Standard Compliance (128-character identifiers)**:
+
+| Object Type | Records per 16KB Page | Practical Limit |
+|-------------|----------------------|-----------------|
+| Schemas | 57 records | Thousands |
+| Tables per schema | 87 records | Thousands |
+| Columns per table | 54 records | 1,024 (recommended) |
+| Indexes per table | 37 records | Hundreds |
+
+**Catalog Capacity Analysis**:
+- Schema names: 128 characters (SQL standard compliant)
+- Table names: 128 characters (SQL standard compliant)
+- Column names: 128 characters (SQL standard compliant)
+- Index names: 128 characters (SQL standard compliant)
 
 ## Data Type Limits
 

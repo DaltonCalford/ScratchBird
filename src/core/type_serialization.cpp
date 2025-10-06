@@ -120,8 +120,42 @@ namespace scratchbird::core
             case DataType::TIMESTAMP:
             {
                 int64_t v = value.getTimestamp();
-                result.resize(8);
-                std::memcpy(result.data(), &v, 8);
+
+                // Check if we have TypeInfo with timezone information
+                bool has_type_info = value.hasTypeInfo();
+                bool with_timezone = false;
+                uint16_t timezone_hint = 0;
+
+                if (has_type_info)
+                {
+                    const auto& type_info = value.getTypeInfo();
+                    if (type_info.has_value())
+                    {
+                        with_timezone = type_info->with_timezone;
+                        timezone_hint = type_info->timezone_hint;
+                    }
+                }
+
+                // Format: [1 byte: flags][2 bytes: timezone_hint if with_timezone][8 bytes: microseconds]
+                // Flags: bit 0 = has_timezone
+                uint8_t flags = with_timezone ? 1 : 0;
+                size_t total_size = 1 + (with_timezone ? 2 : 0) + 8;
+
+                result.resize(total_size);
+                size_t offset = 0;
+
+                // Write flags
+                result[offset++] = flags;
+
+                // Write timezone_hint if present
+                if (with_timezone)
+                {
+                    std::memcpy(result.data() + offset, &timezone_hint, 2);
+                    offset += 2;
+                }
+
+                // Write timestamp value
+                std::memcpy(result.data() + offset, &v, 8);
                 break;
             }
 
@@ -134,8 +168,45 @@ namespace scratchbird::core
 
             case DataType::CHAR:
             case DataType::VARCHAR:
+            {
+                std::string v = value.toString();
+                uint32_t len = static_cast<uint32_t>(v.size());
+
+                // For CHAR/VARCHAR, serialize TypeInfo if present (to preserve max_length constraint)
+                bool has_type_info = value.hasTypeInfo();
+                uint32_t precision = 0;
+                if (has_type_info)
+                {
+                    const auto& type_info = value.getTypeInfo();
+                    if (type_info.has_value())
+                    {
+                        precision = type_info->precision;
+                    }
+                }
+
+                // Format: [1 byte: has_precision][4 bytes: precision if has_precision][4 bytes: length][data]
+                uint8_t flags = has_type_info ? 1 : 0;
+                size_t total_size = 1 + (has_type_info ? 4 : 0) + 4 + len;
+                result.resize(total_size);
+
+                size_t offset = 0;
+                result[offset++] = flags;
+
+                if (has_type_info)
+                {
+                    std::memcpy(result.data() + offset, &precision, 4);
+                    offset += 4;
+                }
+
+                std::memcpy(result.data() + offset, &len, 4);
+                offset += 4;
+                std::memcpy(result.data() + offset, v.data(), len);
+                break;
+            }
+
             case DataType::TEXT:
             {
+                // TEXT has no max_length constraint, use simple format
                 std::string v = value.toString();
                 uint32_t len = static_cast<uint32_t>(v.size());
                 result.resize(4 + len);
@@ -309,14 +380,55 @@ namespace scratchbird::core
 
             case DataType::TIMESTAMP:
             {
-                if (size < 8)
+                // Format: [1 byte: flags][2 bytes: timezone_hint if with_timezone][8 bytes: microseconds]
+                if (size < 1)
                 {
-                    SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Insufficient data for TIMESTAMP");
+                    SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Insufficient data for TIMESTAMP flags");
                     return std::nullopt;
                 }
+
+                size_t offset = 0;
+                uint8_t flags = data[offset++];
+                bool with_timezone = (flags & 1) != 0;
+
+                uint16_t timezone_hint = 0;
+                if (with_timezone)
+                {
+                    if (size < 1 + 2 + 8)
+                    {
+                        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Insufficient data for TIMESTAMP WITH TIME ZONE");
+                        return std::nullopt;
+                    }
+                    std::memcpy(&timezone_hint, data + offset, 2);
+                    offset += 2;
+                }
+                else
+                {
+                    if (size < 1 + 8)
+                    {
+                        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Insufficient data for TIMESTAMP");
+                        return std::nullopt;
+                    }
+                }
+
+                // Read timestamp value
                 int64_t v;
-                std::memcpy(&v, data, 8);
-                return TypedValue::makeTimestamp(v);
+                std::memcpy(&v, data + offset, 8);
+
+                // Create TypedValue with timestamp
+                TypedValue result = TypedValue::makeTimestamp(v);
+
+                // Restore TypeInfo if timezone present
+                if (with_timezone)
+                {
+                    TypeInfo type_info;
+                    type_info.type = DataType::TIMESTAMP;
+                    type_info.with_timezone = true;
+                    type_info.timezone_hint = timezone_hint;
+                    result.setTypeInfo(type_info);
+                }
+
+                return result;
             }
 
             case DataType::UUID:
@@ -330,39 +442,59 @@ namespace scratchbird::core
             }
 
             case DataType::CHAR:
-            {
-                if (size < 4)
-                {
-                    SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Insufficient data for CHAR length");
-                    return std::nullopt;
-                }
-                uint32_t len;
-                std::memcpy(&len, data, 4);
-                if (size < 4 + len)
-                {
-                    SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Insufficient data for CHAR value");
-                    return std::nullopt;
-                }
-                std::string v(reinterpret_cast<const char *>(data + 4), len);
-                return TypedValue::makeChar(v);
-            }
-
             case DataType::VARCHAR:
             {
-                if (size < 4)
+                // Format: [1 byte: has_precision][4 bytes: precision if has_precision][4 bytes: length][data]
+                if (size < 1)
                 {
-                    SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Insufficient data for VARCHAR length");
+                    SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Insufficient data for CHAR/VARCHAR flags");
                     return std::nullopt;
                 }
+
+                size_t offset = 0;
+                uint8_t flags = data[offset++];
+                bool has_precision = (flags & 1) != 0;
+
+                uint32_t precision = 0;
+                if (has_precision)
+                {
+                    if (size < 1 + 4)
+                    {
+                        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Insufficient data for CHAR/VARCHAR precision");
+                        return std::nullopt;
+                    }
+                    std::memcpy(&precision, data + offset, 4);
+                    offset += 4;
+                }
+
+                if (size < offset + 4)
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Insufficient data for CHAR/VARCHAR length");
+                    return std::nullopt;
+                }
+
                 uint32_t len;
-                std::memcpy(&len, data, 4);
-                if (size < 4 + len)
+                std::memcpy(&len, data + offset, 4);
+                offset += 4;
+
+                if (size < offset + len)
                 {
-                    SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Insufficient data for VARCHAR value");
+                    SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Insufficient data for CHAR/VARCHAR value");
                     return std::nullopt;
                 }
-                std::string v(reinterpret_cast<const char *>(data + 4), len);
-                return TypedValue::makeVarchar(v);
+
+                std::string v(reinterpret_cast<const char *>(data + offset), len);
+                TypedValue result = (type == DataType::CHAR) ? TypedValue::makeChar(v) : TypedValue::makeVarchar(v);
+
+                // Restore TypeInfo if precision was serialized
+                if (has_precision && precision > 0)
+                {
+                    TypeInfo info(type);
+                    info.precision = precision;
+                    result.setTypeInfo(info);
+                }
+
+                return result;
             }
 
             case DataType::TEXT:
@@ -470,14 +602,39 @@ namespace scratchbird::core
             case DataType::FLOAT64:
             case DataType::DATE:
             case DataType::TIME:
-            case DataType::TIMESTAMP:
                 return 8;
+
+            case DataType::TIMESTAMP:
+            {
+                // Format: [1 byte: flags][2 bytes: timezone_hint if with_timezone][8 bytes: microseconds]
+                uint32_t size = 1 + 8; // flags + timestamp value
+                if (value.hasTypeInfo())
+                {
+                    const auto& type_info = value.getTypeInfo();
+                    if (type_info.has_value() && type_info->with_timezone)
+                    {
+                        size += 2; // timezone_hint
+                    }
+                }
+                return size;
+            }
 
             case DataType::UUID:
                 return 16;
 
             case DataType::CHAR:
             case DataType::VARCHAR:
+            {
+                std::string v = value.toString();
+                // Format: [1 byte: flags][4 bytes: precision if has_type_info][4 bytes: length][data]
+                uint32_t size = 1 + 4 + v.size(); // flags + length + data
+                if (value.hasTypeInfo())
+                {
+                    size += 4; // precision
+                }
+                return size;
+            }
+
             case DataType::TEXT:
             {
                 std::string v = value.toString();

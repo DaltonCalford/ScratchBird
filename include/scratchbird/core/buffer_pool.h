@@ -70,6 +70,23 @@
              */
             auto flushAll(ErrorContext *ctx = nullptr) -> Status;
 
+            /**
+             * Lock a page for exclusive access (must be pinned first)
+             * Caller must call unlockPage() when done
+             * @param page_id Page ID to lock
+             * @param ctx Error context
+             * @return Status code
+             */
+            auto lockPage(uint32_t page_id, ErrorContext *ctx = nullptr) -> Status;
+
+            /**
+             * Unlock a previously locked page
+             * @param page_id Page ID to unlock
+             * @param ctx Error context
+             * @return Status code
+             */
+            auto unlockPage(uint32_t page_id, ErrorContext *ctx = nullptr) -> Status;
+
             // Statistics
             struct Stats
             {
@@ -93,8 +110,12 @@
                 uint32_t pin_count = 0;
                 bool is_dirty = false;
                 std::unique_ptr<uint8_t[]> data = nullptr;
+                std::unique_ptr<std::mutex> content_mutex;  // Protects page content from concurrent modifications
 
                 static constexpr uint32_t INVALID_PAGE_ID = 0xFFFFFFFF;
+
+                // Constructor to initialize mutex
+                Frame() : content_mutex(std::make_unique<std::mutex>()) {}
             };
 
             Database *db_;                                      // Database instance

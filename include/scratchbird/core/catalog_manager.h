@@ -51,7 +51,26 @@
                 ID schema_id;
                 std::string schema_name;
                 std::string owner;
-                uint64_t created_time;
+                uint16_t default_tablespace_id = 0;  // Default tablespace for new tables
+                uint16_t permissions = 0;            // Bitmask of schema permissions
+                uint16_t default_charset = 0;        // Default character set (0 = inherit from database)
+                uint16_t reserved = 0;
+                uint32_t default_collation_id = 0;   // Default collation ID (0 = inherit from database)
+                uint32_t acl_oid = 0;                // TOAST reference for ACL (access control list)
+                uint32_t search_path_oid = 0;        // TOAST reference for search path
+                uint64_t created_time = 0;
+                uint64_t last_modified_time = 0;
+            };
+
+            // Table types
+            enum class TableType : uint8_t
+            {
+                HEAP = 0,       // Regular heap table
+                INDEX = 1,      // Index-organized table
+                TEMPORARY = 2,  // Temporary table
+                EXTERNAL = 3,   // External table
+                MATERIALIZED_VIEW = 4, // Materialized view
+                TOAST = 5       // TOAST table
             };
 
             // Table information
@@ -60,10 +79,17 @@
                 ID table_id;
                 ID schema_id;
                 std::string table_name;
-                uint32_t root_page; // Root page of table data
-                uint32_t column_count;
-                uint64_t row_count; // Estimated row count
-                uint64_t created_time;
+                uint32_t root_page = 0;     // Root page of table data
+                uint32_t column_count = 0;
+                uint64_t row_count = 0;     // Estimated row count
+                TableType table_type = TableType::HEAP;
+                bool has_toast = false;
+                uint16_t tablespace_id = 0; // Tablespace ID (0 = default)
+                uint16_t default_charset = 0;        // Default character set (0 = inherit from schema)
+                uint32_t default_collation_id = 0;   // Default collation ID (0 = inherit from schema)
+                uint32_t storage_params_oid = 0; // TOAST reference for storage parameters
+                uint64_t created_time = 0;
+                uint64_t last_modified_time = 0;
             };
 
             // Column information
@@ -72,11 +98,38 @@
                 ID table_id;
                 ID column_id;
                 std::string column_name;
-                uint16_t data_type;  // Type code
-                uint32_t max_length; // For variable length types
-                bool nullable;
-                bool has_default;
-                std::string default_value; // Serialized default
+                uint16_t ordinal = 0;        // Column position in table
+                uint16_t data_type = 0;      // Type code
+                uint32_t type_precision = 0; // For DECIMAL, VECTOR dimensions, VARCHAR length
+                uint32_t type_scale = 0;     // For DECIMAL scale
+                uint32_t max_length = 0;     // Legacy field, use type_precision instead
+                bool nullable = true;
+                bool has_default = false;
+                bool is_primary_key = false;
+                bool is_unique = false;
+                bool is_foreign_key = false;
+                bool is_generated = false;
+                uint8_t storage_type = 0;    // TOAST storage strategy
+                bool with_timezone = false;  // For TIMESTAMP: WITH TIME ZONE
+                uint16_t charset = 0;        // Character set (0 = inherit from table)
+                uint16_t timezone_hint = 0;  // Timezone ID for display (0 = use connection default)
+                uint32_t collation_id = 0;   // Collation ID (0 = inherit from table)
+                std::string default_value;   // Serialized default
+                uint32_t default_value_oid = 0; // TOAST reference for large defaults
+                uint32_t check_expr_oid = 0;    // TOAST reference for check expressions
+                uint64_t created_time = 0;
+            };
+
+            // Index types
+            enum class IndexType : uint8_t
+            {
+                BTREE = 0,      // B-tree index (default)
+                HASH = 1,       // Hash index
+                VECTOR = 2,     // Vector similarity index (HNSW, IVF, etc.)
+                FULLTEXT = 3,   // Full-text search index
+                GIN = 4,        // Generalized Inverted Index
+                GIST = 5,       // Generalized Search Tree
+                BRIN = 6        // Block Range Index
             };
 
             // Index information
@@ -85,10 +138,12 @@
                 ID index_id;
                 ID table_id;
                 std::string index_name;
-                uint32_t root_page;
-                bool is_unique;
+                uint32_t root_page = 0;
+                IndexType index_type = IndexType::BTREE;
+                bool is_unique = false;
                 std::vector<ID> column_ids;
-                uint64_t created_time;
+                uint32_t index_params_oid = 0; // TOAST reference for index parameters
+                uint64_t created_time = 0;
             };
 
             CatalogManager(Database *db);
@@ -134,7 +189,8 @@
             // Index operations
             auto createIndex(const ID &table_id, const std::string &index_name,
                                 const std::vector<std::string> &column_names, ID &index_id,
-                                bool is_unique = false, ErrorContext *ctx = nullptr) -> Status;
+                                bool is_unique = false, IndexType index_type = IndexType::BTREE,
+                                ErrorContext *ctx = nullptr) -> Status;
 
             auto getIndex(const ID &index_id, IndexInfo &info, ErrorContext *ctx = nullptr) -> Status;
 
@@ -143,6 +199,80 @@
 
             auto listIndexesForTable(const ID &table_id, std::vector<IndexInfo> &indexes,
                                           ErrorContext *ctx = nullptr) -> Status;
+
+            // Timezone operations (pg_timezone system table)
+            struct TimezoneInfo
+            {
+                uint16_t timezone_id = 0;
+                std::string name;
+                std::string abbreviation;
+                int32_t std_offset_minutes = 0;
+                bool observes_dst = false;
+                uint8_t dst_start_month = 0;
+                uint8_t dst_start_week = 0;
+                uint8_t dst_start_day = 0;
+                uint8_t dst_start_hour = 0;
+                uint8_t dst_end_month = 0;
+                uint8_t dst_end_week = 0;
+                uint8_t dst_end_day = 0;
+                uint8_t dst_end_hour = 0;
+                int32_t dst_offset_minutes = 0;
+                uint64_t created_time = 0;
+                uint64_t last_modified_time = 0;
+            };
+
+            auto createTimezone(const TimezoneInfo &tz_info, ErrorContext *ctx = nullptr) -> Status;
+            auto updateTimezone(uint16_t timezone_id, const TimezoneInfo &tz_info, ErrorContext *ctx = nullptr) -> Status;
+            auto getTimezone(uint16_t timezone_id, TimezoneInfo &info, ErrorContext *ctx = nullptr) -> Status;
+            auto getTimezoneByName(const std::string &name, TimezoneInfo &info, ErrorContext *ctx = nullptr) -> Status;
+            auto listTimezones(std::vector<TimezoneInfo> &timezones, ErrorContext *ctx = nullptr) -> Status;
+            auto deleteTimezone(uint16_t timezone_id, ErrorContext *ctx = nullptr) -> Status;
+
+            // Character set operations (pg_charset system table)
+            struct CharsetInfo
+            {
+                uint16_t charset_id = 0;        // Character set ID (matches CharacterSet enum)
+                std::string name;               // e.g., "utf8", "latin1"
+                std::string description;        // Human-readable description
+                uint8_t min_bytes = 1;          // Minimum bytes per character
+                uint8_t max_bytes = 1;          // Maximum bytes per character
+                uint8_t variable_width = 0;     // 1 = variable width, 0 = fixed width
+                uint8_t reserved = 0;
+                uint32_t default_collation_id = 0; // Default collation for this charset
+                uint64_t created_time = 0;
+                uint64_t last_modified_time = 0;
+            };
+
+            auto createCharset(const CharsetInfo &cs_info, ErrorContext *ctx = nullptr) -> Status;
+            auto updateCharset(uint16_t charset_id, const CharsetInfo &cs_info, ErrorContext *ctx = nullptr) -> Status;
+            auto getCharset(uint16_t charset_id, CharsetInfo &info, ErrorContext *ctx = nullptr) -> Status;
+            auto getCharsetByName(const std::string &name, CharsetInfo &info, ErrorContext *ctx = nullptr) -> Status;
+            auto listCharsets(std::vector<CharsetInfo> &charsets, ErrorContext *ctx = nullptr) -> Status;
+            auto deleteCharset(uint16_t charset_id, ErrorContext *ctx = nullptr) -> Status;
+
+            // Collation operations (pg_collation system table)
+            struct CollationCatalogInfo
+            {
+                uint32_t collation_id = 0;
+                std::string name;               // e.g., "utf8_general_ci"
+                uint16_t charset_id = 0;        // Associated character set ID
+                uint8_t collation_type = 0;     // CollationType enum value
+                uint8_t strength = 0;           // CollationStrength enum value
+                uint8_t pad_space = 1;          // 1 = PAD SPACE, 0 = NO PAD
+                uint8_t is_default = 0;         // 1 = default for charset, 0 = not default
+                uint16_t reserved = 0;
+                char locale[32] = {0};          // Locale string (e.g., "en_US")
+                uint64_t created_time = 0;
+                uint64_t last_modified_time = 0;
+            };
+
+            auto createCollation(const CollationCatalogInfo &col_info, ErrorContext *ctx = nullptr) -> Status;
+            auto updateCollation(uint32_t collation_id, const CollationCatalogInfo &col_info, ErrorContext *ctx = nullptr) -> Status;
+            auto getCollation(uint32_t collation_id, CollationCatalogInfo &info, ErrorContext *ctx = nullptr) -> Status;
+            auto getCollationByName(const std::string &name, CollationCatalogInfo &info, ErrorContext *ctx = nullptr) -> Status;
+            auto listCollations(std::vector<CollationCatalogInfo> &collations, ErrorContext *ctx = nullptr) -> Status;
+            auto listCollationsForCharset(uint16_t charset_id, std::vector<CollationCatalogInfo> &collations, ErrorContext *ctx = nullptr) -> Status;
+            auto deleteCollation(uint32_t collation_id, ErrorContext *ctx = nullptr) -> Status;
 
             // Catalog statistics
             auto schemaCount() const -> uint32_t
@@ -187,6 +317,16 @@
             uint32_t tables_table_page_ = TABLES_TABLE_PAGE;
             uint32_t columns_table_page_ = COLUMNS_TABLE_PAGE;
             uint32_t indexes_table_page_ = INDEXES_TABLE_PAGE;
+            uint32_t constraints_table_page_ = 0;  // Will be allocated during init
+            uint32_t sequences_table_page_ = 0;    // Will be allocated during init
+            uint32_t views_table_page_ = 0;        // Will be allocated during init
+            uint32_t triggers_table_page_ = 0;     // Will be allocated during init
+            uint32_t permissions_table_page_ = 0;  // Will be allocated during init
+            uint32_t statistics_table_page_ = 0;   // Will be allocated during init
+            uint32_t collations_table_page_ = 0;   // Will be allocated during init
+            uint32_t timezones_table_page_ = 0;    // Will be allocated during init
+            uint32_t charsets_table_page_ = 0;     // Will be allocated during init (pg_charset)
+            uint32_t collation_defs_table_page_ = 0; // Will be allocated during init (pg_collation)
 
             // Internal methods
             auto writeCatalogRoot(ErrorContext *ctx) -> Status;
@@ -196,6 +336,122 @@
             template <typename RecordType>
             auto writeRecordToHeapPage(uint32_t page_id, const RecordType &record,
                                              ErrorContext *ctx) -> Status;
+
+            // Result structure for findRecordInHeapPage
+            template <typename RecordType>
+            struct FindResult
+            {
+                Status status;
+                uint32_t slot_index;  // Index in the catalog page
+                RecordType record;
+            };
+
+            // Helper to find a record in a catalog heap page matching a predicate
+            template <typename RecordType, typename Predicate>
+            auto findRecordInHeapPage(uint32_t page_id, Predicate predicate, ErrorContext *ctx)
+                -> FindResult<RecordType>
+            {
+                BufferPool *bp = db_->buffer_pool();
+                void *page_buffer;
+
+                Status status = bp->pinPage(page_id, &page_buffer, ctx);
+                if (status != Status::OK)
+                {
+                    SET_ERROR_CONTEXT(ctx, status, "Failed to pin catalog heap page");
+                    return {status, 0, RecordType{}};
+                }
+
+                auto *heap = reinterpret_cast<CatalogHeapPage *>(page_buffer);
+                uint32_t offset = sizeof(CatalogHeapPage);
+
+                for (uint32_t i = 0; i < heap->record_count; i++)
+                {
+                    auto *record = reinterpret_cast<RecordType *>(
+                        reinterpret_cast<uint8_t *>(page_buffer) + offset);
+
+                    if (predicate(*record))
+                    {
+                        RecordType found = *record;
+                        bp->unpinPage(page_id, false, ctx);
+                        return {Status::OK, i, found};
+                    }
+
+                    offset += sizeof(RecordType);
+                }
+
+                bp->unpinPage(page_id, false, ctx);
+                SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Record not found in catalog page");
+                return {Status::NOT_FOUND, 0, RecordType{}};
+            }
+
+            // Helper to scan all records in a catalog heap page
+            template <typename RecordType, typename InfoType, typename Converter>
+            auto scanHeapPage(uint32_t page_id, std::vector<InfoType> &results,
+                             Converter converter, ErrorContext *ctx) -> Status
+            {
+                BufferPool *bp = db_->buffer_pool();
+                void *page_buffer;
+
+                Status status = bp->pinPage(page_id, &page_buffer, ctx);
+                if (status != Status::OK)
+                {
+                    SET_ERROR_CONTEXT(ctx, status, "Failed to pin catalog heap page");
+                    return status;
+                }
+
+                auto *heap = reinterpret_cast<CatalogHeapPage *>(page_buffer);
+                uint32_t offset = sizeof(CatalogHeapPage);
+
+                for (uint32_t i = 0; i < heap->record_count; i++)
+                {
+                    auto *record = reinterpret_cast<RecordType *>(
+                        reinterpret_cast<uint8_t *>(page_buffer) + offset);
+
+                    if (record->is_valid)
+                    {
+                        InfoType info;
+                        converter(*record, info);
+                        results.push_back(info);
+                    }
+
+                    offset += sizeof(RecordType);
+                }
+
+                return bp->unpinPage(page_id, false, ctx);
+            }
+
+            // Helper to update a record in a catalog heap page
+            template <typename RecordType>
+            auto updateRecordInHeapPage(uint32_t page_id, uint32_t slot_index,
+                                       const RecordType &updated_record, ErrorContext *ctx) -> Status
+            {
+                BufferPool *bp = db_->buffer_pool();
+                void *page_buffer;
+
+                Status status = bp->pinPage(page_id, &page_buffer, ctx);
+                if (status != Status::OK)
+                {
+                    SET_ERROR_CONTEXT(ctx, status, "Failed to pin catalog heap page");
+                    return status;
+                }
+
+                auto *heap = reinterpret_cast<CatalogHeapPage *>(page_buffer);
+
+                if (slot_index >= heap->record_count)
+                {
+                    bp->unpinPage(page_id, false, ctx);
+                    SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Invalid slot index");
+                    return Status::INVALID_ARGUMENT;
+                }
+
+                uint32_t offset = sizeof(CatalogHeapPage) + (slot_index * sizeof(RecordType));
+                auto *record = reinterpret_cast<RecordType *>(
+                    reinterpret_cast<uint8_t *>(page_buffer) + offset);
+
+                *record = updated_record;
+
+                return bp->unpinPage(page_id, true, ctx);  // Mark as dirty
+            }
 
             // Helper to read records from a catalog heap page
             template <typename RecordType, typename InfoType, typename KeyType, typename Converter,

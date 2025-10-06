@@ -89,6 +89,12 @@
             // Check if a transaction is visible to another transaction
             auto isTransactionVisible(uint64_t xid, uint64_t snapshot_xid) -> bool;
 
+            // Validate XID is structurally valid (not INVALID_XID)
+            static auto isValidXid(uint64_t xid) -> bool;
+
+            // Validate XID is in valid range for current database state
+            auto isXidInRange(uint64_t xid) const -> bool;
+
             // Get current transaction ID (for read-only operations)
             auto getCurrentXid() const -> uint64_t
             {
@@ -96,15 +102,42 @@
                 return next_xid_;
             }
 
+            // Get oldest valid XID (for VACUUM and XID validation)
+            auto getOldestXid() const -> uint64_t
+            {
+                std::lock_guard<std::mutex> lock(mutex_);
+                return oldest_xid_;
+            }
+
+            // Update oldest XID after VACUUM completes
+            auto setOldestXid(uint64_t xid, ErrorContext *ctx = nullptr) -> Status;
+
+            // Check if approaching XID wraparound
+            auto isApproachingWraparound() const -> bool
+            {
+                std::lock_guard<std::mutex> lock(mutex_);
+                return next_xid_ > MAX_SAFE_XID;
+            }
+
             // Get active transaction for a specific backend
             auto getBackendXid(uint32_t proc_id) const -> uint64_t;
 
-            // Snapshot isolation support (future)
+            // Snapshot isolation support
             struct Snapshot
             {
                 uint64_t xmin;                     // Oldest active XID
                 uint64_t xmax;                     // Next XID to be assigned
                 std::vector<uint64_t> active_xids; // Active XIDs at snapshot time
+
+                // MVCC cross-page pin tracking
+                // When following version chains across pages, we pin pages for the snapshot duration
+                std::vector<uint32_t> pinned_pages; // Pages pinned for this snapshot
+                BufferPool *buffer_pool = nullptr;   // BufferPool to unpin pages (set when first pin occurs)
+
+                // Cleanup method - unpins all pages when snapshot released
+                void cleanup();
+
+                ~Snapshot();
             };
 
             // Get current snapshot (for future MVCC)
@@ -117,6 +150,7 @@
 
             // Transaction state
             uint64_t next_xid_ = 100;    // Next XID to allocate (start at 100)
+            uint64_t oldest_xid_ = FROZEN_XID + 1; // Oldest non-frozen XID (for VACUUM tracking)
             uint32_t tip_root_page_ = 0; // Root TIP page ID
 
             // In-memory cache of recent transactions
@@ -127,6 +161,10 @@
             static constexpr uint64_t INVALID_XID = 0;
             static constexpr uint64_t BOOTSTRAP_XID = 1;
             static constexpr uint64_t FROZEN_XID = 2;
+
+            // XID wraparound protection
+            static constexpr uint64_t XID_WRAPAROUND_THRESHOLD = 1000000; // Trigger autovacuum when this close to UINT64_MAX
+            static constexpr uint64_t MAX_SAFE_XID = UINT64_MAX - XID_WRAPAROUND_THRESHOLD;
 
             // TIP page management - calculate based on actual page size
             [[nodiscard]] auto getTipEntriesPerPage() const -> uint32_t;

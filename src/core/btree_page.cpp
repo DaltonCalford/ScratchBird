@@ -36,6 +36,7 @@
             page_header_->btr_left_sibling = 0;
             page_header_->btr_right_sibling = 0;
             page_header_->btr_parent_page = 0;
+            page_header_->btr_rightmost_child = 0; // Initialize rightmost child pointer
             page_header_->btr_prefix_total = 0;
             page_header_->btr_suffix_total = 0;
                         page_header_->btr_compression = static_cast<uint8_t>(BTreeCompressionType::NONE);

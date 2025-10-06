@@ -261,6 +261,30 @@ namespace scratchbird
             {
                 type = DataType::INT64;
             }
+            else if (match(TokenType::KW_INT128))
+            {
+                type = DataType::INT128;
+            }
+            else if (match(TokenType::KW_UINT8))
+            {
+                type = DataType::UINT8;
+            }
+            else if (match(TokenType::KW_UINT16))
+            {
+                type = DataType::UINT16;
+            }
+            else if (match(TokenType::KW_UINT32))
+            {
+                type = DataType::UINT32;
+            }
+            else if (match(TokenType::KW_UINT64))
+            {
+                type = DataType::UINT64;
+            }
+            else if (match(TokenType::KW_MONEY))
+            {
+                type = DataType::MONEY;
+            }
             else if (match(TokenType::KW_REAL) || match(TokenType::KW_FLOAT))
             {
                 type = DataType::FLOAT32;
@@ -392,6 +416,32 @@ namespace scratchbird
             else if (match(TokenType::KW_JSON))
             {
                 type = DataType::JSON;
+            }
+            else if (match(TokenType::KW_JSONB))
+            {
+                type = DataType::JSONB;
+            }
+            else if (match(TokenType::KW_XML))
+            {
+                type = DataType::XML;
+            }
+            else if (match(TokenType::KW_VECTOR))
+            {
+                type = DataType::VECTOR;
+                // Parse dimensions: VECTOR(n)
+                if (match(TokenType::LEFT_PAREN))
+                {
+                    if (check(TokenType::INTEGER_LITERAL))
+                    {
+                        precision = static_cast<uint32_t>(current().value.int_value);
+                        if (precision == 0 || precision > 65535)
+                        {
+                            error("VECTOR dimensions must be between 1 and 65535");
+                        }
+                        advance();
+                    }
+                    consume(TokenType::RIGHT_PAREN, "Expected ')' after VECTOR dimensions");
+                }
             }
             else
             {

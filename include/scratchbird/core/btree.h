@@ -74,6 +74,12 @@ enum class BTreeNodeFlags : uint16_t {
             uint64_t btr_right_sibling; // Right sibling page number
             uint64_t btr_parent_page;   // Parent page (for fast traversal)
 
+            // B-Tree rightmost child pointer (for internal nodes only)
+            // In a B-tree, internal nodes with N keys have N+1 children
+            // Each key has a left child pointer (stored in SBBTreeNode->btn_child_page)
+            // The rightmost child pointer is stored here in the page header
+            uint64_t btr_rightmost_child; // Rightmost child page (internal nodes only, 0 for leaves)
+
             // Compression metadata
             uint16_t btr_prefix_total;  // Total prefix compression bytes saved
             uint16_t btr_suffix_total;  // Total suffix truncation bytes saved
@@ -114,7 +120,7 @@ enum class BTreeNodeFlags : uint16_t {
         };
 #pragma pack(pop)
 
-        static_assert(sizeof(SBBTreePage) == 160, "SBBTreePage size must be 160 bytes");
+        static_assert(sizeof(SBBTreePage) == 168, "SBBTreePage size must be 168 bytes");
         static_assert(sizeof(SBBTreeNode) == 36, "SBBTreeNode size must be 36 bytes");
 
         // In-memory representation of a B-Tree index
