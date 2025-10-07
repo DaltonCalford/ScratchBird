@@ -15,6 +15,77 @@ Alpha 1.2 completes all core database engine functionality required before begin
 
 ---
 
+## Core Design Principles
+
+### Transaction Management Architecture
+
+**Fundamental Rule:** Connections are ALWAYS in a transaction.
+
+#### Key Principles:
+
+1. **Always-In-Transaction Model:**
+   - A connection is ALWAYS in a transaction from the moment it's established
+   - `COMMIT` automatically starts a new transaction
+   - `ROLLBACK` automatically starts a new transaction
+   - There is NO state where a connection exists outside of a transaction
+
+2. **No Work Outside MGA:**
+   - ALL database work occurs within the MGA (Multi-Generational Architecture) transaction system
+   - This includes DDL (Data Definition Language) operations
+   - This includes catalog operations
+   - This includes all data modifications
+
+3. **DDL Within Transactions:**
+   - DDL commands (CREATE, ALTER, DROP) execute within transactions
+   - Some DDL commands may require being in their own transaction (exclusive access)
+   - But they are still within a transaction - never outside the transaction system
+
+4. **START TRANSACTION Command:**
+   - `START TRANSACTION` is used to change transaction settings, NOT to start the first transaction
+   - Syntax: `START TRANSACTION [options] [COMMIT OUTSTANDING]`
+
+   **Options:**
+   - `READ ONLY` - Start a read-only transaction
+   - `READ WRITE` - Start a read-write transaction (default)
+   - `COMMIT OUTSTANDING` - Commit current transaction before starting new one
+
+   **Behavior:**
+   - If `COMMIT OUTSTANDING` is specified:
+     - Attempts to commit the current transaction
+     - If current transaction cannot commit due to errors, the command fails
+     - New transaction is NOT started if commit fails
+     - Only starts new transaction after successful commit
+
+   **Examples:**
+   ```sql
+   -- Change to read-only mode, committing current transaction first
+   START TRANSACTION READ ONLY COMMIT OUTSTANDING;
+
+   -- Switch back to read-write after read-only queries
+   START TRANSACTION READ WRITE COMMIT OUTSTANDING;
+
+   -- Start new transaction with same settings (commits current)
+   START TRANSACTION COMMIT OUTSTANDING;
+   ```
+
+5. **Implementation Requirements:**
+   - ConnectionContext MUST always have a valid transaction ID (XID)
+   - Transaction commit MUST immediately start new transaction
+   - Transaction rollback MUST immediately start new transaction
+   - Connection establishment MUST immediately start initial transaction
+   - Connection close MUST rollback any outstanding transaction
+
+6. **Implications for ConnectionContext (CRIT-002):**
+   - ConnectionContext must include:
+     - Current transaction ID (never NULL)
+     - Transaction state (active, read-only, read-write)
+     - Transaction start time
+     - Transaction settings
+   - Must provide atomic transition between transactions
+   - Must ensure no gap exists between commit/rollback and next transaction
+
+---
+
 ## Requirements Overview
 
 ### 1. Complete All Data Types ✅ CRITICAL
