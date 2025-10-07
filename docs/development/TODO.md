@@ -377,6 +377,84 @@ Remove duplicate `#include "scratchbird/core/storage_engine.h"` line.
 
 ---
 
+### CRIT-004: Implement Firebird Transaction Model 🔥 CRITICAL
+**Files:** Multiple subsystems
+**Effort:** 10 weeks (6-7 weeks with 2 developers)
+**Impact:** Production-quality transaction management, long-transaction handling, garbage collection
+**Reference:** `/docs/specifications/FIREBIRD_TRANSACTION_MODEL_SPEC.md`
+**Dependencies:** CRIT-002 (ConnectionContext) must be complete first
+
+**Overview:**
+Implement Firebird's proven transaction model including transaction markers, isolation levels, sweep mechanism, and garbage collection.
+
+**Phase 1: Transaction Markers (1 week)**
+- Add OIT, OAT, OST, Next to database header
+- Implement marker update logic
+- Add monitoring query support
+- Track transaction states in TIP
+
+**Phase 2: Isolation Levels (2 weeks)**
+- Implement SNAPSHOT isolation
+- Implement READ COMMITTED with READ CONSISTENCY
+- Implement SNAPSHOT TABLE STABILITY with table reservations
+- Parser support for ISOLATION LEVEL clause
+
+**Phase 3: Sweep Mechanism (2 weeks)**
+- Implement sweep interval checking: (OST - OIT) > sweep_interval
+- Implement sweep process (advance OIT, remove old versions)
+- Add configuration support (sweep_interval parameter)
+- Add sweep monitoring and statistics
+
+**Phase 4: Garbage Collection (2 weeks)**
+- Implement cooperative GC (clean during page reads)
+- Implement background GC (optional dedicated thread)
+- Add GC policy configuration (cooperative/background/combined)
+- Integrate with sweep mechanism
+
+**Phase 5: Long Transaction Management (1 week)**
+- Implement transaction age tracking
+- Add configurable detection thresholds
+- Implement policies: LOG / ROLLBACK_READONLY / ROLLBACK_ALL / TERMINATE
+- Add monitoring queries for long transactions
+
+**Phase 6: Advanced Features (2 weeks)**
+- Implement table reservation (RESERVING clause)
+- Implement LOCK TIMEOUT
+- Implement READ ONLY optimization
+- Full SET TRANSACTION syntax support
+
+**Configuration (sb_config.ini):**
+```ini
+[transactions]
+default_isolation_level = SNAPSHOT
+
+[sweep]
+sweep_interval = 20000
+sweep_mode = combined
+
+[garbage_collection]
+gc_policy = combined
+background_gc_threads = 2
+
+[long_transactions]
+warning_threshold = 600
+critical_threshold = 3600
+warning_action = LOG
+```
+
+**Monitoring Queries:**
+- Transaction markers (NEXT, OIT, OAT, OST)
+- Active transactions list
+- Long-running transaction detection
+- Transaction gap analysis
+- Garbage collection statistics
+
+**Blockers:** Must complete CRIT-002 (ConnectionContext) first
+
+**Status:** ❌ Not Started
+
+---
+
 ## High Priority (Major Features/Fixes)
 
 ### HIGH-001: Implement Cross-Page Tuple Updates
