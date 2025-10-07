@@ -516,7 +516,7 @@
 
             // Initialize buffer pool
             BufferPool::Config bp_config;
-            bp_config.pool_size = config::DEFAULT_BUFFER_POOL_SIZE;
+            bp_config.pool_size = Config::getInstance().getUInt("memory", "buffer_pool_size", 128);
             bp_config.page_size = page_size_;
             try {
                 buffer_pool_ = std::make_unique<BufferPool>(this, bp_config);

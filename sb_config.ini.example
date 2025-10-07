@@ -87,6 +87,9 @@ transaction_cache_size = 10000
 toast_cache_size = 1000
 
 [storage]
+# First heap page number (pages before this are catalog pages)
+heap_scan_start_page = 7
+
 # TOAST chunk size in bytes
 toast_chunk_size = 8192
 

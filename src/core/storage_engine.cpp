@@ -183,9 +183,9 @@
             // For now, we don't need table info - just return a scanner
             // In a real system, we'd track heap pages per table in the catalog
 
-            // For now, assume heap pages start at page 7 (after catalog pages)
+            // For now, assume heap pages start after catalog pages
             // In a real system, we'd track this in the catalog
-            uint32_t start_page = config::HEAP_SCAN_START_PAGE; // First heap page
+            uint32_t start_page = Config::getInstance().getUInt("storage", "heap_scan_start_page", 7);
 
             return std::unique_ptr<HeapScanIterator>(
                 new (std::nothrow) HeapScanIterator(db_, this, table_id, start_page));
@@ -275,8 +275,9 @@
             // In a real system, we'd maintain a free space map per table
 
             uint32_t total_pages = page_manager_->totalPages();
-            // Start scanning from page 7 (after catalog pages)
-            for (uint32_t page_id = config::HEAP_SCAN_START_PAGE; page_id < total_pages; page_id++)
+            // Start scanning after catalog pages
+            uint32_t heap_start = Config::getInstance().getUInt("storage", "heap_scan_start_page", 7);
+            for (uint32_t page_id = heap_start; page_id < total_pages; page_id++)
             { // Arbitrary limit
                 void *page_buffer;
                 Status status = buffer_pool_->pinPage(page_id, &page_buffer, ctx);
