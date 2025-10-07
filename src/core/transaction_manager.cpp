@@ -5,6 +5,7 @@
 #include "scratchbird/core/proc_array.h"
 #include "scratchbird/core/clog.h"
 #include "scratchbird/core/error_context.h"
+#include "scratchbird/core/logger.h"
 #include <algorithm>
 #include <chrono>
 #include <cstring>
@@ -476,9 +477,8 @@
             {
                 // Old XID that should have been frozen
                 // CORRUPTION LOGGING: This indicates the tuple wasn't frozen by VACUUM
-                // Log to stderr for now (future: proper logging system)
-                fprintf(stderr, "[WARNING] XID %lu is older than oldest_xid %lu - tuple should have been frozen by VACUUM\n",
-                        xid, oldest_xid_);
+                LOG_WARNING(VACUUM, "XID %lu is older than oldest_xid %lu - tuple should have been frozen by VACUUM",
+                           xid, oldest_xid_);
                 // Allow it for now (graceful degradation)
                 // In strict mode, this should return false
             }
@@ -532,8 +532,8 @@
                 // Invalid XID - treat as invisible
                 // This protects against corrupted tuple headers
                 // CORRUPTION LOGGING: Log invalid XID
-                fprintf(stderr, "[ERROR] Invalid XID %lu in visibility check (next_xid=%lu, oldest_xid=%lu)\n",
-                        xid, next_xid_, oldest_xid_);
+                LOG_ERROR(TRANSACTION, "Invalid XID %lu in visibility check (next_xid=%lu, oldest_xid=%lu)",
+                         xid, next_xid_, oldest_xid_);
                 return false;
             }
 
