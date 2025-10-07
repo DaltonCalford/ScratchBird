@@ -367,12 +367,26 @@
 
             // Update database header with correct page count
             lseek(fd, 0, SEEK_SET);
-            ::read(fd, page_buffer.get(), page_size);
+            ssize_t bytes_read = ::read(fd, page_buffer.get(), page_size);
+            if (bytes_read != static_cast<ssize_t>(page_size))
+            {
+                ::close(fd);
+                unlink(canonical_path.c_str());
+                SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to read database header");
+                return Status::IO_ERROR;
+            }
             header = reinterpret_cast<DatabaseHeader *>(page_buffer.get());
             header->total_pages = 3; // Now we have 3 pages
             header->page_header.checksum = calculatePageChecksum(page_buffer.get(), page_size);
             lseek(fd, 0, SEEK_SET);
-            ::write(fd, page_buffer.get(), page_size);
+            ssize_t bytes_written = ::write(fd, page_buffer.get(), page_size);
+            if (bytes_written != static_cast<ssize_t>(page_size))
+            {
+                ::close(fd);
+                unlink(canonical_path.c_str());
+                SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to write database header");
+                return Status::IO_ERROR;
+            }
 
             // Sync to disk
             fsync(fd);

@@ -29,7 +29,7 @@ Status Config::initialize(const std::string& config_file, ErrorContext* ctx)
 
     // Try to load config file (optional - not an error if missing)
     Status s = parseFile(config_file, ctx);
-    if (!s.ok() && s != Status::NOT_FOUND) {
+    if (s != Status::OK && s != Status::NOT_FOUND) {
         // Real error (not just file not found)
         return s;
     }
@@ -46,7 +46,7 @@ Status Config::loadFile(const std::string& config_file, ErrorContext* ctx)
     config_data_.clear(); // Clear existing config
 
     Status s = parseFile(config_file, ctx);
-    if (s.ok()) {
+    if (s == Status::OK) {
         loaded_ = true;
     }
     return s;
