@@ -1,4 +1,5 @@
 #include "scratchbird/parser/lexer.h"
+#include "scratchbird/core/utf8_utils.h"
 #include <cctype>
 #include <charconv>
 #include <algorithm>
@@ -219,6 +220,19 @@ namespace scratchbird
 
             size_t length = current_pos_ - start_pos;
             std::string_view text = input_.substr(start_pos, length);
+
+            // Validate UTF-8 encoding (Phase 1: Foundation Infrastructure)
+            if (!scratchbird::core::UTF8Utils::isValidUTF8(text))
+            {
+                return makeError("Identifier contains invalid UTF-8");
+            }
+
+            // Validate identifier length (SQL standard: 128 characters, not bytes)
+            if (!scratchbird::core::UTF8Utils::isValidIdentifierLength(text))
+            {
+                size_t char_count = scratchbird::core::UTF8Utils::countCharacters(text);
+                return makeError("Identifier too long: " + std::to_string(char_count) + " characters (maximum 128)");
+            }
 
             // Check if it's a keyword
             TokenType keyword_type = checkKeyword(text);
