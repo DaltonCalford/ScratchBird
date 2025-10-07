@@ -287,6 +287,9 @@ TEST_F(StoragePerformanceTest, MixedWorkloadBenchmark)
 
     StorageEngine engine(&db);
 
+    // Table ID for the test
+    ID table_id = makeTestUUID(1);
+
     // Initial data
     const int initial_tuples = 5000;
     const size_t tuple_size = 300;
@@ -348,7 +351,7 @@ TEST_F(StoragePerformanceTest, MixedWorkloadBenchmark)
             {
                 int idx = idx_dis(gen) % tuple_ids.size();
                 Status status =
-                    engine.deleteTuple(tuple_ids[idx].first, tuple_ids[idx].second, nullptr);
+                    engine.deleteTuple(table_id, tuple_ids[idx].first, tuple_ids[idx].second, nullptr);
                 if (status == Status::OK)
                 {
                     tuple_ids.erase(tuple_ids.begin() + idx);

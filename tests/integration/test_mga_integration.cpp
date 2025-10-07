@@ -258,7 +258,7 @@ TEST_F(MGAIntegrationTest, VersionChainsBasicUpdate) {
 
     uint32_t new_page_id;
     uint16_t new_item_id;
-    Status update_result = db.storage_engine()->updateTuple(page_id, item_id,
+    Status update_result = db.storage_engine()->updateTuple(table_id, page_id, item_id,
                                                             new_tuple_data.data(),
                                                             new_tuple_data.size(),
                                                             &new_page_id, &new_item_id, &ctx);
@@ -385,7 +385,7 @@ TEST_F(MGAIntegrationTest, FullCRUDWithTransactions) {
     uint64_t xid3;
     ASSERT_EQ(db.transaction_manager()->beginTransaction(proc_id, xid3, &ctx), Status::OK);
 
-    Status delete_result = db.storage_engine()->deleteTuple(page_id, item_id, &ctx);
+    Status delete_result = db.storage_engine()->deleteTuple(table_id, page_id, item_id, &ctx);
     EXPECT_TRUE(delete_result == Status::OK || delete_result == Status::NOT_FOUND);
 
     ASSERT_EQ(db.transaction_manager()->commitTransaction(proc_id, xid3, &ctx), Status::OK);
@@ -671,7 +671,7 @@ TEST_F(MGAIntegrationTest, SnapshotIsolationOverlappingTransactions) {
     // T2 updates the tuple
     uint32_t new_page_id;
     uint16_t new_item_id;
-    Status update_result = db.storage_engine()->updateTuple(page_id, item_id,
+    Status update_result = db.storage_engine()->updateTuple(table_id, page_id, item_id,
                                                             updated_tuple_data.data(),
                                                             updated_tuple_data.size(),
                                                             &new_page_id, &new_item_id, &ctx);

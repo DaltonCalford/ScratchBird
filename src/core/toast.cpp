@@ -389,7 +389,7 @@
                 }
 
                 // Delete this chunk
-                Status delete_status = storage->deleteTuple(tuple.page_id, tuple.item_id, ctx);
+                Status delete_status = storage->deleteTuple(toast_table_id_, tuple.page_id, tuple.item_id, ctx);
                 if (delete_status != Status::OK)
                 {
                     return delete_status;
@@ -427,7 +427,7 @@
                 if (chunk_id == value_id)
                 {
                     // Delete this chunk
-                    Status delete_status = storage->deleteTuple(tuple.page_id, tuple.item_id, ctx);
+                    Status delete_status = storage->deleteTuple(toast_table_id_, tuple.page_id, tuple.item_id, ctx);
                     if (delete_status != Status::OK)
                     {
                         return delete_status;
@@ -513,7 +513,7 @@
                     // Clean up any chunks we already inserted
                     for (const auto &chunk : inserted_chunks)
                     {
-                        storage->deleteTuple(chunk.first, chunk.second, ctx);
+                        storage->deleteTuple(toast_table_id_, chunk.first, chunk.second, ctx);
                     }
 
                     return status;
