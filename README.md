@@ -1,6 +1,6 @@
 # ScratchBird Database Engine
 
-A modern relational database engine built from scratch with MVCC transactions, flexible indexing, and clean architecture.
+An educational relational database engine built from scratch with MVCC transactions, B-tree/hash indexing, TOAST storage, and multi-version concurrency control.
 
 ## Quick Start
 
@@ -15,19 +15,30 @@ ctest --output-on-failure
 
 ## Current Status
 
-**Version:** Alpha 1.0.1 (75% complete)
-**Latest:** See [Overall Project Status](docs/status/OVERALL_PROJECT_STATUS.md)
+**Version:** Alpha 1.0.1
+**Status:** Educational/Development (Not Production Ready)
+**Latest:** See [Current Status](docs/status/CURRENT_STATUS.md) | [Code Audit Report](docs/audits/audit_2025_10_06.md)
 
-### Recent Milestones ✅
-- B-Tree index complete (2,256 lines) - Range scans, compression, vacuum
-- Hash index complete (2,254 lines) - All tests passing
-- MVCC/MGA complete (~1,800 lines) - Full transaction support with CLOG
-- Storage engine production-ready (~3,500 lines)
+### What's Implemented ✅
+- **Storage Engine:** Page management, buffer pool, heap pages, TOAST, compression (90%)
+- **Transaction Management:** MVCC, MGA, CLOG, XID management, snapshot isolation (85%)
+- **Indexing:** B-tree (2,256 lines) and hash indexes (2,254 lines) with scans (80%)
+- **Type System:** 30+ data types, UUIDv7, timezones, 100+ collations (95%)
+- **Query Processing:** Lexer, parser, AST, semantic analyzer, bytecode, executor (70%)
+- **Catalog:** System catalog with metadata persistence (75%)
 
-### Active Work 🔧
-- Fixing database initialization hang
-- Resolving executor compilation errors
-- Enabling comprehensive test suite
+### Known Limitations ⚠️
+- **No multi-connection support** (missing ConnectionContext - CRITICAL)
+- **No cross-page UPDATE** (returns NOT_IMPLEMENTED)
+- **No WAL** (no crash recovery)
+- **Limited SQL** (no JOINs, subqueries, many features)
+- **Locking disabled** in 15+ locations pending connection context
+
+### Active Issues 🔧
+- Missing thread-local storage for connection context (blocks multi-user)
+- Parser missing advanced SQL features (15 test failures)
+- Error handling inconsistencies throughout codebase
+- See [audit report](docs/audits/audit_2025_10_06.md) for full analysis
 
 ## Project Structure
 
@@ -48,10 +59,11 @@ ctest --output-on-failure
 
 ## Development Process
 
-1. Review the `IMPLEMENTATION_PLAN.md` in the `project/plan` directory.
-2. Begin implementation of the next Alpha phase.
-3. Progress is tracked in the `project/progress` directory.
-4. Tests are created alongside implementation.
+1. Review [Current Status](docs/status/CURRENT_STATUS.md) and [Code Audit](docs/audits/audit_2025_10_06.md)
+2. Check [TODO.md](docs/development/TODO.md) for prioritized work items
+3. Follow [Coding Standards](docs/development/CODING_STANDARDS.md)
+4. Run tests frequently with `ctest --output-on-failure`
+5. See [Build Instructions](docs/development/BUILD_INSTRUCTIONS.md) for details
 
 ## Building
 
