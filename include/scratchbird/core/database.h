@@ -28,6 +28,7 @@ namespace scratchbird
         class LockManager;
         class Vacuum;
         class Clog;
+        class ConnectionContext;
 
 // Database header structure for Page 0
 #pragma pack(push, 1)
@@ -111,6 +112,12 @@ namespace scratchbird
 
             // Close the database
             void close();
+
+            // Create a new connection context
+            // This registers a backend in ProcArray and creates a ConnectionContext
+            // The caller is responsible for managing the ConnectionContext lifetime
+            Status connect(std::unique_ptr<class ConnectionContext>& connection_out,
+                          ErrorContext* ctx = nullptr);
 
             // Get database information
             bool is_open() const

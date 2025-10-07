@@ -9,6 +9,7 @@
 #include "scratchbird/core/vacuum.h"
 #include "scratchbird/core/clog.h"
 #include "scratchbird/core/proc_array.h"
+#include "scratchbird/core/connection_context.h"
 #include "scratchbird/core/system_uuids.h"
 #include "scratchbird/core/debug.h"
 #include <fcntl.h>
@@ -82,6 +83,68 @@
             {
                 ::close(fd_);
                 fd_ = -1;
+            }
+        }
+
+        auto Database::connect(std::unique_ptr<ConnectionContext>& connection_out,
+                             ErrorContext* ctx) -> Status
+        {
+            if (!is_open())
+            {
+                SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Database is not open");
+                return Status::NOT_FOUND;
+            }
+
+            // Initialize ProcArray if not already done
+            if (header_ && !header_->proc_array_initialized)
+            {
+                uint32_t max_backends = header_->max_backends;
+                if (max_backends == 0)
+                {
+                    max_backends = 100;  // Default
+                }
+
+                Status s = initializeProcArray(max_backends, ctx);
+                if (s != Status::OK)
+                {
+                    SET_ERROR_CONTEXT(ctx, s, "Failed to initialize ProcArray");
+                    return s;
+                }
+            }
+
+            // Register this backend and get a proc_id
+            uint32_t proc_id = 0;
+            Status s = ProcArrayManager::registerBackend(&proc_id, ctx);
+            if (s != Status::OK)
+            {
+                SET_ERROR_CONTEXT(ctx, s, "Failed to register backend in ProcArray");
+                return s;
+            }
+
+            // Create connection context
+            try
+            {
+                auto connection = std::make_unique<ConnectionContext>(this, proc_id);
+
+                // Initialize the connection (starts initial transaction)
+                s = connection->initialize(ctx);
+                if (s != Status::OK)
+                {
+                    // Unregister backend on failure
+                    ProcArrayManager::unregisterBackend(proc_id, nullptr);
+                    SET_ERROR_CONTEXT(ctx, s, "Failed to initialize connection context");
+                    return s;
+                }
+
+                connection_out = std::move(connection);
+                return Status::OK;
+            }
+            catch (const std::bad_alloc&)
+            {
+                // Unregister backend on OOM
+                ProcArrayManager::unregisterBackend(proc_id, nullptr);
+                SET_ERROR_CONTEXT(ctx, Status::OOM, "Failed to allocate ConnectionContext");
+                return Status::OOM;
             }
         }
 

@@ -7,6 +7,7 @@
 #include "scratchbird/core/buffer_pool.h"
 #include "scratchbird/core/page_manager.h"
 #include "scratchbird/core/lock_manager.h"
+#include "scratchbird/core/connection_context.h"
 
 
     namespace scratchbird::core
@@ -233,8 +234,9 @@
                 return status;
             }
 
-            // TODO(concurrency): Get proc_id from thread-local storage or connection context
-            const uint32_t proc_id = 0;
+            // Get proc_id from ConnectionContext (Phase 2 complete)
+            int32_t proc_id_signed = ConnectionContext::getCurrentProcId();
+            const uint32_t proc_id = (proc_id_signed >= 0) ? static_cast<uint32_t>(proc_id_signed) : 0;
             LockManager *lock_mgr = db_->lock_manager();
 
             BufferPool *bp = db_->buffer_pool();
@@ -588,8 +590,9 @@
                 return status;
             }
 
-            // TODO(concurrency): Get proc_id from thread-local storage or connection context
-            const uint32_t proc_id = 0;
+            // Get proc_id from ConnectionContext (Phase 2 complete)
+            int32_t proc_id_signed = ConnectionContext::getCurrentProcId();
+            const uint32_t proc_id = (proc_id_signed >= 0) ? static_cast<uint32_t>(proc_id_signed) : 0;
             LockManager *lock_mgr = db_->lock_manager();
 
             BufferPool *bp = db_->buffer_pool();
@@ -643,8 +646,9 @@
                 return status;
             }
 
-            // TODO(concurrency): Get proc_id from thread-local storage or connection context
-            const uint32_t proc_id = 0;
+            // Get proc_id from ConnectionContext (Phase 2 complete)
+            int32_t proc_id_signed = ConnectionContext::getCurrentProcId();
+            const uint32_t proc_id = (proc_id_signed >= 0) ? static_cast<uint32_t>(proc_id_signed) : 0;
             LockManager *lock_mgr = db_->lock_manager();
 
             BufferPool *bp = db_->buffer_pool();
