@@ -1,0 +1,207 @@
+# ScratchBird Database Configuration File
+# Copy this file to sb_config.ini and customize for your environment
+
+[database]
+# Default page size in bytes (8KB, 16KB, 32KB, 64KB, 128KB)
+default_page_size = 16384
+
+# Maximum number of concurrent connections
+max_connections = 100
+
+# Maximum backend processes
+max_backends = 100
+
+# Default character encoding (utf8, latin1, etc.)
+default_encoding = utf8
+
+[transactions]
+# Default isolation level (SNAPSHOT, READ_COMMITTED, SNAPSHOT_TABLE_STABILITY)
+default_isolation_level = SNAPSHOT
+
+# How often to update transaction markers in header (transaction count)
+marker_update_interval = 100
+
+[sweep]
+# Automatic sweep interval (0 = disabled)
+# Sweep triggers when (OST - OIT) > sweep_interval
+sweep_interval = 20000
+
+# Allow sweep to run in background thread
+background_sweep = true
+
+# Maximum sweep duration in seconds (0 = unlimited)
+max_sweep_duration = 3600
+
+# Sweep mode: cooperative | background | combined | off
+sweep_mode = combined
+
+# Minimum free space to reclaim before sweep triggers (bytes)
+min_garbage_threshold = 104857600
+
+[garbage_collection]
+# GC policy: cooperative | background | combined
+gc_policy = combined
+
+# Number of background GC threads
+background_gc_threads = 2
+
+# GC sleep interval in milliseconds
+gc_sleep_interval = 1000
+
+# Pages to process per GC cycle
+gc_batch_size = 100
+
+[long_transactions]
+# Enable long-running transaction detection
+enable_detection = true
+
+# Warning threshold in seconds (10 minutes)
+warning_threshold = 600
+
+# Critical threshold in seconds (1 hour)
+critical_threshold = 3600
+
+# Action for warnings: LOG | ROLLBACK_READONLY | ROLLBACK_ALL | TERMINATE
+warning_action = LOG
+
+# Action for critical: LOG | ROLLBACK_READONLY | ROLLBACK_ALL | TERMINATE
+critical_action = LOG
+
+# Exempt read-only transactions from actions
+exempt_readonly = false
+
+# Comma-separated list of application names to exempt
+exempt_applications = monitoring,reporting
+
+# Check interval in seconds
+check_interval = 60
+
+[memory]
+# Buffer pool size in pages (default 128 = 2MB with 16KB pages)
+buffer_pool_size = 128
+
+# Transaction cache size (number of transactions)
+transaction_cache_size = 10000
+
+# TOAST cache size (number of TOAST values)
+toast_cache_size = 1000
+
+[storage]
+# TOAST chunk size in bytes
+toast_chunk_size = 8192
+
+# Maximum tuple size in bytes
+max_tuple_size = 32768
+
+# Enable compression for TOAST values
+compression_enabled = true
+
+# Compression type: lz4 | zstd | none
+compression_type = lz4
+
+[btree]
+# Minimum B-tree fanout
+min_fanout = 32
+
+# Maximum B-tree fanout
+max_fanout = 256
+
+# Enable B-tree compression
+compression_enabled = false
+
+[hash]
+# Initial number of hash buckets
+initial_buckets = 256
+
+# Load factor before split (0.0 - 1.0)
+split_threshold = 0.75
+
+[vacuum]
+# Enable automatic vacuum
+autovacuum_enabled = true
+
+# Minimum dead tuples before vacuum (percentage)
+autovacuum_threshold = 20
+
+# Vacuum cost delay in milliseconds
+vacuum_cost_delay = 0
+
+[logging]
+# Log level: TRACE | DEBUG | INFO | WARNING | ERROR | CRITICAL
+log_level = INFO
+
+# Log output file path (empty for stderr)
+log_file = scratchbird.log
+
+# Enable log rotation
+log_rotation_enabled = true
+
+# Maximum log file size in bytes before rotation
+log_max_size = 10485760
+
+# Number of rotated log files to keep
+log_max_files = 5
+
+# Log format: TEXT | JSON
+log_format = TEXT
+
+# Include timestamp in logs
+log_timestamp = true
+
+# Include thread ID in logs
+log_thread_id = false
+
+# Include source location in logs (file:line)
+log_source_location = true
+
+[monitoring]
+# Enable transaction monitoring tables
+enable_monitoring = true
+
+# MON$ table update frequency in seconds
+monitoring_interval = 5
+
+# Retain monitoring history (seconds)
+monitoring_history_retention = 3600
+
+[performance]
+# Enable statistics collection
+enable_statistics = true
+
+# Statistics collection interval in seconds
+statistics_interval = 60
+
+# Enable query plan caching
+enable_plan_cache = true
+
+# Maximum cached plans
+max_cached_plans = 1000
+
+[security]
+# Enable audit logging
+enable_audit = false
+
+# Audit log file
+audit_log_file = scratchbird_audit.log
+
+# Log all DML operations
+audit_dml = false
+
+# Log all DDL operations
+audit_ddl = true
+
+# Log failed authentication attempts
+audit_failed_auth = true
+
+[debug]
+# Enable debug mode (verbose logging)
+debug_enabled = false
+
+# Enable memory leak detection
+memory_leak_detection = false
+
+# Enable performance profiling
+performance_profiling = false
+
+# Assert on warnings (development only)
+assert_on_warning = false
