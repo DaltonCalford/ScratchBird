@@ -282,23 +282,73 @@ Remove duplicate `#include "scratchbird/core/storage_engine.h"` line.
 **Files:** 15+ locations across codebase
 **Effort:** 1-2 weeks
 **Impact:** Enables multi-connection support, enables locking
+**Design Reference:** See "Core Design Principles" in [ALPHA_1_2_REQUIREMENTS.md](../issues/ALPHA_1_2_REQUIREMENTS.md)
+
+**Core Design Principle: Always-In-Transaction**
+- Connections are ALWAYS in a transaction (no work outside MGA)
+- COMMIT/ROLLBACK automatically start new transaction
+- Connection establishment immediately starts initial transaction
+- Connection close must rollback any outstanding transaction
+- START TRANSACTION changes transaction settings, doesn't start first transaction
 
 **Requirements:**
-1. Create `ConnectionContext` class with `proc_id` and transaction context
-2. Implement thread-local storage pattern
-3. Add `ConnectionContext::getCurrentProcId()` API
-4. Update all 15+ TODO markers in:
+
+1. **Create ConnectionContext Class:**
+   ```cpp
+   class ConnectionContext {
+       int32_t proc_id;           // Process ID from ProcArray
+       TransactionId current_xid; // NEVER NULL - always in transaction
+       TransactionState state;    // ACTIVE, READ_ONLY, READ_WRITE
+       Timestamp xact_start_time; // Transaction start timestamp
+       bool is_read_only;         // Transaction read-only flag
+       // ... other fields
+   };
+   ```
+
+2. **Transaction Lifecycle Management:**
+   - `beginTransaction()` - Start new transaction (initial or after commit/rollback)
+   - `commitTransaction()` - Commit current, IMMEDIATELY start new transaction atomically
+   - `rollbackTransaction()` - Rollback current, IMMEDIATELY start new transaction atomically
+   - `changeTransactionSettings()` - Implement START TRANSACTION command logic
+   - Ensure no gap exists between transactions
+
+3. **Thread-Local Storage Pattern:**
+   - Implement thread-local storage for ConnectionContext
+   - Add `ConnectionContext::getCurrent()` static method
+   - Add `ConnectionContext::getCurrentProcId()` convenience method
+   - Ensure thread-safety for multi-connection scenarios
+
+4. **Update All TODO Markers (15+ locations):**
    - `src/core/storage_engine.cpp` (5 locations)
    - `src/core/btree.cpp` (6 locations)
    - `src/core/catalog_manager.cpp` (multiple)
-   - Other files with locking disabled
-5. Enable locking in all critical sections
-6. Add tests for multi-connection scenarios
+   - Other files with "TODO(concurrency): Get proc_id from thread-local storage"
+   - Replace placeholder code with actual ConnectionContext::getCurrentProcId() calls
+
+5. **Enable Locking:**
+   - Remove all "For now, locking is disabled" comments
+   - Enable lock acquisition in all critical sections
+   - Ensure deadlock detection is functional
+
+6. **Parser Support:**
+   - Add START TRANSACTION command parsing
+   - Support READ ONLY and READ WRITE options
+   - Support COMMIT OUTSTANDING option
+   - Implement transaction settings change logic
+
+7. **Testing:**
+   - Multi-connection concurrent access tests
+   - Transaction lifecycle tests (commit/rollback auto-starts new transaction)
+   - START TRANSACTION command tests
+   - COMMIT OUTSTANDING with error conditions
+   - Connection establishment/close transaction handling
+   - Verify no work can occur outside transaction
 
 **Blockers:** This blocks:
 - Multi-user support
 - Proper lock management
 - Production readiness
+- Correct transaction semantics
 
 **Status:** ❌ Not Started
 
