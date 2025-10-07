@@ -84,6 +84,46 @@ Alpha 1.2 completes all core database engine functionality required before begin
    - Must provide atomic transition between transactions
    - Must ensure no gap exists between commit/rollback and next transaction
 
+### Firebird Transaction Model Adoption
+
+**Reference Specification:** `/docs/specifications/FIREBIRD_TRANSACTION_MODEL_SPEC.md`
+
+ScratchBird adopts Firebird's proven transaction implementation model:
+
+1. **Transaction Markers:**
+   - OIT (Oldest Interesting Transaction) - for garbage collection
+   - OAT (Oldest Active Transaction) - oldest running transaction
+   - OST (Oldest Snapshot Transaction) - oldest SNAPSHOT transaction
+   - Next Transaction ID - transaction counter
+
+2. **Isolation Levels:**
+   - SNAPSHOT (concurrency) - point-in-time consistency
+   - SNAPSHOT TABLE STABILITY - table-level locking
+   - READ COMMITTED (with READ CONSISTENCY) - sees latest committed changes
+
+3. **Long-Running Transaction Management:**
+   - Configurable detection thresholds
+   - Automatic monitoring and warnings
+   - Policies: LOG / ROLLBACK_READONLY / ROLLBACK_ALL / TERMINATE
+   - Special handling for READ ONLY READ COMMITTED transactions
+
+4. **Sweep Mechanism:**
+   - Automatic sweep when (OST - OIT) > sweep_interval
+   - Default interval: 20,000 transactions
+   - Configurable: cooperative, background, or combined mode
+   - Manual sweep trigger support
+
+5. **Garbage Collection:**
+   - Cooperative GC: queries clean garbage they encounter
+   - Background GC: dedicated thread (optional)
+   - Combined mode (recommended)
+
+**Implementation Timeline:** 10 weeks (6-7 weeks with 2 developers)
+**Priority:** HIGH - Required for production-quality transaction management
+**Dependencies:** ConnectionContext (CRIT-002) must be implemented first
+
+See detailed specification for complete implementation roadmap, configuration options, and monitoring queries.
+
 ---
 
 ## Requirements Overview
