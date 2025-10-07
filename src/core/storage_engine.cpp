@@ -6,6 +6,7 @@
 #include "scratchbird/core/page_manager.h"
 #include "scratchbird/core/catalog_manager.h"
 #include "scratchbird/core/transaction_manager.h"
+#include "scratchbird/core/connection_context.h"
 #include "scratchbird/core/lock_manager.h"
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/core/btree.h"
@@ -56,11 +57,12 @@
             HeapPage heap_page(page_data, db_->page_size(), toast_mgr, db_, table_id);
             uint16_t item_id;
 
-            // Get current XID from transaction manager
-            // TODO: Get proc_id from thread-local storage or connection context
-            uint64_t current_xid = (db_->transaction_manager() != nullptr)
-                                      ? db_->transaction_manager()->getCurrentXid()
-                                      : 100;
+            // Get current XID from connection context
+            uint64_t current_xid = ConnectionContext::getCurrentTransactionId();
+            if (current_xid == 0) {
+                // No active connection context - use fallback XID
+                current_xid = 100;
+            }
 
             status = heap_page.insertTuple(tuple_data, tuple_size, current_xid, &item_id, ctx);
 
@@ -130,9 +132,11 @@
 
         auto StorageEngine::deleteTuple(uint32_t page_id, uint16_t item_id, ErrorContext *ctx) -> Status
         {
-            // TODO: Get proc_id and table_id from thread-local storage or connection context
-            // For now, locking is disabled (requires connection context refactoring)
-            // Future: uint32_t proc_id = ConnectionContext::getCurrentProcId();
+            // Get proc_id from ConnectionContext (Phase 2 complete)
+            int32_t proc_id = ConnectionContext::getCurrentProcId();
+
+            // TODO: Track current table_id in ConnectionContext (future enhancement)
+            // For now, locking is disabled (requires table_id tracking)
             // Future: ID table_id = ConnectionContext::getCurrentTableId();
 
             // Future lock acquisition:
@@ -153,11 +157,12 @@
             // Delete tuple
             HeapPage heap_page(page_data, db_->page_size());
 
-            // Get current XID from transaction manager
-            // TODO: Get proc_id from thread-local storage or connection context
-            uint64_t current_xid = (db_->transaction_manager() != nullptr)
-                                      ? db_->transaction_manager()->getCurrentXid()
-                                      : 100;
+            // Get current XID from connection context
+            uint64_t current_xid = ConnectionContext::getCurrentTransactionId();
+            if (current_xid == 0) {
+                // No active connection context - use fallback XID
+                current_xid = 100;
+            }
 
             status = heap_page.deleteTuple(item_id, current_xid, ctx);
 
@@ -259,10 +264,15 @@
 
         auto StorageEngine::getCurrentXid() const -> uint64_t
         {
+            // Get current XID from ConnectionContext (Phase 2 complete)
+            uint64_t xid = ConnectionContext::getCurrentTransactionId();
+            if (xid != 0) {
+                return xid;
+            }
+
+            // Fallback if no connection context
             if (db_->transaction_manager() != nullptr)
             {
-                // TODO: Need proc_id to get backend XID
-                // For now, just return next XID
                 return db_->transaction_manager()->getCurrentXid();
             }
             return 100; // Default if no transaction manager
@@ -484,8 +494,11 @@
                                         uint32_t *new_page_id_out, uint16_t *new_item_id_out,
                                         ErrorContext *ctx) -> Status
         {
-            // TODO: Get proc_id and table_id from thread-local storage or connection context
-            // Future: uint32_t proc_id = ConnectionContext::getCurrentProcId();
+            // Get proc_id from ConnectionContext (Phase 2 complete)
+            int32_t proc_id = ConnectionContext::getCurrentProcId();
+
+            // TODO: Track current table_id in ConnectionContext (future enhancement)
+            // For now, locking is disabled (requires table_id tracking)
             // Future: ID table_id = ConnectionContext::getCurrentTableId();
 
             // Future lock acquisition (same tuple):
