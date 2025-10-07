@@ -10,6 +10,7 @@
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/core/btree.h"
 #include "scratchbird/core/toast.h"
+#include "scratchbird/core/logger.h"
 #include <cstring>
 #include <new>
 
@@ -201,14 +202,14 @@
                 if (!tm->isXidInRange(xmin))
                 {
                     // CORRUPTION LOGGING: Invalid xmin detected
-                    fprintf(stderr, "[ERROR] Invalid xmin %lu in StorageEngine::isVisible\n", xmin);
+                    LOG_ERROR(STORAGE, "Invalid xmin %lu in StorageEngine::isVisible", xmin);
                     return false; // Invalid xmin - tuple is invisible
                 }
 
                 if (xmax != 0 && !tm->isXidInRange(xmax))
                 {
                     // CORRUPTION LOGGING: Invalid xmax detected
-                    fprintf(stderr, "[WARNING] Invalid xmax %lu in StorageEngine::isVisible - treating as not deleted\n", xmax);
+                    LOG_WARNING(STORAGE, "Invalid xmax %lu in StorageEngine::isVisible - treating as not deleted", xmax);
                     // Invalid xmax - treat as if not deleted
                     xmax = 0;
                 }
@@ -232,14 +233,14 @@
             if (!TransactionManager::isValidXid(xmin))
             {
                 // CORRUPTION LOGGING: Invalid xmin in fallback path
-                fprintf(stderr, "[ERROR] Invalid xmin %lu in fallback visibility check\n", xmin);
+                LOG_ERROR(STORAGE, "Invalid xmin %lu in fallback visibility check", xmin);
                 return false; // Invalid xmin
             }
 
             if (xmax != 0 && !TransactionManager::isValidXid(xmax))
             {
                 // CORRUPTION LOGGING: Invalid xmax in fallback path
-                fprintf(stderr, "[WARNING] Invalid xmax %lu in fallback visibility check - treating as not deleted\n", xmax);
+                LOG_WARNING(STORAGE, "Invalid xmax %lu in fallback visibility check - treating as not deleted", xmax);
                 xmax = 0; // Invalid xmax - treat as not deleted
             }
 

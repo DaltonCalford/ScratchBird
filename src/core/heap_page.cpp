@@ -5,6 +5,7 @@
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/buffer_pool.h"
 #include "scratchbird/core/transaction_manager.h"
+#include "scratchbird/core/logger.h"
 #include <cstring>
 #include <algorithm>
 #include <vector>
@@ -694,8 +695,8 @@
                     // Invalid xmin - skip this version and try next
                     // This protects against corrupted data
                     // CORRUPTION LOGGING: Invalid xmin in version chain
-                    fprintf(stderr, "[ERROR] Invalid xmin %lu in version chain at page %u item %u - skipping to next version\n",
-                            tuple_hdr->xmin, current_page_id, current_item_id);
+                    LOG_ERROR(STORAGE, "Invalid xmin %lu in version chain at page %u item %u - skipping to next version",
+                             tuple_hdr->xmin, current_page_id, current_item_id);
 
                     if (tuple_hdr->hasNextVersion())
                     {
