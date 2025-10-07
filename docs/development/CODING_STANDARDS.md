@@ -127,18 +127,61 @@ return Status::PAGE_FULL;  // No error details
 - No documentation on which pattern to use when
 - Potential for segmentation faults if nullptr passed incorrectly
 
-**CRITICAL:** This inconsistency is a HIGH priority fix. See [TODO.md CRIT-003](TODO.md#crit-003-standardize-error-handling-pattern).
+**CRITICAL:** Error handling standardization required. See [TODO.md CRIT-003](TODO.md#crit-003-standardize-error-handling-pattern).
 
-**Required Decision:**
-Choose ONE pattern and apply consistently:
-- **Option A:** ErrorContext is always required (never nullptr) - simpler, safer
-- **Option B:** ErrorContext is optional, always check before use - more flexible
+**AUDIT COMPLETE:** Error handling audit performed October 7, 2025. See [error_handling_audit_2025_10_07.md](../audits/error_handling_audit_2025_10_07.md) for full analysis.
 
-**Recommendation:** Create `SAFE_SET_ERROR_CONTEXT` macro that checks before use:
+**DECISION: Option B - ErrorContext Always Optional**
+
+The `SET_ERROR_CONTEXT` macro **already includes** a nullptr check (error_context.h:57). Current code is SAFE.
+
+**Standard Error Handling Pattern:**
+
+1. **Always use `SET_ERROR_CONTEXT` macro**
+   ```cpp
+   // Safe - macro checks for nullptr automatically
+   SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Descriptive message");
+   return Status::INVALID_ARGUMENT;
+   ```
+
+2. **Function signatures: Default to optional**
+   ```cpp
+   // Public API - always optional
+   auto publicFunction(Args... args, ErrorContext *ctx = nullptr) -> Status;
+
+   // Internal critical functions can require it (rare)
+   auto criticalInternal(Args... args, ErrorContext *ctx) -> Status;
+   ```
+
+3. **Propagate errors from nested calls**
+   ```cpp
+   Status s = nestedFunction(args, ctx);
+   if (!s.ok()) {
+       // ctx already set by nestedFunction
+       return s;
+   }
+   ```
+
+4. **Document all ErrorContext parameters**
+   ```cpp
+   /**
+    * @param ctx Error context (optional, can be nullptr)
+    * @return Status::OK on success, error code with context on failure
+    */
+   ```
+
+**Optional Helper Macros (can be added later):**
 ```cpp
-#define SAFE_SET_ERROR_CONTEXT(ctx, status, msg) \
-    do { if ((ctx) != nullptr) { SET_ERROR_CONTEXT(ctx, status, msg); } } while(0)
+// Assert ctx is non-null in debug builds
+#define REQUIRE_ERROR_CONTEXT(ctx, err_code, msg) \
+    do { assert((ctx) != nullptr); SET_ERROR_CONTEXT(ctx, err_code, msg); } while(0)
+
+// Set error context and log simultaneously (after logging framework added)
+#define SET_ERROR_CONTEXT_LOG(ctx, err_code, msg) \
+    do { SET_ERROR_CONTEXT(ctx, err_code, msg); LOG_ERROR(GENERAL, "%s", msg); } while(0)
 ```
+
+**Status:** ✅ STANDARDIZED - Current code is safe, documentation updated
 
 ---
 

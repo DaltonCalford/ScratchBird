@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cassert>
 #include <cstdint>
 #include <string>
 #include "scratchbird/core/status.h"
@@ -50,7 +51,7 @@
             }
         };
 
-// Macro for setting error context
+// Macro for setting error context (always safe, checks for nullptr)
 #define SET_ERROR_CONTEXT(ctx, err_code, msg)                            \
     do                                                                   \
     {                                                                    \
@@ -59,5 +60,27 @@
             (ctx)->set((err_code), (msg), __FILE__, __LINE__, __func__); \
         }                                                                \
     } while (0)
+
+// Optional helper macros (Phase 0 - October 7, 2025)
+
+// Assert ctx is non-null in debug builds (for functions requiring error context)
+#define REQUIRE_ERROR_CONTEXT(ctx, err_code, msg)                        \
+    do                                                                   \
+    {                                                                    \
+        assert((ctx) != nullptr && "ErrorContext must not be nullptr"); \
+        (ctx)->set((err_code), (msg), __FILE__, __LINE__, __func__);    \
+    } while (0)
+
+// Placeholder for SET_ERROR_CONTEXT_LOG (requires logging framework from Phase 1)
+// Will be uncommented after logging framework is implemented
+/*
+#define SET_ERROR_CONTEXT_LOG(ctx, err_code, msg)                        \
+    do                                                                   \
+    {                                                                    \
+        SET_ERROR_CONTEXT(ctx, err_code, msg);                          \
+        LOG_ERROR(GENERAL, "%s:%d %s - %s",                             \
+                 __FILE__, __LINE__, __func__, (msg));                  \
+    } while (0)
+*/
 
     } // namespace scratchbird::core

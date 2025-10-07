@@ -8,7 +8,6 @@
 #include "scratchbird/core/uuidv7.h"
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/core/storage_engine.h"
-#include "scratchbird/core/storage_engine.h"
 
 namespace scratchbird
 {
