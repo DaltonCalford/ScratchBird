@@ -130,20 +130,19 @@
             return status;
         }
 
-        auto StorageEngine::deleteTuple(uint32_t page_id, uint16_t item_id, ErrorContext *ctx) -> Status
+        auto StorageEngine::deleteTuple(const ID &table_id, uint32_t page_id, uint16_t item_id,
+                                       ErrorContext *ctx) -> Status
         {
             // Get proc_id from ConnectionContext (Phase 2 complete)
-            int32_t proc_id = ConnectionContext::getCurrentProcId();
+            int32_t proc_id_signed = ConnectionContext::getCurrentProcId();
+            uint32_t proc_id = (proc_id_signed >= 0) ? static_cast<uint32_t>(proc_id_signed) : 0;
 
-            // TODO: Track current table_id in ConnectionContext (future enhancement)
-            // For now, locking is disabled (requires table_id tracking)
-            // Future: ID table_id = ConnectionContext::getCurrentTableId();
-
-            // Future lock acquisition:
-            // Status lock_status = acquireTupleLock(table_id, page_id, item_id, proc_id, true, ctx);
-            // if (lock_status != Status::OK) {
-            //     return lock_status;
-            // }
+            // Acquire tuple lock (Phase 2.5 complete)
+            bool wait = true; // TODO: Get from ConnectionContext::getWaitForLocks()
+            Status lock_status = acquireTupleLock(table_id, page_id, item_id, proc_id, wait, ctx);
+            if (lock_status != Status::OK) {
+                return lock_status;
+            }
 
             // Pin the page
             void *page_buffer;
@@ -484,28 +483,26 @@
             uint16_t item_id = tid & 0xFFFF;
 
             // Use existing delete_tuple method
-            return deleteTuple(page_id, item_id, ctx);
+            return deleteTuple(table_id, page_id, item_id, ctx);
         }
 
         // MGA Phase 3: Version Chains
 
-        auto StorageEngine::updateTuple(uint32_t page_id, uint16_t item_id,
+        auto StorageEngine::updateTuple(const ID &table_id, uint32_t page_id, uint16_t item_id,
                                         const uint8_t *new_tuple_data, uint32_t new_tuple_size,
                                         uint32_t *new_page_id_out, uint16_t *new_item_id_out,
                                         ErrorContext *ctx) -> Status
         {
             // Get proc_id from ConnectionContext (Phase 2 complete)
-            int32_t proc_id = ConnectionContext::getCurrentProcId();
+            int32_t proc_id_signed = ConnectionContext::getCurrentProcId();
+            uint32_t proc_id = (proc_id_signed >= 0) ? static_cast<uint32_t>(proc_id_signed) : 0;
 
-            // TODO: Track current table_id in ConnectionContext (future enhancement)
-            // For now, locking is disabled (requires table_id tracking)
-            // Future: ID table_id = ConnectionContext::getCurrentTableId();
-
-            // Future lock acquisition (same tuple):
-            // Status lock_status = acquireTupleLock(table_id, page_id, item_id, proc_id, true, ctx);
-            // if (lock_status != Status::OK) {
-            //     return lock_status;
-            // }
+            // Acquire lock on old tuple (Phase 2.5 complete)
+            bool wait = true; // TODO: Get from ConnectionContext::getWaitForLocks()
+            Status lock_status = acquireTupleLock(table_id, page_id, item_id, proc_id, wait, ctx);
+            if (lock_status != Status::OK) {
+                return lock_status;
+            }
 
             // Get current XID from transaction manager
             uint64_t xmax = (db_->transaction_manager() != nullptr)
