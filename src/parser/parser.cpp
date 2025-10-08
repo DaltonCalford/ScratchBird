@@ -120,6 +120,18 @@ namespace scratchbird
                 {
                     stmt = parseSelect();
                 }
+                else if (match(TokenType::KW_START))
+                {
+                    stmt = parseStartTransaction();
+                }
+                else if (match(TokenType::KW_COMMIT))
+                {
+                    stmt = parseCommit();
+                }
+                else if (match(TokenType::KW_ROLLBACK))
+                {
+                    stmt = parseRollback();
+                }
                 else if (isAtEnd())
                 {
                     error("Expected SQL statement, but got end of file");
@@ -611,6 +623,140 @@ namespace scratchbird
 
             auto span = makeSpan(start_loc);
             return arena_.make<SelectStmt>(span, std::move(select_list), table_name, where_clause);
+        }
+
+        Statement *Parser::parseStartTransaction()
+        {
+            // START TRANSACTION [READ WRITE | READ ONLY] [WAIT | NO WAIT]
+            // [ISOLATION LEVEL {READ COMMITTED | SNAPSHOT | SNAPSHOT TABLE STABILITY}]
+            // [WITH COMMIT OUTSTANDING]
+            auto start_loc = previous().location;
+
+            // Consume TRANSACTION keyword
+            if (!consume(TokenType::KW_TRANSACTION, "Expected TRANSACTION after START"))
+            {
+                synchronize();
+                return nullptr;
+            }
+
+            // Default values
+            TransactionMode mode = TransactionMode::READ_WRITE;
+            IsolationLevel isolation = IsolationLevel::READ_COMMITTED;
+            bool wait = true;
+            bool commit_outstanding = false;
+
+            // Parse optional transaction mode
+            if (match(TokenType::KW_READ))
+            {
+                if (match(TokenType::KW_WRITE))
+                {
+                    mode = TransactionMode::READ_WRITE;
+                }
+                else if (match(TokenType::KW_ONLY))
+                {
+                    mode = TransactionMode::READ_ONLY;
+                }
+                else if (match(TokenType::KW_COMMITTED))
+                {
+                    // READ COMMITTED - this is the isolation level, rewind
+                    // We need to handle "READ COMMITTED" as isolation level
+                    isolation = IsolationLevel::READ_COMMITTED;
+                }
+                else
+                {
+                    error("Expected WRITE, ONLY, or COMMITTED after READ");
+                }
+            }
+
+            // Parse NO WAIT
+            if (match(TokenType::KW_NOT))
+            {
+                if (!consume(TokenType::KW_WAIT, "Expected WAIT after NO"))
+                {
+                    synchronize();
+                    return nullptr;
+                }
+                wait = false;
+            }
+
+            // Parse ISOLATION LEVEL
+            if (match(TokenType::KW_ISOLATION))
+            {
+                if (!consume(TokenType::KW_LEVEL, "Expected LEVEL after ISOLATION"))
+                {
+                    synchronize();
+                    return nullptr;
+                }
+
+                if (match(TokenType::KW_READ))
+                {
+                    if (!consume(TokenType::KW_COMMITTED, "Expected COMMITTED after READ"))
+                    {
+                        synchronize();
+                        return nullptr;
+                    }
+                    isolation = IsolationLevel::READ_COMMITTED;
+                }
+                else if (match(TokenType::KW_SNAPSHOT))
+                {
+                    if (match(TokenType::KW_TABLE))
+                    {
+                        if (!consume(TokenType::KW_STABILITY, "Expected STABILITY after TABLE"))
+                        {
+                            synchronize();
+                            return nullptr;
+                        }
+                        isolation = IsolationLevel::SNAPSHOT_TABLE_STABILITY;
+                    }
+                    else
+                    {
+                        isolation = IsolationLevel::SNAPSHOT;
+                    }
+                }
+                else
+                {
+                    error("Expected isolation level (READ COMMITTED, SNAPSHOT, or SNAPSHOT TABLE STABILITY)");
+                    synchronize();
+                    return nullptr;
+                }
+            }
+
+            // Parse WITH COMMIT OUTSTANDING
+            if (match(TokenType::KW_WITH))
+            {
+                if (!consume(TokenType::KW_COMMIT, "Expected COMMIT after WITH"))
+                {
+                    synchronize();
+                    return nullptr;
+                }
+                if (!consume(TokenType::KW_OUTSTANDING, "Expected OUTSTANDING after COMMIT"))
+                {
+                    synchronize();
+                    return nullptr;
+                }
+                commit_outstanding = true;
+            }
+
+            auto span = makeSpan(start_loc);
+            return arena_.make<StartTransactionStmt>(span, mode, isolation, wait, commit_outstanding);
+        }
+
+        Statement *Parser::parseCommit()
+        {
+            // COMMIT
+            auto start_loc = previous().location;
+
+            auto span = makeSpan(start_loc);
+            return arena_.make<CommitStmt>(span);
+        }
+
+        Statement *Parser::parseRollback()
+        {
+            // ROLLBACK
+            auto start_loc = previous().location;
+
+            auto span = makeSpan(start_loc);
+            return arena_.make<RollbackStmt>(span);
         }
 
         Expression *Parser::parseExpression()
