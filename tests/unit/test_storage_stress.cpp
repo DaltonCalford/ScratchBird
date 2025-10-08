@@ -183,7 +183,7 @@ TEST_F(StorageStressTest, RandomDeletePattern)
         if (!deleted[idx])
         {
             Status status =
-                engine.deleteTuple(tuple_ids[idx].first, tuple_ids[idx].second, nullptr);
+                engine.deleteTuple(makeTestUUID(1), tuple_ids[idx].first, tuple_ids[idx].second, nullptr);
             ASSERT_EQ(status, Status::OK);
             deleted[idx] = true;
             delete_count++;
@@ -280,7 +280,7 @@ TEST_F(StorageStressTest, FragmentationHandling)
     // Phase 2: Delete all large tuples (create fragmentation)
     for (const auto &id : large_tuple_ids)
     {
-        Status status = engine.deleteTuple(id.first, id.second, nullptr);
+        Status status = engine.deleteTuple(makeTestUUID(1), id.first, id.second, nullptr);
         ASSERT_EQ(status, Status::OK);
     }
 
@@ -428,7 +428,7 @@ TEST_F(StorageStressTest, TransactionIDStress)
 
             // Delete tuples from 200 transactions ago
             int delete_idx = i - 200;
-            status = engine.deleteTuple(tuple_ids[delete_idx].first, tuple_ids[delete_idx].second,
+            status = engine.deleteTuple(makeTestUUID(1), tuple_ids[delete_idx].first, tuple_ids[delete_idx].second,
                                          nullptr);
             ASSERT_EQ(status, Status::OK);
         }
@@ -527,7 +527,7 @@ TEST_F(StorageStressTest, ConcurrentAccessPattern)
                 if (!session.my_tuples.empty())
                 {
                     int idx = gen() % session.my_tuples.size();
-                    Status status = engine.deleteTuple(session.my_tuples[idx].first,
+                    Status status = engine.deleteTuple(makeTestUUID(1), session.my_tuples[idx].first,
                                                         session.my_tuples[idx].second, nullptr);
                     if (status == Status::OK)
                     {
