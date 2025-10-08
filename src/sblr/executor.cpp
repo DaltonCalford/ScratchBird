@@ -4,8 +4,10 @@
 #include "scratchbird/core/heap_page.h"
 #include "scratchbird/core/charset.h"
 #include "scratchbird/core/timezone.h"
+#include "scratchbird/core/page_manager.h"
 #include <sstream>
 #include <iomanip>
+#include <iostream>
 #include <cstring>
 #include <algorithm>
 #include <chrono>
@@ -675,6 +677,14 @@ namespace scratchbird
 
             std::string table_name = readString();
 
+            // Check if this is a monitoring/system table (MON_ prefix)
+            // Note: Using MON_ instead of MON$ because $ is not supported in identifiers yet
+            if (table_name.size() >= 4 && table_name.substr(0, 4) == "MON_")
+            {
+                executeMonitoringQuery(table_name);
+                return;
+            }
+
             // Get default schema and table info
             core::CatalogManager::SchemaInfo schema_info;
             auto status = db_->catalog_manager()->getSchema("PUBLIC", schema_info, nullptr);
@@ -877,6 +887,43 @@ namespace scratchbird
                 }
 
                 current_result_set_->addRow(std::move(result_row));
+            }
+        }
+
+        void Executor::executeMonitoringQuery(const std::string &table_name)
+        {
+            // Handle monitoring/system table queries (MON_ tables)
+            current_result_set_ = std::make_unique<ResultSet>();
+
+            if (table_name == "MON_DATABASE")
+            {
+                // Add columns for transaction markers
+                current_result_set_->addColumn("MON$DATABASE_NAME", core::DataType::VARCHAR);
+                current_result_set_->addColumn("MON$NEXT_TRANSACTION", core::DataType::INT64);
+                current_result_set_->addColumn("MON$OLDEST_TRANSACTION", core::DataType::INT64);
+                current_result_set_->addColumn("MON$OLDEST_ACTIVE", core::DataType::INT64);
+                current_result_set_->addColumn("MON$OLDEST_SNAPSHOT", core::DataType::INT64);
+
+                // Get transaction markers from transaction manager
+                auto txn_mgr = db_->transaction_manager();
+                uint64_t next_xid = txn_mgr->getCurrentXid();
+                uint64_t oit = txn_mgr->getOldestXid();
+                uint64_t oat = txn_mgr->getOldestActiveXid();
+                uint64_t ost = txn_mgr->getOldestSnapshot();
+
+                // Create the result row
+                std::vector<Value> row;
+                row.push_back(Value::makeVarchar("SCRATCHBIRD"));
+                row.push_back(Value::makeInt64(static_cast<int64_t>(next_xid)));
+                row.push_back(Value::makeInt64(static_cast<int64_t>(oit)));
+                row.push_back(Value::makeInt64(static_cast<int64_t>(oat)));
+                row.push_back(Value::makeInt64(static_cast<int64_t>(ost)));
+
+                current_result_set_->addRow(std::move(row));
+            }
+            else
+            {
+                error("Unknown monitoring table: " + table_name);
             }
         }
 

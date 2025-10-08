@@ -22,6 +22,8 @@ namespace scratchbird::core
         uint64_t xid;                  // Current transaction XID (0 = none)
         uint64_t backend_xmin;         // Snapshot horizon for this backend
         uint64_t xmin;                 // Oldest XID visible to this backend
+        uint8_t isolation_level;       // IsolationLevel enum value (0=READ_COMMITTED, 2=SNAPSHOT, etc.)
+        bool is_snapshot_txn;          // True if using SNAPSHOT isolation
 
         // Locking state (for future lock manager)
         uint32_t wait_lock_id;         // Lock waiting for (0 = none)
@@ -32,7 +34,7 @@ namespace scratchbird::core
         uint64_t query_start_time;     // Current query start (0 = idle)
 
         // Padding for cache line alignment
-        uint8_t padding[48];
+        uint8_t padding[44];
     };
 
     // Process array (shared memory structure)
@@ -81,6 +83,10 @@ namespace scratchbird::core
 
         static auto clearTransactionId(uint32_t proc_id,
                                       ErrorContext* ctx = nullptr) -> Status;
+
+        // Set transaction isolation level
+        static auto setIsolationLevel(uint32_t proc_id, uint8_t isolation_level,
+                                     ErrorContext* ctx = nullptr) -> Status;
 
         // Snapshot support
         static auto getActiveTransactions(std::vector<uint64_t>* xids_out,

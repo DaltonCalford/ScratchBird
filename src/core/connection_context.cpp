@@ -1,5 +1,6 @@
 #include "scratchbird/core/connection_context.h"
 #include "scratchbird/core/database.h"
+#include "scratchbird/core/proc_array.h"
 #include "scratchbird/core/logger.h"
 #include <cassert>
 
@@ -280,6 +281,22 @@ namespace scratchbird::core
             std::chrono::system_clock::now().time_since_epoch()
         );
 
+        // Update isolation level in ProcArray for transaction marker tracking
+        s = ProcArrayManager::setIsolationLevel(proc_id_, static_cast<uint8_t>(isolation_level_), ctx);
+        if (s != Status::OK)
+        {
+            LOG_WARNING(TRANSACTION, "Failed to set isolation level in ProcArray for proc_id %u", proc_id_);
+            // Non-fatal - continue with transaction
+        }
+
+        // Update transaction markers (OAT, OST) after starting new transaction
+        s = txn_manager_->updateTransactionMarkers(ctx);
+        if (s != Status::OK)
+        {
+            LOG_WARNING(TRANSACTION, "Failed to update transaction markers");
+            // Non-fatal - continue with transaction
+        }
+
         // Create snapshot if using SNAPSHOT isolation
         if (isolation_level_ == IsolationLevel::SNAPSHOT)
         {
@@ -324,6 +341,15 @@ namespace scratchbird::core
         // Clear transaction state (will be reset by beginNewTransaction)
         current_xid_ = 0;
         xact_start_time_ = std::chrono::microseconds(0);
+
+        // Update transaction markers (OAT, OST) after ending transaction
+        Status marker_status = txn_manager_->updateTransactionMarkers(ctx);
+        if (marker_status != Status::OK)
+        {
+            LOG_WARNING(TRANSACTION, "Failed to update transaction markers after %s",
+                       commit ? "commit" : "rollback");
+            // Non-fatal - markers will be updated on next transaction
+        }
 
         return s;
     }

@@ -116,6 +116,8 @@
             tip_root_page_ = db_header->tip_root_page;
             next_xid_ = db_header->next_transaction_id;
             oldest_xid_ = db_header->oldest_transaction_id;
+            oldest_active_xid_ = db_header->oldest_active_xid;
+            oldest_snapshot_ = db_header->oldest_snapshot;
 
             // DATABASE HEADER VALIDATION: Validate next_xid is sane
             if (next_xid_ > MAX_SAFE_XID)
@@ -518,6 +520,90 @@
 
             auto *db_header = static_cast<DatabaseHeader *>(header_buffer);
             db_header->oldest_transaction_id = oldest_xid_;
+
+            buffer_pool_->unpinPage(0, true, ctx);
+
+            return Status::OK;
+        }
+
+        auto TransactionManager::updateTransactionMarkers(ErrorContext *ctx) -> Status
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+
+            // Get ProcArray instance to scan active transactions
+            ProcArray* proc_array = ProcArrayManager::getInstance();
+            if (!proc_array)
+            {
+                // ProcArray not initialized - this is okay during early startup
+                return Status::OK;
+            }
+
+            // Acquire read lock to scan the proc array
+            pthread_rwlock_rdlock(&proc_array->array_lock);
+
+            // Compute OAT (Oldest Active Transaction) and OST (Oldest Snapshot Transaction)
+            uint64_t new_oat = next_xid_; // Start with next_xid (will be reduced)
+            uint64_t new_ost = next_xid_; // Start with next_xid (will be reduced)
+            bool has_active = false;
+            bool has_snapshot = false;
+
+            // Scan all process control blocks
+            ProcessControlBlock* pcbs = reinterpret_cast<ProcessControlBlock*>(
+                reinterpret_cast<uint8_t*>(proc_array) + sizeof(ProcArray));
+
+            for (uint32_t i = 0; i < proc_array->max_backends; ++i)
+            {
+                ProcessControlBlock* pcb = &pcbs[i];
+
+                if (!pcb->is_active || pcb->xid == 0)
+                {
+                    continue; // Skip inactive or non-transactional backends
+                }
+
+                // Update OAT - minimum of all active XIDs
+                if (pcb->xid < new_oat)
+                {
+                    new_oat = pcb->xid;
+                    has_active = true;
+                }
+
+                // Update OST - minimum of active SNAPSHOT transaction XIDs
+                if (pcb->is_snapshot_txn && pcb->xid < new_ost)
+                {
+                    new_ost = pcb->xid;
+                    has_snapshot = true;
+                }
+            }
+
+            pthread_rwlock_unlock(&proc_array->array_lock);
+
+            // If no active transactions, set OAT to 0
+            if (!has_active)
+            {
+                new_oat = 0;
+            }
+
+            // If no snapshot transactions, set OST to 0
+            if (!has_snapshot)
+            {
+                new_ost = 0;
+            }
+
+            // Update in-memory markers
+            oldest_active_xid_ = new_oat;
+            oldest_snapshot_ = new_ost;
+
+            // Update database header with new markers
+            void *header_buffer;
+            Status status = buffer_pool_->pinPage(0, &header_buffer, ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+
+            auto *db_header = static_cast<DatabaseHeader *>(header_buffer);
+            db_header->oldest_active_xid = oldest_active_xid_;
+            db_header->oldest_snapshot = oldest_snapshot_;
 
             buffer_pool_->unpinPage(0, true, ctx);
 

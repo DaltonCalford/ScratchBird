@@ -326,7 +326,9 @@
 
             // Initialize transaction info
             header->next_transaction_id = 3; // Start after FROZEN_XID (2)
-            header->oldest_active_xid = 0;
+            header->oldest_transaction_id = 3; // OIT - initially same as next
+            header->oldest_active_xid = 0;     // OAT - 0 means no active transactions
+            header->oldest_snapshot = 0;       // OST - 0 means no snapshot transactions
             header->latest_completed_xid = 0;
             header->tip_root_page = 0; // 0 means no TIP pages allocated yet
 

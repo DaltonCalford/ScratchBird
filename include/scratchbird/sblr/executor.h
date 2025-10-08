@@ -169,6 +169,9 @@ namespace scratchbird
             void executeInsert();
             void executeSelect();
 
+            // Monitoring/system table execution
+            void executeMonitoringQuery(const std::string &table_name);
+
             // Expression evaluation
             void evaluateExpression();
             void executeBinaryOp(Opcode op);
