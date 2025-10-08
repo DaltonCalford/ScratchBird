@@ -145,6 +145,8 @@ namespace scratchbird
                     return "WRITE";
                 case TokenType::KW_ONLY:
                     return "ONLY";
+                case TokenType::KW_WAIT:
+                    return "WAIT";
                 case TokenType::KW_ISOLATION:
                     return "ISOLATION";
                 case TokenType::KW_LEVEL:

@@ -136,6 +136,7 @@ namespace scratchbird
             KW_READ,
             KW_WRITE,
             KW_ONLY,
+            KW_WAIT,
             KW_ISOLATION,
             KW_LEVEL,
             KW_COMMITTED,

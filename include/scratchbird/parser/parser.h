@@ -106,6 +106,9 @@ namespace scratchbird
             Statement *parseCreateTable();
             Statement *parseInsert();
             Statement *parseSelect();
+            Statement *parseStartTransaction();  // Phase 2 Task 2.6
+            Statement *parseCommit();            // Phase 2 Task 2.6
+            Statement *parseRollback();          // Phase 2 Task 2.6
 
             // CREATE TABLE helpers
             ColumnDef *parseColumnDef();
