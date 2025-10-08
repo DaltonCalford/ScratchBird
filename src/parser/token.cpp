@@ -130,6 +130,42 @@ namespace scratchbird
                 case TokenType::KW_VARCHAR:
                     return "VARCHAR";
 
+                // Transaction control (Phase 2 Task 2.6)
+                case TokenType::KW_START:
+                    return "START";
+                case TokenType::KW_TRANSACTION:
+                    return "TRANSACTION";
+                case TokenType::KW_COMMIT:
+                    return "COMMIT";
+                case TokenType::KW_ROLLBACK:
+                    return "ROLLBACK";
+                case TokenType::KW_READ:
+                    return "READ";
+                case TokenType::KW_WRITE:
+                    return "WRITE";
+                case TokenType::KW_ONLY:
+                    return "ONLY";
+                case TokenType::KW_ISOLATION:
+                    return "ISOLATION";
+                case TokenType::KW_LEVEL:
+                    return "LEVEL";
+                case TokenType::KW_COMMITTED:
+                    return "COMMITTED";
+                case TokenType::KW_SNAPSHOT:
+                    return "SNAPSHOT";
+                case TokenType::KW_STABILITY:
+                    return "STABILITY";
+                case TokenType::KW_RESERVING:
+                    return "RESERVING";
+                case TokenType::KW_SHARED:
+                    return "SHARED";
+                case TokenType::KW_PROTECTED:
+                    return "PROTECTED";
+                case TokenType::KW_FOR:
+                    return "FOR";
+                case TokenType::KW_OUTSTANDING:
+                    return "OUTSTANDING";
+
                 default:
                     return "UNKNOWN";
             }

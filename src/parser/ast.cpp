@@ -108,6 +108,21 @@ namespace scratchbird
             visitor->visit(this);
         }
 
+        void StartTransactionStmt::accept(ASTVisitor *visitor)
+        {
+            visitor->visit(this);
+        }
+
+        void CommitStmt::accept(ASTVisitor *visitor)
+        {
+            visitor->visit(this);
+        }
+
+        void RollbackStmt::accept(ASTVisitor *visitor)
+        {
+            visitor->visit(this);
+        }
+
         // ===== AST Printer =====
 
         void ASTPrinter::printIndent()
@@ -199,6 +214,57 @@ namespace scratchbird
                 out_ << " WHERE ";
                 node->whereClause()->accept(this);
             }
+        }
+
+        void ASTPrinter::visit(StartTransactionStmt *node)
+        {
+            printIndent();
+            out_ << "START TRANSACTION";
+
+            if (node->mode() == TransactionMode::READ_ONLY)
+            {
+                out_ << " READ ONLY";
+            }
+            else
+            {
+                out_ << " READ WRITE";
+            }
+
+            out_ << " ISOLATION LEVEL ";
+            switch (node->isolation())
+            {
+                case IsolationLevel::READ_COMMITTED:
+                    out_ << "READ COMMITTED";
+                    break;
+                case IsolationLevel::SNAPSHOT:
+                    out_ << "SNAPSHOT";
+                    break;
+                case IsolationLevel::SNAPSHOT_TABLE_STABILITY:
+                    out_ << "SNAPSHOT TABLE STABILITY";
+                    break;
+            }
+
+            if (!node->wait())
+            {
+                out_ << " NO WAIT";
+            }
+
+            if (node->commitOutstanding())
+            {
+                out_ << " WITH COMMIT OUTSTANDING";
+            }
+        }
+
+        void ASTPrinter::visit(CommitStmt *node)
+        {
+            printIndent();
+            out_ << "COMMIT";
+        }
+
+        void ASTPrinter::visit(RollbackStmt *node)
+        {
+            printIndent();
+            out_ << "ROLLBACK";
         }
 
         void ASTPrinter::visit(LiteralExpr *node)

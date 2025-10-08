@@ -208,6 +208,30 @@ namespace scratchbird
             }
         }
 
+        void BytecodeGenerator::visit(parser::StartTransactionStmt *node)
+        {
+            // Generate START TRANSACTION bytecode (Phase 2 Task 2.6)
+            // For now, just mark as unimplemented
+            current_result_->addError("START TRANSACTION bytecode generation not yet implemented");
+            (void)node; // Suppress unused parameter warning
+        }
+
+        void BytecodeGenerator::visit(parser::CommitStmt *node)
+        {
+            // Generate COMMIT bytecode (Phase 2 Task 2.6)
+            // For now, just mark as unimplemented
+            current_result_->addError("COMMIT bytecode generation not yet implemented");
+            (void)node; // Suppress unused parameter warning
+        }
+
+        void BytecodeGenerator::visit(parser::RollbackStmt *node)
+        {
+            // Generate ROLLBACK bytecode (Phase 2 Task 2.6)
+            // For now, just mark as unimplemented
+            current_result_->addError("ROLLBACK bytecode generation not yet implemented");
+            (void)node; // Suppress unused parameter warning
+        }
+
         // ===== Expression Visitors =====
 
         void BytecodeGenerator::visit(parser::LiteralExpr *node)

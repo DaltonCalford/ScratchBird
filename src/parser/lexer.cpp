@@ -70,6 +70,17 @@ namespace scratchbird
             // Timezone
             {"ZONE", TokenType::KW_ZONE},       {"WITH", TokenType::KW_WITH},
             {"WITHOUT", TokenType::KW_WITHOUT}, {"AT", TokenType::KW_AT},
+
+            // Transaction control (Phase 2 Task 2.6)
+            {"START", TokenType::KW_START},     {"TRANSACTION", TokenType::KW_TRANSACTION},
+            {"COMMIT", TokenType::KW_COMMIT},   {"ROLLBACK", TokenType::KW_ROLLBACK},
+            {"READ", TokenType::KW_READ},       {"WRITE", TokenType::KW_WRITE},
+            {"ONLY", TokenType::KW_ONLY},       {"ISOLATION", TokenType::KW_ISOLATION},
+            {"LEVEL", TokenType::KW_LEVEL},     {"COMMITTED", TokenType::KW_COMMITTED},
+            {"SNAPSHOT", TokenType::KW_SNAPSHOT}, {"STABILITY", TokenType::KW_STABILITY},
+            {"RESERVING", TokenType::KW_RESERVING}, {"SHARED", TokenType::KW_SHARED},
+            {"PROTECTED", TokenType::KW_PROTECTED}, {"FOR", TokenType::KW_FOR},
+            {"OUTSTANDING", TokenType::KW_OUTSTANDING},
         };
 
         // Case-insensitive string comparison

@@ -249,6 +249,25 @@ namespace scratchbird
             current_table_ = nullptr;
         }
 
+        void SemanticAnalyzer::visit(StartTransactionStmt *node)
+        {
+            // Transaction statements don't require semantic analysis
+            // They will be handled by the executor
+            (void)node; // Suppress unused parameter warning
+        }
+
+        void SemanticAnalyzer::visit(CommitStmt *node)
+        {
+            // Transaction statements don't require semantic analysis
+            (void)node; // Suppress unused parameter warning
+        }
+
+        void SemanticAnalyzer::visit(RollbackStmt *node)
+        {
+            // Transaction statements don't require semantic analysis
+            (void)node; // Suppress unused parameter warning
+        }
+
         // ===== Expression Visitors =====
 
         void SemanticAnalyzer::checkExpression(Expression *expr)

@@ -127,6 +127,25 @@ namespace scratchbird
             KW_WITH,
             KW_WITHOUT,
             KW_AT,
+
+            // Transaction control (Phase 2 Task 2.6)
+            KW_START,
+            KW_TRANSACTION,
+            KW_COMMIT,
+            KW_ROLLBACK,
+            KW_READ,
+            KW_WRITE,
+            KW_ONLY,
+            KW_ISOLATION,
+            KW_LEVEL,
+            KW_COMMITTED,
+            KW_SNAPSHOT,
+            KW_STABILITY,
+            KW_RESERVING,
+            KW_SHARED,
+            KW_PROTECTED,
+            KW_FOR,
+            KW_OUTSTANDING,
         };
 
         // Location in source file
