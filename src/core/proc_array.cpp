@@ -263,6 +263,32 @@ namespace scratchbird::core
         return Status::OK;
     }
 
+    auto ProcArrayManager::setIsolationLevel(uint32_t proc_id, uint8_t isolation_level,
+                                            ErrorContext* ctx) -> Status
+    {
+        if (!proc_array_) {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "ProcArray not initialized");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        ProcessControlBlock* pcb = getPCB(proc_id);
+        if (!pcb || !pcb->is_active) {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Invalid or inactive backend");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        pthread_rwlock_wrlock(&proc_array_->array_lock);
+
+        pcb->isolation_level = isolation_level;
+        // IsolationLevel: 0=READ_COMMITTED, 1=READ_COMMITTED_READ_CONSISTENCY, 2=SNAPSHOT, 3=SNAPSHOT_TABLE_STABILITY
+        // SNAPSHOT modes are 2 and 3
+        pcb->is_snapshot_txn = (isolation_level >= 2);
+
+        pthread_rwlock_unlock(&proc_array_->array_lock);
+
+        return Status::OK;
+    }
+
     auto ProcArrayManager::getActiveTransactions(std::vector<uint64_t>* xids_out,
                                                  uint64_t* oldest_xmin_out,
                                                  ErrorContext* ctx) -> Status

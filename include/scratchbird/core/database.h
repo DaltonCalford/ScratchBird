@@ -59,10 +59,11 @@ namespace scratchbird
             uint64_t next_page_id;        // Next page ID to allocate
             uint64_t system_catalog_page; // Root of system catalog (usually 1)
 
-            // Transaction info (48 bytes)
-            uint64_t next_transaction_id;  // Next transaction ID to assign
-            uint64_t oldest_transaction_id; // Oldest non-frozen XID (for VACUUM tracking)
-            uint64_t oldest_active_xid;    // Oldest active transaction
+            // Transaction info (56 bytes)
+            uint64_t next_transaction_id;  // Next transaction ID to assign (NEXT)
+            uint64_t oldest_transaction_id; // Oldest Interesting Transaction (OIT)
+            uint64_t oldest_active_xid;    // Oldest Active Transaction (OAT)
+            uint64_t oldest_snapshot;      // Oldest Snapshot Transaction (OST)
             uint64_t latest_completed_xid; // Latest completed transaction
             uint32_t tip_root_page;        // Root page of Transaction Inventory Pages
             uint32_t max_backends;         // Maximum concurrent backends

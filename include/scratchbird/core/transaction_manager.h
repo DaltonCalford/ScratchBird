@@ -103,15 +103,32 @@
                 return next_xid_;
             }
 
-            // Get oldest valid XID (for VACUUM and XID validation)
+            // Get oldest valid XID (OIT - for VACUUM and XID validation)
             auto getOldestXid() const -> uint64_t
             {
                 std::lock_guard<std::mutex> lock(mutex_);
                 return oldest_xid_;
             }
 
-            // Update oldest XID after VACUUM completes
+            // Get oldest active transaction (OAT)
+            auto getOldestActiveXid() const -> uint64_t
+            {
+                std::lock_guard<std::mutex> lock(mutex_);
+                return oldest_active_xid_;
+            }
+
+            // Get oldest snapshot transaction (OST)
+            auto getOldestSnapshot() const -> uint64_t
+            {
+                std::lock_guard<std::mutex> lock(mutex_);
+                return oldest_snapshot_;
+            }
+
+            // Update oldest XID after VACUUM/sweep completes
             auto setOldestXid(uint64_t xid, ErrorContext *ctx = nullptr) -> Status;
+
+            // Update transaction markers (called during transaction lifecycle)
+            auto updateTransactionMarkers(ErrorContext *ctx = nullptr) -> Status;
 
             // Check if approaching XID wraparound
             auto isApproachingWraparound() const -> bool
@@ -150,9 +167,11 @@
             PageManager *page_manager_;
 
             // Transaction state
-            uint64_t next_xid_ = 100;    // Next XID to allocate (start at 100)
-            uint64_t oldest_xid_ = FROZEN_XID + 1; // Oldest non-frozen XID (for VACUUM tracking)
-            uint32_t tip_root_page_ = 0; // Root TIP page ID
+            uint64_t next_xid_ = 100;           // Next XID to allocate (NEXT)
+            uint64_t oldest_xid_ = FROZEN_XID + 1; // Oldest Interesting Transaction (OIT)
+            uint64_t oldest_active_xid_ = 0;     // Oldest Active Transaction (OAT)
+            uint64_t oldest_snapshot_ = 0;       // Oldest Snapshot Transaction (OST)
+            uint32_t tip_root_page_ = 0;         // Root TIP page ID
 
             // In-memory cache of recent transactions (LRU cache)
             std::unordered_map<uint64_t, TransactionState> transaction_cache_;
