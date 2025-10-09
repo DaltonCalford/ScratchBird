@@ -4,6 +4,7 @@
 #include "scratchbird/core/page_manager.h"
 #include "scratchbird/core/proc_array.h"
 #include "scratchbird/core/clog.h"
+#include "scratchbird/core/sweep_manager.h"
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/core/logger.h"
 #include <algorithm>
@@ -307,54 +308,69 @@
 
         auto TransactionManager::commitTransaction(uint32_t proc_id, uint64_t xid, ErrorContext *ctx) -> Status
         {
-            std::lock_guard<std::mutex> lock(mutex_);
+            Status status;
 
-            // No longer verify against single active_xid_
+            // Perform commit within mutex scope
+            {
+                std::lock_guard<std::mutex> lock(mutex_);
 
-            // Update state (updates existing entry, marking as used)
-            auto cache_it = transaction_cache_.find(xid);
-            if (cache_it != transaction_cache_.end())
-            {
-                cache_it->second = TransactionState::COMMITTED;
-                touchCacheEntry(xid); // Mark as recently used
-            }
-            else
-            {
-                // Not in cache, add it
-                addToCacheLRU(xid, TransactionState::COMMITTED);
-            }
+                // No longer verify against single active_xid_
 
-            // Clear from ProcArray
-            Status status = ProcArrayManager::clearTransactionId(proc_id, ctx);
-            if (status != Status::OK)
-            {
-                // Continue anyway - state update is more critical
-            }
-
-            // Write to CLOG (commit log)
-            status = db_->clog()->setStatus(xid, ClogStatus::COMMITTED, ctx);
-            if (status != Status::OK)
-            {
-                // Try to rollback on failure
-                auto it = transaction_cache_.find(xid);
-                if (it != transaction_cache_.end())
+                // Update state (updates existing entry, marking as used)
+                auto cache_it = transaction_cache_.find(xid);
+                if (cache_it != transaction_cache_.end())
                 {
-                    it->second = TransactionState::ABORTED;
-                    touchCacheEntry(xid);
+                    cache_it->second = TransactionState::COMMITTED;
+                    touchCacheEntry(xid); // Mark as recently used
                 }
-                return status;
-            }
+                else
+                {
+                    // Not in cache, add it
+                    addToCacheLRU(xid, TransactionState::COMMITTED);
+                }
 
-            // Update TIP with committed state
-            status = writeTipEntry(xid, TransactionState::COMMITTED, ctx);
-            if (status != Status::OK)
+                // Clear from ProcArray
+                status = ProcArrayManager::clearTransactionId(proc_id, ctx);
+                if (status != Status::OK)
+                {
+                    // Continue anyway - state update is more critical
+                }
+
+                // Write to CLOG (commit log)
+                status = db_->clog()->setStatus(xid, ClogStatus::COMMITTED, ctx);
+                if (status != Status::OK)
+                {
+                    // Try to rollback on failure
+                    auto it = transaction_cache_.find(xid);
+                    if (it != transaction_cache_.end())
+                    {
+                        it->second = TransactionState::ABORTED;
+                        touchCacheEntry(xid);
+                    }
+                    return status;
+                }
+
+                // Update TIP with committed state
+                status = writeTipEntry(xid, TransactionState::COMMITTED, ctx);
+                if (status != Status::OK)
+                {
+                    // Log error but don't fail - CLOG is the source of truth
+                    LOG_WARNING(TRANSACTION, "Failed to update TIP entry for committed XID %lu", xid);
+                }
+
+                // Ensure durability
+                status = db_->sync(ctx);
+            }
+            // Mutex lock is now released
+
+            // Check if sweep should be triggered (non-blocking, runs outside mutex)
+            if (status == Status::OK && db_->sweep_manager())
             {
-                // Log error but don't fail - CLOG is the source of truth
-                LOG_WARNING(TRANSACTION, "Failed to update TIP entry for committed XID %lu", xid);
+                db_->sweep_manager()->checkSweepTrigger(ctx);
+                // Ignore sweep trigger errors - they're non-fatal
             }
 
-            // Ensure durability
-            return db_->sync(ctx);
+            return status;
         }
 
         auto TransactionManager::rollbackTransaction(uint32_t proc_id, uint64_t xid, ErrorContext *ctx) -> Status

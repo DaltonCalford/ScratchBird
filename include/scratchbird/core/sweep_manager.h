@@ -12,7 +12,7 @@ namespace scratchbird::core
     // Forward declarations
     class Database;
     class TransactionManager;
-    class BufferManager;
+    class BufferPool;
 
     // Sweep statistics for monitoring
     struct SweepStatistics
@@ -70,7 +70,7 @@ namespace scratchbird::core
     private:
         Database* db_;
         TransactionManager* txn_manager_;
-        BufferManager* buffer_manager_;
+        BufferPool* buffer_pool_;
 
         // Sweep statistics (protected by mutex)
         mutable std::mutex stats_mutex_;

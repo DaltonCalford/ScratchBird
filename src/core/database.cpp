@@ -8,6 +8,7 @@
 #include "scratchbird/core/lock_manager.h"
 #include "scratchbird/core/vacuum.h"
 #include "scratchbird/core/clog.h"
+#include "scratchbird/core/sweep_manager.h"
 #include "scratchbird/core/proc_array.h"
 #include "scratchbird/core/connection_context.h"
 #include "scratchbird/core/system_uuids.h"
@@ -39,7 +40,10 @@
 
         void Database::close()
         {
-            // Shut down lock manager first (before transaction manager)
+            // Shut down sweep manager first (before transaction manager)
+            sweep_manager_.reset();
+
+            // Shut down lock manager (before transaction manager)
             lock_manager_.reset();
 
             // Shut down ProcArray (before transaction manager)
@@ -670,6 +674,20 @@
                 return Status::OOM;
             }
             status = clog_->initialize(ctx);
+            if (status != Status::OK) {
+                close();
+                return status;
+            }
+
+            // Initialize sweep manager
+            try {
+                sweep_manager_ = std::make_unique<SweepManager>(this);
+            } catch (const std::bad_alloc&) {
+                close();
+                SET_ERROR_CONTEXT(ctx, Status::OOM, "Failed to allocate SweepManager");
+                return Status::OOM;
+            }
+            status = sweep_manager_->initialize(ctx);
             if (status != Status::OK) {
                 close();
                 return status;
