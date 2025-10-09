@@ -6,6 +6,7 @@
 #include "scratchbird/core/timezone.h"
 #include "scratchbird/core/page_manager.h"
 #include "scratchbird/core/connection_context.h"
+#include "scratchbird/core/sweep_manager.h"
 #include <sstream>
 #include <iomanip>
 #include <iostream>
@@ -956,6 +957,50 @@ namespace scratchbird
                 row.push_back(Value::makeInt64(static_cast<int64_t>(ost)));
 
                 current_result_set_->addRow(std::move(row));
+            }
+            else if (table_name == "MON_SWEEP")
+            {
+                // Add columns for sweep statistics
+                current_result_set_->addColumn("MON$SWEEP_COUNT", core::DataType::INT64);
+                current_result_set_->addColumn("MON$LAST_SWEEP_TIME", core::DataType::INT64);
+                current_result_set_->addColumn("MON$LAST_DURATION_MS", core::DataType::INT64);
+                current_result_set_->addColumn("MON$OIT_BEFORE", core::DataType::INT64);
+                current_result_set_->addColumn("MON$OIT_AFTER", core::DataType::INT64);
+                current_result_set_->addColumn("MON$TOTAL_SWEPT", core::DataType::INT64);
+                current_result_set_->addColumn("MON$IN_PROGRESS", core::DataType::BOOLEAN);
+
+                // Get sweep statistics from sweep manager
+                auto sweep_mgr = db_->sweep_manager();
+                if (sweep_mgr)
+                {
+                    auto stats = sweep_mgr->getStatistics();
+
+                    // Create the result row
+                    std::vector<Value> row;
+                    row.push_back(Value::makeInt64(static_cast<int64_t>(stats.sweep_count)));
+                    row.push_back(Value::makeInt64(static_cast<int64_t>(stats.last_sweep_time)));
+                    row.push_back(Value::makeInt64(static_cast<int64_t>(stats.last_sweep_duration_ms)));
+                    row.push_back(Value::makeInt64(static_cast<int64_t>(stats.last_oit_before)));
+                    row.push_back(Value::makeInt64(static_cast<int64_t>(stats.last_oit_after)));
+                    row.push_back(Value::makeInt64(static_cast<int64_t>(stats.total_transactions_swept)));
+                    row.push_back(Value::makeBoolean(stats.sweep_in_progress));
+
+                    current_result_set_->addRow(std::move(row));
+                }
+                else
+                {
+                    // SweepManager not available - return row with zeros
+                    std::vector<Value> row;
+                    row.push_back(Value::makeInt64(0));
+                    row.push_back(Value::makeInt64(0));
+                    row.push_back(Value::makeInt64(0));
+                    row.push_back(Value::makeInt64(0));
+                    row.push_back(Value::makeInt64(0));
+                    row.push_back(Value::makeInt64(0));
+                    row.push_back(Value::makeBoolean(false));
+
+                    current_result_set_->addRow(std::move(row));
+                }
             }
             else
             {
