@@ -93,6 +93,16 @@ namespace scratchbird::core
         // Get current snapshot (for SNAPSHOT isolation)
         const TransactionManager::Snapshot* getSnapshot() const { return snapshot_.get(); }
 
+        // Statement snapshot support (for READ_COMMITTED_READ_CONSISTENCY)
+        // Get current statement snapshot (may be null)
+        const TransactionManager::Snapshot* getStatementSnapshot() const { return statement_snapshot_.get(); }
+
+        // Create a new statement snapshot (for READ_COMMITTED_READ_CONSISTENCY)
+        Status createStatementSnapshot(ErrorContext* ctx = nullptr);
+
+        // Clear the statement snapshot
+        void clearStatementSnapshot();
+
         // Connection settings
         void setWaitForLocks(bool wait) { wait_for_locks_ = wait; }
         bool getWaitForLocks() const { return wait_for_locks_; }
@@ -132,6 +142,10 @@ namespace scratchbird::core
 
         // Snapshot for SNAPSHOT isolation
         std::unique_ptr<TransactionManager::Snapshot> snapshot_;
+
+        // Statement snapshot for READ_COMMITTED_READ_CONSISTENCY
+        // Created at statement start, cleared at statement end
+        std::unique_ptr<TransactionManager::Snapshot> statement_snapshot_;
 
         // Table reservations for SNAPSHOT TABLE STABILITY
         std::vector<TableReservation> table_reservations_;

@@ -5,6 +5,7 @@
 #include "scratchbird/core/charset.h"
 #include "scratchbird/core/timezone.h"
 #include "scratchbird/core/page_manager.h"
+#include "scratchbird/core/connection_context.h"
 #include <sstream>
 #include <iomanip>
 #include <iostream>
@@ -102,6 +103,10 @@ namespace scratchbird
             current_columns_.clear();
             current_result_set_.reset();
 
+            // Statement snapshot management for READ_COMMITTED_READ_CONSISTENCY
+            core::ConnectionContext* conn_ctx = core::ConnectionContext::getCurrent();
+            bool created_stmt_snapshot = false;
+
             try
             {
                 // Check version
@@ -117,29 +122,60 @@ namespace scratchbird
                                            std::to_string(version));
                 }
 
+                // Create statement snapshot for READ_COMMITTED_READ_CONSISTENCY
+                if (conn_ctx && conn_ctx->getIsolationLevel() == core::IsolationLevel::READ_COMMITTED_READ_CONSISTENCY)
+                {
+                    core::ErrorContext err_ctx;
+                    core::Status status = conn_ctx->createStatementSnapshot(&err_ctx);
+                    if (status == core::Status::OK)
+                    {
+                        created_stmt_snapshot = true;
+                    }
+                    // Non-fatal if snapshot creation fails - fall back to READ COMMITTED semantics
+                }
+
                 // Execute main statement
                 Opcode op = static_cast<Opcode>(readByte());
+                ExecutionResult result;
+
                 switch (op)
                 {
                     case Opcode::CREATE_TABLE:
                         executeCreateTable();
-                        return ExecutionResult();
+                        result = ExecutionResult();
+                        break;
 
                     case Opcode::INSERT:
                         executeInsert();
-                        return ExecutionResult();
+                        result = ExecutionResult();
+                        break;
 
                     case Opcode::SELECT:
                         executeSelect();
-                        return ExecutionResult(std::move(current_result_set_));
+                        result = ExecutionResult(std::move(current_result_set_));
+                        break;
 
                     default:
-                        return ExecutionResult("Unknown statement opcode: " +
+                        result = ExecutionResult("Unknown statement opcode: " +
                                                std::to_string(static_cast<int>(op)));
+                        break;
                 }
+
+                // Clear statement snapshot after successful execution
+                if (created_stmt_snapshot && conn_ctx)
+                {
+                    conn_ctx->clearStatementSnapshot();
+                }
+
+                return result;
             }
             catch (const std::exception &e)
             {
+                // Clear statement snapshot on error
+                if (created_stmt_snapshot && conn_ctx)
+                {
+                    conn_ctx->clearStatementSnapshot();
+                }
                 return ExecutionResult(std::string("Execution error: ") + e.what());
             }
         }

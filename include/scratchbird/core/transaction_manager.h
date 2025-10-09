@@ -85,9 +85,9 @@
 
             // Get transaction state
             auto getTransactionState(uint64_t xid, TransactionState &state_out,
-                                         ErrorContext *ctx = nullptr) -> Status;
+                                         ErrorContext *ctx = nullptr) const -> Status;
 
-            // Check if a transaction is visible to another transaction
+            // Check if a transaction is visible to another transaction (READ COMMITTED semantics)
             auto isTransactionVisible(uint64_t xid, uint64_t snapshot_xid) -> bool;
 
             // Validate XID is structurally valid (not INVALID_XID)
@@ -161,6 +161,10 @@
             // Get current snapshot (for future MVCC)
             auto getSnapshot(Snapshot &snapshot_out, ErrorContext *ctx = nullptr) -> Status;
 
+            // Check if a transaction is visible using snapshot isolation (SNAPSHOT semantics)
+            // Returns true if xid is visible according to the snapshot
+            auto isSnapshotVisible(uint64_t xid, const Snapshot* snapshot) const -> bool;
+
         private:
             Database *db_;
             BufferPool *buffer_pool_;
@@ -174,9 +178,10 @@
             uint32_t tip_root_page_ = 0;         // Root TIP page ID
 
             // In-memory cache of recent transactions (LRU cache)
-            std::unordered_map<uint64_t, TransactionState> transaction_cache_;
-            std::list<uint64_t> cache_lru_list_; // LRU list: front = most recent, back = least recent
-            std::unordered_map<uint64_t, std::list<uint64_t>::iterator> cache_lru_map_; // XID -> position in LRU list
+            // Marked mutable since caching is an internal optimization that doesn't affect logical constness
+            mutable std::unordered_map<uint64_t, TransactionState> transaction_cache_;
+            mutable std::list<uint64_t> cache_lru_list_; // LRU list: front = most recent, back = least recent
+            mutable std::unordered_map<uint64_t, std::list<uint64_t>::iterator> cache_lru_map_; // XID -> position in LRU list
             mutable std::mutex mutex_; // Thread safety for future
 
             // Special transaction IDs
@@ -201,11 +206,11 @@
             auto findTipEntry(uint64_t xid, TIPEntry &entry_out, ErrorContext *ctx) -> Status;
             auto flushTransactionState(ErrorContext *ctx) -> Status;
 
-            // LRU cache management
-            void touchCacheEntry(uint64_t xid); // Move entry to front of LRU
-            void evictOldestCacheEntry(); // Remove least recently used entry
-            void addToCacheLRU(uint64_t xid, TransactionState state); // Add with LRU tracking
-            void removeFromCacheLRU(uint64_t xid); // Remove with LRU cleanup
+            // LRU cache management (const because they modify mutable cache state)
+            void touchCacheEntry(uint64_t xid) const; // Move entry to front of LRU
+            void evictOldestCacheEntry() const; // Remove least recently used entry
+            void addToCacheLRU(uint64_t xid, TransactionState state) const; // Add with LRU tracking
+            void removeFromCacheLRU(uint64_t xid) const; // Remove with LRU cleanup
         };
 
     } // namespace scratchbird::core
