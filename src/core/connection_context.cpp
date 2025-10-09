@@ -2,6 +2,8 @@
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/proc_array.h"
 #include "scratchbird/core/logger.h"
+#include "scratchbird/core/lock_manager.h"
+#include "scratchbird/core/catalog_manager.h"
 #include <cassert>
 
 namespace scratchbird::core
@@ -58,6 +60,7 @@ namespace scratchbird::core
         , next_isolation_level_(other.next_isolation_level_)
         , next_is_read_only_(other.next_is_read_only_)
         , snapshot_(std::move(other.snapshot_))
+        , statement_snapshot_(std::move(other.statement_snapshot_))
         , table_reservations_(std::move(other.table_reservations_))
     {
         // Clear other's state
@@ -91,6 +94,7 @@ namespace scratchbird::core
             next_isolation_level_ = other.next_isolation_level_;
             next_is_read_only_ = other.next_is_read_only_;
             snapshot_ = std::move(other.snapshot_);
+            statement_snapshot_ = std::move(other.statement_snapshot_);
             table_reservations_ = std::move(other.table_reservations_);
 
             // Clear other's state
@@ -253,14 +257,15 @@ namespace scratchbird::core
     Status ConnectionContext::reserveTables(const std::vector<TableReservation>& reservations,
                                           ErrorContext* ctx)
     {
-        // For now, just store the reservations
-        // Actual lock acquisition would happen in the lock manager
+        // Store the reservations
+        // Actual lock acquisition happens in beginNewTransaction() for SNAPSHOT TABLE STABILITY
         table_reservations_ = reservations;
 
         LOG_DEBUG(LOCK, "Reserved %zu tables for transaction: proc_id=%u, xid=%lu",
                  reservations.size(), proc_id_, current_xid_);
 
-        // TODO: Implement actual table locking when SNAPSHOT TABLE STABILITY is used
+        // Note: Table locks will be acquired when the next transaction starts with
+        // SNAPSHOT TABLE STABILITY isolation level. See beginNewTransaction().
 
         return Status::OK;
     }
@@ -297,8 +302,9 @@ namespace scratchbird::core
             // Non-fatal - continue with transaction
         }
 
-        // Create snapshot if using SNAPSHOT isolation
-        if (isolation_level_ == IsolationLevel::SNAPSHOT)
+        // Create snapshot if using SNAPSHOT or SNAPSHOT_TABLE_STABILITY isolation
+        if (isolation_level_ == IsolationLevel::SNAPSHOT ||
+            isolation_level_ == IsolationLevel::SNAPSHOT_TABLE_STABILITY)
         {
             s = createSnapshot(ctx);
             if (s != Status::OK)
@@ -314,9 +320,77 @@ namespace scratchbird::core
         if (isolation_level_ == IsolationLevel::SNAPSHOT_TABLE_STABILITY &&
             !table_reservations_.empty())
         {
-            // TODO: Acquire table locks via LockManager
-            LOG_DEBUG(LOCK, "TODO: Acquire table locks for %zu reserved tables",
-                     table_reservations_.size());
+            LockManager* lock_mgr = db_->lock_manager();
+            CatalogManager* catalog = db_->catalog_manager();
+
+            if (!lock_mgr || !catalog)
+            {
+                LOG_ERROR(LOCK, "LockManager or CatalogManager not available");
+                return Status::IO_ERROR;
+            }
+
+            // First, get the default schema ID (use "[sys]" for now)
+            CatalogManager::SchemaInfo schema_info;
+            s = catalog->getSchema("[sys]", schema_info, ctx);
+            if (s != Status::OK)
+            {
+                LOG_ERROR(LOCK, "Failed to get [sys] schema for table locking");
+                return s;
+            }
+
+            // Acquire locks for each reserved table
+            for (const auto& reservation : table_reservations_)
+            {
+                // Look up table to get its UUID
+                CatalogManager::TableInfo table_info;
+                s = catalog->getTable(schema_info.schema_id, reservation.table_name, table_info, ctx);
+                if (s != Status::OK)
+                {
+                    LOG_ERROR(LOCK, "Failed to find table '%s' for locking",
+                             reservation.table_name.c_str());
+                    // Release all locks acquired so far
+                    lock_mgr->releaseAllLocks(proc_id_, nullptr);
+                    return s;
+                }
+
+                // Convert TableLockMode to LockMode
+                LockMode lock_mode;
+                if (reservation.lock_mode == TableLockMode::SHARED)
+                {
+                    // SHARED allows concurrent reads
+                    lock_mode = LockMode::LOCK_SHARE;
+                }
+                else // PROTECTED
+                {
+                    // PROTECTED gives exclusive access
+                    lock_mode = LockMode::LOCK_ACCESS_EXCLUSIVE;
+                }
+
+                // Create lock tag for table
+                LockTag tag;
+                tag.target_type = LockTarget::LOCK_TARGET_TABLE;
+                tag.object_uuid = table_info.table_id;
+                tag.page_num = 0;
+                tag.offset_num = 0;
+                tag.padding = 0;
+
+                // Acquire the lock
+                uint32_t timeout_ms = lock_timeout_seconds_ * 1000;
+                s = lock_mgr->acquireLock(proc_id_, tag, lock_mode, wait_for_locks_, timeout_ms, ctx);
+                if (s != Status::OK)
+                {
+                    LOG_ERROR(LOCK, "Failed to acquire %s lock on table '%s'",
+                             reservation.lock_mode == TableLockMode::SHARED ? "SHARED" : "PROTECTED",
+                             reservation.table_name.c_str());
+                    // Release all locks acquired so far
+                    lock_mgr->releaseAllLocks(proc_id_, nullptr);
+                    return s;
+                }
+
+                LOG_DEBUG(LOCK, "Acquired %s lock on table '%s' for transaction: proc_id=%u, xid=%lu",
+                         reservation.lock_mode == TableLockMode::SHARED ? "SHARED" : "PROTECTED",
+                         reservation.table_name.c_str(), proc_id_, current_xid_);
+            }
         }
 
         return Status::OK;
@@ -335,8 +409,27 @@ namespace scratchbird::core
             s = txn_manager_->rollbackTransaction(proc_id_, current_xid_, ctx);
         }
 
-        // Clear snapshot if any
+        // Release all locks held by this transaction
+        LockManager* lock_mgr = db_->lock_manager();
+        if (lock_mgr)
+        {
+            Status lock_status = lock_mgr->releaseAllLocks(proc_id_, ctx);
+            if (lock_status != Status::OK)
+            {
+                LOG_WARNING(LOCK, "Failed to release locks after %s: proc_id=%u, xid=%lu",
+                           commit ? "commit" : "rollback", proc_id_, current_xid_);
+                // Non-fatal - continue with transaction cleanup
+            }
+            else
+            {
+                LOG_DEBUG(LOCK, "Released all locks for transaction: proc_id=%u, xid=%lu",
+                         proc_id_, current_xid_);
+            }
+        }
+
+        // Clear snapshots if any
         snapshot_.reset();
+        statement_snapshot_.reset();
 
         // Clear transaction state (will be reset by beginNewTransaction)
         current_xid_ = 0;
@@ -383,6 +476,33 @@ namespace scratchbird::core
                  snapshot_->xmin, snapshot_->xmax, snapshot_->active_xids.size());
 
         return Status::OK;
+    }
+
+    Status ConnectionContext::createStatementSnapshot(ErrorContext* ctx)
+    {
+        auto snapshot = std::make_unique<TransactionManager::Snapshot>();
+
+        Status s = txn_manager_->getSnapshot(*snapshot, ctx);
+        if (s != Status::OK)
+        {
+            return s;
+        }
+
+        statement_snapshot_ = std::move(snapshot);
+
+        LOG_DEBUG(TRANSACTION, "Created statement snapshot: xmin=%lu, xmax=%lu, active_xids=%zu",
+                 statement_snapshot_->xmin, statement_snapshot_->xmax, statement_snapshot_->active_xids.size());
+
+        return Status::OK;
+    }
+
+    void ConnectionContext::clearStatementSnapshot()
+    {
+        if (statement_snapshot_)
+        {
+            LOG_DEBUG(TRANSACTION, "Cleared statement snapshot");
+            statement_snapshot_.reset();
+        }
     }
 
 } // namespace scratchbird::core

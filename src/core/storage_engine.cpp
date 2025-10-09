@@ -218,19 +218,166 @@
                     xmax = 0;
                 }
 
-                // Check if creating transaction is visible
-                if (!tm->isTransactionVisible(xmin, current_xid))
+                // Get current connection context to determine isolation level
+                ConnectionContext* conn_ctx = ConnectionContext::getCurrent();
+
+                // "See own changes" logic - transaction always sees its own modifications
+                if (xmin == current_xid)
                 {
-                    return false;
+                    // Created by current transaction - check if deleted by current transaction
+                    if (xmax == current_xid)
+                    {
+                        return false; // Deleted by current transaction - not visible
+                    }
+                    return true; // Created by current transaction and not yet deleted - visible
                 }
 
-                // If deleted, check if deleting transaction is visible
-                if (xmax != 0 && tm->isTransactionVisible(xmax, current_xid))
+                // If no connection context, fall back to READ COMMITTED semantics
+                if (conn_ctx == nullptr)
                 {
-                    return false;
+                    // Check if creating transaction is visible
+                    if (!tm->isTransactionVisible(xmin, current_xid))
+                    {
+                        return false;
+                    }
+
+                    // If deleted, check if deleting transaction is visible
+                    if (xmax != 0 && tm->isTransactionVisible(xmax, current_xid))
+                    {
+                        return false;
+                    }
+
+                    return true;
                 }
 
-                return true;
+                // Isolation-level-aware visibility checking
+                IsolationLevel iso_level = conn_ctx->getIsolationLevel();
+
+                switch (iso_level)
+                {
+                    case IsolationLevel::READ_COMMITTED:
+                    {
+                        // READ COMMITTED: See latest committed data
+                        // Check if creating transaction is visible
+                        if (!tm->isTransactionVisible(xmin, current_xid))
+                        {
+                            return false;
+                        }
+
+                        // If deleted, check if deleting transaction is visible
+                        if (xmax != 0 && tm->isTransactionVisible(xmax, current_xid))
+                        {
+                            return false;
+                        }
+
+                        return true;
+                    }
+
+                    case IsolationLevel::SNAPSHOT:
+                    case IsolationLevel::SNAPSHOT_TABLE_STABILITY:
+                    {
+                        // SNAPSHOT: Use snapshot-based visibility
+                        const TransactionManager::Snapshot* snapshot = conn_ctx->getSnapshot();
+
+                        if (snapshot == nullptr)
+                        {
+                            LOG_WARNING(STORAGE, "SNAPSHOT isolation without snapshot - falling back to READ COMMITTED");
+                            // Fallback to READ COMMITTED semantics
+                            if (!tm->isTransactionVisible(xmin, current_xid))
+                            {
+                                return false;
+                            }
+
+                            if (xmax != 0 && tm->isTransactionVisible(xmax, current_xid))
+                            {
+                                return false;
+                            }
+
+                            return true;
+                        }
+
+                        // Check if creating transaction is visible in snapshot
+                        if (!tm->isSnapshotVisible(xmin, snapshot))
+                        {
+                            return false;
+                        }
+
+                        // If deleted, check if deleting transaction is visible in snapshot
+                        if (xmax != 0)
+                        {
+                            // Special case: deleted by current transaction
+                            if (xmax == current_xid)
+                            {
+                                return false; // We deleted it - not visible
+                            }
+
+                            // Check if deletion is visible in snapshot
+                            if (tm->isSnapshotVisible(xmax, snapshot))
+                            {
+                                return false; // Deletion committed before snapshot - not visible
+                            }
+                        }
+
+                        return true;
+                    }
+
+                    case IsolationLevel::READ_COMMITTED_READ_CONSISTENCY:
+                    {
+                        // READ COMMITTED READ CONSISTENCY: Statement-level snapshot
+                        // If statement snapshot exists, use it; otherwise fall back to READ COMMITTED
+                        const TransactionManager::Snapshot* stmt_snapshot = conn_ctx->getStatementSnapshot();
+
+                        if (stmt_snapshot != nullptr)
+                        {
+                            // Use statement snapshot (similar to SNAPSHOT isolation)
+                            // Check if creating transaction is visible in statement snapshot
+                            if (!tm->isSnapshotVisible(xmin, stmt_snapshot))
+                            {
+                                return false;
+                            }
+
+                            // If deleted, check if deleting transaction is visible in statement snapshot
+                            if (xmax != 0)
+                            {
+                                // Special case: deleted by current transaction
+                                if (xmax == current_xid)
+                                {
+                                    return false; // We deleted it - not visible
+                                }
+
+                                // Check if deletion is visible in statement snapshot
+                                if (tm->isSnapshotVisible(xmax, stmt_snapshot))
+                                {
+                                    return false; // Deletion committed before statement - not visible
+                                }
+                            }
+
+                            return true;
+                        }
+                        else
+                        {
+                            // No statement snapshot - fall back to READ COMMITTED semantics
+                            // This happens between statements (normal READ COMMITTED behavior)
+                            if (!tm->isTransactionVisible(xmin, current_xid))
+                            {
+                                return false;
+                            }
+
+                            if (xmax != 0 && tm->isTransactionVisible(xmax, current_xid))
+                            {
+                                return false;
+                            }
+
+                            return true;
+                        }
+                    }
+
+                    default:
+                    {
+                        LOG_ERROR(STORAGE, "Unknown isolation level: %d", static_cast<int>(iso_level));
+                        return false;
+                    }
+                }
             }
 
             // Fallback to simple visibility rules (still validate XIDs)

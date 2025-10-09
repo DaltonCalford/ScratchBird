@@ -345,6 +345,14 @@
                 return status;
             }
 
+            // Update TIP with committed state
+            status = writeTipEntry(xid, TransactionState::COMMITTED, ctx);
+            if (status != Status::OK)
+            {
+                // Log error but don't fail - CLOG is the source of truth
+                LOG_WARNING(TRANSACTION, "Failed to update TIP entry for committed XID %lu", xid);
+            }
+
             // Ensure durability
             return db_->sync(ctx);
         }
@@ -382,12 +390,20 @@
                 return status;
             }
 
+            // Update TIP with aborted state
+            status = writeTipEntry(xid, TransactionState::ABORTED, ctx);
+            if (status != Status::OK)
+            {
+                // Log error but don't fail - CLOG is the source of truth
+                LOG_WARNING(TRANSACTION, "Failed to update TIP entry for aborted XID %lu", xid);
+            }
+
             // Sync to ensure rollback is recorded
             return db_->sync(ctx);
         }
 
         auto TransactionManager::getTransactionState(uint64_t xid, TransactionState &state_out,
-                                                         ErrorContext *ctx) -> Status
+                                                         ErrorContext *ctx) const -> Status
         {
             std::lock_guard<std::mutex> lock(mutex_);
 
@@ -659,6 +675,72 @@
             return state == TransactionState::COMMITTED;
         }
 
+        auto TransactionManager::isSnapshotVisible(uint64_t xid, const Snapshot* snapshot) const -> bool
+        {
+            // Null snapshot check
+            if (snapshot == nullptr)
+            {
+                LOG_WARNING(TRANSACTION, "isSnapshotVisible called with null snapshot for XID %lu", xid);
+                return false;
+            }
+
+            // 1. Validate XID - protect against corrupted tuple headers
+            if (!isXidInRange(xid))
+            {
+                LOG_ERROR(TRANSACTION, "Invalid XID %lu in snapshot visibility check", xid);
+                return false;
+            }
+
+            // 2. Future transaction (started after snapshot was taken) - INVISIBLE
+            //    Any XID >= xmax did not exist when snapshot was created
+            if (xid >= snapshot->xmax)
+            {
+                return false;
+            }
+
+            // 3. Frozen tuples are always visible
+            //    FROZEN_XID = 2, used for tuples that survived VACUUM
+            if (xid <= FROZEN_XID)
+            {
+                return true;
+            }
+
+            // 4. Transaction was active at snapshot time - INVISIBLE
+            //    Binary search in sorted active_xids array (O(log N))
+            //    Note: active_xids is sorted by getSnapshot()
+            if (std::binary_search(snapshot->active_xids.begin(),
+                                  snapshot->active_xids.end(), xid))
+            {
+                return false;  // Transaction was in-progress at snapshot time
+            }
+
+            // 5. Old transaction (started before oldest active transaction)
+            //    These must be committed to be visible
+            if (xid < snapshot->xmin)
+            {
+                TransactionState state;
+                if (getTransactionState(xid, state, nullptr) != Status::OK)
+                {
+                    // Error getting state - for safety, assume visible if old
+                    return true;
+                }
+                return state == TransactionState::COMMITTED;
+            }
+
+            // 6. Transaction started after xmin but before xmax,
+            //    and was NOT in the active list at snapshot time
+            //    This means it must have committed BEFORE the snapshot
+            //    Verify it's actually committed
+            TransactionState state;
+            if (getTransactionState(xid, state, nullptr) != Status::OK)
+            {
+                // Error getting state - assume not visible for safety
+                return false;
+            }
+
+            return state == TransactionState::COMMITTED;
+        }
+
         auto TransactionManager::getBackendXid(uint32_t proc_id) const -> uint64_t
         {
             // Use ProcArray API to safely get backend XID
@@ -686,6 +768,9 @@
             }
 
             snapshot_out.xmin = (oldest_xmin != 0) ? oldest_xmin : FROZEN_XID + 1;
+
+            // Sort active_xids for efficient binary search in isSnapshotVisible()
+            std::sort(snapshot_out.active_xids.begin(), snapshot_out.active_xids.end());
 
             return Status::OK;
         }
@@ -948,7 +1033,7 @@
             return db_->sync(ctx);
         }
 
-        void TransactionManager::touchCacheEntry(uint64_t xid)
+        void TransactionManager::touchCacheEntry(uint64_t xid) const
         {
             // Move entry to front of LRU list (most recently used)
             // Assumes mutex_ is already held by caller
@@ -969,7 +1054,7 @@
             cache_lru_map_[xid] = cache_lru_list_.begin();
         }
 
-        void TransactionManager::evictOldestCacheEntry()
+        void TransactionManager::evictOldestCacheEntry() const
         {
             // Remove least recently used entry (back of list)
             // Assumes mutex_ is already held by caller
@@ -987,7 +1072,7 @@
             transaction_cache_.erase(oldest_xid);
         }
 
-        void TransactionManager::addToCacheLRU(uint64_t xid, TransactionState state)
+        void TransactionManager::addToCacheLRU(uint64_t xid, TransactionState state) const
         {
             // Add entry with LRU tracking
             // Assumes mutex_ is already held by caller
@@ -1006,7 +1091,7 @@
             cache_lru_map_[xid] = cache_lru_list_.begin();
         }
 
-        void TransactionManager::removeFromCacheLRU(uint64_t xid)
+        void TransactionManager::removeFromCacheLRU(uint64_t xid) const
         {
             // Remove entry with LRU cleanup
             // Assumes mutex_ is already held by caller
