@@ -1,16 +1,17 @@
 #include "scratchbird/core/sweep_manager.h"
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/transaction_manager.h"
-#include "scratchbird/core/buffer_manager.h"
+#include "scratchbird/core/buffer_pool.h"
 #include "scratchbird/core/logger.h"
 #include <chrono>
+#include <thread>
 
 namespace scratchbird::core
 {
     SweepManager::SweepManager(Database* db)
         : db_(db)
         , txn_manager_(nullptr)
-        , buffer_manager_(nullptr)
+        , buffer_pool_(nullptr)
     {
     }
 
@@ -32,15 +33,15 @@ namespace scratchbird::core
         }
 
         txn_manager_ = db_->transaction_manager();
-        buffer_manager_ = db_->buffer_manager();
+        buffer_pool_ = db_->buffer_pool();
 
-        if (!txn_manager_ || !buffer_manager_)
+        if (!txn_manager_ || !buffer_pool_)
         {
-            SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "TransactionManager or BufferManager not available");
+            SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "TransactionManager or BufferPool not available");
             return Status::IO_ERROR;
         }
 
-        LOG_INFO(SWEEP, "SweepManager initialized");
+        LOG_INFO(VACUUM, "SweepManager initialized");
         return Status::OK;
     }
 
@@ -72,14 +73,14 @@ namespace scratchbird::core
         // Trigger sweep if gap exceeds threshold
         if (gap > sweep_interval)
         {
-            LOG_INFO(SWEEP, "Sweep trigger condition met: gap=%lu, interval=%u, oit=%lu, ost=%lu",
+            LOG_INFO(VACUUM, "Sweep trigger condition met: gap=%lu, interval=%u, oit=%lu, ost=%lu",
                      gap, sweep_interval, oit, ost);
 
             // Trigger background sweep (non-blocking)
             Status s = executeSweep(false, ctx);
             if (s != Status::OK)
             {
-                LOG_ERROR(SWEEP, "Failed to trigger sweep: %d", static_cast<int>(s));
+                LOG_ERROR(VACUUM, "Failed to trigger sweep: %d", static_cast<int>(s));
                 return false;
             }
 
@@ -95,12 +96,12 @@ namespace scratchbird::core
         bool expected = false;
         if (!sweep_in_progress_.compare_exchange_strong(expected, true, std::memory_order_acq_rel))
         {
-            LOG_WARNING(SWEEP, "Sweep already in progress, skipping");
+            LOG_WARNING(VACUUM, "Sweep already in progress, skipping");
             SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Sweep already in progress");
             return Status::IO_ERROR;
         }
 
-        LOG_INFO(SWEEP, "Starting sweep: mode=%s", foreground ? "foreground" : "background");
+        LOG_INFO(VACUUM, "Starting sweep: mode=%s", foreground ? "foreground" : "background");
 
         auto start_time = std::chrono::steady_clock::now();
         uint64_t oit_before = txn_manager_->getOldestXid();
@@ -111,7 +112,7 @@ namespace scratchbird::core
         if (new_oit == 0 || new_oit == oit_before)
         {
             // No change needed
-            LOG_INFO(SWEEP, "Sweep completed: OIT unchanged (oit=%lu)", oit_before);
+            LOG_INFO(VACUUM, "Sweep completed: OIT unchanged (oit=%lu)", oit_before);
             sweep_in_progress_.store(false, std::memory_order_release);
             return Status::OK;
         }
@@ -120,7 +121,7 @@ namespace scratchbird::core
         Status s = txn_manager_->setOldestXid(new_oit, ctx);
         if (s != Status::OK)
         {
-            LOG_ERROR(SWEEP, "Failed to update OIT: %d", static_cast<int>(s));
+            LOG_ERROR(VACUUM, "Failed to update OIT: %d", static_cast<int>(s));
             sweep_in_progress_.store(false, std::memory_order_release);
             return s;
         }
@@ -131,7 +132,7 @@ namespace scratchbird::core
             s = reclaimSpace(new_oit, ctx);
             if (s != Status::OK)
             {
-                LOG_WARNING(SWEEP, "Space reclamation failed: %d", static_cast<int>(s));
+                LOG_WARNING(VACUUM, "Space reclamation failed: %d", static_cast<int>(s));
                 // Non-fatal - OIT is already advanced
             }
         }
@@ -142,7 +143,7 @@ namespace scratchbird::core
 
         updateStatistics(oit_before, new_oit, duration_ms);
 
-        LOG_INFO(SWEEP, "Sweep completed: old_oit=%lu, new_oit=%lu, duration=%lums",
+        LOG_INFO(VACUUM, "Sweep completed: old_oit=%lu, new_oit=%lu, duration=%lums",
                  oit_before, new_oit, duration_ms);
 
         sweep_in_progress_.store(false, std::memory_order_release);
@@ -152,9 +153,9 @@ namespace scratchbird::core
     uint64_t SweepManager::findFirstUncommittedTransaction(ErrorContext* ctx)
     {
         uint64_t current_oit = txn_manager_->getOldestXid();
-        uint64_t current_xmax = txn_manager_->getNextTransactionId();
+        uint64_t current_xmax = txn_manager_->getCurrentXid();
 
-        LOG_DEBUG(SWEEP, "Scanning transactions: oit=%lu, xmax=%lu, range=%lu",
+        LOG_DEBUG(VACUUM, "Scanning transactions: oit=%lu, xmax=%lu, range=%lu",
                   current_oit, current_xmax, current_xmax - current_oit);
 
         // Scan from current OIT to current XMAX
@@ -164,26 +165,34 @@ namespace scratchbird::core
 
         for (uint64_t xid = current_oit; xid < current_xmax; xid++)
         {
-            TransactionState state = txn_manager_->getTransactionState(xid);
-
-            // Skip special XIDs
-            if (xid <= TransactionManager::FROZEN_XID)
+            // Skip special XIDs (INVALID_XID=0, BOOTSTRAP_XID=1, FROZEN_XID=2)
+            constexpr uint64_t FROZEN_XID = 2;
+            if (xid <= FROZEN_XID)
             {
                 continue;
+            }
+
+            TransactionState state;
+            Status s = txn_manager_->getTransactionState(xid, state, ctx);
+            if (s != Status::OK)
+            {
+                // If we can't read state, assume it's still active (conservative)
+                LOG_DEBUG(VACUUM, "Failed to read transaction state for xid=%lu, assuming active", xid);
+                return xid;
             }
 
             // First transaction that's not committed/aborted is new OIT
             if (state != TransactionState::COMMITTED &&
                 state != TransactionState::ABORTED)
             {
-                LOG_DEBUG(SWEEP, "Found first uncommitted transaction: xid=%lu, state=%d",
+                LOG_DEBUG(VACUUM, "Found first uncommitted transaction: xid=%lu, state=%d",
                           xid, static_cast<int>(state));
                 return xid;
             }
         }
 
         // All transactions are committed/aborted - OIT can advance to XMAX
-        LOG_DEBUG(SWEEP, "All transactions committed/aborted, advancing OIT to XMAX=%lu", current_xmax);
+        LOG_DEBUG(VACUUM, "All transactions committed/aborted, advancing OIT to XMAX=%lu", current_xmax);
         return current_xmax;
     }
 
@@ -199,7 +208,7 @@ namespace scratchbird::core
         // TODO: Implement space reclamation in future iteration
         // For now, rely on cooperative/background GC for space reclamation
 
-        LOG_INFO(SWEEP, "Space reclamation not yet implemented (new_oit=%lu)", new_oit);
+        LOG_INFO(VACUUM, "Space reclamation not yet implemented (new_oit=%lu)", new_oit);
         return Status::OK;
     }
 
@@ -217,7 +226,7 @@ namespace scratchbird::core
         stats_.total_transactions_swept += (oit_after - oit_before);
         stats_.sweep_in_progress = false;
 
-        LOG_DEBUG(SWEEP, "Statistics updated: count=%lu, transactions_swept=%lu",
+        LOG_DEBUG(VACUUM, "Statistics updated: count=%lu, transactions_swept=%lu",
                   stats_.sweep_count, stats_.total_transactions_swept);
     }
 
