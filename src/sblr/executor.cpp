@@ -1049,6 +1049,21 @@ namespace scratchbird
                 current_result_set_->addColumn("MON$DIRTY_PAGE_COUNT", core::DataType::INT64);
                 current_result_set_->addColumn("MON$SPACE_RECLAIMED", core::DataType::INT64);
 
+                // Enhanced metrics - Duration histogram
+                current_result_set_->addColumn("MON$DURATION_0_10MS", core::DataType::INT64);
+                current_result_set_->addColumn("MON$DURATION_10_50MS", core::DataType::INT64);
+                current_result_set_->addColumn("MON$DURATION_50_100MS", core::DataType::INT64);
+                current_result_set_->addColumn("MON$DURATION_100_500MS", core::DataType::INT64);
+                current_result_set_->addColumn("MON$DURATION_500_1000MS", core::DataType::INT64);
+                current_result_set_->addColumn("MON$DURATION_1000MS_PLUS", core::DataType::INT64);
+
+                // Enhanced metrics - Page efficiency
+                current_result_set_->addColumn("MON$PAGES_NO_GARBAGE", core::DataType::INT64);
+                current_result_set_->addColumn("MON$MAX_SPACE_RECLAIMED_PAGE", core::DataType::INT64);
+
+                // Enhanced metrics - Garbage accumulation
+                current_result_set_->addColumn("MON$TOTAL_DIRTY_MARKED", core::DataType::INT64);
+
                 // Get GC statistics from garbage collector
                 auto gc = db_->garbage_collector();
                 if (gc)
@@ -1066,6 +1081,21 @@ namespace scratchbird
                     row.push_back(Value::makeInt64(static_cast<int64_t>(stats.dirty_page_count)));
                     row.push_back(Value::makeInt64(static_cast<int64_t>(stats.space_reclaimed_bytes)));
 
+                    // Enhanced metrics - Duration histogram
+                    row.push_back(Value::makeInt64(static_cast<int64_t>(stats.duration_0_10ms)));
+                    row.push_back(Value::makeInt64(static_cast<int64_t>(stats.duration_10_50ms)));
+                    row.push_back(Value::makeInt64(static_cast<int64_t>(stats.duration_50_100ms)));
+                    row.push_back(Value::makeInt64(static_cast<int64_t>(stats.duration_100_500ms)));
+                    row.push_back(Value::makeInt64(static_cast<int64_t>(stats.duration_500_1000ms)));
+                    row.push_back(Value::makeInt64(static_cast<int64_t>(stats.duration_1000ms_plus)));
+
+                    // Enhanced metrics - Page efficiency
+                    row.push_back(Value::makeInt64(static_cast<int64_t>(stats.pages_with_no_garbage)));
+                    row.push_back(Value::makeInt64(static_cast<int64_t>(stats.max_space_reclaimed_single_page)));
+
+                    // Enhanced metrics - Garbage accumulation
+                    row.push_back(Value::makeInt64(static_cast<int64_t>(stats.total_dirty_pages_marked)));
+
                     current_result_set_->addRow(std::move(row));
                 }
                 else
@@ -1079,6 +1109,21 @@ namespace scratchbird
                     row.push_back(Value::makeInt64(0));
                     row.push_back(Value::makeInt64(0));
                     row.push_back(Value::makeInt64(0));
+                    row.push_back(Value::makeInt64(0));
+
+                    // Enhanced metrics - Duration histogram (zeros)
+                    row.push_back(Value::makeInt64(0));
+                    row.push_back(Value::makeInt64(0));
+                    row.push_back(Value::makeInt64(0));
+                    row.push_back(Value::makeInt64(0));
+                    row.push_back(Value::makeInt64(0));
+                    row.push_back(Value::makeInt64(0));
+
+                    // Enhanced metrics - Page efficiency (zeros)
+                    row.push_back(Value::makeInt64(0));
+                    row.push_back(Value::makeInt64(0));
+
+                    // Enhanced metrics - Garbage accumulation (zeros)
                     row.push_back(Value::makeInt64(0));
 
                     current_result_set_->addRow(std::move(row));

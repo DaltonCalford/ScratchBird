@@ -161,6 +161,10 @@ namespace scratchbird::core
     {
         std::lock_guard<std::mutex> lock(dirty_pages_mutex_);
         dirty_pages_.insert(page_id);
+
+        // Track garbage accumulation rate
+        std::lock_guard<std::mutex> stats_lock(stats_mutex_);
+        stats_.total_dirty_pages_marked++;
     }
 
     size_t GarbageCollector::getDirtyPageCount() const
@@ -389,6 +393,16 @@ namespace scratchbird::core
         stats_.pages_cleaned += pages_cleaned;
         stats_.space_reclaimed_bytes += space_reclaimed;
         stats_.cooperative_runs++;
+
+        // Track page efficiency metrics
+        if (tuples_removed == 0)
+        {
+            stats_.pages_with_no_garbage++;
+        }
+        if (space_reclaimed > stats_.max_space_reclaimed_single_page)
+        {
+            stats_.max_space_reclaimed_single_page = space_reclaimed;
+        }
     }
 
     void GarbageCollector::updateBackgroundStats(uint64_t tuples_removed, uint64_t pages_cleaned,
@@ -403,6 +417,42 @@ namespace scratchbird::core
             std::chrono::system_clock::now().time_since_epoch()
         ).count();
         stats_.last_background_duration_ms = duration_ms;
+
+        // Update duration histogram
+        if (duration_ms < 10)
+        {
+            stats_.duration_0_10ms++;
+        }
+        else if (duration_ms < 50)
+        {
+            stats_.duration_10_50ms++;
+        }
+        else if (duration_ms < 100)
+        {
+            stats_.duration_50_100ms++;
+        }
+        else if (duration_ms < 500)
+        {
+            stats_.duration_100_500ms++;
+        }
+        else if (duration_ms < 1000)
+        {
+            stats_.duration_500_1000ms++;
+        }
+        else
+        {
+            stats_.duration_1000ms_plus++;
+        }
+
+        // Track page efficiency metrics (for background GC passes)
+        if (tuples_removed == 0)
+        {
+            stats_.pages_with_no_garbage += pages_cleaned;
+        }
+        if (space_reclaimed > stats_.max_space_reclaimed_single_page)
+        {
+            stats_.max_space_reclaimed_single_page = space_reclaimed;
+        }
     }
 
     void GarbageCollector::wakeBackgroundThread()
