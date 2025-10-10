@@ -6,6 +6,7 @@
 #include <atomic>
 #include <thread>
 #include <mutex>
+#include <condition_variable>
 #include <unordered_set>
 
 namespace scratchbird::core
@@ -108,6 +109,10 @@ namespace scratchbird::core
         std::thread background_thread_;
         std::atomic<bool> background_running_;
         std::atomic<bool> shutdown_requested_;
+
+        // Background GC wake mechanism
+        std::mutex bg_wake_mutex_;
+        std::condition_variable bg_wake_cv_;
 
         // Dirty page tracking
         mutable std::mutex dirty_pages_mutex_;
