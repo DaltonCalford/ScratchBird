@@ -1064,6 +1064,10 @@ namespace scratchbird
                 // Enhanced metrics - Garbage accumulation
                 current_result_set_->addColumn("MON$TOTAL_DIRTY_MARKED", core::DataType::INT64);
 
+                // Current tuning parameters
+                current_result_set_->addColumn("MON$COOPERATIVE_RATE", core::DataType::INT64);
+                current_result_set_->addColumn("MON$BACKGROUND_INTERVAL_MS", core::DataType::INT64);
+
                 // Get GC statistics from garbage collector
                 auto gc = db_->garbage_collector();
                 if (gc)
@@ -1096,6 +1100,10 @@ namespace scratchbird
                     // Enhanced metrics - Garbage accumulation
                     row.push_back(Value::makeInt64(static_cast<int64_t>(stats.total_dirty_pages_marked)));
 
+                    // Current tuning parameters
+                    row.push_back(Value::makeInt64(static_cast<int64_t>(stats.current_cooperative_rate)));
+                    row.push_back(Value::makeInt64(static_cast<int64_t>(stats.current_background_interval_ms)));
+
                     current_result_set_->addRow(std::move(row));
                 }
                 else
@@ -1125,6 +1133,10 @@ namespace scratchbird
 
                     // Enhanced metrics - Garbage accumulation (zeros)
                     row.push_back(Value::makeInt64(0));
+
+                    // Current tuning parameters (defaults)
+                    row.push_back(Value::makeInt64(100));   // Default cooperative_rate
+                    row.push_back(Value::makeInt64(5000));  // Default background_interval_ms
 
                     current_result_set_->addRow(std::move(row));
                 }
