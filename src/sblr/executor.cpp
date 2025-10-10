@@ -7,6 +7,7 @@
 #include "scratchbird/core/page_manager.h"
 #include "scratchbird/core/connection_context.h"
 #include "scratchbird/core/sweep_manager.h"
+#include "scratchbird/core/garbage_collector.h"
 #include <sstream>
 #include <iomanip>
 #include <iostream>
@@ -1032,6 +1033,50 @@ namespace scratchbird
                     row.push_back(Value::makeInt64(0));
                     row.push_back(Value::makeInt64(0));
                     row.push_back(Value::makeBoolean(false));
+
+                    current_result_set_->addRow(std::move(row));
+                }
+            }
+            else if (table_name == "MON_GARBAGE_COLLECTION")
+            {
+                // Add columns for GC statistics
+                current_result_set_->addColumn("MON$TUPLES_REMOVED", core::DataType::INT64);
+                current_result_set_->addColumn("MON$PAGES_CLEANED", core::DataType::INT64);
+                current_result_set_->addColumn("MON$COOPERATIVE_RUNS", core::DataType::INT64);
+                current_result_set_->addColumn("MON$BACKGROUND_RUNS", core::DataType::INT64);
+                current_result_set_->addColumn("MON$LAST_BG_TIME", core::DataType::INT64);
+                current_result_set_->addColumn("MON$LAST_BG_DURATION_MS", core::DataType::INT64);
+                current_result_set_->addColumn("MON$DIRTY_PAGE_COUNT", core::DataType::INT64);
+
+                // Get GC statistics from garbage collector
+                auto gc = db_->garbage_collector();
+                if (gc)
+                {
+                    auto stats = gc->getStatistics();
+
+                    // Create the result row
+                    std::vector<Value> row;
+                    row.push_back(Value::makeInt64(static_cast<int64_t>(stats.tuples_removed)));
+                    row.push_back(Value::makeInt64(static_cast<int64_t>(stats.pages_cleaned)));
+                    row.push_back(Value::makeInt64(static_cast<int64_t>(stats.cooperative_runs)));
+                    row.push_back(Value::makeInt64(static_cast<int64_t>(stats.background_runs)));
+                    row.push_back(Value::makeInt64(static_cast<int64_t>(stats.last_background_time)));
+                    row.push_back(Value::makeInt64(static_cast<int64_t>(stats.last_background_duration_ms)));
+                    row.push_back(Value::makeInt64(static_cast<int64_t>(stats.dirty_page_count)));
+
+                    current_result_set_->addRow(std::move(row));
+                }
+                else
+                {
+                    // GarbageCollector not available - return row with zeros
+                    std::vector<Value> row;
+                    row.push_back(Value::makeInt64(0));
+                    row.push_back(Value::makeInt64(0));
+                    row.push_back(Value::makeInt64(0));
+                    row.push_back(Value::makeInt64(0));
+                    row.push_back(Value::makeInt64(0));
+                    row.push_back(Value::makeInt64(0));
+                    row.push_back(Value::makeInt64(0));
 
                     current_result_set_->addRow(std::move(row));
                 }
