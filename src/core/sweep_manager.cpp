@@ -2,6 +2,7 @@
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/transaction_manager.h"
 #include "scratchbird/core/buffer_pool.h"
+#include "scratchbird/core/garbage_collector.h"
 #include "scratchbird/core/logger.h"
 #include <chrono>
 #include <thread>
@@ -150,6 +151,13 @@ namespace scratchbird::core
 
         LOG_INFO(VACUUM, "Sweep completed: old_oit=%lu, new_oit=%lu, duration=%lums",
                  oit_before, new_oit, duration_ms);
+
+        // 5. Notify garbage collector that OIT has advanced
+        // This allows GC to identify more garbage tuples for removal
+        if (db_->garbage_collector() != nullptr)
+        {
+            db_->garbage_collector()->notifySweepComplete(oit_before, new_oit);
+        }
 
         sweep_in_progress_.store(false, std::memory_order_release);
         return Status::OK;
