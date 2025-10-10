@@ -20,6 +20,8 @@ namespace scratchbird::core
         , enabled_(true)
         , background_interval_ms_(5000)
         , cooperative_rate_(100)
+        , adaptive_tuning_enabled_(true)
+        , tuning_check_interval_(10)
         , background_running_(false)
         , shutdown_requested_(false)
     {
@@ -211,6 +213,10 @@ namespace scratchbird::core
         GCStatistics stats = stats_;
         stats.dirty_page_count = getDirtyPageCount();
 
+        // Include current tuning parameters
+        stats.current_cooperative_rate = cooperative_rate_;
+        stats.current_background_interval_ms = background_interval_ms_;
+
         return stats;
     }
 
@@ -269,6 +275,9 @@ namespace scratchbird::core
                 end_time - start_time).count();
 
             updateBackgroundStats(tuples_removed, pages_cleaned, space_reclaimed, duration_ms);
+
+            // Perform adaptive tuning (if enabled)
+            performAdaptiveTuning();
 
             // Wait for wake signal or timeout
             // Use condition variable for responsive wake on sweep completion
@@ -528,6 +537,139 @@ namespace scratchbird::core
         // Read enabled flag (default: true)
         bool enabled = cfg.getBool("garbage_collection", "enabled", true);
         enabled_.store(enabled, std::memory_order_release);
+
+        // Read adaptive tuning flag (default: true)
+        bool adaptive_enabled = cfg.getBool("garbage_collection", "adaptive_tuning", true);
+        adaptive_tuning_enabled_.store(adaptive_enabled, std::memory_order_release);
+
+        // Read tuning check interval (default: 10 background runs)
+        tuning_check_interval_ = cfg.getUInt("garbage_collection", "tuning_check_interval", 10);
+        if (tuning_check_interval_ < 1)
+        {
+            LOG_WARNING(VACUUM, "Tuning check interval %u too low, using 1", tuning_check_interval_);
+            tuning_check_interval_ = 1;
+        }
+    }
+
+    void GarbageCollector::setAdaptiveTuning(bool enabled)
+    {
+        adaptive_tuning_enabled_.store(enabled, std::memory_order_release);
+        LOG_INFO(VACUUM, "Adaptive tuning %s", enabled ? "enabled" : "disabled");
+    }
+
+    bool GarbageCollector::isAdaptiveTuningEnabled() const
+    {
+        return adaptive_tuning_enabled_.load(std::memory_order_acquire);
+    }
+
+    void GarbageCollector::performAdaptiveTuning()
+    {
+        // Only perform tuning if enabled
+        if (!adaptive_tuning_enabled_.load(std::memory_order_acquire))
+        {
+            return;
+        }
+
+        // Check if it's time to tune (every N background runs)
+        uint64_t background_runs = 0;
+        {
+            std::lock_guard<std::mutex> lock(stats_mutex_);
+            background_runs = stats_.background_runs;
+        }
+
+        if (background_runs % tuning_check_interval_ != 0)
+        {
+            return;  // Not yet time to tune
+        }
+
+        // Get current statistics
+        GCStatistics stats = getStatistics();
+
+        // Adaptive Cooperative Rate Tuning
+        // Goal: Minimize wasted effort (pages scanned with no garbage)
+        if (stats.pages_cleaned > 0)
+        {
+            double waste_ratio = static_cast<double>(stats.pages_with_no_garbage) /
+                                static_cast<double>(stats.pages_cleaned);
+
+            uint32_t old_rate = cooperative_rate_;
+            uint32_t new_rate = old_rate;
+
+            if (waste_ratio > HIGH_WASTE_THRESHOLD)
+            {
+                // Too much wasted effort - reduce frequency (increase rate)
+                new_rate = static_cast<uint32_t>(old_rate * 1.1);  // Increase by 10%
+                if (new_rate > MAX_COOPERATIVE_RATE)
+                {
+                    new_rate = MAX_COOPERATIVE_RATE;
+                }
+            }
+            else if (waste_ratio < LOW_WASTE_THRESHOLD)
+            {
+                // Low wasted effort - can increase frequency (decrease rate)
+                new_rate = static_cast<uint32_t>(old_rate * 0.9);  // Decrease by 10%
+                if (new_rate < MIN_COOPERATIVE_RATE)
+                {
+                    new_rate = MIN_COOPERATIVE_RATE;
+                }
+            }
+
+            if (new_rate != old_rate)
+            {
+                cooperative_rate_ = new_rate;
+                LOG_INFO(VACUUM, "Adaptive tuning: cooperative_rate %u -> %u (waste ratio: %.2f%%)",
+                         old_rate, new_rate, waste_ratio * 100.0);
+            }
+        }
+
+        // Adaptive Background Interval Tuning
+        // Goal: Balance responsiveness with CPU overhead
+        uint64_t total_runs = stats.duration_0_10ms + stats.duration_10_50ms +
+                             stats.duration_50_100ms + stats.duration_100_500ms +
+                             stats.duration_500_1000ms + stats.duration_1000ms_plus;
+
+        if (total_runs > 0)
+        {
+            // Calculate percentage of fast runs (0-50ms)
+            double fast_ratio = static_cast<double>(stats.duration_0_10ms + stats.duration_10_50ms) /
+                               static_cast<double>(total_runs);
+
+            // Calculate percentage of slow runs (100ms+)
+            double slow_ratio = static_cast<double>(stats.duration_100_500ms +
+                                                    stats.duration_500_1000ms +
+                                                    stats.duration_1000ms_plus) /
+                               static_cast<double>(total_runs);
+
+            uint64_t old_interval = background_interval_ms_;
+            uint64_t new_interval = old_interval;
+
+            // If mostly fast runs AND low dirty page count, increase interval (less frequent)
+            if (fast_ratio > 0.8 && stats.dirty_page_count < LOW_DIRTY_THRESHOLD)
+            {
+                new_interval = static_cast<uint64_t>(old_interval * 1.1);  // Increase by 10%
+                if (new_interval > MAX_BACKGROUND_INTERVAL_MS)
+                {
+                    new_interval = MAX_BACKGROUND_INTERVAL_MS;
+                }
+            }
+            // If many slow runs OR high dirty page count, decrease interval (more frequent)
+            else if (slow_ratio > 0.2 || stats.dirty_page_count > HIGH_DIRTY_THRESHOLD)
+            {
+                new_interval = static_cast<uint64_t>(old_interval * 0.9);  // Decrease by 10%
+                if (new_interval < MIN_BACKGROUND_INTERVAL_MS)
+                {
+                    new_interval = MIN_BACKGROUND_INTERVAL_MS;
+                }
+            }
+
+            if (new_interval != old_interval)
+            {
+                background_interval_ms_ = new_interval;
+                LOG_INFO(VACUUM, "Adaptive tuning: background_interval_ms %lu -> %lu (fast: %.1f%%, slow: %.1f%%, dirty: %lu)",
+                         old_interval, new_interval, fast_ratio * 100.0, slow_ratio * 100.0,
+                         stats.dirty_page_count);
+            }
+        }
     }
 
 } // namespace scratchbird::core

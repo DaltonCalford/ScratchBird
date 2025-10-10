@@ -51,6 +51,10 @@ namespace scratchbird::core
         // Enhanced metrics - Garbage accumulation
         uint64_t total_dirty_pages_marked;     // Total pages marked dirty (all time)
 
+        // Current tuning parameters (for monitoring)
+        uint32_t current_cooperative_rate;     // Current cooperative GC rate
+        uint64_t current_background_interval_ms;  // Current background interval
+
         GCStatistics()
             : tuples_removed(0)
             , pages_cleaned(0)
@@ -69,6 +73,8 @@ namespace scratchbird::core
             , pages_with_no_garbage(0)
             , max_space_reclaimed_single_page(0)
             , total_dirty_pages_marked(0)
+            , current_cooperative_rate(100)
+            , current_background_interval_ms(5000)
         {
         }
     };
@@ -113,6 +119,10 @@ namespace scratchbird::core
         // Statistics
         GCStatistics getStatistics() const;
 
+        // Adaptive tuning
+        void setAdaptiveTuning(bool enabled);
+        bool isAdaptiveTuningEnabled() const;
+
         // Integration with sweep
         void notifySweepComplete(uint64_t old_oit, uint64_t new_oit);
 
@@ -128,6 +138,22 @@ namespace scratchbird::core
         // Configuration parameters
         uint64_t background_interval_ms_;  // Sleep interval for background GC (default: 5000ms)
         uint32_t cooperative_rate_;         // Cooperative GC rate: 1 in N page reads (default: 100)
+
+        // Adaptive tuning configuration
+        std::atomic<bool> adaptive_tuning_enabled_;  // Enable/disable adaptive tuning (default: true)
+        uint32_t tuning_check_interval_;             // Check every N background runs (default: 10)
+
+        // Adaptive tuning bounds
+        static constexpr uint32_t MIN_COOPERATIVE_RATE = 10;      // 1 in 10 page reads
+        static constexpr uint32_t MAX_COOPERATIVE_RATE = 1000;    // 1 in 1000 page reads
+        static constexpr uint64_t MIN_BACKGROUND_INTERVAL_MS = 1000;   // 1 second
+        static constexpr uint64_t MAX_BACKGROUND_INTERVAL_MS = 60000;  // 1 minute
+
+        // Adaptive tuning thresholds
+        static constexpr double HIGH_WASTE_THRESHOLD = 0.30;  // 30% wasted effort
+        static constexpr double LOW_WASTE_THRESHOLD = 0.10;   // 10% wasted effort
+        static constexpr uint64_t HIGH_DIRTY_THRESHOLD = 1000;  // Many dirty pages
+        static constexpr uint64_t LOW_DIRTY_THRESHOLD = 100;    // Few dirty pages
 
         // Background GC thread
         std::thread background_thread_;
@@ -159,6 +185,9 @@ namespace scratchbird::core
 
         // Rate limiting for cooperative GC
         bool shouldRunCooperativeGC();
+
+        // Adaptive tuning
+        void performAdaptiveTuning();
     };
 
 } // namespace scratchbird::core
