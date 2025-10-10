@@ -32,6 +32,9 @@ namespace scratchbird::core
         {
             shutdown_requested_.store(true, std::memory_order_release);
 
+            // Wake the background thread so it can exit
+            bg_wake_cv_.notify_one();
+
             if (background_thread_.joinable())
             {
                 background_thread_.join();
@@ -134,6 +137,9 @@ namespace scratchbird::core
         // Signal shutdown
         shutdown_requested_.store(true, std::memory_order_release);
 
+        // Wake the background thread so it can exit
+        bg_wake_cv_.notify_one();
+
         // Wait for thread to finish
         if (background_thread_.joinable())
         {
@@ -226,9 +232,6 @@ namespace scratchbird::core
         {
             auto start_time = std::chrono::steady_clock::now();
 
-            // TODO: Implement actual background GC logic
-            // For now, just sleep
-
             // Get dirty pages to clean
             std::vector<uint32_t> pages_to_clean;
             {
@@ -263,8 +266,11 @@ namespace scratchbird::core
 
             updateBackgroundStats(tuples_removed, pages_cleaned, space_reclaimed, duration_ms);
 
-            // Sleep before next pass
-            std::this_thread::sleep_for(std::chrono::milliseconds(background_interval_ms_));
+            // Wait for wake signal or timeout
+            // Use condition variable for responsive wake on sweep completion
+            std::unique_lock<std::mutex> lock(bg_wake_mutex_);
+            bg_wake_cv_.wait_for(lock, std::chrono::milliseconds(background_interval_ms_),
+                                 [this] { return shutdown_requested_.load(std::memory_order_acquire); });
         }
 
         LOG_INFO(VACUUM, "Background GC loop stopped");
@@ -401,8 +407,8 @@ namespace scratchbird::core
 
     void GarbageCollector::wakeBackgroundThread()
     {
-        // TODO: Implement proper wake mechanism (condition variable)
-        // For now, the thread will wake on its own periodic interval
+        // Wake background GC thread immediately using condition variable
+        bg_wake_cv_.notify_one();
     }
 
     bool GarbageCollector::shouldRunCooperativeGC()
