@@ -2,6 +2,8 @@
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/transaction_manager.h"
 #include "scratchbird/core/storage_engine.h"
+#include "scratchbird/core/buffer_pool.h"
+#include "scratchbird/core/ondisk.h"
 #include "scratchbird/core/logger.h"
 #include <chrono>
 #include <thread>
@@ -258,18 +260,41 @@ namespace scratchbird::core
 
     void GarbageCollector::cleanPage(uint32_t page_id, ErrorContext* ctx)
     {
-        // TODO: Implement actual page cleaning logic
-        // For now, just mark as no longer dirty
+        // Get current OIT from TransactionManager
+        uint64_t oit = txn_manager_->getOldestXid();
 
+        // Pin the page through buffer pool
+        void* page_buffer;
+        Status s = db_->buffer_pool()->pinPage(page_id, &page_buffer, ctx);
+        if (s != Status::OK)
+        {
+            LOG_WARNING(VACUUM, "Failed to pin page %u for GC: %d", page_id, static_cast<int>(s));
+            return;
+        }
+
+        // Get page header to check page type
+        auto* page_header = reinterpret_cast<PageHeader*>(page_buffer);
+
+        // Only process heap pages
+        if (page_header->page_type != PAGE_TYPE_HEAP)
+        {
+            db_->buffer_pool()->unpinPage(page_id, false, ctx);
+            return;
+        }
+
+        // TODO: Implement actual tuple scanning and cleanup
+        // For now, this is a placeholder that removes the page from dirty set
+
+        // Unpin page (not modified for now)
+        db_->buffer_pool()->unpinPage(page_id, false, ctx);
+
+        // Remove from dirty pages
         std::lock_guard<std::mutex> lock(dirty_pages_mutex_);
         dirty_pages_.erase(page_id);
-
-        (void)ctx;  // Suppress unused parameter warning
     }
 
     bool GarbageCollector::isTupleGarbage(uint64_t xmax, uint64_t oit)
     {
-        // TODO: Implement actual garbage detection
         // Tuple is garbage if:
         // 1. It has been deleted/updated (xmax != INVALID_XID)
         // 2. The deleting transaction is old (xmax < OIT)
@@ -277,19 +302,31 @@ namespace scratchbird::core
 
         constexpr uint64_t INVALID_XID = 0;
 
+        // Not deleted/updated - still visible
         if (xmax == INVALID_XID)
         {
-            return false;  // Still visible
+            return false;
         }
 
+        // Deleting transaction too new - not yet garbage
         if (xmax >= oit)
         {
-            return false;  // Deleting transaction too new
+            return false;
         }
 
-        // TODO: Check CLOG to verify transaction committed
+        // Check if deleting transaction committed
+        TransactionState state;
+        Status s = txn_manager_->getTransactionState(xmax, state, nullptr);
 
-        return true;  // Potentially garbage
+        if (s != Status::OK)
+        {
+            // Can't determine state - assume not garbage (conservative)
+            return false;
+        }
+
+        // Only garbage if the deleting transaction committed
+        // If it aborted, the tuple is still visible
+        return (state == TransactionState::COMMITTED);
     }
 
     void GarbageCollector::updateCooperativeStats(uint64_t tuples_removed, uint64_t pages_cleaned)

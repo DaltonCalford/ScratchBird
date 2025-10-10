@@ -11,6 +11,7 @@
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/core/btree.h"
 #include "scratchbird/core/toast.h"
+#include "scratchbird/core/garbage_collector.h"
 #include "scratchbird/core/logger.h"
 #include <cstring>
 #include <new>
@@ -127,6 +128,12 @@
             // Unpin the page
             buffer_pool_->unpinPage(page_id, status == Status::OK, ctx);
 
+            // Cooperative GC hook - opportunistic cleanup
+            if (db_->garbage_collector() != nullptr)
+            {
+                db_->garbage_collector()->processPageCooperative(page_id, ctx);
+            }
+
             return status;
         }
 
@@ -167,8 +174,11 @@
 
             if (status == Status::OK)
             {
-                // Mark page as dirty
-                // Page will be marked dirty on unpin
+                // Mark page as dirty for GC
+                if (db_->garbage_collector() != nullptr)
+                {
+                    db_->garbage_collector()->markPageDirty(page_id);
+                }
             }
 
             // Unpin the page
@@ -683,6 +693,12 @@
                 if (new_item_id_out != nullptr)
                 {
                     *new_item_id_out = new_item_id;
+                }
+
+                // Mark page as dirty for GC
+                if (db_->garbage_collector() != nullptr)
+                {
+                    db_->garbage_collector()->markPageDirty(page_id);
                 }
 
                 // Unpin with dirty flag
