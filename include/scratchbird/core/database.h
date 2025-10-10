@@ -30,6 +30,7 @@ namespace scratchbird
         class Clog;
         class ConnectionContext;
         class SweepManager;
+        class GarbageCollector;
 
 // Database header structure for Page 0
 #pragma pack(push, 1)
@@ -207,6 +208,12 @@ namespace scratchbird
                 return sweep_manager_.get();
             }
 
+            // Get garbage collector
+            GarbageCollector *garbage_collector()
+            {
+                return garbage_collector_.get();
+            }
+
             // Initialize ProcArray for multi-connection support
             Status initializeProcArray(uint32_t max_backends, ErrorContext *ctx = nullptr);
 
@@ -243,6 +250,7 @@ namespace scratchbird
             std::unique_ptr<Vacuum> vacuum_;                          // Vacuum manager (owned)
             std::unique_ptr<Clog> clog_;                              // Commit log manager (owned)
             std::unique_ptr<SweepManager> sweep_manager_;             // Sweep manager (owned)
+            std::unique_ptr<GarbageCollector> garbage_collector_;     // Garbage collector (owned)
 
             // Validate database header
             Status validate_header();
