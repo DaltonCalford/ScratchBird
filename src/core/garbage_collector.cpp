@@ -87,10 +87,11 @@ namespace scratchbird::core
         }
 
         // Perform cooperative cleanup
-        cleanPage(page_id, ctx);
+        uint64_t space_reclaimed = 0;
+        uint64_t tuples_removed = cleanPage(page_id, &space_reclaimed, ctx);
 
         // Update statistics
-        updateCooperativeStats(0, 1);  // Will be updated with actual counts later
+        updateCooperativeStats(tuples_removed, 1, space_reclaimed);
     }
 
     Status GarbageCollector::startBackgroundGC(ErrorContext* ctx)
@@ -237,6 +238,7 @@ namespace scratchbird::core
 
             uint64_t tuples_removed = 0;
             uint64_t pages_cleaned = 0;
+            uint64_t space_reclaimed = 0;
 
             // Clean each dirty page
             for (uint32_t page_id : pages_to_clean)
@@ -247,8 +249,10 @@ namespace scratchbird::core
                 }
 
                 ErrorContext err_ctx;
-                uint64_t tuples_found = cleanPage(page_id, &err_ctx);
+                uint64_t page_space_reclaimed = 0;
+                uint64_t tuples_found = cleanPage(page_id, &page_space_reclaimed, &err_ctx);
                 tuples_removed += tuples_found;
+                space_reclaimed += page_space_reclaimed;
                 pages_cleaned++;
             }
 
@@ -257,7 +261,7 @@ namespace scratchbird::core
             uint64_t duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                 end_time - start_time).count();
 
-            updateBackgroundStats(tuples_removed, pages_cleaned, duration_ms);
+            updateBackgroundStats(tuples_removed, pages_cleaned, space_reclaimed, duration_ms);
 
             // Sleep before next pass
             std::this_thread::sleep_for(std::chrono::milliseconds(background_interval_ms_));
@@ -266,7 +270,7 @@ namespace scratchbird::core
         LOG_INFO(VACUUM, "Background GC loop stopped");
     }
 
-    uint64_t GarbageCollector::cleanPage(uint32_t page_id, ErrorContext* ctx)
+    uint64_t GarbageCollector::cleanPage(uint32_t page_id, uint64_t* space_reclaimed_out, ErrorContext* ctx)
     {
         // Get current OIT from TransactionManager
         uint64_t oit = txn_manager_->getOldestXid();
@@ -277,6 +281,10 @@ namespace scratchbird::core
         if (s != Status::OK)
         {
             LOG_WARNING(VACUUM, "Failed to pin page %u for GC: %d", page_id, static_cast<int>(s));
+            if (space_reclaimed_out != nullptr)
+            {
+                *space_reclaimed_out = 0;
+            }
             return 0;
         }
 
@@ -287,49 +295,41 @@ namespace scratchbird::core
         if (page_header->page_type != PAGE_TYPE_HEAP)
         {
             db_->buffer_pool()->unpinPage(page_id, false, ctx);
+            if (space_reclaimed_out != nullptr)
+            {
+                *space_reclaimed_out = 0;
+            }
             return 0;
         }
 
-        // Scan tuples to identify garbage
+        // Use HeapPage::prunePage() for physical tuple removal
         HeapPage heap_page(reinterpret_cast<uint8_t*>(page_buffer), page_header->page_size);
-        uint16_t item_count = heap_page.getItemCount();
-        uint64_t garbage_tuples_found = 0;
 
-        for (uint16_t item_id = 0; item_id < item_count; item_id++)
+        uint32_t tuples_pruned = 0;
+        uint32_t space_reclaimed = 0;
+
+        // Prune garbage tuples and defragment page
+        Status prune_status = heap_page.prunePage(oit, &tuples_pruned, &space_reclaimed, ctx);
+
+        bool page_modified = (tuples_pruned > 0);
+
+        // Log results if we pruned any tuples
+        if (tuples_pruned > 0)
         {
-            const uint8_t* tuple_data;
-            uint32_t tuple_size;
-
-            Status tuple_status = heap_page.getTuple(item_id, &tuple_data, &tuple_size, ctx);
-            if (tuple_status != Status::OK)
-            {
-                continue; // Skip invalid/deleted items
-            }
-
-            // Get tuple header
-            const auto* tuple_hdr = reinterpret_cast<const TupleHeader*>(tuple_data);
-
-            // Check if tuple is garbage
-            if (isTupleGarbage(tuple_hdr->xmax, oit))
-            {
-                garbage_tuples_found++;
-                // TODO: Physically remove tuple from page
-                // For now, we just count it. Full implementation would:
-                // 1. Mark item pointer as LP_UNUSED
-                // 2. Compact page to reclaim space
-                // 3. Update free space metadata
-            }
+            LOG_INFO(VACUUM, "Page %u: pruned %u tuples, reclaimed %u bytes (OIT=%lu)",
+                    page_id, tuples_pruned, space_reclaimed, oit);
         }
 
-        // Log results if we found garbage
-        if (garbage_tuples_found > 0)
-        {
-            LOG_INFO(VACUUM, "Page %u: found %lu garbage tuples (OIT=%lu)",
-                    page_id, garbage_tuples_found, oit);
-        }
+        // Unpin page (mark as dirty if we modified it)
+        db_->buffer_pool()->unpinPage(page_id, page_modified, ctx);
 
-        // Unpin page (not modified for now - we're not physically removing tuples yet)
-        db_->buffer_pool()->unpinPage(page_id, false, ctx);
+        uint64_t garbage_tuples_found = tuples_pruned;
+
+        // Return space reclaimed
+        if (space_reclaimed_out != nullptr)
+        {
+            *space_reclaimed_out = space_reclaimed;
+        }
 
         // Remove from dirty pages
         {
@@ -376,20 +376,22 @@ namespace scratchbird::core
         return (state == TransactionState::COMMITTED);
     }
 
-    void GarbageCollector::updateCooperativeStats(uint64_t tuples_removed, uint64_t pages_cleaned)
+    void GarbageCollector::updateCooperativeStats(uint64_t tuples_removed, uint64_t pages_cleaned, uint64_t space_reclaimed)
     {
         std::lock_guard<std::mutex> lock(stats_mutex_);
         stats_.tuples_removed += tuples_removed;
         stats_.pages_cleaned += pages_cleaned;
+        stats_.space_reclaimed_bytes += space_reclaimed;
         stats_.cooperative_runs++;
     }
 
     void GarbageCollector::updateBackgroundStats(uint64_t tuples_removed, uint64_t pages_cleaned,
-                                                   uint64_t duration_ms)
+                                                   uint64_t space_reclaimed, uint64_t duration_ms)
     {
         std::lock_guard<std::mutex> lock(stats_mutex_);
         stats_.tuples_removed += tuples_removed;
         stats_.pages_cleaned += pages_cleaned;
+        stats_.space_reclaimed_bytes += space_reclaimed;
         stats_.background_runs++;
         stats_.last_background_time = std::chrono::duration_cast<std::chrono::microseconds>(
             std::chrono::system_clock::now().time_since_epoch()

@@ -28,9 +28,10 @@
         {
             uint32_t offset;      // Offset from start of page (supports up to 4GB pages)
             uint32_t length : 31; // Length of tuple (max ~2GB)
-            uint32_t flags : 1;   // 0 = normal, 1 = deleted
+            uint32_t flags : 1;   // 0 = normal, 1 = deleted/unused
 
             static constexpr uint32_t FLAG_DELETED = 0x80000000;
+            static constexpr uint32_t LP_UNUSED = 0;  // Offset 0 means unused
 
             [[nodiscard]] auto isDeleted() const -> bool
             {
@@ -39,6 +40,17 @@
             void setDeleted(bool deleted)
             {
                 flags = deleted ? 1 : 0;
+            }
+
+            [[nodiscard]] auto isUnused() const -> bool
+            {
+                return offset == LP_UNUSED && length == 0;
+            }
+            void setUnused()
+            {
+                offset = LP_UNUSED;
+                length = 0;
+                flags = 0;
             }
 
             // Validate item pointer bounds
@@ -212,6 +224,22 @@
             // Returns number of tuples frozen
             auto freezeTuples(uint64_t freeze_limit, uint32_t *frozen_count_out,
                              ErrorContext *ctx = nullptr) -> Status;
+
+            // Physical tuple removal for garbage collection
+            // Mark tuple as LP_UNUSED (permanently dead, can be overwritten)
+            // Returns Status::OK if tuple was marked unused
+            auto markTupleUnused(uint16_t item_id, ErrorContext *ctx = nullptr) -> Status;
+
+            // Defragment page by compacting tuples and reclaiming free space
+            // Moves live tuples together, updates item pointers, reclaims holes
+            // Returns number of bytes reclaimed
+            auto defragmentPage(uint32_t *bytes_reclaimed_out, ErrorContext *ctx = nullptr) -> Status;
+
+            // Prune dead tuples from page (GC helper)
+            // Marks garbage tuples as LP_UNUSED based on provided OIT
+            // Returns number of tuples pruned
+            auto prunePage(uint64_t oit, uint32_t *tuples_pruned_out,
+                          uint32_t *space_reclaimed_out, ErrorContext *ctx = nullptr) -> Status;
 
             // Get page header
             auto header() -> PageHeader *

@@ -880,4 +880,166 @@
             return Status::OK;
         }
 
+        auto HeapPage::markTupleUnused(uint16_t item_id, ErrorContext *ctx) -> Status
+        {
+            if (item_id >= header()->item_count)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Invalid item ID");
+                return Status::INVALID_ARGUMENT;
+            }
+
+            ItemPointer *items = getItemArray();
+
+            // Mark the item pointer as unused (LP_UNUSED)
+            items[item_id].setUnused();
+
+            updateHeaderStats();
+            return Status::OK;
+        }
+
+        auto HeapPage::defragmentPage(uint32_t *bytes_reclaimed_out, ErrorContext *ctx) -> Status
+        {
+            HeapPageSpecial *special = getSpecial();
+            ItemPointer *items = getItemArray();
+            uint16_t item_count = header()->item_count;
+
+            // Calculate space before defragmentation
+            uint32_t free_space_before = special->pd_upper - special->pd_lower;
+
+            // Build list of live tuples
+            struct TupleInfo
+            {
+                uint16_t item_id;
+                uint32_t old_offset;
+                uint32_t length;
+            };
+            std::vector<TupleInfo> live_tuples;
+
+            for (uint16_t i = 0; i < item_count; i++)
+            {
+                if (!items[i].isUnused() && !items[i].isDeleted())
+                {
+                    live_tuples.push_back({i, items[i].offset, items[i].length});
+                }
+            }
+
+            // Sort by offset (ascending) to maintain locality
+            std::sort(live_tuples.begin(), live_tuples.end(),
+                     [](const TupleInfo &a, const TupleInfo &b) {
+                         return a.old_offset > b.old_offset;  // Descending for top-down
+                     });
+
+            // Compact tuples toward upper end of page
+            uint32_t new_upper = page_size_ - sizeof(HeapPageSpecial);
+
+            for (auto &tuple : live_tuples)
+            {
+                // Calculate new offset
+                uint32_t new_offset = new_upper - tuple.length;
+
+                // Move tuple if needed
+                if (new_offset != tuple.old_offset)
+                {
+                    // Use memmove for overlapping regions
+                    std::memmove(page_data_ + new_offset,
+                                page_data_ + tuple.old_offset,
+                                tuple.length);
+                }
+
+                // Update item pointer
+                items[tuple.item_id].offset = new_offset;
+
+                // Update upper boundary
+                new_upper = new_offset;
+            }
+
+            // Update special area
+            special->pd_upper = new_upper;
+
+            // Calculate space reclaimed
+            uint32_t free_space_after = special->pd_upper - special->pd_lower;
+            uint32_t bytes_reclaimed = free_space_after - free_space_before;
+
+            if (bytes_reclaimed_out != nullptr)
+            {
+                *bytes_reclaimed_out = bytes_reclaimed;
+            }
+
+            updateHeaderStats();
+            return Status::OK;
+        }
+
+        auto HeapPage::prunePage(uint64_t oit, uint32_t *tuples_pruned_out,
+                                uint32_t *space_reclaimed_out, ErrorContext *ctx) -> Status
+        {
+            ItemPointer *items = getItemArray();
+            uint16_t item_count = header()->item_count;
+
+            uint32_t tuples_pruned = 0;
+
+            // Scan all tuples and mark garbage as unused
+            for (uint16_t i = 0; i < item_count; i++)
+            {
+                // Skip already unused items
+                if (items[i].isUnused())
+                {
+                    continue;
+                }
+
+                // Skip deleted items (they can't be accessed anyway)
+                if (items[i].isDeleted())
+                {
+                    continue;
+                }
+
+                // Validate item pointer bounds
+                if (!items[i].isValid(page_size_))
+                {
+                    continue;  // Skip corrupt items
+                }
+
+                // Get tuple header
+                auto *tuple_hdr = reinterpret_cast<TupleHeader *>(page_data_ + items[i].offset);
+
+                // Check if tuple is garbage
+                // Tuple is garbage if:
+                // 1. xmax != 0 (deleted/updated)
+                // 2. xmax < OIT (deleting transaction is old)
+                // 3. xmax is committed
+                if (tuple_hdr->xmax != 0 && tuple_hdr->xmax < oit)
+                {
+                    // Check if XMAX_COMMITTED flag is set
+                    if ((tuple_hdr->infomask & TupleHeader::HEAP_XMAX_COMMITTED) != 0)
+                    {
+                        // Tuple is garbage - mark as unused
+                        items[i].setUnused();
+                        tuples_pruned++;
+                    }
+                }
+            }
+
+            if (tuples_pruned_out != nullptr)
+            {
+                *tuples_pruned_out = tuples_pruned;
+            }
+
+            // If we pruned any tuples, defragment the page to reclaim space
+            uint32_t bytes_reclaimed = 0;
+            if (tuples_pruned > 0)
+            {
+                Status status = defragmentPage(&bytes_reclaimed, ctx);
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+            }
+
+            if (space_reclaimed_out != nullptr)
+            {
+                *space_reclaimed_out = bytes_reclaimed;
+            }
+
+            return Status::OK;
+        }
+
     } // namespace scratchbird::core
