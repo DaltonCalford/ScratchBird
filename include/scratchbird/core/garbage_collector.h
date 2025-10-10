@@ -98,6 +98,10 @@ namespace scratchbird::core
         GCPolicy policy_;
         std::atomic<bool> enabled_;
 
+        // Configuration parameters
+        uint64_t background_interval_ms_;  // Sleep interval for background GC (default: 5000ms)
+        uint32_t cooperative_rate_;         // Cooperative GC rate: 1 in N page reads (default: 100)
+
         // Background GC thread
         std::thread background_thread_;
         std::atomic<bool> background_running_;
@@ -115,6 +119,7 @@ namespace scratchbird::core
         void backgroundGCLoop();
         uint64_t cleanPage(uint32_t page_id, ErrorContext* ctx);
         bool isTupleGarbage(uint64_t xmax, uint64_t oit);
+        void readConfiguration();
 
         // Statistics helpers
         void updateCooperativeStats(uint64_t tuples_removed, uint64_t pages_cleaned);
