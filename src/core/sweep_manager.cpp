@@ -111,8 +111,13 @@ namespace scratchbird::core
 
         if (new_oit == 0 || new_oit == oit_before)
         {
-            // No change needed
+            // No change needed, but still update statistics
             LOG_INFO(VACUUM, "Sweep completed: OIT unchanged (oit=%lu)", oit_before);
+
+            auto end_time = std::chrono::steady_clock::now();
+            uint64_t duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time).count();
+            updateStatistics(oit_before, oit_before, duration_ms);
+
             sweep_in_progress_.store(false, std::memory_order_release);
             return Status::OK;
         }
