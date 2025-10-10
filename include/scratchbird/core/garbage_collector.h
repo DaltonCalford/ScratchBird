@@ -36,6 +36,21 @@ namespace scratchbird::core
         uint64_t dirty_page_count;             // Current dirty pages
         uint64_t space_reclaimed_bytes;        // Total bytes reclaimed
 
+        // Enhanced metrics - Duration histogram (background GC runs)
+        uint64_t duration_0_10ms;              // Runs that took 0-10ms
+        uint64_t duration_10_50ms;             // Runs that took 10-50ms
+        uint64_t duration_50_100ms;            // Runs that took 50-100ms
+        uint64_t duration_100_500ms;           // Runs that took 100-500ms
+        uint64_t duration_500_1000ms;          // Runs that took 500-1000ms
+        uint64_t duration_1000ms_plus;         // Runs that took 1000ms+
+
+        // Enhanced metrics - Page efficiency
+        uint64_t pages_with_no_garbage;        // Pages scanned with no garbage found
+        uint64_t max_space_reclaimed_single_page;  // Max bytes reclaimed from one page
+
+        // Enhanced metrics - Garbage accumulation
+        uint64_t total_dirty_pages_marked;     // Total pages marked dirty (all time)
+
         GCStatistics()
             : tuples_removed(0)
             , pages_cleaned(0)
@@ -45,6 +60,15 @@ namespace scratchbird::core
             , last_background_duration_ms(0)
             , dirty_page_count(0)
             , space_reclaimed_bytes(0)
+            , duration_0_10ms(0)
+            , duration_10_50ms(0)
+            , duration_50_100ms(0)
+            , duration_100_500ms(0)
+            , duration_500_1000ms(0)
+            , duration_1000ms_plus(0)
+            , pages_with_no_garbage(0)
+            , max_space_reclaimed_single_page(0)
+            , total_dirty_pages_marked(0)
         {
         }
     };
