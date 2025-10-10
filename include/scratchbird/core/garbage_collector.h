@@ -8,6 +8,7 @@
 #include <mutex>
 #include <condition_variable>
 #include <unordered_set>
+#include <map>
 
 namespace scratchbird::core
 {
@@ -76,6 +77,43 @@ namespace scratchbird::core
             , current_cooperative_rate(100)
             , current_background_interval_ms(5000)
         {
+        }
+    };
+
+    // Dirty page information for priority-based cleaning
+    struct DirtyPageInfo
+    {
+        uint32_t page_id;
+        double priority;              // Higher = more urgent (estimated garbage density)
+        uint64_t marked_timestamp;    // When page was marked dirty (microseconds)
+        uint32_t mark_count;          // Number of times marked dirty (indicates churn)
+
+        DirtyPageInfo()
+            : page_id(0)
+            , priority(0.0)
+            , marked_timestamp(0)
+            , mark_count(0)
+        {
+        }
+
+        DirtyPageInfo(uint32_t page_id, double priority, uint64_t timestamp)
+            : page_id(page_id)
+            , priority(priority)
+            , marked_timestamp(timestamp)
+            , mark_count(1)
+        {
+        }
+
+        // Comparator for priority queue (higher priority first)
+        bool operator<(const DirtyPageInfo& other) const
+        {
+            // First compare priority (higher is better)
+            if (priority != other.priority)
+            {
+                return priority > other.priority;  // Reverse for max-heap
+            }
+            // If priority equal, older pages first
+            return marked_timestamp < other.marked_timestamp;
         }
     };
 
@@ -164,9 +202,9 @@ namespace scratchbird::core
         std::mutex bg_wake_mutex_;
         std::condition_variable bg_wake_cv_;
 
-        // Dirty page tracking
+        // Dirty page tracking (priority-based)
         mutable std::mutex dirty_pages_mutex_;
-        std::unordered_set<uint32_t> dirty_pages_;
+        std::map<uint32_t, DirtyPageInfo> dirty_pages_;  // page_id -> info
 
         // Statistics
         mutable std::mutex stats_mutex_;
@@ -188,6 +226,9 @@ namespace scratchbird::core
 
         // Adaptive tuning
         void performAdaptiveTuning();
+
+        // Priority calculation for dirty pages
+        double calculatePagePriority(uint32_t mark_count, uint64_t age_microseconds);
     };
 
 } // namespace scratchbird::core

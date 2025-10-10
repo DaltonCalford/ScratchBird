@@ -9,6 +9,8 @@
 #include "scratchbird/core/logger.h"
 #include <chrono>
 #include <thread>
+#include <algorithm>
+#include <cmath>
 
 namespace scratchbird::core
 {
@@ -162,11 +164,34 @@ namespace scratchbird::core
     void GarbageCollector::markPageDirty(uint32_t page_id)
     {
         std::lock_guard<std::mutex> lock(dirty_pages_mutex_);
-        dirty_pages_.insert(page_id);
 
-        // Track garbage accumulation rate
-        std::lock_guard<std::mutex> stats_lock(stats_mutex_);
-        stats_.total_dirty_pages_marked++;
+        // Get current timestamp
+        uint64_t now = std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::system_clock::now().time_since_epoch()
+        ).count();
+
+        // Check if page is already dirty
+        auto it = dirty_pages_.find(page_id);
+        if (it != dirty_pages_.end())
+        {
+            // Page already dirty - increment mark count and recalculate priority
+            DirtyPageInfo& info = it->second;
+            info.mark_count++;
+
+            // Recalculate priority based on mark count and age
+            uint64_t age = now - info.marked_timestamp;
+            info.priority = calculatePagePriority(info.mark_count, age);
+        }
+        else
+        {
+            // New dirty page - add to map with initial priority
+            double initial_priority = 1.0;  // Base priority
+            dirty_pages_[page_id] = DirtyPageInfo(page_id, initial_priority, now);
+
+            // Track garbage accumulation rate
+            std::lock_guard<std::mutex> stats_lock(stats_mutex_);
+            stats_.total_dirty_pages_marked++;
+        }
     }
 
     size_t GarbageCollector::getDirtyPageCount() const
@@ -242,19 +267,31 @@ namespace scratchbird::core
         {
             auto start_time = std::chrono::steady_clock::now();
 
-            // Get dirty pages to clean
-            std::vector<uint32_t> pages_to_clean;
+            // Get dirty pages to clean (sorted by priority)
+            std::vector<DirtyPageInfo> pages_to_clean;
             {
                 std::lock_guard<std::mutex> lock(dirty_pages_mutex_);
-                pages_to_clean.assign(dirty_pages_.begin(), dirty_pages_.end());
+
+                // Extract all dirty page info
+                pages_to_clean.reserve(dirty_pages_.size());
+                for (const auto& pair : dirty_pages_)
+                {
+                    pages_to_clean.push_back(pair.second);
+                }
+
+                // Sort by priority (highest first)
+                std::sort(pages_to_clean.begin(), pages_to_clean.end(),
+                         [](const DirtyPageInfo& a, const DirtyPageInfo& b) {
+                             return a < b;  // Uses operator< which orders by priority
+                         });
             }
 
             uint64_t tuples_removed = 0;
             uint64_t pages_cleaned = 0;
             uint64_t space_reclaimed = 0;
 
-            // Clean each dirty page
-            for (uint32_t page_id : pages_to_clean)
+            // Clean each dirty page (in priority order - highest first)
+            for (const auto& page_info : pages_to_clean)
             {
                 if (shutdown_requested_.load(std::memory_order_acquire))
                 {
@@ -263,7 +300,7 @@ namespace scratchbird::core
 
                 ErrorContext err_ctx;
                 uint64_t page_space_reclaimed = 0;
-                uint64_t tuples_found = cleanPage(page_id, &page_space_reclaimed, &err_ctx);
+                uint64_t tuples_found = cleanPage(page_info.page_id, &page_space_reclaimed, &err_ctx);
                 tuples_removed += tuples_found;
                 space_reclaimed += page_space_reclaimed;
                 pages_cleaned++;
@@ -670,6 +707,38 @@ namespace scratchbird::core
                          stats.dirty_page_count);
             }
         }
+    }
+
+    double GarbageCollector::calculatePagePriority(uint32_t mark_count, uint64_t age_microseconds)
+    {
+        // Priority calculation strategy:
+        // 1. Pages marked multiple times (high churn) = higher priority
+        // 2. Older pages (accumulated more garbage) = higher priority
+        // 3. Combine both factors with weighted scoring
+        //
+        // Formula: priority = mark_count_score + age_score
+        //   mark_count_score = log2(mark_count + 1) * 2.0
+        //   age_score = age_seconds * 0.1
+        //
+        // This gives:
+        // - mark_count=1, age=10s  -> priority = 2.0 + 1.0 = 3.0
+        // - mark_count=5, age=10s  -> priority = 5.17 + 1.0 = 6.17
+        // - mark_count=1, age=100s -> priority = 2.0 + 10.0 = 12.0
+        // - mark_count=10, age=100s -> priority = 7.02 + 10.0 = 17.02
+
+        // Convert age to seconds
+        double age_seconds = age_microseconds / 1000000.0;
+
+        // Mark count contribution (logarithmic to avoid extreme values)
+        double mark_count_score = std::log2(mark_count + 1) * 2.0;
+
+        // Age contribution (linear)
+        double age_score = age_seconds * 0.1;
+
+        // Combined priority
+        double priority = mark_count_score + age_score;
+
+        return priority;
     }
 
 } // namespace scratchbird::core
