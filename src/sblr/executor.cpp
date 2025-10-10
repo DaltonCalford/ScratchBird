@@ -1047,6 +1047,7 @@ namespace scratchbird
                 current_result_set_->addColumn("MON$LAST_BG_TIME", core::DataType::INT64);
                 current_result_set_->addColumn("MON$LAST_BG_DURATION_MS", core::DataType::INT64);
                 current_result_set_->addColumn("MON$DIRTY_PAGE_COUNT", core::DataType::INT64);
+                current_result_set_->addColumn("MON$SPACE_RECLAIMED", core::DataType::INT64);
 
                 // Get GC statistics from garbage collector
                 auto gc = db_->garbage_collector();
@@ -1063,6 +1064,7 @@ namespace scratchbird
                     row.push_back(Value::makeInt64(static_cast<int64_t>(stats.last_background_time)));
                     row.push_back(Value::makeInt64(static_cast<int64_t>(stats.last_background_duration_ms)));
                     row.push_back(Value::makeInt64(static_cast<int64_t>(stats.dirty_page_count)));
+                    row.push_back(Value::makeInt64(static_cast<int64_t>(stats.space_reclaimed_bytes)));
 
                     current_result_set_->addRow(std::move(row));
                 }
@@ -1070,6 +1072,7 @@ namespace scratchbird
                 {
                     // GarbageCollector not available - return row with zeros
                     std::vector<Value> row;
+                    row.push_back(Value::makeInt64(0));
                     row.push_back(Value::makeInt64(0));
                     row.push_back(Value::makeInt64(0));
                     row.push_back(Value::makeInt64(0));

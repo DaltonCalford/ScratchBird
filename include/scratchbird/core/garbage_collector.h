@@ -33,6 +33,7 @@ namespace scratchbird::core
         uint64_t last_background_time;         // Timestamp of last background run (microseconds)
         uint64_t last_background_duration_ms;  // Duration of last background run
         uint64_t dirty_page_count;             // Current dirty pages
+        uint64_t space_reclaimed_bytes;        // Total bytes reclaimed
 
         GCStatistics()
             : tuples_removed(0)
@@ -42,6 +43,7 @@ namespace scratchbird::core
             , last_background_time(0)
             , last_background_duration_ms(0)
             , dirty_page_count(0)
+            , space_reclaimed_bytes(0)
         {
         }
     };
@@ -117,13 +119,13 @@ namespace scratchbird::core
 
         // Internal methods
         void backgroundGCLoop();
-        uint64_t cleanPage(uint32_t page_id, ErrorContext* ctx);
+        uint64_t cleanPage(uint32_t page_id, uint64_t* space_reclaimed_out, ErrorContext* ctx);
         bool isTupleGarbage(uint64_t xmax, uint64_t oit);
         void readConfiguration();
 
         // Statistics helpers
-        void updateCooperativeStats(uint64_t tuples_removed, uint64_t pages_cleaned);
-        void updateBackgroundStats(uint64_t tuples_removed, uint64_t pages_cleaned, uint64_t duration_ms);
+        void updateCooperativeStats(uint64_t tuples_removed, uint64_t pages_cleaned, uint64_t space_reclaimed);
+        void updateBackgroundStats(uint64_t tuples_removed, uint64_t pages_cleaned, uint64_t space_reclaimed, uint64_t duration_ms);
         void wakeBackgroundThread();
 
         // Rate limiting for cooperative GC
