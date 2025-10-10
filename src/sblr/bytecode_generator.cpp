@@ -232,6 +232,13 @@ namespace scratchbird
             (void)node; // Suppress unused parameter warning
         }
 
+        void BytecodeGenerator::visit(parser::SweepStmt *node)
+        {
+            // Generate SWEEP DATABASE bytecode (Phase 3 Task 3.3)
+            current_result_->writeOpcode(Opcode::SWEEP);
+            (void)node; // Suppress unused parameter warning
+        }
+
         // ===== Expression Visitors =====
 
         void BytecodeGenerator::visit(parser::LiteralExpr *node)
@@ -636,6 +643,14 @@ namespace scratchbird
                     return "INSERT";
                 case Opcode::SELECT:
                     return "SELECT";
+                case Opcode::START_TRANSACTION:
+                    return "START_TRANSACTION";
+                case Opcode::COMMIT:
+                    return "COMMIT";
+                case Opcode::ROLLBACK:
+                    return "ROLLBACK";
+                case Opcode::SWEEP:
+                    return "SWEEP";
                 case Opcode::TYPE_INTEGER:
                     return "TYPE_INTEGER";
                 case Opcode::TYPE_BIGINT:

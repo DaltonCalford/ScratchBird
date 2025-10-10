@@ -168,6 +168,7 @@ namespace scratchbird
             void executeCreateTable();
             void executeInsert();
             void executeSelect();
+            void executeSweep();  // Phase 3 Task 3.3
 
             // Monitoring/system table execution
             void executeMonitoringQuery(const std::string &table_name);

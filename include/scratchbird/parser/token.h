@@ -147,6 +147,10 @@ namespace scratchbird
             KW_PROTECTED,
             KW_FOR,
             KW_OUTSTANDING,
+
+            // Database maintenance (Phase 3 Task 3.3)
+            KW_SWEEP,
+            KW_DATABASE,
         };
 
         // Location in source file
