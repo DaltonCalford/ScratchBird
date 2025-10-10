@@ -4,6 +4,7 @@
 #include "scratchbird/core/storage_engine.h"
 #include "scratchbird/core/buffer_pool.h"
 #include "scratchbird/core/ondisk.h"
+#include "scratchbird/core/heap_page.h"
 #include "scratchbird/core/logger.h"
 #include <chrono>
 #include <thread>
@@ -239,7 +240,8 @@ namespace scratchbird::core
                 }
 
                 ErrorContext err_ctx;
-                cleanPage(page_id, &err_ctx);
+                uint64_t tuples_found = cleanPage(page_id, &err_ctx);
+                tuples_removed += tuples_found;
                 pages_cleaned++;
             }
 
@@ -258,7 +260,7 @@ namespace scratchbird::core
         LOG_INFO(VACUUM, "Background GC loop stopped");
     }
 
-    void GarbageCollector::cleanPage(uint32_t page_id, ErrorContext* ctx)
+    uint64_t GarbageCollector::cleanPage(uint32_t page_id, ErrorContext* ctx)
     {
         // Get current OIT from TransactionManager
         uint64_t oit = txn_manager_->getOldestXid();
@@ -269,7 +271,7 @@ namespace scratchbird::core
         if (s != Status::OK)
         {
             LOG_WARNING(VACUUM, "Failed to pin page %u for GC: %d", page_id, static_cast<int>(s));
-            return;
+            return 0;
         }
 
         // Get page header to check page type
@@ -279,18 +281,57 @@ namespace scratchbird::core
         if (page_header->page_type != PAGE_TYPE_HEAP)
         {
             db_->buffer_pool()->unpinPage(page_id, false, ctx);
-            return;
+            return 0;
         }
 
-        // TODO: Implement actual tuple scanning and cleanup
-        // For now, this is a placeholder that removes the page from dirty set
+        // Scan tuples to identify garbage
+        HeapPage heap_page(reinterpret_cast<uint8_t*>(page_buffer), page_header->page_size);
+        uint16_t item_count = heap_page.getItemCount();
+        uint64_t garbage_tuples_found = 0;
 
-        // Unpin page (not modified for now)
+        for (uint16_t item_id = 0; item_id < item_count; item_id++)
+        {
+            const uint8_t* tuple_data;
+            uint32_t tuple_size;
+
+            Status tuple_status = heap_page.getTuple(item_id, &tuple_data, &tuple_size, ctx);
+            if (tuple_status != Status::OK)
+            {
+                continue; // Skip invalid/deleted items
+            }
+
+            // Get tuple header
+            const auto* tuple_hdr = reinterpret_cast<const TupleHeader*>(tuple_data);
+
+            // Check if tuple is garbage
+            if (isTupleGarbage(tuple_hdr->xmax, oit))
+            {
+                garbage_tuples_found++;
+                // TODO: Physically remove tuple from page
+                // For now, we just count it. Full implementation would:
+                // 1. Mark item pointer as LP_UNUSED
+                // 2. Compact page to reclaim space
+                // 3. Update free space metadata
+            }
+        }
+
+        // Log results if we found garbage
+        if (garbage_tuples_found > 0)
+        {
+            LOG_INFO(VACUUM, "Page %u: found %lu garbage tuples (OIT=%lu)",
+                    page_id, garbage_tuples_found, oit);
+        }
+
+        // Unpin page (not modified for now - we're not physically removing tuples yet)
         db_->buffer_pool()->unpinPage(page_id, false, ctx);
 
         // Remove from dirty pages
-        std::lock_guard<std::mutex> lock(dirty_pages_mutex_);
-        dirty_pages_.erase(page_id);
+        {
+            std::lock_guard<std::mutex> lock(dirty_pages_mutex_);
+            dirty_pages_.erase(page_id);
+        }
+
+        return garbage_tuples_found;
     }
 
     bool GarbageCollector::isTupleGarbage(uint64_t xmax, uint64_t oit)

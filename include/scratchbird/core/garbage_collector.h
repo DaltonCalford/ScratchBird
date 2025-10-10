@@ -113,7 +113,7 @@ namespace scratchbird::core
 
         // Internal methods
         void backgroundGCLoop();
-        void cleanPage(uint32_t page_id, ErrorContext* ctx);
+        uint64_t cleanPage(uint32_t page_id, ErrorContext* ctx);
         bool isTupleGarbage(uint64_t xmax, uint64_t oit);
 
         // Statistics helpers
