@@ -5,6 +5,7 @@
 #include "scratchbird/core/buffer_pool.h"
 #include "scratchbird/core/ondisk.h"
 #include "scratchbird/core/heap_page.h"
+#include "scratchbird/core/config.h"
 #include "scratchbird/core/logger.h"
 #include <chrono>
 #include <thread>
@@ -17,6 +18,8 @@ namespace scratchbird::core
         , storage_engine_(nullptr)
         , policy_(GCPolicy::COMBINED)
         , enabled_(true)
+        , background_interval_ms_(5000)
+        , cooperative_rate_(100)
         , background_running_(false)
         , shutdown_requested_(false)
     {
@@ -53,9 +56,13 @@ namespace scratchbird::core
             return Status::IO_ERROR;
         }
 
-        LOG_INFO(VACUUM, "GarbageCollector initialized with policy: %s",
+        // Read configuration
+        readConfiguration();
+
+        LOG_INFO(VACUUM, "GarbageCollector initialized with policy: %s, interval: %lums, rate: 1/%u",
                  policy_ == GCPolicy::COOPERATIVE ? "COOPERATIVE" :
-                 policy_ == GCPolicy::BACKGROUND ? "BACKGROUND" : "COMBINED");
+                 policy_ == GCPolicy::BACKGROUND ? "BACKGROUND" : "COMBINED",
+                 background_interval_ms_, cooperative_rate_);
 
         return Status::OK;
     }
@@ -252,9 +259,8 @@ namespace scratchbird::core
 
             updateBackgroundStats(tuples_removed, pages_cleaned, duration_ms);
 
-            // Sleep before next pass (5 seconds default)
-            // TODO: Read from config
-            std::this_thread::sleep_for(std::chrono::milliseconds(5000));
+            // Sleep before next pass
+            std::this_thread::sleep_for(std::chrono::milliseconds(background_interval_ms_));
         }
 
         LOG_INFO(VACUUM, "Background GC loop stopped");
@@ -404,10 +410,66 @@ namespace scratchbird::core
         static thread_local uint32_t counter = 0;
         counter++;
 
-        // TODO: Read rate from config
-        const uint32_t cooperative_rate = 100;  // 1 in 100 page reads
+        return (counter % cooperative_rate_) == 0;
+    }
 
-        return (counter % cooperative_rate) == 0;
+    void GarbageCollector::readConfiguration()
+    {
+        Config& cfg = Config::getInstance();
+
+        // Read GC policy
+        std::string policy_str = cfg.getString("garbage_collection", "policy", "COMBINED");
+        if (policy_str == "COOPERATIVE")
+        {
+            policy_ = GCPolicy::COOPERATIVE;
+        }
+        else if (policy_str == "BACKGROUND")
+        {
+            policy_ = GCPolicy::BACKGROUND;
+        }
+        else if (policy_str == "COMBINED")
+        {
+            policy_ = GCPolicy::COMBINED;
+        }
+        else
+        {
+            LOG_WARNING(VACUUM, "Invalid GC policy '%s', using COMBINED", policy_str.c_str());
+            policy_ = GCPolicy::COMBINED;
+        }
+
+        // Read background interval (default: 5000ms = 5 seconds)
+        background_interval_ms_ = cfg.getUInt("garbage_collection", "background_interval_ms", 5000);
+
+        // Validate interval (minimum 100ms, maximum 1 hour)
+        if (background_interval_ms_ < 100)
+        {
+            LOG_WARNING(VACUUM, "Background interval %lums too low, using 100ms", background_interval_ms_);
+            background_interval_ms_ = 100;
+        }
+        else if (background_interval_ms_ > 3600000)  // 1 hour
+        {
+            LOG_WARNING(VACUUM, "Background interval %lums too high, using 3600000ms (1 hour)", background_interval_ms_);
+            background_interval_ms_ = 3600000;
+        }
+
+        // Read cooperative rate (default: 100 = 1% of page reads)
+        cooperative_rate_ = cfg.getUInt("garbage_collection", "cooperative_rate", 100);
+
+        // Validate rate (minimum 1, maximum 10000)
+        if (cooperative_rate_ < 1)
+        {
+            LOG_WARNING(VACUUM, "Cooperative rate %u too low, using 1", cooperative_rate_);
+            cooperative_rate_ = 1;
+        }
+        else if (cooperative_rate_ > 10000)
+        {
+            LOG_WARNING(VACUUM, "Cooperative rate %u too high, using 10000", cooperative_rate_);
+            cooperative_rate_ = 10000;
+        }
+
+        // Read enabled flag (default: true)
+        bool enabled = cfg.getBool("garbage_collection", "enabled", true);
+        enabled_.store(enabled, std::memory_order_release);
     }
 
 } // namespace scratchbird::core
