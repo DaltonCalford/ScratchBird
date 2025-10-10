@@ -35,6 +35,7 @@ namespace scratchbird
             START_TRANSACTION,  // Phase 2 Task 2.6
             COMMIT,             // Phase 2 Task 2.6
             ROLLBACK,           // Phase 2 Task 2.6
+            SWEEP,              // Phase 3 Task 3.3
 
             // Expressions
             LITERAL,
@@ -561,6 +562,18 @@ namespace scratchbird
             void accept(ASTVisitor *visitor) override;
         };
 
+        // SWEEP DATABASE statement (Phase 3 Task 3.3)
+        class SweepStmt : public Statement
+        {
+        public:
+            explicit SweepStmt(const SourceSpan &span)
+                : Statement(ASTKind::SWEEP, span)
+            {
+            }
+
+            void accept(ASTVisitor *visitor) override;
+        };
+
         // ===== Visitor Pattern =====
 
         class ASTVisitor
@@ -575,6 +588,7 @@ namespace scratchbird
             virtual void visit(StartTransactionStmt *node) = 0;  // Phase 2 Task 2.6
             virtual void visit(CommitStmt *node) = 0;            // Phase 2 Task 2.6
             virtual void visit(RollbackStmt *node) = 0;          // Phase 2 Task 2.6
+            virtual void visit(SweepStmt *node) = 0;             // Phase 3 Task 3.3
 
             // Expressions
             virtual void visit(LiteralExpr *node) = 0;
@@ -602,6 +616,7 @@ namespace scratchbird
             void visit(StartTransactionStmt *node) override;  // Phase 2 Task 2.6
             void visit(CommitStmt *node) override;            // Phase 2 Task 2.6
             void visit(RollbackStmt *node) override;          // Phase 2 Task 2.6
+            void visit(SweepStmt *node) override;             // Phase 3 Task 3.3
             void visit(LiteralExpr *node) override;
             void visit(IdentifierExpr *node) override;
             void visit(BinaryOpExpr *node) override;

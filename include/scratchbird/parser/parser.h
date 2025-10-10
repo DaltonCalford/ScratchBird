@@ -109,6 +109,7 @@ namespace scratchbird
             Statement *parseStartTransaction();  // Phase 2 Task 2.6
             Statement *parseCommit();            // Phase 2 Task 2.6
             Statement *parseRollback();          // Phase 2 Task 2.6
+            Statement *parseSweep();             // Phase 3 Task 3.3
 
             // CREATE TABLE helpers
             ColumnDef *parseColumnDef();

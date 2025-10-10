@@ -132,6 +132,10 @@ namespace scratchbird
                 {
                     stmt = parseRollback();
                 }
+                else if (match(TokenType::KW_SWEEP))
+                {
+                    stmt = parseSweep();
+                }
                 else if (isAtEnd())
                 {
                     error("Expected SQL statement, but got end of file");
@@ -757,6 +761,21 @@ namespace scratchbird
 
             auto span = makeSpan(start_loc);
             return arena_.make<RollbackStmt>(span);
+        }
+
+        Statement *Parser::parseSweep()
+        {
+            // SWEEP DATABASE
+            auto start_loc = previous().location;
+
+            if (!consume(TokenType::KW_DATABASE, "Expected DATABASE after SWEEP"))
+            {
+                synchronize();
+                return nullptr;
+            }
+
+            auto span = makeSpan(start_loc);
+            return arena_.make<SweepStmt>(span);
         }
 
         Expression *Parser::parseExpression()

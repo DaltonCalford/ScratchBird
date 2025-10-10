@@ -156,6 +156,11 @@ namespace scratchbird
                         result = ExecutionResult(std::move(current_result_set_));
                         break;
 
+                    case Opcode::SWEEP:
+                        executeSweep();
+                        result = ExecutionResult();
+                        break;
+
                     default:
                         result = ExecutionResult("Unknown statement opcode: " +
                                                std::to_string(static_cast<int>(op)));
@@ -925,6 +930,35 @@ namespace scratchbird
 
                 current_result_set_->addRow(std::move(result_row));
             }
+        }
+
+        void Executor::executeSweep()
+        {
+            // Execute SWEEP DATABASE command (Phase 3 Task 3.3)
+            // This triggers a manual foreground sweep
+
+            // Get sweep manager
+            auto sweep_mgr = db_->sweep_manager();
+            if (!sweep_mgr)
+            {
+                error("Sweep manager not available");
+            }
+
+            // Execute foreground sweep
+            core::ErrorContext err_ctx;
+            auto status = sweep_mgr->executeSweep(true, &err_ctx);
+
+            if (status != core::Status::OK)
+            {
+                std::string err_msg = "Sweep failed";
+                if (!err_ctx.message.empty())
+                {
+                    err_msg += ": " + err_ctx.message;
+                }
+                error(err_msg);
+            }
+
+            // Success - sweep completed
         }
 
         void Executor::executeMonitoringQuery(const std::string &table_name)

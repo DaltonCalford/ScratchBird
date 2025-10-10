@@ -268,6 +268,12 @@ namespace scratchbird
             (void)node; // Suppress unused parameter warning
         }
 
+        void SemanticAnalyzer::visit(SweepStmt *node)
+        {
+            // Sweep statements don't require semantic analysis
+            (void)node; // Suppress unused parameter warning
+        }
+
         // ===== Expression Visitors =====
 
         void SemanticAnalyzer::checkExpression(Expression *expr)

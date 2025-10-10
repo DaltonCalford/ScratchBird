@@ -123,6 +123,11 @@ namespace scratchbird
             visitor->visit(this);
         }
 
+        void SweepStmt::accept(ASTVisitor *visitor)
+        {
+            visitor->visit(this);
+        }
+
         // ===== AST Printer =====
 
         void ASTPrinter::printIndent()
@@ -265,6 +270,12 @@ namespace scratchbird
         {
             printIndent();
             out_ << "ROLLBACK";
+        }
+
+        void ASTPrinter::visit(SweepStmt *node)
+        {
+            printIndent();
+            out_ << "SWEEP DATABASE";
         }
 
         void ASTPrinter::visit(LiteralExpr *node)

@@ -81,6 +81,9 @@ namespace scratchbird
             {"STABILITY", TokenType::KW_STABILITY}, {"RESERVING", TokenType::KW_RESERVING},
             {"SHARED", TokenType::KW_SHARED},   {"PROTECTED", TokenType::KW_PROTECTED},
             {"FOR", TokenType::KW_FOR},         {"OUTSTANDING", TokenType::KW_OUTSTANDING},
+
+            // Database maintenance (Phase 3 Task 3.3)
+            {"SWEEP", TokenType::KW_SWEEP},     {"DATABASE", TokenType::KW_DATABASE},
         };
 
         // Case-insensitive string comparison

@@ -20,6 +20,10 @@ namespace scratchbird
             CREATE_TABLE = 0x10, // Create table
             INSERT = 0x11,       // Insert row
             SELECT = 0x12,       // Select query
+            START_TRANSACTION = 0x13, // Start transaction (Phase 2 Task 2.6)
+            COMMIT = 0x14,            // Commit transaction (Phase 2 Task 2.6)
+            ROLLBACK = 0x15,          // Rollback transaction (Phase 2 Task 2.6)
+            SWEEP = 0x16,             // Sweep database (Phase 3 Task 3.3)
 
             // Data types
             TYPE_INTEGER = 0x20,  // 32-bit integer (INT32)
