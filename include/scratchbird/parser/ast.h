@@ -33,6 +33,7 @@ namespace scratchbird
             INSERT,
             SELECT,
             START_TRANSACTION,  // Phase 2 Task 2.6
+            SET_TRANSACTION,    // Phase 3 Task 3.6
             COMMIT,             // Phase 2 Task 2.6
             ROLLBACK,           // Phase 2 Task 2.6
             SWEEP,              // Phase 3 Task 3.3
@@ -509,7 +510,25 @@ namespace scratchbird
             SNAPSHOT_TABLE_STABILITY = 2
         };
 
-        // START TRANSACTION statement
+        // Table lock mode for RESERVING clause (Firebird-style)
+        enum class TableLockMode : uint8_t
+        {
+            SHARED = 0,     // SHARED READ - allows concurrent reads
+            PROTECTED = 1,  // PROTECTED READ/WRITE - exclusive table access
+        };
+
+        // Table reservation for RESERVING clause
+        struct TableReservation
+        {
+            StringPool::StringId table_name;
+            TableLockMode lock_mode;
+            bool for_write;
+
+            TableReservation(StringPool::StringId name, TableLockMode mode, bool write)
+                : table_name(name), lock_mode(mode), for_write(write) {}
+        };
+
+        // START TRANSACTION statement (Phase 2 Task 2.6, Phase 3 Task 3.6)
         class StartTransactionStmt : public Statement
         {
         public:
@@ -517,10 +536,14 @@ namespace scratchbird
                                  TransactionMode mode = TransactionMode::READ_WRITE,
                                  IsolationLevel isolation = IsolationLevel::READ_COMMITTED,
                                  bool wait = true,
-                                 bool commit_outstanding = false)
+                                 bool commit_outstanding = false,
+                                 uint32_t lock_timeout = 0,
+                                 std::vector<TableReservation> reservations = {})
                 : Statement(ASTKind::START_TRANSACTION, span),
                   mode_(mode), isolation_(isolation), wait_(wait),
-                  commit_outstanding_(commit_outstanding)
+                  commit_outstanding_(commit_outstanding),
+                  lock_timeout_(lock_timeout),
+                  table_reservations_(std::move(reservations))
             {
             }
 
@@ -528,6 +551,8 @@ namespace scratchbird
             IsolationLevel isolation() const { return isolation_; }
             bool wait() const { return wait_; }
             bool commitOutstanding() const { return commit_outstanding_; }
+            uint32_t lockTimeout() const { return lock_timeout_; }
+            const std::vector<TableReservation>& tableReservations() const { return table_reservations_; }
 
             void accept(ASTVisitor *visitor) override;
 
@@ -536,6 +561,8 @@ namespace scratchbird
             IsolationLevel isolation_;
             bool wait_;
             bool commit_outstanding_;
+            uint32_t lock_timeout_;                         // Lock timeout in seconds (0 = no wait, UINT32_MAX = wait forever)
+            std::vector<TableReservation> table_reservations_; // RESERVING clause tables
         };
 
         // COMMIT statement
@@ -574,6 +601,40 @@ namespace scratchbird
             void accept(ASTVisitor *visitor) override;
         };
 
+        // SET TRANSACTION statement (Phase 3 Task 3.6)
+        // Sets transaction parameters for the NEXT transaction (doesn't start one immediately)
+        class SetTransactionStmt : public Statement
+        {
+        public:
+            SetTransactionStmt(const SourceSpan &span,
+                              TransactionMode mode = TransactionMode::READ_WRITE,
+                              IsolationLevel isolation = IsolationLevel::READ_COMMITTED,
+                              bool wait = true,
+                              uint32_t lock_timeout = 0,
+                              std::vector<TableReservation> reservations = {})
+                : Statement(ASTKind::SET_TRANSACTION, span),
+                  mode_(mode), isolation_(isolation), wait_(wait),
+                  lock_timeout_(lock_timeout),
+                  table_reservations_(std::move(reservations))
+            {
+            }
+
+            TransactionMode mode() const { return mode_; }
+            IsolationLevel isolation() const { return isolation_; }
+            bool wait() const { return wait_; }
+            uint32_t lockTimeout() const { return lock_timeout_; }
+            const std::vector<TableReservation>& tableReservations() const { return table_reservations_; }
+
+            void accept(ASTVisitor *visitor) override;
+
+        private:
+            TransactionMode mode_;
+            IsolationLevel isolation_;
+            bool wait_;
+            uint32_t lock_timeout_;                         // Lock timeout in seconds (0 = no wait, UINT32_MAX = wait forever)
+            std::vector<TableReservation> table_reservations_; // RESERVING clause tables
+        };
+
         // ===== Visitor Pattern =====
 
         class ASTVisitor
@@ -586,6 +647,7 @@ namespace scratchbird
             virtual void visit(InsertStmt *node) = 0;
             virtual void visit(SelectStmt *node) = 0;
             virtual void visit(StartTransactionStmt *node) = 0;  // Phase 2 Task 2.6
+            virtual void visit(SetTransactionStmt *node) = 0;    // Phase 3 Task 3.6
             virtual void visit(CommitStmt *node) = 0;            // Phase 2 Task 2.6
             virtual void visit(RollbackStmt *node) = 0;          // Phase 2 Task 2.6
             virtual void visit(SweepStmt *node) = 0;             // Phase 3 Task 3.3
@@ -614,6 +676,7 @@ namespace scratchbird
             void visit(InsertStmt *node) override;
             void visit(SelectStmt *node) override;
             void visit(StartTransactionStmt *node) override;  // Phase 2 Task 2.6
+            void visit(SetTransactionStmt *node) override;    // Phase 3 Task 3.6
             void visit(CommitStmt *node) override;            // Phase 2 Task 2.6
             void visit(RollbackStmt *node) override;          // Phase 2 Task 2.6
             void visit(SweepStmt *node) override;             // Phase 3 Task 3.3

@@ -73,6 +73,7 @@ namespace scratchbird
             void visit(InsertStmt *node) override;
             void visit(SelectStmt *node) override;
             void visit(StartTransactionStmt *node) override;  // Phase 2 Task 2.6
+            void visit(SetTransactionStmt *node) override;    // Phase 3 Task 3.6
             void visit(CommitStmt *node) override;            // Phase 2 Task 2.6
             void visit(RollbackStmt *node) override;          // Phase 2 Task 2.6
             void visit(SweepStmt *node) override;             // Phase 3 Task 3.3

@@ -107,6 +107,7 @@ namespace scratchbird
             Statement *parseInsert();
             Statement *parseSelect();
             Statement *parseStartTransaction();  // Phase 2 Task 2.6
+            Statement *parseSetTransaction();    // Phase 3 Task 3.6
             Statement *parseCommit();            // Phase 2 Task 2.6
             Statement *parseRollback();          // Phase 2 Task 2.6
             Statement *parseSweep();             // Phase 3 Task 3.3
