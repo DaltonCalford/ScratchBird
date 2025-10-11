@@ -270,6 +270,9 @@
             // Record transaction as active (with LRU tracking)
             addToCacheLRU(new_xid, TransactionState::ACTIVE);
 
+            // Track statistics
+            stats_.transactions_started++;
+
             // Register in ProcArray
             Status status = ProcArrayManager::setTransactionId(proc_id, new_xid, ctx);
             if (status != Status::OK)
@@ -359,6 +362,9 @@
                     LOG_WARNING(TRANSACTION, "Failed to update TIP entry for committed XID %lu", xid);
                 }
 
+                // Track statistics
+                stats_.transactions_committed++;
+
                 // Ensure durability
                 status = db_->sync(ctx);
             }
@@ -414,6 +420,9 @@
                 // Log error but don't fail - CLOG is the source of truth
                 LOG_WARNING(TRANSACTION, "Failed to update TIP entry for aborted XID %lu", xid);
             }
+
+            // Track statistics
+            stats_.transactions_aborted++;
 
             // Sync to ensure rollback is recorded
             return db_->sync(ctx);
@@ -833,11 +842,18 @@
 
                     pthread_rwlock_unlock(&proc_array->array_lock);
 
+                    // Track statistics
+                    size_t original_size = snapshot_out.active_xids.size();
+                    size_t filtered_size = filtered_xids.size();
+                    uint64_t xids_filtered = original_size - filtered_size;
+
                     snapshot_out.active_xids = std::move(filtered_xids);
 
+                    stats_.readonly_snapshots++;
+                    stats_.readonly_snapshot_xids_filtered += xids_filtered;
+
                     LOG_DEBUG(TRANSACTION, "Read-only snapshot optimization: filtered %zu active XIDs down to %zu write XIDs",
-                             snapshot_out.active_xids.size() + filtered_xids.size(),
-                             snapshot_out.active_xids.size());
+                             original_size, filtered_size);
                 }
             }
 
