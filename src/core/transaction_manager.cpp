@@ -592,14 +592,21 @@
                     continue; // Skip inactive or non-transactional backends
                 }
 
-                // Update OAT - minimum of all active XIDs
-                if (pcb->xid < new_oat)
+                // OPTIMIZATION: Exclude read-only transactions from OAT calculation
+                // Read-only transactions don't create tuple versions, so they don't prevent VACUUM
+                // This allows VACUUM to be more aggressive when there are only read-only analytics queries
+                if (!pcb->is_read_only)
                 {
-                    new_oat = pcb->xid;
-                    has_active = true;
+                    // Update OAT - minimum of all active WRITE transactions
+                    if (pcb->xid < new_oat)
+                    {
+                        new_oat = pcb->xid;
+                        has_active = true;
+                    }
                 }
 
-                // Update OST - minimum of active SNAPSHOT transaction XIDs
+                // Update OST - minimum of active SNAPSHOT transaction XIDs (regardless of read-only status)
+                // OST must include read-only transactions for correct MVCC visibility
                 if (pcb->is_snapshot_txn && pcb->xid < new_ost)
                 {
                     new_ost = pcb->xid;
@@ -781,6 +788,56 @@
                 // Fallback to simple snapshot if ProcArray not available
                 snapshot_out.xmin = FROZEN_XID + 1;
                 return Status::OK;
+            }
+
+            // OPTIMIZATION: For read-only transactions, filter out other read-only transactions
+            // from the active_xids list. Read-only transactions don't create write conflicts,
+            // so they don't need to be tracked for visibility purposes.
+            // This reduces memory usage and improves snapshot visibility check performance.
+            ConnectionContext* current_ctx = ConnectionContext::getCurrent();
+            if (current_ctx && current_ctx->isReadOnly())
+            {
+                // Get ProcArray to check read-only status of active transactions
+                ProcArray* proc_array = ProcArrayManager::getInstance();
+                if (proc_array)
+                {
+                    pthread_rwlock_rdlock(&proc_array->array_lock);
+
+                    ProcessControlBlock* pcbs = reinterpret_cast<ProcessControlBlock*>(
+                        reinterpret_cast<uint8_t*>(proc_array) + sizeof(ProcArray));
+
+                    // Filter active_xids to only include write transactions
+                    std::vector<uint64_t> filtered_xids;
+                    filtered_xids.reserve(snapshot_out.active_xids.size());
+
+                    for (uint64_t active_xid : snapshot_out.active_xids)
+                    {
+                        // Find this XID in proc array
+                        bool is_write_txn = true; // Assume write if not found
+                        for (uint32_t i = 0; i < proc_array->max_backends; ++i)
+                        {
+                            if (pcbs[i].is_active && pcbs[i].xid == active_xid)
+                            {
+                                is_write_txn = !pcbs[i].is_read_only;
+                                break;
+                            }
+                        }
+
+                        // Only include write transactions
+                        if (is_write_txn)
+                        {
+                            filtered_xids.push_back(active_xid);
+                        }
+                    }
+
+                    pthread_rwlock_unlock(&proc_array->array_lock);
+
+                    snapshot_out.active_xids = std::move(filtered_xids);
+
+                    LOG_DEBUG(TRANSACTION, "Read-only snapshot optimization: filtered %zu active XIDs down to %zu write XIDs",
+                             snapshot_out.active_xids.size() + filtered_xids.size(),
+                             snapshot_out.active_xids.size());
+                }
             }
 
             snapshot_out.xmin = (oldest_xmin != 0) ? oldest_xmin : FROZEN_XID + 1;
