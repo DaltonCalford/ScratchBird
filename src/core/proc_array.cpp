@@ -289,6 +289,48 @@ namespace scratchbird::core
         return Status::OK;
     }
 
+    auto ProcArrayManager::setTransactionReadOnly(uint32_t proc_id, bool is_read_only,
+                                                 ErrorContext* ctx) -> Status
+    {
+        if (!proc_array_) {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "ProcArray not initialized");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        ProcessControlBlock* pcb = getPCB(proc_id);
+        if (!pcb || !pcb->is_active) {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Invalid or inactive backend");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        pthread_rwlock_wrlock(&proc_array_->array_lock);
+        pcb->is_read_only = is_read_only;
+        pthread_rwlock_unlock(&proc_array_->array_lock);
+
+        return Status::OK;
+    }
+
+    auto ProcArrayManager::setTransactionStartTime(uint32_t proc_id, uint64_t start_time,
+                                                  ErrorContext* ctx) -> Status
+    {
+        if (!proc_array_) {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "ProcArray not initialized");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        ProcessControlBlock* pcb = getPCB(proc_id);
+        if (!pcb || !pcb->is_active) {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Invalid or inactive backend");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        pthread_rwlock_wrlock(&proc_array_->array_lock);
+        pcb->xact_start_time = start_time;
+        pthread_rwlock_unlock(&proc_array_->array_lock);
+
+        return Status::OK;
+    }
+
     auto ProcArrayManager::getActiveTransactions(std::vector<uint64_t>* xids_out,
                                                  uint64_t* oldest_xmin_out,
                                                  ErrorContext* ctx) -> Status
@@ -478,6 +520,38 @@ namespace scratchbird::core
         pthread_mutex_lock(&proc_array_->alloc_lock);
         *count_out = proc_array_->num_active;
         pthread_mutex_unlock(&proc_array_->alloc_lock);
+
+        return Status::OK;
+    }
+
+    auto ProcArrayManager::getAllActiveBackends(std::vector<ProcessControlBlock>* backends_out,
+                                               ErrorContext* ctx) -> Status
+    {
+        if (!proc_array_) {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "ProcArray not initialized");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        if (!backends_out) {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "backends_out is null");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        pthread_rwlock_rdlock(&proc_array_->array_lock);
+
+        backends_out->clear();
+
+        auto* pcbs = reinterpret_cast<ProcessControlBlock*>(
+            reinterpret_cast<uint8_t*>(proc_array_) + sizeof(ProcArray));
+
+        // Collect all active backends
+        for (uint32_t i = 0; i < proc_array_->max_backends; ++i) {
+            if (pcbs[i].is_active) {
+                backends_out->push_back(pcbs[i]);
+            }
+        }
+
+        pthread_rwlock_unlock(&proc_array_->array_lock);
 
         return Status::OK;
     }

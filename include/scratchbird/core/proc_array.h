@@ -24,6 +24,8 @@ namespace scratchbird::core
         uint64_t xmin;                 // Oldest XID visible to this backend
         uint8_t isolation_level;       // IsolationLevel enum value (0=READ_COMMITTED, 2=SNAPSHOT, etc.)
         bool is_snapshot_txn;          // True if using SNAPSHOT isolation
+        bool is_read_only;             // True if transaction is read-only
+        uint64_t xact_start_time;      // Transaction start timestamp (microseconds)
 
         // Locking state (for future lock manager)
         uint32_t wait_lock_id;         // Lock waiting for (0 = none)
@@ -33,8 +35,8 @@ namespace scratchbird::core
         uint64_t start_time;           // Backend start timestamp (microseconds)
         uint64_t query_start_time;     // Current query start (0 = idle)
 
-        // Padding for cache line alignment
-        uint8_t padding[44];
+        // Padding for cache line alignment (adjusted for new fields)
+        uint8_t padding[27];
     };
 
     // Process array (shared memory structure)
@@ -88,6 +90,14 @@ namespace scratchbird::core
         static auto setIsolationLevel(uint32_t proc_id, uint8_t isolation_level,
                                      ErrorContext* ctx = nullptr) -> Status;
 
+        // Set transaction read-only flag
+        static auto setTransactionReadOnly(uint32_t proc_id, bool is_read_only,
+                                          ErrorContext* ctx = nullptr) -> Status;
+
+        // Set transaction start time
+        static auto setTransactionStartTime(uint32_t proc_id, uint64_t start_time,
+                                           ErrorContext* ctx = nullptr) -> Status;
+
         // Snapshot support
         static auto getActiveTransactions(std::vector<uint64_t>* xids_out,
                                          uint64_t* oldest_xmin_out,
@@ -109,6 +119,10 @@ namespace scratchbird::core
 
         // Statistics
         static auto getNumActiveBackends(uint32_t* count_out,
+                                        ErrorContext* ctx = nullptr) -> Status;
+
+        // Get all active backends (for monitoring)
+        static auto getAllActiveBackends(std::vector<ProcessControlBlock>* backends_out,
                                         ErrorContext* ctx = nullptr) -> Status;
 
         // Get ProcArray instance (for internal use)
