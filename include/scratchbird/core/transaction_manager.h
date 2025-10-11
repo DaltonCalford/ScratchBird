@@ -165,6 +165,27 @@
             // Returns true if xid is visible according to the snapshot
             auto isSnapshotVisible(uint64_t xid, const Snapshot* snapshot) const -> bool;
 
+            // Statistics
+            struct Stats
+            {
+                uint64_t transactions_started = 0;      // Total transactions started
+                uint64_t transactions_committed = 0;    // Total transactions committed
+                uint64_t transactions_aborted = 0;      // Total transactions aborted
+
+                // READ ONLY transaction optimizations (Phase 3)
+                uint64_t readonly_transactions = 0;     // Read-only transactions started
+                uint64_t readonly_committed = 0;        // Read-only transactions committed
+                uint64_t readonly_aborted = 0;          // Read-only transactions aborted
+                uint64_t readonly_snapshots = 0;        // Snapshots created for read-only txns
+                uint64_t readonly_snapshot_xids_filtered = 0; // XIDs filtered from read-only snapshots
+            };
+
+            auto getStats() const -> Stats
+            {
+                std::lock_guard<std::mutex> lock(mutex_);
+                return stats_;
+            }
+
         private:
             Database *db_;
             BufferPool *buffer_pool_;
@@ -183,6 +204,9 @@
             mutable std::list<uint64_t> cache_lru_list_; // LRU list: front = most recent, back = least recent
             mutable std::unordered_map<uint64_t, std::list<uint64_t>::iterator> cache_lru_map_; // XID -> position in LRU list
             mutable std::mutex mutex_; // Thread safety for future
+
+            // Statistics
+            Stats stats_;
 
             // Special transaction IDs
             static constexpr uint64_t INVALID_XID = 0;
