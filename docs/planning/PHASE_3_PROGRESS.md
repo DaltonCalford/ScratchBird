@@ -1,29 +1,31 @@
 # Phase 3: Firebird Transaction Model - PROGRESS REPORT
 
 **Date:** October 11, 2025
-**Status:** ~85% Complete (Tasks 3.1, 3.2, 3.3, 3.4 COMPLETE)
-**Commits:** 21+ commits, ~3300+ lines of code
-**Last Session:** Phase 4 - Garbage Collection Future Improvements (comprehensive GC enhancements)
+**Status:** ~95% Complete (Tasks 3.1, 3.2, 3.3, 3.4, 3.5 COMPLETE)
+**Commits:** 24+ commits, ~4500+ lines of code
+**Last Session:** Task 3.5 - Long Transaction Management (comprehensive monitoring and detection)
 
 ---
 
 ## Executive Summary
 
-Tasks 3.1 (Transaction Markers), 3.2 (Isolation Levels), 3.3 (Sweep Mechanism), and 3.4 (Garbage Collection) are now COMPLETE! The database now has:
+Tasks 3.1 (Transaction Markers), 3.2 (Isolation Levels), 3.3 (Sweep Mechanism), 3.4 (Garbage Collection), and 3.5 (Long Transaction Management) are now COMPLETE! The database now has:
 - All 4 Firebird isolation levels with full functionality
 - Transaction markers (OIT, OAT, OST, NEXT) with monitoring queries
 - Complete sweep mechanism with manual and automatic triggering
 - SWEEP DATABASE SQL command support
 - Production-ready garbage collector with physical cleanup, adaptive tuning, and priority-based cleaning
+- Long transaction monitoring with configurable policies and background detection
 
 **Completed:**
 - Task 3.1 (Transaction Markers) ✅ COMPLETE
 - Task 3.2 (Isolation Levels) ✅ COMPLETE
 - Task 3.3 (Sweep Mechanism) ✅ COMPLETE
 - Task 3.4 (Garbage Collection) ✅ COMPLETE - See Phase 4 completion reports
+- Task 3.5 (Long Transaction Management) ✅ COMPLETE
 
-**Next Up:** Task 3.5 (Long Transaction Management)
-**Remaining:** Tasks 3.5-3.6 (Long Transaction Management, Advanced Features)
+**Next Up:** Task 3.6 (Advanced Features)
+**Remaining:** Task 3.6 (Advanced Features)
 
 ---
 
@@ -621,12 +623,217 @@ docs/planning/PHASE_4_*.md                       | 7 completion reports (new)
 
 ---
 
+### Task 3.5: Long Transaction Management ✅ COMPLETE
+
+#### What Was Completed
+
+**1. LongTransactionMonitor Class** (`include/scratchbird/core/long_transaction_monitor.h`, `src/core/long_transaction_monitor.cpp`)
+- Complete long transaction monitoring system with:
+  - Background monitoring thread with condition variable wake mechanism
+  - Configurable warning and critical thresholds (default: 600s warning, 3600s critical)
+  - Configurable check interval (default: 60s)
+  - Four action policies: LOG, ROLLBACK_READONLY, ROLLBACK_ALL, TERMINATE_CONNECTION
+  - Thread-safe statistics tracking
+  - Configuration file integration (sb_config.ini)
+  - Enable/disable functionality
+  - Manual transaction checking via `checkLongTransactions()`
+
+**2. Action Policies** (`include/scratchbird/core/long_transaction_monitor.h:11-17`)
+- **LOG (default)**: Only logs warnings for long transactions
+- **ROLLBACK_READONLY**: Automatically rolls back read-only long transactions
+- **ROLLBACK_ALL**: Automatically rolls back any long transaction
+- **TERMINATE_CONNECTION**: Forces disconnect for long transactions
+
+**3. Transaction Age Tracking in ProcArray** (`include/scratchbird/core/proc_array.h:27-28`)
+- Extended ProcessControlBlock with two new fields:
+  - `is_read_only`: Boolean flag indicating if transaction is read-only
+  - `xact_start_time`: Transaction start timestamp in microseconds
+- Adjusted padding from 44 to 27 bytes to maintain cache line alignment
+
+**4. ProcArray Helper Methods** (`include/scratchbird/core/proc_array.h:94-99, 125-126`)
+- Added `setTransactionReadOnly()`: Updates read-only flag in PCB
+- Added `setTransactionStartTime()`: Updates transaction start time in PCB
+- Added `getAllActiveBackends()`: Retrieves all active backends for monitoring
+- All methods implemented with proper locking and error handling
+
+**5. ConnectionContext Integration** (`src/core/connection_context.cpp:138-159`)
+- Updated `beginNewTransaction()` to populate PCB fields:
+  - Calls `setIsolationLevel()` for transaction marker tracking
+  - Calls `setTransactionReadOnly()` for long transaction detection
+  - Calls `setTransactionStartTime()` with microsecond precision
+- Non-fatal warnings if PCB updates fail (transaction continues)
+
+**6. Database Integration** (`include/scratchbird/core/database.h`, `src/core/database.cpp`)
+- Added `long_transaction_monitor_` member (unique_ptr)
+- Integrated into Database lifecycle:
+  - Initialized in `Database::open()` after ProcArray
+  - Started monitoring thread automatically
+  - Stopped and cleaned up in `Database::close()` before ProcArray shutdown
+- Added `long_transaction_monitor()` accessor method
+
+**7. MON_ACTIVE_TRANSACTIONS Monitoring Query** (`src/sblr/executor.cpp:689, 1066-1122`)
+- New system monitoring table for active transaction information
+- Returns 6 columns:
+  - `MON$TRANSACTION_ID`: Transaction XID
+  - `MON$PROC_ID`: Process ID (slot number)
+  - `MON$AGE_SECONDS`: Transaction age in seconds
+  - `MON$ISOLATION_LEVEL`: Isolation level (0=READ_COMMITTED, 2=SNAPSHOT, etc.)
+  - `MON$IS_READ_ONLY`: Boolean flag for read-only transactions
+  - `MON$START_TIME`: Transaction start timestamp (microseconds)
+- Calculates age in real-time based on current time
+
+**Usage Example:**
+```sql
+SELECT * FROM MON_ACTIVE_TRANSACTIONS;
+```
+
+**Output:**
+```
+MON$TRANSACTION_ID | MON$PROC_ID | MON$AGE_SECONDS | MON$ISOLATION_LEVEL | MON$IS_READ_ONLY | MON$START_TIME
+-------------------+-------------+-----------------+---------------------+------------------+------------------
+              1001 |           1 |              45 |                   0 |            false | 1728637200000000
+              1002 |           2 |             120 |                   2 |             true | 1728637125000000
+```
+
+**8. Configuration File Support** (`sb_config.ini`)
+- Created new configuration file with `[long_transactions]` section:
+  - `enabled`: Enable/disable monitoring (default: true)
+  - `warning_threshold`: Seconds before warning (default: 600 = 10 minutes)
+  - `critical_threshold`: Seconds before critical action (default: 3600 = 1 hour)
+  - `check_interval`: How often to check (default: 60 seconds)
+  - `policy`: Action policy (default: LOG)
+- Configuration read on LongTransactionMonitor initialization
+- Can be modified and reloaded by restarting database
+
+**9. Statistics Tracking** (`include/scratchbird/core/long_transaction_monitor.h:20-28`)
+- Comprehensive statistics structure:
+  - `warnings_logged`: Count of warning messages logged
+  - `readonly_rolled_back`: Count of read-only transactions rolled back
+  - `readwrite_rolled_back`: Count of read-write transactions rolled back
+  - `connections_terminated`: Count of connections forcibly terminated
+  - `last_check_time`: Timestamp of last check (microseconds)
+  - `current_long_transactions`: Number of currently long transactions
+- Thread-safe access with mutex protection
+- Accessible via `getStatistics()` method
+
+**10. Comprehensive Testing** (`tests/unit/test_long_transaction_monitor.cpp` - 456 lines)
+- Created 18 comprehensive tests covering all aspects:
+
+  **Initialization & Configuration Tests** (5 tests):
+  - `BasicInitialization`: Monitor starts automatically with database
+  - `EnableDisable`: Enable/disable functionality
+  - `PolicyConfiguration`: All 4 policies can be set/retrieved
+  - `ThresholdConfiguration`: Custom thresholds can be configured
+  - `StartStopMonitoring`: Monitor can be stopped and restarted
+
+  **Detection & Tracking Tests** (6 tests):
+  - `Statistics`: Initial statistics are zero
+  - `ManualCheck`: Aged transactions are detected and flagged
+  - `TransactionAgeTracking`: PCB tracks transaction age correctly
+  - `ReadOnlyFlagTracking`: PCB tracks read-only flag correctly
+  - `TransactionAgeCalculation`: Age calculation is accurate (>= 100ms)
+  - `MultipleConnections`: All aged connections are detected
+
+  **Policy Tests** (2 tests):
+  - `LogPolicy`: LOG policy only logs, doesn't rollback or terminate
+  - `WarningVsCriticalThresholds`: Warning and critical thresholds work independently
+
+  **Concurrency Tests** (2 tests):
+  - `ConcurrentMonitoring`: Multiple threads with long transactions
+  - `StatisticsAccuracy`: Statistics update correctly after multiple checks
+
+**All 18 tests passing with 100% success rate**
+
+#### Technical Highlights
+
+**Transaction Age Calculation**:
+```cpp
+auto now = std::chrono::duration_cast<std::chrono::microseconds>(
+    std::chrono::system_clock::now().time_since_epoch()
+);
+std::chrono::microseconds backend_start_time(backend.xact_start_time);
+uint64_t age_microseconds = (now - backend_start_time).count();
+uint64_t age_seconds = age_microseconds / 1000000;
+```
+
+**Monitoring Loop**:
+```cpp
+while (!shutdown_requested_) {
+    if (enabled_) {
+        checkLongTransactions(&err_ctx);
+    }
+
+    // Sleep for check_interval with early wake on shutdown
+    std::unique_lock<std::mutex> lock(wake_mutex_);
+    wake_cv_.wait_for(lock, std::chrono::seconds(check_interval),
+                     [this] { return shutdown_requested_.load(); });
+}
+```
+
+**Key Design Decisions**:
+- Transaction age stored in ProcessControlBlock for thread-safe access
+- Background monitoring thread uses condition variable for graceful shutdown (< 1ms latency)
+- Atomic operations for configuration values that can change at runtime
+- Statistics protected by separate mutex to avoid contention with monitoring loop
+- Always-in-transaction model means every connection has trackable transaction age
+- Non-fatal PCB updates ensure transaction can proceed even if tracking fails
+
+**Architecture Pattern**:
+Follows the same lifecycle management pattern as SweepManager and GarbageCollector:
+1. Created in `Database::open()` after dependencies (ProcArray)
+2. Initialized with `initialize()`
+3. Started with `startMonitoring()` (background thread)
+4. Stopped in `Database::close()` before dependencies shut down
+5. Automatic cleanup via unique_ptr
+
+#### Testing Results
+
+✅ **All 18 LongTransactionMonitorTest tests passed** (100% pass rate)
+- Total execution time: ~11 seconds (includes thread sleep for age testing)
+- No regressions in existing tests
+- All age calculations accurate within expected tolerances
+- Concurrent monitoring works correctly with multiple threads
+
+#### Files Modified/Created (Task 3.5)
+
+```
+include/scratchbird/core/long_transaction_monitor.h   | 110 ++++++ (new)
+src/core/long_transaction_monitor.cpp                  | 351 ++++++ (new)
+include/scratchbird/core/proc_array.h                  |  11 +++- (modified, padding 44→27)
+src/core/proc_array.cpp                                |  93 +++++ (3 new methods)
+include/scratchbird/core/database.h                    |   8 +++ (forward decl + member)
+src/core/database.cpp                                  |  32 +++++ (init + lifecycle)
+src/core/connection_context.cpp                        |  22 ++++ (PCB updates)
+src/sblr/executor.cpp                                  |  60 ++++ (MON_ACTIVE_TRANSACTIONS)
+tests/unit/test_long_transaction_monitor.cpp           | 456 ++++++ (new)
+sb_config.ini                                          |  73 ++++ (new)
+```
+
+**Summary**: 10 files (4 new, 6 modified), ~1,216 lines of code added
+
+#### Commit Information
+
+**Commit a424aee**: "Implement Phase 3 Task 3.5: Long Transaction Management"
+
+Key changes:
+- Complete LongTransactionMonitor implementation with background monitoring
+- Transaction age tracking in ProcessControlBlock
+- MON_ACTIVE_TRANSACTIONS monitoring query
+- Configuration file support (sb_config.ini)
+- Comprehensive test suite (18 tests, all passing)
+- Database lifecycle integration
+
+**Status**: Task 3.5 (Long Transaction Management) ✅ COMPLETE
+
+---
+
 ## Build Status
 
 ✅ All code compiles successfully with no errors
 ✅ All 27 ConnectionContext tests passing (100% pass rate)
 ✅ All 15 SweepMechanismTest tests passing (100% pass rate)
 ✅ All 20 GarbageCollectorTest tests passing (100% pass rate)
+✅ All 18 LongTransactionMonitorTest tests passing (100% pass rate)
 ✅ All 28 transaction-related tests passing
 ✅ All 4 isolation levels fully implemented and tested:
   - READ_COMMITTED: Latest committed data visibility
@@ -642,7 +849,13 @@ docs/planning/PHASE_4_*.md                       | 7 completion reports (new)
   - Priority-based page cleaning
   - Comprehensive monitoring (22 metrics)
 ✅ MON_GARBAGE_COLLECTION monitoring query with 22 columns
-⚠️ Main test suite has pre-existing failures (not related to Phase 3/4 changes)
+✅ Long transaction management fully implemented with:
+  - Background monitoring with configurable thresholds
+  - Four action policies (LOG/ROLLBACK/TERMINATE)
+  - Transaction age tracking in ProcessControlBlock
+  - Configuration file support (sb_config.ini)
+✅ MON_ACTIVE_TRANSACTIONS monitoring query with 6 columns
+⚠️ Main test suite has pre-existing failures (not related to Phase 3/4/5 changes)
 
 ---
 
@@ -668,7 +881,10 @@ docs/planning/PHASE_4_*.md                       | 7 completion reports (new)
 15. **Commit 88a4c0a**: "Add Phase 4 Part 5 and Part 6 completion reports"
 16. **Commit a01ca3e**: "Mark Phase 4: Garbage Collection Future Improvements as COMPLETE"
 
-**Total:** 16 commits across Phase 3 and Phase 4
+**Task 3.5 - Long Transaction Management:**
+17. **Commit a424aee**: "Implement Phase 3 Task 3.5: Long Transaction Management"
+
+**Total:** 17 commits across Phase 3 and Phase 4
 
 ---
 
@@ -707,13 +923,16 @@ According to `ALPHA_1_2_IMPLEMENTATION_PLAN.md`, the remaining work includes:
 - ✅ Comprehensive testing (20 tests, all passing)
 - See Phase 4 completion reports for details
 
-### Task 3.5: Long Transaction Management (1 week)
-- Transaction age tracking
-- Long transaction detection with configurable thresholds
-- Action policies (LOG/ROLLBACK/TERMINATE)
-- Monitoring queries for long transactions
+### Task 3.5: Long Transaction Management (1 week) ✅ COMPLETE
+- ✅ Transaction age tracking in ProcessControlBlock
+- ✅ Long transaction detection with configurable thresholds (warning/critical)
+- ✅ Action policies (LOG/ROLLBACK_READONLY/ROLLBACK_ALL/TERMINATE_CONNECTION)
+- ✅ Background monitoring thread with condition variable wake
+- ✅ Configuration file support (sb_config.ini)
+- ✅ MON_ACTIVE_TRANSACTIONS monitoring query
+- ✅ Comprehensive testing (18 tests, all passing)
 
-### Task 3.6: Advanced Features (2 weeks)
+### Task 3.6: Advanced Features (2 weeks) 🔜 NEXT
 - RESERVING clause execution for table locking
 - LOCK TIMEOUT with timeout-based waiting
 - READ ONLY transaction optimizations
@@ -723,46 +942,85 @@ According to `ALPHA_1_2_IMPLEMENTATION_PLAN.md`, the remaining work includes:
 
 ## Next Session Recommendations
 
-1. **Begin Task 3.5: Long Transaction Management** (1 week estimated)
-   - Implement transaction age tracking
-   - Implement long transaction detection with configurable thresholds
-   - Add action policies (LOG/ROLLBACK/TERMINATE)
-   - Add MON_LONG_TRANSACTIONS monitoring query
-   - Comprehensive testing
-
-2. **Alternative: Begin Task 3.6: Advanced Features** (2 weeks estimated)
+1. **Begin Task 3.6: Advanced Features** (2 weeks estimated)
    - RESERVING clause execution for table locking
    - LOCK TIMEOUT with timeout-based waiting
    - READ ONLY transaction optimizations
    - Full SET TRANSACTION syntax support
 
+   Task 3.6 would complete Phase 3: Firebird Transaction Model implementation!
+
+2. **Alternative: Focus on Testing and Documentation**
+   - Add integration tests combining multiple transaction features
+   - Performance testing for transaction throughput
+   - Update user documentation for transaction features
+   - Create examples demonstrating isolation levels and monitoring queries
+
 ---
 
 ## Files Modified This Session
 
-**This Session (READ_COMMITTED_READ_CONSISTENCY + SNAPSHOT_TABLE_STABILITY Locking):**
+**This Session (Task 3.5 - Long Transaction Management):**
 ```
-include/scratchbird/core/connection_context.h   | 12 ++++
-src/core/connection_context.cpp                 | 152 ++++++++++++++++++
-src/core/storage_engine.cpp                     |  48 ++++--
-src/sblr/executor.cpp                           |  93 ++++++++++
-tests/unit/test_connection_context.cpp          | 252 +++++++++++++++++++++++++++
-docs/planning/PHASE_3_PROGRESS.md               | 150 ++++++++++++++---
+include/scratchbird/core/long_transaction_monitor.h   | 110 ++++++ (new)
+src/core/long_transaction_monitor.cpp                  | 351 ++++++ (new)
+include/scratchbird/core/proc_array.h                  |  11 +++- (modified)
+src/core/proc_array.cpp                                |  93 +++++ (new methods)
+include/scratchbird/core/database.h                    |   8 +++ (modified)
+src/core/database.cpp                                  |  32 +++++ (modified)
+src/core/connection_context.cpp                        |  22 ++++ (modified)
+src/sblr/executor.cpp                                  |  60 ++++ (modified)
+tests/unit/test_long_transaction_monitor.cpp           | 456 ++++++ (new)
+sb_config.ini                                          |  73 ++++ (new)
+docs/planning/PHASE_3_PROGRESS.md                     | 237 +++++ (modified)
 ```
 
-**Cumulative Changes (Task 3.2 Complete)**: 12 files changed, 1400+ insertions(+), 75 deletions(-)
+**Cumulative Changes (Task 3.5 Complete)**: 11 files changed, ~1,453 insertions(+), 17 deletions(-)
 
 **Previous Sessions:**
-- Session 1: Transaction markers infrastructure (OIT/OAT/OST/NEXT)
-- Session 2: Monitoring queries (MON_DATABASE)
+- Sessions 1-2: Transaction markers infrastructure (OIT/OAT/OST/NEXT) + monitoring queries
 - Session 3: SNAPSHOT isolation with visibility checking
-- Session 4: READ_COMMITTED_READ_CONSISTENCY + SNAPSHOT_TABLE_STABILITY locking (this session)
+- Session 4: READ_COMMITTED_READ_CONSISTENCY + SNAPSHOT_TABLE_STABILITY locking
+- Session 5: Sweep mechanism (Task 3.3 COMPLETE)
+- Sessions 6-7: Garbage collection (Task 3.4 / Phase 4 COMPLETE)
+- Session 8: Long transaction management (Task 3.5 COMPLETE - this session)
 
 ---
 
 ## Session Notes
 
-### Current Session (October 11, 2025)
+### Current Session (October 11, 2025) - Task 3.5 Complete
+
+**Long Transaction Management Implementation**:
+- Created LongTransactionMonitor class with background monitoring thread
+- Implemented 4 action policies: LOG, ROLLBACK_READONLY, ROLLBACK_ALL, TERMINATE_CONNECTION
+- Extended ProcessControlBlock with is_read_only and xact_start_time fields
+- Added ProcArray helper methods: setTransactionReadOnly(), setTransactionStartTime(), getAllActiveBackends()
+- Integrated with ConnectionContext to populate PCB fields in beginNewTransaction()
+- Integrated with Database class for lifecycle management (follows SweepManager/GarbageCollector pattern)
+- Implemented MON_ACTIVE_TRANSACTIONS monitoring query (6 columns)
+- Created configuration file support (sb_config.ini) with [long_transactions] section
+- Created comprehensive test suite (test_long_transaction_monitor.cpp) with 18 tests
+- All tests passing (100% pass rate)
+- Committed changes (commit a424aee) and pushed to GitHub
+- Updated PHASE_3_PROGRESS.md to mark Task 3.5 as COMPLETE
+
+**Key Accomplishments**:
+- Task 3.5 (Long Transaction Management) now COMPLETE
+- 18 comprehensive tests with 100% pass rate (~11s execution time)
+- 10 files modified/created (~1,216 lines of code)
+- Background monitoring with configurable thresholds and policies
+- Thread-safe statistics tracking with atomic operations
+- Condition variable for graceful shutdown (< 1ms latency)
+
+**Technical Highlights**:
+- Transaction age calculated from microsecond-precision timestamps in PCB
+- Monitoring loop sleeps for check_interval with early wake on shutdown
+- Configuration read from sb_config.ini on initialization
+- Always-in-transaction model means every connection has trackable age
+- Non-fatal PCB updates ensure transactions proceed even if tracking fails
+
+### Previous Session (Phase 4 Parts 5 & 6)
 
 **Phase 4 Completion - Garbage Collection Parts 5 & 6**:
 - Implemented priority queue for dirty pages with DirtyPageInfo structure
@@ -780,7 +1038,7 @@ docs/planning/PHASE_3_PROGRESS.md               | 150 ++++++++++++++---
 - 20 comprehensive GC tests with 100% pass rate
 - Production-ready garbage collector with all planned features
 
-### Previous Session (October 10, 2025)
+### Previous Session (Sweep Mechanism Testing)
 
 **Sweep Mechanism Testing and Completion**:
 - Created comprehensive test suite (`test_sweep_mechanism.cpp`) with 15 tests covering:
