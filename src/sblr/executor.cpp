@@ -1141,6 +1141,56 @@ namespace scratchbird
                     current_result_set_->addRow(std::move(row));
                 }
             }
+            else if (table_name == "MON_ACTIVE_TRANSACTIONS")
+            {
+                // Add columns for active transaction information
+                current_result_set_->addColumn("MON$TRANSACTION_ID", core::DataType::INT64);
+                current_result_set_->addColumn("MON$PROC_ID", core::DataType::INT64);
+                current_result_set_->addColumn("MON$AGE_SECONDS", core::DataType::INT64);
+                current_result_set_->addColumn("MON$ISOLATION_LEVEL", core::DataType::INT64);
+                current_result_set_->addColumn("MON$IS_READ_ONLY", core::DataType::BOOLEAN);
+                current_result_set_->addColumn("MON$START_TIME", core::DataType::INT64);
+
+                // Get all active backends from ProcArray
+                std::vector<core::ProcessControlBlock> active_backends;
+                core::ErrorContext err_ctx;
+                auto status = core::ProcArrayManager::getAllActiveBackends(&active_backends, &err_ctx);
+
+                if (status == core::Status::OK)
+                {
+                    // Get current time for age calculation
+                    auto now = std::chrono::duration_cast<std::chrono::microseconds>(
+                        std::chrono::system_clock::now().time_since_epoch()
+                    );
+
+                    // Add a row for each active backend with a transaction
+                    for (const auto& backend : active_backends)
+                    {
+                        // Skip backends without active transactions
+                        if (backend.xid == 0 || backend.xact_start_time == 0)
+                        {
+                            continue;
+                        }
+
+                        // Calculate transaction age
+                        std::chrono::microseconds backend_start_time(backend.xact_start_time);
+                        uint64_t age_microseconds = (now - backend_start_time).count();
+                        uint64_t age_seconds = age_microseconds / 1000000;
+
+                        // Create the result row
+                        std::vector<Value> row;
+                        row.push_back(Value::makeInt64(static_cast<int64_t>(backend.xid)));
+                        row.push_back(Value::makeInt64(static_cast<int64_t>(backend.proc_id)));
+                        row.push_back(Value::makeInt64(static_cast<int64_t>(age_seconds)));
+                        row.push_back(Value::makeInt64(static_cast<int64_t>(backend.isolation_level)));
+                        row.push_back(Value::makeBoolean(backend.is_read_only));
+                        row.push_back(Value::makeInt64(static_cast<int64_t>(backend.xact_start_time)));
+
+                        current_result_set_->addRow(std::move(row));
+                    }
+                }
+                // If getAllActiveBackends fails, return empty result set (no error)
+            }
             else
             {
                 error("Unknown monitoring table: " + table_name);

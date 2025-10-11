@@ -294,6 +294,22 @@ namespace scratchbird::core
             // Non-fatal - continue with transaction
         }
 
+        // Update read-only flag in ProcArray for long transaction monitoring
+        s = ProcArrayManager::setTransactionReadOnly(proc_id_, is_read_only_, ctx);
+        if (s != Status::OK)
+        {
+            LOG_WARNING(TRANSACTION, "Failed to set read-only flag in ProcArray for proc_id %u", proc_id_);
+            // Non-fatal - continue with transaction
+        }
+
+        // Update transaction start time in ProcArray for long transaction monitoring
+        s = ProcArrayManager::setTransactionStartTime(proc_id_, xact_start_time_.count(), ctx);
+        if (s != Status::OK)
+        {
+            LOG_WARNING(TRANSACTION, "Failed to set transaction start time in ProcArray for proc_id %u", proc_id_);
+            // Non-fatal - continue with transaction
+        }
+
         // Update transaction markers (OAT, OST) after starting new transaction
         s = txn_manager_->updateTransactionMarkers(ctx);
         if (s != Status::OK)

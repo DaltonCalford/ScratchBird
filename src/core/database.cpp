@@ -10,6 +10,7 @@
 #include "scratchbird/core/clog.h"
 #include "scratchbird/core/sweep_manager.h"
 #include "scratchbird/core/garbage_collector.h"
+#include "scratchbird/core/long_transaction_monitor.h"
 #include "scratchbird/core/proc_array.h"
 #include "scratchbird/core/connection_context.h"
 #include "scratchbird/core/system_uuids.h"
@@ -41,6 +42,13 @@
 
         void Database::close()
         {
+            // Stop long transaction monitor (before shutting down other components)
+            if (long_transaction_monitor_ && long_transaction_monitor_->isMonitoring()) {
+                ErrorContext ctx;
+                long_transaction_monitor_->stopMonitoring(&ctx);
+            }
+            long_transaction_monitor_.reset();
+
             // Shut down garbage collector first (before sweep manager)
             garbage_collector_.reset();
 
@@ -706,6 +714,27 @@
                 return Status::OOM;
             }
             status = garbage_collector_->initialize(ctx);
+            if (status != Status::OK) {
+                close();
+                return status;
+            }
+
+            // Initialize long transaction monitor
+            try {
+                long_transaction_monitor_ = std::make_unique<LongTransactionMonitor>(this);
+            } catch (const std::bad_alloc&) {
+                close();
+                SET_ERROR_CONTEXT(ctx, Status::OOM, "Failed to allocate LongTransactionMonitor");
+                return Status::OOM;
+            }
+            status = long_transaction_monitor_->initialize(ctx);
+            if (status != Status::OK) {
+                close();
+                return status;
+            }
+
+            // Start long transaction monitoring thread
+            status = long_transaction_monitor_->startMonitoring(ctx);
             if (status != Status::OK) {
                 close();
                 return status;
