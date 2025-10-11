@@ -167,6 +167,10 @@ namespace scratchbird
                     return "FOR";
                 case TokenType::KW_OUTSTANDING:
                     return "OUTSTANDING";
+                case TokenType::KW_LOCK:
+                    return "LOCK";
+                case TokenType::KW_TIMEOUT:
+                    return "TIMEOUT";
 
                 default:
                     return "UNKNOWN";
