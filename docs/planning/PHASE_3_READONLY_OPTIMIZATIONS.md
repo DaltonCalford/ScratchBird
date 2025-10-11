@@ -152,21 +152,138 @@ File: `tests/integration/test_transaction_advanced_integration.cpp`
 | ConnectionContext flag | ✅ Complete | `src/core/connection_context.cpp` |
 | ProcArray tracking | ✅ Complete | `src/core/proc_array.cpp` |
 | Write operation checks | ⏳ Recommended | Storage engine layer |
-| OAT optimization | 🔮 Future | `src/core/transaction_manager.cpp` |
-| Snapshot optimization | 🔮 Future | `src/core/transaction_manager.cpp` |
-| Lock optimization | 🔮 Future | `src/core/lock_manager.cpp` |
+| **OAT optimization** | **✅ Complete** | `src/core/transaction_manager.cpp` |
+| **Snapshot optimization** | **✅ Complete** | `src/core/transaction_manager.cpp` |
+| **Lock optimization** | **✅ Complete** | `src/core/lock_manager.cpp` |
+| **Buffer pool optimization** | **✅ Complete** | `src/core/buffer_pool.cpp` |
+| **Statistics tracking** | **✅ Complete** | All core components |
+
+## Completed Optimizations (2025-10-11)
+
+### 1. OAT Optimization ✅
+**Implementation**: `src/core/transaction_manager.cpp::updateTransactionMarkers()`
+
+- Excludes read-only transactions from OAT (Oldest Active Transaction) calculation
+- OAT now only tracks write transactions
+- OST still includes read-only transactions for MVCC correctness
+- **Benefit**: VACUUM can be more aggressive with long-running read-only analytics queries
+
+```cpp
+// Lines 595-606
+if (!pcb->is_read_only) {
+    // Update OAT - minimum of all active WRITE transactions
+    if (pcb->xid < new_oat) {
+        new_oat = pcb->xid;
+        has_active = true;
+    }
+}
+```
+
+### 2. Snapshot Optimization ✅
+**Implementation**: `src/core/transaction_manager.cpp::getSnapshot()`
+
+- Filters `active_xids` list for read-only transactions
+- Excludes other read-only transactions from snapshot
+- Reduces memory usage and improves binary search performance in `isSnapshotVisible()`
+- **Benefit**: Smaller snapshots, faster visibility checks
+
+```cpp
+// Lines 793-841
+if (current_ctx && current_ctx->isReadOnly()) {
+    // Filter active_xids to only include write transactions
+    for (uint64_t active_xid : snapshot_out.active_xids) {
+        bool is_write_txn = !pcbs[i].is_read_only;
+        if (is_write_txn) {
+            filtered_xids.push_back(active_xid);
+        }
+    }
+}
+```
+
+### 3. Lock Manager Optimization ✅
+**Implementation**: `src/core/lock_manager.cpp::acquireLock()`
+
+**Features**:
+- Read-only transaction detection via `isReadOnlyTransaction(proc_id)`
+- Fast-path for SHARE locks (ACCESS_SHARE, SHARE, ROW_SHARE) with no conflicts
+- Separate statistics tracking for read-only lock operations
+- Deadlock detection can be skipped for read-only transactions (future enhancement)
+
+**Statistics Added**:
+- `readonly_locks_acquired`: Locks acquired by read-only transactions
+- `readonly_fast_path`: Fast-path acquisitions (no conflicts)
+- `readonly_lock_waits`: Read-only transactions that had to wait
+
+**Benefit**: Reduced lock acquisition latency for read-only workloads
+
+```cpp
+// Lines 105-156
+bool is_readonly_txn = isReadOnlyTransaction(proc_id);
+if (is_readonly_txn && is_share_lock && !checkConflictInternal(...)) {
+    // Fast path: no conflicts, grant immediately
+    stats_.readonly_fast_path++;
+    return Status::OK;
+}
+```
+
+### 4. Buffer Pool Optimization ✅
+**Implementation**: `src/core/buffer_pool.cpp::evictPage()`
+
+**Two-Pass Eviction Policy**:
+- **Pass 1**: Prefer unpinned, CLEAN pages (no flush required)
+- **Pass 2**: Fall back to dirty pages if no clean pages available
+
+**Statistics Added**:
+- `evictions_clean`: Clean pages evicted (instant eviction)
+- `evictions_dirty`: Dirty pages evicted (requires flush)
+
+**Benefit**: Read-only transactions access only clean pages, enabling faster eviction without I/O
+
+```cpp
+// Lines 297-349
+// Pass 1: Prefer clean pages for faster eviction
+for (unsigned int frame_index : lru_list_) {
+    if (frames_[frame_index].pin_count == 0 && !frames_[frame_index].is_dirty) {
+        candidate_frame = frame_index;
+        found_clean = true;
+        break;
+    }
+}
+```
+
+### 5. Statistics Tracking ✅
+**Implementation**: Multiple components
+
+**TransactionManager Stats**:
+- `transactions_started`, `transactions_committed`, `transactions_aborted`
+- `readonly_snapshots`: Snapshots created for read-only transactions
+- `readonly_snapshot_xids_filtered`: XIDs filtered from read-only snapshots
+
+**LockManager Stats** (see #3 above):
+- `readonly_locks_acquired`, `readonly_fast_path`, `readonly_lock_waits`
+
+**BufferPool Stats** (see #4 above):
+- `evictions_clean`, `evictions_dirty`
+
+**Benefit**: Comprehensive monitoring of read-only vs read-write workload behavior
 
 ## Conclusion
 
-The Phase 3 Task 3.6 implementation provides solid infrastructure for READ ONLY transaction optimization:
+The Phase 3 READ ONLY transaction optimizations are now **COMPLETE**:
 
-1. **✅ Tracking**: Read-only flag is tracked at all necessary levels
+1. **✅ Tracking**: Read-only flag tracked at all necessary levels
 2. **✅ Visibility**: Exposed via monitoring queries and ProcArray
-3. **✅ Foundation**: Infrastructure ready for future storage-level optimizations
+3. **✅ Optimizations**: All 5 performance optimizations implemented
+4. **✅ Statistics**: Comprehensive monitoring infrastructure
 
-The current implementation focuses on correctness and observability. Performance optimizations (OAT exclusion, smaller snapshots, lock-free reads) can be added incrementally in future phases without changing the parser/executor layer.
+**Performance Impact**:
+- Reduced VACUUM blocking from long-running analytics
+- Smaller snapshots for read-only transactions
+- Faster lock acquisition for read-only workloads
+- Improved buffer pool eviction efficiency
+- Comprehensive performance monitoring
 
 ---
 
-*Generated as part of Phase 3 Task 3.6: Advanced Transaction Features*
-*Date: 2025-10-11*
+*Updated: 2025-10-11 - All optimizations implemented*
+*Original: 2025-10-11 - Phase 3 Task 3.6: Advanced Transaction Features*
