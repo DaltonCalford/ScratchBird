@@ -71,7 +71,7 @@ namespace scratchbird
             {"ZONE", TokenType::KW_ZONE},       {"WITH", TokenType::KW_WITH},
             {"WITHOUT", TokenType::KW_WITHOUT}, {"AT", TokenType::KW_AT},
 
-            // Transaction control (Phase 2 Task 2.6)
+            // Transaction control (Phase 2 Task 2.6, Phase 3 Task 3.6)
             {"START", TokenType::KW_START},     {"TRANSACTION", TokenType::KW_TRANSACTION},
             {"COMMIT", TokenType::KW_COMMIT},   {"ROLLBACK", TokenType::KW_ROLLBACK},
             {"READ", TokenType::KW_READ},       {"WRITE", TokenType::KW_WRITE},
@@ -81,6 +81,7 @@ namespace scratchbird
             {"STABILITY", TokenType::KW_STABILITY}, {"RESERVING", TokenType::KW_RESERVING},
             {"SHARED", TokenType::KW_SHARED},   {"PROTECTED", TokenType::KW_PROTECTED},
             {"FOR", TokenType::KW_FOR},         {"OUTSTANDING", TokenType::KW_OUTSTANDING},
+            {"LOCK", TokenType::KW_LOCK},       {"TIMEOUT", TokenType::KW_TIMEOUT},
 
             // Database maintenance (Phase 3 Task 3.3)
             {"SWEEP", TokenType::KW_SWEEP},     {"DATABASE", TokenType::KW_DATABASE},

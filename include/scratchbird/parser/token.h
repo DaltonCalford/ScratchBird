@@ -128,7 +128,7 @@ namespace scratchbird
             KW_WITHOUT,
             KW_AT,
 
-            // Transaction control (Phase 2 Task 2.6)
+            // Transaction control (Phase 2 Task 2.6, Phase 3 Task 3.6)
             KW_START,
             KW_TRANSACTION,
             KW_COMMIT,
@@ -147,6 +147,8 @@ namespace scratchbird
             KW_PROTECTED,
             KW_FOR,
             KW_OUTSTANDING,
+            KW_LOCK,
+            KW_TIMEOUT,
 
             // Database maintenance (Phase 3 Task 3.3)
             KW_SWEEP,
