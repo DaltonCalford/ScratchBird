@@ -187,11 +187,11 @@ namespace scratchbird::core
             // New dirty page - add to map with initial priority
             double initial_priority = 1.0;  // Base priority
             dirty_pages_[page_id] = DirtyPageInfo(page_id, initial_priority, now);
-
-            // Track garbage accumulation rate
-            std::lock_guard<std::mutex> stats_lock(stats_mutex_);
-            stats_.total_dirty_pages_marked++;
         }
+
+        // Track garbage accumulation rate (counts every mark, including re-marks)
+        std::lock_guard<std::mutex> stats_lock(stats_mutex_);
+        stats_.total_dirty_pages_marked++;
     }
 
     size_t GarbageCollector::getDirtyPageCount() const
