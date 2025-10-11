@@ -120,6 +120,11 @@ namespace scratchbird::core
         uint64_t lock_timeouts;
         uint32_t current_locks;
         uint32_t max_locks_used;
+
+        // READ ONLY transaction optimizations (Phase 3)
+        uint64_t readonly_locks_acquired;   // Locks acquired by read-only transactions
+        uint64_t readonly_fast_path;        // Fast-path acquisitions (no conflicts)
+        uint64_t readonly_lock_waits;       // Read-only transactions that had to wait
     };
 
     // Deadlock detector (forward declaration)
@@ -209,6 +214,9 @@ namespace scratchbird::core
         // Lock memory management
         Lock* allocateLock();
         void freeLock(Lock* lock);
+
+        // READ ONLY transaction optimization helpers
+        bool isReadOnlyTransaction(uint32_t proc_id) const;
     };
 
     // Deadlock detector - detects cycles in wait-for graph

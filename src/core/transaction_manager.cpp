@@ -5,6 +5,7 @@
 #include "scratchbird/core/proc_array.h"
 #include "scratchbird/core/clog.h"
 #include "scratchbird/core/sweep_manager.h"
+#include "scratchbird/core/connection_context.h"
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/core/logger.h"
 #include <algorithm>
