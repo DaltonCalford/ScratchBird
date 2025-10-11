@@ -163,6 +163,26 @@ namespace scratchbird
                         result = ExecutionResult();
                         break;
 
+                    case Opcode::START_TRANSACTION:
+                        executeStartTransaction();
+                        result = ExecutionResult();
+                        break;
+
+                    case Opcode::SET_TRANSACTION:
+                        executeSetTransaction();
+                        result = ExecutionResult();
+                        break;
+
+                    case Opcode::COMMIT:
+                        executeCommit();
+                        result = ExecutionResult();
+                        break;
+
+                    case Opcode::ROLLBACK:
+                        executeRollback();
+                        result = ExecutionResult();
+                        break;
+
                     default:
                         result = ExecutionResult("Unknown statement opcode: " +
                                                std::to_string(static_cast<int>(op)));
@@ -961,6 +981,299 @@ namespace scratchbird
             }
 
             // Success - sweep completed
+        }
+
+        void Executor::executeStartTransaction()
+        {
+            // Execute START TRANSACTION statement (Phase 2 Task 2.6, Phase 3 Task 3.6)
+
+            // Read transaction mode (1 byte: 0 = READ_WRITE, 1 = READ_ONLY)
+            uint8_t mode_byte = readByte();
+            bool read_only = (mode_byte == 1);
+
+            // Read isolation level (1 byte: 0 = READ_COMMITTED, 1 = SNAPSHOT, 2 = SNAPSHOT_TABLE_STABILITY)
+            uint8_t isolation_byte = readByte();
+            core::IsolationLevel isolation;
+            switch (isolation_byte)
+            {
+                case 0:
+                    isolation = core::IsolationLevel::READ_COMMITTED;
+                    break;
+                case 1:
+                    isolation = core::IsolationLevel::SNAPSHOT;
+                    break;
+                case 2:
+                    isolation = core::IsolationLevel::SNAPSHOT_TABLE_STABILITY;
+                    break;
+                default:
+                    error("Unknown isolation level: " + std::to_string(isolation_byte));
+                    return;
+            }
+
+            // Read wait flag (1 byte: 0 = NO WAIT, 1 = WAIT)
+            uint8_t wait_byte = readByte();
+            bool wait = (wait_byte == 1);
+
+            // Read commit outstanding flag (1 byte: 0 = false, 1 = true)
+            uint8_t commit_outstanding_byte = readByte();
+            bool commit_outstanding = (commit_outstanding_byte == 1);
+
+            // Read lock timeout (uint32, 0 = no lock timeout)
+            uint32_t lock_timeout = readInt32();
+
+            // Read table reservations list (Phase 3 Task 3.6)
+            if (readByte() != static_cast<uint8_t>(Opcode::BEGIN_LIST))
+            {
+                error("Expected BEGIN_LIST for table reservations");
+            }
+
+            uint32_t reservation_count = readInt32();
+            std::vector<core::ConnectionContext::TableReservation> reservations;
+
+            for (uint32_t i = 0; i < reservation_count; i++)
+            {
+                // Read TABLE_REF opcode
+                if (readByte() != static_cast<uint8_t>(Opcode::TABLE_REF))
+                {
+                    error("Expected TABLE_REF in table reservation");
+                }
+
+                std::string table_name = readString();
+
+                // Read lock mode (1 byte: 0 = SHARED, 1 = PROTECTED)
+                uint8_t lock_mode_byte = readByte();
+                core::TableLockMode lock_mode = (lock_mode_byte == 0)
+                    ? core::TableLockMode::SHARED
+                    : core::TableLockMode::PROTECTED;
+
+                // Read for_write flag (1 byte: 0 = FOR READ, 1 = FOR WRITE)
+                uint8_t for_write_byte = readByte();
+                bool for_write = (for_write_byte == 1);
+
+                // Add to reservations list
+                reservations.push_back({table_name, lock_mode, for_write});
+            }
+
+            if (readByte() != static_cast<uint8_t>(Opcode::END_LIST))
+            {
+                error("Expected END_LIST after table reservations");
+            }
+
+            // Get connection context
+            auto conn_ctx = core::ConnectionContext::getCurrent();
+            if (!conn_ctx)
+            {
+                error("No connection context available");
+            }
+
+            // Apply transaction settings
+            core::ErrorContext err_ctx;
+
+            // Set wait and timeout settings
+            conn_ctx->setWaitForLocks(wait);
+            conn_ctx->setLockTimeout(lock_timeout);
+
+            // Start new transaction (commits current if commit_outstanding = true)
+            auto status = conn_ctx->startTransaction(read_only, isolation, commit_outstanding, &err_ctx);
+            if (status != core::Status::OK)
+            {
+                std::string err_msg = "Failed to start transaction";
+                if (!err_ctx.message.empty())
+                {
+                    err_msg += ": " + err_ctx.message;
+                }
+                error(err_msg);
+            }
+
+            // Apply table reservations if any
+            if (!reservations.empty())
+            {
+                status = conn_ctx->reserveTables(reservations, &err_ctx);
+                if (status != core::Status::OK)
+                {
+                    std::string err_msg = "Failed to reserve tables";
+                    if (!err_ctx.message.empty())
+                    {
+                        err_msg += ": " + err_ctx.message;
+                    }
+                    error(err_msg);
+                }
+            }
+
+            // Success - transaction started with new settings
+        }
+
+        void Executor::executeSetTransaction()
+        {
+            // Execute SET TRANSACTION statement (Phase 3 Task 3.6)
+            // Similar to START TRANSACTION but without commit_outstanding flag
+
+            // Read transaction mode (1 byte: 0 = READ_WRITE, 1 = READ_ONLY)
+            uint8_t mode_byte = readByte();
+            bool read_only = (mode_byte == 1);
+
+            // Read isolation level (1 byte: 0 = READ_COMMITTED, 1 = SNAPSHOT, 2 = SNAPSHOT_TABLE_STABILITY)
+            uint8_t isolation_byte = readByte();
+            core::IsolationLevel isolation;
+            switch (isolation_byte)
+            {
+                case 0:
+                    isolation = core::IsolationLevel::READ_COMMITTED;
+                    break;
+                case 1:
+                    isolation = core::IsolationLevel::SNAPSHOT;
+                    break;
+                case 2:
+                    isolation = core::IsolationLevel::SNAPSHOT_TABLE_STABILITY;
+                    break;
+                default:
+                    error("Unknown isolation level: " + std::to_string(isolation_byte));
+                    return;
+            }
+
+            // Read wait flag (1 byte: 0 = NO WAIT, 1 = WAIT)
+            uint8_t wait_byte = readByte();
+            bool wait = (wait_byte == 1);
+
+            // Read lock timeout (uint32, 0 = no lock timeout)
+            uint32_t lock_timeout = readInt32();
+
+            // Read table reservations list (Phase 3 Task 3.6)
+            if (readByte() != static_cast<uint8_t>(Opcode::BEGIN_LIST))
+            {
+                error("Expected BEGIN_LIST for table reservations");
+            }
+
+            uint32_t reservation_count = readInt32();
+            std::vector<core::ConnectionContext::TableReservation> reservations;
+
+            for (uint32_t i = 0; i < reservation_count; i++)
+            {
+                // Read TABLE_REF opcode
+                if (readByte() != static_cast<uint8_t>(Opcode::TABLE_REF))
+                {
+                    error("Expected TABLE_REF in table reservation");
+                }
+
+                std::string table_name = readString();
+
+                // Read lock mode (1 byte: 0 = SHARED, 1 = PROTECTED)
+                uint8_t lock_mode_byte = readByte();
+                core::TableLockMode lock_mode = (lock_mode_byte == 0)
+                    ? core::TableLockMode::SHARED
+                    : core::TableLockMode::PROTECTED;
+
+                // Read for_write flag (1 byte: 0 = FOR READ, 1 = FOR WRITE)
+                uint8_t for_write_byte = readByte();
+                bool for_write = (for_write_byte == 1);
+
+                // Add to reservations list
+                reservations.push_back({table_name, lock_mode, for_write});
+            }
+
+            if (readByte() != static_cast<uint8_t>(Opcode::END_LIST))
+            {
+                error("Expected END_LIST after table reservations");
+            }
+
+            // Get connection context
+            auto conn_ctx = core::ConnectionContext::getCurrent();
+            if (!conn_ctx)
+            {
+                error("No connection context available");
+            }
+
+            // Apply transaction settings (staged for next transaction)
+            core::ErrorContext err_ctx;
+
+            // Set wait and timeout settings
+            conn_ctx->setWaitForLocks(wait);
+            conn_ctx->setLockTimeout(lock_timeout);
+
+            // Start new transaction with commit_outstanding = false (stages settings)
+            auto status = conn_ctx->startTransaction(read_only, isolation, false, &err_ctx);
+            if (status != core::Status::OK)
+            {
+                std::string err_msg = "Failed to set transaction parameters";
+                if (!err_ctx.message.empty())
+                {
+                    err_msg += ": " + err_ctx.message;
+                }
+                error(err_msg);
+            }
+
+            // Apply table reservations if any
+            if (!reservations.empty())
+            {
+                status = conn_ctx->reserveTables(reservations, &err_ctx);
+                if (status != core::Status::OK)
+                {
+                    std::string err_msg = "Failed to reserve tables";
+                    if (!err_ctx.message.empty())
+                    {
+                        err_msg += ": " + err_ctx.message;
+                    }
+                    error(err_msg);
+                }
+            }
+
+            // Success - transaction parameters set for next transaction
+        }
+
+        void Executor::executeCommit()
+        {
+            // Execute COMMIT statement (Phase 2 Task 2.6)
+
+            // Get connection context
+            auto conn_ctx = core::ConnectionContext::getCurrent();
+            if (!conn_ctx)
+            {
+                error("No connection context available");
+            }
+
+            // Commit current transaction and start new one
+            core::ErrorContext err_ctx;
+            auto status = conn_ctx->commit(&err_ctx);
+
+            if (status != core::Status::OK)
+            {
+                std::string err_msg = "Commit failed";
+                if (!err_ctx.message.empty())
+                {
+                    err_msg += ": " + err_ctx.message;
+                }
+                error(err_msg);
+            }
+
+            // Success - transaction committed
+        }
+
+        void Executor::executeRollback()
+        {
+            // Execute ROLLBACK statement (Phase 2 Task 2.6)
+
+            // Get connection context
+            auto conn_ctx = core::ConnectionContext::getCurrent();
+            if (!conn_ctx)
+            {
+                error("No connection context available");
+            }
+
+            // Rollback current transaction and start new one
+            core::ErrorContext err_ctx;
+            auto status = conn_ctx->rollback(&err_ctx);
+
+            if (status != core::Status::OK)
+            {
+                std::string err_msg = "Rollback failed";
+                if (!err_ctx.message.empty())
+                {
+                    err_msg += ": " + err_ctx.message;
+                }
+                error(err_msg);
+            }
+
+            // Success - transaction rolled back
         }
 
         void Executor::executeMonitoringQuery(const std::string &table_name)
