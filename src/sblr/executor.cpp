@@ -8,6 +8,7 @@
 #include "scratchbird/core/connection_context.h"
 #include "scratchbird/core/sweep_manager.h"
 #include "scratchbird/core/garbage_collector.h"
+#include "scratchbird/core/proc_array.h"
 #include <sstream>
 #include <iomanip>
 #include <iostream>
