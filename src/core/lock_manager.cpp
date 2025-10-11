@@ -102,6 +102,10 @@ namespace scratchbird::core
         uint32_t timeout_ms,
         ErrorContext* ctx) -> Status
     {
+        // OPTIMIZATION: Check if this is a read-only transaction
+        // Read-only transactions can benefit from fast-path lock acquisition
+        bool is_readonly_txn = isReadOnlyTransaction(proc_id);
+
         std::unique_lock<std::mutex> lock(lock_table_mutex_);
 
         // Get or create lock object
@@ -122,6 +126,32 @@ namespace scratchbird::core
             // Already granted, just increment count
             lock_obj->granted_counts[mode_idx]++;
             stats_.locks_acquired++;
+            if (is_readonly_txn) {
+                stats_.readonly_locks_acquired++;
+            }
+            return Status::OK;
+        }
+
+        // OPTIMIZATION: Fast-path for read-only transactions with SHARE locks
+        // Read-only transactions typically use ACCESS_SHARE or SHARE locks
+        // These don't conflict with each other, so we can check quickly
+        bool is_share_lock = (mode == LockMode::LOCK_ACCESS_SHARE ||
+                              mode == LockMode::LOCK_SHARE ||
+                              mode == LockMode::LOCK_ROW_SHARE);
+
+        if (is_readonly_txn && is_share_lock && !checkConflictInternal(lock_obj, mode, proc_id)) {
+            // Fast path: no conflicts, grant immediately
+            lock_obj->granted_mask |= (1u << mode_idx);
+            lock_obj->granted_counts[mode_idx]++;
+            lock_obj->total_acquisitions++;
+            stats_.locks_acquired++;
+            stats_.readonly_locks_acquired++;
+            stats_.readonly_fast_path++;
+            stats_.current_locks++;
+            if (stats_.current_locks > stats_.max_locks_used) {
+                stats_.max_locks_used = stats_.current_locks;
+            }
+            proc_locks_.insert({proc_id, lock_obj});
             return Status::OK;
         }
 
@@ -148,6 +178,9 @@ namespace scratchbird::core
             enqueueRequest(lock_obj, req);
             stats_.lock_waits++;
             lock_obj->total_waits++;
+            if (is_readonly_txn) {
+                stats_.readonly_lock_waits++;
+            }
 
             // Wait for lock to be granted
             auto timeout = (timeout_ms == 0)
@@ -177,6 +210,9 @@ namespace scratchbird::core
         lock_obj->granted_counts[mode_idx]++;
         lock_obj->total_acquisitions++;
         stats_.locks_acquired++;
+        if (is_readonly_txn) {
+            stats_.readonly_locks_acquired++;
+        }
         stats_.current_locks++;
         if (stats_.current_locks > stats_.max_locks_used) {
             stats_.max_locks_used = stats_.current_locks;
@@ -307,6 +343,15 @@ namespace scratchbird::core
         if (!deadlock_detector_) {
             return Status::OK;
         }
+
+        // OPTIMIZATION NOTE: When deadlock detection is fully implemented,
+        // read-only transactions can be excluded from deadlock detection
+        // since they only acquire SHARE locks and cannot create write-write
+        // deadlock cycles. This will reduce deadlock detection overhead.
+        //
+        // Future implementation:
+        //   - Skip adding read-only transactions to wait-for graph
+        //   - Filter out read-only waiters/holders in buildWaitGraph()
 
         return deadlock_detector_->detectDeadlocks(ctx);
     }
@@ -484,6 +529,33 @@ namespace scratchbird::core
         } else {
             delete lock_obj;
         }
+    }
+
+    bool LockManager::isReadOnlyTransaction(uint32_t proc_id) const
+    {
+        // Check if this proc_id belongs to a read-only transaction
+        // by examining the ProcArray
+        ProcArray* proc_array = ProcArrayManager::getInstance();
+        if (!proc_array) {
+            return false;  // Assume not read-only if ProcArray unavailable
+        }
+
+        pthread_rwlock_rdlock(&proc_array->array_lock);
+
+        ProcessControlBlock* pcbs = reinterpret_cast<ProcessControlBlock*>(
+            reinterpret_cast<uint8_t*>(proc_array) + sizeof(ProcArray));
+
+        bool is_readonly = false;
+        for (uint32_t i = 0; i < proc_array->max_backends; ++i) {
+            if (pcbs[i].is_active && pcbs[i].proc_id == proc_id) {
+                is_readonly = pcbs[i].is_read_only;
+                break;
+            }
+        }
+
+        pthread_rwlock_unlock(&proc_array->array_lock);
+
+        return is_readonly;
     }
 
     // ============================================================================
