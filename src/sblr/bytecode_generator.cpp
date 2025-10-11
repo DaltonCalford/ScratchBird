@@ -210,25 +210,132 @@ namespace scratchbird
 
         void BytecodeGenerator::visit(parser::StartTransactionStmt *node)
         {
-            // Generate START TRANSACTION bytecode (Phase 2 Task 2.6)
-            // For now, just mark as unimplemented
-            current_result_->addError("START TRANSACTION bytecode generation not yet implemented");
-            (void)node; // Suppress unused parameter warning
+            // Generate START TRANSACTION bytecode (Phase 2 Task 2.6, Phase 3 Task 3.6)
+            current_result_->writeOpcode(Opcode::START_TRANSACTION);
+
+            // Write transaction mode (1 byte: 0 = READ_WRITE, 1 = READ_ONLY)
+            current_result_->writeByte(node->mode() == parser::TransactionMode::READ_ONLY ? 1 : 0);
+
+            // Write isolation level (1 byte: 0 = READ_COMMITTED, 1 = SNAPSHOT, 2 = SNAPSHOT_TABLE_STABILITY)
+            uint8_t isolation_byte = 0;
+            switch (node->isolation())
+            {
+                case parser::IsolationLevel::READ_COMMITTED:
+                    isolation_byte = 0;
+                    break;
+                case parser::IsolationLevel::SNAPSHOT:
+                    isolation_byte = 1;
+                    break;
+                case parser::IsolationLevel::SNAPSHOT_TABLE_STABILITY:
+                    isolation_byte = 2;
+                    break;
+            }
+            current_result_->writeByte(isolation_byte);
+
+            // Write wait flag (1 byte: 0 = NO WAIT, 1 = WAIT)
+            current_result_->writeByte(node->wait() ? 1 : 0);
+
+            // Write commit outstanding flag (1 byte: 0 = false, 1 = true) - START_TRANSACTION only
+            current_result_->writeByte(node->commitOutstanding() ? 1 : 0);
+
+            // Write lock timeout (uint32, 0 = no lock timeout)
+            current_result_->writeInt32(node->lockTimeout());
+
+            // Write table reservations list (Phase 3 Task 3.6)
+            const auto& reservations = node->tableReservations();
+            if (reservations.size() > UINT32_MAX)
+            {
+                current_result_->addError("Table reservation count exceeds maximum");
+                return;
+            }
+
+            current_result_->writeOpcode(Opcode::BEGIN_LIST);
+            current_result_->writeInt32(static_cast<uint32_t>(reservations.size()));
+
+            for (const auto& res : reservations)
+            {
+                // Write table name
+                current_result_->writeOpcode(Opcode::TABLE_REF);
+                writeStringId(res.table_name);
+
+                // Write lock mode (1 byte: 0 = SHARED, 1 = PROTECTED)
+                current_result_->writeByte(res.lock_mode == parser::TableLockMode::SHARED ? 0 : 1);
+
+                // Write for_write flag (1 byte: 0 = FOR READ, 1 = FOR WRITE)
+                current_result_->writeByte(res.for_write ? 1 : 0);
+            }
+
+            current_result_->writeOpcode(Opcode::END_LIST);
+        }
+
+        void BytecodeGenerator::visit(parser::SetTransactionStmt *node)
+        {
+            // Generate SET TRANSACTION bytecode (Phase 3 Task 3.6)
+            current_result_->writeOpcode(Opcode::SET_TRANSACTION);
+
+            // Write transaction mode (1 byte: 0 = READ_WRITE, 1 = READ_ONLY)
+            current_result_->writeByte(node->mode() == parser::TransactionMode::READ_ONLY ? 1 : 0);
+
+            // Write isolation level (1 byte: 0 = READ_COMMITTED, 1 = SNAPSHOT, 2 = SNAPSHOT_TABLE_STABILITY)
+            uint8_t isolation_byte = 0;
+            switch (node->isolation())
+            {
+                case parser::IsolationLevel::READ_COMMITTED:
+                    isolation_byte = 0;
+                    break;
+                case parser::IsolationLevel::SNAPSHOT:
+                    isolation_byte = 1;
+                    break;
+                case parser::IsolationLevel::SNAPSHOT_TABLE_STABILITY:
+                    isolation_byte = 2;
+                    break;
+            }
+            current_result_->writeByte(isolation_byte);
+
+            // Write wait flag (1 byte: 0 = NO WAIT, 1 = WAIT)
+            current_result_->writeByte(node->wait() ? 1 : 0);
+
+            // Write lock timeout (uint32, 0 = no lock timeout)
+            current_result_->writeInt32(node->lockTimeout());
+
+            // Write table reservations list (Phase 3 Task 3.6)
+            const auto& reservations = node->tableReservations();
+            if (reservations.size() > UINT32_MAX)
+            {
+                current_result_->addError("Table reservation count exceeds maximum");
+                return;
+            }
+
+            current_result_->writeOpcode(Opcode::BEGIN_LIST);
+            current_result_->writeInt32(static_cast<uint32_t>(reservations.size()));
+
+            for (const auto& res : reservations)
+            {
+                // Write table name
+                current_result_->writeOpcode(Opcode::TABLE_REF);
+                writeStringId(res.table_name);
+
+                // Write lock mode (1 byte: 0 = SHARED, 1 = PROTECTED)
+                current_result_->writeByte(res.lock_mode == parser::TableLockMode::SHARED ? 0 : 1);
+
+                // Write for_write flag (1 byte: 0 = FOR READ, 1 = FOR WRITE)
+                current_result_->writeByte(res.for_write ? 1 : 0);
+            }
+
+            current_result_->writeOpcode(Opcode::END_LIST);
         }
 
         void BytecodeGenerator::visit(parser::CommitStmt *node)
         {
             // Generate COMMIT bytecode (Phase 2 Task 2.6)
-            // For now, just mark as unimplemented
-            current_result_->addError("COMMIT bytecode generation not yet implemented");
+            current_result_->writeOpcode(Opcode::COMMIT);
             (void)node; // Suppress unused parameter warning
         }
 
         void BytecodeGenerator::visit(parser::RollbackStmt *node)
         {
             // Generate ROLLBACK bytecode (Phase 2 Task 2.6)
-            // For now, just mark as unimplemented
-            current_result_->addError("ROLLBACK bytecode generation not yet implemented");
+            current_result_->writeOpcode(Opcode::ROLLBACK);
             (void)node; // Suppress unused parameter warning
         }
 
@@ -645,6 +752,8 @@ namespace scratchbird
                     return "SELECT";
                 case Opcode::START_TRANSACTION:
                     return "START_TRANSACTION";
+                case Opcode::SET_TRANSACTION:
+                    return "SET_TRANSACTION";
                 case Opcode::COMMIT:
                     return "COMMIT";
                 case Opcode::ROLLBACK:
