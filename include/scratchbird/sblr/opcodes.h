@@ -21,6 +21,7 @@ namespace scratchbird
             INSERT = 0x11,       // Insert row
             SELECT = 0x12,       // Select query
             START_TRANSACTION = 0x13, // Start transaction (Phase 2 Task 2.6)
+            SET_TRANSACTION = 0x17,   // Set transaction parameters (Phase 3 Task 3.6)
             COMMIT = 0x14,            // Commit transaction (Phase 2 Task 2.6)
             ROLLBACK = 0x15,          // Rollback transaction (Phase 2 Task 2.6)
             SWEEP = 0x16,             // Sweep database (Phase 3 Task 3.3)
