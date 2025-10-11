@@ -1,27 +1,29 @@
 # Phase 3: Firebird Transaction Model - PROGRESS REPORT
 
-**Date:** October 10, 2025
-**Status:** ~65% Complete (Task 3.1 COMPLETE, Task 3.2 COMPLETE, Task 3.3 COMPLETE)
-**Commits:** 9 commits, ~1700+ lines of code
-**Last Session:** Sweep mechanism implementation with SWEEP DATABASE command and comprehensive testing
+**Date:** October 11, 2025
+**Status:** ~85% Complete (Tasks 3.1, 3.2, 3.3, 3.4 COMPLETE)
+**Commits:** 21+ commits, ~3300+ lines of code
+**Last Session:** Phase 4 - Garbage Collection Future Improvements (comprehensive GC enhancements)
 
 ---
 
 ## Executive Summary
 
-Tasks 3.1 (Transaction Markers), 3.2 (Isolation Levels), and 3.3 (Sweep Mechanism) are now COMPLETE! The database now has:
+Tasks 3.1 (Transaction Markers), 3.2 (Isolation Levels), 3.3 (Sweep Mechanism), and 3.4 (Garbage Collection) are now COMPLETE! The database now has:
 - All 4 Firebird isolation levels with full functionality
 - Transaction markers (OIT, OAT, OST, NEXT) with monitoring queries
 - Complete sweep mechanism with manual and automatic triggering
 - SWEEP DATABASE SQL command support
+- Production-ready garbage collector with physical cleanup, adaptive tuning, and priority-based cleaning
 
 **Completed:**
 - Task 3.1 (Transaction Markers) ✅ COMPLETE
 - Task 3.2 (Isolation Levels) ✅ COMPLETE
 - Task 3.3 (Sweep Mechanism) ✅ COMPLETE
+- Task 3.4 (Garbage Collection) ✅ COMPLETE - See Phase 4 completion reports
 
-**Next Up:** Task 3.4 (Garbage Collection)
-**Remaining:** Tasks 3.4-3.6 (GC, Long Transaction Management, Advanced Features)
+**Next Up:** Task 3.5 (Long Transaction Management)
+**Remaining:** Tasks 3.5-3.6 (Long Transaction Management, Advanced Features)
 
 ---
 
@@ -532,11 +534,99 @@ tests/unit/test_sweep_mechanism.cpp              | 468 +++++++++++ (new)
 
 ---
 
+### Task 3.4: Garbage Collection ✅ COMPLETE (Phase 4)
+
+#### What Was Completed
+
+Task 3.4 was implemented as **Phase 4: Garbage Collection Future Improvements**, completed over multiple sessions. Phase 4 transformed the garbage collector from a basic implementation to a production-ready, self-tuning system.
+
+**Phase 4 comprised 6 parts:**
+
+**Part 1: Physical Tuple Removal and Page Compaction**
+- Integrated HeapPage::prunePage() for actual physical cleanup
+- Defragmentation after tuple removal
+- Space reclamation tracking
+- Real cleanup instead of placeholder logic
+
+**Part 2: Condition Variable for Immediate GC Wake**
+- Added bg_wake_cv_ condition variable for sub-millisecond wake latency
+- Background GC responds immediately to sweep completion (< 1ms)
+- Better integration with sweep process
+
+**Part 3: Enhanced Metrics (Histograms, Space Reclaimed)**
+- Added 11 new monitoring metrics
+- Duration histogram (6 buckets: 0-10ms, 10-50ms, 50-100ms, 100-500ms, 500-1000ms, 1000ms+)
+- Page efficiency metrics (pages_with_no_garbage, max_space_reclaimed_single_page)
+- Garbage accumulation tracking (total_dirty_pages_marked)
+- Current tuning parameters (cooperative_rate, background_interval_ms)
+- MON_GARBAGE_COLLECTION query now returns 22 columns
+
+**Part 4: Adaptive Rate Adjustment**
+- Self-tuning cooperative rate based on waste ratio
+- Self-tuning background interval based on duration histogram and dirty page count
+- Adjusts parameters by ±10% within bounded ranges
+- Adapts automatically to workload characteristics
+
+**Part 5: Priority Queue for Dirty Pages**
+- DirtyPageInfo structure with priority, timestamp, mark_count
+- Priority calculation: `priority = log2(mark_count+1)*2.0 + age_seconds*0.1`
+- Background GC cleans high-priority pages first
+- Better space reclamation efficiency
+
+**Part 6: Comprehensive GC Tests**
+- Created 20 comprehensive test cases
+- Categories: basic, tracking, statistics, background, adaptive, priority, stress, edge cases, integration, performance
+- 100% pass rate
+- Total execution time: ~19.5 seconds
+
+#### Key Achievements
+
+- **~1600 lines** of production code
+- **12 commits** with detailed completion reports
+- **20 comprehensive tests** with 100% pass rate
+- **22 monitoring metrics** in MON_GARBAGE_COLLECTION query
+- **Self-tuning** adaptive parameters
+- **Priority-based** page cleaning
+- **Immediate response** via condition variables
+- **Physical cleanup** with space reclamation
+
+#### Documentation
+
+Comprehensive completion reports created:
+- `PHASE_4_PART_1_PHYSICAL_REMOVAL_COMPLETE.md`
+- `PHASE_4_PART_2_CV_WAKE_COMPLETE.md`
+- `PHASE_4_PART_3_ENHANCED_METRICS_COMPLETE.md`
+- `PHASE_4_PART_4_ADAPTIVE_TUNING_COMPLETE.md`
+- `PHASE_4_PART_5_PRIORITY_QUEUE_COMPLETE.md`
+- `PHASE_4_PART_6_COMPREHENSIVE_TESTS_COMPLETE.md`
+- `PHASE_4_COMPLETE.md` (summary)
+
+#### Testing Results
+
+✅ **All 20 GarbageCollectorTest tests passed** (100% pass rate)
+
+#### Files Modified/Created (Task 3.4 / Phase 4)
+
+```
+include/scratchbird/core/garbage_collector.h     | Major enhancements
+src/core/garbage_collector.cpp                   | ~1000 lines added/modified
+src/sblr/executor.cpp                            | Enhanced MON_GARBAGE_COLLECTION query
+tests/unit/test_garbage_collector.cpp            | 598 lines (new)
+docs/planning/PHASE_4_*.md                       | 7 completion reports (new)
+```
+
+**Cumulative Changes (Task 3.4 / Phase 4)**: 4 core files, 1 test file, 7 documentation files; ~1600+ lines of code
+
+**Status**: Task 3.4 (Garbage Collection) ✅ COMPLETE
+
+---
+
 ## Build Status
 
 ✅ All code compiles successfully with no errors
 ✅ All 27 ConnectionContext tests passing (100% pass rate)
 ✅ All 15 SweepMechanismTest tests passing (100% pass rate)
+✅ All 20 GarbageCollectorTest tests passing (100% pass rate)
 ✅ All 28 transaction-related tests passing
 ✅ All 4 isolation levels fully implemented and tested:
   - READ_COMMITTED: Latest committed data visibility
@@ -546,12 +636,19 @@ tests/unit/test_sweep_mechanism.cpp              | 468 +++++++++++ (new)
 ✅ Sweep mechanism fully implemented with manual and automatic triggering
 ✅ SWEEP DATABASE command functional via parser/bytecode/executor pipeline
 ✅ MON_SWEEP monitoring query providing sweep statistics
-⚠️ Main test suite has pre-existing failures (not related to Phase 3 changes)
+✅ Garbage collection fully implemented with:
+  - Physical tuple removal and page compaction
+  - Adaptive self-tuning parameters
+  - Priority-based page cleaning
+  - Comprehensive monitoring (22 metrics)
+✅ MON_GARBAGE_COLLECTION monitoring query with 22 columns
+⚠️ Main test suite has pre-existing failures (not related to Phase 3/4 changes)
 
 ---
 
 ## Commits
 
+**Phase 3 Tasks 3.1-3.3:**
 1. **Commit b13cdd4**: "Mark Phase 2 as COMPLETE in implementation plan"
 2. **Commit 21fbf83**: "Add monitoring queries to expose transaction markers (OIT/OAT/OST/NEXT)"
 3. **Commit 59744f7**: "Add Phase 3 progress report documenting monitoring queries implementation"
@@ -560,6 +657,18 @@ tests/unit/test_sweep_mechanism.cpp              | 468 +++++++++++ (new)
 6. **Commit fb26c99**: "Add MON_SWEEP monitoring query for sweep statistics (Phase 3 Task 3.3 - Part 3)"
 7. **Commit c7cc02a**: "Add SWEEP DATABASE parser and executor support (Phase 3 Task 3.3 - Part 4)"
 8. **Commit ec9972d**: "Add comprehensive sweep mechanism tests and fix statistics update bug (Phase 3 Task 3.3 COMPLETE)"
+
+**Phase 4 - Garbage Collection (Task 3.4):**
+9. **Commit ddf932b**: "Add enhanced GC metrics with duration histograms and page efficiency tracking (Phase 4 Part 3)"
+10. **Commit 816c2b3**: "Add Phase 4 Part 3 completion report for enhanced GC metrics"
+11. **Commit 5c17e69**: "Implement adaptive tuning for GC parameters (Phase 4 Part 4)"
+12. **Commit f030509**: "Add Phase 4 Part 4 completion report for adaptive tuning"
+13. **Commit 2f2709f**: "Add priority queue for dirty pages in garbage collector (Phase 4 Part 5)"
+14. **Commit 7e18316**: "Add comprehensive GC test suite and fix accumulation metric (Phase 4 Part 6)"
+15. **Commit 88a4c0a**: "Add Phase 4 Part 5 and Part 6 completion reports"
+16. **Commit a01ca3e**: "Mark Phase 4: Garbage Collection Future Improvements as COMPLETE"
+
+**Total:** 16 commits across Phase 3 and Phase 4
 
 ---
 
@@ -586,10 +695,17 @@ According to `ALPHA_1_2_IMPLEMENTATION_PLAN.md`, the remaining work includes:
 - ✅ Manual SWEEP DATABASE command
 - ✅ Comprehensive testing (15 tests, all passing)
 
-### Task 3.4: Garbage Collection (2 weeks)
-- Cooperative garbage collection during normal operations
-- Background garbage collection thread
-- GC policy configuration (COOPERATIVE/BACKGROUND/COMBINED)
+### Task 3.4: Garbage Collection (2 weeks) ✅ COMPLETE
+- ✅ Cooperative garbage collection during normal operations
+- ✅ Background garbage collection thread
+- ✅ GC policy configuration (COOPERATIVE/BACKGROUND/COMBINED)
+- ✅ Physical tuple removal and page compaction
+- ✅ Condition variable for immediate GC wake
+- ✅ Enhanced monitoring with 22 metrics
+- ✅ Adaptive self-tuning parameters
+- ✅ Priority-based page cleaning
+- ✅ Comprehensive testing (20 tests, all passing)
+- See Phase 4 completion reports for details
 
 ### Task 3.5: Long Transaction Management (1 week)
 - Transaction age tracking
@@ -607,16 +723,18 @@ According to `ALPHA_1_2_IMPLEMENTATION_PLAN.md`, the remaining work includes:
 
 ## Next Session Recommendations
 
-1. **Begin Task 3.3: Sweep Mechanism** (2 weeks estimated)
-   - Implement sweep trigger check: `(OST - OIT) > sweep_interval`
-   - Implement sweep process to scan TIP and advance OIT
-   - Add SWEEP DATABASE command
-   - Add sweep monitoring and statistics
+1. **Begin Task 3.5: Long Transaction Management** (1 week estimated)
+   - Implement transaction age tracking
+   - Implement long transaction detection with configurable thresholds
+   - Add action policies (LOG/ROLLBACK/TERMINATE)
+   - Add MON_LONG_TRANSACTIONS monitoring query
+   - Comprehensive testing
 
-2. **Testing**: Integration tests for complete isolation level functionality
-   - Test concurrent transactions with different isolation levels
-   - Test lock conflicts with SNAPSHOT_TABLE_STABILITY
-   - Test statement snapshot behavior across complex queries
+2. **Alternative: Begin Task 3.6: Advanced Features** (2 weeks estimated)
+   - RESERVING clause execution for table locking
+   - LOCK TIMEOUT with timeout-based waiting
+   - READ ONLY transaction optimizations
+   - Full SET TRANSACTION syntax support
 
 ---
 
@@ -644,7 +762,25 @@ docs/planning/PHASE_3_PROGRESS.md               | 150 ++++++++++++++---
 
 ## Session Notes
 
-### Current Session (October 10, 2025)
+### Current Session (October 11, 2025)
+
+**Phase 4 Completion - Garbage Collection Parts 5 & 6**:
+- Implemented priority queue for dirty pages with DirtyPageInfo structure
+- Priority calculation: `priority = log2(mark_count+1)*2.0 + age_seconds*0.1`
+- Background GC now cleans pages in priority order (highest first)
+- Created comprehensive test suite (test_garbage_collector.cpp) with 20 tests
+- All tests passing (100% pass rate)
+- Fixed accumulation metric bug where re-marks weren't counted
+- Created completion reports for Parts 5 and 6, plus Phase 4 summary
+- Updated PHASE_3_PROGRESS.md to mark Task 3.4 as COMPLETE
+
+**Key Accomplishments**:
+- Phase 4 (Garbage Collection Future Improvements) now COMPLETE
+- Task 3.4 (Garbage Collection) now COMPLETE
+- 20 comprehensive GC tests with 100% pass rate
+- Production-ready garbage collector with all planned features
+
+### Previous Session (October 10, 2025)
 
 **Sweep Mechanism Testing and Completion**:
 - Created comprehensive test suite (`test_sweep_mechanism.cpp`) with 15 tests covering:
