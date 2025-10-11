@@ -128,6 +128,11 @@ namespace scratchbird
             visitor->visit(this);
         }
 
+        void SetTransactionStmt::accept(ASTVisitor *visitor)
+        {
+            visitor->visit(this);
+        }
+
         // ===== AST Printer =====
 
         void ASTPrinter::printIndent()
@@ -276,6 +281,61 @@ namespace scratchbird
         {
             printIndent();
             out_ << "SWEEP DATABASE";
+        }
+
+        void ASTPrinter::visit(SetTransactionStmt *node)
+        {
+            printIndent();
+            out_ << "SET TRANSACTION";
+
+            if (node->mode() == TransactionMode::READ_ONLY)
+            {
+                out_ << " READ ONLY";
+            }
+            else
+            {
+                out_ << " READ WRITE";
+            }
+
+            out_ << " ISOLATION LEVEL ";
+            switch (node->isolation())
+            {
+                case IsolationLevel::READ_COMMITTED:
+                    out_ << "READ COMMITTED";
+                    break;
+                case IsolationLevel::SNAPSHOT:
+                    out_ << "SNAPSHOT";
+                    break;
+                case IsolationLevel::SNAPSHOT_TABLE_STABILITY:
+                    out_ << "SNAPSHOT TABLE STABILITY";
+                    break;
+            }
+
+            if (!node->wait())
+            {
+                out_ << " NO WAIT";
+            }
+
+            if (node->lockTimeout() > 0)
+            {
+                out_ << " LOCK TIMEOUT " << node->lockTimeout();
+            }
+
+            if (!node->tableReservations().empty())
+            {
+                out_ << " RESERVING ";
+                bool first = true;
+                for (const auto &res : node->tableReservations())
+                {
+                    if (!first) out_ << ", ";
+                    out_ << pool_.get(res.table_name);
+                    if (res.lock_mode == TableLockMode::SHARED)
+                        out_ << " FOR SHARED " << (res.for_write ? "WRITE" : "READ");
+                    else
+                        out_ << " FOR PROTECTED " << (res.for_write ? "WRITE" : "READ");
+                    first = false;
+                }
+            }
         }
 
         void ASTPrinter::visit(LiteralExpr *node)

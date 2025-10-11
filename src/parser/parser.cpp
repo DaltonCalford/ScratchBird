@@ -78,6 +78,11 @@ namespace scratchbird
                     case TokenType::KW_CREATE:
                     case TokenType::KW_INSERT:
                     case TokenType::KW_SELECT:
+                    case TokenType::KW_START:
+                    case TokenType::KW_SET:
+                    case TokenType::KW_COMMIT:
+                    case TokenType::KW_ROLLBACK:
+                    case TokenType::KW_SWEEP:
                         // Found a recovery point - don't consume it, let normal parsing continue
                         return;
                     default:
@@ -123,6 +128,10 @@ namespace scratchbird
                 else if (match(TokenType::KW_START))
                 {
                     stmt = parseStartTransaction();
+                }
+                else if (match(TokenType::KW_SET))
+                {
+                    stmt = parseSetTransaction();
                 }
                 else if (match(TokenType::KW_COMMIT))
                 {
@@ -633,6 +642,8 @@ namespace scratchbird
         {
             // START TRANSACTION [READ WRITE | READ ONLY] [WAIT | NO WAIT]
             // [ISOLATION LEVEL {READ COMMITTED | SNAPSHOT | SNAPSHOT TABLE STABILITY}]
+            // [LOCK TIMEOUT seconds]
+            // [RESERVING table1 FOR {SHARED|PROTECTED} {READ|WRITE}, ...]
             // [WITH COMMIT OUTSTANDING]
             auto start_loc = previous().location;
 
@@ -648,6 +659,8 @@ namespace scratchbird
             IsolationLevel isolation = IsolationLevel::READ_COMMITTED;
             bool wait = true;
             bool commit_outstanding = false;
+            uint32_t lock_timeout = 0;
+            std::vector<TableReservation> table_reservations;
 
             // Parse optional transaction mode
             if (match(TokenType::KW_READ))
@@ -725,6 +738,89 @@ namespace scratchbird
                 }
             }
 
+            // Parse LOCK TIMEOUT (Phase 3 Task 3.6)
+            if (match(TokenType::KW_LOCK))
+            {
+                if (!consume(TokenType::KW_TIMEOUT, "Expected TIMEOUT after LOCK"))
+                {
+                    synchronize();
+                    return nullptr;
+                }
+
+                if (!check(TokenType::INTEGER_LITERAL))
+                {
+                    error("Expected timeout value (integer) after LOCK TIMEOUT");
+                    synchronize();
+                    return nullptr;
+                }
+
+                lock_timeout = static_cast<uint32_t>(current().value.int_value);
+                advance();
+            }
+
+            // Parse RESERVING clause (Phase 3 Task 3.6)
+            if (match(TokenType::KW_RESERVING))
+            {
+                do
+                {
+                    // Parse table name
+                    if (!check(TokenType::IDENTIFIER))
+                    {
+                        error("Expected table name in RESERVING clause");
+                        synchronize();
+                        return nullptr;
+                    }
+
+                    StringPool::StringId table_name = current().value.string_id;
+                    advance();
+
+                    // Parse FOR keyword
+                    if (!consume(TokenType::KW_FOR, "Expected FOR after table name in RESERVING clause"))
+                    {
+                        synchronize();
+                        return nullptr;
+                    }
+
+                    // Parse lock mode (SHARED or PROTECTED)
+                    TableLockMode lock_mode;
+                    if (match(TokenType::KW_SHARED))
+                    {
+                        lock_mode = TableLockMode::SHARED;
+                    }
+                    else if (match(TokenType::KW_PROTECTED))
+                    {
+                        lock_mode = TableLockMode::PROTECTED;
+                    }
+                    else
+                    {
+                        error("Expected SHARED or PROTECTED in RESERVING clause");
+                        synchronize();
+                        return nullptr;
+                    }
+
+                    // Parse access mode (READ or WRITE)
+                    bool for_write = false;
+                    if (match(TokenType::KW_READ))
+                    {
+                        for_write = false;
+                    }
+                    else if (match(TokenType::KW_WRITE))
+                    {
+                        for_write = true;
+                    }
+                    else
+                    {
+                        error("Expected READ or WRITE in RESERVING clause");
+                        synchronize();
+                        return nullptr;
+                    }
+
+                    // Add this table reservation
+                    table_reservations.emplace_back(table_name, lock_mode, for_write);
+
+                } while (match(TokenType::COMMA));
+            }
+
             // Parse WITH COMMIT OUTSTANDING
             if (match(TokenType::KW_WITH))
             {
@@ -742,7 +838,194 @@ namespace scratchbird
             }
 
             auto span = makeSpan(start_loc);
-            return arena_.make<StartTransactionStmt>(span, mode, isolation, wait, commit_outstanding);
+            return arena_.make<StartTransactionStmt>(span, mode, isolation, wait, commit_outstanding,
+                                                     lock_timeout, std::move(table_reservations));
+        }
+
+        Statement *Parser::parseSetTransaction()
+        {
+            // SET TRANSACTION [READ WRITE | READ ONLY] [WAIT | NO WAIT]
+            // [ISOLATION LEVEL {READ COMMITTED | SNAPSHOT | SNAPSHOT TABLE STABILITY}]
+            // [LOCK TIMEOUT seconds]
+            // [RESERVING table1 FOR {SHARED|PROTECTED} {READ|WRITE}, ...]
+            auto start_loc = previous().location;
+
+            // Consume TRANSACTION keyword
+            if (!consume(TokenType::KW_TRANSACTION, "Expected TRANSACTION after SET"))
+            {
+                synchronize();
+                return nullptr;
+            }
+
+            // Default values
+            TransactionMode mode = TransactionMode::READ_WRITE;
+            IsolationLevel isolation = IsolationLevel::READ_COMMITTED;
+            bool wait = true;
+            uint32_t lock_timeout = 0;
+            std::vector<TableReservation> table_reservations;
+
+            // Parse optional transaction mode
+            if (match(TokenType::KW_READ))
+            {
+                if (match(TokenType::KW_WRITE))
+                {
+                    mode = TransactionMode::READ_WRITE;
+                }
+                else if (match(TokenType::KW_ONLY))
+                {
+                    mode = TransactionMode::READ_ONLY;
+                }
+                else if (match(TokenType::KW_COMMITTED))
+                {
+                    // READ COMMITTED - this is the isolation level, rewind
+                    // We need to handle "READ COMMITTED" as isolation level
+                    isolation = IsolationLevel::READ_COMMITTED;
+                }
+                else
+                {
+                    error("Expected WRITE, ONLY, or COMMITTED after READ");
+                }
+            }
+
+            // Parse NO WAIT
+            if (match(TokenType::KW_NOT))
+            {
+                if (!consume(TokenType::KW_WAIT, "Expected WAIT after NO"))
+                {
+                    synchronize();
+                    return nullptr;
+                }
+                wait = false;
+            }
+
+            // Parse ISOLATION LEVEL
+            if (match(TokenType::KW_ISOLATION))
+            {
+                if (!consume(TokenType::KW_LEVEL, "Expected LEVEL after ISOLATION"))
+                {
+                    synchronize();
+                    return nullptr;
+                }
+
+                if (match(TokenType::KW_READ))
+                {
+                    if (!consume(TokenType::KW_COMMITTED, "Expected COMMITTED after READ"))
+                    {
+                        synchronize();
+                        return nullptr;
+                    }
+                    isolation = IsolationLevel::READ_COMMITTED;
+                }
+                else if (match(TokenType::KW_SNAPSHOT))
+                {
+                    if (match(TokenType::KW_TABLE))
+                    {
+                        if (!consume(TokenType::KW_STABILITY, "Expected STABILITY after TABLE"))
+                        {
+                            synchronize();
+                            return nullptr;
+                        }
+                        isolation = IsolationLevel::SNAPSHOT_TABLE_STABILITY;
+                    }
+                    else
+                    {
+                        isolation = IsolationLevel::SNAPSHOT;
+                    }
+                }
+                else
+                {
+                    error("Expected isolation level (READ COMMITTED, SNAPSHOT, or SNAPSHOT TABLE STABILITY)");
+                    synchronize();
+                    return nullptr;
+                }
+            }
+
+            // Parse LOCK TIMEOUT (Phase 3 Task 3.6)
+            if (match(TokenType::KW_LOCK))
+            {
+                if (!consume(TokenType::KW_TIMEOUT, "Expected TIMEOUT after LOCK"))
+                {
+                    synchronize();
+                    return nullptr;
+                }
+
+                if (!check(TokenType::INTEGER_LITERAL))
+                {
+                    error("Expected timeout value (integer) after LOCK TIMEOUT");
+                    synchronize();
+                    return nullptr;
+                }
+
+                lock_timeout = static_cast<uint32_t>(current().value.int_value);
+                advance();
+            }
+
+            // Parse RESERVING clause (Phase 3 Task 3.6)
+            if (match(TokenType::KW_RESERVING))
+            {
+                do
+                {
+                    // Parse table name
+                    if (!check(TokenType::IDENTIFIER))
+                    {
+                        error("Expected table name in RESERVING clause");
+                        synchronize();
+                        return nullptr;
+                    }
+
+                    StringPool::StringId table_name = current().value.string_id;
+                    advance();
+
+                    // Parse FOR keyword
+                    if (!consume(TokenType::KW_FOR, "Expected FOR after table name in RESERVING clause"))
+                    {
+                        synchronize();
+                        return nullptr;
+                    }
+
+                    // Parse lock mode (SHARED or PROTECTED)
+                    TableLockMode lock_mode;
+                    if (match(TokenType::KW_SHARED))
+                    {
+                        lock_mode = TableLockMode::SHARED;
+                    }
+                    else if (match(TokenType::KW_PROTECTED))
+                    {
+                        lock_mode = TableLockMode::PROTECTED;
+                    }
+                    else
+                    {
+                        error("Expected SHARED or PROTECTED in RESERVING clause");
+                        synchronize();
+                        return nullptr;
+                    }
+
+                    // Parse access mode (READ or WRITE)
+                    bool for_write = false;
+                    if (match(TokenType::KW_READ))
+                    {
+                        for_write = false;
+                    }
+                    else if (match(TokenType::KW_WRITE))
+                    {
+                        for_write = true;
+                    }
+                    else
+                    {
+                        error("Expected READ or WRITE in RESERVING clause");
+                        synchronize();
+                        return nullptr;
+                    }
+
+                    // Add this table reservation
+                    table_reservations.emplace_back(table_name, lock_mode, for_write);
+
+                } while (match(TokenType::COMMA));
+            }
+
+            auto span = makeSpan(start_loc);
+            return arena_.make<SetTransactionStmt>(span, mode, isolation, wait,
+                                                   lock_timeout, std::move(table_reservations));
         }
 
         Statement *Parser::parseCommit()

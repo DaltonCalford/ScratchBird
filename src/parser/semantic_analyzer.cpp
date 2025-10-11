@@ -256,6 +256,13 @@ namespace scratchbird
             (void)node; // Suppress unused parameter warning
         }
 
+        void SemanticAnalyzer::visit(SetTransactionStmt *node)
+        {
+            // Transaction statements don't require semantic analysis
+            // They will be handled by the executor
+            (void)node; // Suppress unused parameter warning
+        }
+
         void SemanticAnalyzer::visit(CommitStmt *node)
         {
             // Transaction statements don't require semantic analysis
