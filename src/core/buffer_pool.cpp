@@ -282,43 +282,81 @@
 
         auto BufferPool::evictPage(uint32_t &evicted_frame, ErrorContext *ctx) -> Status
         {
-            // Find a page to evict using LRU
+            // OPTIMIZATION: Two-pass eviction policy for READ ONLY transaction optimization
+            // Pass 1: Look for unpinned, CLEAN pages (no flush needed)
+            // Pass 2: Fall back to dirty pages if no clean pages available
+            //
+            // Benefits READ ONLY transactions:
+            // - Pages accessed by read-only transactions are always clean
+            // - Clean pages evict faster (no I/O)
+            // - Read-only scans don't force dirty page flushes
+
+            uint32_t candidate_frame = UINT32_MAX;
+            bool found_clean = false;
+
+            // Pass 1: Prefer clean pages for faster eviction
             for (unsigned int frame_index : lru_list_)
             {
-                // Can only evict unpinned pages
-                if (frames_[frame_index].pin_count == 0)
+                if (frames_[frame_index].pin_count == 0 && !frames_[frame_index].is_dirty)
                 {
-                    // Found a candidate
-                    evicted_frame = frame_index;
-
-                    // If dirty, flush first
-                    if (frames_[frame_index].is_dirty)
-                    {
-                        Status status = writePageToDisk(frames_[frame_index].page_id,
-                                                           frames_[frame_index].data.get(), ctx);
-                        if (status != Status::OK)
-                        {
-                            return status;
-                        }
-                        stats_.flushes++;
-                    }
-
-                    // Remove from page table
-                    page_table_.erase(frames_[frame_index].page_id);
-
-                    // Reset frame
-                    frames_[frame_index].page_id = Frame::INVALID_PAGE_ID;
-                    frames_[frame_index].is_dirty = false;
-
-                    stats_.evictions++;
-                    return Status::OK;
+                    candidate_frame = frame_index;
+                    found_clean = true;
+                    break;
                 }
             }
 
-            // No unpinned pages found
-            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
-                              "Buffer pool full - all pages are pinned");
-            return Status::INVALID_ARGUMENT;
+            // Pass 2: If no clean pages, accept dirty pages
+            if (!found_clean)
+            {
+                for (unsigned int frame_index : lru_list_)
+                {
+                    if (frames_[frame_index].pin_count == 0)
+                    {
+                        candidate_frame = frame_index;
+                        break;
+                    }
+                }
+            }
+
+            // Check if we found any evictable page
+            if (candidate_frame == UINT32_MAX)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                  "Buffer pool full - all pages are pinned");
+                return Status::INVALID_ARGUMENT;
+            }
+
+            evicted_frame = candidate_frame;
+
+            // Track whether this is a clean or dirty eviction
+            bool was_dirty = frames_[evicted_frame].is_dirty;
+
+            // If dirty, flush first
+            if (was_dirty)
+            {
+                Status status = writePageToDisk(frames_[evicted_frame].page_id,
+                                                   frames_[evicted_frame].data.get(), ctx);
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+                stats_.flushes++;
+                stats_.evictions_dirty++;
+            }
+            else
+            {
+                stats_.evictions_clean++;
+            }
+
+            // Remove from page table
+            page_table_.erase(frames_[evicted_frame].page_id);
+
+            // Reset frame
+            frames_[evicted_frame].page_id = Frame::INVALID_PAGE_ID;
+            frames_[evicted_frame].is_dirty = false;
+
+            stats_.evictions++;
+            return Status::OK;
         }
 
         auto BufferPool::readPageFromDisk(uint32_t page_id, uint8_t *buffer, ErrorContext *ctx) -> Status
