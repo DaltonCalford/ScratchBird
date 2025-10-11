@@ -90,10 +90,14 @@
             // Statistics
             struct Stats
             {
-                uint64_t hits = 0;      // Cache hits
-                uint64_t misses = 0;    // Cache misses
-                uint64_t evictions = 0; // Pages evicted
-                uint64_t flushes = 0;   // Pages flushed
+                uint64_t hits = 0;              // Cache hits
+                uint64_t misses = 0;            // Cache misses
+                uint64_t evictions = 0;         // Pages evicted
+                uint64_t flushes = 0;           // Pages flushed
+
+                // READ ONLY transaction optimizations (Phase 3)
+                uint64_t evictions_clean = 0;   // Clean pages evicted (read-only benefit)
+                uint64_t evictions_dirty = 0;   // Dirty pages evicted (requires flush)
             };
 
             auto getStats() const -> Stats
