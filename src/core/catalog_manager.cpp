@@ -1385,8 +1385,12 @@ namespace scratchbird::core
         uint16_t item_count = heap_page.getItemCount();
         bool found = false;
 
+        // Access page data directly as mutable (we own it via pinPage)
+        auto *mutable_page_data = static_cast<uint8_t *>(page_data);
+
         for (uint16_t i = 0; i < item_count; ++i)
         {
+            // Get tuple location using const API for bounds checking
             const uint8_t *tuple_data;
             uint32_t tuple_size;
 
@@ -1394,15 +1398,20 @@ namespace scratchbird::core
             {
                 if (tuple_size >= sizeof(TupleHeader) + sizeof(TableRecord))
                 {
-                    const auto *record =
-                        reinterpret_cast<const TableRecord *>(tuple_data + sizeof(TupleHeader));
+                    // Calculate mutable pointer to same location
+                    // (getTuple validates bounds, but returns const pointer)
+                    const ptrdiff_t offset = tuple_data - static_cast<const uint8_t *>(page_data);
+                    uint8_t *mutable_tuple_data = mutable_page_data + offset;
+
+                    // Now we can access the record as mutable (no const_cast needed)
+                    auto *record =
+                        reinterpret_cast<TableRecord *>(mutable_tuple_data + sizeof(TupleHeader));
 
                     if (record->table_id == table_id && record->is_valid == 1)
                     {
                         // Found the record - mark it as invalid
-                        // We need to update the record in place
-                        auto *mutable_record = const_cast<TableRecord *>(record);
-                        mutable_record->is_valid = 0;
+                        // Safe: we own the page (pinned with write intent)
+                        record->is_valid = 0;
                         found = true;
                         break;
                     }
