@@ -185,8 +185,8 @@ namespace scratchbird::core
 
     std::vector<uint8_t> TypedValue::getBinary() const
     {
-        if (type_ != DataType::BINARY && type_ != DataType::VARBINARY &&
-            type_ != DataType::BLOB && type_ != DataType::BYTEA)
+        if (type_ != DataType::BINARY && type_ != DataType::VARBINARY && type_ != DataType::BLOB &&
+            type_ != DataType::BYTEA)
             throw std::runtime_error("Type mismatch: not a binary type");
         return std::get<std::vector<uint8_t>>(data_);
     }
@@ -240,43 +240,43 @@ namespace scratchbird::core
 
         switch (type_)
         {
-        case DataType::INT8:
-            return TypeConverter::int8ToString(getInt8());
-        case DataType::INT16:
-            return TypeConverter::int16ToString(getInt16());
-        case DataType::INT32:
-            return TypeConverter::int32ToString(getInt32());
-        case DataType::INT64:
-            return TypeConverter::int64ToString(getInt64());
-        case DataType::FLOAT32:
-            return TypeConverter::float32ToString(getFloat32());
-        case DataType::FLOAT64:
-            return TypeConverter::float64ToString(getFloat64());
-        case DataType::DECIMAL:
-            return getDecimal();
-        case DataType::CHAR:
-        case DataType::VARCHAR:
-        case DataType::TEXT:
-            return std::get<std::string>(data_);
-        case DataType::BOOLEAN:
-            return TypeConverter::booleanToString(getBoolean());
-        case DataType::DATE:
-            return TypeConverter::dateToString(getDate());
-        case DataType::TIME:
-            return TypeConverter::timeToString(getTime());
-        case DataType::TIMESTAMP:
-            return TypeConverter::timestampToString(getTimestamp());
-        case DataType::UUID:
-            return TypeConverter::uuidToString(getUUID());
-        case DataType::BINARY:
-        case DataType::VARBINARY:
-        case DataType::BLOB:
-        case DataType::BYTEA:
-            return TypeConverter::binaryToHex(getBinary());
-        case DataType::JSON:
-            return getJSON();
-        default:
-            return "<unknown>";
+            case DataType::INT8:
+                return TypeConverter::int8ToString(getInt8());
+            case DataType::INT16:
+                return TypeConverter::int16ToString(getInt16());
+            case DataType::INT32:
+                return TypeConverter::int32ToString(getInt32());
+            case DataType::INT64:
+                return TypeConverter::int64ToString(getInt64());
+            case DataType::FLOAT32:
+                return TypeConverter::float32ToString(getFloat32());
+            case DataType::FLOAT64:
+                return TypeConverter::float64ToString(getFloat64());
+            case DataType::DECIMAL:
+                return getDecimal();
+            case DataType::CHAR:
+            case DataType::VARCHAR:
+            case DataType::TEXT:
+                return std::get<std::string>(data_);
+            case DataType::BOOLEAN:
+                return TypeConverter::booleanToString(getBoolean());
+            case DataType::DATE:
+                return TypeConverter::dateToString(getDate());
+            case DataType::TIME:
+                return TypeConverter::timeToString(getTime());
+            case DataType::TIMESTAMP:
+                return TypeConverter::timestampToString(getTimestamp());
+            case DataType::UUID:
+                return TypeConverter::uuidToString(getUUID());
+            case DataType::BINARY:
+            case DataType::VARBINARY:
+            case DataType::BLOB:
+            case DataType::BYTEA:
+                return TypeConverter::binaryToHex(getBinary());
+            case DataType::JSON:
+                return getJSON();
+            default:
+                return "<unknown>";
         }
     }
 
@@ -284,17 +284,15 @@ namespace scratchbird::core
 
     bool TypeSystem::isNumeric(DataType type)
     {
-        return isInteger(type) || isFloatingPoint(type) ||
-               type == DataType::DECIMAL || type == DataType::MONEY;
+        return isInteger(type) || isFloatingPoint(type) || type == DataType::DECIMAL ||
+               type == DataType::MONEY;
     }
 
     bool TypeSystem::isInteger(DataType type)
     {
-        return type == DataType::INT8 || type == DataType::INT16 ||
-               type == DataType::INT32 || type == DataType::INT64 ||
-               type == DataType::INT128 ||
-               type == DataType::UINT8 || type == DataType::UINT16 ||
-               type == DataType::UINT32 || type == DataType::UINT64;
+        return type == DataType::INT8 || type == DataType::INT16 || type == DataType::INT32 ||
+               type == DataType::INT64 || type == DataType::INT128 || type == DataType::UINT8 ||
+               type == DataType::UINT16 || type == DataType::UINT32 || type == DataType::UINT64;
     }
 
     bool TypeSystem::isFloatingPoint(DataType type)
@@ -309,74 +307,73 @@ namespace scratchbird::core
 
     bool TypeSystem::isBinary(DataType type)
     {
-        return type == DataType::BINARY || type == DataType::VARBINARY ||
-               type == DataType::BLOB || type == DataType::BYTEA;
+        return type == DataType::BINARY || type == DataType::VARBINARY || type == DataType::BLOB ||
+               type == DataType::BYTEA;
     }
 
     bool TypeSystem::isTemporal(DataType type)
     {
-        return type == DataType::DATE || type == DataType::TIME ||
-               type == DataType::TIMESTAMP || type == DataType::INTERVAL;
+        return type == DataType::DATE || type == DataType::TIME || type == DataType::TIMESTAMP ||
+               type == DataType::INTERVAL;
     }
 
     bool TypeSystem::isFixedLength(DataType type)
     {
         switch (type)
         {
-        case DataType::INT8:
-        case DataType::INT16:
-        case DataType::INT32:
-        case DataType::INT64:
-        case DataType::FLOAT32:
-        case DataType::FLOAT64:
-        case DataType::DATE:
-        case DataType::TIME:
-        case DataType::TIMESTAMP:
-        case DataType::BOOLEAN:
-        case DataType::CHAR:
-        case DataType::BINARY:
-        case DataType::UUID:
-            return true;
-        default:
-            return false;
+            case DataType::INT8:
+            case DataType::INT16:
+            case DataType::INT32:
+            case DataType::INT64:
+            case DataType::FLOAT32:
+            case DataType::FLOAT64:
+            case DataType::DATE:
+            case DataType::TIME:
+            case DataType::TIMESTAMP:
+            case DataType::BOOLEAN:
+            case DataType::CHAR:
+            case DataType::BINARY:
+            case DataType::UUID:
+                return true;
+            default:
+                return false;
         }
     }
 
     bool TypeSystem::isVariableLength(DataType type)
     {
-        return isString(type) || isBinary(type) ||
-               type == DataType::JSON || type == DataType::ARRAY ||
-               type == DataType::COMPOSITE;
+        return isString(type) || isBinary(type) || type == DataType::JSON ||
+               type == DataType::ARRAY || type == DataType::COMPOSITE;
     }
 
     auto TypeSystem::getFixedSize(DataType type) -> std::optional<uint32_t>
     {
         switch (type)
         {
-        case DataType::INT8:
-            return 1;
-        case DataType::INT16:
-            return 2;
-        case DataType::INT32:
-            return 4;
-        case DataType::INT64:
-            return 8;
-        case DataType::FLOAT32:
-            return 4;
-        case DataType::FLOAT64:
-            return 8;
-        case DataType::DATE:
-            return 8;
-        case DataType::TIME:
-            return 8;
-        case DataType::TIMESTAMP:
-            return 8;
-        case DataType::BOOLEAN:
-            return 1;
-        case DataType::UUID:
-            return 16;
-        default:
-            return std::nullopt;
+            case DataType::INT8:
+                return 1;
+            case DataType::INT16:
+                return 2;
+            case DataType::INT32:
+                return 4;
+            case DataType::INT64:
+                return 8;
+            case DataType::FLOAT32:
+                return 4;
+            case DataType::FLOAT64:
+                return 8;
+            case DataType::DATE:
+                return 8;
+            case DataType::TIME:
+                return 8;
+            case DataType::TIMESTAMP:
+                return 8;
+            case DataType::BOOLEAN:
+                return 1;
+            case DataType::UUID:
+                return 16;
+            default:
+                return std::nullopt;
         }
     }
 
@@ -400,76 +397,76 @@ namespace scratchbird::core
     {
         switch (type)
         {
-        case DataType::UNKNOWN:
-            return "UNKNOWN";
-        case DataType::INT8:
-            return "INT8";
-        case DataType::INT16:
-            return "INT16";
-        case DataType::INT32:
-            return "INT32";
-        case DataType::INT64:
-            return "INT64";
-        case DataType::INT128:
-            return "INT128";
-        case DataType::UINT8:
-            return "UINT8";
-        case DataType::UINT16:
-            return "UINT16";
-        case DataType::UINT32:
-            return "UINT32";
-        case DataType::UINT64:
-            return "UINT64";
-        case DataType::FLOAT32:
-            return "FLOAT32";
-        case DataType::FLOAT64:
-            return "FLOAT64";
-        case DataType::DECIMAL:
-            return "DECIMAL";
-        case DataType::MONEY:
-            return "MONEY";
-        case DataType::CHAR:
-            return "CHAR";
-        case DataType::VARCHAR:
-            return "VARCHAR";
-        case DataType::TEXT:
-            return "TEXT";
-        case DataType::BINARY:
-            return "BINARY";
-        case DataType::VARBINARY:
-            return "VARBINARY";
-        case DataType::BLOB:
-            return "BLOB";
-        case DataType::BYTEA:
-            return "BYTEA";
-        case DataType::DATE:
-            return "DATE";
-        case DataType::TIME:
-            return "TIME";
-        case DataType::TIMESTAMP:
-            return "TIMESTAMP";
-        case DataType::INTERVAL:
-            return "INTERVAL";
-        case DataType::BOOLEAN:
-            return "BOOLEAN";
-        case DataType::UUID:
-            return "UUID";
-        case DataType::JSON:
-            return "JSON";
-        case DataType::JSONB:
-            return "JSONB";
-        case DataType::XML:
-            return "XML";
-        case DataType::VECTOR:
-            return "VECTOR";
-        case DataType::ARRAY:
-            return "ARRAY";
-        case DataType::COMPOSITE:
-            return "COMPOSITE";
-        case DataType::NULL_TYPE:
-            return "NULL";
-        default:
-            return "UNKNOWN";
+            case DataType::UNKNOWN:
+                return "UNKNOWN";
+            case DataType::INT8:
+                return "INT8";
+            case DataType::INT16:
+                return "INT16";
+            case DataType::INT32:
+                return "INT32";
+            case DataType::INT64:
+                return "INT64";
+            case DataType::INT128:
+                return "INT128";
+            case DataType::UINT8:
+                return "UINT8";
+            case DataType::UINT16:
+                return "UINT16";
+            case DataType::UINT32:
+                return "UINT32";
+            case DataType::UINT64:
+                return "UINT64";
+            case DataType::FLOAT32:
+                return "FLOAT32";
+            case DataType::FLOAT64:
+                return "FLOAT64";
+            case DataType::DECIMAL:
+                return "DECIMAL";
+            case DataType::MONEY:
+                return "MONEY";
+            case DataType::CHAR:
+                return "CHAR";
+            case DataType::VARCHAR:
+                return "VARCHAR";
+            case DataType::TEXT:
+                return "TEXT";
+            case DataType::BINARY:
+                return "BINARY";
+            case DataType::VARBINARY:
+                return "VARBINARY";
+            case DataType::BLOB:
+                return "BLOB";
+            case DataType::BYTEA:
+                return "BYTEA";
+            case DataType::DATE:
+                return "DATE";
+            case DataType::TIME:
+                return "TIME";
+            case DataType::TIMESTAMP:
+                return "TIMESTAMP";
+            case DataType::INTERVAL:
+                return "INTERVAL";
+            case DataType::BOOLEAN:
+                return "BOOLEAN";
+            case DataType::UUID:
+                return "UUID";
+            case DataType::JSON:
+                return "JSON";
+            case DataType::JSONB:
+                return "JSONB";
+            case DataType::XML:
+                return "XML";
+            case DataType::VECTOR:
+                return "VECTOR";
+            case DataType::ARRAY:
+                return "ARRAY";
+            case DataType::COMPOSITE:
+                return "COMPOSITE";
+            case DataType::NULL_TYPE:
+                return "NULL";
+            default:
+                return "UNKNOWN";
         }
     }
 
@@ -568,7 +565,8 @@ namespace scratchbird::core
             return true;
 
         // Integer widening is implicit
-        if (from == DataType::INT8 && (to == DataType::INT16 || to == DataType::INT32 || to == DataType::INT64))
+        if (from == DataType::INT8 &&
+            (to == DataType::INT16 || to == DataType::INT32 || to == DataType::INT64))
             return true;
         if (from == DataType::INT16 && (to == DataType::INT32 || to == DataType::INT64))
             return true;
@@ -621,25 +619,25 @@ namespace scratchbird::core
     {
         switch (type)
         {
-        case DataType::INT8:
-            return 1;
-        case DataType::INT16:
-            return 2;
-        case DataType::INT32:
-            return 3;
-        case DataType::INT64:
-            return 4;
-        case DataType::FLOAT32:
-            return 5;
-        case DataType::FLOAT64:
-            return 6;
-        case DataType::DECIMAL:
-            return 7;
-        case DataType::VARCHAR:
-        case DataType::TEXT:
-            return 8;
-        default:
-            return 0;
+            case DataType::INT8:
+                return 1;
+            case DataType::INT16:
+                return 2;
+            case DataType::INT32:
+                return 3;
+            case DataType::INT64:
+                return 4;
+            case DataType::FLOAT32:
+                return 5;
+            case DataType::FLOAT64:
+                return 6;
+            case DataType::DECIMAL:
+                return 7;
+            case DataType::VARCHAR:
+            case DataType::TEXT:
+                return 8;
+            default:
+                return 0;
         }
     }
 
@@ -671,7 +669,8 @@ namespace scratchbird::core
 
     // ===== TypeConverter Implementation - String to Type =====
 
-    auto TypeConverter::stringToInt8(const std::string &str, ErrorContext *ctx) -> std::optional<int8_t>
+    auto TypeConverter::stringToInt8(const std::string &str, ErrorContext *ctx)
+        -> std::optional<int8_t>
     {
         try
         {
@@ -690,7 +689,8 @@ namespace scratchbird::core
         }
     }
 
-    auto TypeConverter::stringToInt16(const std::string &str, ErrorContext *ctx) -> std::optional<int16_t>
+    auto TypeConverter::stringToInt16(const std::string &str, ErrorContext *ctx)
+        -> std::optional<int16_t>
     {
         try
         {
@@ -709,7 +709,8 @@ namespace scratchbird::core
         }
     }
 
-    auto TypeConverter::stringToInt32(const std::string &str, ErrorContext *ctx) -> std::optional<int32_t>
+    auto TypeConverter::stringToInt32(const std::string &str, ErrorContext *ctx)
+        -> std::optional<int32_t>
     {
         try
         {
@@ -722,7 +723,8 @@ namespace scratchbird::core
         }
     }
 
-    auto TypeConverter::stringToInt64(const std::string &str, ErrorContext *ctx) -> std::optional<int64_t>
+    auto TypeConverter::stringToInt64(const std::string &str, ErrorContext *ctx)
+        -> std::optional<int64_t>
     {
         try
         {
@@ -735,7 +737,8 @@ namespace scratchbird::core
         }
     }
 
-    auto TypeConverter::stringToFloat32(const std::string &str, ErrorContext *ctx) -> std::optional<float>
+    auto TypeConverter::stringToFloat32(const std::string &str, ErrorContext *ctx)
+        -> std::optional<float>
     {
         try
         {
@@ -748,7 +751,8 @@ namespace scratchbird::core
         }
     }
 
-    auto TypeConverter::stringToFloat64(const std::string &str, ErrorContext *ctx) -> std::optional<double>
+    auto TypeConverter::stringToFloat64(const std::string &str, ErrorContext *ctx)
+        -> std::optional<double>
     {
         try
         {
@@ -761,7 +765,8 @@ namespace scratchbird::core
         }
     }
 
-    auto TypeConverter::stringToBoolean(const std::string &str, ErrorContext *ctx) -> std::optional<bool>
+    auto TypeConverter::stringToBoolean(const std::string &str, ErrorContext *ctx)
+        -> std::optional<bool>
     {
         std::string lower = str;
         std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
@@ -831,8 +836,8 @@ namespace scratchbird::core
         y += (m <= 2);
 
         std::ostringstream oss;
-        oss << std::setfill('0') << std::setw(4) << y << '-'
-            << std::setw(2) << m << '-' << std::setw(2) << d;
+        oss << std::setfill('0') << std::setw(4) << y << '-' << std::setw(2) << m << '-'
+            << std::setw(2) << d;
         return oss.str();
     }
 
@@ -845,8 +850,8 @@ namespace scratchbird::core
         int64_t secs = seconds % 60;
 
         std::ostringstream oss;
-        oss << std::setfill('0') << std::setw(2) << hours << ':'
-            << std::setw(2) << minutes << ':' << std::setw(2) << secs;
+        oss << std::setfill('0') << std::setw(2) << hours << ':' << std::setw(2) << minutes << ':'
+            << std::setw(2) << secs;
         if (us > 0)
         {
             oss << '.' << std::setw(6) << us;
@@ -891,10 +896,9 @@ namespace scratchbird::core
 
     auto TypeConverter::binaryToBase64(const std::vector<uint8_t> &data) -> std::string
     {
-        static const char base64_chars[] =
-            "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-            "abcdefghijklmnopqrstuvwxyz"
-            "0123456789+/";
+        static const char base64_chars[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+                                           "abcdefghijklmnopqrstuvwxyz"
+                                           "0123456789+/";
 
         std::string result;
         int val = 0;
@@ -1013,7 +1017,9 @@ namespace scratchbird::core
     {
         int64_t z = days_since_epoch + 719468;
         int64_t era = (z >= 0 ? z : z - 146096) / 146097;
-        int64_t yoe = (z - era * 146097 - (z - era * 146097) / 1460 + (z - era * 146097) / 36524 - (z - era * 146097) / 146096) / 365;
+        int64_t yoe = (z - era * 146097 - (z - era * 146097) / 1460 + (z - era * 146097) / 36524 -
+                       (z - era * 146097) / 146096) /
+                      365;
         int64_t y = yoe + era * 400;
         int64_t doy = z - era * 146097 - (365 * yoe + yoe / 4 - yoe / 100);
         int64_t mp = (5 * doy + 2) / 153;
@@ -1083,22 +1089,23 @@ namespace scratchbird::core
     {
         switch (type_)
         {
-        case DataType::INT8:
-            return getInt8();
-        case DataType::INT16:
-            return getInt16();
-        case DataType::INT32:
-            return getInt32();
-        case DataType::INT64:
-            return getInt64();
-        case DataType::FLOAT32:
-            return static_cast<int64_t>(getFloat32());
-        case DataType::FLOAT64:
-            return static_cast<int64_t>(getFloat64());
-        case DataType::BOOLEAN:
-            return getBoolean() ? 1 : 0;
-        default:
-            throw std::runtime_error("Cannot convert " + TypeSystem::getTypeName(type_) + " to int64");
+            case DataType::INT8:
+                return getInt8();
+            case DataType::INT16:
+                return getInt16();
+            case DataType::INT32:
+                return getInt32();
+            case DataType::INT64:
+                return getInt64();
+            case DataType::FLOAT32:
+                return static_cast<int64_t>(getFloat32());
+            case DataType::FLOAT64:
+                return static_cast<int64_t>(getFloat64());
+            case DataType::BOOLEAN:
+                return getBoolean() ? 1 : 0;
+            default:
+                throw std::runtime_error("Cannot convert " + TypeSystem::getTypeName(type_) +
+                                         " to int64");
         }
     }
 
@@ -1106,22 +1113,23 @@ namespace scratchbird::core
     {
         switch (type_)
         {
-        case DataType::INT8:
-            return static_cast<double>(getInt8());
-        case DataType::INT16:
-            return static_cast<double>(getInt16());
-        case DataType::INT32:
-            return static_cast<double>(getInt32());
-        case DataType::INT64:
-            return static_cast<double>(getInt64());
-        case DataType::FLOAT32:
-            return static_cast<double>(getFloat32());
-        case DataType::FLOAT64:
-            return getFloat64();
-        case DataType::BOOLEAN:
-            return getBoolean() ? 1.0 : 0.0;
-        default:
-            throw std::runtime_error("Cannot convert " + TypeSystem::getTypeName(type_) + " to double");
+            case DataType::INT8:
+                return static_cast<double>(getInt8());
+            case DataType::INT16:
+                return static_cast<double>(getInt16());
+            case DataType::INT32:
+                return static_cast<double>(getInt32());
+            case DataType::INT64:
+                return static_cast<double>(getInt64());
+            case DataType::FLOAT32:
+                return static_cast<double>(getFloat32());
+            case DataType::FLOAT64:
+                return getFloat64();
+            case DataType::BOOLEAN:
+                return getBoolean() ? 1.0 : 0.0;
+            default:
+                throw std::runtime_error("Cannot convert " + TypeSystem::getTypeName(type_) +
+                                         " to double");
         }
     }
 
@@ -1129,26 +1137,27 @@ namespace scratchbird::core
     {
         switch (type_)
         {
-        case DataType::BOOLEAN:
-            return getBoolean();
-        case DataType::INT8:
-            return getInt8() != 0;
-        case DataType::INT16:
-            return getInt16() != 0;
-        case DataType::INT32:
-            return getInt32() != 0;
-        case DataType::INT64:
-            return getInt64() != 0;
-        case DataType::FLOAT32:
-            return getFloat32() != 0.0f;
-        case DataType::FLOAT64:
-            return getFloat64() != 0.0;
-        case DataType::VARCHAR:
-        case DataType::TEXT:
-        case DataType::CHAR:
-            return !getVarchar().empty();
-        default:
-            throw std::runtime_error("Cannot convert " + TypeSystem::getTypeName(type_) + " to boolean");
+            case DataType::BOOLEAN:
+                return getBoolean();
+            case DataType::INT8:
+                return getInt8() != 0;
+            case DataType::INT16:
+                return getInt16() != 0;
+            case DataType::INT32:
+                return getInt32() != 0;
+            case DataType::INT64:
+                return getInt64() != 0;
+            case DataType::FLOAT32:
+                return getFloat32() != 0.0f;
+            case DataType::FLOAT64:
+                return getFloat64() != 0.0;
+            case DataType::VARCHAR:
+            case DataType::TEXT:
+            case DataType::CHAR:
+                return !getVarchar().empty();
+            default:
+                throw std::runtime_error("Cannot convert " + TypeSystem::getTypeName(type_) +
+                                         " to boolean");
         }
     }
 

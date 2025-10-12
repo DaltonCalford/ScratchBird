@@ -8,36 +8,22 @@ namespace scratchbird::core
 {
 
     // BTree::rangeScan implementation
-    auto BTree::rangeScan(
-        const std::vector<uint8_t>* start_key,
-        const std::vector<uint8_t>* end_key,
-        bool start_inclusive,
-        bool end_inclusive,
-        ErrorContext* ctx) -> std::unique_ptr<BTreeIterator>
+    auto BTree::rangeScan(const std::vector<uint8_t> *start_key,
+                          const std::vector<uint8_t> *end_key, bool start_inclusive,
+                          bool end_inclusive, ErrorContext *ctx) -> std::unique_ptr<BTreeIterator>
     {
-        return std::make_unique<BTreeIterator>(
-            this, start_key, end_key, start_inclusive, end_inclusive);
+        return std::make_unique<BTreeIterator>(this, start_key, end_key, start_inclusive,
+                                               end_inclusive);
     }
 
     // BTreeIterator implementation
-    BTreeIterator::BTreeIterator(
-        BTree* btree,
-        const std::vector<uint8_t>* start_key,
-        const std::vector<uint8_t>* end_key,
-        bool start_inclusive,
-        bool end_inclusive)
-        : btree_(btree)
-        , db_(btree->db_)
-        , has_start_(start_key != nullptr)
-        , has_end_(end_key != nullptr)
-        , start_inclusive_(start_inclusive)
-        , end_inclusive_(end_inclusive)
-        , current_page_(0)
-        , current_slot_(0)
-        , current_tuple_index_(0)
-        , initialized_(false)
-        , exhausted_(false)
-        , scanned_count_(0)
+    BTreeIterator::BTreeIterator(BTree *btree, const std::vector<uint8_t> *start_key,
+                                 const std::vector<uint8_t> *end_key, bool start_inclusive,
+                                 bool end_inclusive)
+        : btree_(btree), db_(btree->db_), has_start_(start_key != nullptr),
+          has_end_(end_key != nullptr), start_inclusive_(start_inclusive),
+          end_inclusive_(end_inclusive), current_page_(0), current_slot_(0),
+          current_tuple_index_(0), initialized_(false), exhausted_(false), scanned_count_(0)
     {
         if (has_start_)
         {
@@ -73,7 +59,7 @@ namespace scratchbird::core
         }
 
         // Check if current position has valid data
-        void* page_buffer;
+        void *page_buffer;
         ErrorContext ctx;
         Status status = db_->buffer_pool()->pinPage(current_page_, &page_buffer, &ctx);
         if (status != Status::OK)
@@ -82,7 +68,7 @@ namespace scratchbird::core
             return false;
         }
 
-        auto* page = reinterpret_cast<SBBTreePage*>(page_buffer);
+        auto *page = reinterpret_cast<SBBTreePage *>(page_buffer);
         bool has_data = (current_slot_ < page->btr_count);
 
         db_->buffer_pool()->unpinPage(current_page_, false, &ctx);
@@ -96,10 +82,8 @@ namespace scratchbird::core
         return !exhausted_;
     }
 
-    auto BTreeIterator::next(
-        std::vector<uint8_t>* key_out,
-        uint64_t* tuple_id_out,
-        ErrorContext* ctx) -> Status
+    auto BTreeIterator::next(std::vector<uint8_t> *key_out, uint64_t *tuple_id_out,
+                             ErrorContext *ctx) -> Status
     {
         if (exhausted_)
         {
@@ -118,7 +102,7 @@ namespace scratchbird::core
         }
 
         // Pin current page
-        void* page_buffer;
+        void *page_buffer;
         Status status = db_->buffer_pool()->pinPage(current_page_, &page_buffer, ctx);
         if (status != Status::OK)
         {
@@ -126,8 +110,8 @@ namespace scratchbird::core
             return status;
         }
 
-        auto* page_data = static_cast<uint8_t*>(page_buffer);
-        auto* page = reinterpret_cast<SBBTreePage*>(page_data);
+        auto *page_data = static_cast<uint8_t *>(page_buffer);
+        auto *page = reinterpret_cast<SBBTreePage *>(page_data);
 
         // Get current entry using BTreePage helper
         std::vector<uint8_t> key;
@@ -183,7 +167,7 @@ namespace scratchbird::core
         return Status::NOT_FOUND;
     }
 
-    auto BTreeIterator::getCurrentKey(std::vector<uint8_t>* key_out) const -> Status
+    auto BTreeIterator::getCurrentKey(std::vector<uint8_t> *key_out) const -> Status
     {
         if (!initialized_ || exhausted_)
         {
@@ -191,7 +175,7 @@ namespace scratchbird::core
         }
 
         // Pin current page
-        void* page_buffer;
+        void *page_buffer;
         ErrorContext ctx;
         Status status = db_->buffer_pool()->pinPage(current_page_, &page_buffer, &ctx);
         if (status != Status::OK)
@@ -199,7 +183,7 @@ namespace scratchbird::core
             return status;
         }
 
-        auto* page_data = static_cast<uint8_t*>(page_buffer);
+        auto *page_data = static_cast<uint8_t *>(page_buffer);
 
         std::vector<uint8_t> key;
         std::vector<uint64_t> tuple_ids;
@@ -215,7 +199,7 @@ namespace scratchbird::core
         return status;
     }
 
-    auto BTreeIterator::initialize(ErrorContext* ctx) -> Status
+    auto BTreeIterator::initialize(ErrorContext *ctx) -> Status
     {
         if (initialized_)
         {
@@ -235,14 +219,14 @@ namespace scratchbird::core
                 leaf_page = btree_->index_info_.idx_root_page;
 
                 // Navigate to leftmost leaf
-                void* page_buffer;
+                void *page_buffer;
                 status = db_->buffer_pool()->pinPage(leaf_page, &page_buffer, ctx);
                 if (status != Status::OK)
                 {
                     return status;
                 }
 
-                auto* page = reinterpret_cast<SBBTreePage*>(page_buffer);
+                auto *page = reinterpret_cast<SBBTreePage *>(page_buffer);
 
                 // Walk down to leftmost leaf
                 while ((page->btr_flags & static_cast<uint16_t>(BTreeFlags::LEAF)) == 0)
@@ -250,16 +234,13 @@ namespace scratchbird::core
                     // Internal node - follow first child
                     std::vector<uint8_t> first_key;
                     std::vector<uint64_t> child_pages;
-                    Status get_status = BTreePage::get_node(
-                        static_cast<uint8_t*>(page_buffer),
-                        db_->page_size(),
-                        0,
-                        first_key,
-                        child_pages);
+                    Status get_status =
+                        BTreePage::get_node(static_cast<uint8_t *>(page_buffer), db_->page_size(),
+                                            0, first_key, child_pages);
 
                     uint64_t next_page = (get_status == Status::OK && !child_pages.empty())
-                                          ? child_pages[0]
-                                          : page->btr_left_sibling;
+                                             ? child_pages[0]
+                                             : page->btr_left_sibling;
 
                     db_->buffer_pool()->unpinPage(leaf_page, false, ctx);
 
@@ -275,7 +256,7 @@ namespace scratchbird::core
                     {
                         return status;
                     }
-                    page = reinterpret_cast<SBBTreePage*>(page_buffer);
+                    page = reinterpret_cast<SBBTreePage *>(page_buffer);
                 }
 
                 db_->buffer_pool()->unpinPage(leaf_page, false, ctx);
@@ -288,14 +269,14 @@ namespace scratchbird::core
             // No start key - begin from leftmost leaf
             current_page_ = btree_->index_info_.idx_root_page;
 
-            void* page_buffer;
+            void *page_buffer;
             Status status = db_->buffer_pool()->pinPage(current_page_, &page_buffer, ctx);
             if (status != Status::OK)
             {
                 return status;
             }
 
-            auto* page = reinterpret_cast<SBBTreePage*>(page_buffer);
+            auto *page = reinterpret_cast<SBBTreePage *>(page_buffer);
 
             // Navigate to leftmost leaf
             while ((page->btr_flags & static_cast<uint16_t>(BTreeFlags::LEAF)) == 0)
@@ -303,12 +284,8 @@ namespace scratchbird::core
                 // Get first child page
                 std::vector<uint8_t> first_key;
                 std::vector<uint64_t> child_pages;
-                BTreePage::get_node(
-                    static_cast<uint8_t*>(page_buffer),
-                    db_->page_size(),
-                    0,
-                    first_key,
-                    child_pages);
+                BTreePage::get_node(static_cast<uint8_t *>(page_buffer), db_->page_size(), 0,
+                                    first_key, child_pages);
 
                 uint64_t next_page = (!child_pages.empty()) ? child_pages[0] : 0;
                 db_->buffer_pool()->unpinPage(current_page_, false, ctx);
@@ -325,7 +302,7 @@ namespace scratchbird::core
                 {
                     return status;
                 }
-                page = reinterpret_cast<SBBTreePage*>(page_buffer);
+                page = reinterpret_cast<SBBTreePage *>(page_buffer);
             }
 
             db_->buffer_pool()->unpinPage(current_page_, false, ctx);
@@ -342,14 +319,14 @@ namespace scratchbird::core
             bool found_start = false;
             while (!found_start)
             {
-                void* page_buffer;
+                void *page_buffer;
                 Status status = db_->buffer_pool()->pinPage(current_page_, &page_buffer, ctx);
                 if (status != Status::OK)
                 {
                     return status;
                 }
 
-                auto* page = reinterpret_cast<SBBTreePage*>(page_buffer);
+                auto *page = reinterpret_cast<SBBTreePage *>(page_buffer);
 
                 if (current_slot_ >= page->btr_count)
                 {
@@ -366,12 +343,8 @@ namespace scratchbird::core
 
                 std::vector<uint8_t> key;
                 std::vector<uint64_t> tuple_ids;
-                status = BTreePage::get_node(
-                    static_cast<uint8_t*>(page_buffer),
-                    db_->page_size(),
-                    current_slot_,
-                    key,
-                    tuple_ids);
+                status = BTreePage::get_node(static_cast<uint8_t *>(page_buffer), db_->page_size(),
+                                             current_slot_, key, tuple_ids);
 
                 db_->buffer_pool()->unpinPage(current_page_, false, ctx);
 
@@ -401,20 +374,20 @@ namespace scratchbird::core
         return Status::OK;
     }
 
-    auto BTreeIterator::moveToNextSlot(ErrorContext* ctx) -> Status
+    auto BTreeIterator::moveToNextSlot(ErrorContext *ctx) -> Status
     {
         current_slot_++;
         current_tuple_index_ = 0;
 
         // Check if we need to move to next page
-        void* page_buffer;
+        void *page_buffer;
         Status status = db_->buffer_pool()->pinPage(current_page_, &page_buffer, ctx);
         if (status != Status::OK)
         {
             return status;
         }
 
-        auto* page = reinterpret_cast<SBBTreePage*>(page_buffer);
+        auto *page = reinterpret_cast<SBBTreePage *>(page_buffer);
         bool need_next_page = (current_slot_ >= page->btr_count);
 
         db_->buffer_pool()->unpinPage(current_page_, false, ctx);
@@ -427,17 +400,17 @@ namespace scratchbird::core
         return Status::OK;
     }
 
-    auto BTreeIterator::moveToNextPage(ErrorContext* ctx) -> Status
+    auto BTreeIterator::moveToNextPage(ErrorContext *ctx) -> Status
     {
         // Pin current page to get sibling
-        void* page_buffer;
+        void *page_buffer;
         Status status = db_->buffer_pool()->pinPage(current_page_, &page_buffer, ctx);
         if (status != Status::OK)
         {
             return status;
         }
 
-        auto* page = reinterpret_cast<SBBTreePage*>(page_buffer);
+        auto *page = reinterpret_cast<SBBTreePage *>(page_buffer);
         uint64_t next_page = page->btr_right_sibling;
 
         db_->buffer_pool()->unpinPage(current_page_, false, ctx);
@@ -455,7 +428,7 @@ namespace scratchbird::core
         return Status::OK;
     }
 
-    bool BTreeIterator::isKeyInRange(const std::vector<uint8_t>& key) const
+    bool BTreeIterator::isKeyInRange(const std::vector<uint8_t> &key) const
     {
         // Check start bound
         if (has_start_)
@@ -480,9 +453,8 @@ namespace scratchbird::core
         return true;
     }
 
-    int BTreeIterator::compareKeys(
-        const std::vector<uint8_t>& k1,
-        const std::vector<uint8_t>& k2) const
+    int BTreeIterator::compareKeys(const std::vector<uint8_t> &k1,
+                                   const std::vector<uint8_t> &k2) const
     {
         // Use the BTree's collation-aware comparison
         return btree_->compare_keys(k1, k2);

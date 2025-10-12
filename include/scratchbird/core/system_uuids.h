@@ -41,9 +41,8 @@ namespace scratchbird::core::system_uuids
      * Contains system catalog tables (pg_class equivalent)
      */
     constexpr UuidV7Bytes SYS_SCHEMA_UUID = {{
-        0x01, 0x92, 0x00, 0x00, 0x00, 0x00,
-        0x70, 0x00, 0x80, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x02  // ID: 2
+        0x01, 0x92, 0x00, 0x00, 0x00, 0x00, 0x70, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x02 // ID: 2
     }};
 
     /**
@@ -51,9 +50,8 @@ namespace scratchbird::core::system_uuids
      * Contains authentication, authorization, and audit tables
      */
     constexpr UuidV7Bytes SEC_SCHEMA_UUID = {{
-        0x01, 0x92, 0x00, 0x00, 0x00, 0x00,
-        0x70, 0x00, 0x80, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x03  // ID: 3
+        0x01, 0x92, 0x00, 0x00, 0x00, 0x00, 0x70, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x03 // ID: 3
     }};
 
     /**
@@ -61,9 +59,8 @@ namespace scratchbird::core::system_uuids
      * For autonomous agent system (future feature)
      */
     constexpr UuidV7Bytes AGENTS_SCHEMA_UUID = {{
-        0x01, 0x92, 0x00, 0x00, 0x00, 0x00,
-        0x70, 0x00, 0x80, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x04  // ID: 4
+        0x01, 0x92, 0x00, 0x00, 0x00, 0x00, 0x70, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x04 // ID: 4
     }};
 
     /**
@@ -71,9 +68,8 @@ namespace scratchbird::core::system_uuids
      * Default schema for user applications
      */
     constexpr UuidV7Bytes APP_SCHEMA_UUID = {{
-        0x01, 0x92, 0x00, 0x00, 0x00, 0x00,
-        0x70, 0x00, 0x80, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x05  // ID: 5
+        0x01, 0x92, 0x00, 0x00, 0x00, 0x00, 0x70, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x05 // ID: 5
     }};
 
     /**
@@ -81,9 +77,8 @@ namespace scratchbird::core::system_uuids
      * For distributed database features (future)
      */
     constexpr UuidV7Bytes REMOTE_SCHEMA_UUID = {{
-        0x01, 0x92, 0x00, 0x00, 0x00, 0x00,
-        0x70, 0x00, 0x80, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x06  // ID: 6
+        0x01, 0x92, 0x00, 0x00, 0x00, 0x00, 0x70, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x06 // ID: 6
     }};
 
     /**
@@ -91,9 +86,8 @@ namespace scratchbird::core::system_uuids
      * Contains user accounts and profiles
      */
     constexpr UuidV7Bytes USERS_SCHEMA_UUID = {{
-        0x01, 0x92, 0x00, 0x00, 0x00, 0x00,
-        0x70, 0x00, 0x80, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x07  // ID: 7
+        0x01, 0x92, 0x00, 0x00, 0x00, 0x00, 0x70, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x07 // ID: 7
     }};
 
     /**
@@ -101,22 +95,14 @@ namespace scratchbird::core::system_uuids
      * Contains role definitions and permissions
      */
     constexpr UuidV7Bytes ROLES_SCHEMA_UUID = {{
-        0x01, 0x92, 0x00, 0x00, 0x00, 0x00,
-        0x70, 0x00, 0x80, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x08  // ID: 8
+        0x01, 0x92, 0x00, 0x00, 0x00, 0x00, 0x70, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x08 // ID: 8
     }};
 
     // Array for easy iteration during database creation
     constexpr UuidV7Bytes SYSTEM_SCHEMA_UUIDS[] = {
-        ROOT_SCHEMA_UUID,
-        SYS_SCHEMA_UUID,
-        SEC_SCHEMA_UUID,
-        AGENTS_SCHEMA_UUID,
-        APP_SCHEMA_UUID,
-        REMOTE_SCHEMA_UUID,
-        USERS_SCHEMA_UUID,
-        ROLES_SCHEMA_UUID
-    };
+        ROOT_SCHEMA_UUID, SYS_SCHEMA_UUID,    SEC_SCHEMA_UUID,   AGENTS_SCHEMA_UUID,
+        APP_SCHEMA_UUID,  REMOTE_SCHEMA_UUID, USERS_SCHEMA_UUID, ROLES_SCHEMA_UUID};
 
     // =========================================================================
     // SYSTEM CATALOG TABLE UUIDs
@@ -129,9 +115,8 @@ namespace scratchbird::core::system_uuids
      * Stores schema definitions (equivalent to pg_namespace)
      */
     constexpr UuidV7Bytes SCHEMAS_TABLE_UUID = {{
-        0x01, 0x92, 0x00, 0x00, 0x00, 0x00,
-        0x70, 0x00, 0x80, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x10  // ID: 16 (0x10)
+        0x01, 0x92, 0x00, 0x00, 0x00, 0x00, 0x70, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x10 // ID: 16 (0x10)
     }};
 
     /**
@@ -139,9 +124,8 @@ namespace scratchbird::core::system_uuids
      * Stores table definitions (equivalent to pg_class for tables)
      */
     constexpr UuidV7Bytes TABLES_TABLE_UUID = {{
-        0x01, 0x92, 0x00, 0x00, 0x00, 0x00,
-        0x70, 0x00, 0x80, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x11  // ID: 17 (0x11)
+        0x01, 0x92, 0x00, 0x00, 0x00, 0x00, 0x70, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x11 // ID: 17 (0x11)
     }};
 
     /**
@@ -149,9 +133,8 @@ namespace scratchbird::core::system_uuids
      * Stores column definitions (equivalent to pg_attribute)
      */
     constexpr UuidV7Bytes COLUMNS_TABLE_UUID = {{
-        0x01, 0x92, 0x00, 0x00, 0x00, 0x00,
-        0x70, 0x00, 0x80, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x12  // ID: 18 (0x12)
+        0x01, 0x92, 0x00, 0x00, 0x00, 0x00, 0x70, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x12 // ID: 18 (0x12)
     }};
 
     /**
@@ -159,9 +142,8 @@ namespace scratchbird::core::system_uuids
      * Stores index definitions (equivalent to pg_index)
      */
     constexpr UuidV7Bytes INDEXES_TABLE_UUID = {{
-        0x01, 0x92, 0x00, 0x00, 0x00, 0x00,
-        0x70, 0x00, 0x80, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x13  // ID: 19 (0x13)
+        0x01, 0x92, 0x00, 0x00, 0x00, 0x00, 0x70, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x13 // ID: 19 (0x13)
     }};
 
     // =========================================================================
@@ -188,10 +170,8 @@ namespace scratchbird::core::system_uuids
      */
     inline auto isSystemCatalogTable(const UuidV7Bytes &uuid) -> bool
     {
-        return uuid == SCHEMAS_TABLE_UUID ||
-               uuid == TABLES_TABLE_UUID ||
-               uuid == COLUMNS_TABLE_UUID ||
-               uuid == INDEXES_TABLE_UUID;
+        return uuid == SCHEMAS_TABLE_UUID || uuid == TABLES_TABLE_UUID ||
+               uuid == COLUMNS_TABLE_UUID || uuid == INDEXES_TABLE_UUID;
     }
 
     /**
@@ -200,14 +180,22 @@ namespace scratchbird::core::system_uuids
      */
     inline auto getSystemSchemaName(const UuidV7Bytes &uuid) -> const char *
     {
-        if (uuid == ROOT_SCHEMA_UUID) return "[root]";
-        if (uuid == SYS_SCHEMA_UUID) return "[sys]";
-        if (uuid == SEC_SCHEMA_UUID) return "[sec]";
-        if (uuid == AGENTS_SCHEMA_UUID) return "[agents]";
-        if (uuid == APP_SCHEMA_UUID) return "[app]";
-        if (uuid == REMOTE_SCHEMA_UUID) return "[remote]";
-        if (uuid == USERS_SCHEMA_UUID) return "[users]";
-        if (uuid == ROLES_SCHEMA_UUID) return "[roles]";
+        if (uuid == ROOT_SCHEMA_UUID)
+            return "[root]";
+        if (uuid == SYS_SCHEMA_UUID)
+            return "[sys]";
+        if (uuid == SEC_SCHEMA_UUID)
+            return "[sec]";
+        if (uuid == AGENTS_SCHEMA_UUID)
+            return "[agents]";
+        if (uuid == APP_SCHEMA_UUID)
+            return "[app]";
+        if (uuid == REMOTE_SCHEMA_UUID)
+            return "[remote]";
+        if (uuid == USERS_SCHEMA_UUID)
+            return "[users]";
+        if (uuid == ROLES_SCHEMA_UUID)
+            return "[roles]";
         return nullptr;
     }
 

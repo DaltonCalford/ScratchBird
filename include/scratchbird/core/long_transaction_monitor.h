@@ -17,10 +17,10 @@ namespace scratchbird::core
     // Long transaction action policy
     enum class LongTransactionPolicy : uint8_t
     {
-        LOG = 0,                    // Just log warnings
-        ROLLBACK_READONLY = 1,      // Rollback read-only long transactions
-        ROLLBACK_ALL = 2,           // Rollback any long transaction
-        TERMINATE_CONNECTION = 3    // Force disconnect long transactions
+        LOG = 0,                 // Just log warnings
+        ROLLBACK_READONLY = 1,   // Rollback read-only long transactions
+        ROLLBACK_ALL = 2,        // Rollback any long transaction
+        TERMINATE_CONNECTION = 3 // Force disconnect long transactions
     };
 
     // Statistics for long transaction monitoring
@@ -34,12 +34,8 @@ namespace scratchbird::core
         uint32_t current_long_transactions; // Current number of long transactions
 
         LongTransactionStatistics()
-            : warnings_logged(0)
-            , readonly_rolled_back(0)
-            , readwrite_rolled_back(0)
-            , connections_terminated(0)
-            , last_check_time(0)
-            , current_long_transactions(0)
+            : warnings_logged(0), readonly_rolled_back(0), readwrite_rolled_back(0),
+              connections_terminated(0), last_check_time(0), current_long_transactions(0)
         {
         }
     };
@@ -50,17 +46,17 @@ namespace scratchbird::core
     {
     public:
         // Constructor - does not take ownership of Database
-        explicit LongTransactionMonitor(Database* db);
+        explicit LongTransactionMonitor(Database *db);
 
         // Destructor - stops monitoring thread if running
         ~LongTransactionMonitor();
 
         // Initialize long transaction monitor
-        Status initialize(ErrorContext* ctx = nullptr);
+        Status initialize(ErrorContext *ctx = nullptr);
 
         // Start/stop monitoring thread
-        Status startMonitoring(ErrorContext* ctx = nullptr);
-        Status stopMonitoring(ErrorContext* ctx = nullptr);
+        Status startMonitoring(ErrorContext *ctx = nullptr);
+        Status stopMonitoring(ErrorContext *ctx = nullptr);
         bool isMonitoring() const;
 
         // Enable/disable monitoring
@@ -74,26 +70,38 @@ namespace scratchbird::core
         void setCheckInterval(uint32_t seconds);
         void setPolicy(LongTransactionPolicy policy);
 
-        uint32_t getWarningThreshold() const { return warning_threshold_seconds_; }
-        uint32_t getCriticalThreshold() const { return critical_threshold_seconds_; }
-        uint32_t getCheckInterval() const { return check_interval_seconds_; }
-        LongTransactionPolicy getPolicy() const { return policy_; }
+        uint32_t getWarningThreshold() const
+        {
+            return warning_threshold_seconds_;
+        }
+        uint32_t getCriticalThreshold() const
+        {
+            return critical_threshold_seconds_;
+        }
+        uint32_t getCheckInterval() const
+        {
+            return check_interval_seconds_;
+        }
+        LongTransactionPolicy getPolicy() const
+        {
+            return policy_;
+        }
 
         // Statistics
         LongTransactionStatistics getStatistics() const;
 
         // Manual check for long transactions (can be called directly)
-        uint32_t checkLongTransactions(ErrorContext* ctx = nullptr);
+        uint32_t checkLongTransactions(ErrorContext *ctx = nullptr);
 
     private:
-        Database* db_;
+        Database *db_;
 
         // Configuration
         std::atomic<bool> enabled_;
-        std::atomic<uint32_t> warning_threshold_seconds_;   // Warn after this many seconds
-        std::atomic<uint32_t> critical_threshold_seconds_;  // Take action after this many seconds
-        std::atomic<uint32_t> check_interval_seconds_;      // Check every N seconds
-        LongTransactionPolicy policy_;                      // Action policy
+        std::atomic<uint32_t> warning_threshold_seconds_;  // Warn after this many seconds
+        std::atomic<uint32_t> critical_threshold_seconds_; // Take action after this many seconds
+        std::atomic<uint32_t> check_interval_seconds_;     // Check every N seconds
+        LongTransactionPolicy policy_;                     // Action policy
 
         // Monitoring thread
         std::thread monitor_thread_;
@@ -111,7 +119,7 @@ namespace scratchbird::core
         // Internal methods
         void monitoringLoop();
         void checkAndActOnTransaction(uint32_t proc_id, uint64_t xid, uint64_t age_seconds,
-                                     bool is_read_only, ErrorContext* ctx);
+                                      bool is_read_only, ErrorContext *ctx);
         void readConfiguration();
     };
 

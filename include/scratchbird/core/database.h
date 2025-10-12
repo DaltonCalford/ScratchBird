@@ -63,15 +63,15 @@ namespace scratchbird
             uint64_t system_catalog_page; // Root of system catalog (usually 1)
 
             // Transaction info (56 bytes)
-            uint64_t next_transaction_id;  // Next transaction ID to assign (NEXT)
-            uint64_t oldest_transaction_id; // Oldest Interesting Transaction (OIT)
-            uint64_t oldest_active_xid;    // Oldest Active Transaction (OAT)
-            uint64_t oldest_snapshot;      // Oldest Snapshot Transaction (OST)
-            uint64_t latest_completed_xid; // Latest completed transaction
-            uint32_t tip_root_page;        // Root page of Transaction Inventory Pages
-            uint32_t max_backends;         // Maximum concurrent backends
+            uint64_t next_transaction_id;    // Next transaction ID to assign (NEXT)
+            uint64_t oldest_transaction_id;  // Oldest Interesting Transaction (OIT)
+            uint64_t oldest_active_xid;      // Oldest Active Transaction (OAT)
+            uint64_t oldest_snapshot;        // Oldest Snapshot Transaction (OST)
+            uint64_t latest_completed_xid;   // Latest completed transaction
+            uint32_t tip_root_page;          // Root page of Transaction Inventory Pages
+            uint32_t max_backends;           // Maximum concurrent backends
             uint32_t proc_array_initialized; // 1 if ProcArray initialized
-            uint32_t reserved3;            // Reserved
+            uint32_t reserved3;              // Reserved
 
             // Checksums for critical data (16 bytes)
             uint32_t catalog_checksum; // Checksum of system catalog
@@ -100,12 +100,12 @@ namespace scratchbird
             ~Database(); // Defined in cpp file due to unique_ptr of forward declared types
 
             // Explicitly delete copy operations (Database is non-copyable)
-            Database(const Database&) = delete;
-            Database& operator=(const Database&) = delete;
+            Database(const Database &) = delete;
+            Database &operator=(const Database &) = delete;
 
             // Move operations must be defined in cpp file where types are complete
-            Database(Database&&) noexcept;
-            Database& operator=(Database&&) noexcept;
+            Database(Database &&) noexcept;
+            Database &operator=(Database &&) noexcept;
 
             // Create a new database file
             static Status create(const std::string &path, uint32_t page_size = 16384,
@@ -120,8 +120,8 @@ namespace scratchbird
             // Create a new connection context
             // This registers a backend in ProcArray and creates a ConnectionContext
             // The caller is responsible for managing the ConnectionContext lifetime
-            Status connect(std::unique_ptr<class ConnectionContext>& connection_out,
-                          ErrorContext* ctx = nullptr);
+            Status connect(std::unique_ptr<class ConnectionContext> &connection_out,
+                           ErrorContext *ctx = nullptr);
 
             // Get database information
             bool is_open() const
@@ -181,9 +181,18 @@ namespace scratchbird
 
             // Timezone context for connections
             // Get/set connection timezone (defaults to database timezone, then UTC)
-            uint16_t getConnectionTimezone() const { return connection_timezone_; }
-            void setConnectionTimezone(uint16_t tz_id) { connection_timezone_ = tz_id; }
-            uint16_t getDatabaseTimezone() const { return header_ ? header_->timezone : 1; } // 1 = UTC
+            uint16_t getConnectionTimezone() const
+            {
+                return connection_timezone_;
+            }
+            void setConnectionTimezone(uint16_t tz_id)
+            {
+                connection_timezone_ = tz_id;
+            }
+            uint16_t getDatabaseTimezone() const
+            {
+                return header_ ? header_->timezone : 1;
+            } // 1 = UTC
 
             // Get lock manager
             LockManager *lock_manager()
@@ -243,22 +252,23 @@ namespace scratchbird
             int fd_ = -1;                      // File descriptor
             std::string path_;                 // Database file path
             uint32_t page_size_ = 0;           // Page size
-                        ID db_uuid_;              // Database UUID
+            ID db_uuid_;                       // Database UUID
             DatabaseHeader *header_ = nullptr; // Cached header
             uint16_t connection_timezone_ = 1; // Connection timezone (1 = UTC)
 
             // Forward declared pointers - managed via unique_ptr for RAII
-            std::unique_ptr<PageManager> page_manager_;               // Page allocation manager (owned)
-            std::unique_ptr<BufferPool> buffer_pool_;                 // Buffer pool manager (owned)
-            std::unique_ptr<CatalogManager> catalog_manager_;         // System catalog manager (owned)
-            std::unique_ptr<StorageEngine> storage_engine_;           // Storage engine (owned)
+            std::unique_ptr<PageManager> page_manager_;       // Page allocation manager (owned)
+            std::unique_ptr<BufferPool> buffer_pool_;         // Buffer pool manager (owned)
+            std::unique_ptr<CatalogManager> catalog_manager_; // System catalog manager (owned)
+            std::unique_ptr<StorageEngine> storage_engine_;   // Storage engine (owned)
             std::unique_ptr<TransactionManager> transaction_manager_; // Transaction manager (owned)
             std::unique_ptr<LockManager> lock_manager_;               // Lock manager (owned)
             std::unique_ptr<Vacuum> vacuum_;                          // Vacuum manager (owned)
             std::unique_ptr<Clog> clog_;                              // Commit log manager (owned)
             std::unique_ptr<SweepManager> sweep_manager_;             // Sweep manager (owned)
             std::unique_ptr<GarbageCollector> garbage_collector_;     // Garbage collector (owned)
-            std::unique_ptr<LongTransactionMonitor> long_transaction_monitor_; // Long transaction monitor (owned)
+            std::unique_ptr<LongTransactionMonitor>
+                long_transaction_monitor_; // Long transaction monitor (owned)
 
             // Validate database header
             Status validate_header();

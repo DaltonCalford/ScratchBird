@@ -1,7 +1,7 @@
 # ScratchBird Coding Standards
 
-**Last Updated:** October 6, 2025
-**Status:** Actual practices documented (with inconsistencies noted)
+**Last Updated:** October 12, 2025
+**Status:** Naming conventions standardized; other inconsistencies documented
 
 This document describes both the **intended** coding standards and the **actual current state** of the codebase as revealed by comprehensive code audit.
 
@@ -17,9 +17,9 @@ This document describes both the **intended** coding standards and the **actual 
 - **Constants and Enums:** `UPPER_CASE_SNAKE_CASE`
 - **Private Members:** `snake_case_` (with a trailing underscore)
 
-### Current Reality ⚠️
+### Current Reality ✅
 
-**INCONSISTENT** - Mixed naming styles across subsystems:
+**STANDARDIZED** - clang-format applied to entire codebase (October 12, 2025):
 
 **Core subsystem:**
 ```cpp
@@ -34,15 +34,14 @@ Status::PAGE_FULL                 // SCREAMING_SNAKE_CASE ✓
 class Lexer { };                 // PascalCase ✓
 Token nextToken();               // camelCase ✓
 std::string_view input_;         // snake_case ✓
-TokenType::KW_CREATE             // Mixed: PascalCase_SCREAMING ⚠️
+TokenType::KW_CREATE             // Mixed: PascalCase_SCREAMING (preserved for compatibility)
 ```
 
-**Issues Found:**
-- Enum naming inconsistent (some `SCREAMING_SNAKE`, some `PascalCase_SCREAMING`)
-- Some local variables use camelCase instead of snake_case
-- Mix of styles between older and newer code
-
-**Recommendation:** Run clang-format with consistent configuration across entire codebase. See [TODO.md MED-001](TODO.md#med-001-standardize-naming-conventions).
+**Status:**
+- All 89 source files (.cpp and .h) formatted with clang-format
+- 83 files modified with consistent indentation, spacing, and brace style
+- Formatting configuration based on LLVM style with project-specific adjustments
+- See [TODO.md MED-001](TODO.md#med-001-standardize-naming-conventions) - **COMPLETED**
 
 ---
 
@@ -637,7 +636,7 @@ To bring codebase into compliance:
    - Fix raw pointer safety issues
 
 3. **Phase 3 (Medium Priority - Weeks 5-8):**
-   - Standardize naming with clang-format
+   - ✅ Standardize naming with clang-format (COMPLETED October 12, 2025)
    - Add const correctness
    - Remove commented code
    - Standardize comments

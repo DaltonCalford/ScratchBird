@@ -9,18 +9,20 @@
 namespace scratchbird::core
 {
     // Static member initialization
-    ProcArray* ProcArrayManager::proc_array_ = nullptr;
-    Database* ProcArrayManager::database_ = nullptr;
+    ProcArray *ProcArrayManager::proc_array_ = nullptr;
+    Database *ProcArrayManager::database_ = nullptr;
 
-    auto ProcArrayManager::initialize(Database* db, uint32_t max_backends,
-                                     ErrorContext* ctx) -> Status
+    auto ProcArrayManager::initialize(Database *db, uint32_t max_backends, ErrorContext *ctx)
+        -> Status
     {
-        if (!db) {
+        if (!db)
+        {
             SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Database is null");
             return Status::INVALID_ARGUMENT;
         }
 
-        if (proc_array_ != nullptr) {
+        if (proc_array_ != nullptr)
+        {
             SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "ProcArray already initialized");
             return Status::INVALID_ARGUMENT;
         }
@@ -33,17 +35,17 @@ namespace scratchbird::core
         size_t total_size = header_size + pcb_array_size;
 
         // Allocate shared memory (mmap with MAP_SHARED)
-        void* shared_mem = mmap(nullptr, total_size,
-                               PROT_READ | PROT_WRITE,
-                               MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+        void *shared_mem =
+            mmap(nullptr, total_size, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
 
-        if (shared_mem == MAP_FAILED) {
+        if (shared_mem == MAP_FAILED)
+        {
             SET_ERROR_CONTEXT(ctx, Status::OOM, "Failed to allocate shared memory for ProcArray");
             return Status::OOM;
         }
 
         // Initialize ProcArray header
-        proc_array_ = static_cast<ProcArray*>(shared_mem);
+        proc_array_ = static_cast<ProcArray *>(shared_mem);
         std::memset(proc_array_, 0, total_size);
 
         proc_array_->max_backends = max_backends;
@@ -67,11 +69,12 @@ namespace scratchbird::core
         pthread_mutexattr_destroy(&mutex_attr);
 
         // Initialize PCB array (comes after header)
-        auto* pcbs = reinterpret_cast<ProcessControlBlock*>(
-            reinterpret_cast<uint8_t*>(proc_array_) + sizeof(ProcArray));
+        auto *pcbs = reinterpret_cast<ProcessControlBlock *>(
+            reinterpret_cast<uint8_t *>(proc_array_) + sizeof(ProcArray));
 
         // Build free list
-        for (uint32_t i = 0; i < max_backends; ++i) {
+        for (uint32_t i = 0; i < max_backends; ++i)
+        {
             std::memset(&pcbs[i], 0, sizeof(ProcessControlBlock));
             pcbs[i].proc_id = i;
             pcbs[i].is_active = false;
@@ -88,9 +91,10 @@ namespace scratchbird::core
         return Status::OK;
     }
 
-    auto ProcArrayManager::shutdown(ErrorContext* ctx) -> Status
+    auto ProcArrayManager::shutdown(ErrorContext *ctx) -> Status
     {
-        if (proc_array_ == nullptr) {
+        if (proc_array_ == nullptr)
+        {
             return Status::OK;
         }
 
@@ -104,7 +108,8 @@ namespace scratchbird::core
         pthread_mutex_destroy(&proc_array_->alloc_lock);
 
         // Unmap shared memory
-        if (munmap(proc_array_, total_size) != 0) {
+        if (munmap(proc_array_, total_size) != 0)
+        {
             SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to unmap ProcArray");
             return Status::IO_ERROR;
         }
@@ -115,15 +120,16 @@ namespace scratchbird::core
         return Status::OK;
     }
 
-    auto ProcArrayManager::registerBackend(uint32_t* proc_id_out,
-                                          ErrorContext* ctx) -> Status
+    auto ProcArrayManager::registerBackend(uint32_t *proc_id_out, ErrorContext *ctx) -> Status
     {
-        if (!proc_array_) {
+        if (!proc_array_)
+        {
             SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "ProcArray not initialized");
             return Status::INVALID_ARGUMENT;
         }
 
-        if (!proc_id_out) {
+        if (!proc_id_out)
+        {
             SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "proc_id_out is null");
             return Status::INVALID_ARGUMENT;
         }
@@ -134,25 +140,28 @@ namespace scratchbird::core
         uint32_t proc_id = 0;
         bool found = false;
 
-        auto* pcbs = reinterpret_cast<ProcessControlBlock*>(
-            reinterpret_cast<uint8_t*>(proc_array_) + sizeof(ProcArray));
+        auto *pcbs = reinterpret_cast<ProcessControlBlock *>(
+            reinterpret_cast<uint8_t *>(proc_array_) + sizeof(ProcArray));
 
-        for (uint32_t i = 0; i < proc_array_->max_backends; ++i) {
-            if (!pcbs[i].is_active) {
+        for (uint32_t i = 0; i < proc_array_->max_backends; ++i)
+        {
+            if (!pcbs[i].is_active)
+            {
                 proc_id = i;
                 found = true;
                 break;
             }
         }
 
-        if (!found) {
+        if (!found)
+        {
             pthread_mutex_unlock(&proc_array_->alloc_lock);
             SET_ERROR_CONTEXT(ctx, Status::PAGE_FULL, "No free backend slots");
             return Status::PAGE_FULL;
         }
 
         // Initialize PCB
-        ProcessControlBlock* pcb = &pcbs[proc_id];
+        ProcessControlBlock *pcb = &pcbs[proc_id];
         pcb->is_active = true;
         pcb->backend_pid = getpid();
         pcb->xid = 0;
@@ -161,7 +170,8 @@ namespace scratchbird::core
         pcb->wait_lock_id = 0;
         pcb->deadlock_check_pending = false;
         pcb->start_time = std::chrono::duration_cast<std::chrono::microseconds>(
-            std::chrono::system_clock::now().time_since_epoch()).count();
+                              std::chrono::system_clock::now().time_since_epoch())
+                              .count();
         pcb->query_start_time = 0;
 
         proc_array_->num_active++;
@@ -172,23 +182,25 @@ namespace scratchbird::core
         return Status::OK;
     }
 
-    auto ProcArrayManager::unregisterBackend(uint32_t proc_id,
-                                            ErrorContext* ctx) -> Status
+    auto ProcArrayManager::unregisterBackend(uint32_t proc_id, ErrorContext *ctx) -> Status
     {
-        if (!proc_array_) {
+        if (!proc_array_)
+        {
             SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "ProcArray not initialized");
             return Status::INVALID_ARGUMENT;
         }
 
-        if (proc_id >= proc_array_->max_backends) {
+        if (proc_id >= proc_array_->max_backends)
+        {
             SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Invalid proc_id");
             return Status::INVALID_ARGUMENT;
         }
 
         pthread_mutex_lock(&proc_array_->alloc_lock);
 
-        ProcessControlBlock* pcb = getPCB(proc_id);
-        if (!pcb || !pcb->is_active) {
+        ProcessControlBlock *pcb = getPCB(proc_id);
+        if (!pcb || !pcb->is_active)
+        {
             pthread_mutex_unlock(&proc_array_->alloc_lock);
             SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Backend not active");
             return Status::INVALID_ARGUMENT;
@@ -206,16 +218,18 @@ namespace scratchbird::core
         return Status::OK;
     }
 
-    auto ProcArrayManager::setTransactionId(uint32_t proc_id, uint64_t xid,
-                                           ErrorContext* ctx) -> Status
+    auto ProcArrayManager::setTransactionId(uint32_t proc_id, uint64_t xid, ErrorContext *ctx)
+        -> Status
     {
-        if (!proc_array_) {
+        if (!proc_array_)
+        {
             SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "ProcArray not initialized");
             return Status::INVALID_ARGUMENT;
         }
 
-        ProcessControlBlock* pcb = getPCB(proc_id);
-        if (!pcb || !pcb->is_active) {
+        ProcessControlBlock *pcb = getPCB(proc_id);
+        if (!pcb || !pcb->is_active)
+        {
             SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Invalid or inactive backend");
             return Status::INVALID_ARGUMENT;
         }
@@ -225,7 +239,8 @@ namespace scratchbird::core
         pcb->xid = xid;
 
         // Update global latest completed XID if this is higher
-        if (xid > proc_array_->latest_completed_xid) {
+        if (xid > proc_array_->latest_completed_xid)
+        {
             proc_array_->latest_completed_xid = xid;
         }
 
@@ -234,16 +249,17 @@ namespace scratchbird::core
         return Status::OK;
     }
 
-    auto ProcArrayManager::clearTransactionId(uint32_t proc_id,
-                                             ErrorContext* ctx) -> Status
+    auto ProcArrayManager::clearTransactionId(uint32_t proc_id, ErrorContext *ctx) -> Status
     {
-        if (!proc_array_) {
+        if (!proc_array_)
+        {
             SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "ProcArray not initialized");
             return Status::INVALID_ARGUMENT;
         }
 
-        ProcessControlBlock* pcb = getPCB(proc_id);
-        if (!pcb || !pcb->is_active) {
+        ProcessControlBlock *pcb = getPCB(proc_id);
+        if (!pcb || !pcb->is_active)
+        {
             SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Invalid or inactive backend");
             return Status::INVALID_ARGUMENT;
         }
@@ -254,7 +270,8 @@ namespace scratchbird::core
         pcb->xid = 0;
 
         // Update latest completed XID
-        if (xid > proc_array_->latest_completed_xid) {
+        if (xid > proc_array_->latest_completed_xid)
+        {
             proc_array_->latest_completed_xid = xid;
         }
 
@@ -264,15 +281,17 @@ namespace scratchbird::core
     }
 
     auto ProcArrayManager::setIsolationLevel(uint32_t proc_id, uint8_t isolation_level,
-                                            ErrorContext* ctx) -> Status
+                                             ErrorContext *ctx) -> Status
     {
-        if (!proc_array_) {
+        if (!proc_array_)
+        {
             SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "ProcArray not initialized");
             return Status::INVALID_ARGUMENT;
         }
 
-        ProcessControlBlock* pcb = getPCB(proc_id);
-        if (!pcb || !pcb->is_active) {
+        ProcessControlBlock *pcb = getPCB(proc_id);
+        if (!pcb || !pcb->is_active)
+        {
             SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Invalid or inactive backend");
             return Status::INVALID_ARGUMENT;
         }
@@ -280,8 +299,8 @@ namespace scratchbird::core
         pthread_rwlock_wrlock(&proc_array_->array_lock);
 
         pcb->isolation_level = isolation_level;
-        // IsolationLevel: 0=READ_COMMITTED, 1=READ_COMMITTED_READ_CONSISTENCY, 2=SNAPSHOT, 3=SNAPSHOT_TABLE_STABILITY
-        // SNAPSHOT modes are 2 and 3
+        // IsolationLevel: 0=READ_COMMITTED, 1=READ_COMMITTED_READ_CONSISTENCY, 2=SNAPSHOT,
+        // 3=SNAPSHOT_TABLE_STABILITY SNAPSHOT modes are 2 and 3
         pcb->is_snapshot_txn = (isolation_level >= 2);
 
         pthread_rwlock_unlock(&proc_array_->array_lock);
@@ -290,15 +309,17 @@ namespace scratchbird::core
     }
 
     auto ProcArrayManager::setTransactionReadOnly(uint32_t proc_id, bool is_read_only,
-                                                 ErrorContext* ctx) -> Status
+                                                  ErrorContext *ctx) -> Status
     {
-        if (!proc_array_) {
+        if (!proc_array_)
+        {
             SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "ProcArray not initialized");
             return Status::INVALID_ARGUMENT;
         }
 
-        ProcessControlBlock* pcb = getPCB(proc_id);
-        if (!pcb || !pcb->is_active) {
+        ProcessControlBlock *pcb = getPCB(proc_id);
+        if (!pcb || !pcb->is_active)
+        {
             SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Invalid or inactive backend");
             return Status::INVALID_ARGUMENT;
         }
@@ -311,15 +332,17 @@ namespace scratchbird::core
     }
 
     auto ProcArrayManager::setTransactionStartTime(uint32_t proc_id, uint64_t start_time,
-                                                  ErrorContext* ctx) -> Status
+                                                   ErrorContext *ctx) -> Status
     {
-        if (!proc_array_) {
+        if (!proc_array_)
+        {
             SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "ProcArray not initialized");
             return Status::INVALID_ARGUMENT;
         }
 
-        ProcessControlBlock* pcb = getPCB(proc_id);
-        if (!pcb || !pcb->is_active) {
+        ProcessControlBlock *pcb = getPCB(proc_id);
+        if (!pcb || !pcb->is_active)
+        {
             SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Invalid or inactive backend");
             return Status::INVALID_ARGUMENT;
         }
@@ -331,16 +354,18 @@ namespace scratchbird::core
         return Status::OK;
     }
 
-    auto ProcArrayManager::getActiveTransactions(std::vector<uint64_t>* xids_out,
-                                                 uint64_t* oldest_xmin_out,
-                                                 ErrorContext* ctx) -> Status
+    auto ProcArrayManager::getActiveTransactions(std::vector<uint64_t> *xids_out,
+                                                 uint64_t *oldest_xmin_out, ErrorContext *ctx)
+        -> Status
     {
-        if (!proc_array_) {
+        if (!proc_array_)
+        {
             SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "ProcArray not initialized");
             return Status::INVALID_ARGUMENT;
         }
 
-        if (!xids_out || !oldest_xmin_out) {
+        if (!xids_out || !oldest_xmin_out)
+        {
             SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Output parameters are null");
             return Status::INVALID_ARGUMENT;
         }
@@ -350,33 +375,39 @@ namespace scratchbird::core
         xids_out->clear();
         uint64_t oldest_xmin = UINT64_MAX;
 
-        auto* pcbs = reinterpret_cast<ProcessControlBlock*>(
-            reinterpret_cast<uint8_t*>(proc_array_) + sizeof(ProcArray));
+        auto *pcbs = reinterpret_cast<ProcessControlBlock *>(
+            reinterpret_cast<uint8_t *>(proc_array_) + sizeof(ProcArray));
 
         // Scan all active backends
-        for (uint32_t i = 0; i < proc_array_->max_backends; ++i) {
-            if (!pcbs[i].is_active) {
+        for (uint32_t i = 0; i < proc_array_->max_backends; ++i)
+        {
+            if (!pcbs[i].is_active)
+            {
                 continue;
             }
 
             // Collect active transaction XIDs
-            if (pcbs[i].xid != 0) {
+            if (pcbs[i].xid != 0)
+            {
                 xids_out->push_back(pcbs[i].xid);
 
-                if (pcbs[i].xid < oldest_xmin) {
+                if (pcbs[i].xid < oldest_xmin)
+                {
                     oldest_xmin = pcbs[i].xid;
                 }
             }
 
             // Consider backend's xmin (snapshot horizon)
-            if (pcbs[i].backend_xmin != 0 && pcbs[i].backend_xmin < oldest_xmin) {
+            if (pcbs[i].backend_xmin != 0 && pcbs[i].backend_xmin < oldest_xmin)
+            {
                 oldest_xmin = pcbs[i].backend_xmin;
             }
         }
 
         pthread_rwlock_unlock(&proc_array_->array_lock);
 
-        if (oldest_xmin == UINT64_MAX) {
+        if (oldest_xmin == UINT64_MAX)
+        {
             // No active transactions
             oldest_xmin = proc_array_->latest_completed_xid;
         }
@@ -386,15 +417,16 @@ namespace scratchbird::core
         return Status::OK;
     }
 
-    auto ProcArrayManager::getVacuumHorizon(uint64_t* horizon_out,
-                                           ErrorContext* ctx) -> Status
+    auto ProcArrayManager::getVacuumHorizon(uint64_t *horizon_out, ErrorContext *ctx) -> Status
     {
-        if (!proc_array_) {
+        if (!proc_array_)
+        {
             SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "ProcArray not initialized");
             return Status::INVALID_ARGUMENT;
         }
 
-        if (!horizon_out) {
+        if (!horizon_out)
+        {
             SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "horizon_out is null");
             return Status::INVALID_ARGUMENT;
         }
@@ -403,29 +435,34 @@ namespace scratchbird::core
 
         uint64_t oldest_xmin = UINT64_MAX;
 
-        auto* pcbs = reinterpret_cast<ProcessControlBlock*>(
-            reinterpret_cast<uint8_t*>(proc_array_) + sizeof(ProcArray));
+        auto *pcbs = reinterpret_cast<ProcessControlBlock *>(
+            reinterpret_cast<uint8_t *>(proc_array_) + sizeof(ProcArray));
 
         // Scan all active backends for oldest xmin
-        for (uint32_t i = 0; i < proc_array_->max_backends; ++i) {
-            if (!pcbs[i].is_active) {
+        for (uint32_t i = 0; i < proc_array_->max_backends; ++i)
+        {
+            if (!pcbs[i].is_active)
+            {
                 continue;
             }
 
             // Consider backend's xmin (snapshot horizon)
-            if (pcbs[i].backend_xmin != 0 && pcbs[i].backend_xmin < oldest_xmin) {
+            if (pcbs[i].backend_xmin != 0 && pcbs[i].backend_xmin < oldest_xmin)
+            {
                 oldest_xmin = pcbs[i].backend_xmin;
             }
 
             // Consider active transaction
-            if (pcbs[i].xid != 0 && pcbs[i].xid < oldest_xmin) {
+            if (pcbs[i].xid != 0 && pcbs[i].xid < oldest_xmin)
+            {
                 oldest_xmin = pcbs[i].xid;
             }
         }
 
         pthread_rwlock_unlock(&proc_array_->array_lock);
 
-        if (oldest_xmin == UINT64_MAX) {
+        if (oldest_xmin == UINT64_MAX)
+        {
             // No active transactions, use latest completed
             oldest_xmin = proc_array_->latest_completed_xid;
         }
@@ -435,16 +472,18 @@ namespace scratchbird::core
         return Status::OK;
     }
 
-    auto ProcArrayManager::getBackendXmin(uint32_t proc_id, uint64_t* xmin_out,
-                                         ErrorContext* ctx) -> Status
+    auto ProcArrayManager::getBackendXmin(uint32_t proc_id, uint64_t *xmin_out, ErrorContext *ctx)
+        -> Status
     {
-        if (!proc_array_) {
+        if (!proc_array_)
+        {
             SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "ProcArray not initialized");
             return Status::INVALID_ARGUMENT;
         }
 
-        ProcessControlBlock* pcb = getPCB(proc_id);
-        if (!pcb || !pcb->is_active) {
+        ProcessControlBlock *pcb = getPCB(proc_id);
+        if (!pcb || !pcb->is_active)
+        {
             SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Invalid or inactive backend");
             return Status::INVALID_ARGUMENT;
         }
@@ -456,16 +495,18 @@ namespace scratchbird::core
         return Status::OK;
     }
 
-    auto ProcArrayManager::setBackendXmin(uint32_t proc_id, uint64_t xmin,
-                                         ErrorContext* ctx) -> Status
+    auto ProcArrayManager::setBackendXmin(uint32_t proc_id, uint64_t xmin, ErrorContext *ctx)
+        -> Status
     {
-        if (!proc_array_) {
+        if (!proc_array_)
+        {
             SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "ProcArray not initialized");
             return Status::INVALID_ARGUMENT;
         }
 
-        ProcessControlBlock* pcb = getPCB(proc_id);
-        if (!pcb || !pcb->is_active) {
+        ProcessControlBlock *pcb = getPCB(proc_id);
+        if (!pcb || !pcb->is_active)
+        {
             SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Invalid or inactive backend");
             return Status::INVALID_ARGUMENT;
         }
@@ -477,21 +518,24 @@ namespace scratchbird::core
         return Status::OK;
     }
 
-    auto ProcArrayManager::getBackendXid(uint32_t proc_id, uint64_t* xid_out,
-                                        ErrorContext* ctx) -> Status
+    auto ProcArrayManager::getBackendXid(uint32_t proc_id, uint64_t *xid_out, ErrorContext *ctx)
+        -> Status
     {
-        if (!proc_array_) {
+        if (!proc_array_)
+        {
             SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "ProcArray not initialized");
             return Status::INVALID_ARGUMENT;
         }
 
-        if (!xid_out) {
+        if (!xid_out)
+        {
             SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "xid_out is null");
             return Status::INVALID_ARGUMENT;
         }
 
-        ProcessControlBlock* pcb = getPCB(proc_id);
-        if (!pcb || !pcb->is_active) {
+        ProcessControlBlock *pcb = getPCB(proc_id);
+        if (!pcb || !pcb->is_active)
+        {
             // For inactive backends, return 0 (no transaction)
             *xid_out = 0;
             return Status::OK;
@@ -504,15 +548,16 @@ namespace scratchbird::core
         return Status::OK;
     }
 
-    auto ProcArrayManager::getNumActiveBackends(uint32_t* count_out,
-                                               ErrorContext* ctx) -> Status
+    auto ProcArrayManager::getNumActiveBackends(uint32_t *count_out, ErrorContext *ctx) -> Status
     {
-        if (!proc_array_) {
+        if (!proc_array_)
+        {
             SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "ProcArray not initialized");
             return Status::INVALID_ARGUMENT;
         }
 
-        if (!count_out) {
+        if (!count_out)
+        {
             SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "count_out is null");
             return Status::INVALID_ARGUMENT;
         }
@@ -524,15 +569,17 @@ namespace scratchbird::core
         return Status::OK;
     }
 
-    auto ProcArrayManager::getAllActiveBackends(std::vector<ProcessControlBlock>* backends_out,
-                                               ErrorContext* ctx) -> Status
+    auto ProcArrayManager::getAllActiveBackends(std::vector<ProcessControlBlock> *backends_out,
+                                                ErrorContext *ctx) -> Status
     {
-        if (!proc_array_) {
+        if (!proc_array_)
+        {
             SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "ProcArray not initialized");
             return Status::INVALID_ARGUMENT;
         }
 
-        if (!backends_out) {
+        if (!backends_out)
+        {
             SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "backends_out is null");
             return Status::INVALID_ARGUMENT;
         }
@@ -541,12 +588,14 @@ namespace scratchbird::core
 
         backends_out->clear();
 
-        auto* pcbs = reinterpret_cast<ProcessControlBlock*>(
-            reinterpret_cast<uint8_t*>(proc_array_) + sizeof(ProcArray));
+        auto *pcbs = reinterpret_cast<ProcessControlBlock *>(
+            reinterpret_cast<uint8_t *>(proc_array_) + sizeof(ProcArray));
 
         // Collect all active backends
-        for (uint32_t i = 0; i < proc_array_->max_backends; ++i) {
-            if (pcbs[i].is_active) {
+        for (uint32_t i = 0; i < proc_array_->max_backends; ++i)
+        {
+            if (pcbs[i].is_active)
+            {
                 backends_out->push_back(pcbs[i]);
             }
         }
@@ -556,19 +605,20 @@ namespace scratchbird::core
         return Status::OK;
     }
 
-    auto ProcArrayManager::getInstance() -> ProcArray*
+    auto ProcArrayManager::getInstance() -> ProcArray *
     {
         return proc_array_;
     }
 
-    auto ProcArrayManager::getPCB(uint32_t proc_id) -> ProcessControlBlock*
+    auto ProcArrayManager::getPCB(uint32_t proc_id) -> ProcessControlBlock *
     {
-        if (!proc_array_ || proc_id >= proc_array_->max_backends) {
+        if (!proc_array_ || proc_id >= proc_array_->max_backends)
+        {
             return nullptr;
         }
 
-        auto* pcbs = reinterpret_cast<ProcessControlBlock*>(
-            reinterpret_cast<uint8_t*>(proc_array_) + sizeof(ProcArray));
+        auto *pcbs = reinterpret_cast<ProcessControlBlock *>(
+            reinterpret_cast<uint8_t *>(proc_array_) + sizeof(ProcArray));
 
         return &pcbs[proc_id];
     }

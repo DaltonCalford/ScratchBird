@@ -19,72 +19,110 @@ namespace scratchbird
 
         static const KeywordEntry KEYWORDS[] = {
             // SQL keywords
-            {"CREATE", TokenType::KW_CREATE},   {"TABLE", TokenType::KW_TABLE},
-            {"INSERT", TokenType::KW_INSERT},   {"INTO", TokenType::KW_INTO},
-            {"VALUES", TokenType::KW_VALUES},   {"SELECT", TokenType::KW_SELECT},
-            {"FROM", TokenType::KW_FROM},       {"WHERE", TokenType::KW_WHERE},
-            {"NULL", TokenType::KW_NULL},       {"NOT", TokenType::KW_NOT},
+            {"CREATE", TokenType::KW_CREATE},
+            {"TABLE", TokenType::KW_TABLE},
+            {"INSERT", TokenType::KW_INSERT},
+            {"INTO", TokenType::KW_INTO},
+            {"VALUES", TokenType::KW_VALUES},
+            {"SELECT", TokenType::KW_SELECT},
+            {"FROM", TokenType::KW_FROM},
+            {"WHERE", TokenType::KW_WHERE},
+            {"NULL", TokenType::KW_NULL},
+            {"NOT", TokenType::KW_NOT},
 
             // Numeric types
-            {"INT", TokenType::KW_INT},         {"INTEGER", TokenType::KW_INTEGER},
-            {"SMALLINT", TokenType::KW_SMALLINT}, {"BIGINT", TokenType::KW_BIGINT},
-            {"TINYINT", TokenType::KW_TINYINT}, {"INT128", TokenType::KW_INT128},
-            {"UINT8", TokenType::KW_UINT8},     {"UINT16", TokenType::KW_UINT16},
-            {"UINT32", TokenType::KW_UINT32},   {"UINT64", TokenType::KW_UINT64},
-            {"REAL", TokenType::KW_REAL},       {"FLOAT", TokenType::KW_FLOAT},
+            {"INT", TokenType::KW_INT},
+            {"INTEGER", TokenType::KW_INTEGER},
+            {"SMALLINT", TokenType::KW_SMALLINT},
+            {"BIGINT", TokenType::KW_BIGINT},
+            {"TINYINT", TokenType::KW_TINYINT},
+            {"INT128", TokenType::KW_INT128},
+            {"UINT8", TokenType::KW_UINT8},
+            {"UINT16", TokenType::KW_UINT16},
+            {"UINT32", TokenType::KW_UINT32},
+            {"UINT64", TokenType::KW_UINT64},
+            {"REAL", TokenType::KW_REAL},
+            {"FLOAT", TokenType::KW_FLOAT},
             {"DOUBLE", TokenType::KW_DOUBLE},
-            {"DECIMAL", TokenType::KW_DECIMAL}, {"NUMERIC", TokenType::KW_NUMERIC},
+            {"DECIMAL", TokenType::KW_DECIMAL},
+            {"NUMERIC", TokenType::KW_NUMERIC},
             {"MONEY", TokenType::KW_MONEY},
 
             // String types
-            {"CHAR", TokenType::KW_CHAR},       {"CHARACTER", TokenType::KW_CHARACTER},
-            {"VARCHAR", TokenType::KW_VARCHAR}, {"TEXT", TokenType::KW_TEXT},
+            {"CHAR", TokenType::KW_CHAR},
+            {"CHARACTER", TokenType::KW_CHARACTER},
+            {"VARCHAR", TokenType::KW_VARCHAR},
+            {"TEXT", TokenType::KW_TEXT},
 
             // Binary types
-            {"BINARY", TokenType::KW_BINARY},   {"VARBINARY", TokenType::KW_VARBINARY},
-            {"BLOB", TokenType::KW_BLOB},       {"BYTEA", TokenType::KW_BYTEA},
+            {"BINARY", TokenType::KW_BINARY},
+            {"VARBINARY", TokenType::KW_VARBINARY},
+            {"BLOB", TokenType::KW_BLOB},
+            {"BYTEA", TokenType::KW_BYTEA},
 
             // Date/Time types
-            {"DATE", TokenType::KW_DATE},       {"TIME", TokenType::KW_TIME},
-            {"TIMESTAMP", TokenType::KW_TIMESTAMP}, {"INTERVAL", TokenType::KW_INTERVAL},
+            {"DATE", TokenType::KW_DATE},
+            {"TIME", TokenType::KW_TIME},
+            {"TIMESTAMP", TokenType::KW_TIMESTAMP},
+            {"INTERVAL", TokenType::KW_INTERVAL},
 
             // Boolean
-            {"BOOLEAN", TokenType::KW_BOOLEAN}, {"BOOL", TokenType::KW_BOOL},
+            {"BOOLEAN", TokenType::KW_BOOLEAN},
+            {"BOOL", TokenType::KW_BOOL},
 
             // Special types
-            {"UUID", TokenType::KW_UUID},       {"JSON", TokenType::KW_JSON},
-            {"JSONB", TokenType::KW_JSONB},     {"XML", TokenType::KW_XML},
+            {"UUID", TokenType::KW_UUID},
+            {"JSON", TokenType::KW_JSON},
+            {"JSONB", TokenType::KW_JSONB},
+            {"XML", TokenType::KW_XML},
             {"VECTOR", TokenType::KW_VECTOR},
 
             // Type conversion
-            {"CAST", TokenType::KW_CAST},       {"TRY_CAST", TokenType::KW_TRY_CAST},
+            {"CAST", TokenType::KW_CAST},
+            {"TRY_CAST", TokenType::KW_TRY_CAST},
             {"AS", TokenType::KW_AS},
 
             // Pattern matching
-            {"LIKE", TokenType::KW_LIKE},       {"ILIKE", TokenType::KW_ILIKE},
+            {"LIKE", TokenType::KW_LIKE},
+            {"ILIKE", TokenType::KW_ILIKE},
 
             // Character set and collation
-            {"SET", TokenType::KW_SET},         {"COLLATE", TokenType::KW_COLLATE},
-            {"COLLATION", TokenType::KW_COLLATION}, {"DEFAULT", TokenType::KW_DEFAULT},
+            {"SET", TokenType::KW_SET},
+            {"COLLATE", TokenType::KW_COLLATE},
+            {"COLLATION", TokenType::KW_COLLATION},
+            {"DEFAULT", TokenType::KW_DEFAULT},
 
             // Timezone
-            {"ZONE", TokenType::KW_ZONE},       {"WITH", TokenType::KW_WITH},
-            {"WITHOUT", TokenType::KW_WITHOUT}, {"AT", TokenType::KW_AT},
+            {"ZONE", TokenType::KW_ZONE},
+            {"WITH", TokenType::KW_WITH},
+            {"WITHOUT", TokenType::KW_WITHOUT},
+            {"AT", TokenType::KW_AT},
 
             // Transaction control (Phase 2 Task 2.6, Phase 3 Task 3.6)
-            {"START", TokenType::KW_START},     {"TRANSACTION", TokenType::KW_TRANSACTION},
-            {"COMMIT", TokenType::KW_COMMIT},   {"ROLLBACK", TokenType::KW_ROLLBACK},
-            {"READ", TokenType::KW_READ},       {"WRITE", TokenType::KW_WRITE},
-            {"ONLY", TokenType::KW_ONLY},       {"WAIT", TokenType::KW_WAIT},
-            {"ISOLATION", TokenType::KW_ISOLATION}, {"LEVEL", TokenType::KW_LEVEL},
-            {"COMMITTED", TokenType::KW_COMMITTED}, {"SNAPSHOT", TokenType::KW_SNAPSHOT},
-            {"STABILITY", TokenType::KW_STABILITY}, {"RESERVING", TokenType::KW_RESERVING},
-            {"SHARED", TokenType::KW_SHARED},   {"PROTECTED", TokenType::KW_PROTECTED},
-            {"FOR", TokenType::KW_FOR},         {"OUTSTANDING", TokenType::KW_OUTSTANDING},
-            {"LOCK", TokenType::KW_LOCK},       {"TIMEOUT", TokenType::KW_TIMEOUT},
+            {"START", TokenType::KW_START},
+            {"TRANSACTION", TokenType::KW_TRANSACTION},
+            {"COMMIT", TokenType::KW_COMMIT},
+            {"ROLLBACK", TokenType::KW_ROLLBACK},
+            {"READ", TokenType::KW_READ},
+            {"WRITE", TokenType::KW_WRITE},
+            {"ONLY", TokenType::KW_ONLY},
+            {"WAIT", TokenType::KW_WAIT},
+            {"ISOLATION", TokenType::KW_ISOLATION},
+            {"LEVEL", TokenType::KW_LEVEL},
+            {"COMMITTED", TokenType::KW_COMMITTED},
+            {"SNAPSHOT", TokenType::KW_SNAPSHOT},
+            {"STABILITY", TokenType::KW_STABILITY},
+            {"RESERVING", TokenType::KW_RESERVING},
+            {"SHARED", TokenType::KW_SHARED},
+            {"PROTECTED", TokenType::KW_PROTECTED},
+            {"FOR", TokenType::KW_FOR},
+            {"OUTSTANDING", TokenType::KW_OUTSTANDING},
+            {"LOCK", TokenType::KW_LOCK},
+            {"TIMEOUT", TokenType::KW_TIMEOUT},
 
             // Database maintenance (Phase 3 Task 3.3)
-            {"SWEEP", TokenType::KW_SWEEP},     {"DATABASE", TokenType::KW_DATABASE},
+            {"SWEEP", TokenType::KW_SWEEP},
+            {"DATABASE", TokenType::KW_DATABASE},
         };
 
         // Case-insensitive string comparison
@@ -246,7 +284,8 @@ namespace scratchbird
             if (!scratchbird::core::UTF8Utils::isValidIdentifierLength(text))
             {
                 size_t char_count = scratchbird::core::UTF8Utils::countCharacters(text);
-                return makeError("Identifier too long: " + std::to_string(char_count) + " characters (maximum 128)");
+                return makeError("Identifier too long: " + std::to_string(char_count) +
+                                 " characters (maximum 128)");
             }
 
             // Check if it's a keyword

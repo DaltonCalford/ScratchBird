@@ -13,13 +13,11 @@
 namespace scratchbird::core
 {
 
-    Vacuum::Vacuum(Database* db) : db_(db)
-    {
-    }
+    Vacuum::Vacuum(Database *db) : db_(db) {}
 
     Vacuum::~Vacuum() = default;
 
-    auto Vacuum::getVacuumHorizon(uint64_t* horizon_out, ErrorContext* ctx) -> Status
+    auto Vacuum::getVacuumHorizon(uint64_t *horizon_out, ErrorContext *ctx) -> Status
     {
         // Get oldest XID that might still see a tuple
         // This is the minimum of all backend xmin values
@@ -36,8 +34,8 @@ namespace scratchbird::core
         return Status::OK;
     }
 
-    auto Vacuum::vacuumTable(const ID& table_id, VacuumStats* stats_out,
-                            ErrorContext* ctx) -> Status
+    auto Vacuum::vacuumTable(const ID &table_id, VacuumStats *stats_out, ErrorContext *ctx)
+        -> Status
     {
         auto start_time = std::chrono::high_resolution_clock::now();
 
@@ -80,7 +78,7 @@ namespace scratchbird::core
         }
 
         // Remove dead tuples page by page
-        for (const auto& [page_id, dead_items] : dead_by_page)
+        for (const auto &[page_id, dead_items] : dead_by_page)
         {
             status = removeDeadTuplesFromPage(table_id, page_id, dead_items, &stats, ctx);
             if (status != Status::OK)
@@ -95,8 +93,8 @@ namespace scratchbird::core
         }
 
         auto end_time = std::chrono::high_resolution_clock::now();
-        stats.vacuum_time_us = std::chrono::duration_cast<std::chrono::microseconds>(
-                                  end_time - start_time).count();
+        stats.vacuum_time_us =
+            std::chrono::duration_cast<std::chrono::microseconds>(end_time - start_time).count();
 
         if (stats_out != nullptr)
         {
@@ -106,13 +104,13 @@ namespace scratchbird::core
         return Status::OK;
     }
 
-    auto Vacuum::vacuumDatabase(VacuumStats* stats_out, ErrorContext* ctx) -> Status
+    auto Vacuum::vacuumDatabase(VacuumStats *stats_out, ErrorContext *ctx) -> Status
     {
         VacuumStats total_stats;
         auto start_time = std::chrono::high_resolution_clock::now();
 
         // Get catalog manager
-        auto* catalog = db_->catalog_manager();
+        auto *catalog = db_->catalog_manager();
         if (catalog == nullptr)
         {
             SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Catalog manager not available");
@@ -130,7 +128,7 @@ namespace scratchbird::core
         }
 
         // Iterate over all schemas
-        for (const auto& schema : schemas)
+        for (const auto &schema : schemas)
         {
             // Get all tables in this schema
             std::vector<CatalogManager::TableInfo> tables;
@@ -142,7 +140,7 @@ namespace scratchbird::core
             }
 
             // Vacuum each table
-            for (const auto& table : tables)
+            for (const auto &table : tables)
             {
                 // Skip TOAST tables and system tables
                 if (table.table_type == CatalogManager::TableType::TOAST)
@@ -169,8 +167,8 @@ namespace scratchbird::core
         }
 
         auto end_time = std::chrono::high_resolution_clock::now();
-        total_stats.vacuum_time_us = std::chrono::duration_cast<std::chrono::microseconds>(
-                                         end_time - start_time).count();
+        total_stats.vacuum_time_us =
+            std::chrono::duration_cast<std::chrono::microseconds>(end_time - start_time).count();
 
         if (stats_out != nullptr)
         {
@@ -180,8 +178,8 @@ namespace scratchbird::core
         return Status::OK;
     }
 
-    auto Vacuum::vacuumPage(const ID& table_id, uint32_t page_id,
-                           VacuumStats* stats_out, ErrorContext* ctx) -> Status
+    auto Vacuum::vacuumPage(const ID &table_id, uint32_t page_id, VacuumStats *stats_out,
+                            ErrorContext *ctx) -> Status
     {
         VacuumStats stats;
 
@@ -215,12 +213,12 @@ namespace scratchbird::core
         return status;
     }
 
-    auto Vacuum::scanHeapForDeadTuples(const ID& table_id, uint64_t horizon,
-                                      std::vector<uint64_t>* dead_tids_out,
-                                      VacuumStats* stats, ErrorContext* ctx) -> Status
+    auto Vacuum::scanHeapForDeadTuples(const ID &table_id, uint64_t horizon,
+                                       std::vector<uint64_t> *dead_tids_out, VacuumStats *stats,
+                                       ErrorContext *ctx) -> Status
     {
         // Get table information from catalog
-        auto* catalog = db_->catalog_manager();
+        auto *catalog = db_->catalog_manager();
         if (catalog == nullptr)
         {
             SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Catalog manager not available");
@@ -247,9 +245,9 @@ namespace scratchbird::core
 
         // Scan all pages of this table
         // We scan sequentially from the root page until we encounter a non-existent page
-        for (uint32_t page_id = start_page; ; ++page_id)
+        for (uint32_t page_id = start_page;; ++page_id)
         {
-            void* page_buffer;
+            void *page_buffer;
             Status status = db_->buffer_pool()->pinPage(page_id, &page_buffer, ctx);
             if (status == Status::IO_ERROR)
             {
@@ -261,8 +259,8 @@ namespace scratchbird::core
                 continue;
             }
 
-            auto* page_data = static_cast<uint8_t*>(page_buffer);
-            auto* page_hdr = reinterpret_cast<PageHeader*>(page_data);
+            auto *page_data = static_cast<uint8_t *>(page_buffer);
+            auto *page_hdr = reinterpret_cast<PageHeader *>(page_data);
 
             // Check if this is a heap page
             if (page_hdr->page_type != PAGE_TYPE_HEAP)
@@ -278,7 +276,7 @@ namespace scratchbird::core
             uint16_t item_count = heap.getItemCount();
             for (uint16_t item_id = 0; item_id < item_count; ++item_id)
             {
-                const uint8_t* tuple_data;
+                const uint8_t *tuple_data;
                 uint32_t tuple_size;
                 status = heap.getTuple(item_id, &tuple_data, &tuple_size, ctx);
                 if (status != Status::OK)
@@ -293,7 +291,7 @@ namespace scratchbird::core
                 {
                     // Build TID: (page_id << 32) | (item_id << 16)
                     uint64_t tid = (static_cast<uint64_t>(page_id) << 32) |
-                                  (static_cast<uint64_t>(item_id) << 16);
+                                   (static_cast<uint64_t>(item_id) << 16);
                     dead_tids_out->push_back(tid);
                     stats->dead_tuples_found++;
                 }
@@ -305,18 +303,17 @@ namespace scratchbird::core
         return Status::OK;
     }
 
-    auto Vacuum::pruneVersionChains(const ID& table_id, uint32_t page_id,
-                                   uint64_t horizon, VacuumStats* stats,
-                                   ErrorContext* ctx) -> Status
+    auto Vacuum::pruneVersionChains(const ID &table_id, uint32_t page_id, uint64_t horizon,
+                                    VacuumStats *stats, ErrorContext *ctx) -> Status
     {
-        void* page_buffer;
+        void *page_buffer;
         Status status = db_->buffer_pool()->pinPage(page_id, &page_buffer, ctx);
         if (status != Status::OK)
         {
             return status;
         }
 
-        auto* page_data = static_cast<uint8_t*>(page_buffer);
+        auto *page_data = static_cast<uint8_t *>(page_buffer);
         HeapPage heap(page_data, db_->page_size());
         bool page_modified = false;
 
@@ -324,7 +321,7 @@ namespace scratchbird::core
         uint16_t item_count = heap.getItemCount();
         for (uint16_t item_id = 0; item_id < item_count; ++item_id)
         {
-            const uint8_t* tuple_data;
+            const uint8_t *tuple_data;
             uint32_t tuple_size;
             status = heap.getTuple(item_id, &tuple_data, &tuple_size, ctx);
             if (status != Status::OK)
@@ -338,8 +335,8 @@ namespace scratchbird::core
                 // Mark tuple as deleted (prune it)
                 // This is a simplified version - full implementation would
                 // need to update version chain pointers
-                auto* tuple_hdr = const_cast<TupleHeader*>(
-                    reinterpret_cast<const TupleHeader*>(tuple_data));
+                auto *tuple_hdr =
+                    const_cast<TupleHeader *>(reinterpret_cast<const TupleHeader *>(tuple_data));
 
                 // Set xmax if not already set
                 if (tuple_hdr->xmax == 0)
@@ -359,23 +356,23 @@ namespace scratchbird::core
         return Status::OK;
     }
 
-    auto Vacuum::removeDeadTuplesFromPage(const ID& table_id, uint32_t page_id,
-                                         const std::vector<uint16_t>& dead_item_ids,
-                                         VacuumStats* stats, ErrorContext* ctx) -> Status
+    auto Vacuum::removeDeadTuplesFromPage(const ID &table_id, uint32_t page_id,
+                                          const std::vector<uint16_t> &dead_item_ids,
+                                          VacuumStats *stats, ErrorContext *ctx) -> Status
     {
         if (dead_item_ids.empty())
         {
             return Status::OK;
         }
 
-        void* page_buffer;
+        void *page_buffer;
         Status status = db_->buffer_pool()->pinPage(page_id, &page_buffer, ctx);
         if (status != Status::OK)
         {
             return status;
         }
 
-        auto* page_data = static_cast<uint8_t*>(page_buffer);
+        auto *page_data = static_cast<uint8_t *>(page_buffer);
         HeapPage heap(page_data, db_->page_size());
 
         // Delete each tuple
@@ -393,32 +390,31 @@ namespace scratchbird::core
         return Status::OK;
     }
 
-    auto Vacuum::compactPage(uint32_t page_id, VacuumStats* stats,
-                            ErrorContext* ctx) -> Status
+    auto Vacuum::compactPage(uint32_t page_id, VacuumStats *stats, ErrorContext *ctx) -> Status
     {
         // Pin the page
-        void* page_buffer;
+        void *page_buffer;
         Status status = db_->buffer_pool()->pinPage(page_id, &page_buffer, ctx);
         if (status != Status::OK)
         {
             return status;
         }
 
-        auto* page_data = static_cast<uint8_t*>(page_buffer);
+        auto *page_data = static_cast<uint8_t *>(page_buffer);
         uint32_t page_size = db_->page_size();
 
         // Create a temporary buffer for compaction
         std::vector<uint8_t> temp_buffer(page_size);
-        uint8_t* temp_data = temp_buffer.data();
+        uint8_t *temp_data = temp_buffer.data();
 
         // Copy page header
-        auto* old_page_hdr = reinterpret_cast<PageHeader*>(page_data);
-        auto* temp_page_hdr = reinterpret_cast<PageHeader*>(temp_data);
+        auto *old_page_hdr = reinterpret_cast<PageHeader *>(page_data);
+        auto *temp_page_hdr = reinterpret_cast<PageHeader *>(temp_data);
         std::memcpy(temp_page_hdr, old_page_hdr, sizeof(PageHeader));
 
         // Get item arrays (starts right after PageHeader)
-        auto* old_items = reinterpret_cast<ItemPointer*>(page_data + sizeof(PageHeader));
-        auto* new_items = reinterpret_cast<ItemPointer*>(temp_data + sizeof(PageHeader));
+        auto *old_items = reinterpret_cast<ItemPointer *>(page_data + sizeof(PageHeader));
+        auto *new_items = reinterpret_cast<ItemPointer *>(temp_data + sizeof(PageHeader));
 
         uint16_t old_item_count = old_page_hdr->item_count;
         uint16_t new_item_count = 0;
@@ -432,7 +428,7 @@ namespace scratchbird::core
         // Pass 1: Copy non-deleted tuples and build new item array
         for (uint16_t i = 0; i < old_item_count; ++i)
         {
-            const ItemPointer& old_item = old_items[i];
+            const ItemPointer &old_item = old_items[i];
 
             // Skip deleted/unused items
             if (old_item.isDeleted() || old_item.offset == 0)
@@ -441,7 +437,7 @@ namespace scratchbird::core
             }
 
             // Get tuple data
-            const uint8_t* tuple_src = page_data + old_item.offset;
+            const uint8_t *tuple_src = page_data + old_item.offset;
             uint32_t tuple_size = old_item.length;
 
             // Allocate space from end of page (before special area)
@@ -464,14 +460,17 @@ namespace scratchbird::core
         // Calculate new free space
         uint32_t items_size = new_item_count * sizeof(ItemPointer);
         uint32_t header_size = sizeof(PageHeader);
-        uint32_t used_space = header_size + items_size + (page_size - sizeof(HeapPageSpecial) - tuple_data_offset);
+        uint32_t used_space =
+            header_size + items_size + (page_size - sizeof(HeapPageSpecial) - tuple_data_offset);
         uint32_t new_free_space = page_size - sizeof(HeapPageSpecial) - used_space;
 
         temp_page_hdr->free_space = static_cast<uint16_t>(new_free_space);
 
         // Copy special area
-        auto* old_special = reinterpret_cast<HeapPageSpecial*>(page_data + page_size - sizeof(HeapPageSpecial));
-        auto* temp_special = reinterpret_cast<HeapPageSpecial*>(temp_data + page_size - sizeof(HeapPageSpecial));
+        auto *old_special =
+            reinterpret_cast<HeapPageSpecial *>(page_data + page_size - sizeof(HeapPageSpecial));
+        auto *temp_special =
+            reinterpret_cast<HeapPageSpecial *>(temp_data + page_size - sizeof(HeapPageSpecial));
         std::memcpy(temp_special, old_special, sizeof(HeapPageSpecial));
 
         // Update statistics
@@ -490,9 +489,9 @@ namespace scratchbird::core
         return Status::OK;
     }
 
-    bool Vacuum::isTupleDead(const uint8_t* tuple_data, uint64_t horizon)
+    bool Vacuum::isTupleDead(const uint8_t *tuple_data, uint64_t horizon)
     {
-        auto* header = reinterpret_cast<const TupleHeader*>(tuple_data);
+        auto *header = reinterpret_cast<const TupleHeader *>(tuple_data);
 
         // Tuple is dead if:
         // 1. xmax is set (tuple was deleted or updated)
@@ -525,9 +524,9 @@ namespace scratchbird::core
         return (header->infomask & TupleHeader::HEAP_XMAX_COMMITTED) != 0;
     }
 
-    bool Vacuum::isVersionPrunable(const uint8_t* tuple_data, uint64_t horizon)
+    bool Vacuum::isVersionPrunable(const uint8_t *tuple_data, uint64_t horizon)
     {
-        auto* header = reinterpret_cast<const TupleHeader*>(tuple_data);
+        auto *header = reinterpret_cast<const TupleHeader *>(tuple_data);
 
         // A version is prunable if:
         // 1. It was updated (not the latest version)
@@ -553,14 +552,14 @@ namespace scratchbird::core
         return true;
     }
 
-    auto Vacuum::freezeTable(const ID& table_id, uint64_t freeze_limit,
-                            VacuumStats* stats_out, ErrorContext* ctx) -> Status
+    auto Vacuum::freezeTable(const ID &table_id, uint64_t freeze_limit, VacuumStats *stats_out,
+                             ErrorContext *ctx) -> Status
     {
         // Freeze tuples with xmin < freeze_limit to prevent XID wraparound
         VacuumStats stats;
 
         // Get table metadata from catalog
-        CatalogManager* catalog = db_->catalog_manager();
+        CatalogManager *catalog = db_->catalog_manager();
         if (catalog == nullptr)
         {
             SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Catalog manager not available");
@@ -586,7 +585,7 @@ namespace scratchbird::core
         }
 
         // Scan all pages in the table
-        BufferPool* bp = db_->buffer_pool();
+        BufferPool *bp = db_->buffer_pool();
         if (bp == nullptr)
         {
             SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Buffer pool not available");
@@ -594,10 +593,10 @@ namespace scratchbird::core
         }
 
         // Scan sequentially from root page until IO_ERROR
-        for (uint32_t page_id = start_page; ; ++page_id)
+        for (uint32_t page_id = start_page;; ++page_id)
         {
             // Pin the page
-            void* page_buffer;
+            void *page_buffer;
             status = bp->pinPage(page_id, &page_buffer, ctx);
             if (status == Status::IO_ERROR)
             {
@@ -610,8 +609,8 @@ namespace scratchbird::core
                 continue;
             }
 
-            auto* page_data = static_cast<uint8_t*>(page_buffer);
-            auto* page_hdr = reinterpret_cast<PageHeader*>(page_data);
+            auto *page_data = static_cast<uint8_t *>(page_buffer);
+            auto *page_hdr = reinterpret_cast<PageHeader *>(page_data);
 
             // Check if this is a heap page
             if (page_hdr->page_type != PAGE_TYPE_HEAP)
@@ -645,7 +644,7 @@ namespace scratchbird::core
         // This allows old XIDs to be reclaimed
         if (stats.tuples_frozen > 0)
         {
-            TransactionManager* txn_mgr = db_->transaction_manager();
+            TransactionManager *txn_mgr = db_->transaction_manager();
             if (txn_mgr != nullptr)
             {
                 status = txn_mgr->setOldestXid(freeze_limit, ctx);

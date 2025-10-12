@@ -4,9 +4,8 @@
 #include <sstream>
 #include <string>
 
-
-    namespace scratchbird::core
-    {
+namespace scratchbird::core
+{
 
 // Debug logging configuration
 #ifndef SCRATCHBIRD_DEBUG
@@ -36,4 +35,4 @@
 #define DEBUG_LOG_BP(message) DEBUG_LOG("BufferPool", message)
 #define DEBUG_LOG_DB(message) DEBUG_LOG("Database", message)
 
-    } // namespace scratchbird::core
+} // namespace scratchbird::core

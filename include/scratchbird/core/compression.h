@@ -6,124 +6,123 @@
 #include <string>
 #include <vector>
 
+namespace scratchbird::core
+{
 
-    namespace scratchbird::core
+    // Compression algorithms supported
+    enum class CompressionType : uint8_t
     {
+        NONE = 0,   // No compression
+        LZ4 = 1,    // LZ4 compression (baseline)
+        ZSTD = 2,   // Zstandard compression (future)
+        SNAPPY = 3, // Snappy compression (future)
+        // Add more algorithms as needed
+    };
 
-        // Compression algorithms supported
-        enum class CompressionType : uint8_t
+    // Compression level hints
+    enum class CompressionLevel
+    {
+        FASTEST = 0, // Optimize for speed
+        DEFAULT = 1, // Balance speed and ratio
+        BEST = 2,    // Optimize for compression ratio
+    };
+
+    // Compression statistics
+    struct CompressionStats
+    {
+        uint64_t bytes_in = 0;           // Total uncompressed bytes
+        uint64_t bytes_out = 0;          // Total compressed bytes
+        uint64_t compress_time_us = 0;   // Total compression time in microseconds
+        uint64_t decompress_time_us = 0; // Total decompression time in microseconds
+        uint64_t compress_calls = 0;     // Number of compress calls
+        uint64_t decompress_calls = 0;   // Number of decompress calls
+
+        [[nodiscard]] auto compressionRatio() const -> double
         {
-            NONE = 0,   // No compression
-            LZ4 = 1,    // LZ4 compression (baseline)
-            ZSTD = 2,   // Zstandard compression (future)
-            SNAPPY = 3, // Snappy compression (future)
-            // Add more algorithms as needed
-        };
+            return bytes_in > 0 ? static_cast<double>(bytes_out) / bytes_in : 1.0;
+        }
 
-        // Compression level hints
-        enum class CompressionLevel
+        [[nodiscard]] auto avgCompressTimeUs() const -> double
         {
-            FASTEST = 0, // Optimize for speed
-            DEFAULT = 1, // Balance speed and ratio
-            BEST = 2,    // Optimize for compression ratio
-        };
+            return compress_calls > 0 ? static_cast<double>(compress_time_us) / compress_calls
+                                      : 0.0;
+        }
 
-        // Compression statistics
-        struct CompressionStats
+        [[nodiscard]] auto avgDecompressTimeUs() const -> double
         {
-            uint64_t bytes_in = 0;           // Total uncompressed bytes
-            uint64_t bytes_out = 0;          // Total compressed bytes
-            uint64_t compress_time_us = 0;   // Total compression time in microseconds
-            uint64_t decompress_time_us = 0; // Total decompression time in microseconds
-            uint64_t compress_calls = 0;     // Number of compress calls
-            uint64_t decompress_calls = 0;   // Number of decompress calls
+            return decompress_calls > 0 ? static_cast<double>(decompress_time_us) / decompress_calls
+                                        : 0.0;
+        }
+    };
 
-            [[nodiscard]] auto compressionRatio() const -> double
-            {
-                return bytes_in > 0 ? static_cast<double>(bytes_out) / bytes_in : 1.0;
-            }
+    // Abstract compression interface
+    class CompressionCodec
+    {
+    public:
+        virtual ~CompressionCodec() = default;
 
-            [[nodiscard]] auto avgCompressTimeUs() const -> double
-            {
-                return compress_calls > 0 ? static_cast<double>(compress_time_us) / compress_calls
-                                          : 0.0;
-            }
+        // Get the compression type
+        [[nodiscard]] virtual auto type() const -> CompressionType = 0;
 
-            [[nodiscard]] auto avgDecompressTimeUs() const -> double
-            {
-                return decompress_calls > 0
-                           ? static_cast<double>(decompress_time_us) / decompress_calls
-                           : 0.0;
-            }
-        };
+        // Get algorithm name
+        [[nodiscard]] virtual auto name() const -> const char * = 0;
 
-        // Abstract compression interface
-        class CompressionCodec
+        // Compress data
+        // Returns compressed size, or Status error
+        virtual auto compress(const uint8_t *src, uint32_t src_size, uint8_t *dst,
+                              uint32_t dst_capacity, uint32_t *compressed_size,
+                              CompressionLevel level = CompressionLevel::DEFAULT) -> Status = 0;
+
+        // Decompress data
+        // Returns decompressed size, or Status error
+        virtual auto decompress(const uint8_t *src, uint32_t src_size, uint8_t *dst,
+                                uint32_t dst_capacity, uint32_t *decompressed_size) -> Status = 0;
+
+        // Get maximum compressed size for given input size
+        [[nodiscard]] virtual auto maxCompressedSize(uint32_t uncompressed_size) const
+            -> uint32_t = 0;
+
+        // Check if compression is beneficial for this data size
+        [[nodiscard]] virtual auto shouldCompress(uint32_t size) const -> bool
         {
-        public:
-            virtual ~CompressionCodec() = default;
+            // Default: compress if larger than 256 bytes
+            return size > 256;
+        }
 
-            // Get the compression type
-            [[nodiscard]] virtual auto type() const -> CompressionType = 0;
+        // Get compression statistics
+        [[nodiscard]] virtual auto stats() const -> const CompressionStats & = 0;
 
-            // Get algorithm name
-            [[nodiscard]] virtual auto name() const -> const char * = 0;
+        // Reset statistics
+        virtual void resetStats() = 0;
+    };
 
-            // Compress data
-            // Returns compressed size, or Status error
-            virtual auto compress(const uint8_t *src, uint32_t src_size, uint8_t *dst,
-                                    uint32_t dst_capacity, uint32_t *compressed_size,
-                                    CompressionLevel level = CompressionLevel::DEFAULT) -> Status = 0;
+    // Compression factory
+    class CompressionFactory
+    {
+    public:
+        // Create a compression codec
+        static auto create(CompressionType type) -> std::unique_ptr<CompressionCodec>;
 
-            // Decompress data
-            // Returns decompressed size, or Status error
-            virtual auto decompress(const uint8_t *src, uint32_t src_size, uint8_t *dst,
-                                      uint32_t dst_capacity, uint32_t *decompressed_size) -> Status = 0;
+        // Check if compression type is supported
+        static auto isSupported(CompressionType type) -> bool;
 
-            // Get maximum compressed size for given input size
-            [[nodiscard]] virtual auto maxCompressedSize(uint32_t uncompressed_size) const -> uint32_t = 0;
+        // Get list of supported compression types
+        static auto supportedTypes() -> std::vector<CompressionType>;
 
-            // Check if compression is beneficial for this data size
-            [[nodiscard]] virtual auto shouldCompress(uint32_t size) const -> bool
-            {
-                // Default: compress if larger than 256 bytes
-                return size > 256;
-            }
-
-            // Get compression statistics
-            [[nodiscard]] virtual auto stats() const -> const CompressionStats & = 0;
-
-            // Reset statistics
-            virtual void resetStats() = 0;
-        };
-
-        // Compression factory
-        class CompressionFactory
-        {
-        public:
-            // Create a compression codec
-            static auto create(CompressionType type) -> std::unique_ptr<CompressionCodec>;
-
-            // Check if compression type is supported
-            static auto isSupported(CompressionType type) -> bool;
-
-            // Get list of supported compression types
-            static auto supportedTypes() -> std::vector<CompressionType>;
-
-            // Get name for compression type
-            static auto getName(CompressionType type) -> const char *;
-        };
+        // Get name for compression type
+        static auto getName(CompressionType type) -> const char *;
+    };
 
 // Page compression header - stored at beginning of compressed page data
 #pragma pack(push, 1)
-        struct CompressedPageHeader
-        {
-            uint32_t uncompressed_size; // Original page size
-            uint32_t compressed_size;   // Compressed data size (excluding this header)
-            uint8_t compression_type;   // CompressionType enum value
-            uint8_t reserved[3];        // Reserved for alignment
-            uint32_t checksum;          // CRC32C of compressed data
-        };
+    struct CompressedPageHeader
+    {
+        uint32_t uncompressed_size; // Original page size
+        uint32_t compressed_size;   // Compressed data size (excluding this header)
+        uint8_t compression_type;   // CompressionType enum value
+        uint8_t reserved[3];        // Reserved for alignment
+        uint32_t checksum;          // CRC32C of compressed data
+    };
 #pragma pack(pop)
 
-    } // namespace scratchbird::core
+} // namespace scratchbird::core

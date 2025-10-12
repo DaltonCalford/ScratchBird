@@ -32,11 +32,11 @@ namespace scratchbird
             CREATE_TABLE,
             INSERT,
             SELECT,
-            START_TRANSACTION,  // Phase 2 Task 2.6
-            SET_TRANSACTION,    // Phase 3 Task 3.6
-            COMMIT,             // Phase 2 Task 2.6
-            ROLLBACK,           // Phase 2 Task 2.6
-            SWEEP,              // Phase 3 Task 3.3
+            START_TRANSACTION, // Phase 2 Task 2.6
+            SET_TRANSACTION,   // Phase 3 Task 3.6
+            COMMIT,            // Phase 2 Task 2.6
+            ROLLBACK,          // Phase 2 Task 2.6
+            SWEEP,             // Phase 3 Task 3.3
 
             // Expressions
             LITERAL,
@@ -129,13 +129,16 @@ namespace scratchbird
         struct TypeName
         {
             DataType type;
-            uint32_t precision; // For VARCHAR(n), CHAR(n)
-            uint32_t scale;     // For DECIMAL(p,s)
-            bool with_timezone; // For TIMESTAMP WITH TIME ZONE
+            uint32_t precision;     // For VARCHAR(n), CHAR(n)
+            uint32_t scale;         // For DECIMAL(p,s)
+            bool with_timezone;     // For TIMESTAMP WITH TIME ZONE
             uint16_t timezone_hint; // Timezone ID for display
 
-            TypeName(DataType t, uint32_t p = 0, uint32_t s = 0, bool tz = false, uint16_t tz_hint = 0)
-                : type(t), precision(p), scale(s), with_timezone(tz), timezone_hint(tz_hint) {}
+            TypeName(DataType t, uint32_t p = 0, uint32_t s = 0, bool tz = false,
+                     uint16_t tz_hint = 0)
+                : type(t), precision(p), scale(s), with_timezone(tz), timezone_hint(tz_hint)
+            {
+            }
 
             // Convert to TypeInfo
             TypeInfo toTypeInfo() const
@@ -292,14 +295,25 @@ namespace scratchbird
         class CastExpr : public Expression
         {
         public:
-            CastExpr(const SourceSpan &span, Expression *expr, const TypeName &target_type, bool is_try_cast = false)
-                : Expression(ASTKind::CAST, span), expr_(expr), target_type_(target_type), is_try_cast_(is_try_cast)
+            CastExpr(const SourceSpan &span, Expression *expr, const TypeName &target_type,
+                     bool is_try_cast = false)
+                : Expression(ASTKind::CAST, span), expr_(expr), target_type_(target_type),
+                  is_try_cast_(is_try_cast)
             {
             }
 
-            Expression *expr() const { return expr_; }
-            const TypeName &targetType() const { return target_type_; }
-            bool isTryCast() const { return is_try_cast_; }
+            Expression *expr() const
+            {
+                return expr_;
+            }
+            const TypeName &targetType() const
+            {
+                return target_type_;
+            }
+            bool isTryCast() const
+            {
+                return is_try_cast_;
+            }
 
             void accept(ASTVisitor *visitor) override;
 
@@ -313,13 +327,20 @@ namespace scratchbird
         class FunctionCallExpr : public Expression
         {
         public:
-            FunctionCallExpr(const SourceSpan &span, StringPool::StringId name, std::vector<Expression *> args)
+            FunctionCallExpr(const SourceSpan &span, StringPool::StringId name,
+                             std::vector<Expression *> args)
                 : Expression(ASTKind::FUNCTION_CALL, span), name_(name), args_(std::move(args))
             {
             }
 
-            StringPool::StringId name() const { return name_; }
-            const std::vector<Expression *> &args() const { return args_; }
+            StringPool::StringId name() const
+            {
+                return name_;
+            }
+            const std::vector<Expression *> &args() const
+            {
+                return args_;
+            }
 
             void accept(ASTVisitor *visitor) override;
 
@@ -375,8 +396,8 @@ namespace scratchbird
             StringPool::StringId name_;
             TypeName type_;
             bool nullable_;
-            StringPool::StringId charset_;    // CHARACTER SET clause
-            StringPool::StringId collation_;  // COLLATE clause
+            StringPool::StringId charset_;   // CHARACTER SET clause
+            StringPool::StringId collation_; // COLLATE clause
         };
 
         // CREATE TABLE statement
@@ -384,8 +405,7 @@ namespace scratchbird
         {
         public:
             CreateTableStmt(const SourceSpan &span, StringPool::StringId table_name,
-                            std::vector<ColumnDef *> columns,
-                            StringPool::StringId charset = 0,
+                            std::vector<ColumnDef *> columns, StringPool::StringId charset = 0,
                             StringPool::StringId collation = 0)
                 : Statement(ASTKind::CREATE_TABLE, span), table_name_(table_name),
                   columns_(std::move(columns)), charset_(charset), collation_(collation)
@@ -414,8 +434,8 @@ namespace scratchbird
         private:
             StringPool::StringId table_name_;
             std::vector<ColumnDef *> columns_;
-            StringPool::StringId charset_;    // DEFAULT CHARACTER SET clause
-            StringPool::StringId collation_;  // DEFAULT COLLATE clause
+            StringPool::StringId charset_;   // DEFAULT CHARACTER SET clause
+            StringPool::StringId collation_; // DEFAULT COLLATE clause
         };
 
         // INSERT statement
@@ -513,8 +533,8 @@ namespace scratchbird
         // Table lock mode for RESERVING clause (Firebird-style)
         enum class TableLockMode : uint8_t
         {
-            SHARED = 0,     // SHARED READ - allows concurrent reads
-            PROTECTED = 1,  // PROTECTED READ/WRITE - exclusive table access
+            SHARED = 0,    // SHARED READ - allows concurrent reads
+            PROTECTED = 1, // PROTECTED READ/WRITE - exclusive table access
         };
 
         // Table reservation for RESERVING clause
@@ -525,7 +545,9 @@ namespace scratchbird
             bool for_write;
 
             TableReservation(StringPool::StringId name, TableLockMode mode, bool write)
-                : table_name(name), lock_mode(mode), for_write(write) {}
+                : table_name(name), lock_mode(mode), for_write(write)
+            {
+            }
         };
 
         // START TRANSACTION statement (Phase 2 Task 2.6, Phase 3 Task 3.6)
@@ -535,24 +557,39 @@ namespace scratchbird
             StartTransactionStmt(const SourceSpan &span,
                                  TransactionMode mode = TransactionMode::READ_WRITE,
                                  IsolationLevel isolation = IsolationLevel::READ_COMMITTED,
-                                 bool wait = true,
-                                 bool commit_outstanding = false,
+                                 bool wait = true, bool commit_outstanding = false,
                                  uint32_t lock_timeout = 0,
                                  std::vector<TableReservation> reservations = {})
-                : Statement(ASTKind::START_TRANSACTION, span),
-                  mode_(mode), isolation_(isolation), wait_(wait),
-                  commit_outstanding_(commit_outstanding),
-                  lock_timeout_(lock_timeout),
+                : Statement(ASTKind::START_TRANSACTION, span), mode_(mode), isolation_(isolation),
+                  wait_(wait), commit_outstanding_(commit_outstanding), lock_timeout_(lock_timeout),
                   table_reservations_(std::move(reservations))
             {
             }
 
-            TransactionMode mode() const { return mode_; }
-            IsolationLevel isolation() const { return isolation_; }
-            bool wait() const { return wait_; }
-            bool commitOutstanding() const { return commit_outstanding_; }
-            uint32_t lockTimeout() const { return lock_timeout_; }
-            const std::vector<TableReservation>& tableReservations() const { return table_reservations_; }
+            TransactionMode mode() const
+            {
+                return mode_;
+            }
+            IsolationLevel isolation() const
+            {
+                return isolation_;
+            }
+            bool wait() const
+            {
+                return wait_;
+            }
+            bool commitOutstanding() const
+            {
+                return commit_outstanding_;
+            }
+            uint32_t lockTimeout() const
+            {
+                return lock_timeout_;
+            }
+            const std::vector<TableReservation> &tableReservations() const
+            {
+                return table_reservations_;
+            }
 
             void accept(ASTVisitor *visitor) override;
 
@@ -561,7 +598,8 @@ namespace scratchbird
             IsolationLevel isolation_;
             bool wait_;
             bool commit_outstanding_;
-            uint32_t lock_timeout_;                         // Lock timeout in seconds (0 = no wait, UINT32_MAX = wait forever)
+            uint32_t
+                lock_timeout_; // Lock timeout in seconds (0 = no wait, UINT32_MAX = wait forever)
             std::vector<TableReservation> table_reservations_; // RESERVING clause tables
         };
 
@@ -569,10 +607,7 @@ namespace scratchbird
         class CommitStmt : public Statement
         {
         public:
-            explicit CommitStmt(const SourceSpan &span)
-                : Statement(ASTKind::COMMIT, span)
-            {
-            }
+            explicit CommitStmt(const SourceSpan &span) : Statement(ASTKind::COMMIT, span) {}
 
             void accept(ASTVisitor *visitor) override;
         };
@@ -581,10 +616,7 @@ namespace scratchbird
         class RollbackStmt : public Statement
         {
         public:
-            explicit RollbackStmt(const SourceSpan &span)
-                : Statement(ASTKind::ROLLBACK, span)
-            {
-            }
+            explicit RollbackStmt(const SourceSpan &span) : Statement(ASTKind::ROLLBACK, span) {}
 
             void accept(ASTVisitor *visitor) override;
         };
@@ -593,10 +625,7 @@ namespace scratchbird
         class SweepStmt : public Statement
         {
         public:
-            explicit SweepStmt(const SourceSpan &span)
-                : Statement(ASTKind::SWEEP, span)
-            {
-            }
+            explicit SweepStmt(const SourceSpan &span) : Statement(ASTKind::SWEEP, span) {}
 
             void accept(ASTVisitor *visitor) override;
         };
@@ -607,23 +636,36 @@ namespace scratchbird
         {
         public:
             SetTransactionStmt(const SourceSpan &span,
-                              TransactionMode mode = TransactionMode::READ_WRITE,
-                              IsolationLevel isolation = IsolationLevel::READ_COMMITTED,
-                              bool wait = true,
-                              uint32_t lock_timeout = 0,
-                              std::vector<TableReservation> reservations = {})
-                : Statement(ASTKind::SET_TRANSACTION, span),
-                  mode_(mode), isolation_(isolation), wait_(wait),
-                  lock_timeout_(lock_timeout),
+                               TransactionMode mode = TransactionMode::READ_WRITE,
+                               IsolationLevel isolation = IsolationLevel::READ_COMMITTED,
+                               bool wait = true, uint32_t lock_timeout = 0,
+                               std::vector<TableReservation> reservations = {})
+                : Statement(ASTKind::SET_TRANSACTION, span), mode_(mode), isolation_(isolation),
+                  wait_(wait), lock_timeout_(lock_timeout),
                   table_reservations_(std::move(reservations))
             {
             }
 
-            TransactionMode mode() const { return mode_; }
-            IsolationLevel isolation() const { return isolation_; }
-            bool wait() const { return wait_; }
-            uint32_t lockTimeout() const { return lock_timeout_; }
-            const std::vector<TableReservation>& tableReservations() const { return table_reservations_; }
+            TransactionMode mode() const
+            {
+                return mode_;
+            }
+            IsolationLevel isolation() const
+            {
+                return isolation_;
+            }
+            bool wait() const
+            {
+                return wait_;
+            }
+            uint32_t lockTimeout() const
+            {
+                return lock_timeout_;
+            }
+            const std::vector<TableReservation> &tableReservations() const
+            {
+                return table_reservations_;
+            }
 
             void accept(ASTVisitor *visitor) override;
 
@@ -631,7 +673,8 @@ namespace scratchbird
             TransactionMode mode_;
             IsolationLevel isolation_;
             bool wait_;
-            uint32_t lock_timeout_;                         // Lock timeout in seconds (0 = no wait, UINT32_MAX = wait forever)
+            uint32_t
+                lock_timeout_; // Lock timeout in seconds (0 = no wait, UINT32_MAX = wait forever)
             std::vector<TableReservation> table_reservations_; // RESERVING clause tables
         };
 
@@ -646,11 +689,11 @@ namespace scratchbird
             virtual void visit(CreateTableStmt *node) = 0;
             virtual void visit(InsertStmt *node) = 0;
             virtual void visit(SelectStmt *node) = 0;
-            virtual void visit(StartTransactionStmt *node) = 0;  // Phase 2 Task 2.6
-            virtual void visit(SetTransactionStmt *node) = 0;    // Phase 3 Task 3.6
-            virtual void visit(CommitStmt *node) = 0;            // Phase 2 Task 2.6
-            virtual void visit(RollbackStmt *node) = 0;          // Phase 2 Task 2.6
-            virtual void visit(SweepStmt *node) = 0;             // Phase 3 Task 3.3
+            virtual void visit(StartTransactionStmt *node) = 0; // Phase 2 Task 2.6
+            virtual void visit(SetTransactionStmt *node) = 0;   // Phase 3 Task 3.6
+            virtual void visit(CommitStmt *node) = 0;           // Phase 2 Task 2.6
+            virtual void visit(RollbackStmt *node) = 0;         // Phase 2 Task 2.6
+            virtual void visit(SweepStmt *node) = 0;            // Phase 3 Task 3.3
 
             // Expressions
             virtual void visit(LiteralExpr *node) = 0;
@@ -675,11 +718,11 @@ namespace scratchbird
             void visit(CreateTableStmt *node) override;
             void visit(InsertStmt *node) override;
             void visit(SelectStmt *node) override;
-            void visit(StartTransactionStmt *node) override;  // Phase 2 Task 2.6
-            void visit(SetTransactionStmt *node) override;    // Phase 3 Task 3.6
-            void visit(CommitStmt *node) override;            // Phase 2 Task 2.6
-            void visit(RollbackStmt *node) override;          // Phase 2 Task 2.6
-            void visit(SweepStmt *node) override;             // Phase 3 Task 3.3
+            void visit(StartTransactionStmt *node) override; // Phase 2 Task 2.6
+            void visit(SetTransactionStmt *node) override;   // Phase 3 Task 3.6
+            void visit(CommitStmt *node) override;           // Phase 2 Task 2.6
+            void visit(RollbackStmt *node) override;         // Phase 2 Task 2.6
+            void visit(SweepStmt *node) override;            // Phase 3 Task 3.3
             void visit(LiteralExpr *node) override;
             void visit(IdentifierExpr *node) override;
             void visit(BinaryOpExpr *node) override;

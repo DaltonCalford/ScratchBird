@@ -10,10 +10,7 @@
 
 namespace scratchbird::core
 {
-    SweepManager::SweepManager(Database* db)
-        : db_(db)
-        , txn_manager_(nullptr)
-        , buffer_pool_(nullptr)
+    SweepManager::SweepManager(Database *db) : db_(db), txn_manager_(nullptr), buffer_pool_(nullptr)
     {
     }
 
@@ -26,7 +23,7 @@ namespace scratchbird::core
         }
     }
 
-    Status SweepManager::initialize(ErrorContext* ctx)
+    Status SweepManager::initialize(ErrorContext *ctx)
     {
         if (!db_)
         {
@@ -39,7 +36,8 @@ namespace scratchbird::core
 
         if (!txn_manager_ || !buffer_pool_)
         {
-            SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "TransactionManager or BufferPool not available");
+            SET_ERROR_CONTEXT(ctx, Status::IO_ERROR,
+                              "TransactionManager or BufferPool not available");
             return Status::IO_ERROR;
         }
 
@@ -47,7 +45,7 @@ namespace scratchbird::core
         return Status::OK;
     }
 
-    bool SweepManager::checkSweepTrigger(ErrorContext* ctx)
+    bool SweepManager::checkSweepTrigger(ErrorContext *ctx)
     {
         // Don't trigger if sweep is already in progress
         if (sweep_in_progress_.load(std::memory_order_acquire))
@@ -92,7 +90,7 @@ namespace scratchbird::core
         return false;
     }
 
-    Status SweepManager::executeSweep(bool foreground, ErrorContext* ctx)
+    Status SweepManager::executeSweep(bool foreground, ErrorContext *ctx)
     {
         // Check if sweep is already running
         bool expected = false;
@@ -117,7 +115,9 @@ namespace scratchbird::core
             LOG_INFO(VACUUM, "Sweep completed: OIT unchanged (oit=%lu)", oit_before);
 
             auto end_time = std::chrono::steady_clock::now();
-            uint64_t duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time).count();
+            uint64_t duration_ms =
+                std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time)
+                    .count();
             updateStatistics(oit_before, oit_before, duration_ms);
 
             sweep_in_progress_.store(false, std::memory_order_release);
@@ -146,12 +146,13 @@ namespace scratchbird::core
 
         // 4. Update statistics
         auto end_time = std::chrono::steady_clock::now();
-        uint64_t duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time).count();
+        uint64_t duration_ms =
+            std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time).count();
 
         updateStatistics(oit_before, new_oit, duration_ms);
 
-        LOG_INFO(VACUUM, "Sweep completed: old_oit=%lu, new_oit=%lu, duration=%lums",
-                 oit_before, new_oit, duration_ms);
+        LOG_INFO(VACUUM, "Sweep completed: old_oit=%lu, new_oit=%lu, duration=%lums", oit_before,
+                 new_oit, duration_ms);
 
         // 5. Notify garbage collector that OIT has advanced
         // This allows GC to identify more garbage tuples for removal
@@ -164,13 +165,13 @@ namespace scratchbird::core
         return Status::OK;
     }
 
-    uint64_t SweepManager::findFirstUncommittedTransaction(ErrorContext* ctx)
+    uint64_t SweepManager::findFirstUncommittedTransaction(ErrorContext *ctx)
     {
         uint64_t current_oit = txn_manager_->getOldestXid();
         uint64_t current_xmax = txn_manager_->getCurrentXid();
 
-        LOG_DEBUG(VACUUM, "Scanning transactions: oit=%lu, xmax=%lu, range=%lu",
-                  current_oit, current_xmax, current_xmax - current_oit);
+        LOG_DEBUG(VACUUM, "Scanning transactions: oit=%lu, xmax=%lu, range=%lu", current_oit,
+                  current_xmax, current_xmax - current_oit);
 
         // Scan from current OIT to current XMAX
         // This is a simplified implementation that uses the transaction manager's
@@ -191,26 +192,27 @@ namespace scratchbird::core
             if (s != Status::OK)
             {
                 // If we can't read state, assume it's still active (conservative)
-                LOG_DEBUG(VACUUM, "Failed to read transaction state for xid=%lu, assuming active", xid);
+                LOG_DEBUG(VACUUM, "Failed to read transaction state for xid=%lu, assuming active",
+                          xid);
                 return xid;
             }
 
             // First transaction that's not committed/aborted is new OIT
-            if (state != TransactionState::COMMITTED &&
-                state != TransactionState::ABORTED)
+            if (state != TransactionState::COMMITTED && state != TransactionState::ABORTED)
             {
-                LOG_DEBUG(VACUUM, "Found first uncommitted transaction: xid=%lu, state=%d",
-                          xid, static_cast<int>(state));
+                LOG_DEBUG(VACUUM, "Found first uncommitted transaction: xid=%lu, state=%d", xid,
+                          static_cast<int>(state));
                 return xid;
             }
         }
 
         // All transactions are committed/aborted - OIT can advance to XMAX
-        LOG_DEBUG(VACUUM, "All transactions committed/aborted, advancing OIT to XMAX=%lu", current_xmax);
+        LOG_DEBUG(VACUUM, "All transactions committed/aborted, advancing OIT to XMAX=%lu",
+                  current_xmax);
         return current_xmax;
     }
 
-    Status SweepManager::reclaimSpace(uint64_t new_oit, ErrorContext* ctx)
+    Status SweepManager::reclaimSpace(uint64_t new_oit, ErrorContext *ctx)
     {
         // Space reclamation (foreground sweep):
         // 1. Scan all data pages
@@ -226,14 +228,15 @@ namespace scratchbird::core
         return Status::OK;
     }
 
-    void SweepManager::updateStatistics(uint64_t oit_before, uint64_t oit_after, uint64_t duration_ms)
+    void SweepManager::updateStatistics(uint64_t oit_before, uint64_t oit_after,
+                                        uint64_t duration_ms)
     {
         std::lock_guard<std::mutex> lock(stats_mutex_);
 
         stats_.sweep_count++;
         stats_.last_sweep_time = std::chrono::duration_cast<std::chrono::microseconds>(
-            std::chrono::system_clock::now().time_since_epoch()
-        ).count();
+                                     std::chrono::system_clock::now().time_since_epoch())
+                                     .count();
         stats_.last_sweep_duration_ms = duration_ms;
         stats_.last_oit_before = oit_before;
         stats_.last_oit_after = oit_after;

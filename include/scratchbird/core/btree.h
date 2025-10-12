@@ -20,17 +20,18 @@ namespace scratchbird
         class PageManager;
         struct ErrorContext;
 
-// Page flags
-enum class BTreeFlags : uint16_t {
-    LEAF = 0x0001,           // Leaf page
-    ROOT = 0x0002,           // Root page
-    RIGHTMOST = 0x0004,      // Rightmost page at this level
-    LEFTMOST = 0x0008,       // Leftmost page at this level
-    COMPRESSED = 0x0010,     // Compression enabled
-    ENCRYPTED = 0x0020,      // Page is encrypted
-    HAS_GARBAGE = 0x0040,    // Page has deleted entries
-    INCOMPLETE = 0x0080      // Split in progress
-};
+        // Page flags
+        enum class BTreeFlags : uint16_t
+        {
+            LEAF = 0x0001,        // Leaf page
+            ROOT = 0x0002,        // Root page
+            RIGHTMOST = 0x0004,   // Rightmost page at this level
+            LEFTMOST = 0x0008,    // Leftmost page at this level
+            COMPRESSED = 0x0010,  // Compression enabled
+            ENCRYPTED = 0x0020,   // Page is encrypted
+            HAS_GARBAGE = 0x0040, // Page has deleted entries
+            INCOMPLETE = 0x0080   // Split in progress
+        };
 
         // Compression types
         enum class BTreeCompressionType : uint8_t
@@ -43,15 +44,16 @@ enum class BTreeFlags : uint16_t {
             ADAPTIVE = 5
         };
 
-// Node flags
-enum class BTreeNodeFlags : uint16_t {
-    DELETED = 0x0001,        // Logically deleted
-    HAS_DUPLICATES = 0x0002, // Multiple tuple IDs
-    FIRST_ON_PAGE = 0x0004,  // First node on page (no prefix)
-    LAST_ON_PAGE = 0x0008,   // Last node on page
-    NULL_KEY = 0x0010,       // NULL key value
-    INFINITY_KEY = 0x0020    // Positive infinity (rightmost)
-};
+        // Node flags
+        enum class BTreeNodeFlags : uint16_t
+        {
+            DELETED = 0x0001,        // Logically deleted
+            HAS_DUPLICATES = 0x0002, // Multiple tuple IDs
+            FIRST_ON_PAGE = 0x0004,  // First node on page (no prefix)
+            LAST_ON_PAGE = 0x0008,   // Last node on page
+            NULL_KEY = 0x0010,       // NULL key value
+            INFINITY_KEY = 0x0020    // Positive infinity (rightmost)
+        };
 
 #pragma pack(push, 1)
         // ScratchBird B-Tree page structure (all page sizes supported)
@@ -79,7 +81,8 @@ enum class BTreeNodeFlags : uint16_t {
             // In a B-tree, internal nodes with N keys have N+1 children
             // Each key has a left child pointer (stored in SBBTreeNode->btn_child_page)
             // The rightmost child pointer is stored here in the page header
-            uint64_t btr_rightmost_child; // Rightmost child page (internal nodes only, 0 for leaves)
+            uint64_t
+                btr_rightmost_child; // Rightmost child page (internal nodes only, 0 for leaves)
 
             // Compression metadata
             uint16_t btr_prefix_total;  // Total prefix compression bytes saved
@@ -129,7 +132,7 @@ enum class BTreeNodeFlags : uint16_t {
         {
             ID idx_uuid;
             ID idx_table_uuid;
-            std::vector<ID> idx_column_ids;  // Fixed: Changed from uint16_t to ID (UUID)
+            std::vector<ID> idx_column_ids; // Fixed: Changed from uint16_t to ID (UUID)
             uint32_t idx_flags;
 
             uint64_t idx_root_page;
@@ -154,19 +157,13 @@ enum class BTreeNodeFlags : uint16_t {
             ~BTree();
 
             // Static factory methods
-            static Status create(
-                Database* db,
-                const UuidV7Bytes& index_uuid,
-                const UuidV7Bytes& table_uuid,
-                const std::vector<UuidV7Bytes>& column_uuids,
-                uint32_t* root_page_out,
-                ErrorContext* ctx = nullptr);
+            static Status create(Database *db, const UuidV7Bytes &index_uuid,
+                                 const UuidV7Bytes &table_uuid,
+                                 const std::vector<UuidV7Bytes> &column_uuids,
+                                 uint32_t *root_page_out, ErrorContext *ctx = nullptr);
 
-            static std::unique_ptr<BTree> open(
-                Database* db,
-                const UuidV7Bytes& index_uuid,
-                uint32_t root_page,
-                ErrorContext* ctx = nullptr);
+            static std::unique_ptr<BTree> open(Database *db, const UuidV7Bytes &index_uuid,
+                                               uint32_t root_page, ErrorContext *ctx = nullptr);
 
             Status insert(const std::vector<uint8_t> &key, uint64_t tuple_id,
                           ErrorContext *ctx = nullptr);
@@ -176,12 +173,11 @@ enum class BTreeNodeFlags : uint16_t {
                           ErrorContext *ctx = nullptr);
 
             // Range scan operations
-            std::unique_ptr<BTreeIterator> rangeScan(
-                const std::vector<uint8_t>* start_key,  // nullptr for beginning
-                const std::vector<uint8_t>* end_key,    // nullptr for end
-                bool start_inclusive = true,
-                bool end_inclusive = false,
-                ErrorContext* ctx = nullptr);
+            std::unique_ptr<BTreeIterator>
+            rangeScan(const std::vector<uint8_t> *start_key, // nullptr for beginning
+                      const std::vector<uint8_t> *end_key,   // nullptr for end
+                      bool start_inclusive = true, bool end_inclusive = false,
+                      ErrorContext *ctx = nullptr);
 
             // Vacuum operations
             struct VacuumStats
@@ -193,23 +189,21 @@ enum class BTreeNodeFlags : uint16_t {
                 uint64_t pages_merged;
             };
 
-            Status vacuum(VacuumStats* stats_out = nullptr, ErrorContext* ctx = nullptr);
+            Status vacuum(VacuumStats *stats_out = nullptr, ErrorContext *ctx = nullptr);
 
         private:
             Database *db_;
             SBBTreeIndex index_info_;
-            CharsetManager charset_manager_;  // For collation-aware key comparisons
+            CharsetManager charset_manager_; // For collation-aware key comparisons
 
             // Collation-aware key comparison using CharsetManager
             // Returns: -1 if key1 < key2, 0 if equal, 1 if key1 > key2
-            int compare_keys(const std::vector<uint8_t>& key1,
-                           const std::vector<uint8_t>& key2) const
+            int compare_keys(const std::vector<uint8_t> &key1,
+                             const std::vector<uint8_t> &key2) const
             {
-                return charset_manager_.compare(
-                    key1.data(), static_cast<uint32_t>(key1.size()),
-                    key2.data(), static_cast<uint32_t>(key2.size()),
-                    index_info_.idx_collation_id
-                );
+                return charset_manager_.compare(key1.data(), static_cast<uint32_t>(key1.size()),
+                                                key2.data(), static_cast<uint32_t>(key2.size()),
+                                                index_info_.idx_collation_id);
             }
 
             // Traverses the B-Tree to find the correct leaf page for a given key.
@@ -218,50 +212,56 @@ enum class BTreeNodeFlags : uint16_t {
 
             // Searches for a key within a single B-Tree page using binary search.
             bool searchPage(const SBBTreePage *page, const std::vector<uint8_t> &key,
-                           std::vector<uint64_t> *tuple_ids_out);
+                            std::vector<uint64_t> *tuple_ids_out);
 
             // Page split operations
             Status split_leaf_page(uint64_t left_page_num, const std::vector<uint8_t> &new_key,
                                    uint64_t new_tuple_id, ErrorContext *ctx);
-            Status split_internal_page(uint64_t left_page_num, const std::vector<uint8_t> &separator_key,
+            Status split_internal_page(uint64_t left_page_num,
+                                       const std::vector<uint8_t> &separator_key,
                                        uint64_t right_page_num, ErrorContext *ctx);
-            Status insert_into_parent(uint64_t left_page_num, const std::vector<uint8_t> &separator_key,
+            Status insert_into_parent(uint64_t left_page_num,
+                                      const std::vector<uint8_t> &separator_key,
                                       uint64_t right_page_num, ErrorContext *ctx);
-            Status create_new_root(uint64_t left_page_num, const std::vector<uint8_t> &separator_key,
+            Status create_new_root(uint64_t left_page_num,
+                                   const std::vector<uint8_t> &separator_key,
                                    uint64_t right_page_num, ErrorContext *ctx);
 
             // Allow iterator to access internal members
             friend class BTreeIterator;
 
             // Vacuum helpers
-            Status vacuumPage(uint32_t page_id, VacuumStats& stats, ErrorContext* ctx);
-            Status compactPage(uint8_t* page_data, uint32_t page_size, VacuumStats& stats);
-            bool shouldMergePages(const SBBTreePage* page1, const SBBTreePage* page2) const;
-            Status mergePages(uint32_t left_page, uint32_t right_page, VacuumStats& stats, ErrorContext* ctx);
+            Status vacuumPage(uint32_t page_id, VacuumStats &stats, ErrorContext *ctx);
+            Status compactPage(uint8_t *page_data, uint32_t page_size, VacuumStats &stats);
+            bool shouldMergePages(const SBBTreePage *page1, const SBBTreePage *page2) const;
+            Status mergePages(uint32_t left_page, uint32_t right_page, VacuumStats &stats,
+                              ErrorContext *ctx);
         };
 
         // B-tree range scan iterator
         class BTreeIterator
         {
         public:
-            BTreeIterator(BTree* btree,
-                         const std::vector<uint8_t>* start_key,
-                         const std::vector<uint8_t>* end_key,
-                         bool start_inclusive,
-                         bool end_inclusive);
+            BTreeIterator(BTree *btree, const std::vector<uint8_t> *start_key,
+                          const std::vector<uint8_t> *end_key, bool start_inclusive,
+                          bool end_inclusive);
             ~BTreeIterator();
 
             // Iterator operations
             bool hasNext();
-            Status next(std::vector<uint8_t>* key_out, uint64_t* tuple_id_out, ErrorContext* ctx = nullptr);
+            Status next(std::vector<uint8_t> *key_out, uint64_t *tuple_id_out,
+                        ErrorContext *ctx = nullptr);
 
             // Get current position
-            Status getCurrentKey(std::vector<uint8_t>* key_out) const;
-            uint64_t getScannedCount() const { return scanned_count_; }
+            Status getCurrentKey(std::vector<uint8_t> *key_out) const;
+            uint64_t getScannedCount() const
+            {
+                return scanned_count_;
+            }
 
         private:
-            BTree* btree_;
-            Database* db_;
+            BTree *btree_;
+            Database *db_;
 
             // Range bounds
             std::vector<uint8_t> start_key_;
@@ -274,7 +274,7 @@ enum class BTreeNodeFlags : uint16_t {
             // Current position
             uint32_t current_page_;
             uint16_t current_slot_;
-            uint16_t current_tuple_index_;  // For duplicate keys
+            uint16_t current_tuple_index_; // For duplicate keys
             bool initialized_;
             bool exhausted_;
 
@@ -282,11 +282,11 @@ enum class BTreeNodeFlags : uint16_t {
             uint64_t scanned_count_;
 
             // Internal navigation
-            Status initialize(ErrorContext* ctx);
-            Status moveToNextSlot(ErrorContext* ctx);
-            Status moveToNextPage(ErrorContext* ctx);
-            bool isKeyInRange(const std::vector<uint8_t>& key) const;
-            int compareKeys(const std::vector<uint8_t>& k1, const std::vector<uint8_t>& k2) const;
+            Status initialize(ErrorContext *ctx);
+            Status moveToNextSlot(ErrorContext *ctx);
+            Status moveToNextPage(ErrorContext *ctx);
+            bool isKeyInRange(const std::vector<uint8_t> &key) const;
+            int compareKeys(const std::vector<uint8_t> &k1, const std::vector<uint8_t> &k2) const;
         };
 
     } // namespace core

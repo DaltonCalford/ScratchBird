@@ -216,7 +216,8 @@ namespace scratchbird
             // Write transaction mode (1 byte: 0 = READ_WRITE, 1 = READ_ONLY)
             current_result_->writeByte(node->mode() == parser::TransactionMode::READ_ONLY ? 1 : 0);
 
-            // Write isolation level (1 byte: 0 = READ_COMMITTED, 1 = SNAPSHOT, 2 = SNAPSHOT_TABLE_STABILITY)
+            // Write isolation level (1 byte: 0 = READ_COMMITTED, 1 = SNAPSHOT, 2 =
+            // SNAPSHOT_TABLE_STABILITY)
             uint8_t isolation_byte = 0;
             switch (node->isolation())
             {
@@ -242,7 +243,7 @@ namespace scratchbird
             current_result_->writeInt32(node->lockTimeout());
 
             // Write table reservations list (Phase 3 Task 3.6)
-            const auto& reservations = node->tableReservations();
+            const auto &reservations = node->tableReservations();
             if (reservations.size() > UINT32_MAX)
             {
                 current_result_->addError("Table reservation count exceeds maximum");
@@ -252,7 +253,7 @@ namespace scratchbird
             current_result_->writeOpcode(Opcode::BEGIN_LIST);
             current_result_->writeInt32(static_cast<uint32_t>(reservations.size()));
 
-            for (const auto& res : reservations)
+            for (const auto &res : reservations)
             {
                 // Write table name
                 current_result_->writeOpcode(Opcode::TABLE_REF);
@@ -276,7 +277,8 @@ namespace scratchbird
             // Write transaction mode (1 byte: 0 = READ_WRITE, 1 = READ_ONLY)
             current_result_->writeByte(node->mode() == parser::TransactionMode::READ_ONLY ? 1 : 0);
 
-            // Write isolation level (1 byte: 0 = READ_COMMITTED, 1 = SNAPSHOT, 2 = SNAPSHOT_TABLE_STABILITY)
+            // Write isolation level (1 byte: 0 = READ_COMMITTED, 1 = SNAPSHOT, 2 =
+            // SNAPSHOT_TABLE_STABILITY)
             uint8_t isolation_byte = 0;
             switch (node->isolation())
             {
@@ -299,7 +301,7 @@ namespace scratchbird
             current_result_->writeInt32(node->lockTimeout());
 
             // Write table reservations list (Phase 3 Task 3.6)
-            const auto& reservations = node->tableReservations();
+            const auto &reservations = node->tableReservations();
             if (reservations.size() > UINT32_MAX)
             {
                 current_result_->addError("Table reservation count exceeds maximum");
@@ -309,7 +311,7 @@ namespace scratchbird
             current_result_->writeOpcode(Opcode::BEGIN_LIST);
             current_result_->writeInt32(static_cast<uint32_t>(reservations.size()));
 
-            for (const auto& res : reservations)
+            for (const auto &res : reservations)
             {
                 // Write table name
                 current_result_->writeOpcode(Opcode::TABLE_REF);

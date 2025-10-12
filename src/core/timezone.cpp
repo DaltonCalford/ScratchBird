@@ -16,10 +16,8 @@ namespace scratchbird::core
         int minutes = std::abs(offset_minutes % 60);
 
         std::ostringstream oss;
-        oss << (offset_minutes >= 0 ? '+' : '-')
-            << std::setfill('0') << std::setw(2) << std::abs(hours)
-            << ':'
-            << std::setfill('0') << std::setw(2) << minutes;
+        oss << (offset_minutes >= 0 ? '+' : '-') << std::setfill('0') << std::setw(2)
+            << std::abs(hours) << ':' << std::setfill('0') << std::setw(2) << minutes;
         return oss.str();
     }
 
@@ -30,8 +28,7 @@ namespace scratchbird::core
         {
             if (ctx)
             {
-                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
-                                  "Empty timezone offset string");
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Empty timezone offset string");
             }
             return std::nullopt;
         }
@@ -100,8 +97,9 @@ namespace scratchbird::core
         {
             if (ctx)
             {
-                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
-                                  "Timezone offset out of range (must be between -12:00 and +14:00)");
+                SET_ERROR_CONTEXT(
+                    ctx, Status::INVALID_ARGUMENT,
+                    "Timezone offset out of range (must be between -12:00 and +14:00)");
             }
             return std::nullopt;
         }
@@ -237,7 +235,9 @@ namespace scratchbird::core
 
             // Days until first Sunday (0 if March 1 is Sunday)
             int days_to_first_sunday = (7 - march_1_dow + 1) % 7;
-            if (days_to_first_sunday == 0) days_to_first_sunday = 7; // If March 1 is Sunday, first Sunday is March 1, second is March 8
+            if (days_to_first_sunday == 0)
+                days_to_first_sunday =
+                    7; // If March 1 is Sunday, first Sunday is March 1, second is March 8
 
             // Second Sunday is first Sunday + 7 days
             int second_sunday = days_to_first_sunday == 0 ? 8 : days_to_first_sunday + 7;
@@ -265,7 +265,8 @@ namespace scratchbird::core
 
             // Days until first Sunday
             int days_to_first_sunday = (7 - nov_1_dow + 1) % 7;
-            if (days_to_first_sunday == 0) days_to_first_sunday = 7;
+            if (days_to_first_sunday == 0)
+                days_to_first_sunday = 7;
             int first_sunday = days_to_first_sunday;
 
             if (day < first_sunday)
@@ -332,12 +333,15 @@ namespace scratchbird::core
         while (remaining_days < 0)
         {
             year--;
-            remaining_days += 365 + ((year % 4 == 0 && (year % 100 != 0 || year % 400 == 0)) ? 1 : 0);
+            remaining_days +=
+                365 + ((year % 4 == 0 && (year % 100 != 0 || year % 400 == 0)) ? 1 : 0);
         }
 
-        while (remaining_days >= 365 + ((year % 4 == 0 && (year % 100 != 0 || year % 400 == 0)) ? 1 : 0))
+        while (remaining_days >=
+               365 + ((year % 4 == 0 && (year % 100 != 0 || year % 400 == 0)) ? 1 : 0))
         {
-            remaining_days -= 365 + ((year % 4 == 0 && (year % 100 != 0 || year % 400 == 0)) ? 1 : 0);
+            remaining_days -=
+                365 + ((year % 4 == 0 && (year % 100 != 0 || year % 400 == 0)) ? 1 : 0);
             year++;
         }
 
@@ -427,8 +431,7 @@ namespace scratchbird::core
         {
             if (ctx)
             {
-                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
-                                  "Invalid date format");
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Invalid date format");
             }
             return std::nullopt;
         }
@@ -499,8 +502,7 @@ namespace scratchbird::core
             {
                 if (ctx)
                 {
-                    SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
-                                      "Invalid time format");
+                    SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Invalid time format");
                 }
                 return std::nullopt;
             }
@@ -522,8 +524,7 @@ namespace scratchbird::core
             {
                 if (ctx)
                 {
-                    SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
-                                      "Invalid time format");
+                    SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Invalid time format");
                 }
                 return std::nullopt;
             }
@@ -531,9 +532,8 @@ namespace scratchbird::core
 
         // Validate ranges
         // Allow second = 60 for leap seconds (ISO 8601)
-        if (month < 1 || month > 12 || day < 1 || day > 31 ||
-            hour < 0 || hour > 23 || minute < 0 || minute > 59 ||
-            second < 0 || second > 60 || microseconds < 0 || microseconds > 999999)
+        if (month < 1 || month > 12 || day < 1 || day > 31 || hour < 0 || hour > 23 || minute < 0 ||
+            minute > 59 || second < 0 || second > 60 || microseconds < 0 || microseconds > 999999)
         {
             if (ctx)
             {
@@ -559,8 +559,7 @@ namespace scratchbird::core
         {
             if (ctx)
             {
-                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
-                                  "Failed to convert to timestamp");
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Failed to convert to timestamp");
             }
             return std::nullopt;
         }
@@ -584,7 +583,8 @@ namespace scratchbird::core
         if (tz_offset)
         {
             // Has explicit timezone - convert to GMT
-            int64_t offset_microseconds = static_cast<int64_t>(tz_offset->offset_minutes) * 60 * 1000000;
+            int64_t offset_microseconds =
+                static_cast<int64_t>(tz_offset->offset_minutes) * 60 * 1000000;
             return local_time - offset_microseconds;
         }
         else
@@ -621,14 +621,10 @@ namespace scratchbird::core
 
         // Format: YYYY-MM-DD HH:MM:SS.ffffff
         std::ostringstream oss;
-        oss << std::setfill('0')
-            << std::setw(4) << (timeinfo.tm_year + 1900) << '-'
-            << std::setw(2) << (timeinfo.tm_mon + 1) << '-'
-            << std::setw(2) << timeinfo.tm_mday << ' '
-            << std::setw(2) << timeinfo.tm_hour << ':'
-            << std::setw(2) << timeinfo.tm_min << ':'
-            << std::setw(2) << timeinfo.tm_sec << '.'
-            << std::setw(6) << microseconds;
+        oss << std::setfill('0') << std::setw(4) << (timeinfo.tm_year + 1900) << '-' << std::setw(2)
+            << (timeinfo.tm_mon + 1) << '-' << std::setw(2) << timeinfo.tm_mday << ' '
+            << std::setw(2) << timeinfo.tm_hour << ':' << std::setw(2) << timeinfo.tm_min << ':'
+            << std::setw(2) << timeinfo.tm_sec << '.' << std::setw(6) << microseconds;
 
         if (show_offset)
         {

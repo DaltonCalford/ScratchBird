@@ -9,7 +9,7 @@
 namespace scratchbird::core
 {
 
-    auto BTree::vacuum(VacuumStats* stats_out, ErrorContext* ctx) -> Status
+    auto BTree::vacuum(VacuumStats *stats_out, ErrorContext *ctx) -> Status
     {
         VacuumStats stats{};
         stats.pages_visited = 0;
@@ -22,22 +22,22 @@ namespace scratchbird::core
         uint32_t current_page = index_info_.idx_root_page;
 
         // Navigate to leftmost leaf
-        BufferPool* bp = db_->buffer_pool();
-        void* page_buffer;
+        BufferPool *bp = db_->buffer_pool();
+        void *page_buffer;
         Status status = bp->pinPage(current_page, &page_buffer, ctx);
         if (status != Status::OK)
         {
             return status;
         }
 
-        auto* page = reinterpret_cast<SBBTreePage*>(page_buffer);
+        auto *page = reinterpret_cast<SBBTreePage *>(page_buffer);
 
         // Walk down to leftmost leaf
         while ((page->btr_flags & static_cast<uint16_t>(BTreeFlags::LEAF)) == 0)
         {
             // Internal node - get first child
-            auto* offsets = reinterpret_cast<uint16_t*>(
-                reinterpret_cast<uint8_t*>(page_buffer) + sizeof(SBBTreePage));
+            auto *offsets = reinterpret_cast<uint16_t *>(reinterpret_cast<uint8_t *>(page_buffer) +
+                                                         sizeof(SBBTreePage));
 
             if (page->btr_count == 0)
             {
@@ -46,8 +46,8 @@ namespace scratchbird::core
                 return Status::PAGE_CORRUPT;
             }
 
-            auto* first_node = reinterpret_cast<SBBTreeNode*>(
-                reinterpret_cast<uint8_t*>(page_buffer) + offsets[0]);
+            auto *first_node = reinterpret_cast<SBBTreeNode *>(
+                reinterpret_cast<uint8_t *>(page_buffer) + offsets[0]);
 
             uint32_t next_page = static_cast<uint32_t>(first_node->btn_child_page);
             bp->unpinPage(current_page, false, ctx);
@@ -64,7 +64,7 @@ namespace scratchbird::core
             {
                 return status;
             }
-            page = reinterpret_cast<SBBTreePage*>(page_buffer);
+            page = reinterpret_cast<SBBTreePage *>(page_buffer);
         }
 
         bp->unpinPage(current_page, false, ctx);
@@ -86,7 +86,7 @@ namespace scratchbird::core
                 break;
             }
 
-            page = reinterpret_cast<SBBTreePage*>(page_buffer);
+            page = reinterpret_cast<SBBTreePage *>(page_buffer);
             uint32_t next_page = static_cast<uint32_t>(page->btr_right_sibling);
 
             bp->unpinPage(current_page, false, ctx);
@@ -95,7 +95,7 @@ namespace scratchbird::core
         }
 
         // Update index statistics
-        index_info_.idx_deleted_count = 0;  // All deleted nodes removed
+        index_info_.idx_deleted_count = 0; // All deleted nodes removed
 
         if (stats_out)
         {
@@ -105,20 +105,20 @@ namespace scratchbird::core
         return Status::OK;
     }
 
-    auto BTree::vacuumPage(uint32_t page_id, VacuumStats& stats, ErrorContext* ctx) -> Status
+    auto BTree::vacuumPage(uint32_t page_id, VacuumStats &stats, ErrorContext *ctx) -> Status
     {
         stats.pages_visited++;
 
-        BufferPool* bp = db_->buffer_pool();
-        void* page_buffer;
+        BufferPool *bp = db_->buffer_pool();
+        void *page_buffer;
         Status status = bp->pinPage(page_id, &page_buffer, ctx);
         if (status != Status::OK)
         {
             return status;
         }
 
-        auto* page_data = static_cast<uint8_t*>(page_buffer);
-        auto* page = reinterpret_cast<SBBTreePage*>(page_data);
+        auto *page_data = static_cast<uint8_t *>(page_buffer);
+        auto *page = reinterpret_cast<SBBTreePage *>(page_data);
 
         // Check if page needs vacuuming
         bool has_deleted = (page->btr_flags & static_cast<uint16_t>(BTreeFlags::HAS_GARBAGE)) != 0;
@@ -126,11 +126,11 @@ namespace scratchbird::core
         if (!has_deleted)
         {
             // Quick scan for deleted nodes
-            auto* offsets = reinterpret_cast<uint16_t*>(page_data + sizeof(SBBTreePage));
+            auto *offsets = reinterpret_cast<uint16_t *>(page_data + sizeof(SBBTreePage));
 
             for (uint16_t i = 0; i < page->btr_count; i++)
             {
-                auto* node = reinterpret_cast<SBBTreeNode*>(page_data + offsets[i]);
+                auto *node = reinterpret_cast<SBBTreeNode *>(page_data + offsets[i]);
                 if ((node->btn_flags & static_cast<uint16_t>(BTreeNodeFlags::DELETED)) != 0)
                 {
                     has_deleted = true;
@@ -161,10 +161,10 @@ namespace scratchbird::core
         return Status::OK;
     }
 
-    auto BTree::compactPage(uint8_t* page_data, uint32_t page_size, VacuumStats& stats) -> Status
+    auto BTree::compactPage(uint8_t *page_data, uint32_t page_size, VacuumStats &stats) -> Status
     {
-        auto* page = reinterpret_cast<SBBTreePage*>(page_data);
-        auto* old_offsets = reinterpret_cast<uint16_t*>(page_data + sizeof(SBBTreePage));
+        auto *page = reinterpret_cast<SBBTreePage *>(page_data);
+        auto *old_offsets = reinterpret_cast<uint16_t *>(page_data + sizeof(SBBTreePage));
 
         // Build list of non-deleted nodes
         struct NodeInfo
@@ -183,7 +183,7 @@ namespace scratchbird::core
 
         for (uint16_t i = 0; i < page->btr_count; i++)
         {
-            auto* node = reinterpret_cast<SBBTreeNode*>(page_data + old_offsets[i]);
+            auto *node = reinterpret_cast<SBBTreeNode *>(page_data + old_offsets[i]);
 
             // Calculate node size
             uint32_t node_size = sizeof(SBBTreeNode) + node->btn_key_len;
@@ -193,7 +193,7 @@ namespace scratchbird::core
             }
             else
             {
-                node_size += sizeof(uint64_t);  // child pointer
+                node_size += sizeof(uint64_t); // child pointer
             }
 
             bytes_before += node_size;
@@ -202,7 +202,7 @@ namespace scratchbird::core
             if ((node->btn_flags & static_cast<uint16_t>(BTreeNodeFlags::DELETED)) != 0)
             {
                 stats.nodes_removed++;
-                continue;  // Skip deleted nodes
+                continue; // Skip deleted nodes
             }
 
             // Extract node data
@@ -211,19 +211,19 @@ namespace scratchbird::core
             info.size = node_size;
 
             // Extract key
-            const uint8_t* key_data = reinterpret_cast<const uint8_t*>(node) + sizeof(SBBTreeNode);
+            const uint8_t *key_data = reinterpret_cast<const uint8_t *>(node) + sizeof(SBBTreeNode);
             info.key.assign(key_data, key_data + node->btn_key_len);
 
             // Extract tuple IDs or child pointer
-            const uint8_t* tuple_data = key_data + node->btn_key_len;
+            const uint8_t *tuple_data = key_data + node->btn_key_len;
             if ((page->btr_flags & static_cast<uint16_t>(BTreeFlags::LEAF)) != 0)
             {
-                auto* tuple_ids = reinterpret_cast<const uint64_t*>(tuple_data);
+                auto *tuple_ids = reinterpret_cast<const uint64_t *>(tuple_data);
                 info.tuple_ids.assign(tuple_ids, tuple_ids + node->btn_tuple_count);
             }
             else
             {
-                auto* child_ptr = reinterpret_cast<const uint64_t*>(tuple_data);
+                auto *child_ptr = reinterpret_cast<const uint64_t *>(tuple_data);
                 info.tuple_ids.push_back(*child_ptr);
             }
 
@@ -245,15 +245,15 @@ namespace scratchbird::core
 
         for (size_t i = 0; i < live_nodes.size(); i++)
         {
-            const auto& node_info = live_nodes[i];
+            const auto &node_info = live_nodes[i];
 
             // Allocate space from end
             new_high_water -= node_info.size;
 
-            auto* new_node = reinterpret_cast<SBBTreeNode*>(page_data + new_high_water);
+            auto *new_node = reinterpret_cast<SBBTreeNode *>(page_data + new_high_water);
 
             // Copy node header
-            auto* old_node = reinterpret_cast<SBBTreeNode*>(page_data + node_info.old_offset);
+            auto *old_node = reinterpret_cast<SBBTreeNode *>(page_data + node_info.old_offset);
             new_node->btn_flags = old_node->btn_flags;
             new_node->btn_prefix_len = old_node->btn_prefix_len;
             new_node->btn_suffix_trunc = old_node->btn_suffix_trunc;
@@ -264,11 +264,11 @@ namespace scratchbird::core
             new_node->btn_xmax = old_node->btn_xmax;
 
             // Copy key
-            uint8_t* key_location = reinterpret_cast<uint8_t*>(new_node) + sizeof(SBBTreeNode);
+            uint8_t *key_location = reinterpret_cast<uint8_t *>(new_node) + sizeof(SBBTreeNode);
             memcpy(key_location, node_info.key.data(), node_info.key.size());
 
             // Copy tuple IDs or child pointer
-            uint8_t* tuple_location = key_location + node_info.key.size();
+            uint8_t *tuple_location = key_location + node_info.key.size();
             memcpy(tuple_location, node_info.tuple_ids.data(),
                    node_info.tuple_ids.size() * sizeof(uint64_t));
 
@@ -288,7 +288,7 @@ namespace scratchbird::core
         return Status::OK;
     }
 
-    bool BTree::shouldMergePages(const SBBTreePage* page1, const SBBTreePage* page2) const
+    bool BTree::shouldMergePages(const SBBTreePage *page1, const SBBTreePage *page2) const
     {
         if (!page1 || !page2)
         {
@@ -317,13 +317,13 @@ namespace scratchbird::core
         uint32_t total_used = page1_used + page2_used;
 
         // Can merge if combined data fits in one page with some headroom
-        uint32_t merge_threshold = (db_->page_size() * 3) / 4;  // 75% full
+        uint32_t merge_threshold = (db_->page_size() * 3) / 4; // 75% full
 
         return total_used < merge_threshold;
     }
 
-    auto BTree::mergePages(uint32_t left_page, uint32_t right_page,
-                          VacuumStats& stats, ErrorContext* ctx) -> Status
+    auto BTree::mergePages(uint32_t left_page, uint32_t right_page, VacuumStats &stats,
+                           ErrorContext *ctx) -> Status
     {
         // TODO: Implement page merging
         // This is complex as it requires:

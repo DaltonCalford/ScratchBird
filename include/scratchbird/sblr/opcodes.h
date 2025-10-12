@@ -17,9 +17,9 @@ namespace scratchbird
             VERSION = 0x01, // Version marker (followed by version byte)
 
             // Statements
-            CREATE_TABLE = 0x10, // Create table
-            INSERT = 0x11,       // Insert row
-            SELECT = 0x12,       // Select query
+            CREATE_TABLE = 0x10,      // Create table
+            INSERT = 0x11,            // Insert row
+            SELECT = 0x12,            // Select query
             START_TRANSACTION = 0x13, // Start transaction (Phase 2 Task 2.6)
             SET_TRANSACTION = 0x17,   // Set transaction parameters (Phase 3 Task 3.6)
             COMMIT = 0x14,            // Commit transaction (Phase 2 Task 2.6)
@@ -27,22 +27,22 @@ namespace scratchbird
             SWEEP = 0x16,             // Sweep database (Phase 3 Task 3.3)
 
             // Data types
-            TYPE_INTEGER = 0x20,  // 32-bit integer (INT32)
-            TYPE_BIGINT = 0x21,   // 64-bit integer (INT64)
-            TYPE_DOUBLE = 0x22,   // Double precision float (FLOAT64)
-            TYPE_VARCHAR = 0x23,  // Variable length string
-            TYPE_BOOLEAN = 0x24,  // Boolean (true/false)
-            TYPE_INT8 = 0x25,     // 8-bit integer
-            TYPE_INT16 = 0x26,    // 16-bit integer
-            TYPE_FLOAT32 = 0x27,  // Single precision float
-            TYPE_DATE = 0x28,     // Date (days since epoch)
-            TYPE_TIME = 0x29,     // Time (microseconds since midnight)
+            TYPE_INTEGER = 0x20,   // 32-bit integer (INT32)
+            TYPE_BIGINT = 0x21,    // 64-bit integer (INT64)
+            TYPE_DOUBLE = 0x22,    // Double precision float (FLOAT64)
+            TYPE_VARCHAR = 0x23,   // Variable length string
+            TYPE_BOOLEAN = 0x24,   // Boolean (true/false)
+            TYPE_INT8 = 0x25,      // 8-bit integer
+            TYPE_INT16 = 0x26,     // 16-bit integer
+            TYPE_FLOAT32 = 0x27,   // Single precision float
+            TYPE_DATE = 0x28,      // Date (days since epoch)
+            TYPE_TIME = 0x29,      // Time (microseconds since midnight)
             TYPE_TIMESTAMP = 0x2A, // Timestamp (microseconds since epoch)
-            TYPE_UUID = 0x2B,     // UUID (16 bytes)
-            TYPE_DECIMAL = 0x2C,  // DECIMAL with precision/scale
-            TYPE_CHAR = 0x2D,     // Fixed-length character string
-            TYPE_TEXT = 0x2E,     // Unlimited text
-            TYPE_BINARY = 0x2F,   // Fixed-length binary
+            TYPE_UUID = 0x2B,      // UUID (16 bytes)
+            TYPE_DECIMAL = 0x2C,   // DECIMAL with precision/scale
+            TYPE_CHAR = 0x2D,      // Fixed-length character string
+            TYPE_TEXT = 0x2E,      // Unlimited text
+            TYPE_BINARY = 0x2F,    // Fixed-length binary
 
             // Values
             LITERAL_NULL = 0x30,      // NULL value
@@ -85,15 +85,15 @@ namespace scratchbird
             EXPR_ILIKE = 0x79, // ILIKE case-insensitive pattern match
 
             // String functions
-            FUNC_LENGTH = 0x73,         // LENGTH(str) - byte length
-            FUNC_SUBSTRING = 0x74,      // SUBSTRING(str, start, length)
-            FUNC_UPPER = 0x75,          // UPPER(str)
-            FUNC_LOWER = 0x76,          // LOWER(str)
-            FUNC_TRIM = 0x77,           // TEND(str)
-            FUNC_CHAR_LENGTH = 0x89,    // CHAR_LENGTH(str) - character count
-            FUNC_OCTET_LENGTH = 0x8A,   // OCTET_LENGTH(str) - byte count
-            FUNC_CONVERT = 0x8B,        // CONVERT(str, from_cs, to_cs)
-            FUNC_COLLATE = 0x8C,        // Apply collation to expression
+            FUNC_LENGTH = 0x73,       // LENGTH(str) - byte length
+            FUNC_SUBSTRING = 0x74,    // SUBSTRING(str, start, length)
+            FUNC_UPPER = 0x75,        // UPPER(str)
+            FUNC_LOWER = 0x76,        // LOWER(str)
+            FUNC_TRIM = 0x77,         // TEND(str)
+            FUNC_CHAR_LENGTH = 0x89,  // CHAR_LENGTH(str) - character count
+            FUNC_OCTET_LENGTH = 0x8A, // OCTET_LENGTH(str) - byte count
+            FUNC_CONVERT = 0x8B,      // CONVERT(str, from_cs, to_cs)
+            FUNC_COLLATE = 0x8C,      // Apply collation to expression
 
             // Aggregate functions
             AGG_SUM = 0x7A,   // SUM(expr)
@@ -103,12 +103,13 @@ namespace scratchbird
             AGG_COUNT = 0x7E, // COUNT(expr) or COUNT(*)
 
             // Temporal functions
-            FUNC_DATE_ADD = 0x84,      // DATE_ADD(date, days)
-            FUNC_DATE_SUB = 0x85,      // DATE_SUB(date, days)
-            FUNC_DATE_DIFF = 0x86,     // DATE_DIFF(date1, date2) - returns days
-            FUNC_NOW = 0x87,           // NOW() - current timestamp
-            FUNC_CURRENT_DATE = 0x88,  // CURRENT_DATE() - current date
-            FUNC_AT_TIME_ZONE = 0x8D,  // timestamp AT TIME ZONE timezone_id - convert to timezone for display
+            FUNC_DATE_ADD = 0x84,     // DATE_ADD(date, days)
+            FUNC_DATE_SUB = 0x85,     // DATE_SUB(date, days)
+            FUNC_DATE_DIFF = 0x86,    // DATE_DIFF(date1, date2) - returns days
+            FUNC_NOW = 0x87,          // NOW() - current timestamp
+            FUNC_CURRENT_DATE = 0x88, // CURRENT_DATE() - current date
+            FUNC_AT_TIME_ZONE =
+                0x8D, // timestamp AT TIME ZONE timezone_id - convert to timezone for display
 
             // Lists
             BEGIN_LIST = 0x80, // Start of list (followed by count)

@@ -732,7 +732,8 @@ namespace scratchbird
                 }
                 else
                 {
-                    error("Expected isolation level (READ COMMITTED, SNAPSHOT, or SNAPSHOT TABLE STABILITY)");
+                    error("Expected isolation level (READ COMMITTED, SNAPSHOT, or SNAPSHOT TABLE "
+                          "STABILITY)");
                     synchronize();
                     return nullptr;
                 }
@@ -775,7 +776,8 @@ namespace scratchbird
                     advance();
 
                     // Parse FOR keyword
-                    if (!consume(TokenType::KW_FOR, "Expected FOR after table name in RESERVING clause"))
+                    if (!consume(TokenType::KW_FOR,
+                                 "Expected FOR after table name in RESERVING clause"))
                     {
                         synchronize();
                         return nullptr;
@@ -838,8 +840,9 @@ namespace scratchbird
             }
 
             auto span = makeSpan(start_loc);
-            return arena_.make<StartTransactionStmt>(span, mode, isolation, wait, commit_outstanding,
-                                                     lock_timeout, std::move(table_reservations));
+            return arena_.make<StartTransactionStmt>(span, mode, isolation, wait,
+                                                     commit_outstanding, lock_timeout,
+                                                     std::move(table_reservations));
         }
 
         Statement *Parser::parseSetTransaction()
@@ -934,7 +937,8 @@ namespace scratchbird
                 }
                 else
                 {
-                    error("Expected isolation level (READ COMMITTED, SNAPSHOT, or SNAPSHOT TABLE STABILITY)");
+                    error("Expected isolation level (READ COMMITTED, SNAPSHOT, or SNAPSHOT TABLE "
+                          "STABILITY)");
                     synchronize();
                     return nullptr;
                 }
@@ -977,7 +981,8 @@ namespace scratchbird
                     advance();
 
                     // Parse FOR keyword
-                    if (!consume(TokenType::KW_FOR, "Expected FOR after table name in RESERVING clause"))
+                    if (!consume(TokenType::KW_FOR,
+                                 "Expected FOR after table name in RESERVING clause"))
                     {
                         synchronize();
                         return nullptr;
@@ -1024,8 +1029,8 @@ namespace scratchbird
             }
 
             auto span = makeSpan(start_loc);
-            return arena_.make<SetTransactionStmt>(span, mode, isolation, wait,
-                                                   lock_timeout, std::move(table_reservations));
+            return arena_.make<SetTransactionStmt>(span, mode, isolation, wait, lock_timeout,
+                                                   std::move(table_reservations));
         }
 
         Statement *Parser::parseCommit()
@@ -1233,20 +1238,23 @@ namespace scratchbird
                 bool is_try_cast = previous().type == TokenType::KW_TRY_CAST;
                 const char *keyword_name = is_try_cast ? "TRY_CAST" : "CAST";
 
-                if (!consume(TokenType::LEFT_PAREN, std::string("Expected '(' after ") + keyword_name))
+                if (!consume(TokenType::LEFT_PAREN,
+                             std::string("Expected '(' after ") + keyword_name))
                     return nullptr;
 
                 auto *expr = parseExpression();
                 if (!expr)
                     return nullptr;
 
-                if (!consume(TokenType::KW_AS, std::string("Expected AS in ") + keyword_name + " expression"))
+                if (!consume(TokenType::KW_AS,
+                             std::string("Expected AS in ") + keyword_name + " expression"))
                     return nullptr;
 
                 auto target_type = parseTypeName();
 
                 auto end_loc = current().location;
-                if (!consume(TokenType::RIGHT_PAREN, std::string("Expected ')' after ") + keyword_name))
+                if (!consume(TokenType::RIGHT_PAREN,
+                             std::string("Expected ')' after ") + keyword_name))
                     return nullptr;
 
                 auto span = makeSpan(start_loc, end_loc);

@@ -39,38 +39,39 @@ namespace scratchbird::core
     class SweepManager
     {
     public:
-        SweepManager(Database* db);
+        SweepManager(Database *db);
         ~SweepManager();
 
         // Explicitly delete copy operations
-        SweepManager(const SweepManager&) = delete;
-        SweepManager& operator=(const SweepManager&) = delete;
+        SweepManager(const SweepManager &) = delete;
+        SweepManager &operator=(const SweepManager &) = delete;
 
         // Initialize sweep manager
-        Status initialize(ErrorContext* ctx = nullptr);
+        Status initialize(ErrorContext *ctx = nullptr);
 
         // Check if sweep should be triggered based on transaction gap
         // Called after transaction commit
         // Returns true if sweep was triggered
-        bool checkSweepTrigger(ErrorContext* ctx = nullptr);
+        bool checkSweepTrigger(ErrorContext *ctx = nullptr);
 
         // Execute sweep process
-        // foreground: true = full sweep with space reclamation, false = background (OIT advancement only)
-        // Returns Status::OK on success
-        Status executeSweep(bool foreground, ErrorContext* ctx = nullptr);
+        // foreground: true = full sweep with space reclamation, false = background (OIT advancement
+        // only) Returns Status::OK on success
+        Status executeSweep(bool foreground, ErrorContext *ctx = nullptr);
 
         // Get current sweep statistics
         SweepStatistics getStatistics() const;
 
         // Check if sweep is currently running
-        bool isSweepInProgress() const {
+        bool isSweepInProgress() const
+        {
             return sweep_in_progress_.load(std::memory_order_acquire);
         }
 
     private:
-        Database* db_;
-        TransactionManager* txn_manager_;
-        BufferPool* buffer_pool_;
+        Database *db_;
+        TransactionManager *txn_manager_;
+        BufferPool *buffer_pool_;
 
         // Sweep statistics (protected by mutex)
         mutable std::mutex stats_mutex_;
@@ -83,11 +84,11 @@ namespace scratchbird::core
 
         // Scan TIP pages to find first uncommitted transaction
         // Returns new OIT (or 0 if no change needed)
-        uint64_t findFirstUncommittedTransaction(ErrorContext* ctx);
+        uint64_t findFirstUncommittedTransaction(ErrorContext *ctx);
 
         // Reclaim space from old tuple versions (foreground sweep only)
         // Removes versions with xmax < new_oit
-        Status reclaimSpace(uint64_t new_oit, ErrorContext* ctx);
+        Status reclaimSpace(uint64_t new_oit, ErrorContext *ctx);
 
         // Update sweep statistics
         void updateStatistics(uint64_t oit_before, uint64_t oit_after, uint64_t duration_ms);

@@ -168,11 +168,11 @@ namespace scratchbird
             void executeCreateTable();
             void executeInsert();
             void executeSelect();
-            void executeSweep();                // Phase 3 Task 3.3
-            void executeStartTransaction();     // Phase 2 Task 2.6, Phase 3 Task 3.6
-            void executeSetTransaction();       // Phase 3 Task 3.6
-            void executeCommit();               // Phase 2 Task 2.6
-            void executeRollback();             // Phase 2 Task 2.6
+            void executeSweep();            // Phase 3 Task 3.3
+            void executeStartTransaction(); // Phase 2 Task 2.6, Phase 3 Task 3.6
+            void executeSetTransaction();   // Phase 3 Task 3.6
+            void executeCommit();           // Phase 2 Task 2.6
+            void executeRollback();         // Phase 2 Task 2.6
 
             // Monitoring/system table execution
             void executeMonitoringQuery(const std::string &table_name);
@@ -182,20 +182,22 @@ namespace scratchbird
             void executeBinaryOp(Opcode op);
 
             // Pattern matching helpers
-            bool matchPattern(const std::string &text, const std::string &pattern, bool case_insensitive);
+            bool matchPattern(const std::string &text, const std::string &pattern,
+                              bool case_insensitive);
             bool matchPatternRecursive(const std::string &text, size_t text_pos,
-                                      const std::string &pattern, size_t pattern_pos);
+                                       const std::string &pattern, size_t pattern_pos);
 
             // Collation-aware string comparison helper
-            int compareStrings(const std::string& left, const std::string& right, uint32_t collation_id = 101) const;
+            int compareStrings(const std::string &left, const std::string &right,
+                               uint32_t collation_id = 101) const;
 
             // Error handling
             void error(const std::string &msg);
 
             // Tuple deserialization helper
             bool deserializeTuple(const uint8_t *tuple_data, uint32_t tuple_size,
-                                   const std::vector<core::CatalogManager::ColumnInfo> &columns,
-                                   std::vector<Value> &values_out);
+                                  const std::vector<core::CatalogManager::ColumnInfo> &columns,
+                                  std::vector<Value> &values_out);
         };
 
     } // namespace sblr
