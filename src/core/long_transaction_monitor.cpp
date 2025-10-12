@@ -338,10 +338,33 @@ namespace scratchbird::core
                 if (is_read_only)
                 {
                     LOG_WARNING(TRANSACTION, "Rolling back read-only long transaction: XID=%lu, ProcID=%u", xid, proc_id);
-                    // TODO: Implement connection lookup and rollback
-                    // For now, just log
-                    std::lock_guard<std::mutex> lock(stats_mutex_);
-                    stats_.readonly_rolled_back++;
+
+                    // Rollback the transaction via TransactionManager
+                    if (db_ && db_->transaction_manager())
+                    {
+                        TransactionManager* txn_mgr = db_->transaction_manager();
+                        Status rollback_status = txn_mgr->rollbackTransaction(proc_id, xid, ctx);
+
+                        if (rollback_status == Status::OK)
+                        {
+                            LOG_INFO(TRANSACTION, "Successfully rolled back long read-only transaction: XID=%lu", xid);
+                            std::lock_guard<std::mutex> lock(stats_mutex_);
+                            stats_.readonly_rolled_back++;
+                        }
+                        else
+                        {
+                            LOG_ERROR(TRANSACTION, "Failed to rollback long read-only transaction: XID=%lu, Status=%d",
+                                     xid, static_cast<int>(rollback_status));
+                            std::lock_guard<std::mutex> lock(stats_mutex_);
+                            stats_.warnings_logged++;
+                        }
+                    }
+                    else
+                    {
+                        LOG_ERROR(TRANSACTION, "Cannot rollback transaction - TransactionManager unavailable");
+                        std::lock_guard<std::mutex> lock(stats_mutex_);
+                        stats_.warnings_logged++;
+                    }
                 }
                 else
                 {
@@ -353,28 +376,63 @@ namespace scratchbird::core
 
             case LongTransactionPolicy::ROLLBACK_ALL:
                 LOG_WARNING(TRANSACTION, "Rolling back long transaction: XID=%lu, ProcID=%u, ReadOnly=%d", xid, proc_id, is_read_only);
-                // TODO: Implement connection lookup and rollback
-                // For now, just log
+
+                // Rollback the transaction via TransactionManager (both read-only and read-write)
+                if (db_ && db_->transaction_manager())
                 {
-                    std::lock_guard<std::mutex> lock(stats_mutex_);
-                    if (is_read_only)
+                    TransactionManager* txn_mgr = db_->transaction_manager();
+                    Status rollback_status = txn_mgr->rollbackTransaction(proc_id, xid, ctx);
+
+                    if (rollback_status == Status::OK)
                     {
-                        stats_.readonly_rolled_back++;
+                        LOG_INFO(TRANSACTION, "Successfully rolled back long transaction: XID=%lu, ReadOnly=%d", xid, is_read_only);
+                        std::lock_guard<std::mutex> lock(stats_mutex_);
+                        if (is_read_only)
+                        {
+                            stats_.readonly_rolled_back++;
+                        }
+                        else
+                        {
+                            stats_.readwrite_rolled_back++;
+                        }
                     }
                     else
                     {
-                        stats_.readwrite_rolled_back++;
+                        LOG_ERROR(TRANSACTION, "Failed to rollback long transaction: XID=%lu, Status=%d",
+                                 xid, static_cast<int>(rollback_status));
+                        std::lock_guard<std::mutex> lock(stats_mutex_);
+                        stats_.warnings_logged++;
                     }
+                }
+                else
+                {
+                    LOG_ERROR(TRANSACTION, "Cannot rollback transaction - TransactionManager unavailable");
+                    std::lock_guard<std::mutex> lock(stats_mutex_);
+                    stats_.warnings_logged++;
                 }
                 break;
 
             case LongTransactionPolicy::TERMINATE_CONNECTION:
                 LOG_WARNING(TRANSACTION, "Terminating connection for long transaction: XID=%lu, ProcID=%u", xid, proc_id);
-                // TODO: Implement connection lookup and termination
-                // For now, just log
+
+                // NOTE: Connection termination requires access to ConnectionContext and connection management
+                // infrastructure that is not yet integrated with LongTransactionMonitor.
+                //
+                // To implement this properly, we need:
+                // 1. A way to look up ConnectionContext* from proc_id (e.g., via Database or ProcArray)
+                // 2. Access to the connection's socket/file descriptor to force close it
+                // 3. Proper cleanup to ensure the backend process detects the closed connection
+                // 4. Consider graceful vs forceful termination options
+                //
+                // For now, ROLLBACK_ALL policy provides similar protection by aborting the transaction
+                // without terminating the connection, allowing the client to continue with a new transaction.
+                //
+                // This is a planned enhancement tracked in the development roadmap.
+
+                LOG_ERROR(TRANSACTION, "TERMINATE_CONNECTION policy not yet implemented - use ROLLBACK_ALL instead");
                 {
                     std::lock_guard<std::mutex> lock(stats_mutex_);
-                    stats_.connections_terminated++;
+                    stats_.warnings_logged++;  // Count as warning since action couldn't be taken
                 }
                 break;
         }
