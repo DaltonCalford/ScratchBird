@@ -154,9 +154,17 @@ namespace scratchbird
             {
                 return page_manager_.get();
             }
+            const PageManager *page_manager() const
+            {
+                return page_manager_.get();
+            }
 
             // Get buffer pool
             BufferPool *buffer_pool()
+            {
+                return buffer_pool_.get();
+            }
+            const BufferPool *buffer_pool() const
             {
                 return buffer_pool_.get();
             }
@@ -166,15 +174,27 @@ namespace scratchbird
             {
                 return catalog_manager_.get();
             }
+            const CatalogManager *catalog_manager() const
+            {
+                return catalog_manager_.get();
+            }
 
             // Get storage engine
             StorageEngine *storage_engine()
             {
                 return storage_engine_.get();
             }
+            const StorageEngine *storage_engine() const
+            {
+                return storage_engine_.get();
+            }
 
             // Get transaction manager
             TransactionManager *transaction_manager()
+            {
+                return transaction_manager_.get();
+            }
+            const TransactionManager *transaction_manager() const
             {
                 return transaction_manager_.get();
             }
@@ -199,9 +219,17 @@ namespace scratchbird
             {
                 return lock_manager_.get();
             }
+            const LockManager *lock_manager() const
+            {
+                return lock_manager_.get();
+            }
 
             // Get vacuum manager
             Vacuum *vacuum()
+            {
+                return vacuum_.get();
+            }
+            const Vacuum *vacuum() const
             {
                 return vacuum_.get();
             }
@@ -211,9 +239,17 @@ namespace scratchbird
             {
                 return clog_.get();
             }
+            const Clog *clog() const
+            {
+                return clog_.get();
+            }
 
             // Get sweep manager
             SweepManager *sweep_manager()
+            {
+                return sweep_manager_.get();
+            }
+            const SweepManager *sweep_manager() const
             {
                 return sweep_manager_.get();
             }
@@ -223,9 +259,17 @@ namespace scratchbird
             {
                 return garbage_collector_.get();
             }
+            const GarbageCollector *garbage_collector() const
+            {
+                return garbage_collector_.get();
+            }
 
             // Get long transaction monitor
             LongTransactionMonitor *long_transaction_monitor()
+            {
+                return long_transaction_monitor_.get();
+            }
+            const LongTransactionMonitor *long_transaction_monitor() const
             {
                 return long_transaction_monitor_.get();
             }

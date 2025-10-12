@@ -154,10 +154,10 @@ namespace scratchbird::core
         Status releaseAllLocks(uint32_t proc_id, ErrorContext *ctx = nullptr);
 
         // Check if lock conflicts
-        bool checkConflict(const LockTag &tag, LockMode mode);
+        bool checkConflict(const LockTag &tag, LockMode mode) const;
 
         // Get statistics
-        void getStatistics(LockStats *stats_out);
+        void getStatistics(LockStats *stats_out) const;
 
         // Deadlock detection (called periodically or on timeout)
         Status detectDeadlocks(ErrorContext *ctx = nullptr);
@@ -170,7 +170,7 @@ namespace scratchbird::core
         std::unordered_multimap<uint32_t, Lock *> proc_locks_; // By proc_id (non-owning references)
 
         // Synchronization
-        std::mutex lock_table_mutex_;
+        mutable std::mutex lock_table_mutex_;
         std::condition_variable lock_wait_cv_;
 
         // Deadlock detection
@@ -190,7 +190,7 @@ namespace scratchbird::core
         Lock *findOrCreateLock(const LockTag &tag);
         void removeLockIfUnused(const LockTag &tag);
         void grantWaitingLocks(Lock *lock);
-        bool checkConflictInternal(const Lock *lock, LockMode mode, uint32_t skip_proc_id);
+        bool checkConflictInternal(const Lock *lock, LockMode mode, uint32_t skip_proc_id) const;
 
         // READ ONLY transaction optimization helpers
         bool isReadOnlyTransaction(uint32_t proc_id) const;
