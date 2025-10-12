@@ -55,17 +55,12 @@
             // Note: This is called from load() which already holds the lock
             // Don't lock again to avoid deadlock
 
-            // fprintf(stderr, "TransactionManager::initialize() called\n");
-
             // Allocate the first TIP page
-            // fprintf(stderr, "About to allocate TIP page\n");
             Status status = allocateTipPage(tip_root_page_, ctx);
             if (status != Status::OK)
             {
-                // fprintf(stderr, "Failed to allocate TIP page: %d\n", static_cast<int>(status));
                 return status;
             }
-            // fprintf(stderr, "Allocated TIP page: %u\n", tip_root_page_);
 
             // Update database header with TIP root page
             void *header_buffer;
@@ -917,7 +912,7 @@
             if (status != Status::OK)
             {
                 // Log but don't fail - the page is allocated
-                // fprintf(stderr, "Warning: Failed to flush page manager after TIP allocation\n");
+                LOG_WARNING(TRANSACTION, "Failed to flush page manager after TIP page allocation");
             }
 
             // Now pin and initialize the page properly
