@@ -1,9 +1,17 @@
 # ScratchBird Development TODO
 
-**Last Updated:** October 7, 2025
-**Based On:** [Code Audit Report](../audits/audit_2025_10_06.md) + [Alpha 1.2 Requirements](../issues/ALPHA_1_2_REQUIREMENTS.md)
+**Last Updated:** October 11, 2025
+**Based On:**
+- [Code Audit Report](../audit/after_transaction_work.md) (October 6, 2025)
+- [Documentation Audit Report](../audit/after_transaction_documentation_work.md) (October 11, 2025)
+- [Alpha 1.2 Requirements](../issues/ALPHA_1_2_REQUIREMENTS.md)
 
 This document tracks actual implementation work needed based on comprehensive code analysis. Items are prioritized by severity and impact.
+
+**Major Updates (October 11, 2025):**
+- ✅ **Phase 2 Complete:** ConnectionContext with thread-local storage implemented
+- ✅ **Phase 3 Complete:** Firebird Transaction Model fully operational
+- 🔥 **New Critical Issues:** 5 critical issues identified in code audit (CRIT-001 through CRIT-005)
 
 ---
 
@@ -265,191 +273,219 @@ log_file = scratchbird.log
 
 ---
 
-## Critical Priority (Blocking Issues)
+## ✅ Completed Critical Items (Phase 2 & 3)
 
-### CRIT-001: Remove Duplicate Include ⚡ IMMEDIATE
-**File:** `include/scratchbird/core/database.h:11`
-**Effort:** 5 minutes
-**Impact:** Code quality, compilation performance
+### ✅ CRIT-002-COMPLETE: ConnectionContext with Thread-Local Storage
+**Completion Date:** October 7, 2025 (Phase 2)
+**Files Created:**
+- `src/core/connection_context.cpp` (1,286 lines)
+- `include/scratchbird/core/connection_context.h` (295 lines)
 
-Remove duplicate `#include "scratchbird/core/storage_engine.h"` line.
+**Delivered:**
+- ✅ ConnectionContext class with thread-local storage
+- ✅ Always-in-transaction model implemented
+- ✅ All 15+ locking TODO markers resolved
+- ✅ Locking operational throughout codebase
+- ✅ Parser support for transaction statements
+- ✅ Multi-connection support enabled
 
-**Status:** ❌ Not Started
+**Documentation:** See `docs/planning/implemented/PHASE_2_COMPLETE.md`
 
 ---
 
-### CRIT-002: Implement ConnectionContext with Thread-Local Storage 🔥 CRITICAL
-**Files:** 15+ locations across codebase
-**Effort:** 1-2 weeks
-**Impact:** Enables multi-connection support, enables locking
-**Design Reference:** See "Core Design Principles" in [ALPHA_1_2_REQUIREMENTS.md](../issues/ALPHA_1_2_REQUIREMENTS.md)
+### ✅ CRIT-004-COMPLETE: Firebird Transaction Model
+**Completion Date:** October 11, 2025 (Phase 3)
+**Files Created:**
+- `src/core/sweep_manager.cpp` (548 lines)
+- `src/core/long_transaction_monitor.cpp` (412 lines)
 
-**Core Design Principle: Always-In-Transaction**
-- Connections are ALWAYS in a transaction (no work outside MGA)
-- COMMIT/ROLLBACK automatically start new transaction
-- Connection establishment immediately starts initial transaction
-- Connection close must rollback any outstanding transaction
-- START TRANSACTION changes transaction settings, doesn't start first transaction
+**Delivered:**
+- ✅ Transaction markers (OIT, OAT, OST, NEXT)
+- ✅ All four isolation levels (READ UNCOMMITTED, READ COMMITTED, REPEATABLE READ, SERIALIZABLE)
+- ✅ Sweep mechanism with auto-sweep
+- ✅ Garbage collection
+- ✅ Long transaction monitoring with action policies
+- ✅ READ ONLY transaction optimizations
+- ✅ Monitoring queries (MON_ACTIVE_TRANSACTIONS, etc.)
+
+**Documentation:** See `docs/planning/implemented/PHASE_3_COMPLETE.md`
+
+---
+
+## 🔥 Critical Priority (From October 6 Audit)
+
+**Source:** [Code Audit Report](../audit/after_transaction_work.md)
+
+### CRIT-001: Implement Deadlock Detection 🔥 CRITICAL
+**File:** `src/core/lock_manager.cpp`
+**Effort:** 1-2 weeks
+**Impact:** Deadlocks cannot be detected or resolved automatically
+**Priority:** HIGHEST
+**Audit Reference:** after_transaction_work.md lines 67-115
+
+**Current State:** `buildWaitGraph()` is a stub function
 
 **Requirements:**
+1. Implement wait-graph construction from lock wait queues
+2. Implement cycle detection algorithm (DFS or Tarjan's)
+3. Implement deadlock victim selection policy
+4. Add deadlock abort logic with proper cleanup
+5. Add deadlock statistics tracking
+6. Add comprehensive deadlock tests
 
-1. **Create ConnectionContext Class:**
-   ```cpp
-   class ConnectionContext {
-       int32_t proc_id;           // Process ID from ProcArray
-       TransactionId current_xid; // NEVER NULL - always in transaction
-       TransactionState state;    // ACTIVE, READ_ONLY, READ_WRITE
-       Timestamp xact_start_time; // Transaction start timestamp
-       bool is_read_only;         // Transaction read-only flag
-       // ... other fields
-   };
-   ```
+**Deadlock Detection Algorithm:**
+```cpp
+// Build directed graph: Transaction A → Transaction B means A waits for B
+bool LockManager::buildWaitGraph() {
+    // 1. Iterate all locks
+    // 2. For each lock with waiting requests:
+    //    - Determine which granted locks block the waiter
+    //    - Add edge: waiter → holder
+    // 3. Detect cycles using DFS
+    // 4. If cycle found, select victim and abort
+}
+```
 
-2. **Transaction Lifecycle Management:**
-   - `beginTransaction()` - Start new transaction (initial or after commit/rollback)
-   - `commitTransaction()` - Commit current, IMMEDIATELY start new transaction atomically
-   - `rollbackTransaction()` - Rollback current, IMMEDIATELY start new transaction atomically
-   - `changeTransactionSettings()` - Implement START TRANSACTION command logic
-   - Ensure no gap exists between transactions
-
-3. **Thread-Local Storage Pattern:**
-   - Implement thread-local storage for ConnectionContext
-   - Add `ConnectionContext::getCurrent()` static method
-   - Add `ConnectionContext::getCurrentProcId()` convenience method
-   - Ensure thread-safety for multi-connection scenarios
-
-4. **Update All TODO Markers (15+ locations):**
-   - `src/core/storage_engine.cpp` (5 locations)
-   - `src/core/btree.cpp` (6 locations)
-   - `src/core/catalog_manager.cpp` (multiple)
-   - Other files with "TODO(concurrency): Get proc_id from thread-local storage"
-   - Replace placeholder code with actual ConnectionContext::getCurrentProcId() calls
-
-5. **Enable Locking:**
-   - Remove all "For now, locking is disabled" comments
-   - Enable lock acquisition in all critical sections
-   - Ensure deadlock detection is functional
-
-6. **Parser Support:**
-   - Add START TRANSACTION command parsing
-   - Support READ ONLY and READ WRITE options
-   - Support COMMIT OUTSTANDING option
-   - Implement transaction settings change logic
-
-7. **Testing:**
-   - Multi-connection concurrent access tests
-   - Transaction lifecycle tests (commit/rollback auto-starts new transaction)
-   - START TRANSACTION command tests
-   - COMMIT OUTSTANDING with error conditions
-   - Connection establishment/close transaction handling
-   - Verify no work can occur outside transaction
-
-**Blockers:** This blocks:
-- Multi-user support
-- Proper lock management
-- Production readiness
-- Correct transaction semantics
+**Victim Selection:**
+- Choose transaction with least work done (fewest pages modified)
+- Or choose youngest transaction
+- Or choose transaction with lowest priority
 
 **Status:** ❌ Not Started
 
 ---
 
-### CRIT-003: Standardize Error Handling Pattern
+### CRIT-002: Implement Cross-Page Tuple Updates 🔥 HIGH
+**File:** `src/core/storage_engine.cpp:534-546`
+**Effort:** 3-5 days
+**Impact:** UPDATE fails when tuple grows beyond page capacity
+**Priority:** HIGH
+**Audit Reference:** after_transaction_work.md lines 117-159
+
+**Current State:** Returns `Status::NOT_IMPLEMENTED`
+
+**Requirements:**
+1. Design cross-page version chain mechanism
+2. Implement HOT (Heap-Only Tuple) updates when possible
+3. Implement cross-page chain for large updates
+4. Update heap_page to support cross-page pointers
+5. Add tuple relocation logic with proper locking
+6. Handle TOAST interaction correctly
+7. Add comprehensive tests
+
+**Implementation Strategy:**
+- Try HOT update first (same page, index columns unchanged)
+- If HOT fails, create new tuple on different page
+- Link via cross-page version chain (ctid pointer)
+- Update all indexes to point to new location
+
+**Status:** ❌ Not Started
+
+---
+
+### CRIT-003: Fix Lock Manager Memory Safety 🔥 CRITICAL
+**File:** `src/core/lock_manager.cpp:63-90`
+**Effort:** 1 week
+**Impact:** Manual memory management creates leak/corruption risk
+**Priority:** CRITICAL
+**Audit Reference:** after_transaction_work.md lines 161-208
+
+**Current Issues:**
+- Manual `new`/`delete` for Lock and LockRequest objects
+- Prone to leaks if shutdown isn't called properly
+- No exception safety
+- Complex ownership model hard to maintain
+
+**Requirements:**
+1. Replace `Lock*` with `std::unique_ptr<Lock>` or `std::shared_ptr<Lock>`
+2. Replace `LockRequest*` with `std::unique_ptr<LockRequest>`
+3. Implement proper ownership model
+4. Add exception safety (RAII)
+5. Use `std::unordered_map` with smart pointer values
+6. Add leak detection in debug builds
+7. Verify no memory leaks with valgrind/sanitizers
+
+**Memory Model:**
+```cpp
+// Before (unsafe):
+Lock* lock = new Lock(resource_id);
+locks_[resource_id] = lock;
+
+// After (safe):
+auto lock = std::make_unique<Lock>(resource_id);
+locks_[resource_id] = std::move(lock);
+```
+
+**Status:** ❌ Not Started
+
+---
+
+### CRIT-004: Fix TIP Page Logic 🔥 HIGH
+**File:** `src/core/tip_page.cpp`
+**Effort:** 3-5 days
+**Impact:** Transaction state persistence issues
+**Priority:** HIGH
+**Audit Reference:** after_transaction_work.md lines 210-256
+
+**Current Issues:**
+- Incorrect transaction state values written to TIP
+- Magic constant `0xFF` used instead of proper TransactionState enum
+- State retrieval may return incorrect values
+- No validation of TIP page consistency
+
+**Requirements:**
+1. Use proper TransactionState enum values throughout
+2. Remove magic constant `0xFF` usage
+3. Add TIP page consistency validation
+4. Implement TIP page recovery logic
+5. Add comprehensive unit tests for all transaction states
+6. Add integration tests for TIP persistence across restarts
+
+**Fix Required:**
+```cpp
+// Before (incorrect):
+tip_data[offset] = 0xFF;  // Magic number!
+
+// After (correct):
+tip_data[offset] = static_cast<uint8_t>(TransactionState::IN_PROGRESS);
+```
+
+**Status:** ❌ Not Started
+
+---
+
+### CRIT-005: Standardize Error Handling Pattern ⚠️ MEDIUM-HIGH
 **Files:** Throughout codebase
 **Effort:** 1 week
 **Impact:** Prevents crashes, improves debugging
-
-**Requirements:**
-1. Audit all `SET_ERROR_CONTEXT` calls for nullptr safety
-2. Choose standard pattern:
-   - Option A: Always require ErrorContext (never nullptr)
-   - Option B: Always check before use
-3. Create safe wrapper macro (e.g., `SAFE_SET_ERROR_CONTEXT`)
-4. Update all error handling call sites
-5. Document pattern in CODING_STANDARDS.md
+**Priority:** MEDIUM-HIGH
+**Audit Reference:** after_transaction_work.md lines 258-303
 
 **Current Issues:**
-- Some functions check `if (ctx != nullptr)` before use
+- Some functions check `if (ctx != nullptr)` before SET_ERROR_CONTEXT
 - Others assume ctx is valid (will crash if nullptr)
 - Inconsistent across subsystems
+- No documented policy
 
-**Status:** ❌ Not Started
+**Requirements:**
+1. Audit all `SET_ERROR_CONTEXT` calls for nullptr safety (100+ locations)
+2. Choose standard pattern:
+   - **Option A (Recommended):** Always check before use: `if (ctx) SET_ERROR_CONTEXT(...)`
+   - Option B: Always require ErrorContext (never nullptr) - change signatures
+3. Create safe wrapper macro: `SAFE_SET_ERROR_CONTEXT(ctx, ...)`
+4. Update all error handling call sites
+5. Document pattern in CODING_STANDARDS.md
+6. Add static analysis check if possible
 
----
+**Recommended Pattern:**
+```cpp
+// Safe macro (Option A):
+#define SAFE_SET_ERROR_CONTEXT(ctx, ...) \
+    do { if (ctx) { SET_ERROR_CONTEXT(ctx, __VA_ARGS__); } } while(0)
 
-### CRIT-004: Implement Firebird Transaction Model 🔥 CRITICAL
-**Files:** Multiple subsystems
-**Effort:** 10 weeks (6-7 weeks with 2 developers)
-**Impact:** Production-quality transaction management, long-transaction handling, garbage collection
-**Reference:** `/docs/specifications/FIREBIRD_TRANSACTION_MODEL_SPEC.md`
-**Dependencies:** CRIT-002 (ConnectionContext) must be complete first
-
-**Overview:**
-Implement Firebird's proven transaction model including transaction markers, isolation levels, sweep mechanism, and garbage collection.
-
-**Phase 1: Transaction Markers (1 week)**
-- Add OIT, OAT, OST, Next to database header
-- Implement marker update logic
-- Add monitoring query support
-- Track transaction states in TIP
-
-**Phase 2: Isolation Levels (2 weeks)**
-- Implement SNAPSHOT isolation
-- Implement READ COMMITTED with READ CONSISTENCY
-- Implement SNAPSHOT TABLE STABILITY with table reservations
-- Parser support for ISOLATION LEVEL clause
-
-**Phase 3: Sweep Mechanism (2 weeks)**
-- Implement sweep interval checking: (OST - OIT) > sweep_interval
-- Implement sweep process (advance OIT, remove old versions)
-- Add configuration support (sweep_interval parameter)
-- Add sweep monitoring and statistics
-
-**Phase 4: Garbage Collection (2 weeks)**
-- Implement cooperative GC (clean during page reads)
-- Implement background GC (optional dedicated thread)
-- Add GC policy configuration (cooperative/background/combined)
-- Integrate with sweep mechanism
-
-**Phase 5: Long Transaction Management (1 week)**
-- Implement transaction age tracking
-- Add configurable detection thresholds
-- Implement policies: LOG / ROLLBACK_READONLY / ROLLBACK_ALL / TERMINATE
-- Add monitoring queries for long transactions
-
-**Phase 6: Advanced Features (2 weeks)**
-- Implement table reservation (RESERVING clause)
-- Implement LOCK TIMEOUT
-- Implement READ ONLY optimization
-- Full SET TRANSACTION syntax support
-
-**Configuration (sb_config.ini):**
-```ini
-[transactions]
-default_isolation_level = SNAPSHOT
-
-[sweep]
-sweep_interval = 20000
-sweep_mode = combined
-
-[garbage_collection]
-gc_policy = combined
-background_gc_threads = 2
-
-[long_transactions]
-warning_threshold = 600
-critical_threshold = 3600
-warning_action = LOG
+// Usage:
+SAFE_SET_ERROR_CONTEXT(ctx, "Failed to acquire lock");
 ```
-
-**Monitoring Queries:**
-- Transaction markers (NEXT, OIT, OAT, OST)
-- Active transactions list
-- Long-running transaction detection
-- Transaction gap analysis
-- Garbage collection statistics
-
-**Blockers:** Must complete CRIT-002 (ConnectionContext) first
 
 **Status:** ❌ Not Started
 
@@ -1024,31 +1060,56 @@ constexpr uint32_t MAX_CHAIN_LENGTH = 100;
 
 ## Summary Statistics
 
-**Total Items:** 40+
-**Critical:** 3 (BLOCKING)
-**High:** 5
+**Last Updated:** October 11, 2025
+
+**Phase 2 & 3 Completion:**
+- ✅ ConnectionContext implementation (Phase 2)
+- ✅ Firebird Transaction Model (Phase 3)
+- ✅ 2 major critical items resolved
+- 🔥 5 new critical issues identified from audit
+
+**Current TODO Items:**
+**Total Items:** 45+
+**✅ Completed Critical:** 2 (ConnectionContext, Firebird Transaction Model)
+**🔥 Critical:** 5 (CRIT-001 through CRIT-005 from audit - BLOCKING)
+**High:** 4
 **Medium:** 5
 **Low:** 4
+**Alpha 1.2 Items:** 6 (Type system, DOMAIN, indexes, config, UTF-8, comments)
 **Parser/Lexer:** 9
 **Future/Beta:** 5
 **Testing:** 4
 **Documentation:** 3
 
-**Estimated Total Effort:** 6-8 months full-time development
+**Estimated Remaining Effort:**
+- **Critical fixes:** 4-6 weeks (CRIT-001 through CRIT-005)
+- **Alpha 1.2 completion:** 20-30 weeks (parallelizable with 2-3 developers)
+- **Parser/Lexer:** 8-12 weeks
+- **Future/Beta features:** 16-24 weeks
 
-**Priority Order:**
-1. Fix CRIT-001 (5 minutes - do immediately)
-2. Implement CRIT-002 (1-2 weeks - enables multi-user)
-3. Fix CRIT-003 (1 week - prevents crashes)
-4. Address HIGH-001 through HIGH-005 (4-6 weeks)
-5. Parser/Lexer improvements (8-12 weeks)
-6. Future features for Beta (16-24 weeks)
+**Priority Order (Post Phase 2 & 3):**
+1. Fix CRIT-001 (Deadlock detection - 1-2 weeks) 🔥 HIGHEST
+2. Fix CRIT-003 (Lock manager memory safety - 1 week) 🔥 CRITICAL
+3. Fix CRIT-002 (Cross-page updates - 3-5 days)
+4. Fix CRIT-004 (TIP page logic - 3-5 days)
+5. Fix CRIT-005 (Error handling standardization - 1 week)
+6. Alpha 1.2 items (Type system, DOMAIN, indexes - 20-30 weeks with 2-3 developers)
+7. Parser/Lexer improvements (8-12 weeks)
+8. Future features for Beta (WAL, network layer - 16-24 weeks)
+
+**Progress Update:**
+- **Before Phase 2 & 3:** ~60-70% of core functionality
+- **After Phase 2 & 3:** ~75-80% of core functionality
+- **Remaining for Alpha 1.2:** Type system completion, advanced indexes, configuration system
 
 ---
 
-**Note:** This TODO list is based on actual code analysis, not on documentation or comments. All issues are verified to exist in the codebase as of October 6, 2025.
+**Note:** This TODO list is based on actual code analysis, not on documentation or comments. All issues are verified to exist in the codebase as of October 11, 2025.
 
 **See Also:**
-- [Code Audit Report](../audits/audit_2025_10_06.md) - Full details
-- [Current Status](../status/CURRENT_STATUS.md) - Implementation status
+- [Code Audit Report](../audit/after_transaction_work.md) (October 6, 2025) - Critical issues
+- [Documentation Audit Report](../audit/after_transaction_documentation_work.md) (October 11, 2025) - Doc updates needed
+- [Current Status](../status/CURRENT_STATUS.md) - Implementation status (updated Oct 11, 2025)
+- [Phase 2 Complete](../planning/implemented/PHASE_2_COMPLETE.md) - ConnectionContext completion
+- [Phase 3 Complete](../planning/implemented/PHASE_3_COMPLETE.md) - Firebird Transaction Model completion
 - [Coding Standards](CODING_STANDARDS.md) - Development guidelines
