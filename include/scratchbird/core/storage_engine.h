@@ -177,6 +177,13 @@
                                  uint32_t proc_id, bool wait, ErrorContext *ctx) -> Status;
             auto releaseTupleLock(const ID &table_id, uint32_t page_id, uint16_t item_id,
                                  uint32_t proc_id, ErrorContext *ctx) -> Status;
+
+            // Index update helper for cross-page relocations
+            auto updateIndexesForRelocation(const ID &table_id,
+                                          uint32_t old_page_id, uint16_t old_item_id,
+                                          uint32_t new_page_id, uint16_t new_item_id,
+                                          const uint8_t *tuple_data, uint32_t tuple_size,
+                                          ErrorContext *ctx) -> Status;
         };
 
     } // namespace scratchbird::core

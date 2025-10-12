@@ -62,8 +62,13 @@ This comprehensive audit examined 36 C++ source files (~22,000 lines) and 47 hea
   - MVCC visibility
   - Large tuple handling
   - Error cases
-- **Known Limitation:** Index entry updates for cross-page relocations not yet implemented (documented in TODO at line 824-831)
-- **Status:** ✅ RESOLVED
+- **Index Updates:** Index entries are now automatically updated when tuples relocate across pages. Both BTree and Hash indexes are supported. Implementation includes:
+  - Helper function `buildIndexKey()` to extract indexed column values from tuples
+  - Helper function `updateIndexesForRelocation()` to update all table indexes
+  - Automatic index entry removal from old location and insertion at new location
+  - Graceful handling when tables have no indexes or when index updates fail
+  - Note: Key extraction currently uses simplified tuple parsing (see TODO at line 1006-1009 for future enhancement with proper tuple deserializer)
+- **Status:** ✅ RESOLVED (including index updates)
 
 ### CRIT-003: Deadlock Detector Victim Selection Uses Placeholder Logic
 - **File:** `/home/dcalford/CliWork/ScratchBird/src/core/lock_manager.cpp:678-683`
