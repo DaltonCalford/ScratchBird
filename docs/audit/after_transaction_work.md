@@ -5,18 +5,22 @@
 
 ## Executive Summary
 
-This comprehensive audit examined 36 C++ source files (~22,000 lines) and 47 header files in the ScratchBird database engine, focusing on the recently completed transaction infrastructure (Phase 2 & 3). The audit identified **5 critical issues** (2 now resolved), **12 high priority issues**, **18 medium priority issues**, and **35 low priority technical debt items**.
+This comprehensive audit examined 36 C++ source files (~22,000 lines) and 47 header files in the ScratchBird database engine, focusing on the recently completed transaction infrastructure (Phase 2 & 3). The audit identified **5 critical issues** (4 now resolved), **12 high priority issues**, **18 medium priority issues**, and **35 low priority technical debt items**.
 
 **Updates (October 12, 2025):**
 - ✅ CRIT-001 (Deadlock Detection) has been fully implemented and resolved
 - ✅ CRIT-002 (Cross-Page Tuple Updates) has been fully implemented and resolved
+- ✅ CRIT-003 (Lock Manager Memory Safety) has been fully refactored and resolved
+- ✅ CRIT-004 (Transaction Abort in Deadlock Detector) was found already implemented - resolved
 
 ### Key Findings:
 - **Transaction infrastructure is generally well-implemented** with proper MVCC, locking, and snapshot isolation
 - **✅ Deadlock detection now complete** (CRIT-001 resolved October 12, 2025)
 - **✅ Cross-page tuple updates now complete** (CRIT-002 resolved October 12, 2025)
-- **Several incomplete TODO items** remain in critical paths (lock manager memory safety, TIP page logic)
-- **Memory management is mostly sound** with smart pointers, but some raw pointer usage in lock manager
+- **✅ Lock manager memory safety resolved** (CRIT-003 resolved October 12, 2025)
+- **✅ Transaction abort in deadlock detector complete** (CRIT-004 found already implemented)
+- **One critical item remains:** CRIT-005 (Long Transaction Monitor stub implementations)
+- **Memory management is excellent** - Lock manager now uses RAII with smart pointers throughout
 - **Thread safety is generally good** with proper mutex usage, but ProcArray uses C-style locks (pthread)
 - **Error handling is inconsistent** - some functions don't check ErrorContext for nullptr
 - **Magic numbers** exist throughout the codebase (timeouts, buffer sizes)
@@ -88,33 +92,47 @@ uint32_t DeadlockDetector::selectVictim(const std::vector<uint32_t>& cycle)
 }
 ```
 
-### CRIT-004: Transaction Abort in Deadlock Detector Incomplete
-- **File:** `/home/dcalford/CliWork/ScratchBird/src/core/lock_manager.cpp:686-699`
-- **Severity:** Critical
-- **Category:** Incomplete Feature / Data Corruption Risk
-- **Description:** `abortTransaction()` only releases locks, doesn't actually rollback the transaction or mark it as aborted in TransactionManager.
-- **Impact:** Deadlock "resolution" leaves transactions in inconsistent state. Transaction continues to run despite being "aborted", potentially causing data corruption.
-- **Recommendation:** Implement full transaction abort:
-  1. Release all locks (already done)
-  2. Call TransactionManager::rollbackTransaction()
-  3. Mark transaction as aborted in CLOG
-  4. Wake up any waiters
-- **Code Snippet:**
+### ✅ CRIT-004-RESOLVED: Transaction Abort in Deadlock Detector Complete
+- **File:** `/home/dcalford/CliWork/ScratchBird/src/core/lock_manager.cpp:674-721`
+- **Severity:** Critical → RESOLVED
+- **Category:** Incomplete Feature / Data Corruption Risk → COMPLETED
+- **Resolution Date:** Prior to October 12, 2025 (found already implemented during investigation)
+- **Description:** `abortTransaction()` now performs full transaction abort with rollback, lock release, and statistics tracking.
+- **Impact:** Deadlock resolution properly aborts victim transactions and maintains database consistency.
+- **Implementation:**
+  1. ✅ Get XID from ProcArray for victim process (lines 682-699)
+  2. ✅ Call TransactionManager::rollbackTransaction() (lines 701-712)
+  3. ✅ Release all locks via releaseAllLocks() (lines 714-721)
+  4. ✅ Update deadlock statistics (line 67)
+  5. ✅ Error handling with logging (lines 708-710)
+- **Code Implementation:**
 ```cpp
 auto DeadlockDetector::abortTransaction(uint32_t proc_id, ErrorContext* ctx) -> Status
 {
-    // TODO: Abort transaction by:
-    // 1. Release all locks held by proc_id
-    // 2. Mark transaction as aborted in TransactionManager
-    // 3. Wake up any waiters
+    // 1. Get XID from ProcArray
+    uint64_t xid = 0;
+    ProcArray* proc_array = ProcArrayManager::getInstance();
+    // ... retrieves XID ...
 
-    // For now, just release locks
-    if (lock_mgr_) {
-        return lock_mgr_->releaseAllLocks(proc_id, ctx);
+    // 2. Rollback transaction in TransactionManager
+    if (xid != 0 && lock_mgr_ && lock_mgr_->db_) {
+        TransactionManager* txn_mgr = lock_mgr_->db_->transaction_manager();
+        if (txn_mgr) {
+            Status status = txn_mgr->rollbackTransaction(proc_id, xid, ctx);
+            // ... error handling with logging ...
+        }
     }
+
+    // 3. Release all locks and update statistics
+    if (lock_mgr_) {
+        Status status = lock_mgr_->releaseAllLocks(proc_id, ctx);
+        lock_mgr_->stats_.deadlocks_detected++;
+    }
+
     return Status::OK;
 }
 ```
+- **Status:** ✅ RESOLVED
 
 ### CRIT-005: Long Transaction Monitor Has Stub Implementations
 - **File:** `/home/dcalford/CliWork/ScratchBird/src/core/long_transaction_monitor.cpp:342, 357, 374`
@@ -685,11 +703,11 @@ if (!new_page)
 
 - **Total files audited:** 83 (36 .cpp + 47 .h)
 - **Total lines of code:** ~22,000 (core only)
-- **Critical issues:** 5 (2 resolved ✅, 3 remaining 🔥)
+- **Critical issues:** 5 (4 resolved ✅, 1 remaining 🔥)
 - **High priority:** 12
 - **Medium priority:** 18
 - **Low priority:** 35
-- **TODO markers found:** 21 in src/core (2 resolved)
+- **TODO markers found:** 21 in src/core (4 resolved)
 - **Magic numbers found:** 15+
 - **Last Updated:** October 12, 2025
 
@@ -716,9 +734,11 @@ if (!new_page)
 ### Immediate Actions (Before Beta):
 1. ✅ ~~**Complete deadlock detection** (CRIT-001)~~ **COMPLETED October 12, 2025** 🎉
 2. ✅ ~~**Implement cross-page updates** (CRIT-002)~~ **COMPLETED October 12, 2025** 🎉
-3. **Fix lock manager memory safety** (CRIT-003) - Memory leak/corruption risk
-4. **Fix lock manager bounds checks** (HIGH-011) - Security/stability issue
-5. **Complete catalog helper functions** (HIGH-003) - Required for i18n features
+3. ✅ ~~**Fix lock manager memory safety** (CRIT-003)~~ **COMPLETED October 12, 2025** 🎉
+4. ✅ ~~**Fix transaction abort in deadlock detector** (CRIT-004)~~ **Found already implemented** 🎉
+5. **Complete long transaction monitor actions** (CRIT-005) - Required for production
+6. **Fix lock manager bounds checks** (HIGH-011) - Security/stability issue
+7. **Complete catalog helper functions** (HIGH-003) - Required for i18n features
 
 ### Short-term (Next Sprint):
 5. **Add configuration for hardcoded values** (HIGH-001, HIGH-008, MED-006) - Improves tuneability
