@@ -79,10 +79,10 @@ namespace scratchbird::core
         Status compactPage(uint32_t page_id, VacuumStats *stats, ErrorContext *ctx);
 
         // Check if tuple is dead (not visible to any transaction)
-        bool isTupleDead(const uint8_t *tuple_data, uint64_t horizon);
+        bool isTupleDead(const uint8_t *tuple_data, uint64_t horizon) const;
 
         // Check if tuple version is prunable
-        bool isVersionPrunable(const uint8_t *tuple_data, uint64_t horizon);
+        bool isVersionPrunable(const uint8_t *tuple_data, uint64_t horizon) const;
     };
 
 } // namespace scratchbird::core

@@ -658,7 +658,7 @@ namespace scratchbird::core
         return Status::OK;
     }
 
-    auto TransactionManager::isTransactionVisible(uint64_t xid, uint64_t snapshot_xid) -> bool
+    auto TransactionManager::isTransactionVisible(uint64_t xid, uint64_t snapshot_xid) const -> bool
     {
         // VALIDATE XID FIRST - Critical security check
         if (!isXidInRange(xid))

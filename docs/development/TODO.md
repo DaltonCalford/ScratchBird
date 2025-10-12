@@ -861,15 +861,25 @@ else
 - Marked `checkConflictInternal()` as const (helper method)
 - Made `lock_table_mutex_` mutable for use in const methods
 
-**Remaining Work (Phase 2):**
-- ❌ StorageEngine::isVisible() const
-- ❌ Vacuum::isTupleDead(), isVersionPrunable() const
+**Phase 2 Completed (October 12, 2025):**
+
+✅ **StorageEngine class (storage_engine.h/cpp):**
+- Marked `isVisible()` as const
+- Required marking `TransactionManager::isTransactionVisible()` as const (propagated const-correctness)
+
+✅ **Vacuum class (vacuum.h/cpp):**
+- Marked `isTupleDead()` as const
+- Marked `isVersionPrunable()` as const
+
+✅ **Clog class (clog.h/cpp):**
+- Marked `getStatistics()` as const
+
+**Remaining Work (Phase 3 - Optional):**
 - ❌ GarbageCollector helper methods (isTupleGarbage, shouldRunCooperativeGC, calculatePagePriority) const
 - ❌ BTree::searchPage() const
 - ❌ SweepManager::findFirstUncommittedTransaction() const
-- ❌ Clog::getStatistics() const
 
-**Status:** ⏳ Phase 1 COMPLETED, Phase 2 Pending
+**Status:** ⏳ Phase 1 & 2 COMPLETED, Phase 3 Optional (low priority)
 
 ---
 

@@ -80,7 +80,7 @@ namespace scratchbird::core
             uint64_t space_saved_bytes;  // Space saved vs TIP
         };
 
-        void getStatistics(ClogStats *stats_out);
+        void getStatistics(ClogStats *stats_out) const;
 
     private:
         Database *db_;

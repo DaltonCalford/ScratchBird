@@ -210,12 +210,12 @@ namespace scratchbird::core
             new (std::nothrow) HeapScanIterator(db_, this, table_id, start_page));
     }
 
-    auto StorageEngine::isVisible(uint64_t xmin, uint64_t xmax, uint64_t current_xid) -> bool
+    auto StorageEngine::isVisible(uint64_t xmin, uint64_t xmax, uint64_t current_xid) const -> bool
     {
         // Use transaction manager for visibility if available
         if (db_->transaction_manager() != nullptr)
         {
-            TransactionManager *tm = db_->transaction_manager();
+            const TransactionManager *tm = db_->transaction_manager();
 
             // VALIDATE XIDs FIRST - protect against corrupted tuple headers
             if (!tm->isXidInRange(xmin))
