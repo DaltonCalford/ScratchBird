@@ -10,7 +10,6 @@ namespace scratchbird::core
 {
     LongTransactionMonitor::LongTransactionMonitor(Database* db)
         : db_(db)
-        , proc_array_(nullptr)
         , enabled_(true)
         , warning_threshold_seconds_(600)      // 10 minutes default
         , critical_threshold_seconds_(3600)    // 1 hour default

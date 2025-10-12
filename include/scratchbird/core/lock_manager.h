@@ -133,6 +133,9 @@ namespace scratchbird::core
     // Lock Manager - manages all locks in the database
     class LockManager
     {
+        // Allow DeadlockDetector to access internal lock_table_ for building wait graph
+        friend class DeadlockDetector;
+
     public:
         explicit LockManager(Database* db);
         ~LockManager();

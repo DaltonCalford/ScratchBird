@@ -121,16 +121,15 @@ namespace scratchbird::core
             return Status::INVALID_ARGUMENT;
         }
 
-        // Check if we already hold this lock
-        if (lock_obj->granted_counts[mode_idx] > 0) {
-            // Already granted, just increment count
-            lock_obj->granted_counts[mode_idx]++;
-            stats_.locks_acquired++;
-            if (is_readonly_txn) {
-                stats_.readonly_locks_acquired++;
-            }
-            return Status::OK;
-        }
+        // NOTE: Removed buggy optimization that allowed ANY proc_id to increment
+        // granted_counts if the mode was already granted. This was incorrect for
+        // self-conflicting modes (SHARE_ROW_EXCLUSIVE, EXCLUSIVE, ACCESS_EXCLUSIVE).
+        //
+        // TODO: Implement proper per-proc-id lock tracking to support:
+        //   1. Recursive locking (same proc_id acquiring same mode multiple times)
+        //   2. Fast-path for non-conflicting modes (multiple ACCESS_SHARE holders)
+        //
+        // For now, all lock requests go through conflict checking below.
 
         // OPTIMIZATION: Fast-path for read-only transactions with SHARE locks
         // Read-only transactions typically use ACCESS_SHARE or SHARE locks
@@ -622,12 +621,72 @@ namespace scratchbird::core
 
     void DeadlockDetector::buildWaitGraph()
     {
-        // TODO: Build wait-for graph by scanning lock manager state
-        // For each lock with waiters:
-        //   For each waiter W:
-        //     For each holder H:
-        //       Add edge W -> H
-        // This requires access to lock manager internals
+        // Build wait-for graph by scanning lock manager state
+        // Edge from W -> H means "W is waiting for H"
+
+        wait_graph_.clear();
+
+        // Iterate through all locks in the system
+        for (const auto& pair : lock_mgr_->lock_table_) {
+            const Lock* lock_obj = pair.second;
+
+            // Skip locks with no waiters
+            if (!lock_obj->wait_queue_head || lock_obj->wait_queue_size == 0) {
+                continue;
+            }
+
+            // For each waiter in the queue
+            LockRequest* req = lock_obj->wait_queue_head;
+            while (req) {
+                uint32_t waiter_proc_id = req->proc_id;
+                LockMode waiter_mode = req->mode;
+                uint8_t waiter_mode_idx = static_cast<uint8_t>(waiter_mode) - 1;
+
+                // Determine which granted locks block this waiter
+                // We need to check which holder proc_ids have locks that conflict
+
+                // Check each granted lock mode to see if it conflicts
+                for (uint8_t held_idx = 0; held_idx < 8; ++held_idx) {
+                    if (lock_obj->granted_counts[held_idx] > 0) {
+                        // Check if this held mode conflicts with waiter's requested mode
+                        if (lock_mgr_->conflict_matrix_[held_idx][waiter_mode_idx]) {
+                            // This lock mode conflicts! Find which proc_ids hold it
+                            // We need to scan proc_locks_ to find holders
+
+                            LockMode held_mode = static_cast<LockMode>(held_idx + 1);
+
+                            // Find all proc_ids holding this lock in this mode
+                            for (const auto& proc_pair : lock_mgr_->proc_locks_) {
+                                uint32_t holder_proc_id = proc_pair.first;
+                                Lock* proc_lock = proc_pair.second;
+
+                                // Check if this proc holds the same lock object
+                                if (proc_lock == lock_obj) {
+                                    // Verify this proc actually holds the conflicting mode
+                                    // (we can't directly check from proc_locks_, so we assume
+                                    // if they're in proc_locks_ for this lock, they hold it)
+
+                                    // Don't add self-edges
+                                    if (holder_proc_id != waiter_proc_id) {
+                                        // Add edge: waiter -> holder
+                                        wait_graph_[waiter_proc_id].push_back(holder_proc_id);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                req = req->next;
+            }
+        }
+
+        // Remove duplicate edges in wait graph
+        for (auto& pair : wait_graph_) {
+            auto& holders = pair.second;
+            std::sort(holders.begin(), holders.end());
+            holders.erase(std::unique(holders.begin(), holders.end()), holders.end());
+        }
     }
 
     bool DeadlockDetector::hasCycle(
@@ -677,22 +736,96 @@ namespace scratchbird::core
 
     uint32_t DeadlockDetector::selectVictim(const std::vector<uint32_t>& cycle)
     {
+        if (cycle.empty()) {
+            return 0;
+        }
+
         // Select youngest transaction (highest XID) as victim
-        // TODO: Get XIDs from ProcArray
-        // For now, just return first process
-        return cycle.empty() ? 0 : cycle[0];
+        // Younger transactions have done less work, so aborting them is cheaper
+
+        ProcArray* proc_array = ProcArrayManager::getInstance();
+        if (!proc_array) {
+            // Fallback: return first process if ProcArray unavailable
+            return cycle[0];
+        }
+
+        pthread_rwlock_rdlock(&proc_array->array_lock);
+
+        ProcessControlBlock* pcbs = reinterpret_cast<ProcessControlBlock*>(
+            reinterpret_cast<uint8_t*>(proc_array) + sizeof(ProcArray));
+
+        // Find the process with the highest XID (youngest transaction)
+        uint32_t victim_proc_id = cycle[0];
+        uint64_t highest_xid = 0;
+
+        for (uint32_t proc_id : cycle) {
+            // Find this proc_id in the ProcArray
+            for (uint32_t i = 0; i < proc_array->max_backends; ++i) {
+                if (pcbs[i].is_active && pcbs[i].proc_id == proc_id) {
+                    if (pcbs[i].xid > highest_xid) {
+                        highest_xid = pcbs[i].xid;
+                        victim_proc_id = proc_id;
+                    }
+                    break;
+                }
+            }
+        }
+
+        pthread_rwlock_unlock(&proc_array->array_lock);
+
+        return victim_proc_id;
     }
 
     auto DeadlockDetector::abortTransaction(uint32_t proc_id, ErrorContext* ctx) -> Status
     {
-        // TODO: Abort transaction by:
-        // 1. Release all locks held by proc_id
-        // 2. Mark transaction as aborted in TransactionManager
-        // 3. Wake up any waiters
+        // Abort transaction to break deadlock:
+        // 1. Get XID from ProcArray
+        // 2. Rollback transaction in TransactionManager
+        // 3. Release all locks held by proc_id
+        // 4. Update statistics
 
-        // For now, just release locks
+        // Get the XID for this proc_id
+        uint64_t xid = 0;
+        ProcArray* proc_array = ProcArrayManager::getInstance();
+        if (proc_array) {
+            pthread_rwlock_rdlock(&proc_array->array_lock);
+
+            ProcessControlBlock* pcbs = reinterpret_cast<ProcessControlBlock*>(
+                reinterpret_cast<uint8_t*>(proc_array) + sizeof(ProcArray));
+
+            for (uint32_t i = 0; i < proc_array->max_backends; ++i) {
+                if (pcbs[i].is_active && pcbs[i].proc_id == proc_id) {
+                    xid = pcbs[i].xid;
+                    break;
+                }
+            }
+
+            pthread_rwlock_unlock(&proc_array->array_lock);
+        }
+
+        // Rollback the transaction in TransactionManager
+        if (xid != 0 && lock_mgr_ && lock_mgr_->db_) {
+            TransactionManager* txn_mgr = lock_mgr_->db_->transaction_manager();
+            if (txn_mgr) {
+                Status status = txn_mgr->rollbackTransaction(proc_id, xid, ctx);
+                if (status != Status::OK) {
+                    // Log error but continue with cleanup
+                    fprintf(stderr, "[DeadlockDetector] Failed to rollback transaction XID=%lu: %d\n",
+                            xid, static_cast<int>(status));
+                }
+            }
+        }
+
+        // Release all locks held by this proc_id
+        // This will also wake up any waiters via grantWaitingLocks()
         if (lock_mgr_) {
-            return lock_mgr_->releaseAllLocks(proc_id, ctx);
+            Status status = lock_mgr_->releaseAllLocks(proc_id, ctx);
+            if (status != Status::OK) {
+                return status;
+            }
+
+            // Update deadlock statistics
+            lock_mgr_->stats_.deadlocks_detected++;
         }
 
         return Status::OK;
