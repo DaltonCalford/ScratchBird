@@ -21,8 +21,7 @@ namespace scratchbird::core
         bool is_dst;            // Whether this offset includes DST
 
         TimezoneOffset() : offset_minutes(0), is_dst(false) {}
-        TimezoneOffset(int32_t minutes, bool dst = false)
-            : offset_minutes(minutes), is_dst(dst) {}
+        TimezoneOffset(int32_t minutes, bool dst = false) : offset_minutes(minutes), is_dst(dst) {}
 
         // Convert to string format (+/-HH:MM)
         std::string toString() const;
@@ -38,15 +37,17 @@ namespace scratchbird::core
      */
     struct TimezoneInfo
     {
-        uint16_t timezone_id;        // Unique ID for this timezone
-        std::string name;            // e.g., "America/New_York", "UTC", "GMT"
-        std::string abbreviation;    // e.g., "EST", "PST", "UTC"
-        TimezoneOffset offset;       // Current offset from GMT
-        bool observes_dst;           // Whether this timezone observes DST
+        uint16_t timezone_id;     // Unique ID for this timezone
+        std::string name;         // e.g., "America/New_York", "UTC", "GMT"
+        std::string abbreviation; // e.g., "EST", "PST", "UTC"
+        TimezoneOffset offset;    // Current offset from GMT
+        bool observes_dst;        // Whether this timezone observes DST
 
         TimezoneInfo()
-            : timezone_id(0), name("UTC"), abbreviation("UTC"),
-              offset(0, false), observes_dst(false) {}
+            : timezone_id(0), name("UTC"), abbreviation("UTC"), offset(0, false),
+              observes_dst(false)
+        {
+        }
     };
 
     /**
@@ -71,7 +72,10 @@ namespace scratchbird::core
         auto getTimezoneByAbbreviation(const std::string &abbr) const -> uint16_t;
 
         // Default timezone (UTC/GMT)
-        auto getDefaultTimezone() const -> uint16_t { return 1; } // UTC
+        auto getDefaultTimezone() const -> uint16_t
+        {
+            return 1;
+        } // UTC
 
         // Common timezones
         static constexpr uint16_t TZ_GMT = 1;
@@ -108,7 +112,7 @@ namespace scratchbird::core
          * Returns: microseconds since epoch in GMT
          */
         auto parseTimestamp(const std::string &str, uint16_t default_tz,
-                           ErrorContext *ctx = nullptr) const -> std::optional<int64_t>;
+                            ErrorContext *ctx = nullptr) const -> std::optional<int64_t>;
 
         /**
          * Format timestamp to string with timezone
@@ -120,7 +124,7 @@ namespace scratchbird::core
          *   - formatTimestamp(ts, TZ_EST) -> "2025-10-04 10:30:00-05:00"
          */
         auto formatTimestamp(int64_t gmt_microseconds, uint16_t display_tz,
-                            bool show_offset = true) const -> std::string;
+                             bool show_offset = true) const -> std::string;
 
         /**
          * Get offset for a timezone at a specific time

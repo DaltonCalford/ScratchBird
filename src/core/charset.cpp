@@ -16,11 +16,12 @@ namespace scratchbird::core
 
     CharsetManager::~CharsetManager() = default;
 
-    auto CharsetManager::loadFromCatalog(Database* db, ErrorContext* ctx) -> Status
+    auto CharsetManager::loadFromCatalog(Database *db, ErrorContext *ctx) -> Status
     {
         if (db == nullptr || db->catalog_manager() == nullptr)
         {
-            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Database or catalog manager not available");
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                              "Database or catalog manager not available");
             return Status::INVALID_ARGUMENT;
         }
 
@@ -33,7 +34,7 @@ namespace scratchbird::core
             // Clear existing charsets and reload from catalog
             charsets_.clear();
 
-            for (const auto& cs : catalog_charsets)
+            for (const auto &cs : catalog_charsets)
             {
                 CharacterSetInfo info;
                 info.id = static_cast<CharacterSet>(cs.charset_id);
@@ -65,7 +66,7 @@ namespace scratchbird::core
             // Clear existing collations and reload from catalog
             collations_.clear();
 
-            for (const auto& col : catalog_collations)
+            for (const auto &col : catalog_collations)
             {
                 CollationInfo info;
                 info.id = col.collation_id;
@@ -96,68 +97,56 @@ namespace scratchbird::core
     {
         // ASCII
         charsets_.push_back({
-            CharacterSet::ASCII,
-            "ascii",
-            "7-bit ASCII",
-            1, // min_bytes
-            1, // max_bytes
+            CharacterSet::ASCII, "ascii", "7-bit ASCII",
+            1,     // min_bytes
+            1,     // max_bytes
             false, // variable_width
-            1  // default_collation_id (ascii_bin)
+            1      // default_collation_id (ascii_bin)
         });
 
         // Latin1
         charsets_.push_back({
-            CharacterSet::LATIN1,
-            "latin1",
-            "ISO-8859-1 Western European",
-            1, // min_bytes
-            1, // max_bytes
+            CharacterSet::LATIN1, "latin1", "ISO-8859-1 Western European",
+            1,     // min_bytes
+            1,     // max_bytes
             false, // variable_width
-            10 // default_collation_id (latin1_general_ci)
+            10     // default_collation_id (latin1_general_ci)
         });
 
         // UTF-8 (default)
         charsets_.push_back({
-            CharacterSet::UTF8,
-            "utf8",
-            "UTF-8 Unicode",
-            1, // min_bytes
-            4, // max_bytes
+            CharacterSet::UTF8, "utf8", "UTF-8 Unicode",
+            1,    // min_bytes
+            4,    // max_bytes
             true, // variable_width
-            100 // default_collation_id (utf8_general_ci)
+            100   // default_collation_id (utf8_general_ci)
         });
 
         // UTF-8MB4 (same as UTF-8 for our purposes)
         charsets_.push_back({
-            CharacterSet::UTF8MB4,
-            "utf8mb4",
-            "UTF-8 Unicode (MySQL compatible)",
-            1, // min_bytes
-            4, // max_bytes
+            CharacterSet::UTF8MB4, "utf8mb4", "UTF-8 Unicode (MySQL compatible)",
+            1,    // min_bytes
+            4,    // max_bytes
             true, // variable_width
-            100 // default_collation_id (utf8_general_ci)
+            100   // default_collation_id (utf8_general_ci)
         });
 
         // UTF-16
         charsets_.push_back({
-            CharacterSet::UTF16,
-            "utf16",
-            "UTF-16 Unicode",
-            2, // min_bytes
-            4, // max_bytes
+            CharacterSet::UTF16, "utf16", "UTF-16 Unicode",
+            2,    // min_bytes
+            4,    // max_bytes
             true, // variable_width
-            200 // default_collation_id (utf16_general_ci)
+            200   // default_collation_id (utf16_general_ci)
         });
 
         // UTF-32
         charsets_.push_back({
-            CharacterSet::UTF32,
-            "utf32",
-            "UTF-32 Unicode",
-            4, // min_bytes
-            4, // max_bytes
+            CharacterSet::UTF32, "utf32", "UTF-32 Unicode",
+            4,     // min_bytes
+            4,     // max_bytes
             false, // variable_width
-            300 // default_collation_id (utf32_general_ci)
+            300    // default_collation_id (utf32_general_ci)
         });
     }
 
@@ -166,178 +155,143 @@ namespace scratchbird::core
         // ASCII collations
         collations_.push_back({
             1, // id
-            "ascii_bin",
-            CharacterSet::ASCII,
-            CollationType::BINARY,
-            CollationStrength::IDENTICAL,
-            true,  // pad_space
-            "",    // locale
-            true   // is_default
+            "ascii_bin", CharacterSet::ASCII, CollationType::BINARY, CollationStrength::IDENTICAL,
+            true, // pad_space
+            "",   // locale
+            true  // is_default
         });
 
         collations_.push_back({
             2, // id
-            "ascii_general_ci",
-            CharacterSet::ASCII,
-            CollationType::CASE_INSENSITIVE,
+            "ascii_general_ci", CharacterSet::ASCII, CollationType::CASE_INSENSITIVE,
             CollationStrength::TERTIARY,
-            true,  // pad_space
-            "",    // locale
-            false  // is_default
+            true, // pad_space
+            "",   // locale
+            false // is_default
         });
 
         // Latin1 collations
         collations_.push_back({
             10, // id
-            "latin1_bin",
-            CharacterSet::LATIN1,
-            CollationType::BINARY,
-            CollationStrength::IDENTICAL,
-            true,  // pad_space
-            "",    // locale
-            false  // is_default
+            "latin1_bin", CharacterSet::LATIN1, CollationType::BINARY, CollationStrength::IDENTICAL,
+            true, // pad_space
+            "",   // locale
+            false // is_default
         });
 
         collations_.push_back({
             11, // id
-            "latin1_general_ci",
-            CharacterSet::LATIN1,
-            CollationType::CASE_INSENSITIVE,
+            "latin1_general_ci", CharacterSet::LATIN1, CollationType::CASE_INSENSITIVE,
             CollationStrength::TERTIARY,
-            true,  // pad_space
-            "",    // locale
-            true   // is_default
+            true, // pad_space
+            "",   // locale
+            true  // is_default
         });
 
         collations_.push_back({
             12, // id
-            "latin1_general_cs",
-            CharacterSet::LATIN1,
-            CollationType::CASE_SENSITIVE,
+            "latin1_general_cs", CharacterSet::LATIN1, CollationType::CASE_SENSITIVE,
             CollationStrength::TERTIARY,
-            true,  // pad_space
-            "",    // locale
-            false  // is_default
+            true, // pad_space
+            "",   // locale
+            false // is_default
         });
 
         // UTF-8 collations
         collations_.push_back({
             100, // id
-            "utf8_bin",
-            CharacterSet::UTF8,
-            CollationType::BINARY,
-            CollationStrength::IDENTICAL,
-            true,  // pad_space
-            "",    // locale
-            false  // is_default
+            "utf8_bin", CharacterSet::UTF8, CollationType::BINARY, CollationStrength::IDENTICAL,
+            true, // pad_space
+            "",   // locale
+            false // is_default
         });
 
         collations_.push_back({
             101, // id
-            "utf8_general_ci",
-            CharacterSet::UTF8,
-            CollationType::CASE_INSENSITIVE,
+            "utf8_general_ci", CharacterSet::UTF8, CollationType::CASE_INSENSITIVE,
             CollationStrength::TERTIARY,
-            true,  // pad_space
-            "",    // locale
-            true   // is_default (DEFAULT for UTF-8)
+            true, // pad_space
+            "",   // locale
+            true  // is_default (DEFAULT for UTF-8)
         });
 
         collations_.push_back({
             102, // id
-            "utf8_unicode_ci",
-            CharacterSet::UTF8,
-            CollationType::UNICODE,
+            "utf8_unicode_ci", CharacterSet::UTF8, CollationType::UNICODE,
             CollationStrength::TERTIARY,
-            true,  // pad_space
-            "",    // locale
-            false  // is_default
+            true, // pad_space
+            "",   // locale
+            false // is_default
         });
 
         collations_.push_back({
             103, // id
-            "utf8_unicode_cs",
-            CharacterSet::UTF8,
-            CollationType::UNICODE,
+            "utf8_unicode_cs", CharacterSet::UTF8, CollationType::UNICODE,
             CollationStrength::TERTIARY,
-            true,  // pad_space
-            "",    // locale
-            false  // is_default
+            true, // pad_space
+            "",   // locale
+            false // is_default
         });
 
         // Locale-specific UTF-8 collations
         collations_.push_back({
             110, // id
-            "utf8_en_US_ci",
-            CharacterSet::UTF8,
-            CollationType::UNICODE,
+            "utf8_en_US_ci", CharacterSet::UTF8, CollationType::UNICODE,
             CollationStrength::TERTIARY,
-            true,  // pad_space
+            true,    // pad_space
             "en_US", // locale
-            false  // is_default
+            false    // is_default
         });
 
         collations_.push_back({
             111, // id
-            "utf8_de_DE_ci",
-            CharacterSet::UTF8,
-            CollationType::UNICODE,
+            "utf8_de_DE_ci", CharacterSet::UTF8, CollationType::UNICODE,
             CollationStrength::TERTIARY,
-            true,  // pad_space
+            true,    // pad_space
             "de_DE", // locale
-            false  // is_default
+            false    // is_default
         });
 
         // UTF-16 collations
         collations_.push_back({
             200, // id
-            "utf16_bin",
-            CharacterSet::UTF16,
-            CollationType::BINARY,
-            CollationStrength::IDENTICAL,
-            true,  // pad_space
-            "",    // locale
-            false  // is_default
+            "utf16_bin", CharacterSet::UTF16, CollationType::BINARY, CollationStrength::IDENTICAL,
+            true, // pad_space
+            "",   // locale
+            false // is_default
         });
 
         collations_.push_back({
             201, // id
-            "utf16_general_ci",
-            CharacterSet::UTF16,
-            CollationType::CASE_INSENSITIVE,
+            "utf16_general_ci", CharacterSet::UTF16, CollationType::CASE_INSENSITIVE,
             CollationStrength::TERTIARY,
-            true,  // pad_space
-            "",    // locale
-            true   // is_default
+            true, // pad_space
+            "",   // locale
+            true  // is_default
         });
 
         // UTF-32 collations
         collations_.push_back({
             300, // id
-            "utf32_bin",
-            CharacterSet::UTF32,
-            CollationType::BINARY,
-            CollationStrength::IDENTICAL,
-            true,  // pad_space
-            "",    // locale
-            false  // is_default
+            "utf32_bin", CharacterSet::UTF32, CollationType::BINARY, CollationStrength::IDENTICAL,
+            true, // pad_space
+            "",   // locale
+            false // is_default
         });
 
         collations_.push_back({
             301, // id
-            "utf32_general_ci",
-            CharacterSet::UTF32,
-            CollationType::CASE_INSENSITIVE,
+            "utf32_general_ci", CharacterSet::UTF32, CollationType::CASE_INSENSITIVE,
             CollationStrength::TERTIARY,
-            true,  // pad_space
-            "",    // locale
-            true   // is_default
+            true, // pad_space
+            "",   // locale
+            true  // is_default
         });
     }
 
-    auto CharsetManager::getCharsetInfo(CharacterSet charset) const -> const CharacterSetInfo*
+    auto CharsetManager::getCharsetInfo(CharacterSet charset) const -> const CharacterSetInfo *
     {
-        for (const auto& cs : charsets_)
+        for (const auto &cs : charsets_)
         {
             if (cs.id == charset)
             {
@@ -347,9 +301,9 @@ namespace scratchbird::core
         return nullptr;
     }
 
-    auto CharsetManager::getCharsetByName(const std::string& name) const -> CharacterSet
+    auto CharsetManager::getCharsetByName(const std::string &name) const -> CharacterSet
     {
-        for (const auto& cs : charsets_)
+        for (const auto &cs : charsets_)
         {
             if (cs.name == name)
             {
@@ -361,13 +315,13 @@ namespace scratchbird::core
 
     auto CharsetManager::getCharsetName(CharacterSet charset) const -> std::string
     {
-        const auto* info = getCharsetInfo(charset);
+        const auto *info = getCharsetInfo(charset);
         return info ? info->name : "utf8";
     }
 
-    auto CharsetManager::getCollationInfo(uint32_t collation_id) const -> const CollationInfo*
+    auto CharsetManager::getCollationInfo(uint32_t collation_id) const -> const CollationInfo *
     {
-        for (const auto& coll : collations_)
+        for (const auto &coll : collations_)
         {
             if (coll.id == collation_id)
             {
@@ -377,9 +331,9 @@ namespace scratchbird::core
         return nullptr;
     }
 
-    auto CharsetManager::getCollationByName(const std::string& name) const -> uint32_t
+    auto CharsetManager::getCollationByName(const std::string &name) const -> uint32_t
     {
-        for (const auto& coll : collations_)
+        for (const auto &coll : collations_)
         {
             if (coll.name == name)
             {
@@ -391,13 +345,13 @@ namespace scratchbird::core
 
     auto CharsetManager::getCollationName(uint32_t collation_id) const -> std::string
     {
-        const auto* info = getCollationInfo(collation_id);
+        const auto *info = getCollationInfo(collation_id);
         return info ? info->name : "utf8_general_ci";
     }
 
     auto CharsetManager::getDefaultCollation(CharacterSet charset) const -> uint32_t
     {
-        for (const auto& coll : collations_)
+        for (const auto &coll : collations_)
         {
             if (coll.charset == charset && coll.is_default)
             {
@@ -407,7 +361,8 @@ namespace scratchbird::core
         return 101; // Fallback: utf8_general_ci
     }
 
-    auto CharsetManager::getCharLength(const uint8_t* str, uint32_t byte_len, CharacterSet charset) const -> uint32_t
+    auto CharsetManager::getCharLength(const uint8_t *str, uint32_t byte_len,
+                                       CharacterSet charset) const -> uint32_t
     {
         if (charset == CharacterSet::UTF8 || charset == CharacterSet::UTF8MB4)
         {
@@ -422,7 +377,7 @@ namespace scratchbird::core
             return utf32::char_length(str, byte_len);
         }
         // For fixed-width encodings, char count = byte count / bytes_per_char
-        const auto* info = getCharsetInfo(charset);
+        const auto *info = getCharsetInfo(charset);
         if (info && !info->variable_width)
         {
             return byte_len / info->min_bytes;
@@ -430,7 +385,8 @@ namespace scratchbird::core
         return byte_len; // Fallback
     }
 
-    auto CharsetManager::getByteLength(const uint8_t* str, uint32_t char_count, CharacterSet charset) const -> uint32_t
+    auto CharsetManager::getByteLength(const uint8_t *str, uint32_t char_count,
+                                       CharacterSet charset) const -> uint32_t
     {
         if (charset == CharacterSet::UTF8 || charset == CharacterSet::UTF8MB4)
         {
@@ -444,7 +400,7 @@ namespace scratchbird::core
         {
             return utf32::byte_length(str, char_count);
         }
-        const auto* info = getCharsetInfo(charset);
+        const auto *info = getCharsetInfo(charset);
         if (info && !info->variable_width)
         {
             return char_count * info->min_bytes;
@@ -454,12 +410,12 @@ namespace scratchbird::core
 
     auto CharsetManager::getMaxBytesPerChar(CharacterSet charset) const -> uint8_t
     {
-        const auto* info = getCharsetInfo(charset);
+        const auto *info = getCharsetInfo(charset);
         return info ? info->max_bytes : 4; // Default to UTF-8
     }
 
-    auto CharsetManager::validate(const uint8_t* str, uint32_t byte_len, CharacterSet charset,
-                                   ErrorContext* ctx) const -> Status
+    auto CharsetManager::validate(const uint8_t *str, uint32_t byte_len, CharacterSet charset,
+                                  ErrorContext *ctx) const -> Status
     {
         if (charset == CharacterSet::UTF8 || charset == CharacterSet::UTF8MB4)
         {
@@ -489,11 +445,10 @@ namespace scratchbird::core
         return Status::OK;
     }
 
-    auto CharsetManager::compare(const uint8_t* s1, uint32_t len1,
-                                  const uint8_t* s2, uint32_t len2,
-                                  uint32_t collation_id) const -> int
+    auto CharsetManager::compare(const uint8_t *s1, uint32_t len1, const uint8_t *s2, uint32_t len2,
+                                 uint32_t collation_id) const -> int
     {
-        const auto* coll = getCollationInfo(collation_id);
+        const auto *coll = getCollationInfo(collation_id);
         if (!coll)
         {
             // Fallback to binary comparison
@@ -502,26 +457,26 @@ namespace scratchbird::core
 
         switch (coll->type)
         {
-        case CollationType::BINARY:
-            return utf8::compare_bin(s1, len1, s2, len2);
+            case CollationType::BINARY:
+                return utf8::compare_bin(s1, len1, s2, len2);
 
-        case CollationType::CASE_INSENSITIVE:
-            if (coll->charset == CharacterSet::UTF8 || coll->charset == CharacterSet::UTF8MB4)
-            {
-                return utf8::compare_ci(s1, len1, s2, len2);
-            }
-            return utf8::compare_bin(s1, len1, s2, len2);
+            case CollationType::CASE_INSENSITIVE:
+                if (coll->charset == CharacterSet::UTF8 || coll->charset == CharacterSet::UTF8MB4)
+                {
+                    return utf8::compare_ci(s1, len1, s2, len2);
+                }
+                return utf8::compare_bin(s1, len1, s2, len2);
 
-        default:
-            // For now, fall back to binary comparison
-            // TODO: Implement full UCA and locale-specific comparison
-            return utf8::compare_bin(s1, len1, s2, len2);
+            default:
+                // For now, fall back to binary comparison
+                // TODO: Implement full UCA and locale-specific comparison
+                return utf8::compare_bin(s1, len1, s2, len2);
         }
     }
 
-    auto CharsetManager::convert(const uint8_t* input, uint32_t input_len, CharacterSet from_cs,
-                                  std::vector<uint8_t>& output, CharacterSet to_cs,
-                                  ErrorContext* ctx) const -> Status
+    auto CharsetManager::convert(const uint8_t *input, uint32_t input_len, CharacterSet from_cs,
+                                 std::vector<uint8_t> &output, CharacterSet to_cs,
+                                 ErrorContext *ctx) const -> Status
     {
         // Identity conversion
         if (from_cs == to_cs)
@@ -670,8 +625,8 @@ namespace scratchbird::core
         // All other conversions not yet implemented
         if (ctx != nullptr)
         {
-            std::string msg = "Conversion from " + getCharsetName(from_cs) +
-                              " to " + getCharsetName(to_cs) + " not yet implemented";
+            std::string msg = "Conversion from " + getCharsetName(from_cs) + " to " +
+                              getCharsetName(to_cs) + " not yet implemented";
             SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED, msg.c_str());
         }
         return Status::NOT_IMPLEMENTED;
@@ -680,7 +635,7 @@ namespace scratchbird::core
     // UTF-8 utility functions implementation
     namespace utf8
     {
-        auto validate(const uint8_t* str, uint32_t byte_len) -> bool
+        auto validate(const uint8_t *str, uint32_t byte_len) -> bool
         {
             uint32_t i = 0;
             while (i < byte_len)
@@ -702,7 +657,8 @@ namespace scratchbird::core
                 // 3-byte sequence: 1110xxxx 10xxxxxx 10xxxxxx
                 else if ((c & 0xF0) == 0xE0)
                 {
-                    if (i + 2 >= byte_len || (str[i + 1] & 0xC0) != 0x80 || (str[i + 2] & 0xC0) != 0x80)
+                    if (i + 2 >= byte_len || (str[i + 1] & 0xC0) != 0x80 ||
+                        (str[i + 2] & 0xC0) != 0x80)
                         return false;
                     i += 3;
                 }
@@ -722,7 +678,7 @@ namespace scratchbird::core
             return true;
         }
 
-        auto char_length(const uint8_t* str, uint32_t byte_len) -> uint32_t
+        auto char_length(const uint8_t *str, uint32_t byte_len) -> uint32_t
         {
             uint32_t char_count = 0;
             uint32_t i = 0;
@@ -747,7 +703,7 @@ namespace scratchbird::core
             return char_count;
         }
 
-        auto byte_length(const uint8_t* str, uint32_t char_count) -> uint32_t
+        auto byte_length(const uint8_t *str, uint32_t char_count) -> uint32_t
         {
             uint32_t byte_count = 0;
             uint32_t chars_seen = 0;
@@ -777,7 +733,7 @@ namespace scratchbird::core
             return byte_count;
         }
 
-        auto char_byte_length(const uint8_t* str) -> uint32_t
+        auto char_byte_length(const uint8_t *str) -> uint32_t
         {
             uint8_t c = str[0];
             if ((c & 0x80) == 0)
@@ -791,7 +747,7 @@ namespace scratchbird::core
             return 1; // Invalid
         }
 
-        auto to_upper(const std::string& str) -> std::string
+        auto to_upper(const std::string &str) -> std::string
         {
             std::string result = str;
             std::transform(result.begin(), result.end(), result.begin(),
@@ -799,7 +755,7 @@ namespace scratchbird::core
             return result;
         }
 
-        auto to_lower(const std::string& str) -> std::string
+        auto to_lower(const std::string &str) -> std::string
         {
             std::string result = str;
             std::transform(result.begin(), result.end(), result.begin(),
@@ -807,8 +763,7 @@ namespace scratchbird::core
             return result;
         }
 
-        auto compare_ci(const uint8_t* s1, uint32_t len1,
-                        const uint8_t* s2, uint32_t len2) -> int
+        auto compare_ci(const uint8_t *s1, uint32_t len1, const uint8_t *s2, uint32_t len2) -> int
         {
             // Simple ASCII case-insensitive comparison
             // TODO: Implement proper Unicode case folding
@@ -829,8 +784,7 @@ namespace scratchbird::core
             return 0;
         }
 
-        auto compare_bin(const uint8_t* s1, uint32_t len1,
-                         const uint8_t* s2, uint32_t len2) -> int
+        auto compare_bin(const uint8_t *s1, uint32_t len1, const uint8_t *s2, uint32_t len2) -> int
         {
             uint32_t min_len = std::min(len1, len2);
             int result = std::memcmp(s1, s2, min_len);
@@ -848,7 +802,7 @@ namespace scratchbird::core
     // UTF-16 utility functions (little-endian)
     namespace utf16
     {
-        auto validate(const uint8_t* str, uint32_t byte_len) -> bool
+        auto validate(const uint8_t *str, uint32_t byte_len) -> bool
         {
             // UTF-16 must have even number of bytes
             if (byte_len % 2 != 0)
@@ -860,7 +814,8 @@ namespace scratchbird::core
             while (i < byte_len)
             {
                 // Read 16-bit code unit (little-endian)
-                uint16_t unit = static_cast<uint16_t>(str[i]) | (static_cast<uint16_t>(str[i + 1]) << 8);
+                uint16_t unit =
+                    static_cast<uint16_t>(str[i]) | (static_cast<uint16_t>(str[i + 1]) << 8);
 
                 // Check for high surrogate (0xD800-0xDBFF)
                 if (unit >= 0xD800 && unit <= 0xDBFF)
@@ -871,7 +826,8 @@ namespace scratchbird::core
                         return false; // Incomplete surrogate pair
                     }
 
-                    uint16_t low_unit = static_cast<uint16_t>(str[i + 2]) | (static_cast<uint16_t>(str[i + 3]) << 8);
+                    uint16_t low_unit = static_cast<uint16_t>(str[i + 2]) |
+                                        (static_cast<uint16_t>(str[i + 3]) << 8);
 
                     // Validate low surrogate (0xDC00-0xDFFF)
                     if (low_unit < 0xDC00 || low_unit > 0xDFFF)
@@ -896,7 +852,7 @@ namespace scratchbird::core
             return true;
         }
 
-        auto char_length(const uint8_t* str, uint32_t byte_len) -> uint32_t
+        auto char_length(const uint8_t *str, uint32_t byte_len) -> uint32_t
         {
             if (byte_len % 2 != 0)
             {
@@ -908,7 +864,8 @@ namespace scratchbird::core
 
             while (i < byte_len)
             {
-                uint16_t unit = static_cast<uint16_t>(str[i]) | (static_cast<uint16_t>(str[i + 1]) << 8);
+                uint16_t unit =
+                    static_cast<uint16_t>(str[i]) | (static_cast<uint16_t>(str[i + 1]) << 8);
 
                 if (unit >= 0xD800 && unit <= 0xDBFF)
                 {
@@ -927,7 +884,7 @@ namespace scratchbird::core
             return char_count;
         }
 
-        auto byte_length(const uint8_t* str, uint32_t char_count) -> uint32_t
+        auto byte_length(const uint8_t *str, uint32_t char_count) -> uint32_t
         {
             uint32_t byte_count = 0;
             uint32_t chars_seen = 0;
@@ -935,7 +892,8 @@ namespace scratchbird::core
 
             while (chars_seen < char_count && i < 10000) // Safety limit
             {
-                uint16_t unit = static_cast<uint16_t>(str[i]) | (static_cast<uint16_t>(str[i + 1]) << 8);
+                uint16_t unit =
+                    static_cast<uint16_t>(str[i]) | (static_cast<uint16_t>(str[i + 1]) << 8);
 
                 if (unit >= 0xD800 && unit <= 0xDBFF)
                 {
@@ -956,7 +914,7 @@ namespace scratchbird::core
             return byte_count;
         }
 
-        auto char_byte_length(const uint8_t* str) -> uint32_t
+        auto char_byte_length(const uint8_t *str) -> uint32_t
         {
             uint16_t unit = static_cast<uint16_t>(str[0]) | (static_cast<uint16_t>(str[1]) << 8);
 
@@ -975,7 +933,7 @@ namespace scratchbird::core
     // UTF-32 utility functions (little-endian)
     namespace utf32
     {
-        auto validate(const uint8_t* str, uint32_t byte_len) -> bool
+        auto validate(const uint8_t *str, uint32_t byte_len) -> bool
         {
             // UTF-32 must have multiple of 4 bytes
             if (byte_len % 4 != 0)
@@ -988,9 +946,9 @@ namespace scratchbird::core
             {
                 // Read 32-bit code point (little-endian)
                 uint32_t codepoint = static_cast<uint32_t>(str[i]) |
-                                    (static_cast<uint32_t>(str[i + 1]) << 8) |
-                                    (static_cast<uint32_t>(str[i + 2]) << 16) |
-                                    (static_cast<uint32_t>(str[i + 3]) << 24);
+                                     (static_cast<uint32_t>(str[i + 1]) << 8) |
+                                     (static_cast<uint32_t>(str[i + 2]) << 16) |
+                                     (static_cast<uint32_t>(str[i + 3]) << 24);
 
                 // Valid Unicode range: U+0000 to U+10FFFF
                 if (codepoint > 0x10FFFF)
@@ -1010,7 +968,7 @@ namespace scratchbird::core
             return true;
         }
 
-        auto char_length(const uint8_t* str, uint32_t byte_len) -> uint32_t
+        auto char_length(const uint8_t *str, uint32_t byte_len) -> uint32_t
         {
             // UTF-32 is fixed-width: 4 bytes per character
             if (byte_len % 4 != 0)
@@ -1021,13 +979,13 @@ namespace scratchbird::core
             return byte_len / 4;
         }
 
-        auto byte_length(const uint8_t* str, uint32_t char_count) -> uint32_t
+        auto byte_length(const uint8_t *str, uint32_t char_count) -> uint32_t
         {
             // UTF-32 is fixed-width: 4 bytes per character
             return char_count * 4;
         }
 
-        auto char_byte_length(const uint8_t* str) -> uint32_t
+        auto char_byte_length(const uint8_t *str) -> uint32_t
         {
             // UTF-32 is always 4 bytes per character
             return 4;

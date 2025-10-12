@@ -8,15 +8,14 @@
 
 namespace scratchbird::core
 {
-    LongTransactionMonitor::LongTransactionMonitor(Database* db)
-        : db_(db)
-        , enabled_(true)
-        , warning_threshold_seconds_(600)      // 10 minutes default
-        , critical_threshold_seconds_(3600)    // 1 hour default
-        , check_interval_seconds_(60)          // Check every minute default
-        , policy_(LongTransactionPolicy::LOG)
-        , monitoring_(false)
-        , shutdown_requested_(false)
+    LongTransactionMonitor::LongTransactionMonitor(Database *db)
+        : db_(db), enabled_(true), warning_threshold_seconds_(600) // 10 minutes default
+          ,
+          critical_threshold_seconds_(3600) // 1 hour default
+          ,
+          check_interval_seconds_(60) // Check every minute default
+          ,
+          policy_(LongTransactionPolicy::LOG), monitoring_(false), shutdown_requested_(false)
     {
     }
 
@@ -37,7 +36,7 @@ namespace scratchbird::core
         }
     }
 
-    Status LongTransactionMonitor::initialize(ErrorContext* ctx)
+    Status LongTransactionMonitor::initialize(ErrorContext *ctx)
     {
         if (!db_)
         {
@@ -48,7 +47,8 @@ namespace scratchbird::core
         // Read configuration
         readConfiguration();
 
-        LOG_INFO(TRANSACTION, "LongTransactionMonitor initialized: warn=%us, critical=%us, check=%us, policy=%d",
+        LOG_INFO(TRANSACTION,
+                 "LongTransactionMonitor initialized: warn=%us, critical=%us, check=%us, policy=%d",
                  warning_threshold_seconds_.load(), critical_threshold_seconds_.load(),
                  check_interval_seconds_.load(), static_cast<int>(policy_));
 
@@ -57,7 +57,7 @@ namespace scratchbird::core
 
     void LongTransactionMonitor::readConfiguration()
     {
-        Config& cfg = Config::getInstance();
+        Config &cfg = Config::getInstance();
 
         // Read warning threshold (default: 600 seconds = 10 minutes)
         warning_threshold_seconds_ = cfg.getUInt("long_transactions", "warning_threshold", 600);
@@ -71,20 +71,23 @@ namespace scratchbird::core
         // Validate thresholds
         if (warning_threshold_seconds_ < 1)
         {
-            LOG_WARNING(TRANSACTION, "Warning threshold %u too low, using 1 second", warning_threshold_seconds_.load());
+            LOG_WARNING(TRANSACTION, "Warning threshold %u too low, using 1 second",
+                        warning_threshold_seconds_.load());
             warning_threshold_seconds_ = 1;
         }
 
         if (critical_threshold_seconds_ < warning_threshold_seconds_)
         {
-            LOG_WARNING(TRANSACTION, "Critical threshold %u < warning threshold %u, using warning+60",
-                       critical_threshold_seconds_.load(), warning_threshold_seconds_.load());
+            LOG_WARNING(TRANSACTION,
+                        "Critical threshold %u < warning threshold %u, using warning+60",
+                        critical_threshold_seconds_.load(), warning_threshold_seconds_.load());
             critical_threshold_seconds_ = warning_threshold_seconds_.load() + 60;
         }
 
         if (check_interval_seconds_ < 1)
         {
-            LOG_WARNING(TRANSACTION, "Check interval %u too low, using 1 second", check_interval_seconds_.load());
+            LOG_WARNING(TRANSACTION, "Check interval %u too low, using 1 second",
+                        check_interval_seconds_.load());
             check_interval_seconds_ = 1;
         }
 
@@ -108,7 +111,8 @@ namespace scratchbird::core
         }
         else
         {
-            LOG_WARNING(TRANSACTION, "Invalid long transaction policy '%s', using LOG", policy_str.c_str());
+            LOG_WARNING(TRANSACTION, "Invalid long transaction policy '%s', using LOG",
+                        policy_str.c_str());
             policy_ = LongTransactionPolicy::LOG;
         }
 
@@ -117,7 +121,7 @@ namespace scratchbird::core
         enabled_.store(enabled, std::memory_order_release);
     }
 
-    Status LongTransactionMonitor::startMonitoring(ErrorContext* ctx)
+    Status LongTransactionMonitor::startMonitoring(ErrorContext *ctx)
     {
         // Check if already running
         if (monitoring_.load(std::memory_order_acquire))
@@ -137,7 +141,7 @@ namespace scratchbird::core
         return Status::OK;
     }
 
-    Status LongTransactionMonitor::stopMonitoring(ErrorContext* ctx)
+    Status LongTransactionMonitor::stopMonitoring(ErrorContext *ctx)
     {
         if (!monitoring_.load(std::memory_order_acquire))
         {
@@ -207,10 +211,11 @@ namespace scratchbird::core
     void LongTransactionMonitor::setPolicy(LongTransactionPolicy policy)
     {
         policy_ = policy;
-        const char* policy_name =
-            policy == LongTransactionPolicy::LOG ? "LOG" :
-            policy == LongTransactionPolicy::ROLLBACK_READONLY ? "ROLLBACK_READONLY" :
-            policy == LongTransactionPolicy::ROLLBACK_ALL ? "ROLLBACK_ALL" : "TERMINATE_CONNECTION";
+        const char *policy_name =
+            policy == LongTransactionPolicy::LOG                 ? "LOG"
+            : policy == LongTransactionPolicy::ROLLBACK_READONLY ? "ROLLBACK_READONLY"
+            : policy == LongTransactionPolicy::ROLLBACK_ALL      ? "ROLLBACK_ALL"
+                                                                 : "TERMINATE_CONNECTION";
         LOG_INFO(TRANSACTION, "Long transaction policy set to %s", policy_name);
     }
 
@@ -237,19 +242,18 @@ namespace scratchbird::core
             // Wait for wake signal or timeout
             std::unique_lock<std::mutex> lock(wake_mutex_);
             uint32_t interval = check_interval_seconds_.load(std::memory_order_acquire);
-            wake_cv_.wait_for(lock, std::chrono::seconds(interval),
-                             [this] { return shutdown_requested_.load(std::memory_order_acquire); });
+            wake_cv_.wait_for(lock, std::chrono::seconds(interval), [this]
+                              { return shutdown_requested_.load(std::memory_order_acquire); });
         }
 
         LOG_INFO(TRANSACTION, "Long transaction monitoring loop stopped");
     }
 
-    uint32_t LongTransactionMonitor::checkLongTransactions(ErrorContext* ctx)
+    uint32_t LongTransactionMonitor::checkLongTransactions(ErrorContext *ctx)
     {
         // Get current time
         auto now = std::chrono::duration_cast<std::chrono::microseconds>(
-            std::chrono::system_clock::now().time_since_epoch()
-        );
+            std::chrono::system_clock::now().time_since_epoch());
 
         // Get thresholds
         uint32_t warning_threshold = warning_threshold_seconds_.load(std::memory_order_acquire);
@@ -266,9 +270,10 @@ namespace scratchbird::core
 
         uint32_t long_txn_count = 0;
 
-        for (const auto& backend : active_backends)
+        for (const auto &backend : active_backends)
         {
-            // Skip if no active transaction (shouldn't happen in always-in-transaction model, but check anyway)
+            // Skip if no active transaction (shouldn't happen in always-in-transaction model, but
+            // check anyway)
             if (backend.xid == 0 || backend.xact_start_time == 0)
             {
                 continue;
@@ -288,14 +293,15 @@ namespace scratchbird::core
                 if (age_seconds >= critical_threshold)
                 {
                     checkAndActOnTransaction(backend.proc_id, backend.xid, age_seconds,
-                                           backend.is_read_only, ctx);
+                                             backend.is_read_only, ctx);
                 }
                 else
                 {
                     // Just log warning
                     LOG_WARNING(TRANSACTION,
-                               "Long transaction detected: XID=%lu, ProcID=%u, Age=%lu seconds, ReadOnly=%d",
-                               backend.xid, backend.proc_id, age_seconds, backend.is_read_only);
+                                "Long transaction detected: XID=%lu, ProcID=%u, Age=%lu seconds, "
+                                "ReadOnly=%d",
+                                backend.xid, backend.proc_id, age_seconds, backend.is_read_only);
 
                     std::lock_guard<std::mutex> lock(stats_mutex_);
                     stats_.warnings_logged++;
@@ -315,13 +321,14 @@ namespace scratchbird::core
 
     void LongTransactionMonitor::checkAndActOnTransaction(uint32_t proc_id, uint64_t xid,
                                                           uint64_t age_seconds, bool is_read_only,
-                                                          ErrorContext* ctx)
+                                                          ErrorContext *ctx)
     {
         LongTransactionPolicy policy = policy_;
 
         LOG_ERROR(TRANSACTION,
-                 "CRITICAL: Long transaction exceeds threshold: XID=%lu, ProcID=%u, Age=%lu seconds, ReadOnly=%d",
-                 xid, proc_id, age_seconds, is_read_only);
+                  "CRITICAL: Long transaction exceeds threshold: XID=%lu, ProcID=%u, Age=%lu "
+                  "seconds, ReadOnly=%d",
+                  xid, proc_id, age_seconds, is_read_only);
 
         // Take action based on policy
         switch (policy)
@@ -337,55 +344,69 @@ namespace scratchbird::core
             case LongTransactionPolicy::ROLLBACK_READONLY:
                 if (is_read_only)
                 {
-                    LOG_WARNING(TRANSACTION, "Rolling back read-only long transaction: XID=%lu, ProcID=%u", xid, proc_id);
+                    LOG_WARNING(TRANSACTION,
+                                "Rolling back read-only long transaction: XID=%lu, ProcID=%u", xid,
+                                proc_id);
 
                     // Rollback the transaction via TransactionManager
                     if (db_ && db_->transaction_manager())
                     {
-                        TransactionManager* txn_mgr = db_->transaction_manager();
+                        TransactionManager *txn_mgr = db_->transaction_manager();
                         Status rollback_status = txn_mgr->rollbackTransaction(proc_id, xid, ctx);
 
                         if (rollback_status == Status::OK)
                         {
-                            LOG_INFO(TRANSACTION, "Successfully rolled back long read-only transaction: XID=%lu", xid);
+                            LOG_INFO(TRANSACTION,
+                                     "Successfully rolled back long read-only transaction: XID=%lu",
+                                     xid);
                             std::lock_guard<std::mutex> lock(stats_mutex_);
                             stats_.readonly_rolled_back++;
                         }
                         else
                         {
-                            LOG_ERROR(TRANSACTION, "Failed to rollback long read-only transaction: XID=%lu, Status=%d",
-                                     xid, static_cast<int>(rollback_status));
+                            LOG_ERROR(
+                                TRANSACTION,
+                                "Failed to rollback long read-only transaction: XID=%lu, Status=%d",
+                                xid, static_cast<int>(rollback_status));
                             std::lock_guard<std::mutex> lock(stats_mutex_);
                             stats_.warnings_logged++;
                         }
                     }
                     else
                     {
-                        LOG_ERROR(TRANSACTION, "Cannot rollback transaction - TransactionManager unavailable");
+                        LOG_ERROR(TRANSACTION,
+                                  "Cannot rollback transaction - TransactionManager unavailable");
                         std::lock_guard<std::mutex> lock(stats_mutex_);
                         stats_.warnings_logged++;
                     }
                 }
                 else
                 {
-                    LOG_WARNING(TRANSACTION, "Read-write transaction exceeds threshold but policy is ROLLBACK_READONLY: XID=%lu", xid);
+                    LOG_WARNING(TRANSACTION,
+                                "Read-write transaction exceeds threshold but policy is "
+                                "ROLLBACK_READONLY: XID=%lu",
+                                xid);
                     std::lock_guard<std::mutex> lock(stats_mutex_);
                     stats_.warnings_logged++;
                 }
                 break;
 
             case LongTransactionPolicy::ROLLBACK_ALL:
-                LOG_WARNING(TRANSACTION, "Rolling back long transaction: XID=%lu, ProcID=%u, ReadOnly=%d", xid, proc_id, is_read_only);
+                LOG_WARNING(TRANSACTION,
+                            "Rolling back long transaction: XID=%lu, ProcID=%u, ReadOnly=%d", xid,
+                            proc_id, is_read_only);
 
                 // Rollback the transaction via TransactionManager (both read-only and read-write)
                 if (db_ && db_->transaction_manager())
                 {
-                    TransactionManager* txn_mgr = db_->transaction_manager();
+                    TransactionManager *txn_mgr = db_->transaction_manager();
                     Status rollback_status = txn_mgr->rollbackTransaction(proc_id, xid, ctx);
 
                     if (rollback_status == Status::OK)
                     {
-                        LOG_INFO(TRANSACTION, "Successfully rolled back long transaction: XID=%lu, ReadOnly=%d", xid, is_read_only);
+                        LOG_INFO(TRANSACTION,
+                                 "Successfully rolled back long transaction: XID=%lu, ReadOnly=%d",
+                                 xid, is_read_only);
                         std::lock_guard<std::mutex> lock(stats_mutex_);
                         if (is_read_only)
                         {
@@ -398,41 +419,49 @@ namespace scratchbird::core
                     }
                     else
                     {
-                        LOG_ERROR(TRANSACTION, "Failed to rollback long transaction: XID=%lu, Status=%d",
-                                 xid, static_cast<int>(rollback_status));
+                        LOG_ERROR(TRANSACTION,
+                                  "Failed to rollback long transaction: XID=%lu, Status=%d", xid,
+                                  static_cast<int>(rollback_status));
                         std::lock_guard<std::mutex> lock(stats_mutex_);
                         stats_.warnings_logged++;
                     }
                 }
                 else
                 {
-                    LOG_ERROR(TRANSACTION, "Cannot rollback transaction - TransactionManager unavailable");
+                    LOG_ERROR(TRANSACTION,
+                              "Cannot rollback transaction - TransactionManager unavailable");
                     std::lock_guard<std::mutex> lock(stats_mutex_);
                     stats_.warnings_logged++;
                 }
                 break;
 
             case LongTransactionPolicy::TERMINATE_CONNECTION:
-                LOG_WARNING(TRANSACTION, "Terminating connection for long transaction: XID=%lu, ProcID=%u", xid, proc_id);
+                LOG_WARNING(TRANSACTION,
+                            "Terminating connection for long transaction: XID=%lu, ProcID=%u", xid,
+                            proc_id);
 
-                // NOTE: Connection termination requires access to ConnectionContext and connection management
-                // infrastructure that is not yet integrated with LongTransactionMonitor.
+                // NOTE: Connection termination requires access to ConnectionContext and connection
+                // management infrastructure that is not yet integrated with LongTransactionMonitor.
                 //
                 // To implement this properly, we need:
-                // 1. A way to look up ConnectionContext* from proc_id (e.g., via Database or ProcArray)
+                // 1. A way to look up ConnectionContext* from proc_id (e.g., via Database or
+                // ProcArray)
                 // 2. Access to the connection's socket/file descriptor to force close it
                 // 3. Proper cleanup to ensure the backend process detects the closed connection
                 // 4. Consider graceful vs forceful termination options
                 //
-                // For now, ROLLBACK_ALL policy provides similar protection by aborting the transaction
-                // without terminating the connection, allowing the client to continue with a new transaction.
+                // For now, ROLLBACK_ALL policy provides similar protection by aborting the
+                // transaction without terminating the connection, allowing the client to continue
+                // with a new transaction.
                 //
                 // This is a planned enhancement tracked in the development roadmap.
 
-                LOG_ERROR(TRANSACTION, "TERMINATE_CONNECTION policy not yet implemented - use ROLLBACK_ALL instead");
+                LOG_ERROR(
+                    TRANSACTION,
+                    "TERMINATE_CONNECTION policy not yet implemented - use ROLLBACK_ALL instead");
                 {
                     std::lock_guard<std::mutex> lock(stats_mutex_);
-                    stats_.warnings_logged++;  // Count as warning since action couldn't be taken
+                    stats_.warnings_logged++; // Count as warning since action couldn't be taken
                 }
                 break;
         }

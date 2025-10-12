@@ -73,8 +73,8 @@ namespace scratchbird
         private:
             Lexer &lexer_;
             ASTArena &arena_;
-            Token previous_token_;  // Previously consumed token
-            Token current_token_;   // Current lookahead token
+            Token previous_token_; // Previously consumed token
+            Token current_token_;  // Current lookahead token
             std::vector<Error> errors_;
 
             // Token management
@@ -106,11 +106,11 @@ namespace scratchbird
             Statement *parseCreateTable();
             Statement *parseInsert();
             Statement *parseSelect();
-            Statement *parseStartTransaction();  // Phase 2 Task 2.6
-            Statement *parseSetTransaction();    // Phase 3 Task 3.6
-            Statement *parseCommit();            // Phase 2 Task 2.6
-            Statement *parseRollback();          // Phase 2 Task 2.6
-            Statement *parseSweep();             // Phase 3 Task 3.3
+            Statement *parseStartTransaction(); // Phase 2 Task 2.6
+            Statement *parseSetTransaction();   // Phase 3 Task 3.6
+            Statement *parseCommit();           // Phase 2 Task 2.6
+            Statement *parseRollback();         // Phase 2 Task 2.6
+            Statement *parseSweep();            // Phase 3 Task 3.3
 
             // CREATE TABLE helpers
             ColumnDef *parseColumnDef();

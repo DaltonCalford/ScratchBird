@@ -14,18 +14,11 @@
 
 namespace scratchbird::core
 {
-    GarbageCollector::GarbageCollector(Database* db)
-        : db_(db)
-        , txn_manager_(nullptr)
-        , storage_engine_(nullptr)
-        , policy_(GCPolicy::COMBINED)
-        , enabled_(true)
-        , background_interval_ms_(5000)
-        , cooperative_rate_(100)
-        , adaptive_tuning_enabled_(true)
-        , tuning_check_interval_(10)
-        , background_running_(false)
-        , shutdown_requested_(false)
+    GarbageCollector::GarbageCollector(Database *db)
+        : db_(db), txn_manager_(nullptr), storage_engine_(nullptr), policy_(GCPolicy::COMBINED),
+          enabled_(true), background_interval_ms_(5000), cooperative_rate_(100),
+          adaptive_tuning_enabled_(true), tuning_check_interval_(10), background_running_(false),
+          shutdown_requested_(false)
     {
     }
 
@@ -46,7 +39,7 @@ namespace scratchbird::core
         }
     }
 
-    Status GarbageCollector::initialize(ErrorContext* ctx)
+    Status GarbageCollector::initialize(ErrorContext *ctx)
     {
         if (!db_)
         {
@@ -59,22 +52,25 @@ namespace scratchbird::core
 
         if (!txn_manager_ || !storage_engine_)
         {
-            SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "TransactionManager or StorageEngine not available");
+            SET_ERROR_CONTEXT(ctx, Status::IO_ERROR,
+                              "TransactionManager or StorageEngine not available");
             return Status::IO_ERROR;
         }
 
         // Read configuration
         readConfiguration();
 
-        LOG_INFO(VACUUM, "GarbageCollector initialized with policy: %s, interval: %lums, rate: 1/%u",
-                 policy_ == GCPolicy::COOPERATIVE ? "COOPERATIVE" :
-                 policy_ == GCPolicy::BACKGROUND ? "BACKGROUND" : "COMBINED",
+        LOG_INFO(VACUUM,
+                 "GarbageCollector initialized with policy: %s, interval: %lums, rate: 1/%u",
+                 policy_ == GCPolicy::COOPERATIVE  ? "COOPERATIVE"
+                 : policy_ == GCPolicy::BACKGROUND ? "BACKGROUND"
+                                                   : "COMBINED",
                  background_interval_ms_, cooperative_rate_);
 
         return Status::OK;
     }
 
-    void GarbageCollector::processPageCooperative(uint32_t page_id, ErrorContext* ctx)
+    void GarbageCollector::processPageCooperative(uint32_t page_id, ErrorContext *ctx)
     {
         // Check if cooperative GC is enabled
         if (!enabled_.load(std::memory_order_acquire))
@@ -84,7 +80,7 @@ namespace scratchbird::core
 
         if (policy_ == GCPolicy::BACKGROUND)
         {
-            return;  // Cooperative disabled in BACKGROUND-only mode
+            return; // Cooperative disabled in BACKGROUND-only mode
         }
 
         // Rate limiting - don't run on every page read
@@ -101,7 +97,7 @@ namespace scratchbird::core
         updateCooperativeStats(tuples_removed, 1, space_reclaimed);
     }
 
-    Status GarbageCollector::startBackgroundGC(ErrorContext* ctx)
+    Status GarbageCollector::startBackgroundGC(ErrorContext *ctx)
     {
         // Check if already running
         if (background_running_.load(std::memory_order_acquire))
@@ -129,7 +125,7 @@ namespace scratchbird::core
         return Status::OK;
     }
 
-    Status GarbageCollector::stopBackgroundGC(ErrorContext* ctx)
+    Status GarbageCollector::stopBackgroundGC(ErrorContext *ctx)
     {
         if (!background_running_.load(std::memory_order_acquire))
         {
@@ -167,15 +163,15 @@ namespace scratchbird::core
 
         // Get current timestamp
         uint64_t now = std::chrono::duration_cast<std::chrono::microseconds>(
-            std::chrono::system_clock::now().time_since_epoch()
-        ).count();
+                           std::chrono::system_clock::now().time_since_epoch())
+                           .count();
 
         // Check if page is already dirty
         auto it = dirty_pages_.find(page_id);
         if (it != dirty_pages_.end())
         {
             // Page already dirty - increment mark count and recalculate priority
-            DirtyPageInfo& info = it->second;
+            DirtyPageInfo &info = it->second;
             info.mark_count++;
 
             // Recalculate priority based on mark count and age
@@ -185,7 +181,7 @@ namespace scratchbird::core
         else
         {
             // New dirty page - add to map with initial priority
-            double initial_priority = 1.0;  // Base priority
+            double initial_priority = 1.0; // Base priority
             dirty_pages_[page_id] = DirtyPageInfo(page_id, initial_priority, now);
         }
 
@@ -204,8 +200,9 @@ namespace scratchbird::core
     {
         policy_ = policy;
         LOG_INFO(VACUUM, "GC policy changed to: %s",
-                 policy == GCPolicy::COOPERATIVE ? "COOPERATIVE" :
-                 policy == GCPolicy::BACKGROUND ? "BACKGROUND" : "COMBINED");
+                 policy == GCPolicy::COOPERATIVE  ? "COOPERATIVE"
+                 : policy == GCPolicy::BACKGROUND ? "BACKGROUND"
+                                                  : "COMBINED");
     }
 
     GCPolicy GarbageCollector::getPolicy() const
@@ -274,16 +271,17 @@ namespace scratchbird::core
 
                 // Extract all dirty page info
                 pages_to_clean.reserve(dirty_pages_.size());
-                for (const auto& pair : dirty_pages_)
+                for (const auto &pair : dirty_pages_)
                 {
                     pages_to_clean.push_back(pair.second);
                 }
 
                 // Sort by priority (highest first)
                 std::sort(pages_to_clean.begin(), pages_to_clean.end(),
-                         [](const DirtyPageInfo& a, const DirtyPageInfo& b) {
-                             return a < b;  // Uses operator< which orders by priority
-                         });
+                          [](const DirtyPageInfo &a, const DirtyPageInfo &b)
+                          {
+                              return a < b; // Uses operator< which orders by priority
+                          });
             }
 
             uint64_t tuples_removed = 0;
@@ -291,7 +289,7 @@ namespace scratchbird::core
             uint64_t space_reclaimed = 0;
 
             // Clean each dirty page (in priority order - highest first)
-            for (const auto& page_info : pages_to_clean)
+            for (const auto &page_info : pages_to_clean)
             {
                 if (shutdown_requested_.load(std::memory_order_acquire))
                 {
@@ -300,7 +298,8 @@ namespace scratchbird::core
 
                 ErrorContext err_ctx;
                 uint64_t page_space_reclaimed = 0;
-                uint64_t tuples_found = cleanPage(page_info.page_id, &page_space_reclaimed, &err_ctx);
+                uint64_t tuples_found =
+                    cleanPage(page_info.page_id, &page_space_reclaimed, &err_ctx);
                 tuples_removed += tuples_found;
                 space_reclaimed += page_space_reclaimed;
                 pages_cleaned++;
@@ -308,8 +307,9 @@ namespace scratchbird::core
 
             // Update statistics
             auto end_time = std::chrono::steady_clock::now();
-            uint64_t duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-                end_time - start_time).count();
+            uint64_t duration_ms =
+                std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time)
+                    .count();
 
             updateBackgroundStats(tuples_removed, pages_cleaned, space_reclaimed, duration_ms);
 
@@ -319,20 +319,21 @@ namespace scratchbird::core
             // Wait for wake signal or timeout
             // Use condition variable for responsive wake on sweep completion
             std::unique_lock<std::mutex> lock(bg_wake_mutex_);
-            bg_wake_cv_.wait_for(lock, std::chrono::milliseconds(background_interval_ms_),
-                                 [this] { return shutdown_requested_.load(std::memory_order_acquire); });
+            bg_wake_cv_.wait_for(lock, std::chrono::milliseconds(background_interval_ms_), [this]
+                                 { return shutdown_requested_.load(std::memory_order_acquire); });
         }
 
         LOG_INFO(VACUUM, "Background GC loop stopped");
     }
 
-    uint64_t GarbageCollector::cleanPage(uint32_t page_id, uint64_t* space_reclaimed_out, ErrorContext* ctx)
+    uint64_t GarbageCollector::cleanPage(uint32_t page_id, uint64_t *space_reclaimed_out,
+                                         ErrorContext *ctx)
     {
         // Get current OIT from TransactionManager
         uint64_t oit = txn_manager_->getOldestXid();
 
         // Pin the page through buffer pool
-        void* page_buffer;
+        void *page_buffer;
         Status s = db_->buffer_pool()->pinPage(page_id, &page_buffer, ctx);
         if (s != Status::OK)
         {
@@ -345,7 +346,7 @@ namespace scratchbird::core
         }
 
         // Get page header to check page type
-        auto* page_header = reinterpret_cast<PageHeader*>(page_buffer);
+        auto *page_header = reinterpret_cast<PageHeader *>(page_buffer);
 
         // Only process heap pages
         if (page_header->page_type != PAGE_TYPE_HEAP)
@@ -359,7 +360,7 @@ namespace scratchbird::core
         }
 
         // Use HeapPage::prunePage() for physical tuple removal
-        HeapPage heap_page(reinterpret_cast<uint8_t*>(page_buffer), page_header->page_size);
+        HeapPage heap_page(reinterpret_cast<uint8_t *>(page_buffer), page_header->page_size);
 
         uint32_t tuples_pruned = 0;
         uint32_t space_reclaimed = 0;
@@ -372,8 +373,8 @@ namespace scratchbird::core
         // Log results if we pruned any tuples
         if (tuples_pruned > 0)
         {
-            LOG_INFO(VACUUM, "Page %u: pruned %u tuples, reclaimed %u bytes (OIT=%lu)",
-                    page_id, tuples_pruned, space_reclaimed, oit);
+            LOG_INFO(VACUUM, "Page %u: pruned %u tuples, reclaimed %u bytes (OIT=%lu)", page_id,
+                     tuples_pruned, space_reclaimed, oit);
         }
 
         // Unpin page (mark as dirty if we modified it)
@@ -432,7 +433,8 @@ namespace scratchbird::core
         return (state == TransactionState::COMMITTED);
     }
 
-    void GarbageCollector::updateCooperativeStats(uint64_t tuples_removed, uint64_t pages_cleaned, uint64_t space_reclaimed)
+    void GarbageCollector::updateCooperativeStats(uint64_t tuples_removed, uint64_t pages_cleaned,
+                                                  uint64_t space_reclaimed)
     {
         std::lock_guard<std::mutex> lock(stats_mutex_);
         stats_.tuples_removed += tuples_removed;
@@ -452,7 +454,7 @@ namespace scratchbird::core
     }
 
     void GarbageCollector::updateBackgroundStats(uint64_t tuples_removed, uint64_t pages_cleaned,
-                                                   uint64_t space_reclaimed, uint64_t duration_ms)
+                                                 uint64_t space_reclaimed, uint64_t duration_ms)
     {
         std::lock_guard<std::mutex> lock(stats_mutex_);
         stats_.tuples_removed += tuples_removed;
@@ -460,8 +462,8 @@ namespace scratchbird::core
         stats_.space_reclaimed_bytes += space_reclaimed;
         stats_.background_runs++;
         stats_.last_background_time = std::chrono::duration_cast<std::chrono::microseconds>(
-            std::chrono::system_clock::now().time_since_epoch()
-        ).count();
+                                          std::chrono::system_clock::now().time_since_epoch())
+                                          .count();
         stats_.last_background_duration_ms = duration_ms;
 
         // Update duration histogram
@@ -519,7 +521,7 @@ namespace scratchbird::core
 
     void GarbageCollector::readConfiguration()
     {
-        Config& cfg = Config::getInstance();
+        Config &cfg = Config::getInstance();
 
         // Read GC policy
         std::string policy_str = cfg.getString("garbage_collection", "policy", "COMBINED");
@@ -547,12 +549,14 @@ namespace scratchbird::core
         // Validate interval (minimum 100ms, maximum 1 hour)
         if (background_interval_ms_ < 100)
         {
-            LOG_WARNING(VACUUM, "Background interval %lums too low, using 100ms", background_interval_ms_);
+            LOG_WARNING(VACUUM, "Background interval %lums too low, using 100ms",
+                        background_interval_ms_);
             background_interval_ms_ = 100;
         }
-        else if (background_interval_ms_ > 3600000)  // 1 hour
+        else if (background_interval_ms_ > 3600000) // 1 hour
         {
-            LOG_WARNING(VACUUM, "Background interval %lums too high, using 3600000ms (1 hour)", background_interval_ms_);
+            LOG_WARNING(VACUUM, "Background interval %lums too high, using 3600000ms (1 hour)",
+                        background_interval_ms_);
             background_interval_ms_ = 3600000;
         }
 
@@ -583,7 +587,8 @@ namespace scratchbird::core
         tuning_check_interval_ = cfg.getUInt("garbage_collection", "tuning_check_interval", 10);
         if (tuning_check_interval_ < 1)
         {
-            LOG_WARNING(VACUUM, "Tuning check interval %u too low, using 1", tuning_check_interval_);
+            LOG_WARNING(VACUUM, "Tuning check interval %u too low, using 1",
+                        tuning_check_interval_);
             tuning_check_interval_ = 1;
         }
     }
@@ -616,7 +621,7 @@ namespace scratchbird::core
 
         if (background_runs % tuning_check_interval_ != 0)
         {
-            return;  // Not yet time to tune
+            return; // Not yet time to tune
         }
 
         // Get current statistics
@@ -627,7 +632,7 @@ namespace scratchbird::core
         if (stats.pages_cleaned > 0)
         {
             double waste_ratio = static_cast<double>(stats.pages_with_no_garbage) /
-                                static_cast<double>(stats.pages_cleaned);
+                                 static_cast<double>(stats.pages_cleaned);
 
             uint32_t old_rate = cooperative_rate_;
             uint32_t new_rate = old_rate;
@@ -635,7 +640,7 @@ namespace scratchbird::core
             if (waste_ratio > HIGH_WASTE_THRESHOLD)
             {
                 // Too much wasted effort - reduce frequency (increase rate)
-                new_rate = static_cast<uint32_t>(old_rate * 1.1);  // Increase by 10%
+                new_rate = static_cast<uint32_t>(old_rate * 1.1); // Increase by 10%
                 if (new_rate > MAX_COOPERATIVE_RATE)
                 {
                     new_rate = MAX_COOPERATIVE_RATE;
@@ -644,7 +649,7 @@ namespace scratchbird::core
             else if (waste_ratio < LOW_WASTE_THRESHOLD)
             {
                 // Low wasted effort - can increase frequency (decrease rate)
-                new_rate = static_cast<uint32_t>(old_rate * 0.9);  // Decrease by 10%
+                new_rate = static_cast<uint32_t>(old_rate * 0.9); // Decrease by 10%
                 if (new_rate < MIN_COOPERATIVE_RATE)
                 {
                     new_rate = MIN_COOPERATIVE_RATE;
@@ -662,20 +667,21 @@ namespace scratchbird::core
         // Adaptive Background Interval Tuning
         // Goal: Balance responsiveness with CPU overhead
         uint64_t total_runs = stats.duration_0_10ms + stats.duration_10_50ms +
-                             stats.duration_50_100ms + stats.duration_100_500ms +
-                             stats.duration_500_1000ms + stats.duration_1000ms_plus;
+                              stats.duration_50_100ms + stats.duration_100_500ms +
+                              stats.duration_500_1000ms + stats.duration_1000ms_plus;
 
         if (total_runs > 0)
         {
             // Calculate percentage of fast runs (0-50ms)
-            double fast_ratio = static_cast<double>(stats.duration_0_10ms + stats.duration_10_50ms) /
-                               static_cast<double>(total_runs);
+            double fast_ratio =
+                static_cast<double>(stats.duration_0_10ms + stats.duration_10_50ms) /
+                static_cast<double>(total_runs);
 
             // Calculate percentage of slow runs (100ms+)
-            double slow_ratio = static_cast<double>(stats.duration_100_500ms +
-                                                    stats.duration_500_1000ms +
-                                                    stats.duration_1000ms_plus) /
-                               static_cast<double>(total_runs);
+            double slow_ratio =
+                static_cast<double>(stats.duration_100_500ms + stats.duration_500_1000ms +
+                                    stats.duration_1000ms_plus) /
+                static_cast<double>(total_runs);
 
             uint64_t old_interval = background_interval_ms_;
             uint64_t new_interval = old_interval;
@@ -683,7 +689,7 @@ namespace scratchbird::core
             // If mostly fast runs AND low dirty page count, increase interval (less frequent)
             if (fast_ratio > 0.8 && stats.dirty_page_count < LOW_DIRTY_THRESHOLD)
             {
-                new_interval = static_cast<uint64_t>(old_interval * 1.1);  // Increase by 10%
+                new_interval = static_cast<uint64_t>(old_interval * 1.1); // Increase by 10%
                 if (new_interval > MAX_BACKGROUND_INTERVAL_MS)
                 {
                     new_interval = MAX_BACKGROUND_INTERVAL_MS;
@@ -692,7 +698,7 @@ namespace scratchbird::core
             // If many slow runs OR high dirty page count, decrease interval (more frequent)
             else if (slow_ratio > 0.2 || stats.dirty_page_count > HIGH_DIRTY_THRESHOLD)
             {
-                new_interval = static_cast<uint64_t>(old_interval * 0.9);  // Decrease by 10%
+                new_interval = static_cast<uint64_t>(old_interval * 0.9); // Decrease by 10%
                 if (new_interval < MIN_BACKGROUND_INTERVAL_MS)
                 {
                     new_interval = MIN_BACKGROUND_INTERVAL_MS;
@@ -702,7 +708,9 @@ namespace scratchbird::core
             if (new_interval != old_interval)
             {
                 background_interval_ms_ = new_interval;
-                LOG_INFO(VACUUM, "Adaptive tuning: background_interval_ms %lu -> %lu (fast: %.1f%%, slow: %.1f%%, dirty: %lu)",
+                LOG_INFO(VACUUM,
+                         "Adaptive tuning: background_interval_ms %lu -> %lu (fast: %.1f%%, slow: "
+                         "%.1f%%, dirty: %lu)",
                          old_interval, new_interval, fast_ratio * 100.0, slow_ratio * 100.0,
                          stats.dirty_page_count);
             }

@@ -107,7 +107,7 @@ namespace scratchbird
             current_result_set_.reset();
 
             // Statement snapshot management for READ_COMMITTED_READ_CONSISTENCY
-            core::ConnectionContext* conn_ctx = core::ConnectionContext::getCurrent();
+            core::ConnectionContext *conn_ctx = core::ConnectionContext::getCurrent();
             bool created_stmt_snapshot = false;
 
             try
@@ -126,7 +126,8 @@ namespace scratchbird
                 }
 
                 // Create statement snapshot for READ_COMMITTED_READ_CONSISTENCY
-                if (conn_ctx && conn_ctx->getIsolationLevel() == core::IsolationLevel::READ_COMMITTED_READ_CONSISTENCY)
+                if (conn_ctx && conn_ctx->getIsolationLevel() ==
+                                    core::IsolationLevel::READ_COMMITTED_READ_CONSISTENCY)
                 {
                     core::ErrorContext err_ctx;
                     core::Status status = conn_ctx->createStatementSnapshot(&err_ctx);
@@ -185,7 +186,7 @@ namespace scratchbird
 
                     default:
                         result = ExecutionResult("Unknown statement opcode: " +
-                                               std::to_string(static_cast<int>(op)));
+                                                 std::to_string(static_cast<int>(op)));
                         break;
                 }
 
@@ -442,7 +443,7 @@ namespace scratchbird
             // Create table in catalog
             core::ID table_id;
             status = db_->catalog_manager()->createTable(schema_info.schema_id, table_name, columns,
-                                                          table_id, nullptr);
+                                                         table_id, nullptr);
             if (status != core::Status::OK)
             {
                 error("Failed to create table");
@@ -470,7 +471,7 @@ namespace scratchbird
             // Get table from catalog
             core::CatalogManager::TableInfo table_info;
             status = db_->catalog_manager()->getTable(schema_info.schema_id, table_name, table_info,
-                                                       nullptr);
+                                                      nullptr);
             if (status != core::Status::OK)
             {
                 error("Table not found: " + table_name);
@@ -544,8 +545,8 @@ namespace scratchbird
             for (const auto &col_name_str : col_names)
             {
                 auto it = std::find_if(all_columns.begin(), all_columns.end(),
-                                        [&col_name_str](const auto &c)
-                                        { return c.column_name == col_name_str; });
+                                       [&col_name_str](const auto &c)
+                                       { return c.column_name == col_name_str; });
 
                 if (it == all_columns.end())
                 {
@@ -759,7 +760,7 @@ namespace scratchbird
 
             core::CatalogManager::TableInfo table_info;
             status = db_->catalog_manager()->getTable(schema_info.schema_id, table_name, table_info,
-                                                       nullptr);
+                                                      nullptr);
             if (status != core::Status::OK)
             {
                 error("Table not found: " + table_name);
@@ -782,7 +783,7 @@ namespace scratchbird
                 for (const auto &col : all_columns)
                 {
                     current_result_set_->addColumn(col.column_name,
-                                                    static_cast<core::DataType>(col.data_type));
+                                                   static_cast<core::DataType>(col.data_type));
                 }
             }
             else
@@ -792,8 +793,8 @@ namespace scratchbird
                 {
                     // Find column in table
                     auto it = std::find_if(all_columns.begin(), all_columns.end(),
-                                            [&col_name](const auto &c)
-                                            { return c.column_name == col_name; });
+                                           [&col_name](const auto &c)
+                                           { return c.column_name == col_name; });
 
                     if (it == all_columns.end())
                     {
@@ -801,7 +802,7 @@ namespace scratchbird
                     }
 
                     current_result_set_->addColumn(alias,
-                                                    static_cast<core::DataType>(it->data_type));
+                                                   static_cast<core::DataType>(it->data_type));
                 }
             }
 
@@ -810,7 +811,8 @@ namespace scratchbird
             size_t where_end_pc = 0;
             bool has_where = false;
 
-            if (pc_ < bytecode_size_ && bytecode_[pc_] == static_cast<uint8_t>(Opcode::WHERE_CLAUSE))
+            if (pc_ < bytecode_size_ &&
+                bytecode_[pc_] == static_cast<uint8_t>(Opcode::WHERE_CLAUSE))
             {
                 has_where = true;
                 readByte(); // Consume WHERE_CLAUSE opcode
@@ -939,8 +941,8 @@ namespace scratchbird
                     {
                         // Find column index
                         auto it = std::find_if(all_columns.begin(), all_columns.end(),
-                                                [&col_name](const auto &c)
-                                                { return c.column_name == col_name; });
+                                               [&col_name](const auto &c)
+                                               { return c.column_name == col_name; });
 
                         if (it != all_columns.end())
                         {
@@ -991,7 +993,8 @@ namespace scratchbird
             uint8_t mode_byte = readByte();
             bool read_only = (mode_byte == 1);
 
-            // Read isolation level (1 byte: 0 = READ_COMMITTED, 1 = SNAPSHOT, 2 = SNAPSHOT_TABLE_STABILITY)
+            // Read isolation level (1 byte: 0 = READ_COMMITTED, 1 = SNAPSHOT, 2 =
+            // SNAPSHOT_TABLE_STABILITY)
             uint8_t isolation_byte = readByte();
             core::IsolationLevel isolation;
             switch (isolation_byte)
@@ -1043,8 +1046,8 @@ namespace scratchbird
                 // Read lock mode (1 byte: 0 = SHARED, 1 = PROTECTED)
                 uint8_t lock_mode_byte = readByte();
                 core::TableLockMode lock_mode = (lock_mode_byte == 0)
-                    ? core::TableLockMode::SHARED
-                    : core::TableLockMode::PROTECTED;
+                                                    ? core::TableLockMode::SHARED
+                                                    : core::TableLockMode::PROTECTED;
 
                 // Read for_write flag (1 byte: 0 = FOR READ, 1 = FOR WRITE)
                 uint8_t for_write_byte = readByte();
@@ -1074,7 +1077,8 @@ namespace scratchbird
             conn_ctx->setLockTimeout(lock_timeout);
 
             // Start new transaction (commits current if commit_outstanding = true)
-            auto status = conn_ctx->startTransaction(read_only, isolation, commit_outstanding, &err_ctx);
+            auto status =
+                conn_ctx->startTransaction(read_only, isolation, commit_outstanding, &err_ctx);
             if (status != core::Status::OK)
             {
                 std::string err_msg = "Failed to start transaction";
@@ -1112,7 +1116,8 @@ namespace scratchbird
             uint8_t mode_byte = readByte();
             bool read_only = (mode_byte == 1);
 
-            // Read isolation level (1 byte: 0 = READ_COMMITTED, 1 = SNAPSHOT, 2 = SNAPSHOT_TABLE_STABILITY)
+            // Read isolation level (1 byte: 0 = READ_COMMITTED, 1 = SNAPSHOT, 2 =
+            // SNAPSHOT_TABLE_STABILITY)
             uint8_t isolation_byte = readByte();
             core::IsolationLevel isolation;
             switch (isolation_byte)
@@ -1160,8 +1165,8 @@ namespace scratchbird
                 // Read lock mode (1 byte: 0 = SHARED, 1 = PROTECTED)
                 uint8_t lock_mode_byte = readByte();
                 core::TableLockMode lock_mode = (lock_mode_byte == 0)
-                    ? core::TableLockMode::SHARED
-                    : core::TableLockMode::PROTECTED;
+                                                    ? core::TableLockMode::SHARED
+                                                    : core::TableLockMode::PROTECTED;
 
                 // Read for_write flag (1 byte: 0 = FOR READ, 1 = FOR WRITE)
                 uint8_t for_write_byte = readByte();
@@ -1328,10 +1333,12 @@ namespace scratchbird
                     std::vector<Value> row;
                     row.push_back(Value::makeInt64(static_cast<int64_t>(stats.sweep_count)));
                     row.push_back(Value::makeInt64(static_cast<int64_t>(stats.last_sweep_time)));
-                    row.push_back(Value::makeInt64(static_cast<int64_t>(stats.last_sweep_duration_ms)));
+                    row.push_back(
+                        Value::makeInt64(static_cast<int64_t>(stats.last_sweep_duration_ms)));
                     row.push_back(Value::makeInt64(static_cast<int64_t>(stats.last_oit_before)));
                     row.push_back(Value::makeInt64(static_cast<int64_t>(stats.last_oit_after)));
-                    row.push_back(Value::makeInt64(static_cast<int64_t>(stats.total_transactions_swept)));
+                    row.push_back(
+                        Value::makeInt64(static_cast<int64_t>(stats.total_transactions_swept)));
                     row.push_back(Value::makeBoolean(stats.sweep_in_progress));
 
                     current_result_set_->addRow(std::move(row));
@@ -1373,7 +1380,8 @@ namespace scratchbird
 
                 // Enhanced metrics - Page efficiency
                 current_result_set_->addColumn("MON$PAGES_NO_GARBAGE", core::DataType::INT64);
-                current_result_set_->addColumn("MON$MAX_SPACE_RECLAIMED_PAGE", core::DataType::INT64);
+                current_result_set_->addColumn("MON$MAX_SPACE_RECLAIMED_PAGE",
+                                               core::DataType::INT64);
 
                 // Enhanced metrics - Garbage accumulation
                 current_result_set_->addColumn("MON$TOTAL_DIRTY_MARKED", core::DataType::INT64);
@@ -1394,29 +1402,39 @@ namespace scratchbird
                     row.push_back(Value::makeInt64(static_cast<int64_t>(stats.pages_cleaned)));
                     row.push_back(Value::makeInt64(static_cast<int64_t>(stats.cooperative_runs)));
                     row.push_back(Value::makeInt64(static_cast<int64_t>(stats.background_runs)));
-                    row.push_back(Value::makeInt64(static_cast<int64_t>(stats.last_background_time)));
-                    row.push_back(Value::makeInt64(static_cast<int64_t>(stats.last_background_duration_ms)));
+                    row.push_back(
+                        Value::makeInt64(static_cast<int64_t>(stats.last_background_time)));
+                    row.push_back(
+                        Value::makeInt64(static_cast<int64_t>(stats.last_background_duration_ms)));
                     row.push_back(Value::makeInt64(static_cast<int64_t>(stats.dirty_page_count)));
-                    row.push_back(Value::makeInt64(static_cast<int64_t>(stats.space_reclaimed_bytes)));
+                    row.push_back(
+                        Value::makeInt64(static_cast<int64_t>(stats.space_reclaimed_bytes)));
 
                     // Enhanced metrics - Duration histogram
                     row.push_back(Value::makeInt64(static_cast<int64_t>(stats.duration_0_10ms)));
                     row.push_back(Value::makeInt64(static_cast<int64_t>(stats.duration_10_50ms)));
                     row.push_back(Value::makeInt64(static_cast<int64_t>(stats.duration_50_100ms)));
                     row.push_back(Value::makeInt64(static_cast<int64_t>(stats.duration_100_500ms)));
-                    row.push_back(Value::makeInt64(static_cast<int64_t>(stats.duration_500_1000ms)));
-                    row.push_back(Value::makeInt64(static_cast<int64_t>(stats.duration_1000ms_plus)));
+                    row.push_back(
+                        Value::makeInt64(static_cast<int64_t>(stats.duration_500_1000ms)));
+                    row.push_back(
+                        Value::makeInt64(static_cast<int64_t>(stats.duration_1000ms_plus)));
 
                     // Enhanced metrics - Page efficiency
-                    row.push_back(Value::makeInt64(static_cast<int64_t>(stats.pages_with_no_garbage)));
-                    row.push_back(Value::makeInt64(static_cast<int64_t>(stats.max_space_reclaimed_single_page)));
+                    row.push_back(
+                        Value::makeInt64(static_cast<int64_t>(stats.pages_with_no_garbage)));
+                    row.push_back(Value::makeInt64(
+                        static_cast<int64_t>(stats.max_space_reclaimed_single_page)));
 
                     // Enhanced metrics - Garbage accumulation
-                    row.push_back(Value::makeInt64(static_cast<int64_t>(stats.total_dirty_pages_marked)));
+                    row.push_back(
+                        Value::makeInt64(static_cast<int64_t>(stats.total_dirty_pages_marked)));
 
                     // Current tuning parameters
-                    row.push_back(Value::makeInt64(static_cast<int64_t>(stats.current_cooperative_rate)));
-                    row.push_back(Value::makeInt64(static_cast<int64_t>(stats.current_background_interval_ms)));
+                    row.push_back(
+                        Value::makeInt64(static_cast<int64_t>(stats.current_cooperative_rate)));
+                    row.push_back(Value::makeInt64(
+                        static_cast<int64_t>(stats.current_background_interval_ms)));
 
                     current_result_set_->addRow(std::move(row));
                 }
@@ -1449,8 +1467,8 @@ namespace scratchbird
                     row.push_back(Value::makeInt64(0));
 
                     // Current tuning parameters (defaults)
-                    row.push_back(Value::makeInt64(100));   // Default cooperative_rate
-                    row.push_back(Value::makeInt64(5000));  // Default background_interval_ms
+                    row.push_back(Value::makeInt64(100));  // Default cooperative_rate
+                    row.push_back(Value::makeInt64(5000)); // Default background_interval_ms
 
                     current_result_set_->addRow(std::move(row));
                 }
@@ -1468,17 +1486,17 @@ namespace scratchbird
                 // Get all active backends from ProcArray
                 std::vector<core::ProcessControlBlock> active_backends;
                 core::ErrorContext err_ctx;
-                auto status = core::ProcArrayManager::getAllActiveBackends(&active_backends, &err_ctx);
+                auto status =
+                    core::ProcArrayManager::getAllActiveBackends(&active_backends, &err_ctx);
 
                 if (status == core::Status::OK)
                 {
                     // Get current time for age calculation
                     auto now = std::chrono::duration_cast<std::chrono::microseconds>(
-                        std::chrono::system_clock::now().time_since_epoch()
-                    );
+                        std::chrono::system_clock::now().time_since_epoch());
 
                     // Add a row for each active backend with a transaction
-                    for (const auto& backend : active_backends)
+                    for (const auto &backend : active_backends)
                     {
                         // Skip backends without active transactions
                         if (backend.xid == 0 || backend.xact_start_time == 0)
@@ -1496,9 +1514,11 @@ namespace scratchbird
                         row.push_back(Value::makeInt64(static_cast<int64_t>(backend.xid)));
                         row.push_back(Value::makeInt64(static_cast<int64_t>(backend.proc_id)));
                         row.push_back(Value::makeInt64(static_cast<int64_t>(age_seconds)));
-                        row.push_back(Value::makeInt64(static_cast<int64_t>(backend.isolation_level)));
+                        row.push_back(
+                            Value::makeInt64(static_cast<int64_t>(backend.isolation_level)));
                         row.push_back(Value::makeBoolean(backend.is_read_only));
-                        row.push_back(Value::makeInt64(static_cast<int64_t>(backend.xact_start_time)));
+                        row.push_back(
+                            Value::makeInt64(static_cast<int64_t>(backend.xact_start_time)));
 
                         current_result_set_->addRow(std::move(row));
                     }
@@ -1548,9 +1568,9 @@ namespace scratchbird
                     }
 
                     // Find column in current row
-                    auto it = std::find_if(current_row_columns_->begin(), current_row_columns_->end(),
-                                            [&col_name](const auto &c)
-                                            { return c.column_name == col_name; });
+                    auto it = std::find_if(current_row_columns_->begin(),
+                                           current_row_columns_->end(), [&col_name](const auto &c)
+                                           { return c.column_name == col_name; });
 
                     if (it == current_row_columns_->end())
                     {
@@ -1658,10 +1678,8 @@ namespace scratchbird
                         std::string str = arg.toString();
                         // Default to UTF-8 for string values
                         uint32_t char_len = charset_manager_.getCharLength(
-                            reinterpret_cast<const uint8_t*>(str.data()),
-                            str.length(),
-                            core::CharacterSet::UTF8
-                        );
+                            reinterpret_cast<const uint8_t *>(str.data()), str.length(),
+                            core::CharacterSet::UTF8);
                         push(Value::makeInt32(static_cast<int32_t>(char_len)));
                     }
                     break;
@@ -1695,7 +1713,7 @@ namespace scratchbird
                             char_start = 1;
                         char_start--; // Convert to 0-based
 
-                        const uint8_t* str_bytes = reinterpret_cast<const uint8_t*>(str.data());
+                        const uint8_t *str_bytes = reinterpret_cast<const uint8_t *>(str.data());
                         uint32_t total_chars = charset_manager_.getCharLength(
                             str_bytes, str.length(), core::CharacterSet::UTF8);
 
@@ -1709,12 +1727,10 @@ namespace scratchbird
                             uint32_t byte_start = core::utf8::byte_length(str_bytes, char_start);
 
                             // Find byte length for the substring
-                            uint32_t remaining_chars = std::min(
-                                static_cast<uint32_t>(char_length),
-                                total_chars - char_start
-                            );
-                            uint32_t byte_length = core::utf8::byte_length(
-                                str_bytes + byte_start, remaining_chars);
+                            uint32_t remaining_chars = std::min(static_cast<uint32_t>(char_length),
+                                                                total_chars - char_start);
+                            uint32_t byte_length =
+                                core::utf8::byte_length(str_bytes + byte_start, remaining_chars);
 
                             std::string result = str.substr(byte_start, byte_length);
                             push(Value::makeVarchar(result));
@@ -1788,14 +1804,16 @@ namespace scratchbird
 
                         // Trim leading whitespace
                         size_t start = 0;
-                        while (start < str.length() && std::isspace(static_cast<unsigned char>(str[start])))
+                        while (start < str.length() &&
+                               std::isspace(static_cast<unsigned char>(str[start])))
                         {
                             start++;
                         }
 
                         // Trim trailing whitespace
                         size_t end = str.length();
-                        while (end > start && std::isspace(static_cast<unsigned char>(str[end - 1])))
+                        while (end > start &&
+                               std::isspace(static_cast<unsigned char>(str[end - 1])))
                         {
                             end--;
                         }
@@ -1824,10 +1842,8 @@ namespace scratchbird
                     {
                         std::string str = arg.toString();
                         uint32_t char_len = charset_manager_.getCharLength(
-                            reinterpret_cast<const uint8_t*>(str.data()),
-                            str.length(),
-                            core::CharacterSet::UTF8
-                        );
+                            reinterpret_cast<const uint8_t *>(str.data()), str.length(),
+                            core::CharacterSet::UTF8);
                         push(Value::makeInt32(static_cast<int32_t>(char_len)));
                     }
                     break;
@@ -1880,14 +1896,9 @@ namespace scratchbird
                         auto to_cs = static_cast<core::CharacterSet>(to_cs_val.toInt64());
 
                         std::vector<uint8_t> output;
-                        auto status = charset_manager_.convert(
-                            reinterpret_cast<const uint8_t*>(str.data()),
-                            str.length(),
-                            from_cs,
-                            output,
-                            to_cs,
-                            nullptr
-                        );
+                        auto status =
+                            charset_manager_.convert(reinterpret_cast<const uint8_t *>(str.data()),
+                                                     str.length(), from_cs, output, to_cs, nullptr);
 
                         if (status != core::Status::OK)
                         {
@@ -1902,12 +1913,14 @@ namespace scratchbird
 
                 case Opcode::FUNC_COLLATE:
                 {
-                    // COLLATE applies a collation to an expression (metadata only, actual comparison elsewhere)
-                    // For now, we'll just pass through the value but could store collation metadata
+                    // COLLATE applies a collation to an expression (metadata only, actual
+                    // comparison elsewhere) For now, we'll just pass through the value but could
+                    // store collation metadata
                     uint8_t arg_count = readByte();
                     if (arg_count != 2)
                     {
-                        error("COLLATE expects 2 arguments (expr, collation_id), got " + std::to_string(arg_count));
+                        error("COLLATE expects 2 arguments (expr, collation_id), got " +
+                              std::to_string(arg_count));
                     }
 
                     Value collation_id = pop();
@@ -1936,7 +1949,8 @@ namespace scratchbird
                     // For now, just evaluate the argument expression
                     // Full aggregation support requires refactoring SELECT execution
                     // to accumulate values across rows
-                    error("Aggregate functions require full aggregation support (not yet implemented in executor)");
+                    error("Aggregate functions require full aggregation support (not yet "
+                          "implemented in executor)");
                     break;
                 }
 
@@ -2028,8 +2042,9 @@ namespace scratchbird
 
                     // Return current Unix timestamp
                     auto now = std::chrono::system_clock::now();
-                    auto timestamp = std::chrono::duration_cast<std::chrono::seconds>(
-                        now.time_since_epoch()).count();
+                    auto timestamp =
+                        std::chrono::duration_cast<std::chrono::seconds>(now.time_since_epoch())
+                            .count();
                     push(Value::makeInt64(timestamp));
                     break;
                 }
@@ -2058,8 +2073,8 @@ namespace scratchbird
                         uint16_t timezone_id = static_cast<uint16_t>(tz_val.toInt64());
 
                         // Format timestamp in target timezone
-                        std::string result = timezone_manager_.formatTimestamp(
-                            gmt_microseconds, timezone_id, true);
+                        std::string result =
+                            timezone_manager_.formatTimestamp(gmt_microseconds, timezone_id, true);
                         push(Value::makeVarchar(result));
                     }
                     break;
@@ -2075,8 +2090,9 @@ namespace scratchbird
 
                     // Return current date as Unix timestamp (midnight)
                     auto now = std::chrono::system_clock::now();
-                    auto timestamp = std::chrono::duration_cast<std::chrono::seconds>(
-                        now.time_since_epoch()).count();
+                    auto timestamp =
+                        std::chrono::duration_cast<std::chrono::seconds>(now.time_since_epoch())
+                            .count();
                     // Round down to midnight
                     timestamp = (timestamp / 86400) * 86400;
                     push(Value::makeInt64(timestamp));
@@ -2105,7 +2121,8 @@ namespace scratchbird
             {
                 case Opcode::EXPR_ADD:
                 {
-                    if (left.type() == core::DataType::FLOAT64 || right.type() == core::DataType::FLOAT64)
+                    if (left.type() == core::DataType::FLOAT64 ||
+                        right.type() == core::DataType::FLOAT64)
                         push(Value::makeFloat64(left.toDouble() + right.toDouble()));
                     else
                         push(Value::makeInt64(left.toInt64() + right.toInt64()));
@@ -2113,7 +2130,8 @@ namespace scratchbird
                 }
                 case Opcode::EXPR_SUBTRACT:
                 {
-                    if (left.type() == core::DataType::FLOAT64 || right.type() == core::DataType::FLOAT64)
+                    if (left.type() == core::DataType::FLOAT64 ||
+                        right.type() == core::DataType::FLOAT64)
                         push(Value::makeFloat64(left.toDouble() - right.toDouble()));
                     else
                         push(Value::makeInt64(left.toInt64() - right.toInt64()));
@@ -2121,7 +2139,8 @@ namespace scratchbird
                 }
                 case Opcode::EXPR_MULTIPLY:
                 {
-                    if (left.type() == core::DataType::FLOAT64 || right.type() == core::DataType::FLOAT64)
+                    if (left.type() == core::DataType::FLOAT64 ||
+                        right.type() == core::DataType::FLOAT64)
                         push(Value::makeFloat64(left.toDouble() * right.toDouble()));
                     else
                         push(Value::makeInt64(left.toInt64() * right.toInt64()));
@@ -2131,7 +2150,8 @@ namespace scratchbird
                 {
                     if (right.toDouble() == 0.0)
                         error("Division by zero");
-                    if (left.type() == core::DataType::FLOAT64 || right.type() == core::DataType::FLOAT64)
+                    if (left.type() == core::DataType::FLOAT64 ||
+                        right.type() == core::DataType::FLOAT64)
                         push(Value::makeFloat64(left.toDouble() / right.toDouble()));
                     else
                         push(Value::makeInt64(left.toInt64() / right.toInt64()));
@@ -2149,9 +2169,11 @@ namespace scratchbird
                 case Opcode::EXPR_EQ:
                 {
                     bool result;
-                    if (core::TypeSystem::isString(left.type()) || core::TypeSystem::isString(right.type()))
+                    if (core::TypeSystem::isString(left.type()) ||
+                        core::TypeSystem::isString(right.type()))
                         result = compareStrings(left.toString(), right.toString()) == 0;
-                    else if (left.type() == core::DataType::FLOAT64 || right.type() == core::DataType::FLOAT64)
+                    else if (left.type() == core::DataType::FLOAT64 ||
+                             right.type() == core::DataType::FLOAT64)
                         result = left.toDouble() == right.toDouble();
                     else
                         result = left.toInt64() == right.toInt64();
@@ -2161,9 +2183,11 @@ namespace scratchbird
                 case Opcode::EXPR_NE:
                 {
                     bool result;
-                    if (core::TypeSystem::isString(left.type()) || core::TypeSystem::isString(right.type()))
+                    if (core::TypeSystem::isString(left.type()) ||
+                        core::TypeSystem::isString(right.type()))
                         result = compareStrings(left.toString(), right.toString()) != 0;
-                    else if (left.type() == core::DataType::FLOAT64 || right.type() == core::DataType::FLOAT64)
+                    else if (left.type() == core::DataType::FLOAT64 ||
+                             right.type() == core::DataType::FLOAT64)
                         result = left.toDouble() != right.toDouble();
                     else
                         result = left.toInt64() != right.toInt64();
@@ -2173,9 +2197,11 @@ namespace scratchbird
                 case Opcode::EXPR_LT:
                 {
                     bool result;
-                    if (core::TypeSystem::isString(left.type()) || core::TypeSystem::isString(right.type()))
+                    if (core::TypeSystem::isString(left.type()) ||
+                        core::TypeSystem::isString(right.type()))
                         result = compareStrings(left.toString(), right.toString()) < 0;
-                    else if (left.type() == core::DataType::FLOAT64 || right.type() == core::DataType::FLOAT64)
+                    else if (left.type() == core::DataType::FLOAT64 ||
+                             right.type() == core::DataType::FLOAT64)
                         result = left.toDouble() < right.toDouble();
                     else
                         result = left.toInt64() < right.toInt64();
@@ -2185,9 +2211,11 @@ namespace scratchbird
                 case Opcode::EXPR_GT:
                 {
                     bool result;
-                    if (core::TypeSystem::isString(left.type()) || core::TypeSystem::isString(right.type()))
+                    if (core::TypeSystem::isString(left.type()) ||
+                        core::TypeSystem::isString(right.type()))
                         result = compareStrings(left.toString(), right.toString()) > 0;
-                    else if (left.type() == core::DataType::FLOAT64 || right.type() == core::DataType::FLOAT64)
+                    else if (left.type() == core::DataType::FLOAT64 ||
+                             right.type() == core::DataType::FLOAT64)
                         result = left.toDouble() > right.toDouble();
                     else
                         result = left.toInt64() > right.toInt64();
@@ -2197,9 +2225,11 @@ namespace scratchbird
                 case Opcode::EXPR_LE:
                 {
                     bool result;
-                    if (core::TypeSystem::isString(left.type()) || core::TypeSystem::isString(right.type()))
+                    if (core::TypeSystem::isString(left.type()) ||
+                        core::TypeSystem::isString(right.type()))
                         result = compareStrings(left.toString(), right.toString()) <= 0;
-                    else if (left.type() == core::DataType::FLOAT64 || right.type() == core::DataType::FLOAT64)
+                    else if (left.type() == core::DataType::FLOAT64 ||
+                             right.type() == core::DataType::FLOAT64)
                         result = left.toDouble() <= right.toDouble();
                     else
                         result = left.toInt64() <= right.toInt64();
@@ -2209,9 +2239,11 @@ namespace scratchbird
                 case Opcode::EXPR_GE:
                 {
                     bool result;
-                    if (core::TypeSystem::isString(left.type()) || core::TypeSystem::isString(right.type()))
+                    if (core::TypeSystem::isString(left.type()) ||
+                        core::TypeSystem::isString(right.type()))
                         result = compareStrings(left.toString(), right.toString()) >= 0;
-                    else if (left.type() == core::DataType::FLOAT64 || right.type() == core::DataType::FLOAT64)
+                    else if (left.type() == core::DataType::FLOAT64 ||
+                             right.type() == core::DataType::FLOAT64)
                         result = left.toDouble() >= right.toDouble();
                     else
                         result = left.toInt64() >= right.toInt64();
@@ -2255,7 +2287,8 @@ namespace scratchbird
             throw std::runtime_error(msg);
         }
 
-        bool Executor::matchPattern(const std::string &text, const std::string &pattern, bool case_insensitive)
+        bool Executor::matchPattern(const std::string &text, const std::string &pattern,
+                                    bool case_insensitive)
         {
             // Convert to lowercase for case-insensitive matching
             std::string t = text;
@@ -2329,20 +2362,20 @@ namespace scratchbird
             return false;
         }
 
-        int Executor::compareStrings(const std::string& left, const std::string& right, uint32_t collation_id) const
+        int Executor::compareStrings(const std::string &left, const std::string &right,
+                                     uint32_t collation_id) const
         {
             // Use charset manager for collation-aware comparison
             // Default collation_id = 101 (utf8_general_ci - case insensitive)
             return charset_manager_.compare(
-                reinterpret_cast<const uint8_t*>(left.data()), left.length(),
-                reinterpret_cast<const uint8_t*>(right.data()), right.length(),
-                collation_id
-            );
+                reinterpret_cast<const uint8_t *>(left.data()), left.length(),
+                reinterpret_cast<const uint8_t *>(right.data()), right.length(), collation_id);
         }
 
-        bool Executor::deserializeTuple(const uint8_t *tuple_data, uint32_t tuple_size,
-                                         const std::vector<core::CatalogManager::ColumnInfo> &columns,
-                                         std::vector<Value> &values_out)
+        bool
+        Executor::deserializeTuple(const uint8_t *tuple_data, uint32_t tuple_size,
+                                   const std::vector<core::CatalogManager::ColumnInfo> &columns,
+                                   std::vector<Value> &values_out)
         {
             if (tuple_size < sizeof(core::TupleHeader))
             {
@@ -2442,7 +2475,8 @@ namespace scratchbird
                         if (data_offset + len > tuple_size)
                             return false;
 
-                        std::string str(reinterpret_cast<const char *>(tuple_data + data_offset), len);
+                        std::string str(reinterpret_cast<const char *>(tuple_data + data_offset),
+                                        len);
                         values_out.push_back(Value::makeVarchar(str));
                         data_offset += len;
                         break;

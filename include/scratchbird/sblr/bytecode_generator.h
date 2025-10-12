@@ -100,11 +100,11 @@ namespace scratchbird
             void visit(parser::CreateTableStmt *node) override;
             void visit(parser::InsertStmt *node) override;
             void visit(parser::SelectStmt *node) override;
-            void visit(parser::StartTransactionStmt *node) override;  // Phase 2 Task 2.6
-            void visit(parser::SetTransactionStmt *node) override;    // Phase 3 Task 3.6
-            void visit(parser::CommitStmt *node) override;            // Phase 2 Task 2.6
-            void visit(parser::RollbackStmt *node) override;          // Phase 2 Task 2.6
-            void visit(parser::SweepStmt *node) override;             // Phase 3 Task 3.3
+            void visit(parser::StartTransactionStmt *node) override; // Phase 2 Task 2.6
+            void visit(parser::SetTransactionStmt *node) override;   // Phase 3 Task 3.6
+            void visit(parser::CommitStmt *node) override;           // Phase 2 Task 2.6
+            void visit(parser::RollbackStmt *node) override;         // Phase 2 Task 2.6
+            void visit(parser::SweepStmt *node) override;            // Phase 3 Task 3.3
             void visit(parser::LiteralExpr *node) override;
             void visit(parser::IdentifierExpr *node) override;
             void visit(parser::BinaryOpExpr *node) override;

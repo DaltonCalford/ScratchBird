@@ -327,7 +327,8 @@ namespace scratchbird
                 bool first = true;
                 for (const auto &res : node->tableReservations())
                 {
-                    if (!first) out_ << ", ";
+                    if (!first)
+                        out_ << ", ";
                     out_ << pool_.get(res.table_name);
                     if (res.lock_mode == TableLockMode::SHARED)
                         out_ << " FOR SHARED " << (res.for_write ? "WRITE" : "READ");
@@ -463,7 +464,7 @@ namespace scratchbird
             node->expr()->accept(this);
             out_ << " AS ";
 
-            auto& type = node->targetType();
+            auto &type = node->targetType();
             out_ << core::TypeSystem::getTypeName(type.type);
 
             if (type.precision > 0)

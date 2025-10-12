@@ -238,7 +238,7 @@ namespace scratchbird
                 // WHERE clause must be boolean
                 const ExpressionType *where_type = getExpressionType(node->whereClause());
                 if (!where_type || (where_type->type.type != DataType::BOOLEAN &&
-                                     where_type->type.type != DataType::INT32))
+                                    where_type->type.type != DataType::INT32))
                 {
                     reportError(node->whereClause(), "WHERE clause must evaluate to boolean");
                 }
@@ -431,7 +431,8 @@ namespace scratchbird
                 reportError(node, ss.str());
             }
 
-            // Set result type to target type (CAST always produces non-nullable unless explicitly nullable)
+            // Set result type to target type (CAST always produces non-nullable unless explicitly
+            // nullable)
             setExpressionType(node, ExpressionType(target_type, false));
         }
 

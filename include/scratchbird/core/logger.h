@@ -9,187 +9,197 @@
 namespace scratchbird::core
 {
 
-/**
- * Log levels
- */
-enum class LogLevel : uint8_t
-{
-    TRACE = 0,     // Very detailed debug information
-    DEBUG = 1,     // Debug information
-    INFO = 2,      // Informational messages
-    WARNING = 3,   // Warning messages
-    ERROR = 4,     // Error messages
-    CRITICAL = 5   // Critical errors
-};
-
-/**
- * Log categories for filtering and organization
- */
-enum class LogCategory : uint8_t
-{
-    GENERAL = 0,
-    STORAGE = 1,
-    TRANSACTION = 2,
-    LOCK = 3,
-    PARSER = 4,
-    EXECUTOR = 5,
-    NETWORK = 6,
-    CATALOG = 7,
-    BTREE = 8,
-    HASH = 9,
-    BUFFER = 10,
-    VACUUM = 11
-};
-
-/**
- * Thread-safe logging framework
- * Replaces fprintf(stderr) calls throughout codebase
- *
- * Usage:
- * @code
- *   Logger& log = Logger::getInstance();
- *   log.initialize();
- *   LOG_INFO(STORAGE, "Database opened: %s", db_name.c_str());
- *   LOG_ERROR(TRANSACTION, "Transaction %lu failed", xid);
- * @endcode
- */
-class Logger
-{
-public:
     /**
-     * Get singleton instance
+     * Log levels
      */
-    static Logger& getInstance();
+    enum class LogLevel : uint8_t
+    {
+        TRACE = 0,   // Very detailed debug information
+        DEBUG = 1,   // Debug information
+        INFO = 2,    // Informational messages
+        WARNING = 3, // Warning messages
+        ERROR = 4,   // Error messages
+        CRITICAL = 5 // Critical errors
+    };
 
     /**
-     * Initialize logger with configuration
-     * Reads settings from Config if available, otherwise uses defaults
+     * Log categories for filtering and organization
      */
-    void initialize();
+    enum class LogCategory : uint8_t
+    {
+        GENERAL = 0,
+        STORAGE = 1,
+        TRANSACTION = 2,
+        LOCK = 3,
+        PARSER = 4,
+        EXECUTOR = 5,
+        NETWORK = 6,
+        CATALOG = 7,
+        BTREE = 8,
+        HASH = 9,
+        BUFFER = 10,
+        VACUUM = 11
+    };
 
     /**
-     * Set log level
-     * Only messages at this level or higher will be logged
+     * Thread-safe logging framework
+     * Replaces fprintf(stderr) calls throughout codebase
+     *
+     * Usage:
+     * @code
+     *   Logger& log = Logger::getInstance();
+     *   log.initialize();
+     *   LOG_INFO(STORAGE, "Database opened: %s", db_name.c_str());
+     *   LOG_ERROR(TRANSACTION, "Transaction %lu failed", xid);
+     * @endcode
      */
-    void setLogLevel(LogLevel level);
+    class Logger
+    {
+    public:
+        /**
+         * Get singleton instance
+         */
+        static Logger &getInstance();
 
-    /**
-     * Get current log level
-     */
-    LogLevel getLogLevel() const { return log_level_; }
+        /**
+         * Initialize logger with configuration
+         * Reads settings from Config if available, otherwise uses defaults
+         */
+        void initialize();
 
-    /**
-     * Set log output file
-     * Empty string means stderr
-     */
-    void setLogFile(const std::string& filepath);
+        /**
+         * Set log level
+         * Only messages at this level or higher will be logged
+         */
+        void setLogLevel(LogLevel level);
 
-    /**
-     * Enable/disable timestamp in log messages
-     */
-    void setTimestampEnabled(bool enabled) { timestamp_enabled_ = enabled; }
+        /**
+         * Get current log level
+         */
+        LogLevel getLogLevel() const
+        {
+            return log_level_;
+        }
 
-    /**
-     * Enable/disable thread ID in log messages
-     */
-    void setThreadIdEnabled(bool enabled) { thread_id_enabled_ = enabled; }
+        /**
+         * Set log output file
+         * Empty string means stderr
+         */
+        void setLogFile(const std::string &filepath);
 
-    /**
-     * Enable/disable source location in log messages
-     */
-    void setSourceLocationEnabled(bool enabled) { source_location_enabled_ = enabled; }
+        /**
+         * Enable/disable timestamp in log messages
+         */
+        void setTimestampEnabled(bool enabled)
+        {
+            timestamp_enabled_ = enabled;
+        }
 
-    /**
-     * Log a message
-     */
-    void log(LogLevel level, LogCategory category,
-            const char* file, int line, const char* function,
-            const char* format, ...);
+        /**
+         * Enable/disable thread ID in log messages
+         */
+        void setThreadIdEnabled(bool enabled)
+        {
+            thread_id_enabled_ = enabled;
+        }
 
-    /**
-     * Flush log output
-     */
-    void flush();
+        /**
+         * Enable/disable source location in log messages
+         */
+        void setSourceLocationEnabled(bool enabled)
+        {
+            source_location_enabled_ = enabled;
+        }
 
-    /**
-     * Close log file
-     */
-    void close();
+        /**
+         * Log a message
+         */
+        void log(LogLevel level, LogCategory category, const char *file, int line,
+                 const char *function, const char *format, ...);
 
-    /**
-     * Convert log level to string
-     */
-    static const char* levelToString(LogLevel level);
+        /**
+         * Flush log output
+         */
+        void flush();
 
-    /**
-     * Convert log category to string
-     */
-    static const char* categoryToString(LogCategory category);
+        /**
+         * Close log file
+         */
+        void close();
 
-private:
-    Logger() = default;
-    ~Logger();
+        /**
+         * Convert log level to string
+         */
+        static const char *levelToString(LogLevel level);
 
-    // Delete copy and move
-    Logger(const Logger&) = delete;
-    Logger& operator=(const Logger&) = delete;
-    Logger(Logger&&) = delete;
-    Logger& operator=(Logger&&) = delete;
+        /**
+         * Convert log category to string
+         */
+        static const char *categoryToString(LogCategory category);
 
-    // Internal log implementation
-    void logInternal(LogLevel level, LogCategory category,
-                    const char* file, int line, const char* function,
-                    const char* message);
+    private:
+        Logger() = default;
+        ~Logger();
 
-    // Get current timestamp string
-    std::string getTimestamp();
+        // Delete copy and move
+        Logger(const Logger &) = delete;
+        Logger &operator=(const Logger &) = delete;
+        Logger(Logger &&) = delete;
+        Logger &operator=(Logger &&) = delete;
 
-    // Get current thread ID
-    uint64_t getThreadId();
+        // Internal log implementation
+        void logInternal(LogLevel level, LogCategory category, const char *file, int line,
+                         const char *function, const char *message);
 
-    // Mutex for thread-safety
-    mutable std::mutex mutex_;
+        // Get current timestamp string
+        std::string getTimestamp();
 
-    // Log level filter
-    LogLevel log_level_ = LogLevel::INFO;
+        // Get current thread ID
+        uint64_t getThreadId();
 
-    // Output file stream (nullptr means stderr)
-    std::unique_ptr<std::ofstream> log_file_;
+        // Mutex for thread-safety
+        mutable std::mutex mutex_;
 
-    // Log file path
-    std::string log_file_path_;
+        // Log level filter
+        LogLevel log_level_ = LogLevel::INFO;
 
-    // Configuration flags
-    bool timestamp_enabled_ = true;
-    bool thread_id_enabled_ = false;
-    bool source_location_enabled_ = true;
-    bool initialized_ = false;
-};
+        // Output file stream (nullptr means stderr)
+        std::unique_ptr<std::ofstream> log_file_;
 
-// Convenience macros for logging
+        // Log file path
+        std::string log_file_path_;
 
-#define LOG_TRACE(category, format, ...) \
-    Logger::getInstance().log(LogLevel::TRACE, LogCategory::category, \
-                             __FILE__, __LINE__, __func__, format, ##__VA_ARGS__)
+        // Configuration flags
+        bool timestamp_enabled_ = true;
+        bool thread_id_enabled_ = false;
+        bool source_location_enabled_ = true;
+        bool initialized_ = false;
+    };
 
-#define LOG_DEBUG(category, format, ...) \
-    Logger::getInstance().log(LogLevel::DEBUG, LogCategory::category, \
-                             __FILE__, __LINE__, __func__, format, ##__VA_ARGS__)
+    // Convenience macros for logging
 
-#define LOG_INFO(category, format, ...) \
-    Logger::getInstance().log(LogLevel::INFO, LogCategory::category, \
-                             __FILE__, __LINE__, __func__, format, ##__VA_ARGS__)
+#define LOG_TRACE(category, format, ...)                                                  \
+    Logger::getInstance().log(LogLevel::TRACE, LogCategory::category, __FILE__, __LINE__, \
+                              __func__, format, ##__VA_ARGS__)
 
-#define LOG_WARNING(category, format, ...) \
-    Logger::getInstance().log(LogLevel::WARNING, LogCategory::category, \
-                             __FILE__, __LINE__, __func__, format, ##__VA_ARGS__)
+#define LOG_DEBUG(category, format, ...)                                                  \
+    Logger::getInstance().log(LogLevel::DEBUG, LogCategory::category, __FILE__, __LINE__, \
+                              __func__, format, ##__VA_ARGS__)
 
-#define LOG_ERROR(category, format, ...) \
-    Logger::getInstance().log(LogLevel::ERROR, LogCategory::category, \
-                             __FILE__, __LINE__, __func__, format, ##__VA_ARGS__)
+#define LOG_INFO(category, format, ...)                                                            \
+    Logger::getInstance().log(LogLevel::INFO, LogCategory::category, __FILE__, __LINE__, __func__, \
+                              format, ##__VA_ARGS__)
 
-#define LOG_CRITICAL(category, format, ...) \
-    Logger::getInstance().log(LogLevel::CRITICAL, LogCategory::category, \
-                             __FILE__, __LINE__, __func__, format, ##__VA_ARGS__)
+#define LOG_WARNING(category, format, ...)                                                  \
+    Logger::getInstance().log(LogLevel::WARNING, LogCategory::category, __FILE__, __LINE__, \
+                              __func__, format, ##__VA_ARGS__)
+
+#define LOG_ERROR(category, format, ...)                                                  \
+    Logger::getInstance().log(LogLevel::ERROR, LogCategory::category, __FILE__, __LINE__, \
+                              __func__, format, ##__VA_ARGS__)
+
+#define LOG_CRITICAL(category, format, ...)                                                  \
+    Logger::getInstance().log(LogLevel::CRITICAL, LogCategory::category, __FILE__, __LINE__, \
+                              __func__, format, ##__VA_ARGS__)
 
 } // namespace scratchbird::core

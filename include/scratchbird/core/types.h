@@ -77,27 +77,36 @@ namespace scratchbird::core
     struct TypeInfo
     {
         DataType type;
-        uint32_t precision; // For CHAR, VARCHAR, DECIMAL
-        uint32_t scale;     // For DECIMAL
-        DataType element_type; // For ARRAY
-        bool with_timezone; // For TIMESTAMP
-        uint16_t timezone_hint; // Display timezone ID for TIMESTAMP WITH TIME ZONE (0 = use connection default)
+        uint32_t precision;     // For CHAR, VARCHAR, DECIMAL
+        uint32_t scale;         // For DECIMAL
+        DataType element_type;  // For ARRAY
+        bool with_timezone;     // For TIMESTAMP
+        uint16_t timezone_hint; // Display timezone ID for TIMESTAMP WITH TIME ZONE (0 = use
+                                // connection default)
 
         TypeInfo()
-            : type(DataType::UNKNOWN), precision(0), scale(0),
-              element_type(DataType::UNKNOWN), with_timezone(false), timezone_hint(0) {}
+            : type(DataType::UNKNOWN), precision(0), scale(0), element_type(DataType::UNKNOWN),
+              with_timezone(false), timezone_hint(0)
+        {
+        }
 
         TypeInfo(DataType t)
-            : type(t), precision(0), scale(0),
-              element_type(DataType::UNKNOWN), with_timezone(false), timezone_hint(0) {}
+            : type(t), precision(0), scale(0), element_type(DataType::UNKNOWN),
+              with_timezone(false), timezone_hint(0)
+        {
+        }
 
         TypeInfo(DataType t, uint32_t p)
-            : type(t), precision(p), scale(0),
-              element_type(DataType::UNKNOWN), with_timezone(false), timezone_hint(0) {}
+            : type(t), precision(p), scale(0), element_type(DataType::UNKNOWN),
+              with_timezone(false), timezone_hint(0)
+        {
+        }
 
         TypeInfo(DataType t, uint32_t p, uint32_t s)
-            : type(t), precision(p), scale(s),
-              element_type(DataType::UNKNOWN), with_timezone(false), timezone_hint(0) {}
+            : type(t), precision(p), scale(s), element_type(DataType::UNKNOWN),
+              with_timezone(false), timezone_hint(0)
+        {
+        }
     };
 
     /**
@@ -109,25 +118,28 @@ namespace scratchbird::core
     class TypedValue
     {
     public:
-        using VariantType = std::variant<
-            std::monostate,       // NULL_TYPE
-            int8_t,               // INT8
-            int16_t,              // INT16
-            int32_t,              // INT32
-            int64_t,              // INT64, DATE, TIME, TIMESTAMP (differentiated by type_)
-            float,                // FLOAT32
-            double,               // FLOAT64
-            std::string,          // VARCHAR, TEXT, CHAR, DECIMAL (as string), JSON
-            std::vector<uint8_t>, // BINARY, VARBINARY, BLOB, BYTEA, UUID
-            bool                  // BOOLEAN
-        >;
+        using VariantType =
+            std::variant<std::monostate, // NULL_TYPE
+                         int8_t,         // INT8
+                         int16_t,        // INT16
+                         int32_t,        // INT32
+                         int64_t,        // INT64, DATE, TIME, TIMESTAMP (differentiated by type_)
+                         float,          // FLOAT32
+                         double,         // FLOAT64
+                         std::string,    // VARCHAR, TEXT, CHAR, DECIMAL (as string), JSON
+                         std::vector<uint8_t>, // BINARY, VARBINARY, BLOB, BYTEA, UUID
+                         bool                  // BOOLEAN
+                         >;
 
         TypedValue() : type_(DataType::NULL_TYPE), data_(std::monostate{}) {}
 
         explicit TypedValue(DataType type) : type_(type), data_(std::monostate{}) {}
 
         // Constructors for each type
-        static TypedValue makeNull() { return TypedValue(); }
+        static TypedValue makeNull()
+        {
+            return TypedValue();
+        }
         static TypedValue makeInt8(int8_t v);
         static TypedValue makeInt16(int16_t v);
         static TypedValue makeInt32(int32_t v);
@@ -149,8 +161,14 @@ namespace scratchbird::core
         static TypedValue makeJSON(const std::string &v);
 
         // Type checking
-        DataType type() const { return type_; }
-        bool isNull() const { return type_ == DataType::NULL_TYPE; }
+        DataType type() const
+        {
+            return type_;
+        }
+        bool isNull() const
+        {
+            return type_ == DataType::NULL_TYPE;
+        }
 
         // Type extraction
         int8_t getInt8() const;
@@ -180,10 +198,12 @@ namespace scratchbird::core
         bool toBoolean() const;
 
         // Type conversions with error handling
-        auto convertTo(DataType target_type, ErrorContext *ctx = nullptr) const -> std::optional<TypedValue>;
+        auto convertTo(DataType target_type, ErrorContext *ctx = nullptr) const
+            -> std::optional<TypedValue>;
 
         // Type coercion (implicit conversion with validation)
-        auto coerceTo(DataType target_type, ErrorContext *ctx = nullptr) const -> std::optional<TypedValue>;
+        auto coerceTo(DataType target_type, ErrorContext *ctx = nullptr) const
+            -> std::optional<TypedValue>;
 
         // Comparison operators (returns NULL for incompatible types)
         auto equals(const TypedValue &other) const -> std::optional<bool>;
@@ -196,20 +216,35 @@ namespace scratchbird::core
     private:
         DataType type_;
         VariantType data_;
-        std::optional<TypeInfo> type_info_; // Optional type metadata (for VARCHAR max_length, DECIMAL precision/scale, etc.)
+        std::optional<TypeInfo> type_info_; // Optional type metadata (for VARCHAR max_length,
+                                            // DECIMAL precision/scale, etc.)
 
-        TypedValue(DataType type, VariantType data) : type_(type), data_(std::move(data)), type_info_(std::nullopt) {}
+        TypedValue(DataType type, VariantType data)
+            : type_(type), data_(std::move(data)), type_info_(std::nullopt)
+        {
+        }
 
     public:
         // Get/set type info (for preserving constraints like VARCHAR max_length)
-        auto getTypeInfo() const -> const std::optional<TypeInfo>& { return type_info_; }
-        void setTypeInfo(const TypeInfo& info) { type_info_ = info; }
-        bool hasTypeInfo() const { return type_info_.has_value(); }
+        auto getTypeInfo() const -> const std::optional<TypeInfo> &
+        {
+            return type_info_;
+        }
+        void setTypeInfo(const TypeInfo &info)
+        {
+            type_info_ = info;
+        }
+        bool hasTypeInfo() const
+        {
+            return type_info_.has_value();
+        }
 
     private:
         // Helper methods for conversion
-        auto convertNumericTo(DataType target_type, ErrorContext *ctx = nullptr) const -> std::optional<TypedValue>;
-        auto convertStringTo(DataType target_type, ErrorContext *ctx = nullptr) const -> std::optional<TypedValue>;
+        auto convertNumericTo(DataType target_type, ErrorContext *ctx = nullptr) const
+            -> std::optional<TypedValue>;
+        auto convertStringTo(DataType target_type, ErrorContext *ctx = nullptr) const
+            -> std::optional<TypedValue>;
     };
 
     /**
@@ -248,7 +283,7 @@ namespace scratchbird::core
 
         // Validation
         static auto validateValue(const TypedValue &value, const TypeInfo &type_info,
-                                   ErrorContext *ctx = nullptr) -> Status;
+                                  ErrorContext *ctx = nullptr) -> Status;
 
         // Serialization size calculation
         static auto getSerializedSize(const TypedValue &value) -> uint32_t;
@@ -261,20 +296,32 @@ namespace scratchbird::core
     {
     public:
         // String conversions
-        static auto stringToInt8(const std::string &str, ErrorContext *ctx = nullptr) -> std::optional<int8_t>;
-        static auto stringToInt16(const std::string &str, ErrorContext *ctx = nullptr) -> std::optional<int16_t>;
-        static auto stringToInt32(const std::string &str, ErrorContext *ctx = nullptr) -> std::optional<int32_t>;
-        static auto stringToInt64(const std::string &str, ErrorContext *ctx = nullptr) -> std::optional<int64_t>;
-        static auto stringToFloat32(const std::string &str, ErrorContext *ctx = nullptr) -> std::optional<float>;
-        static auto stringToFloat64(const std::string &str, ErrorContext *ctx = nullptr) -> std::optional<double>;
+        static auto stringToInt8(const std::string &str, ErrorContext *ctx = nullptr)
+            -> std::optional<int8_t>;
+        static auto stringToInt16(const std::string &str, ErrorContext *ctx = nullptr)
+            -> std::optional<int16_t>;
+        static auto stringToInt32(const std::string &str, ErrorContext *ctx = nullptr)
+            -> std::optional<int32_t>;
+        static auto stringToInt64(const std::string &str, ErrorContext *ctx = nullptr)
+            -> std::optional<int64_t>;
+        static auto stringToFloat32(const std::string &str, ErrorContext *ctx = nullptr)
+            -> std::optional<float>;
+        static auto stringToFloat64(const std::string &str, ErrorContext *ctx = nullptr)
+            -> std::optional<double>;
         static auto stringToDecimal(const std::string &str, uint32_t precision, uint32_t scale,
-                                     ErrorContext *ctx = nullptr) -> std::optional<std::string>;
-        static auto stringToBoolean(const std::string &str, ErrorContext *ctx = nullptr) -> std::optional<bool>;
-        static auto stringToDate(const std::string &str, ErrorContext *ctx = nullptr) -> std::optional<int64_t>;
-        static auto stringToTime(const std::string &str, ErrorContext *ctx = nullptr) -> std::optional<int64_t>;
-        static auto stringToTimestamp(const std::string &str, ErrorContext *ctx = nullptr) -> std::optional<int64_t>;
-        static auto stringToUUID(const std::string &str, ErrorContext *ctx = nullptr) -> std::optional<std::vector<uint8_t>>;
-        static auto stringToBinary(const std::string &str, ErrorContext *ctx = nullptr) -> std::optional<std::vector<uint8_t>>;
+                                    ErrorContext *ctx = nullptr) -> std::optional<std::string>;
+        static auto stringToBoolean(const std::string &str, ErrorContext *ctx = nullptr)
+            -> std::optional<bool>;
+        static auto stringToDate(const std::string &str, ErrorContext *ctx = nullptr)
+            -> std::optional<int64_t>;
+        static auto stringToTime(const std::string &str, ErrorContext *ctx = nullptr)
+            -> std::optional<int64_t>;
+        static auto stringToTimestamp(const std::string &str, ErrorContext *ctx = nullptr)
+            -> std::optional<int64_t>;
+        static auto stringToUUID(const std::string &str, ErrorContext *ctx = nullptr)
+            -> std::optional<std::vector<uint8_t>>;
+        static auto stringToBinary(const std::string &str, ErrorContext *ctx = nullptr)
+            -> std::optional<std::vector<uint8_t>>;
 
         // To string conversions
         static auto int8ToString(int8_t v) -> std::string;
@@ -346,7 +393,7 @@ namespace scratchbird::core
         static auto extractUUIDVersion(const std::vector<uint8_t> &uuid) -> int32_t;
         static auto extractUUIDVariant(const std::vector<uint8_t> &uuid) -> int32_t;
         static auto extractUUIDTimestamp(const std::vector<uint8_t> &uuid,
-                                          ErrorContext *ctx = nullptr) -> std::optional<int64_t>;
+                                         ErrorContext *ctx = nullptr) -> std::optional<int64_t>;
     };
 
 } // namespace scratchbird::core

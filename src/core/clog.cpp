@@ -8,14 +8,11 @@
 namespace scratchbird::core
 {
 
-    Clog::Clog(Database* db)
-        : db_(db), buffer_pool_(db->buffer_pool()), clog_root_page_(0)
-    {
-    }
+    Clog::Clog(Database *db) : db_(db), buffer_pool_(db->buffer_pool()), clog_root_page_(0) {}
 
     Clog::~Clog() = default;
 
-    auto Clog::initialize(ErrorContext* ctx) -> Status
+    auto Clog::initialize(ErrorContext *ctx) -> Status
     {
         std::lock_guard<std::mutex> lock(mutex_);
 
@@ -36,7 +33,7 @@ namespace scratchbird::core
         return Status::OK;
     }
 
-    auto Clog::setStatus(uint64_t xid, ClogStatus status, ErrorContext* ctx) -> Status
+    auto Clog::setStatus(uint64_t xid, ClogStatus status, ErrorContext *ctx) -> Status
     {
         std::lock_guard<std::mutex> lock(mutex_);
 
@@ -45,7 +42,7 @@ namespace scratchbird::core
         uint32_t offset = getOffsetInPage(xid);
 
         // Pin the CLOG page
-        void* page_buffer;
+        void *page_buffer;
         Status pin_status = buffer_pool_->pinPage(page_id, &page_buffer, ctx);
         if (pin_status == Status::IO_ERROR)
         {
@@ -64,11 +61,11 @@ namespace scratchbird::core
             return pin_status;
         }
 
-        auto* page_data = static_cast<uint8_t*>(page_buffer);
-        auto* header = reinterpret_cast<ClogPageHeader*>(page_data);
+        auto *page_data = static_cast<uint8_t *>(page_buffer);
+        auto *header = reinterpret_cast<ClogPageHeader *>(page_data);
 
         // Status data starts after header
-        uint8_t* status_data = page_data + sizeof(ClogPageHeader);
+        uint8_t *status_data = page_data + sizeof(ClogPageHeader);
 
         // Set the 2-bit status
         setStatusBits(status_data, offset, status);
@@ -79,7 +76,7 @@ namespace scratchbird::core
         return Status::OK;
     }
 
-    auto Clog::getStatus(uint64_t xid, ClogStatus* status_out, ErrorContext* ctx) -> Status
+    auto Clog::getStatus(uint64_t xid, ClogStatus *status_out, ErrorContext *ctx) -> Status
     {
         std::lock_guard<std::mutex> lock(mutex_);
 
@@ -88,7 +85,7 @@ namespace scratchbird::core
         uint32_t offset = getOffsetInPage(xid);
 
         // Pin the CLOG page
-        void* page_buffer;
+        void *page_buffer;
         Status status = buffer_pool_->pinPage(page_id, &page_buffer, ctx);
         if (status != Status::OK)
         {
@@ -100,10 +97,10 @@ namespace scratchbird::core
             return Status::NOT_FOUND;
         }
 
-        auto* page_data = static_cast<uint8_t*>(page_buffer);
+        auto *page_data = static_cast<uint8_t *>(page_buffer);
 
         // Status data starts after header
-        const uint8_t* status_data = page_data + sizeof(ClogPageHeader);
+        const uint8_t *status_data = page_data + sizeof(ClogPageHeader);
 
         // Get the 2-bit status
         ClogStatus clog_status = getStatusBits(status_data, offset);
@@ -119,22 +116,22 @@ namespace scratchbird::core
         return Status::OK;
     }
 
-    auto Clog::extendClog(uint64_t xid, ErrorContext* ctx) -> Status
+    auto Clog::extendClog(uint64_t xid, ErrorContext *ctx) -> Status
     {
         // Calculate how many pages we need
         uint32_t required_page = getPageForXid(xid);
         uint32_t current_last_page = clog_root_page_;
 
         // Find the current last CLOG page
-        void* page_buffer;
+        void *page_buffer;
         Status status = buffer_pool_->pinPage(current_last_page, &page_buffer, ctx);
         if (status != Status::OK)
         {
             return status;
         }
 
-        auto* page_data = static_cast<uint8_t*>(page_buffer);
-        auto* header = reinterpret_cast<ClogPageHeader*>(page_data);
+        auto *page_data = static_cast<uint8_t *>(page_buffer);
+        auto *header = reinterpret_cast<ClogPageHeader *>(page_data);
 
         // Follow the chain to find the last page
         while (header->next_clog_page != 0)
@@ -148,8 +145,8 @@ namespace scratchbird::core
             {
                 return status;
             }
-            page_data = static_cast<uint8_t*>(page_buffer);
-            header = reinterpret_cast<ClogPageHeader*>(page_data);
+            page_data = static_cast<uint8_t *>(page_buffer);
+            header = reinterpret_cast<ClogPageHeader *>(page_data);
         }
 
         // Now current_last_page is the last page in the chain
@@ -168,7 +165,8 @@ namespace scratchbird::core
             }
 
             // Initialize the new CLOG page
-            uint64_t base_xid = static_cast<uint64_t>(next_page_num - clog_root_page_) * XIDS_PER_PAGE;
+            uint64_t base_xid =
+                static_cast<uint64_t>(next_page_num - clog_root_page_) * XIDS_PER_PAGE;
             status = allocateClogPage(new_page_id, base_xid, ctx);
             if (status != Status::OK)
             {
@@ -187,8 +185,8 @@ namespace scratchbird::core
             {
                 return status;
             }
-            page_data = static_cast<uint8_t*>(page_buffer);
-            header = reinterpret_cast<ClogPageHeader*>(page_data);
+            page_data = static_cast<uint8_t *>(page_buffer);
+            header = reinterpret_cast<ClogPageHeader *>(page_data);
 
             next_page_num++;
         }
@@ -197,23 +195,23 @@ namespace scratchbird::core
         return Status::OK;
     }
 
-    auto Clog::allocateClogPage(uint32_t page_id, uint64_t base_xid, ErrorContext* ctx) -> Status
+    auto Clog::allocateClogPage(uint32_t page_id, uint64_t base_xid, ErrorContext *ctx) -> Status
     {
         // Pin the new page
-        void* page_buffer;
+        void *page_buffer;
         Status status = buffer_pool_->pinPage(page_id, &page_buffer, ctx);
         if (status != Status::OK)
         {
             return status;
         }
 
-        auto* page_data = static_cast<uint8_t*>(page_buffer);
+        auto *page_data = static_cast<uint8_t *>(page_buffer);
 
         // Initialize page to zeros (all statuses = IN_PROGRESS)
         memset(page_data, 0, db_->page_size());
 
         // Set up page header
-        auto* header = reinterpret_cast<ClogPageHeader*>(page_data);
+        auto *header = reinterpret_cast<ClogPageHeader *>(page_data);
         header->page_header.magic = K_MAGIC_SBRD;
         header->page_header.version = 1;
         header->page_header.page_type = PAGE_TYPE_CLOG;
@@ -241,13 +239,13 @@ namespace scratchbird::core
         return Status::OK;
     }
 
-    void Clog::setStatusBits(uint8_t* data, uint32_t offset, ClogStatus status)
+    void Clog::setStatusBits(uint8_t *data, uint32_t offset, ClogStatus status)
     {
         // Each byte holds 4 transaction statuses (2 bits each)
         // offset is the transaction number within the page (0-65535)
 
-        uint32_t byte_offset = offset / 4;  // Which byte
-        uint32_t bit_offset = (offset % 4) * 2;  // Which 2-bit slot (0, 2, 4, or 6)
+        uint32_t byte_offset = offset / 4;      // Which byte
+        uint32_t bit_offset = (offset % 4) * 2; // Which 2-bit slot (0, 2, 4, or 6)
 
         // Clear the 2 bits
         data[byte_offset] &= ~(0x3 << bit_offset);
@@ -256,7 +254,7 @@ namespace scratchbird::core
         data[byte_offset] |= (static_cast<uint8_t>(status) << bit_offset);
     }
 
-    auto Clog::getStatusBits(const uint8_t* data, uint32_t offset) const -> ClogStatus
+    auto Clog::getStatusBits(const uint8_t *data, uint32_t offset) const -> ClogStatus
     {
         // Each byte holds 4 transaction statuses (2 bits each)
         uint32_t byte_offset = offset / 4;
@@ -268,7 +266,7 @@ namespace scratchbird::core
         return static_cast<ClogStatus>(bits);
     }
 
-    void Clog::getStatistics(ClogStats* stats_out)
+    void Clog::getStatistics(ClogStats *stats_out)
     {
         if (stats_out == nullptr)
         {
@@ -286,15 +284,15 @@ namespace scratchbird::core
             num_pages++;
 
             // Try to get next page
-            void* page_buffer;
+            void *page_buffer;
             Status status = buffer_pool_->pinPage(current_page, &page_buffer, nullptr);
             if (status != Status::OK)
             {
                 break;
             }
 
-            auto* page_data = static_cast<uint8_t*>(page_buffer);
-            auto* header = reinterpret_cast<ClogPageHeader*>(page_data);
+            auto *page_data = static_cast<uint8_t *>(page_buffer);
+            auto *header = reinterpret_cast<ClogPageHeader *>(page_data);
             uint32_t next_page = header->next_clog_page;
 
             buffer_pool_->unpinPage(current_page, false, nullptr);
@@ -313,8 +311,8 @@ namespace scratchbird::core
         // Calculate space saved vs TIP (20 bytes per transaction)
         uint64_t tip_space = stats_out->total_transactions * 20;
         stats_out->space_saved_bytes = (tip_space > stats_out->space_used_bytes)
-                                          ? (tip_space - stats_out->space_used_bytes)
-                                          : 0;
+                                           ? (tip_space - stats_out->space_used_bytes)
+                                           : 0;
     }
 
 } // namespace scratchbird::core

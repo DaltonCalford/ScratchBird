@@ -43,21 +43,19 @@ namespace scratchbird::core
     struct LockTag
     {
         LockTarget target_type;
-        UuidV7Bytes object_uuid;    // Table/Index UUID
-        uint64_t page_num;          // For page locks
-        uint16_t offset_num;        // For tuple locks
-        uint16_t padding;           // Alignment
+        UuidV7Bytes object_uuid; // Table/Index UUID
+        uint64_t page_num;       // For page locks
+        uint16_t offset_num;     // For tuple locks
+        uint16_t padding;        // Alignment
 
         // Comparison for use in maps
-        bool operator==(const LockTag& other) const
+        bool operator==(const LockTag &other) const
         {
-            return target_type == other.target_type &&
-                   object_uuid == other.object_uuid &&
-                   page_num == other.page_num &&
-                   offset_num == other.offset_num;
+            return target_type == other.target_type && object_uuid == other.object_uuid &&
+                   page_num == other.page_num && offset_num == other.offset_num;
         }
 
-        bool operator!=(const LockTag& other) const
+        bool operator!=(const LockTag &other) const
         {
             return !(*this == other);
         }
@@ -65,11 +63,12 @@ namespace scratchbird::core
         // Hash function
         struct Hash
         {
-            size_t operator()(const LockTag& tag) const
+            size_t operator()(const LockTag &tag) const
             {
                 size_t h1 = std::hash<uint8_t>{}(static_cast<uint8_t>(tag.target_type));
                 size_t h2 = 0;
-                for (size_t i = 0; i < 16; ++i) {
+                for (size_t i = 0; i < 16; ++i)
+                {
                     h2 ^= std::hash<uint8_t>{}(tag.object_uuid.bytes[i]) << i;
                 }
                 size_t h3 = std::hash<uint64_t>{}(tag.page_num);
@@ -82,20 +81,20 @@ namespace scratchbird::core
     // Lock request (one backend requesting a lock)
     struct LockRequest
     {
-        uint32_t proc_id;              // Backend requesting lock
-        LockMode mode;                 // Requested mode
-        bool granted;                  // Is lock granted?
-        uint64_t request_time;         // When requested (microseconds)
+        uint32_t proc_id;      // Backend requesting lock
+        LockMode mode;         // Requested mode
+        bool granted;          // Is lock granted?
+        uint64_t request_time; // When requested (microseconds)
     };
 
     // Lock object (one lockable resource)
     struct Lock
     {
-        LockTag tag;                   // What is locked
+        LockTag tag; // What is locked
 
         // Granted locks (bitmask of granted modes)
-        uint32_t granted_mask;         // Bit i = mode i granted
-        uint32_t granted_counts[8];    // Count per mode (0-indexed from LOCK_ACCESS_SHARE-1)
+        uint32_t granted_mask;      // Bit i = mode i granted
+        uint32_t granted_counts[8]; // Count per mode (0-indexed from LOCK_ACCESS_SHARE-1)
 
         // Waiting queue (RAII-managed with unique_ptr)
         std::list<std::unique_ptr<LockRequest>> wait_queue;
@@ -117,9 +116,9 @@ namespace scratchbird::core
         uint32_t max_locks_used;
 
         // READ ONLY transaction optimizations (Phase 3)
-        uint64_t readonly_locks_acquired;   // Locks acquired by read-only transactions
-        uint64_t readonly_fast_path;        // Fast-path acquisitions (no conflicts)
-        uint64_t readonly_lock_waits;       // Read-only transactions that had to wait
+        uint64_t readonly_locks_acquired; // Locks acquired by read-only transactions
+        uint64_t readonly_fast_path;      // Fast-path acquisitions (no conflicts)
+        uint64_t readonly_lock_waits;     // Read-only transactions that had to wait
     };
 
     // Deadlock detector (forward declaration)
@@ -132,49 +131,43 @@ namespace scratchbird::core
         friend class DeadlockDetector;
 
     public:
-        explicit LockManager(Database* db);
+        explicit LockManager(Database *db);
         ~LockManager();
 
         // Initialization
-        Status initialize(ErrorContext* ctx = nullptr);
+        Status initialize(ErrorContext *ctx = nullptr);
 
         // Shutdown
-        Status shutdown(ErrorContext* ctx = nullptr);
+        Status shutdown(ErrorContext *ctx = nullptr);
 
         // Lock acquisition
-        Status acquireLock(
-            uint32_t proc_id,
-            const LockTag& tag,
-            LockMode mode,
-            bool wait,                  // Block if conflict?
-            uint32_t timeout_ms,        // Wait timeout (0 = infinite)
-            ErrorContext* ctx = nullptr);
+        Status acquireLock(uint32_t proc_id, const LockTag &tag, LockMode mode,
+                           bool wait,           // Block if conflict?
+                           uint32_t timeout_ms, // Wait timeout (0 = infinite)
+                           ErrorContext *ctx = nullptr);
 
         // Lock release
-        Status releaseLock(
-            uint32_t proc_id,
-            const LockTag& tag,
-            LockMode mode,
-            ErrorContext* ctx = nullptr);
+        Status releaseLock(uint32_t proc_id, const LockTag &tag, LockMode mode,
+                           ErrorContext *ctx = nullptr);
 
         // Release all locks for a backend (on disconnect/abort)
-        Status releaseAllLocks(uint32_t proc_id, ErrorContext* ctx = nullptr);
+        Status releaseAllLocks(uint32_t proc_id, ErrorContext *ctx = nullptr);
 
         // Check if lock conflicts
-        bool checkConflict(const LockTag& tag, LockMode mode);
+        bool checkConflict(const LockTag &tag, LockMode mode);
 
         // Get statistics
-        void getStatistics(LockStats* stats_out);
+        void getStatistics(LockStats *stats_out);
 
         // Deadlock detection (called periodically or on timeout)
-        Status detectDeadlocks(ErrorContext* ctx = nullptr);
+        Status detectDeadlocks(ErrorContext *ctx = nullptr);
 
     private:
-        Database* db_;
+        Database *db_;
 
         // Lock tables (lock_table_ owns Lock objects via unique_ptr)
         std::unordered_map<LockTag, std::unique_ptr<Lock>, LockTag::Hash> lock_table_;
-        std::unordered_multimap<uint32_t, Lock*> proc_locks_;  // By proc_id (non-owning references)
+        std::unordered_multimap<uint32_t, Lock *> proc_locks_; // By proc_id (non-owning references)
 
         // Synchronization
         std::mutex lock_table_mutex_;
@@ -194,10 +187,10 @@ namespace scratchbird::core
         static const bool conflict_matrix_[8][8];
 
         // Helper methods
-        Lock* findOrCreateLock(const LockTag& tag);
-        void removeLockIfUnused(const LockTag& tag);
-        void grantWaitingLocks(Lock* lock);
-        bool checkConflictInternal(const Lock* lock, LockMode mode, uint32_t skip_proc_id);
+        Lock *findOrCreateLock(const LockTag &tag);
+        void removeLockIfUnused(const LockTag &tag);
+        void grantWaitingLocks(Lock *lock);
+        bool checkConflictInternal(const Lock *lock, LockMode mode, uint32_t skip_proc_id);
 
         // READ ONLY transaction optimization helpers
         bool isReadOnlyTransaction(uint32_t proc_id) const;
@@ -207,17 +200,17 @@ namespace scratchbird::core
     class DeadlockDetector
     {
     public:
-        explicit DeadlockDetector(LockManager* lock_mgr);
+        explicit DeadlockDetector(LockManager *lock_mgr);
         ~DeadlockDetector();
 
         // Run deadlock detection
-        Status detectDeadlocks(ErrorContext* ctx = nullptr);
+        Status detectDeadlocks(ErrorContext *ctx = nullptr);
 
         // Check if adding wait would create cycle
         bool wouldCreateCycle(uint32_t waiter, uint32_t holder);
 
     private:
-        LockManager* lock_mgr_;
+        LockManager *lock_mgr_;
 
         // Wait-for graph (waiter -> holders)
         std::unordered_map<uint32_t, std::vector<uint32_t>> wait_graph_;
@@ -226,17 +219,17 @@ namespace scratchbird::core
         void buildWaitGraph();
 
         // DFS for cycle detection
-        bool hasCycle(uint32_t start_proc, std::unordered_set<uint32_t>* visited,
-                     std::unordered_set<uint32_t>* rec_stack);
+        bool hasCycle(uint32_t start_proc, std::unordered_set<uint32_t> *visited,
+                      std::unordered_set<uint32_t> *rec_stack);
 
         // Detect all cycles
         std::vector<std::vector<uint32_t>> findAllCycles();
 
         // Select victim from cycle (abort youngest transaction)
-        uint32_t selectVictim(const std::vector<uint32_t>& cycle);
+        uint32_t selectVictim(const std::vector<uint32_t> &cycle);
 
         // Abort transaction to break deadlock
-        Status abortTransaction(uint32_t proc_id, ErrorContext* ctx);
+        Status abortTransaction(uint32_t proc_id, ErrorContext *ctx);
     };
 
 } // namespace scratchbird::core

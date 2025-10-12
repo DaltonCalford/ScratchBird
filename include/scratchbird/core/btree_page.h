@@ -33,14 +33,11 @@ namespace scratchbird
             uint16_t find_split_point();
 
             // Compression support
-            static Status get_node(
-                const uint8_t* page_data,
-                uint32_t page_size,
-                uint16_t node_index,
-                std::vector<uint8_t>& key_out,
-                std::vector<uint64_t>& tuple_ids_out);
+            static Status get_node(const uint8_t *page_data, uint32_t page_size,
+                                   uint16_t node_index, std::vector<uint8_t> &key_out,
+                                   std::vector<uint64_t> &tuple_ids_out);
 
-            void enableCompression(const std::vector<uint8_t>& page_prefix);
+            void enableCompression(const std::vector<uint8_t> &page_prefix);
             bool isCompressionEnabled() const;
             std::vector<uint8_t> getPagePrefix() const;
 
@@ -50,7 +47,8 @@ namespace scratchbird
             SBBTreePage *page_header_;
 
             // Helper to calculate prefix for key at position
-            uint16_t calculateNodePrefix(uint16_t node_index, const std::vector<uint8_t>& key) const;
+            uint16_t calculateNodePrefix(uint16_t node_index,
+                                         const std::vector<uint8_t> &key) const;
         };
 
     } // namespace core
