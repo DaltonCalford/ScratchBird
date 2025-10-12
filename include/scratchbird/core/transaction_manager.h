@@ -91,7 +91,7 @@ namespace scratchbird::core
                                  ErrorContext *ctx = nullptr) const -> Status;
 
         // Check if a transaction is visible to another transaction (READ COMMITTED semantics)
-        auto isTransactionVisible(uint64_t xid, uint64_t snapshot_xid) -> bool;
+        auto isTransactionVisible(uint64_t xid, uint64_t snapshot_xid) const -> bool;
 
         // Validate XID is structurally valid (not INVALID_XID)
         static auto isValidXid(uint64_t xid) -> bool;

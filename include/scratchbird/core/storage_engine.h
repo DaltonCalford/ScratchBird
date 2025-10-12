@@ -144,7 +144,7 @@ namespace scratchbird::core
                             ErrorContext *ctx = nullptr) -> std::unique_ptr<HeapScanIterator>;
 
         // Check if a tuple is visible (basic visibility for single connection)
-        auto isVisible(uint64_t xmin, uint64_t xmax, uint64_t current_xid) -> bool;
+        auto isVisible(uint64_t xmin, uint64_t xmax, uint64_t current_xid) const -> bool;
 
         // Get current transaction ID from TransactionManager
         [[nodiscard]] auto getCurrentXid() const -> uint64_t;

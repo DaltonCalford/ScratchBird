@@ -266,7 +266,7 @@ namespace scratchbird::core
         return static_cast<ClogStatus>(bits);
     }
 
-    void Clog::getStatistics(ClogStats *stats_out)
+    void Clog::getStatistics(ClogStats *stats_out) const
     {
         if (stats_out == nullptr)
         {

@@ -489,7 +489,7 @@ namespace scratchbird::core
         return Status::OK;
     }
 
-    bool Vacuum::isTupleDead(const uint8_t *tuple_data, uint64_t horizon)
+    bool Vacuum::isTupleDead(const uint8_t *tuple_data, uint64_t horizon) const
     {
         auto *header = reinterpret_cast<const TupleHeader *>(tuple_data);
 
@@ -524,7 +524,7 @@ namespace scratchbird::core
         return (header->infomask & TupleHeader::HEAP_XMAX_COMMITTED) != 0;
     }
 
-    bool Vacuum::isVersionPrunable(const uint8_t *tuple_data, uint64_t horizon)
+    bool Vacuum::isVersionPrunable(const uint8_t *tuple_data, uint64_t horizon) const
     {
         auto *header = reinterpret_cast<const TupleHeader *>(tuple_data);
 
