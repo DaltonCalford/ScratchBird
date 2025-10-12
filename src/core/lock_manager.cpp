@@ -321,7 +321,7 @@ namespace scratchbird::core
         return Status::OK;
     }
 
-    bool LockManager::checkConflict(const LockTag &tag, LockMode mode)
+    bool LockManager::checkConflict(const LockTag &tag, LockMode mode) const
     {
         std::lock_guard<std::mutex> lock(lock_table_mutex_);
 
@@ -334,7 +334,7 @@ namespace scratchbird::core
         return checkConflictInternal(it->second.get(), mode, 0);
     }
 
-    void LockManager::getStatistics(LockStats *stats_out)
+    void LockManager::getStatistics(LockStats *stats_out) const
     {
         std::lock_guard<std::mutex> lock(lock_table_mutex_);
         *stats_out = stats_;
@@ -436,7 +436,7 @@ namespace scratchbird::core
     }
 
     bool LockManager::checkConflictInternal(const Lock *lock_obj, LockMode mode,
-                                            uint32_t skip_proc_id)
+                                            uint32_t skip_proc_id) const
     {
         uint8_t req_mode_idx = static_cast<uint8_t>(mode) - 1;
 
