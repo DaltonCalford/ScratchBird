@@ -15,6 +15,7 @@
 #include "scratchbird/core/connection_context.h"
 #include "scratchbird/core/system_uuids.h"
 #include "scratchbird/core/debug.h"
+#include "scratchbird/core/logger.h"
 #include <fcntl.h>
 #include <unistd.h>
 #include <sys/stat.h>
@@ -579,6 +580,9 @@
             // Store database UUID
             memcpy(db_uuid_.bytes.data(), header_->page_header.database_uuid, 16);
             path_ = canonical_path;
+
+            // Initialize logger
+            Logger::getInstance().initialize();
 
             // Initialize page manager
             try {

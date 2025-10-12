@@ -4,6 +4,7 @@
 #include "scratchbird/core/transaction_manager.h"
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/core/config.h"
+#include "scratchbird/core/logger.h"
 #include <chrono>
 #include <algorithm>
 #include <cstring>
@@ -706,8 +707,8 @@ namespace scratchbird::core
                 Status status = txn_mgr->rollbackTransaction(proc_id, xid, ctx);
                 if (status != Status::OK) {
                     // Log error but continue with cleanup
-                    fprintf(stderr, "[DeadlockDetector] Failed to rollback transaction XID=%lu: %d\n",
-                            xid, static_cast<int>(status));
+                    LOG_ERROR(LOCK, "Failed to rollback transaction XID=%lu during deadlock resolution: status=%d",
+                              xid, static_cast<int>(status));
                 }
             }
         }

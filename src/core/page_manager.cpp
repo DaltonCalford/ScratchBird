@@ -1,6 +1,7 @@
 #include "scratchbird/core/page_manager.h"
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/debug.h"
+#include "scratchbird/core/logger.h"
 #include <cstring>
 #include <algorithm>
 
@@ -99,7 +100,7 @@
             if (update_status != Status::OK)
             {
                 // Log but continue - FSM is authoritative
-                // fprintf(stderr, "Warning: Failed to sync header total_pages with FSM\n");
+                LOG_WARNING(STORAGE, "Failed to sync header total_pages with FSM: status=%d", static_cast<int>(update_status));
             }
 
             // Validate bitmap consistency - count allocated pages
@@ -264,7 +265,7 @@
             if (update_status != Status::OK)
             {
                 // Log but don't fail - the pages are allocated
-                // fprintf(stderr, "Warning: Failed to update header total_pages\n");
+                LOG_WARNING(STORAGE, "Failed to update header total_pages after file extension: status=%d", static_cast<int>(update_status));
             }
 
             return Status::OK;
