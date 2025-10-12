@@ -193,7 +193,7 @@ namespace scratchbird::core
         // Internal methods
         void backgroundGCLoop();
         uint64_t cleanPage(uint32_t page_id, uint64_t *space_reclaimed_out, ErrorContext *ctx);
-        bool isTupleGarbage(uint64_t xmax, uint64_t oit);
+        bool isTupleGarbage(uint64_t xmax, uint64_t oit) const;
         void readConfiguration();
 
         // Statistics helpers
@@ -204,13 +204,13 @@ namespace scratchbird::core
         void wakeBackgroundThread();
 
         // Rate limiting for cooperative GC
-        bool shouldRunCooperativeGC();
+        bool shouldRunCooperativeGC() const;
 
         // Adaptive tuning
         void performAdaptiveTuning();
 
         // Priority calculation for dirty pages
-        double calculatePagePriority(uint32_t mark_count, uint64_t age_microseconds);
+        double calculatePagePriority(uint32_t mark_count, uint64_t age_microseconds) const;
     };
 
 } // namespace scratchbird::core

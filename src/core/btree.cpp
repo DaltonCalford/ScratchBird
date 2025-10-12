@@ -344,7 +344,7 @@ namespace scratchbird::core
 
     // Searches for a key within a single B-Tree page using binary search.
     auto BTree::searchPage(const SBBTreePage *page, const std::vector<uint8_t> &key,
-                           std::vector<uint64_t> *tuple_ids_out) -> bool
+                           std::vector<uint64_t> *tuple_ids_out) const -> bool
     {
         const auto *page_data = reinterpret_cast<const uint8_t *>(page);
 

@@ -84,7 +84,7 @@ namespace scratchbird::core
 
         // Scan TIP pages to find first uncommitted transaction
         // Returns new OIT (or 0 if no change needed)
-        uint64_t findFirstUncommittedTransaction(ErrorContext *ctx);
+        uint64_t findFirstUncommittedTransaction(ErrorContext *ctx) const;
 
         // Reclaim space from old tuple versions (foreground sweep only)
         // Removes versions with xmax < new_oit
