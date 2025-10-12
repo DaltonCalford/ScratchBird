@@ -2,6 +2,7 @@
 
 #include "scratchbird/core/status.h"
 #include "scratchbird/core/ondisk.h"
+#include "scratchbird/core/config.h"
 #include <cstdint>
 #include <memory>
 #include <unordered_map>
@@ -192,7 +193,7 @@
             PageManager *page_manager_;
 
             // Transaction state
-            uint64_t next_xid_ = 100;           // Next XID to allocate (NEXT)
+            uint64_t next_xid_ = config::DEFAULT_INITIAL_XID;           // Next XID to allocate (NEXT)
             uint64_t oldest_xid_ = FROZEN_XID + 1; // Oldest Interesting Transaction (OIT)
             uint64_t oldest_active_xid_ = 0;     // Oldest Active Transaction (OAT)
             uint64_t oldest_snapshot_ = 0;       // Oldest Snapshot Transaction (OST)
@@ -214,7 +215,7 @@
             static constexpr uint64_t FROZEN_XID = 2;
 
             // Cache limits
-            static constexpr size_t MAX_CACHE_SIZE = 10000; // Maximum number of cached transactions
+            static constexpr uint32_t MAX_CACHE_SIZE = config::DEFAULT_TRANSACTION_CACHE_SIZE; // Maximum number of cached transactions
 
             // XID wraparound protection
             static constexpr uint64_t XID_WRAPAROUND_THRESHOLD = 1000000; // Trigger autovacuum when this close to UINT64_MAX

@@ -6,6 +6,7 @@
 #include "scratchbird/core/buffer_pool.h"
 #include "scratchbird/core/transaction_manager.h"
 #include "scratchbird/core/logger.h"
+#include "scratchbird/core/config.h"
 #include <cstring>
 #include <algorithm>
 #include <vector>
@@ -632,7 +633,7 @@
 
             // Follow version chain looking for visible version
             // Limit chain traversal to prevent infinite loops
-            constexpr uint32_t MAX_CHAIN_LENGTH = 100;
+            constexpr uint32_t MAX_CHAIN_LENGTH = config::DEFAULT_MAX_VERSION_CHAIN_LENGTH;
             uint32_t chain_length = 0;
 
             BufferPool *buffer_pool = (db_ != nullptr) ? db_->buffer_pool() : nullptr;

@@ -117,7 +117,7 @@
                 uint32_t max_backends = header_->max_backends;
                 if (max_backends == 0)
                 {
-                    max_backends = 100;  // Default
+                    max_backends = config::DEFAULT_MAX_BACKENDS;
                 }
 
                 Status s = initializeProcArray(max_backends, ctx);
