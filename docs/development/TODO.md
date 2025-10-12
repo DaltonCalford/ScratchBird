@@ -393,12 +393,14 @@ log_file = scratchbird.log
 - Large tuple updates (6KB+)
 - Error handling for invalid updates
 
-**Known Limitations:**
-- Index updates not yet implemented (TODO at line 824-831)
-- Index scans may need to follow version chains to find current location
-- Future work: Implement index entry updates for cross-page relocations
+**Index Updates (Completed October 12, 2025):**
+- ✅ Index entries are automatically updated when tuples relocate across pages
+- ✅ Both BTree and Hash indexes supported
+- ✅ Helper functions `buildIndexKey()` and `updateIndexesForRelocation()` implemented (lines 1004-1190)
+- ✅ Graceful handling when tables have no indexes or when index updates fail
+- ⚠️ Note: Key extraction currently uses simplified tuple parsing (TODO at line 1006-1009 for future enhancement)
 
-**Status:** ✅ COMPLETED
+**Status:** ✅ COMPLETED (including index updates)
 
 ---
 
@@ -512,21 +514,10 @@ SAFE_SET_ERROR_CONTEXT(ctx, "Failed to acquire lock");
 
 ## High Priority (Major Features/Fixes)
 
-### HIGH-001: Implement Cross-Page Tuple Updates
-**File:** `src/core/storage_engine.cpp:534-546`
-**Effort:** 3-5 days
-**Impact:** Enables UPDATE to work with size changes
-
-**Requirements:**
-1. Design cross-page version chain mechanism
-2. Update heap_page to support cross-page pointers
-3. Implement tuple relocation logic
-4. Add tests for UPDATE with growing tuples
-5. Handle page-full scenarios gracefully
-
-**Current State:** Returns `Status::NOT_IMPLEMENTED`
-
-**Status:** ❌ Not Started
+### ✅ HIGH-001-COMPLETE: Cross-Page Tuple Updates (Now CRIT-002)
+**File:** `src/core/storage_engine.cpp:708-840`
+**Completion Date:** October 12, 2025
+**Status:** ✅ COMPLETED (see CRIT-002-COMPLETE above for full details)
 
 ---
 
