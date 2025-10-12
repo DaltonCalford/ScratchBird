@@ -86,9 +86,6 @@ namespace scratchbird::core
         LockMode mode;                 // Requested mode
         bool granted;                  // Is lock granted?
         uint64_t request_time;         // When requested (microseconds)
-
-        LockRequest* next;             // Queue linkage
-        LockRequest* prev;             // Doubly-linked for removal
     };
 
     // Lock object (one lockable resource)
@@ -100,10 +97,8 @@ namespace scratchbird::core
         uint32_t granted_mask;         // Bit i = mode i granted
         uint32_t granted_counts[8];    // Count per mode (0-indexed from LOCK_ACCESS_SHARE-1)
 
-        // Waiting queue
-        LockRequest* wait_queue_head;
-        LockRequest* wait_queue_tail;
-        uint32_t wait_queue_size;
+        // Waiting queue (RAII-managed with unique_ptr)
+        std::list<std::unique_ptr<LockRequest>> wait_queue;
 
         // Statistics
         uint64_t total_acquisitions;
@@ -177,13 +172,9 @@ namespace scratchbird::core
     private:
         Database* db_;
 
-        // Lock tables
-        std::unordered_map<LockTag, Lock*, LockTag::Hash> lock_table_;
-        std::unordered_multimap<uint32_t, Lock*> proc_locks_;  // By proc_id
-
-        // Lock pools (for memory management)
-        std::list<Lock*> lock_pool_;
-        std::list<LockRequest*> request_pool_;
+        // Lock tables (lock_table_ owns Lock objects via unique_ptr)
+        std::unordered_map<LockTag, std::unique_ptr<Lock>, LockTag::Hash> lock_table_;
+        std::unordered_multimap<uint32_t, Lock*> proc_locks_;  // By proc_id (non-owning references)
 
         // Synchronization
         std::mutex lock_table_mutex_;
@@ -204,19 +195,9 @@ namespace scratchbird::core
 
         // Helper methods
         Lock* findOrCreateLock(const LockTag& tag);
-        void removeLockIfUnused(Lock* lock);
+        void removeLockIfUnused(const LockTag& tag);
         void grantWaitingLocks(Lock* lock);
         bool checkConflictInternal(const Lock* lock, LockMode mode, uint32_t skip_proc_id);
-
-        // Request management
-        LockRequest* allocateRequest();
-        void freeRequest(LockRequest* req);
-        void enqueueRequest(Lock* lock, LockRequest* req);
-        void dequeueRequest(Lock* lock, LockRequest* req);
-
-        // Lock memory management
-        Lock* allocateLock();
-        void freeLock(Lock* lock);
 
         // READ ONLY transaction optimization helpers
         bool isReadOnlyTransaction(uint32_t proc_id) const;
