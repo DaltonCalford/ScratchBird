@@ -707,17 +707,130 @@
             }
             else if (status == Status::PAGE_FULL)
             {
-                // TODO: Implement cross-page update
-                // For Phase 3, we only support same-page updates
-                // Cross-page updates require:
-                // 1. Allocate new page or find page with free space
-                // 2. Insert new version on new page
-                // 3. Update old tuple's next_version_tid to point to new page
-                // 4. Handle lock acquisition on new tuple
+                // CROSS-PAGE UPDATE: Old page is full, need to place new version on different page
+                // This implements cross-page version chains for MVCC
+
+                // Unpin old page (no modifications made yet)
                 buffer_pool_->unpinPage(page_id, false, ctx);
-                SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED,
-                                 "Cross-page tuple updates not yet implemented");
-                return Status::NOT_IMPLEMENTED;
+
+                // Find or allocate a new page with sufficient free space
+                uint32_t new_page_id;
+                status = findFreePage(table_id, new_tuple_size + sizeof(TupleHeader),
+                                     &new_page_id, ctx);
+                if (status != Status::OK)
+                {
+                    SET_ERROR_CONTEXT(ctx, status, "Failed to find free page for cross-page update");
+                    return status;
+                }
+
+                // Pin the new page
+                void *new_page_buffer;
+                status = buffer_pool_->pinPage(new_page_id, &new_page_buffer, ctx);
+                if (status != Status::OK)
+                {
+                    SET_ERROR_CONTEXT(ctx, status, "Failed to pin new page for cross-page update");
+                    return status;
+                }
+
+                auto *new_page_data = static_cast<uint8_t *>(new_page_buffer);
+                HeapPage new_heap_page(new_page_data, db_->page_size());
+
+                // Insert new tuple version on the new page
+                uint16_t new_item_id;
+                status = new_heap_page.insertTuple(new_tuple_data, new_tuple_size, new_xmin,
+                                                   &new_item_id, ctx);
+
+                if (status != Status::OK)
+                {
+                    buffer_pool_->unpinPage(new_page_id, false, ctx);
+                    SET_ERROR_CONTEXT(ctx, status, "Failed to insert tuple on new page for cross-page update");
+                    return status;
+                }
+
+                // Acquire lock on new tuple location
+                // Note: We already hold lock on old tuple from earlier in this function
+                status = acquireTupleLock(table_id, new_page_id, new_item_id, proc_id, wait, ctx);
+                if (status != Status::OK)
+                {
+                    buffer_pool_->unpinPage(new_page_id, false, ctx);
+                    SET_ERROR_CONTEXT(ctx, status, "Failed to acquire lock on new tuple for cross-page update");
+                    return status;
+                }
+
+                // Unpin new page (mark as dirty since we inserted a tuple)
+                buffer_pool_->unpinPage(new_page_id, true, ctx);
+
+                // Now pin the old page again to update the version chain
+                status = buffer_pool_->pinPage(page_id, &page_buffer, ctx);
+                if (status != Status::OK)
+                {
+                    SET_ERROR_CONTEXT(ctx, status, "Failed to re-pin old page for cross-page update");
+                    return status;
+                }
+
+                page_data = static_cast<uint8_t *>(page_buffer);
+                HeapPage old_heap_page(page_data, db_->page_size());
+
+                // Get old tuple to update its version chain pointer
+                const ItemPointer *items = reinterpret_cast<const ItemPointer *>(
+                    page_data + sizeof(PageHeader));
+
+                if (item_id >= old_heap_page.getItemCount())
+                {
+                    buffer_pool_->unpinPage(page_id, false, ctx);
+                    SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Invalid old item ID after cross-page insert");
+                    return Status::INVALID_ARGUMENT;
+                }
+
+                uint32_t old_offset = items[item_id].offset;
+                auto *old_tuple_hdr = reinterpret_cast<TupleHeader *>(page_data + old_offset);
+
+                // Build TID for new tuple on different page
+                uint64_t new_tid = (static_cast<uint64_t>(new_page_id) << 32) |
+                                   (static_cast<uint64_t>(new_item_id) << 16);
+
+                // Update old tuple's version chain to point to new page
+                old_tuple_hdr->xmax = xmax;
+                old_tuple_hdr->next_version_tid = new_tid;
+                old_tuple_hdr->infomask |= TupleHeader::HEAP_UPDATED;
+                old_tuple_hdr->infomask |= TupleHeader::HEAP_MOVED;  // Mark as moved to different page
+                old_tuple_hdr->infomask |= TupleHeader::HEAP_XMAX_COMMITTED;
+
+                // Mark old page as dirty for GC
+                if (db_->garbage_collector() != nullptr)
+                {
+                    db_->garbage_collector()->markPageDirty(page_id);
+                }
+
+                // Mark new page as dirty for GC
+                if (db_->garbage_collector() != nullptr)
+                {
+                    db_->garbage_collector()->markPageDirty(new_page_id);
+                }
+
+                // Unpin old page (mark as dirty since we updated old tuple)
+                buffer_pool_->unpinPage(page_id, true, ctx);
+
+                // Return new location
+                if (new_page_id_out != nullptr)
+                {
+                    *new_page_id_out = new_page_id;
+                }
+                if (new_item_id_out != nullptr)
+                {
+                    *new_item_id_out = new_item_id;
+                }
+
+                // TODO: Update indexes to point to new tuple location
+                // This is complex because we need to:
+                // 1. Find all indexes on this table
+                // 2. For each index, update entries that point to (old_page_id, old_item_id)
+                //    to point to (new_page_id, new_item_id)
+                // 3. Handle index-only scans that might be using old location
+                // For now, cross-page updates work for heap scans but may cause issues
+                // with index scans until indexes are updated.
+
+                return Status::OK;
             }
             else
             {
