@@ -97,12 +97,22 @@ namespace scratchbird::core
             // READ ONLY transaction optimizations (Phase 3)
             uint64_t evictions_clean = 0; // Clean pages evicted (read-only benefit)
             uint64_t evictions_dirty = 0; // Dirty pages evicted (requires flush)
+
+            // Corruption detection (MED-005)
+            uint64_t page_size_mismatches = 0; // Page size mismatches corrected
         };
 
         auto getStats() const -> Stats
         {
             std::lock_guard<std::mutex> lock(mutex_);
             return stats_;
+        }
+
+        // Increment page size mismatch counter (called by HeapPage when corruption detected)
+        void incrementPageSizeMismatchCount()
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            stats_.page_size_mismatches++;
         }
 
     private:

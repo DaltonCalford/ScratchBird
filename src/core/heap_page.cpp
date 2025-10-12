@@ -66,8 +66,21 @@ namespace scratchbird::core
             // Page already initialized - validate and correct page size if needed
             if (hdr->page_size != page_size_)
             {
+                // CORRUPTION DETECTION: Page size mismatch detected
+                // This could indicate corruption or database configuration change
+                LOG_WARNING(STORAGE,
+                            "Page size mismatch detected on page %u: stored=%u, expected=%u. "
+                            "Correcting to buffer size (this may indicate corruption or config change).",
+                            page_id, hdr->page_size, page_size_);
+
                 // Correct the mismatch - the buffer size is authoritative
                 hdr->page_size = page_size_;
+
+                // Update statistics if buffer pool is available
+                if (db_ != nullptr && db_->buffer_pool() != nullptr)
+                {
+                    db_->buffer_pool()->incrementPageSizeMismatchCount();
+                }
             }
 
             // Validate special area is sane

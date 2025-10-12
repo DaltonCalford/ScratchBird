@@ -316,3 +316,77 @@ TEST_F(HeapPageTest, MinimumTupleSizeBoundary)
         EXPECT_GE(size2, sizeof(TupleHeader) + 1) << "Should have TupleHeader + 1 byte";
     }
 }
+
+// Test: Corrupted Page Size Detection (MED-005)
+TEST_F(HeapPageTest, CorruptedPageSizeDetection)
+{
+    // Initialize page normally
+    HeapPage page(page_buffer_, page_size_);
+    uint32_t page_id = 123;
+    ASSERT_EQ(page.initialize(page_id, nullptr), Status::OK);
+
+    // Insert some data to make it a realistic page
+    std::vector<uint8_t> tuple_data(100, 0xDD);
+    uint16_t item_id;
+    ASSERT_EQ(page.insertTuple(tuple_data.data(), tuple_data.size() + sizeof(TupleHeader), 100,
+                                &item_id, nullptr),
+              Status::OK);
+
+    // Verify page is correctly initialized
+    PageHeader *header = page.header();
+    EXPECT_EQ(header->page_size, page_size_) << "Page size should match initial value";
+
+    // Simulate corruption: change the stored page size to a different value
+    uint32_t corrupted_size = 4096; // Different from actual page_size_
+    header->page_size = corrupted_size;
+
+    // Re-initialize the page (simulating a page reload from disk)
+    // The initialize() method should detect the mismatch, log a warning, and correct it
+    ErrorContext ctx;
+    Status status = page.initialize(page_id, &ctx);
+
+    // Initialize should succeed (it corrects the error)
+    EXPECT_EQ(status, Status::OK) << "Should successfully correct page size mismatch";
+
+    // Verify that page size was corrected
+    EXPECT_EQ(header->page_size, page_size_)
+        << "Page size should be corrected to buffer pool size";
+    EXPECT_NE(header->page_size, corrupted_size)
+        << "Page size should no longer be the corrupted value";
+
+    // Verify the page is still functional after correction
+    const uint8_t *retrieved_data;
+    uint32_t retrieved_size;
+    status = page.getTuple(item_id, &retrieved_data, &retrieved_size, nullptr);
+    EXPECT_EQ(status, Status::OK) << "Should still be able to retrieve tuples after correction";
+}
+
+// Test: Multiple Page Size Corruptions
+TEST_F(HeapPageTest, MultiplePageSizeCorruptions)
+{
+    // Test that page size correction works consistently across multiple corruptions
+    HeapPage page(page_buffer_, page_size_);
+    uint32_t page_id = 456;
+    ASSERT_EQ(page.initialize(page_id, nullptr), Status::OK);
+
+    PageHeader *header = page.header();
+
+    // Test various corrupted page sizes
+    std::vector<uint32_t> corrupted_sizes = {4096, 16384, 32768, 1024};
+
+    for (uint32_t corrupted_size : corrupted_sizes)
+    {
+        // Corrupt the page size
+        header->page_size = corrupted_size;
+        EXPECT_EQ(header->page_size, corrupted_size) << "Corruption should be applied";
+
+        // Re-initialize - should correct the corruption
+        ErrorContext ctx;
+        Status status = page.initialize(page_id, &ctx);
+        EXPECT_EQ(status, Status::OK) << "Should correct corruption with size " << corrupted_size;
+
+        // Verify correction
+        EXPECT_EQ(header->page_size, page_size_)
+            << "Should correct page size from " << corrupted_size << " to " << page_size_;
+    }
+}

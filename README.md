@@ -46,7 +46,10 @@ ctest --output-on-failure
 - ✅ HIGH-003: Magic numbers moved to configuration (config.h)
 - ✅ HIGH-004: Logging framework integrated (Logger with categories & levels)
 - ✅ MED-001: Code formatting standardized with clang-format (83 files)
-- ✅ MED-002: Const correctness (Phase 1 & 2) - 19 methods improved across 6 classes
+- ✅ MED-002: Const correctness (Phase 1, 2 & 3) - 19 methods improved across 6 classes
+- ✅ MED-003: Removed commented debug code (fprintf/printf cleanup)
+- ✅ MED-004: Type cast safety audit (4 const_cast, 345 reinterpret_cast audited)
+- ✅ MED-005: Page size mismatch detection with logging & statistics tracking
 
 ### What's Implemented ✅
 - **Storage Engine:** Page management, buffer pool with 2-pass eviction, heap pages, TOAST, compression, cross-page updates (95%)
@@ -68,10 +71,12 @@ ctest --output-on-failure
 ### Recent Achievements 🎉
 - ✅ **All Critical Issues Resolved** - CRIT-001 through CRIT-005 completed (Oct 12, 2025)
 - ✅ **All High Priority Issues Resolved** - HIGH-001 through HIGH-005 completed (Oct 12, 2025)
+- ✅ **All Medium Priority Issues Resolved** - MED-001 through MED-005 completed (Oct 12, 2025)
 - ✅ **Memory Safety** - Lock manager fully RAII-ified with smart pointers
 - ✅ **Production-Ready Logging** - Logger framework with categories and levels integrated
 - ✅ **Code Quality Improvements** - 83 files formatted with clang-format, magic numbers eliminated
 - ✅ **API Safety** - Const correctness improvements across 19 methods in 6 core classes
+- ✅ **Corruption Detection** - Page size mismatches now logged and tracked with statistics
 - See [TODO.md](docs/development/TODO.md) for remaining work and Alpha 1.2 requirements
 
 ## Project Structure
