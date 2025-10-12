@@ -833,19 +833,43 @@ else
 
 ---
 
-### MED-002: Add Const Correctness
+### ⏳ MED-002: Add Const Correctness ~~⚠️ MEDIUM~~ **IN PROGRESS** 🚧
 **Files:** Multiple headers and implementations
-**Effort:** 1-2 weeks
-**Impact:** Correctness, optimization
+**Effort:** 1-2 weeks → **Phase 1 COMPLETED (October 12, 2025)**
+**Impact:** Correctness, optimization, API safety
+**Priority:** MEDIUM → IN PROGRESS
 
 **Requirements:**
-1. Audit all getter methods
-2. Add `const` qualifiers where appropriate
-3. Use `mutable` for internal caches if needed
-4. Update method signatures throughout
-5. Propagate const-correctness through call chains
+1. ✅ Audit all getter methods (COMPLETED - 67 methods identified)
+2. ✅ Add `const` qualifiers where appropriate (Phase 1 COMPLETED)
+3. ✅ Use `mutable` for internal caches if needed (lock_table_mutex_)
+4. ⏳ Update method signatures throughout (IN PROGRESS)
+5. ⏳ Propagate const-correctness through call chains (IN PROGRESS)
 
-**Status:** ❌ Not Started
+**Phase 1 Completed (October 12, 2025):**
+
+✅ **Database class (database.h):**
+- Added const overloads for all 11 subsystem getter methods
+- `page_manager()`, `buffer_pool()`, `catalog_manager()`
+- `storage_engine()`, `transaction_manager()`
+- `lock_manager()`, `vacuum()`, `clog()`
+- `sweep_manager()`, `garbage_collector()`, `long_transaction_monitor()`
+
+✅ **LockManager class (lock_manager.h/cpp):**
+- Marked `checkConflict()` as const
+- Marked `getStatistics()` as const
+- Marked `checkConflictInternal()` as const (helper method)
+- Made `lock_table_mutex_` mutable for use in const methods
+
+**Remaining Work (Phase 2):**
+- ❌ StorageEngine::isVisible() const
+- ❌ Vacuum::isTupleDead(), isVersionPrunable() const
+- ❌ GarbageCollector helper methods (isTupleGarbage, shouldRunCooperativeGC, calculatePagePriority) const
+- ❌ BTree::searchPage() const
+- ❌ SweepManager::findFirstUncommittedTransaction() const
+- ❌ Clog::getStatistics() const
+
+**Status:** ⏳ Phase 1 COMPLETED, Phase 2 Pending
 
 ---
 
