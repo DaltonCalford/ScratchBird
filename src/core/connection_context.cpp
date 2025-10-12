@@ -4,6 +4,7 @@
 #include "scratchbird/core/logger.h"
 #include "scratchbird/core/lock_manager.h"
 #include "scratchbird/core/catalog_manager.h"
+#include "scratchbird/core/config.h"
 #include <cassert>
 
 namespace scratchbird::core
@@ -20,7 +21,7 @@ namespace scratchbird::core
         , isolation_level_(IsolationLevel::SNAPSHOT)  // Default to SNAPSHOT
         , is_read_only_(false)
         , wait_for_locks_(true)  // Default: wait for locks
-        , lock_timeout_seconds_(60)  // Default: 60 second timeout
+        , lock_timeout_seconds_(config::DEFAULT_LOCK_TIMEOUT_SECONDS)  // Default: 60 second timeout
         , settings_staged_(false)
         , next_isolation_level_(IsolationLevel::SNAPSHOT)
         , next_is_read_only_(false)

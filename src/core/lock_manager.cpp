@@ -3,6 +3,7 @@
 #include "scratchbird/core/proc_array.h"
 #include "scratchbird/core/transaction_manager.h"
 #include "scratchbird/core/error_context.h"
+#include "scratchbird/core/config.h"
 #include <chrono>
 #include <algorithm>
 #include <cstring>
@@ -26,8 +27,8 @@ namespace scratchbird::core
 
     LockManager::LockManager(Database* db)
         : db_(db)
-        , max_locks_(10000)
-        , deadlock_timeout_ms_(1000)
+        , max_locks_(config::DEFAULT_MAX_LOCKS)
+        , deadlock_timeout_ms_(config::DEFAULT_DEADLOCK_TIMEOUT_MS)
     {
         std::memset(&stats_, 0, sizeof(stats_));
     }

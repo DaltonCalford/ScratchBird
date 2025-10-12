@@ -63,7 +63,7 @@
             uint64_t current_xid = ConnectionContext::getCurrentTransactionId();
             if (current_xid == 0) {
                 // No active connection context - use fallback XID
-                current_xid = 100;
+                current_xid = config::DEFAULT_INITIAL_XID;
             }
 
             status = heap_page.insertTuple(tuple_data, tuple_size, current_xid, &item_id, ctx);
@@ -168,7 +168,7 @@
             uint64_t current_xid = ConnectionContext::getCurrentTransactionId();
             if (current_xid == 0) {
                 // No active connection context - use fallback XID
-                current_xid = 100;
+                current_xid = config::DEFAULT_INITIAL_XID;
             }
 
             status = heap_page.deleteTuple(item_id, current_xid, ctx);
@@ -432,7 +432,7 @@
             {
                 return db_->transaction_manager()->getCurrentXid();
             }
-            return 100; // Default if no transaction manager
+            return config::DEFAULT_INITIAL_XID; // Default if no transaction manager
         }
 
         auto StorageEngine::findFreePage(const ID &table_id, uint32_t tuple_size,
@@ -665,7 +665,7 @@
             // Get current XID from transaction manager
             uint64_t xmax = (db_->transaction_manager() != nullptr)
                                ? db_->transaction_manager()->getCurrentXid()
-                               : 100;
+                               : config::DEFAULT_INITIAL_XID;
             uint64_t new_xmin = xmax; // New version gets same XID as update
 
             // Pin the page

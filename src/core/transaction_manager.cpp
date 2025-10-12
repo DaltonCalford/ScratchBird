@@ -8,6 +8,7 @@
 #include "scratchbird/core/connection_context.h"
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/core/logger.h"
+#include "scratchbird/core/config.h"
 #include <algorithm>
 #include <chrono>
 #include <cstring>
@@ -293,7 +294,7 @@
             }
 
             // Update database header with new next_xid periodically (every 100 XIDs)
-            if (next_xid_ % 100 == 0)
+            if ((next_xid_ % config::DEFAULT_HEADER_UPDATE_FREQUENCY) == 0)
             {
                 void *header_buffer;
                 status = buffer_pool_->pinPage(0, &header_buffer, ctx);

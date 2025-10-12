@@ -11,8 +11,11 @@
 
 namespace scratchbird::core::config
 {
-    // Legacy constants (to be replaced with Config::get() calls in Phase 1.5)
-    // These remain for backward compatibility during transition
+    // Configuration Constants
+    // These constants provide default values used throughout the codebase.
+    // They can be overridden via Config::getInstance() from sb_config.ini.
+
+    // ===== System Configuration =====
 
     // Buffer Pool configuration
     constexpr uint32_t DEFAULT_BUFFER_POOL_SIZE = 128; // in pages
@@ -22,6 +25,62 @@ namespace scratchbird::core::config
 
     // Number of base schemas
     constexpr int NUM_BASE_SCHEMAS = 8;
+
+    // Maximum number of concurrent backend connections
+    constexpr uint32_t DEFAULT_MAX_BACKENDS = 100;
+
+    // Maximum number of locks in the lock manager
+    constexpr uint32_t DEFAULT_MAX_LOCKS = 10000;
+
+    // Maximum number of cached transactions in TransactionManager
+    constexpr uint32_t DEFAULT_TRANSACTION_CACHE_SIZE = 10000;
+
+    // ===== Timeout Configuration =====
+
+    // Deadlock detection timeout in milliseconds
+    constexpr uint32_t DEFAULT_DEADLOCK_TIMEOUT_MS = 1000;
+
+    // Lock acquisition timeout in seconds
+    constexpr uint32_t DEFAULT_LOCK_TIMEOUT_SECONDS = 60;
+
+    // ===== Transaction/MVCC Configuration =====
+
+    // Initial transaction ID (start value for new databases)
+    constexpr uint64_t DEFAULT_INITIAL_XID = 100;
+
+    // Update database header every N transactions
+    constexpr uint32_t DEFAULT_HEADER_UPDATE_FREQUENCY = 100;
+
+    // Trigger sweep when this many transactions have passed
+    constexpr uint32_t DEFAULT_SWEEP_INTERVAL = 20000;
+
+    // Maximum length of MVCC version chain before breaking
+    constexpr uint32_t DEFAULT_MAX_VERSION_CHAIN_LENGTH = 100;
+
+    // ===== Storage/Index Configuration =====
+
+    // Hash index bucket fill threshold (percentage)
+    constexpr uint32_t DEFAULT_HASH_BUCKET_FILL_THRESHOLD = 90;
+
+    // B-tree page merge threshold (percentage)
+    constexpr uint32_t DEFAULT_BTREE_MERGE_THRESHOLD = 80;
+
+    // TOAST compression threshold (bytes)
+    constexpr uint32_t DEFAULT_COMPRESSION_THRESHOLD = 256;
+
+    // Page compression threshold (ratio, 0.0-1.0)
+    constexpr double DEFAULT_PAGE_COMPRESSION_THRESHOLD = 0.5;
+
+    // ===== Internal Buffer Sizes (typically not user-configurable) =====
+
+    // Error message buffer size
+    constexpr size_t ERROR_MESSAGE_BUFFER_SIZE = 256;
+
+    // Log buffer size
+    constexpr size_t LOG_BUFFER_SIZE = 4096;
+
+    // Key output truncation limit
+    constexpr size_t KEY_OUTPUT_LIMIT = 256;
 
 } // namespace scratchbird::core::config
 

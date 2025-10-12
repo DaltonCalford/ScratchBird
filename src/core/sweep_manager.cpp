@@ -4,6 +4,7 @@
 #include "scratchbird/core/buffer_pool.h"
 #include "scratchbird/core/garbage_collector.h"
 #include "scratchbird/core/logger.h"
+#include "scratchbird/core/config.h"
 #include <chrono>
 #include <thread>
 
@@ -69,7 +70,7 @@ namespace scratchbird::core
 
         // TODO: Read sweep_interval from config
         // For now, use hardcoded default of 20000
-        uint32_t sweep_interval = 20000;
+        uint32_t sweep_interval = config::DEFAULT_SWEEP_INTERVAL;
 
         // Trigger sweep if gap exceeds threshold
         if (gap > sweep_interval)
