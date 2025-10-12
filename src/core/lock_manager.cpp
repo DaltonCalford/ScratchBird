@@ -59,35 +59,9 @@ namespace scratchbird::core
     {
         std::lock_guard<std::mutex> lock(lock_table_mutex_);
 
-        // Free all locks
-        for (auto& pair : lock_table_) {
-            Lock* lock_obj = pair.second;
-
-            // Free all requests in wait queue
-            LockRequest* req = lock_obj->wait_queue_head;
-            while (req) {
-                LockRequest* next = req->next;
-                delete req;
-                req = next;
-            }
-
-            delete lock_obj;
-        }
-
+        // RAII: unique_ptr automatically cleans up Lock objects and their wait_queues
         lock_table_.clear();
         proc_locks_.clear();
-
-        // Free lock pool
-        for (Lock* lock_obj : lock_pool_) {
-            delete lock_obj;
-        }
-        lock_pool_.clear();
-
-        // Free request pool
-        for (LockRequest* req : request_pool_) {
-            delete req;
-        }
-        request_pool_.clear();
 
         deadlock_detector_.reset();
 
@@ -161,12 +135,9 @@ namespace scratchbird::core
                 return Status::LOCK_CONFLICT;
             }
 
-            // Must wait for lock
-            LockRequest* req = allocateRequest();
-            if (!req) {
-                SET_ERROR_CONTEXT(ctx, Status::OOM, "Failed to allocate lock request");
-                return Status::OOM;
-            }
+            // Must wait for lock - create request with RAII
+            auto req_ptr = std::make_unique<LockRequest>();
+            LockRequest* req = req_ptr.get();
 
             req->proc_id = proc_id;
             req->mode = mode;
@@ -174,7 +145,8 @@ namespace scratchbird::core
             req->request_time = std::chrono::duration_cast<std::chrono::microseconds>(
                 std::chrono::system_clock::now().time_since_epoch()).count();
 
-            enqueueRequest(lock_obj, req);
+            // Add to wait queue
+            lock_obj->wait_queue.push_back(std::move(req_ptr));
             stats_.lock_waits++;
             lock_obj->total_waits++;
             if (is_readonly_txn) {
@@ -191,17 +163,23 @@ namespace scratchbird::core
             });
 
             if (!granted) {
-                // Timeout
-                dequeueRequest(lock_obj, req);
-                freeRequest(req);
+                // Timeout - remove from queue (RAII handles deletion)
+                auto it = std::find_if(lock_obj->wait_queue.begin(), lock_obj->wait_queue.end(),
+                    [req](const std::unique_ptr<LockRequest>& r) { return r.get() == req; });
+                if (it != lock_obj->wait_queue.end()) {
+                    lock_obj->wait_queue.erase(it);
+                }
                 stats_.lock_timeouts++;
                 SET_ERROR_CONTEXT(ctx, Status::LOCK_TIMEOUT, "Lock acquisition timeout");
                 return Status::LOCK_TIMEOUT;
             }
 
-            // Lock granted, remove from queue
-            dequeueRequest(lock_obj, req);
-            freeRequest(req);
+            // Lock granted, remove from queue (RAII handles deletion)
+            auto it = std::find_if(lock_obj->wait_queue.begin(), lock_obj->wait_queue.end(),
+                [req](const std::unique_ptr<LockRequest>& r) { return r.get() == req; });
+            if (it != lock_obj->wait_queue.end()) {
+                lock_obj->wait_queue.erase(it);
+            }
         }
 
         // Grant the lock
@@ -237,7 +215,7 @@ namespace scratchbird::core
             return Status::NOT_FOUND;
         }
 
-        Lock* lock_obj = it->second;
+        Lock* lock_obj = it->second.get();
         uint8_t mode_idx = static_cast<uint8_t>(mode) - 1;
 
         if (mode_idx >= 8 || lock_obj->granted_counts[mode_idx] == 0) {
@@ -266,8 +244,8 @@ namespace scratchbird::core
         // Try to grant waiting locks
         grantWaitingLocks(lock_obj);
 
-        // Remove lock if unused
-        removeLockIfUnused(lock_obj);
+        // Remove lock if unused (RAII handles deletion)
+        removeLockIfUnused(tag);
 
         return Status::OK;
     }
@@ -277,9 +255,9 @@ namespace scratchbird::core
         std::lock_guard<std::mutex> lock(lock_table_mutex_);
 
         auto range = proc_locks_.equal_range(proc_id);
-        std::vector<std::pair<Lock*, LockMode>> locks_to_release;
+        std::vector<std::pair<LockTag, LockMode>> locks_to_release;
 
-        // Collect all locks held by this process
+        // Collect all locks held by this process (store tag instead of pointer)
         for (auto it = range.first; it != range.second; ++it) {
             Lock* lock_obj = it->second;
 
@@ -287,16 +265,23 @@ namespace scratchbird::core
             for (uint8_t i = 0; i < 8; ++i) {
                 if (lock_obj->granted_counts[i] > 0) {
                     LockMode mode = static_cast<LockMode>(i + 1);
-                    locks_to_release.push_back({lock_obj, mode});
+                    locks_to_release.push_back({lock_obj->tag, mode});
                 }
             }
         }
 
         // Release all locks
         for (const auto& pair : locks_to_release) {
-            Lock* lock_obj = pair.first;
+            const LockTag& tag = pair.first;
             LockMode mode = pair.second;
             uint8_t mode_idx = static_cast<uint8_t>(mode) - 1;
+
+            // Find lock (might have been deleted in previous iteration)
+            auto it = lock_table_.find(tag);
+            if (it == lock_table_.end()) {
+                continue;
+            }
+            Lock* lock_obj = it->second.get();
 
             // Release all instances of this lock
             uint32_t count = lock_obj->granted_counts[mode_idx];
@@ -309,8 +294,8 @@ namespace scratchbird::core
             // Try to grant waiting locks
             grantWaitingLocks(lock_obj);
 
-            // Remove lock if unused
-            removeLockIfUnused(lock_obj);
+            // Remove lock if unused (RAII handles deletion)
+            removeLockIfUnused(tag);
         }
 
         // Clear all proc_locks entries
@@ -328,7 +313,7 @@ namespace scratchbird::core
             return false;  // No lock exists, no conflict
         }
 
-        return checkConflictInternal(it->second, mode, 0);
+        return checkConflictInternal(it->second.get(), mode, 0);
     }
 
     void LockManager::getStatistics(LockStats* stats_out)
@@ -359,7 +344,7 @@ namespace scratchbird::core
     {
         auto it = lock_table_.find(tag);
         if (it != lock_table_.end()) {
-            return it->second;
+            return it->second.get();
         }
 
         // Check lock limit
@@ -367,48 +352,46 @@ namespace scratchbird::core
             return nullptr;
         }
 
-        // Allocate new lock
-        Lock* lock_obj = allocateLock();
-        if (!lock_obj) {
-            return nullptr;
-        }
+        // Allocate new lock with RAII
+        auto lock_obj = std::make_unique<Lock>();
 
         lock_obj->tag = tag;
         lock_obj->granted_mask = 0;
         std::memset(lock_obj->granted_counts, 0, sizeof(lock_obj->granted_counts));
-        lock_obj->wait_queue_head = nullptr;
-        lock_obj->wait_queue_tail = nullptr;
-        lock_obj->wait_queue_size = 0;
+        // wait_queue is std::list, default-constructed as empty
         lock_obj->total_acquisitions = 0;
         lock_obj->total_waits = 0;
 
-        lock_table_[tag] = lock_obj;
+        Lock* lock_ptr = lock_obj.get();
+        lock_table_[tag] = std::move(lock_obj);
 
-        return lock_obj;
+        return lock_ptr;
     }
 
-    void LockManager::removeLockIfUnused(Lock* lock_obj)
+    void LockManager::removeLockIfUnused(const LockTag& tag)
     {
-        if (lock_obj->granted_mask == 0 && lock_obj->wait_queue_size == 0) {
-            lock_table_.erase(lock_obj->tag);
-            freeLock(lock_obj);
+        auto it = lock_table_.find(tag);
+        if (it != lock_table_.end()) {
+            Lock* lock_obj = it->second.get();
+            if (lock_obj->granted_mask == 0 && lock_obj->wait_queue.empty()) {
+                // RAII: unique_ptr automatically deletes Lock when erased
+                lock_table_.erase(it);
+            }
         }
     }
 
     void LockManager::grantWaitingLocks(Lock* lock_obj)
     {
-        if (!lock_obj->wait_queue_head) {
+        if (lock_obj->wait_queue.empty()) {
             return;
         }
 
         bool granted_any = true;
-        while (granted_any && lock_obj->wait_queue_head) {
+        while (granted_any && !lock_obj->wait_queue.empty()) {
             granted_any = false;
 
-            LockRequest* req = lock_obj->wait_queue_head;
-            LockRequest* prev = nullptr;
-
-            while (req) {
+            for (auto& req_ptr : lock_obj->wait_queue) {
+                LockRequest* req = req_ptr.get();
                 if (!checkConflictInternal(lock_obj, req->mode, req->proc_id)) {
                     // Can grant this lock
                     uint8_t mode_idx = static_cast<uint8_t>(req->mode) - 1;
@@ -420,12 +403,6 @@ namespace scratchbird::core
 
                     // Wake up waiter
                     lock_wait_cv_.notify_all();
-
-                    prev = req;
-                    req = req->next;
-                } else {
-                    prev = req;
-                    req = req->next;
                 }
             }
         }
@@ -448,86 +425,6 @@ namespace scratchbird::core
         }
 
         return false;
-    }
-
-    LockRequest* LockManager::allocateRequest()
-    {
-        if (!request_pool_.empty()) {
-            LockRequest* req = request_pool_.back();
-            request_pool_.pop_back();
-            return req;
-        }
-
-        try {
-            return new LockRequest();
-        } catch (const std::bad_alloc&) {
-            return nullptr;
-        }
-    }
-
-    void LockManager::freeRequest(LockRequest* req)
-    {
-        if (request_pool_.size() < 1000) {
-            request_pool_.push_back(req);
-        } else {
-            delete req;
-        }
-    }
-
-    void LockManager::enqueueRequest(Lock* lock_obj, LockRequest* req)
-    {
-        req->next = nullptr;
-        req->prev = lock_obj->wait_queue_tail;
-
-        if (lock_obj->wait_queue_tail) {
-            lock_obj->wait_queue_tail->next = req;
-        } else {
-            lock_obj->wait_queue_head = req;
-        }
-
-        lock_obj->wait_queue_tail = req;
-        lock_obj->wait_queue_size++;
-    }
-
-    void LockManager::dequeueRequest(Lock* lock_obj, LockRequest* req)
-    {
-        if (req->prev) {
-            req->prev->next = req->next;
-        } else {
-            lock_obj->wait_queue_head = req->next;
-        }
-
-        if (req->next) {
-            req->next->prev = req->prev;
-        } else {
-            lock_obj->wait_queue_tail = req->prev;
-        }
-
-        lock_obj->wait_queue_size--;
-    }
-
-    Lock* LockManager::allocateLock()
-    {
-        if (!lock_pool_.empty()) {
-            Lock* lock_obj = lock_pool_.back();
-            lock_pool_.pop_back();
-            return lock_obj;
-        }
-
-        try {
-            return new Lock();
-        } catch (const std::bad_alloc&) {
-            return nullptr;
-        }
-    }
-
-    void LockManager::freeLock(Lock* lock_obj)
-    {
-        if (lock_pool_.size() < 1000) {
-            lock_pool_.push_back(lock_obj);
-        } else {
-            delete lock_obj;
-        }
     }
 
     bool LockManager::isReadOnlyTransaction(uint32_t proc_id) const
@@ -628,16 +525,16 @@ namespace scratchbird::core
 
         // Iterate through all locks in the system
         for (const auto& pair : lock_mgr_->lock_table_) {
-            const Lock* lock_obj = pair.second;
+            const Lock* lock_obj = pair.second.get();
 
             // Skip locks with no waiters
-            if (!lock_obj->wait_queue_head || lock_obj->wait_queue_size == 0) {
+            if (lock_obj->wait_queue.empty()) {
                 continue;
             }
 
             // For each waiter in the queue
-            LockRequest* req = lock_obj->wait_queue_head;
-            while (req) {
+            for (const auto& req_ptr : lock_obj->wait_queue) {
+                const LockRequest* req = req_ptr.get();
                 uint32_t waiter_proc_id = req->proc_id;
                 LockMode waiter_mode = req->mode;
                 uint8_t waiter_mode_idx = static_cast<uint8_t>(waiter_mode) - 1;
@@ -676,8 +573,6 @@ namespace scratchbird::core
                         }
                     }
                 }
-
-                req = req->next;
             }
         }
 
