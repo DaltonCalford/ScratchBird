@@ -316,42 +316,41 @@ log_file = scratchbird.log
 
 **Source:** [Code Audit Report](../audit/after_transaction_work.md)
 
-### CRIT-001: Implement Deadlock Detection 🔥 CRITICAL
+### ✅ CRIT-001-COMPLETE: Deadlock Detection Implementation
 **File:** `src/core/lock_manager.cpp`
-**Effort:** 1-2 weeks
-**Impact:** Deadlocks cannot be detected or resolved automatically
-**Priority:** HIGHEST
+**Completion Date:** October 12, 2025
+**Effort:** 2 weeks (including testing and bug fixes)
+**Impact:** Deadlocks are now detected and resolved automatically
+**Priority:** COMPLETED
 **Audit Reference:** after_transaction_work.md lines 67-115
 
-**Current State:** `buildWaitGraph()` is a stub function
+**Delivered:**
+1. ✅ Wait-graph construction from lock wait queues (lines 500-568)
+2. ✅ Cycle detection algorithm using DFS (lines 570-613)
+3. ✅ Deadlock victim selection policy - youngest transaction/highest XID (lines 615-655)
+4. ✅ Deadlock abort logic with full rollback and cleanup (lines 657-710)
+5. ✅ Deadlock statistics tracking (stats_.deadlocks_detected)
+6. ✅ Comprehensive deadlock tests (tests/unit/test_deadlock_detection.cpp)
 
-**Requirements:**
-1. Implement wait-graph construction from lock wait queues
-2. Implement cycle detection algorithm (DFS or Tarjan's)
-3. Implement deadlock victim selection policy
-4. Add deadlock abort logic with proper cleanup
-5. Add deadlock statistics tracking
-6. Add comprehensive deadlock tests
+**Implementation Details:**
+- `buildWaitGraph()`: Constructs wait-for graph by scanning lock manager state
+- `findAllCycles()`: Detects all cycles in wait-for graph using DFS
+- `selectVictim()`: Selects youngest transaction (highest XID) as victim
+- `abortTransaction()`: Performs full rollback via TransactionManager
 
-**Deadlock Detection Algorithm:**
-```cpp
-// Build directed graph: Transaction A → Transaction B means A waits for B
-bool LockManager::buildWaitGraph() {
-    // 1. Iterate all locks
-    // 2. For each lock with waiting requests:
-    //    - Determine which granted locks block the waiter
-    //    - Add edge: waiter → holder
-    // 3. Detect cycles using DFS
-    // 4. If cycle found, select victim and abort
-}
-```
+**Bug Fixed:**
+- Fixed critical bug in `acquireLock()` (lines 124-133) that allowed conflicting locks
+  to be granted incorrectly for self-conflicting modes (EXCLUSIVE, ACCESS_EXCLUSIVE)
 
-**Victim Selection:**
-- Choose transaction with least work done (fewest pages modified)
-- Or choose youngest transaction
-- Or choose transaction with lowest priority
+**Test Coverage:**
+- Simple 2-process deadlocks
+- Multi-process cycles (3+ processes)
+- Victim selection verification
+- Statistics tracking
+- Mixed lock modes
+- Edge cases (no false positives)
 
-**Status:** ❌ Not Started
+**Status:** ✅ COMPLETED
 
 ---
 
@@ -1070,8 +1069,8 @@ constexpr uint32_t MAX_CHAIN_LENGTH = 100;
 
 **Current TODO Items:**
 **Total Items:** 45+
-**✅ Completed Critical:** 2 (ConnectionContext, Firebird Transaction Model)
-**🔥 Critical:** 5 (CRIT-001 through CRIT-005 from audit - BLOCKING)
+**✅ Completed Critical:** 3 (ConnectionContext, Firebird Transaction Model, Deadlock Detection)
+**🔥 Critical:** 4 (CRIT-002 through CRIT-005 from audit - BLOCKING)
 **High:** 4
 **Medium:** 5
 **Low:** 4
@@ -1082,13 +1081,13 @@ constexpr uint32_t MAX_CHAIN_LENGTH = 100;
 **Documentation:** 3
 
 **Estimated Remaining Effort:**
-- **Critical fixes:** 4-6 weeks (CRIT-001 through CRIT-005)
+- **Critical fixes:** 2-4 weeks (CRIT-002 through CRIT-005) ⬇️ Reduced from 4-6 weeks
 - **Alpha 1.2 completion:** 20-30 weeks (parallelizable with 2-3 developers)
 - **Parser/Lexer:** 8-12 weeks
 - **Future/Beta features:** 16-24 weeks
 
 **Priority Order (Post Phase 2 & 3):**
-1. Fix CRIT-001 (Deadlock detection - 1-2 weeks) 🔥 HIGHEST
+1. ✅ ~~Fix CRIT-001 (Deadlock detection - 1-2 weeks)~~ **COMPLETED** 🎉
 2. Fix CRIT-003 (Lock manager memory safety - 1 week) 🔥 CRITICAL
 3. Fix CRIT-002 (Cross-page updates - 3-5 days)
 4. Fix CRIT-004 (TIP page logic - 3-5 days)

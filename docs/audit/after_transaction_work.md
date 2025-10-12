@@ -5,11 +5,14 @@
 
 ## Executive Summary
 
-This comprehensive audit examined 36 C++ source files (~22,000 lines) and 47 header files in the ScratchBird database engine, focusing on the recently completed transaction infrastructure (Phase 2 & 3). The audit identified **5 critical issues**, **12 high priority issues**, **18 medium priority issues**, and **35 low priority technical debt items**.
+This comprehensive audit examined 36 C++ source files (~22,000 lines) and 47 header files in the ScratchBird database engine, focusing on the recently completed transaction infrastructure (Phase 2 & 3). The audit identified **5 critical issues** (1 now resolved), **12 high priority issues**, **18 medium priority issues**, and **35 low priority technical debt items**.
+
+**Update (October 12, 2025):** CRIT-001 (Deadlock Detection) has been fully implemented and resolved.
 
 ### Key Findings:
 - **Transaction infrastructure is generally well-implemented** with proper MVCC, locking, and snapshot isolation
-- **Several incomplete TODO items** remain in critical paths (deadlock detection, cross-page updates)
+- **✅ Deadlock detection now complete** (CRIT-001 resolved October 12, 2025)
+- **Several incomplete TODO items** remain in critical paths (cross-page updates)
 - **Memory management is mostly sound** with smart pointers, but some raw pointer usage in lock manager
 - **Thread safety is generally good** with proper mutex usage, but ProcArray uses C-style locks (pthread)
 - **Error handling is inconsistent** - some functions don't check ErrorContext for nullptr
@@ -19,25 +22,21 @@ This comprehensive audit examined 36 C++ source files (~22,000 lines) and 47 hea
 
 ## Critical Issues (Must Fix Before Production)
 
-### CRIT-001: Deadlock Detector Not Fully Implemented
-- **File:** `/home/dcalford/CliWork/ScratchBird/src/core/lock_manager.cpp:625-630`
-- **Severity:** Critical
-- **Category:** Incomplete Feature / Data Loss Risk
-- **Description:** The deadlock detector's `buildWaitGraph()` function is a stub with TODO comment. Deadlock detection is non-functional.
-- **Impact:** Deadlocks can occur and freeze transactions indefinitely. In a multi-user environment, this will cause system hangs requiring manual intervention or process kills.
-- **Recommendation:** Implement wait-for graph construction by scanning lock manager's lock_table_ and building edges from waiters to holders.
-- **Code Snippet:**
-```cpp
-void DeadlockDetector::buildWaitGraph()
-{
-    // TODO: Build wait-for graph by scanning lock manager state
-    // For each lock with waiters:
-    //   For each waiter W:
-    //     For each holder H:
-    //       Add edge W -> H
-    // This requires access to lock manager internals
-}
-```
+### ✅ CRIT-001-RESOLVED: Deadlock Detector Implementation Complete
+- **File:** `/home/dcalford/CliWork/ScratchBird/src/core/lock_manager.cpp:500-710`
+- **Severity:** Critical → RESOLVED
+- **Category:** Incomplete Feature / Data Loss Risk → COMPLETED
+- **Resolution Date:** October 12, 2025
+- **Description:** The deadlock detector has been fully implemented with wait-graph construction, cycle detection, victim selection, and abort logic.
+- **Impact:** Deadlocks are now automatically detected and resolved by aborting the youngest transaction.
+- **Implementation:**
+  - `buildWaitGraph()` (lines 500-568): Constructs wait-for graph from lock wait queues
+  - `findAllCycles()` (lines 595-613): Detects all cycles using DFS algorithm
+  - `selectVictim()` (lines 615-655): Selects youngest transaction (highest XID) as victim
+  - `abortTransaction()` (lines 657-710): Performs full rollback and lock release
+- **Testing:** Comprehensive test suite added in `tests/unit/test_deadlock_detection.cpp`
+- **Bug Fixed:** Also fixed critical bug in `acquireLock()` that allowed conflicting locks to be granted incorrectly
+- **Status:** ✅ RESOLVED
 
 ### CRIT-002: Cross-Page Tuple Updates Not Implemented
 - **File:** `/home/dcalford/CliWork/ScratchBird/src/core/storage_engine.cpp:710-720`
@@ -678,12 +677,13 @@ if (!new_page)
 
 - **Total files audited:** 83 (36 .cpp + 47 .h)
 - **Total lines of code:** ~22,000 (core only)
-- **Critical issues:** 5
+- **Critical issues:** 5 (1 resolved ✅, 4 remaining 🔥)
 - **High priority:** 12
 - **Medium priority:** 18
 - **Low priority:** 35
-- **TODO markers found:** 21 in src/core
+- **TODO markers found:** 21 in src/core (1 resolved)
 - **Magic numbers found:** 15+
+- **Last Updated:** October 12, 2025
 
 ### Issue Breakdown by Category:
 - **Incomplete Features:** 12 (40% of high/critical)
@@ -706,7 +706,7 @@ if (!new_page)
 ## Recommendations
 
 ### Immediate Actions (Before Beta):
-1. **Complete deadlock detection** (CRIT-001, CRIT-003, CRIT-004) - This is essential for multi-user safety
+1. ✅ ~~**Complete deadlock detection** (CRIT-001, CRIT-003, CRIT-004)~~ **COMPLETED October 12, 2025** 🎉
 2. **Implement cross-page updates** (CRIT-002) - Required for correct UPDATE semantics
 3. **Fix lock manager bounds checks** (HIGH-011) - Security/stability issue
 4. **Complete catalog helper functions** (HIGH-003) - Required for i18n features
