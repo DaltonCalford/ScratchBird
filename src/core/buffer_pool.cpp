@@ -1,7 +1,9 @@
 #include "scratchbird/core/buffer_pool.h"
 #include "scratchbird/core/database.h"
+#include "scratchbird/core/debug.h"
 #include <cstring>
 #include <algorithm>
+#include <cassert>
 
 
     namespace scratchbird::core
@@ -297,6 +299,16 @@
             // Pass 1: Prefer clean pages for faster eviction
             for (unsigned int frame_index : lru_list_)
             {
+                // SAFETY: Bounds check for frame_index from LRU list
+                if (frame_index >= config_.pool_size)
+                {
+                    DEBUG_LOG_BP("Invalid frame_index in LRU list: " << frame_index
+                                 << " >= pool_size: " << config_.pool_size);
+                    SET_ERROR_CONTEXT(ctx, Status::IO_ERROR,
+                                     "Corrupted LRU list - frame_index out of bounds");
+                    return Status::IO_ERROR;
+                }
+
                 if (frames_[frame_index].pin_count == 0 && !frames_[frame_index].is_dirty)
                 {
                     candidate_frame = frame_index;
@@ -310,6 +322,16 @@
             {
                 for (unsigned int frame_index : lru_list_)
                 {
+                    // SAFETY: Bounds check for frame_index from LRU list
+                    if (frame_index >= config_.pool_size)
+                    {
+                        DEBUG_LOG_BP("Invalid frame_index in LRU list: " << frame_index
+                                     << " >= pool_size: " << config_.pool_size);
+                        SET_ERROR_CONTEXT(ctx, Status::IO_ERROR,
+                                         "Corrupted LRU list - frame_index out of bounds");
+                        return Status::IO_ERROR;
+                    }
+
                     if (frames_[frame_index].pin_count == 0)
                     {
                         candidate_frame = frame_index;
@@ -326,15 +348,46 @@
                 return Status::INVALID_ARGUMENT;
             }
 
+            // SAFETY: Final bounds check before using candidate_frame
+            if (candidate_frame >= config_.pool_size)
+            {
+                DEBUG_LOG_BP("Invalid candidate_frame: " << candidate_frame
+                             << " >= pool_size: " << config_.pool_size);
+                SET_ERROR_CONTEXT(ctx, Status::IO_ERROR,
+                                 "Invalid frame index selected for eviction");
+                return Status::IO_ERROR;
+            }
+
             evicted_frame = candidate_frame;
+
+            // DEBUG: Consistency check - verify frame is unpinned
+            #if SCRATCHBIRD_DEBUG
+            if (frames_[evicted_frame].pin_count != 0)
+            {
+                DEBUG_LOG_BP("CONSISTENCY ERROR: Attempting to evict pinned frame "
+                             << evicted_frame << " with pin_count="
+                             << frames_[evicted_frame].pin_count);
+                assert(false && "Attempting to evict pinned frame");
+            }
+            #endif
 
             // Track whether this is a clean or dirty eviction
             bool was_dirty = frames_[evicted_frame].is_dirty;
+            uint32_t evicted_page_id = frames_[evicted_frame].page_id;
+
+            // SAFETY: Verify the page_id is valid before using it
+            if (evicted_page_id == Frame::INVALID_PAGE_ID)
+            {
+                DEBUG_LOG_BP("Evicting frame with INVALID_PAGE_ID at index " << evicted_frame);
+                // This is actually OK - might be a free frame, just skip the flush and erase
+                evicted_frame = candidate_frame;
+                return Status::OK;
+            }
 
             // If dirty, flush first
             if (was_dirty)
             {
-                Status status = writePageToDisk(frames_[evicted_frame].page_id,
+                Status status = writePageToDisk(evicted_page_id,
                                                    frames_[evicted_frame].data.get(), ctx);
                 if (status != Status::OK)
                 {
@@ -348,8 +401,33 @@
                 stats_.evictions_clean++;
             }
 
-            // Remove from page table
-            page_table_.erase(frames_[evicted_frame].page_id);
+            // SAFETY: Assert that page_id exists in page_table before erasing
+            auto page_table_it = page_table_.find(evicted_page_id);
+            if (page_table_it == page_table_.end())
+            {
+                DEBUG_LOG_BP("CONSISTENCY ERROR: page_id " << evicted_page_id
+                             << " not found in page_table during eviction");
+                #if SCRATCHBIRD_DEBUG
+                assert(false && "page_id not in page_table during eviction");
+                #endif
+                // In release builds, continue but log the issue
+            }
+            else
+            {
+                // DEBUG: Verify consistency - page_table points to correct frame
+                #if SCRATCHBIRD_DEBUG
+                if (page_table_it->second != evicted_frame)
+                {
+                    DEBUG_LOG_BP("CONSISTENCY ERROR: page_table[" << evicted_page_id
+                                 << "] = " << page_table_it->second
+                                 << " but evicting frame " << evicted_frame);
+                    assert(false && "page_table frame_index mismatch");
+                }
+                #endif
+
+                // Remove from page table
+                page_table_.erase(page_table_it);
+            }
 
             // Reset frame
             frames_[evicted_frame].page_id = Frame::INVALID_PAGE_ID;
