@@ -165,7 +165,7 @@ namespace scratchbird::core
         return Status::OK;
     }
 
-    uint64_t SweepManager::findFirstUncommittedTransaction(ErrorContext *ctx)
+    uint64_t SweepManager::findFirstUncommittedTransaction(ErrorContext *ctx) const
     {
         uint64_t current_oit = txn_manager_->getOldestXid();
         uint64_t current_xmax = txn_manager_->getCurrentXid();

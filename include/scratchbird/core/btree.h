@@ -212,7 +212,7 @@ namespace scratchbird
 
             // Searches for a key within a single B-Tree page using binary search.
             bool searchPage(const SBBTreePage *page, const std::vector<uint8_t> &key,
-                            std::vector<uint64_t> *tuple_ids_out);
+                            std::vector<uint64_t> *tuple_ids_out) const;
 
             // Page split operations
             Status split_leaf_page(uint64_t left_page_num, const std::vector<uint8_t> &new_key,

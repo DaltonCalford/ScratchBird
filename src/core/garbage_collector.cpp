@@ -397,7 +397,7 @@ namespace scratchbird::core
         return garbage_tuples_found;
     }
 
-    bool GarbageCollector::isTupleGarbage(uint64_t xmax, uint64_t oit)
+    bool GarbageCollector::isTupleGarbage(uint64_t xmax, uint64_t oit) const
     {
         // Tuple is garbage if:
         // 1. It has been deleted/updated (xmax != INVALID_XID)
@@ -509,7 +509,7 @@ namespace scratchbird::core
         bg_wake_cv_.notify_one();
     }
 
-    bool GarbageCollector::shouldRunCooperativeGC()
+    bool GarbageCollector::shouldRunCooperativeGC() const
     {
         // Simple rate limiting - run on ~1% of page reads
         // Use thread-local counter to avoid contention
@@ -717,7 +717,7 @@ namespace scratchbird::core
         }
     }
 
-    double GarbageCollector::calculatePagePriority(uint32_t mark_count, uint64_t age_microseconds)
+    double GarbageCollector::calculatePagePriority(uint32_t mark_count, uint64_t age_microseconds) const
     {
         // Priority calculation strategy:
         // 1. Pages marked multiple times (high churn) = higher priority

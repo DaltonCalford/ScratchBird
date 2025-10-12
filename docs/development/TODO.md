@@ -874,12 +874,20 @@ else
 ✅ **Clog class (clog.h/cpp):**
 - Marked `getStatistics()` as const
 
-**Remaining Work (Phase 3 - Optional):**
-- ❌ GarbageCollector helper methods (isTupleGarbage, shouldRunCooperativeGC, calculatePagePriority) const
-- ❌ BTree::searchPage() const
-- ❌ SweepManager::findFirstUncommittedTransaction() const
+**Phase 3 Completed (October 12, 2025):**
 
-**Status:** ⏳ Phase 1 & 2 COMPLETED, Phase 3 Optional (low priority)
+✅ **GarbageCollector class (garbage_collector.h/cpp):**
+- Marked `isTupleGarbage()` as const
+- Marked `shouldRunCooperativeGC()` as const
+- Marked `calculatePagePriority()` as const
+
+✅ **BTree class (btree.h/cpp):**
+- Marked `searchPage()` as const
+
+✅ **SweepManager class (sweep_manager.h/cpp):**
+- Marked `findFirstUncommittedTransaction()` as const
+
+**Status:** ✅ Phase 1, 2, & 3 COMPLETED - All planned const correctness improvements done!
 
 ---
 
