@@ -35,6 +35,31 @@ namespace scratchbird::core
         return TypedValue(DataType::INT64, v);
     }
 
+    TypedValue TypedValue::makeInt128(int128_t v)
+    {
+        return TypedValue(DataType::INT128, v);
+    }
+
+    TypedValue TypedValue::makeUInt8(uint8_t v)
+    {
+        return TypedValue(DataType::UINT8, v);
+    }
+
+    TypedValue TypedValue::makeUInt16(uint16_t v)
+    {
+        return TypedValue(DataType::UINT16, v);
+    }
+
+    TypedValue TypedValue::makeUInt32(uint32_t v)
+    {
+        return TypedValue(DataType::UINT32, v);
+    }
+
+    TypedValue TypedValue::makeUInt64(uint64_t v)
+    {
+        return TypedValue(DataType::UINT64, v);
+    }
+
     TypedValue TypedValue::makeFloat32(float v)
     {
         return TypedValue(DataType::FLOAT32, v);
@@ -48,6 +73,11 @@ namespace scratchbird::core
     TypedValue TypedValue::makeDecimal(const std::string &v)
     {
         return TypedValue(DataType::DECIMAL, v);
+    }
+
+    TypedValue TypedValue::makeMoney(int64_t cents)
+    {
+        return TypedValue(DataType::MONEY, cents);
     }
 
     TypedValue TypedValue::makeChar(const std::string &v)
@@ -96,6 +126,16 @@ namespace scratchbird::core
         return TypedValue(DataType::TIMESTAMP, microseconds_since_epoch);
     }
 
+    TypedValue TypedValue::makeInterval(const Interval &interval)
+    {
+        return TypedValue(DataType::INTERVAL, interval);
+    }
+
+    TypedValue TypedValue::makeInterval(int32_t months, int32_t days, int64_t microseconds)
+    {
+        return TypedValue(DataType::INTERVAL, Interval(months, days, microseconds));
+    }
+
     TypedValue TypedValue::makeUUID(const std::vector<uint8_t> &v)
     {
         return TypedValue(DataType::UUID, v);
@@ -141,6 +181,41 @@ namespace scratchbird::core
         return std::get<int64_t>(data_);
     }
 
+    int128_t TypedValue::getInt128() const
+    {
+        if (type_ != DataType::INT128)
+            throw std::runtime_error("Type mismatch: not INT128");
+        return std::get<int128_t>(data_);
+    }
+
+    uint8_t TypedValue::getUInt8() const
+    {
+        if (type_ != DataType::UINT8)
+            throw std::runtime_error("Type mismatch: not UINT8");
+        return std::get<uint8_t>(data_);
+    }
+
+    uint16_t TypedValue::getUInt16() const
+    {
+        if (type_ != DataType::UINT16)
+            throw std::runtime_error("Type mismatch: not UINT16");
+        return std::get<uint16_t>(data_);
+    }
+
+    uint32_t TypedValue::getUInt32() const
+    {
+        if (type_ != DataType::UINT32)
+            throw std::runtime_error("Type mismatch: not UINT32");
+        return std::get<uint32_t>(data_);
+    }
+
+    uint64_t TypedValue::getUInt64() const
+    {
+        if (type_ != DataType::UINT64)
+            throw std::runtime_error("Type mismatch: not UINT64");
+        return std::get<uint64_t>(data_);
+    }
+
     float TypedValue::getFloat32() const
     {
         if (type_ != DataType::FLOAT32)
@@ -160,6 +235,13 @@ namespace scratchbird::core
         if (type_ != DataType::DECIMAL)
             throw std::runtime_error("Type mismatch: not DECIMAL");
         return std::get<std::string>(data_);
+    }
+
+    int64_t TypedValue::getMoney() const
+    {
+        if (type_ != DataType::MONEY)
+            throw std::runtime_error("Type mismatch: not MONEY");
+        return std::get<int64_t>(data_);
     }
 
     std::string TypedValue::getChar() const
@@ -219,6 +301,13 @@ namespace scratchbird::core
         return std::get<int64_t>(data_);
     }
 
+    Interval TypedValue::getInterval() const
+    {
+        if (type_ != DataType::INTERVAL)
+            throw std::runtime_error("Type mismatch: not INTERVAL");
+        return std::get<Interval>(data_);
+    }
+
     std::vector<uint8_t> TypedValue::getUUID() const
     {
         if (type_ != DataType::UUID)
@@ -248,12 +337,24 @@ namespace scratchbird::core
                 return TypeConverter::int32ToString(getInt32());
             case DataType::INT64:
                 return TypeConverter::int64ToString(getInt64());
+            case DataType::INT128:
+                return TypeConverter::int128ToString(getInt128());
+            case DataType::UINT8:
+                return TypeConverter::uint8ToString(getUInt8());
+            case DataType::UINT16:
+                return TypeConverter::uint16ToString(getUInt16());
+            case DataType::UINT32:
+                return TypeConverter::uint32ToString(getUInt32());
+            case DataType::UINT64:
+                return TypeConverter::uint64ToString(getUInt64());
             case DataType::FLOAT32:
                 return TypeConverter::float32ToString(getFloat32());
             case DataType::FLOAT64:
                 return TypeConverter::float64ToString(getFloat64());
             case DataType::DECIMAL:
                 return getDecimal();
+            case DataType::MONEY:
+                return TypeConverter::moneyToString(getMoney());
             case DataType::CHAR:
             case DataType::VARCHAR:
             case DataType::TEXT:
@@ -266,6 +367,8 @@ namespace scratchbird::core
                 return TypeConverter::timeToString(getTime());
             case DataType::TIMESTAMP:
                 return TypeConverter::timestampToString(getTimestamp());
+            case DataType::INTERVAL:
+                return TypeConverter::intervalToString(getInterval());
             case DataType::UUID:
                 return TypeConverter::uuidToString(getUUID());
             case DataType::BINARY:
@@ -325,11 +428,18 @@ namespace scratchbird::core
             case DataType::INT16:
             case DataType::INT32:
             case DataType::INT64:
+            case DataType::INT128:
+            case DataType::UINT8:
+            case DataType::UINT16:
+            case DataType::UINT32:
+            case DataType::UINT64:
             case DataType::FLOAT32:
             case DataType::FLOAT64:
+            case DataType::MONEY:
             case DataType::DATE:
             case DataType::TIME:
             case DataType::TIMESTAMP:
+            case DataType::INTERVAL:
             case DataType::BOOLEAN:
             case DataType::CHAR:
             case DataType::BINARY:
@@ -358,9 +468,21 @@ namespace scratchbird::core
                 return 4;
             case DataType::INT64:
                 return 8;
+            case DataType::INT128:
+                return 16;
+            case DataType::UINT8:
+                return 1;
+            case DataType::UINT16:
+                return 2;
+            case DataType::UINT32:
+                return 4;
+            case DataType::UINT64:
+                return 8;
             case DataType::FLOAT32:
                 return 4;
             case DataType::FLOAT64:
+                return 8;
+            case DataType::MONEY:
                 return 8;
             case DataType::DATE:
                 return 8;
@@ -368,6 +490,8 @@ namespace scratchbird::core
                 return 8;
             case DataType::TIMESTAMP:
                 return 8;
+            case DataType::INTERVAL:
+                return 16;
             case DataType::BOOLEAN:
                 return 1;
             case DataType::UUID:
@@ -801,6 +925,50 @@ namespace scratchbird::core
         return std::to_string(v);
     }
 
+    auto TypeConverter::int128ToString(int128_t v) -> std::string
+    {
+#if HAS_INT128
+        // For native __int128 support
+        if (v == 0) return "0";
+
+        bool negative = v < 0;
+        __int128 abs_val = negative ? -v : v;
+
+        std::string result;
+        while (abs_val > 0) {
+            result = char('0' + (abs_val % 10)) + result;
+            abs_val /= 10;
+        }
+
+        return negative ? "-" + result : result;
+#else
+        // For struct-based fallback
+        std::ostringstream oss;
+        oss << "INT128{high=" << v.high << ",low=" << v.low << "}";
+        return oss.str();
+#endif
+    }
+
+    auto TypeConverter::uint8ToString(uint8_t v) -> std::string
+    {
+        return std::to_string(static_cast<unsigned int>(v));
+    }
+
+    auto TypeConverter::uint16ToString(uint16_t v) -> std::string
+    {
+        return std::to_string(v);
+    }
+
+    auto TypeConverter::uint32ToString(uint32_t v) -> std::string
+    {
+        return std::to_string(v);
+    }
+
+    auto TypeConverter::uint64ToString(uint64_t v) -> std::string
+    {
+        return std::to_string(v);
+    }
+
     auto TypeConverter::float32ToString(float v) -> std::string
     {
         std::ostringstream oss;
@@ -812,6 +980,23 @@ namespace scratchbird::core
     {
         std::ostringstream oss;
         oss << std::setprecision(15) << v;
+        return oss.str();
+    }
+
+    auto TypeConverter::moneyToString(int64_t cents) -> std::string
+    {
+        // Format as currency: $123.45 (assuming 2 decimal places for cents)
+        bool negative = cents < 0;
+        int64_t abs_cents = negative ? -cents : cents;
+
+        int64_t dollars = abs_cents / 100;
+        int64_t remaining_cents = abs_cents % 100;
+
+        std::ostringstream oss;
+        if (negative) {
+            oss << "-";
+        }
+        oss << "$" << dollars << "." << std::setfill('0') << std::setw(2) << remaining_cents;
         return oss.str();
     }
 
@@ -865,6 +1050,65 @@ namespace scratchbird::core
         // Output in UTC with timezone offset for backward compatibility
         // Use TimezoneManager for proper formatting
         return g_tz_manager.formatTimestamp(microseconds, TimezoneManager::TZ_UTC, true);
+    }
+
+    auto TypeConverter::intervalToString(const Interval &interval) -> std::string
+    {
+        // Format as PostgreSQL-style interval: "X years Y mons Z days HH:MM:SS.microseconds"
+        std::ostringstream oss;
+        bool has_output = false;
+
+        // Years and months
+        if (interval.months != 0) {
+            int32_t years = interval.months / 12;
+            int32_t months = interval.months % 12;
+
+            if (years != 0) {
+                oss << years << (years == 1 ? " year" : " years");
+                has_output = true;
+            }
+            if (months != 0) {
+                if (has_output) oss << " ";
+                oss << months << (months == 1 ? " mon" : " mons");
+                has_output = true;
+            }
+        }
+
+        // Days
+        if (interval.days != 0) {
+            if (has_output) oss << " ";
+            oss << interval.days << (interval.days == 1 ? " day" : " days");
+            has_output = true;
+        }
+
+        // Time component
+        if (interval.microseconds != 0 || !has_output) {
+            int64_t total_seconds = interval.microseconds / 1000000;
+            int64_t us = interval.microseconds % 1000000;
+
+            // Handle negative time
+            bool negative = total_seconds < 0 || (total_seconds == 0 && us < 0);
+            if (negative) {
+                total_seconds = -total_seconds;
+                us = -us;
+            }
+
+            int64_t hours = total_seconds / 3600;
+            int64_t minutes = (total_seconds % 3600) / 60;
+            int64_t seconds = total_seconds % 60;
+
+            if (has_output) oss << " ";
+            if (negative) oss << "-";
+            oss << std::setfill('0') << std::setw(2) << hours << ":"
+                << std::setw(2) << minutes << ":"
+                << std::setw(2) << seconds;
+
+            if (us != 0) {
+                oss << "." << std::setw(6) << (us < 0 ? -us : us);
+            }
+        }
+
+        return oss.str();
     }
 
     auto TypeConverter::uuidToString(const std::vector<uint8_t> &uuid) -> std::string
