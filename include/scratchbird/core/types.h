@@ -109,6 +109,56 @@ namespace scratchbird::core
         }
     };
 
+    // INT128 type support using compiler intrinsics
+    #if defined(__SIZEOF_INT128__)
+        using int128_t = __int128;
+        using uint128_t = unsigned __int128;
+        #define HAS_INT128 1
+    #else
+        // Fallback: use two int64_t for platforms without __int128
+        struct int128_t {
+            int64_t high;
+            uint64_t low;
+            int128_t() : high(0), low(0) {}
+            int128_t(int64_t h, uint64_t l) : high(h), low(l) {}
+        };
+        struct uint128_t {
+            uint64_t high;
+            uint64_t low;
+            uint128_t() : high(0), low(0) {}
+            uint128_t(uint64_t h, uint64_t l) : high(h), low(l) {}
+        };
+        #define HAS_INT128 0
+    #endif
+
+    /**
+     * INTERVAL type - represents time intervals
+     *
+     * Follows PostgreSQL interval model:
+     * - months: Separate field for years/months (since month lengths vary)
+     * - days: Separate field (since days can vary with DST)
+     * - microseconds: Time component (hours, minutes, seconds, microseconds)
+     *
+     * Total size: 16 bytes (3 x int32_t + 1 x int64_t)
+     */
+    struct Interval {
+        int32_t months;       // Number of months (can be negative)
+        int32_t days;         // Number of days (can be negative)
+        int64_t microseconds; // Time component in microseconds (can be negative)
+
+        // Constructors
+        Interval() : months(0), days(0), microseconds(0) {}
+        Interval(int32_t m, int32_t d, int64_t us) : months(m), days(d), microseconds(us) {}
+
+        // Comparison operators
+        bool operator==(const Interval& other) const {
+            return months == other.months && days == other.days && microseconds == other.microseconds;
+        }
+        bool operator!=(const Interval& other) const {
+            return !(*this == other);
+        }
+    };
+
     /**
      * Runtime value representation
      * Supports all database types with proper type safety
@@ -123,9 +173,15 @@ namespace scratchbird::core
                          int8_t,         // INT8
                          int16_t,        // INT16
                          int32_t,        // INT32
-                         int64_t,        // INT64, DATE, TIME, TIMESTAMP (differentiated by type_)
+                         int64_t,        // INT64, DATE, TIME, TIMESTAMP, MONEY (differentiated by type_)
+                         int128_t,       // INT128
+                         uint8_t,        // UINT8
+                         uint16_t,       // UINT16
+                         uint32_t,       // UINT32
+                         uint64_t,       // UINT64
                          float,          // FLOAT32
                          double,         // FLOAT64
+                         Interval,       // INTERVAL
                          std::string,    // VARCHAR, TEXT, CHAR, DECIMAL (as string), JSON
                          std::vector<uint8_t>, // BINARY, VARBINARY, BLOB, BYTEA, UUID
                          bool                  // BOOLEAN
@@ -144,9 +200,15 @@ namespace scratchbird::core
         static TypedValue makeInt16(int16_t v);
         static TypedValue makeInt32(int32_t v);
         static TypedValue makeInt64(int64_t v);
+        static TypedValue makeInt128(int128_t v);
+        static TypedValue makeUInt8(uint8_t v);
+        static TypedValue makeUInt16(uint16_t v);
+        static TypedValue makeUInt32(uint32_t v);
+        static TypedValue makeUInt64(uint64_t v);
         static TypedValue makeFloat32(float v);
         static TypedValue makeFloat64(double v);
         static TypedValue makeDecimal(const std::string &v);
+        static TypedValue makeMoney(int64_t cents);
         static TypedValue makeChar(const std::string &v);
         static TypedValue makeVarchar(const std::string &v);
         static TypedValue makeText(const std::string &v);
@@ -156,6 +218,8 @@ namespace scratchbird::core
         static TypedValue makeDate(int64_t days_since_epoch);
         static TypedValue makeTime(int64_t microseconds_since_midnight);
         static TypedValue makeTimestamp(int64_t microseconds_since_epoch);
+        static TypedValue makeInterval(const Interval &interval);
+        static TypedValue makeInterval(int32_t months, int32_t days, int64_t microseconds);
         static TypedValue makeUUID(const std::vector<uint8_t> &v);
         static TypedValue makeUUID(const uint8_t *data, size_t len);
         static TypedValue makeJSON(const std::string &v);
@@ -175,9 +239,15 @@ namespace scratchbird::core
         int16_t getInt16() const;
         int32_t getInt32() const;
         int64_t getInt64() const;
+        int128_t getInt128() const;
+        uint8_t getUInt8() const;
+        uint16_t getUInt16() const;
+        uint32_t getUInt32() const;
+        uint64_t getUInt64() const;
         float getFloat32() const;
         double getFloat64() const;
         std::string getDecimal() const;
+        int64_t getMoney() const;
         std::string getChar() const;
         std::string getVarchar() const;
         std::string getText() const;
@@ -186,6 +256,7 @@ namespace scratchbird::core
         int64_t getDate() const;
         int64_t getTime() const;
         int64_t getTimestamp() const;
+        Interval getInterval() const;
         std::vector<uint8_t> getUUID() const;
         std::string getJSON() const;
 
@@ -328,12 +399,19 @@ namespace scratchbird::core
         static auto int16ToString(int16_t v) -> std::string;
         static auto int32ToString(int32_t v) -> std::string;
         static auto int64ToString(int64_t v) -> std::string;
+        static auto int128ToString(int128_t v) -> std::string;
+        static auto uint8ToString(uint8_t v) -> std::string;
+        static auto uint16ToString(uint16_t v) -> std::string;
+        static auto uint32ToString(uint32_t v) -> std::string;
+        static auto uint64ToString(uint64_t v) -> std::string;
         static auto float32ToString(float v) -> std::string;
         static auto float64ToString(double v) -> std::string;
+        static auto moneyToString(int64_t cents) -> std::string;
         static auto booleanToString(bool v) -> std::string;
         static auto dateToString(int64_t days) -> std::string;
         static auto timeToString(int64_t microseconds) -> std::string;
         static auto timestampToString(int64_t microseconds) -> std::string;
+        static auto intervalToString(const Interval &interval) -> std::string;
         static auto uuidToString(const std::vector<uint8_t> &uuid) -> std::string;
         static auto binaryToHex(const std::vector<uint8_t> &data) -> std::string;
         static auto binaryToBase64(const std::vector<uint8_t> &data) -> std::string;
