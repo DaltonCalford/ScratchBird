@@ -22,6 +22,10 @@ namespace scratchbird::core
         HASH_INDEX_DIRECTORY = 10,  // Hash index directory page
         HASH_INDEX_BUCKET = 11,     // Hash index bucket page
         PAGE_TYPE_CLOG = 12,        // Commit log page (2-bit transaction status)
+        GIN_INDEX_META = 13,        // GIN index meta page
+        GIN_PENDING_LIST = 14,      // GIN pending list page
+        GIN_POSTING_LIST = 15,      // GIN posting list page
+        GIN_POSTING_TREE = 16,      // GIN posting tree page
     };
 
     // Page flags (bitwise OR)
