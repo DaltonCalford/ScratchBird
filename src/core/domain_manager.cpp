@@ -765,7 +765,7 @@ namespace scratchbird::core
     }
 
     // ====================
-    // Phase 4: SET Domains (Stubs)
+    // Phase 4: SET Domains
     // ====================
 
     auto DomainManager::createSetDomain(const ID& schema_id,
@@ -774,8 +774,45 @@ namespace scratchbird::core
                                        ID& domain_id,
                                        ErrorContext* ctx) -> Status
     {
-        SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED, "SET domains not yet implemented");
-        return Status::NOT_IMPLEMENTED;
+        std::lock_guard<std::mutex> lock(mutex_);
+
+        // Validate element type
+        if (element_type == DataType::UNKNOWN)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "SET element type cannot be UNKNOWN");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        // Generate new domain ID
+        domain_id = generateUuidV7();
+
+        // Create domain info
+        DomainInfo info;
+        info.domain_id = domain_id;
+        info.schema_id = schema_id;
+        info.domain_name = domain_name;
+        info.domain_type = DomainType::SET;
+        info.base_type = DataType::VECTOR;  // SETs stored as VECTOR with unique elements
+        info.set_element_type = element_type;
+        info.created_time = std::time(nullptr);
+        info.last_modified_time = info.created_time;
+
+        // Write to catalog
+        Status status = writeDomainRecord(info, ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, status, "Failed to write SET domain record");
+            return status;
+        }
+
+        // Add to cache
+        domain_cache_[domain_id] = info;
+        domain_count_++;
+
+        LOG_INFO(CATALOG, "Created SET domain '%s' with element type %d",
+                domain_name.c_str(), static_cast<int>(element_type));
+
+        return Status::OK;
     }
 
     auto DomainManager::setContains(const TypedValue& set_value,
@@ -783,7 +820,22 @@ namespace scratchbird::core
                                    bool& result,
                                    ErrorContext* ctx) -> Status
     {
-        SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED, "SET domains not yet implemented");
+        // Check if set_value is VECTOR type
+        if (set_value.type() != DataType::VECTOR)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::TYPE_MISMATCH, "Value is not a VECTOR/SET type");
+            return Status::TYPE_MISMATCH;
+        }
+
+        // TODO: This requires TypedValue VECTOR support for element access
+        // For now, this is a placeholder that demonstrates the API
+        // Full implementation requires:
+        // 1. TypedValue extension to access VectorValue elements
+        // 2. Element iteration through vector
+        // 3. Element comparison for membership testing
+
+        SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED,
+            "SET contains operation requires TypedValue VECTOR element access (future enhancement)");
         return Status::NOT_IMPLEMENTED;
     }
 
@@ -792,7 +844,21 @@ namespace scratchbird::core
                                    bool& result,
                                    ErrorContext* ctx) -> Status
     {
-        SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED, "SET domains not yet implemented");
+        // Check if both values are VECTOR type
+        if (set1.type() != DataType::VECTOR || set2.type() != DataType::VECTOR)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::TYPE_MISMATCH, "Values are not VECTOR/SET types");
+            return Status::TYPE_MISMATCH;
+        }
+
+        // TODO: This requires TypedValue VECTOR support for element access
+        // Full implementation requires:
+        // 1. TypedValue extension to access VectorValue elements
+        // 2. Iterate through both sets looking for common elements
+        // 3. Return true if any element appears in both sets
+
+        SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED,
+            "SET overlap operation requires TypedValue VECTOR element access (future enhancement)");
         return Status::NOT_IMPLEMENTED;
     }
 
@@ -801,7 +867,21 @@ namespace scratchbird::core
                                 TypedValue& result,
                                 ErrorContext* ctx) -> Status
     {
-        SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED, "SET domains not yet implemented");
+        // Check if both values are VECTOR type
+        if (set1.type() != DataType::VECTOR || set2.type() != DataType::VECTOR)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::TYPE_MISMATCH, "Values are not VECTOR/SET types");
+            return Status::TYPE_MISMATCH;
+        }
+
+        // TODO: This requires TypedValue VECTOR support for construction and element access
+        // Full implementation requires:
+        // 1. TypedValue extension to access and create VectorValue
+        // 2. Collect all unique elements from both sets
+        // 3. Create new VECTOR with union of elements
+
+        SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED,
+            "SET union operation requires TypedValue VECTOR construction (future enhancement)");
         return Status::NOT_IMPLEMENTED;
     }
 
@@ -810,7 +890,21 @@ namespace scratchbird::core
                                        TypedValue& result,
                                        ErrorContext* ctx) -> Status
     {
-        SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED, "SET domains not yet implemented");
+        // Check if both values are VECTOR type
+        if (set1.type() != DataType::VECTOR || set2.type() != DataType::VECTOR)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::TYPE_MISMATCH, "Values are not VECTOR/SET types");
+            return Status::TYPE_MISMATCH;
+        }
+
+        // TODO: This requires TypedValue VECTOR support for construction and element access
+        // Full implementation requires:
+        // 1. TypedValue extension to access and create VectorValue
+        // 2. Collect elements that appear in both sets
+        // 3. Create new VECTOR with intersection of elements
+
+        SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED,
+            "SET intersection operation requires TypedValue VECTOR construction (future enhancement)");
         return Status::NOT_IMPLEMENTED;
     }
 
@@ -819,7 +913,21 @@ namespace scratchbird::core
                                      TypedValue& result,
                                      ErrorContext* ctx) -> Status
     {
-        SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED, "SET domains not yet implemented");
+        // Check if both values are VECTOR type
+        if (set1.type() != DataType::VECTOR || set2.type() != DataType::VECTOR)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::TYPE_MISMATCH, "Values are not VECTOR/SET types");
+            return Status::TYPE_MISMATCH;
+        }
+
+        // TODO: This requires TypedValue VECTOR support for construction and element access
+        // Full implementation requires:
+        // 1. TypedValue extension to access and create VectorValue
+        // 2. Collect elements from set1 that don't appear in set2
+        // 3. Create new VECTOR with difference of elements
+
+        SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED,
+            "SET difference operation requires TypedValue VECTOR construction (future enhancement)");
         return Status::NOT_IMPLEMENTED;
     }
 
