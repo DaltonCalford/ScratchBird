@@ -163,6 +163,9 @@ namespace scratchbird::core
         // For SET domains
         DataType set_element_type;    // Element type for SET
 
+        // For VARIANT domains
+        std::vector<DataType> variant_allowed_types;  // Allowed types for VARIANT
+
         // Constraints
         std::vector<DomainConstraint> constraints;
 
