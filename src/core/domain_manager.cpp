@@ -932,7 +932,7 @@ namespace scratchbird::core
     }
 
     // ====================
-    // Phase 5: VARIANT Type (Stubs)
+    // Phase 5: VARIANT Type
     // ====================
 
     auto DomainManager::createVariantDomain(const ID& schema_id,
@@ -941,15 +941,81 @@ namespace scratchbird::core
                                            ID& domain_id,
                                            ErrorContext* ctx) -> Status
     {
-        SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED, "VARIANT domains not yet implemented");
-        return Status::NOT_IMPLEMENTED;
+        std::lock_guard<std::mutex> lock(mutex_);
+
+        // Validate allowed types
+        if (allowed_types.empty())
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "VARIANT domain must allow at least one type");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        // Check for UNKNOWN type
+        for (const auto& type : allowed_types)
+        {
+            if (type == DataType::UNKNOWN)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "VARIANT cannot allow UNKNOWN type");
+                return Status::INVALID_ARGUMENT;
+            }
+        }
+
+        // Check for duplicate types
+        std::unordered_set<DataType> type_set;
+        for (const auto& type : allowed_types)
+        {
+            if (type_set.count(type) > 0)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Duplicate type in VARIANT allowed types");
+                return Status::INVALID_ARGUMENT;
+            }
+            type_set.insert(type);
+        }
+
+        // Generate new domain ID
+        domain_id = generateUuidV7();
+
+        // Create domain info
+        DomainInfo info;
+        info.domain_id = domain_id;
+        info.schema_id = schema_id;
+        info.domain_name = domain_name;
+        info.domain_type = DomainType::VARIANT;
+        info.base_type = DataType::UNKNOWN;  // VARIANT doesn't have fixed base type
+        info.variant_allowed_types = allowed_types;
+        info.created_time = std::time(nullptr);
+        info.last_modified_time = info.created_time;
+
+        // Write to catalog
+        Status status = writeDomainRecord(info, ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, status, "Failed to write VARIANT domain record");
+            return status;
+        }
+
+        // Add to cache
+        domain_cache_[domain_id] = info;
+        domain_count_++;
+
+        LOG_INFO(CATALOG, "Created VARIANT domain '%s' with %zu allowed types",
+                domain_name.c_str(), allowed_types.size());
+
+        return Status::OK;
     }
 
     auto DomainManager::extractDataType(const TypedValue& variant_value,
                                        DataType& type,
                                        ErrorContext* ctx) -> Status
     {
-        SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED, "VARIANT domains not yet implemented");
+        // TODO: This requires TypedValue VARIANT support for runtime type access
+        // For now, this is a placeholder that demonstrates the API
+        // Full implementation requires:
+        // 1. TypedValue extension to hold VariantValue with runtime type tag
+        // 2. Runtime type extraction from VariantValue
+
+        SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED,
+            "VARIANT type extraction requires TypedValue VARIANT support (future enhancement)");
         return Status::NOT_IMPLEMENTED;
     }
 
@@ -958,7 +1024,13 @@ namespace scratchbird::core
                                 bool& result,
                                 ErrorContext* ctx) -> Status
     {
-        SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED, "VARIANT domains not yet implemented");
+        // TODO: This requires TypedValue VARIANT support for runtime type checking
+        // Full implementation requires:
+        // 1. TypedValue extension to hold VariantValue with runtime type tag
+        // 2. Runtime type comparison
+
+        SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED,
+            "VARIANT type checking requires TypedValue VARIANT support (future enhancement)");
         return Status::NOT_IMPLEMENTED;
     }
 
@@ -967,7 +1039,15 @@ namespace scratchbird::core
                                    TypedValue& result,
                                    ErrorContext* ctx) -> Status
     {
-        SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED, "VARIANT domains not yet implemented");
+        // TODO: This requires TypedValue VARIANT support for type-safe casting
+        // Full implementation requires:
+        // 1. TypedValue extension to hold VariantValue
+        // 2. Runtime type extraction
+        // 3. Type-safe value extraction and casting
+        // 4. Validation that cast is to allowed type
+
+        SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED,
+            "VARIANT casting requires TypedValue VARIANT support (future enhancement)");
         return Status::NOT_IMPLEMENTED;
     }
 
