@@ -32,6 +32,7 @@ namespace scratchbird
         class SweepManager;
         class GarbageCollector;
         class LongTransactionMonitor;
+        class DomainManager;
 
 // Database header structure for Page 0
 #pragma pack(push, 1)
@@ -274,6 +275,16 @@ namespace scratchbird
                 return long_transaction_monitor_.get();
             }
 
+            // Get domain manager
+            DomainManager *domain_manager()
+            {
+                return domain_manager_.get();
+            }
+            const DomainManager *domain_manager() const
+            {
+                return domain_manager_.get();
+            }
+
             // Initialize ProcArray for multi-connection support
             Status initializeProcArray(uint32_t max_backends, ErrorContext *ctx = nullptr);
 
@@ -312,7 +323,8 @@ namespace scratchbird
             std::unique_ptr<SweepManager> sweep_manager_;             // Sweep manager (owned)
             std::unique_ptr<GarbageCollector> garbage_collector_;     // Garbage collector (owned)
             std::unique_ptr<LongTransactionMonitor>
-                long_transaction_monitor_; // Long transaction monitor (owned)
+                long_transaction_monitor_;                     // Long transaction monitor (owned)
+            std::unique_ptr<DomainManager> domain_manager_;    // Domain manager (owned)
 
             // Validate database header
             Status validate_header();

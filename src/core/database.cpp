@@ -11,6 +11,7 @@
 #include "scratchbird/core/sweep_manager.h"
 #include "scratchbird/core/garbage_collector.h"
 #include "scratchbird/core/long_transaction_monitor.h"
+#include "scratchbird/core/domain_manager.h"
 #include "scratchbird/core/proc_array.h"
 #include "scratchbird/core/connection_context.h"
 #include "scratchbird/core/system_uuids.h"
@@ -49,6 +50,9 @@ namespace scratchbird::core
             long_transaction_monitor_->stopMonitoring(&ctx);
         }
         long_transaction_monitor_.reset();
+
+        // Shut down domain manager
+        domain_manager_.reset();
 
         // Shut down garbage collector first (before sweep manager)
         garbage_collector_.reset();
@@ -777,6 +781,28 @@ namespace scratchbird::core
         {
             close();
             return status;
+        }
+
+        // Initialize domain manager
+        try
+        {
+            domain_manager_ = std::make_unique<DomainManager>(this);
+        }
+        catch (const std::bad_alloc &)
+        {
+            close();
+            SET_ERROR_CONTEXT(ctx, Status::OOM, "Failed to allocate DomainManager");
+            return Status::OOM;
+        }
+        status = domain_manager_->initialize(ctx);
+        if (status != Status::OK)
+        {
+            // Domain catalog not initialized yet is OK
+            if (status != Status::NOT_FOUND && status != Status::PAGE_CORRUPT)
+            {
+                close();
+                return status;
+            }
         }
 
         DEBUG_LOG_DB("Database opened successfully");
