@@ -3,8 +3,10 @@
 #include "scratchbird/core/buffer_pool.h"
 #include "scratchbird/core/page_manager.h"
 #include "scratchbird/core/logger.h"
+#include "scratchbird/core/composite.h"
 #include <cstring>
 #include <algorithm>
+#include <unordered_set>
 
 namespace scratchbird::core
 {
@@ -390,8 +392,57 @@ namespace scratchbird::core
                                           ID& domain_id,
                                           ErrorContext* ctx) -> Status
     {
-        SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED, "RECORD domains not yet implemented");
-        return Status::NOT_IMPLEMENTED;
+        std::lock_guard<std::mutex> lock(mutex_);
+
+        // Validate fields
+        if (fields.empty())
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "RECORD domain must have at least one field");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        // Check for duplicate field names
+        std::unordered_set<std::string> field_names;
+        for (const auto& field : fields)
+        {
+            if (field_names.count(field.name) > 0)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Duplicate field name in RECORD domain");
+                return Status::INVALID_ARGUMENT;
+            }
+            field_names.insert(field.name);
+        }
+
+        // Generate new domain ID
+        domain_id = generateUuidV7();
+
+        // Create domain info
+        DomainInfo info;
+        info.domain_id = domain_id;
+        info.schema_id = schema_id;
+        info.domain_name = domain_name;
+        info.domain_type = DomainType::RECORD;
+        info.base_type = DataType::COMPOSITE;
+        info.fields = fields;
+        info.created_time = std::time(nullptr);
+        info.last_modified_time = info.created_time;
+
+        // Write to catalog
+        Status status = writeDomainRecord(info, ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, status, "Failed to write RECORD domain record");
+            return status;
+        }
+
+        // Add to cache
+        domain_cache_[domain_id] = info;
+        domain_count_++;
+
+        LOG_INFO(CATALOG, "Created RECORD domain '%s' with %zu fields",
+                domain_name.c_str(), fields.size());
+
+        return Status::OK;
     }
 
     auto DomainManager::getRecordField(const ID& domain_id,
@@ -399,8 +450,34 @@ namespace scratchbird::core
                                       RecordField& field,
                                       ErrorContext* ctx) -> Status
     {
-        SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED, "RECORD domains not yet implemented");
-        return Status::NOT_IMPLEMENTED;
+        std::lock_guard<std::mutex> lock(mutex_);
+
+        auto it = domain_cache_.find(domain_id);
+        if (it == domain_cache_.end())
+        {
+            SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Domain not found");
+            return Status::NOT_FOUND;
+        }
+
+        const DomainInfo& domain = it->second;
+        if (domain.domain_type != DomainType::RECORD)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Domain is not a RECORD type");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        // Find field by name
+        for (const auto& f : domain.fields)
+        {
+            if (f.name == field_name)
+            {
+                field = f;
+                return Status::OK;
+            }
+        }
+
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Field not found in RECORD domain");
+        return Status::NOT_FOUND;
     }
 
     auto DomainManager::extractField(const TypedValue& record_value,
@@ -408,7 +485,22 @@ namespace scratchbird::core
                                     TypedValue& field_value,
                                     ErrorContext* ctx) -> Status
     {
-        SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED, "RECORD domains not yet implemented");
+        // Check if value is COMPOSITE type
+        if (record_value.type() != DataType::COMPOSITE)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::TYPE_MISMATCH, "Value is not a COMPOSITE/RECORD type");
+            return Status::TYPE_MISMATCH;
+        }
+
+        // TODO: This requires TypedValue to support COMPOSITE values directly
+        // For now, this is a placeholder that demonstrates the API
+        // Full implementation requires:
+        // 1. TypedValue extension to hold CompositeValue
+        // 2. Binary decoding of COMPOSITE from TypedValue storage
+        // 3. Field extraction from decoded CompositeValue
+
+        SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED,
+            "RECORD field extraction requires TypedValue COMPOSITE support (future enhancement)");
         return Status::NOT_IMPLEMENTED;
     }
 
