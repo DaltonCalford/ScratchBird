@@ -10,7 +10,14 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(googletest)
 
 # Test sources
-file(GLOB TEST_SOURCES "*.cpp" "unit/*.cpp" "integration/*.cpp")
+file(GLOB_RECURSE TEST_SOURCES
+    "*.cpp"
+    "unit/*.cpp"
+    "unit/gin/*.cpp"
+    "unit/types/*.cpp"
+    "unit/domains/*.cpp"
+    "integration/*.cpp"
+)
 
 # Test executable
 add_executable(scratchbird_tests ${TEST_SOURCES})
