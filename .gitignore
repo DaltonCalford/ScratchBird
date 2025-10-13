@@ -16,9 +16,33 @@ compile_commands.json
 
 # Test databases and temporary test files
 test_*.db
+test_*_db[0-9]*
+*.db
 *.db-journal
 *.db-wal
 *.db-shm
+
+# Test executables in root (should be in build/)
+# Ignore test executables but not test source files
+/test_advanced_domain
+/test_btree
+/test_clog_standalone
+/test_decimal_debug
+/test_domain_manager
+/test_enum_domain
+/test_gin_*
+/test_interval_type
+/test_jsonb
+/test_minimal_db
+/test_money_type
+/test_record_domain
+/test_set_domain
+/test_variant_domain
+/test_wildcard_debug
+/test_xml
+
+# Test data directories
+/test_dbs/
 
 # IDE/editor
 .vscode/
