@@ -92,6 +92,7 @@ namespace scratchbird::core
     struct DomainSecurity
     {
         bool masking_enabled;       // Data masking
+        std::string mask_type;      // Masking type (FULL, PARTIAL, etc.)
         bool encryption_enabled;    // Encryption at rest
         bool audit_enabled;         // Audit trail
         uint32_t permission_mask;   // Permission requirements

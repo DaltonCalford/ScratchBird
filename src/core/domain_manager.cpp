@@ -1052,39 +1052,131 @@ namespace scratchbird::core
     }
 
     // ====================
-    // Phase 6: Advanced Features (Stubs)
+    // Phase 6: Advanced Features
     // ====================
 
     auto DomainManager::setSecurityOptions(const ID& domain_id,
                                           const DomainSecurity& security,
                                           ErrorContext* ctx) -> Status
     {
-        SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED, "Security features not yet implemented");
-        return Status::NOT_IMPLEMENTED;
+        std::lock_guard<std::mutex> lock(mutex_);
+
+        auto it = domain_cache_.find(domain_id);
+        if (it == domain_cache_.end())
+        {
+            SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Domain not found");
+            return Status::NOT_FOUND;
+        }
+
+        // Update security options
+        it->second.security = security;
+        it->second.last_modified_time = std::time(nullptr);
+
+        // Update catalog
+        Status status = writeDomainRecord(it->second, ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, status, "Failed to update domain record");
+            return status;
+        }
+
+        LOG_INFO(CATALOG, "Set security options for domain %s",
+                domain_id.toString().c_str());
+
+        return Status::OK;
     }
 
     auto DomainManager::setIntegrityOptions(const ID& domain_id,
                                            const DomainIntegrity& integrity,
                                            ErrorContext* ctx) -> Status
     {
-        SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED, "Integrity features not yet implemented");
-        return Status::NOT_IMPLEMENTED;
+        std::lock_guard<std::mutex> lock(mutex_);
+
+        auto it = domain_cache_.find(domain_id);
+        if (it == domain_cache_.end())
+        {
+            SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Domain not found");
+            return Status::NOT_FOUND;
+        }
+
+        // Update integrity options
+        it->second.integrity = integrity;
+        it->second.last_modified_time = std::time(nullptr);
+
+        // Update catalog
+        Status status = writeDomainRecord(it->second, ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, status, "Failed to update domain record");
+            return status;
+        }
+
+        LOG_INFO(CATALOG, "Set integrity options for domain %s",
+                domain_id.toString().c_str());
+
+        return Status::OK;
     }
 
     auto DomainManager::setValidationOptions(const ID& domain_id,
                                             const DomainValidation& validation,
                                             ErrorContext* ctx) -> Status
     {
-        SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED, "Validation features not yet implemented");
-        return Status::NOT_IMPLEMENTED;
+        std::lock_guard<std::mutex> lock(mutex_);
+
+        auto it = domain_cache_.find(domain_id);
+        if (it == domain_cache_.end())
+        {
+            SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Domain not found");
+            return Status::NOT_FOUND;
+        }
+
+        // Update validation options
+        it->second.validation = validation;
+        it->second.last_modified_time = std::time(nullptr);
+
+        // Update catalog
+        Status status = writeDomainRecord(it->second, ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, status, "Failed to update domain record");
+            return status;
+        }
+
+        LOG_INFO(CATALOG, "Set validation options for domain %s",
+                domain_id.toString().c_str());
+
+        return Status::OK;
     }
 
     auto DomainManager::setQualityOptions(const ID& domain_id,
                                          const DomainQuality& quality,
                                          ErrorContext* ctx) -> Status
     {
-        SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED, "Quality features not yet implemented");
-        return Status::NOT_IMPLEMENTED;
+        std::lock_guard<std::mutex> lock(mutex_);
+
+        auto it = domain_cache_.find(domain_id);
+        if (it == domain_cache_.end())
+        {
+            SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Domain not found");
+            return Status::NOT_FOUND;
+        }
+
+        // Update quality options
+        it->second.quality = quality;
+        it->second.last_modified_time = std::time(nullptr);
+
+        // Update catalog
+        Status status = writeDomainRecord(it->second, ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, status, "Failed to update domain record");
+            return status;
+        }
+
+        LOG_INFO(CATALOG, "Set quality options for domain %s",
+                domain_id.toString().c_str());
+
+        return Status::OK;
     }
 
     auto DomainManager::applyMasking(const ID& domain_id,
@@ -1092,8 +1184,44 @@ namespace scratchbird::core
                                     TypedValue& masked_value,
                                     ErrorContext* ctx) -> Status
     {
-        SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED, "Masking not yet implemented");
-        return Status::NOT_IMPLEMENTED;
+        std::lock_guard<std::mutex> lock(mutex_);
+
+        auto it = domain_cache_.find(domain_id);
+        if (it == domain_cache_.end())
+        {
+            SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Domain not found");
+            return Status::NOT_FOUND;
+        }
+
+        const DomainInfo& domain = it->second;
+
+        // Check if masking is enabled
+        if (!domain.security.masking_enabled)
+        {
+            // No masking - return original value
+            masked_value = value;
+            return Status::OK;
+        }
+
+        // Apply masking based on mask type
+        if (domain.security.mask_type == "FULL")
+        {
+            // Full masking - return placeholder
+            masked_value = TypedValue::makeVarchar("***MASKED***");
+        }
+        else if (domain.security.mask_type == "PARTIAL")
+        {
+            // Partial masking - show first/last few characters
+            // TODO: Implement partial masking logic
+            masked_value = TypedValue::makeVarchar("***PARTIAL***");
+        }
+        else
+        {
+            // No masking or unknown type - return original
+            masked_value = value;
+        }
+
+        return Status::OK;
     }
 
     // ====================
