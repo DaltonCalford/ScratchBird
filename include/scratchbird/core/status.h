@@ -23,6 +23,8 @@ namespace scratchbird::core
         PAGE_FULL = 4001,         // No space available in page
         NOT_FOUND = 4002,         // Tuple/item not found
         NOT_IMPLEMENTED = 4003,   // Feature not implemented
+        TYPE_MISMATCH = 4004,     // Type mismatch
+        CONSTRAINT_VIOLATION = 4005, // Constraint violation
         COMPRESSION_ERROR = 5001, // Compression/decompression failed
     };
 
