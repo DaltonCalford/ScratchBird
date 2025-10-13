@@ -25,6 +25,7 @@ namespace scratchbird::core
         NOT_IMPLEMENTED = 4003,   // Feature not implemented
         TYPE_MISMATCH = 4004,     // Type mismatch
         CONSTRAINT_VIOLATION = 4005, // Constraint violation
+        OUT_OF_RANGE = 4006,      // Value out of range
         COMPRESSION_ERROR = 5001, // Compression/decompression failed
     };
 
