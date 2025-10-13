@@ -505,7 +505,7 @@ namespace scratchbird::core
     }
 
     // ====================
-    // Phase 3: ENUM Domains (Stubs)
+    // Phase 3: ENUM Domains
     // ====================
 
     auto DomainManager::createEnumDomain(const ID& schema_id,
@@ -514,8 +514,68 @@ namespace scratchbird::core
                                         ID& domain_id,
                                         ErrorContext* ctx) -> Status
     {
-        SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED, "ENUM domains not yet implemented");
-        return Status::NOT_IMPLEMENTED;
+        std::lock_guard<std::mutex> lock(mutex_);
+
+        // Validate enum values
+        if (values.empty())
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "ENUM domain must have at least one value");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        // Check for duplicate values
+        std::unordered_set<std::string> value_set;
+        for (const auto& enum_val : values)
+        {
+            if (value_set.count(enum_val.label) > 0)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Duplicate value in ENUM domain");
+                return Status::INVALID_ARGUMENT;
+            }
+            value_set.insert(enum_val.label);
+        }
+
+        // Validate positions are sequential starting from 0
+        for (size_t i = 0; i < values.size(); i++)
+        {
+            if (values[i].position != static_cast<uint32_t>(i))
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                 "ENUM positions must be sequential starting from 0");
+                return Status::INVALID_ARGUMENT;
+            }
+        }
+
+        // Generate new domain ID
+        domain_id = generateUuidV7();
+
+        // Create domain info
+        DomainInfo info;
+        info.domain_id = domain_id;
+        info.schema_id = schema_id;
+        info.domain_name = domain_name;
+        info.domain_type = DomainType::ENUM;
+        info.base_type = DataType::VARCHAR;  // ENUMs stored as VARCHAR
+        info.enum_values = values;
+        info.created_time = std::time(nullptr);
+        info.last_modified_time = info.created_time;
+
+        // Write to catalog
+        Status status = writeDomainRecord(info, ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, status, "Failed to write ENUM domain record");
+            return status;
+        }
+
+        // Add to cache
+        domain_cache_[domain_id] = info;
+        domain_count_++;
+
+        LOG_INFO(CATALOG, "Created ENUM domain '%s' with %zu values",
+                domain_name.c_str(), values.size());
+
+        return Status::OK;
     }
 
     auto DomainManager::setNextEnumValue(const ID& domain_id,
@@ -523,8 +583,50 @@ namespace scratchbird::core
                                         std::string& next_label,
                                         ErrorContext* ctx) -> Status
     {
-        SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED, "ENUM domains not yet implemented");
-        return Status::NOT_IMPLEMENTED;
+        std::lock_guard<std::mutex> lock(mutex_);
+
+        auto it = domain_cache_.find(domain_id);
+        if (it == domain_cache_.end())
+        {
+            SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Domain not found");
+            return Status::NOT_FOUND;
+        }
+
+        DomainInfo& domain = it->second;
+        if (domain.domain_type != DomainType::ENUM)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Domain is not an ENUM type");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        // Find current value position
+        int32_t current_position = -1;
+        for (const auto& enum_val : domain.enum_values)
+        {
+            if (enum_val.label == current_label)
+            {
+                current_position = static_cast<int32_t>(enum_val.position);
+                break;
+            }
+        }
+
+        if (current_position == -1)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Current value not found in ENUM");
+            return Status::NOT_FOUND;
+        }
+
+        // Check if there's a next value
+        int32_t next_position = current_position + 1;
+        if (next_position >= static_cast<int32_t>(domain.enum_values.size()))
+        {
+            SET_ERROR_CONTEXT(ctx, Status::OUT_OF_RANGE, "No next value (already at last position)");
+            return Status::OUT_OF_RANGE;
+        }
+
+        // Return next value
+        next_label = domain.enum_values[next_position].label;
+        return Status::OK;
     }
 
     auto DomainManager::getEnumValueForPosition(const ID& domain_id,
@@ -532,8 +634,32 @@ namespace scratchbird::core
                                                std::string& label,
                                                ErrorContext* ctx) -> Status
     {
-        SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED, "ENUM domains not yet implemented");
-        return Status::NOT_IMPLEMENTED;
+        std::lock_guard<std::mutex> lock(mutex_);
+
+        auto it = domain_cache_.find(domain_id);
+        if (it == domain_cache_.end())
+        {
+            SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Domain not found");
+            return Status::NOT_FOUND;
+        }
+
+        const DomainInfo& domain = it->second;
+        if (domain.domain_type != DomainType::ENUM)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Domain is not an ENUM type");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        // Validate position
+        if (position < 0 || position >= static_cast<int32_t>(domain.enum_values.size()))
+        {
+            SET_ERROR_CONTEXT(ctx, Status::OUT_OF_RANGE, "Position out of range");
+            return Status::OUT_OF_RANGE;
+        }
+
+        // Return value at position
+        label = domain.enum_values[position].label;
+        return Status::OK;
     }
 
     auto DomainManager::getPositionForEnumValue(const ID& domain_id,
@@ -541,8 +667,34 @@ namespace scratchbird::core
                                                int32_t& position,
                                                ErrorContext* ctx) -> Status
     {
-        SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED, "ENUM domains not yet implemented");
-        return Status::NOT_IMPLEMENTED;
+        std::lock_guard<std::mutex> lock(mutex_);
+
+        auto it = domain_cache_.find(domain_id);
+        if (it == domain_cache_.end())
+        {
+            SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Domain not found");
+            return Status::NOT_FOUND;
+        }
+
+        const DomainInfo& domain = it->second;
+        if (domain.domain_type != DomainType::ENUM)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Domain is not an ENUM type");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        // Find value and return position
+        for (const auto& enum_val : domain.enum_values)
+        {
+            if (enum_val.label == label)
+            {
+                position = static_cast<int32_t>(enum_val.position);
+                return Status::OK;
+            }
+        }
+
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Value not found in ENUM");
+        return Status::NOT_FOUND;
     }
 
     auto DomainManager::compareEnumValues(const ID& domain_id,
@@ -551,8 +703,65 @@ namespace scratchbird::core
                                          int& result,
                                          ErrorContext* ctx) -> Status
     {
-        SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED, "ENUM domains not yet implemented");
-        return Status::NOT_IMPLEMENTED;
+        std::lock_guard<std::mutex> lock(mutex_);
+
+        auto it = domain_cache_.find(domain_id);
+        if (it == domain_cache_.end())
+        {
+            SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Domain not found");
+            return Status::NOT_FOUND;
+        }
+
+        const DomainInfo& domain = it->second;
+        if (domain.domain_type != DomainType::ENUM)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Domain is not an ENUM type");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        // Find positions for both values
+        int32_t pos1 = -1;
+        int32_t pos2 = -1;
+
+        for (const auto& enum_val : domain.enum_values)
+        {
+            if (enum_val.label == label1)
+            {
+                pos1 = static_cast<int32_t>(enum_val.position);
+            }
+            if (enum_val.label == label2)
+            {
+                pos2 = static_cast<int32_t>(enum_val.position);
+            }
+        }
+
+        if (pos1 == -1)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "First value not found in ENUM");
+            return Status::NOT_FOUND;
+        }
+
+        if (pos2 == -1)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Second value not found in ENUM");
+            return Status::NOT_FOUND;
+        }
+
+        // Compare by position
+        if (pos1 < pos2)
+        {
+            result = -1;
+        }
+        else if (pos1 > pos2)
+        {
+            result = 1;
+        }
+        else
+        {
+            result = 0;
+        }
+
+        return Status::OK;
     }
 
     // ====================
