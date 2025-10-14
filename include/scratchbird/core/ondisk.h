@@ -26,6 +26,10 @@ namespace scratchbird::core
         GIN_PENDING_LIST = 14,      // GIN pending list page
         GIN_POSTING_LIST = 15,      // GIN posting list page
         GIN_POSTING_TREE = 16,      // GIN posting tree page
+        BITMAP_INDEX_META = 17,     // Bitmap index meta page
+        BITMAP_INDEX_DICT = 18,     // Bitmap index dictionary page
+        BITMAP_ROARING_ROOT = 19,   // Roaring bitmap root page
+        BITMAP_CONTAINER = 20,      // Roaring bitmap container page
     };
 
     // Page flags (bitwise OR)
