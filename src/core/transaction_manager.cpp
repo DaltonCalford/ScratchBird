@@ -111,26 +111,27 @@ namespace scratchbird::core
 
         auto *db_header = static_cast<DatabaseHeader *>(header_buffer);
         tip_root_page_ = db_header->tip_root_page;
-        next_xid_ = db_header->next_transaction_id;
+        next_xid_.store(db_header->next_transaction_id, std::memory_order_release);
         oldest_xid_ = db_header->oldest_transaction_id;
         oldest_active_xid_ = db_header->oldest_active_xid;
         oldest_snapshot_ = db_header->oldest_snapshot;
 
         // DATABASE HEADER VALIDATION: Validate next_xid is sane
-        if (next_xid_ > MAX_SAFE_XID)
+        uint64_t current_next_xid = next_xid_.load(std::memory_order_acquire);
+        if (current_next_xid > MAX_SAFE_XID)
         {
             buffer_pool_->unpinPage(0, false, ctx);
             char msg[256];
             snprintf(msg, sizeof(msg),
                      "Database next_xid approaching wraparound: next_xid=%lu, max_safe=%lu",
-                     next_xid_, MAX_SAFE_XID);
+                     current_next_xid, MAX_SAFE_XID);
             SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, msg);
             // WARNING: Database needs immediate VACUUM to prevent wraparound
             // For now, allow loading but transactions will be blocked
         }
 
         // Validate next_xid is not corrupted
-        if (next_xid_ == UINT64_MAX)
+        if (current_next_xid == UINT64_MAX)
         {
             buffer_pool_->unpinPage(0, false, ctx);
             SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT,
@@ -139,9 +140,10 @@ namespace scratchbird::core
         }
 
         // Ensure next_xid is at least beyond reserved XIDs
-        if (next_xid_ <= FROZEN_XID)
+        if (current_next_xid <= FROZEN_XID)
         {
-            next_xid_ = FROZEN_XID + 1;
+            next_xid_.store(FROZEN_XID + 1, std::memory_order_release);
+            current_next_xid = FROZEN_XID + 1;
         }
 
         // Validate oldest_xid is sane
@@ -155,12 +157,12 @@ namespace scratchbird::core
             // Invalid - reset to safe default
             oldest_xid_ = FROZEN_XID + 1;
         }
-        else if (oldest_xid_ > next_xid_)
+        else if (oldest_xid_ > current_next_xid)
         {
             // Corrupted - oldest_xid should never exceed next_xid
             char msg[256];
             snprintf(msg, sizeof(msg), "Database oldest_xid > next_xid: oldest=%lu, next=%lu",
-                     oldest_xid_, next_xid_);
+                     oldest_xid_, current_next_xid);
             buffer_pool_->unpinPage(0, false, ctx);
             SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, msg);
             return Status::PAGE_CORRUPT;
@@ -217,9 +219,17 @@ namespace scratchbird::core
             addToCacheLRU(entries[i].xid, static_cast<TransactionState>(entries[i].state));
 
             // Track highest XID (in case it's higher than header's next_xid)
-            if (entries[i].xid >= next_xid_)
+            uint64_t current_xid = entries[i].xid;
+            uint64_t expected_next = next_xid_.load(std::memory_order_acquire);
+            while (current_xid >= expected_next)
             {
-                next_xid_ = entries[i].xid + 1;
+                // Atomically update next_xid_ if current_xid is still >= expected_next
+                if (next_xid_.compare_exchange_weak(expected_next, current_xid + 1,
+                                                     std::memory_order_acq_rel))
+                {
+                    break; // Successfully updated
+                }
+                // If CAS failed, expected_next was updated with current value, retry
             }
         }
 
@@ -236,7 +246,8 @@ namespace scratchbird::core
         // No longer check for active_xid_ - allow multiple active transactions
 
         // WRAPAROUND PROTECTION: Check if approaching UINT64_MAX
-        if (next_xid_ > MAX_SAFE_XID)
+        uint64_t current_next = next_xid_.load(std::memory_order_acquire);
+        if (current_next > MAX_SAFE_XID)
         {
             // Critical: Database is approaching XID wraparound
             // VACUUM must be run to freeze old tuples before continuing
@@ -247,19 +258,23 @@ namespace scratchbird::core
         }
 
         // Allocate new XID (check for overflow BEFORE increment)
-        if (next_xid_ == UINT64_MAX)
+        // Note: Using .load() to read atomic value for comparison
+        if (next_xid_.load(std::memory_order_acquire) == UINT64_MAX)
         {
             // Catastrophic: Wraparound occurred
             SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "XID overflow - database is corrupted");
             return Status::PAGE_CORRUPT;
         }
 
-        uint64_t new_xid = next_xid_++;
+        // CRITICAL FIX (Issue 1.2): Use atomic fetch_add for thread-safe XID allocation
+        // This prevents race conditions where multiple threads could get the same XID
+        uint64_t new_xid = next_xid_.fetch_add(1, std::memory_order_seq_cst);
 
         // Prevent wraparound to reserved XIDs (should never happen with above checks)
-        if (next_xid_ <= FROZEN_XID)
+        uint64_t check_next = next_xid_.load(std::memory_order_acquire);
+        if (check_next <= FROZEN_XID)
         {
-            next_xid_ = FROZEN_XID + 1;
+            next_xid_.store(FROZEN_XID + 1, std::memory_order_release);
         }
 
         // Record transaction as active (with LRU tracking)
@@ -288,14 +303,15 @@ namespace scratchbird::core
         }
 
         // Update database header with new next_xid periodically (every 100 XIDs)
-        if ((next_xid_ % config::DEFAULT_HEADER_UPDATE_FREQUENCY) == 0)
+        uint64_t current_next_xid_for_header = next_xid_.load(std::memory_order_acquire);
+        if ((current_next_xid_for_header % config::DEFAULT_HEADER_UPDATE_FREQUENCY) == 0)
         {
             void *header_buffer;
             status = buffer_pool_->pinPage(0, &header_buffer, ctx);
             if (status == Status::OK)
             {
                 auto *db_header = static_cast<DatabaseHeader *>(header_buffer);
-                db_header->next_transaction_id = next_xid_;
+                db_header->next_transaction_id = current_next_xid_for_header;
                 buffer_pool_->unpinPage(0, true, ctx);
             }
             // Ignore errors - this is just an optimization
@@ -507,7 +523,8 @@ namespace scratchbird::core
         std::lock_guard<std::mutex> lock(mutex_);
 
         // User XIDs must be less than next_xid (no future transactions)
-        if (xid >= next_xid_)
+        uint64_t current_next_xid = next_xid_.load(std::memory_order_acquire);
+        if (xid >= current_next_xid)
         {
             return false; // Future XID - invalid!
         }
@@ -535,7 +552,8 @@ namespace scratchbird::core
         std::lock_guard<std::mutex> lock(mutex_);
 
         // Validate new oldest XID is sane
-        if (xid > next_xid_)
+        uint64_t current_next_xid = next_xid_.load(std::memory_order_acquire);
+        if (xid > current_next_xid)
         {
             SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
                               "Cannot set oldest_xid beyond next_xid");
@@ -582,8 +600,9 @@ namespace scratchbird::core
         pthread_rwlock_rdlock(&proc_array->array_lock);
 
         // Compute OAT (Oldest Active Transaction) and OST (Oldest Snapshot Transaction)
-        uint64_t new_oat = next_xid_; // Start with next_xid (will be reduced)
-        uint64_t new_ost = next_xid_; // Start with next_xid (will be reduced)
+        uint64_t current_next_xid = next_xid_.load(std::memory_order_acquire);
+        uint64_t new_oat = current_next_xid; // Start with next_xid (will be reduced)
+        uint64_t new_ost = current_next_xid; // Start with next_xid (will be reduced)
         bool has_active = false;
         bool has_snapshot = false;
 
@@ -666,9 +685,10 @@ namespace scratchbird::core
             // Invalid XID - treat as invisible
             // This protects against corrupted tuple headers
             // CORRUPTION LOGGING: Log invalid XID
+            uint64_t current_next = next_xid_.load(std::memory_order_acquire);
             LOG_ERROR(TRANSACTION,
                       "Invalid XID %lu in visibility check (next_xid=%lu, oldest_xid=%lu)", xid,
-                      next_xid_, oldest_xid_);
+                      current_next, oldest_xid_);
             return false;
         }
 
@@ -786,7 +806,7 @@ namespace scratchbird::core
     {
         std::lock_guard<std::mutex> lock(mutex_);
 
-        snapshot_out.xmax = next_xid_;
+        snapshot_out.xmax = next_xid_.load(std::memory_order_acquire);
         snapshot_out.active_xids.clear();
 
         // Get active transactions from ProcArray
