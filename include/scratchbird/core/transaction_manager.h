@@ -3,6 +3,7 @@
 #include "scratchbird/core/status.h"
 #include "scratchbird/core/ondisk.h"
 #include "scratchbird/core/config.h"
+#include <atomic>
 #include <cstdint>
 #include <memory>
 #include <unordered_map>
@@ -102,8 +103,9 @@ namespace scratchbird::core
         // Get current transaction ID (for read-only operations)
         auto getCurrentXid() const -> uint64_t
         {
+            // Note: Lock not strictly needed for atomic read, but kept for consistency
             std::lock_guard<std::mutex> lock(mutex_);
-            return next_xid_;
+            return next_xid_.load(std::memory_order_acquire);
         }
 
         // Get oldest valid XID (OIT - for VACUUM and XID validation)
@@ -136,8 +138,9 @@ namespace scratchbird::core
         // Check if approaching XID wraparound
         auto isApproachingWraparound() const -> bool
         {
+            // Note: Lock not strictly needed for atomic read, but kept for consistency
             std::lock_guard<std::mutex> lock(mutex_);
-            return next_xid_ > MAX_SAFE_XID;
+            return next_xid_.load(std::memory_order_acquire) > MAX_SAFE_XID;
         }
 
         // Get active transaction for a specific backend
@@ -196,7 +199,7 @@ namespace scratchbird::core
         PageManager *page_manager_;
 
         // Transaction state
-        uint64_t next_xid_ = config::DEFAULT_INITIAL_XID; // Next XID to allocate (NEXT)
+        std::atomic<uint64_t> next_xid_{config::DEFAULT_INITIAL_XID}; // Next XID to allocate (NEXT) - ATOMIC for thread safety
         uint64_t oldest_xid_ = FROZEN_XID + 1;            // Oldest Interesting Transaction (OIT)
         uint64_t oldest_active_xid_ = 0;                  // Oldest Active Transaction (OAT)
         uint64_t oldest_snapshot_ = 0;                    // Oldest Snapshot Transaction (OST)
