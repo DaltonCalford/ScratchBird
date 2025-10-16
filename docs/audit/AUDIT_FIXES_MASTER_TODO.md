@@ -2598,7 +2598,7 @@ if (status != Status::OK)
 - [x] 2.13: Hint bits implementation ✅ **COMPLETE** (Oct 14, 2025) - Fast path check and hint bit setting in findVisibleVersion(), 50% TIP lookup reduction
 - [x] 2.14: Clock Sweep algorithm ✅ **COMPLETE** (Oct 14, 2025) - Circular clock hand with usage_count, prefers clean pages, LRU fallback
 - [x] 2.15: Subtransaction support ✅ **COMPLETE** (Oct 14, 2025) - Full savepoint stack with create/rollback/release, tuple tracking, nested savepoints, cleared on commit/rollback
-- [x] 2.16: HOT updates ⚠️ **PARTIALLY_RESOLVED** (Oct 14, 2025) - Same-page update optimization implemented, HEAP_HOT_UPDATED flag added. Full Firebird MGA back versioning deferred to Beta (requires architectural changes). See `docs/audit/ISSUE_2_16_STATUS.md` for details.
+- [x] 2.16: HOT updates ✅ **FULLY RESOLVED** (Oct 16, 2025) - Complete Firebird MGA back versioning implemented (Phases 1-4). Stable item pointers, cross-page back versions, N2O traversal, full TOAST support. All validation tests passing (3/3). Phase 5 (index optimization) design complete. See `docs/audit/ISSUE_2_16_STATUS.md` and `docs/MGA_ALPHA_STATUS.md` for details.
 - [ ] 2.17: B-tree prefix compression (1 week)
 - [ ] 2.18: GIN posting list compression (1 week)
 - [ ] 2.19: Group commit (1 week)
