@@ -1,4 +1,5 @@
 #include "scratchbird/core/gin_index.h"
+#include "scratchbird/core/gin_compression.h"
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/buffer_pool.h"
 #include "scratchbird/core/page_manager.h"
@@ -637,13 +638,43 @@ namespace scratchbird
                 return getPostingTreeTids(tree_root, tids_out, ctx);
             }
 
-            // It's a posting list
+            // It's a posting list - check if compressed
             uint16_t tid_count = list_page->gpl_entry_count;
             tids_out->reserve(tids_out->size() + tid_count);
 
-            for (uint16_t i = 0; i < tid_count; i++)
+            if (list_page->gpl_is_compressed != 0)
             {
-                tids_out->push_back(list_page->gpl_data.gpl_entries[i].tid);
+                // Compressed posting list - decompress
+                uint16_t compressed_bytes = list_page->gpl_compressed_bytes;
+                const uint8_t *compressed_data = list_page->gpl_data.gpl_compressed_data;
+
+                // Allocate temp buffer for decompressed TIDs
+                std::vector<uint64_t> temp_tids(tid_count);
+
+                size_t decompressed_count = decompress_posting_list(
+                    compressed_data, compressed_bytes,
+                    temp_tids.data(), tid_count);
+
+                if (decompressed_count != tid_count)
+                {
+                    buffer_pool_->unpinPage(posting_page, false, ctx);
+                    SET_ERROR_CONTEXT(ctx, Status::COMPRESSION_ERROR,
+                                      ("Decompression failed: expected " +
+                                          std::to_string(tid_count) + " TIDs, got " +
+                                          std::to_string(decompressed_count)).c_str());
+                    return Status::COMPRESSION_ERROR;
+                }
+
+                // Append decompressed TIDs to output
+                tids_out->insert(tids_out->end(), temp_tids.begin(), temp_tids.end());
+            }
+            else
+            {
+                // Uncompressed posting list - use existing logic
+                for (uint16_t i = 0; i < tid_count; i++)
+                {
+                    tids_out->push_back(list_page->gpl_data.gpl_entries[i].tid);
+                }
             }
 
             buffer_pool_->unpinPage(posting_page, false, ctx);
@@ -690,6 +721,8 @@ namespace scratchbird
             list_page->gpl_header.page_id = new_posting_page;
             list_page->gpl_entry_count = 0;
             list_page->gpl_is_tree = 0;
+            list_page->gpl_is_compressed = 0;
+            list_page->gpl_compressed_bytes = 0;
 
             buffer_pool_->unpinPage(new_posting_page, true, ctx);
 
@@ -724,18 +757,52 @@ namespace scratchbird
                 return insertIntoPostingTree(posting_page, tuple_id, ctx);
             }
 
-            // Check for duplicate
-            for (uint16_t i = 0; i < list_page->gpl_entry_count; i++)
+            uint16_t current_count = list_page->gpl_entry_count;
+
+            // Step 1: Read existing TIDs (compressed or uncompressed)
+            std::vector<uint64_t> tids;
+            tids.reserve(current_count + 1);
+
+            if (list_page->gpl_is_compressed != 0)
             {
-                if (list_page->gpl_data.gpl_entries[i].tid == tuple_id)
+                // Decompress existing TIDs
+                uint16_t compressed_bytes = list_page->gpl_compressed_bytes;
+                const uint8_t *compressed_data = list_page->gpl_data.gpl_compressed_data;
+
+                tids.resize(current_count);
+                size_t decompressed_count = decompress_posting_list(
+                    compressed_data, compressed_bytes,
+                    tids.data(), current_count);
+
+                if (decompressed_count != current_count)
                 {
                     buffer_pool_->unpinPage(posting_page, false, ctx);
-                    return Status::OK; // Already exists
+                    SET_ERROR_CONTEXT(ctx, Status::COMPRESSION_ERROR, "Decompression failed during insert");
+                    return Status::COMPRESSION_ERROR;
+                }
+            }
+            else
+            {
+                // Read uncompressed TIDs
+                for (uint16_t i = 0; i < current_count; i++)
+                {
+                    tids.push_back(list_page->gpl_data.gpl_entries[i].tid);
                 }
             }
 
-            // Check if we need to convert to tree (threshold reached)
-            if (list_page->gpl_entry_count >= GIN_POSTING_LIST_THRESHOLD)
+            // Step 2: Check for duplicate
+            if (std::binary_search(tids.begin(), tids.end(), tuple_id))
+            {
+                buffer_pool_->unpinPage(posting_page, false, ctx);
+                return Status::OK; // Already exists
+            }
+
+            // Step 3: Insert new TID (maintaining sorted order)
+            auto insert_pos = std::lower_bound(tids.begin(), tids.end(), tuple_id);
+            tids.insert(insert_pos, tuple_id);
+
+            // Step 4: Check if we need to convert to tree (threshold reached)
+            if (tids.size() > GIN_POSTING_LIST_THRESHOLD)
             {
                 buffer_pool_->unpinPage(posting_page, false, ctx);
 
@@ -750,24 +817,38 @@ namespace scratchbird
                 return insertIntoPostingTree(posting_page, tuple_id, ctx);
             }
 
-            // Find insertion position (maintain sorted order)
-            uint16_t insert_pos = 0;
-            while (insert_pos < list_page->gpl_entry_count &&
-                   list_page->gpl_data.gpl_entries[insert_pos].tid < tuple_id)
+            // Step 5: Try to compress the TID list
+            size_t compressed_size = 0;
+            uint8_t temp_compressed[8192 - 80];
+
+            if (should_compress(tids.data(), tids.size()))
             {
-                insert_pos++;
+                compressed_size = compress_posting_list(
+                    tids.data(), tids.size(),
+                    temp_compressed, sizeof(temp_compressed));
             }
 
-            // Shift elements to make room
-            if (insert_pos < list_page->gpl_entry_count)
+            // Step 6: Store compressed or uncompressed based on what fits
+            if (compressed_size > 0 && compressed_size < sizeof(temp_compressed))
             {
-                std::memmove(&list_page->gpl_data.gpl_entries[insert_pos + 1],
-                             &list_page->gpl_data.gpl_entries[insert_pos],
-                             (list_page->gpl_entry_count - insert_pos) * sizeof(GinPostingEntry));
+                // Store compressed
+                list_page->gpl_is_compressed = 1;
+                list_page->gpl_compressed_bytes = compressed_size;
+                list_page->gpl_entry_count = tids.size();
+                std::memcpy(list_page->gpl_data.gpl_compressed_data, temp_compressed, compressed_size);
             }
+            else
+            {
+                // Store uncompressed (or compression didn't save space)
+                list_page->gpl_is_compressed = 0;
+                list_page->gpl_compressed_bytes = 0;
+                list_page->gpl_entry_count = tids.size();
 
-            list_page->gpl_data.gpl_entries[insert_pos].tid = tuple_id;
-            list_page->gpl_entry_count++;
+                for (size_t i = 0; i < tids.size(); i++)
+                {
+                    list_page->gpl_data.gpl_entries[i].tid = tids[i];
+                }
+            }
 
             buffer_pool_->unpinPage(posting_page, true, ctx);
             return Status::OK;
@@ -794,13 +875,37 @@ namespace scratchbird
                 return Status::OK;
             }
 
-            // Copy TIDs from the list (already sorted)
+            // Copy TIDs from the list (compressed or uncompressed)
             uint16_t tid_count = list_page->gpl_entry_count;
             std::vector<uint64_t> tids;
             tids.reserve(tid_count);
-            for (uint16_t i = 0; i < tid_count; i++)
+
+            if (list_page->gpl_is_compressed != 0)
             {
-                tids.push_back(list_page->gpl_data.gpl_entries[i].tid);
+                // Decompress TIDs
+                uint16_t compressed_bytes = list_page->gpl_compressed_bytes;
+                const uint8_t *compressed_data = list_page->gpl_data.gpl_compressed_data;
+
+                tids.resize(tid_count);
+                size_t decompressed_count = decompress_posting_list(
+                    compressed_data, compressed_bytes,
+                    tids.data(), tid_count);
+
+                if (decompressed_count != tid_count)
+                {
+                    buffer_pool_->unpinPage(posting_page, false, ctx);
+                    SET_ERROR_CONTEXT(ctx, Status::COMPRESSION_ERROR,
+                                      "Decompression failed during tree conversion");
+                    return Status::COMPRESSION_ERROR;
+                }
+            }
+            else
+            {
+                // Read uncompressed TIDs
+                for (uint16_t i = 0; i < tid_count; i++)
+                {
+                    tids.push_back(list_page->gpl_data.gpl_entries[i].tid);
+                }
             }
 
             buffer_pool_->unpinPage(posting_page, false, ctx);
