@@ -83,9 +83,10 @@ namespace scratchbird::core
         uint64_t xmin; // Transaction ID that inserted this tuple
         uint64_t xmax; // Transaction ID that deleted/updated this tuple (or 0)
 
-        // Version chain (8 bytes)
-        uint64_t next_version_tid; // TID of next version (0 if latest)
+        // Version chain (8 bytes) - Firebird MGA back versioning
+        uint64_t back_version_tid; // TID of BACK version (previous state, 0 if original)
                                    // Format: (page_id << 32) | (item_id << 16)
+                                   // Points BACKWARD to older version (Newest-to-Oldest chain)
 
         // Tuple metadata (8 bytes)
         uint32_t ctid_page; // Current tuple ID: page number
@@ -109,6 +110,7 @@ namespace scratchbird::core
         static constexpr uint16_t HEAP_MOVED = 0x0080;         // Tuple moved to new page
         static constexpr uint16_t HEAP_XMIN_FROZEN = 0x0100;   // xmin is frozen (FROZEN_XID)
         static constexpr uint16_t HEAP_HOT_UPDATED = 0x0200;   // HOT update (no index update needed)
+        static constexpr uint16_t HEAP_CHAIN = 0x0400;         // Tuple is a back version in chain
 
         // Backward compatibility
         static constexpr uint16_t FLAG_HAS_NULLS = HEAP_HAS_NULLS;
@@ -130,9 +132,27 @@ namespace scratchbird::core
             return (infomask & HEAP_UPDATED) != 0;
         }
 
+        // NEW: MGA back versioning helper methods
+        [[nodiscard]] auto hasBackVersion() const -> bool
+        {
+            return back_version_tid != 0;
+        }
+
+        [[nodiscard]] auto getBackVersionTID() const -> uint64_t
+        {
+            return back_version_tid;
+        }
+
+        void setBackVersionTID(uint32_t page_id, uint16_t item_id)
+        {
+            back_version_tid = (static_cast<uint64_t>(page_id) << 32) |
+                              (static_cast<uint64_t>(item_id) << 16);
+        }
+
+        // DEPRECATED: Use hasBackVersion() instead
         [[nodiscard]] auto hasNextVersion() const -> bool
         {
-            return next_version_tid != 0;
+            return back_version_tid != 0;
         }
 
         // Get TID of this tuple

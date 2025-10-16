@@ -236,7 +236,7 @@ TEST_F(StorageCorruptionTest, CorruptTupleHeader)
     TupleHeader bad_header;
     bad_header.xmin = UINT64_MAX; // Invalid transaction ID
     bad_header.xmax = UINT64_MAX - 1;
-    bad_header.next_version_tid = 0;
+    bad_header.back_version_tid = 0;
     bad_header.ctid_page = 0;
     bad_header.ctid_item = 0;
     bad_header.infomask = 0xFFFF; // All flags set

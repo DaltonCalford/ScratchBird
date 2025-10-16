@@ -9,15 +9,16 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(googletest)
 
-# Test sources
+# Test sources (exclude deprecated tests)
 file(GLOB_RECURSE TEST_SOURCES
-    "*.cpp"
     "unit/*.cpp"
-    "unit/gin/*.cpp"
     "unit/types/*.cpp"
     "unit/domains/*.cpp"
     "integration/*.cpp"
 )
+
+# Explicitly exclude deprecated tests
+list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/deprecated/.*")
 
 # Test executable
 add_executable(scratchbird_tests ${TEST_SOURCES})

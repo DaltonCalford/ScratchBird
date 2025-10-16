@@ -72,7 +72,7 @@ int main()
         auto *hdr = reinterpret_cast<TupleHeader *>(tuple_data.data());
         hdr->xmin = 1;
         hdr->xmax = 0;
-        hdr->next_version_tid = 0;
+        hdr->back_version_tid = 0;
         hdr->infomask = 0;
 
         uint16_t item_id;
@@ -140,7 +140,7 @@ int main()
             auto *hdr = reinterpret_cast<TupleHeader *>(tuple_data.data());
             hdr->xmin = 1;
             hdr->xmax = 0;
-            hdr->next_version_tid = 0;
+            hdr->back_version_tid = 0;
             hdr->infomask = 0;
 
             uint16_t item_id;
@@ -213,7 +213,7 @@ int main()
             auto *hdr = reinterpret_cast<TupleHeader *>(tuple_data.data());
             hdr->xmin = 1;
             hdr->xmax = 0;
-            hdr->next_version_tid = 0;
+            hdr->back_version_tid = 0;
             hdr->infomask = 0;
 
             uint16_t item_id;
@@ -300,7 +300,7 @@ int main()
         auto *hdr = reinterpret_cast<TupleHeader *>(tuple_data.data());
         hdr->xmin = 1;
         hdr->xmax = 0;
-        hdr->next_version_tid = 0;
+        hdr->back_version_tid = 0;
         hdr->infomask = 0;
 
         // Fill data with a test pattern (64-bit values)

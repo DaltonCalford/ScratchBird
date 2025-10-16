@@ -105,7 +105,7 @@ int main()
         auto *hdr = reinterpret_cast<TupleHeader *>(tuple_data.data());
         hdr->xmin = 1;
         hdr->xmax = 0;
-        hdr->next_version_tid = 0;
+        hdr->back_version_tid = 0;
         hdr->infomask = 0;
 
         // Insert tuple
@@ -195,7 +195,7 @@ int main()
         auto *hdr = reinterpret_cast<TupleHeader *>(tuple_data.data());
         hdr->xmin = 1;
         hdr->xmax = 0;
-        hdr->next_version_tid = 0;
+        hdr->back_version_tid = 0;
         hdr->infomask = 0;
 
         uint32_t tuples_inserted = 0;

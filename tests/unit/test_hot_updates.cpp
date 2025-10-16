@@ -77,7 +77,7 @@ int main()
     auto *tuple1_hdr = reinterpret_cast<TupleHeader *>(tuple1_data.data());
     tuple1_hdr->xmin = 100;
     tuple1_hdr->xmax = 0;
-    tuple1_hdr->next_version_tid = 0;
+    tuple1_hdr->back_version_tid = 0;
     tuple1_hdr->infomask = 0;
     memcpy(tuple1_data.data() + sizeof(TupleHeader), "Initial data", 12);
 
@@ -114,7 +114,7 @@ int main()
     auto *tuple2_hdr = reinterpret_cast<TupleHeader *>(tuple2_data.data());
     tuple2_hdr->xmin = 101;
     tuple2_hdr->xmax = 0;
-    tuple2_hdr->next_version_tid = 0;
+    tuple2_hdr->back_version_tid = 0;
     tuple2_hdr->infomask = 0;
     memcpy(tuple2_data.data() + sizeof(TupleHeader), "Updated data", 12);
 
@@ -167,7 +167,7 @@ int main()
     auto *tuple3_hdr = reinterpret_cast<TupleHeader *>(tuple3_data.data());
     tuple3_hdr->xmin = 102;
     tuple3_hdr->xmax = 0;
-    tuple3_hdr->next_version_tid = 0;
+    tuple3_hdr->back_version_tid = 0;
     tuple3_hdr->infomask = 0;
     memcpy(tuple3_data.data() + sizeof(TupleHeader), "Smaller", 7);
 
@@ -200,7 +200,7 @@ int main()
         auto *filler_hdr = reinterpret_cast<TupleHeader *>(filler_data.data());
         filler_hdr->xmin = 200 + i;
         filler_hdr->xmax = 0;
-        filler_hdr->next_version_tid = 0;
+        filler_hdr->back_version_tid = 0;
         filler_hdr->infomask = 0;
 
         uint16_t filler_id = 0;
@@ -225,7 +225,7 @@ int main()
     auto *large_tuple_hdr = reinterpret_cast<TupleHeader *>(large_tuple_data.data());
     large_tuple_hdr->xmin = 300;
     large_tuple_hdr->xmax = 0;
-    large_tuple_hdr->next_version_tid = 0;
+    large_tuple_hdr->back_version_tid = 0;
     large_tuple_hdr->infomask = 0;
     memcpy(large_tuple_data.data() + sizeof(TupleHeader), "Large data", 10);
 
@@ -279,7 +279,7 @@ int main()
     auto *chain_hdr = reinterpret_cast<TupleHeader *>(chain_tuple.data());
     chain_hdr->xmin = 1000;
     chain_hdr->xmax = 0;
-    chain_hdr->next_version_tid = 0;
+    chain_hdr->back_version_tid = 0;
     chain_hdr->infomask = 0;
 
     uint16_t chain_item_id = 0;
@@ -298,7 +298,7 @@ int main()
         auto *update_hdr = reinterpret_cast<TupleHeader *>(update_tuple.data());
         update_hdr->xmin = 1000 + i;
         update_hdr->xmax = 0;
-        update_hdr->next_version_tid = 0;
+        update_hdr->back_version_tid = 0;
         update_hdr->infomask = 0;
 
         char data_str[20];

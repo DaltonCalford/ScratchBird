@@ -4,11 +4,11 @@
  * and that traversal code properly detects corruption
  */
 
-#include "include/scratchbird/core/btree.h"
-#include "include/scratchbird/core/database.h"
-#include "include/scratchbird/core/buffer_pool.h"
-#include "include/scratchbird/core/btree_page.h"
-#include "include/scratchbird/core/page_manager.h"
+#include "scratchbird/core/btree.h"
+#include "scratchbird/core/database.h"
+#include "scratchbird/core/buffer_pool.h"
+#include "scratchbird/core/btree_page.h"
+#include "scratchbird/core/page_manager.h"
 #include <iostream>
 #include <cstdio>
 #include <cstring>

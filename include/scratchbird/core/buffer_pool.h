@@ -60,6 +60,23 @@ namespace scratchbird::core
         auto unpinPage(uint32_t page_id, bool is_dirty, ErrorContext *ctx = nullptr) -> Status;
 
         /**
+         * Allocate a new page and pin it
+         * @param page_id_out Returns the allocated page ID
+         * @param buffer Returns pointer to page data
+         * @param ctx Error context
+         * @return Status code
+         */
+        auto allocatePage(uint32_t *page_id_out, void **buffer, ErrorContext *ctx = nullptr) -> Status;
+
+        /**
+         * Mark a page as dirty (without unpinning)
+         * @param page_id Page to mark dirty
+         * @param ctx Error context
+         * @return Status code
+         */
+        auto markDirty(uint32_t page_id, ErrorContext *ctx = nullptr) -> Status;
+
+        /**
          * Flush a specific page if dirty
          */
         auto flushPage(uint32_t page_id, ErrorContext *ctx = nullptr) -> Status;

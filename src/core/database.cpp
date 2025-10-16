@@ -1139,4 +1139,67 @@ namespace scratchbird::core
         return Status::OK;
     }
 
+    auto Database::allocate_page_id(uint32_t *page_id_out, ErrorContext *ctx) -> Status
+    {
+        if (!is_open())
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Database not open");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        if (page_id_out == nullptr)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "page_id_out cannot be null");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        if (header_ == nullptr)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Database header not loaded");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        // Atomically allocate a new page ID by incrementing next_page_id
+        // NOTE: This is a simple sequential allocation strategy
+        // Future enhancements: free list, page recycling, etc.
+        uint32_t new_page_id = header_->next_page_id;
+
+        // Check for overflow (page_id is uint32_t, max 4 billion pages)
+        if (new_page_id == UINT32_MAX)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                              "Page ID overflow: maximum number of pages reached");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        // Increment next_page_id for next allocation
+        header_->next_page_id++;
+        header_->total_pages++;
+
+        // Persist the updated header to disk
+        // Pin header page through buffer pool to update it
+        if (buffer_pool_ != nullptr)
+        {
+            void *header_buffer;
+            Status status = buffer_pool_->pinPage(0, &header_buffer, ctx);
+            if (status != Status::OK)
+            {
+                // Rollback on failure
+                header_->next_page_id--;
+                header_->total_pages--;
+                return status;
+            }
+
+            auto *db_header = static_cast<DatabaseHeader *>(header_buffer);
+            db_header->next_page_id = header_->next_page_id;
+            db_header->total_pages = header_->total_pages;
+
+            // Unpin as dirty
+            buffer_pool_->unpinPage(0, true, ctx);
+        }
+
+        *page_id_out = new_page_id;
+        return Status::OK;
+    }
+
 } // namespace scratchbird::core

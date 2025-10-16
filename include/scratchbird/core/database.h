@@ -303,6 +303,10 @@ namespace scratchbird
             // Update header total pages (for internal use by PageManager)
             Status update_header_total_pages(uint32_t total_pages, ErrorContext *ctx = nullptr);
 
+            // Allocate a new page ID (for internal use by BufferPool/PageManager)
+            // Thread-safe: atomically increments next_page_id in database header
+            Status allocate_page_id(uint32_t *page_id_out, ErrorContext *ctx = nullptr);
+
         private:
             int fd_ = -1;                      // File descriptor
             std::string path_;                 // Database file path

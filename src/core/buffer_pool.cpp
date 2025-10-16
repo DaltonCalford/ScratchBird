@@ -556,4 +556,62 @@ namespace scratchbird::core
         lru_list_.push_back(frame_index);
     }
 
+    auto BufferPool::allocatePage(uint32_t *page_id_out, void **buffer, ErrorContext *ctx) -> Status
+    {
+        if (page_id_out == nullptr || buffer == nullptr)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Null output parameters");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        // Allocate a new page ID from database
+        uint32_t new_page_id;
+        Status status = db_->allocate_page_id(&new_page_id, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        // Pin the new page (this will allocate a frame and initialize it)
+        status = pinPage(new_page_id, buffer, ctx);
+        if (status != Status::OK)
+        {
+            // Failed to pin - the page_id has been allocated but not used
+            // For simplicity, we don't reclaim it (would require free list)
+            return status;
+        }
+
+        // Mark the new page as dirty since it needs to be written
+        status = markDirty(new_page_id, ctx);
+        if (status != Status::OK)
+        {
+            // Unpin on failure
+            unpinPage(new_page_id, false, ctx);
+            return status;
+        }
+
+        *page_id_out = new_page_id;
+        return Status::OK;
+    }
+
+    auto BufferPool::markDirty(uint32_t page_id, ErrorContext *ctx) -> Status
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+
+        // Find the page in buffer pool
+        auto it = page_table_.find(page_id);
+        if (it == page_table_.end())
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Page not in buffer pool");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        uint32_t frame_index = it->second;
+
+        // Mark the frame as dirty
+        frames_[frame_index].is_dirty = true;
+
+        return Status::OK;
+    }
+
 } // namespace scratchbird::core
