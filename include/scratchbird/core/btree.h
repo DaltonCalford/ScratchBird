@@ -206,6 +206,17 @@ namespace scratchbird
                                                 index_info_.idx_collation_id);
             }
 
+            // ISSUE 3.6 FIX: Optimized key comparison that avoids temporary vector allocation
+            // This overload takes raw pointers and lengths, eliminating heap allocation overhead
+            // Returns: -1 if key1 < key2, 0 if equal, 1 if key1 > key2
+            int compare_keys(const std::vector<uint8_t> &key1, const uint8_t *key2_data,
+                             uint16_t key2_len) const
+            {
+                return charset_manager_.compare(key1.data(), static_cast<uint32_t>(key1.size()),
+                                                key2_data, static_cast<uint32_t>(key2_len),
+                                                index_info_.idx_collation_id);
+            }
+
             // Traverses the B-Tree to find the correct leaf page for a given key.
             Status find_leaf_page(const std::vector<uint8_t> &key, uint64_t *page_num_out,
                                   bool write_lock, ErrorContext *ctx);

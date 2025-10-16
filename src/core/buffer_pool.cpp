@@ -44,11 +44,20 @@ namespace scratchbird::core
             lru_list_.push_back(i);
         }
 
+        // Start background writer if enabled (Issue 2.20)
+        if (config_.enable_background_writer)
+        {
+            startBackgroundWriter();
+        }
+
         return Status::OK;
     }
 
     auto BufferPool::shutdown(ErrorContext *ctx) -> Status
     {
+        // Stop background writer first (before acquiring mutex to avoid deadlock)
+        stopBackgroundWriter();
+
         std::lock_guard<std::mutex> lock(mutex_);
 
         // Flush all dirty pages
@@ -411,6 +420,8 @@ namespace scratchbird::core
             // Fallback to LRU for emergency eviction
             for (unsigned int frame_index : lru_list_)
             {
+                // DEFENSIVE CHECK (Issue 3.2): Validate LRU list entries
+                // This is NOT redundant - it validates data from lru_list_ which could be corrupted
                 if (frame_index >= config_.pool_size)
                 {
                     continue; // Skip invalid entries
@@ -433,7 +444,9 @@ namespace scratchbird::core
             return Status::INVALID_ARGUMENT;
         }
 
-        // SAFETY: Final bounds check before using candidate_frame
+        // ALGORITHM OUTPUT VALIDATION (Issue 3.2): Final safety check
+        // This is NOT redundant - it validates the algorithm's output (candidate_frame) which is
+        // computed from clock sweep or LRU fallback logic. Different variable than internal checks.
         if (candidate_frame >= config_.pool_size)
         {
             DEBUG_LOG_BP("Invalid candidate_frame: " << candidate_frame
@@ -542,12 +555,10 @@ namespace scratchbird::core
         // NOTE: There's no portable way to assert a mutex is locked, so we document the requirement
         // and rely on correct usage patterns. All callers (pinPage) do hold the lock.
 
-        // SAFETY: Bounds check before accessing LRU list
-        if (frame_index >= config_.pool_size)
-        {
-            // This should never happen if callers are correct
-            return; // Silently fail in release, assert in debug
-        }
+        // INTERNAL CONSISTENCY CHECK (Issue 3.2 consolidation):
+        // This is an internal method - callers must provide valid frame_index
+        // Use assertion instead of runtime check since this indicates a programming error
+        assert(frame_index < config_.pool_size && "updateLru called with invalid frame_index");
 
         // Remove from current position in LRU list
         lru_list_.remove(frame_index);
@@ -612,6 +623,246 @@ namespace scratchbird::core
         frames_[frame_index].is_dirty = true;
 
         return Status::OK;
+    }
+
+    // ===========================================================================================
+    // ISSUE 2.20: ADAPTIVE FLUSHING - BACKGROUND WRITER IMPLEMENTATION
+    // ===========================================================================================
+    //
+    // This implementation addresses the audit finding:
+    // "Buffer Pool - No Adaptive Flushing"
+    // File: src/core/buffer_pool.cpp:438-449
+    // Severity: MAJOR
+    //
+    // Problem:
+    // - Flushing only occurs when evicting dirty pages
+    // - Causes checkpoint storms (unpredictable I/O spikes)
+    // - Long checkpoint times block transactions
+    // - No proactive dirty page management
+    //
+    // Solution:
+    // - Background writer thread with adaptive flushing
+    // - Dirty ratio monitoring (percentage of dirty pages)
+    // - Three-tier flushing strategy:
+    //   * Low threshold (25%): Start gentle flushing
+    //   * High threshold (50%): Aggressive flushing
+    //   * Checkpoint threshold (75%): Emergency flushing
+    // - Smooths I/O load over time
+    // - Prevents checkpoint storms
+    //
+    // Benefits:
+    // - Predictable I/O patterns
+    // - Shorter checkpoint times (less dirty pages to flush)
+    // - Better transaction throughput (fewer eviction stalls)
+    // - Configurable flushing behavior
+    //
+    // Algorithm based on PostgreSQL's bgwriter and MySQL InnoDB's adaptive flushing
+    // Spec: docs/specifications/STORAGE_ENGINE_BUFFER_POOL.md (background writer)
+
+    void BufferPool::startBackgroundWriter()
+    {
+        // CRITICAL: This method is called while holding mutex_ in initialize()
+        // Do NOT acquire mutex_ here to avoid deadlock
+
+        bgwriter_shutdown_.store(false, std::memory_order_release);
+        bgwriter_thread_ = std::make_unique<std::thread>(&BufferPool::backgroundWriterMain, this);
+    }
+
+    void BufferPool::stopBackgroundWriter()
+    {
+        // Signal shutdown (no mutex needed - atomic operation)
+        bgwriter_shutdown_.store(true, std::memory_order_release);
+
+        // Wake up background writer if sleeping
+        {
+            std::lock_guard<std::mutex> lock(bgwriter_mutex_);
+            bgwriter_cv_.notify_one();
+        }
+
+        // Wait for thread to finish
+        if (bgwriter_thread_ && bgwriter_thread_->joinable())
+        {
+            bgwriter_thread_->join();
+        }
+    }
+
+    void BufferPool::backgroundWriterMain()
+    {
+        // Background writer thread main loop
+        // This runs continuously until shutdown is requested
+
+        ErrorContext ctx;
+
+        while (!bgwriter_shutdown_.load(std::memory_order_acquire))
+        {
+            // Sleep for configured delay (using condition variable for interruptible sleep)
+            {
+                std::unique_lock<std::mutex> lock(bgwriter_mutex_);
+                bgwriter_cv_.wait_for(lock,
+                                       std::chrono::milliseconds(config_.bgwriter_delay_ms),
+                                       [this] { return bgwriter_shutdown_.load(std::memory_order_acquire); });
+            }
+
+            // Check shutdown again after waking up
+            if (bgwriter_shutdown_.load(std::memory_order_acquire))
+            {
+                break;
+            }
+
+            // Perform one cycle of adaptive flushing
+            backgroundWriterFlush(&ctx);
+
+            // Update statistics (dirty ratio tracking)
+            {
+                std::lock_guard<std::mutex> lock(mutex_);
+                stats_.dirty_ratio_current = calculateDirtyRatio();
+                if (stats_.dirty_ratio_current > stats_.dirty_ratio_max)
+                {
+                    stats_.dirty_ratio_max = stats_.dirty_ratio_current;
+                }
+            }
+        }
+    }
+
+    void BufferPool::backgroundWriterFlush(ErrorContext *ctx)
+    {
+        // Perform one cycle of adaptive flushing
+        // This implements the three-tier flushing strategy based on dirty ratio
+
+        uint32_t pages_written = 0;
+        uint32_t pages_to_write = 0;
+
+        // Acquire mutex for the entire flushing cycle
+        std::lock_guard<std::mutex> lock(mutex_);
+
+        // Calculate current dirty ratio
+        double dirty_ratio = calculateDirtyRatio();
+
+        // Determine how many pages to write based on dirty ratio (adaptive algorithm)
+        if (dirty_ratio >= config_.dirty_ratio_checkpoint)
+        {
+            // EMERGENCY: Checkpoint threshold exceeded
+            // Write maximum pages to prevent checkpoint storm
+            pages_to_write = config_.bgwriter_max_pages;
+        }
+        else if (dirty_ratio >= config_.dirty_ratio_high)
+        {
+            // AGGRESSIVE: High threshold exceeded
+            // Write 75% of maximum pages
+            pages_to_write = static_cast<uint32_t>(config_.bgwriter_max_pages * 0.75);
+        }
+        else if (dirty_ratio >= config_.dirty_ratio_low)
+        {
+            // GENTLE: Low threshold exceeded
+            // Write scaled based on how far above low threshold
+            // Scale linearly from 25% to 75% of max_pages
+            double scale = (dirty_ratio - config_.dirty_ratio_low) /
+                           (config_.dirty_ratio_high - config_.dirty_ratio_low);
+            pages_to_write = static_cast<uint32_t>(config_.bgwriter_max_pages * (0.25 + scale * 0.50));
+        }
+        else
+        {
+            // Below low threshold - no flushing needed
+            stats_.bgwriter_runs++;
+            return;
+        }
+
+        // Ensure we write at least 1 page if dirty ratio triggered flushing
+        if (pages_to_write == 0)
+        {
+            pages_to_write = 1;
+        }
+
+        // Flush dirty pages (up to pages_to_write limit)
+        // Strategy: Iterate through frames and flush dirty, unpinned pages
+        // Prefer pages with lower usage_count (clock sweep integration)
+        for (uint32_t i = 0; i < config_.pool_size && pages_written < pages_to_write; i++)
+        {
+            Frame &frame = frames_[i];
+
+            // Skip non-dirty pages
+            if (!frame.is_dirty)
+            {
+                continue;
+            }
+
+            // Skip pinned pages (in use by transactions)
+            if (frame.pin_count > 0)
+            {
+                continue;
+            }
+
+            // Skip invalid pages
+            if (frame.page_id == Frame::INVALID_PAGE_ID)
+            {
+                continue;
+            }
+
+            // Prefer pages with lower usage_count (cold pages)
+            // This integrates with Clock Sweep eviction algorithm
+            if (frame.usage_count > 2 && pages_written < pages_to_write / 2)
+            {
+                // Skip hot pages in first half of writes (only flush cold pages)
+                continue;
+            }
+
+            // Flush this dirty page
+            Status status = writePageToDisk(frame.page_id, frame.data.get(), ctx);
+            if (status == Status::OK)
+            {
+                frame.is_dirty = false;
+                pages_written++;
+                stats_.bgwriter_pages_written++;
+            }
+            else
+            {
+                // Log error but continue flushing other pages
+                // Background writer should be resilient to transient I/O errors
+                DEBUG_LOG_BP("Background writer failed to flush page "
+                             << frame.page_id << ": " << static_cast<int>(status));
+            }
+        }
+
+        // Update statistics
+        stats_.bgwriter_runs++;
+        if (pages_written >= pages_to_write)
+        {
+            stats_.bgwriter_maxwritten++;
+        }
+    }
+
+    double BufferPool::calculateDirtyRatio() const
+    {
+        // CRITICAL: Caller must hold mutex_
+        // Calculate the ratio of dirty pages to total pages
+
+        uint32_t dirty_count = getDirtyPageCount();
+        uint32_t total_pages = config_.pool_size;
+
+        if (total_pages == 0)
+        {
+            return 0.0;
+        }
+
+        return static_cast<double>(dirty_count) / static_cast<double>(total_pages);
+    }
+
+    uint32_t BufferPool::getDirtyPageCount() const
+    {
+        // CRITICAL: Caller must hold mutex_
+        // Count the number of dirty pages in the buffer pool
+
+        uint32_t dirty_count = 0;
+
+        for (uint32_t i = 0; i < config_.pool_size; i++)
+        {
+            if (frames_[i].is_dirty && frames_[i].page_id != Frame::INVALID_PAGE_ID)
+            {
+                dirty_count++;
+            }
+        }
+
+        return dirty_count;
     }
 
 } // namespace scratchbird::core

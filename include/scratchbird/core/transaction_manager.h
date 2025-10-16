@@ -63,6 +63,24 @@ namespace scratchbird::core
     };
 #pragma pack(pop)
 
+    // ===========================================================================================
+    // TRANSACTION MANAGER - LOCKING CONTRACT
+    // ===========================================================================================
+    //
+    // ISSUE 3.9 FIX: Document mutex usage patterns for all methods
+    //
+    // Mutex hierarchy:
+    //   1. mutex_ - Protects transaction state (next_xid_, oldest_xid_, cache, etc.)
+    //   2. group_commit_mutex_ - Protects group commit queue (independent of mutex_)
+    //
+    // Locking conventions:
+    //   - PUBLIC methods acquire locks internally (thread-safe)
+    //   - PRIVATE helper methods may require caller to hold locks (documented per-method)
+    //   - Never hold mutex_ during I/O operations (release before disk writes)
+    //   - Group commit uses separate mutex to avoid blocking regular operations
+    //
+    // ===========================================================================================
+
     // Transaction Manager - handles transaction lifecycle and visibility
     class TransactionManager
     {
@@ -70,38 +88,66 @@ namespace scratchbird::core
         explicit TransactionManager(Database *db);
         ~TransactionManager();
 
+        // ===========================================================================================
+        // INITIALIZATION AND LOADING
+        // ===========================================================================================
+
         // Initialize transaction subsystem
+        // LOCKING: Called from load() which holds mutex_. Does NOT acquire mutex_ internally.
         auto initialize(ErrorContext *ctx = nullptr) -> Status;
 
         // Load existing transaction state from disk
+        // LOCKING: Thread-safe. Acquires mutex_ internally.
         auto load(ErrorContext *ctx = nullptr) -> Status;
 
+        // ===========================================================================================
+        // TRANSACTION LIFECYCLE
+        // ===========================================================================================
+
         // Begin a new transaction
+        // LOCKING: Thread-safe. Acquires mutex_ internally.
         auto beginTransaction(uint32_t proc_id, uint64_t &xid_out, ErrorContext *ctx = nullptr)
             -> Status;
 
         // Commit a transaction
+        // LOCKING: Thread-safe. Acquires mutex_ for pre-commit work, releases before I/O,
+        //          then uses group_commit_mutex_ for group commit coordination.
         auto commitTransaction(uint32_t proc_id, uint64_t xid, ErrorContext *ctx = nullptr)
             -> Status;
 
         // Rollback a transaction
+        // LOCKING: Thread-safe. Acquires mutex_ for pre-rollback work, releases before I/O,
+        //          then uses group_commit_mutex_ for group commit coordination.
         auto rollbackTransaction(uint32_t proc_id, uint64_t xid, ErrorContext *ctx = nullptr)
             -> Status;
 
+        // ===========================================================================================
+        // TRANSACTION STATE QUERIES
+        // ===========================================================================================
+
         // Get transaction state
+        // LOCKING: Thread-safe. Acquires mutex_ internally. Safe to call from const methods.
         auto getTransactionState(uint64_t xid, TransactionState &state_out,
                                  ErrorContext *ctx = nullptr) const -> Status;
 
         // Check if a transaction is visible to another transaction (READ COMMITTED semantics)
+        // LOCKING: Thread-safe. Acquires mutex_ internally via isXidInRange() and getTransactionState().
         auto isTransactionVisible(uint64_t xid, uint64_t snapshot_xid) const -> bool;
 
         // Validate XID is structurally valid (not INVALID_XID)
+        // LOCKING: No locks required (static method, no shared state access).
         static auto isValidXid(uint64_t xid) -> bool;
 
         // Validate XID is in valid range for current database state
+        // LOCKING: Thread-safe. Acquires mutex_ internally for range checks.
         auto isXidInRange(uint64_t xid) const -> bool;
 
+        // ===========================================================================================
+        // TRANSACTION ID AND MARKER QUERIES
+        // ===========================================================================================
+
         // Get current transaction ID (for read-only operations)
+        // LOCKING: Thread-safe. Acquires mutex_ internally.
         auto getCurrentXid() const -> uint64_t
         {
             // Note: Lock not strictly needed for atomic read, but kept for consistency
@@ -110,6 +156,7 @@ namespace scratchbird::core
         }
 
         // Get oldest valid XID (OIT - for VACUUM and XID validation)
+        // LOCKING: Thread-safe. Acquires mutex_ internally.
         auto getOldestXid() const -> uint64_t
         {
             std::lock_guard<std::mutex> lock(mutex_);
@@ -117,6 +164,7 @@ namespace scratchbird::core
         }
 
         // Get oldest active transaction (OAT)
+        // LOCKING: Thread-safe. Acquires mutex_ internally.
         auto getOldestActiveXid() const -> uint64_t
         {
             std::lock_guard<std::mutex> lock(mutex_);
@@ -124,6 +172,7 @@ namespace scratchbird::core
         }
 
         // Get oldest snapshot transaction (OST)
+        // LOCKING: Thread-safe. Acquires mutex_ internally.
         auto getOldestSnapshot() const -> uint64_t
         {
             std::lock_guard<std::mutex> lock(mutex_);
@@ -131,12 +180,16 @@ namespace scratchbird::core
         }
 
         // Update oldest XID after VACUUM/sweep completes
+        // LOCKING: Thread-safe. Acquires mutex_ internally.
         auto setOldestXid(uint64_t xid, ErrorContext *ctx = nullptr) -> Status;
 
         // Update transaction markers (called during transaction lifecycle)
+        // LOCKING: Thread-safe. Acquires mutex_ internally, then acquires ProcArray read lock.
+        //          Lock order: mutex_ → ProcArray::array_lock (rwlock read).
         auto updateTransactionMarkers(ErrorContext *ctx = nullptr) -> Status;
 
         // Check if approaching XID wraparound
+        // LOCKING: Thread-safe. Acquires mutex_ internally.
         auto isApproachingWraparound() const -> bool
         {
             // Note: Lock not strictly needed for atomic read, but kept for consistency
@@ -145,7 +198,12 @@ namespace scratchbird::core
         }
 
         // Get active transaction for a specific backend
+        // LOCKING: Thread-safe. Uses ProcArrayManager API which handles locking internally.
         auto getBackendXid(uint32_t proc_id) const -> uint64_t;
+
+        // ===========================================================================================
+        // SNAPSHOT ISOLATION SUPPORT
+        // ===========================================================================================
 
         // Snapshot isolation support
         struct Snapshot
@@ -161,17 +219,25 @@ namespace scratchbird::core
                 nullptr; // BufferPool to unpin pages (set when first pin occurs)
 
             // Cleanup method - unpins all pages when snapshot released
+            // LOCKING: Thread-safe. Uses BufferPool API which handles locking internally.
             void cleanup();
 
             ~Snapshot();
         };
 
-        // Get current snapshot (for future MVCC)
+        // Get current snapshot (for MVCC)
+        // LOCKING: Thread-safe. Acquires mutex_ internally, then acquires ProcArray read lock.
+        //          Lock order: mutex_ → ProcArray::array_lock (rwlock read).
         auto getSnapshot(Snapshot &snapshot_out, ErrorContext *ctx = nullptr) -> Status;
 
         // Check if a transaction is visible using snapshot isolation (SNAPSHOT semantics)
         // Returns true if xid is visible according to the snapshot
+        // LOCKING: Thread-safe. Acquires mutex_ internally via isXidInRange() and getTransactionState().
         auto isSnapshotVisible(uint64_t xid, const Snapshot *snapshot) const -> bool;
+
+        // ===========================================================================================
+        // STATISTICS AND CONFIGURATION
+        // ===========================================================================================
 
         // Statistics
         struct Stats
@@ -188,6 +254,8 @@ namespace scratchbird::core
             uint64_t readonly_snapshot_xids_filtered = 0; // XIDs filtered from read-only snapshots
         };
 
+        // Get transaction statistics
+        // LOCKING: Thread-safe. Acquires mutex_ internally.
         auto getStats() const -> Stats
         {
             std::lock_guard<std::mutex> lock(mutex_);
@@ -195,21 +263,32 @@ namespace scratchbird::core
         }
 
         // Group commit control
+        // LOCKING: Thread-safe. Uses atomic operations (no locks required).
         void enableGroupCommit(bool enabled)
         {
             group_commit_enabled_.store(enabled, std::memory_order_release);
         }
 
+        // Set group commit timeout in microseconds
+        // LOCKING: No locks required (simple assignment to non-shared variable).
+        //          Note: Not thread-safe for concurrent updates, but safe for read/write from
+        //          single configuration thread.
         void setGroupCommitTimeout(uint64_t timeout_us)
         {
             group_commit_timeout_us_ = timeout_us;
         }
 
+        // Set group commit batch size
+        // LOCKING: No locks required (simple assignment to non-shared variable).
+        //          Note: Not thread-safe for concurrent updates, but safe for read/write from
+        //          single configuration thread.
         void setGroupCommitBatchSize(uint32_t batch_size)
         {
             group_commit_batch_size_ = batch_size;
         }
 
+        // Get group commit statistics
+        // LOCKING: Thread-safe. Uses atomic operations (no locks required).
         auto getGroupCommitStats() const -> std::pair<uint64_t, uint64_t>
         {
             return {group_commits_performed_.load(std::memory_order_acquire),
@@ -251,6 +330,13 @@ namespace scratchbird::core
             cache_lru_list_; // LRU list: front = most recent, back = least recent
         mutable std::unordered_map<uint64_t, std::list<uint64_t>::iterator>
             cache_lru_map_;        // XID -> position in LRU list
+
+        // TIP page location cache (Issue 3.1 optimization)
+        // Maps XID -> TIP page ID to avoid scanning entire chain
+        // Marked mutable since caching is an internal optimization
+        mutable std::unordered_map<uint64_t, uint32_t> tip_location_cache_;
+        static constexpr uint32_t MAX_TIP_LOCATION_CACHE_SIZE = 1000; // Limit cache size
+
         mutable std::mutex mutex_; // Thread safety for future
 
         // Group commit infrastructure
@@ -282,29 +368,66 @@ namespace scratchbird::core
             1000000; // Trigger autovacuum when this close to UINT64_MAX
         static constexpr uint64_t MAX_SAFE_XID = UINT64_MAX - XID_WRAPAROUND_THRESHOLD;
 
+        // ===========================================================================================
+        // PRIVATE HELPER METHODS - LOCKING REQUIREMENTS
+        // ===========================================================================================
+
         // TIP page management - calculate based on actual page size
+        // LOCKING: No locks required (only reads page_size_ which is immutable after construction).
         [[nodiscard]] auto getTipEntriesPerPage() const -> uint32_t;
 
-        // Helper methods
+        // Helper methods for TIP management
+        // LOCKING: No locks required (called from load() which holds mutex_).
         auto loadTipPage(uint32_t page_id, ErrorContext *ctx) -> Status;
+
+        // LOCKING: No locks required (allocates page and writes header, no shared state).
         auto allocateTipPage(uint32_t &page_id_out, ErrorContext *ctx) -> Status;
+
+        // LOCKING: No locks required internally. Updates TIP pages (disk I/O).
+        //          May update tip_location_cache_ but doesn't require mutex_ (cache is best-effort).
         auto writeTipEntry(uint64_t xid, TransactionState state, ErrorContext *ctx) -> Status;
+
+        // LOCKING: No locks required (reads TIP pages from disk via buffer pool).
         auto findTipEntry(uint64_t xid, TIPEntry &entry_out, ErrorContext *ctx) -> Status;
+
+        // LOCKING: No locks required (performs fsync via Database API).
         auto flushTransactionState(ErrorContext *ctx) -> Status;
 
         // Group commit methods
+        // LOCKING: No locks required (performs batch TIP writes via writeTipEntry()).
         auto writeTipEntriesBatch(const std::vector<std::pair<uint64_t, TransactionState>> &batch,
                                   ErrorContext *ctx) -> Status;
+
+        // LOCKING: Acquires group_commit_mutex_ internally to collect waiters.
+        //          Does NOT hold mutex_ (called after mutex_ released in commit/rollback).
         auto performGroupCommit(CommitWaiter *leader_waiter, ErrorContext *ctx) -> Status;
 
-        // LRU cache management
+        // ===========================================================================================
+        // LRU CACHE MANAGEMENT (PRIVATE HELPERS)
+        // ===========================================================================================
         // Note: These methods are marked const because they only modify mutable cache state,
         // which doesn't affect logical const-ness. The cache is an implementation detail
         // for performance optimization and doesn't change the observable behavior.
-        void touchCacheEntry(uint64_t xid) const; // Move entry to front of LRU
-        void evictOldestCacheEntry() const;       // Remove least recently used entry
-        void addToCacheLRU(uint64_t xid, TransactionState state) const; // Add with LRU tracking
-        void removeFromCacheLRU(uint64_t xid) const;                    // Remove with LRU cleanup
+        //
+        // LOCKING REQUIREMENT: Caller MUST hold mutex_ before calling these methods.
+        // These methods manipulate shared cache data structures and are NOT thread-safe on their own.
+        // ===========================================================================================
+
+        // Move entry to front of LRU (most recently used)
+        // LOCKING: Requires mutex_ held by caller.
+        void touchCacheEntry(uint64_t xid) const;
+
+        // Remove least recently used entry from cache
+        // LOCKING: Requires mutex_ held by caller.
+        void evictOldestCacheEntry() const;
+
+        // Add entry to cache with LRU tracking
+        // LOCKING: Requires mutex_ held by caller.
+        void addToCacheLRU(uint64_t xid, TransactionState state) const;
+
+        // Remove entry from cache with LRU cleanup
+        // LOCKING: Requires mutex_ held by caller.
+        void removeFromCacheLRU(uint64_t xid) const;
     };
 
 } // namespace scratchbird::core

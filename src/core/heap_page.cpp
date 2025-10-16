@@ -493,6 +493,15 @@ namespace scratchbird::core
             return Status::PAGE_CORRUPT;
         }
 
+        // ISSUE 3.8 FIX: Validate page_size consistency
+        // This detects corruption where stored page_size doesn't match buffer size
+        // Such mismatches can cause subsequent operations to access out-of-bounds memory
+        if (hdr->page_size != page_size_)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "Page size mismatch");
+            return Status::PAGE_CORRUPT;
+        }
+
         // Validate special area
         const HeapPageSpecial *special = getSpecial();
 

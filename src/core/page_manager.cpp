@@ -213,9 +213,8 @@ namespace scratchbird::core
         // Write empty pages to extend file
         for (uint32_t i = 0; i < num_pages; i++)
         {
-            memset(buffer.get(), 0, page_size_);
-
-            // Initialize page header
+            // ISSUE 3.5 FIX: Only zero the data portion, not the header
+            // Initialize page header first (will be overwritten anyway)
             auto *header = reinterpret_cast<PageHeader *>(buffer.get());
             header->magic = K_MAGIC_SBRD;
             header->version = 1;
@@ -229,6 +228,10 @@ namespace scratchbird::core
             header->item_count = 0;
             header->free_offset = sizeof(PageHeader);
             header->special_size = 0;
+
+            // Zero only the data portion after the header
+            // This avoids wasting CPU cycles zeroing bytes that are immediately overwritten
+            memset(buffer.get() + sizeof(PageHeader), 0, page_size_ - sizeof(PageHeader));
 
             // Write page
             Status status = db_->write_page(total_pages_ + i, buffer.get(), ctx);

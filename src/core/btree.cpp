@@ -376,9 +376,8 @@ namespace scratchbird::core
 
                     const uint8_t *node_key_data =
                         reinterpret_cast<const uint8_t *>(n) + sizeof(SBBTreeNode);
-                    std::vector<uint8_t> node_key(node_key_data, node_key_data + n->btn_key_len);
-
-                    int cmp = compare_keys(key, node_key);
+                    // ISSUE 3.6 FIX: Use optimized compare_keys to avoid vector allocation
+                    int cmp = compare_keys(key, node_key_data, n->btn_key_len);
                     if (cmp == 0)
                     {
                         found_index = i;
@@ -391,10 +390,9 @@ namespace scratchbird::core
             // Extract the node's key
             const uint8_t *node_key_data =
                 reinterpret_cast<const uint8_t *>(node) + sizeof(SBBTreeNode);
-            std::vector<uint8_t> node_key(node_key_data, node_key_data + node->btn_key_len);
 
-            // Compare keys using collation-aware comparison
-            int cmp = compare_keys(key, node_key);
+            // ISSUE 3.6 FIX: Use optimized compare_keys to avoid vector allocation
+            int cmp = compare_keys(key, node_key_data, node->btn_key_len);
             if (cmp == 0)
             {
                 found_index = mid;
@@ -535,10 +533,10 @@ namespace scratchbird::core
                 // Extract the node's key
                 const uint8_t *node_key_data =
                     reinterpret_cast<const uint8_t *>(node) + sizeof(SBBTreeNode);
-                std::vector<uint8_t> node_key(node_key_data, node_key_data + node->btn_key_len);
 
+                // ISSUE 3.6 FIX: Use optimized compare_keys to avoid vector allocation
                 // If our search key is less than this node's key, go to this node's left child
-                int cmp = compare_keys(key, node_key);
+                int cmp = compare_keys(key, node_key_data, node->btn_key_len);
                 if (cmp < 0)
                 {
                     next_page_num = node->btn_child_page;
@@ -691,9 +689,9 @@ namespace scratchbird::core
             // Extract the node's key
             const uint8_t *node_key_data =
                 reinterpret_cast<const uint8_t *>(node) + sizeof(SBBTreeNode);
-            std::vector<uint8_t> node_key(node_key_data, node_key_data + node->btn_key_len);
 
-            int cmp = compare_keys(key, node_key);
+            // ISSUE 3.6 FIX: Use optimized compare_keys to avoid vector allocation
+            int cmp = compare_keys(key, node_key_data, node->btn_key_len);
             if (cmp == 0)
             {
                 // Check if the tuple_id matches
@@ -1256,10 +1254,9 @@ namespace scratchbird::core
                 reinterpret_cast<uint8_t *>(parent_page_data_ptr) + parent_offsets[i]);
             const uint8_t *existing_key_data =
                 reinterpret_cast<const uint8_t *>(existing_node) + sizeof(SBBTreeNode);
-            std::vector<uint8_t> existing_key(existing_key_data,
-                                              existing_key_data + existing_node->btn_key_len);
 
-            int cmp = compare_keys(separator_key, existing_key);
+            // ISSUE 3.6 FIX: Use optimized compare_keys to avoid vector allocation
+            int cmp = compare_keys(separator_key, existing_key_data, existing_node->btn_key_len);
             if (cmp < 0)
             {
                 insert_pos = i;
