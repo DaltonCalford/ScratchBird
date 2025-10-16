@@ -3,8 +3,8 @@
  * Verifies that ClogStatus enum fits in 2-bit storage with compile-time checks
  */
 
-#include "include/scratchbird/core/clog.h"
-#include "include/scratchbird/core/database.h"
+#include "scratchbird/core/clog.h"
+#include "scratchbird/core/database.h"
 #include <iostream>
 #include <cstdio>
 #include <type_traits>

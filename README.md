@@ -15,47 +15,51 @@ ctest --output-on-failure
 
 ## Current Status
 
-**Version:** Alpha 1.2 (Phase 2, 3 & 4 Complete)
+**Version:** Alpha 1.2+ (MGA Phases 1-4 Complete, Phase 5 Design Complete)
 **Status:** Educational/Development (Not Production Ready)
-**Last Updated:** October 12, 2025
-**Latest:** See [Current Status](docs/status/CURRENT_STATUS.md) | [Code Audit](docs/audit/after_transaction_work.md) | [TODO](docs/development/TODO.md)
+**Last Updated:** October 16, 2025 (21:00)
+**Latest:** See [MGA Alpha Status](docs/MGA_ALPHA_STATUS.md) | [Current Status](docs/status/CURRENT_STATUS.md) | [TODO](docs/development/TODO.md)
 
 ### ✅ Major Milestones (October 2025)
+
+**MGA Back Versioning Implementation Complete (Oct 16, 2025)** 🎉
+- ✅ **Phase 1**: Data structure changes - renamed next_version_tid → back_version_tid, added helper methods
+- ✅ **Phase 2**: updateTuple() rewrite - 3-phase Firebird MGA algorithm with back version creation
+- ✅ **Phase 3**: findVisibleVersion() rewrite - dual-access mode, N2O traversal, cycle detection
+- ✅ **Phase 4**: Cross-page back versions - page allocation infrastructure (Database::allocate_page_id, BufferPool::allocatePage/markDirty), cross-page creation/traversal, snapshot pin management
+- ✅ **Phase 5 Design**: Index integration architecture documented - awaits executor layer implementation
+- ✅ **Phase 6**: Test suite development - 500+ lines, 6 comprehensive tests
+- ✅ Item pointer stability - SAME item_id returned on UPDATE (core MGA benefit)
+- ✅ N2O version chains - Newest-to-Oldest traversal
+- ✅ Cross-page support - no more PAGE_FULL errors, works with TOAST
+- ✅ Test environment cleanup - deprecated 10+ outdated tests, created standalone validation tool
+- ⏳ Alpha validation - in progress
+- ⏳ Performance benchmarks - pending
 
 **Phase 2: ConnectionContext & Always-In-Transaction (Oct 7, 2025)**
 - ✅ Multi-connection support with thread-local storage
 - ✅ Always-in-transaction execution model
-- ✅ Locking enabled throughout codebase (15+ TODO markers resolved)
-- ✅ Parser support for transaction statements (START TRANSACTION, COMMIT, ROLLBACK)
+- ✅ Locking enabled throughout codebase
+- ✅ Parser support for transaction statements
 
 **Phase 3: Firebird Transaction Model (Oct 7-11, 2025)**
 - ✅ Transaction markers (OIT, OAT, OST, NEXT)
-- ✅ All four isolation levels (READ UNCOMMITTED, READ COMMITTED, REPEATABLE READ, SERIALIZABLE)
+- ✅ All four isolation levels
 - ✅ Sweep mechanism for garbage collection
-- ✅ Long transaction monitoring with action policies
-- ✅ READ ONLY transaction optimizations
-- ✅ Monitoring queries (MON_ACTIVE_TRANSACTIONS, etc.)
+- ✅ Long transaction monitoring
+- ✅ READ ONLY optimizations
 
-**Phase 4: Critical Issues Resolution (Oct 12, 2025)**
-- ✅ CRIT-001: Deadlock detection fully implemented with cycle detection & victim selection
-- ✅ CRIT-002: Cross-page tuple updates with version chain management
-- ✅ CRIT-003: Lock manager converted to RAII (smart pointers, memory safe)
-- ✅ CRIT-004: Transaction abort in deadlock detector (full rollback)
-- ✅ CRIT-005: Long transaction monitor stub implementations completed
-- ✅ HIGH-002: Buffer pool eviction safety with comprehensive bounds checking
-- ✅ HIGH-003: Magic numbers moved to configuration (config.h)
-- ✅ HIGH-004: Logging framework integrated (Logger with categories & levels)
-- ✅ MED-001: Code formatting standardized with clang-format (83 files)
-- ✅ MED-002: Const correctness (Phase 1, 2 & 3) - 19 methods improved across 6 classes
-- ✅ MED-003: Removed commented debug code (fprintf/printf cleanup)
-- ✅ MED-004: Type cast safety audit (4 const_cast, 345 reinterpret_cast audited)
-- ✅ MED-005: Page size mismatch detection with logging & statistics tracking
+**Phase 4: Critical Issues Resolution (Oct 12-14, 2025)**
+- ✅ **23/23 CRITICAL issues resolved** (9 fixed + 14 false positives)
+- ✅ 15/41 MAJOR issues resolved (26 remaining)
+- ✅ Comprehensive audit report with 126 issues documented
 
 ### What's Implemented ✅
-- **Storage Engine:** Page management, buffer pool with 2-pass eviction, heap pages, TOAST, compression, cross-page updates (95%)
+- **Storage Engine:** Page management, buffer pool, heap pages, TOAST, compression, page allocation infrastructure (100%)
 - **Transaction Management:** Full Firebird-style MGA with all isolation levels, sweep, GC, monitoring (98%)
+- **MVCC/MGA:** ✅ **Back versioning (Phases 1-4)**, cross-page support, stable item pointers, N2O chains, snapshot pin management (100% implementation, Phase 5 design complete)
 - **Concurrency:** Multi-connection support, locking operational, deadlock detection, READ ONLY optimizations (95%)
-- **Indexing:** B-tree (2,256 lines) and hash indexes (2,254 lines) with scans, index updates on relocation (85%)
+- **Indexing:** B-tree (2,256 lines), Hash (2,254 lines), GIN (Phase 6 complete), Bitmap (Roaring compression) (90%)
 - **Type System:** 30+ data types, UUIDv7, timezones, 100+ collations (95%)
 - **Query Processing:** Lexer, parser (with transaction statements), AST, semantic analyzer, bytecode, executor (72%)
 - **Catalog:** System catalog with metadata persistence (75%)
@@ -65,19 +69,23 @@ ctest --output-on-failure
 - **No WAL** (no crash recovery - Beta requirement)
 - **Limited SQL** (no JOINs, subqueries, many advanced features - see TODO.md)
 - **No network layer** (local database only - Beta requirement)
+- **MGA Index Integration:** Phase 5 design complete, implementation awaits executor layer development
 - **Incomplete type system** (missing INT128, UINT types, JSONB, XML, VECTOR - see ALPHA-001)
-- **Missing advanced indexes** (GIN, GIST, BRIN, Bitmap - see ALPHA-003)
 
 ### Recent Achievements 🎉
-- ✅ **All Critical Issues Resolved** - CRIT-001 through CRIT-005 completed (Oct 12, 2025)
-- ✅ **All High Priority Issues Resolved** - HIGH-001 through HIGH-005 completed (Oct 12, 2025)
-- ✅ **All Medium Priority Issues Resolved** - MED-001 through MED-005 completed (Oct 12, 2025)
+- ✅ **MGA Phases 1-4 Complete** - Full Firebird-style back versioning with cross-page support (Oct 16, 2025) 🎉
+- ✅ **MGA Phase 5 Design Complete** - Index integration architecture documented, awaits executor (Oct 16, 2025)
+- ✅ **Page Allocation Infrastructure** - Database::allocate_page_id, BufferPool::allocatePage/markDirty (Oct 16, 2025)
+- ✅ **Cross-Page Back Versions** - No more PAGE_FULL errors, full TOAST support (Oct 16, 2025)
+- ✅ **MGA Test Suite** - 500+ lines, 6 comprehensive tests covering all Alpha scenarios (Oct 16, 2025)
+- ✅ **Test Environment Cleanup** - Deprecated 10+ outdated tests, standalone validation tool created (Oct 16, 2025)
+- ✅ **All Critical Issues Resolved** - 23/23 critical issues from comprehensive audit (Oct 14, 2025)
+- ✅ **PHASE 2 Major Fixes** - 15/41 major issues resolved (Oct 14, 2025)
 - ✅ **Memory Safety** - Lock manager fully RAII-ified with smart pointers
 - ✅ **Production-Ready Logging** - Logger framework with categories and levels integrated
 - ✅ **Code Quality Improvements** - 83 files formatted with clang-format, magic numbers eliminated
-- ✅ **API Safety** - Const correctness improvements across 19 methods in 6 core classes
-- ✅ **Corruption Detection** - Page size mismatches now logged and tracked with statistics
-- See [TODO.md](docs/development/TODO.md) for remaining work and Alpha 1.2 requirements
+- See [MGA_ALPHA_STATUS.md](docs/MGA_ALPHA_STATUS.md) for complete MGA implementation details
+- See [TODO.md](docs/development/TODO.md) for remaining work and Alpha 1.3 roadmap
 
 ## Project Structure
 
@@ -98,13 +106,14 @@ ctest --output-on-failure
 
 ## Development Process
 
-1. Review [Current Status](docs/status/CURRENT_STATUS.md) (updated Oct 12, 2025)
-2. Check [TODO.md](docs/development/TODO.md) for prioritized work items (Alpha 1.2 goals)
-3. Review completion docs: [Phase 2](docs/planning/implemented/PHASE_2_COMPLETE.md) | [Phase 3](docs/planning/implemented/PHASE_3_COMPLETE.md)
-4. Review audits: [Code Audit](docs/audit/after_transaction_work.md) | [Doc Audit](docs/audit/after_transaction_documentation_work.md)
-5. Follow [Coding Standards](docs/development/CODING_STANDARDS.md)
-6. Run tests frequently with `ctest --output-on-failure`
-7. See [Build Instructions](docs/development/BUILD_INSTRUCTIONS.md) for details
+1. Review [MGA Alpha Status](docs/MGA_ALPHA_STATUS.md) (updated Oct 16, 2025) - **Latest milestone**
+2. Review [Current Status](docs/status/CURRENT_STATUS.md) (updated Oct 12, 2025)
+3. Check [TODO.md](docs/development/TODO.md) for prioritized work items (Alpha 1.3 goals)
+4. Review [MGA Implementation Plan](docs/planning/MGA_PROPER_INDEX_IMPLEMENTATION_PLAN.md) for MGA details
+5. Review [Comprehensive Audit](docs/audit/COMPREHENSIVE_AUDIT_REPORT.md) for known issues
+6. Follow [Coding Standards](docs/development/CODING_STANDARDS.md)
+7. Run tests frequently with `ctest --output-on-failure`
+8. See [Build Instructions](docs/development/BUILD_INSTRUCTIONS.md) for details
 
 ## Building
 

@@ -663,7 +663,7 @@ namespace scratchbird
             // HeapPage::insertTuple() will set:
             // - xmin (from transaction manager)
             // - xmax = 0
-            // - next_version_tid = 0
+            // - back_version_tid = 0 (no back version for new insert)
             // - ctid_page, ctid_item (from final item position)
 
             // Insert tuple via storage engine

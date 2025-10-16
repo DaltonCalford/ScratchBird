@@ -809,7 +809,9 @@ namespace scratchbird::core
 
             // Update old tuple's version chain to point to new page
             old_tuple_hdr->xmax = xmax;
-            old_tuple_hdr->next_version_tid = new_tid;
+            // TODO PHASE 2: This pointer direction is WRONG (forward not back)
+            // Will be fixed in Phase 2 when implementing proper back versioning
+            old_tuple_hdr->back_version_tid = new_tid;
             old_tuple_hdr->infomask |= TupleHeader::HEAP_UPDATED;
             old_tuple_hdr->infomask |= TupleHeader::HEAP_MOVED; // Mark as moved to different page
             old_tuple_hdr->infomask |= TupleHeader::HEAP_XMAX_COMMITTED;

@@ -193,14 +193,14 @@ TEST_F(CrossPageUpdateTest, VersionChainLinksAcrossPages)
 
     const auto* old_hdr = reinterpret_cast<const TupleHeader*>(old_tuple_data);
 
-    // Verify old tuple has next_version_tid pointing to new location
-    EXPECT_NE(old_hdr->next_version_tid, 0UL) << "Old tuple should have next version";
+    // Verify old tuple has back_version_tid pointing to new location
+    EXPECT_NE(old_hdr->back_version_tid, 0UL) << "Old tuple should have next version";
     EXPECT_TRUE(old_hdr->infomask & TupleHeader::HEAP_UPDATED) << "Old tuple should be marked as updated";
     EXPECT_TRUE(old_hdr->infomask & TupleHeader::HEAP_MOVED) << "Old tuple should be marked as moved";
 
-    // Extract page_id and item_id from next_version_tid
-    uint32_t next_page = static_cast<uint32_t>(old_hdr->next_version_tid >> 32);
-    uint16_t next_item = static_cast<uint16_t>((old_hdr->next_version_tid >> 16) & 0xFFFF);
+    // Extract page_id and item_id from back_version_tid
+    uint32_t next_page = static_cast<uint32_t>(old_hdr->back_version_tid >> 32);
+    uint16_t next_item = static_cast<uint16_t>((old_hdr->back_version_tid >> 16) & 0xFFFF);
 
     EXPECT_EQ(next_page, new_page_id) << "Version chain should point to new page";
     EXPECT_EQ(next_item, new_item_id) << "Version chain should point to new item";
@@ -260,7 +260,7 @@ TEST_F(CrossPageUpdateTest, MultipleUpdatesCreateChain)
     status = page1.getTuple(item_id_v1, &tuple1_data, &tuple1_size, &ctx);
     ASSERT_EQ(status, Status::OK);
     const auto* hdr1 = reinterpret_cast<const TupleHeader*>(tuple1_data);
-    uint32_t next_page_from_v1 = static_cast<uint32_t>(hdr1->next_version_tid >> 32);
+    uint32_t next_page_from_v1 = static_cast<uint32_t>(hdr1->back_version_tid >> 32);
     EXPECT_EQ(next_page_from_v1, page_id_v2) << "V1 should point to V2";
     db_->buffer_pool()->unpinPage(page_id_v1, false, &ctx);
 
@@ -274,7 +274,7 @@ TEST_F(CrossPageUpdateTest, MultipleUpdatesCreateChain)
     status = page2.getTuple(item_id_v2, &tuple2_data, &tuple2_size, &ctx);
     ASSERT_EQ(status, Status::OK);
     const auto* hdr2 = reinterpret_cast<const TupleHeader*>(tuple2_data);
-    uint32_t next_page_from_v2 = static_cast<uint32_t>(hdr2->next_version_tid >> 32);
+    uint32_t next_page_from_v2 = static_cast<uint32_t>(hdr2->back_version_tid >> 32);
     EXPECT_EQ(next_page_from_v2, page_id_v3) << "V2 should point to V3";
     db_->buffer_pool()->unpinPage(page_id_v2, false, &ctx);
 
@@ -288,7 +288,7 @@ TEST_F(CrossPageUpdateTest, MultipleUpdatesCreateChain)
     status = page3.getTuple(item_id_v3, &tuple3_data, &tuple3_size, &ctx);
     ASSERT_EQ(status, Status::OK);
     const auto* hdr3 = reinterpret_cast<const TupleHeader*>(tuple3_data);
-    EXPECT_EQ(hdr3->next_version_tid, 0UL) << "V3 should be latest version";
+    EXPECT_EQ(hdr3->back_version_tid, 0UL) << "V3 should be latest version";
     db_->buffer_pool()->unpinPage(page_id_v3, false, &ctx);
 }
 

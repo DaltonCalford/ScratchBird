@@ -72,7 +72,7 @@ int main()
         auto *tuple_hdr = reinterpret_cast<TupleHeader*>(normal_tuple.data());
         tuple_hdr->xmin = 1;
         tuple_hdr->xmax = 0;
-        tuple_hdr->next_version_tid = 0;
+        tuple_hdr->back_version_tid = 0;
         tuple_hdr->ctid_page = 0;
         tuple_hdr->ctid_item = 0;
         tuple_hdr->infomask = 0;
@@ -103,7 +103,7 @@ int main()
         auto *tuple_hdr = reinterpret_cast<TupleHeader*>(max_tuple.data());
         tuple_hdr->xmin = 2;
         tuple_hdr->xmax = 0;
-        tuple_hdr->next_version_tid = 0;
+        tuple_hdr->back_version_tid = 0;
         tuple_hdr->ctid_page = 0;
         tuple_hdr->ctid_item = 0;
         tuple_hdr->infomask = 0;
@@ -141,7 +141,7 @@ int main()
         auto *tuple_hdr = reinterpret_cast<TupleHeader*>(huge_tuple.data());
         tuple_hdr->xmin = 3;
         tuple_hdr->xmax = 0;
-        tuple_hdr->next_version_tid = 0;
+        tuple_hdr->back_version_tid = 0;
         tuple_hdr->ctid_page = 0;
         tuple_hdr->ctid_item = 0;
         tuple_hdr->infomask = 0;
@@ -185,7 +185,7 @@ int main()
         auto *tuple_hdr = reinterpret_cast<TupleHeader*>(dummy_tuple.data());
         tuple_hdr->xmin = 4;
         tuple_hdr->xmax = 0;
-        tuple_hdr->next_version_tid = 0;
+        tuple_hdr->back_version_tid = 0;
         tuple_hdr->ctid_page = 0;
         tuple_hdr->ctid_item = 0;
         tuple_hdr->infomask = 0;

@@ -3,10 +3,10 @@
  * Verifies that calculatePageChecksum is properly accessible and working
  */
 
-#include "include/scratchbird/core/clog.h"
-#include "include/scratchbird/core/database.h"
-#include "include/scratchbird/core/buffer_pool.h"
-#include "include/scratchbird/core/ondisk.h"
+#include "scratchbird/core/clog.h"
+#include "scratchbird/core/database.h"
+#include "scratchbird/core/buffer_pool.h"
+#include "scratchbird/core/ondisk.h"
 #include <iostream>
 #include <cstdio>
 #include <cstring>
