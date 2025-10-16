@@ -81,11 +81,14 @@ namespace scratchbird
             PageHeader gpl_header;                          // Standard page header (64 bytes)
             uint16_t gpl_entry_count;                       // Number of TIDs (2 bytes)
             uint8_t gpl_is_tree;                            // 0 = list, 1 = tree root pointer (1 byte)
-            uint8_t gpl_reserved[13];                       // Reserved for alignment (13 bytes)
+            uint8_t gpl_is_compressed;                      // 1 = compressed, 0 = uncompressed (1 byte)
+            uint16_t gpl_compressed_bytes;                  // Size of compressed data (2 bytes)
+            uint8_t gpl_reserved[10];                       // Reserved for alignment (10 bytes, was 13)
             union
             {
-                GinPostingEntry gpl_entries[(8192 - 80) / 8]; // TID list (1014 entries)
-                uint64_t gpl_tree_root;                        // Root page of posting B-Tree
+                uint8_t gpl_compressed_data[8192 - 80];     // Compressed TID data
+                GinPostingEntry gpl_entries[(8192 - 80) / 8]; // Uncompressed TIDs (backward compat)
+                uint64_t gpl_tree_root;                     // Root page of posting B-Tree
             } gpl_data;
         } __attribute__((packed));
 
