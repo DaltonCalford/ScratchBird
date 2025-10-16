@@ -561,9 +561,11 @@ Based on PostgreSQL and other database implementations:
 
 **Phase 4: Integration** ✅ COMPLETE
 - `commitTransaction()` rewritten with group commit (transaction_manager.cpp:325-434)
-- Leader election pattern: first waiter becomes leader
+- `rollbackTransaction()` extended with group commit (transaction_manager.cpp:436-539)
+- Leader election pattern: first waiter (commit or rollback) becomes leader
 - Followers join queue and wait for leader to complete
-- Fallback to individual commits when group commit disabled
+- Mixed commit/rollback batches supported (same queue, same fsync)
+- Fallback to individual operations when group commit disabled
 - Maintains compatibility with Issue 1.14 fix (clear ProcArray after sync)
 
 **Phase 5: Configuration** ✅ COMPLETE
@@ -588,11 +590,12 @@ Based on PostgreSQL and other database implementations:
    - Added group commit method declarations (lines 295-298)
 
 **Source Files**:
-2. `src/core/transaction_manager.cpp` (~200 lines added/modified)
+2. `src/core/transaction_manager.cpp` (~300 lines added/modified)
    - Added `#include <thread>` for sleep_for (line 16)
    - Added `writeTipEntriesBatch()` function (lines 1109-1137)
    - Added `performGroupCommit()` function (lines 1139-1226)
    - Rewritten `commitTransaction()` with group commit (lines 325-434)
+   - Rewritten `rollbackTransaction()` with group commit (lines 436-539)
 
 ### Next Steps
 1. Create unit tests in `tests/unit/test_group_commit.cpp`
