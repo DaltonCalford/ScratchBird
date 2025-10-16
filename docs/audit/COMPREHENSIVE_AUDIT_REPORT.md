@@ -1086,20 +1086,46 @@ special->pd_lower = sizeof(PageHeader) + (item_count * sizeof(ItemPointer));
 
 ---
 
-### 2.17 B-Tree - No Prefix Compression
+### 2.17 B-Tree - No Prefix Compression → ⏳ **DEFERRED TO BETA** (2025-10-16)
 
-**Severity**: MAJOR
+**Severity**: MAJOR (Performance Optimization)
 **File**: `src/core/btree.cpp`
-**Spec Reference**: `docs/specifications/LOW_LEVEL_SPECIFICATION_B-TREE_INDEX.md` (compression)
+**Spec Reference**: `docs/specifications/LOW_LEVEL_SPECIFICATION_B-TREE_INDEX.md` (Section 4.3)
 
-**Issue**: Prefix compression not implemented.
+**Original Issue**: Prefix compression not implemented for B-tree nodes.
 
 **Impact**:
-- Larger index size
-- More I/O
+- Larger index size (30-50% larger than necessary)
+- More I/O operations
 - Reduced cache efficiency
+- Lower index fan-out
 
-**Recommendation**: Implement prefix compression for string keys.
+**Analysis Status** (2025-10-16): ✅ COMPLETE
+
+**Findings**:
+- **Data Structures**: ✅ READY - All required fields already exist:
+  - `SBBTreeNode::btn_prefix_len` (uint16_t)
+  - `SBBTreeNode::btn_suffix_trunc` (uint16_t)
+  - `SBBTreePage::btr_prefix_total`, `btr_suffix_total`, `btr_min_prefix_len`
+- **Current Behavior**: ❌ NOT USED - All compression fields set to 0
+- **Implementation Required**: Compression algorithm, key decompression, integration (~8-12 days)
+
+**Expected Benefits** (when implemented):
+- 30-50% reduction in index size for string keys
+- 40-60% reduction for UUIDv7 keys (time-series)
+- Better cache utilization, higher fan-out, reduced I/O
+
+**Recommendation**: **DEFER TO BETA**
+- Not a correctness issue - B-tree fully functional without compression
+- Pure performance optimization
+- MGA Phase 5 (index integration) has higher priority
+- Requires comprehensive testing (affects many code paths)
+- Can be added incrementally when performance profiling shows benefit
+
+**Status**: ANALYZED & DOCUMENTED - Implementation deferred
+**Deferred Date**: 2025-10-16
+**Estimated Effort**: 8-12 days when prioritized
+**See**: `docs/audit/ISSUE_2_17_STATUS.md` for complete analysis and implementation plan
 
 ---
 
