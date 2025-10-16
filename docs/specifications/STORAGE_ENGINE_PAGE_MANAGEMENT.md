@@ -392,6 +392,289 @@ bool vm_page_is_all_visible(
 }
 ```
 
+### 2.3 FSM Reconstruction (MGA-Style Recovery)
+
+```c
+// FSM reconstruction for crash recovery (Firebird-style)
+// Rebuilds FSM from actual page state on database open
+// Supports full MGA transaction recovery without WAL
+
+// FSM reconstruction context
+typedef struct fsm_reconstruction_context {
+    uint32_t        total_pages;           // Total pages to scan
+    uint32_t        allocated_count;       // Pages with valid headers
+    uint32_t        free_count;            // Pages without headers
+    uint32_t        empty_count;           // Non-existent pages
+    uint32_t        corrupt_count;         // Read errors (marked allocated)
+
+    // Statistics
+    uint64_t        scan_start_time;       // Start time
+    uint64_t        scan_duration_ms;      // Duration in milliseconds
+} FSMReconstructionContext;
+
+// Reconstruct FSM from actual page state
+Status fsm_reconstruct_from_pages(
+    Database* db,
+    PageManager* page_mgr,
+    FSMReconstructionContext* ctx)
+{
+    LOG_INFO(STORAGE, "FSM reconstruction: Scanning %u pages...", ctx->total_pages);
+
+    // Reset bitmap and counters
+    fsm_reset_bitmap(page_mgr);
+
+    // Mark system pages as allocated (always)
+    // Page 0: Database header
+    // Page 1: System catalog
+    // Page 2: FSM itself
+    fsm_mark_allocated(page_mgr, 0);
+    fsm_mark_allocated(page_mgr, 1);
+    fsm_mark_allocated(page_mgr, 2);
+
+    ctx->allocated_count = 3;
+    ctx->free_count = 0;
+    ctx->empty_count = 0;
+    ctx->corrupt_count = 0;
+
+    // Allocate buffer for reading pages
+    Page buffer = allocate_page(db->page_size);
+    if (buffer == NULL) {
+        return Status::OOM;
+    }
+
+    // Scan all pages to determine actual allocation state
+    for (uint32_t page_id = 3; page_id < ctx->total_pages; page_id++) {
+        Status status = db_read_page(db, page_id, buffer);
+
+        if (status == Status::IO_ERROR) {
+            // Page doesn't exist yet (file not extended to this point)
+            // Mark as free - safe because page was never written
+            fsm_mark_free(page_mgr, page_id);
+            ctx->free_count++;
+            ctx->empty_count++;
+            continue;
+        }
+
+        if (status != Status::OK) {
+            // Read error - mark as allocated (conservative approach)
+            // Better to waste space than to double-allocate
+            // Double allocation → data corruption
+            // Wasted space → resolved by GC/VACUUM
+            fsm_mark_allocated(page_mgr, page_id);
+            ctx->corrupt_count++;
+            LOG_WARNING(STORAGE,
+                "FSM reconstruction: page %u read error, marking allocated",
+                page_id);
+            continue;
+        }
+
+        // Check if page is initialized (has valid header)
+        SBPageHeader* header = (SBPageHeader*)buffer;
+
+        // Page is allocated if:
+        // 1. Has correct magic number (K_MAGIC_SBRD)
+        // 2. page_id matches (prevents corruption detection)
+        // 3. page_size matches (prevents format mismatch)
+        if (header->magic == K_MAGIC_SBRD &&
+            header->page_id == page_id &&
+            header->page_size == db->page_size)
+        {
+            // Page is initialized and allocated
+            // IMPORTANT: Even if the transaction that allocated it was aborted,
+            // the page contains data and should not be reused until GC
+            //
+            // MGA Transaction Recovery Model:
+            // - Aborted transaction: xmin in TIP = ABORTED
+            // - Tuple on page: xmin = aborted XID → invisible to all
+            // - Page remains allocated (prevents double allocation)
+            // - Garbage collector will reclaim page later
+            // - Matches Firebird's proven MGA recovery approach
+            fsm_mark_allocated(page_mgr, page_id);
+            ctx->allocated_count++;
+        }
+        else
+        {
+            // Page is uninitialized or corrupt - mark as free
+            // This allows reuse of pages that were never properly initialized
+            // (e.g., allocatePage() returned page but crash before initialization)
+            fsm_mark_free(page_mgr, page_id);
+            ctx->free_count++;
+            ctx->empty_count++;
+        }
+    }
+
+    free_page(buffer);
+
+    LOG_INFO(STORAGE,
+        "FSM reconstruction complete: %u allocated, %u free, %u empty, %u corrupt",
+        ctx->allocated_count, ctx->free_count,
+        ctx->empty_count, ctx->corrupt_count);
+
+    // Mark FSM as dirty so it gets flushed with the corrected state
+    fsm_mark_dirty(page_mgr);
+
+    return Status::OK;
+}
+
+// Integration with database open sequence
+Status database_open_with_fsm_reconstruction(
+    Database* db)
+{
+    Status status;
+
+    // 1. Open database file
+    status = db_open_file(db);
+    if (status != Status::OK) {
+        return status;
+    }
+
+    // 2. Read and validate database header
+    status = db_read_header(db);
+    if (status != Status::OK) {
+        return status;
+    }
+
+    // 3. Load FSM from page 2 (may be stale after crash)
+    status = page_manager_load(db->page_mgr);
+    if (status != Status::OK) {
+        return status;
+    }
+
+    // 4. Reconstruct FSM from actual pages (MGA-style recovery)
+    // This ensures FSM is always consistent with actual page state,
+    // supporting full transaction recovery without WAL
+    FSMReconstructionContext recon_ctx;
+    recon_ctx.total_pages = db->page_mgr->total_pages;
+    recon_ctx.scan_start_time = get_current_time_ms();
+
+    status = fsm_reconstruct_from_pages(db, db->page_mgr, &recon_ctx);
+    if (status != Status::OK) {
+        return status;
+    }
+
+    recon_ctx.scan_duration_ms = get_current_time_ms() -
+                                 recon_ctx.scan_start_time;
+
+    LOG_INFO(STORAGE,
+        "FSM reconstruction took %llu ms for %u pages",
+        recon_ctx.scan_duration_ms, recon_ctx.total_pages);
+
+    // 5. Initialize other subsystems (catalog, transaction manager, etc.)
+    // ...
+
+    return Status::OK;
+}
+```
+
+#### 2.3.1 FSM Reconstruction Design Rationale
+
+**Why FSM Reconstruction (Not WAL)?**
+
+ScratchBird uses **Firebird-style MGA (Multi-Generational Architecture)**, which provides crash recovery without requiring Write-Ahead Logging for this purpose:
+
+1. **FSM is a Hint Structure**
+   - FSM tracks page allocation state
+   - Can become stale on crash (in-memory changes not flushed)
+   - **Solution**: Rebuild from actual page state on database open
+   - Matches Firebird's PIP (Page Inventory Pages) reconstruction
+
+2. **MGA Transaction Recovery**
+   - Transaction state tracked in TIP (Transaction Inventory Pages)
+   - Aborted transactions visible in TIP on recovery
+   - Pages allocated by aborted transactions remain allocated
+   - Tuples marked with aborted xmin → invisible to all
+   - Garbage collector reclaims pages later
+   - **No WAL needed for crash recovery**
+
+3. **Conservative Error Handling**
+   - Read errors → mark page allocated (not free)
+   - Better to waste space than double-allocate
+   - Double allocation → data corruption (catastrophic)
+   - Wasted space → resolved by VACUUM/GC (acceptable)
+
+4. **Performance Characteristics**
+   - **Complexity**: O(N) where N = total_pages
+   - **I/O Pattern**: Sequential reads (efficient on modern SSDs)
+   - **Frequency**: One-time cost on database open only
+   - **Runtime Impact**: Zero overhead during normal operation
+   - **Example**: 1GB database (8KB pages) = 131,072 pages ≈ 1 second on SSD
+
+5. **Comparison with Firebird**
+   ```
+   Firebird PIP Reconstruction:
+   - Scans all pages on database open
+   - Checks for valid page headers
+   - Rebuilds PIP from actual state
+   - Conservative approach (mark allocated if uncertain)
+   - Proven in production for 20+ years
+
+   ScratchBird FSM Reconstruction:
+   - Same approach, adapted for ScratchBird
+   - Checks magic number, page_id, page_size
+   - Rebuilds FSM bitmap from actual state
+   - Same conservative error handling
+   - Supports Full MGA transaction recovery
+   ```
+
+**Note on WAL Purpose:**
+- **WAL is NOT needed for crash recovery** in MGA (Firebird proves this)
+- WAL is valuable for:
+  - **Point-in-time recovery** (restore to specific timestamp)
+  - **Replication** (stream changes to replicas)
+  - **Forensic analysis** (audit trail of all changes)
+- ScratchBird may add WAL in Beta for replication support
+
+#### 2.3.2 Transaction Recovery Scenarios
+
+**Scenario 1: Uncommitted Transaction with Allocated Page**
+
+```
+Timeline:
+T1: Transaction XID=100 calls allocatePage() → gets page 50
+T2: FSM marks page 50 allocated IN MEMORY (not flushed)
+T3: Page 50 initialized with header (magic, page_id, page_size)
+T4: Transaction writes tuple to page 50 with xmin=100
+T5: Page 50 synced to disk (durable)
+T6: CRASH - FSM not flushed, transaction not committed
+T7: Database reopens
+T8: Transaction XID=100 found in TIP as ACTIVE → marked aborted
+T9: FSM reconstruction scans page 50
+T10: Page 50 has valid header → marked ALLOCATED ✅
+T11: Tuple on page 50 has xmin=100 (aborted) → invisible
+T12: Page 50 NOT double-allocated ✅
+T13: Garbage collector will eventually reclaim page 50
+
+Result: Data consistent, no double allocation, MGA recovery successful
+```
+
+**Scenario 2: Page Allocated but Never Initialized**
+
+```
+Timeline:
+T1: allocatePage() returns page 60
+T2: FSM marks page 60 allocated IN MEMORY
+T3: CRASH before page initialization
+T4: Database reopens, FSM reconstruction scans page 60
+T5: Page 60 has NO valid header (no magic, wrong page_id, etc.)
+T6: FSM marks page 60 as FREE ✅
+T7: Page 60 can be allocated again ✅
+
+Result: Uninitialized page reclaimed, no space leak
+```
+
+**Scenario 3: Read Error During Reconstruction**
+
+```
+Timeline:
+T1: FSM reconstruction scanning pages
+T2: Read error on page 75 (permission error, disk corruption, etc.)
+T3: Conservative approach: mark page 75 as ALLOCATED
+T4: Better to waste space than risk double allocation
+T5: Administrator can investigate and manually free if appropriate
+
+Result: Safe (no corruption), administrator notified
+```
+
 ## 3. Page Compression
 
 ### 3.1 Page-Level Compression

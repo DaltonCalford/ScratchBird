@@ -437,31 +437,31 @@ namespace scratchbird::core
 
             case LongTransactionPolicy::TERMINATE_CONNECTION:
                 LOG_WARNING(TRANSACTION,
-                            "Terminating connection for long transaction: XID=%lu, ProcID=%u", xid,
+                            "Requesting termination for long transaction: XID=%lu, ProcID=%u", xid,
                             proc_id);
 
-                // NOTE: Connection termination requires access to ConnectionContext and connection
-                // management infrastructure that is not yet integrated with LongTransactionMonitor.
-                //
-                // To implement this properly, we need:
-                // 1. A way to look up ConnectionContext* from proc_id (e.g., via Database or
-                // ProcArray)
-                // 2. Access to the connection's socket/file descriptor to force close it
-                // 3. Proper cleanup to ensure the backend process detects the closed connection
-                // 4. Consider graceful vs forceful termination options
-                //
-                // For now, ROLLBACK_ALL policy provides similar protection by aborting the
-                // transaction without terminating the connection, allowing the client to continue
-                // with a new transaction.
-                //
-                // This is a planned enhancement tracked in the development roadmap.
-
-                LOG_ERROR(
-                    TRANSACTION,
-                    "TERMINATE_CONNECTION policy not yet implemented - use ROLLBACK_ALL instead");
+                // Request backend termination via ProcArray flag
+                // The backend will check this flag and terminate gracefully
                 {
-                    std::lock_guard<std::mutex> lock(stats_mutex_);
-                    stats_.warnings_logged++; // Count as warning since action couldn't be taken
+                    Status term_status = ProcArrayManager::requestBackendTermination(proc_id, ctx);
+                    if (term_status == Status::OK)
+                    {
+                        LOG_INFO(TRANSACTION,
+                                 "Successfully requested termination for long transaction: XID=%lu, "
+                                 "ProcID=%u",
+                                 xid, proc_id);
+                        std::lock_guard<std::mutex> lock(stats_mutex_);
+                        stats_.connections_terminated++;
+                    }
+                    else
+                    {
+                        LOG_ERROR(TRANSACTION,
+                                  "Failed to request backend termination: XID=%lu, ProcID=%u, "
+                                  "Status=%d",
+                                  xid, proc_id, static_cast<int>(term_status));
+                        std::lock_guard<std::mutex> lock(stats_mutex_);
+                        stats_.warnings_logged++;
+                    }
                 }
                 break;
         }

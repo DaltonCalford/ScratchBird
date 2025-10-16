@@ -108,6 +108,7 @@ namespace scratchbird::core
         static constexpr uint16_t HEAP_UPDATED = 0x0040;       // Tuple was updated
         static constexpr uint16_t HEAP_MOVED = 0x0080;         // Tuple moved to new page
         static constexpr uint16_t HEAP_XMIN_FROZEN = 0x0100;   // xmin is frozen (FROZEN_XID)
+        static constexpr uint16_t HEAP_HOT_UPDATED = 0x0200;   // HOT update (no index update needed)
 
         // Backward compatibility
         static constexpr uint16_t FLAG_HAS_NULLS = HEAP_HAS_NULLS;

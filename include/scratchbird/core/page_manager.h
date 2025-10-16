@@ -62,6 +62,9 @@ namespace scratchbird::core
         // Flush FSM to disk
         auto flush(ErrorContext *ctx = nullptr) -> Status;
 
+        // Reconstruct FSM from actual page state (MGA-style recovery)
+        auto reconstructFromPages(ErrorContext *ctx = nullptr) -> Status;
+
     protected:
         Database *db_;       // Database instance
         uint32_t page_size_; // Page size

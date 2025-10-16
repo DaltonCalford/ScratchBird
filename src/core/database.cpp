@@ -603,6 +603,16 @@ namespace scratchbird::core
             return status;
         }
 
+        // Reconstruct FSM from actual pages (MGA-style recovery)
+        // This ensures FSM is always consistent with actual page state,
+        // supporting full transaction recovery without WAL
+        status = page_manager_->reconstructFromPages(ctx);
+        if (status != Status::OK)
+        {
+            close();
+            return status;
+        }
+
         // Initialize buffer pool
         BufferPool::Config bp_config;
         bp_config.pool_size = Config::getInstance().getUInt("memory", "buffer_pool_size", 128);

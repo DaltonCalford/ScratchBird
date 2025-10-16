@@ -242,7 +242,10 @@ namespace scratchbird::core
         auto findTipEntry(uint64_t xid, TIPEntry &entry_out, ErrorContext *ctx) -> Status;
         auto flushTransactionState(ErrorContext *ctx) -> Status;
 
-        // LRU cache management (const because they modify mutable cache state)
+        // LRU cache management
+        // Note: These methods are marked const because they only modify mutable cache state,
+        // which doesn't affect logical const-ness. The cache is an implementation detail
+        // for performance optimization and doesn't change the observable behavior.
         void touchCacheEntry(uint64_t xid) const; // Move entry to front of LRU
         void evictOldestCacheEntry() const;       // Remove least recently used entry
         void addToCacheLRU(uint64_t xid, TransactionState state) const; // Add with LRU tracking

@@ -238,17 +238,28 @@ namespace scratchbird::core
             }
         }
 
-        // Update bitmap
+        // Update bitmap with overflow protection
         size_t old_size = bitmap_.size();
-        size_t new_total = total_pages_ + num_pages;
 
+        // Check for overflow BEFORE performing addition (Issue 1.7 fix)
+        // Ensure: total_pages_ + num_pages <= SIZE_MAX
+        if (num_pages > SIZE_MAX - total_pages_)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::OOM, "Database extension would exceed addressable space.");
+            return Status::OOM;
+        }
+
+        size_t new_total = total_pages_ + num_pages;  // Safe: overflow checked above
+
+        // Check that bitmap calculation won't overflow: new_total + 7 <= SIZE_MAX
+        // Equivalently: new_total <= SIZE_MAX - 7
         if (new_total > (SIZE_MAX - 7))
         {
             SET_ERROR_CONTEXT(ctx, Status::OOM, "Database size exceeds addressable space.");
             return Status::OOM;
         }
 
-        size_t new_bitmap_bytes = (new_total + 7) / 8;
+        size_t new_bitmap_bytes = (new_total + 7) / 8;  // Safe: overflow checked above
 
         if (new_bitmap_bytes > old_size)
         {
@@ -376,6 +387,98 @@ namespace scratchbird::core
             }
         }
         return total_pages_; // No free page found
+    }
+
+    auto PageManager::reconstructFromPages(ErrorContext *ctx) -> Status
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+
+        LOG_INFO(STORAGE, "FSM reconstruction: Scanning %u pages...", total_pages_);
+
+        // Reset bitmap and counters
+        free_pages_ = 0;
+        for (size_t i = 0; i < bitmap_.size(); i++)
+        {
+            bitmap_[i] = 0;
+        }
+
+        // Mark system pages as allocated (always)
+        setBit(0, true);  // Header page
+        setBit(1, true);  // System catalog
+        setBit(2, true);  // FSM itself
+
+        // Scan all pages to determine actual allocation state
+        auto buffer = std::make_unique<uint8_t[]>(page_size_);
+        if (!buffer)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::OOM, "Failed to allocate buffer for FSM reconstruction");
+            return Status::OOM;
+        }
+
+        uint32_t allocated_count = 3;  // System pages
+        uint32_t empty_pages = 0;
+        uint32_t corrupt_pages = 0;
+
+        for (uint32_t page_id = 3; page_id < total_pages_; page_id++)
+        {
+            Status status = db_->read_page(page_id, buffer.get(), ctx);
+
+            if (status == Status::IO_ERROR)
+            {
+                // Page doesn't exist yet (file not extended to this point)
+                // Mark as free
+                setBit(page_id, false);
+                free_pages_++;
+                empty_pages++;
+                continue;
+            }
+
+            if (status != Status::OK)
+            {
+                // Read error - mark as allocated (conservative approach)
+                // Better to waste space than to double-allocate
+                setBit(page_id, true);
+                corrupt_pages++;
+                LOG_WARNING(STORAGE, "FSM reconstruction: page %u read error, marking allocated",
+                            page_id);
+                continue;
+            }
+
+            // Check if page is initialized (has valid header)
+            auto *header = reinterpret_cast<PageHeader *>(buffer.get());
+
+            // Page is allocated if:
+            // 1. Has correct magic number
+            // 2. page_id matches (prevents corruption detection)
+            // 3. page_size matches (prevents format mismatch)
+            if (header->magic == K_MAGIC_SBRD &&
+                header->page_id == page_id &&
+                header->page_size == page_size_)
+            {
+                // Page is initialized and allocated
+                // Even if the transaction that allocated it was aborted,
+                // the page contains data and should not be reused until GC
+                setBit(page_id, true);
+                allocated_count++;
+            }
+            else
+            {
+                // Page is uninitialized or corrupt - mark as free
+                // This allows reuse of pages that were never properly initialized
+                setBit(page_id, false);
+                free_pages_++;
+                empty_pages++;
+            }
+        }
+
+        LOG_INFO(STORAGE,
+                 "FSM reconstruction complete: %u allocated, %u free, %u empty, %u corrupt",
+                 allocated_count, free_pages_, empty_pages, corrupt_pages);
+
+        // Mark FSM as dirty so it gets flushed with the corrected state
+        dirty_ = true;
+
+        return Status::OK;
     }
 
 } // namespace scratchbird::core
