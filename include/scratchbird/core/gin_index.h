@@ -44,8 +44,9 @@ namespace scratchbird
         struct GinPendingEntry
         {
             uint64_t tid;         // TupleId (page_id << 32 | item_id)
+            uint64_t xmin;        // Transaction ID that inserted this entry (for MVCC)
             uint16_t key_len;     // Key length in bytes
-            uint8_t key_data[62]; // Key data (inline for small keys)
+            uint8_t key_data[54]; // Key data (inline for small keys, reduced from 62)
         } __attribute__((packed));
 
         static_assert(sizeof(GinPendingEntry) == 72, "GinPendingEntry must be 72 bytes");

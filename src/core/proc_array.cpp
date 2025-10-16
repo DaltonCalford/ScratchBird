@@ -173,6 +173,7 @@ namespace scratchbird::core
                               std::chrono::system_clock::now().time_since_epoch())
                               .count();
         pcb->query_start_time = 0;
+        pcb->termination_requested = false;
 
         proc_array_->num_active++;
 
@@ -621,6 +622,80 @@ namespace scratchbird::core
             reinterpret_cast<uint8_t *>(proc_array_) + sizeof(ProcArray));
 
         return &pcbs[proc_id];
+    }
+
+    auto ProcArrayManager::requestBackendTermination(uint32_t proc_id, ErrorContext *ctx)
+        -> Status
+    {
+        if (!proc_array_)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "ProcArray not initialized");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        ProcessControlBlock *pcb = getPCB(proc_id);
+        if (!pcb || !pcb->is_active)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Invalid or inactive backend");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        pthread_rwlock_wrlock(&proc_array_->array_lock);
+        pcb->termination_requested = true;
+        pthread_rwlock_unlock(&proc_array_->array_lock);
+
+        return Status::OK;
+    }
+
+    auto ProcArrayManager::isTerminationRequested(uint32_t proc_id, bool *requested_out,
+                                                  ErrorContext *ctx) -> Status
+    {
+        if (!proc_array_)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "ProcArray not initialized");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        if (!requested_out)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "requested_out is null");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        ProcessControlBlock *pcb = getPCB(proc_id);
+        if (!pcb || !pcb->is_active)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Invalid or inactive backend");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        pthread_rwlock_rdlock(&proc_array_->array_lock);
+        *requested_out = pcb->termination_requested;
+        pthread_rwlock_unlock(&proc_array_->array_lock);
+
+        return Status::OK;
+    }
+
+    auto ProcArrayManager::clearTerminationRequest(uint32_t proc_id, ErrorContext *ctx) -> Status
+    {
+        if (!proc_array_)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "ProcArray not initialized");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        ProcessControlBlock *pcb = getPCB(proc_id);
+        if (!pcb || !pcb->is_active)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Invalid or inactive backend");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        pthread_rwlock_wrlock(&proc_array_->array_lock);
+        pcb->termination_requested = false;
+        pthread_rwlock_unlock(&proc_array_->array_lock);
+
+        return Status::OK;
     }
 
 } // namespace scratchbird::core

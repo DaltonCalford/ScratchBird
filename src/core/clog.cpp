@@ -8,6 +8,44 @@
 namespace scratchbird::core
 {
 
+    // ============================================================================
+    // CLOG TRANSACTION STATE SIZE CONSTRAINT
+    // ============================================================================
+    // The CLOG uses 2 bits per transaction to store status, which allows exactly
+    // 4 possible values (2^2 = 4). The ClogStatus enum MUST NOT exceed 4 values.
+    //
+    // These static assertions enforce this constraint at compile time to prevent
+    // forward compatibility issues if someone attempts to add a 5th state.
+    //
+    // If you need more than 4 transaction states, you MUST:
+    // 1. Change BITS_PER_XID from 2 to 3 (allows 8 states)
+    // 2. Update setStatusBits() and getStatusBits() to use 3 bits
+    // 3. Update XIDS_PER_PAGE calculation (currently 65536 = 16KB*8/2)
+    // 4. Implement database version migration for existing CLOG pages
+    // ============================================================================
+
+    // Verify ClogStatus has exactly 4 values
+    static_assert(static_cast<uint8_t>(ClogStatus::IN_PROGRESS) == 0,
+                  "ClogStatus::IN_PROGRESS must be 0 to fit in 2-bit storage");
+    static_assert(static_cast<uint8_t>(ClogStatus::COMMITTED) == 1,
+                  "ClogStatus::COMMITTED must be 1 to fit in 2-bit storage");
+    static_assert(static_cast<uint8_t>(ClogStatus::ABORTED) == 2,
+                  "ClogStatus::ABORTED must be 2 to fit in 2-bit storage");
+    static_assert(static_cast<uint8_t>(ClogStatus::SUB_COMMITTED) == 3,
+                  "ClogStatus::SUB_COMMITTED must be 3 to fit in 2-bit storage");
+
+    // Ensure no enum value exceeds 3 (maximum value for 2 bits)
+    static_assert(static_cast<uint8_t>(ClogStatus::IN_PROGRESS) <= 3,
+                  "ClogStatus values must fit in 2 bits (0-3)");
+    static_assert(static_cast<uint8_t>(ClogStatus::COMMITTED) <= 3,
+                  "ClogStatus values must fit in 2 bits (0-3)");
+    static_assert(static_cast<uint8_t>(ClogStatus::ABORTED) <= 3,
+                  "ClogStatus values must fit in 2 bits (0-3)");
+    static_assert(static_cast<uint8_t>(ClogStatus::SUB_COMMITTED) <= 3,
+                  "ClogStatus values must fit in 2 bits (0-3)");
+
+    // ============================================================================
+
     Clog::Clog(Database *db) : db_(db), buffer_pool_(db->buffer_pool()), clog_root_page_(0) {}
 
     Clog::~Clog() = default;

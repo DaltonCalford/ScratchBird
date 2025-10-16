@@ -35,8 +35,11 @@ namespace scratchbird::core
         uint64_t start_time;       // Backend start timestamp (microseconds)
         uint64_t query_start_time; // Current query start (0 = idle)
 
+        // Connection termination (for long transaction monitor)
+        bool termination_requested; // Backend should terminate connection
+
         // Padding for cache line alignment (adjusted for new fields)
-        uint8_t padding[27];
+        uint8_t padding[26];
     };
 
     // Process array (shared memory structure)
@@ -120,6 +123,18 @@ namespace scratchbird::core
         // Get all active backends (for monitoring)
         static auto getAllActiveBackends(std::vector<ProcessControlBlock> *backends_out,
                                          ErrorContext *ctx = nullptr) -> Status;
+
+        // Request backend termination (for long transaction monitor)
+        static auto requestBackendTermination(uint32_t proc_id, ErrorContext *ctx = nullptr)
+            -> Status;
+
+        // Check if termination requested (for backend to poll)
+        static auto isTerminationRequested(uint32_t proc_id, bool *requested_out,
+                                           ErrorContext *ctx = nullptr) -> Status;
+
+        // Clear termination request (after handling)
+        static auto clearTerminationRequest(uint32_t proc_id, ErrorContext *ctx = nullptr)
+            -> Status;
 
         // Get ProcArray instance (for internal use)
         static auto getInstance() -> ProcArray *;

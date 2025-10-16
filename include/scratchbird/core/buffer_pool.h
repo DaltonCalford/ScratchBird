@@ -100,6 +100,10 @@ namespace scratchbird::core
 
             // Corruption detection (MED-005)
             uint64_t page_size_mismatches = 0; // Page size mismatches corrected
+
+            // Clock Sweep algorithm statistics (Issue 2.14)
+            uint64_t clock_sweeps = 0;      // Total clock sweeps performed
+            uint64_t clock_hand_resets = 0; // Times clock hand wrapped around
         };
 
         auto getStats() const -> Stats
@@ -122,11 +126,13 @@ namespace scratchbird::core
             uint32_t page_id = INVALID_PAGE_ID;
             uint32_t pin_count = 0;
             bool is_dirty = false;
+            uint32_t usage_count = 0; // Clock Sweep algorithm: usage counter for eviction
             std::unique_ptr<uint8_t[]> data = nullptr;
             std::unique_ptr<std::mutex>
                 content_mutex; // Protects page content from concurrent modifications
 
             static constexpr uint32_t INVALID_PAGE_ID = 0xFFFFFFFF;
+            static constexpr uint32_t MAX_USAGE_COUNT = 5; // Maximum usage count for Clock Sweep
 
             // Constructor to initialize mutex
             Frame() : content_mutex(std::make_unique<std::mutex>()) {}
@@ -139,6 +145,9 @@ namespace scratchbird::core
         std::unordered_map<uint32_t, uint32_t> page_table_; // page_id -> frame_index
         Stats stats_;                                       // Statistics
         mutable std::mutex mutex_;                          // Thread safety (future)
+
+        // Clock Sweep algorithm state
+        uint32_t clock_hand_ = 0;                           // Current position of clock hand
 
         // Helper methods
         auto evictPage(uint32_t &evicted_frame, ErrorContext *ctx) -> Status;

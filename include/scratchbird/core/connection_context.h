@@ -124,6 +124,10 @@ namespace scratchbird::core
         // Clear the statement snapshot
         void clearStatementSnapshot();
 
+        // Check if termination has been requested (for long transaction monitor)
+        // Returns Status::IO_ERROR if termination requested, Status::OK otherwise
+        Status checkTerminationRequested(ErrorContext *ctx = nullptr);
+
         // Connection settings
         void setWaitForLocks(bool wait)
         {
@@ -183,6 +187,28 @@ namespace scratchbird::core
         // Table reservations for SNAPSHOT TABLE STABILITY
         std::vector<TableReservation> table_reservations_;
 
+        // Subtransaction/Savepoint support (Issue 2.15)
+        struct Savepoint
+        {
+            std::string name;                    // Savepoint name
+            uint32_t level;                      // Nesting level
+            uint64_t xid;                        // Transaction ID at savepoint creation
+            uint32_t command_id;                 // Command ID at savepoint (for future use)
+
+            // Snapshot at savepoint creation (for potential restore)
+            std::unique_ptr<TransactionManager::Snapshot> snapshot;
+
+            // Track tuples modified after this savepoint
+            // For rollback, we need to mark inserted tuples as aborted
+            // and clear xmax on deleted tuples
+            std::vector<std::pair<uint32_t, uint16_t>> inserted_tids;  // (page_id, item_id)
+            std::vector<std::pair<uint32_t, uint16_t>> deleted_tids;   // (page_id, item_id)
+        };
+
+        std::vector<Savepoint> savepoint_stack_;  // Stack of active savepoints
+        uint32_t savepoint_level_ = 0;            // Current savepoint nesting level
+        uint32_t command_id_ = 0;                 // Current command ID within transaction
+
         // Thread-local storage
         static thread_local ConnectionContext *current_;
 
@@ -191,6 +217,69 @@ namespace scratchbird::core
         Status endCurrentTransaction(bool commit, ErrorContext *ctx);
         void applyStagedSettings();
         Status createSnapshot(ErrorContext *ctx);
+
+    public:
+        // Savepoint operations (Issue 2.15: Subtransaction Support)
+
+        /**
+         * Create a new savepoint
+         * @param name Savepoint name (must be unique in current transaction)
+         * @param ctx Error context
+         * @return Status code
+         */
+        Status createSavepoint(const std::string &name, ErrorContext *ctx = nullptr);
+
+        /**
+         * Rollback to a savepoint
+         * Undoes all changes made after the named savepoint was created
+         * @param name Savepoint name to rollback to
+         * @param ctx Error context
+         * @return Status code
+         */
+        Status rollbackToSavepoint(const std::string &name, ErrorContext *ctx = nullptr);
+
+        /**
+         * Release a savepoint
+         * Removes the savepoint from the stack, keeping all changes
+         * @param name Savepoint name to release
+         * @param ctx Error context
+         * @return Status code
+         */
+        Status releaseSavepoint(const std::string &name, ErrorContext *ctx = nullptr);
+
+        /**
+         * Track a tuple insertion for potential savepoint rollback
+         * Called by heap_page.cpp after inserting a tuple
+         * @param page_id Page ID where tuple was inserted
+         * @param item_id Item ID of inserted tuple
+         */
+        void trackTupleInsertion(uint32_t page_id, uint16_t item_id);
+
+        /**
+         * Track a tuple deletion for potential savepoint rollback
+         * Called by heap_page.cpp after marking a tuple deleted
+         * @param page_id Page ID where tuple was deleted
+         * @param item_id Item ID of deleted tuple
+         */
+        void trackTupleDeletion(uint32_t page_id, uint16_t item_id);
+
+        /**
+         * Increment command ID (for statement-level tracking)
+         * @return New command ID
+         */
+        uint32_t incrementCommandId()
+        {
+            return ++command_id_;
+        }
+
+        /**
+         * Get current command ID
+         * @return Current command ID
+         */
+        uint32_t getCommandId() const
+        {
+            return command_id_;
+        }
     };
 
 } // namespace scratchbird::core

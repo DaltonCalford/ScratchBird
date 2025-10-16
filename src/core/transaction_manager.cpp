@@ -345,13 +345,6 @@ namespace scratchbird::core
                 addToCacheLRU(xid, TransactionState::COMMITTED);
             }
 
-            // Clear from ProcArray
-            status = ProcArrayManager::clearTransactionId(proc_id, ctx);
-            if (status != Status::OK)
-            {
-                // Continue anyway - state update is more critical
-            }
-
             // Write to CLOG (commit log)
             status = db_->clog()->setStatus(xid, ClogStatus::COMMITTED, ctx);
             if (status != Status::OK)
@@ -379,6 +372,16 @@ namespace scratchbird::core
 
             // Ensure durability
             status = db_->sync(ctx);
+
+            // CRITICAL FIX (Issue 1.14): Clear from ProcArray ONLY after TIP write and sync
+            // This prevents slot reuse before transaction state is durably persisted
+            // Moving this after sync() ensures durability guarantee before allowing slot reuse
+            Status clear_status = ProcArrayManager::clearTransactionId(proc_id, ctx);
+            if (clear_status != Status::OK)
+            {
+                // Log but don't fail - transaction is already committed and durable
+                LOG_WARNING(TRANSACTION, "Failed to clear ProcArray slot for committed XID %lu", xid);
+            }
         }
         // Mutex lock is now released
 
@@ -412,14 +415,8 @@ namespace scratchbird::core
             addToCacheLRU(xid, TransactionState::ABORTED);
         }
 
-        // Clear from ProcArray
-        Status status = ProcArrayManager::clearTransactionId(proc_id, ctx);
-        if (status != Status::OK)
-        {
-            // Continue anyway - state update is more critical
-        }
-
         // Write to CLOG (commit log)
+        Status status;
         status = db_->clog()->setStatus(xid, ClogStatus::ABORTED, ctx);
         if (status != Status::OK)
         {
@@ -438,7 +435,19 @@ namespace scratchbird::core
         stats_.transactions_aborted++;
 
         // Sync to ensure rollback is recorded
-        return db_->sync(ctx);
+        status = db_->sync(ctx);
+
+        // CRITICAL FIX (Issue 1.14): Clear from ProcArray ONLY after TIP write and sync
+        // This prevents slot reuse before transaction state is durably persisted
+        // Moving this after sync() ensures durability guarantee before allowing slot reuse
+        Status clear_status = ProcArrayManager::clearTransactionId(proc_id, ctx);
+        if (clear_status != Status::OK)
+        {
+            // Log but don't fail - transaction is already aborted and durable
+            LOG_WARNING(TRANSACTION, "Failed to clear ProcArray slot for aborted XID %lu", xid);
+        }
+
+        return status;
     }
 
     auto TransactionManager::getTransactionState(uint64_t xid, TransactionState &state_out,
@@ -539,8 +548,9 @@ namespace scratchbird::core
                 VACUUM,
                 "XID %lu is older than oldest_xid %lu - tuple should have been frozen by VACUUM",
                 xid, oldest_xid_);
-            // Allow it for now (graceful degradation)
-            // In strict mode, this should return false
+            // CRITICAL FIX (Issue 2.9): Reject old unfrozen XIDs for data integrity
+            // This enforces proper VACUUM discipline and protects wraparound mechanisms
+            return false;
         }
 
         // XID is in valid range

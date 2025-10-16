@@ -2,6 +2,7 @@
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/buffer_pool.h"
 #include "scratchbird/core/page_manager.h"
+#include "scratchbird/core/connection_context.h"
 #include <cstring>
 #include <algorithm>
 #include <thread>
@@ -298,7 +299,8 @@ namespace scratchbird
             // Add entry to tail page
             GinPendingEntry &entry = tail->gpp_entries[tail->gpp_entry_count];
             entry.tid = tuple_id;
-            entry.key_len = std::min(static_cast<uint16_t>(key.size()), static_cast<uint16_t>(62));
+            entry.xmin = ConnectionContext::getCurrentTransactionId(); // Record inserting transaction
+            entry.key_len = std::min(static_cast<uint16_t>(key.size()), static_cast<uint16_t>(54));
             std::memcpy(entry.key_data, key.data(), entry.key_len);
 
             tail->gpp_entry_count++;
@@ -334,19 +336,86 @@ namespace scratchbird
             // Search for the key in the keys B-Tree
             uint64_t posting_page = 0;
             Status status = searchKeysTree(key, &posting_page, ctx);
-            if (status != Status::OK || posting_page == 0)
+
+            // Get TIDs from posting list (if key found in main index)
+            if (status == Status::OK && posting_page != 0)
             {
-                // Key not found in main index, check pending list
-                // TODO: Implement pending list scan
-                return results;
+                status = getPostingListTids(posting_page, &results, ctx);
+                if (status != Status::OK)
+                {
+                    results.clear();
+                }
             }
 
-            // Get TIDs from posting list
-            status = getPostingListTids(posting_page, &results, ctx);
-            if (status != Status::OK)
+            // Scan pending list for matching keys with visibility check
+            // Get current snapshot for visibility checking
+            ConnectionContext *conn_ctx = ConnectionContext::getCurrent();
+            const TransactionManager::Snapshot *snapshot = nullptr;
+            if (conn_ctx != nullptr)
             {
-                results.clear();
+                snapshot = conn_ctx->getSnapshot();
             }
+
+            // Pin meta page to get pending list head
+            uint8_t *meta_data = nullptr;
+            status = buffer_pool_->pinPage(meta_page_, (void **)&meta_data, ctx);
+            if (status == Status::OK)
+            {
+                auto *meta = reinterpret_cast<SBGinIndexMetaPage *>(meta_data);
+                uint32_t pending_page = meta->gin_pending_list_head;
+                buffer_pool_->unpinPage(meta_page_, false, ctx);
+
+                // Scan through all pending list pages
+                while (pending_page != 0)
+                {
+                    uint8_t *pending_data = nullptr;
+                    status = buffer_pool_->pinPage(pending_page, (void **)&pending_data, ctx);
+                    if (status != Status::OK)
+                    {
+                        break;
+                    }
+
+                    auto *pending = reinterpret_cast<SBGinPendingListPage *>(pending_data);
+                    uint32_t next_page = pending->gpp_next_page;
+
+                    // Check each entry in this pending page
+                    for (uint16_t i = 0; i < pending->gpp_entry_count; i++)
+                    {
+                        const GinPendingEntry &entry = pending->gpp_entries[i];
+
+                        // Check visibility: is this entry's transaction visible to current snapshot?
+                        bool is_visible = false;
+                        if (snapshot != nullptr)
+                        {
+                            // Use snapshot isolation
+                            is_visible = db_->transaction_manager()->isSnapshotVisible(entry.xmin, snapshot);
+                        }
+                        else
+                        {
+                            // Fallback: READ COMMITTED semantics (always see committed)
+                            TransactionState state;
+                            Status vis_status = db_->transaction_manager()->getTransactionState(entry.xmin, state, ctx);
+                            is_visible = (vis_status == Status::OK && state == TransactionState::COMMITTED);
+                        }
+
+                        // If visible and key matches, add TID to results
+                        if (is_visible)
+                        {
+                            std::vector<uint8_t> entry_key(entry.key_data, entry.key_data + entry.key_len);
+                            if (entry_key == key)
+                            {
+                                results.push_back(entry.tid);
+                            }
+                        }
+                    }
+
+                    buffer_pool_->unpinPage(pending_page, false, ctx);
+                    pending_page = next_page;
+                }
+            }
+
+            // Sort results to ensure consistent ordering
+            std::sort(results.begin(), results.end());
 
             return results;
         }

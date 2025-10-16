@@ -236,6 +236,8 @@ namespace scratchbird
             bool shouldMergePages(const SBBTreePage *page1, const SBBTreePage *page2) const;
             Status mergePages(uint32_t left_page, uint32_t right_page, VacuumStats &stats,
                               ErrorContext *ctx);
+            Status removeFromParent(uint64_t parent_page_num, uint64_t child_page_id,
+                                    ErrorContext *ctx);
         };
 
         // B-tree range scan iterator

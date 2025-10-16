@@ -25,6 +25,13 @@ namespace scratchbird::core
     // - CLOG: 65,536 transactions (82x more)
 
     // Transaction status (2 bits)
+    //
+    // IMPORTANT: This enum MUST have exactly 4 values (0-3) to fit in 2-bit storage.
+    // The CLOG uses 2 bits per transaction, allowing 4 possible states (2^2 = 4).
+    // Static assertions in clog.cpp enforce this constraint at compile time.
+    //
+    // DO NOT ADD MORE VALUES without expanding storage to 3 bits and implementing
+    // database version migration. See clog.cpp for detailed instructions.
     enum class ClogStatus : uint8_t
     {
         IN_PROGRESS = 0,  // 00 - Transaction still active
