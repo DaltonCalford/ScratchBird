@@ -436,52 +436,102 @@ namespace scratchbird::core
     auto TransactionManager::rollbackTransaction(uint32_t proc_id, uint64_t xid, ErrorContext *ctx)
         -> Status
     {
-        std::lock_guard<std::mutex> lock(mutex_);
+        Status status;
 
-        // No longer verify against single active_xid_
-
-        // Update state (updates existing entry, marking as used)
-        auto cache_it = transaction_cache_.find(xid);
-        if (cache_it != transaction_cache_.end())
+        // Perform pre-rollback work within mutex
         {
-            cache_it->second = TransactionState::ABORTED;
-            touchCacheEntry(xid);
+            std::lock_guard<std::mutex> lock(mutex_);
+
+            // Update cache state
+            auto cache_it = transaction_cache_.find(xid);
+            if (cache_it != transaction_cache_.end())
+            {
+                cache_it->second = TransactionState::ABORTED;
+                touchCacheEntry(xid);
+            }
+            else
+            {
+                addToCacheLRU(xid, TransactionState::ABORTED);
+            }
+
+            // Write to CLOG (commit log)
+            status = db_->clog()->setStatus(xid, ClogStatus::ABORTED, ctx);
+            if (status != Status::OK)
+            {
+                // Rollback cache on CLOG failure
+                auto it = transaction_cache_.find(xid);
+                if (it != transaction_cache_.end())
+                {
+                    it->second = TransactionState::ACTIVE;
+                    touchCacheEntry(xid);
+                }
+                return status;
+            }
+
+            // Track statistics
+            stats_.transactions_aborted++;
+        }
+        // Mutex released - don't hold during I/O!
+
+        // GROUP COMMIT OPTIMIZATION (Issue 2.19) - Applied to rollbacks for consistency
+        if (group_commit_enabled_.load(std::memory_order_acquire))
+        {
+            // Create waiter for this rollback
+            CommitWaiter waiter(xid, TransactionState::ABORTED);
+
+            bool is_leader = false;
+
+            // Try to become leader
+            {
+                std::lock_guard<std::mutex> lock(group_commit_mutex_);
+
+                if (!group_commit_in_progress_)
+                {
+                    // Become leader
+                    is_leader = true;
+                    group_commit_in_progress_ = true;
+                }
+                else
+                {
+                    // Join queue as follower
+                    commit_queue_.push_back(&waiter);
+                }
+            }
+
+            if (is_leader)
+            {
+                // Perform group commit as leader (handles both commits and rollbacks)
+                status = performGroupCommit(&waiter, ctx);
+
+                // Mark group commit complete
+                {
+                    std::lock_guard<std::mutex> lock(group_commit_mutex_);
+                    group_commit_in_progress_ = false;
+                }
+            }
+            else
+            {
+                // Wait for leader to complete
+                std::unique_lock<std::mutex> lock(waiter.cv_mutex);
+                waiter.cv.wait(lock, [&waiter] { return waiter.completed; });
+                status = waiter.result;
+            }
         }
         else
         {
-            // Not in cache, add it
-            addToCacheLRU(xid, TransactionState::ABORTED);
+            // Fallback: Traditional individual rollback (for testing/debugging)
+            status = writeTipEntry(xid, TransactionState::ABORTED, ctx);
+            if (status != Status::OK)
+            {
+                LOG_WARNING(TRANSACTION, "Failed to update TIP entry for aborted XID %lu", xid);
+            }
+            status = db_->sync(ctx);
         }
 
-        // Write to CLOG (commit log)
-        Status status;
-        status = db_->clog()->setStatus(xid, ClogStatus::ABORTED, ctx);
-        if (status != Status::OK)
-        {
-            return status;
-        }
-
-        // Update TIP with aborted state
-        status = writeTipEntry(xid, TransactionState::ABORTED, ctx);
-        if (status != Status::OK)
-        {
-            // Log error but don't fail - CLOG is the source of truth
-            LOG_WARNING(TRANSACTION, "Failed to update TIP entry for aborted XID %lu", xid);
-        }
-
-        // Track statistics
-        stats_.transactions_aborted++;
-
-        // Sync to ensure rollback is recorded
-        status = db_->sync(ctx);
-
-        // CRITICAL FIX (Issue 1.14): Clear from ProcArray ONLY after TIP write and sync
-        // This prevents slot reuse before transaction state is durably persisted
-        // Moving this after sync() ensures durability guarantee before allowing slot reuse
+        // Clear ProcArray slot after durability guaranteed (Issue 1.14)
         Status clear_status = ProcArrayManager::clearTransactionId(proc_id, ctx);
         if (clear_status != Status::OK)
         {
-            // Log but don't fail - transaction is already aborted and durable
             LOG_WARNING(TRANSACTION, "Failed to clear ProcArray slot for aborted XID %lu", xid);
         }
 
