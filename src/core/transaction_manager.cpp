@@ -13,6 +13,7 @@
 #include <chrono>
 #include <cstring>
 #include <new>
+#include <thread>
 #include <unistd.h>
 
 namespace scratchbird::core
@@ -326,22 +327,19 @@ namespace scratchbird::core
     {
         Status status;
 
-        // Perform commit within mutex scope
+        // Perform pre-commit work within mutex
         {
             std::lock_guard<std::mutex> lock(mutex_);
 
-            // No longer verify against single active_xid_
-
-            // Update state (updates existing entry, marking as used)
+            // Update cache state
             auto cache_it = transaction_cache_.find(xid);
             if (cache_it != transaction_cache_.end())
             {
                 cache_it->second = TransactionState::COMMITTED;
-                touchCacheEntry(xid); // Mark as recently used
+                touchCacheEntry(xid);
             }
             else
             {
-                // Not in cache, add it
                 addToCacheLRU(xid, TransactionState::COMMITTED);
             }
 
@@ -349,7 +347,7 @@ namespace scratchbird::core
             status = db_->clog()->setStatus(xid, ClogStatus::COMMITTED, ctx);
             if (status != Status::OK)
             {
-                // Try to rollback on failure
+                // Rollback cache on CLOG failure
                 auto it = transaction_cache_.find(xid);
                 if (it != transaction_cache_.end())
                 {
@@ -359,37 +357,77 @@ namespace scratchbird::core
                 return status;
             }
 
-            // Update TIP with committed state
+            // Track statistics
+            stats_.transactions_committed++;
+        }
+        // Mutex released - don't hold during I/O!
+
+        // GROUP COMMIT OPTIMIZATION (Issue 2.19)
+        if (group_commit_enabled_.load(std::memory_order_acquire))
+        {
+            // Create waiter for this commit
+            CommitWaiter waiter(xid, TransactionState::COMMITTED);
+
+            bool is_leader = false;
+
+            // Try to become leader
+            {
+                std::lock_guard<std::mutex> lock(group_commit_mutex_);
+
+                if (!group_commit_in_progress_)
+                {
+                    // Become leader
+                    is_leader = true;
+                    group_commit_in_progress_ = true;
+                }
+                else
+                {
+                    // Join queue as follower
+                    commit_queue_.push_back(&waiter);
+                }
+            }
+
+            if (is_leader)
+            {
+                // Perform group commit as leader
+                status = performGroupCommit(&waiter, ctx);
+
+                // Mark group commit complete
+                {
+                    std::lock_guard<std::mutex> lock(group_commit_mutex_);
+                    group_commit_in_progress_ = false;
+                }
+            }
+            else
+            {
+                // Wait for leader to complete
+                std::unique_lock<std::mutex> lock(waiter.cv_mutex);
+                waiter.cv.wait(lock, [&waiter] { return waiter.completed; });
+                status = waiter.result;
+            }
+        }
+        else
+        {
+            // Fallback: Traditional individual commit (for testing/debugging)
             status = writeTipEntry(xid, TransactionState::COMMITTED, ctx);
             if (status != Status::OK)
             {
-                // Log error but don't fail - CLOG is the source of truth
                 LOG_WARNING(TRANSACTION, "Failed to update TIP entry for committed XID %lu", xid);
             }
-
-            // Track statistics
-            stats_.transactions_committed++;
-
-            // Ensure durability
             status = db_->sync(ctx);
-
-            // CRITICAL FIX (Issue 1.14): Clear from ProcArray ONLY after TIP write and sync
-            // This prevents slot reuse before transaction state is durably persisted
-            // Moving this after sync() ensures durability guarantee before allowing slot reuse
-            Status clear_status = ProcArrayManager::clearTransactionId(proc_id, ctx);
-            if (clear_status != Status::OK)
-            {
-                // Log but don't fail - transaction is already committed and durable
-                LOG_WARNING(TRANSACTION, "Failed to clear ProcArray slot for committed XID %lu", xid);
-            }
         }
-        // Mutex lock is now released
 
-        // Check if sweep should be triggered (non-blocking, runs outside mutex)
+        // Clear ProcArray slot after durability guaranteed (Issue 1.14)
+        Status clear_status = ProcArrayManager::clearTransactionId(proc_id, ctx);
+        if (clear_status != Status::OK)
+        {
+            LOG_WARNING(TRANSACTION, "Failed to clear ProcArray slot for committed XID %lu", xid);
+        }
+
+        // Check sweep trigger (non-blocking)
         if (status == Status::OK && db_->sweep_manager())
         {
             db_->sweep_manager()->checkSweepTrigger(ctx);
-            // Ignore sweep trigger errors - they're non-fatal
         }
 
         return status;
@@ -1104,6 +1142,125 @@ namespace scratchbird::core
         buffer_pool_->unpinPage(last_page, true, ctx);
 
         return Status::OK;
+    }
+
+    auto TransactionManager::writeTipEntriesBatch(
+        const std::vector<std::pair<uint64_t, TransactionState>> &batch, ErrorContext *ctx) -> Status
+    {
+        if (batch.empty())
+        {
+            return Status::OK;
+        }
+
+        // Sort batch by XID to minimize page pin/unpin cycles
+        std::vector<std::pair<uint64_t, TransactionState>> sorted_batch = batch;
+        std::sort(sorted_batch.begin(), sorted_batch.end(),
+                  [](const auto &a, const auto &b) { return a.first < b.first; });
+
+        // Process all XIDs in the batch
+        for (const auto &[xid, state] : sorted_batch)
+        {
+            // For each XID, update or insert the TIP entry
+            // This reuses the existing writeTipEntry logic but without the fsync
+            Status status = writeTipEntry(xid, state, ctx);
+            if (status != Status::OK)
+            {
+                LOG_ERROR(TRANSACTION, "Failed to write TIP entry for XID %lu in batch", xid);
+                return status;
+            }
+        }
+
+        // All TIP entries written successfully
+        return Status::OK;
+    }
+
+    auto TransactionManager::performGroupCommit(CommitWaiter *leader_waiter, ErrorContext *ctx)
+        -> Status
+    {
+        // Leader function: collect batch, write TIDs, fsync, wake waiters
+        std::vector<CommitWaiter *> batch;
+        batch.push_back(leader_waiter);
+
+        // Collect batch of waiting commits (with timeout)
+        auto start_time = std::chrono::steady_clock::now();
+        auto deadline = start_time + std::chrono::microseconds(group_commit_timeout_us_);
+
+        while (std::chrono::steady_clock::now() < deadline &&
+               batch.size() < group_commit_batch_size_)
+        {
+            {
+                std::lock_guard<std::mutex> lock(group_commit_mutex_);
+
+                // Collect all waiting commits from queue
+                while (!commit_queue_.empty() && batch.size() < group_commit_batch_size_)
+                {
+                    batch.push_back(commit_queue_.back());
+                    commit_queue_.pop_back();
+                }
+            }
+
+            // If we have a good batch size, break early
+            if (batch.size() >= group_commit_batch_size_ / 2)
+            {
+                break;
+            }
+
+            // If queue is empty and we're past minimum wait time, break
+            if (commit_queue_.empty() &&
+                std::chrono::steady_clock::now() - start_time >
+                    std::chrono::microseconds(group_commit_timeout_us_ / 4))
+            {
+                break;
+            }
+
+            // Sleep briefly (1ms) to allow more commits to arrive
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+
+        // Final queue drain
+        {
+            std::lock_guard<std::mutex> lock(group_commit_mutex_);
+            while (!commit_queue_.empty() && batch.size() < group_commit_batch_size_)
+            {
+                batch.push_back(commit_queue_.back());
+                commit_queue_.pop_back();
+            }
+        }
+
+        // Build TID batch for TIP writes
+        std::vector<std::pair<uint64_t, TransactionState>> xid_batch;
+        xid_batch.reserve(batch.size());
+        for (auto *waiter : batch)
+        {
+            xid_batch.push_back({waiter->xid, waiter->state});
+        }
+
+        // Write all TIP entries in batch
+        Status status = writeTipEntriesBatch(xid_batch, ctx);
+
+        // Single fsync for entire batch (the key optimization!)
+        if (status == Status::OK)
+        {
+            status = db_->sync(ctx);
+        }
+
+        // Wake all waiters with result
+        for (auto *waiter : batch)
+        {
+            std::lock_guard<std::mutex> lock(waiter->cv_mutex);
+            waiter->result = status;
+            waiter->completed = true;
+            waiter->cv.notify_one();
+        }
+
+        // Update statistics
+        group_commits_performed_.fetch_add(1, std::memory_order_relaxed);
+        group_commit_total_xids_.fetch_add(batch.size(), std::memory_order_relaxed);
+
+        LOG_DEBUG(TRANSACTION, "Group commit completed: %zu XIDs in batch, status=%d", batch.size(),
+                  static_cast<int>(status));
+
+        return status;
     }
 
     auto TransactionManager::findTipEntry(uint64_t xid, TIPEntry &entry_out, ErrorContext *ctx)

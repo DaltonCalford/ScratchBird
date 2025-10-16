@@ -10,6 +10,7 @@
 #include <mutex>
 #include <vector>
 #include <list>
+#include <condition_variable>
 
 namespace scratchbird::core
 {
@@ -193,7 +194,44 @@ namespace scratchbird::core
             return stats_;
         }
 
+        // Group commit control
+        void enableGroupCommit(bool enabled)
+        {
+            group_commit_enabled_.store(enabled, std::memory_order_release);
+        }
+
+        void setGroupCommitTimeout(uint64_t timeout_us)
+        {
+            group_commit_timeout_us_ = timeout_us;
+        }
+
+        void setGroupCommitBatchSize(uint32_t batch_size)
+        {
+            group_commit_batch_size_ = batch_size;
+        }
+
+        auto getGroupCommitStats() const -> std::pair<uint64_t, uint64_t>
+        {
+            return {group_commits_performed_.load(std::memory_order_acquire),
+                    group_commit_total_xids_.load(std::memory_order_acquire)};
+        }
+
     private:
+        // Group commit waiter structure
+        struct CommitWaiter
+        {
+            uint64_t xid;
+            TransactionState state;
+            Status result;
+            std::condition_variable cv;
+            std::mutex cv_mutex;
+            bool completed;
+
+            CommitWaiter(uint64_t xid_, TransactionState state_)
+                : xid(xid_), state(state_), result(Status::OK), completed(false)
+            {
+            }
+        };
         Database *db_;
         BufferPool *buffer_pool_;
         PageManager *page_manager_;
@@ -214,6 +252,18 @@ namespace scratchbird::core
         mutable std::unordered_map<uint64_t, std::list<uint64_t>::iterator>
             cache_lru_map_;        // XID -> position in LRU list
         mutable std::mutex mutex_; // Thread safety for future
+
+        // Group commit infrastructure
+        std::mutex group_commit_mutex_;                  // Protects group commit queue
+        std::vector<CommitWaiter *> commit_queue_;       // Queue of waiting commits
+        bool group_commit_in_progress_{false};           // True if leader is processing
+        std::atomic<bool> group_commit_enabled_{true};   // Configuration flag
+        uint64_t group_commit_timeout_us_{10000};        // Wait up to 10ms for batch (configurable)
+        uint32_t group_commit_batch_size_{32};           // Max batch size (configurable)
+
+        // Group commit statistics
+        std::atomic<uint64_t> group_commits_performed_{0}; // Total group commits performed
+        std::atomic<uint64_t> group_commit_total_xids_{0}; // Total XIDs committed via group commit
 
         // Statistics
         Stats stats_;
@@ -241,6 +291,11 @@ namespace scratchbird::core
         auto writeTipEntry(uint64_t xid, TransactionState state, ErrorContext *ctx) -> Status;
         auto findTipEntry(uint64_t xid, TIPEntry &entry_out, ErrorContext *ctx) -> Status;
         auto flushTransactionState(ErrorContext *ctx) -> Status;
+
+        // Group commit methods
+        auto writeTipEntriesBatch(const std::vector<std::pair<uint64_t, TransactionState>> &batch,
+                                  ErrorContext *ctx) -> Status;
+        auto performGroupCommit(CommitWaiter *leader_waiter, ErrorContext *ctx) -> Status;
 
         // LRU cache management
         // Note: These methods are marked const because they only modify mutable cache state,
