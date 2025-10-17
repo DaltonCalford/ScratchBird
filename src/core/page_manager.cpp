@@ -34,7 +34,17 @@ namespace scratchbird::core
         // Calculate bitmap size needed
         // Each page needs 1 bit, round up to nearest byte
         size_t bitmap_bytes = (total_pages_ + 7) / 8;
-        bitmap_.resize(bitmap_bytes, 0);
+        // EXCEPTION SAFETY (ERROR-CRITICAL-2 Priority 2): Protect bitmap allocation
+        try
+        {
+            bitmap_.resize(bitmap_bytes, 0);
+        }
+        catch (const std::bad_alloc &)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::OOM,
+                              "Out of memory allocating page bitmap during initialization");
+            return Status::OOM;
+        }
 
         // Mark first 3 pages as allocated
         setBit(0, true); // Header
@@ -91,7 +101,17 @@ namespace scratchbird::core
 
         // Load bitmap
         size_t bitmap_bytes = (total_pages_ + 7) / 8;
-        bitmap_.resize(bitmap_bytes);
+        // EXCEPTION SAFETY (ERROR-CRITICAL-2 Priority 2): Protect bitmap allocation in load
+        try
+        {
+            bitmap_.resize(bitmap_bytes);
+        }
+        catch (const std::bad_alloc &)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::OOM,
+                              "Out of memory allocating page bitmap during FSM load");
+            return Status::OOM;
+        }
         memcpy(bitmap_.data(), fsm->bitmap, bitmap_bytes);
 
         // Update database header to ensure it matches FSM
@@ -264,9 +284,19 @@ namespace scratchbird::core
 
         size_t new_bitmap_bytes = (new_total + 7) / 8;  // Safe: overflow checked above
 
+        // EXCEPTION SAFETY (ERROR-CRITICAL-2 Priority 2): Protect bitmap expansion
         if (new_bitmap_bytes > old_size)
         {
-            bitmap_.resize(new_bitmap_bytes, 0);
+            try
+            {
+                bitmap_.resize(new_bitmap_bytes, 0);
+            }
+            catch (const std::bad_alloc &)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::OOM,
+                                  "Out of memory expanding page bitmap during file extension");
+                return Status::OOM;
+            }
         }
 
         // New pages are free by default

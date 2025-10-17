@@ -316,11 +316,21 @@ namespace scratchbird::core
         header->page_header.special_size = 0;
 
         // Initialize database identification with actual filename
-        size_t last_slash = path.find_last_of("/\\\\");
-        std::string db_name =
-            (last_slash != std::string::npos) ? path.substr(last_slash + 1) : path;
-        strncpy(header->db_name, db_name.c_str(), 31);
-        header->db_name[31] = '\0';
+        // EXCEPTION SAFETY (ERROR-CRITICAL-2 Priority 3): Protect string operations
+        try
+        {
+            size_t last_slash = path.find_last_of("/\\\\");
+            std::string db_name =
+                (last_slash != std::string::npos) ? path.substr(last_slash + 1) : path;
+            strncpy(header->db_name, db_name.c_str(), 31);
+            header->db_name[31] = '\0';
+        }
+        catch (const std::bad_alloc &)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::OOM,
+                              "Out of memory extracting database name from path");
+            return Status::OOM;
+        }
         header->db_version = DB_VERSION_ALPHA_1_0_1;
         header->db_compat_version = DB_COMPAT_VERSION_ALPHA_1_0_1;
 
@@ -828,41 +838,52 @@ namespace scratchbird::core
             return Status::INVALID_PATH;
         }
 
-        char *real_path_buf = realpath(path.c_str(), nullptr);
-        if (real_path_buf == nullptr)
+        // EXCEPTION SAFETY (ERROR-CRITICAL-2 Priority 3): Protect path string operations
+        std::string cwd;
+        try
         {
-            // If realpath fails, it might be because the file doesn't exist yet (for create).
-            // In that case, we'll resolve the directory path and append the filename.
-            std::filesystem::path p(path);
-            std::string parent_path_str = p.parent_path().string();
-            if (parent_path_str.empty())
+            char *real_path_buf = realpath(path.c_str(), nullptr);
+            if (real_path_buf == nullptr)
             {
-                parent_path_str = ".";
+                // If realpath fails, it might be because the file doesn't exist yet (for create).
+                // In that case, we'll resolve the directory path and append the filename.
+                std::filesystem::path p(path);
+                std::string parent_path_str = p.parent_path().string();
+                if (parent_path_str.empty())
+                {
+                    parent_path_str = ".";
+                }
+                char *real_parent_path_buf = realpath(parent_path_str.c_str(), nullptr);
+                if (real_parent_path_buf == nullptr)
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::INVALID_PATH,
+                                      "Could not resolve database path directory.");
+                    return Status::INVALID_PATH;
+                }
+                canonical_path = std::string(real_parent_path_buf) + "/" + p.filename().string();
+                free(real_parent_path_buf);
             }
-            char *real_parent_path_buf = realpath(parent_path_str.c_str(), nullptr);
-            if (real_parent_path_buf == nullptr)
+            else
             {
-                SET_ERROR_CONTEXT(ctx, Status::INVALID_PATH,
-                                  "Could not resolve database path directory.");
-                return Status::INVALID_PATH;
+                canonical_path = std::string(real_path_buf);
+                free(real_path_buf);
             }
-            canonical_path = std::string(real_parent_path_buf) + "/" + p.filename().string();
-            free(real_parent_path_buf);
-        }
-        else
-        {
-            canonical_path = std::string(real_path_buf);
-            free(real_path_buf);
-        }
 
-        char *cwd_buf = getcwd(nullptr, 0);
-        if (cwd_buf == nullptr)
-        {
-            SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Could not get current working directory.");
-            return Status::IO_ERROR;
+            char *cwd_buf = getcwd(nullptr, 0);
+            if (cwd_buf == nullptr)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Could not get current working directory.");
+                return Status::IO_ERROR;
+            }
+            cwd = std::string(cwd_buf);
+            free(cwd_buf);
         }
-        std::string cwd(cwd_buf);
-        free(cwd_buf);
+        catch (const std::bad_alloc &)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::OOM,
+                              "Out of memory during path validation");
+            return Status::OOM;
+        }
 
         if (canonical_path.rfind(cwd, 0) != 0)
         {

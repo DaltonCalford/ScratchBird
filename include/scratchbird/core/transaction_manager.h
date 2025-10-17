@@ -68,16 +68,31 @@ namespace scratchbird::core
     // ===========================================================================================
     //
     // ISSUE 3.9 FIX: Document mutex usage patterns for all methods
+    // CRITICAL FIX (CRITICAL-3): Document complete lock ordering hierarchy to prevent deadlocks
     //
-    // Mutex hierarchy:
+    // Mutex hierarchy (MUST be acquired in this order to prevent deadlock):
     //   1. mutex_ - Protects transaction state (next_xid_, oldest_xid_, cache, etc.)
-    //   2. group_commit_mutex_ - Protects group commit queue (independent of mutex_)
+    //   2. ProcArray::array_lock (pthread_rwlock) - Protects process control blocks
+    //   3. group_commit_mutex_ - Protects group commit queue (independent of mutex_)
+    //
+    // Lock ordering rules:
+    //   - If acquiring both mutex_ and ProcArray::array_lock:
+    //     ALWAYS acquire mutex_ FIRST, then ProcArray::array_lock
+    //   - If acquiring both ProcArray::alloc_lock and array_lock:
+    //     ALWAYS acquire alloc_lock FIRST (per ProcArray's internal contract)
+    //   - NEVER acquire mutex_ while holding ProcArray::array_lock (deadlock risk!)
+    //   - group_commit_mutex_ is independent - can be acquired in any order relative to mutex_
     //
     // Locking conventions:
     //   - PUBLIC methods acquire locks internally (thread-safe)
     //   - PRIVATE helper methods may require caller to hold locks (documented per-method)
     //   - Never hold mutex_ during I/O operations (release before disk writes)
     //   - Group commit uses separate mutex to avoid blocking regular operations
+    //
+    // Examples of correct lock ordering:
+    //   updateTransactionMarkers():  mutex_ → ProcArray::array_lock (rdlock) ✓ CORRECT
+    //   getSnapshot():               mutex_ → ProcArray::array_lock (rdlock) ✓ CORRECT
+    //   beginTransaction():          mutex_ → ProcArray::array_lock (wrlock via setTransactionId) ✓ CORRECT
     //
     // ===========================================================================================
 
@@ -126,13 +141,17 @@ namespace scratchbird::core
         // ===========================================================================================
 
         // Get transaction state
-        // LOCKING: Thread-safe. Acquires mutex_ internally. Safe to call from const methods.
+        // CRITICAL FIX (CRITICAL-2): Removed const because this method modifies transaction_cache_
+        // Even though cache is mutable, removing const makes the API clearer and prevents misuse
+        // LOCKING: Thread-safe. Acquires mutex_ internally.
         auto getTransactionState(uint64_t xid, TransactionState &state_out,
-                                 ErrorContext *ctx = nullptr) const -> Status;
+                                 ErrorContext *ctx = nullptr) -> Status;
 
         // Check if a transaction is visible to another transaction (READ COMMITTED semantics)
+        // CRITICAL FIX (CRITICAL-2 side-effect): Removed const because this calls getTransactionState()
+        // which modifies the cache. This is part of the cache consistency fix.
         // LOCKING: Thread-safe. Acquires mutex_ internally via isXidInRange() and getTransactionState().
-        auto isTransactionVisible(uint64_t xid, uint64_t snapshot_xid) const -> bool;
+        auto isTransactionVisible(uint64_t xid, uint64_t snapshot_xid) -> bool;
 
         // Validate XID is structurally valid (not INVALID_XID)
         // LOCKING: No locks required (static method, no shared state access).
@@ -232,8 +251,10 @@ namespace scratchbird::core
 
         // Check if a transaction is visible using snapshot isolation (SNAPSHOT semantics)
         // Returns true if xid is visible according to the snapshot
+        // CRITICAL FIX (CRITICAL-2 side-effect): Removed const because this calls getTransactionState()
+        // which modifies the cache. This is part of the cache consistency fix.
         // LOCKING: Thread-safe. Acquires mutex_ internally via isXidInRange() and getTransactionState().
-        auto isSnapshotVisible(uint64_t xid, const Snapshot *snapshot) const -> bool;
+        auto isSnapshotVisible(uint64_t xid, const Snapshot *snapshot) -> bool;
 
         // ===========================================================================================
         // STATISTICS AND CONFIGURATION
