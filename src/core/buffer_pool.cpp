@@ -117,12 +117,14 @@ namespace scratchbird::core
             // Update LRU (still maintained for fallback)
             updateLru(frame_index);
 
-            stats_.hits++;
+            // MEDIUM-1 FIX: Use relaxed atomic increment for stats (consistency with other operations)
+            stats_.hits.fetch_add(1, std::memory_order_relaxed);
             return Status::OK;
         }
 
         // Cache miss - need to load page
-        stats_.misses++;
+        // MEDIUM-1 FIX: Use relaxed atomic increment for stats
+        stats_.misses.fetch_add(1, std::memory_order_relaxed);
 
         // Find a frame to use
         uint32_t frame_index;
@@ -250,7 +252,8 @@ namespace scratchbird::core
         if (status == Status::OK)
         {
             frames_[frame_index].is_dirty = false;
-            stats_.flushes++;
+            // MEDIUM-1 FIX: Use relaxed atomic increment for stats
+            stats_.flushes.fetch_add(1, std::memory_order_relaxed);
         }
 
         return status;
@@ -270,7 +273,8 @@ namespace scratchbird::core
                     return status;
                 }
                 frames_[i].is_dirty = false;
-                stats_.flushes++;
+                // MEDIUM-1 FIX: Use relaxed atomic increment for stats
+                stats_.flushes.fetch_add(1, std::memory_order_relaxed);
             }
         }
 
@@ -362,7 +366,8 @@ namespace scratchbird::core
         // Clock sweep: search for victim page
         while (passes < MAX_PASSES)
         {
-            stats_.clock_sweeps++;
+            // MEDIUM-1 FIX: Use relaxed atomic increment for stats
+            stats_.clock_sweeps.fetch_add(1, std::memory_order_relaxed);
 
             // SAFETY: Bounds check for clock_hand_
             if (clock_hand_ >= config_.pool_size)
@@ -381,7 +386,8 @@ namespace scratchbird::core
             // Track when we wrap around
             if (clock_hand_ == 0)
             {
-                stats_.clock_hand_resets++;
+                // MEDIUM-1 FIX: Use relaxed atomic increment for stats
+                stats_.clock_hand_resets.fetch_add(1, std::memory_order_relaxed);
             }
 
             // Skip pinned frames (in use)
@@ -520,12 +526,14 @@ namespace scratchbird::core
             {
                 return status;
             }
-            stats_.flushes++;
-            stats_.evictions_dirty++;
+            // MEDIUM-1 FIX: Use relaxed atomic increment for stats
+            stats_.flushes.fetch_add(1, std::memory_order_relaxed);
+            stats_.evictions_dirty.fetch_add(1, std::memory_order_relaxed);
         }
         else
         {
-            stats_.evictions_clean++;
+            // MEDIUM-1 FIX: Use relaxed atomic increment for stats
+            stats_.evictions_clean.fetch_add(1, std::memory_order_relaxed);
         }
 
         // CRITICAL FIX (Issue 2.2): Verify page_id exists in page_table before erasing
@@ -561,7 +569,8 @@ namespace scratchbird::core
         // CRITICAL FIX (CRITICAL-1): Use atomic store for thread-safe write
         frames_[evicted_frame].usage_count.store(0, std::memory_order_relaxed); // Reset usage count for next page
 
-        stats_.evictions++;
+        // MEDIUM-1 FIX: Use relaxed atomic increment for stats
+        stats_.evictions.fetch_add(1, std::memory_order_relaxed);
         return Status::OK;
     }
 
@@ -793,7 +802,8 @@ namespace scratchbird::core
         else
         {
             // Below low threshold - no flushing needed
-            stats_.bgwriter_runs++;
+            // MEDIUM-1 FIX: Use relaxed atomic increment for stats
+            stats_.bgwriter_runs.fetch_add(1, std::memory_order_relaxed);
             return;
         }
 
@@ -844,7 +854,8 @@ namespace scratchbird::core
             {
                 frame.is_dirty = false;
                 pages_written++;
-                stats_.bgwriter_pages_written++;
+                // MEDIUM-1 FIX: Use relaxed atomic increment for stats
+                stats_.bgwriter_pages_written.fetch_add(1, std::memory_order_relaxed);
             }
             else
             {
@@ -856,10 +867,12 @@ namespace scratchbird::core
         }
 
         // Update statistics
-        stats_.bgwriter_runs++;
+        // MEDIUM-1 FIX: Use relaxed atomic increment for stats
+        stats_.bgwriter_runs.fetch_add(1, std::memory_order_relaxed);
         if (pages_written >= pages_to_write)
         {
-            stats_.bgwriter_maxwritten++;
+            // MEDIUM-1 FIX: Use relaxed atomic increment for stats
+            stats_.bgwriter_maxwritten.fetch_add(1, std::memory_order_relaxed);
         }
     }
 
