@@ -1,9 +1,9 @@
 # SCRATCHBIRD ALPHA - ISSUES TRACKER
 
-**Last Updated**: October 17, 2025 (14:45)
+**Last Updated**: October 17, 2025 (15:00)
 **Source**: Alpha Final Comprehensive Audit
-**Total Issues**: 21 → 7 remaining (0 Critical, 0 High, 6 Medium, 1 Low)
-**Resolved**: 14 (CRITICAL-1, CRITICAL-2, CRITICAL-3, ERROR-CRITICAL-1 false positive, ERROR-CRITICAL-2, HIGH-1, HIGH-2, HIGH-3, HIGH-4, HIGH-5, HIGH-6, HIGH-7, HIGH-8, MEDIUM-1)
+**Total Issues**: 21 → 6 remaining (0 Critical, 0 High, 5 Medium, 1 Low)
+**Resolved**: 15 (CRITICAL-1, CRITICAL-2, CRITICAL-3, ERROR-CRITICAL-1 false positive, ERROR-CRITICAL-2, HIGH-1, HIGH-2, HIGH-3, HIGH-4, HIGH-5, HIGH-6, HIGH-7, HIGH-8, MEDIUM-1, MEDIUM-2)
 
 ---
 
@@ -290,12 +290,25 @@
   - Files: src/core/buffer_pool.cpp
 
 ### MEDIUM-2: TOAST Integer Overflow
-- **File**: `src/core/toast.cpp:472`
+- **File**: `src/core/toast.cpp:471-478`
 - **Type**: Integer Overflow
-- **Impact**: Incorrect chunk calculation
+- **Impact**: Incorrect chunk calculation (resolved)
 - **Fix**: Add overflow check before calculation
-- **Effort**: 30 minutes
-- **Status**: 🟡 OPEN
+- **Effort**: 30 minutes (actual: 15 minutes)
+- **Status**: ✅ RESOLVED (Oct 17, 2025)
+- **Resolution Details**:
+  - Identified integer overflow risk in TOAST chunk calculation
+  - Problem: Line 481 calculates `chunks_needed = (size + TOAST_MAX_CHUNK_SIZE - 1) / TOAST_MAX_CHUNK_SIZE`
+  - Risk: When size is close to UINT32_MAX, adding TOAST_MAX_CHUNK_SIZE (1996) causes overflow
+  - Example: size = 4294966300 (UINT32_MAX - 996), size + 1996 - 1 = overflow to small value
+  - Impact: Incorrect chunks_needed calculation → incomplete TOAST storage → data corruption
+  - Fix: Added overflow check before calculation (lines 471-478):
+    * Check if size > UINT32_MAX - TOAST_MAX_CHUNK_SIZE + 1
+    * Return Status::OUT_OF_RANGE with descriptive error message
+    * Prevents overflow by rejecting values that would overflow
+  - This ensures chunk calculation is always mathematically correct
+  - Verified compilation: toast.cpp compiled successfully with only style warnings
+  - File: src/core/toast.cpp
 
 ### MEDIUM-3: TOAST Offset Validation
 - **File**: `src/core/toast.cpp:502`
@@ -398,11 +411,12 @@ All Phase 1 issues resolved on October 14, 2025. See:
 
 ### Following Sprint (Week of Oct 30 - Nov 6):
 - [x] MEDIUM-1: Non-Atomic BufferPool Stats ✅ RESOLVED (Oct 17, 2025)
-- [ ] MEDIUM-2 through MEDIUM-7 (6 issues)
+- [x] MEDIUM-2: TOAST Integer Overflow ✅ RESOLVED (Oct 17, 2025)
+- [ ] MEDIUM-3 through MEDIUM-7 (5 issues)
 - [ ] LOW-1 (1 issue)
 
 **Target**: 5/7 medium issues resolved
-**Progress**: 1/7 resolved (Oct 17, 2025 - 14% complete)
+**Progress**: 2/7 resolved (Oct 17, 2025 - 29% complete)
 
 ---
 
