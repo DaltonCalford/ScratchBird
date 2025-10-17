@@ -156,7 +156,22 @@ namespace scratchbird::core
             return status;
         }
 
-        // Update frame metadata
+        // HIGH-1 FIX: Update page_table BEFORE frame metadata to ensure atomicity
+        // This prevents the race where frame is updated but page_table is not,
+        // which could cause evictPage() to fail to find the page in page_table
+        // while the frame thinks it contains the page.
+        //
+        // Order of operations (CRITICAL for correctness):
+        // 1. page_table_[page_id] = frame_index  (establish mapping first)
+        // 2. frames_[frame_index].page_id = page_id  (then update frame)
+        //
+        // This way, if anything fails after step 1, the page_table entry exists
+        // and evictPage() can clean it up properly. If we did it the other way,
+        // we'd have an orphaned frame that thinks it contains a page but isn't
+        // in the page_table, causing corruption.
+        page_table_[page_id] = frame_index;
+
+        // Update frame metadata (page_table already knows about this mapping)
         frames_[frame_index].page_id = page_id;
         // CRITICAL FIX (CRITICAL-1): Use atomic store for thread-safe write
         frames_[frame_index].pin_count.store(1, std::memory_order_relaxed);
@@ -166,9 +181,6 @@ namespace scratchbird::core
         // Start with usage_count = 1 to give new pages a chance to stay
         // CRITICAL FIX (CRITICAL-1): Use atomic store for thread-safe write
         frames_[frame_index].usage_count.store(1, std::memory_order_relaxed);
-
-        // Update page table
-        page_table_[page_id] = frame_index;
 
         // Update LRU (still maintained for fallback)
         updateLru(frame_index);
