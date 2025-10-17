@@ -273,7 +273,11 @@ namespace scratchbird::core
 
         // CRITICAL FIX (Issue 1.2): Use atomic fetch_add for thread-safe XID allocation
         // This prevents race conditions where multiple threads could get the same XID
-        uint64_t new_xid = next_xid_.fetch_add(1, std::memory_order_seq_cst);
+        // HIGH-5 FIX: Use memory_order_acq_rel instead of seq_cst for better performance
+        // Acquire-release semantics are sufficient for XID allocation - we don't need
+        // full sequential consistency. This provides the same correctness guarantees
+        // (atomic increment + happens-before relationships) with lower overhead.
+        uint64_t new_xid = next_xid_.fetch_add(1, std::memory_order_acq_rel);
 
         // Prevent wraparound to reserved XIDs (should never happen with above checks)
         uint64_t check_next = next_xid_.load(std::memory_order_acquire);
