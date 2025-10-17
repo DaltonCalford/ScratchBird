@@ -180,9 +180,12 @@ namespace scratchbird::core
         struct Frame
         {
             uint32_t page_id = INVALID_PAGE_ID;
-            uint32_t pin_count = 0;
+            // CRITICAL FIX (CRITICAL-1): Make pin_count and usage_count atomic to prevent race conditions
+            // Even though operations occur under mutex_, atomics provide memory ordering guarantees
+            // and prevent torn reads/writes on all architectures
+            std::atomic<uint32_t> pin_count{0};
             bool is_dirty = false;
-            uint32_t usage_count = 0; // Clock Sweep algorithm: usage counter for eviction
+            std::atomic<uint32_t> usage_count{0}; // Clock Sweep algorithm: usage counter for eviction
             std::unique_ptr<uint8_t[]> data = nullptr;
             std::unique_ptr<std::mutex>
                 content_mutex; // Protects page content from concurrent modifications
@@ -192,6 +195,65 @@ namespace scratchbird::core
 
             // Constructor to initialize mutex
             Frame() : content_mutex(std::make_unique<std::mutex>()) {}
+
+            // CRITICAL FIX (CRITICAL-1): std::atomic is not copyable, so we need custom copy/move
+            // Copy constructor: atomic values are copied with load/store
+            Frame(const Frame& other)
+                : page_id(other.page_id),
+                  pin_count(other.pin_count.load(std::memory_order_relaxed)),
+                  is_dirty(other.is_dirty),
+                  usage_count(other.usage_count.load(std::memory_order_relaxed)),
+                  data(nullptr),
+                  content_mutex(std::make_unique<std::mutex>())
+            {
+                // Note: data is not copied (unique_ptr), each frame gets its own data allocation
+                // content_mutex is always a new mutex (unique_ptr)
+            }
+
+            // Copy assignment operator
+            Frame& operator=(const Frame& other) {
+                if (this != &other) {
+                    page_id = other.page_id;
+                    pin_count.store(other.pin_count.load(std::memory_order_relaxed), std::memory_order_relaxed);
+                    is_dirty = other.is_dirty;
+                    usage_count.store(other.usage_count.load(std::memory_order_relaxed), std::memory_order_relaxed);
+                    // data and content_mutex remain unchanged (unique per frame)
+                }
+                return *this;
+            }
+
+            // Move constructor
+            Frame(Frame&& other) noexcept
+                : page_id(other.page_id),
+                  pin_count(other.pin_count.load(std::memory_order_relaxed)),
+                  is_dirty(other.is_dirty),
+                  usage_count(other.usage_count.load(std::memory_order_relaxed)),
+                  data(std::move(other.data)),
+                  content_mutex(std::move(other.content_mutex))
+            {
+                other.page_id = INVALID_PAGE_ID;
+                other.pin_count.store(0, std::memory_order_relaxed);
+                other.is_dirty = false;
+                other.usage_count.store(0, std::memory_order_relaxed);
+            }
+
+            // Move assignment operator
+            Frame& operator=(Frame&& other) noexcept {
+                if (this != &other) {
+                    page_id = other.page_id;
+                    pin_count.store(other.pin_count.load(std::memory_order_relaxed), std::memory_order_relaxed);
+                    is_dirty = other.is_dirty;
+                    usage_count.store(other.usage_count.load(std::memory_order_relaxed), std::memory_order_relaxed);
+                    data = std::move(other.data);
+                    content_mutex = std::move(other.content_mutex);
+
+                    other.page_id = INVALID_PAGE_ID;
+                    other.pin_count.store(0, std::memory_order_relaxed);
+                    other.is_dirty = false;
+                    other.usage_count.store(0, std::memory_order_relaxed);
+                }
+                return *this;
+            }
         };
 
         // ISSUE 3.10 FIX: Internal Stats structure with atomic types for thread-safe updates

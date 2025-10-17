@@ -37,7 +37,8 @@ namespace scratchbird::core
 
             // Initialize frame
             frames_[i].page_id = Frame::INVALID_PAGE_ID;
-            frames_[i].pin_count = 0;
+            // CRITICAL FIX (CRITICAL-1): Use atomic store for thread-safe write
+            frames_[i].pin_count.store(0, std::memory_order_relaxed);
             frames_[i].is_dirty = false;
 
             // Add to LRU list (all frames start as free)
@@ -91,20 +92,24 @@ namespace scratchbird::core
 
             // CRITICAL FIX (Issue 1.13): Check for pin count overflow BEFORE incrementing
             // If pin_count reaches UINT32_MAX and wraps to 0, the page could be evicted while in use
-            if (frames_[frame_index].pin_count == UINT32_MAX)
+            // CRITICAL FIX (CRITICAL-1): Use atomic load for thread-safe read
+            if (frames_[frame_index].pin_count.load(std::memory_order_relaxed) == UINT32_MAX)
             {
                 SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
                                   "Pin count overflow - page pinned too many times");
                 return Status::INVALID_ARGUMENT;
             }
 
-            frames_[frame_index].pin_count++;
+            // CRITICAL FIX (CRITICAL-1): Use atomic fetch_add for thread-safe increment
+            frames_[frame_index].pin_count.fetch_add(1, std::memory_order_relaxed);
 
             // Clock Sweep: Increment usage count (capped at MAX_USAGE_COUNT)
             // This gives frequently accessed pages a longer stay in the buffer pool
-            if (frames_[frame_index].usage_count < Frame::MAX_USAGE_COUNT)
+            // CRITICAL FIX (CRITICAL-1): Use atomic operations for thread-safe read-modify-write
+            uint32_t current_usage = frames_[frame_index].usage_count.load(std::memory_order_relaxed);
+            if (current_usage < Frame::MAX_USAGE_COUNT)
             {
-                frames_[frame_index].usage_count++;
+                frames_[frame_index].usage_count.fetch_add(1, std::memory_order_relaxed);
             }
 
             *buffer = frames_[frame_index].data.get();
@@ -153,12 +158,14 @@ namespace scratchbird::core
 
         // Update frame metadata
         frames_[frame_index].page_id = page_id;
-        frames_[frame_index].pin_count = 1;
+        // CRITICAL FIX (CRITICAL-1): Use atomic store for thread-safe write
+        frames_[frame_index].pin_count.store(1, std::memory_order_relaxed);
         frames_[frame_index].is_dirty = false;
 
         // Clock Sweep: Initialize usage count for newly loaded page
         // Start with usage_count = 1 to give new pages a chance to stay
-        frames_[frame_index].usage_count = 1;
+        // CRITICAL FIX (CRITICAL-1): Use atomic store for thread-safe write
+        frames_[frame_index].usage_count.store(1, std::memory_order_relaxed);
 
         // Update page table
         page_table_[page_id] = frame_index;
@@ -185,7 +192,8 @@ namespace scratchbird::core
         uint32_t frame_index = it->second;
 
         // Check pin count
-        if (frames_[frame_index].pin_count == 0)
+        // CRITICAL FIX (CRITICAL-1): Use atomic load for thread-safe read
+        if (frames_[frame_index].pin_count.load(std::memory_order_relaxed) == 0)
         {
             SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Page is not pinned");
             return Status::INVALID_ARGUMENT;
@@ -198,7 +206,8 @@ namespace scratchbird::core
         }
 
         // Decrement pin count
-        frames_[frame_index].pin_count--;
+        // CRITICAL FIX (CRITICAL-1): Use atomic fetch_sub for thread-safe decrement
+        frames_[frame_index].pin_count.fetch_sub(1, std::memory_order_relaxed);
 
         return Status::OK;
     }
@@ -275,7 +284,8 @@ namespace scratchbird::core
             frame_index = it->second;
 
             // Page must be pinned before locking
-            if (frames_[frame_index].pin_count == 0)
+            // CRITICAL FIX (CRITICAL-1): Use atomic load for thread-safe read
+            if (frames_[frame_index].pin_count.load(std::memory_order_relaxed) == 0)
             {
                 SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Cannot lock unpinned page");
                 return Status::INVALID_ARGUMENT;
@@ -363,7 +373,8 @@ namespace scratchbird::core
             }
 
             // Skip pinned frames (in use)
-            if (frame.pin_count > 0)
+            // CRITICAL FIX (CRITICAL-1): Use atomic load for thread-safe read
+            if (frame.pin_count.load(std::memory_order_relaxed) > 0)
             {
                 continue;
             }
@@ -375,7 +386,9 @@ namespace scratchbird::core
             }
 
             // Check usage count
-            if (frame.usage_count == 0)
+            // CRITICAL FIX (CRITICAL-1): Use atomic load for thread-safe read
+            uint32_t current_usage_count = frame.usage_count.load(std::memory_order_relaxed);
+            if (current_usage_count == 0)
             {
                 // Found victim! This page hasn't been accessed recently
                 // Prefer clean pages for faster eviction (READ ONLY optimization)
@@ -394,7 +407,8 @@ namespace scratchbird::core
             else
             {
                 // Give page another chance - decrement usage count
-                frame.usage_count--;
+                // CRITICAL FIX (CRITICAL-1): Use atomic fetch_sub for thread-safe decrement
+                frame.usage_count.fetch_sub(1, std::memory_order_relaxed);
             }
 
             // Check if we've completed a full pass
@@ -427,7 +441,8 @@ namespace scratchbird::core
                     continue; // Skip invalid entries
                 }
 
-                if (frames_[frame_index].pin_count == 0 &&
+                // CRITICAL FIX (CRITICAL-1): Use atomic load for thread-safe read
+                if (frames_[frame_index].pin_count.load(std::memory_order_relaxed) == 0 &&
                     frames_[frame_index].page_id != Frame::INVALID_PAGE_ID)
                 {
                     candidate_frame = frame_index;
@@ -459,11 +474,13 @@ namespace scratchbird::core
 
         // CRITICAL FIX (Issue 2.2): Consistency check - verify frame is unpinned
         // This MUST be fatal in ALL builds (not just debug) to prevent corruption
-        if (frames_[evicted_frame].pin_count != 0)
+        // CRITICAL FIX (CRITICAL-1): Use atomic load for thread-safe read
+        uint32_t evicted_pin_count = frames_[evicted_frame].pin_count.load(std::memory_order_relaxed);
+        if (evicted_pin_count != 0)
         {
             DEBUG_LOG_BP("CONSISTENCY ERROR: Attempting to evict pinned frame "
                          << evicted_frame
-                         << " with pin_count=" << frames_[evicted_frame].pin_count);
+                         << " with pin_count=" << evicted_pin_count);
             SET_ERROR_CONTEXT(ctx, Status::IO_ERROR,
                               "Buffer pool corruption: attempting to evict pinned page");
             return Status::IO_ERROR;
@@ -529,7 +546,8 @@ namespace scratchbird::core
         // Reset frame (including Clock Sweep usage_count)
         frames_[evicted_frame].page_id = Frame::INVALID_PAGE_ID;
         frames_[evicted_frame].is_dirty = false;
-        frames_[evicted_frame].usage_count = 0; // Reset usage count for next page
+        // CRITICAL FIX (CRITICAL-1): Use atomic store for thread-safe write
+        frames_[evicted_frame].usage_count.store(0, std::memory_order_relaxed); // Reset usage count for next page
 
         stats_.evictions++;
         return Status::OK;
@@ -787,7 +805,8 @@ namespace scratchbird::core
             }
 
             // Skip pinned pages (in use by transactions)
-            if (frame.pin_count > 0)
+            // CRITICAL FIX (CRITICAL-1): Use atomic load for thread-safe read
+            if (frame.pin_count.load(std::memory_order_relaxed) > 0)
             {
                 continue;
             }
@@ -800,7 +819,8 @@ namespace scratchbird::core
 
             // Prefer pages with lower usage_count (cold pages)
             // This integrates with Clock Sweep eviction algorithm
-            if (frame.usage_count > 2 && pages_written < pages_to_write / 2)
+            // CRITICAL FIX (CRITICAL-1): Use atomic load for thread-safe read
+            if (frame.usage_count.load(std::memory_order_relaxed) > 2 && pages_written < pages_to_write / 2)
             {
                 // Skip hot pages in first half of writes (only flush cold pages)
                 continue;

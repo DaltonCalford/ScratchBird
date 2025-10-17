@@ -138,7 +138,17 @@ namespace scratchbird::core
             ToastManager::shouldToast(tuple_size, page_size_))
         {
             // Create a temporary buffer for the toasted tuple
-            toasted_data.resize(sizeof(TupleHeader) + sizeof(ToastPointer));
+            // EXCEPTION SAFETY (ERROR-CRITICAL-2 Priority 2): Protect TOAST allocation
+            try
+            {
+                toasted_data.resize(sizeof(TupleHeader) + sizeof(ToastPointer));
+            }
+            catch (const std::bad_alloc &)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::OOM,
+                                  "Out of memory allocating TOAST buffer for tuple insertion");
+                return Status::OOM;
+            }
 
             // Copy the tuple header
             auto *new_hdr = reinterpret_cast<TupleHeader *>(toasted_data.data());
@@ -654,7 +664,17 @@ namespace scratchbird::core
         if (new_tuple_needs_toast)
         {
             // TOAST the new tuple
-            toasted_new_tuple.resize(sizeof(TupleHeader) + sizeof(ToastPointer));
+            // EXCEPTION SAFETY (ERROR-CRITICAL-2 Priority 2): Protect TOAST allocation in update
+            try
+            {
+                toasted_new_tuple.resize(sizeof(TupleHeader) + sizeof(ToastPointer));
+            }
+            catch (const std::bad_alloc &)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::OOM,
+                                  "Out of memory allocating TOAST buffer for tuple update");
+                return Status::OOM;
+            }
 
             // Copy tuple header
             auto *new_hdr = reinterpret_cast<TupleHeader *>(toasted_new_tuple.data());
@@ -756,7 +776,20 @@ namespace scratchbird::core
 
             // Insert old tuple as a back version on the new page
             // Create back version tuple (copy of old tuple)
-            std::vector<uint8_t> back_version_tuple(primary_length);
+            // EXCEPTION SAFETY (ERROR-CRITICAL-2 Priority 2): Protect cross-page back version allocation
+            std::vector<uint8_t> back_version_tuple;
+            try
+            {
+                back_version_tuple.resize(primary_length);
+            }
+            catch (const std::bad_alloc &)
+            {
+                // Failed to allocate - must unpin the allocated page to prevent leak
+                buffer_pool->unpinPage(back_version_page_id, false, ctx);
+                SET_ERROR_CONTEXT(ctx, Status::OOM,
+                                  "Out of memory allocating cross-page back version tuple");
+                return Status::OOM;
+            }
             memcpy(back_version_tuple.data(), page_data_ + primary_offset, primary_length);
 
             // Update back version tuple header
@@ -954,7 +987,22 @@ namespace scratchbird::core
             }
 
             // Mark this location as visited
-            visited_locations.insert(location_key);
+            // EXCEPTION SAFETY (ERROR-CRITICAL-2 Priority 1): Protect cycle detection
+            // If insert fails due to OOM, we lose corruption protection! Must handle gracefully.
+            try
+            {
+                visited_locations.insert(location_key);
+            }
+            catch (const std::bad_alloc &)
+            {
+                // CRITICAL: Allocation failure in cycle detection
+                // We can't safely continue without cycle protection - abort the chain traversal
+                LOG_ERROR(STORAGE,
+                          "OOM during cycle detection in version chain - aborting traversal for safety");
+                SET_ERROR_CONTEXT(ctx, Status::OOM,
+                                  "Out of memory during version chain cycle detection");
+                return Status::OOM;
+            }
 
             // Get tuple data based on whether we're at primary or back version
             uint32_t offset;
@@ -1253,7 +1301,23 @@ namespace scratchbird::core
 
                     // Register pin with snapshot (Option 3: MVCC Snapshot)
                     // Snapshot owns the pin and will clean up on transaction commit/rollback
-                    snapshot->pinned_pages.push_back(back_page_id);
+                    // EXCEPTION SAFETY (ERROR-CRITICAL-2 Priority 1): Protect snapshot pin tracking
+                    // If push_back fails, page remains pinned but not tracked = BUFFER POOL LEAK!
+                    try
+                    {
+                        snapshot->pinned_pages.push_back(back_page_id);
+                    }
+                    catch (const std::bad_alloc &)
+                    {
+                        // CRITICAL: Failed to track pinned page - must unpin to prevent leak
+                        buffer_pool->unpinPage(back_page_id, false, ctx);
+                        LOG_ERROR(STORAGE,
+                                  "OOM tracking snapshot pin for page %u - unpinned to prevent leak",
+                                  back_page_id);
+                        SET_ERROR_CONTEXT(ctx, Status::OOM,
+                                          "Out of memory tracking cross-page version pins");
+                        return Status::OOM;
+                    }
                     if (snapshot->buffer_pool == nullptr)
                     {
                         snapshot->buffer_pool = buffer_pool;

@@ -215,7 +215,9 @@ namespace scratchbird::core
         // Use transaction manager for visibility if available
         if (db_->transaction_manager() != nullptr)
         {
-            const TransactionManager *tm = db_->transaction_manager();
+            // CRITICAL FIX (CRITICAL-2 side-effect): Removed const because visibility methods
+            // modify the transaction cache for performance optimization
+            TransactionManager *tm = db_->transaction_manager();
 
             // VALIDATE XIDs FIRST - protect against corrupted tuple headers
             if (!tm->isXidInRange(xmin))

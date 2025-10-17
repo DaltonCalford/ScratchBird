@@ -540,7 +540,7 @@ namespace scratchbird::core
     }
 
     auto TransactionManager::getTransactionState(uint64_t xid, TransactionState &state_out,
-                                                 ErrorContext *ctx) const -> Status
+                                                 ErrorContext *ctx) -> Status
     {
         std::lock_guard<std::mutex> lock(mutex_);
 
@@ -685,6 +685,11 @@ namespace scratchbird::core
 
     auto TransactionManager::updateTransactionMarkers(ErrorContext *ctx) -> Status
     {
+        // CRITICAL FIX (CRITICAL-3): Lock ordering documentation
+        // This method follows correct lock hierarchy: mutex_ → ProcArray::array_lock
+        // 1. Acquire mutex_ (protects transaction markers)
+        // 2. Then acquire ProcArray::array_lock (protects process control blocks)
+        // This ordering MUST be maintained to prevent deadlock!
         std::lock_guard<std::mutex> lock(mutex_);
 
         // Get ProcArray instance to scan active transactions
@@ -695,7 +700,8 @@ namespace scratchbird::core
             return Status::OK;
         }
 
-        // Acquire read lock to scan the proc array
+        // LOCK ORDERING: mutex_ already held, now acquire ProcArray::array_lock (read lock)
+        // This is CORRECT order: mutex_ → ProcArray::array_lock
         pthread_rwlock_rdlock(&proc_array->array_lock);
 
         // Compute OAT (Oldest Active Transaction) and OST (Oldest Snapshot Transaction)
@@ -776,7 +782,7 @@ namespace scratchbird::core
         return Status::OK;
     }
 
-    auto TransactionManager::isTransactionVisible(uint64_t xid, uint64_t snapshot_xid) const -> bool
+    auto TransactionManager::isTransactionVisible(uint64_t xid, uint64_t snapshot_xid) -> bool
     {
         // VALIDATE XID FIRST - Critical security check
         if (!isXidInRange(xid))
@@ -840,7 +846,7 @@ namespace scratchbird::core
         return state == TransactionState::COMMITTED;
     }
 
-    auto TransactionManager::isSnapshotVisible(uint64_t xid, const Snapshot *snapshot) const -> bool
+    auto TransactionManager::isSnapshotVisible(uint64_t xid, const Snapshot *snapshot) -> bool
     {
         // Null snapshot check
         if (snapshot == nullptr)
@@ -930,12 +936,19 @@ namespace scratchbird::core
 
     auto TransactionManager::getSnapshot(Snapshot &snapshot_out, ErrorContext *ctx) -> Status
     {
+        // CRITICAL FIX (CRITICAL-3): Lock ordering documentation
+        // This method follows correct lock hierarchy: mutex_ → ProcArray::array_lock
+        // 1. Acquire mutex_ (protects transaction state)
+        // 2. Then acquire ProcArray::array_lock (protects process control blocks)
+        // This ordering MUST be maintained to prevent deadlock!
         std::lock_guard<std::mutex> lock(mutex_);
 
         snapshot_out.xmax = next_xid_.load(std::memory_order_acquire);
         snapshot_out.active_xids.clear();
 
         // Get active transactions from ProcArray
+        // NOTE: getActiveTransactions() internally acquires ProcArray::array_lock
+        // This is safe because we're following the correct lock order: mutex_ → array_lock
         uint64_t oldest_xmin = 0;
         Status status =
             ProcArrayManager::getActiveTransactions(&snapshot_out.active_xids, &oldest_xmin, ctx);
@@ -957,6 +970,10 @@ namespace scratchbird::core
             ProcArray *proc_array = ProcArrayManager::getInstance();
             if (proc_array)
             {
+                // LOCK ORDERING: mutex_ already held, now acquire ProcArray::array_lock (read lock)
+                // This is CORRECT order: mutex_ → ProcArray::array_lock
+                // NOTE: This is a second acquisition of array_lock (first was in getActiveTransactions)
+                // but that's safe because rdlocks are reentrant for the same thread
                 pthread_rwlock_rdlock(&proc_array->array_lock);
 
                 ProcessControlBlock *pcbs = reinterpret_cast<ProcessControlBlock *>(
