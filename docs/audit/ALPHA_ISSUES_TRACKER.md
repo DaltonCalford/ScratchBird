@@ -1,9 +1,9 @@
 # SCRATCHBIRD ALPHA - ISSUES TRACKER
 
-**Last Updated**: October 17, 2025 (15:45)
+**Last Updated**: October 17, 2025 (16:00)
 **Source**: Alpha Final Comprehensive Audit
-**Total Issues**: 21 → 4 remaining (0 Critical, 0 High, 3 Medium, 1 Low)
-**Resolved**: 17 (CRITICAL-1, CRITICAL-2, CRITICAL-3, ERROR-CRITICAL-1 false positive, ERROR-CRITICAL-2, HIGH-1, HIGH-2, HIGH-3, HIGH-4, HIGH-5, HIGH-6, HIGH-7, HIGH-8, MEDIUM-1, MEDIUM-2, MEDIUM-3, MEDIUM-4)
+**Total Issues**: 21 → 3 remaining (0 Critical, 0 High, 2 Medium, 1 Low)
+**Resolved**: 18 (CRITICAL-1, CRITICAL-2, CRITICAL-3, ERROR-CRITICAL-1 false positive, ERROR-CRITICAL-2, HIGH-1, HIGH-2, HIGH-3, HIGH-4, HIGH-5, HIGH-6, HIGH-7, HIGH-8, MEDIUM-1, MEDIUM-2, MEDIUM-3, MEDIUM-4, MEDIUM-5)
 
 ---
 
@@ -351,12 +351,30 @@
   - File: src/core/gin_index.cpp
 
 ### MEDIUM-5: Flush Error in Destructor
-- **File**: `src/core/page_manager.cpp:16-25`
+- **File**: `src/core/page_manager.cpp:16-49`
 - **Type**: Error Handling
-- **Impact**: Data loss on shutdown
-- **Fix**: Add warning log or emergency dump
-- **Effort**: 1 hour
-- **Status**: 🟡 OPEN
+- **Impact**: Data loss on shutdown (resolved)
+- **Fix**: Add warning log and emergency sync on flush failure
+- **Effort**: 1 hour (actual: 30 minutes)
+- **Status**: ✅ RESOLVED (Oct 17, 2025)
+- **Resolution Details**:
+  - Identified silent flush failure in PageManager destructor
+  - Problem: Line 22 called flush() but ignored return status
+  - Comment at line 23: "Can't do much if flush fails in destructor" indicated known issue
+  - Risk: If FSM flush fails during shutdown, free space map changes are lost silently
+  - Impact: Database corruption risk - pages marked as allocated/free may be incorrect after restart
+  - Fix: Added comprehensive error handling (lines 23-47):
+    * Capture flush() return status
+    * Log critical error with full context if flush fails (includes status code and error message)
+    * Attempt emergency db->sync() as last-ditch effort to minimize data loss
+    * Log if emergency sync also fails
+  - Benefits:
+    * Operators can now diagnose data loss issues during shutdown
+    * Error logs provide actionable information for debugging
+    * Emergency sync may save some data even if FSM flush fails
+  - Rationale: Can't throw exceptions in destructors (undefined behavior), but can log errors
+  - Verified compilation: page_manager.cpp compiled successfully with only style warnings
+  - File: src/core/page_manager.cpp
 
 ### MEDIUM-6: Unchecked Vector Operations
 - **File**: Multiple (page_manager.cpp:269, btree.cpp:822, etc.)
@@ -438,11 +456,12 @@ All Phase 1 issues resolved on October 14, 2025. See:
 - [x] MEDIUM-2: TOAST Integer Overflow ✅ RESOLVED (Oct 17, 2025)
 - [x] MEDIUM-3: TOAST Offset Validation ✅ RESOLVED (Oct 17, 2025)
 - [x] MEDIUM-4: GIN Index Magic Number ✅ RESOLVED (Oct 17, 2025)
-- [ ] MEDIUM-5 through MEDIUM-7 (3 issues)
+- [x] MEDIUM-5: Flush Error in Destructor ✅ RESOLVED (Oct 17, 2025)
+- [ ] MEDIUM-6, MEDIUM-7 (2 issues)
 - [ ] LOW-1 (1 issue)
 
 **Target**: 5/7 medium issues resolved
-**Progress**: 4/7 resolved (Oct 17, 2025 - 57% complete)
+**Progress**: 5/7 resolved (Oct 17, 2025 - 71% complete) ✅ TARGET ACHIEVED
 
 ---
 

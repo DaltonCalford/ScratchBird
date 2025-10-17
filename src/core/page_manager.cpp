@@ -16,11 +16,35 @@ namespace scratchbird::core
     PageManager::~PageManager()
     {
         // Flush if dirty
+        // MEDIUM-5 FIX: Log flush errors in destructor to help diagnose data loss on shutdown
         if (dirty_)
         {
             ErrorContext ctx;
-            flush(&ctx);
-            // Can't do much if flush fails in destructor
+            Status status = flush(&ctx);
+            if (status != Status::OK)
+            {
+                // Can't throw in destructor, but we can log the critical error
+                // This helps diagnose data loss issues during shutdown
+                LOG_ERROR(STORAGE,
+                          "PageManager destructor: CRITICAL - Failed to flush FSM! Status=%d. "
+                          "Free space map changes may be lost. Error: %s",
+                          static_cast<int>(status),
+                          ctx.message.empty() ? "Unknown error" : ctx.message.c_str());
+
+                // If we have valid database pointer, attempt emergency sync
+                // This is a last-ditch effort to minimize data loss
+                if (db_ != nullptr)
+                {
+                    ErrorContext sync_ctx;
+                    Status sync_status = db_->sync(&sync_ctx);
+                    if (sync_status != Status::OK)
+                    {
+                        LOG_ERROR(STORAGE,
+                                  "PageManager destructor: Emergency sync also failed! Status=%d",
+                                  static_cast<int>(sync_status));
+                    }
+                }
+            }
         }
     }
 
