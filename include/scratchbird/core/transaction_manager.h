@@ -237,6 +237,11 @@ namespace scratchbird::core
             BufferPool *buffer_pool =
                 nullptr; // BufferPool to unpin pages (set when first pin occurs)
 
+            // HIGH-4 FIX: Protect pinned_pages vector from concurrent access
+            // Multiple threads can traverse version chains with the same snapshot, causing
+            // concurrent push_back() calls to pinned_pages. This mutex prevents vector corruption.
+            mutable std::mutex pinned_pages_mutex_;
+
             // Cleanup method - unpins all pages when snapshot released
             // LOCKING: Thread-safe. Uses BufferPool API which handles locking internally.
             void cleanup();
