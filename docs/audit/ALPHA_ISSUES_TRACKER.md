@@ -1,9 +1,9 @@
 # SCRATCHBIRD ALPHA - ISSUES TRACKER
 
-**Last Updated**: October 17, 2025 (02:30)
+**Last Updated**: October 17, 2025 (13:25)
 **Source**: Alpha Final Comprehensive Audit
-**Total Issues**: 21 → 11 remaining (0 Critical, 3 High, 7 Medium, 1 Low)
-**Resolved**: 10 (CRITICAL-1, CRITICAL-2, CRITICAL-3, ERROR-CRITICAL-1 false positive, ERROR-CRITICAL-2, HIGH-1, HIGH-2, HIGH-3, HIGH-4, HIGH-5)
+**Total Issues**: 21 → 8 remaining (0 Critical, 0 High, 7 Medium, 1 Low)
+**Resolved**: 13 (CRITICAL-1, CRITICAL-2, CRITICAL-3, ERROR-CRITICAL-1 false positive, ERROR-CRITICAL-2, HIGH-1, HIGH-2, HIGH-3, HIGH-4, HIGH-5, HIGH-6, HIGH-7, HIGH-8)
 
 ---
 
@@ -200,28 +200,65 @@
   - File: src/core/transaction_manager.cpp
 
 ### HIGH-6: Cross-Page Update Unpinning Asymmetry
-- **File**: `src/core/storage_engine.cpp:729-832`
+- **File**: `src/core/storage_engine.cpp:773-775`
 - **Type**: Resource Management
 - **Impact**: Data loss risk
 - **Fix**: Add comprehensive error recovery and dirty flag tracking
-- **Effort**: 6-8 hours
-- **Status**: 🟠 OPEN
+- **Effort**: 6-8 hours (actual: 30 minutes)
+- **Status**: ✅ RESOLVED (Oct 17, 2025)
+- **Resolution Details**:
+  - Identified data loss risk in cross-page update error path
+  - Problem: After successful tuple insertion (line 757), if lock acquisition fails (line 770), we were unpinning with dirty=false
+  - Risk: Tuple was already inserted and modified the page, but dirty=false meant changes would not be persisted
+  - Fix: Changed unpinPage() dirty flag from false to true at line 775
+  - Added explanatory comment documenting why dirty=true is required
+  - Verified compilation: storage_engine.cpp.o built successfully
+  - File: src/core/storage_engine.cpp
 
 ### HIGH-7: Page Leak on Initialize Failure
-- **File**: `src/core/storage_engine.cpp:500-533`
+- **File**: `src/core/storage_engine.cpp:527-542`
 - **Type**: Resource Leak
 - **Impact**: Page exhaustion
 - **Fix**: Free page if initialize fails
-- **Effort**: 1 hour
-- **Status**: 🟠 OPEN
+- **Effort**: 1 hour (actual: 20 minutes)
+- **Status**: ✅ RESOLVED (Oct 17, 2025)
+- **Resolution Details**:
+  - Identified page leak in allocateHeapPage() error path
+  - Problem: After allocatePage() succeeds (line 506) and pinPage() succeeds (line 514), if heap_page.initialize() fails (line 525), we were only unpinning the page but not freeing it from page_manager
+  - Risk: Allocated pages remain marked as used but are never accessible, leading to page exhaustion over time
+  - Fix: Added else branch at lines 533-540 to handle initialize failure
+    * Unpin page with dirty=false (no changes to persist)
+    * Call page_manager_->freePage() to release the allocated page
+  - Also changed success path to explicitly unpin with dirty=true for clarity
+  - Verified compilation: storage_engine.cpp compiled successfully with only style warnings
+  - File: src/core/storage_engine.cpp
 
 ### HIGH-8: Index Update Errors Swallowed
-- **File**: `src/core/storage_engine.cpp:1209`
+- **File**: `src/core/storage_engine.cpp:1088-1256`, `include/scratchbird/core/status.h:19`
 - **Type**: Error Handling
 - **Impact**: Index corruption
 - **Fix**: Add index corruption tracking/reporting
-- **Effort**: 4-6 hours
-- **Status**: 🟠 OPEN
+- **Effort**: 4-6 hours (actual: 2 hours)
+- **Status**: ✅ RESOLVED (Oct 17, 2025)
+- **Resolution Details**:
+  - Identified silent index corruption in updateIndexesForRelocation()
+  - Problem: Index update errors were logged but always returned Status::OK
+  - Risk: Index inserts fail but system doesn't know, leading to incorrect query results
+  - Fix 1: Added Status::INDEX_CORRUPTED (2003) to status.h alongside other corruption codes
+  - Fix 2: Added error tracking in updateIndexesForRelocation():
+    * std::vector<std::string> failed_indexes - tracks all failures with reasons
+    * bool had_critical_failure - distinguishes critical (insert) vs. non-critical failures
+  - Fix 3: Modified all error paths to collect index name + failure reason:
+    * "index_name (key build failed)" - line 1147
+    * "index_name (open failed)" - line 1160
+    * "index_name (insert failed)" - lines 1182, 1217 (critical)
+  - Fix 4: Added comprehensive error reporting at function end (lines 1232-1253):
+    * Build error message listing all failed indexes
+    * Log at ERROR level with REINDEX recommendation
+    * Return Status::INDEX_CORRUPTED when critical failures occurred
+  - Impact: Operators now see which indexes are corrupted and can run REINDEX
+  - Verified compilation: storage_engine.cpp compiled successfully
+  - Files: include/scratchbird/core/status.h, src/core/storage_engine.cpp
 
 ---
 
@@ -335,10 +372,12 @@ All Phase 1 issues resolved on October 14, 2025. See:
 - [x] HIGH-3: BTree lock coupling documentation ✅ RESOLVED (Oct 17, 2025)
 - [x] HIGH-4: Snapshot pin management race ✅ RESOLVED (Oct 17, 2025)
 - [x] HIGH-5: Atomic XID memory ordering ✅ RESOLVED (Oct 17, 2025)
-- [ ] HIGH-6 through HIGH-8 (3 issues remaining)
+- [x] HIGH-6: Cross-Page Update Unpinning Asymmetry ✅ RESOLVED (Oct 17, 2025)
+- [x] HIGH-7: Page Leak on Initialize Failure ✅ RESOLVED (Oct 17, 2025)
+- [x] HIGH-8: Index Update Errors Swallowed ✅ RESOLVED (Oct 17, 2025)
 
 **Target**: 6/8 high priority issues resolved
-**Progress**: 5/8 resolved (Oct 17, 2025 - 62.5% complete) ⭐ TARGET EXCEEDED
+**Progress**: 8/8 resolved (Oct 17, 2025 - 100% complete) ✅ ALL HIGH ISSUES RESOLVED
 
 ### Following Sprint (Week of Oct 30 - Nov 6):
 - [ ] MEDIUM-1 through MEDIUM-7 (7 issues)
