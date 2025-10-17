@@ -487,6 +487,15 @@ namespace scratchbird::core
 
         for (uint32_t seq = 0; seq < chunks_needed; seq++)
         {
+            // MEDIUM-3 FIX: Validate offset before calculating chunk_size
+            // Prevent underflow if offset exceeds size (defensive check)
+            if (offset > size)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::OUT_OF_RANGE,
+                                  "TOAST offset exceeds data size - internal error");
+                return Status::OUT_OF_RANGE;
+            }
+
             uint32_t chunk_size = std::min(TOAST_MAX_CHUNK_SIZE, size - offset);
 
             // Build tuple data manually

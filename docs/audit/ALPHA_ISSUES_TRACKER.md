@@ -1,9 +1,9 @@
 # SCRATCHBIRD ALPHA - ISSUES TRACKER
 
-**Last Updated**: October 17, 2025 (15:00)
+**Last Updated**: October 17, 2025 (15:30)
 **Source**: Alpha Final Comprehensive Audit
-**Total Issues**: 21 → 6 remaining (0 Critical, 0 High, 5 Medium, 1 Low)
-**Resolved**: 15 (CRITICAL-1, CRITICAL-2, CRITICAL-3, ERROR-CRITICAL-1 false positive, ERROR-CRITICAL-2, HIGH-1, HIGH-2, HIGH-3, HIGH-4, HIGH-5, HIGH-6, HIGH-7, HIGH-8, MEDIUM-1, MEDIUM-2)
+**Total Issues**: 21 → 5 remaining (0 Critical, 0 High, 4 Medium, 1 Low)
+**Resolved**: 16 (CRITICAL-1, CRITICAL-2, CRITICAL-3, ERROR-CRITICAL-1 false positive, ERROR-CRITICAL-2, HIGH-1, HIGH-2, HIGH-3, HIGH-4, HIGH-5, HIGH-6, HIGH-7, HIGH-8, MEDIUM-1, MEDIUM-2, MEDIUM-3)
 
 ---
 
@@ -311,12 +311,25 @@
   - File: src/core/toast.cpp
 
 ### MEDIUM-3: TOAST Offset Validation
-- **File**: `src/core/toast.cpp:502`
+- **File**: `src/core/toast.cpp:488-519`
 - **Type**: Bounds Check
-- **Impact**: Out-of-bounds read
-- **Fix**: Add explicit bounds check
-- **Effort**: 30 minutes
-- **Status**: 🟡 OPEN
+- **Impact**: Out-of-bounds read (resolved)
+- **Fix**: Add explicit bounds check before chunk_size calculation
+- **Effort**: 30 minutes (actual: 15 minutes)
+- **Status**: ✅ RESOLVED (Oct 17, 2025)
+- **Resolution Details**:
+  - Identified bounds check missing in TOAST chunk loop
+  - Problem: Line 499 calculates `chunk_size = std::min(TOAST_MAX_CHUNK_SIZE, size - offset)`
+  - Risk: If offset > size, unsigned subtraction underflows to huge value → out-of-bounds read at line 519
+  - Code path: `tuple_data.insert(tuple_data.end(), data + offset, data + offset + chunk_size)`
+  - Fix: Added defensive check before calculation (lines 490-497):
+    * Validate offset <= size before calculating chunk_size
+    * Return Status::OUT_OF_RANGE with descriptive error message
+    * Prevents integer underflow in size - offset calculation
+  - While offset shouldn't exceed size in correct operation (incremented by chunk_size each iteration),
+    this is a defensive check against internal errors or data corruption
+  - Verified compilation: toast.cpp compiled successfully with only style warnings
+  - File: src/core/toast.cpp
 
 ### MEDIUM-4: GIN Index Magic Number
 - **File**: `src/core/gin_index.cpp:304`
@@ -412,11 +425,12 @@ All Phase 1 issues resolved on October 14, 2025. See:
 ### Following Sprint (Week of Oct 30 - Nov 6):
 - [x] MEDIUM-1: Non-Atomic BufferPool Stats ✅ RESOLVED (Oct 17, 2025)
 - [x] MEDIUM-2: TOAST Integer Overflow ✅ RESOLVED (Oct 17, 2025)
-- [ ] MEDIUM-3 through MEDIUM-7 (5 issues)
+- [x] MEDIUM-3: TOAST Offset Validation ✅ RESOLVED (Oct 17, 2025)
+- [ ] MEDIUM-4 through MEDIUM-7 (4 issues)
 - [ ] LOW-1 (1 issue)
 
 **Target**: 5/7 medium issues resolved
-**Progress**: 2/7 resolved (Oct 17, 2025 - 29% complete)
+**Progress**: 3/7 resolved (Oct 17, 2025 - 43% complete)
 
 ---
 
