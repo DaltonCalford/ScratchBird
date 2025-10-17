@@ -468,6 +468,15 @@ namespace scratchbird::core
     {
         StorageEngine *storage = db_->storage_engine();
 
+        // MEDIUM-2 FIX: Check for integer overflow before chunk calculation
+        // If size is close to UINT32_MAX, adding TOAST_MAX_CHUNK_SIZE would overflow
+        if (size > UINT32_MAX - TOAST_MAX_CHUNK_SIZE + 1)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::OUT_OF_RANGE,
+                              "TOAST value too large - would cause integer overflow in chunk calculation");
+            return Status::OUT_OF_RANGE;
+        }
+
         // Split data into chunks
         uint32_t chunks_needed = (size + TOAST_MAX_CHUNK_SIZE - 1) / TOAST_MAX_CHUNK_SIZE;
         uint32_t offset = 0;
