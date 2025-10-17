@@ -347,6 +347,11 @@ namespace scratchbird::core
             return Status::OK;
         }
 
+        // HIGH-2 FIX: Acquire lock before deadlock detection
+        // DeadlockDetector needs to access lock_table_ and proc_locks_,
+        // which require lock_table_mutex_ to be held for thread safety.
+        std::lock_guard<std::mutex> lock(lock_table_mutex_);
+
         // OPTIMIZATION NOTE: When deadlock detection is fully implemented,
         // read-only transactions can be excluded from deadlock detection
         // since they only acquire SHARE locks and cannot create write-write
@@ -556,6 +561,11 @@ namespace scratchbird::core
     {
         // Build wait-for graph by scanning lock manager state
         // Edge from W -> H means "W is waiting for H"
+        //
+        // HIGH-2 FIX: CRITICAL - Caller MUST hold lock_mgr_->lock_table_mutex_
+        // This method accesses lock_table_ and proc_locks_, which are protected
+        // by lock_table_mutex_. The mutex is acquired in LockManager::detectDeadlocks()
+        // before calling this method.
 
         wait_graph_.clear();
 
