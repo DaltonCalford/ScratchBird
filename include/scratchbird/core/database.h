@@ -308,12 +308,13 @@ namespace scratchbird
             Status allocate_page_id(uint32_t *page_id_out, ErrorContext *ctx = nullptr);
 
         private:
-            int fd_ = -1;                      // File descriptor
-            std::string path_;                 // Database file path
-            uint32_t page_size_ = 0;           // Page size
-            ID db_uuid_;                       // Database UUID
-            DatabaseHeader *header_ = nullptr; // Cached header
-            uint16_t connection_timezone_ = 1; // Connection timezone (1 = UTC)
+            int fd_ = -1;                                    // File descriptor
+            std::string path_;                               // Database file path
+            uint32_t page_size_ = 0;                         // Page size
+            ID db_uuid_;                                     // Database UUID
+            std::unique_ptr<uint8_t[]> header_buffer_;       // Header buffer (LOW-1 FIX: Modern RAII)
+            DatabaseHeader *header_ = nullptr;               // Cached header (points into header_buffer_)
+            uint16_t connection_timezone_ = 1;               // Connection timezone (1 = UTC)
 
             // Forward declared pointers - managed via unique_ptr for RAII
             std::unique_ptr<PageManager> page_manager_;       // Page allocation manager (owned)

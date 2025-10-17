@@ -96,11 +96,10 @@ namespace scratchbird::core
         // Now delete page manager
         page_manager_.reset();
 
-        if (header_ != nullptr)
-        {
-            delete[] reinterpret_cast<uint8_t *>(header_);
-            header_ = nullptr;
-        }
+        // LOW-1 FIX: header_buffer_ automatically cleaned up by std::unique_ptr
+        header_ = nullptr;        // Invalidate pointer (was pointing into header_buffer_)
+        header_buffer_.reset();   // Release memory (automatic, but explicit for clarity)
+
         if (fd_ >= 0)
         {
             ::close(fd_);
@@ -560,15 +559,19 @@ namespace scratchbird::core
 
         page_size_ = ph->page_size;
 
-        // Allocate full header buffer with OOM check
-        header_ = reinterpret_cast<DatabaseHeader *>(new (std::nothrow) uint8_t[page_size_]);
-        if (header_ == nullptr)
+        // LOW-1 FIX: Allocate full header buffer using std::unique_ptr for RAII
+        try
+        {
+            header_buffer_ = std::make_unique<uint8_t[]>(page_size_);
+        }
+        catch (const std::bad_alloc &)
         {
             ::close(fd_);
             fd_ = -1;
             SET_ERROR_CONTEXT(ctx, Status::OOM, "Failed to allocate memory for database header");
             return Status::OOM;
         }
+        header_ = reinterpret_cast<DatabaseHeader *>(header_buffer_.get());
 
         // Read full header page
         lseek(fd_, 0, SEEK_SET);
