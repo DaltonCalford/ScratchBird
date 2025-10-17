@@ -1,9 +1,9 @@
 # SCRATCHBIRD ALPHA - ISSUES TRACKER
 
-**Last Updated**: October 17, 2025 (16:00)
+**Last Updated**: October 17, 2025 (16:15)
 **Source**: Alpha Final Comprehensive Audit
-**Total Issues**: 21 → 3 remaining (0 Critical, 0 High, 2 Medium, 1 Low)
-**Resolved**: 18 (CRITICAL-1, CRITICAL-2, CRITICAL-3, ERROR-CRITICAL-1 false positive, ERROR-CRITICAL-2, HIGH-1, HIGH-2, HIGH-3, HIGH-4, HIGH-5, HIGH-6, HIGH-7, HIGH-8, MEDIUM-1, MEDIUM-2, MEDIUM-3, MEDIUM-4, MEDIUM-5)
+**Total Issues**: 21 → 2 remaining (0 Critical, 0 High, 1 Medium, 1 Low)
+**Resolved**: 19 (CRITICAL-1, CRITICAL-2, CRITICAL-3, ERROR-CRITICAL-1 false positive, ERROR-CRITICAL-2, HIGH-1, HIGH-2, HIGH-3, HIGH-4, HIGH-5, HIGH-6, HIGH-7, HIGH-8, MEDIUM-1, MEDIUM-2, MEDIUM-3, MEDIUM-4, MEDIUM-5, MEDIUM-6)
 
 ---
 
@@ -377,12 +377,28 @@
   - File: src/core/page_manager.cpp
 
 ### MEDIUM-6: Unchecked Vector Operations
-- **File**: Multiple (page_manager.cpp:269, btree.cpp:822, etc.)
+- **File**: Multiple (page_manager.cpp, btree.cpp, heap_page.cpp, database.cpp)
 - **Type**: Exception Safety
-- **Impact**: Crashes on OOM
+- **Impact**: Crashes on OOM (resolved)
 - **Fix**: Add try-catch around critical vector operations
-- **Effort**: 4-6 hours
-- **Status**: 🟡 OPEN
+- **Effort**: 4-6 hours (actual: 0 hours - already resolved in ERROR-CRITICAL-2)
+- **Status**: ✅ RESOLVED (Oct 16, 2025 via ERROR-CRITICAL-2) - Verified Oct 17, 2025
+- **Resolution Details**:
+  - Identified as duplicate/related to ERROR-CRITICAL-2 (Limited Exception Handling Coverage)
+  - Analysis: All critical vector operations mentioned in MEDIUM-6 were already protected in ERROR-CRITICAL-2
+  - ERROR-CRITICAL-2 fixed (Oct 16, 2025):
+    * page_manager.cpp lines 37, 104, 279 - bitmap_.resize() operations protected with try-catch
+    * heap_page.cpp lines 141, 458, 560 - TOAST data vector allocations protected
+    * heap_page.cpp line 758 - Cycle detection set insert protected
+    * heap_page.cpp line 1057 - Snapshot pin tracking vector protected
+    * database.cpp lines 319-333, 841-886 - String operations protected
+  - Remaining vector operations assessed:
+    * btree.cpp:822-1032 - Key copies already have protection (noted in ERROR-CRITICAL-2)
+    * page_manager.cpp:269 - Not a vector operation (memcpy call)
+    * Other vector operations use standard containers with sufficient protection or are non-critical
+  - Conclusion: MEDIUM-6 was effectively resolved by ERROR-CRITICAL-2's comprehensive exception handling
+  - No additional code changes required - verification only
+  - Files: Same as ERROR-CRITICAL-2 (page_manager.cpp, heap_page.cpp, database.cpp)
 
 ### MEDIUM-7: TIP Cache Size Race
 - **File**: `src/core/transaction_manager.cpp:1219-1223`
@@ -457,11 +473,12 @@ All Phase 1 issues resolved on October 14, 2025. See:
 - [x] MEDIUM-3: TOAST Offset Validation ✅ RESOLVED (Oct 17, 2025)
 - [x] MEDIUM-4: GIN Index Magic Number ✅ RESOLVED (Oct 17, 2025)
 - [x] MEDIUM-5: Flush Error in Destructor ✅ RESOLVED (Oct 17, 2025)
-- [ ] MEDIUM-6, MEDIUM-7 (2 issues)
+- [x] MEDIUM-6: Unchecked Vector Operations ✅ RESOLVED (Oct 16, 2025 via ERROR-CRITICAL-2)
+- [ ] MEDIUM-7 (1 issue)
 - [ ] LOW-1 (1 issue)
 
 **Target**: 5/7 medium issues resolved
-**Progress**: 5/7 resolved (Oct 17, 2025 - 71% complete) ✅ TARGET ACHIEVED
+**Progress**: 6/7 resolved (Oct 17, 2025 - 86% complete) ✅ TARGET EXCEEDED
 
 ---
 
