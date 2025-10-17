@@ -1303,8 +1303,10 @@ namespace scratchbird::core
                     // Snapshot owns the pin and will clean up on transaction commit/rollback
                     // EXCEPTION SAFETY (ERROR-CRITICAL-2 Priority 1): Protect snapshot pin tracking
                     // If push_back fails, page remains pinned but not tracked = BUFFER POOL LEAK!
+                    // HIGH-4 FIX: Protect pinned_pages vector with mutex to prevent concurrent modification
                     try
                     {
+                        std::lock_guard<std::mutex> lock(snapshot->pinned_pages_mutex_);
                         snapshot->pinned_pages.push_back(back_page_id);
                     }
                     catch (const std::bad_alloc &)

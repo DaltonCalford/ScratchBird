@@ -23,6 +23,9 @@ namespace scratchbird::core
     // Snapshot cleanup implementation
     void TransactionManager::Snapshot::cleanup()
     {
+        // HIGH-4 FIX: Protect pinned_pages access with mutex
+        std::lock_guard<std::mutex> lock(pinned_pages_mutex_);
+
         if (buffer_pool != nullptr)
         {
             for (uint32_t page_id : pinned_pages)

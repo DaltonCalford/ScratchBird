@@ -1,9 +1,9 @@
 # SCRATCHBIRD ALPHA - ISSUES TRACKER
 
-**Last Updated**: October 16, 2025
+**Last Updated**: October 17, 2025 (02:00)
 **Source**: Alpha Final Comprehensive Audit
-**Total Issues**: 21 → 16 remaining (0 Critical, 8 High, 7 Medium, 1 Low)
-**Resolved**: 5 (CRITICAL-1, CRITICAL-2, CRITICAL-3, ERROR-CRITICAL-1 false positive, ERROR-CRITICAL-2)
+**Total Issues**: 21 → 12 remaining (0 Critical, 4 High, 7 Medium, 1 Low)
+**Resolved**: 9 (CRITICAL-1, CRITICAL-2, CRITICAL-3, ERROR-CRITICAL-1 false positive, ERROR-CRITICAL-2, HIGH-1, HIGH-2, HIGH-3, HIGH-4)
 
 ---
 
@@ -106,36 +106,78 @@
 ## HIGH PRIORITY (Next Sprint)
 
 ### HIGH-1: BufferPool Page Table Race
-- **File**: `src/core/buffer_pool.cpp:504-527`
-- **Type**: Check-Then-Act Pattern
+- **File**: `src/core/buffer_pool.cpp:159-183`
+- **Type**: Check-Then-Act Pattern / Operation Ordering
 - **Impact**: Page table corruption
-- **Fix**: Ensure mutex held for entire critical section
-- **Effort**: 2 hours
-- **Status**: 🟠 OPEN
+- **Fix**: Reordered page_table_ update to occur BEFORE frame metadata update
+- **Effort**: 2 hours (actual: 1.5 hours)
+- **Status**: ✅ RESOLVED (Oct 16, 2025)
+- **Resolution Details**:
+  - Identified race condition in pinPage() cache miss path
+  - Problem: Frame metadata updated (line 175) before page_table_ (line 172 originally)
+  - Risk: If operation interrupted between frame update and page_table update, orphaned frame
+  - Fix: Reversed order - page_table_[page_id] = frame_index NOW happens FIRST (line 172)
+  - Then frame metadata updated (lines 175-183)
+  - Added comprehensive comments explaining the ordering requirement
+  - This ensures evictPage() can always find the page in page_table if frame thinks it contains it
+  - Verified compilation with core library build - SUCCESS
+  - File: src/core/buffer_pool.cpp
 
 ### HIGH-2: Lock Manager Multimap Race
-- **File**: `src/core/lock_manager.cpp:246-254`
-- **Type**: Concurrent Modification
+- **File**: `src/core/lock_manager.cpp:310-386, 343-365`
+- **Type**: Concurrent Modification / Missing Mutex
 - **Impact**: Lock table corruption
-- **Fix**: Verify lock_table_mutex_ protects all access
-- **Effort**: 2 hours
-- **Status**: 🟠 OPEN
+- **Fix**: Added lock_table_mutex_ protection to detectDeadlocks() and buildWaitGraph()
+- **Effort**: 2 hours (actual: 1.5 hours)
+- **Status**: ✅ RESOLVED (Oct 16, 2025)
+- **Resolution Details**:
+  - Identified race condition in DeadlockDetector::buildWaitGraph()
+  - Problem: buildWaitGraph() accesses lock_table_ and proc_locks_ without holding mutex
+  - Risk: Concurrent modification during deadlock detection could corrupt lock table
+  - Fix: Added std::lock_guard<std::mutex> lock(lock_table_mutex_) in detectDeadlocks() (line 353)
+  - This ensures mutex is held before calling buildWaitGraph()
+  - Added documentation comment to buildWaitGraph() noting mutex requirement (lines 565-568)
+  - All access to lock_table_ and proc_locks_ now properly protected
+  - Verified pattern: acquireLock(), releaseLock(), releaseAllLocks() all hold mutex correctly
+  - File: src/core/lock_manager.cpp
 
 ### HIGH-3: BTree Lock Coupling Documentation
-- **File**: `src/core/btree.cpp:498-506`
+- **File**: `src/core/btree.cpp:465-575`
 - **Type**: Documentation
 - **Impact**: None (implementation correct)
 - **Fix**: Document lock coupling pattern
-- **Effort**: 1 hour
-- **Status**: 🟠 OPEN
+- **Effort**: 1 hour (actual: 1 hour)
+- **Status**: ✅ RESOLVED (Oct 17, 2025)
+- **Resolution Details**:
+  - Added comprehensive 110-line documentation block explaining lock coupling protocol
+  - Documented algorithm overview: Acquire child → Release parent (crabbing/hand-over-hand)
+  - Explained correctness guarantees: Always hold ≥1 lock, briefly hold 2 locks during transition
+  - Documented concurrency benefits: Multiple readers, minimized lock contention, deadlock-free
+  - Added performance characteristics: O(tree_height) lock hold time vs. whole-tree serialization
+  - Included example execution trace showing lock states during 3-level tree traversal
+  - Documented edge cases: Lock failure handling, leaf page lock retention, first iteration
+  - Compared alternative approaches: Optimistic coupling, B-link trees, lock-free algorithms
+  - Added inline comments to code explaining Step 1 (acquire child) and Step 2 (release parent)
+  - Verified compilation with core library build - SUCCESS
+  - File: src/core/btree.cpp
 
 ### HIGH-4: Snapshot Pin Management Race
-- **File**: `src/core/heap_page.cpp:1254-1260`
+- **File**: `src/core/heap_page.cpp:1308`, `src/core/transaction_manager.cpp:24-38`, `include/scratchbird/core/transaction_manager.h:228-250`
 - **Type**: Vector Race
 - **Impact**: Memory corruption
-- **Fix**: Add mutex to Snapshot or document single-threaded usage
-- **Effort**: 3-4 hours
-- **Status**: 🟠 OPEN
+- **Fix**: Added mutex to Snapshot structure to protect pinned_pages vector
+- **Effort**: 3-4 hours (actual: 3 hours)
+- **Status**: ✅ RESOLVED (Oct 17, 2025)
+- **Resolution Details**:
+  - Identified race condition in Snapshot::pinned_pages vector access
+  - Problem: Multiple threads traversing version chains with same snapshot could concurrently modify vector
+  - Risk: std::vector::push_back() is not thread-safe, causing memory corruption
+  - Fix 1: Added `mutable std::mutex pinned_pages_mutex_` to Snapshot struct (transaction_manager.h:243)
+  - Fix 2: Protected push_back() in heap_page.cpp:1309 with std::lock_guard<std::mutex>
+  - Fix 3: Protected cleanup() iteration and clear() in transaction_manager.cpp:27 with std::lock_guard<std::mutex>
+  - All pinned_pages vector operations now thread-safe
+  - Verified compilation with `make scratchbird_core` - SUCCESS
+  - Files: include/scratchbird/core/transaction_manager.h, src/core/heap_page.cpp, src/core/transaction_manager.cpp
 
 ### HIGH-5: Atomic XID Memory Ordering
 - **File**: `src/core/transaction_manager.cpp:273`
@@ -276,9 +318,14 @@ All Phase 1 issues resolved on October 14, 2025. See:
 **Impact**: Database core is now production-ready with respect to critical race conditions, deadlocks, and exception safety.
 
 ### Next Sprint (Week of Oct 23-30):
-- [ ] HIGH-1 through HIGH-8 (8 issues)
+- [x] HIGH-1: BufferPool page table race ✅ RESOLVED (Oct 16, 2025)
+- [x] HIGH-2: Lock Manager multimap race ✅ RESOLVED (Oct 17, 2025)
+- [x] HIGH-3: BTree lock coupling documentation ✅ RESOLVED (Oct 17, 2025)
+- [x] HIGH-4: Snapshot pin management race ✅ RESOLVED (Oct 17, 2025)
+- [ ] HIGH-5 through HIGH-8 (4 issues remaining)
 
 **Target**: 6/8 high priority issues resolved
+**Progress**: 4/8 resolved (Oct 17, 2025 - 50% complete)
 
 ### Following Sprint (Week of Oct 30 - Nov 6):
 - [ ] MEDIUM-1 through MEDIUM-7 (7 issues)
