@@ -1543,6 +1543,12 @@ namespace scratchbird::core
     {
         // Add entry with LRU tracking
         // Assumes mutex_ is already held by caller
+        //
+        // MEDIUM-7 FIX: Check-then-act pattern here is SAFE
+        // The check (transaction_cache_.size() >= MAX_CACHE_SIZE) and act (insert)
+        // execute atomically within mutex_ critical section. All callers hold mutex_,
+        // preventing concurrent modification. Slight cache overflow is impossible
+        // because only one thread can execute this code at a time.
 
         // Check if cache is full
         if (transaction_cache_.size() >= MAX_CACHE_SIZE)
