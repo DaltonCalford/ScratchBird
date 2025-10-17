@@ -1,9 +1,9 @@
 # SCRATCHBIRD ALPHA - ISSUES TRACKER
 
-**Last Updated**: October 17, 2025 (16:15)
+**Last Updated**: October 17, 2025 (16:30)
 **Source**: Alpha Final Comprehensive Audit
-**Total Issues**: 21 → 2 remaining (0 Critical, 0 High, 1 Medium, 1 Low)
-**Resolved**: 19 (CRITICAL-1, CRITICAL-2, CRITICAL-3, ERROR-CRITICAL-1 false positive, ERROR-CRITICAL-2, HIGH-1, HIGH-2, HIGH-3, HIGH-4, HIGH-5, HIGH-6, HIGH-7, HIGH-8, MEDIUM-1, MEDIUM-2, MEDIUM-3, MEDIUM-4, MEDIUM-5, MEDIUM-6)
+**Total Issues**: 21 → 1 remaining (0 Critical, 0 High, 0 Medium, 1 Low)
+**Resolved**: 20 (CRITICAL-1, CRITICAL-2, CRITICAL-3, ERROR-CRITICAL-1 false positive, ERROR-CRITICAL-2, HIGH-1, HIGH-2, HIGH-3, HIGH-4, HIGH-5, HIGH-6, HIGH-7, HIGH-8, MEDIUM-1, MEDIUM-2, MEDIUM-3, MEDIUM-4, MEDIUM-5, MEDIUM-6, MEDIUM-7 false positive)
 
 ---
 
@@ -401,12 +401,30 @@
   - Files: Same as ERROR-CRITICAL-2 (page_manager.cpp, heap_page.cpp, database.cpp)
 
 ### MEDIUM-7: TIP Cache Size Race
-- **File**: `src/core/transaction_manager.cpp:1219-1223`
-- **Type**: Check-Then-Act
-- **Impact**: Slight cache overflow (acceptable)
-- **Fix**: Accept overflow or use proper LRU eviction
-- **Effort**: 2 hours
-- **Status**: 🟡 OPEN
+- **File**: `src/core/transaction_manager.cpp:1542-1565`
+- **Type**: Check-Then-Act (False Positive)
+- **Impact**: None (mutex protected)
+- **Fix**: Document that pattern is safe due to mutex protection
+- **Effort**: 2 hours (actual: 1.5 hours)
+- **Status**: ✅ RESOLVED - FALSE POSITIVE (Oct 17, 2025)
+- **Resolution Details**:
+  - Identified check-then-act pattern in addToCacheLRU() at lines 1554-1560
+  - Problem (alleged): Race condition where multiple threads check cache size, both see not full, both add entries
+  - Analysis: Verified ALL call sites to addToCacheLRU():
+    * Line 84-85: initialize() - called from load() which holds mutex_ (line 106)
+    * Line 224: loadTipPage() - called from load() which holds mutex_ (line 106)
+    * Line 290: beginTransaction() - holds mutex_ (line 249)
+    * Line 351: commitTransaction() - holds mutex_ (line 340)
+    * Line 462: rollbackTransaction() - holds mutex_ (line 451)
+    * Line 570: getTransactionState() - holds mutex_ (line 552)
+  - Conclusion: ALL callers hold mutex_ before calling addToCacheLRU()
+  - Function comment at line 1545 explicitly states "Assumes mutex_ is already held by caller"
+  - The check (line 1554) and act (line 1560) execute atomically within critical section
+  - NO RACE CONDITION EXISTS - only one thread can execute this code at a time
+  - Fix: Added comprehensive comment (lines 1547-1551) documenting why pattern is safe
+  - Benefits: Future maintainers understand thread safety guarantees
+  - Verified compilation: scratchbird_core built successfully
+  - File: src/core/transaction_manager.cpp
 
 ---
 
@@ -474,11 +492,11 @@ All Phase 1 issues resolved on October 14, 2025. See:
 - [x] MEDIUM-4: GIN Index Magic Number ✅ RESOLVED (Oct 17, 2025)
 - [x] MEDIUM-5: Flush Error in Destructor ✅ RESOLVED (Oct 17, 2025)
 - [x] MEDIUM-6: Unchecked Vector Operations ✅ RESOLVED (Oct 16, 2025 via ERROR-CRITICAL-2)
-- [ ] MEDIUM-7 (1 issue)
+- [x] MEDIUM-7: TIP Cache Size Race ✅ RESOLVED - FALSE POSITIVE (Oct 17, 2025)
 - [ ] LOW-1 (1 issue)
 
 **Target**: 5/7 medium issues resolved
-**Progress**: 6/7 resolved (Oct 17, 2025 - 86% complete) ✅ TARGET EXCEEDED
+**Progress**: 7/7 resolved (Oct 17, 2025 - 100% complete) ✅ ALL MEDIUM ISSUES RESOLVED
 
 ---
 
