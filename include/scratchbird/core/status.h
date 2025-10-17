@@ -16,6 +16,7 @@ namespace scratchbird::core
         INVALID_ARGUMENT = 1006,
         PAGE_CORRUPT = 2001,
         CHECKSUM_MISMATCH = 2002,
+        INDEX_CORRUPTED = 2003,   // Index update failed, REINDEX needed
         DEADLOCK = 3001,
         LOCK_TIMEOUT = 3002,
         LOCK_CONFLICT = 3003,

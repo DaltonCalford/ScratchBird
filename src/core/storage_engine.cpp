@@ -528,9 +528,16 @@ namespace scratchbird::core
         {
             // Page will be marked dirty on unpin
             *page_id_out = page_id;
+            buffer_pool_->unpinPage(page_id, true, ctx);
         }
-
-        buffer_pool_->unpinPage(page_id, ctx != nullptr);
+        else
+        {
+            // HIGH-7 FIX: Initialize failed - clean up allocated page
+            // Unpin the page (no dirty flag needed since initialization failed)
+            buffer_pool_->unpinPage(page_id, false, ctx);
+            // Free the allocated page to prevent leak
+            page_manager_->freePage(page_id, ctx);
+        }
 
         return status;
     }
@@ -770,7 +777,9 @@ namespace scratchbird::core
             status = acquireTupleLock(table_id, new_page_id, new_item_id, proc_id, wait, ctx);
             if (status != Status::OK)
             {
-                buffer_pool_->unpinPage(new_page_id, false, ctx);
+                // HIGH-6 FIX: Mark new_page as dirty since tuple was already inserted
+                // The tuple insert at line 757 succeeded, so we must persist it
+                buffer_pool_->unpinPage(new_page_id, true, ctx);
                 SET_ERROR_CONTEXT(ctx, status,
                                   "Failed to acquire lock on new tuple for cross-page update");
                 return status;
@@ -1119,6 +1128,10 @@ namespace scratchbird::core
         uint64_t new_tid =
             (static_cast<uint64_t>(new_page_id) << 32) | (static_cast<uint64_t>(new_item_id) << 16);
 
+        // HIGH-8 FIX: Track failed index updates for corruption reporting
+        std::vector<std::string> failed_indexes;
+        bool had_critical_failure = false;
+
         // Update each index
         for (const auto &index_info : indexes)
         {
@@ -1131,6 +1144,7 @@ namespace scratchbird::core
                 LOG_WARNING(STORAGE,
                             "Failed to build index key for index %s during cross-page update",
                             index_info.index_name.c_str());
+                failed_indexes.push_back(index_info.index_name + " (key build failed)");
                 continue; // Skip this index, try others
             }
 
@@ -1143,6 +1157,7 @@ namespace scratchbird::core
                 {
                     LOG_WARNING(STORAGE, "Failed to open BTree index %s for update",
                                 index_info.index_name.c_str());
+                    failed_indexes.push_back(index_info.index_name + " (open failed)");
                     continue;
                 }
 
@@ -1163,8 +1178,9 @@ namespace scratchbird::core
                     LOG_ERROR(STORAGE, "Failed to insert new entry into BTree index %s: %s",
                               index_info.index_name.c_str(),
                               ctx ? ctx->message.c_str() : "unknown error");
-                    // This is a problem - index is now inconsistent
-                    // In a real system, we might need to mark the index as needing rebuild
+                    // HIGH-8 FIX: Track this critical failure
+                    failed_indexes.push_back(index_info.index_name + " (insert failed)");
+                    had_critical_failure = true;
                 }
             }
             else if (index_info.index_type == CatalogManager::IndexType::HASH)
@@ -1176,6 +1192,7 @@ namespace scratchbird::core
                 {
                     LOG_WARNING(STORAGE, "Failed to open Hash index %s for update",
                                 index_info.index_name.c_str());
+                    failed_indexes.push_back(index_info.index_name + " (open failed)");
                     continue;
                 }
 
@@ -1196,7 +1213,9 @@ namespace scratchbird::core
                     LOG_ERROR(STORAGE, "Failed to insert new entry into Hash index %s: %s",
                               index_info.index_name.c_str(),
                               ctx ? ctx->message.c_str() : "unknown error");
-                    // This is a problem - index is now inconsistent
+                    // HIGH-8 FIX: Track this critical failure
+                    failed_indexes.push_back(index_info.index_name + " (insert failed)");
+                    had_critical_failure = true;
                 }
             }
             else
@@ -1205,10 +1224,35 @@ namespace scratchbird::core
                 LOG_WARNING(STORAGE,
                             "Unsupported index type %d for index %s during cross-page update",
                             static_cast<int>(index_info.index_type), index_info.index_name.c_str());
+                failed_indexes.push_back(index_info.index_name + " (unsupported type)");
             }
         }
 
-        return Status::OK; // Always return OK - don't fail the update if index updates have issues
+        // HIGH-8 FIX: Report index corruption if any updates failed
+        if (!failed_indexes.empty())
+        {
+            // Build comprehensive error message
+            std::string error_msg = "Index corruption detected - failed to update " +
+                                    std::to_string(failed_indexes.size()) + " index(es): ";
+            for (size_t i = 0; i < failed_indexes.size(); ++i)
+            {
+                if (i > 0)
+                    error_msg += ", ";
+                error_msg += failed_indexes[i];
+            }
+            error_msg += ". REINDEX recommended for affected indexes.";
+
+            LOG_ERROR(STORAGE, "%s", error_msg.c_str());
+
+            // Return error status if we had critical failures (insert failures)
+            if (had_critical_failure)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INDEX_CORRUPTED, error_msg.c_str());
+                return Status::INDEX_CORRUPTED;
+            }
+        }
+
+        return Status::OK;
     }
 
     auto StorageEngine::getOrCreateToastManager(const ID &table_id, ErrorContext *ctx)
