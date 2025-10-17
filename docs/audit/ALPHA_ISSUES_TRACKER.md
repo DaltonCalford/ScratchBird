@@ -1,9 +1,9 @@
 # SCRATCHBIRD ALPHA - ISSUES TRACKER
 
-**Last Updated**: October 17, 2025 (15:30)
+**Last Updated**: October 17, 2025 (15:45)
 **Source**: Alpha Final Comprehensive Audit
-**Total Issues**: 21 → 5 remaining (0 Critical, 0 High, 4 Medium, 1 Low)
-**Resolved**: 16 (CRITICAL-1, CRITICAL-2, CRITICAL-3, ERROR-CRITICAL-1 false positive, ERROR-CRITICAL-2, HIGH-1, HIGH-2, HIGH-3, HIGH-4, HIGH-5, HIGH-6, HIGH-7, HIGH-8, MEDIUM-1, MEDIUM-2, MEDIUM-3)
+**Total Issues**: 21 → 4 remaining (0 Critical, 0 High, 3 Medium, 1 Low)
+**Resolved**: 17 (CRITICAL-1, CRITICAL-2, CRITICAL-3, ERROR-CRITICAL-1 false positive, ERROR-CRITICAL-2, HIGH-1, HIGH-2, HIGH-3, HIGH-4, HIGH-5, HIGH-6, HIGH-7, HIGH-8, MEDIUM-1, MEDIUM-2, MEDIUM-3, MEDIUM-4)
 
 ---
 
@@ -332,12 +332,23 @@
   - File: src/core/toast.cpp
 
 ### MEDIUM-4: GIN Index Magic Number
-- **File**: `src/core/gin_index.cpp:304`
+- **File**: `src/core/gin_index.cpp:305`
 - **Type**: Code Quality
-- **Impact**: Maintainability
+- **Impact**: Maintainability (resolved)
 - **Fix**: Replace "54" with sizeof(entry.key_data)
-- **Effort**: 15 minutes
-- **Status**: 🟡 OPEN
+- **Effort**: 15 minutes (actual: 10 minutes)
+- **Status**: ✅ RESOLVED (Oct 17, 2025)
+- **Resolution Details**:
+  - Identified magic number 54 in GIN pending list entry insertion
+  - Problem: Line 305 used hardcoded value 54 to limit key_len
+  - Code: `entry.key_len = std::min(static_cast<uint16_t>(key.size()), static_cast<uint16_t>(54))`
+  - Risk: If GinPendingEntry.key_data array size changes (currently uint8_t[54]), the magic number
+    would become incorrect, leading to buffer overflow or unused space
+  - Fix: Replaced magic number with sizeof(entry.key_data) for maintainability
+  - New code: `entry.key_len = std::min(static_cast<uint16_t>(key.size()), static_cast<uint16_t>(sizeof(entry.key_data)))`
+  - Benefits: Self-documenting code, automatic adjustment if array size changes
+  - Verified compilation: gin_index.cpp compiled successfully with only existing style warnings
+  - File: src/core/gin_index.cpp
 
 ### MEDIUM-5: Flush Error in Destructor
 - **File**: `src/core/page_manager.cpp:16-25`
@@ -426,11 +437,12 @@ All Phase 1 issues resolved on October 14, 2025. See:
 - [x] MEDIUM-1: Non-Atomic BufferPool Stats ✅ RESOLVED (Oct 17, 2025)
 - [x] MEDIUM-2: TOAST Integer Overflow ✅ RESOLVED (Oct 17, 2025)
 - [x] MEDIUM-3: TOAST Offset Validation ✅ RESOLVED (Oct 17, 2025)
-- [ ] MEDIUM-4 through MEDIUM-7 (4 issues)
+- [x] MEDIUM-4: GIN Index Magic Number ✅ RESOLVED (Oct 17, 2025)
+- [ ] MEDIUM-5 through MEDIUM-7 (3 issues)
 - [ ] LOW-1 (1 issue)
 
 **Target**: 5/7 medium issues resolved
-**Progress**: 3/7 resolved (Oct 17, 2025 - 43% complete)
+**Progress**: 4/7 resolved (Oct 17, 2025 - 57% complete)
 
 ---
 

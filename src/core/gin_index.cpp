@@ -301,7 +301,8 @@ namespace scratchbird
             GinPendingEntry &entry = tail->gpp_entries[tail->gpp_entry_count];
             entry.tid = tuple_id;
             entry.xmin = ConnectionContext::getCurrentTransactionId(); // Record inserting transaction
-            entry.key_len = std::min(static_cast<uint16_t>(key.size()), static_cast<uint16_t>(54));
+            // MEDIUM-4 FIX: Use sizeof(entry.key_data) instead of magic number 54 for maintainability
+            entry.key_len = std::min(static_cast<uint16_t>(key.size()), static_cast<uint16_t>(sizeof(entry.key_data)));
             std::memcpy(entry.key_data, key.data(), entry.key_len);
 
             tail->gpp_entry_count++;
