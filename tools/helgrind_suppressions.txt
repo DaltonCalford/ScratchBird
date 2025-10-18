@@ -1,0 +1,116 @@
+# Helgrind Suppressions for ScratchBird
+# Format:
+# {
+#    name
+#    Helgrind:Race
+#    ...
+#    fun:function_pattern
+# }
+
+# GoogleTest framework (benign races in test infrastructure)
+{
+   gtest_unit_test_impl
+   Helgrind:Race
+   ...
+   fun:*testing*UnitTestImpl*
+}
+
+{
+   gtest_test_info
+   Helgrind:Race
+   ...
+   fun:*testing*TestInfo*
+}
+
+# Pthread library initialization (false positives)
+{
+   pthread_once_race
+   Helgrind:Race
+   ...
+   fun:pthread_once
+}
+
+{
+   pthread_create_race
+   Helgrind:Race
+   ...
+   fun:pthread_create*
+}
+
+# Standard library locale (known benign race)
+{
+   std_locale_init
+   Helgrind:Race
+   ...
+   fun:*std*locale*
+}
+
+# GCC libstdc++ internal (known false positive)
+{
+   libstdcpp_locale
+   Helgrind:Race
+   ...
+   obj:*/libstdc++.so*
+}
+
+# spdlog library (async logger has known benign races)
+{
+   spdlog_async_logger
+   Helgrind:Race
+   ...
+   fun:*spdlog*
+}
+
+# fmt library (used by spdlog)
+{
+   fmt_library
+   Helgrind:Race
+   ...
+   fun:*fmt*
+}
+
+# Atomic operations (Helgrind sometimes flags these incorrectly)
+{
+   atomic_load_relaxed
+   Helgrind:Race
+   ...
+   fun:*atomic*load*
+}
+
+{
+   atomic_store_relaxed
+   Helgrind:Race
+   ...
+   fun:*atomic*store*
+}
+
+# C++ static initialization (order dependency, not a race)
+{
+   static_init
+   Helgrind:Race
+   ...
+   fun:*static_initialization*
+}
+
+{
+   cxa_guard_acquire
+   Helgrind:Race
+   ...
+   fun:__cxa_guard_acquire
+}
+
+{
+   cxa_guard_release
+   Helgrind:Race
+   ...
+   fun:__cxa_guard_release
+}
+
+# Note: Add project-specific suppressions below this line
+# Format:
+# {
+#    descriptive_name
+#    Helgrind:Race (or Helgrind:Misc, Helgrind:UnlockForeign, etc.)
+#    ...
+#    fun:function_name_pattern
+# }

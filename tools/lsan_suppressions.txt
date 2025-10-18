@@ -1,0 +1,33 @@
+# LeakSanitizer (LSAN) Suppressions for ScratchBird
+# Format: leak:<pattern>
+#
+# This file suppresses known false positives and third-party library leaks
+# that are not under our control.
+
+# GoogleTest framework leaks (static singletons)
+leak:testing::internal::
+leak:testing::UnitTest::
+leak:__cxa_thread_atexit_impl
+
+# Standard library allocations (pthread, locale, etc.)
+leak:std::locale::
+leak:std::__1::locale::
+leak:pthread_create
+leak:pthread_once
+
+# GCC/Clang runtime library
+leak:__gthread_
+leak:__static_initialization_and_destruction
+
+# spdlog library (static logger instances)
+leak:spdlog::
+leak:fmt::
+
+# System libraries (known false positives)
+leak:ld-linux
+leak:libc.so
+leak:libpthread.so
+leak:libstdc++.so
+
+# Note: Add project-specific suppressions below this line
+# Format: leak:function_name or leak:source_file_name

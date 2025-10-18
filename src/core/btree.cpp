@@ -12,6 +12,91 @@
 namespace scratchbird::core
 {
 
+    // ============================================================================
+    // B-TREE PREFIX COMPRESSION HELPER FUNCTIONS
+    // ============================================================================
+
+    // Calculate the common prefix length between two keys
+    // Used to determine how many leading bytes can be omitted when storing compressed keys
+    // Returns the number of matching bytes from the start of both keys
+    static uint16_t calculate_prefix_length(const std::vector<uint8_t>& key1,
+                                           const std::vector<uint8_t>& key2)
+    {
+        uint16_t len = std::min(static_cast<uint16_t>(key1.size()),
+                               static_cast<uint16_t>(key2.size()));
+        uint16_t prefix = 0;
+
+        while (prefix < len && key1[prefix] == key2[prefix]) {
+            prefix++;
+        }
+
+        return prefix;
+    }
+
+    // Compress a key by storing only the suffix after removing common prefix
+    // prev_key: the previous key on the page (used to find common prefix)
+    // current_key: the key to compress
+    // prefix_len_out: receives the calculated prefix length
+    // Returns: vector containing only the suffix (compressed key data)
+    static std::vector<uint8_t> compress_key(const std::vector<uint8_t>& prev_key,
+                                             const std::vector<uint8_t>& current_key,
+                                             uint16_t* prefix_len_out)
+    {
+        // Calculate common prefix
+        uint16_t prefix_len = calculate_prefix_length(prev_key, current_key);
+
+        // Don't compress if:
+        // 1. No common prefix exists (prefix_len == 0)
+        // 2. Key is too short (< 8 bytes) - overhead exceeds benefit
+        // 3. Prefix is too small (< 4 bytes) - not worth the complexity
+        if (prefix_len == 0 || current_key.size() < 8 || prefix_len < 4) {
+            *prefix_len_out = 0;
+            return current_key; // Return full uncompressed key
+        }
+
+        // Store only the suffix
+        *prefix_len_out = prefix_len;
+        std::vector<uint8_t> suffix(current_key.begin() + prefix_len, current_key.end());
+        return suffix;
+    }
+
+    // Decompress a key by combining the prefix from prev_key with stored suffix
+    // prev_key: the previous key on the page (provides the prefix)
+    // compressed_key: the stored suffix data
+    // prefix_len: length of prefix to take from prev_key
+    // Returns: full reconstructed key
+    static std::vector<uint8_t> decompress_key(const std::vector<uint8_t>& prev_key,
+                                               const uint8_t* compressed_key_data,
+                                               uint16_t compressed_key_len,
+                                               uint16_t prefix_len)
+    {
+        // If no compression (prefix_len == 0), return the data as-is
+        if (prefix_len == 0) {
+            return std::vector<uint8_t>(compressed_key_data,
+                                       compressed_key_data + compressed_key_len);
+        }
+
+        // Validate prefix length doesn't exceed prev_key size
+        if (prefix_len > prev_key.size()) {
+            // Corruption detected - return compressed data as fallback
+            return std::vector<uint8_t>(compressed_key_data,
+                                       compressed_key_data + compressed_key_len);
+        }
+
+        // Reconstruct: prefix from prev_key + suffix from compressed data
+        std::vector<uint8_t> full_key;
+        full_key.reserve(prefix_len + compressed_key_len);
+
+        // Copy prefix from previous key
+        full_key.insert(full_key.end(), prev_key.begin(), prev_key.begin() + prefix_len);
+
+        // Append suffix from compressed data
+        full_key.insert(full_key.end(), compressed_key_data,
+                       compressed_key_data + compressed_key_len);
+
+        return full_key;
+    }
+
     BTree::BTree(Database *db, SBBTreeIndex index_info)
         : db_(db), index_info_(std::move(index_info))
     {
@@ -343,6 +428,7 @@ namespace scratchbird::core
     }
 
     // Searches for a key within a single B-Tree page using binary search.
+    // Handles prefix-compressed keys by decompressing them before comparison.
     auto BTree::searchPage(const SBBTreePage *page, const std::vector<uint8_t> &key,
                            std::vector<uint64_t> *tuple_ids_out) const -> bool
     {
@@ -350,6 +436,9 @@ namespace scratchbird::core
 
         // Get the node offsets array
         const auto *offsets = reinterpret_cast<const uint16_t *>(page_data + sizeof(SBBTreePage));
+
+        // Track previous key for decompression
+        std::vector<uint8_t> prev_key;
 
         // Binary search for the key
         int left = 0;
@@ -366,6 +455,7 @@ namespace scratchbird::core
             if ((node->btn_flags & static_cast<uint16_t>(BTreeNodeFlags::DELETED)) != 0)
             {
                 // Fall back to linear search in this rare case
+                prev_key.clear(); // Reset for linear search
                 for (int i = 0; i < page->btr_count; ++i)
                 {
                     const auto *n = reinterpret_cast<const SBBTreeNode *>(page_data + offsets[i]);
@@ -376,13 +466,22 @@ namespace scratchbird::core
 
                     const uint8_t *node_key_data =
                         reinterpret_cast<const uint8_t *>(n) + sizeof(SBBTreeNode);
-                    // ISSUE 3.6 FIX: Use optimized compare_keys to avoid vector allocation
-                    int cmp = compare_keys(key, node_key_data, n->btn_key_len);
+
+                    // Decompress key if needed
+                    std::vector<uint8_t> full_key = decompress_key(prev_key, node_key_data,
+                                                                    n->btn_key_len,
+                                                                    n->btn_prefix_len);
+
+                    // Compare decompressed key
+                    int cmp = compare_keys(key, full_key.data(), full_key.size());
                     if (cmp == 0)
                     {
                         found_index = i;
                         break;
                     }
+
+                    // Update prev_key for next iteration
+                    prev_key = full_key;
                 }
                 break;
             }
@@ -391,8 +490,28 @@ namespace scratchbird::core
             const uint8_t *node_key_data =
                 reinterpret_cast<const uint8_t *>(node) + sizeof(SBBTreeNode);
 
-            // ISSUE 3.6 FIX: Use optimized compare_keys to avoid vector allocation
-            int cmp = compare_keys(key, node_key_data, node->btn_key_len);
+            // Decompress key if compressed (btn_prefix_len > 0)
+            // For binary search, we need to build prev_key by scanning from first node
+            if (node->btn_prefix_len > 0 && prev_key.empty() && mid > 0) {
+                // Need to build prev_key by scanning from start
+                prev_key.clear();
+                for (int i = 0; i < mid; ++i) {
+                    const auto *scan_node = reinterpret_cast<const SBBTreeNode *>(page_data + offsets[i]);
+                    if ((scan_node->btn_flags & static_cast<uint16_t>(BTreeNodeFlags::DELETED)) != 0) {
+                        continue;
+                    }
+                    const uint8_t *scan_key_data = reinterpret_cast<const uint8_t *>(scan_node) + sizeof(SBBTreeNode);
+                    prev_key = decompress_key(prev_key, scan_key_data, scan_node->btn_key_len, scan_node->btn_prefix_len);
+                }
+            }
+
+            // Decompress the current node's key
+            std::vector<uint8_t> full_key = decompress_key(prev_key, node_key_data,
+                                                           node->btn_key_len,
+                                                           node->btn_prefix_len);
+
+            // Compare decompressed key
+            int cmp = compare_keys(key, full_key.data(), full_key.size());
             if (cmp == 0)
             {
                 found_index = mid;
@@ -404,6 +523,7 @@ namespace scratchbird::core
             }
             else
             {
+                prev_key = full_key; // Update prev_key when moving right
                 left = mid + 1;
             }
         }
@@ -593,6 +713,9 @@ namespace scratchbird::core
             const auto *offsets =
                 reinterpret_cast<const uint16_t *>(page_data + sizeof(SBBTreePage));
 
+            // Track previous key for decompression
+            std::vector<uint8_t> prev_key;
+
             // Linear search through nodes to find the correct child
             // Each internal node has a key and a child pointer to the left of that key
             for (uint16_t i = 0; i < page->btr_count; ++i)
@@ -603,14 +726,21 @@ namespace scratchbird::core
                 const uint8_t *node_key_data =
                     reinterpret_cast<const uint8_t *>(node) + sizeof(SBBTreeNode);
 
-                // ISSUE 3.6 FIX: Use optimized compare_keys to avoid vector allocation
-                // If our search key is less than this node's key, go to this node's left child
-                int cmp = compare_keys(key, node_key_data, node->btn_key_len);
+                // Decompress key if compressed
+                std::vector<uint8_t> full_key = decompress_key(prev_key, node_key_data,
+                                                               node->btn_key_len,
+                                                               node->btn_prefix_len);
+
+                // Compare decompressed key
+                int cmp = compare_keys(key, full_key.data(), full_key.size());
                 if (cmp < 0)
                 {
                     next_page_num = node->btn_child_page;
                     break;
                 }
+
+                // Update prev_key for next iteration
+                prev_key = full_key;
             }
 
             // If we didn't find a suitable child (key >= all keys), use the rightmost child
@@ -751,6 +881,9 @@ namespace scratchbird::core
         bool found = false;
         uint16_t node_to_remove = 0;
 
+        // Track previous key for decompression
+        std::vector<uint8_t> prev_key;
+
         for (uint16_t i = 0; i < page->btr_count; ++i)
         {
             const auto *node = reinterpret_cast<const SBBTreeNode *>(page_data + offsets[i]);
@@ -759,8 +892,13 @@ namespace scratchbird::core
             const uint8_t *node_key_data =
                 reinterpret_cast<const uint8_t *>(node) + sizeof(SBBTreeNode);
 
-            // ISSUE 3.6 FIX: Use optimized compare_keys to avoid vector allocation
-            int cmp = compare_keys(key, node_key_data, node->btn_key_len);
+            // Decompress key if compressed
+            std::vector<uint8_t> full_key = decompress_key(prev_key, node_key_data,
+                                                           node->btn_key_len,
+                                                           node->btn_prefix_len);
+
+            // Compare decompressed key
+            int cmp = compare_keys(key, full_key.data(), full_key.size());
             if (cmp == 0)
             {
                 // Check if the tuple_id matches
@@ -782,6 +920,9 @@ namespace scratchbird::core
                     break;
                 }
             }
+
+            // Update prev_key for next iteration
+            prev_key = full_key;
         }
 
         if (!found)
@@ -1316,6 +1457,9 @@ namespace scratchbird::core
         auto *parent_offsets = reinterpret_cast<uint16_t *>(
             reinterpret_cast<uint8_t *>(parent_page_data_ptr) + sizeof(SBBTreePage));
 
+        // Track previous key for decompression
+        std::vector<uint8_t> prev_key;
+
         uint16_t insert_pos = 0;
         for (uint16_t i = 0; i < parent_page->btr_count; ++i)
         {
@@ -1324,14 +1468,22 @@ namespace scratchbird::core
             const uint8_t *existing_key_data =
                 reinterpret_cast<const uint8_t *>(existing_node) + sizeof(SBBTreeNode);
 
-            // ISSUE 3.6 FIX: Use optimized compare_keys to avoid vector allocation
-            int cmp = compare_keys(separator_key, existing_key_data, existing_node->btn_key_len);
+            // Decompress existing key if compressed
+            std::vector<uint8_t> full_existing_key = decompress_key(prev_key, existing_key_data,
+                                                                     existing_node->btn_key_len,
+                                                                     existing_node->btn_prefix_len);
+
+            // Compare with separator key
+            int cmp = compare_keys(separator_key, full_existing_key.data(), full_existing_key.size());
             if (cmp < 0)
             {
                 insert_pos = i;
                 break;
             }
             insert_pos = i + 1;
+
+            // Update prev_key for next iteration
+            prev_key = full_existing_key;
         }
 
         // Shift existing offsets to make room
