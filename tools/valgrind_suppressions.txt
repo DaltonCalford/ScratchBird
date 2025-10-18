@@ -1,0 +1,153 @@
+# Valgrind Memcheck Suppressions for ScratchBird
+# Format:
+# {
+#    name
+#    Memcheck:Leak
+#    ...
+#    fun:function_pattern
+# }
+
+# GoogleTest framework (static allocations never freed)
+{
+   gtest_singleton_leak
+   Memcheck:Leak
+   match-leak-kinds: reachable
+   ...
+   fun:*testing*
+}
+
+{
+   gtest_internal_init
+   Memcheck:Leak
+   match-leak-kinds: reachable
+   ...
+   obj:*/libgtest.so*
+}
+
+# Pthread library (thread-local storage not freed)
+{
+   pthread_create_leak
+   Memcheck:Leak
+   match-leak-kinds: possible
+   ...
+   fun:pthread_create*
+}
+
+{
+   pthread_getspecific_leak
+   Memcheck:Leak
+   match-leak-kinds: possible
+   ...
+   fun:pthread_getspecific
+}
+
+# C++ standard library (locale and iostream static initialization)
+{
+   std_locale_leak
+   Memcheck:Leak
+   match-leak-kinds: reachable
+   ...
+   fun:*std*locale*
+}
+
+{
+   std_iostream_init
+   Memcheck:Leak
+   match-leak-kinds: reachable
+   ...
+   fun:*std*__ioinit*
+}
+
+{
+   std_string_static
+   Memcheck:Leak
+   match-leak-kinds: reachable
+   ...
+   fun:*std*string*
+}
+
+# GCC/Clang runtime (exception handling tables, static data)
+{
+   cxa_get_globals
+   Memcheck:Leak
+   match-leak-kinds: reachable
+   ...
+   fun:__cxa_get_globals
+}
+
+{
+   gcc_personality
+   Memcheck:Leak
+   match-leak-kinds: reachable
+   ...
+   fun:*personality*
+}
+
+# spdlog library (static logger instances)
+{
+   spdlog_registry
+   Memcheck:Leak
+   match-leak-kinds: reachable
+   ...
+   fun:*spdlog*registry*
+}
+
+{
+   spdlog_logger
+   Memcheck:Leak
+   match-leak-kinds: reachable
+   ...
+   fun:*spdlog*logger*
+}
+
+# fmt library (used by spdlog)
+{
+   fmt_format
+   Memcheck:Leak
+   match-leak-kinds: reachable
+   ...
+   fun:*fmt*
+}
+
+# Dynamic linker (ld-linux)
+{
+   dl_init_leak
+   Memcheck:Leak
+   match-leak-kinds: reachable
+   ...
+   obj:*/ld-*.so
+}
+
+# libc initialization
+{
+   libc_dlopen_leak
+   Memcheck:Leak
+   match-leak-kinds: reachable
+   ...
+   fun:*dl_open*
+}
+
+{
+   libc_malloc_init
+   Memcheck:Leak
+   match-leak-kinds: reachable
+   ...
+   obj:*/libc-*.so
+}
+
+# Suppress unitialized value warnings for std::atomic (false positive)
+{
+   atomic_uninitialized
+   Memcheck:Cond
+   ...
+   fun:*atomic*
+}
+
+{
+   atomic_value
+   Memcheck:Value8
+   ...
+   fun:*atomic*
+}
+
+# Note: Add project-specific suppressions below this line

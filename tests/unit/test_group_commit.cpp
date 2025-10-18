@@ -18,16 +18,18 @@ class GroupCommitTest : public ::testing::Test
         // Create test database
         ErrorContext ctx;
         Status status = Database::create(db_path_.c_str(), 8192, &ctx);
-        ASSERT_EQ(status, Status::OK) << "Failed to create database: " << ctx.error_message;
+        ASSERT_EQ(status, Status::OK) << "Failed to create database: " << ctx.message;
 
-        status = Database::open(db_path_.c_str(), &db_, &ctx);
-        ASSERT_EQ(status, Status::OK) << "Failed to open database: " << ctx.error_message;
+        db_ = new Database();
+        status = db_->open(db_path_.c_str(), &ctx);
+        ASSERT_EQ(status, Status::OK) << "Failed to open database: " << ctx.message;
 
         txn_mgr_ = db_->transaction_manager();
         ASSERT_NE(txn_mgr_, nullptr);
 
         // Initialize ProcArray for multi-transaction support
-        ProcArrayManager::initialize(100);
+        status = db_->initializeProcArray(100, &ctx);
+        ASSERT_EQ(status, Status::OK) << "Failed to initialize ProcArray: " << ctx.message;
     }
 
     void TearDown() override
@@ -38,8 +40,6 @@ class GroupCommitTest : public ::testing::Test
             db_ = nullptr;
         }
         std::remove(db_path_.c_str());
-
-        ProcArrayManager::shutdown();
     }
 
     std::string db_path_ = "test_group_commit.db";

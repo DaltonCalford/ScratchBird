@@ -946,14 +946,11 @@ namespace scratchbird::core
             return Status::INVALID_ARGUMENT;
         }
 
+        // NEW ISSUE FIX: Use pread() instead of lseek()+read() for thread-safe I/O
+        // pread() is atomic and doesn't modify the file offset, preventing race conditions
+        // when multiple threads access different pages concurrently
         off_t offset = static_cast<off_t>(page_id) * page_size_;
-        if (lseek(fd_, offset, SEEK_SET) != offset)
-        {
-            SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to seek to page");
-            return Status::IO_ERROR;
-        }
-
-        ssize_t bytes_read = ::read(fd_, buffer, page_size_);
+        ssize_t bytes_read = ::pread(fd_, buffer, page_size_, offset);
         if (bytes_read != static_cast<ssize_t>(page_size_))
         {
             SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Short read on page");
@@ -1000,14 +997,11 @@ namespace scratchbird::core
         auto *header = reinterpret_cast<PageHeader *>(page);
         header->checksum = calculatePageChecksum(page, page_size_);
 
+        // NEW ISSUE FIX: Use pwrite() instead of lseek()+write() for thread-safe I/O
+        // pwrite() is atomic and doesn't modify the file offset, preventing race conditions
+        // when multiple threads write different pages concurrently (e.g., background flush + active writes)
         off_t offset = static_cast<off_t>(page_id) * page_size_;
-        if (lseek(fd_, offset, SEEK_SET) != offset)
-        {
-            SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to seek to page");
-            return Status::IO_ERROR;
-        }
-
-        ssize_t bytes_written = ::write(fd_, buffer, page_size_);
+        ssize_t bytes_written = ::pwrite(fd_, buffer, page_size_, offset);
         if (bytes_written != static_cast<ssize_t>(page_size_))
         {
             SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Short write on page");

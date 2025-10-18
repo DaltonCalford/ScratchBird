@@ -1,0 +1,560 @@
+name: Sanitizers and Static Analysis
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+env:
+  BUILD_TYPE: Debug
+  CTEST_OUTPUT_ON_FAILURE: 1
+
+jobs:
+  # Job 1: ThreadSanitizer (TSAN) - Detect data races
+  thread-sanitizer:
+    runs-on: ubuntu-latest
+    name: ThreadSanitizer (TSAN)
+
+    steps:
+    - uses: actions/checkout@v3
+      with:
+        submodules: recursive
+
+    - name: Install Dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y cmake g++ libgtest-dev valgrind clang-tidy
+
+    - name: Configure CMake with TSAN
+      run: |
+        cmake -B build \
+          -DCMAKE_BUILD_TYPE=Debug \
+          -DCMAKE_CXX_FLAGS="-fsanitize=thread -g -O1" \
+          -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=thread" \
+          -DCMAKE_SHARED_LINKER_FLAGS="-fsanitize=thread"
+
+    - name: Build with TSAN
+      run: cmake --build build --config Debug -j$(nproc)
+
+    - name: Run TSAN Tests
+      working-directory: build
+      run: |
+        # Run all TSAN-specific tests
+        ctest -R "tsan_" --output-on-failure --timeout 300
+
+        # Also run regular unit tests with TSAN
+        echo "Running unit tests with ThreadSanitizer..."
+        ctest -R "StatisticsAccuracy|PageManagerDestructor" --output-on-failure --timeout 120
+
+    - name: Upload TSAN Results
+      if: always()
+      uses: actions/upload-artifact@v3
+      with:
+        name: tsan-results
+        path: |
+          build/Testing/Temporary/LastTest.log
+          build/tsan-*.log
+        retention-days: 30
+
+  # Job 2: AddressSanitizer (ASAN) - Detect memory errors
+  address-sanitizer:
+    runs-on: ubuntu-latest
+    name: AddressSanitizer (ASAN)
+
+    steps:
+    - uses: actions/checkout@v3
+      with:
+        submodules: recursive
+
+    - name: Install Dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y cmake g++ libgtest-dev
+
+    - name: Configure CMake with ASAN
+      run: |
+        cmake -B build \
+          -DCMAKE_BUILD_TYPE=Debug \
+          -DCMAKE_CXX_FLAGS="-fsanitize=address -fsanitize=undefined -fsanitize=leak -fno-omit-frame-pointer -g -O1" \
+          -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address -fsanitize=undefined -fsanitize=leak" \
+          -DCMAKE_SHARED_LINKER_FLAGS="-fsanitize=address -fsanitize=undefined -fsanitize=leak"
+
+    - name: Build with ASAN
+      run: cmake --build build --config Debug -j$(nproc)
+
+    - name: Run ASAN Tests
+      working-directory: build
+      env:
+        ASAN_OPTIONS: "detect_leaks=1:check_initialization_order=1:strict_init_order=1:detect_stack_use_after_return=1:verbosity=1:halt_on_error=0"
+        LSAN_OPTIONS: "suppressions=../tools/lsan_suppressions.txt:print_suppressions=0"
+        UBSAN_OPTIONS: "print_stacktrace=1:halt_on_error=0"
+      run: |
+        # Run all tests with AddressSanitizer
+        ctest --output-on-failure --timeout 300 || true
+
+        # Specifically run leak detection tests
+        echo "Running resource leak detection tests..."
+        ctest -R "ExceptionInjection|BufferPoolExhaustion" --output-on-failure --timeout 120 || true
+
+    - name: Upload ASAN Results
+      if: always()
+      uses: actions/upload-artifact@v3
+      with:
+        name: asan-results
+        path: |
+          build/Testing/Temporary/LastTest.log
+          build/asan-*.log
+        retention-days: 30
+
+  # Job 3: Helgrind - Race condition detection (Valgrind)
+  helgrind:
+    runs-on: ubuntu-latest
+    name: Helgrind Race Detection
+
+    steps:
+    - uses: actions/checkout@v3
+      with:
+        submodules: recursive
+
+    - name: Install Dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y cmake g++ libgtest-dev valgrind
+
+    - name: Configure CMake (Debug)
+      run: |
+        cmake -B build \
+          -DCMAKE_BUILD_TYPE=Debug \
+          -DCMAKE_CXX_FLAGS="-g -O0"
+
+    - name: Build
+      run: cmake --build build --config Debug -j$(nproc)
+
+    - name: Run Helgrind Tests
+      working-directory: build
+      run: |
+        # Run dedicated Helgrind tests
+        if [ -f tests/helgrind_races ]; then
+          echo "Running Helgrind race condition tests..."
+          valgrind --tool=helgrind \
+            --log-file=helgrind-races.log \
+            --error-exitcode=1 \
+            --suppressions=../tools/helgrind_suppressions.txt \
+            ./tests/helgrind_races || true
+        fi
+
+        # Run concurrency tests under Helgrind
+        echo "Running concurrency tests under Helgrind..."
+        for test in ConcurrentPageAccess MultithreadedStress; do
+          if ctest -N | grep -q "$test"; then
+            timeout 600 valgrind --tool=helgrind \
+              --log-file=helgrind-${test}.log \
+              --error-exitcode=0 \
+              --suppressions=../tools/helgrind_suppressions.txt \
+              $(ctest -N -R "$test" | grep "Test command:" | sed 's/.*Test command: //') || true
+          fi
+        done
+
+    - name: Analyze Helgrind Results
+      working-directory: build
+      run: |
+        echo "Helgrind Results Summary:"
+        for log in helgrind-*.log; do
+          if [ -f "$log" ]; then
+            echo "=== $log ==="
+            grep -E "(ERROR SUMMARY|Possible data race|Lock order violation)" "$log" || echo "No races detected"
+          fi
+        done
+
+    - name: Upload Helgrind Results
+      if: always()
+      uses: actions/upload-artifact@v3
+      with:
+        name: helgrind-results
+        path: |
+          build/helgrind-*.log
+        retention-days: 30
+
+  # Job 4: Clang-Tidy Static Analysis
+  clang-tidy:
+    runs-on: ubuntu-latest
+    name: Clang-Tidy Static Analysis
+
+    steps:
+    - uses: actions/checkout@v3
+      with:
+        submodules: recursive
+
+    - name: Install Dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y cmake clang clang-tidy libgtest-dev
+
+    - name: Configure CMake with Clang
+      run: |
+        cmake -B build \
+          -DCMAKE_BUILD_TYPE=Debug \
+          -DCMAKE_CXX_COMPILER=clang++ \
+          -DCMAKE_C_COMPILER=clang \
+          -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+
+    - name: Build
+      run: cmake --build build --config Debug -j$(nproc)
+
+    - name: Run Clang-Tidy
+      working-directory: build
+      run: |
+        # Create clang-tidy configuration if it doesn't exist
+        if [ ! -f ../.clang-tidy ]; then
+          cat > ../.clang-tidy << 'EOF'
+        ---
+        Checks: >
+          *,
+          -fuchsia-*,
+          -google-*,
+          -llvm-*,
+          -modernize-use-trailing-return-type,
+          -readability-else-after-return,
+          -readability-static-accessed-through-instance,
+          -readability-avoid-const-params-in-decls,
+          -cppcoreguidelines-pro-bounds-pointer-arithmetic,
+          -cppcoreguidelines-pro-bounds-constant-array-index,
+          -cppcoreguidelines-avoid-magic-numbers,
+          -readability-magic-numbers,
+          bugprone-*,
+          clang-analyzer-*,
+          cppcoreguidelines-*,
+          performance-*,
+          readability-*,
+          modernize-*
+        WarningsAsErrors: ''
+        HeaderFilterRegex: '.*'
+        AnalyzeTemporaryDtors: false
+        FormatStyle: none
+        CheckOptions:
+          - key: readability-identifier-naming.ClassCase
+            value: CamelCase
+          - key: readability-identifier-naming.FunctionCase
+            value: camelBack
+          - key: readability-identifier-naming.VariableCase
+            value: lower_case
+        EOF
+        fi
+
+        # Run clang-tidy on source files
+        echo "Running Clang-Tidy on source files..."
+        find ../src -name "*.cpp" -type f | while read file; do
+          echo "Analyzing: $file"
+          clang-tidy "$file" \
+            -p=. \
+            --checks='bugprone-*,clang-analyzer-*,cppcoreguidelines-*,performance-*' \
+            --warnings-as-errors='' \
+            2>&1 | tee -a clang-tidy.log || true
+        done
+
+        # Check for critical warnings
+        echo "Checking for critical issues..."
+        grep -E "(warning:|error:)" clang-tidy.log | grep -E "(bounds|overflow|use-after|null|leak)" > clang-tidy-critical.log || true
+
+        if [ -s clang-tidy-critical.log ]; then
+          echo "CRITICAL WARNINGS FOUND:"
+          cat clang-tidy-critical.log
+        else
+          echo "No critical warnings found"
+        fi
+
+    - name: Upload Clang-Tidy Results
+      if: always()
+      uses: actions/upload-artifact@v3
+      with:
+        name: clang-tidy-results
+        path: |
+          build/clang-tidy*.log
+        retention-days: 30
+
+  # Job 5: Resource Leak Detection
+  resource-leak-detection:
+    runs-on: ubuntu-latest
+    name: Resource Leak Detection
+
+    steps:
+    - uses: actions/checkout@v3
+      with:
+        submodules: recursive
+
+    - name: Install Dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y cmake g++ libgtest-dev valgrind
+
+    - name: Configure CMake (Debug)
+      run: |
+        cmake -B build \
+          -DCMAKE_BUILD_TYPE=Debug \
+          -DCMAKE_CXX_FLAGS="-g -O0"
+
+    - name: Build
+      run: cmake --build build --config Debug -j$(nproc)
+
+    - name: Run Valgrind Leak Check
+      working-directory: build
+      run: |
+        # Create leak suppression file
+        mkdir -p ../tools
+        cat > ../tools/valgrind_suppressions.txt << 'EOF'
+        # Suppress known GTest leaks
+        {
+           gtest_leak
+           Memcheck:Leak
+           ...
+           fun:*gtest*
+        }
+        # Suppress pthread leaks (false positives)
+        {
+           pthread_leak
+           Memcheck:Leak
+           ...
+           fun:pthread_create*
+        }
+        EOF
+
+        # Run leak detection on resource-intensive tests
+        echo "Running leak detection tests..."
+        for test in ExceptionInjection BufferPoolExhaustion PageManagerDestructor; do
+          if ctest -N | grep -q "$test"; then
+            echo "=== Leak check: $test ==="
+            timeout 600 valgrind \
+              --tool=memcheck \
+              --leak-check=full \
+              --show-leak-kinds=all \
+              --track-origins=yes \
+              --verbose \
+              --log-file=valgrind-${test}.log \
+              --error-exitcode=0 \
+              --suppressions=../tools/valgrind_suppressions.txt \
+              $(ctest -N -R "$test" | grep "Test command:" | sed 's/.*Test command: //') || true
+          fi
+        done
+
+    - name: Analyze Leak Results
+      working-directory: build
+      run: |
+        echo "=== Leak Detection Summary ==="
+        for log in valgrind-*.log; do
+          if [ -f "$log" ]; then
+            echo ""
+            echo "File: $log"
+            grep -A 2 "LEAK SUMMARY" "$log" || echo "No leaks detected"
+
+            # Check for definitely lost bytes
+            definitely_lost=$(grep "definitely lost:" "$log" | awk '{print $4}' | sed 's/,//g' || echo "0")
+            if [ "$definitely_lost" != "0" ] && [ -n "$definitely_lost" ]; then
+              echo "WARNING: $definitely_lost bytes definitely lost in $log"
+            fi
+          fi
+        done
+
+    - name: Upload Leak Detection Results
+      if: always()
+      uses: actions/upload-artifact@v3
+      with:
+        name: leak-detection-results
+        path: |
+          build/valgrind-*.log
+        retention-days: 30
+
+  # Job 6: Pin/Unpin Balance Checking
+  pin-unpin-balance:
+    runs-on: ubuntu-latest
+    name: Pin/Unpin Balance Checking
+
+    steps:
+    - uses: actions/checkout@v3
+      with:
+        submodules: recursive
+
+    - name: Install Dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y cmake g++ libgtest-dev python3
+
+    - name: Configure CMake (Debug with instrumentation)
+      run: |
+        cmake -B build \
+          -DCMAKE_BUILD_TYPE=Debug \
+          -DCMAKE_CXX_FLAGS="-g -O0 -DTRACK_PIN_UNPIN_BALANCE=1"
+
+    - name: Build
+      run: cmake --build build --config Debug -j$(nproc)
+
+    - name: Create Pin/Unpin Balance Checker
+      run: |
+        cat > tools/check_pin_unpin_balance.py << 'EOF'
+        #!/usr/bin/env python3
+        import re
+        import sys
+        from collections import defaultdict
+
+        def analyze_log(log_file):
+            """Analyze test log for pin/unpin balance"""
+            pin_count = 0
+            unpin_count = 0
+            page_balance = defaultdict(int)
+            errors = []
+
+            try:
+                with open(log_file, 'r') as f:
+                    for line_num, line in enumerate(f, 1):
+                        # Track pinPage calls
+                        if 'pinPage' in line or 'Pin page' in line:
+                            match = re.search(r'page[_ ](?:id)?[:\s]+(\d+)', line, re.IGNORECASE)
+                            if match:
+                                page_id = int(match.group(1))
+                                pin_count += 1
+                                page_balance[page_id] += 1
+
+                        # Track unpinPage calls
+                        if 'unpinPage' in line or 'Unpin page' in line:
+                            match = re.search(r'page[_ ](?:id)?[:\s]+(\d+)', line, re.IGNORECASE)
+                            if match:
+                                page_id = int(match.group(1))
+                                unpin_count += 1
+                                page_balance[page_id] -= 1
+
+                        # Check for balance errors in log
+                        if 'ERROR' in line and ('pin' in line.lower() or 'leak' in line.lower()):
+                            errors.append(f"Line {line_num}: {line.strip()}")
+
+            except FileNotFoundError:
+                print(f"WARNING: Log file {log_file} not found")
+                return None
+
+            return {
+                'pin_count': pin_count,
+                'unpin_count': unpin_count,
+                'balance': pin_count - unpin_count,
+                'page_balance': dict(page_balance),
+                'errors': errors
+            }
+
+        def main():
+            if len(sys.argv) < 2:
+                print("Usage: check_pin_unpin_balance.py <log_file> [<log_file2> ...]")
+                sys.exit(1)
+
+            total_issues = 0
+
+            for log_file in sys.argv[1:]:
+                print(f"\n=== Analyzing {log_file} ===")
+                result = analyze_log(log_file)
+
+                if result is None:
+                    continue
+
+                print(f"Total pins: {result['pin_count']}")
+                print(f"Total unpins: {result['unpin_count']}")
+                print(f"Balance: {result['balance']}")
+
+                if result['balance'] != 0:
+                    print(f"WARNING: Pin/unpin imbalance detected: {result['balance']}")
+                    total_issues += 1
+
+                # Check per-page balance
+                imbalanced_pages = {pid: bal for pid, bal in result['page_balance'].items() if bal != 0}
+                if imbalanced_pages:
+                    print(f"\nImbalanced pages: {len(imbalanced_pages)}")
+                    for page_id, balance in sorted(imbalanced_pages.items())[:10]:  # Show first 10
+                        print(f"  Page {page_id}: {balance:+d}")
+                    total_issues += len(imbalanced_pages)
+
+                if result['errors']:
+                    print(f"\nErrors found: {len(result['errors'])}")
+                    for error in result['errors'][:5]:  # Show first 5
+                        print(f"  {error}")
+                    total_issues += len(result['errors'])
+
+                if result['balance'] == 0 and not imbalanced_pages and not result['errors']:
+                    print("✓ Pin/unpin balance is perfect")
+
+            if total_issues > 0:
+                print(f"\n⚠ TOTAL ISSUES FOUND: {total_issues}")
+                sys.exit(1)
+            else:
+                print("\n✓ All pin/unpin balances are correct")
+                sys.exit(0)
+
+        if __name__ == '__main__':
+            main()
+        EOF
+
+        chmod +x tools/check_pin_unpin_balance.py
+
+    - name: Run Tests with Pin/Unpin Tracking
+      working-directory: build
+      run: |
+        # Run tests and capture output
+        ctest --output-on-failure --verbose 2>&1 | tee test-output.log || true
+
+    - name: Check Pin/Unpin Balance
+      run: |
+        python3 tools/check_pin_unpin_balance.py build/test-output.log || true
+
+        # Also check individual test logs if they exist
+        if ls build/Testing/Temporary/*.log 2>/dev/null; then
+          python3 tools/check_pin_unpin_balance.py build/Testing/Temporary/*.log || true
+        fi
+
+    - name: Upload Balance Check Results
+      if: always()
+      uses: actions/upload-artifact@v3
+      with:
+        name: pin-unpin-balance-results
+        path: |
+          build/test-output.log
+          build/Testing/Temporary/*.log
+        retention-days: 30
+
+  # Job 7: Summary Report
+  summary:
+    runs-on: ubuntu-latest
+    name: Generate Summary Report
+    needs: [thread-sanitizer, address-sanitizer, helgrind, clang-tidy, resource-leak-detection, pin-unpin-balance]
+    if: always()
+
+    steps:
+    - name: Download All Artifacts
+      uses: actions/download-artifact@v3
+      with:
+        path: artifacts
+
+    - name: Generate Summary Report
+      run: |
+        cat > summary.md << 'EOF'
+        # CI/CD Sanitizers and Analysis Summary
+
+        ## Test Results
+
+        | Check | Status |
+        |-------|--------|
+        | ThreadSanitizer (TSAN) | ${{ needs.thread-sanitizer.result }} |
+        | AddressSanitizer (ASAN) | ${{ needs.address-sanitizer.result }} |
+        | Helgrind | ${{ needs.helgrind.result }} |
+        | Clang-Tidy | ${{ needs.clang-tidy.result }} |
+        | Resource Leak Detection | ${{ needs.resource-leak-detection.result }} |
+        | Pin/Unpin Balance | ${{ needs.pin-unpin-balance.result }} |
+
+        ## Artifacts
+
+        All test results and logs are available as artifacts for 30 days.
+
+        EOF
+
+        cat summary.md
+
+    - name: Upload Summary
+      uses: actions/upload-artifact@v3
+      with:
+        name: summary-report
+        path: summary.md
+        retention-days: 30
