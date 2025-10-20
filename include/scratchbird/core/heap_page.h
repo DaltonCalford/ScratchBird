@@ -4,6 +4,8 @@
 #include "scratchbird/core/status.h"
 #include "scratchbird/core/uuidv7.h"
 #include "scratchbird/core/transaction_manager.h"
+#include "scratchbird/core/gpid.h"
+#include "scratchbird/core/tid.h"
 #include <cstdint>
 #include <vector>
 #include <memory>
@@ -83,21 +85,24 @@ namespace scratchbird::core
         uint64_t xmin; // Transaction ID that inserted this tuple
         uint64_t xmax; // Transaction ID that deleted/updated this tuple (or 0)
 
-        // Version chain (8 bytes) - Firebird MGA back versioning
-        uint64_t back_version_tid; // TID of BACK version (previous state, 0 if original)
-                                   // Format: (page_id << 32) | (item_id << 16)
-                                   // Points BACKWARD to older version (Newest-to-Oldest chain)
+        // Version chain (12 bytes) - Firebird MGA back versioning
+        // PHASE 1, TASK 1.2.5: Changed to TID struct (GPID + slot)
+        uint64_t back_version_gpid;  // GPID of BACK version (previous state, INVALID_GPID if original)
+        uint16_t back_version_slot;  // Slot of BACK version
+        uint16_t reserved1;          // Alignment padding
+                                     // Points BACKWARD to older version (Newest-to-Oldest chain)
 
-        // Tuple metadata (8 bytes)
-        uint32_t ctid_page; // Current tuple ID: page number
-        uint16_t ctid_item; // Current tuple ID: item number
-        uint16_t infomask;  // Tuple state flags (replaces old 'flags')
+        // Tuple metadata (12 bytes)
+        // PHASE 1, TASK 1.2.5: Changed ctid_page from uint32_t to GPID (64-bit)
+        GPID ctid_gpid;      // Current tuple ID: GPID (tablespace + page number)
+        uint16_t ctid_slot;  // Current tuple ID: slot number
+        uint16_t infomask;   // Tuple state flags (replaces old 'flags')
 
         // Null bitmap (4 bytes)
         uint16_t null_bitmap_offset; // Offset to null bitmap (0 if no nulls)
         uint16_t padding;            // Alignment padding
 
-        // Total: 36 bytes (up from 18 bytes)
+        // Total: 44 bytes (increased from 36 bytes due to GPID expansion)
 
         // Infomask flags (PostgreSQL-compatible)
         static constexpr uint16_t HEAP_HAS_NULLS = 0x0001;
@@ -132,41 +137,61 @@ namespace scratchbird::core
             return (infomask & HEAP_UPDATED) != 0;
         }
 
+        // PHASE 1, TASK 1.2.5: Updated for GPID-based TID
+
         // NEW: MGA back versioning helper methods
         [[nodiscard]] auto hasBackVersion() const -> bool
         {
-            return back_version_tid != 0;
+            return back_version_gpid != INVALID_GPID;
         }
 
-        [[nodiscard]] auto getBackVersionTID() const -> uint64_t
+        [[nodiscard]] auto getBackVersionTID() const -> TID
         {
-            return back_version_tid;
+            return TID(back_version_gpid, back_version_slot);
         }
 
-        void setBackVersionTID(uint32_t page_id, uint16_t item_id)
+        void setBackVersionTID(GPID gpid, uint16_t slot)
         {
-            back_version_tid = (static_cast<uint64_t>(page_id) << 32) |
-                              (static_cast<uint64_t>(item_id) << 16);
+            back_version_gpid = gpid;
+            back_version_slot = slot;
+        }
+
+        void setBackVersionTID(const TID &tid)
+        {
+            back_version_gpid = tid.gpid;
+            back_version_slot = tid.slot;
         }
 
         // DEPRECATED: Use hasBackVersion() instead
         [[nodiscard]] auto hasNextVersion() const -> bool
         {
-            return back_version_tid != 0;
+            return back_version_gpid != INVALID_GPID;
         }
 
         // Get TID of this tuple
-        [[nodiscard]] auto getTID() const -> uint64_t
+        [[nodiscard]] auto getTID() const -> TID
         {
-            return (static_cast<uint64_t>(ctid_page) << 32) |
-                   (static_cast<uint64_t>(ctid_item) << 16);
+            return TID(ctid_gpid, ctid_slot);
         }
 
         // Set TID of this tuple
-        void setTID(uint32_t page_id, uint16_t item_id)
+        void setTID(GPID gpid, uint16_t slot)
         {
-            ctid_page = page_id;
-            ctid_item = item_id;
+            ctid_gpid = gpid;
+            ctid_slot = slot;
+        }
+
+        void setTID(const TID &tid)
+        {
+            ctid_gpid = tid.gpid;
+            ctid_slot = tid.slot;
+        }
+
+        // LEGACY: Conversion helpers for backward compatibility with uint32_t page_id
+        void setTIDLegacy(uint32_t page_id, uint16_t item_id)
+        {
+            ctid_gpid = makeGPID(PRIMARY_TABLESPACE_ID, static_cast<uint64_t>(page_id));
+            ctid_slot = item_id;
         }
     };
 #pragma pack(pop)

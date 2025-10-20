@@ -154,9 +154,12 @@ namespace scratchbird::core
             auto *new_hdr = reinterpret_cast<TupleHeader *>(toasted_data.data());
             new_hdr->xmin = xmin;
             new_hdr->xmax = 0;
-            new_hdr->back_version_tid = 0; // No back version (original insert)
-            new_hdr->ctid_page = 0; // Will be set after insertion
-            new_hdr->ctid_item = 0;
+            // PHASE 1, TASK 1.2.5: Use GPID-based TID fields
+            new_hdr->back_version_gpid = INVALID_GPID; // No back version (original insert)
+            new_hdr->back_version_slot = 0;
+            new_hdr->reserved1 = 0;
+            new_hdr->ctid_gpid = INVALID_GPID; // Will be set after insertion
+            new_hdr->ctid_slot = 0;
             new_hdr->infomask = 0;
             new_hdr->null_bitmap_offset = 0;
             new_hdr->padding = 0;
@@ -230,9 +233,13 @@ namespace scratchbird::core
         auto *tuple_hdr = reinterpret_cast<TupleHeader *>(page_data_ + tuple_offset);
         tuple_hdr->xmin = xmin;
         tuple_hdr->xmax = 0;
-        tuple_hdr->back_version_tid = 0; // No back version (original insert)
+        // PHASE 1, TASK 1.2.5: Use GPID-based TID fields
+        tuple_hdr->back_version_gpid = INVALID_GPID; // No back version (original insert)
+        tuple_hdr->back_version_slot = 0;
         // ctid will be set after we know the final item_id
-        tuple_hdr->setTID(header()->page_id, item_id);
+        // Convert page_id to GPID (tablespace 0 for now)
+        GPID page_gpid = makeGPID(PRIMARY_TABLESPACE_ID, static_cast<uint64_t>(header()->page_id));
+        tuple_hdr->setTID(page_gpid, item_id);
         if (tuple_hdr->infomask == 0)
         {
             tuple_hdr->infomask = 0; // Initialize if not already set
@@ -883,16 +890,17 @@ namespace scratchbird::core
         new_primary_hdr->xmin = new_xmin;
         new_primary_hdr->xmax = 0; // Not deleted
 
-        // CRITICAL: Set back_version_tid to point BACKWARD to back version
+        // PHASE 1, TASK 1.2.5: Use GPID-based TID fields
+        // CRITICAL: Set back_version to point BACKWARD to back version
         // Build TID for back version (same page, but different offset)
-        // We need to create a temporary item pointer for the back version
-        // For Alpha simplification: Store back version offset directly in back_version_tid
-        // Format: page_id in upper 32 bits, offset in lower 32 bits
+        // For Alpha simplification: Store back version offset directly in slot field
+        // (This is a temporary approach - full implementation would use proper item pointers)
         uint32_t page_id = header()->page_id;
-        new_primary_hdr->back_version_tid =
-            (static_cast<uint64_t>(page_id) << 32) | static_cast<uint64_t>(back_version_offset);
+        GPID page_gpid = makeGPID(PRIMARY_TABLESPACE_ID, static_cast<uint64_t>(page_id));
+        new_primary_hdr->back_version_gpid = page_gpid;
+        new_primary_hdr->back_version_slot = static_cast<uint16_t>(back_version_offset); // Temporary: use offset as slot
 
-        new_primary_hdr->setTID(page_id, old_item_id); // Same item ID (stable!)
+        new_primary_hdr->setTID(page_gpid, old_item_id); // Same item ID (stable!)
         new_primary_hdr->infomask = 0; // Clear flags (new primary version)
         // Note: We don't set HEAP_HOT_UPDATED here - that's for index update optimization
         // MGA provides stable TIDs naturally, so indexes don't need updating regardless
@@ -1100,12 +1108,13 @@ namespace scratchbird::core
                 {
                     // Continue to BACK version (N2O traversal)
                     chain_length++;
-                    uint64_t back_tid = tuple_hdr->back_version_tid;
-                    uint32_t back_page_id = static_cast<uint32_t>(back_tid >> 32);
-                    uint32_t back_offset = static_cast<uint32_t>(back_tid & 0xFFFFFFFF);
+                    // PHASE 1, TASK 1.2.5: Use GPID-based TID fields
+                    TID back_tid = tuple_hdr->getBackVersionTID();
+                    uint64_t back_page_num = getPageNumber(back_tid);
+                    uint32_t back_offset = back_tid.slot; // Alpha: slot is actually offset
 
                     // For Alpha: Only same-page back versions supported
-                    if (back_page_id != current_page_id)
+                    if (back_page_num != static_cast<uint64_t>(current_page_id))
                     {
                         SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED,
                                           "Cross-page back versions not yet supported (Alpha)");
@@ -1267,19 +1276,21 @@ namespace scratchbird::core
             // NOT VISIBLE: Follow BACK version chain (N2O traversal)
             // ====================================================================
             // This version is not visible to our snapshot.
-            // Follow back_version_tid pointer BACKWARD to older version.
+            // Follow back version pointer BACKWARD to older version.
             if (tuple_hdr->hasBackVersion())
             {
+                // PHASE 1, TASK 1.2.5: Use GPID-based TID fields
                 // Extract back version TID
-                uint64_t back_tid = tuple_hdr->back_version_tid;
-                uint32_t back_page_id = static_cast<uint32_t>(back_tid >> 32);
+                TID back_tid = tuple_hdr->getBackVersionTID();
+                uint64_t back_page_num = getPageNumber(back_tid);
 
-                // CRITICAL: Extract OFFSET (not item_id) from lower 32 bits
+                // CRITICAL: Extract OFFSET (not item_id) from slot field
                 // This is the key change from forward versioning
-                uint32_t back_offset = static_cast<uint32_t>(back_tid & 0xFFFFFFFF);
+                // Alpha: slot is actually offset
+                uint32_t back_offset = back_tid.slot;
 
                 // Check if we need to follow version chain to another page
-                if (back_page_id != current_page_id)
+                if (back_page_num != static_cast<uint64_t>(current_page_id))
                 {
                     // CROSS-PAGE BACK VERSION CHAIN
                     // Phase 4: Full cross-page support (CRITICAL PATH - NOW IMPLEMENTED)
@@ -1292,7 +1303,7 @@ namespace scratchbird::core
 
                     // Pin the back version page
                     void *back_page_buffer = nullptr;
-                    Status status = buffer_pool->pinPage(back_page_id, &back_page_buffer, ctx);
+                    Status status = buffer_pool->pinPage(back_page_num, &back_page_buffer, ctx);
                     if (status != Status::OK)
                     {
                         SET_ERROR_CONTEXT(ctx, status, "Failed to pin back version page");
@@ -1307,15 +1318,15 @@ namespace scratchbird::core
                     try
                     {
                         std::lock_guard<std::mutex> lock(snapshot->pinned_pages_mutex_);
-                        snapshot->pinned_pages.push_back(back_page_id);
+                        snapshot->pinned_pages.push_back(back_page_num);
                     }
                     catch (const std::bad_alloc &)
                     {
                         // CRITICAL: Failed to track pinned page - must unpin to prevent leak
-                        buffer_pool->unpinPage(back_page_id, false, ctx);
+                        buffer_pool->unpinPage(back_page_num, false, ctx);
                         LOG_ERROR(STORAGE,
                                   "OOM tracking snapshot pin for page %u - unpinned to prevent leak",
-                                  back_page_id);
+                                  back_page_num);
                         SET_ERROR_CONTEXT(ctx, Status::OOM,
                                           "Out of memory tracking cross-page version pins");
                         return Status::OOM;
@@ -1328,7 +1339,7 @@ namespace scratchbird::core
                     // Switch to the back version page
                     current_page_data = static_cast<uint8_t *>(back_page_buffer);
                     current_page_size = page_size_; // Assume same page size
-                    current_page_id = back_page_id;
+                    current_page_id = back_page_num;
                     current_offset = back_offset;
                     is_back_version = true; // Now accessing by offset
                 }

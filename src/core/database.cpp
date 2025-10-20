@@ -1061,6 +1061,129 @@ namespace scratchbird::core
         return Status::OK;
     }
 
+    // === PHASE 1, TASK 1.2.4: GPID-based I/O methods ===
+
+    auto Database::read_page_global(GPID gpid, void *buffer, ErrorContext *ctx) const -> Status
+    {
+        if (fd_ < 0 || (buffer == nullptr))
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Invalid arguments to read_page_global");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        // Extract tablespace_id and page_number from GPID
+        uint16_t tablespace_id = getTablespaceID(gpid);
+        uint64_t page_number = getPageNumber(gpid);
+
+        // PHASE 1: Only primary tablespace (tablespace 0) is supported
+        if (tablespace_id != PRIMARY_TABLESPACE_ID)
+        {
+            char msg[256];
+            snprintf(msg, sizeof(msg),
+                     "Custom tablespaces not yet implemented (Phase 1, Task 1.3). "
+                     "Requested tablespace_id=%u, page_number=%lu",
+                     tablespace_id, page_number);
+            SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED, msg);
+            return Status::NOT_IMPLEMENTED;
+        }
+
+        // Validate page_number fits in uint32_t for primary tablespace
+        if (page_number > UINT32_MAX)
+        {
+            char msg[256];
+            snprintf(msg, sizeof(msg),
+                     "Page number %lu exceeds uint32_t maximum for primary tablespace",
+                     page_number);
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, msg);
+            return Status::INVALID_ARGUMENT;
+        }
+
+        // Convert to legacy page_id and call existing read_page()
+        uint32_t page_id = static_cast<uint32_t>(page_number);
+        return read_page(page_id, buffer, ctx);
+    }
+
+    auto Database::write_page_global(GPID gpid, const void *buffer, ErrorContext *ctx) -> Status
+    {
+        if (fd_ < 0 || (buffer == nullptr))
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Invalid arguments to write_page_global");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        // Extract tablespace_id and page_number from GPID
+        uint16_t tablespace_id = getTablespaceID(gpid);
+        uint64_t page_number = getPageNumber(gpid);
+
+        // PHASE 1: Only primary tablespace (tablespace 0) is supported
+        if (tablespace_id != PRIMARY_TABLESPACE_ID)
+        {
+            char msg[256];
+            snprintf(msg, sizeof(msg),
+                     "Custom tablespaces not yet implemented (Phase 1, Task 1.3). "
+                     "Requested tablespace_id=%u, page_number=%lu",
+                     tablespace_id, page_number);
+            SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED, msg);
+            return Status::NOT_IMPLEMENTED;
+        }
+
+        // Validate page_number fits in uint32_t for primary tablespace
+        if (page_number > UINT32_MAX)
+        {
+            char msg[256];
+            snprintf(msg, sizeof(msg),
+                     "Page number %lu exceeds uint32_t maximum for primary tablespace",
+                     page_number);
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, msg);
+            return Status::INVALID_ARGUMENT;
+        }
+
+        // Convert to legacy page_id and call existing write_page()
+        uint32_t page_id = static_cast<uint32_t>(page_number);
+        return write_page(page_id, buffer, ctx);
+    }
+
+    auto Database::allocate_page_id_global(uint16_t tablespace_id, GPID *gpid_out,
+                                          ErrorContext *ctx) -> Status
+    {
+        if (!is_open())
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Database not open");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        if (gpid_out == nullptr)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "gpid_out cannot be null");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        // PHASE 1: Only primary tablespace (tablespace 0) is supported
+        if (tablespace_id != PRIMARY_TABLESPACE_ID)
+        {
+            char msg[256];
+            snprintf(msg, sizeof(msg),
+                     "Custom tablespaces not yet implemented (Phase 1, Task 1.3). "
+                     "Requested tablespace_id=%u",
+                     tablespace_id);
+            SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED, msg);
+            return Status::NOT_IMPLEMENTED;
+        }
+
+        // Allocate page_id using legacy API
+        uint32_t page_id;
+        Status status = allocate_page_id(&page_id, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        // Convert to GPID
+        *gpid_out = makeGPID(PRIMARY_TABLESPACE_ID, static_cast<uint64_t>(page_id));
+
+        return Status::OK;
+    }
+
     auto Database::update_header_total_pages(uint32_t total_pages, ErrorContext *ctx) -> Status
     {
         if (fd_ < 0)

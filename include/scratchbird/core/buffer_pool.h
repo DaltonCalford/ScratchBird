@@ -12,6 +12,7 @@
 #include "scratchbird/core/status.h"
 #include "scratchbird/core/ondisk.h"
 #include "scratchbird/core/error_context.h"
+#include "scratchbird/core/gpid.h"
 
 namespace scratchbird::core
 {
@@ -52,45 +53,121 @@ namespace scratchbird::core
         // Shutdown and flush all dirty pages
         auto shutdown(ErrorContext *ctx = nullptr) -> Status;
 
+        // === LEGACY API: 32-bit page_id (tablespace 0 only) ===
+
         /**
-         * Pin a page in the buffer pool
-         * @param page_id Page to pin
+         * Pin a page in the buffer pool (LEGACY API - tablespace 0 only)
+         * @param page_id Page to pin (32-bit, primary tablespace only)
          * @param buffer Returns pointer to page data
          * @param ctx Error context
          * @return Status code
+         *
+         * Note: For new code, use pinPageGlobal(GPID) instead.
          */
         auto pinPage(uint32_t page_id, void **buffer, ErrorContext *ctx = nullptr) -> Status;
 
         /**
-         * Unpin a page
-         * @param page_id Page to unpin
+         * Unpin a page (LEGACY API - tablespace 0 only)
+         * @param page_id Page to unpin (32-bit, primary tablespace only)
          * @param is_dirty True if page was modified
          * @param ctx Error context
          * @return Status code
+         *
+         * Note: For new code, use unpinPageGlobal(GPID) instead.
          */
         auto unpinPage(uint32_t page_id, bool is_dirty, ErrorContext *ctx = nullptr) -> Status;
 
         /**
-         * Allocate a new page and pin it
-         * @param page_id_out Returns the allocated page ID
+         * Allocate a new page and pin it (LEGACY API - tablespace 0 only)
+         * @param page_id_out Returns the allocated page ID (32-bit, primary tablespace only)
          * @param buffer Returns pointer to page data
          * @param ctx Error context
          * @return Status code
+         *
+         * Note: For new code, use allocatePageGlobal(GPID) instead.
          */
         auto allocatePage(uint32_t *page_id_out, void **buffer, ErrorContext *ctx = nullptr) -> Status;
 
         /**
-         * Mark a page as dirty (without unpinning)
-         * @param page_id Page to mark dirty
+         * Mark a page as dirty (LEGACY API - tablespace 0 only)
+         * @param page_id Page to mark dirty (32-bit, primary tablespace only)
          * @param ctx Error context
          * @return Status code
+         *
+         * Note: For new code, use markDirtyGlobal(GPID) instead.
          */
         auto markDirty(uint32_t page_id, ErrorContext *ctx = nullptr) -> Status;
 
         /**
-         * Flush a specific page if dirty
+         * Flush a specific page if dirty (LEGACY API - tablespace 0 only)
+         * @param page_id Page to flush (32-bit, primary tablespace only)
+         * @param ctx Error context
+         * @return Status code
+         *
+         * Note: For new code, use flushPageGlobal(GPID) instead.
          */
         auto flushPage(uint32_t page_id, ErrorContext *ctx = nullptr) -> Status;
+
+        // === NEW: GPID-based API (Phase 1, Task 1.2.3) ===
+
+        /**
+         * pinPageGlobal - Pin a page in the buffer pool (GPID version)
+         *
+         * @param gpid Global Page ID of page to pin
+         * @param buffer Returns pointer to page data
+         * @param ctx Error context
+         * @return Status::OK on success, error status otherwise
+         *
+         * Purpose: Multi-tablespace support. Pins a page identified by GPID.
+         *
+         * Example:
+         *   GPID gpid = makeGPID(5, 1000);  // Tablespace 5, page 1000
+         *   void *buffer;
+         *   Status s = buffer_pool->pinPageGlobal(gpid, &buffer);
+         */
+        auto pinPageGlobal(GPID gpid, void **buffer, ErrorContext *ctx = nullptr) -> Status;
+
+        /**
+         * unpinPageGlobal - Unpin a page (GPID version)
+         *
+         * @param gpid Global Page ID of page to unpin
+         * @param is_dirty True if page was modified
+         * @param ctx Error context
+         * @return Status::OK on success, error status otherwise
+         */
+        auto unpinPageGlobal(GPID gpid, bool is_dirty, ErrorContext *ctx = nullptr) -> Status;
+
+        /**
+         * allocatePageGlobal - Allocate a new page in a specific tablespace and pin it
+         *
+         * @param tablespace_id Tablespace ID (0 = primary, 1-65535 = custom)
+         * @param gpid_out Returns the allocated GPID
+         * @param buffer Returns pointer to page data
+         * @param ctx Error context
+         * @return Status::OK on success, error status otherwise
+         *
+         * Note: For Phase 1, only tablespace_id=0 (primary) is supported.
+         */
+        auto allocatePageGlobal(uint16_t tablespace_id, GPID *gpid_out, void **buffer,
+                               ErrorContext *ctx = nullptr) -> Status;
+
+        /**
+         * markDirtyGlobal - Mark a page as dirty (GPID version)
+         *
+         * @param gpid Global Page ID of page to mark dirty
+         * @param ctx Error context
+         * @return Status::OK on success, error status otherwise
+         */
+        auto markDirtyGlobal(GPID gpid, ErrorContext *ctx = nullptr) -> Status;
+
+        /**
+         * flushPageGlobal - Flush a specific page if dirty (GPID version)
+         *
+         * @param gpid Global Page ID of page to flush
+         * @param ctx Error context
+         * @return Status::OK on success, error status otherwise
+         */
+        auto flushPageGlobal(GPID gpid, ErrorContext *ctx = nullptr) -> Status;
 
         /**
          * Flush all dirty pages
@@ -179,7 +256,8 @@ namespace scratchbird::core
         // Frame metadata
         struct Frame
         {
-            uint32_t page_id = INVALID_PAGE_ID;
+            // PHASE 1, TASK 1.2.3: Changed from uint32_t to GPID (64-bit)
+            GPID gpid = INVALID_GPID;
             // CRITICAL FIX (CRITICAL-1): Make pin_count and usage_count atomic to prevent race conditions
             // Even though operations occur under mutex_, atomics provide memory ordering guarantees
             // and prevent torn reads/writes on all architectures
@@ -190,7 +268,6 @@ namespace scratchbird::core
             std::unique_ptr<std::mutex>
                 content_mutex; // Protects page content from concurrent modifications
 
-            static constexpr uint32_t INVALID_PAGE_ID = 0xFFFFFFFF;
             static constexpr uint32_t MAX_USAGE_COUNT = 5; // Maximum usage count for Clock Sweep
 
             // Constructor to initialize mutex
@@ -199,7 +276,7 @@ namespace scratchbird::core
             // CRITICAL FIX (CRITICAL-1): std::atomic is not copyable, so we need custom copy/move
             // Copy constructor: atomic values are copied with load/store
             Frame(const Frame& other)
-                : page_id(other.page_id),
+                : gpid(other.gpid),
                   pin_count(other.pin_count.load(std::memory_order_relaxed)),
                   is_dirty(other.is_dirty),
                   usage_count(other.usage_count.load(std::memory_order_relaxed)),
@@ -213,7 +290,7 @@ namespace scratchbird::core
             // Copy assignment operator
             Frame& operator=(const Frame& other) {
                 if (this != &other) {
-                    page_id = other.page_id;
+                    gpid = other.gpid;
                     pin_count.store(other.pin_count.load(std::memory_order_relaxed), std::memory_order_relaxed);
                     is_dirty = other.is_dirty;
                     usage_count.store(other.usage_count.load(std::memory_order_relaxed), std::memory_order_relaxed);
@@ -224,14 +301,14 @@ namespace scratchbird::core
 
             // Move constructor
             Frame(Frame&& other) noexcept
-                : page_id(other.page_id),
+                : gpid(other.gpid),
                   pin_count(other.pin_count.load(std::memory_order_relaxed)),
                   is_dirty(other.is_dirty),
                   usage_count(other.usage_count.load(std::memory_order_relaxed)),
                   data(std::move(other.data)),
                   content_mutex(std::move(other.content_mutex))
             {
-                other.page_id = INVALID_PAGE_ID;
+                other.gpid = INVALID_GPID;
                 other.pin_count.store(0, std::memory_order_relaxed);
                 other.is_dirty = false;
                 other.usage_count.store(0, std::memory_order_relaxed);
@@ -240,14 +317,14 @@ namespace scratchbird::core
             // Move assignment operator
             Frame& operator=(Frame&& other) noexcept {
                 if (this != &other) {
-                    page_id = other.page_id;
+                    gpid = other.gpid;
                     pin_count.store(other.pin_count.load(std::memory_order_relaxed), std::memory_order_relaxed);
                     is_dirty = other.is_dirty;
                     usage_count.store(other.usage_count.load(std::memory_order_relaxed), std::memory_order_relaxed);
                     data = std::move(other.data);
                     content_mutex = std::move(other.content_mutex);
 
-                    other.page_id = INVALID_PAGE_ID;
+                    other.gpid = INVALID_GPID;
                     other.pin_count.store(0, std::memory_order_relaxed);
                     other.is_dirty = false;
                     other.usage_count.store(0, std::memory_order_relaxed);
@@ -290,7 +367,8 @@ namespace scratchbird::core
         Config config_;                                     // Configuration
         std::vector<Frame> frames_;                         // Buffer pool frames
         std::list<uint32_t> lru_list_;                      // LRU list (frame indices)
-        std::unordered_map<uint32_t, uint32_t> page_table_; // page_id -> frame_index
+        // PHASE 1, TASK 1.2.3: Changed key from uint32_t to GPID (64-bit)
+        std::unordered_map<GPID, uint32_t> page_table_;     // gpid -> frame_index
         Stats stats_;                                       // Statistics (atomic counters)
         mutable std::mutex mutex_;                          // Thread safety (future)
 
@@ -305,8 +383,9 @@ namespace scratchbird::core
 
         // Helper methods
         auto evictPage(uint32_t &evicted_frame, ErrorContext *ctx) -> Status;
-        auto readPageFromDisk(uint32_t page_id, uint8_t *buffer, ErrorContext *ctx) -> Status;
-        auto writePageToDisk(uint32_t page_id, const uint8_t *buffer, ErrorContext *ctx) -> Status;
+        // PHASE 1, TASK 1.2.3: Changed page_id to gpid (GPID is 64-bit)
+        auto readPageFromDisk(GPID gpid, uint8_t *buffer, ErrorContext *ctx) -> Status;
+        auto writePageToDisk(GPID gpid, const uint8_t *buffer, ErrorContext *ctx) -> Status;
         void updateLru(uint32_t frame_index);
 
         // Background writer methods (Issue 2.20)

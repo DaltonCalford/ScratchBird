@@ -814,15 +814,15 @@ namespace scratchbird::core
             uint32_t old_offset = items[item_id].offset;
             auto *old_tuple_hdr = reinterpret_cast<TupleHeader *>(page_data + old_offset);
 
-            // Build TID for new tuple on different page
-            uint64_t new_tid = (static_cast<uint64_t>(new_page_id) << 32) |
-                               (static_cast<uint64_t>(new_item_id) << 16);
+            // PHASE 1, TASK 1.2.5: Build TID for new tuple on different page using GPID
+            GPID new_page_gpid = makeGPID(PRIMARY_TABLESPACE_ID, static_cast<uint64_t>(new_page_id));
+            TID new_tid(new_page_gpid, new_item_id);
 
             // Update old tuple's version chain to point to new page
             old_tuple_hdr->xmax = xmax;
             // TODO PHASE 2: This pointer direction is WRONG (forward not back)
             // Will be fixed in Phase 2 when implementing proper back versioning
-            old_tuple_hdr->back_version_tid = new_tid;
+            old_tuple_hdr->setBackVersionTID(new_tid);
             old_tuple_hdr->infomask |= TupleHeader::HEAP_UPDATED;
             old_tuple_hdr->infomask |= TupleHeader::HEAP_MOVED; // Mark as moved to different page
             old_tuple_hdr->infomask |= TupleHeader::HEAP_XMAX_COMMITTED;

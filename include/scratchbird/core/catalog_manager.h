@@ -13,6 +13,7 @@
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/buffer_pool.h"
 #include "scratchbird/core/types.h"
+#include "scratchbird/core/tablespace.h"
 
 namespace scratchbird::core
 {
@@ -138,6 +139,7 @@ namespace scratchbird::core
             ID table_id;
             std::string index_name;
             uint32_t root_page = 0;
+            uint16_t tablespace_id = 0;    // Tablespace ID (0 = primary file, 1-65535 = custom)
             IndexType index_type = IndexType::BTREE;
             bool is_unique = false;
             std::vector<ID> column_ids;
@@ -319,12 +321,15 @@ namespace scratchbird::core
         static constexpr uint32_t TABLES_TABLE_PAGE = 5;
         static constexpr uint32_t COLUMNS_TABLE_PAGE = 6;
         static constexpr uint32_t INDEXES_TABLE_PAGE = 7;
+        static constexpr uint32_t TABLESPACES_TABLE_PAGE = 8;       // pg_tablespace
+        static constexpr uint32_t TABLESPACE_FILES_TABLE_PAGE = 9;  // pg_tablespace_files
 
         // In-memory cache of catalog data
         std::unordered_map<ID, SchemaInfo> schema_cache_;
         std::unordered_map<ID, TableInfo> table_cache_;
         std::unordered_map<ID, std::vector<ColumnInfo>> column_cache_;
         std::unordered_map<ID, IndexInfo> index_cache_;
+        std::unordered_map<uint16_t, TablespaceInfo> tablespace_cache_;  // keyed by tablespace_id
 
         // Counters
         uint32_t schema_count_ = 0;
@@ -345,6 +350,8 @@ namespace scratchbird::core
         uint32_t timezones_table_page_ = 0;      // Will be allocated during init
         uint32_t charsets_table_page_ = 0;       // Will be allocated during init (pg_charset)
         uint32_t collation_defs_table_page_ = 0; // Will be allocated during init (pg_collation)
+        uint32_t tablespaces_table_page_ = TABLESPACES_TABLE_PAGE;           // pg_tablespace
+        uint32_t tablespace_files_table_page_ = TABLESPACE_FILES_TABLE_PAGE; // pg_tablespace_files
 
         // Internal methods
         auto writeCatalogRoot(ErrorContext *ctx) -> Status;
@@ -527,6 +534,8 @@ namespace scratchbird::core
         auto readColumnRecords(const ID &table_id, ErrorContext *ctx) -> Status;
         auto writeIndexRecord(const IndexInfo &index, ErrorContext *ctx) -> Status;
         auto readIndexRecords(ErrorContext *ctx) -> Status;
+        auto writeTablespaceRecord(const TablespaceInfo &tablespace, ErrorContext *ctx) -> Status;
+        auto readTablespaceRecords(ErrorContext *ctx) -> Status;
 
         // Helper to allocate catalog pages
         auto allocateCatalogPage(uint32_t &page_id, ErrorContext *ctx) -> Status;
