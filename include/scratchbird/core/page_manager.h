@@ -124,6 +124,24 @@ namespace scratchbird::core
         auto openTablespace(uint16_t tablespace_id, const std::string &path,
                            ErrorContext *ctx = nullptr) -> Status;
 
+        /**
+         * closeTablespace - Close a tablespace file and cleanup resources
+         *
+         * @param tablespace_id Tablespace ID (1-65535, 0 = primary reserved)
+         * @param ctx Error context
+         * @return Status::OK on success, error status otherwise
+         *
+         * Performs:
+         * 1. Validates tablespace_id != 0 (primary cannot be closed)
+         * 2. Flushes dirty FSM pages for this tablespace (deferred to Task 1.3.5)
+         * 3. Syncs tablespace file to disk
+         * 4. Unregisters and closes file descriptor
+         *
+         * Thread-safe: Acquires Database::tablespace_mutex_ during unregistration.
+         * Note: Caller must ensure no active transactions using this tablespace.
+         */
+        auto closeTablespace(uint16_t tablespace_id, ErrorContext *ctx = nullptr) -> Status;
+
         // Get total number of pages
         auto totalPages() const -> uint32_t
         {
