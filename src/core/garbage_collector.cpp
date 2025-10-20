@@ -12,6 +12,7 @@
 #include "scratchbird/core/btree.h"
 #include "scratchbird/core/hash_index.h"
 #include "scratchbird/core/gin_index.h"
+#include "scratchbird/core/brin_index.h"
 #include <chrono>
 #include <thread>
 #include <algorithm>
@@ -863,6 +864,7 @@ namespace scratchbird::core
                 std::unique_ptr<BTree> btree;
                 std::unique_ptr<HashIndex> hash_index;
                 std::unique_ptr<GinIndex> gin_index;
+                std::unique_ptr<BrinIndex> brin_index;
 
                 switch (index_info.index_type)
                 {
@@ -887,6 +889,15 @@ namespace scratchbird::core
                     if (gin_index)
                     {
                         index = gin_index.get();
+                    }
+                    break;
+
+                case CatalogManager::IndexType::BRIN:
+                    // PHASE 4A.1.5: BRIN index support
+                    brin_index = BrinIndex::open(db_, index_info.index_id, index_info.root_page, ctx);
+                    if (brin_index)
+                    {
+                        index = brin_index.get();
                     }
                     break;
 
