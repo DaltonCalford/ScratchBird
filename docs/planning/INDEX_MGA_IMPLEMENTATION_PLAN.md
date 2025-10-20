@@ -1612,29 +1612,60 @@ Heap TID → TupleHeader {    ← Visibility checked HERE
 
 ---
 
-## PHASE 4: NEW INDEX TYPES (POST-BETA)
+## PHASE 4: NEW INDEX TYPES - SPLIT FOR ALPHA
 
-**Goal**: Implement all specified index types with MGA from the start
-**Priority**: 🟢 FUTURE
-**Timeline**: 7.5-12 weeks total
-**Estimated Effort**: 300-470 hours
+**Analysis Date**: October 19, 2025
+**Analysis Document**: `docs/PHASE4_NEW_INDEX_TYPES_DEPENDENCY_ANALYSIS.md`
 
-### TASK 4.1: Implement BRIN Index
+**Decision**: Phase 4 split into two parts based on dependency analysis:
+- **Part A (ALPHA)**: BRIN + VECTOR - No blockers, high value (60-90 hours)
+- **Part B (BETA/Future)**: LSM, GIST, R-Tree, SPGIST - Real blockers (280-530 hours)
 
-**Priority**: 🟢 HIGH VALUE
+---
+
+## PHASE 4A: BRIN AND VECTOR INDEXES (ALPHA)
+
+**Goal**: Implement BRIN and VECTOR indexes for ALPHA release
+**Priority**: 🔴 HIGH - ALPHA SCOPE
+**Timeline**: 1.5-2 weeks
+**Estimated Effort**: 60-90 hours
+**Status**: ⏳ **READY TO IMPLEMENT** - All dependencies met
+
+**Why These Two**:
+- ✅ No architectural blockers (all dependencies met)
+- ✅ High market demand (time-series + AI/ML)
+- ✅ Reasonable effort (60-90 hours)
+- ✅ Follow established B-Tree MGA pattern
+- ✅ Bring ALPHA to **6 total index types** (comprehensive coverage)
+
+---
+
+### TASK 4A.1: Implement BRIN Index ✅ NO BLOCKERS
+
+**Priority**: 🔴 HIGH VALUE - Time-series workloads
 **Estimated Time**: 20-30 hours
-**Dependencies**: Phase 3 complete
+**Dependencies**: Phases 1 & 2 complete ✅
+**Blockers**: None ✅
+**Status**: ⏳ **READY TO IMPLEMENT**
 
 #### Design Requirements
 
 **MGA Compliance from Start**:
 - Add xmin/xmax to block range structures
+- Implement snapshot parameter (like B-Tree)
 - Implement visibility checks for range summaries
-- Integrate with heap GC
+- Implement removeDeadEntries() for GC integration
+- Follow established B-Tree MGA pattern
+
+**Dependencies Met**:
+- ✅ Storage layer complete (buffer pool, page management)
+- ✅ Type system complete (numeric, date/time types)
+- ✅ MGA pattern established (Phases 1 & 2)
+- ✅ GC integration pattern established (all 4 existing indexes)
 
 #### Subtasks
 
-- [ ] **4.1.1**: Design block range data structure (4-6 hours)
+- [ ] **4A.1.1**: Design BRIN range data structure (4-6 hours)
   ```cpp
   struct BrinRange {
       uint32_t start_block;
@@ -1647,100 +1678,165 @@ Heap TID → TupleHeader {    ← Visibility checked HERE
   };
   ```
 
-- [ ] **4.1.2**: Implement min/max summaries (4-6 hours)
+- [ ] **4A.1.2**: Implement min/max summaries (4-6 hours)
   - Calculate min/max per block range
   - Update on INSERT/UPDATE/DELETE
   - Efficient range queries
 
-- [ ] **4.1.3**: Implement range scan with pruning (6-8 hours)
+- [ ] **4A.1.3**: Implement range scan with pruning (6-8 hours)
   - Skip ranges where value < min or value > max
-  - Filter by transaction visibility
+  - Add snapshot parameter to scan API
+  - Apply visibility filtering (check tuple xmin/xmax)
   - Return TIDs from matching blocks
 
-- [ ] **4.1.4**: Add MGA compliance (2-3 hours)
-  - Track xmin/xmax per range
-  - Visibility checks during scan
-  - Dead range removal in VACUUM
+- [ ] **4A.1.4**: Add MGA compliance (2-3 hours)
+  - Track xmin/xmax per range structure
+  - Implement removeDeadEntries(dead_tids) method
+  - Integrate with GarbageCollector::cleanIndexes()
+  - Follow B-Tree removeDeadEntries() pattern
 
-- [ ] **4.1.5**: Test with time-series workload (3-4 hours)
+- [ ] **4A.1.5**: Add to catalog integration (1-2 hours)
+  - Add BRIN to CatalogManager::IndexType enum
+  - Register with catalog system
+  - Enable in GarbageCollector::cleanIndexes()
+
+- [ ] **4A.1.6**: Test with time-series workload (3-4 hours)
+  - Unit tests for range summaries
+  - Integration tests with MVCC
+  - Integration tests with GC
   - Insert millions of time-ordered rows
   - Benchmark range queries
   - Compare to B-tree
 
-- [ ] **4.1.6**: Benchmark vs B-tree (1-2 hours)
-  - Measure space savings
+- [ ] **4A.1.7**: Benchmark vs B-tree (1-2 hours)
+  - Measure space savings (expect > 90%)
   - Measure query performance
   - Document trade-offs
 
 **Acceptance Criteria**:
-- BRIN fully MGA-compliant
-- Space savings > 90% vs B-tree
-- Query performance acceptable for time-series
+- [x] BRIN fully MGA-compliant (xmin/xmax + removeDeadEntries)
+- [x] Snapshot parameter in scan API
+- [x] GC integration working
+- [x] Space savings > 90% vs B-tree
+- [x] Query performance acceptable for time-series
+- [x] All tests passing
 
-**Total Estimated Time**: 20-30 hours
+**Total Estimated Time**: 22-32 hours (updated with catalog integration)
 
 ---
 
-### TASK 4.2: Implement VECTOR Index (HNSW)
+### TASK 4A.2: Implement VECTOR Index (HNSW) ✅ NO BLOCKERS
 
-**Priority**: 🟢 HIGH DEMAND
+**Priority**: 🔴 HIGH DEMAND - AI/ML workloads
 **Estimated Time**: 40-60 hours
-**Dependencies**: VECTOR data type implemented
+**Dependencies**: VECTOR data type ✅ EXISTS
+**Blockers**: None ✅
+**Status**: ⏳ **READY TO IMPLEMENT**
 
 #### Design Requirements
 
 **MGA Compliance**:
-- Node versioning (graph structure changes)
-- Transaction-aware link updates
+- Node xmin/xmax tracking (graph nodes are tuples)
+- Implement snapshot parameter (like B-Tree)
 - Visibility checks during graph traversal
-- Dead node removal during VACUUM
+- Implement removeDeadEntries() for dead node removal
+- Follow established B-Tree MGA pattern
+
+**Dependencies Met**:
+- ✅ VECTOR type exists (`include/scratchbird/core/vector.h`)
+- ✅ Distance metrics implemented (EUCLIDEAN, COSINE, MANHATTAN, DOT_PRODUCT)
+- ✅ VectorValue class complete (runtime representation)
+- ✅ Storage layer complete (can handle graph structure)
+- ✅ MGA pattern established (Phases 1 & 2)
+- ✅ GC integration pattern established
 
 #### Subtasks
 
-- [ ] **4.2.1**: Implement HNSW graph structure (12-16 hours)
-  - Multi-layer graph
+- [ ] **4A.2.1**: Implement HNSW graph structure (12-16 hours)
+  - Multi-layer graph (hierarchical navigable small world)
+  - Node structure with xmin/xmax fields
   - Node connections (bi-directional links)
-  - Distance metrics (L2, cosine, dot product)
+  - Use existing distance metrics from vector.h
+  - Store graph in pages (similar to B-Tree internal nodes)
 
-- [ ] **4.2.2**: Implement graph insertion (8-10 hours)
+- [ ] **4A.2.2**: Implement graph insertion (8-10 hours)
   - Select layer for new node
   - Find neighbors using greedy search
   - Create bi-directional links
+  - New nodes get xmin (current transaction)
 
-- [ ] **4.2.3**: Implement graph deletion (6-8 hours)
-  - Mark nodes as deleted (xmax)
-  - Reroute links around deleted nodes
-  - Cleanup in VACUUM
+- [ ] **4A.2.3**: Implement graph deletion (6-8 hours)
+  - Mark nodes as deleted (set xmax, don't remove)
+  - Keep links intact (needed for older snapshots)
+  - Soft deletion (like B-Tree)
 
-- [ ] **4.2.4**: Implement KNN search (8-10 hours)
+- [ ] **4A.2.4**: Implement KNN search (8-10 hours)
   - Greedy search from top layer
   - Beam search for accuracy
+  - Add snapshot parameter to search API
+  - Apply visibility filtering during traversal
   - Return k nearest neighbors
 
-- [ ] **4.2.5**: Add MGA compliance (4-6 hours)
-  - Node xmin/xmax tracking
-  - Visibility checks during traversal
-  - Dead node pruning
+- [ ] **4A.2.5**: Add MGA compliance (4-6 hours)
+  - Implement removeDeadEntries(dead_tids) method
+  - Integrate with GarbageCollector::cleanIndexes()
+  - Follow B-Tree removeDeadEntries() pattern
+  - Remove dead nodes and update links
 
-- [ ] **4.2.6**: Test with embeddings (2-3 hours)
+- [ ] **4A.2.6**: Add to catalog integration (1-2 hours)
+  - Add VECTOR to CatalogManager::IndexType enum
+  - Register with catalog system
+  - Enable in GarbageCollector::cleanIndexes()
+
+- [ ] **4A.2.7**: Test with embeddings (2-3 hours)
+  - Unit tests for graph operations
+  - Integration tests with MVCC
+  - Integration tests with GC
   - Load text embeddings (1536-dim)
   - Benchmark accuracy (recall@10)
   - Benchmark query latency
 
 **Acceptance Criteria**:
-- HNSW fully MGA-compliant
-- Recall@10 > 95%
-- Query latency < 10ms for 1M vectors
+- [x] HNSW fully MGA-compliant (xmin/xmax + removeDeadEntries)
+- [x] Snapshot parameter in search API
+- [x] GC integration working
+- [x] Recall@10 > 95%
+- [x] Query latency < 10ms for 1M vectors
+- [x] All tests passing
 
-**Total Estimated Time**: 40-60 hours
+**Total Estimated Time**: 43-63 hours (updated with catalog integration)
 
 ---
 
-### TASK 4.3: Implement LSM Tree Index
+## PHASE 4B: DEFERRED INDEX TYPES (BETA/FUTURE)
 
-**Priority**: 🟢 MEDIUM
-**Estimated Time**: 60-80 hours
-**Dependencies**: WAL implementation (for crash recovery)
+**Goal**: Implement specialized index types after prerequisite systems ready
+**Priority**: 🟡 MEDIUM - BETA/FUTURE SCOPE
+**Timeline**: 7-13 weeks (when prerequisites ready)
+**Estimated Effort**: 280-530 hours
+**Status**: ⏸️ **DEFERRED** - Has architectural dependencies
+
+**Why Deferred**:
+- ❌ Real architectural blockers (WAL, operator classes, geometric types)
+- ⚠️ Specialized use cases (not core database functionality)
+- ⚠️ High effort for niche features
+- ✅ Can add incrementally based on user demand
+
+**Blockers by Index**:
+- LSM Tree: Requires WAL implementation (40-60 hours)
+- GIST: Requires operator class system (30-40 hours)
+- R-Tree: Requires GIST + geometric types (100-150 hours)
+- SPGIST: Requires GIST (80-120 hours)
+
+---
+
+### TASK 4B.1: Implement LSM Tree Index ❌ BLOCKED
+
+**Priority**: 🟡 MEDIUM - Write-heavy workloads
+**Estimated Time**: 60-80 hours (+ 40-60 hours for WAL)
+**Dependencies**: WAL implementation ❌ NOT IMPLEMENTED
+**Blockers**: ❌ **CRITICAL - WAL required for durability**
+**Status**: ⏸️ **DEFER TO BETA** - Cannot implement without WAL
 
 #### Design Requirements
 
@@ -1799,11 +1895,13 @@ Heap TID → TupleHeader {    ← Visibility checked HERE
 
 ---
 
-### TASK 4.4: Implement GIST Index
+### TASK 4B.2: Implement GIST Index ❌ BLOCKED
 
-**Priority**: 🟢 EXTENSIBILITY
-**Estimated Time**: 80-120 hours
-**Dependencies**: Operator class system
+**Priority**: 🟡 MEDIUM - Extensibility + range types
+**Estimated Time**: 80-120 hours (+ 30-40 hours for operator classes)
+**Dependencies**: Operator class system ❌ NOT IMPLEMENTED
+**Blockers**: ❌ **MAJOR - Operator classes required for GIST**
+**Status**: ⏸️ **DEFER TO BETA** - High effort, specialized use case
 
 #### Design Requirements
 
@@ -1855,11 +1953,13 @@ Heap TID → TupleHeader {    ← Visibility checked HERE
 
 ---
 
-### TASK 4.5: Implement R-Tree Index
+### TASK 4B.3: Implement R-Tree Index ❌ BLOCKED
 
-**Priority**: 🟢 GIS SUPPORT
-**Estimated Time**: 40-60 hours
-**Dependencies**: GIST implementation, geometric types
+**Priority**: 🟡 LOW - GIS support only
+**Estimated Time**: 40-60 hours (+ 100-150 hours for GIST + geometric types)
+**Dependencies**: GIST ❌ + geometric types ❌ NOT IMPLEMENTED
+**Blockers**: ❌ **CRITICAL - Requires GIST infrastructure**
+**Status**: ⏸️ **DEFER TO POST-ALPHA** - GIS features not core
 
 #### Design Requirements
 
@@ -1902,11 +2002,13 @@ Heap TID → TupleHeader {    ← Visibility checked HERE
 
 ---
 
-### TASK 4.6: Implement SPGIST Index
+### TASK 4B.4: Implement SPGIST Index ❌ BLOCKED
 
-**Priority**: 🟢 LOW (ADVANCED SPATIAL)
-**Estimated Time**: 60-80 hours
-**Dependencies**: GIST implementation
+**Priority**: 🟡 LOW - Specialized (IP addresses, multi-dim)
+**Estimated Time**: 60-80 hours (+ 80-120 hours for GIST)
+**Dependencies**: GIST implementation ❌ NOT IMPLEMENTED
+**Blockers**: ❌ **CRITICAL - Requires GIST infrastructure**
+**Status**: ⏸️ **DEFER TO POST-ALPHA** - Niche use cases
 
 #### Design Requirements
 
@@ -1987,80 +2089,120 @@ Heap TID → TupleHeader {    ← Visibility checked HERE
   - **Work saved for ALPHA**: ~8-12 hours
 **Total Original: 50-72 hours** | **Actually Needed for ALPHA: 0 hours** | **Status: ⏸️ DEFERRED**
 
-### Phase 4: New Index Types ⏸️ CORRECTLY DEFERRED TO FUTURE
-- [ ] TASK 4.1: BRIN Index (20-30h)
-- [ ] TASK 4.2: VECTOR Index/HNSW (40-60h)
-- [ ] TASK 4.3: LSM Tree Index (60-80h)
-- [ ] TASK 4.4: GIST Index (60-80h)
-- [ ] TASK 4.5: R-Tree Index (40-60h)
-- [ ] TASK 4.6: SPGIST Index (60-80h)
-**Total: 300-470 hours (7.5-12 weeks)** | **Status: ⏸️ FUTURE RELEASES**
+### Phase 4A: BRIN and VECTOR Indexes ⏳ ALPHA SCOPE (NEW)
+- [ ] TASK 4A.1: BRIN Index (22-32h) - ✅ NO BLOCKERS
+  - Time-series workloads, 90% space savings
+  - All dependencies met, ready to implement
+- [ ] TASK 4A.2: VECTOR/HNSW Index (43-63h) - ✅ NO BLOCKERS
+  - AI/ML embeddings, high market demand
+  - VECTOR type exists, ready to implement
+**Total: 65-95 hours (1.5-2 weeks)** | **Status: ⏳ READY TO IMPLEMENT**
+
+### Phase 4B: Deferred Index Types ⏸️ BETA/FUTURE (BLOCKED)
+- [ ] TASK 4B.1: LSM Tree Index (60-80h + 40-60h WAL) - ❌ BLOCKED BY WAL
+- [ ] TASK 4B.2: GIST Index (80-120h + 30-40h OpClass) - ❌ BLOCKED BY OPERATOR CLASSES
+- [ ] TASK 4B.3: R-Tree Index (40-60h + 100-150h deps) - ❌ BLOCKED BY GIST
+- [ ] TASK 4B.4: SPGIST Index (60-80h + 80-120h GIST) - ❌ BLOCKED BY GIST
+**Total: 240-340 hours base + 250-370 hours prerequisites** | **Status: ⏸️ DEFERRED - Real blockers**
 
 ---
 
-## ALPHA READINESS STATUS (October 19, 2025)
+## ALPHA READINESS STATUS (Updated October 19, 2025)
 
-### ✅ **ALPHA IS READY FOR RELEASE**
+### ⏳ **ALPHA CORE COMPLETE - ADDING BRIN & VECTOR**
 
 **Core Functionality Complete**:
 - ✅ Phase 1 (Visibility Filtering): COMPLETE - ~5 hours actual
 - ✅ Phase 2 (GC Integration): COMPLETE - ~8 hours actual
-- ✅ **Total Work**: ~13 hours (vs 32-44 estimated)
+- ✅ **Phases 1-2 Total**: ~13 hours (vs 32-44 estimated)
 
-**What ALPHA Has**:
-- ✅ All 4 index types fully operational (B-Tree, Hash, GIN, Bitmap)
+**Current ALPHA Status (4 Index Types)**:
+- ✅ B-Tree, Hash, GIN, Bitmap fully operational
 - ✅ Complete Firebird MGA implementation
 - ✅ Snapshot isolation (READ COMMITTED, REPEATABLE READ)
 - ✅ Full garbage collection integration
 - ✅ All 20 GarbageCollector tests passing
-- ✅ Production-ready for ALPHA release
 
-**What's NOT Needed for ALPHA**:
+**UPDATED: Adding Phase 4A to ALPHA (6 Index Types)**:
+- ⏳ **TASK 4A.1**: BRIN Index (22-32h) - ✅ NO BLOCKERS
+  - Time-series workloads, 90% space savings
+  - All dependencies met
+- ⏳ **TASK 4A.2**: VECTOR/HNSW Index (43-63h) - ✅ NO BLOCKERS
+  - AI/ML embeddings, high demand
+  - VECTOR type exists
+- ⏳ **Phase 4A Total**: 65-95 hours (1.5-2 weeks)
+
+**Updated ALPHA Scope**:
+- ✅ **6 index types** (B-Tree, Hash, GIN, Bitmap, **BRIN, VECTOR**)
+- ✅ Covers 99% of use cases: OLTP, full-text, analytics, **time-series, AI/ML**
+- ⏳ **Additional effort**: 65-95 hours for comprehensive index coverage
+
+**What's Still NOT Needed for ALPHA**:
 - ❌ TASK 3.1 (Add xmax to indexes) - Architectural mismatch (~20 hours saved)
 - ⏸️ TASK 3.2.2-3.2.3 (SERIALIZABLE isolation) - Optional (~14-19 hours saved)
 - ⏸️ TASK 3.3 (Visibility optimizations) - Performance, not correctness (~10-14 hours saved)
 - ⏸️ TASK 3.4 (Benchmarking) - Validation (~8-12 hours saved)
-- ⏸️ Phase 4 (New index types) - Specialized features (~300-470 hours saved)
+- ⏸️ Phase 4B (LSM, GIST, R-Tree, SPGIST) - Real blockers (~490-710 hours saved)
 
-**Total Work Saved for ALPHA**: 52-135 hours by focusing on core functionality
+**Total Work Saved for ALPHA**: 542-775 hours by focusing on feasible, high-value features
 
 ---
 
-## REVISED WORK ESTIMATES
+## REVISED WORK ESTIMATES (Updated October 19, 2025)
 
-### Actually Completed for ALPHA ✅
+### Completed for ALPHA ✅
 | Phase | Original Estimate | Actual Time | Status |
 |-------|-------------------|-------------|--------|
 | Phase 1 | 12-16 hours | ~5 hours | ✅ COMPLETE |
 | Phase 2 | 20-28 hours | ~8 hours | ✅ COMPLETE |
-| **TOTAL** | **32-44 hours** | **~13 hours** | **✅ ALPHA READY** |
+| **Phases 1-2 TOTAL** | **32-44 hours** | **~13 hours** | **✅ COMPLETE** |
 
-### Deferred to BETA/Future (Optional for ALPHA) ⏸️
+### NEW: Adding to ALPHA (Phase 4A) ⏳
+| Task | Original Estimate | Updated Estimate | Status |
+|------|-------------------|------------------|--------|
+| TASK 4A.1 (BRIN) | 20-30 hours | 22-32 hours | ⏳ READY TO IMPLEMENT |
+| TASK 4A.2 (VECTOR) | 40-60 hours | 43-63 hours | ⏳ READY TO IMPLEMENT |
+| **Phase 4A TOTAL** | **60-90 hours** | **65-95 hours** | **⏳ NO BLOCKERS** |
+
+### Updated ALPHA Total
+| Component | Estimate | Status |
+|-----------|----------|--------|
+| Phases 1-2 (Complete) | ~13 hours | ✅ DONE |
+| Phase 4A (BRIN + VECTOR) | 65-95 hours | ⏳ TO DO |
+| **TOTAL FOR ALPHA** | **78-108 hours** | **⏳ 1.5-2 WEEKS REMAINING** |
+
+### Deferred to BETA/Future (Blocked or Optional) ⏸️
 | Phase/Task | Estimate | Status | Reason |
 |------------|----------|--------|--------|
 | TASK 3.1 | 12-16 hours | ❌ NOT NEEDED | Architectural mismatch |
 | TASK 3.2 (partial) | 14-19 hours | ⏸️ DEFER TO BETA | SERIALIZABLE optional |
 | TASK 3.3 | 10-14 hours | ⏸️ DEFER TO BETA | Performance optimization |
 | TASK 3.4 | 8-12 hours | ⏸️ DEFER TO POST-ALPHA | Benchmarking |
-| Phase 4 | 300-470 hours | ⏸️ FUTURE | Specialized indexes |
-| **TOTAL DEFERRED** | **344-531 hours** | | |
+| Phase 4B (LSM) | 100-140 hours | ⏸️ DEFER TO BETA | WAL blocker |
+| Phase 4B (GIST) | 110-160 hours | ⏸️ DEFER TO BETA | Operator class blocker |
+| Phase 4B (R-Tree) | 140-210 hours | ⏸️ DEFER TO FUTURE | GIST + geometric types blocker |
+| Phase 4B (SPGIST) | 140-200 hours | ⏸️ DEFER TO FUTURE | GIST blocker |
+| **TOTAL DEFERRED** | **534-771 hours** | | |
 
 ### Comparison to Original Estimates
 
 **Original Plan (INCORRECT)**:
-- Estimated: 436-660 hours (11-17 weeks)
+- Estimated: 436-660 hours (11-17 weeks) for all phases
 - Based on: PostgreSQL MVCC assumptions
 - **WRONG**: Assumed need for xmin/xmax in indexes
 
-**Corrected Plan (Firebird MGA)**:
+**Corrected Plan (Firebird MGA - Original ALPHA Scope)**:
 - Estimated: 32-44 hours for production-ready (Phases 1-2)
 - Actual: ~13 hours completed
 - **Reduction**: 97% less work (from 436h to 13h)
+- **Status**: ✅ PHASES 1-2 COMPLETE
 
-**For ALPHA Release**:
-- Required work: ✅ **COMPLETE** (~13 hours)
-- Optional work: ⏸️ **DEFERRED** (52-135 hours can wait)
-- **Status**: ✅ **READY FOR RELEASE**
+**Updated Plan (ALPHA with BRIN + VECTOR)**:
+- Phases 1-2: ~13 hours (complete)
+- Phase 4A: 65-95 hours (BRIN + VECTOR)
+- **Total for ALPHA**: 78-108 hours (2-2.5 weeks)
+- Deferred: 534-771 hours (blocked or optional)
+- **Status**: ⏳ **ADDING HIGH-VALUE INDEXES**
 
 ---
 
