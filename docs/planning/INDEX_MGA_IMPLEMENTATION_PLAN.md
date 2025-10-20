@@ -1410,38 +1410,69 @@ for (const auto &table : tables) {
 **Timeline**: 2-3 weeks
 **Estimated Effort**: 50-72 hours
 
-### TASK 3.1: Add xmax Support Everywhere
+### TASK 3.1: Add xmax Support Everywhere ❌ NOT NEEDED
 
-**Priority**: 🟡 MEDIUM
-**Estimated Time**: 12-16 hours
+**Priority**: N/A
+**Estimated Time**: N/A (Task not needed)
 **Dependencies**: Phase 2 complete
+**Status**: ❌ **NOT NEEDED** - Architectural Decision (October 19, 2025)
+**Decision Document**: `docs/STATUS_PHASE3_TASK3_1_ARCHITECTURAL_DECISION.md`
 
-#### Subtasks
+#### Architectural Decision
 
-- [ ] **3.1.1**: Add xmax to all index entry structures (4-6 hours)
-  - B-Tree: already has btn_xmax ✅
-  - Hash: already added in Phase 1 ✅
-  - GIN: add to entry tree and posting tree nodes
-  - Bitmap: add to dictionary entries (optional)
+After careful analysis, **this task should NOT be implemented** as specified. The task is based on PostgreSQL MVCC assumptions that don't apply to ScratchBird's Firebird MGA architecture.
 
-- [ ] **3.1.2**: Implement soft deletion (4-5 hours)
-  - Set xmax on delete, don't remove immediately
-  - Keep entries until transaction commits
-  - Cleanup in VACUUM
+**Key Finding**: In Firebird MGA with stable item pointers (which ScratchBird implements), index entries **do NOT need xmin/xmax fields** because:
+1. Indexes point to stable TIDs that never change
+2. Visibility is determined by checking the heap tuple's xmin/xmax, not the index entry
+3. Index lookup → retrieve TID → fetch tuple at primary location → check visibility
+4. Phase 2 (Tasks 2.1-2.6) already provides complete GC integration
 
-- [ ] **3.1.3**: Handle rollback scenarios (3-4 hours)
-  - If transaction rolls back, clear xmax
-  - Entries become visible again
+#### What Phase 2 Already Provides
 
-- [ ] **3.1.4**: Add tests (2-3 hours)
-  - Test concurrent delete visibility
-  - Test rollback makes entries visible
-  - Test commit makes entries invisible
+**Implemented Functionality** (October 17-19, 2025):
+- ✅ Index GC Protocol (TASK 2.1): `IndexGCInterface::removeDeadEntries()`
+- ✅ B-Tree/Hash/GIN/Bitmap GC (TASKS 2.2-2.5): Remove entries by TID
+- ✅ Heap-Index Integration (TASK 2.6): Full GC coordination
+- ✅ Dead entry removal flow:
+  1. Heap identifies dead tuples (via `xmax < OIT`)
+  2. GarbageCollector calls `cleanIndexes(page_id, dead_tids)`
+  3. Indexes remove entries matching dead TIDs
 
-**Acceptance Criteria**:
-- All indexes support soft deletion
-- Rollback works correctly
-- Commit properly hides entries
+#### Why This Is Correct
+
+**ScratchBird's Firebird MGA Model**:
+```
+Index [Key] → TID (stable)  ← NO xmin/xmax needed
+    ↓
+Heap TID → TupleHeader {    ← Visibility checked HERE
+    xmin: 100,
+    xmax: 0
+}
+```
+
+**Soft Deletion** happens at the **heap level**, not index level:
+- Heap tuple marked with `xmax` on DELETE
+- Physical removal happens during GC
+- Indexes cleaned by TID during GC (no xmax needed)
+
+#### Impact
+
+**Work Saved**: 12-16 hours + testing/debugging = ~20 hours
+**Architecture Benefits**:
+- Simpler design (no index-level transaction tracking)
+- Better performance (smaller index entries)
+- Correct MGA semantics (follows Firebird model)
+- No page format changes needed
+
+#### Original Subtasks (NOT IMPLEMENTED)
+
+- [x] ~~3.1.1: Add xmax to index structures~~ - NOT NEEDED
+- [x] ~~3.1.2: Implement soft deletion~~ - ALREADY AT HEAP LEVEL
+- [x] ~~3.1.3: Handle rollback scenarios~~ - HANDLED VIA HEAP TUPLE
+- [x] ~~3.1.4: Add tests~~ - PHASE 1 & 2 TESTS COVER THIS
+
+**Recommendation**: Skip to TASK 3.3 (Optimize Visibility Checks) which provides actual performance value
 
 ---
 
