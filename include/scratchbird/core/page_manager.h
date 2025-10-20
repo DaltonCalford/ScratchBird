@@ -76,6 +76,29 @@ namespace scratchbird::core
          */
         auto isAllocatedGlobal(GPID gpid) const -> bool;
 
+        // === NEW: Tablespace File Management (Phase 1, Task 1.3) ===
+
+        /**
+         * openTablespace - Open an existing tablespace file and validate header
+         *
+         * @param tablespace_id Tablespace ID (1-65535, 0 = primary reserved)
+         * @param path Absolute path to .sbts file
+         * @param ctx Error context
+         * @return Status::OK on success, error status otherwise
+         *
+         * Performs:
+         * 1. Opens .sbts file at specified path
+         * 2. Reads and validates TablespaceHeader (page 0)
+         * 3. Validates database_uuid matches current database (warns if mismatch)
+         * 4. Validates page_size matches (errors if mismatch)
+         * 5. Loads tablespace FSM into memory (page 1)
+         * 6. Registers file descriptor in Database::tablespace_fds_
+         *
+         * Thread-safe: Acquires Database::tablespace_mutex_ during registration.
+         */
+        auto openTablespace(uint16_t tablespace_id, const std::string &path,
+                           ErrorContext *ctx = nullptr) -> Status;
+
         // Get total number of pages
         auto totalPages() const -> uint32_t
         {

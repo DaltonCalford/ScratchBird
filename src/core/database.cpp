@@ -37,9 +37,7 @@ namespace scratchbird::core
         close();
     }
 
-    Database::Database(Database &&) noexcept = default;
-
-    Database &Database::operator=(Database &&) noexcept = default;
+    // NOTE: Move operations deleted in header because Database contains std::mutex (non-movable)
 
     void Database::close()
     {
@@ -1341,6 +1339,97 @@ namespace scratchbird::core
 
         *page_id_out = new_page_id;
         return Status::OK;
+    }
+
+    // ========================================================================
+    // PHASE 1, TASK 1.3.4: Tablespace File Descriptor Management
+    // ========================================================================
+
+    Status Database::registerTablespaceFile(uint16_t tablespace_id, int fd, ErrorContext *ctx)
+    {
+        // Validate tablespace ID
+        if (tablespace_id == PRIMARY_TABLESPACE_ID)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                             "Cannot register tablespace 0 (primary database file)");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        if (fd < 0)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                             ("Invalid file descriptor: " + std::to_string(fd)).c_str());
+            return Status::INVALID_ARGUMENT;
+        }
+
+        // Thread-safe insertion
+        std::lock_guard<std::mutex> lock(tablespace_mutex_);
+
+        // Check if already registered
+        if (tablespace_fds_.find(tablespace_id) != tablespace_fds_.end())
+        {
+            SET_ERROR_CONTEXT(ctx, Status::FILE_EXISTS,
+                             ("Tablespace " + std::to_string(tablespace_id) +
+                              " is already registered").c_str());
+            return Status::FILE_EXISTS;
+        }
+
+        // Register file descriptor
+        tablespace_fds_[tablespace_id] = fd;
+        return Status::OK;
+    }
+
+    Status Database::unregisterTablespaceFile(uint16_t tablespace_id, ErrorContext *ctx)
+    {
+        // Validate tablespace ID
+        if (tablespace_id == PRIMARY_TABLESPACE_ID)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                             "Cannot unregister tablespace 0 (primary database file)");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        // Thread-safe removal
+        std::lock_guard<std::mutex> lock(tablespace_mutex_);
+
+        auto it = tablespace_fds_.find(tablespace_id);
+        if (it == tablespace_fds_.end())
+        {
+            SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND,
+                             ("Tablespace " + std::to_string(tablespace_id) + " not found").c_str());
+            return Status::NOT_FOUND;
+        }
+
+        // Close file descriptor
+        int fd = it->second;
+        if (fd >= 0)
+        {
+            ::close(fd);
+        }
+
+        // Remove from map
+        tablespace_fds_.erase(it);
+        return Status::OK;
+    }
+
+    int Database::getTablespaceFd(uint16_t tablespace_id) const
+    {
+        // PRIMARY_TABLESPACE_ID (0) uses primary database fd_
+        if (tablespace_id == PRIMARY_TABLESPACE_ID)
+        {
+            return fd_;
+        }
+
+        // Thread-safe lookup
+        std::lock_guard<std::mutex> lock(tablespace_mutex_);
+
+        auto it = tablespace_fds_.find(tablespace_id);
+        if (it == tablespace_fds_.end())
+        {
+            return -1; // Not found
+        }
+
+        return it->second;
     }
 
 } // namespace scratchbird::core
