@@ -4,6 +4,7 @@
 #include "scratchbird/core/status.h"
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/core/uuidv7.h"
+#include "scratchbird/core/index_gc_interface.h"
 #include <cstdint>
 #include <vector>
 #include <memory>
@@ -16,6 +17,10 @@ namespace scratchbird
         // Forward declarations
         class Database;
         class BufferPool;
+        class TransactionManager; // For MVCC visibility checks
+        struct ErrorContext;
+        // Note: Snapshot is used as an incomplete type in method signatures
+        // The actual type is TransactionManager::Snapshot, defined in transaction_manager.h
 
         // ===== GIN Index Constants =====
 
@@ -212,7 +217,8 @@ namespace scratchbird
 
         // ===== GIN Index Class =====
 
-        class GinIndex
+        // PHASE 2 TASK 2.4: Implements IndexGCInterface for garbage collection
+        class GinIndex : public IndexGCInterface
         {
         public:
             // Constructor
@@ -236,15 +242,21 @@ namespace scratchbird
                           ErrorContext *ctx = nullptr);
 
             // Find all tuple IDs containing a specific key
+            // PHASE 1 TASK 1.1.3: Added Snapshot parameter for MVCC visibility filtering
             std::vector<uint64_t> find(const void *key_data, size_t key_len,
+                                       struct Snapshot *snapshot,
                                        ErrorContext *ctx = nullptr);
 
             // Find tuple IDs matching ALL keys (AND operation)
+            // PHASE 1 TASK 1.1.3: Added Snapshot parameter for MVCC visibility filtering
             std::vector<uint64_t> findAll(const std::vector<std::vector<uint8_t>> &keys,
+                                          struct Snapshot *snapshot,
                                           ErrorContext *ctx = nullptr);
 
             // Find tuple IDs matching ANY key (OR operation)
+            // PHASE 1 TASK 1.1.3: Added Snapshot parameter for MVCC visibility filtering
             std::vector<uint64_t> findAny(const std::vector<std::vector<uint8_t>> &keys,
+                                          struct Snapshot *snapshot,
                                           ErrorContext *ctx = nullptr);
 
             // Merge pending list into main index
@@ -394,6 +406,20 @@ namespace scratchbird
                 return meta_page_;
             }
 
+            // PHASE 2 TASK 2.4: IndexGCInterface implementation
+            // Remove index entries pointing to dead tuples
+            // Called by garbage collector after heap sweep identifies dead TIDs
+            Status removeDeadEntries(const std::vector<uint64_t> &dead_tids,
+                                     uint64_t *entries_removed_out = nullptr,
+                                     uint64_t *pages_modified_out = nullptr,
+                                     ErrorContext *ctx = nullptr) override;
+
+            // Get index type name for logging
+            const char *indexTypeName() const override
+            {
+                return "GIN";
+            }
+
         private:
             Database *db_;
             BufferPool *buffer_pool_;
@@ -534,6 +560,20 @@ namespace scratchbird
             // Helper: Union sorted TID lists (for OR operation)
             static std::vector<uint64_t> unionTidLists(
                 const std::vector<std::vector<uint64_t>> &tid_lists);
+
+            // ===== PHASE 1 TASK 1.4: MVCC Visibility Helpers =====
+
+            // Helper: Check if a transaction is visible to a snapshot
+            // Similar to B-Tree visibility check helper
+            // Returns true if the transaction (xmin) is visible to the given snapshot
+            bool isTransactionVisible(uint64_t xmin, const struct Snapshot *snapshot, ErrorContext *ctx);
+
+            // Helper: Filter TID list by heap tuple visibility
+            // For each TID, checks if the corresponding heap tuple is visible to the snapshot
+            // Returns a new vector containing only visible TIDs
+            std::vector<uint64_t> filterTidsByVisibility(const std::vector<uint64_t> &tids,
+                                                          const struct Snapshot *snapshot,
+                                                          ErrorContext *ctx);
 
             // ===== Phase 6 Helper Methods =====
 

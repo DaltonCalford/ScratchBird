@@ -5,6 +5,7 @@
 #include "scratchbird/core/storage_engine.h"
 #include "scratchbird/core/uuidv7.h"
 #include "scratchbird/core/charset.h"
+#include "scratchbird/core/index_gc_interface.h"
 #include <cstdint>
 #include <vector>
 #include <memory>
@@ -18,6 +19,7 @@ namespace scratchbird
         class Database;
         class BufferPool;
         class PageManager;
+        class TransactionManager;
         struct ErrorContext;
 
         // Page flags
@@ -150,7 +152,8 @@ namespace scratchbird
         class BTreeIterator;
 
         // B-tree implementation
-        class BTree
+        // PHASE 2 TASK 2.2: Implements IndexGCInterface for garbage collection
+        class BTree : public IndexGCInterface
         {
         public:
             BTree(Database *db, SBBTreeIndex index_info);
@@ -167,15 +170,24 @@ namespace scratchbird
 
             Status insert(const std::vector<uint8_t> &key, uint64_t tuple_id,
                           ErrorContext *ctx = nullptr);
-            Status search(const std::vector<uint8_t> &key, std::vector<uint64_t> *tuple_ids_out,
+
+            // PHASE 1 TASK 1.1.1: Added Snapshot parameter for MVCC visibility filtering
+            // For Firebird MGA: Snapshot is used to filter returned TIDs via heap visibility checks
+            // Pass nullptr to return ALL matching TIDs (used by VACUUM/internal operations)
+            Status search(const std::vector<uint8_t> &key,
+                          struct Snapshot *snapshot,
+                          std::vector<uint64_t> *tuple_ids_out,
                           ErrorContext *ctx = nullptr);
+
             Status remove(const std::vector<uint8_t> &key, uint64_t tuple_id,
                           ErrorContext *ctx = nullptr);
 
             // Range scan operations
+            // PHASE 1 TASK 1.1.1: Added Snapshot parameter for MVCC visibility filtering
             std::unique_ptr<BTreeIterator>
             rangeScan(const std::vector<uint8_t> *start_key, // nullptr for beginning
                       const std::vector<uint8_t> *end_key,   // nullptr for end
+                      struct Snapshot *snapshot,              // MVCC snapshot for visibility
                       bool start_inclusive = true, bool end_inclusive = false,
                       ErrorContext *ctx = nullptr);
 
@@ -190,6 +202,20 @@ namespace scratchbird
             };
 
             Status vacuum(VacuumStats *stats_out = nullptr, ErrorContext *ctx = nullptr);
+
+            // PHASE 2 TASK 2.2: IndexGCInterface implementation
+            // Remove index entries pointing to dead tuples
+            // Called by garbage collector after heap sweep identifies dead TIDs
+            Status removeDeadEntries(const std::vector<uint64_t> &dead_tids,
+                                     uint64_t *entries_removed_out = nullptr,
+                                     uint64_t *pages_modified_out = nullptr,
+                                     ErrorContext *ctx = nullptr) override;
+
+            // Get index type name for logging
+            const char *indexTypeName() const override
+            {
+                return "B-Tree";
+            }
 
         private:
             Database *db_;
@@ -255,8 +281,11 @@ namespace scratchbird
         class BTreeIterator
         {
         public:
+            // PHASE 1 TASK 1.1.1: Added Snapshot parameter for MVCC visibility filtering
             BTreeIterator(BTree *btree, const std::vector<uint8_t> *start_key,
-                          const std::vector<uint8_t> *end_key, bool start_inclusive,
+                          const std::vector<uint8_t> *end_key,
+                          struct Snapshot *snapshot,
+                          bool start_inclusive,
                           bool end_inclusive);
             ~BTreeIterator();
 
@@ -275,6 +304,9 @@ namespace scratchbird
         private:
             BTree *btree_;
             Database *db_;
+
+            // PHASE 1 TASK 1.1.1: MVCC snapshot for visibility filtering
+            struct Snapshot *snapshot_; // Can be nullptr to return all tuples
 
             // Range bounds
             std::vector<uint8_t> start_key_;

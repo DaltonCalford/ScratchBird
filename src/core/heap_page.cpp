@@ -1587,4 +1587,63 @@ namespace scratchbird::core
         return Status::OK;
     }
 
+    // PHASE 2 TASK 2.6: Collect dead tuple IDs for index cleanup
+    auto HeapPage::collectDeadTuples(uint64_t oit, std::vector<uint64_t> *dead_tids_out,
+                                     ErrorContext *ctx) -> Status
+    {
+        if (dead_tids_out == nullptr)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "dead_tids_out cannot be null");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        // Get page header
+        auto *pg_header = header();
+        auto *special = reinterpret_cast<HeapPageSpecial *>(page_data_ + page_size_ -
+                                                            sizeof(HeapPageSpecial));
+
+        // Get item pointer array
+        auto *items = reinterpret_cast<ItemPointer *>(page_data_ + sizeof(PageHeader));
+        uint16_t item_count = special->pd_lower / sizeof(ItemPointer);
+
+        dead_tids_out->clear();
+
+        // Scan all items looking for dead tuples
+        for (uint16_t i = 0; i < item_count; i++)
+        {
+            // Skip unused items
+            if (items[i].isUnused())
+            {
+                continue;
+            }
+
+            // Skip deleted line pointers
+            if (items[i].isDeleted())
+            {
+                continue;
+            }
+
+            // Get tuple header
+            auto *tuple_hdr = reinterpret_cast<TupleHeader *>(page_data_ + items[i].offset);
+
+            // Tuple is dead if:
+            // 1. xmax != 0 (deleted/updated)
+            // 2. xmax < OIT (deleting transaction is old enough)
+            // 3. xmax is committed
+            if (tuple_hdr->xmax != 0 && tuple_hdr->xmax < oit)
+            {
+                // Check if XMAX_COMMITTED flag is set
+                if ((tuple_hdr->infomask & TupleHeader::HEAP_XMAX_COMMITTED) != 0)
+                {
+                    // This tuple is dead - create TID
+                    uint64_t tid = (static_cast<uint64_t>(pg_header->page_id) << 32) |
+                                  (static_cast<uint64_t>(i) << 16);
+                    dead_tids_out->push_back(tid);
+                }
+            }
+        }
+
+        return Status::OK;
+    }
+
 } // namespace scratchbird::core

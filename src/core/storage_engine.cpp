@@ -920,7 +920,8 @@ namespace scratchbird::core
         current_tuple_index_ = 0;
         current_key_ = key;
 
-        status = btree.search(key, &current_tuple_ids_, ctx);
+        // PHASE 1 TASK 1.1.5: Pass nullptr for snapshot (Phase 1 Task 1.2 will pass actual snapshot)
+        status = btree.search(key, nullptr, &current_tuple_ids_, ctx);
         if (status == Status::NOT_FOUND)
         {
             // No matching key found, mark as done

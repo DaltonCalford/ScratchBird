@@ -4,6 +4,7 @@
 #include "scratchbird/core/status.h"
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/core/uuidv7.h"
+#include "scratchbird/core/index_gc_interface.h"
 #include <cstdint>
 #include <vector>
 #include <memory>
@@ -81,7 +82,8 @@ namespace scratchbird
 
         // ===== Hash Index Class =====
 
-        class HashIndex
+        // PHASE 2 TASK 2.3: Implements IndexGCInterface for garbage collection
+        class HashIndex : public IndexGCInterface
         {
         public:
             // Constructor - requires database and index UUID
@@ -108,8 +110,11 @@ namespace scratchbird
                           ErrorContext *ctx = nullptr);
 
             // Find all tuple IDs for a given key
+            // PHASE 1 TASK 1.1.2: Added Snapshot parameter for MVCC visibility filtering
             // Returns a vector of tuple IDs (may be empty if key not found)
+            // Pass nullptr for snapshot to return ALL matching TIDs (used by VACUUM)
             std::vector<uint64_t> find(const void *key_data, size_t key_len,
+                                       struct Snapshot *snapshot,
                                        ErrorContext *ctx = nullptr);
 
             // Remove a specific entry
@@ -144,6 +149,20 @@ namespace scratchbird
             uint32_t getMetaPage() const
             {
                 return meta_page_;
+            }
+
+            // PHASE 2 TASK 2.3: IndexGCInterface implementation
+            // Remove index entries pointing to dead tuples
+            // Called by garbage collector after heap sweep identifies dead TIDs
+            Status removeDeadEntries(const std::vector<uint64_t> &dead_tids,
+                                     uint64_t *entries_removed_out = nullptr,
+                                     uint64_t *pages_modified_out = nullptr,
+                                     ErrorContext *ctx = nullptr) override;
+
+            // Get index type name for logging
+            const char *indexTypeName() const override
+            {
+                return "Hash";
             }
 
         private:

@@ -119,7 +119,7 @@ TEST_F(BTreeIteratorTest, FullScanEmpty)
     openIndex(root_page);
 
     ErrorContext ctx;
-    auto iter = btree_->rangeScan(nullptr, nullptr, true, false, &ctx);
+    auto iter = btree_->rangeScan(nullptr, nullptr, nullptr, true, false, &ctx);
     ASSERT_NE(iter, nullptr);
 
     // Should have no elements
@@ -157,7 +157,7 @@ TEST_F(BTreeIteratorTest, FullScanSinglePage)
         std::cout << "WARNING: Root page btr_count = " << actual_count << " (expected 10)" << std::endl;
     }
 
-    auto iter = btree_->rangeScan(nullptr, nullptr, true, false, &ctx);
+    auto iter = btree_->rangeScan(nullptr, nullptr, nullptr, true, false, &ctx);
     ASSERT_NE(iter, nullptr);
 
     // Collect scanned keys
@@ -199,7 +199,7 @@ TEST_F(BTreeIteratorTest, FullScanMultiplePages)
 
     // Full scan
     ErrorContext ctx;
-    auto iter = btree_->rangeScan(nullptr, nullptr, true, false, &ctx);
+    auto iter = btree_->rangeScan(nullptr, nullptr, nullptr, true, false, &ctx);
     ASSERT_NE(iter, nullptr);
 
     // Collect all keys
@@ -239,7 +239,7 @@ TEST_F(BTreeIteratorTest, BoundedScanInclusive)
     ErrorContext ctx;
     auto start_key = makeKey(5);
     auto end_key = makeKey(15);
-    auto iter = btree_->rangeScan(&start_key, &end_key, true, true, &ctx);
+    auto iter = btree_->rangeScan(&start_key, &end_key, nullptr, true, true, &ctx);
     ASSERT_NE(iter, nullptr);
 
     // Collect scanned keys
@@ -280,7 +280,7 @@ TEST_F(BTreeIteratorTest, BoundedScanExclusive)
     ErrorContext ctx;
     auto start_key = makeKey(5);
     auto end_key = makeKey(15);
-    auto iter = btree_->rangeScan(&start_key, &end_key, false, false, &ctx);
+    auto iter = btree_->rangeScan(&start_key, &end_key, nullptr, false, false, &ctx);
     ASSERT_NE(iter, nullptr);
 
     // Collect scanned keys
@@ -322,7 +322,7 @@ TEST_F(BTreeIteratorTest, UnboundedStartScan)
     // Scan (-∞, 10]
     ErrorContext ctx;
     auto end_key = makeKey(10);
-    auto iter = btree_->rangeScan(nullptr, &end_key, true, true, &ctx);
+    auto iter = btree_->rangeScan(nullptr, &end_key, nullptr, true, true, &ctx);
     ASSERT_NE(iter, nullptr);
 
     // Collect scanned keys
@@ -363,7 +363,7 @@ TEST_F(BTreeIteratorTest, UnboundedEndScan)
     // Scan [10, +∞)
     ErrorContext ctx;
     auto start_key = makeKey(10);
-    auto iter = btree_->rangeScan(&start_key, nullptr, true, false, &ctx);
+    auto iter = btree_->rangeScan(&start_key, nullptr, nullptr, true, false, &ctx);
     ASSERT_NE(iter, nullptr);
 
     // Collect scanned keys
@@ -414,7 +414,7 @@ TEST_F(BTreeIteratorTest, ScanWithDuplicates)
     ASSERT_EQ(btree_->insert(key15, 300, &ctx), Status::OK);
 
     // Full scan
-    auto iter = btree_->rangeScan(nullptr, nullptr, true, false, &ctx);
+    auto iter = btree_->rangeScan(nullptr, nullptr, nullptr, true, false, &ctx);
     ASSERT_NE(iter, nullptr);
 
     // Collect all entries
@@ -447,7 +447,7 @@ TEST_F(BTreeIteratorTest, ScannedCountValidation)
     insertKeys(keys);
 
     ErrorContext ctx;
-    auto iter = btree_->rangeScan(nullptr, nullptr, true, false, &ctx);
+    auto iter = btree_->rangeScan(nullptr, nullptr, nullptr, true, false, &ctx);
     ASSERT_NE(iter, nullptr);
 
     // Initially 0
@@ -492,7 +492,7 @@ TEST_F(BTreeIteratorTest, EmptyRangeScan)
     ErrorContext ctx;
     auto start_key = makeKey(15);
     auto end_key = makeKey(5);
-    auto iter = btree_->rangeScan(&start_key, &end_key, true, true, &ctx);
+    auto iter = btree_->rangeScan(&start_key, &end_key, nullptr, true, true, &ctx);
     ASSERT_NE(iter, nullptr);
 
     // Should have no results
@@ -521,7 +521,7 @@ TEST_F(BTreeIteratorTest, ScanNonExistentRange)
     ErrorContext ctx;
     auto start_key = makeKey(12);
     auto end_key = makeKey(18);
-    auto iter = btree_->rangeScan(&start_key, &end_key, true, true, &ctx);
+    auto iter = btree_->rangeScan(&start_key, &end_key, nullptr, true, true, &ctx);
     ASSERT_NE(iter, nullptr);
 
     // Should have no results
