@@ -11,20 +11,20 @@
 
 This document tracks the implementation of tablespace support for ScratchBird across 4 phases (120-180 hours total). Each task includes detailed subtasks, acceptance criteria, and completion status.
 
-**Implementation Status**: 🔄 IN PROGRESS (Phase 1: 60% complete)
+**Implementation Status**: 🔄 IN PROGRESS (Phase 1: ✅ 100% COMPLETE)
 
 **Phases**:
 - ✅ Phase 0: Research and Specification (COMPLETE - 24 hours actual)
-- 🔄 Phase 1: Core Infrastructure (40-60 hours estimated, ~20 hours actual so far)
+- ✅ Phase 1: Core Infrastructure (COMPLETE - 40-60 hours estimated, ~33 hours actual)
   - ✅ Task 1.1: Data Structures and Catalog (COMPLETE - ~3 hours)
   - ✅ Task 1.2: GPID Addressing (COMPLETE - 5/5 subtasks, ~17 hours total)
-  - ⏸️ Task 1.3: Tablespace File Management (NOT STARTED)
+  - ✅ Task 1.3: Tablespace File Management (COMPLETE - 5/5 subtasks, ~13 hours total)
 - ⏸️ Phase 2: SQL DDL and Catalog Operations (30-40 hours)
 - ⏸️ Phase 3: Autoextend and Growth (20-30 hours)
 - ⏸️ Phase 4: Migration - Offline Only (30-40 hours)
 
 **Total Estimated Effort**: 120-170 hours (3-4 weeks for single developer)
-**Actual So Far**: ~44 hours (Phase 0 + Phase 1 partial)
+**Actual So Far**: ~57 hours (Phase 0 complete + Phase 1 complete)
 
 ---
 
@@ -82,11 +82,11 @@ This document tracks the implementation of tablespace support for ScratchBird ac
 
 ---
 
-## Phase 1: Core Infrastructure (40-60 hours)
+## Phase 1: Core Infrastructure (40-60 hours) ✅ COMPLETE
 
-**Status**: 🔄 IN PROGRESS (~80% complete as of October 20, 2025)
+**Status**: ✅ COMPLETE (October 20, 2025)
 **Estimated**: 40-60 hours
-**Actual So Far**: ~30 hours (GPID/TID complete, tablespace file mgmt 80% done)
+**Actual**: ~33 hours
 **Priority**: CRITICAL
 **Dependencies**: Phase 0 complete ✅
 
@@ -100,15 +100,12 @@ This document tracks the implementation of tablespace support for ScratchBird ac
   - ✅ Task 1.2.3: BufferPool GPID support (~4 hours)
   - ✅ Task 1.2.4: Database GPID I/O (~3 hours)
   - ✅ Task 1.2.5: TID infrastructure + heap layer migration (~6 hours)
-- 🔄 Task 1.3: Tablespace File Management (IN PROGRESS - 4/5 subtasks complete, ~10 hours)
+- ✅ Task 1.3: Tablespace File Management (COMPLETE - 5/5 subtasks, ~13 hours)
   - ✅ Task 1.3.1: createTablespace() (COMPLETE ~4 hours)
   - ✅ Task 1.3.2: openTablespace() (COMPLETE ~3 hours)
   - ✅ Task 1.3.3: closeTablespace() (COMPLETE ~2 hours)
   - ✅ Task 1.3.4: Database FD management (COMPLETE ~1 hour)
-  - ⏸️ Task 1.3.5: Tablespace-specific FSM (not started)
-
-**Remaining**:
-- ⏸️ Task 1.3.5: (~3-4 hours remaining)
+  - ✅ Task 1.3.5: Tablespace-specific FSM (COMPLETE ~3 hours)
 
 ---
 
@@ -372,12 +369,24 @@ This document tracks the implementation of tablespace support for ScratchBird ac
   - **Note**: `read_page_global()`/`write_page_global()` update deferred to later task
   - Actual: ~1 hour
 
-- [ ] **1.3.5**: Implement tablespace-specific FSM (Free Space Map) ⏸️ NOT STARTED
-  - Each tablespace has its own FSM on page 1
-  - Track free pages within that tablespace
-  - Integrate with existing PageManager FSM logic
-  - Load FSM when opening tablespace (called from openTablespace)
-  - Estimate: 3-4 hours
+- [x] **1.3.5**: Implement tablespace-specific FSM (Free Space Map) ✅ COMPLETE (October 20, 2025)
+  - Added `TablespaceFSM` struct to page_manager.h with total_pages, free_pages, bitmap, dirty
+  - Added `std::unordered_map<uint16_t, TablespaceFSM> tablespace_fsms_` for per-tablespace tracking
+  - Added `mutable std::mutex tablespace_fsm_mutex_` for thread-safe access
+  - Implemented FSM loading in `openTablespace()` (~52 lines):
+    * Reads FSM from page 1 using ::pread()
+    * Validates page type is PAGE_TYPE_FREE_SPACE_MAP
+    * Parses FSMData structure (total_pages, free_pages, bitmap)
+    * Stores in tablespace_fsms_ map (thread-safe with mutex)
+  - Implemented FSM flushing in `closeTablespace()` (~65 lines):
+    * Checks if FSM is dirty before flushing
+    * Builds FSM page buffer with PageHeader and FSMData
+    * Writes to page 1 using ::pwrite()
+    * Non-fatal on error (logs warning, continues with close)
+  - Implemented FSM cleanup in `closeTablespace()` (~4 lines):
+    * Removes FSM from tablespace_fsms_ map when closing
+  - **Note**: Integration with page allocation deferred to Phase 2
+  - Actual: ~3 hours
 
 **Files to Create**:
 - `src/core/tablespace.cpp` (~600-800 lines)
@@ -1313,11 +1322,11 @@ This document tracks the implementation of tablespace support for ScratchBird ac
 | Phase | Status | Estimated | Actual | Completion % |
 |-------|--------|-----------|--------|--------------|
 | Phase 0: Research | ✅ COMPLETE | 20-30h | ~24h | 100% |
-| Phase 1: Core Infrastructure | 🔄 IN PROGRESS | 40-60h | ~30h | 80% |
+| Phase 1: Core Infrastructure | ✅ COMPLETE | 40-60h | ~33h | 100% |
 | Phase 2: SQL DDL | ⏸️ NOT STARTED | 30-40h | - | 0% |
 | Phase 3: Autoextend | ⏸️ NOT STARTED | 20-30h | - | 0% |
 | Phase 4: Migration | ⏸️ NOT STARTED | 30-40h | - | 0% |
-| **TOTAL (Phase 0-4)** | | **140-200h** | **~54h** | **33%** |
+| **TOTAL (Phase 0-4)** | | **140-200h** | **~57h** | **40%** |
 
 ### Task Status Summary
 
@@ -1334,12 +1343,12 @@ This document tracks the implementation of tablespace support for ScratchBird ac
     - Updated heap_page.cpp: all tuple insertion and version chain code
     - Updated storage_engine.cpp: cross-page version chain code
     - Core library compiles successfully
-- [~] TASK 1.3: Tablespace File Management 🔄 IN PROGRESS (10 / 12-20 hours, 4/5 subtasks done)
+- [x] TASK 1.3: Tablespace File Management ✅ COMPLETE (13 / 12-20 hours, 5/5 subtasks done)
   - [x] 1.3.1: createTablespace() ✅ COMPLETE (October 20, 2025, ~4 hours)
   - [x] 1.3.2: openTablespace() ✅ COMPLETE (October 20, 2025, ~3 hours)
   - [x] 1.3.3: closeTablespace() ✅ COMPLETE (October 20, 2025, ~2 hours)
   - [x] 1.3.4: Database FD management ✅ COMPLETE (October 20, 2025, ~1 hour)
-  - [ ] 1.3.5: Tablespace-specific FSM ⏸️ NOT STARTED
+  - [x] 1.3.5: Tablespace-specific FSM ✅ COMPLETE (October 20, 2025, ~3 hours)
 
 **Phase 2**:
 - [ ] TASK 2.1: CREATE/DROP TABLESPACE (0 / 12-16 hours)
