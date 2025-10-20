@@ -700,7 +700,7 @@ namespace scratchbird::core
         // Initialize PageHeader portion
         header->page_header.magic = K_MAGIC_SBRD;
         header->page_header.version = 1;
-        header->page_header.page_type = PAGE_TYPE_TABLESPACE_HEADER;
+        header->page_header.page_type = PAGE_TYPE_DATABASE_HEADER; // Tablespace header uses same type
         header->page_header.page_size = page_size_;
         header->page_header.page_id = 0;
         header->page_header.flags = 0;
@@ -989,6 +989,71 @@ namespace scratchbird::core
         }
 
         LOG_INFO(STORAGE, "Successfully opened tablespace %u from %s", tablespace_id, path.c_str());
+        return Status::OK;
+    }
+
+    // ========================================================================
+    // PHASE 1, TASK 1.3.3: Tablespace File Management - Close Tablespace
+    // ========================================================================
+
+    Status PageManager::closeTablespace(uint16_t tablespace_id, ErrorContext *ctx)
+    {
+        // Step 1: Validate inputs
+        if (tablespace_id == PRIMARY_TABLESPACE_ID)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                             "Cannot close tablespace 0 (primary database file)");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        if (tablespace_id == 0)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                             "Invalid tablespace ID: 0 is reserved");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        // Step 2: Get file descriptor before unregistering
+        int fd = db_->getTablespaceFd(tablespace_id);
+        if (fd < 0)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND,
+                             ("Tablespace " + std::to_string(tablespace_id) +
+                              " not found (not open)").c_str());
+            return Status::NOT_FOUND;
+        }
+
+        // Step 3: Flush dirty FSM pages for this tablespace
+        // TODO PHASE 1, TASK 1.3.5: Implement tablespace-specific FSM flushing
+        // For now, skip FSM flushing (will be implemented in Task 1.3.5)
+        // When Task 1.3.5 is complete, this will:
+        // - Check if tablespace FSM is dirty
+        // - Write FSM page 1 to disk
+        // - Mark FSM as clean
+        LOG_INFO(STORAGE, "Tablespace %u: FSM flushing deferred to Task 1.3.5", tablespace_id);
+
+        // Step 4: Sync tablespace file to disk
+        if (::fsync(fd) != 0)
+        {
+            // Log warning but don't fail - we'll still try to close
+            LOG_WARNING(STORAGE,
+                    "Failed to sync tablespace %u to disk before closing (errno=%d, %s). "
+                    "Continuing with close operation.",
+                    tablespace_id, errno, strerror(errno));
+            // Don't return error - continue with unregister
+        }
+
+        // Step 5: Unregister file descriptor from Database (this also closes it)
+        Status status = db_->unregisterTablespaceFile(tablespace_id, ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, status,
+                             ("Failed to unregister tablespace " + std::to_string(tablespace_id) +
+                              " file descriptor").c_str());
+            return status;
+        }
+
+        LOG_INFO(STORAGE, "Successfully closed tablespace %u", tablespace_id);
         return Status::OK;
     }
 
