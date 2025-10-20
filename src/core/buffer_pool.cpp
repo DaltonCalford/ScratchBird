@@ -36,7 +36,8 @@ namespace scratchbird::core
             }
 
             // Initialize frame
-            frames_[i].page_id = Frame::INVALID_PAGE_ID;
+            // PHASE 1, TASK 1.2.3: Changed page_id to gpid
+            frames_[i].gpid = INVALID_GPID;
             // CRITICAL FIX (CRITICAL-1): Use atomic store for thread-safe write
             frames_[i].pin_count.store(0, std::memory_order_relaxed);
             frames_[i].is_dirty = false;
@@ -73,7 +74,15 @@ namespace scratchbird::core
         return status;
     }
 
+    // PHASE 1, TASK 1.2.3: LEGACY API - Convert page_id to GPID and call pinPageGlobal
     auto BufferPool::pinPage(uint32_t page_id, void **buffer, ErrorContext *ctx) -> Status
+    {
+        GPID gpid = convertPageIDtoGPID(page_id);
+        return pinPageGlobal(gpid, buffer, ctx);
+    }
+
+    // PHASE 1, TASK 1.2.3: NEW GPID-based implementation
+    auto BufferPool::pinPageGlobal(GPID gpid, void **buffer, ErrorContext *ctx) -> Status
     {
         std::lock_guard<std::mutex> lock(mutex_);
 
@@ -84,7 +93,7 @@ namespace scratchbird::core
         }
 
         // Check if page is already in buffer pool
-        auto it = page_table_.find(page_id);
+        auto it = page_table_.find(gpid);
         if (it != page_table_.end())
         {
             // Cache hit
@@ -133,7 +142,7 @@ namespace scratchbird::core
         bool found_free = false;
         for (uint32_t i = 0; i < config_.pool_size; i++)
         {
-            if (frames_[i].page_id == Frame::INVALID_PAGE_ID)
+            if (frames_[i].gpid == INVALID_GPID)
             {
                 frame_index = i;
                 found_free = true;
@@ -152,7 +161,7 @@ namespace scratchbird::core
         }
 
         // Read page from disk
-        Status status = readPageFromDisk(page_id, frames_[frame_index].data.get(), ctx);
+        Status status = readPageFromDisk(gpid, frames_[frame_index].data.get(), ctx);
         if (status != Status::OK)
         {
             return status;
@@ -164,17 +173,17 @@ namespace scratchbird::core
         // while the frame thinks it contains the page.
         //
         // Order of operations (CRITICAL for correctness):
-        // 1. page_table_[page_id] = frame_index  (establish mapping first)
-        // 2. frames_[frame_index].page_id = page_id  (then update frame)
+        // 1. page_table_[gpid] = frame_index  (establish mapping first)
+        // 2. frames_[frame_index].gpid = gpid  (then update frame)
         //
         // This way, if anything fails after step 1, the page_table entry exists
         // and evictPage() can clean it up properly. If we did it the other way,
         // we'd have an orphaned frame that thinks it contains a page but isn't
         // in the page_table, causing corruption.
-        page_table_[page_id] = frame_index;
+        page_table_[gpid] = frame_index;
 
         // Update frame metadata (page_table already knows about this mapping)
-        frames_[frame_index].page_id = page_id;
+        frames_[frame_index].gpid = gpid;
         // CRITICAL FIX (CRITICAL-1): Use atomic store for thread-safe write
         frames_[frame_index].pin_count.store(1, std::memory_order_relaxed);
         frames_[frame_index].is_dirty = false;
@@ -191,12 +200,20 @@ namespace scratchbird::core
         return Status::OK;
     }
 
+    // PHASE 1, TASK 1.2.3: LEGACY API - Convert page_id to GPID and call unpinPageGlobal
     auto BufferPool::unpinPage(uint32_t page_id, bool is_dirty, ErrorContext *ctx) -> Status
+    {
+        GPID gpid = convertPageIDtoGPID(page_id);
+        return unpinPageGlobal(gpid, is_dirty, ctx);
+    }
+
+    // PHASE 1, TASK 1.2.3: NEW GPID-based implementation
+    auto BufferPool::unpinPageGlobal(GPID gpid, bool is_dirty, ErrorContext *ctx) -> Status
     {
         std::lock_guard<std::mutex> lock(mutex_);
 
         // Find the page in buffer pool
-        auto it = page_table_.find(page_id);
+        auto it = page_table_.find(gpid);
         if (it == page_table_.end())
         {
             SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Page not in buffer pool");
@@ -226,12 +243,20 @@ namespace scratchbird::core
         return Status::OK;
     }
 
+    // PHASE 1, TASK 1.2.3: LEGACY API - Convert page_id to GPID and call flushPageGlobal
     auto BufferPool::flushPage(uint32_t page_id, ErrorContext *ctx) -> Status
+    {
+        GPID gpid = convertPageIDtoGPID(page_id);
+        return flushPageGlobal(gpid, ctx);
+    }
+
+    // PHASE 1, TASK 1.2.3: NEW GPID-based implementation
+    auto BufferPool::flushPageGlobal(GPID gpid, ErrorContext *ctx) -> Status
     {
         std::lock_guard<std::mutex> lock(mutex_);
 
         // Find the page in buffer pool
-        auto it = page_table_.find(page_id);
+        auto it = page_table_.find(gpid);
         if (it == page_table_.end())
         {
             // Page not in buffer pool, nothing to flush
@@ -248,7 +273,7 @@ namespace scratchbird::core
         }
 
         // Write to disk
-        Status status = writePageToDisk(page_id, frames_[frame_index].data.get(), ctx);
+        Status status = writePageToDisk(gpid, frames_[frame_index].data.get(), ctx);
         if (status == Status::OK)
         {
             frames_[frame_index].is_dirty = false;
@@ -265,9 +290,10 @@ namespace scratchbird::core
 
         for (uint32_t i = 0; i < config_.pool_size; i++)
         {
-            if (frames_[i].page_id != Frame::INVALID_PAGE_ID && frames_[i].is_dirty)
+            // PHASE 1, TASK 1.2.3: Changed page_id to gpid
+            if (frames_[i].gpid != INVALID_GPID && frames_[i].is_dirty)
             {
-                Status status = writePageToDisk(frames_[i].page_id, frames_[i].data.get(), ctx);
+                Status status = writePageToDisk(frames_[i].gpid, frames_[i].data.get(), ctx);
                 if (status != Status::OK)
                 {
                     return status;
@@ -398,7 +424,8 @@ namespace scratchbird::core
             }
 
             // Skip empty frames (these should be allocated first, not evicted)
-            if (frame.page_id == Frame::INVALID_PAGE_ID)
+            // PHASE 1, TASK 1.2.3: Changed page_id to gpid
+            if (frame.gpid == INVALID_GPID)
             {
                 continue;
             }
@@ -460,8 +487,9 @@ namespace scratchbird::core
                 }
 
                 // CRITICAL FIX (CRITICAL-1): Use atomic load for thread-safe read
+                // PHASE 1, TASK 1.2.3: Changed page_id to gpid
                 if (frames_[frame_index].pin_count.load(std::memory_order_relaxed) == 0 &&
-                    frames_[frame_index].page_id != Frame::INVALID_PAGE_ID)
+                    frames_[frame_index].gpid != INVALID_GPID)
                 {
                     candidate_frame = frame_index;
                     break;
@@ -506,12 +534,13 @@ namespace scratchbird::core
 
         // Track whether this is a clean or dirty eviction
         bool was_dirty = frames_[evicted_frame].is_dirty;
-        uint32_t evicted_page_id = frames_[evicted_frame].page_id;
+        // PHASE 1, TASK 1.2.3: Changed page_id to gpid
+        GPID evicted_gpid = frames_[evicted_frame].gpid;
 
-        // SAFETY: Verify the page_id is valid before using it
-        if (evicted_page_id == Frame::INVALID_PAGE_ID)
+        // SAFETY: Verify the gpid is valid before using it
+        if (evicted_gpid == INVALID_GPID)
         {
-            DEBUG_LOG_BP("Evicting frame with INVALID_PAGE_ID at index " << evicted_frame);
+            DEBUG_LOG_BP("Evicting frame with INVALID_GPID at index " << evicted_frame);
             // This is actually OK - might be a free frame, just skip the flush and erase
             evicted_frame = candidate_frame;
             return Status::OK;
@@ -521,7 +550,7 @@ namespace scratchbird::core
         if (was_dirty)
         {
             Status status =
-                writePageToDisk(evicted_page_id, frames_[evicted_frame].data.get(), ctx);
+                writePageToDisk(evicted_gpid, frames_[evicted_frame].data.get(), ctx);
             if (status != Status::OK)
             {
                 return status;
@@ -536,13 +565,13 @@ namespace scratchbird::core
             stats_.evictions_clean.fetch_add(1, std::memory_order_relaxed);
         }
 
-        // CRITICAL FIX (Issue 2.2): Verify page_id exists in page_table before erasing
+        // CRITICAL FIX (Issue 2.2): Verify gpid exists in page_table before erasing
         // This MUST be fatal in ALL builds (not just debug) to prevent corruption
-        auto page_table_it = page_table_.find(evicted_page_id);
+        auto page_table_it = page_table_.find(evicted_gpid);
         if (page_table_it == page_table_.end())
         {
-            DEBUG_LOG_BP("CONSISTENCY ERROR: page_id "
-                         << evicted_page_id << " not found in page_table during eviction");
+            DEBUG_LOG_BP("CONSISTENCY ERROR: gpid "
+                         << gpidToString(evicted_gpid) << " not found in page_table during eviction");
             SET_ERROR_CONTEXT(ctx, Status::IO_ERROR,
                               "Buffer pool corruption: evicting page not in page_table");
             return Status::IO_ERROR;
@@ -553,7 +582,7 @@ namespace scratchbird::core
         if (page_table_it->second != evicted_frame)
         {
             DEBUG_LOG_BP("CONSISTENCY ERROR: page_table["
-                         << evicted_page_id << "] = " << page_table_it->second
+                         << gpidToString(evicted_gpid) << "] = " << page_table_it->second
                          << " but evicting frame " << evicted_frame);
             SET_ERROR_CONTEXT(ctx, Status::IO_ERROR,
                               "Buffer pool corruption: page_table frame_index mismatch");
@@ -564,7 +593,8 @@ namespace scratchbird::core
         page_table_.erase(page_table_it);
 
         // Reset frame (including Clock Sweep usage_count)
-        frames_[evicted_frame].page_id = Frame::INVALID_PAGE_ID;
+        // PHASE 1, TASK 1.2.3: Changed page_id to gpid
+        frames_[evicted_frame].gpid = INVALID_GPID;
         frames_[evicted_frame].is_dirty = false;
         // CRITICAL FIX (CRITICAL-1): Use atomic store for thread-safe write
         frames_[evicted_frame].usage_count.store(0, std::memory_order_relaxed); // Reset usage count for next page
@@ -574,16 +604,22 @@ namespace scratchbird::core
         return Status::OK;
     }
 
-    auto BufferPool::readPageFromDisk(uint32_t page_id, uint8_t *buffer, ErrorContext *ctx)
+    // PHASE 1, TASK 1.2.4: Use Database::read_page_global() for GPID-based I/O
+    auto BufferPool::readPageFromDisk(GPID gpid, uint8_t *buffer, ErrorContext *ctx)
         -> Status
     {
-        return db_->read_page(page_id, buffer, ctx);
+        // Call new Database GPID method (supports multi-tablespace addressing)
+        // Database class handles tablespace validation and routing for Phase 1
+        return db_->read_page_global(gpid, buffer, ctx);
     }
 
-    auto BufferPool::writePageToDisk(uint32_t page_id, const uint8_t *buffer, ErrorContext *ctx)
+    // PHASE 1, TASK 1.2.4: Use Database::write_page_global() for GPID-based I/O
+    auto BufferPool::writePageToDisk(GPID gpid, const uint8_t *buffer, ErrorContext *ctx)
         -> Status
     {
-        return db_->write_page(page_id, buffer, ctx);
+        // Call new Database GPID method (supports multi-tablespace addressing)
+        // Database class handles tablespace validation and routing for Phase 1
+        return db_->write_page_global(gpid, buffer, ctx);
     }
 
     void BufferPool::updateLru(uint32_t frame_index)
@@ -606,50 +642,96 @@ namespace scratchbird::core
         lru_list_.push_back(frame_index);
     }
 
+    // PHASE 1, TASK 1.2.3: LEGACY API - Convert result GPID to page_id
     auto BufferPool::allocatePage(uint32_t *page_id_out, void **buffer, ErrorContext *ctx) -> Status
     {
-        if (page_id_out == nullptr || buffer == nullptr)
+        if (page_id_out == nullptr)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Null page_id_out pointer");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        GPID gpid;
+        Status status = allocatePageGlobal(PRIMARY_TABLESPACE_ID, &gpid, buffer, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        // Convert GPID to page_id (safe since we're using PRIMARY_TABLESPACE_ID)
+        uint32_t page_id;
+        if (!convertGPIDtoPageID(gpid, &page_id))
+        {
+            SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to convert GPID to page_id");
+            return Status::IO_ERROR;
+        }
+
+        *page_id_out = page_id;
+        return Status::OK;
+    }
+
+    // PHASE 1, TASK 1.2.3: NEW GPID-based implementation
+    auto BufferPool::allocatePageGlobal(uint16_t tablespace_id, GPID *gpid_out, void **buffer,
+                                       ErrorContext *ctx) -> Status
+    {
+        if (gpid_out == nullptr || buffer == nullptr)
         {
             SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Null output parameters");
             return Status::INVALID_ARGUMENT;
         }
 
-        // Allocate a new page ID from database
-        uint32_t new_page_id;
-        Status status = db_->allocate_page_id(&new_page_id, ctx);
+        // For Phase 1, only primary tablespace is supported
+        if (tablespace_id != PRIMARY_TABLESPACE_ID)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED,
+                            "Custom tablespaces not yet implemented (Phase 1, Task 1.3)");
+            return Status::NOT_IMPLEMENTED;
+        }
+
+        // PHASE 1, TASK 1.2.4: Use Database::allocate_page_id_global() for GPID allocation
+        GPID new_gpid;
+        Status status = db_->allocate_page_id_global(tablespace_id, &new_gpid, ctx);
         if (status != Status::OK)
         {
             return status;
         }
 
         // Pin the new page (this will allocate a frame and initialize it)
-        status = pinPage(new_page_id, buffer, ctx);
+        status = pinPageGlobal(new_gpid, buffer, ctx);
         if (status != Status::OK)
         {
-            // Failed to pin - the page_id has been allocated but not used
+            // Failed to pin - the gpid has been allocated but not used
             // For simplicity, we don't reclaim it (would require free list)
             return status;
         }
 
         // Mark the new page as dirty since it needs to be written
-        status = markDirty(new_page_id, ctx);
+        status = markDirtyGlobal(new_gpid, ctx);
         if (status != Status::OK)
         {
             // Unpin on failure
-            unpinPage(new_page_id, false, ctx);
+            unpinPageGlobal(new_gpid, false, ctx);
             return status;
         }
 
-        *page_id_out = new_page_id;
+        *gpid_out = new_gpid;
         return Status::OK;
     }
 
+    // PHASE 1, TASK 1.2.3: LEGACY API - Convert page_id to GPID and call markDirtyGlobal
     auto BufferPool::markDirty(uint32_t page_id, ErrorContext *ctx) -> Status
+    {
+        GPID gpid = convertPageIDtoGPID(page_id);
+        return markDirtyGlobal(gpid, ctx);
+    }
+
+    // PHASE 1, TASK 1.2.3: NEW GPID-based implementation
+    auto BufferPool::markDirtyGlobal(GPID gpid, ErrorContext *ctx) -> Status
     {
         std::lock_guard<std::mutex> lock(mutex_);
 
         // Find the page in buffer pool
-        auto it = page_table_.find(page_id);
+        auto it = page_table_.find(gpid);
         if (it == page_table_.end())
         {
             SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Page not in buffer pool");
@@ -834,7 +916,8 @@ namespace scratchbird::core
             }
 
             // Skip invalid pages
-            if (frame.page_id == Frame::INVALID_PAGE_ID)
+            // PHASE 1, TASK 1.2.3: Changed page_id to gpid
+            if (frame.gpid == INVALID_GPID)
             {
                 continue;
             }
@@ -849,7 +932,8 @@ namespace scratchbird::core
             }
 
             // Flush this dirty page
-            Status status = writePageToDisk(frame.page_id, frame.data.get(), ctx);
+            // PHASE 1, TASK 1.2.3: Changed page_id to gpid
+            Status status = writePageToDisk(frame.gpid, frame.data.get(), ctx);
             if (status == Status::OK)
             {
                 frame.is_dirty = false;
@@ -862,7 +946,7 @@ namespace scratchbird::core
                 // Log error but continue flushing other pages
                 // Background writer should be resilient to transient I/O errors
                 DEBUG_LOG_BP("Background writer failed to flush page "
-                             << frame.page_id << ": " << static_cast<int>(status));
+                             << gpidToString(frame.gpid) << ": " << static_cast<int>(status));
             }
         }
 
@@ -901,7 +985,8 @@ namespace scratchbird::core
 
         for (uint32_t i = 0; i < config_.pool_size; i++)
         {
-            if (frames_[i].is_dirty && frames_[i].page_id != Frame::INVALID_PAGE_ID)
+            // PHASE 1, TASK 1.2.3: Changed page_id to gpid
+            if (frames_[i].is_dirty && frames_[i].gpid != INVALID_GPID)
             {
                 dirty_count++;
             }

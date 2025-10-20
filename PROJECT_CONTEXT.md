@@ -1,7 +1,7 @@
 # ScratchBird Project Context
 
-**Last Updated**: 2025-10-18 (00:15)
-**Version**: Alpha 1.2+ (All Alpha Issues Resolved, CI/CD Complete, Documentation Complete)
+**Last Updated**: 2025-10-20 (Tablespace Planning Complete)
+**Version**: Alpha 1.2+ (All Alpha Issues Resolved, CI/CD Complete, Documentation Complete, Tablespace Planning)
 **Status**: Educational/Development (Production-Ready Core, Comprehensive Testing Infrastructure)
 
 > **PURPOSE**: This file provides essential context for AI assistants working on ScratchBird.
@@ -646,6 +646,127 @@ cd build && ctest 2>&1 | grep "tests passed"
 - Tests passing: ~30/40 (75%) - MGA standalone validation 100% (3/3)
 - Active branch: main
 - Known failures: Some deprecated tests moved to tests/deprecated/
+
+---
+
+## 17. Tablespace Feature Planning (NEW - Oct 20, 2025)
+
+**Status**: ✅ RESEARCH & SPECIFICATION COMPLETE (Phase 0)
+**Next Phase**: Phase 1 - Core Infrastructure (40-60 hours)
+
+### Overview
+Comprehensive tablespace support for multi-file databases, enabling:
+- Multi-file database capacity expansion
+- Storage tiering (SSD/HDD placement)
+- Data lifecycle management (archive/retire old data)
+- Partition-based data distribution
+- Cross-database tablespace attachment
+
+### Documents
+- **Specification**: `docs/specifications/TABLESPACE_SPECIFICATION.md` (~1,700 lines)
+- **Implementation Plan**: `docs/planning/TABLESPACE_IMPLEMENTATION_PLAN.md` (~1,400 lines)
+
+### Research Completed (Phase 0 ✅)
+Comprehensive analysis of 4 major database systems:
+- **PostgreSQL**: Directory-based, pg_repack for online ops
+- **Oracle**: Bigfile/Smallfile, autoextend, MOVE ONLINE
+- **MySQL/InnoDB**: File-per-table, general tablespaces, transportable
+- **Firebird**: Multi-file databases (secondary files, MGA implications)
+
+### Key Design Decisions
+1. **GPID Addressing** (64-bit Global Page ID):
+   - 16-bit tablespace ID (0-65535)
+   - 48-bit page number (up to 281TB per tablespace with 16K pages)
+   - Preserves Firebird MGA stable TID invariant
+
+2. **Hybrid Approach**:
+   - Firebird-style simplicity (page-based, stable TIDs)
+   - Oracle-style control (autoextend, MAXSIZE)
+   - PostgreSQL-style flexibility (partition-aware)
+   - MySQL-style portability (transportable tablespaces)
+
+3. **Integration Points**:
+   - PageManager: Multi-file allocation, autoextend
+   - BufferPool: GPID-based pinning (64-bit)
+   - CatalogManager: pg_tablespace system tables
+   - Database: Tablespace file descriptor map
+   - All indexes: Store GPIDs instead of 32-bit page IDs
+
+### Implementation Phases
+
+**Phase 0**: ✅ COMPLETE (Oct 20, 2025) - Research & Specification (~24 hours actual)
+
+**Phase 1**: ⏸️ NOT STARTED - Core Infrastructure (40-60 hours)
+- TASK 1.1: Data Structures and Catalog (12-16h)
+- TASK 1.2: GPID Addressing (16-24h)
+- TASK 1.3: Tablespace File Management (12-20h)
+
+**Phase 2**: ⏸️ NOT STARTED - SQL DDL (30-40 hours)
+- TASK 2.1: CREATE/DROP TABLESPACE (12-16h)
+- TASK 2.2: ALTER TABLESPACE (8-12h)
+- TASK 2.3: Table/Index Creation with Tablespace (10-12h)
+
+**Phase 3**: ⏸️ NOT STARTED - Autoextend and Growth (20-30 hours)
+- TASK 3.1: Autoextend Implementation (12-18h)
+- TASK 3.2: Preallocation (8-12h)
+
+**Phase 4**: ⏸️ NOT STARTED - Migration - Offline Only (30-40 hours)
+- TASK 4.1: Offline Table Migration (20-28h)
+- TASK 4.2: Offline Index Migration (10-12h)
+
+**Total Estimated**: 120-170 hours (Phases 1-4)
+
+**Future Phases** (Post-BETA):
+- Phase 5: Online Migration (40-60h)
+- Phase 6: Attach/Detach Operations (20-30h)
+- Phase 7: Advanced Features (30-50h)
+
+### SQL Syntax (Planned)
+```sql
+-- Create tablespace
+CREATE TABLESPACE ts_hot
+  LOCATION '/mnt/ssd/ts_hot.sbts'
+  AUTOEXTEND ON
+  AUTOEXTEND_SIZE 100
+  MAXSIZE 50000;  -- 50 GB
+
+-- Create table in tablespace
+CREATE TABLE orders_2025 (
+    order_id BIGSERIAL PRIMARY KEY,
+    order_date TIMESTAMP WITH TIME ZONE,
+    total DECIMAL(10,2)
+) TABLESPACE ts_hot;
+
+-- Partition on different tablespaces
+CREATE TABLE orders_202501 PARTITION OF orders
+  FOR VALUES FROM ('2025-01-01') TO ('2025-02-01')
+  TABLESPACE ts_ssd;  -- Recent on SSD
+
+CREATE TABLE orders_202401 PARTITION OF orders
+  FOR VALUES FROM ('2024-01-01') TO ('2024-02-01')
+  TABLESPACE ts_hdd;  -- Archive on HDD
+
+-- Migrate table (offline)
+ALTER TABLE orders_2024 SET TABLESPACE ts_archive_2024;
+
+-- Attach tablespace from archive
+ALTER TABLESPACE ts_archive_2023 ATTACH
+  LOCATION '/backup/archive/ts_archive_2023.sbts'
+  VALIDATE FORCE;
+```
+
+### Risks and Mitigations
+1. **Risk**: GPID migration for existing databases
+   - **Mitigation**: Database version upgrade (convert 32-bit → GPID with tablespace 0)
+
+2. **Risk**: Performance impact of 64-bit GPID
+   - **Mitigation**: Benchmark BufferPool hash, optimize if needed
+
+3. **Risk**: Index TID updates complex for all 6 types
+   - **Mitigation**: Implement one at a time, reuse patterns
+
+4. **Risk**: Concurrent autoextend contention
+   - **Mitigation**: Per-tablespace mutex, not global
 
 ---
 

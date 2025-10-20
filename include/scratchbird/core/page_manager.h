@@ -6,6 +6,7 @@
 #include "scratchbird/core/status.h"
 #include "scratchbird/core/ondisk.h"
 #include "scratchbird/core/error_context.h"
+#include "scratchbird/core/gpid.h"
 
 namespace scratchbird::core
 {
@@ -33,14 +34,47 @@ namespace scratchbird::core
         // Load FSM from existing database
         auto load(ErrorContext *ctx = nullptr) -> Status;
 
-        // Allocate a new page
+        // Allocate a new page (legacy API - uses tablespace 0)
         auto allocatePage(uint32_t &page_id, ErrorContext *ctx = nullptr) -> Status;
 
-        // Free a page
+        // Free a page (legacy API - uses tablespace 0)
         auto freePage(uint32_t page_id, ErrorContext *ctx = nullptr) -> Status;
 
-        // Check if a page is allocated
+        // Check if a page is allocated (legacy API - uses tablespace 0)
         auto isAllocated(uint32_t page_id) const -> bool;
+
+        // === NEW: GPID-based API (Phase 1, Task 1.2.2) ===
+
+        /**
+         * allocatePageInTablespace - Allocate a page in a specific tablespace
+         *
+         * @param tablespace_id Tablespace ID (0 = primary, 1-65535 = custom)
+         * @param gpid_out Output GPID of allocated page
+         * @param ctx Error context
+         * @return Status::OK on success, error status otherwise
+         *
+         * Note: For tablespace 0 (primary), this is equivalent to allocatePage()
+         *       but returns a GPID instead of uint32_t page_id.
+         */
+        auto allocatePageInTablespace(uint16_t tablespace_id, GPID *gpid_out,
+                                     ErrorContext *ctx = nullptr) -> Status;
+
+        /**
+         * freePageGlobal - Free a page identified by GPID
+         *
+         * @param gpid Global Page ID of page to free
+         * @param ctx Error context
+         * @return Status::OK on success, error status otherwise
+         */
+        auto freePageGlobal(GPID gpid, ErrorContext *ctx = nullptr) -> Status;
+
+        /**
+         * isAllocatedGlobal - Check if a page is allocated (GPID version)
+         *
+         * @param gpid Global Page ID to check
+         * @return true if allocated, false if free
+         */
+        auto isAllocatedGlobal(GPID gpid) const -> bool;
 
         // Get total number of pages
         auto totalPages() const -> uint32_t

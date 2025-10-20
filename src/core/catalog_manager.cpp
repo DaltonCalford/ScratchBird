@@ -1883,4 +1883,119 @@ namespace scratchbird::core
         return Status::NOT_IMPLEMENTED;
     }
 
+    // ============================================================================
+    // Tablespace Catalog Methods (Phase 1, Task 1.1.8)
+    // ============================================================================
+
+    auto CatalogManager::writeTablespaceRecord(const TablespaceInfo &tablespace, ErrorContext *ctx)
+        -> Status
+    {
+        // Convert TablespaceInfo to SBTablespaceCatalog
+        SBTablespaceCatalog record = {};
+        record.is_valid = 1;
+        record.tablespace_id = tablespace.tablespace_id;
+
+        // Copy tablespace_name (max 63 chars + null)
+        std::strncpy(record.tablespace_name, tablespace.tablespace_name.c_str(), 63);
+        record.tablespace_name[63] = '\0';
+
+        // Copy UUID
+        std::memcpy(&record.tablespace_uuid, &tablespace.tablespace_uuid, sizeof(UuidV7Bytes));
+
+        // Configuration
+        record.autoextend_enabled = tablespace.autoextend_enabled ? 1 : 0;
+        record.autoextend_size_mb = tablespace.autoextend_size_mb;
+        record.max_size_mb = tablespace.max_size_mb;
+        record.prealloc_pages = tablespace.prealloc_pages;
+        record.flags = 0;  // Reserved
+
+        // File information
+        if (!tablespace.file_paths.empty())
+        {
+            std::strncpy(record.primary_path, tablespace.file_paths[0].c_str(), 255);
+            record.primary_path[255] = '\0';
+        }
+        record.file_count = static_cast<uint32_t>(tablespace.file_paths.size());
+
+        // Statistics
+        record.total_size_mb = tablespace.total_size_mb;
+        record.used_size_mb = tablespace.used_size_mb;
+        record.free_size_mb = tablespace.free_size_mb;
+        record.table_count = tablespace.table_count;
+        record.index_count = tablespace.index_count;
+
+        // Timestamps
+        record.created_time = tablespace.created_time;
+        record.last_modified_time = tablespace.last_modified_time;
+        record.last_extended_time = tablespace.last_extended_time;
+
+        // Write to pg_tablespace table
+        return writeRecordToHeapPage<SBTablespaceCatalog>(tablespaces_table_page_, record, ctx);
+    }
+
+    auto CatalogManager::readTablespaceRecords(ErrorContext *ctx) -> Status
+    {
+        BufferPool *bp = db_->buffer_pool();
+        void *page_buffer;
+
+        // Pin pg_tablespace page
+        Status status = bp->pinPage(tablespaces_table_page_, &page_buffer, ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, status, "Failed to pin pg_tablespace page");
+            return status;
+        }
+
+        auto *heap = reinterpret_cast<CatalogHeapPage *>(page_buffer);
+        uint32_t offset = sizeof(CatalogHeapPage);
+
+        tablespace_cache_.clear();
+
+        for (uint32_t i = 0; i < heap->record_count; i++)
+        {
+            auto *record = reinterpret_cast<SBTablespaceCatalog *>(
+                reinterpret_cast<uint8_t *>(page_buffer) + offset);
+
+            if (record->is_valid)
+            {
+                // Convert SBTablespaceCatalog to TablespaceInfo
+                TablespaceInfo info;
+                info.tablespace_id = record->tablespace_id;
+                info.tablespace_name = std::string(record->tablespace_name);
+                std::memcpy(&info.tablespace_uuid, &record->tablespace_uuid, sizeof(UuidV7Bytes));
+
+                // Configuration
+                info.autoextend_enabled = (record->autoextend_enabled == 1);
+                info.autoextend_size_mb = record->autoextend_size_mb;
+                info.max_size_mb = record->max_size_mb;
+                info.prealloc_pages = record->prealloc_pages;
+
+                // File paths
+                if (record->primary_path[0] != '\0')
+                {
+                    info.file_paths.push_back(std::string(record->primary_path));
+                }
+
+                // Statistics
+                info.total_size_mb = record->total_size_mb;
+                info.used_size_mb = record->used_size_mb;
+                info.free_size_mb = record->free_size_mb;
+                info.table_count = record->table_count;
+                info.index_count = record->index_count;
+
+                // Timestamps
+                info.created_time = record->created_time;
+                info.last_modified_time = record->last_modified_time;
+                info.last_extended_time = record->last_extended_time;
+
+                // Add to cache (keyed by tablespace_id)
+                tablespace_cache_[info.tablespace_id] = info;
+            }
+
+            offset += sizeof(SBTablespaceCatalog);
+        }
+
+        return bp->unpinPage(tablespaces_table_page_, false, ctx);
+    }
+
 } // namespace scratchbird::core

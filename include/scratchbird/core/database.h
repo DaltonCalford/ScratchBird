@@ -8,6 +8,7 @@
 #include "scratchbird/core/uuidv7.h"
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/core/storage_engine.h"
+#include "scratchbird/core/gpid.h"
 
 namespace scratchbird
 {
@@ -142,6 +143,7 @@ namespace scratchbird
                 return header_ ? header_->total_pages : 0;
             }
 
+            // === LEGACY API: tablespace 0 only ===
             // Read/write pages
             Status read_page(uint32_t page_id, void *buffer, ErrorContext *ctx = nullptr) const;
             Status write_page(uint32_t page_id, const void *buffer, ErrorContext *ctx = nullptr);
@@ -149,6 +151,34 @@ namespace scratchbird
             // Read partial page data
             Status read_page_partial(uint32_t page_id, void *buffer, uint32_t size, uint32_t offset,
                                      ErrorContext *ctx = nullptr) const;
+
+            // === NEW: GPID-based API (Phase 1, Task 1.2.4) ===
+
+            /**
+             * read_page_global - Read a page identified by GPID
+             *
+             * @param gpid Global Page ID of page to read
+             * @param buffer Buffer to read page data into (must be page_size bytes)
+             * @param ctx Error context
+             * @return Status::OK on success, error status otherwise
+             *
+             * Note: For Phase 1, only primary tablespace (tablespace 0) is supported.
+             *       Custom tablespaces return Status::NOT_IMPLEMENTED.
+             */
+            Status read_page_global(GPID gpid, void *buffer, ErrorContext *ctx = nullptr) const;
+
+            /**
+             * write_page_global - Write a page identified by GPID
+             *
+             * @param gpid Global Page ID of page to write
+             * @param buffer Buffer containing page data to write (must be page_size bytes)
+             * @param ctx Error context
+             * @return Status::OK on success, error status otherwise
+             *
+             * Note: For Phase 1, only primary tablespace (tablespace 0) is supported.
+             *       Custom tablespaces return Status::NOT_IMPLEMENTED.
+             */
+            Status write_page_global(GPID gpid, const void *buffer, ErrorContext *ctx = nullptr);
 
             // Get page manager
             PageManager *page_manager()
@@ -303,9 +333,28 @@ namespace scratchbird
             // Update header total pages (for internal use by PageManager)
             Status update_header_total_pages(uint32_t total_pages, ErrorContext *ctx = nullptr);
 
+            // === LEGACY API: tablespace 0 only ===
             // Allocate a new page ID (for internal use by BufferPool/PageManager)
             // Thread-safe: atomically increments next_page_id in database header
             Status allocate_page_id(uint32_t *page_id_out, ErrorContext *ctx = nullptr);
+
+            // === NEW: GPID-based API (Phase 1, Task 1.2.4) ===
+
+            /**
+             * allocate_page_id_global - Allocate a new page ID in a specific tablespace
+             *
+             * @param tablespace_id Tablespace ID (0 = primary, 1-65535 = custom)
+             * @param gpid_out Output GPID of allocated page
+             * @param ctx Error context
+             * @return Status::OK on success, error status otherwise
+             *
+             * Note: For Phase 1, only primary tablespace (tablespace 0) is supported.
+             *       Custom tablespaces return Status::NOT_IMPLEMENTED.
+             *
+             * Thread-safe: atomically increments next_page_id in database header.
+             */
+            Status allocate_page_id_global(uint16_t tablespace_id, GPID *gpid_out,
+                                          ErrorContext *ctx = nullptr);
 
         private:
             int fd_ = -1;                                    // File descriptor

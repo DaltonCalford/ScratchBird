@@ -538,4 +538,89 @@ namespace scratchbird::core
         return Status::OK;
     }
 
+    // ============================================================================
+    // GPID-based API (Phase 1, Task 1.2.2)
+    // ============================================================================
+
+    Status PageManager::allocatePageInTablespace(uint16_t tablespace_id, GPID *gpid_out,
+                                                ErrorContext *ctx)
+    {
+        if (gpid_out == nullptr)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "gpid_out cannot be null");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        // Phase 1: Only tablespace 0 (primary file) supported
+        // Future: Support custom tablespaces (Task 1.3)
+        if (tablespace_id != PRIMARY_TABLESPACE_ID)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED,
+                            "Custom tablespaces not yet implemented (Phase 1, Task 1.3)");
+            return Status::NOT_IMPLEMENTED;
+        }
+
+        // Allocate page in primary file using existing logic
+        uint32_t page_id = 0;
+        Status status = allocatePage(page_id, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        // Convert page_id to GPID (tablespace 0)
+        *gpid_out = makeGPID(PRIMARY_TABLESPACE_ID, static_cast<uint64_t>(page_id));
+
+        return Status::OK;
+    }
+
+    Status PageManager::freePageGlobal(GPID gpid, ErrorContext *ctx)
+    {
+        // Extract components
+        uint16_t tablespace_id = getTablespaceID(gpid);
+        uint64_t page_number = getPageNumber(gpid);
+
+        // Phase 1: Only tablespace 0 (primary file) supported
+        if (tablespace_id != PRIMARY_TABLESPACE_ID)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED,
+                            "Custom tablespaces not yet implemented (Phase 1, Task 1.3)");
+            return Status::NOT_IMPLEMENTED;
+        }
+
+        // Validate page_number fits in uint32_t for primary file
+        if (page_number > UINT32_MAX)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                            "Page number exceeds uint32_t range for primary file");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        // Free page in primary file using existing logic
+        return freePage(static_cast<uint32_t>(page_number), ctx);
+    }
+
+    bool PageManager::isAllocatedGlobal(GPID gpid) const
+    {
+        // Extract components
+        uint16_t tablespace_id = getTablespaceID(gpid);
+        uint64_t page_number = getPageNumber(gpid);
+
+        // Phase 1: Only tablespace 0 (primary file) supported
+        if (tablespace_id != PRIMARY_TABLESPACE_ID)
+        {
+            // Custom tablespace not yet supported, treat as not allocated
+            return false;
+        }
+
+        // Validate page_number fits in uint32_t for primary file
+        if (page_number > UINT32_MAX)
+        {
+            return false;
+        }
+
+        // Check allocation in primary file using existing logic
+        return isAllocated(static_cast<uint32_t>(page_number));
+    }
+
 } // namespace scratchbird::core
