@@ -84,9 +84,9 @@ This document tracks the implementation of tablespace support for ScratchBird ac
 
 ## Phase 1: Core Infrastructure (40-60 hours)
 
-**Status**: 🔄 IN PROGRESS (~70% complete as of October 20, 2025)
+**Status**: 🔄 IN PROGRESS (~80% complete as of October 20, 2025)
 **Estimated**: 40-60 hours
-**Actual So Far**: ~28 hours (GPID/TID complete, tablespace file mgmt 70% done)
+**Actual So Far**: ~30 hours (GPID/TID complete, tablespace file mgmt 80% done)
 **Priority**: CRITICAL
 **Dependencies**: Phase 0 complete ✅
 
@@ -100,15 +100,15 @@ This document tracks the implementation of tablespace support for ScratchBird ac
   - ✅ Task 1.2.3: BufferPool GPID support (~4 hours)
   - ✅ Task 1.2.4: Database GPID I/O (~3 hours)
   - ✅ Task 1.2.5: TID infrastructure + heap layer migration (~6 hours)
-- 🔄 Task 1.3: Tablespace File Management (IN PROGRESS - 3/5 subtasks complete, ~8 hours)
+- 🔄 Task 1.3: Tablespace File Management (IN PROGRESS - 4/5 subtasks complete, ~10 hours)
   - ✅ Task 1.3.1: createTablespace() (COMPLETE ~4 hours)
   - ✅ Task 1.3.2: openTablespace() (COMPLETE ~3 hours)
-  - ⏸️ Task 1.3.3: closeTablespace() (not started)
+  - ✅ Task 1.3.3: closeTablespace() (COMPLETE ~2 hours)
   - ✅ Task 1.3.4: Database FD management (COMPLETE ~1 hour)
   - ⏸️ Task 1.3.5: Tablespace-specific FSM (not started)
 
 **Remaining**:
-- ⏸️ Task 1.3.3, 1.3.5: (~5-7 hours remaining)
+- ⏸️ Task 1.3.5: (~3-4 hours remaining)
 
 ---
 
@@ -317,9 +317,9 @@ This document tracks the implementation of tablespace support for ScratchBird ac
 
 ### TASK 1.3: Tablespace File Management (12-20 hours)
 
-**Status**: 🔄 IN PROGRESS (70% complete as of October 20, 2025)
+**Status**: 🔄 IN PROGRESS (80% complete as of October 20, 2025)
 **Estimated**: 12-20 hours
-**Actual So Far**: ~8 hours (Tasks 1.3.1, 1.3.2, and 1.3.4 complete)
+**Actual So Far**: ~10 hours (Tasks 1.3.1, 1.3.2, 1.3.3, and 1.3.4 complete)
 **Dependencies**: TASK 1.1, TASK 1.2 complete ✅
 
 **Description**: Implement tablespace file creation, opening, and management.
@@ -351,12 +351,16 @@ This document tracks the implementation of tablespace support for ScratchBird ac
   - File descriptor closed on all error paths
   - Actual: ~3 hours
 
-- [ ] **1.3.3**: Implement `PageManager::closeTablespace()` ⏸️ NOT STARTED
-  - Flush dirty FSM pages
-  - Sync tablespace file to disk
-  - Close file descriptor
-  - Unregister from Database
-  - Estimate: 2-3 hours
+- [x] **1.3.3**: Implement `PageManager::closeTablespace()` ✅ COMPLETE (October 20, 2025)
+  - Validates tablespace_id != 0 (primary cannot be closed)
+  - Gets file descriptor before unregistering (for fsync)
+  - **FSM flushing deferred to Task 1.3.5** (noted in TODO comment)
+  - Syncs tablespace file to disk with fsync()
+  - Unregisters and closes file descriptor via Database::unregisterTablespaceFile()
+  - Non-fatal sync failure (logs warning but continues with close)
+  - 5-step implementation (~63 lines in page_manager.cpp)
+  - **Bug fix**: Fixed createTablespace() to use PAGE_TYPE_DATABASE_HEADER
+  - Actual: ~2 hours
 
 - [x] **1.3.4**: Add tablespace file descriptor map to Database class ✅ COMPLETE (October 20, 2025)
   - Added `std::unordered_map<uint16_t, int> tablespace_fds_;`
@@ -1309,11 +1313,11 @@ This document tracks the implementation of tablespace support for ScratchBird ac
 | Phase | Status | Estimated | Actual | Completion % |
 |-------|--------|-----------|--------|--------------|
 | Phase 0: Research | ✅ COMPLETE | 20-30h | ~24h | 100% |
-| Phase 1: Core Infrastructure | 🔄 IN PROGRESS | 40-60h | ~28h | 70% |
+| Phase 1: Core Infrastructure | 🔄 IN PROGRESS | 40-60h | ~30h | 80% |
 | Phase 2: SQL DDL | ⏸️ NOT STARTED | 30-40h | - | 0% |
 | Phase 3: Autoextend | ⏸️ NOT STARTED | 20-30h | - | 0% |
 | Phase 4: Migration | ⏸️ NOT STARTED | 30-40h | - | 0% |
-| **TOTAL (Phase 0-4)** | | **140-200h** | **~52h** | **32%** |
+| **TOTAL (Phase 0-4)** | | **140-200h** | **~54h** | **33%** |
 
 ### Task Status Summary
 
@@ -1330,10 +1334,10 @@ This document tracks the implementation of tablespace support for ScratchBird ac
     - Updated heap_page.cpp: all tuple insertion and version chain code
     - Updated storage_engine.cpp: cross-page version chain code
     - Core library compiles successfully
-- [~] TASK 1.3: Tablespace File Management 🔄 IN PROGRESS (8 / 12-20 hours, 3/5 subtasks done)
+- [~] TASK 1.3: Tablespace File Management 🔄 IN PROGRESS (10 / 12-20 hours, 4/5 subtasks done)
   - [x] 1.3.1: createTablespace() ✅ COMPLETE (October 20, 2025, ~4 hours)
   - [x] 1.3.2: openTablespace() ✅ COMPLETE (October 20, 2025, ~3 hours)
-  - [ ] 1.3.3: closeTablespace() ⏸️ NOT STARTED
+  - [x] 1.3.3: closeTablespace() ✅ COMPLETE (October 20, 2025, ~2 hours)
   - [x] 1.3.4: Database FD management ✅ COMPLETE (October 20, 2025, ~1 hour)
   - [ ] 1.3.5: Tablespace-specific FSM ⏸️ NOT STARTED
 
