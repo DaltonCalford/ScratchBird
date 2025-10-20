@@ -3,6 +3,8 @@
 #include <cstdint>
 #include <string>
 #include <memory>
+#include <unordered_map>
+#include <mutex>
 #include "scratchbird/core/status.h"
 #include "scratchbird/core/ondisk.h"
 #include "scratchbird/core/uuidv7.h"
@@ -105,9 +107,9 @@ namespace scratchbird
             Database(const Database &) = delete;
             Database &operator=(const Database &) = delete;
 
-            // Move operations must be defined in cpp file where types are complete
-            Database(Database &&) noexcept;
-            Database &operator=(Database &&) noexcept;
+            // Delete move operations (Database contains std::mutex which is non-movable)
+            Database(Database &&) noexcept = delete;
+            Database &operator=(Database &&) noexcept = delete;
 
             // Create a new database file
             static Status create(const std::string &path, uint32_t page_size = 16384,
@@ -356,8 +358,46 @@ namespace scratchbird
             Status allocate_page_id_global(uint16_t tablespace_id, GPID *gpid_out,
                                           ErrorContext *ctx = nullptr);
 
+            // === NEW: Tablespace File Management (Phase 1, Task 1.3.4) ===
+
+            /**
+             * registerTablespaceFile - Register an open tablespace file descriptor
+             *
+             * @param tablespace_id Tablespace ID
+             * @param fd File descriptor for the tablespace file
+             * @param ctx Error context
+             * @return Status::OK on success, error if tablespace_id already registered
+             *
+             * Thread-safe: Acquires tablespace_mutex_.
+             */
+            Status registerTablespaceFile(uint16_t tablespace_id, int fd,
+                                         ErrorContext *ctx = nullptr);
+
+            /**
+             * unregisterTablespaceFile - Unregister and close tablespace file descriptor
+             *
+             * @param tablespace_id Tablespace ID
+             * @param ctx Error context
+             * @return Status::OK on success, error if tablespace_id not found
+             *
+             * Thread-safe: Acquires tablespace_mutex_.
+             * Note: Caller responsible for flushing before calling this.
+             */
+            Status unregisterTablespaceFile(uint16_t tablespace_id,
+                                           ErrorContext *ctx = nullptr);
+
+            /**
+             * getTablespaceFd - Get file descriptor for a tablespace
+             *
+             * @param tablespace_id Tablespace ID (0 = primary, 1-65535 = custom)
+             * @return File descriptor, or -1 if not found
+             *
+             * Thread-safe: Acquires tablespace_mutex_.
+             */
+            int getTablespaceFd(uint16_t tablespace_id) const;
+
         private:
-            int fd_ = -1;                                    // File descriptor
+            int fd_ = -1;                                    // File descriptor (primary database)
             std::string path_;                               // Database file path
             uint32_t page_size_ = 0;                         // Page size
             ID db_uuid_;                                     // Database UUID
@@ -379,6 +419,10 @@ namespace scratchbird
             std::unique_ptr<LongTransactionMonitor>
                 long_transaction_monitor_;                     // Long transaction monitor (owned)
             std::unique_ptr<DomainManager> domain_manager_;    // Domain manager (owned)
+
+            // === Tablespace File Descriptors (Phase 1, Task 1.3.4) ===
+            std::unordered_map<uint16_t, int> tablespace_fds_; // Map: tablespace_id -> file descriptor
+            mutable std::mutex tablespace_mutex_;              // Protects tablespace_fds_ access
 
             // Validate database header
             Status validate_header();

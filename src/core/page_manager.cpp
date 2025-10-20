@@ -2,8 +2,12 @@
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/debug.h"
 #include "scratchbird/core/logger.h"
+#include "scratchbird/core/tablespace.h"
 #include <cstring>
 #include <algorithm>
+#include <fcntl.h>
+#include <unistd.h>
+#include <sys/stat.h>
 
 namespace scratchbird::core
 {
@@ -621,6 +625,129 @@ namespace scratchbird::core
 
         // Check allocation in primary file using existing logic
         return isAllocated(static_cast<uint32_t>(page_number));
+    }
+
+    // ========================================================================
+    // PHASE 1, TASK 1.3.2: Tablespace File Management - Open Tablespace
+    // ========================================================================
+
+    Status PageManager::openTablespace(uint16_t tablespace_id, const std::string &path,
+                                      ErrorContext *ctx)
+    {
+        // Step 1: Validate inputs
+        if (tablespace_id == PRIMARY_TABLESPACE_ID)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                             "Cannot open tablespace 0 (primary database file)");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        if (path.empty())
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                             "Tablespace path cannot be empty");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        // Step 2: Open .sbts file
+        int fd = ::open(path.c_str(), O_RDWR);
+        if (fd < 0)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::IO_ERROR,
+                             ("Failed to open tablespace file: " + path + " (errno=" +
+                              std::to_string(errno) + ", " + std::string(strerror(errno)) + ")").c_str());
+            return Status::IO_ERROR;
+        }
+
+        // Step 3: Read TablespaceHeader (page 0)
+        auto header_buffer = std::make_unique<uint8_t[]>(page_size_);
+        ssize_t bytes_read = ::pread(fd, header_buffer.get(), page_size_, 0);
+        if (bytes_read != static_cast<ssize_t>(page_size_))
+        {
+            ::close(fd);
+            SET_ERROR_CONTEXT(ctx, Status::IO_ERROR,
+                             ("Failed to read tablespace header from " + path +
+                              " (read " + std::to_string(bytes_read) + " of " +
+                              std::to_string(page_size_) + " bytes)").c_str());
+            return Status::IO_ERROR;
+        }
+
+        auto *header = reinterpret_cast<TablespaceHeader *>(header_buffer.get());
+
+        // Step 4: Validate PageHeader magic
+        if (header->page_header.magic != K_MAGIC_SBRD)
+        {
+            ::close(fd);
+            SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT,
+                             ("Invalid tablespace file: bad magic number (expected 0x" +
+                              std::to_string(K_MAGIC_SBRD) + ", got 0x" +
+                              std::to_string(header->page_header.magic) + ")").c_str());
+            return Status::PAGE_CORRUPT;
+        }
+
+        // Step 5: Validate page_size matches
+        if (header->page_size != page_size_)
+        {
+            ::close(fd);
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                             ("Tablespace page_size mismatch: expected " +
+                              std::to_string(page_size_) + ", got " +
+                              std::to_string(header->page_size) +
+                              ". Cannot open tablespace with different page size.").c_str());
+            return Status::INVALID_ARGUMENT;
+        }
+
+        // Step 6: Validate tablespace_id matches
+        if (header->tablespace_id != tablespace_id)
+        {
+            ::close(fd);
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                             ("Tablespace ID mismatch: expected " +
+                              std::to_string(tablespace_id) + ", got " +
+                              std::to_string(header->tablespace_id)).c_str());
+            return Status::INVALID_ARGUMENT;
+        }
+
+        // Step 7: Check database_uuid matches (warn if mismatch, don't fail)
+        // Get database UUID from Database instance
+        const ID &db_uuid = db_->uuid();
+        bool uuid_mismatch = (header->database_uuid != db_uuid);
+
+        if (uuid_mismatch)
+        {
+            LOG_WARNING(STORAGE,
+                    "Tablespace %u (%s) has different database_uuid than current database. "
+                    "This may indicate the tablespace was created for a different database. "
+                    "Proceeding with caution.",
+                    tablespace_id, path.c_str());
+            // Don't fail - allow cross-database tablespace attachment for data migration
+        }
+
+        // Step 8: Log tablespace information
+        LOG_INFO(STORAGE, "Opening tablespace %u: %s (name='%s', total_pages=%lu, free_pages=%lu)",
+                tablespace_id, path.c_str(), header->tablespace_name,
+                static_cast<unsigned long>(header->total_pages),
+                static_cast<unsigned long>(header->free_pages));
+
+        // Step 9: Load tablespace FSM (page 1)
+        // TODO PHASE 1, TASK 1.3.5: Implement tablespace-specific FSM loading
+        // For now, skip FSM loading (will be implemented in Task 1.3.5)
+        LOG_INFO(STORAGE, "Tablespace %u: FSM loading deferred to Task 1.3.5 (fsm_root_page=%lu)",
+                tablespace_id, static_cast<unsigned long>(header->fsm_root_page));
+
+        // Step 10: Register file descriptor in Database
+        Status status = db_->registerTablespaceFile(tablespace_id, fd, ctx);
+        if (status != Status::OK)
+        {
+            ::close(fd);
+            SET_ERROR_CONTEXT(ctx, status,
+                             ("Failed to register tablespace " + std::to_string(tablespace_id) +
+                              " file descriptor").c_str());
+            return status;
+        }
+
+        LOG_INFO(STORAGE, "Successfully opened tablespace %u from %s", tablespace_id, path.c_str());
+        return Status::OK;
     }
 
 } // namespace scratchbird::core
