@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <vector>
 #include <mutex>
+#include <unordered_map>
 #include "scratchbird/core/status.h"
 #include "scratchbird/core/ondisk.h"
 #include "scratchbird/core/error_context.h"
@@ -170,11 +171,31 @@ namespace scratchbird::core
         uint32_t page_size_; // Page size
 
     private:
+        // Primary database FSM (tablespace 0)
         uint32_t total_pages_;        // Total pages in database
         uint32_t free_pages_;         // Number of free pages
         std::vector<uint8_t> bitmap_; // Allocation bitmap
         bool dirty_;                  // FSM needs flush
         mutable std::mutex mutex_;    // Thread safety (future)
+
+        // === PHASE 1, TASK 1.3.5: Tablespace-specific FSM ===
+        /**
+         * TablespaceFSM - In-memory Free Space Map for a tablespace
+         *
+         * Each tablespace has its own FSM tracking free pages within that tablespace.
+         * The FSM is stored on page 1 of the tablespace file.
+         */
+        struct TablespaceFSM
+        {
+            uint32_t total_pages = 0;        // Total pages in tablespace
+            uint32_t free_pages = 0;         // Number of free pages
+            std::vector<uint8_t> bitmap;     // Allocation bitmap (0=free, 1=allocated)
+            bool dirty = false;              // FSM needs flush
+        };
+
+        // Map of tablespace_id -> FSM (for custom tablespaces 1-65535)
+        std::unordered_map<uint16_t, TablespaceFSM> tablespace_fsms_;
+        mutable std::mutex tablespace_fsm_mutex_; // Protects tablespace_fsms_
 
         // Helper methods
         void setBit(uint32_t page_id, bool allocated);

@@ -972,10 +972,58 @@ namespace scratchbird::core
                 static_cast<unsigned long>(header->free_pages));
 
         // Step 9: Load tablespace FSM (page 1)
-        // TODO PHASE 1, TASK 1.3.5: Implement tablespace-specific FSM loading
-        // For now, skip FSM loading (will be implemented in Task 1.3.5)
-        LOG_INFO(STORAGE, "Tablespace %u: FSM loading deferred to Task 1.3.5 (fsm_root_page=%lu)",
-                tablespace_id, static_cast<unsigned long>(header->fsm_root_page));
+        auto fsm_buffer = std::make_unique<uint8_t[]>(page_size_);
+        ssize_t fsm_bytes_read = ::pread(fd, fsm_buffer.get(), page_size_, page_size_);
+        if (fsm_bytes_read != static_cast<ssize_t>(page_size_))
+        {
+            ::close(fd);
+            SET_ERROR_CONTEXT(ctx, Status::IO_ERROR,
+                             ("Failed to read tablespace FSM from " + path +
+                              " (read " + std::to_string(fsm_bytes_read) + " of " +
+                              std::to_string(page_size_) + " bytes)").c_str());
+            return Status::IO_ERROR;
+        }
+
+        // Parse FSM page
+        auto *fsm_header = reinterpret_cast<PageHeader *>(fsm_buffer.get());
+        if (fsm_header->page_type != PAGE_TYPE_FREE_SPACE_MAP)
+        {
+            ::close(fd);
+            SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT,
+                             ("Invalid FSM page type: expected PAGE_TYPE_FREE_SPACE_MAP, got " +
+                              std::to_string(fsm_header->page_type)).c_str());
+            return Status::PAGE_CORRUPT;
+        }
+
+        // Extract FSM data
+        struct FSMData
+        {
+            uint32_t total_pages;
+            uint32_t free_pages;
+            uint32_t next_fsm_page;
+            uint8_t bitmap[1]; // Variable length
+        };
+        auto *fsm_data = reinterpret_cast<FSMData *>(fsm_buffer.get() + sizeof(PageHeader));
+
+        // Create in-memory FSM for this tablespace
+        TablespaceFSM ts_fsm;
+        ts_fsm.total_pages = fsm_data->total_pages;
+        ts_fsm.free_pages = fsm_data->free_pages;
+
+        // Copy bitmap (calculate size needed)
+        size_t bitmap_bytes = (fsm_data->total_pages + 7) / 8; // Round up to nearest byte
+        ts_fsm.bitmap.resize(bitmap_bytes);
+        std::memcpy(ts_fsm.bitmap.data(), fsm_data->bitmap, bitmap_bytes);
+        ts_fsm.dirty = false;
+
+        // Store FSM in map (thread-safe)
+        {
+            std::lock_guard<std::mutex> lock(tablespace_fsm_mutex_);
+            tablespace_fsms_[tablespace_id] = std::move(ts_fsm);
+        }
+
+        LOG_INFO(STORAGE, "Loaded FSM for tablespace %u: total_pages=%u, free_pages=%u",
+                tablespace_id, fsm_data->total_pages, fsm_data->free_pages);
 
         // Step 10: Register file descriptor in Database
         Status status = db_->registerTablespaceFile(tablespace_id, fd, ctx);
@@ -1024,13 +1072,71 @@ namespace scratchbird::core
         }
 
         // Step 3: Flush dirty FSM pages for this tablespace
-        // TODO PHASE 1, TASK 1.3.5: Implement tablespace-specific FSM flushing
-        // For now, skip FSM flushing (will be implemented in Task 1.3.5)
-        // When Task 1.3.5 is complete, this will:
-        // - Check if tablespace FSM is dirty
-        // - Write FSM page 1 to disk
-        // - Mark FSM as clean
-        LOG_INFO(STORAGE, "Tablespace %u: FSM flushing deferred to Task 1.3.5", tablespace_id);
+        bool fsm_was_dirty = false;
+        {
+            std::lock_guard<std::mutex> lock(tablespace_fsm_mutex_);
+            auto it = tablespace_fsms_.find(tablespace_id);
+            if (it != tablespace_fsms_.end() && it->second.dirty)
+            {
+                fsm_was_dirty = true;
+                TablespaceFSM &ts_fsm = it->second;
+
+                // Build FSM page buffer
+                auto fsm_buffer = std::make_unique<uint8_t[]>(page_size_);
+                memset(fsm_buffer.get(), 0, page_size_);
+
+                // Initialize PageHeader
+                auto *fsm_header = reinterpret_cast<PageHeader *>(fsm_buffer.get());
+                fsm_header->magic = K_MAGIC_SBRD;
+                fsm_header->version = 1;
+                fsm_header->page_type = PAGE_TYPE_FREE_SPACE_MAP;
+                fsm_header->page_size = page_size_;
+                fsm_header->page_id = 1; // FSM is always page 1
+                fsm_header->flags = 0;
+                fsm_header->lsn = 0;
+                const ID &db_uuid = db_->uuid();
+                memcpy(fsm_header->database_uuid, db_uuid.bytes.data(), 16);
+                fsm_header->generation = 1;
+
+                // Write FSM data
+                struct FSMData
+                {
+                    uint32_t total_pages;
+                    uint32_t free_pages;
+                    uint32_t next_fsm_page;
+                    uint8_t bitmap[1];
+                };
+                auto *fsm_data = reinterpret_cast<FSMData *>(fsm_buffer.get() + sizeof(PageHeader));
+                fsm_data->total_pages = ts_fsm.total_pages;
+                fsm_data->free_pages = ts_fsm.free_pages;
+                fsm_data->next_fsm_page = 0;
+
+                // Copy bitmap
+                size_t bitmap_bytes = ts_fsm.bitmap.size();
+                std::memcpy(fsm_data->bitmap, ts_fsm.bitmap.data(), bitmap_bytes);
+
+                // Write FSM to page 1 of tablespace
+                ssize_t bytes_written = ::pwrite(fd, fsm_buffer.get(), page_size_, page_size_);
+                if (bytes_written != static_cast<ssize_t>(page_size_))
+                {
+                    LOG_WARNING(STORAGE,
+                            "Failed to flush FSM for tablespace %u (wrote %ld of %u bytes). "
+                            "Continuing with close operation.",
+                            tablespace_id, bytes_written, page_size_);
+                }
+                else
+                {
+                    ts_fsm.dirty = false;
+                    LOG_INFO(STORAGE, "Flushed FSM for tablespace %u (total_pages=%u, free_pages=%u)",
+                            tablespace_id, ts_fsm.total_pages, ts_fsm.free_pages);
+                }
+            }
+        }
+
+        if (!fsm_was_dirty)
+        {
+            LOG_INFO(STORAGE, "Tablespace %u: FSM not dirty, skipping flush", tablespace_id);
+        }
 
         // Step 4: Sync tablespace file to disk
         if (::fsync(fd) != 0)
@@ -1051,6 +1157,12 @@ namespace scratchbird::core
                              ("Failed to unregister tablespace " + std::to_string(tablespace_id) +
                               " file descriptor").c_str());
             return status;
+        }
+
+        // Step 6: Remove FSM from in-memory map
+        {
+            std::lock_guard<std::mutex> lock(tablespace_fsm_mutex_);
+            tablespace_fsms_.erase(tablespace_id);
         }
 
         LOG_INFO(STORAGE, "Successfully closed tablespace %u", tablespace_id);
