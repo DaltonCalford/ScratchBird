@@ -79,6 +79,31 @@ namespace scratchbird::core
         // === NEW: Tablespace File Management (Phase 1, Task 1.3) ===
 
         /**
+         * createTablespace - Create a new tablespace file
+         *
+         * @param tablespace_id Tablespace ID (1-65535, 0 = primary reserved)
+         * @param name Tablespace name (max 31 chars)
+         * @param path Absolute path to .sbts file to create
+         * @param config Tablespace configuration (autoextend, prealloc, etc.)
+         * @param ctx Error context
+         * @return Status::OK on success, error status otherwise
+         *
+         * Performs:
+         * 1. Validates inputs (tablespace_id, name, path)
+         * 2. Creates .sbts file at specified path (O_RDWR | O_CREAT | O_EXCL)
+         * 3. Initializes TablespaceHeader (page 0) with metadata
+         * 4. Initializes tablespace FSM (page 1)
+         * 5. Preallocates pages if config.prealloc_pages > 0
+         * 6. Opens file and registers in Database
+         *
+         * Thread-safe: Acquires Database::tablespace_mutex_ during registration.
+         * Note: Catalog insertion deferred to CatalogManager (caller responsible).
+         */
+        auto createTablespace(uint16_t tablespace_id, const std::string &name,
+                             const std::string &path, const struct TablespaceConfig &config,
+                             ErrorContext *ctx = nullptr) -> Status;
+
+        /**
          * openTablespace - Open an existing tablespace file and validate header
          *
          * @param tablespace_id Tablespace ID (1-65535, 0 = primary reserved)

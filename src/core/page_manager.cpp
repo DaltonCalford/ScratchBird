@@ -5,6 +5,7 @@
 #include "scratchbird/core/tablespace.h"
 #include <cstring>
 #include <algorithm>
+#include <chrono>
 #include <fcntl.h>
 #include <unistd.h>
 #include <sys/stat.h>
@@ -625,6 +626,247 @@ namespace scratchbird::core
 
         // Check allocation in primary file using existing logic
         return isAllocated(static_cast<uint32_t>(page_number));
+    }
+
+    // ========================================================================
+    // PHASE 1, TASK 1.3.1: Tablespace File Management - Create Tablespace
+    // ========================================================================
+
+    Status PageManager::createTablespace(uint16_t tablespace_id, const std::string &name,
+                                        const std::string &path, const TablespaceConfig &config,
+                                        ErrorContext *ctx)
+    {
+        // Step 1: Validate inputs
+        if (tablespace_id == PRIMARY_TABLESPACE_ID)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                             "Cannot create tablespace 0 (reserved for primary database file)");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        if (tablespace_id == 0)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                             "Invalid tablespace ID: 0 is reserved");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        if (name.empty())
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                             "Tablespace name cannot be empty");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        if (name.length() >= 32)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                             ("Tablespace name too long: max 31 chars, got " +
+                              std::to_string(name.length())).c_str());
+            return Status::INVALID_ARGUMENT;
+        }
+
+        if (path.empty())
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                             "Tablespace path cannot be empty");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        // Step 2: Check if file already exists
+        struct stat st;
+        if (stat(path.c_str(), &st) == 0)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::FILE_EXISTS,
+                             ("Tablespace file already exists: " + path).c_str());
+            return Status::FILE_EXISTS;
+        }
+
+        // Step 3: Create .sbts file with exclusive create
+        int fd = ::open(path.c_str(), O_RDWR | O_CREAT | O_EXCL, 0644);
+        if (fd < 0)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::IO_ERROR,
+                             ("Failed to create tablespace file: " + path + " (errno=" +
+                              std::to_string(errno) + ", " + std::string(strerror(errno)) + ")").c_str());
+            return Status::IO_ERROR;
+        }
+
+        // Step 4: Initialize TablespaceHeader (page 0)
+        auto header_buffer = std::make_unique<uint8_t[]>(page_size_);
+        memset(header_buffer.get(), 0, page_size_);
+        auto *header = reinterpret_cast<TablespaceHeader *>(header_buffer.get());
+
+        // Initialize PageHeader portion
+        header->page_header.magic = K_MAGIC_SBRD;
+        header->page_header.version = 1;
+        header->page_header.page_type = PAGE_TYPE_TABLESPACE_HEADER;
+        header->page_header.page_size = page_size_;
+        header->page_header.page_id = 0;
+        header->page_header.flags = 0;
+        header->page_header.lsn = 0;
+        const ID &db_uuid = db_->uuid();
+        memcpy(header->page_header.database_uuid, db_uuid.bytes.data(), 16);
+        header->page_header.generation = 1;
+        header->page_header.free_space = 0; // Header page has no free space
+        header->page_header.item_count = 0;
+        header->page_header.free_offset = 0;
+        header->page_header.special_size = 0;
+
+        // Initialize TablespaceHeader fields
+        strncpy(header->tablespace_name, name.c_str(), sizeof(header->tablespace_name) - 1);
+        header->tablespace_name[sizeof(header->tablespace_name) - 1] = '\0'; // Ensure null termination
+
+        header->tablespace_uuid = generateUuidV7();
+        header->database_uuid = db_uuid;
+
+        header->tablespace_id = tablespace_id;
+        header->page_size = page_size_;
+
+        // Get current time in microseconds
+        auto now = std::chrono::system_clock::now();
+        auto micros = std::chrono::duration_cast<std::chrono::microseconds>(
+            now.time_since_epoch()).count();
+        header->creation_time = static_cast<uint64_t>(micros);
+        header->last_checkpoint = static_cast<uint64_t>(micros);
+
+        header->autoextend_enabled = config.autoextend_enabled ? 1 : 0;
+        header->autoextend_size_mb = config.autoextend_size_mb;
+        header->max_size_mb = config.max_size_mb;
+
+        // Calculate initial pages: header (0) + FSM (1) + preallocated pages
+        uint64_t initial_total_pages = 2 + config.prealloc_pages;
+        header->total_pages = initial_total_pages;
+        header->free_pages = config.prealloc_pages; // FSM and header are allocated
+        header->next_page_number = 2; // Next page after header and FSM
+        header->fsm_root_page = 1; // FSM is always page 1
+
+        // Initialize transaction info (will be synced with database during checkpoint)
+        // For new tablespace, start with 0 - these will be updated by transaction manager
+        header->oldest_transaction_id = 0;
+        header->latest_completed_xid = 0;
+
+        // Step 5: Write TablespaceHeader to page 0
+        ssize_t bytes_written = ::pwrite(fd, header_buffer.get(), page_size_, 0);
+        if (bytes_written != static_cast<ssize_t>(page_size_))
+        {
+            ::close(fd);
+            ::unlink(path.c_str()); // Clean up partial file
+            SET_ERROR_CONTEXT(ctx, Status::IO_ERROR,
+                             ("Failed to write tablespace header (wrote " +
+                              std::to_string(bytes_written) + " of " +
+                              std::to_string(page_size_) + " bytes)").c_str());
+            return Status::IO_ERROR;
+        }
+
+        // Step 6: Initialize tablespace FSM (page 1)
+        auto fsm_buffer = std::make_unique<uint8_t[]>(page_size_);
+        memset(fsm_buffer.get(), 0, page_size_);
+        auto *fsm_header = reinterpret_cast<PageHeader *>(fsm_buffer.get());
+
+        fsm_header->magic = K_MAGIC_SBRD;
+        fsm_header->version = 1;
+        fsm_header->page_type = PAGE_TYPE_FREE_SPACE_MAP;
+        fsm_header->page_size = page_size_;
+        fsm_header->page_id = 1;
+        fsm_header->flags = 0;
+        fsm_header->lsn = 0;
+        memcpy(fsm_header->database_uuid, db_uuid.bytes.data(), 16);
+        fsm_header->generation = 1;
+
+        // Initialize FSM data structure
+        struct FSMData
+        {
+            uint32_t total_pages;
+            uint32_t free_pages;
+            uint32_t next_fsm_page;
+            uint8_t bitmap[1]; // First byte of bitmap
+        };
+        auto *fsm_data = reinterpret_cast<FSMData *>(fsm_buffer.get() + sizeof(PageHeader));
+
+        fsm_data->total_pages = static_cast<uint32_t>(initial_total_pages);
+        fsm_data->free_pages = static_cast<uint32_t>(config.prealloc_pages);
+        fsm_data->next_fsm_page = 0; // No next FSM page
+
+        // Mark pages 0 and 1 as allocated (header and FSM)
+        fsm_data->bitmap[0] = 0x03; // First 2 bits set (pages 0,1 allocated)
+
+        // If preallocating pages, mark them as free in bitmap
+        // Pages 2 onwards are free (bits starting from bit 2)
+        // We already set bitmap[0] = 0x03, so pages 2-7 in first byte are already 0 (free)
+        // This is correct
+
+        bytes_written = ::pwrite(fd, fsm_buffer.get(), page_size_, page_size_);
+        if (bytes_written != static_cast<ssize_t>(page_size_))
+        {
+            ::close(fd);
+            ::unlink(path.c_str()); // Clean up partial file
+            SET_ERROR_CONTEXT(ctx, Status::IO_ERROR,
+                             ("Failed to write tablespace FSM (wrote " +
+                              std::to_string(bytes_written) + " of " +
+                              std::to_string(page_size_) + " bytes)").c_str());
+            return Status::IO_ERROR;
+        }
+
+        // Step 7: Preallocate pages if requested
+        if (config.prealloc_pages > 0)
+        {
+            // Preallocate by writing zeros to extend the file
+            auto zero_page = std::make_unique<uint8_t[]>(page_size_);
+            memset(zero_page.get(), 0, page_size_);
+
+            for (uint32_t i = 0; i < config.prealloc_pages; i++)
+            {
+                uint64_t page_number = 2 + i; // Pages start at 2 (after header and FSM)
+                off_t offset = page_number * page_size_;
+
+                bytes_written = ::pwrite(fd, zero_page.get(), page_size_, offset);
+                if (bytes_written != static_cast<ssize_t>(page_size_))
+                {
+                    ::close(fd);
+                    ::unlink(path.c_str()); // Clean up partial file
+                    SET_ERROR_CONTEXT(ctx, Status::IO_ERROR,
+                                     ("Failed to preallocate page " + std::to_string(page_number) +
+                                      " (wrote " + std::to_string(bytes_written) + " of " +
+                                      std::to_string(page_size_) + " bytes)").c_str());
+                    return Status::IO_ERROR;
+                }
+            }
+
+            LOG_INFO(STORAGE, "Preallocated %u pages for tablespace %u",
+                    config.prealloc_pages, tablespace_id);
+        }
+
+        // Step 8: Sync file to disk
+        if (::fsync(fd) != 0)
+        {
+            ::close(fd);
+            ::unlink(path.c_str()); // Clean up partial file
+            SET_ERROR_CONTEXT(ctx, Status::IO_ERROR,
+                             ("Failed to sync tablespace file to disk (errno=" +
+                              std::to_string(errno) + ", " + std::string(strerror(errno)) + ")").c_str());
+            return Status::IO_ERROR;
+        }
+
+        // Step 9: Register file descriptor in Database
+        Status status = db_->registerTablespaceFile(tablespace_id, fd, ctx);
+        if (status != Status::OK)
+        {
+            ::close(fd);
+            ::unlink(path.c_str()); // Clean up file
+            SET_ERROR_CONTEXT(ctx, status,
+                             ("Failed to register tablespace " + std::to_string(tablespace_id) +
+                              " file descriptor").c_str());
+            return status;
+        }
+
+        LOG_INFO(STORAGE, "Successfully created tablespace %u: %s (name='%s', total_pages=%lu, free_pages=%lu, prealloc=%u)",
+                tablespace_id, path.c_str(), name.c_str(),
+                static_cast<unsigned long>(initial_total_pages),
+                static_cast<unsigned long>(config.prealloc_pages),
+                config.prealloc_pages);
+
+        return Status::OK;
     }
 
     // ========================================================================
