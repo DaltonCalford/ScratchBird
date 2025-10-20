@@ -7,6 +7,11 @@
 #include "scratchbird/core/heap_page.h"
 #include "scratchbird/core/config.h"
 #include "scratchbird/core/logger.h"
+#include "scratchbird/core/catalog_manager.h"
+#include "scratchbird/core/index_gc_interface.h"
+#include "scratchbird/core/btree.h"
+#include "scratchbird/core/hash_index.h"
+#include "scratchbird/core/gin_index.h"
 #include <chrono>
 #include <thread>
 #include <algorithm>
@@ -359,11 +364,30 @@ namespace scratchbird::core
             return 0;
         }
 
-        // Use HeapPage::prunePage() for physical tuple removal
+        // Use HeapPage for garbage collection
         HeapPage heap_page(reinterpret_cast<uint8_t *>(page_buffer), page_header->page_size);
 
         uint32_t tuples_pruned = 0;
         uint32_t space_reclaimed = 0;
+
+        // PHASE 2 TASK 2.6: Collect dead TIDs before pruning (for index cleanup)
+        std::vector<uint64_t> dead_tids;
+        Status collect_status = heap_page.collectDeadTuples(oit, &dead_tids, ctx);
+        if (collect_status != Status::OK)
+        {
+            LOG_WARNING(VACUUM, "Failed to collect dead TIDs from page %u: %d", page_id,
+                       static_cast<int>(collect_status));
+            // Continue with pruning even if collection failed
+        }
+
+        // PHASE 2 TASK 2.6: Clean indexes before pruning heap
+        uint64_t index_entries_removed = 0;
+        if (!dead_tids.empty())
+        {
+            index_entries_removed = cleanIndexes(page_id, dead_tids, ctx);
+            LOG_DEBUG(VACUUM, "Page %u: removed %lu index entries for %zu dead tuples",
+                     page_id, index_entries_removed, dead_tids.size());
+        }
 
         // Prune garbage tuples and defragment page
         Status prune_status = heap_page.prunePage(oit, &tuples_pruned, &space_reclaimed, ctx);
@@ -747,6 +771,173 @@ namespace scratchbird::core
         double priority = mark_count_score + age_score;
 
         return priority;
+    }
+
+    // PHASE 2 TASK 2.6: Clean indexes for dead tuples
+    uint64_t GarbageCollector::cleanIndexes(uint32_t page_id,
+                                            const std::vector<uint64_t> &dead_tids,
+                                            ErrorContext *ctx)
+    {
+        if (dead_tids.empty())
+        {
+            return 0;
+        }
+
+        uint64_t total_entries_removed = 0;
+
+        // PHASE 2 TASK 2.6: Full implementation of index cleanup
+        //
+        // Strategy: Since we don't have a direct page_id → table_id mapping,
+        // we use catalog metadata to find which table owns this page.
+        // This is acceptable for GC (background operation, not performance-critical).
+
+        auto *catalog = db_->catalog_manager();
+        if (!catalog)
+        {
+            LOG_WARNING(VACUUM, "Cannot clean indexes for page %u: catalog manager not available",
+                       page_id);
+            return 0;
+        }
+
+        // Get all tables from catalog and find which one owns this page
+        // Note: For a production system, we would cache this mapping or store
+        // table_id in the page header. For now, this linear scan is acceptable
+        // since tables are typically small in number and GC is not time-critical.
+
+        // First, get all schemas
+        std::vector<CatalogManager::SchemaInfo> schemas;
+        Status status = catalog->listSchemas(schemas, ctx);
+        if (status != Status::OK)
+        {
+            LOG_WARNING(VACUUM, "Cannot clean indexes for page %u: failed to list schemas (status %d)",
+                       page_id, static_cast<int>(status));
+            return 0;
+        }
+
+        // Collect tables from all schemas
+        std::vector<CatalogManager::TableInfo> tables;
+        for (const auto &schema : schemas)
+        {
+            std::vector<CatalogManager::TableInfo> schema_tables;
+            status = catalog->listTables(schema.schema_id, schema_tables, ctx);
+            if (status == Status::OK)
+            {
+                tables.insert(tables.end(), schema_tables.begin(), schema_tables.end());
+            }
+        }
+
+        // Find the table that owns this page
+        // We check if the page is in the valid range for each table
+        ID owning_table_id;
+        bool found_owner = false;
+
+        for (const auto &table : tables)
+        {
+            // Simple heuristic: assume pages are allocated sequentially for each table
+            // In a real system, we'd check the FSM or maintain explicit ownership records
+            // For now, we'll try to clean indexes for ALL tables (conservative approach)
+            // This ensures we don't miss any indexes, at the cost of some wasted work
+
+            // Get indexes for this table
+            std::vector<CatalogManager::IndexInfo> indexes;
+            status = catalog->listIndexesForTable(table.table_id, indexes, ctx);
+            if (status != Status::OK)
+            {
+                LOG_WARNING(VACUUM, "Failed to list indexes for table %s (status %d)",
+                           table.table_name.c_str(), static_cast<int>(status));
+                continue;
+            }
+
+            if (indexes.empty())
+            {
+                continue; // No indexes for this table
+            }
+
+            // Try to clean each index
+            // Note: removeDeadEntries() is idempotent, so it's safe to call
+            // even if the TIDs don't belong to this table's indexes
+            for (const auto &index_info : indexes)
+            {
+                // Open the index based on its type
+                IndexGCInterface *index = nullptr;
+                std::unique_ptr<BTree> btree;
+                std::unique_ptr<HashIndex> hash_index;
+                std::unique_ptr<GinIndex> gin_index;
+
+                switch (index_info.index_type)
+                {
+                case CatalogManager::IndexType::BTREE:
+                    btree = BTree::open(db_, index_info.index_id, index_info.root_page, ctx);
+                    if (btree)
+                    {
+                        index = btree.get();
+                    }
+                    break;
+
+                case CatalogManager::IndexType::HASH:
+                    hash_index = HashIndex::open(db_, index_info.index_id, index_info.root_page, ctx);
+                    if (hash_index)
+                    {
+                        index = hash_index.get();
+                    }
+                    break;
+
+                case CatalogManager::IndexType::GIN:
+                    gin_index = GinIndex::open(db_, index_info.index_id, index_info.root_page, ctx);
+                    if (gin_index)
+                    {
+                        index = gin_index.get();
+                    }
+                    break;
+
+                default:
+                    LOG_WARNING(VACUUM, "Unsupported index type %d for index %s (GC not implemented)",
+                               static_cast<int>(index_info.index_type), index_info.index_name.c_str());
+                    continue;
+                }
+
+                if (!index)
+                {
+                    LOG_WARNING(VACUUM, "Failed to open index %s for cleanup",
+                               index_info.index_name.c_str());
+                    continue;
+                }
+
+                // Call removeDeadEntries() on this index
+                uint64_t entries_removed = 0;
+                uint64_t pages_modified = 0;
+
+                Status remove_status = index->removeDeadEntries(dead_tids, &entries_removed,
+                                                               &pages_modified, ctx);
+
+                if (remove_status == Status::OK)
+                {
+                    if (entries_removed > 0)
+                    {
+                        total_entries_removed += entries_removed;
+                        found_owner = true; // Found at least one index that had these TIDs
+
+                        LOG_INFO(VACUUM, "Index %s (table %s): removed %lu entries from %lu pages",
+                                index->indexTypeName(), table.table_name.c_str(),
+                                entries_removed, pages_modified);
+                    }
+                }
+                else
+                {
+                    LOG_WARNING(VACUUM, "Index %s (table %s): GC failed with status %d",
+                               index->indexTypeName(), table.table_name.c_str(),
+                               static_cast<int>(remove_status));
+                }
+            }
+        }
+
+        if (!found_owner && !tables.empty())
+        {
+            // This is expected for non-heap pages (index pages, metadata pages, etc.)
+            LOG_DEBUG(VACUUM, "Page %u: no indexes cleaned (may not be a heap page)", page_id);
+        }
+
+        return total_entries_removed;
     }
 
 } // namespace scratchbird::core
