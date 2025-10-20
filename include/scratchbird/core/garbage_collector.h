@@ -9,6 +9,7 @@
 #include <condition_variable>
 #include <unordered_set>
 #include <map>
+#include <vector>
 
 namespace scratchbird::core
 {
@@ -195,6 +196,12 @@ namespace scratchbird::core
         uint64_t cleanPage(uint32_t page_id, uint64_t *space_reclaimed_out, ErrorContext *ctx);
         bool isTupleGarbage(uint64_t xmax, uint64_t oit) const;
         void readConfiguration();
+
+        // PHASE 2 TASK 2.6: Clean indexes for dead tuples
+        // Called after collectDeadTuples but before prunePage
+        // Returns number of index entries removed
+        uint64_t cleanIndexes(uint32_t page_id, const std::vector<uint64_t> &dead_tids,
+                              ErrorContext *ctx);
 
         // Statistics helpers
         void updateCooperativeStats(uint64_t tuples_removed, uint64_t pages_cleaned,

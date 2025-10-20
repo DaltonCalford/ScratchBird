@@ -4,11 +4,15 @@
 #include "scratchbird/core/buffer_pool.h"
 #include "scratchbird/core/page_manager.h"
 #include "scratchbird/core/connection_context.h"
+#include "scratchbird/core/logger.h"
+#include "scratchbird/core/heap_page.h" // For ItemPointer, TupleHeader, HeapPageSpecial
+#include "scratchbird/core/transaction_manager.h" // For Snapshot, TransactionState, isSnapshotVisible
 #include <cstring>
 #include <algorithm>
 #include <thread>
 #include <mutex>
 #include <vector>
+#include <set>
 #if defined(__x86_64__) || defined(_M_X64)
 #include <emmintrin.h> // SSE2
 #endif
@@ -322,7 +326,9 @@ namespace scratchbird
         }
 
         // Find all tuple IDs containing a specific key
+        // PHASE 1 TASK 1.1.3: Added Snapshot parameter (not yet used - Phase 1 Task 1.2 will implement filtering)
         std::vector<uint64_t> GinIndex::find(const void *key_data, size_t key_len,
+                                             Snapshot *snapshot,
                                              ErrorContext *ctx)
         {
             std::vector<uint64_t> results;
@@ -347,16 +353,16 @@ namespace scratchbird
                 {
                     results.clear();
                 }
+                else
+                {
+                    // PHASE 1 TASK 1.4: Filter TIDs from main posting list by heap tuple visibility
+                    // This ensures we only return TIDs for tuples that are visible to the snapshot
+                    results = filterTidsByVisibility(results, snapshot, ctx);
+                }
             }
 
             // Scan pending list for matching keys with visibility check
-            // Get current snapshot for visibility checking
-            ConnectionContext *conn_ctx = ConnectionContext::getCurrent();
-            const TransactionManager::Snapshot *snapshot = nullptr;
-            if (conn_ctx != nullptr)
-            {
-                snapshot = conn_ctx->getSnapshot();
-            }
+            // PHASE 1 TASK 1.4: Use passed-in snapshot parameter instead of local snapshot
 
             // Pin meta page to get pending list head
             uint8_t *meta_data = nullptr;
@@ -385,20 +391,9 @@ namespace scratchbird
                     {
                         const GinPendingEntry &entry = pending->gpp_entries[i];
 
-                        // Check visibility: is this entry's transaction visible to current snapshot?
-                        bool is_visible = false;
-                        if (snapshot != nullptr)
-                        {
-                            // Use snapshot isolation
-                            is_visible = db_->transaction_manager()->isSnapshotVisible(entry.xmin, snapshot);
-                        }
-                        else
-                        {
-                            // Fallback: READ COMMITTED semantics (always see committed)
-                            TransactionState state;
-                            Status vis_status = db_->transaction_manager()->getTransactionState(entry.xmin, state, ctx);
-                            is_visible = (vis_status == Status::OK && state == TransactionState::COMMITTED);
-                        }
+                        // PHASE 1 TASK 1.4: Check visibility using passed-in snapshot or transaction state
+                        // Pending list entries have xmin field for MVCC visibility
+                        bool is_visible = isTransactionVisible(entry.xmin, snapshot, ctx);
 
                         // If visible and key matches, add TID to results
                         if (is_visible)
@@ -1930,7 +1925,9 @@ namespace scratchbird
 
         // Multi-key operations (Phase 4)
         // Find TIDs matching ALL keys (AND operation)
+        // PHASE 1 TASK 1.1.3: Added Snapshot parameter (not yet used - Phase 1 Task 1.2 will implement filtering)
         std::vector<uint64_t> GinIndex::findAll(const std::vector<std::vector<uint8_t>> &keys,
+                                                Snapshot *snapshot,
                                                 ErrorContext *ctx)
         {
             std::vector<uint64_t> result;
@@ -1965,7 +1962,10 @@ namespace scratchbird
                     return result;
                 }
 
-                // If any key has no TIDs, intersection is empty
+                // PHASE 1 TASK 1.4: Filter TIDs by heap tuple visibility
+                tids = filterTidsByVisibility(tids, snapshot, ctx);
+
+                // If any key has no visible TIDs, intersection is empty
                 if (tids.empty())
                 {
                     return result;
@@ -1981,7 +1981,9 @@ namespace scratchbird
         }
 
         // Find TIDs matching ANY key (OR operation)
+        // PHASE 1 TASK 1.1.3: Added Snapshot parameter (not yet used - Phase 1 Task 1.2 will implement filtering)
         std::vector<uint64_t> GinIndex::findAny(const std::vector<std::vector<uint8_t>> &keys,
+                                                Snapshot *snapshot,
                                                 ErrorContext *ctx)
         {
             std::vector<uint64_t> result;
@@ -2016,6 +2018,9 @@ namespace scratchbird
                     continue;
                 }
 
+                // PHASE 1 TASK 1.4: Filter TIDs by heap tuple visibility
+                tids = filterTidsByVisibility(tids, snapshot, ctx);
+
                 // Skip empty TID lists
                 if (tids.empty())
                 {
@@ -2025,7 +2030,7 @@ namespace scratchbird
                 tid_lists.push_back(std::move(tids));
             }
 
-            // If no keys had TIDs, return empty
+            // If no keys had visible TIDs, return empty
             if (tid_lists.empty())
             {
                 return result;
@@ -2159,6 +2164,125 @@ namespace scratchbird
             return result;
         }
 
+        // ===== PHASE 1 TASK 1.4: MVCC Visibility Helpers =====
+
+        // Helper: Check if a transaction is visible to a snapshot
+        // Returns true if the transaction (xmin) is visible to the given snapshot
+        bool GinIndex::isTransactionVisible(uint64_t xmin, const Snapshot *snapshot, ErrorContext *ctx)
+        {
+            // NULL snapshot means no filtering - all committed transactions visible
+            if (snapshot == nullptr)
+            {
+                // Fall back to READ COMMITTED semantics - check if transaction is committed
+                TransactionState state;
+                Status status = db_->transaction_manager()->getTransactionState(xmin, state, ctx);
+                return (status == Status::OK && state == TransactionState::COMMITTED);
+            }
+
+            // Use snapshot visibility check from TransactionManager
+            // Cast from incomplete type to actual TransactionManager::Snapshot
+            return db_->transaction_manager()->isSnapshotVisible(xmin,
+                reinterpret_cast<const TransactionManager::Snapshot *>(snapshot));
+        }
+
+        // Helper: Filter TID list by heap tuple visibility
+        // For each TID, checks if the corresponding heap tuple is visible to the snapshot
+        // Returns a new vector containing only visible TIDs
+        std::vector<uint64_t> GinIndex::filterTidsByVisibility(const std::vector<uint64_t> &tids,
+                                                                const Snapshot *snapshot,
+                                                                ErrorContext *ctx)
+        {
+            std::vector<uint64_t> visible_tids;
+
+            // If no snapshot provided, return all TIDs (no filtering)
+            if (snapshot == nullptr)
+            {
+                return tids;
+            }
+
+            // Reserve space to avoid reallocations
+            visible_tids.reserve(tids.size());
+
+            // For each TID, we need to check the heap tuple's visibility
+            // TID format: (page_id << 32) | (item_id << 16)
+            // We'll need to pin the page and check the tuple header's xmin/xmax
+
+            auto *buffer_pool = db_->buffer_pool();
+            auto *txn_manager = db_->transaction_manager();
+
+            for (uint64_t tid : tids)
+            {
+                // Extract page_id and item_id from TID
+                uint32_t page_id = static_cast<uint32_t>(tid >> 32);
+                uint16_t item_id = static_cast<uint16_t>((tid >> 16) & 0xFFFF);
+
+                // Pin the heap page
+                uint8_t *page_data = nullptr;
+                Status status = buffer_pool->pinPage(page_id, (void **)&page_data, ctx);
+                if (status != Status::OK)
+                {
+                    // If we can't read the page, skip this TID
+                    continue;
+                }
+
+                // Get page header to read tuple
+                auto *page_header = reinterpret_cast<PageHeader *>(page_data);
+
+                // Get item pointer array (starts after page header)
+                auto *item_pointers = reinterpret_cast<struct ItemPointer *>(page_data + sizeof(PageHeader));
+
+                // Check if item_id is valid
+                // We need to calculate how many items are on the page
+                // This requires reading the HeapPageSpecial at the end of the page
+                auto *special = reinterpret_cast<struct HeapPageSpecial *>(
+                    page_data + db_->page_size() - sizeof(struct HeapPageSpecial));
+
+                uint16_t item_count = special->pd_lower / sizeof(struct ItemPointer);
+
+                if (item_id >= item_count)
+                {
+                    // Invalid item_id
+                    buffer_pool->unpinPage(page_id, false, ctx);
+                    continue;
+                }
+
+                // Get the item pointer
+                struct ItemPointer *item_ptr = &item_pointers[item_id];
+
+                // Check if item is deleted or unused
+                if (item_ptr->isDeleted() || item_ptr->isUnused())
+                {
+                    buffer_pool->unpinPage(page_id, false, ctx);
+                    continue;
+                }
+
+                // Get tuple header
+                auto *tuple_header = reinterpret_cast<struct TupleHeader *>(page_data + item_ptr->offset);
+
+                // Check visibility using snapshot
+                // Tuple is visible if:
+                // 1. xmin is visible (inserting transaction committed and visible to snapshot)
+                // 2. xmax is not visible (deleting transaction not yet visible, or no deletion)
+
+                // Cast snapshot pointer to actual TransactionManager::Snapshot type
+                auto *txn_snapshot = reinterpret_cast<const TransactionManager::Snapshot *>(snapshot);
+
+                bool xmin_visible = txn_manager->isSnapshotVisible(tuple_header->xmin, txn_snapshot);
+                bool xmax_visible = (tuple_header->xmax != 0) &&
+                                    txn_manager->isSnapshotVisible(tuple_header->xmax, txn_snapshot);
+
+                // Tuple is visible if inserted by visible transaction and not deleted by visible transaction
+                if (xmin_visible && !xmax_visible)
+                {
+                    visible_tids.push_back(tid);
+                }
+
+                buffer_pool->unpinPage(page_id, false, ctx);
+            }
+
+            return visible_tids;
+        }
+
         // ===== Phase 5: Advanced Query Operations =====
 
         // Estimate cardinality for a key (for query optimization)
@@ -2205,7 +2329,7 @@ namespace scratchbird
             // If optimization is disabled, use standard findAll
             if (!options.optimize_key_order)
             {
-                return findAll(keys, ctx);
+                return findAll(keys, nullptr, ctx);
             }
 
             // Estimate cardinality for each key
@@ -2236,7 +2360,8 @@ namespace scratchbird
             }
 
             // Use standard findAll with optimized key order
-            return findAll(sorted_keys, ctx);
+            // PHASE 1 TASK 1.1.5: Pass nullptr for snapshot (Phase 1 Task 1.2 will pass actual snapshot)
+            return findAll(sorted_keys, nullptr, ctx);
         }
 
         // Optimized multi-key OR query
@@ -2248,7 +2373,7 @@ namespace scratchbird
             // For OR queries, key order doesn't significantly affect performance
             // So we just delegate to standard findAny
             // Future optimization: parallel execution
-            return findAny(keys, ctx);
+            return findAny(keys, nullptr, ctx);
         }
 
         // PostgreSQL GIN operator support
@@ -2264,11 +2389,11 @@ namespace scratchbird
             {
             case GinOperator::CONTAINS: // @> - left contains right
                 // All right keys must be present in documents
-                return findAll(right_keys, ctx);
+                return findAll(right_keys, nullptr, ctx);
 
             case GinOperator::CONTAINED_BY: // <@ - left contained by right
                 // At least one left key must be present
-                return findAny(left_keys, ctx);
+                return findAny(left_keys, nullptr, ctx);
 
             case GinOperator::OVERLAP: // && - has common elements
                 // Any key from either set
@@ -2276,7 +2401,7 @@ namespace scratchbird
                     std::vector<std::vector<uint8_t>> all_keys;
                     all_keys.insert(all_keys.end(), left_keys.begin(), left_keys.end());
                     all_keys.insert(all_keys.end(), right_keys.begin(), right_keys.end());
-                    return findAny(all_keys, ctx);
+                    return findAny(all_keys, nullptr, ctx);
                 }
 
             case GinOperator::EQUALS: // = - exact match
@@ -2285,24 +2410,24 @@ namespace scratchbird
                     std::vector<std::vector<uint8_t>> all_keys;
                     all_keys.insert(all_keys.end(), left_keys.begin(), left_keys.end());
                     all_keys.insert(all_keys.end(), right_keys.begin(), right_keys.end());
-                    return findAll(all_keys, ctx);
+                    return findAll(all_keys, nullptr, ctx);
                 }
 
             case GinOperator::EXISTS: // ? - key exists
                 // At least one left key exists
-                return findAny(left_keys, ctx);
+                return findAny(left_keys, nullptr, ctx);
 
             case GinOperator::EXISTS_ANY: // ?| - any key exists
                 // At least one key from the set exists
-                return findAny(left_keys, ctx);
+                return findAny(left_keys, nullptr, ctx);
 
             case GinOperator::EXISTS_ALL: // ?& - all keys exist
                 // All keys must exist
-                return findAll(left_keys, ctx);
+                return findAll(left_keys, nullptr, ctx);
 
             case GinOperator::TEXT_SEARCH: // @@ - full text search
                 // Treat as ALL operation (all terms must be present)
-                return findAll(left_keys, ctx);
+                return findAll(left_keys, nullptr, ctx);
 
             default:
                 SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Unknown GIN operator");
@@ -2686,7 +2811,8 @@ namespace scratchbird
             if (max_threads <= 1 || keys.size() <= 1)
             {
                 // Use standard implementation for single thread or single key
-                return findAll(keys, ctx);
+                // PHASE 1 TASK 1.1.5: Pass nullptr for snapshot (Phase 1 Task 1.2 will pass actual snapshot)
+                return findAll(keys, nullptr, ctx);
             }
 
             // Parallel key lookup with thread pool
@@ -2767,7 +2893,7 @@ namespace scratchbird
 
             if (max_threads <= 1 || keys.size() <= 1)
             {
-                return findAny(keys, ctx);
+                return findAny(keys, nullptr, ctx);
             }
 
             // Parallel key lookup
@@ -2847,7 +2973,7 @@ namespace scratchbird
             }
 
             // Union all matching keys' TID lists
-            return findAny(matching_keys, ctx);
+            return findAny(matching_keys, nullptr, ctx);
         }
 
         // Helper: Scan entry tree for keys in range
@@ -3084,7 +3210,7 @@ namespace scratchbird
             }
 
             // Union all matching keys
-            return findAny(matching_keys, ctx);
+            return findAny(matching_keys, nullptr, ctx);
         }
 
         // Helper: Levenshtein distance
@@ -3170,6 +3296,169 @@ namespace scratchbird
             SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED,
                               "Full BK-tree optimization not yet implemented - use findFuzzy() for basic support");
             return result;
+        }
+
+        // PHASE 2 TASK 2.4: Remove index entries pointing to dead tuples
+        Status GinIndex::removeDeadEntries(const std::vector<uint64_t> &dead_tids,
+                                           uint64_t *entries_removed_out,
+                                           uint64_t *pages_modified_out,
+                                           ErrorContext *ctx)
+        {
+            // Initialize output parameters
+            uint64_t total_entries_removed = 0;
+            uint64_t total_pages_modified = 0;
+            bool had_errors = false;
+
+            // Early exit if empty
+            if (dead_tids.empty())
+            {
+                if (entries_removed_out)
+                    *entries_removed_out = 0;
+                if (pages_modified_out)
+                    *pages_modified_out = 0;
+                return Status::OK;
+            }
+
+            // Create sorted set for O(log D) lookup
+            std::set<uint64_t> dead_set(dead_tids.begin(), dead_tids.end());
+
+            // ===== Step 1: Remove dead TIDs from pending list =====
+            // The pending list contains recent insertions not yet merged into main index
+            // Format: chain of SBGinPendingListPage with GinPendingEntry arrays
+
+            uint8_t *meta_data = nullptr;
+            Status status = buffer_pool_->pinPage(meta_page_, (void **)&meta_data, ctx);
+            if (status != Status::OK)
+            {
+                LOG_WARNING(VACUUM, "GIN GC: Failed to pin meta page %u: %d",
+                            meta_page_, static_cast<int>(status));
+                return Status::IO_ERROR;
+            }
+
+            auto *meta = reinterpret_cast<SBGinIndexMetaPage *>(meta_data);
+            uint64_t pending_head = meta->gin_pending_list_head;
+            uint64_t pending_count_before = meta->gin_pending_list_count;
+
+            buffer_pool_->unpinPage(meta_page_, false, ctx);
+
+            // Scan pending list chain
+            uint64_t current_page = pending_head;
+            uint64_t pending_entries_removed = 0;
+
+            while (current_page != 0)
+            {
+                uint8_t *page_data = nullptr;
+                status = buffer_pool_->pinPage(static_cast<uint32_t>(current_page), (void **)&page_data, ctx);
+                if (status != Status::OK)
+                {
+                    LOG_WARNING(VACUUM, "GIN GC: Failed to pin pending list page %lu: %d",
+                                current_page, static_cast<int>(status));
+                    had_errors = true;
+                    break;
+                }
+
+                auto *pending_page = reinterpret_cast<SBGinPendingListPage *>(page_data);
+                uint16_t entry_count = pending_page->gpp_entry_count;
+                uint64_t next_page = pending_page->gpp_next_page;
+
+                bool page_modified = false;
+
+                // Scan entries in this page
+                // We mark entries as deleted by setting tid = 0
+                for (uint16_t i = 0; i < entry_count && i < MAX_PENDING_ENTRIES_PER_PAGE; i++)
+                {
+                    GinPendingEntry &entry = pending_page->gpp_entries[i];
+
+                    // Check if already deleted (tid == 0)
+                    if (entry.tid == 0)
+                    {
+                        continue;
+                    }
+
+                    // Check if this TID is in the dead set
+                    if (dead_set.find(entry.tid) != dead_set.end())
+                    {
+                        // Mark as deleted
+                        entry.tid = 0;
+                        pending_entries_removed++;
+                        page_modified = true;
+                    }
+                }
+
+                if (page_modified)
+                {
+                    total_pages_modified++;
+                }
+
+                buffer_pool_->unpinPage(static_cast<uint32_t>(current_page), page_modified, ctx);
+
+                // Move to next page in chain
+                current_page = next_page;
+            }
+
+            total_entries_removed += pending_entries_removed;
+
+            // Update meta page pending count
+            if (pending_entries_removed > 0)
+            {
+                status = buffer_pool_->pinPage(meta_page_, (void **)&meta_data, ctx);
+                if (status == Status::OK)
+                {
+                    meta = reinterpret_cast<SBGinIndexMetaPage *>(meta_data);
+                    if (meta->gin_pending_list_count >= pending_entries_removed)
+                    {
+                        meta->gin_pending_list_count -= pending_entries_removed;
+                    }
+                    else
+                    {
+                        meta->gin_pending_list_count = 0;
+                    }
+                    buffer_pool_->unpinPage(meta_page_, true, ctx);
+                    total_pages_modified++;
+                }
+            }
+
+            // ===== Step 2: Remove dead TIDs from posting lists/trees =====
+            // This is complex because we need to:
+            // 1. Scan all keys in the entry tree
+            // 2. For each key, load its posting list/tree
+            // 3. Remove dead TIDs from the posting structure
+            // 4. Recompress if needed
+            // 5. Mark empty posting lists for deletion
+
+            // For now, we implement a simplified version that handles uncompressed posting lists
+            // Full implementation would handle:
+            // - Compressed posting lists (decompress → filter → recompress)
+            // - Posting trees (scan tree leaves, remove TIDs)
+            // - Empty posting list cleanup
+
+            // This is a placeholder for the full implementation
+            // The full algorithm would:
+            //
+            // 1. Navigate to leftmost leaf of entry tree
+            // 2. For each entry in entry tree leaves:
+            //    a. Load posting page
+            //    b. Check gpl_is_tree flag
+            //    c. If tree: scan posting tree leaves, remove dead TIDs
+            //    d. If list:
+            //       - If compressed: decompress → filter → recompress
+            //       - If uncompressed: scan array, mark deleted
+            //    e. If posting list becomes empty, mark key for deletion
+            // 3. Remove empty keys from entry tree
+            //
+            // This requires significant complexity, so we log a warning and return
+
+            LOG_WARNING(VACUUM, "GIN GC: Removed %lu entries from pending list, "
+                               "but posting list/tree pruning not yet implemented",
+                        pending_entries_removed);
+
+            // Set output parameters
+            if (entries_removed_out)
+                *entries_removed_out = total_entries_removed;
+            if (pages_modified_out)
+                *pages_modified_out = total_pages_modified;
+
+            return had_errors ? Status::IO_ERROR : Status::OK;
         }
 
     } // namespace core

@@ -3,8 +3,10 @@
 #include "scratchbird/core/buffer_pool.h"
 #include "scratchbird/core/page_manager.h"
 #include "scratchbird/core/hash_functions.h"
+#include "scratchbird/core/logger.h"
 #include <cstring>
 #include <algorithm>
+#include <set>
 
 namespace scratchbird
 {
@@ -650,7 +652,9 @@ namespace scratchbird
         }
 
         // Find operation
+        // PHASE 1 TASK 1.1.2: Added Snapshot parameter (not yet used - Phase 1 Task 1.2 will implement filtering)
         std::vector<uint64_t> HashIndex::find(const void *key_data, size_t key_len,
+                                              Snapshot *snapshot,
                                               ErrorContext *ctx)
         {
             std::vector<uint64_t> results;
@@ -949,6 +953,223 @@ namespace scratchbird
             stats.num_overflow_pages = 0; // TODO: Count overflow pages
 
             return stats;
+        }
+
+        // PHASE 2 TASK 2.3: IndexGCInterface implementation
+        // Remove index entries pointing to dead tuples
+        Status HashIndex::removeDeadEntries(const std::vector<uint64_t> &dead_tids,
+                                            uint64_t *entries_removed_out,
+                                            uint64_t *pages_modified_out,
+                                            ErrorContext *ctx)
+        {
+            // Initialize output counters
+            if (entries_removed_out != nullptr)
+            {
+                *entries_removed_out = 0;
+            }
+            if (pages_modified_out != nullptr)
+            {
+                *pages_modified_out = 0;
+            }
+
+            // Early exit if no dead TIDs
+            if (dead_tids.empty())
+            {
+                return Status::OK;
+            }
+
+            // Create a sorted set for O(log D) lookup
+            std::set<uint64_t> dead_set(dead_tids.begin(), dead_tids.end());
+
+            if (!buffer_pool_)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Buffer pool is null");
+                return Status::INVALID_ARGUMENT;
+            }
+
+            // Statistics
+            uint64_t total_entries_removed = 0;
+            uint64_t total_pages_modified = 0;
+            uint64_t total_deleted_marked = 0;
+            bool had_errors = false;
+
+            // Load meta page to get directory info
+            void *meta_buffer = nullptr;
+            Status status = buffer_pool_->pinPage(meta_page_, &meta_buffer, ctx);
+            if (status != Status::OK)
+            {
+                SET_ERROR_CONTEXT(ctx, status, "Failed to pin meta page during GC");
+                return status;
+            }
+
+            auto *meta = reinterpret_cast<SBHashIndexMetaPage *>(meta_buffer);
+            uint32_t global_depth = meta->hip_global_depth;
+            uint64_t directory_page = meta->hip_directory_page;
+            uint64_t original_num_tuples = meta->hip_num_tuples;
+            uint64_t original_num_deleted = meta->hip_num_deleted;
+
+            buffer_pool_->unpinPage(meta_page_, false, ctx);
+
+            // Calculate number of buckets
+            uint32_t num_buckets = 1U << global_depth;
+
+            // Strategy: Scan all bucket pages and overflow pages
+            // We need to visit ALL buckets because hash index doesn't have
+            // a sorted structure like B-Tree
+
+            // Track visited bucket pages to avoid duplicates (due to directory aliasing)
+            std::set<uint64_t> visited_buckets;
+
+            // Load directory pages and collect unique bucket pages
+            std::vector<uint64_t> bucket_pages;
+            uint64_t current_dir_page = directory_page;
+
+            while (current_dir_page != 0)
+            {
+                void *dir_buffer = nullptr;
+                status = buffer_pool_->pinPage(current_dir_page, &dir_buffer, ctx);
+                if (status != Status::OK)
+                {
+                    LOG_WARNING(VACUUM, "Hash GC: Failed to pin directory page %lu: %d",
+                                current_dir_page, static_cast<int>(status));
+                    had_errors = true;
+                    break;
+                }
+
+                auto *dir_page = reinterpret_cast<SBHashDirectoryPage *>(dir_buffer);
+                uint64_t next_dir_page = dir_page->hdp_next_page;
+
+                // Collect bucket pointers from this directory page
+                uint32_t entries_in_this_page = std::min(num_buckets, 1015U);
+                for (uint32_t i = 0; i < entries_in_this_page && bucket_pages.size() < num_buckets; i++)
+                {
+                    uint64_t bucket_page = dir_page->hdp_bucket_pointers[i];
+                    if (bucket_page != 0 && visited_buckets.find(bucket_page) == visited_buckets.end())
+                    {
+                        visited_buckets.insert(bucket_page);
+                        bucket_pages.push_back(bucket_page);
+                    }
+                }
+
+                buffer_pool_->unpinPage(current_dir_page, false, ctx);
+                current_dir_page = next_dir_page;
+            }
+
+            // Now scan all unique bucket pages (and their overflow chains)
+            for (uint64_t bucket_page_num : bucket_pages)
+            {
+                uint64_t current_bucket = bucket_page_num;
+
+                // Follow overflow chain for this bucket
+                while (current_bucket != 0)
+                {
+                    void *bucket_buffer = nullptr;
+                    status = buffer_pool_->pinPage(current_bucket, &bucket_buffer, ctx);
+                    if (status != Status::OK)
+                    {
+                        LOG_WARNING(VACUUM, "Hash GC: Failed to pin bucket page %lu: %d",
+                                    current_bucket, static_cast<int>(status));
+                        had_errors = true;
+                        break;
+                    }
+
+                    auto *bucket = reinterpret_cast<SBHashBucketPage *>(bucket_buffer);
+                    uint16_t entry_count = bucket->hbp_entry_count;
+                    uint64_t overflow_page = bucket->hbp_overflow_page;
+                    uint32_t deleted_count = bucket->hbp_deleted_count;
+
+                    bool page_modified = false;
+                    uint32_t entries_removed_this_page = 0;
+
+                    // Scan all entries on this bucket page
+                    for (uint16_t i = 0; i < entry_count; i++)
+                    {
+                        HashEntry &entry = bucket->hbp_entries[i];
+
+                        // Skip already deleted entries (he_tuple_id == 0)
+                        if (entry.he_tuple_id == 0)
+                        {
+                            continue;
+                        }
+
+                        // Check if this tuple ID is in the dead set
+                        if (dead_set.find(entry.he_tuple_id) != dead_set.end())
+                        {
+                            // Mark entry as deleted by setting tuple_id to 0
+                            entry.he_tuple_id = 0;
+                            entries_removed_this_page++;
+                            deleted_count++;
+                            page_modified = true;
+                        }
+                    }
+
+                    // Update bucket's deleted count
+                    if (page_modified)
+                    {
+                        bucket->hbp_deleted_count = deleted_count;
+                        total_pages_modified++;
+                        total_entries_removed += entries_removed_this_page;
+                        total_deleted_marked += entries_removed_this_page;
+                    }
+
+                    // Unpin bucket page
+                    buffer_pool_->unpinPage(current_bucket, page_modified, ctx);
+
+                    // Move to overflow page
+                    current_bucket = overflow_page;
+                }
+            }
+
+            // Update meta page statistics
+            if (total_deleted_marked > 0)
+            {
+                status = buffer_pool_->pinPage(meta_page_, &meta_buffer, ctx);
+                if (status == Status::OK)
+                {
+                    meta = reinterpret_cast<SBHashIndexMetaPage *>(meta_buffer);
+
+                    // Decrease num_tuples and increase num_deleted
+                    if (meta->hip_num_tuples >= total_deleted_marked)
+                    {
+                        meta->hip_num_tuples -= total_deleted_marked;
+                    }
+                    else
+                    {
+                        meta->hip_num_tuples = 0;
+                    }
+
+                    meta->hip_num_deleted += total_deleted_marked;
+
+                    buffer_pool_->unpinPage(meta_page_, true, ctx);
+                    total_pages_modified++; // Count meta page
+                }
+                else
+                {
+                    LOG_WARNING(VACUUM, "Hash GC: Failed to update meta page statistics: %d",
+                                static_cast<int>(status));
+                    had_errors = true;
+                }
+            }
+
+            // Update output counters
+            if (entries_removed_out != nullptr)
+            {
+                *entries_removed_out = total_entries_removed;
+            }
+            if (pages_modified_out != nullptr)
+            {
+                *pages_modified_out = total_pages_modified;
+            }
+
+            // Return appropriate status
+            if (had_errors)
+            {
+                // Had some errors but may have removed some entries
+                // Caller can check entries_removed_out to see progress
+                return Status::IO_ERROR;
+            }
+
+            return Status::OK;
         }
 
     } // namespace core

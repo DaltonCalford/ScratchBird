@@ -263,6 +263,12 @@ namespace scratchbird::core
         auto prunePage(uint64_t oit, uint32_t *tuples_pruned_out, uint32_t *space_reclaimed_out,
                        ErrorContext *ctx = nullptr) -> Status;
 
+        // PHASE 2 TASK 2.6: Collect dead tuple IDs (for index cleanup)
+        // Returns vector of TIDs for tuples that are garbage (xmax < oit and xmax committed)
+        // Called before prunePage() to allow indexes to be cleaned
+        auto collectDeadTuples(uint64_t oit, std::vector<uint64_t> *dead_tids_out,
+                               ErrorContext *ctx = nullptr) -> Status;
+
         // Get page header
         auto header() -> PageHeader *
         {

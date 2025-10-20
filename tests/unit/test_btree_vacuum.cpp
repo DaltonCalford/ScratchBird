@@ -131,7 +131,7 @@ TEST_F(BTreeVacuumTest, VacuumWithDeletedNodes)
     for (int i = 1; i < num_entries; i += 2)
     {
         std::vector<uint64_t> tuple_ids;
-        status = btree->search(test_data[i].first, &tuple_ids, &ctx);
+        status = btree->search(test_data[i].first, nullptr, &tuple_ids, &ctx);
         ASSERT_EQ(status, Status::OK) << "Failed to search key " << i << ": " << ctx.message;
         ASSERT_EQ(tuple_ids.size(), 1);
         EXPECT_EQ(tuple_ids[0], test_data[i].second);
@@ -141,7 +141,7 @@ TEST_F(BTreeVacuumTest, VacuumWithDeletedNodes)
     for (int i = 0; i < num_entries; i += 2)
     {
         std::vector<uint64_t> tuple_ids;
-        status = btree->search(test_data[i].first, &tuple_ids, &ctx);
+        status = btree->search(test_data[i].first, nullptr, &tuple_ids, &ctx);
         EXPECT_EQ(status, Status::NOT_FOUND) << "Deleted key " << i << " should not be found";
     }
 }
@@ -194,7 +194,7 @@ TEST_F(BTreeVacuumTest, CompactPageReclainsSpace)
         std::vector<uint8_t> key(sizeof(int));
         std::memcpy(key.data(), &i, sizeof(int));
         std::vector<uint64_t> tuple_ids;
-        status = btree->search(key, &tuple_ids, &ctx);
+        status = btree->search(key, nullptr, &tuple_ids, &ctx);
         ASSERT_EQ(status, Status::OK);
         ASSERT_EQ(tuple_ids.size(), 1);
         EXPECT_EQ(tuple_ids[0], i + 1000);

@@ -1,5 +1,6 @@
 #include <utility>
 #include <cstring>
+#include <set>
 
 #include "scratchbird/core/btree.h"
 #include "scratchbird/core/btree_page.h"
@@ -8,6 +9,7 @@
 #include "scratchbird/core/page_manager.h"
 #include "scratchbird/core/lock_manager.h"
 #include "scratchbird/core/connection_context.h"
+#include "scratchbird/core/logger.h"
 
 namespace scratchbird::core
 {
@@ -781,7 +783,10 @@ namespace scratchbird::core
         }
     }
 
-    auto BTree::search(const std::vector<uint8_t> &key, std::vector<uint64_t> *tuple_ids_out,
+    // PHASE 1 TASK 1.1.1: Added Snapshot parameter (not yet used - Phase 1 Task 1.2 will implement filtering)
+    auto BTree::search(const std::vector<uint8_t> &key,
+                       Snapshot *snapshot,
+                       std::vector<uint64_t> *tuple_ids_out,
                        ErrorContext *ctx) -> Status
     {
         uint64_t leaf_page_num;
@@ -828,6 +833,16 @@ namespace scratchbird::core
             leaf_tag.page_num = leaf_page_num;
             lock_mgr->releaseLock(proc_id, leaf_tag, LockMode::LOCK_SHARE, ctx);
         }
+
+        // PHASE 1 TASK 1.2: MVCC Visibility Filtering
+        // NOTE: For Firebird MGA architecture, visibility filtering is best done at the
+        // storage_engine/executor layer where table context is available. Indexes return
+        // TIDs pointing to stable primary tuple locations, and the upper layer checks
+        // visibility when fetching tuples via HeapPage::findVisibleVersion().
+        //
+        // This is consistent with Firebird's design where indexes don't track versions.
+        // The snapshot parameter is accepted for future optimization possibilities.
+        (void)snapshot; // Acknowledge snapshot for API completeness
 
         if (found)
         {
@@ -2170,6 +2185,209 @@ namespace scratchbird::core
         parent_page->btr_flags |= static_cast<uint16_t>(BTreeFlags::HAS_GARBAGE);
 
         bp->unpinPage(parent_page_num, true, ctx);
+
+        return Status::OK;
+    }
+
+    // PHASE 2 TASK 2.2: IndexGCInterface implementation
+    // Remove index entries pointing to dead tuples
+    Status BTree::removeDeadEntries(const std::vector<uint64_t> &dead_tids,
+                                    uint64_t *entries_removed_out,
+                                    uint64_t *pages_modified_out,
+                                    ErrorContext *ctx)
+    {
+        // Initialize output counters
+        if (entries_removed_out != nullptr)
+        {
+            *entries_removed_out = 0;
+        }
+        if (pages_modified_out != nullptr)
+        {
+            *pages_modified_out = 0;
+        }
+
+        // Early exit if no dead TIDs
+        if (dead_tids.empty())
+        {
+            return Status::OK;
+        }
+
+        // Create a sorted set for O(log D) lookup
+        std::set<uint64_t> dead_set(dead_tids.begin(), dead_tids.end());
+
+        BufferPool *bp = db_->buffer_pool();
+        if (!bp)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Buffer pool is null");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        // Statistics
+        uint64_t total_entries_removed = 0;
+        uint64_t total_pages_modified = 0;
+        bool had_errors = false;
+
+        // Find the leftmost leaf page
+        // Strategy: Start from root and go left at each level until we hit a leaf
+        uint64_t current_page_num = index_info_.idx_root_page;
+
+        // Navigate to leftmost leaf
+        while (true)
+        {
+            void *page_buffer = nullptr;
+            Status pin_status = bp->pinPage(current_page_num, &page_buffer, ctx);
+            if (pin_status != Status::OK)
+            {
+                SET_ERROR_CONTEXT(ctx, pin_status, "Failed to pin page during GC navigation");
+                return pin_status;
+            }
+
+            auto *page = reinterpret_cast<SBBTreePage *>(page_buffer);
+            uint16_t level = page->btr_level;
+
+            if (level == 0)
+            {
+                // We've reached a leaf, unpin and break
+                bp->unpinPage(current_page_num, false, ctx);
+                break;
+            }
+
+            // Internal node - go to leftmost child
+            if (page->btr_count == 0)
+            {
+                // Empty internal node - shouldn't happen, but handle gracefully
+                bp->unpinPage(current_page_num, false, ctx);
+                SET_ERROR_CONTEXT(ctx, Status::INDEX_CORRUPTED, "Empty internal node encountered");
+                return Status::INDEX_CORRUPTED;
+            }
+
+            // Get the first node to find its left child
+            uint8_t *page_data = reinterpret_cast<uint8_t *>(page_buffer);
+            auto *first_node = reinterpret_cast<SBBTreeNode *>(
+                page_data + sizeof(SBBTreePage));
+
+            uint64_t next_page = first_node->btn_child_page;
+            bp->unpinPage(current_page_num, false, ctx);
+
+            current_page_num = next_page;
+        }
+
+        // Now scan all leaf pages left-to-right using sibling pointers
+        uint64_t leaf_page_num = current_page_num;
+
+        while (leaf_page_num != 0)
+        {
+            void *page_buffer = nullptr;
+            Status pin_status = bp->pinPage(leaf_page_num, &page_buffer, ctx);
+            if (pin_status != Status::OK)
+            {
+                LOG_WARNING(VACUUM, "B-Tree GC: Failed to pin leaf page %lu: %d",
+                            leaf_page_num, static_cast<int>(pin_status));
+                had_errors = true;
+                break; // Stop scanning on error
+            }
+
+            auto *page = reinterpret_cast<SBBTreePage *>(page_buffer);
+            uint8_t *page_data = reinterpret_cast<uint8_t *>(page_buffer);
+
+            // Verify this is a leaf page
+            if (page->btr_level != 0)
+            {
+                LOG_WARNING(VACUUM, "B-Tree GC: Expected leaf page but got level %u at page %lu",
+                            page->btr_level, leaf_page_num);
+                bp->unpinPage(leaf_page_num, false, ctx);
+                had_errors = true;
+                break;
+            }
+
+            uint16_t entry_count = page->btr_count;
+            uint64_t entries_removed_this_page = 0;
+            bool page_modified = false;
+
+            // Scan all entries on this leaf page
+            // We'll mark entries as deleted by setting the DELETED flag
+            uint8_t *current_offset = page_data + sizeof(SBBTreePage);
+
+            for (uint16_t slot = 0; slot < entry_count; slot++)
+            {
+                auto *node = reinterpret_cast<SBBTreeNode *>(current_offset);
+
+                // Skip already deleted entries
+                if ((node->btn_flags & static_cast<uint16_t>(BTreeNodeFlags::DELETED)) != 0)
+                {
+                    // Move to next node (skip key data and tuple IDs)
+                    uint16_t key_len = node->btn_key_len;
+                    uint32_t tuple_count = node->btn_tuple_count;
+                    current_offset += sizeof(SBBTreeNode) + key_len +
+                                      (tuple_count * sizeof(uint64_t));
+                    continue;
+                }
+
+                // Get tuple IDs for this entry
+                uint16_t key_len = node->btn_key_len;
+                uint32_t tuple_count = node->btn_tuple_count;
+                uint8_t *tuple_ids_ptr = current_offset + sizeof(SBBTreeNode) + key_len;
+                auto *tuple_ids = reinterpret_cast<uint64_t *>(tuple_ids_ptr);
+
+                // Check if any of this entry's tuple IDs are in the dead set
+                bool has_dead_tuples = false;
+                for (uint32_t i = 0; i < tuple_count; i++)
+                {
+                    if (dead_set.find(tuple_ids[i]) != dead_set.end())
+                    {
+                        has_dead_tuples = true;
+                        break;
+                    }
+                }
+
+                if (has_dead_tuples)
+                {
+                    // Mark entry as deleted
+                    node->btn_flags |= static_cast<uint16_t>(BTreeNodeFlags::DELETED);
+                    entries_removed_this_page++;
+                    page_modified = true;
+                }
+
+                // Move to next node
+                current_offset += sizeof(SBBTreeNode) + key_len +
+                                  (tuple_count * sizeof(uint64_t));
+            }
+
+            // If we modified this page, set the HAS_GARBAGE flag
+            if (page_modified)
+            {
+                page->btr_flags |= static_cast<uint16_t>(BTreeFlags::HAS_GARBAGE);
+                total_pages_modified++;
+                total_entries_removed += entries_removed_this_page;
+            }
+
+            // Get next leaf page via right sibling pointer
+            uint64_t next_leaf = page->btr_right_sibling;
+
+            // Unpin current page
+            bp->unpinPage(leaf_page_num, page_modified, ctx);
+
+            // Move to next leaf
+            leaf_page_num = next_leaf;
+        }
+
+        // Update output counters
+        if (entries_removed_out != nullptr)
+        {
+            *entries_removed_out = total_entries_removed;
+        }
+        if (pages_modified_out != nullptr)
+        {
+            *pages_modified_out = total_pages_modified;
+        }
+
+        // Return appropriate status
+        if (had_errors)
+        {
+            // Had some errors but may have removed some entries
+            // Caller can check entries_removed_out to see progress
+            return Status::IO_ERROR;
+        }
 
         return Status::OK;
     }

@@ -8,6 +8,7 @@
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/uuidv7.h"
 #include "scratchbird/core/status.h"
+#include "scratchbird/core/index_gc_interface.h"
 #include <vector>
 #include <cstdint>
 #include <memory>
@@ -116,7 +117,8 @@ namespace scratchbird
         class RoaringBitmapIterator;
 
         // Main Bitmap Index class
-        class BitmapIndex
+        // PHASE 2 TASK 2.5: Implements IndexGCInterface for garbage collection
+        class BitmapIndex : public IndexGCInterface
         {
         public:
             // Constructor
@@ -152,25 +154,31 @@ namespace scratchbird
                 ErrorContext *ctx = nullptr);
 
             // Find all tuple IDs matching a value
+            // PHASE 1 TASK 1.1.4: Added Snapshot parameter for MVCC visibility filtering
             std::vector<uint64_t> find(
                 const void *value_data,
                 size_t value_len,
+                struct Snapshot *snapshot,
                 ErrorContext *ctx = nullptr);
 
             // Logical operations on bitmaps
+            // PHASE 1 TASK 1.1.4: Added Snapshot parameter for MVCC visibility filtering
             std::vector<uint64_t> findAnd(
                 const std::vector<const void *> &values,
                 const std::vector<size_t> &value_lens,
+                struct Snapshot *snapshot,
                 ErrorContext *ctx = nullptr);
 
             std::vector<uint64_t> findOr(
                 const std::vector<const void *> &values,
                 const std::vector<size_t> &value_lens,
+                struct Snapshot *snapshot,
                 ErrorContext *ctx = nullptr);
 
             std::vector<uint64_t> findNot(
                 const void *value_data,
                 size_t value_len,
+                struct Snapshot *snapshot,
                 ErrorContext *ctx = nullptr);
 
             // Get statistics
@@ -187,6 +195,28 @@ namespace scratchbird
 
             // Get index UUID
             const UuidV7Bytes &getUuid() const { return index_uuid_; }
+
+            // PHASE 1 TASK 1.5: Visibility helper for post-filtering TIDs
+            // Note: Snapshot is used as an incomplete type in method signatures
+            // The actual type is TransactionManager::Snapshot, defined in transaction_manager.h
+            // This helper filters a list of TIDs by checking heap tuple visibility
+            std::vector<uint64_t> filterTidsByVisibility(const std::vector<uint64_t> &tids,
+                                                          const struct Snapshot *snapshot,
+                                                          ErrorContext *ctx);
+
+            // PHASE 2 TASK 2.5: IndexGCInterface implementation
+            // Remove index entries pointing to dead tuples
+            // Called by garbage collector after heap sweep identifies dead TIDs
+            Status removeDeadEntries(const std::vector<uint64_t> &dead_tids,
+                                     uint64_t *entries_removed_out = nullptr,
+                                     uint64_t *pages_modified_out = nullptr,
+                                     ErrorContext *ctx = nullptr) override;
+
+            // Get index type name for logging
+            const char *indexTypeName() const override
+            {
+                return "Bitmap";
+            }
 
         private:
             // Helper methods
