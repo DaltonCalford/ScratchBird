@@ -13,6 +13,7 @@
 #include "scratchbird/core/hash_index.h"
 #include "scratchbird/core/gin_index.h"
 #include "scratchbird/core/brin_index.h"
+#include "scratchbird/core/hnsw_index.h"
 #include <chrono>
 #include <thread>
 #include <algorithm>
@@ -865,6 +866,7 @@ namespace scratchbird::core
                 std::unique_ptr<HashIndex> hash_index;
                 std::unique_ptr<GinIndex> gin_index;
                 std::unique_ptr<BrinIndex> brin_index;
+                std::unique_ptr<HnswIndex> hnsw_index;
 
                 switch (index_info.index_type)
                 {
@@ -898,6 +900,15 @@ namespace scratchbird::core
                     if (brin_index)
                     {
                         index = brin_index.get();
+                    }
+                    break;
+
+                case CatalogManager::IndexType::VECTOR:
+                    // PHASE 4A.2.6: HNSW (vector similarity) index support
+                    hnsw_index = HnswIndex::open(db_, index_info.index_id, index_info.root_page, ctx);
+                    if (hnsw_index)
+                    {
+                        index = hnsw_index.get();
                     }
                     break;
 
