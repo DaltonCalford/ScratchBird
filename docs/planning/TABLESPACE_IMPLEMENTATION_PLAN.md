@@ -1045,14 +1045,26 @@ This document tracks the implementation of tablespace support for ScratchBird ac
     - `src/core/catalog_manager.cpp` (+59 lines for implementation)
     - `src/core/page_manager.cpp` (+25 lines to call updateTablespaceStats)
 
-- [x] **3.1.5**: Add logging and monitoring ✅ COMPLETE (implemented in 3.1.1 and 3.1.2)
+- [x] **3.1.5**: Add logging and monitoring ✅ COMPLETE
   - ✅ Log INFO when tablespace extends (include size, reason)
-  - ⏸ Log WARNING when approaching MAXSIZE (e.g., 90% full) - deferred
+  - ✅ Log WARNING when approaching MAXSIZE (90% full) - implemented
   - ✅ Log ERROR when MAXSIZE reached (LOG_WARNING in extendTablespace)
-  - ⏸ Add telemetry/metrics for extension frequency - deferred to monitoring system
+  - ✅ Add telemetry/metrics for extension frequency - implemented
   - Estimate: 2-3 hours
-  - **Actual**: 0 hours (logging integrated into Tasks 3.1.1 and 3.1.2)
-  - **Note**: Comprehensive logging already added to both extendTablespace() and allocatePageInTablespace()
+  - **Actual**: 2 hours (basic logging in 3.1.1/3.1.2, deferred items completed)
+  - **Implementation Details**:
+    - MAXSIZE warning: Added 90% threshold check in extendTablespace() with detailed logging (remaining pages/MB)
+    - Metrics tracking: Added TablespaceMetrics struct (public API) with 5 fields:
+      - extension_count: Total number of successful extensions
+      - total_pages_added: Total pages added across all extensions
+      - last_extension_time: Timestamp of last extension (microseconds)
+      - first_extension_time: Timestamp of first extension (microseconds)
+      - failed_extension_count: Number of failed extension attempts (MAXSIZE reached)
+    - Metrics updated in extendTablespace() on both success and failure paths
+    - Public API: getTablespaceMetrics() method for external monitoring tools
+  - **Files Modified**:
+    - `include/scratchbird/core/page_manager.h` (+17 lines for metrics struct and API)
+    - `src/core/page_manager.cpp` (+45 lines for metrics tracking and 90% warning)
 
 **Files to Modify**:
 - `include/scratchbird/core/page_manager.h` (~40 lines added)
@@ -1079,35 +1091,68 @@ This document tracks the implementation of tablespace support for ScratchBird ac
 
 ### TASK 3.2: Preallocation (8-12 hours)
 
-**Status**: ⏸️ NOT STARTED
+**Status**: ✅ COMPLETE
 **Estimated**: 8-12 hours
-**Assignee**: TBD
+**Actual**: 4.5 hours
 **Dependencies**: TASK 3.1 complete
 
 **Description**: Implement page preallocation during tablespace creation.
 
 **Subtasks**:
-- [ ] **3.2.1**: Implement `PageManager::preallocatePages()`
-  - Accept tablespace_id and num_pages parameters
-  - Use `fallocate()` (Linux) for efficient allocation (no actual writes)
-  - Fallback: Write zeroed pages in batches for portability
-  - Update FSM to mark pages as free
+- [x] **3.2.1**: Implement `PageManager::preallocatePages()` ✅ COMPLETE
+  - ✅ Accept tablespace_id and num_pages parameters
+  - ✅ Use `posix_fallocate()` (Linux) for efficient allocation (no actual writes)
+  - ✅ Fallback: Write zeroed pages in 10MB batches for portability
+  - ✅ Update FSM to mark pages as free
+  - ✅ MAXSIZE enforcement during preallocation
+  - ✅ Progress logging for large allocations (every 100MB)
   - Estimate: 3-5 hours
+  - **Actual**: 3 hours
+  - **Implementation Details**:
+    - 9-step implementation: validation, read header, calculate size, check MAXSIZE,
+      posix_fallocate(), fallback to manual zeroing, update FSM, update header, sync
+    - Linux optimization: Uses posix_fallocate() for guaranteed space reservation
+    - Portable fallback: ftruncate() + manual 10MB batch writes to avoid sparse files
+    - Thread-safe: Acquires tablespace_fsm_mutex_ during FSM updates
+    - Error handling: Returns INVALID_ARGUMENT if preallocation exceeds MAXSIZE
+    - Comprehensive logging: INFO for each step, WARNING on fallocate failure
+  - **Files Modified**:
+    - `include/scratchbird/core/page_manager.h` (+25 lines for method declaration)
+    - `src/core/page_manager.cpp` (+228 lines for implementation)
 
-- [ ] **3.2.2**: Call during tablespace creation
-  - In `createTablespace()`: If `prealloc_pages > 0`, call `preallocatePages()`
-  - Show progress for large preallocations (user feedback)
+- [x] **3.2.2**: Call during tablespace creation ✅ COMPLETE
+  - ✅ In `createTablespace()`: If `prealloc_pages > 0`, call `preallocatePages()`
+  - ✅ Show progress for large preallocations (user feedback via preallocatePages logging)
+  - ✅ Restructured createTablespace() to register FD and create FSM before preallocation
+  - ✅ Error handling: Full cleanup on failure (unregister FD, close file, unlink, remove FSM)
   - Estimate: 2-3 hours
+  - **Actual**: 1.5 hours
+  - **Implementation Details**:
+    - Moved registerTablespaceFile() before preallocation (required for getTablespaceFd)
+    - Created in-memory FSM with initial 2 pages (header + FSM) before calling preallocatePages()
+    - Replaced page-by-page preallocation (lines 966-992) with call to preallocatePages()
+    - Comprehensive error handling: On preallocation failure, cleanup includes:
+      1. Unregister file descriptor from Database
+      2. Close file descriptor
+      3. Unlink partial .sbts file from filesystem
+      4. Remove in-memory FSM entry
+    - Progress logging inherited from preallocatePages() (every 100MB)
+  - **Files Modified**:
+    - `src/core/page_manager.cpp` (+48 lines, -27 lines = net +21 lines)
 
-- [ ] **3.2.3**: Optimize with batching
-  - Don't write page-by-page; batch into 1MB or 10MB chunks
-  - Use `posix_fallocate()` if available (guaranteed space reservation)
+- [x] **3.2.3**: Optimize with batching ✅ COMPLETE (implemented in 3.2.1)
+  - ✅ Don't write page-by-page; batch into 10MB chunks
+  - ✅ Use `posix_fallocate()` if available (guaranteed space reservation)
   - Estimate: 2-3 hours
+  - **Actual**: 0 hours (already implemented in Task 3.2.1)
+  - **Note**: All batching optimizations completed in preallocatePages() implementation
 
-- [ ] **3.2.4**: Handle errors gracefully
-  - If preallocation fails (disk full): Clean up partial file, return error
-  - Don't leave partially created tablespace
+- [x] **3.2.4**: Handle errors gracefully ✅ COMPLETE (implemented in 3.2.1 and 3.2.2)
+  - ✅ If preallocation fails (disk full): Clean up partial file, return error
+  - ✅ Don't leave partially created tablespace
   - Estimate: 1-2 hours
+  - **Actual**: 0 hours (already implemented in Tasks 3.2.1 and 3.2.2)
+  - **Note**: Error handling in both preallocatePages() and createTablespace()
 
 **Files to Modify**:
 - `include/scratchbird/core/page_manager.h` (~20 lines added)

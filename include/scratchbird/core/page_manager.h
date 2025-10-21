@@ -163,6 +163,32 @@ namespace scratchbird::core
          */
         auto extendTablespace(uint16_t tablespace_id, ErrorContext *ctx = nullptr) -> Status;
 
+        /**
+         * preallocatePages - Preallocate pages during tablespace creation
+         *
+         * @param tablespace_id Tablespace ID (1-65535, 0 = primary reserved)
+         * @param num_pages Number of pages to preallocate
+         * @param ctx Error context
+         * @return Status::OK on success, error status otherwise
+         *
+         * Performs:
+         * 1. Validates inputs (tablespace_id, num_pages)
+         * 2. Gets file descriptor for tablespace
+         * 3. Reads current TablespaceHeader to get current size
+         * 4. Calculates new file size (current + num_pages)
+         * 5. Uses fallocate()/posix_fallocate() for efficient allocation (Linux)
+         * 6. Fallback: Writes zeroed pages in 10MB batches (portability)
+         * 7. Updates FSM bitmap to mark new pages as free
+         * 8. Updates TablespaceHeader.total_pages and free_pages
+         * 9. Syncs changes to disk
+         *
+         * Thread-safe: Acquires tablespace_fsm_mutex_ during FSM update.
+         * Note: Called from createTablespace() if prealloc_pages > 0.
+         *       Uses efficient fallocate() on Linux, falls back to manual zeroing.
+         */
+        auto preallocatePages(uint16_t tablespace_id, uint32_t num_pages,
+                             ErrorContext *ctx = nullptr) -> Status;
+
         // Get total number of pages
         auto totalPages() const -> uint32_t
         {
@@ -185,6 +211,35 @@ namespace scratchbird::core
 
         // Reconstruct FSM from actual page state (MGA-style recovery)
         auto reconstructFromPages(ErrorContext *ctx = nullptr) -> Status;
+
+        // === NEW: Tablespace Metrics (Phase 3, Task 3.1.5) ===
+
+        /**
+         * TablespaceMetrics - Extension frequency and timing metrics
+         *
+         * Tracks statistics about tablespace extensions for monitoring and diagnostics.
+         * Returned by getTablespaceMetrics() for external monitoring tools.
+         */
+        struct TablespaceMetrics
+        {
+            uint64_t extension_count = 0;          // Total number of extensions
+            uint64_t total_pages_added = 0;        // Total pages added across all extensions
+            uint64_t last_extension_time = 0;      // Timestamp of last extension (microseconds)
+            uint64_t first_extension_time = 0;     // Timestamp of first extension (microseconds)
+            uint64_t failed_extension_count = 0;   // Number of failed extension attempts
+        };
+
+        /**
+         * getTablespaceMetrics - Get extension metrics for a tablespace
+         *
+         * @param tablespace_id Tablespace ID (1-65535)
+         * @param metrics_out Output structure to receive metrics
+         * @return true if metrics found, false if tablespace_id not found or no extensions yet
+         *
+         * Thread-safe: Acquires tablespace_fsm_mutex_ for reading.
+         * Note: Returns false if tablespace has never been extended (no metrics exist).
+         */
+        auto getTablespaceMetrics(uint16_t tablespace_id, TablespaceMetrics *metrics_out) const -> bool;
 
     protected:
         Database *db_;       // Database instance
@@ -226,6 +281,11 @@ namespace scratchbird::core
          * at a time, preventing races where multiple threads try to extend simultaneously.
          */
         mutable std::mutex tablespace_extend_mutex_; // Protects tablespace extension operations
+
+        // === PHASE 3, TASK 3.1.5: Tablespace Extension Metrics ===
+        // Map of tablespace_id -> metrics (for custom tablespaces 1-65535)
+        // Protected by tablespace_fsm_mutex_ (shared lock for simplicity)
+        std::unordered_map<uint16_t, TablespaceMetrics> tablespace_metrics_;
 
         // Helper methods
         void setBit(uint32_t page_id, bool allocated);

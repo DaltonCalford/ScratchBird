@@ -962,47 +962,19 @@ namespace scratchbird::core
             return Status::IO_ERROR;
         }
 
-        // Step 7: Preallocate pages if requested
-        if (config.prealloc_pages > 0)
-        {
-            // Preallocate by writing zeros to extend the file
-            auto zero_page = std::make_unique<uint8_t[]>(page_size_);
-            memset(zero_page.get(), 0, page_size_);
-
-            for (uint32_t i = 0; i < config.prealloc_pages; i++)
-            {
-                uint64_t page_number = 2 + i; // Pages start at 2 (after header and FSM)
-                off_t offset = page_number * page_size_;
-
-                bytes_written = ::pwrite(fd, zero_page.get(), page_size_, offset);
-                if (bytes_written != static_cast<ssize_t>(page_size_))
-                {
-                    ::close(fd);
-                    ::unlink(path.c_str()); // Clean up partial file
-                    SET_ERROR_CONTEXT(ctx, Status::IO_ERROR,
-                                     ("Failed to preallocate page " + std::to_string(page_number) +
-                                      " (wrote " + std::to_string(bytes_written) + " of " +
-                                      std::to_string(page_size_) + " bytes)").c_str());
-                    return Status::IO_ERROR;
-                }
-            }
-
-            LOG_INFO(STORAGE, "Preallocated %u pages for tablespace %u",
-                    config.prealloc_pages, tablespace_id);
-        }
-
-        // Step 8: Sync file to disk
+        // Step 7: Sync initial pages (header + FSM) to disk before proceeding
         if (::fsync(fd) != 0)
         {
             ::close(fd);
             ::unlink(path.c_str()); // Clean up partial file
             SET_ERROR_CONTEXT(ctx, Status::IO_ERROR,
-                             ("Failed to sync tablespace file to disk (errno=" +
+                             ("Failed to sync tablespace header/FSM to disk (errno=" +
                               std::to_string(errno) + ", " + std::string(strerror(errno)) + ")").c_str());
             return Status::IO_ERROR;
         }
 
-        // Step 9: Register file descriptor in Database
+        // Step 8: Register file descriptor in Database
+        // (Required before calling preallocatePages which needs getTablespaceFd to work)
         Status status = db_->registerTablespaceFile(tablespace_id, fd, ctx);
         if (status != Status::OK)
         {
@@ -1012,6 +984,57 @@ namespace scratchbird::core
                              ("Failed to register tablespace " + std::to_string(tablespace_id) +
                               " file descriptor").c_str());
             return status;
+        }
+
+        // Step 9: Create in-memory FSM for this tablespace
+        // (Required before calling preallocatePages which updates the FSM)
+        {
+            std::lock_guard<std::mutex> lock(tablespace_fsm_mutex_);
+
+            TablespaceFSM ts_fsm;
+            ts_fsm.total_pages = 2; // Header (0) + FSM (1)
+            ts_fsm.free_pages = 0;  // No free pages yet (will be added by preallocatePages)
+            ts_fsm.dirty = false;
+
+            // Initialize bitmap with pages 0 and 1 allocated
+            ts_fsm.bitmap.resize(1, 0x03); // First byte: bits 0,1 set (pages 0,1 allocated)
+
+            tablespace_fsms_[tablespace_id] = std::move(ts_fsm);
+
+            LOG_INFO(STORAGE,
+                    "Created in-memory FSM for tablespace %u: total_pages=2, free_pages=0",
+                    tablespace_id);
+        }
+
+        // Step 10: Preallocate pages if requested (Phase 3 Task 3.2.2)
+        // Use the optimized preallocatePages() method with fallocate support
+        if (config.prealloc_pages > 0)
+        {
+            LOG_INFO(STORAGE, "Preallocating %u pages for tablespace %u using optimized method",
+                    config.prealloc_pages, tablespace_id);
+
+            status = preallocatePages(tablespace_id, config.prealloc_pages, ctx);
+            if (status != Status::OK)
+            {
+                // Preallocation failed - cleanup
+                db_->unregisterTablespaceFile(tablespace_id);
+                ::close(fd);
+                ::unlink(path.c_str()); // Clean up partial file
+
+                // Remove in-memory FSM
+                {
+                    std::lock_guard<std::mutex> lock(tablespace_fsm_mutex_);
+                    tablespace_fsms_.erase(tablespace_id);
+                }
+
+                SET_ERROR_CONTEXT(ctx, status,
+                                 ("Failed to preallocate " + std::to_string(config.prealloc_pages) +
+                                  " pages for tablespace " + std::to_string(tablespace_id)).c_str());
+                return status;
+            }
+
+            LOG_INFO(STORAGE, "Successfully preallocated %u pages for tablespace %u",
+                    config.prealloc_pages, tablespace_id);
         }
 
         LOG_INFO(STORAGE, "Successfully created tablespace %u: %s (name='%s', total_pages=%lu, free_pages=%lu, prealloc=%u)",
@@ -1407,6 +1430,12 @@ namespace scratchbird::core
                 // Would exceed MAXSIZE - try to extend only to max
                 if (current_total_pages >= max_pages)
                 {
+                    // Track failed extension (Phase 3 Task 3.1.5)
+                    {
+                        std::lock_guard<std::mutex> lock(tablespace_fsm_mutex_);
+                        tablespace_metrics_[tablespace_id].failed_extension_count++;
+                    }
+
                     SET_ERROR_CONTEXT(ctx, Status::PAGE_FULL,
                                      ("Tablespace " + std::to_string(tablespace_id) +
                                       " has reached MAXSIZE (" + std::to_string(header->max_size_mb) +
@@ -1423,6 +1452,26 @@ namespace scratchbird::core
                         tablespace_id,
                         static_cast<unsigned long>(pages_to_add),
                         static_cast<unsigned long>(new_total_pages));
+            }
+
+            // Check if we're approaching MAXSIZE (90% full) after this extension
+            // Phase 3 Task 3.1.5: Log WARNING when approaching MAXSIZE
+            if (new_total_pages > 0 && max_pages > 0)
+            {
+                double usage_percent = (static_cast<double>(new_total_pages) / max_pages) * 100.0;
+                if (usage_percent >= 90.0)
+                {
+                    uint64_t remaining_pages = max_pages - new_total_pages;
+                    uint64_t remaining_mb = (remaining_pages * page_size_) / (1024 * 1024);
+
+                    LOG_WARNING(STORAGE,
+                               "Tablespace %u is approaching MAXSIZE: %.1f%% full "
+                               "(%lu / %lu pages, %lu MB remaining)",
+                               tablespace_id, usage_percent,
+                               static_cast<unsigned long>(new_total_pages),
+                               static_cast<unsigned long>(max_pages),
+                               static_cast<unsigned long>(remaining_mb));
+                }
             }
         }
 
@@ -1524,7 +1573,284 @@ namespace scratchbird::core
             // Don't return error - the extension itself succeeded
         }
 
+        // Step 11: Update extension metrics (Phase 3 Task 3.1.5)
+        {
+            // Note: Using tablespace_fsm_mutex_ to protect metrics map (shared lock)
+            // already acquired above, so we're thread-safe here
+
+            TablespaceMetrics &metrics = tablespace_metrics_[tablespace_id];
+
+            metrics.extension_count++;
+            metrics.total_pages_added += pages_to_add;
+            metrics.last_extension_time = last_extended_time;
+
+            // Set first_extension_time if this is the first extension
+            if (metrics.extension_count == 1)
+            {
+                metrics.first_extension_time = last_extended_time;
+            }
+
+            LOG_INFO(STORAGE,
+                    "Updated metrics for tablespace %u: extension_count=%lu, total_pages_added=%lu",
+                    tablespace_id,
+                    static_cast<unsigned long>(metrics.extension_count),
+                    static_cast<unsigned long>(metrics.total_pages_added));
+        }
+
         return Status::OK;
+    }
+
+    // === PHASE 3, TASK 3.2.1: Preallocate Pages ===
+
+    Status PageManager::preallocatePages(uint16_t tablespace_id, uint32_t num_pages, ErrorContext *ctx)
+    {
+        // Step 1: Validate inputs
+        if (tablespace_id == PRIMARY_TABLESPACE_ID)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                             "Cannot preallocate pages for tablespace 0 (use extendFile for primary database)");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        if (num_pages == 0)
+        {
+            // Nothing to do
+            LOG_INFO(STORAGE, "Preallocation requested 0 pages for tablespace %u, skipping", tablespace_id);
+            return Status::OK;
+        }
+
+        LOG_INFO(STORAGE, "Preallocating %u pages for tablespace %u", num_pages, tablespace_id);
+
+        // Step 2: Get file descriptor for this tablespace
+        int fd = db_->getTablespaceFd(tablespace_id);
+        if (fd < 0)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND,
+                             ("Tablespace " + std::to_string(tablespace_id) +
+                              " not found (not open)").c_str());
+            return Status::NOT_FOUND;
+        }
+
+        // Step 3: Read TablespaceHeader to get current state
+        auto header_buffer = std::make_unique<uint8_t[]>(page_size_);
+        ssize_t bytes_read = ::pread(fd, header_buffer.get(), page_size_, 0);
+        if (bytes_read != static_cast<ssize_t>(page_size_))
+        {
+            SET_ERROR_CONTEXT(ctx, Status::IO_ERROR,
+                             ("Failed to read tablespace header for tablespace " +
+                              std::to_string(tablespace_id) + " (read " +
+                              std::to_string(bytes_read) + " of " +
+                              std::to_string(page_size_) + " bytes)").c_str());
+            return Status::IO_ERROR;
+        }
+
+        auto *header = reinterpret_cast<TablespaceHeader *>(header_buffer.get());
+
+        // Step 4: Calculate new file size
+        uint64_t current_total_pages = header->total_pages;
+        uint64_t new_total_pages = current_total_pages + num_pages;
+
+        // Check MAXSIZE limit if set
+        if (header->max_size_mb > 0)
+        {
+            uint64_t max_bytes = static_cast<uint64_t>(header->max_size_mb) * 1024 * 1024;
+            uint64_t max_pages = max_bytes / page_size_;
+
+            if (new_total_pages > max_pages)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                 ("Preallocation would exceed MAXSIZE for tablespace " +
+                                  std::to_string(tablespace_id) + " (requested " +
+                                  std::to_string(new_total_pages) + " pages, max " +
+                                  std::to_string(max_pages) + " pages)").c_str());
+                return Status::INVALID_ARGUMENT;
+            }
+        }
+
+        off_t new_file_size = static_cast<off_t>(new_total_pages) * page_size_;
+        off_t current_file_size = static_cast<off_t>(current_total_pages) * page_size_;
+
+        LOG_INFO(STORAGE,
+                "Preallocating tablespace %u: current_size=%lu bytes, new_size=%lu bytes, adding=%u pages",
+                tablespace_id,
+                static_cast<unsigned long>(current_file_size),
+                static_cast<unsigned long>(new_file_size),
+                num_pages);
+
+        // Step 5: Try to use fallocate() for efficient allocation (Linux only)
+        bool allocation_successful = false;
+
+#if defined(__linux__)
+        // Try posix_fallocate first (guarantees space reservation)
+        int result = ::posix_fallocate(fd, current_file_size, new_file_size - current_file_size);
+        if (result == 0)
+        {
+            allocation_successful = true;
+            LOG_INFO(STORAGE,
+                    "Tablespace %u: used posix_fallocate() to preallocate %u pages (%lu MB)",
+                    tablespace_id, num_pages,
+                    static_cast<unsigned long>((num_pages * page_size_) / (1024 * 1024)));
+        }
+        else
+        {
+            LOG_WARNING(STORAGE,
+                       "Tablespace %u: posix_fallocate() failed (errno=%d), falling back to manual zeroing",
+                       tablespace_id, result);
+        }
+#endif
+
+        // Step 6: Fallback - manually write zeroed pages in batches
+        if (!allocation_successful)
+        {
+            // First, extend the file with ftruncate
+            if (ftruncate(fd, new_file_size) != 0)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::IO_ERROR,
+                                 ("Failed to extend tablespace " + std::to_string(tablespace_id) +
+                                  " to " + std::to_string(new_file_size) + " bytes (errno=" +
+                                  std::to_string(errno) + ")").c_str());
+                return Status::IO_ERROR;
+            }
+
+            // Now write zeros in 10MB batches to ensure space is actually allocated
+            // (ftruncate creates sparse files on many filesystems)
+            const size_t BATCH_SIZE = 10 * 1024 * 1024; // 10 MB
+            auto zero_buffer = std::make_unique<uint8_t[]>(BATCH_SIZE);
+            std::memset(zero_buffer.get(), 0, BATCH_SIZE);
+
+            off_t offset = current_file_size;
+            off_t remaining = new_file_size - current_file_size;
+            uint32_t batches_written = 0;
+
+            LOG_INFO(STORAGE,
+                    "Tablespace %u: writing zeros in 10MB batches (total %lu MB)",
+                    tablespace_id,
+                    static_cast<unsigned long>(remaining / (1024 * 1024)));
+
+            while (remaining > 0)
+            {
+                size_t to_write = (remaining > static_cast<off_t>(BATCH_SIZE)) ? BATCH_SIZE : static_cast<size_t>(remaining);
+
+                ssize_t bytes_written = ::pwrite(fd, zero_buffer.get(), to_write, offset);
+                if (bytes_written != static_cast<ssize_t>(to_write))
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::IO_ERROR,
+                                     ("Failed to write zeros during preallocation for tablespace " +
+                                      std::to_string(tablespace_id) + " at offset " +
+                                      std::to_string(offset) + " (wrote " +
+                                      std::to_string(bytes_written) + " of " +
+                                      std::to_string(to_write) + " bytes)").c_str());
+                    return Status::IO_ERROR;
+                }
+
+                offset += to_write;
+                remaining -= to_write;
+                batches_written++;
+
+                // Log progress every 100MB
+                if (batches_written % 10 == 0)
+                {
+                    uint64_t mb_written = (batches_written * BATCH_SIZE) / (1024 * 1024);
+                    LOG_INFO(STORAGE,
+                            "Tablespace %u: preallocated %lu MB so far...",
+                            tablespace_id, static_cast<unsigned long>(mb_written));
+                }
+            }
+
+            LOG_INFO(STORAGE,
+                    "Tablespace %u: manual zeroing completed, wrote %u batches",
+                    tablespace_id, batches_written);
+        }
+
+        // Step 7: Update FSM bitmap to mark new pages as free
+        {
+            std::lock_guard<std::mutex> lock(tablespace_fsm_mutex_);
+
+            auto ts_fsm_it = tablespace_fsms_.find(tablespace_id);
+            if (ts_fsm_it == tablespace_fsms_.end())
+            {
+                SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND,
+                                 ("Tablespace FSM not found for tablespace " +
+                                  std::to_string(tablespace_id)).c_str());
+                return Status::NOT_FOUND;
+            }
+
+            TablespaceFSM &ts_fsm = ts_fsm_it->second;
+
+            // Resize bitmap to accommodate new pages
+            uint32_t old_bitmap_bytes = (ts_fsm.total_pages + 7) / 8;
+            uint32_t new_bitmap_bytes = (new_total_pages + 7) / 8;
+
+            if (new_bitmap_bytes > old_bitmap_bytes)
+            {
+                ts_fsm.bitmap.resize(new_bitmap_bytes, 0x00); // Initialize new bytes as free (0)
+            }
+
+            // Update FSM counters
+            ts_fsm.total_pages = static_cast<uint32_t>(new_total_pages);
+            ts_fsm.free_pages += num_pages;
+            ts_fsm.dirty = true;
+
+            LOG_INFO(STORAGE,
+                    "Updated FSM for tablespace %u after preallocation: total_pages=%u, free_pages=%u",
+                    tablespace_id, ts_fsm.total_pages, ts_fsm.free_pages);
+        }
+
+        // Step 8: Update TablespaceHeader.total_pages and free_pages
+        header->total_pages = new_total_pages;
+        header->free_pages += num_pages;
+
+        // Write updated header back to page 0
+        ssize_t bytes_written = ::pwrite(fd, header_buffer.get(), page_size_, 0);
+        if (bytes_written != static_cast<ssize_t>(page_size_))
+        {
+            SET_ERROR_CONTEXT(ctx, Status::IO_ERROR,
+                             ("Failed to update tablespace header after preallocation for tablespace " +
+                              std::to_string(tablespace_id) + " (wrote " +
+                              std::to_string(bytes_written) + " of " +
+                              std::to_string(page_size_) + " bytes)").c_str());
+            return Status::IO_ERROR;
+        }
+
+        // Step 9: Sync changes to disk
+        if (::fsync(fd) != 0)
+        {
+            LOG_WARNING(STORAGE,
+                       "Failed to sync tablespace %u after preallocation (errno=%d)",
+                       tablespace_id, errno);
+            // Don't fail - the data is written, just not guaranteed to be on disk yet
+        }
+
+        LOG_INFO(STORAGE,
+                "Successfully preallocated %u pages for tablespace %u: total_pages=%lu, free_pages=%lu",
+                num_pages, tablespace_id,
+                static_cast<unsigned long>(new_total_pages),
+                static_cast<unsigned long>(header->free_pages));
+
+        return Status::OK;
+    }
+
+    // === PHASE 3, TASK 3.1.5: Get Tablespace Metrics ===
+
+    bool PageManager::getTablespaceMetrics(uint16_t tablespace_id, TablespaceMetrics *metrics_out) const
+    {
+        if (metrics_out == nullptr)
+        {
+            return false;
+        }
+
+        std::lock_guard<std::mutex> lock(tablespace_fsm_mutex_);
+
+        auto it = tablespace_metrics_.find(tablespace_id);
+        if (it == tablespace_metrics_.end())
+        {
+            // No metrics for this tablespace (never extended)
+            return false;
+        }
+
+        // Copy metrics to output
+        *metrics_out = it->second;
+        return true;
     }
 
 } // namespace scratchbird::core
