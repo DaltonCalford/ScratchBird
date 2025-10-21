@@ -21,6 +21,8 @@ namespace scratchbird
             // SQL keywords
             {"CREATE", TokenType::KW_CREATE},
             {"TABLE", TokenType::KW_TABLE},
+            {"INDEX", TokenType::KW_INDEX},     // Phase 2 Task 2.3
+            {"UNIQUE", TokenType::KW_UNIQUE},   // Phase 2 Task 2.3
             {"INSERT", TokenType::KW_INSERT},
             {"INTO", TokenType::KW_INTO},
             {"VALUES", TokenType::KW_VALUES},
@@ -123,6 +125,22 @@ namespace scratchbird
             // Database maintenance (Phase 3 Task 3.3)
             {"SWEEP", TokenType::KW_SWEEP},
             {"DATABASE", TokenType::KW_DATABASE},
+
+            // Tablespace management (Phase 2 Task 2.1, 2.2)
+            {"TABLESPACE", TokenType::KW_TABLESPACE},
+            {"LOCATION", TokenType::KW_LOCATION},
+            {"AUTOEXTEND", TokenType::KW_AUTOEXTEND},
+            {"AUTOEXTEND_SIZE", TokenType::KW_AUTOEXTEND_SIZE},
+            {"MAXSIZE", TokenType::KW_MAXSIZE},
+            {"UNLIMITED", TokenType::KW_UNLIMITED},
+            {"PREALLOC", TokenType::KW_PREALLOC},
+            {"FORCE", TokenType::KW_FORCE},
+            {"DROP", TokenType::KW_DROP},
+            {"ON", TokenType::KW_ON},
+            {"OFF", TokenType::KW_OFF},
+            {"ALTER", TokenType::KW_ALTER},   // Phase 2 Task 2.2
+            {"RENAME", TokenType::KW_RENAME}, // Phase 2 Task 2.2
+            {"TO", TokenType::KW_TO},         // Phase 2 Task 2.2
         };
 
         // Case-insensitive string comparison

@@ -2,6 +2,7 @@
 
 #include "scratchbird/core/status.h"
 #include "scratchbird/core/error_context.h"
+#include "scratchbird/core/tid.h"
 #include <cstdint>
 #include <vector>
 
@@ -58,6 +59,8 @@ namespace scratchbird::core
          * Implementation should remove all index entries that point to TIDs
          * in the dead_tids vector.
          *
+         * PHASE 1.5 TASK 1.5.4: Migrated to TID struct API
+         *
          * @param dead_tids Vector of TIDs that have been confirmed dead by OIT check
          * @param entries_removed_out [OUT] Number of index entries removed (optional)
          * @param pages_modified_out [OUT] Number of index pages modified (optional)
@@ -80,7 +83,7 @@ namespace scratchbird::core
          * - Can scan index once and remove all matching TIDs
          * - Should update statistics (entries_removed, pages_modified)
          */
-        virtual Status removeDeadEntries(const std::vector<uint64_t> &dead_tids,
+        virtual Status removeDeadEntries(const std::vector<TID> &dead_tids,
                                          uint64_t *entries_removed_out = nullptr,
                                          uint64_t *pages_modified_out = nullptr,
                                          ErrorContext *ctx = nullptr) = 0;

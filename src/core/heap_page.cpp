@@ -1599,7 +1599,8 @@ namespace scratchbird::core
     }
 
     // PHASE 2 TASK 2.6: Collect dead tuple IDs for index cleanup
-    auto HeapPage::collectDeadTuples(uint64_t oit, std::vector<uint64_t> *dead_tids_out,
+    // PHASE 1.5 TASK 1.5.3: Migrated to TID struct API
+    auto HeapPage::collectDeadTuples(uint64_t oit, std::vector<TID> *dead_tids_out,
                                      ErrorContext *ctx) -> Status
     {
         if (dead_tids_out == nullptr)
@@ -1646,9 +1647,8 @@ namespace scratchbird::core
                 // Check if XMAX_COMMITTED flag is set
                 if ((tuple_hdr->infomask & TupleHeader::HEAP_XMAX_COMMITTED) != 0)
                 {
-                    // This tuple is dead - create TID
-                    uint64_t tid = (static_cast<uint64_t>(pg_header->page_id) << 32) |
-                                  (static_cast<uint64_t>(i) << 16);
+                    // PHASE 1.5: Create TID struct (already using GPID internally)
+                    TID tid = tuple_hdr->getTID();
                     dead_tids_out->push_back(tid);
                 }
             }

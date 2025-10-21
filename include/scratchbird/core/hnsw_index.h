@@ -5,6 +5,7 @@
 #include "scratchbird/core/storage_engine.h"
 #include "scratchbird/core/uuidv7.h"
 #include "scratchbird/core/index_gc_interface.h"
+#include "scratchbird/core/tid.h"
 #include "scratchbird/core/vector.h"
 #include <cstdint>
 #include <vector>
@@ -181,11 +182,12 @@ namespace scratchbird
 
         /**
          * HNSW search result
+         * PHASE 1.5 TASK 1.5.2d: Migrated to TID struct API
          */
         struct HnswSearchResult
         {
-            uint64_t tuple_id; // Heap TID
-            double distance;   // Distance/similarity score
+            TID tid;          // Heap TID
+            double distance;  // Distance/similarity score
 
             bool operator<(const HnswSearchResult &other) const
             {
@@ -232,12 +234,14 @@ namespace scratchbird
              * - Creates bi-directional links
              * - New nodes get xmin (current transaction)
              *
+             * PHASE 1.5 TASK 1.5.2d: Migrated to TID struct API
+             *
              * @param vector The vector to insert (encoded as bytes)
-             * @param tuple_id The heap TID for this vector
+             * @param tid The heap TID for this vector
              * @param ctx Error context
              */
             Status insert(const VectorValue &vector,
-                          uint64_t tuple_id,
+                          const TID &tid,
                           ErrorContext *ctx = nullptr);
 
             /**
@@ -248,10 +252,12 @@ namespace scratchbird
              * - Keeps links intact (needed for older snapshots)
              * - Actual removal done during VACUUM via removeDeadEntries()
              *
-             * @param tuple_id The heap TID to delete
+             * PHASE 1.5 TASK 1.5.2d: Migrated to TID struct API
+             *
+             * @param tid The heap TID to delete
              * @param ctx Error context
              */
-            Status remove(uint64_t tuple_id,
+            Status remove(const TID &tid,
                           ErrorContext *ctx = nullptr);
 
             /**
@@ -297,6 +303,7 @@ namespace scratchbird
 
             /**
              * Phase 4A.2.5: Remove dead nodes
+             * PHASE 1.5 TASK 1.5.2d: Migrated to TID struct API
              *
              * Called by garbage collector after heap sweep identifies dead tuples.
              * Removes nodes and updates graph links.
@@ -307,7 +314,7 @@ namespace scratchbird
              * @param ctx Error context
              * @return Status OK if successful
              */
-            Status removeDeadEntries(const std::vector<uint64_t> &dead_tids,
+            Status removeDeadEntries(const std::vector<TID> &dead_tids,
                                      uint64_t *entries_removed_out = nullptr,
                                      uint64_t *pages_modified_out = nullptr,
                                      ErrorContext *ctx = nullptr) override;

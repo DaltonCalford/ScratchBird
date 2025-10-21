@@ -5,6 +5,7 @@
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/core/uuidv7.h"
 #include "scratchbird/core/index_gc_interface.h"
+#include "scratchbird/core/tid.h"
 #include <cstdint>
 #include <vector>
 #include <memory>
@@ -105,21 +106,23 @@ namespace scratchbird
             // Insert a key-value pair
             // key_data: pointer to key data
             // key_len: length of key in bytes
-            // tuple_id: tuple ID (page_id << 32 | item_id)
-            Status insert(const void *key_data, size_t key_len, uint64_t tuple_id,
+            // PHASE 1.5 TASK 1.5.2b: Migrated to TID struct API
+            Status insert(const void *key_data, size_t key_len, const TID &tid,
                           ErrorContext *ctx = nullptr);
 
             // Find all tuple IDs for a given key
             // PHASE 1 TASK 1.1.2: Added Snapshot parameter for MVCC visibility filtering
-            // Returns a vector of tuple IDs (may be empty if key not found)
+            // Returns a vector of TIDs (may be empty if key not found)
             // Pass nullptr for snapshot to return ALL matching TIDs (used by VACUUM)
-            std::vector<uint64_t> find(const void *key_data, size_t key_len,
-                                       struct Snapshot *snapshot,
-                                       ErrorContext *ctx = nullptr);
+            // PHASE 1.5 TASK 1.5.2b: Migrated to TID struct API
+            std::vector<TID> find(const void *key_data, size_t key_len,
+                                  struct Snapshot *snapshot,
+                                  ErrorContext *ctx = nullptr);
 
             // Remove a specific entry
-            // Only removes the entry matching both key and tuple_id
-            Status remove(const void *key_data, size_t key_len, uint64_t tuple_id,
+            // Only removes the entry matching both key and tid
+            // PHASE 1.5 TASK 1.5.2b: Migrated to TID struct API
+            Status remove(const void *key_data, size_t key_len, const TID &tid,
                           ErrorContext *ctx = nullptr);
 
             // Vacuum the index - remove deleted entries and consolidate pages
@@ -154,7 +157,8 @@ namespace scratchbird
             // PHASE 2 TASK 2.3: IndexGCInterface implementation
             // Remove index entries pointing to dead tuples
             // Called by garbage collector after heap sweep identifies dead TIDs
-            Status removeDeadEntries(const std::vector<uint64_t> &dead_tids,
+            // PHASE 1.5 TASK 1.5.2b: Migrated to TID struct API
+            Status removeDeadEntries(const std::vector<TID> &dead_tids,
                                      uint64_t *entries_removed_out = nullptr,
                                      uint64_t *pages_modified_out = nullptr,
                                      ErrorContext *ctx = nullptr) override;

@@ -98,6 +98,26 @@ namespace scratchbird
             visitor->visit(this);
         }
 
+        void CreateIndexStmt::accept(ASTVisitor *visitor)
+        {
+            visitor->visit(this);
+        }
+
+        void CreateTablespaceStmt::accept(ASTVisitor *visitor)
+        {
+            visitor->visit(this);
+        }
+
+        void DropTablespaceStmt::accept(ASTVisitor *visitor)
+        {
+            visitor->visit(this);
+        }
+
+        void AlterTablespaceStmt::accept(ASTVisitor *visitor)
+        {
+            visitor->visit(this);
+        }
+
         void InsertStmt::accept(ASTVisitor *visitor)
         {
             visitor->visit(this);
@@ -162,6 +182,46 @@ namespace scratchbird
             out_ << "\n";
             printIndent();
             out_ << ")";
+        }
+
+        void ASTPrinter::visit(CreateTablespaceStmt *node)
+        {
+            printIndent();
+            out_ << "CREATE TABLESPACE " << pool_.get(node->tablespaceName())
+                 << " LOCATION '" << pool_.get(node->location()) << "'";
+
+            if (!node->autoextendEnabled())
+            {
+                out_ << " AUTOEXTEND OFF";
+            }
+            else
+            {
+                out_ << " AUTOEXTEND ON AUTOEXTEND_SIZE " << node->autoextendSizeMB();
+            }
+
+            if (node->maxSizeMB() > 0)
+            {
+                out_ << " MAXSIZE " << node->maxSizeMB();
+            }
+            else
+            {
+                out_ << " MAXSIZE UNLIMITED";
+            }
+
+            if (node->preallocPages() > 0)
+            {
+                out_ << " PREALLOC " << node->preallocPages();
+            }
+        }
+
+        void ASTPrinter::visit(DropTablespaceStmt *node)
+        {
+            printIndent();
+            out_ << "DROP TABLESPACE " << pool_.get(node->tablespaceName());
+            if (node->force())
+            {
+                out_ << " FORCE";
+            }
         }
 
         void ASTPrinter::visit(InsertStmt *node)

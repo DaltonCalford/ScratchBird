@@ -5,6 +5,7 @@
 #include "scratchbird/core/storage_engine.h"
 #include "scratchbird/core/uuidv7.h"
 #include "scratchbird/core/index_gc_interface.h"
+#include "scratchbird/core/tid.h"
 #include <cstdint>
 #include <vector>
 #include <memory>
@@ -271,17 +272,18 @@ namespace scratchbird
 
             /**
              * Phase 4A.1.4: Remove dead range summaries
+             * PHASE 1.5 TASK 1.5.2e: Migrated to TID struct API
              *
-             * Called by garbage collector after heap sweep identifies dead ranges.
-             * Removes or marks ranges as deleted based on dead block numbers.
+             * Called by garbage collector after heap sweep identifies dead tuples.
+             * Extracts block numbers from TIDs and removes/marks ranges as deleted.
              *
-             * @param dead_blocks Block numbers that are completely dead
+             * @param dead_tids Tuple IDs that are dead (block numbers extracted from TIDs)
              * @param entries_removed_out Output: number of ranges removed
              * @param pages_modified_out Output: number of pages modified
              * @param ctx Error context
              * @return Status OK if successful
              */
-            Status removeDeadEntries(const std::vector<uint64_t> &dead_blocks,
+            Status removeDeadEntries(const std::vector<TID> &dead_tids,
                                      uint64_t *entries_removed_out = nullptr,
                                      uint64_t *pages_modified_out = nullptr,
                                      ErrorContext *ctx = nullptr) override;

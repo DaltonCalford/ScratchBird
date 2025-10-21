@@ -6,6 +6,7 @@
 #include "scratchbird/core/uuidv7.h"
 #include "scratchbird/core/charset.h"
 #include "scratchbird/core/index_gc_interface.h"
+#include "scratchbird/core/tid.h"
 #include <cstdint>
 #include <vector>
 #include <memory>
@@ -168,18 +169,21 @@ namespace scratchbird
             static std::unique_ptr<BTree> open(Database *db, const UuidV7Bytes &index_uuid,
                                                uint32_t root_page, ErrorContext *ctx = nullptr);
 
-            Status insert(const std::vector<uint8_t> &key, uint64_t tuple_id,
+            // PHASE 1.5 TASK 1.5.2a: Migrated to TID struct API
+            Status insert(const std::vector<uint8_t> &key, const TID &tid,
                           ErrorContext *ctx = nullptr);
 
             // PHASE 1 TASK 1.1.1: Added Snapshot parameter for MVCC visibility filtering
             // For Firebird MGA: Snapshot is used to filter returned TIDs via heap visibility checks
             // Pass nullptr to return ALL matching TIDs (used by VACUUM/internal operations)
+            // PHASE 1.5 TASK 1.5.2a: Migrated to TID struct API
             Status search(const std::vector<uint8_t> &key,
                           struct Snapshot *snapshot,
-                          std::vector<uint64_t> *tuple_ids_out,
+                          std::vector<TID> *tids_out,
                           ErrorContext *ctx = nullptr);
 
-            Status remove(const std::vector<uint8_t> &key, uint64_t tuple_id,
+            // PHASE 1.5 TASK 1.5.2a: Migrated to TID struct API
+            Status remove(const std::vector<uint8_t> &key, const TID &tid,
                           ErrorContext *ctx = nullptr);
 
             // Range scan operations
@@ -206,7 +210,8 @@ namespace scratchbird
             // PHASE 2 TASK 2.2: IndexGCInterface implementation
             // Remove index entries pointing to dead tuples
             // Called by garbage collector after heap sweep identifies dead TIDs
-            Status removeDeadEntries(const std::vector<uint64_t> &dead_tids,
+            // PHASE 1.5 TASK 1.5.2a: Migrated to TID struct API
+            Status removeDeadEntries(const std::vector<TID> &dead_tids,
                                      uint64_t *entries_removed_out = nullptr,
                                      uint64_t *pages_modified_out = nullptr,
                                      ErrorContext *ctx = nullptr) override;
@@ -248,12 +253,14 @@ namespace scratchbird
                                   bool write_lock, ErrorContext *ctx);
 
             // Searches for a key within a single B-Tree page using binary search.
+            // PHASE 1.5 TASK 1.5.2a: Migrated to TID struct API
             bool searchPage(const SBBTreePage *page, const std::vector<uint8_t> &key,
-                            std::vector<uint64_t> *tuple_ids_out) const;
+                            std::vector<TID> *tids_out) const;
 
             // Page split operations
+            // PHASE 1.5 TASK 1.5.2a: Migrated to TID struct API
             Status split_leaf_page(uint64_t left_page_num, const std::vector<uint8_t> &new_key,
-                                   uint64_t new_tuple_id, ErrorContext *ctx);
+                                   const TID &new_tid, ErrorContext *ctx);
             Status split_internal_page(uint64_t left_page_num,
                                        const std::vector<uint8_t> &separator_key,
                                        uint64_t right_page_num, ErrorContext *ctx);
@@ -291,7 +298,8 @@ namespace scratchbird
 
             // Iterator operations
             bool hasNext();
-            Status next(std::vector<uint8_t> *key_out, uint64_t *tuple_id_out,
+            // PHASE 1.5 TASK 1.5.2a: Migrated to TID struct API
+            Status next(std::vector<uint8_t> *key_out, TID *tid_out,
                         ErrorContext *ctx = nullptr);
 
             // Get current position

@@ -51,6 +51,8 @@ namespace scratchbird
             // These are detected post-lexing based on identifier content
             KW_CREATE,
             KW_TABLE,
+            KW_INDEX,   // Phase 2 Task 2.3
+            KW_UNIQUE,  // Phase 2 Task 2.3
             KW_INSERT,
             KW_INTO,
             KW_VALUES,
@@ -153,6 +155,22 @@ namespace scratchbird
             // Database maintenance (Phase 3 Task 3.3)
             KW_SWEEP,
             KW_DATABASE,
+
+            // Tablespace management (Phase 2 Task 2.1, 2.2)
+            KW_TABLESPACE,
+            KW_LOCATION,
+            KW_AUTOEXTEND,
+            KW_AUTOEXTEND_SIZE,
+            KW_MAXSIZE,
+            KW_UNLIMITED,
+            KW_PREALLOC,
+            KW_FORCE,
+            KW_DROP,
+            KW_ON,
+            KW_OFF,
+            KW_ALTER,  // Phase 2 Task 2.2
+            KW_RENAME, // Phase 2 Task 2.2
+            KW_TO,     // Phase 2 Task 2.2
         };
 
         // Location in source file

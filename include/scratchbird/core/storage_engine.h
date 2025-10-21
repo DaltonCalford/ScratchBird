@@ -2,6 +2,7 @@
 
 #include "scratchbird/core/status.h"
 #include "scratchbird/core/uuidv7.h"
+#include "scratchbird/core/tid.h"
 #include <cstdint>
 #include <memory>
 #include <vector>
@@ -25,13 +26,12 @@ namespace scratchbird::core
     struct TableInfo;
 
     // Tuple data structure
+    // PHASE 1.5: Migrated to TID struct
     struct Tuple
     {
         const uint8_t *data; // Pointer to tuple data
         uint32_t data_size;  // Size of tuple data
-        uint64_t tid;        // Tuple ID (page_id << 16 | item_id)
-        uint16_t item_id;    // Item ID within the page
-        uint32_t page_id;    // Page containing this tuple
+        TID tid;             // Tuple ID (GPID + slot)
     };
 
     // Iterator for sequential scan
@@ -93,7 +93,8 @@ namespace scratchbird::core
         bool done_;
 
         // B-tree traversal state
-        std::vector<uint64_t> current_tuple_ids_; // Tuple IDs from current key
+        // PHASE 1.5: Migrated to TID struct
+        std::vector<TID> current_tuple_ids_;      // Tuple IDs from current key
         size_t current_tuple_index_;              // Index within current_tuple_ids_
         std::vector<uint8_t> current_key_;        // Current key being scanned
         bool initialized_;                        // Whether seek() has been called

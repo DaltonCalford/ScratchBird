@@ -122,9 +122,8 @@ namespace scratchbird::core
                 // Set tuple data pointer (includes header for now)
                 tuple_out->data = tuple_data;
                 tuple_out->data_size = tuple_size;
-                tuple_out->item_id = item_id;
-                tuple_out->page_id = page_id;
-                tuple_out->tid = (static_cast<uint64_t>(page_id) << 16) | item_id;
+                // PHASE 1.5: Set TID struct
+                tuple_out->tid = TID(makeGPID(PRIMARY_TABLESPACE_ID, static_cast<uint64_t>(page_id)), item_id);
             }
         }
 
@@ -623,10 +622,8 @@ namespace scratchbird::core
                         {
                             tuple_out->data = tuple_data;
                             tuple_out->data_size = tuple_size;
-                            tuple_out->item_id = current_item_ - 1;
-                            tuple_out->page_id = current_page_;
-                            tuple_out->tid =
-                                (static_cast<uint64_t>(current_page_) << 16) | (current_item_ - 1);
+                            // PHASE 1.5: Set TID struct
+                            tuple_out->tid = TID(makeGPID(PRIMARY_TABLESPACE_ID, static_cast<uint64_t>(current_page_)), current_item_ - 1);
                         }
                         return Status::OK;
                     }
@@ -955,19 +952,13 @@ namespace scratchbird::core
         }
 
         // Get the next tuple ID
-        uint64_t tid = current_tuple_ids_[current_tuple_index_++];
-
-        // Extract page_id and item_id from tuple ID
-        // Assuming tuple ID format: upper 32 bits = page_id, lower 32 bits = item_id
-        uint32_t page_id = static_cast<uint32_t>(tid >> 32);
-        uint16_t item_id = static_cast<uint16_t>(tid & 0xFFFF);
+        // PHASE 1.5: current_tuple_ids_ now contains TID structs
+        TID tid = current_tuple_ids_[current_tuple_index_++];
 
         // Fill tuple_out with the location information
         if (tuple_out != nullptr)
         {
             tuple_out->tid = tid;
-            tuple_out->page_id = page_id;
-            tuple_out->item_id = item_id;
             tuple_out->data = nullptr; // Caller must fetch actual tuple data
             tuple_out->data_size = 0;
         }
@@ -1124,10 +1115,9 @@ namespace scratchbird::core
         }
 
         // Calculate old and new TIDs
-        uint64_t old_tid =
-            (static_cast<uint64_t>(old_page_id) << 32) | (static_cast<uint64_t>(old_item_id) << 16);
-        uint64_t new_tid =
-            (static_cast<uint64_t>(new_page_id) << 32) | (static_cast<uint64_t>(new_item_id) << 16);
+        // PHASE 1.5: Use TID struct instead of uint64_t
+        TID old_tid = TID(makeGPID(PRIMARY_TABLESPACE_ID, static_cast<uint64_t>(old_page_id)), old_item_id);
+        TID new_tid = TID(makeGPID(PRIMARY_TABLESPACE_ID, static_cast<uint64_t>(new_page_id)), new_item_id);
 
         // HIGH-8 FIX: Track failed index updates for corruption reporting
         std::vector<std::string> failed_indexes;

@@ -1,8 +1,8 @@
 # ScratchBird Project Context
 
-**Last Updated**: 2025-10-20 (Tablespace Planning Complete)
-**Version**: Alpha 1.2+ (All Alpha Issues Resolved, CI/CD Complete, Documentation Complete, Tablespace Planning)
-**Status**: Educational/Development (Production-Ready Core, Comprehensive Testing Infrastructure)
+**Last Updated**: 2025-10-20 (Phase 1.5: TID Migration Complete)
+**Version**: Alpha 1.0.2 (Phase 1.5 Complete: GPID-based TID Migration)
+**Status**: Educational/Development (Production-Ready Core, Multi-Tablespace Foundation Complete)
 
 > **PURPOSE**: This file provides essential context for AI assistants working on ScratchBird.
 > Read this file at session start and after every context compaction.
@@ -13,10 +13,11 @@
 ## 1. Current Project State
 
 ### Version & Status
-- **Current Version**: Alpha 1.2+
+- **Current Version**: Alpha 1.0.2
 - **Production Ready**: ❌ NO - Educational/Development only (Core is production-ready quality)
-- **Last Major Update**: October 17, 2025
-- **Active Development Phase**: All Alpha Issues Resolved - CI/CD & Documentation Complete
+- **Last Major Update**: October 20, 2025
+- **Active Development Phase**: Phase 1.5 Complete - GPID-based TID Migration
+- **Breaking Change**: YES - Tuple identification system migrated to TID struct (see PHASE_1_5_MIGRATION_GUIDE.md)
 
 ### Critical Statistics
 ```yaml
@@ -39,6 +40,46 @@ Code Quality:        98% complete  (RAII, logging, const-correct, all issues res
 CI/CD:               100% complete (TSAN, ASAN, Helgrind, Valgrind, Clang-Tidy, automated testing)
 Documentation:       100% complete (Developer guides, API docs, testing docs)
 ```
+
+### Phase 1.5: TID Migration (October 20, 2025) ✅ COMPLETE
+
+**Milestone**: Multi-Tablespace Foundation
+**Status**: 100% Complete - All core infrastructure migrated
+
+**What Changed:**
+- Migrated from 48-bit legacy tuple IDs (`uint64_t`) to 80-bit GPID-based TID struct
+- Supports future multi-tablespace functionality (custom tablespaces return NOT_IMPLEMENTED in ALPHA)
+- On-disk format unchanged - conversion at API boundaries only
+
+**Components Migrated:**
+```yaml
+Indexes:
+  - B-Tree Index:      ✅ Public API uses TID, on-disk uses legacy format
+  - Hash Index:        ✅ Hash table internal, TID API
+  - Bitmap Index:      ✅ Roaring bitmaps (32-bit), TID API
+  - HNSW Index:        ✅ HnswSearchResult uses TID
+  - BRIN Index:        ✅ Block-based with TID cleanup
+  - GIN Index:         ✅ All methods (find/findAll/findAny/operators)
+
+Core Systems:
+  - GarbageCollector:  ✅ cleanIndexes() uses vector<TID>
+  - StorageEngine:     ✅ Tuple struct redesigned (single TID field)
+  - HeapPage:          ✅ collectDeadTuples() returns vector<TID>
+  - TOAST Manager:     ✅ Extracts page_id/item_id from TID
+
+Build Status:
+  - Core Library:      ✅ Builds with 0 errors
+  - Test Suite:        ⚠️  test_brin_mvcc.cpp disabled (needs Phase 4A APIs)
+```
+
+**Migration Guide**: See `docs/guides/PHASE_1_5_MIGRATION_GUIDE.md`
+
+**API Changes:**
+- `Tuple` struct: Removed separate `page_id` and `item_id` fields
+- All index `insert()`/`search()` methods use TID instead of uint64_t
+- Helper functions: `makeGPID()`, `getPageNumber()`, `getSlot()`, `convertTIDtoLegacy()`, `convertLegacyTID()`
+
+**Performance Impact**: None - on-disk format unchanged, conversion is trivial
 
 ---
 

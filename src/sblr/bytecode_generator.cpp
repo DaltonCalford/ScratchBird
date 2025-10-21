@@ -110,6 +110,117 @@ namespace scratchbird
             }
 
             current_result_->writeOpcode(Opcode::END_LIST);
+
+            // Write tablespace name (Phase 2 Task 2.3)
+            writeStringId(node->tablespace());
+        }
+
+        void BytecodeGenerator::visit(parser::CreateIndexStmt *node)
+        {
+            // Generate CREATE INDEX bytecode (Phase 2 Task 2.3)
+            current_result_->writeOpcode(Opcode::CREATE_INDEX);
+
+            // Write index name
+            writeStringId(node->indexName());
+
+            // Write table name
+            writeStringId(node->tableName());
+
+            // Write is_unique flag (1 byte: 0 = non-unique, 1 = unique)
+            current_result_->writeByte(node->isUnique() ? 1 : 0);
+
+            // Write column count
+            const auto &columns = node->columns();
+            current_result_->writeInt32(static_cast<uint32_t>(columns.size()));
+
+            // Write each column name
+            for (auto column_id : columns)
+            {
+                writeStringId(column_id);
+            }
+
+            // Write tablespace name (Phase 2 Task 2.3)
+            writeStringId(node->tablespace());
+        }
+
+        void BytecodeGenerator::visit(parser::CreateTablespaceStmt *node)
+        {
+            // Generate CREATE TABLESPACE bytecode (Phase 2 Task 2.1)
+            current_result_->writeOpcode(Opcode::CREATE_TABLESPACE);
+
+            // Write tablespace name
+            writeStringId(node->tablespaceName());
+
+            // Write location path
+            writeStringId(node->location());
+
+            // Write autoextend_enabled (1 byte: 0 = OFF, 1 = ON)
+            current_result_->writeByte(node->autoextendEnabled() ? 1 : 0);
+
+            // Write autoextend_size_mb (uint32)
+            current_result_->writeInt32(node->autoextendSizeMB());
+
+            // Write max_size_mb (uint32, 0 = UNLIMITED)
+            current_result_->writeInt32(node->maxSizeMB());
+
+            // Write prealloc_pages (uint32)
+            current_result_->writeInt32(node->preallocPages());
+        }
+
+        void BytecodeGenerator::visit(parser::AlterTablespaceStmt *node)
+        {
+            // Generate ALTER TABLESPACE bytecode (Phase 2 Task 2.2)
+            current_result_->writeOpcode(Opcode::ALTER_TABLESPACE);
+
+            // Write tablespace name
+            writeStringId(node->tablespaceName());
+
+            // Write number of alterations
+            const auto &alterations = node->alterations();
+            if (alterations.size() > UINT32_MAX)
+            {
+                current_result_->addError("Alteration count exceeds maximum");
+                return;
+            }
+            current_result_->writeInt32(static_cast<uint32_t>(alterations.size()));
+
+            // Write each alteration
+            for (const auto &alt : alterations)
+            {
+                // Write alteration type (1 byte)
+                current_result_->writeByte(static_cast<uint8_t>(alt.type));
+
+                switch (alt.type)
+                {
+                    case parser::TablespaceAlterationType::SET_AUTOEXTEND:
+                        // Write autoextend_enabled (1 byte)
+                        current_result_->writeByte(alt.autoextend_enabled ? 1 : 0);
+                        break;
+
+                    case parser::TablespaceAlterationType::SET_AUTOEXTEND_SIZE:
+                    case parser::TablespaceAlterationType::SET_MAXSIZE:
+                        // Write size_value (uint32)
+                        current_result_->writeInt32(alt.size_value);
+                        break;
+
+                    case parser::TablespaceAlterationType::RENAME_TO:
+                        // Write new name (string)
+                        writeStringId(alt.new_name);
+                        break;
+                }
+            }
+        }
+
+        void BytecodeGenerator::visit(parser::DropTablespaceStmt *node)
+        {
+            // Generate DROP TABLESPACE bytecode (Phase 2 Task 2.1)
+            current_result_->writeOpcode(Opcode::DROP_TABLESPACE);
+
+            // Write tablespace name
+            writeStringId(node->tablespaceName());
+
+            // Write force flag (1 byte: 0 = normal, 1 = FORCE)
+            current_result_->writeByte(node->force() ? 1 : 0);
         }
 
         void BytecodeGenerator::visit(parser::InsertStmt *node)

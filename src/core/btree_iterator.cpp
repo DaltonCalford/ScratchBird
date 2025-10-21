@@ -88,7 +88,8 @@ namespace scratchbird::core
         return !exhausted_;
     }
 
-    auto BTreeIterator::next(std::vector<uint8_t> *key_out, uint64_t *tuple_id_out,
+    // PHASE 1.5 TASK 1.5.2a: Migrated to TID struct API
+    auto BTreeIterator::next(std::vector<uint8_t> *key_out, TID *tid_out,
                              ErrorContext *ctx) -> Status
     {
         if (exhausted_)
@@ -147,9 +148,11 @@ namespace scratchbird::core
             {
                 *key_out = key;
             }
-            if (tuple_id_out)
+            if (tid_out)
             {
-                *tuple_id_out = tuple_ids[current_tuple_index_];
+                // PHASE 1.5: Convert stored uint64_t to TID struct
+                uint64_t legacy_tid = tuple_ids[current_tuple_index_];
+                *tid_out = convertLegacyTID(legacy_tid);
             }
 
             scanned_count_++;

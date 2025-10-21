@@ -768,6 +768,7 @@ namespace scratchbird::core
 
     auto CatalogManager::createTable(const ID &schema_id, const std::string &table_name,
                                      const std::vector<ColumnInfo> &columns, ID &table_id,
+                                     uint16_t tablespace_id, // Phase 2 Task 2.3
                                      ErrorContext *ctx) -> Status
     {
         std::lock_guard<std::mutex> lock(mutex_);
@@ -809,7 +810,7 @@ namespace scratchbird::core
         table.row_count = 0;
         table.table_type = TableType::HEAP; // Default to heap table
         table.has_toast = false;            // Will be set to true if needed
-        table.tablespace_id = 0;            // Default tablespace
+        table.tablespace_id = tablespace_id; // Phase 2 Task 2.3: Use specified tablespace
         table.storage_params_oid = 0;       // No custom storage parameters
         table.created_time = std::chrono::duration_cast<std::chrono::microseconds>(
                                  std::chrono::system_clock::now().time_since_epoch())
@@ -967,7 +968,9 @@ namespace scratchbird::core
 
     auto CatalogManager::createIndex(const ID &table_id, const std::string &index_name,
                                      const std::vector<std::string> &column_names, ID &index_id,
-                                     bool is_unique, IndexType index_type, ErrorContext *ctx)
+                                     bool is_unique, IndexType index_type,
+                                     uint16_t tablespace_id, // Phase 2 Task 2.3
+                                     ErrorContext *ctx)
         -> Status
     {
         std::lock_guard<std::mutex> lock(mutex_);
@@ -1018,6 +1021,7 @@ namespace scratchbird::core
         index.table_id = table_id;
         index.index_name = index_name;
         index.root_page = root_page;
+        index.tablespace_id = tablespace_id; // Phase 2 Task 2.3: Use specified tablespace
         index.index_type = index_type;
         index.is_unique = is_unique;
         index.column_ids = column_ids;
@@ -1996,6 +2000,402 @@ namespace scratchbird::core
         }
 
         return bp->unpinPage(tablespaces_table_page_, false, ctx);
+    }
+
+    // ===== Tablespace Operations (Phase 2 Task 2.1) =====
+
+    auto CatalogManager::createTablespace(const std::string &tablespace_name,
+                                          const std::string &location, bool autoextend_enabled,
+                                          uint32_t autoextend_size_mb, uint32_t max_size_mb,
+                                          uint32_t prealloc_pages, uint16_t &tablespace_id,
+                                          ErrorContext *ctx) -> Status
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+
+        // Validate tablespace name
+        if (tablespace_name.empty() || tablespace_name.length() > 63)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                              "Tablespace name must be 1-63 characters");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        // Check if tablespace name already exists
+        for (const auto &[id, info] : tablespace_cache_)
+        {
+            if (info.tablespace_name == tablespace_name)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::FILE_EXISTS,
+                                  ("Tablespace '" + tablespace_name + "' already exists").c_str());
+                return Status::FILE_EXISTS;
+            }
+        }
+
+        // Validate location path
+        if (location.empty() || location.length() > 255)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                              "Location path must be 1-255 characters");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        // Validate parameters
+        if (autoextend_size_mb == 0)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                              "AUTOEXTEND_SIZE must be greater than 0");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        if (max_size_mb > 0 && max_size_mb < autoextend_size_mb)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                              "MAXSIZE must be >= AUTOEXTEND_SIZE or 0 (UNLIMITED)");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        // Allocate new tablespace ID (find next available)
+        uint16_t new_id = 2; // Start from 2 (0 = invalid, 1 = primary)
+        while (tablespace_cache_.find(new_id) != tablespace_cache_.end())
+        {
+            new_id++;
+            if (new_id == 0)
+            {
+                // Wrapped around
+                SET_ERROR_CONTEXT(ctx, Status::OOM,
+                                  "No available tablespace IDs (maximum 65535)");
+                return Status::OOM;
+            }
+        }
+
+        // Get PageManager
+        PageManager *pm = db_->page_manager();
+        if (!pm)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "PageManager not available");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        // Create TablespaceConfig
+        TablespaceConfig config;
+        config.autoextend_enabled = autoextend_enabled;
+        config.autoextend_size_mb = autoextend_size_mb;
+        config.max_size_mb = max_size_mb;
+        config.prealloc_pages = prealloc_pages;
+
+        // Create the tablespace file via PageManager
+        Status status = pm->createTablespace(new_id, tablespace_name, location, config, ctx);
+        if (status != Status::OK)
+        {
+            return status; // Error context already set
+        }
+
+        // Create TablespaceInfo
+        TablespaceInfo info;
+        info.tablespace_id = new_id;
+        info.tablespace_name = tablespace_name;
+        info.tablespace_uuid = generateUuidV7();
+        info.autoextend_enabled = autoextend_enabled;
+        info.autoextend_size_mb = autoextend_size_mb;
+        info.max_size_mb = max_size_mb;
+        info.prealloc_pages = prealloc_pages;
+        info.file_paths.push_back(location);
+        info.total_size_mb = 0; // Will be updated by PageManager
+        info.used_size_mb = 0;
+        info.free_size_mb = 0;
+        info.table_count = 0;
+        info.index_count = 0;
+        info.created_time = 0; // TODO: Add timestamp
+        info.last_modified_time = 0;
+        info.last_extended_time = 0;
+
+        // Write to catalog
+        status = writeTablespaceRecord(info, ctx);
+        if (status != Status::OK)
+        {
+            // Rollback: close and delete the tablespace file
+            pm->closeTablespace(new_id, ctx);
+            return status;
+        }
+
+        // Add to cache
+        tablespace_cache_[new_id] = info;
+
+        // Return the allocated ID
+        tablespace_id = new_id;
+
+        return Status::OK;
+    }
+
+    auto CatalogManager::dropTablespace(const std::string &tablespace_name, bool force,
+                                        ErrorContext *ctx) -> Status
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+
+        // Find tablespace by name
+        uint16_t ts_id = 0;
+        TablespaceInfo ts_info;
+        bool found = false;
+
+        for (const auto &[id, info] : tablespace_cache_)
+        {
+            if (info.tablespace_name == tablespace_name)
+            {
+                ts_id = id;
+                ts_info = info;
+                found = true;
+                break;
+            }
+        }
+
+        if (!found)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND,
+                              ("Tablespace '" + tablespace_name + "' not found").c_str());
+            return Status::NOT_FOUND;
+        }
+
+        // Cannot drop primary tablespace
+        if (ts_id == PRIMARY_TABLESPACE_ID)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Cannot drop primary tablespace");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        // Check if tablespace is empty (unless FORCE)
+        if (!force && (ts_info.table_count > 0 || ts_info.index_count > 0))
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                              ("Tablespace '" + tablespace_name +
+                                  "' is not empty. Use FORCE to drop anyway.").c_str());
+            return Status::INVALID_ARGUMENT;
+        }
+
+        // TODO: If FORCE, drop all tables/indexes in the tablespace first
+        // For now, return NOT_IMPLEMENTED for FORCE with objects
+        if (force && (ts_info.table_count > 0 || ts_info.index_count > 0))
+        {
+            SET_ERROR_CONTEXT(
+                ctx, Status::NOT_IMPLEMENTED,
+                "FORCE drop of non-empty tablespace not yet implemented (will be in Phase 2)");
+            return Status::NOT_IMPLEMENTED;
+        }
+
+        // Get PageManager
+        PageManager *pm = db_->page_manager();
+        if (!pm)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "PageManager not available");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        // Close the tablespace file
+        Status status = pm->closeTablespace(ts_id, ctx);
+        if (status != Status::OK)
+        {
+            return status; // Error context already set
+        }
+
+        // TODO: Delete the file from filesystem
+        // For now, we just close it and remove from catalog
+
+        // Remove from cache
+        tablespace_cache_.erase(ts_id);
+
+        // Mark record as invalid in catalog
+        // TODO: Implement invalidation or compaction of catalog pages
+        // For now, we'll leave the record in place and rely on cache
+
+        return Status::OK;
+    }
+
+    auto CatalogManager::getTablespace(uint16_t tablespace_id, TablespaceInfo &info,
+                                       ErrorContext *ctx) -> Status
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+
+        auto it = tablespace_cache_.find(tablespace_id);
+        if (it == tablespace_cache_.end())
+        {
+            SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND,
+                              ("Tablespace ID " + std::to_string(tablespace_id) + " not found").c_str());
+            return Status::NOT_FOUND;
+        }
+
+        info = it->second;
+        return Status::OK;
+    }
+
+    auto CatalogManager::getTablespaceByName(const std::string &tablespace_name,
+                                             TablespaceInfo &info, ErrorContext *ctx) -> Status
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+
+        for (const auto &[id, ts_info] : tablespace_cache_)
+        {
+            if (ts_info.tablespace_name == tablespace_name)
+            {
+                info = ts_info;
+                return Status::OK;
+            }
+        }
+
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND,
+                          ("Tablespace '" + tablespace_name + "' not found").c_str());
+        return Status::NOT_FOUND;
+    }
+
+    auto CatalogManager::listTablespaces(std::vector<TablespaceInfo> &tablespaces,
+                                         ErrorContext *ctx) -> Status
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+
+        tablespaces.clear();
+        tablespaces.reserve(tablespace_cache_.size());
+
+        for (const auto &[id, info] : tablespace_cache_)
+        {
+            tablespaces.push_back(info);
+        }
+
+        (void)ctx; // Suppress unused parameter warning
+        return Status::OK;
+    }
+
+    auto CatalogManager::updateTablespace(const std::string &tablespace_name,
+                                          bool autoextend_enabled, uint32_t autoextend_size_mb,
+                                          uint32_t max_size_mb, ErrorContext *ctx) -> Status
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+
+        // Find tablespace by name
+        uint16_t ts_id = 0;
+        TablespaceInfo *ts_info = nullptr;
+        bool found = false;
+
+        for (auto &[id, info] : tablespace_cache_)
+        {
+            if (info.tablespace_name == tablespace_name)
+            {
+                ts_id = id;
+                ts_info = &info;
+                found = true;
+                break;
+            }
+        }
+
+        if (!found)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND,
+                              ("Tablespace '" + tablespace_name + "' not found").c_str());
+            return Status::NOT_FOUND;
+        }
+
+        // Validate parameters
+        if (autoextend_size_mb == 0)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                              "AUTOEXTEND_SIZE must be greater than 0");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        if (max_size_mb > 0 && max_size_mb < autoextend_size_mb)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                              "MAXSIZE must be >= AUTOEXTEND_SIZE or 0 (UNLIMITED)");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        // TODO: Validate MAXSIZE >= current file size (requires PageManager API)
+
+        // Update in-memory cache
+        ts_info->autoextend_enabled = autoextend_enabled;
+        ts_info->autoextend_size_mb = autoextend_size_mb;
+        ts_info->max_size_mb = max_size_mb;
+
+        // Write updated record to catalog
+        Status status = writeTablespaceRecord(*ts_info, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        // TODO: Update TablespaceHeader on disk (page 0 of tablespace file)
+        // This requires PageManager API to write header
+
+        return Status::OK;
+    }
+
+    auto CatalogManager::renameTablespace(const std::string &old_name,
+                                          const std::string &new_name, ErrorContext *ctx) -> Status
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+
+        // Validate new name
+        if (new_name.empty() || new_name.length() > 63)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                              "Tablespace name must be 1-63 characters");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        // Check if new name already exists
+        for (const auto &[id, info] : tablespace_cache_)
+        {
+            if (info.tablespace_name == new_name)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::FILE_EXISTS,
+                                  ("Tablespace '" + new_name + "' already exists").c_str());
+                return Status::FILE_EXISTS;
+            }
+        }
+
+        // Find tablespace by old name
+        uint16_t ts_id = 0;
+        TablespaceInfo *ts_info = nullptr;
+        bool found = false;
+
+        for (auto &[id, info] : tablespace_cache_)
+        {
+            if (info.tablespace_name == old_name)
+            {
+                ts_id = id;
+                ts_info = &info;
+                found = true;
+                break;
+            }
+        }
+
+        if (!found)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND,
+                              ("Tablespace '" + old_name + "' not found").c_str());
+            return Status::NOT_FOUND;
+        }
+
+        // Cannot rename primary tablespace
+        if (ts_id == PRIMARY_TABLESPACE_ID)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Cannot rename primary tablespace");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        // Update in-memory cache
+        ts_info->tablespace_name = new_name;
+
+        // Write updated record to catalog
+        Status status = writeTablespaceRecord(*ts_info, ctx);
+        if (status != Status::OK)
+        {
+            // Rollback
+            ts_info->tablespace_name = old_name;
+            return status;
+        }
+
+        // TODO: Update TablespaceHeader on disk (page 0 of tablespace file)
+        // This requires PageManager API to write header
+
+        return Status::OK;
     }
 
 } // namespace scratchbird::core

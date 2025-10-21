@@ -17,14 +17,18 @@ namespace scratchbird
             VERSION = 0x01, // Version marker (followed by version byte)
 
             // Statements
-            CREATE_TABLE = 0x10,      // Create table
-            INSERT = 0x11,            // Insert row
-            SELECT = 0x12,            // Select query
-            START_TRANSACTION = 0x13, // Start transaction (Phase 2 Task 2.6)
-            SET_TRANSACTION = 0x17,   // Set transaction parameters (Phase 3 Task 3.6)
-            COMMIT = 0x14,            // Commit transaction (Phase 2 Task 2.6)
-            ROLLBACK = 0x15,          // Rollback transaction (Phase 2 Task 2.6)
-            SWEEP = 0x16,             // Sweep database (Phase 3 Task 3.3)
+            CREATE_TABLE = 0x10,       // Create table
+            CREATE_INDEX = 0x1B,       // Create index (Phase 2 Task 2.3)
+            INSERT = 0x11,             // Insert row
+            SELECT = 0x12,             // Select query
+            START_TRANSACTION = 0x13,  // Start transaction (Phase 2 Task 2.6)
+            SET_TRANSACTION = 0x17,    // Set transaction parameters (Phase 3 Task 3.6)
+            COMMIT = 0x14,             // Commit transaction (Phase 2 Task 2.6)
+            ROLLBACK = 0x15,           // Rollback transaction (Phase 2 Task 2.6)
+            SWEEP = 0x16,              // Sweep database (Phase 3 Task 3.3)
+            CREATE_TABLESPACE = 0x18,  // Create tablespace (Phase 2 Task 2.1)
+            ALTER_TABLESPACE = 0x1A,   // Alter tablespace (Phase 2 Task 2.2)
+            DROP_TABLESPACE = 0x19,    // Drop tablespace (Phase 2 Task 2.1)
 
             // Data types
             TYPE_INTEGER = 0x20,   // 32-bit integer (INT32)

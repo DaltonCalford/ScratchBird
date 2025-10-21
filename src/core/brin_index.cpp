@@ -7,6 +7,7 @@
 #include "scratchbird/core/page_manager.h"
 #include "scratchbird/core/error_context.h"
 #include <cstring>
+#include <set>
 
 namespace scratchbird::core
 {
@@ -118,12 +119,26 @@ Status BrinIndex::vacuum(VacuumStats *stats_out, ErrorContext *ctx)
     return Status::OK;
 }
 
-Status BrinIndex::removeDeadEntries(const std::vector<uint64_t> &dead_blocks,
+Status BrinIndex::removeDeadEntries(const std::vector<TID> &dead_tids,
                                    uint64_t *entries_removed_out,
                                    uint64_t *pages_modified_out,
                                    ErrorContext *ctx)
 {
+    // PHASE 1.5: Extract block numbers from TID structs
+    // BRIN indexes are block-based, not tuple-based
+    std::set<uint32_t> dead_blocks;
+    for (const TID &tid : dead_tids)
+    {
+        // Extract page number (block number) from TID
+        uint64_t page_num = getPageNumber(tid);
+        if (page_num <= UINT32_MAX)  // Ensure it fits in uint32_t
+        {
+            dead_blocks.insert(static_cast<uint32_t>(page_num));
+        }
+    }
+
     // Stub: Report no entries removed
+    // TODO: Implement BRIN range summary removal based on dead blocks
     if (entries_removed_out)
     {
         *entries_removed_out = 0;
@@ -132,6 +147,8 @@ Status BrinIndex::removeDeadEntries(const std::vector<uint64_t> &dead_blocks,
     {
         *pages_modified_out = 0;
     }
+
+    (void)dead_blocks;  // Avoid unused variable warning
     return Status::OK;
 }
 

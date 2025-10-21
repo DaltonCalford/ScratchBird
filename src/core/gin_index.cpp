@@ -131,11 +131,20 @@ namespace scratchbird
         }
 
         // Insert a composite value
-        Status GinIndex::insert(const void *value_data, size_t value_len, uint64_t tuple_id,
+        Status GinIndex::insert(const void *value_data, size_t value_len, const TID &tid,
                                 std::function<std::vector<std::vector<uint8_t>>(const void *, size_t)> key_extractor,
                                 ErrorContext *ctx)
         {
-            if (!value_data || value_len == 0 || tuple_id == 0)
+            // PHASE 1.5: Convert TID to legacy format for storage
+            uint64_t legacy_tid = convertTIDtoLegacy(tid);
+            if (legacy_tid == 0)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED,
+                                  "Custom tablespace indexes not yet supported in ALPHA");
+                return Status::NOT_IMPLEMENTED;
+            }
+
+            if (!value_data || value_len == 0)
             {
                 SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Invalid insert arguments");
                 return Status::INVALID_ARGUMENT;
@@ -150,10 +159,10 @@ namespace scratchbird
                 return Status::OK;
             }
 
-            // Insert each key into the pending list
+            // Insert each key into the pending list (using legacy format internally)
             for (const auto &key : keys)
             {
-                Status status = insertIntoPendingList(key, tuple_id, ctx);
+                Status status = insertIntoPendingList(key, legacy_tid, ctx);
                 if (status != Status::OK)
                 {
                     return status;
@@ -327,11 +336,12 @@ namespace scratchbird
 
         // Find all tuple IDs containing a specific key
         // PHASE 1 TASK 1.1.3: Added Snapshot parameter (not yet used - Phase 1 Task 1.2 will implement filtering)
-        std::vector<uint64_t> GinIndex::find(const void *key_data, size_t key_len,
+        // PHASE 1.5: Return TID structs instead of uint64_t
+        std::vector<TID> GinIndex::find(const void *key_data, size_t key_len,
                                              Snapshot *snapshot,
                                              ErrorContext *ctx)
         {
-            std::vector<uint64_t> results;
+            std::vector<TID> results;
 
             if (!key_data || key_len == 0)
             {
@@ -348,7 +358,9 @@ namespace scratchbird
             // Get TIDs from posting list (if key found in main index)
             if (status == Status::OK && posting_page != 0)
             {
-                status = getPostingListTids(posting_page, &results, ctx);
+                // PHASE 1.5: Use legacy format for internal operations, convert to TID for output
+                std::vector<uint64_t> legacy_results;
+                status = getPostingListTids(posting_page, &legacy_results, ctx);
                 if (status != Status::OK)
                 {
                     results.clear();
@@ -357,7 +369,13 @@ namespace scratchbird
                 {
                     // PHASE 1 TASK 1.4: Filter TIDs from main posting list by heap tuple visibility
                     // This ensures we only return TIDs for tuples that are visible to the snapshot
-                    results = filterTidsByVisibility(results, snapshot, ctx);
+                    legacy_results = filterTidsByVisibility(legacy_results, snapshot, ctx);
+
+                    // PHASE 1.5: Convert legacy uint64_t to TID structs
+                    for (uint64_t legacy_tid : legacy_results)
+                    {
+                        results.push_back(convertLegacyTID(legacy_tid));
+                    }
                 }
             }
 
@@ -401,7 +419,8 @@ namespace scratchbird
                             std::vector<uint8_t> entry_key(entry.key_data, entry.key_data + entry.key_len);
                             if (entry_key == key)
                             {
-                                results.push_back(entry.tid);
+                                // PHASE 1.5: Convert legacy tid to TID struct
+                                results.push_back(convertLegacyTID(entry.tid));
                             }
                         }
                     }
@@ -1926,11 +1945,12 @@ namespace scratchbird
         // Multi-key operations (Phase 4)
         // Find TIDs matching ALL keys (AND operation)
         // PHASE 1 TASK 1.1.3: Added Snapshot parameter (not yet used - Phase 1 Task 1.2 will implement filtering)
-        std::vector<uint64_t> GinIndex::findAll(const std::vector<std::vector<uint8_t>> &keys,
+        // PHASE 1.5: Return TID structs instead of uint64_t
+        std::vector<TID> GinIndex::findAll(const std::vector<std::vector<uint8_t>> &keys,
                                                 Snapshot *snapshot,
                                                 ErrorContext *ctx)
         {
-            std::vector<uint64_t> result;
+            std::vector<TID> result;
 
             // Edge cases
             if (keys.empty())
@@ -1974,19 +1994,26 @@ namespace scratchbird
                 tid_lists.push_back(std::move(tids));
             }
 
-            // Compute intersection of all TID lists
-            result = mergeTidLists(tid_lists);
+            // Compute intersection of all TID lists (uses legacy format)
+            std::vector<uint64_t> legacy_result = mergeTidLists(tid_lists);
+
+            // PHASE 1.5: Convert legacy uint64_t to TID structs
+            for (uint64_t legacy_tid : legacy_result)
+            {
+                result.push_back(convertLegacyTID(legacy_tid));
+            }
 
             return result;
         }
 
         // Find TIDs matching ANY key (OR operation)
         // PHASE 1 TASK 1.1.3: Added Snapshot parameter (not yet used - Phase 1 Task 1.2 will implement filtering)
-        std::vector<uint64_t> GinIndex::findAny(const std::vector<std::vector<uint8_t>> &keys,
+        // PHASE 1.5: Return TID structs instead of uint64_t
+        std::vector<TID> GinIndex::findAny(const std::vector<std::vector<uint8_t>> &keys,
                                                 Snapshot *snapshot,
                                                 ErrorContext *ctx)
         {
-            std::vector<uint64_t> result;
+            std::vector<TID> result;
 
             // Edge cases
             if (keys.empty())
@@ -2036,8 +2063,14 @@ namespace scratchbird
                 return result;
             }
 
-            // Compute union of all TID lists
-            result = unionTidLists(tid_lists);
+            // Compute union of all TID lists (uses legacy format)
+            std::vector<uint64_t> legacy_result = unionTidLists(tid_lists);
+
+            // PHASE 1.5: Convert legacy uint64_t to TID structs
+            for (uint64_t legacy_tid : legacy_result)
+            {
+                result.push_back(convertLegacyTID(legacy_tid));
+            }
 
             return result;
         }
@@ -2314,12 +2347,13 @@ namespace scratchbird
         }
 
         // Optimized multi-key AND query with selectivity-based reordering
-        std::vector<uint64_t> GinIndex::findAllOptimized(
+        // PHASE 1.5: Return TID structs instead of uint64_t
+        std::vector<TID> GinIndex::findAllOptimized(
             const std::vector<std::vector<uint8_t>> &keys,
             const QueryOptions &options,
             ErrorContext *ctx)
         {
-            std::vector<uint64_t> result;
+            std::vector<TID> result;
 
             if (keys.empty())
             {
@@ -2365,7 +2399,8 @@ namespace scratchbird
         }
 
         // Optimized multi-key OR query
-        std::vector<uint64_t> GinIndex::findAnyOptimized(
+        // PHASE 1.5: Return TID structs instead of uint64_t
+        std::vector<TID> GinIndex::findAnyOptimized(
             const std::vector<std::vector<uint8_t>> &keys,
             const QueryOptions &options,
             ErrorContext *ctx)
@@ -2377,13 +2412,14 @@ namespace scratchbird
         }
 
         // PostgreSQL GIN operator support
-        std::vector<uint64_t> GinIndex::executeOperator(
+        // PHASE 1.5: Return TID structs instead of uint64_t
+        std::vector<TID> GinIndex::executeOperator(
             GinOperator op,
             const std::vector<std::vector<uint8_t>> &left_keys,
             const std::vector<std::vector<uint8_t>> &right_keys,
             ErrorContext *ctx)
         {
-            std::vector<uint64_t> result;
+            std::vector<TID> result;
 
             switch (op)
             {
@@ -2436,11 +2472,12 @@ namespace scratchbird
         }
 
         // Wildcard query support
-        std::vector<uint64_t> GinIndex::findWithWildcard(const void *pattern,
+        // PHASE 1.5: Return TID structs instead of uint64_t
+        std::vector<TID> GinIndex::findWithWildcard(const void *pattern,
                                                           size_t pattern_len,
                                                           ErrorContext *ctx)
         {
-            std::vector<uint64_t> result;
+            std::vector<TID> result;
 
             if (!pattern || pattern_len == 0)
             {
@@ -2559,11 +2596,12 @@ namespace scratchbird
         }
 
         // Fuzzy matching with edit distance
-        std::vector<uint64_t> GinIndex::findFuzzy(const void *key_data, size_t key_len,
+        // PHASE 1.5: Return TID structs instead of uint64_t
+        std::vector<TID> GinIndex::findFuzzy(const void *key_data, size_t key_len,
                                                    uint32_t max_edit_distance,
                                                    ErrorContext *ctx)
         {
-            std::vector<uint64_t> result;
+            std::vector<TID> result;
 
             if (!key_data || key_len == 0)
             {
@@ -2812,7 +2850,17 @@ namespace scratchbird
             {
                 // Use standard implementation for single thread or single key
                 // PHASE 1 TASK 1.1.5: Pass nullptr for snapshot (Phase 1 Task 1.2 will pass actual snapshot)
-                return findAll(keys, nullptr, ctx);
+                // PHASE 1.5: findAll returns TID, convert to legacy format for internal use
+                std::vector<TID> tid_results = findAll(keys, nullptr, ctx);
+                for (const TID &tid : tid_results)
+                {
+                    uint64_t legacy_tid = convertTIDtoLegacy(tid);
+                    if (legacy_tid != 0)
+                    {
+                        result.push_back(legacy_tid);
+                    }
+                }
+                return result;
             }
 
             // Parallel key lookup with thread pool
@@ -2893,7 +2941,17 @@ namespace scratchbird
 
             if (max_threads <= 1 || keys.size() <= 1)
             {
-                return findAny(keys, nullptr, ctx);
+                // PHASE 1.5: findAny returns TID, convert to legacy format for internal use
+                std::vector<TID> tid_results = findAny(keys, nullptr, ctx);
+                for (const TID &tid : tid_results)
+                {
+                    uint64_t legacy_tid = convertTIDtoLegacy(tid);
+                    if (legacy_tid != 0)
+                    {
+                        result.push_back(legacy_tid);
+                    }
+                }
+                return result;
             }
 
             // Parallel key lookup
@@ -2973,7 +3031,17 @@ namespace scratchbird
             }
 
             // Union all matching keys' TID lists
-            return findAny(matching_keys, nullptr, ctx);
+            // PHASE 1.5: findAny returns TID, convert to legacy format for internal use
+            std::vector<TID> tid_results = findAny(matching_keys, nullptr, ctx);
+            for (const TID &tid : tid_results)
+            {
+                uint64_t legacy_tid = convertTIDtoLegacy(tid);
+                if (legacy_tid != 0)
+                {
+                    result.push_back(legacy_tid);
+                }
+            }
+            return result;
         }
 
         // Helper: Scan entry tree for keys in range
@@ -3171,7 +3239,17 @@ namespace scratchbird
             if (prefix.empty())
             {
                 // No prefix optimization possible - would need full scan
-                return findWithWildcard(pattern, pattern_len, ctx);
+                // PHASE 1.5: findWithWildcard returns TID, convert to legacy format for internal use
+                std::vector<TID> tid_results = findWithWildcard(pattern, pattern_len, ctx);
+                for (const TID &tid : tid_results)
+                {
+                    uint64_t legacy_tid = convertTIDtoLegacy(tid);
+                    if (legacy_tid != 0)
+                    {
+                        result.push_back(legacy_tid);
+                    }
+                }
+                return result;
             }
 
             // Use prefix for range scan
@@ -3210,7 +3288,17 @@ namespace scratchbird
             }
 
             // Union all matching keys
-            return findAny(matching_keys, nullptr, ctx);
+            // PHASE 1.5: findAny returns TID, convert to legacy format for internal use
+            std::vector<TID> tid_results = findAny(matching_keys, nullptr, ctx);
+            for (const TID &tid : tid_results)
+            {
+                uint64_t legacy_tid = convertTIDtoLegacy(tid);
+                if (legacy_tid != 0)
+                {
+                    result.push_back(legacy_tid);
+                }
+            }
+            return result;
         }
 
         // Helper: Levenshtein distance
@@ -3299,7 +3387,8 @@ namespace scratchbird
         }
 
         // PHASE 2 TASK 2.4: Remove index entries pointing to dead tuples
-        Status GinIndex::removeDeadEntries(const std::vector<uint64_t> &dead_tids,
+        // PHASE 1.5 TASK 1.5.2f: Migrated to TID struct API
+        Status GinIndex::removeDeadEntries(const std::vector<TID> &dead_tids,
                                            uint64_t *entries_removed_out,
                                            uint64_t *pages_modified_out,
                                            ErrorContext *ctx)
@@ -3319,8 +3408,25 @@ namespace scratchbird
                 return Status::OK;
             }
 
-            // Create sorted set for O(log D) lookup
-            std::set<uint64_t> dead_set(dead_tids.begin(), dead_tids.end());
+            // PHASE 1.5: Convert TID structs to legacy format set for lookup
+            std::set<uint64_t> dead_set;
+            for (const TID &tid : dead_tids)
+            {
+                uint64_t legacy = convertTIDtoLegacy(tid);
+                if (legacy != 0)  // Skip custom tablespace TIDs
+                {
+                    dead_set.insert(legacy);
+                }
+            }
+
+            if (dead_set.empty())
+            {
+                if (entries_removed_out)
+                    *entries_removed_out = 0;
+                if (pages_modified_out)
+                    *pages_modified_out = 0;
+                return Status::OK;
+            }
 
             // ===== Step 1: Remove dead TIDs from pending list =====
             // The pending list contains recent insertions not yet merged into main index

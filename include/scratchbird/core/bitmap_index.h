@@ -9,6 +9,7 @@
 #include "scratchbird/core/uuidv7.h"
 #include "scratchbird/core/status.h"
 #include "scratchbird/core/index_gc_interface.h"
+#include "scratchbird/core/tid.h"
 #include <vector>
 #include <cstdint>
 #include <memory>
@@ -142,20 +143,23 @@ namespace scratchbird
             ~BitmapIndex();
 
             // Insert a tuple into the bitmap for a specific value
+            // PHASE 1.5 TASK 1.5.2c: Migrated to TID struct API
             Status insert(
                 const void *value_data,
                 size_t value_len,
-                uint64_t tuple_id,
+                const TID &tid,
                 ErrorContext *ctx = nullptr);
 
             // Remove a tuple from all bitmaps
+            // PHASE 1.5 TASK 1.5.2c: Migrated to TID struct API
             Status remove(
-                uint64_t tuple_id,
+                const TID &tid,
                 ErrorContext *ctx = nullptr);
 
             // Find all tuple IDs matching a value
             // PHASE 1 TASK 1.1.4: Added Snapshot parameter for MVCC visibility filtering
-            std::vector<uint64_t> find(
+            // PHASE 1.5 TASK 1.5.2c: Migrated to TID struct API
+            std::vector<TID> find(
                 const void *value_data,
                 size_t value_len,
                 struct Snapshot *snapshot,
@@ -163,19 +167,20 @@ namespace scratchbird
 
             // Logical operations on bitmaps
             // PHASE 1 TASK 1.1.4: Added Snapshot parameter for MVCC visibility filtering
-            std::vector<uint64_t> findAnd(
+            // PHASE 1.5 TASK 1.5.2c: Migrated to TID struct API
+            std::vector<TID> findAnd(
                 const std::vector<const void *> &values,
                 const std::vector<size_t> &value_lens,
                 struct Snapshot *snapshot,
                 ErrorContext *ctx = nullptr);
 
-            std::vector<uint64_t> findOr(
+            std::vector<TID> findOr(
                 const std::vector<const void *> &values,
                 const std::vector<size_t> &value_lens,
                 struct Snapshot *snapshot,
                 ErrorContext *ctx = nullptr);
 
-            std::vector<uint64_t> findNot(
+            std::vector<TID> findNot(
                 const void *value_data,
                 size_t value_len,
                 struct Snapshot *snapshot,
@@ -197,17 +202,19 @@ namespace scratchbird
             const UuidV7Bytes &getUuid() const { return index_uuid_; }
 
             // PHASE 1 TASK 1.5: Visibility helper for post-filtering TIDs
+            // PHASE 1.5 TASK 1.5.2c: Migrated to TID struct API
             // Note: Snapshot is used as an incomplete type in method signatures
             // The actual type is TransactionManager::Snapshot, defined in transaction_manager.h
             // This helper filters a list of TIDs by checking heap tuple visibility
-            std::vector<uint64_t> filterTidsByVisibility(const std::vector<uint64_t> &tids,
-                                                          const struct Snapshot *snapshot,
-                                                          ErrorContext *ctx);
+            std::vector<TID> filterTidsByVisibility(const std::vector<TID> &tids,
+                                                     const struct Snapshot *snapshot,
+                                                     ErrorContext *ctx);
 
             // PHASE 2 TASK 2.5: IndexGCInterface implementation
+            // PHASE 1.5 TASK 1.5.2c: Migrated to TID struct API
             // Remove index entries pointing to dead tuples
             // Called by garbage collector after heap sweep identifies dead TIDs
-            Status removeDeadEntries(const std::vector<uint64_t> &dead_tids,
+            Status removeDeadEntries(const std::vector<TID> &dead_tids,
                                      uint64_t *entries_removed_out = nullptr,
                                      uint64_t *pages_modified_out = nullptr,
                                      ErrorContext *ctx = nullptr) override;

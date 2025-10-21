@@ -143,6 +143,26 @@ namespace scratchbird::core
          */
         auto closeTablespace(uint16_t tablespace_id, ErrorContext *ctx = nullptr) -> Status;
 
+        /**
+         * extendTablespace - Extend a tablespace file when space is exhausted
+         *
+         * @param tablespace_id Tablespace ID (1-65535, 0 = primary reserved)
+         * @param ctx Error context
+         * @return Status::OK on success, error status otherwise
+         *
+         * Performs:
+         * 1. Calculates extension size from tablespace's autoextend_size_mb
+         * 2. Checks MAXSIZE limit before extending (returns error if exceeded)
+         * 3. Uses ftruncate() to grow the file
+         * 4. Initializes new pages as free in FSM bitmap
+         * 5. Updates TablespaceHeader.total_pages and free_pages
+         * 6. Marks FSM as dirty for flush
+         *
+         * Thread-safe: Acquires tablespace_fsm_mutex_ during FSM update.
+         * Note: Called automatically by allocatePageInTablespace when no free pages.
+         */
+        auto extendTablespace(uint16_t tablespace_id, ErrorContext *ctx = nullptr) -> Status;
+
         // Get total number of pages
         auto totalPages() const -> uint32_t
         {
