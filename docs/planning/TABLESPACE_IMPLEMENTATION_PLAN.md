@@ -1207,12 +1207,16 @@ This document tracks the implementation of tablespace support for ScratchBird ac
 
 ### TASK 4.1: Offline Table Migration (20-28 hours)
 
-**Status**: ⏸️ NOT STARTED
-**Estimated**: 20-28 hours
+**Status**: 📋 DESIGN COMPLETE - READY FOR IMPLEMENTATION
+**Estimated**: 20-28 hours (across 4 sessions)
 **Assignee**: TBD
 **Dependencies**: Phase 1, 2, 3 complete
 
 **Description**: Implement `ALTER TABLE ... SET TABLESPACE` (offline mode).
+
+**Design Documents**:
+- [OFFLINE_TABLE_MIGRATION_DESIGN.md](./OFFLINE_TABLE_MIGRATION_DESIGN.md) - Full architecture and design
+- [OFFLINE_TABLE_MIGRATION_TODOS.md](./OFFLINE_TABLE_MIGRATION_TODOS.md) - Detailed session-by-session todo lists
 
 **Subtasks**:
 - [ ] **4.1.1**: Add ALTER TABLE SET TABLESPACE syntax to parser
