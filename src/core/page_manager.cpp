@@ -3,6 +3,7 @@
 #include "scratchbird/core/debug.h"
 #include "scratchbird/core/logger.h"
 #include "scratchbird/core/tablespace.h"
+#include "scratchbird/core/catalog_manager.h"
 #include <cstring>
 #include <algorithm>
 #include <chrono>
@@ -1498,6 +1499,30 @@ namespace scratchbird::core
                 tablespace_id,
                 static_cast<unsigned long>(new_total_pages),
                 static_cast<unsigned long>(header->free_pages));
+
+        // Step 10: Update pg_tablespace statistics (Phase 3 Task 3.1.4)
+        // Calculate sizes in MB
+        uint64_t total_size_mb = (new_total_pages * page_size_) / (1024 * 1024);
+        uint64_t free_size_mb = (header->free_pages * page_size_) / (1024 * 1024);
+
+        // Get current time for last_extended_time
+        auto now = std::chrono::system_clock::now();
+        auto micros = std::chrono::duration_cast<std::chrono::microseconds>(
+            now.time_since_epoch()).count();
+        uint64_t last_extended_time = static_cast<uint64_t>(micros);
+
+        // Update catalog statistics
+        Status catalog_status = db_->catalog_manager()->updateTablespaceStats(
+            tablespace_id, total_size_mb, free_size_mb, last_extended_time, ctx);
+
+        if (catalog_status != Status::OK)
+        {
+            // Log warning but don't fail the extension - it succeeded on disk
+            LOG_WARNING(STORAGE,
+                       "Tablespace %u extended successfully but failed to update catalog statistics: status=%d",
+                       tablespace_id, static_cast<int>(catalog_status));
+            // Don't return error - the extension itself succeeded
+        }
 
         return Status::OK;
     }

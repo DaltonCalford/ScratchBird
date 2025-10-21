@@ -1033,11 +1033,17 @@ This document tracks the implementation of tablespace support for ScratchBird ac
   - **Actual**: 0 hours (already implemented in extendTablespace() - Task 3.1.1)
   - **Note**: MAXSIZE enforcement is fully integrated into extendTablespace() method
 
-- [ ] **3.1.4**: Update tablespace statistics after extension
-  - Update `pg_tablespace.total_size_mb`
-  - Update `pg_tablespace.free_size_mb`
-  - Update `pg_tablespace.last_extended_time`
+- [x] **3.1.4**: Update tablespace statistics after extension ✅ COMPLETE
+  - ✅ Update `pg_tablespace.total_size_mb`
+  - ✅ Update `pg_tablespace.free_size_mb`
+  - ✅ Update `pg_tablespace.last_extended_time`
+  - ✅ Calculate used_size_mb automatically
   - Estimate: 1-2 hours
+  - **Actual**: 1.5 hours
+  - **Files Modified**:
+    - `include/scratchbird/core/catalog_manager.h` (+15 lines for updateTablespaceStats)
+    - `src/core/catalog_manager.cpp` (+59 lines for implementation)
+    - `src/core/page_manager.cpp` (+25 lines to call updateTablespaceStats)
 
 - [x] **3.1.5**: Add logging and monitoring ✅ COMPLETE (implemented in 3.1.1 and 3.1.2)
   - ✅ Log INFO when tablespace extends (include size, reason)
