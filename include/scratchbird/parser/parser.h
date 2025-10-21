@@ -104,13 +104,17 @@ namespace scratchbird
 
             // Statement parsers
             Statement *parseCreateTable();
+            Statement *parseCreateIndex();           // Phase 2 Task 2.3
+            Statement *parseCreateTablespace();      // Phase 2 Task 2.1
+            Statement *parseAlterTablespace();       // Phase 2 Task 2.2
+            Statement *parseDropTablespace();        // Phase 2 Task 2.1
             Statement *parseInsert();
             Statement *parseSelect();
-            Statement *parseStartTransaction(); // Phase 2 Task 2.6
-            Statement *parseSetTransaction();   // Phase 3 Task 3.6
-            Statement *parseCommit();           // Phase 2 Task 2.6
-            Statement *parseRollback();         // Phase 2 Task 2.6
-            Statement *parseSweep();            // Phase 3 Task 3.3
+            Statement *parseStartTransaction();      // Phase 2 Task 2.6
+            Statement *parseSetTransaction();        // Phase 3 Task 3.6
+            Statement *parseCommit();                // Phase 2 Task 2.6
+            Statement *parseRollback();              // Phase 2 Task 2.6
+            Statement *parseSweep();                 // Phase 3 Task 3.3
 
             // CREATE TABLE helpers
             ColumnDef *parseColumnDef();

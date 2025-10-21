@@ -303,7 +303,8 @@ namespace scratchbird::core
         return std::make_unique<BTree>(db, index_info);
     }
 
-    auto BTree::insert(const std::vector<uint8_t> &key, uint64_t tuple_id, ErrorContext *ctx)
+    // PHASE 1.5 TASK 1.5.2a: Migrated to TID struct API
+    auto BTree::insert(const std::vector<uint8_t> &key, const TID &tid, ErrorContext *ctx)
         -> Status
     {
         // Find the appropriate leaf page for this key
@@ -341,10 +342,9 @@ namespace scratchbird::core
         uint32_t page_size = page->btr_header.page_size;
 
         // Create a Tuple for the add_node call
+        // PHASE 1.5: Tuple struct now uses TID directly
         Tuple tuple;
-        tuple.tid = tuple_id;
-        tuple.page_id = 0;    // Not used by add_node
-        tuple.item_id = 0;    // Not used by add_node
+        tuple.tid = tid;
         tuple.data = nullptr; // Not used by add_node
         tuple.data_size = 0;  // Not used by add_node
 
@@ -369,14 +369,14 @@ namespace scratchbird::core
                 }
 
                 // Split the leaf page
-                status = split_leaf_page(leaf_page_num, key, tuple_id, ctx);
+                status = split_leaf_page(leaf_page_num, key, tid, ctx);
                 if (status != Status::OK)
                 {
                     return status;
                 }
 
                 // After split, retry the insert (will re-acquire locks)
-                return insert(key, tuple_id, ctx);
+                return insert(key, tid, ctx);
             }
             else if (status != Status::OK)
             {
@@ -431,8 +431,9 @@ namespace scratchbird::core
 
     // Searches for a key within a single B-Tree page using binary search.
     // Handles prefix-compressed keys by decompressing them before comparison.
+    // PHASE 1.5 TASK 1.5.2a: Migrated to TID struct API
     auto BTree::searchPage(const SBBTreePage *page, const std::vector<uint8_t> &key,
-                           std::vector<uint64_t> *tuple_ids_out) const -> bool
+                           std::vector<TID> *tids_out) const -> bool
     {
         const auto *page_data = reinterpret_cast<const uint8_t *>(page);
 
@@ -538,12 +539,14 @@ namespace scratchbird::core
             const uint8_t *node_key_data =
                 reinterpret_cast<const uint8_t *>(node) + sizeof(SBBTreeNode);
 
+            // PHASE 1.5: Convert stored uint64_t to TID struct
             const auto *tuple_ids_ptr =
                 reinterpret_cast<const uint64_t *>(node_key_data + node->btn_key_len);
 
             for (uint32_t j = 0; j < node->btn_tuple_count; ++j)
             {
-                tuple_ids_out->push_back(tuple_ids_ptr[j]);
+                TID tid = convertLegacyTID(tuple_ids_ptr[j]);
+                tids_out->push_back(tid);
             }
             return true;
         }
@@ -784,9 +787,10 @@ namespace scratchbird::core
     }
 
     // PHASE 1 TASK 1.1.1: Added Snapshot parameter (not yet used - Phase 1 Task 1.2 will implement filtering)
+    // PHASE 1.5 TASK 1.5.2a: Migrated to TID struct API
     auto BTree::search(const std::vector<uint8_t> &key,
                        Snapshot *snapshot,
-                       std::vector<uint64_t> *tuple_ids_out,
+                       std::vector<TID> *tids_out,
                        ErrorContext *ctx) -> Status
     {
         uint64_t leaf_page_num;
@@ -820,7 +824,7 @@ namespace scratchbird::core
 
         const auto *page = reinterpret_cast<const SBBTreePage *>(page_data_ptr);
 
-        bool found = searchPage(page, key, tuple_ids_out);
+        bool found = searchPage(page, key, tids_out);
 
         bp->unpinPage(leaf_page_num, false, ctx);
 
@@ -852,7 +856,8 @@ namespace scratchbird::core
         return Status::NOT_FOUND;
     }
 
-    auto BTree::remove(const std::vector<uint8_t> &key, uint64_t tuple_id, ErrorContext *ctx)
+    // PHASE 1.5 TASK 1.5.2a: Migrated to TID struct API
+    auto BTree::remove(const std::vector<uint8_t> &key, const TID &tid, ErrorContext *ctx)
         -> Status
     {
         // Find the appropriate leaf page for this key
@@ -916,13 +921,16 @@ namespace scratchbird::core
             int cmp = compare_keys(key, full_key.data(), full_key.size());
             if (cmp == 0)
             {
-                // Check if the tuple_id matches
+                // PHASE 1.5: Convert TID to legacy format for comparison
+                uint64_t legacy_tid = convertTIDtoLegacy(tid);
+
+                // Check if the tid matches
                 const auto *tuple_ids_ptr =
                     reinterpret_cast<const uint64_t *>(node_key_data + node->btn_key_len);
 
                 for (uint32_t j = 0; j < node->btn_tuple_count; ++j)
                 {
-                    if (tuple_ids_ptr[j] == tuple_id)
+                    if (tuple_ids_ptr[j] == legacy_tid)
                     {
                         found = true;
                         node_to_remove = i;
@@ -981,8 +989,9 @@ namespace scratchbird::core
         return Status::OK;
     }
 
+    // PHASE 1.5 TASK 1.5.2a: Migrated to TID struct API
     auto BTree::split_leaf_page(uint64_t left_page_num, const std::vector<uint8_t> &new_key,
-                                uint64_t new_tuple_id, ErrorContext *ctx) -> Status
+                                const TID &new_tid, ErrorContext *ctx) -> Status
     {
         BufferPool *bp = db_->buffer_pool();
         PageManager *pm = db_->page_manager();
@@ -1054,9 +1063,8 @@ namespace scratchbird::core
                 for (uint32_t j = 0; j < node->btn_tuple_count; ++j)
                 {
                     Tuple tuple;
-                    tuple.tid = tuple_ids_ptr[j];
-                    tuple.page_id = 0;
-                    tuple.item_id = 0;
+                    // PHASE 1.5: Convert legacy uint64_t from disk to TID struct
+                    tuple.tid = convertLegacyTID(tuple_ids_ptr[j]);
                     tuple.data = nullptr;
                     tuple.data_size = 0;
 
@@ -2191,7 +2199,8 @@ namespace scratchbird::core
 
     // PHASE 2 TASK 2.2: IndexGCInterface implementation
     // Remove index entries pointing to dead tuples
-    Status BTree::removeDeadEntries(const std::vector<uint64_t> &dead_tids,
+    // PHASE 1.5 TASK 1.5.2a: Migrated to TID struct API
+    Status BTree::removeDeadEntries(const std::vector<TID> &dead_tids,
                                     uint64_t *entries_removed_out,
                                     uint64_t *pages_modified_out,
                                     ErrorContext *ctx)
@@ -2212,8 +2221,17 @@ namespace scratchbird::core
             return Status::OK;
         }
 
-        // Create a sorted set for O(log D) lookup
-        std::set<uint64_t> dead_set(dead_tids.begin(), dead_tids.end());
+        // PHASE 1.5: Convert TID structs to legacy format for lookup
+        // On-disk format still stores uint64_t, so we build a set of legacy TIDs
+        std::set<uint64_t> dead_set;
+        for (const TID &tid : dead_tids)
+        {
+            uint64_t legacy = convertTIDtoLegacy(tid);
+            if (legacy != 0)  // Skip custom tablespace TIDs (not supported in ALPHA)
+            {
+                dead_set.insert(legacy);
+            }
+        }
 
         BufferPool *bp = db_->buffer_pool();
         if (!bp)

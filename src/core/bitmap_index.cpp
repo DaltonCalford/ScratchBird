@@ -11,6 +11,7 @@
 #include <cstring>
 #include <algorithm>
 #include <functional>
+#include <set>
 
 namespace scratchbird
 {
@@ -349,7 +350,7 @@ namespace scratchbird
         Status BitmapIndex::insert(
             const void *value_data,
             size_t value_len,
-            uint64_t tuple_id,
+            const TID &tid,
             ErrorContext *ctx)
         {
             if (!value_data || value_len == 0)
@@ -357,6 +358,15 @@ namespace scratchbird
                 if (ctx)
                     SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Invalid value");
                 return Status::INVALID_ARGUMENT;
+            }
+
+            // PHASE 1.5: Convert TID to legacy format for storage
+            uint64_t legacy_tid = convertTIDtoLegacy(tid);
+            if (legacy_tid == 0)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED,
+                                  "Custom tablespace indexes not yet supported in ALPHA");
+                return Status::NOT_IMPLEMENTED;
             }
 
             // Find or create dictionary entry
@@ -379,8 +389,8 @@ namespace scratchbird
                 return Status::IO_ERROR;
             }
 
-            // Convert 64-bit tuple ID to 32-bit integer
-            uint32_t int_id = static_cast<uint32_t>(tuple_id);
+            // Convert 64-bit legacy TID to 32-bit integer for Roaring bitmap
+            uint32_t int_id = static_cast<uint32_t>(legacy_tid);
 
             Status status = bitmap->add(int_id, ctx);
             if (status != Status::OK)
@@ -400,16 +410,17 @@ namespace scratchbird
         }
 
         // PHASE 1 TASK 1.5: Visibility filter for bitmap index (post-filtering)
+        // PHASE 1.5 TASK 1.5.2c: Migrated to TID struct API
         // This is a post-filter that checks heap tuple visibility for each TID returned by bitmap operations
         // NOTE: This is less efficient than B-Tree/Hash visibility (20-40% overhead) because:
         //       - Bitmap returns TIDs directly, not pointers to heap tuples
         //       - We must access heap pages separately to check visibility
         //       - Full MVCC redesign would require storing xmin/xmax in bitmap entries (deferred to Beta)
-        std::vector<uint64_t> BitmapIndex::filterTidsByVisibility(const std::vector<uint64_t> &tids,
-                                                                   const Snapshot *snapshot,
-                                                                   ErrorContext *ctx)
+        std::vector<TID> BitmapIndex::filterTidsByVisibility(const std::vector<TID> &tids,
+                                                              const Snapshot *snapshot,
+                                                              ErrorContext *ctx)
         {
-            std::vector<uint64_t> visible_tids;
+            std::vector<TID> visible_tids;
 
             // If no snapshot provided, return all TIDs (no filtering)
             if (snapshot == nullptr)
@@ -422,12 +433,11 @@ namespace scratchbird
             auto *buffer_pool = db_->buffer_pool();
             auto *txn_manager = db_->transaction_manager();
 
-            for (uint64_t tid : tids)
+            for (const TID &tid : tids)
             {
-                // Extract page_id and item_id from TID
-                // TID format: (page_id << 32) | (item_id << 16)
-                uint32_t page_id = static_cast<uint32_t>(tid >> 32);
-                uint16_t item_id = static_cast<uint16_t>((tid >> 16) & 0xFFFF);
+                // Extract page_id and item_id from TID struct
+                uint32_t page_id = static_cast<uint32_t>(getPageNumber(tid));
+                uint16_t item_id = getSlot(tid);
 
                 // Pin the heap page
                 uint8_t *page_data = nullptr;
@@ -480,13 +490,13 @@ namespace scratchbird
             return visible_tids;
         }
 
-        std::vector<uint64_t> BitmapIndex::find(
+        std::vector<TID> BitmapIndex::find(
             const void *value_data,
             size_t value_len,
             Snapshot *snapshot,
             ErrorContext *ctx)
         {
-            std::vector<uint64_t> results;
+            std::vector<TID> results;
 
             uint32_t bitmap_root = 0;
             uint32_t cardinality = findDictionaryEntry(value_data, value_len, &bitmap_root, ctx);
@@ -505,9 +515,12 @@ namespace scratchbird
             std::vector<uint32_t> int_results = bitmap->toArray(ctx);
             results.reserve(int_results.size());
 
+            // PHASE 1.5: Convert stored 32-bit integers to TID structs
             for (uint32_t id : int_results)
             {
-                results.push_back(static_cast<uint64_t>(id));
+                uint64_t legacy_tid = static_cast<uint64_t>(id);
+                TID tid = convertLegacyTID(legacy_tid);
+                results.push_back(tid);
             }
 
             // PHASE 1 TASK 1.5: Post-filter results by heap tuple visibility
@@ -516,13 +529,13 @@ namespace scratchbird
             return results;
         }
 
-        std::vector<uint64_t> BitmapIndex::findAnd(
+        std::vector<TID> BitmapIndex::findAnd(
             const std::vector<const void *> &values,
             const std::vector<size_t> &value_lens,
             Snapshot *snapshot,
             ErrorContext *ctx)
         {
-            std::vector<uint64_t> results;
+            std::vector<TID> results;
 
             if (values.empty() || values.size() != value_lens.size())
             {
@@ -554,9 +567,12 @@ namespace scratchbird
             std::vector<uint32_t> int_results = result_bitmap->toArray(ctx);
             results.reserve(int_results.size());
 
+            // PHASE 1.5: Convert stored 32-bit integers to TID structs
             for (uint32_t id : int_results)
             {
-                results.push_back(static_cast<uint64_t>(id));
+                uint64_t legacy_tid = static_cast<uint64_t>(id);
+                TID tid = convertLegacyTID(legacy_tid);
+                results.push_back(tid);
             }
 
             // PHASE 1 TASK 1.5: Post-filter results by heap tuple visibility
@@ -565,13 +581,13 @@ namespace scratchbird
             return results;
         }
 
-        std::vector<uint64_t> BitmapIndex::findOr(
+        std::vector<TID> BitmapIndex::findOr(
             const std::vector<const void *> &values,
             const std::vector<size_t> &value_lens,
             Snapshot *snapshot,
             ErrorContext *ctx)
         {
-            std::vector<uint64_t> results;
+            std::vector<TID> results;
 
             if (values.empty() || values.size() != value_lens.size())
             {
@@ -606,9 +622,12 @@ namespace scratchbird
             std::vector<uint32_t> int_results = result_bitmap->toArray(ctx);
             results.reserve(int_results.size());
 
+            // PHASE 1.5: Convert stored 32-bit integers to TID structs
             for (uint32_t id : int_results)
             {
-                results.push_back(static_cast<uint64_t>(id));
+                uint64_t legacy_tid = static_cast<uint64_t>(id);
+                TID tid = convertLegacyTID(legacy_tid);
+                results.push_back(tid);
             }
 
             // PHASE 1 TASK 1.5: Post-filter results by heap tuple visibility
@@ -1135,7 +1154,8 @@ namespace scratchbird
         // ========================================
 
         // PHASE 2 TASK 2.5: Remove index entries pointing to dead tuples
-        Status BitmapIndex::removeDeadEntries(const std::vector<uint64_t> &dead_tids,
+        // PHASE 1.5 TASK 1.5.2c: Migrated to TID struct API
+        Status BitmapIndex::removeDeadEntries(const std::vector<TID> &dead_tids,
                                               uint64_t *entries_removed_out,
                                               uint64_t *pages_modified_out,
                                               ErrorContext *ctx)
@@ -1173,23 +1193,32 @@ namespace scratchbird
                 return Status::OK;
             }
 
+            // PHASE 1.5: Convert TID structs to legacy format set for lookup
+            std::set<uint32_t> dead_set_32bit;
+            for (const TID &tid : dead_tids)
+            {
+                uint64_t legacy = convertTIDtoLegacy(tid);
+                if (legacy != 0)  // Skip custom tablespace TIDs
+                {
+                    // Bitmap uses 32-bit integers, convert legacy TID
+                    uint32_t tid_32 = static_cast<uint32_t>(legacy & 0xFFFFFFFF);
+                    dead_set_32bit.insert(tid_32);
+                }
+            }
+
+            if (dead_set_32bit.empty())
+            {
+                if (entries_removed_out)
+                    *entries_removed_out = 0;
+                if (pages_modified_out)
+                    *pages_modified_out = 0;
+                return Status::OK;
+            }
+
             // ===== Strategy: Iterate all dictionary entries, remove dead TIDs from each bitmap =====
             //
             // Bitmap indexes store: value → RoaringBitmap (set of TIDs with that value)
             // For GC, we need to remove dead TIDs from ALL bitmaps
-            //
-            // Algorithm:
-            // 1. Scan dictionary chain (all distinct values)
-            // 2. For each dictionary entry:
-            //    a. Load the RoaringBitmap for this value
-            //    b. For each dead TID:
-            //       - Convert 64-bit TID to 32-bit (TID format varies by implementation)
-            //       - Call bitmap->remove(tid_32bit)
-            //    c. Track entries removed and pages modified
-            //
-            // TID Conversion: Roaring bitmaps use 32-bit values
-            // ScratchBird TIDs are 64-bit (page_id << 32 | item_id)
-            // We need to convert or use a mapping scheme
 
             // Scan all dictionary entries
             uint32_t current_dict_page = dictionary_page_;
@@ -1226,20 +1255,12 @@ namespace scratchbird
                         if (bitmap)
                         {
                             // Remove each dead TID from this bitmap
-                            // NOTE: We assume TID fits in 32 bits for Roaring bitmap
-                            // If TIDs are larger, we need a different mapping scheme
-                            for (uint64_t dead_tid : dead_tids)
+                            for (uint32_t tid_32 : dead_set_32bit)
                             {
-                                // Convert 64-bit TID to 32-bit
-                                // WARNING: This truncates! A better approach would use
-                                // a sequential mapping or different bitmap organization
-                                uint32_t tid_32 = static_cast<uint32_t>(dead_tid & 0xFFFFFFFF);
-
                                 Status remove_status = bitmap->remove(tid_32, ctx);
                                 if (remove_status == Status::OK)
                                 {
                                     total_entries_removed++;
-                                    // Note: pages_modified tracked internally by RoaringBitmap
                                 }
                             }
 

@@ -115,7 +115,23 @@ namespace scratchbird
 
                 if (match(TokenType::KW_CREATE))
                 {
-                    stmt = parseCreateTable();
+                    if (check(TokenType::KW_TABLESPACE))
+                    {
+                        stmt = parseCreateTablespace();
+                    }
+                    else if (check(TokenType::KW_TABLE))
+                    {
+                        stmt = parseCreateTable();
+                    }
+                    else if (check(TokenType::KW_INDEX) || check(TokenType::KW_UNIQUE))
+                    {
+                        stmt = parseCreateIndex();
+                    }
+                    else
+                    {
+                        error("Expected TABLE, INDEX, UNIQUE INDEX, or TABLESPACE after CREATE");
+                        synchronize();
+                    }
                 }
                 else if (match(TokenType::KW_INSERT))
                 {
@@ -144,6 +160,30 @@ namespace scratchbird
                 else if (match(TokenType::KW_SWEEP))
                 {
                     stmt = parseSweep();
+                }
+                else if (match(TokenType::KW_ALTER))
+                {
+                    if (check(TokenType::KW_TABLESPACE))
+                    {
+                        stmt = parseAlterTablespace();
+                    }
+                    else
+                    {
+                        error("Expected TABLESPACE after ALTER");
+                        synchronize();
+                    }
+                }
+                else if (match(TokenType::KW_DROP))
+                {
+                    if (check(TokenType::KW_TABLESPACE))
+                    {
+                        stmt = parseDropTablespace();
+                    }
+                    else
+                    {
+                        error("Expected TABLESPACE after DROP");
+                        synchronize();
+                    }
                 }
                 else if (isAtEnd())
                 {
@@ -228,8 +268,120 @@ namespace scratchbird
                 return nullptr;
             }
 
+            // Parse optional TABLESPACE clause (Phase 2 Task 2.3)
+            StringPool::StringId tablespace_name = 0;
+            if (match(TokenType::KW_TABLESPACE))
+            {
+                if (!check(TokenType::IDENTIFIER))
+                {
+                    error("Expected tablespace name after TABLESPACE, but got " +
+                          std::string(tokenTypeToString(current().type)));
+                    synchronize();
+                    return nullptr;
+                }
+                tablespace_name = current().value.string_id;
+                advance();
+            }
+
             auto span = makeSpan(start_loc);
-            return arena_.make<CreateTableStmt>(span, table_name, std::move(columns));
+            return arena_.make<CreateTableStmt>(span, table_name, std::move(columns), 0, 0, tablespace_name);
+        }
+
+        Statement *Parser::parseCreateIndex()
+        {
+            // CREATE [UNIQUE] INDEX index_name ON table_name (column_list) [TABLESPACE tablespace_name]
+            auto start_loc = previous().location;
+
+            // Check for UNIQUE
+            bool is_unique = false;
+            if (match(TokenType::KW_UNIQUE))
+            {
+                is_unique = true;
+            }
+
+            // Expect INDEX keyword
+            if (!consume(TokenType::KW_INDEX, "Expected INDEX"))
+            {
+                synchronize();
+                return nullptr;
+            }
+
+            // Expect index name
+            if (!check(TokenType::IDENTIFIER))
+            {
+                error("Expected index name after INDEX, but got " +
+                      std::string(tokenTypeToString(current().type)));
+                synchronize();
+                return nullptr;
+            }
+            StringPool::StringId index_name = current().value.string_id;
+            advance();
+
+            // Expect ON keyword
+            if (!consume(TokenType::KW_ON, "Expected ON after index name"))
+            {
+                synchronize();
+                return nullptr;
+            }
+
+            // Expect table name
+            if (!check(TokenType::IDENTIFIER))
+            {
+                error("Expected table name after ON, but got " +
+                      std::string(tokenTypeToString(current().type)));
+                synchronize();
+                return nullptr;
+            }
+            StringPool::StringId table_name = current().value.string_id;
+            advance();
+
+            // Expect opening parenthesis
+            if (!consume(TokenType::LEFT_PAREN, "Expected '(' after table name"))
+            {
+                synchronize();
+                return nullptr;
+            }
+
+            // Parse column list
+            std::vector<StringPool::StringId> columns;
+            do
+            {
+                if (!check(TokenType::IDENTIFIER))
+                {
+                    error("Expected column name, but got " +
+                          std::string(tokenTypeToString(current().type)));
+                    synchronize();
+                    return nullptr;
+                }
+                columns.push_back(current().value.string_id);
+                advance();
+            } while (match(TokenType::COMMA));
+
+            // Expect closing parenthesis
+            if (!consume(TokenType::RIGHT_PAREN, "Expected ')' after column list"))
+            {
+                synchronize();
+                return nullptr;
+            }
+
+            // Parse optional TABLESPACE clause (Phase 2 Task 2.3)
+            StringPool::StringId tablespace_name = 0;
+            if (match(TokenType::KW_TABLESPACE))
+            {
+                if (!check(TokenType::IDENTIFIER))
+                {
+                    error("Expected tablespace name after TABLESPACE, but got " +
+                          std::string(tokenTypeToString(current().type)));
+                    synchronize();
+                    return nullptr;
+                }
+                tablespace_name = current().value.string_id;
+                advance();
+            }
+
+            auto span = makeSpan(start_loc);
+            return arena_.make<CreateIndexStmt>(span, index_name, table_name, std::move(columns),
+                                                is_unique, tablespace_name);
         }
 
         ColumnDef *Parser::parseColumnDef()
@@ -1064,6 +1216,286 @@ namespace scratchbird
 
             auto span = makeSpan(start_loc);
             return arena_.make<SweepStmt>(span);
+        }
+
+        Statement *Parser::parseCreateTablespace()
+        {
+            // CREATE TABLESPACE name LOCATION 'path' [AUTOEXTEND ON|OFF] [AUTOEXTEND_SIZE N] [MAXSIZE N|UNLIMITED] [PREALLOC N]
+            auto start_loc = previous().location;
+
+            if (!consume(TokenType::KW_TABLESPACE, "Expected TABLESPACE after CREATE"))
+            {
+                synchronize();
+                return nullptr;
+            }
+
+            if (!check(TokenType::IDENTIFIER))
+            {
+                error("Expected tablespace name after CREATE TABLESPACE");
+                synchronize();
+                return nullptr;
+            }
+
+            StringPool::StringId tablespace_name = current().value.string_id;
+            advance();
+
+            if (!consume(TokenType::KW_LOCATION, "Expected LOCATION after tablespace name"))
+            {
+                synchronize();
+                return nullptr;
+            }
+
+            if (!check(TokenType::STRING_LITERAL))
+            {
+                error("Expected string literal for LOCATION path");
+                synchronize();
+                return nullptr;
+            }
+
+            StringPool::StringId location = current().value.string_id;
+            advance();
+
+            // Parse optional parameters with defaults
+            bool autoextend_enabled = true;
+            uint32_t autoextend_size_mb = 100;
+            uint32_t max_size_mb = 0;  // 0 = UNLIMITED
+            uint32_t prealloc_pages = 0;
+
+            // Parse optional AUTOEXTEND clause
+            if (match(TokenType::KW_AUTOEXTEND))
+            {
+                if (match(TokenType::KW_ON))
+                {
+                    autoextend_enabled = true;
+                }
+                else if (match(TokenType::KW_OFF))
+                {
+                    autoextend_enabled = false;
+                }
+                else
+                {
+                    error("Expected ON or OFF after AUTOEXTEND");
+                    synchronize();
+                    return nullptr;
+                }
+            }
+
+            // Parse optional AUTOEXTEND_SIZE clause
+            if (match(TokenType::KW_AUTOEXTEND_SIZE))
+            {
+                if (!check(TokenType::INTEGER_LITERAL))
+                {
+                    error("Expected integer value for AUTOEXTEND_SIZE");
+                    synchronize();
+                    return nullptr;
+                }
+                autoextend_size_mb = static_cast<uint32_t>(current().value.int_value);
+                advance();
+            }
+
+            // Parse optional MAXSIZE clause
+            if (match(TokenType::KW_MAXSIZE))
+            {
+                if (match(TokenType::KW_UNLIMITED))
+                {
+                    max_size_mb = 0;  // 0 = UNLIMITED
+                }
+                else if (check(TokenType::INTEGER_LITERAL))
+                {
+                    max_size_mb = static_cast<uint32_t>(current().value.int_value);
+                    advance();
+                }
+                else
+                {
+                    error("Expected UNLIMITED or integer value for MAXSIZE");
+                    synchronize();
+                    return nullptr;
+                }
+            }
+
+            // Parse optional PREALLOC clause
+            if (match(TokenType::KW_PREALLOC))
+            {
+                if (!check(TokenType::INTEGER_LITERAL))
+                {
+                    error("Expected integer value for PREALLOC");
+                    synchronize();
+                    return nullptr;
+                }
+                prealloc_pages = static_cast<uint32_t>(current().value.int_value);
+                advance();
+            }
+
+            auto span = makeSpan(start_loc);
+            return arena_.make<CreateTablespaceStmt>(span, tablespace_name, location,
+                                                      autoextend_enabled, autoextend_size_mb,
+                                                      max_size_mb, prealloc_pages);
+        }
+
+        Statement *Parser::parseDropTablespace()
+        {
+            // DROP TABLESPACE name [FORCE]
+            auto start_loc = previous().location;
+
+            if (!consume(TokenType::KW_TABLESPACE, "Expected TABLESPACE after DROP"))
+            {
+                synchronize();
+                return nullptr;
+            }
+
+            if (!check(TokenType::IDENTIFIER))
+            {
+                error("Expected tablespace name after DROP TABLESPACE");
+                synchronize();
+                return nullptr;
+            }
+
+            StringPool::StringId tablespace_name = current().value.string_id;
+            advance();
+
+            // Parse optional FORCE clause
+            bool force = false;
+            if (match(TokenType::KW_FORCE))
+            {
+                force = true;
+            }
+
+            auto span = makeSpan(start_loc);
+            return arena_.make<DropTablespaceStmt>(span, tablespace_name, force);
+        }
+
+        Statement *Parser::parseAlterTablespace()
+        {
+            // ALTER TABLESPACE name { AUTOEXTEND ON|OFF | AUTOEXTEND_SIZE N | MAXSIZE N|UNLIMITED | RENAME TO new_name }
+            auto start_loc = previous().location;
+
+            if (!consume(TokenType::KW_TABLESPACE, "Expected TABLESPACE after ALTER"))
+            {
+                synchronize();
+                return nullptr;
+            }
+
+            if (!check(TokenType::IDENTIFIER))
+            {
+                error("Expected tablespace name after ALTER TABLESPACE");
+                synchronize();
+                return nullptr;
+            }
+
+            StringPool::StringId tablespace_name = current().value.string_id;
+            advance();
+
+            // Create ALTER statement
+            auto *stmt = arena_.make<AlterTablespaceStmt>(makeSpan(start_loc), tablespace_name);
+
+            // Parse alterations (at least one required)
+            bool parsed_alteration = false;
+
+            while (!isAtEnd() && !check(TokenType::SEMICOLON))
+            {
+                TablespaceAlteration alteration(TablespaceAlterationType::SET_AUTOEXTEND);
+
+                if (match(TokenType::KW_AUTOEXTEND))
+                {
+                    // AUTOEXTEND ON|OFF
+                    if (match(TokenType::KW_ON))
+                    {
+                        alteration.type = TablespaceAlterationType::SET_AUTOEXTEND;
+                        alteration.autoextend_enabled = true;
+                        stmt->addAlteration(alteration);
+                        parsed_alteration = true;
+                    }
+                    else if (match(TokenType::KW_OFF))
+                    {
+                        alteration.type = TablespaceAlterationType::SET_AUTOEXTEND;
+                        alteration.autoextend_enabled = false;
+                        stmt->addAlteration(alteration);
+                        parsed_alteration = true;
+                    }
+                    else
+                    {
+                        error("Expected ON or OFF after AUTOEXTEND");
+                        synchronize();
+                        return nullptr;
+                    }
+                }
+                else if (match(TokenType::KW_AUTOEXTEND_SIZE))
+                {
+                    // AUTOEXTEND_SIZE N
+                    if (!check(TokenType::INTEGER_LITERAL))
+                    {
+                        error("Expected integer value for AUTOEXTEND_SIZE");
+                        synchronize();
+                        return nullptr;
+                    }
+                    alteration.type = TablespaceAlterationType::SET_AUTOEXTEND_SIZE;
+                    alteration.size_value = static_cast<uint32_t>(current().value.int_value);
+                    advance();
+                    stmt->addAlteration(alteration);
+                    parsed_alteration = true;
+                }
+                else if (match(TokenType::KW_MAXSIZE))
+                {
+                    // MAXSIZE N | UNLIMITED
+                    if (match(TokenType::KW_UNLIMITED))
+                    {
+                        alteration.type = TablespaceAlterationType::SET_MAXSIZE;
+                        alteration.size_value = 0; // 0 = UNLIMITED
+                        stmt->addAlteration(alteration);
+                        parsed_alteration = true;
+                    }
+                    else if (check(TokenType::INTEGER_LITERAL))
+                    {
+                        alteration.type = TablespaceAlterationType::SET_MAXSIZE;
+                        alteration.size_value = static_cast<uint32_t>(current().value.int_value);
+                        advance();
+                        stmt->addAlteration(alteration);
+                        parsed_alteration = true;
+                    }
+                    else
+                    {
+                        error("Expected UNLIMITED or integer value for MAXSIZE");
+                        synchronize();
+                        return nullptr;
+                    }
+                }
+                else if (match(TokenType::KW_RENAME))
+                {
+                    // RENAME TO new_name
+                    if (!consume(TokenType::KW_TO, "Expected TO after RENAME"))
+                    {
+                        synchronize();
+                        return nullptr;
+                    }
+
+                    if (!check(TokenType::IDENTIFIER))
+                    {
+                        error("Expected new tablespace name after RENAME TO");
+                        synchronize();
+                        return nullptr;
+                    }
+
+                    alteration.type = TablespaceAlterationType::RENAME_TO;
+                    alteration.new_name = current().value.string_id;
+                    advance();
+                    stmt->addAlteration(alteration);
+                    parsed_alteration = true;
+                }
+                else
+                {
+                    // No more alterations to parse
+                    break;
+                }
+            }
+
+            if (!parsed_alteration)
+            {
+                error("Expected at least one alteration after ALTER TABLESPACE");
+                synchronize();
+                return nullptr;
+            }
+
+            return stmt;
         }
 
         Expression *Parser::parseExpression()

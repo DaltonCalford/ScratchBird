@@ -315,10 +315,20 @@ namespace scratchbird
         }
 
         // Insert operation
-        Status HashIndex::insert(const void *key_data, size_t key_len, uint64_t tuple_id,
+        // PHASE 1.5 TASK 1.5.2b: Migrated to TID struct API
+        Status HashIndex::insert(const void *key_data, size_t key_len, const TID &tid,
                                  ErrorContext *ctx)
         {
-            if (!key_data || key_len == 0 || tuple_id == 0)
+            // PHASE 1.5: Convert TID to legacy format for storage
+            uint64_t legacy_tid = convertTIDtoLegacy(tid);
+            if (legacy_tid == 0)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED,
+                                  "Custom tablespace indexes not yet supported in ALPHA");
+                return Status::NOT_IMPLEMENTED;
+            }
+
+            if (!key_data || key_len == 0)
             {
                 SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Invalid insert arguments");
                 return Status::INVALID_ARGUMENT;
@@ -351,10 +361,10 @@ namespace scratchbird
                 // Check if there's space in this page
                 if (bucket->hbp_entry_count < MAX_ENTRIES_PER_BUCKET)
                 {
-                    // Add entry
+                    // Add entry (storing legacy format)
                     HashEntry &entry = bucket->hbp_entries[bucket->hbp_entry_count];
                     entry.he_key_hash = hash;
-                    entry.he_tuple_id = tuple_id;
+                    entry.he_tuple_id = legacy_tid;
                     bucket->hbp_entry_count++;
 
                     buffer_pool_->unpinPage(current_page, true, ctx);
@@ -394,7 +404,7 @@ namespace scratchbird
                     }
 
                     // Retry insert after split
-                    return insert(key_data, key_len, tuple_id, ctx);
+                    return insert(key_data, key_len, tid, ctx);
                 }
                 else
                 {
@@ -653,11 +663,12 @@ namespace scratchbird
 
         // Find operation
         // PHASE 1 TASK 1.1.2: Added Snapshot parameter (not yet used - Phase 1 Task 1.2 will implement filtering)
-        std::vector<uint64_t> HashIndex::find(const void *key_data, size_t key_len,
-                                              Snapshot *snapshot,
-                                              ErrorContext *ctx)
+        // PHASE 1.5 TASK 1.5.2b: Migrated to TID struct API
+        std::vector<TID> HashIndex::find(const void *key_data, size_t key_len,
+                                         Snapshot *snapshot,
+                                         ErrorContext *ctx)
         {
-            std::vector<uint64_t> results;
+            std::vector<TID> results;
 
             if (!key_data || key_len == 0)
             {
@@ -695,7 +706,9 @@ namespace scratchbird
                     // Check if hash matches and entry is not deleted
                     if (entry.he_key_hash == hash && entry.he_tuple_id != 0)
                     {
-                        results.push_back(entry.he_tuple_id);
+                        // PHASE 1.5: Convert stored uint64_t to TID struct
+                        TID tid = convertLegacyTID(entry.he_tuple_id);
+                        results.push_back(tid);
                     }
                 }
 
@@ -704,14 +717,28 @@ namespace scratchbird
                 current_page = next_page;
             }
 
+            // MVCC filtering: For hash indexes in Firebird MGA, visibility filtering
+            // is done at the storage layer when fetching tuples
+            (void)snapshot;
+
             return results;
         }
 
         // Remove operation
-        Status HashIndex::remove(const void *key_data, size_t key_len, uint64_t tuple_id,
+        // PHASE 1.5 TASK 1.5.2b: Migrated to TID struct API
+        Status HashIndex::remove(const void *key_data, size_t key_len, const TID &tid,
                                  ErrorContext *ctx)
         {
-            if (!key_data || key_len == 0 || tuple_id == 0)
+            // PHASE 1.5: Convert TID to legacy format for comparison
+            uint64_t legacy_tid = convertTIDtoLegacy(tid);
+            if (legacy_tid == 0)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED,
+                                  "Custom tablespace indexes not yet supported in ALPHA");
+                return Status::NOT_IMPLEMENTED;
+            }
+
+            if (!key_data || key_len == 0)
             {
                 SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Invalid remove arguments");
                 return Status::INVALID_ARGUMENT;
@@ -747,7 +774,7 @@ namespace scratchbird
                 {
                     HashEntry &entry = bucket->hbp_entries[i];
 
-                    if (entry.he_key_hash == hash && entry.he_tuple_id == tuple_id)
+                    if (entry.he_key_hash == hash && entry.he_tuple_id == legacy_tid)
                     {
                         // Mark as deleted
                         entry.he_tuple_id = 0;
@@ -957,7 +984,8 @@ namespace scratchbird
 
         // PHASE 2 TASK 2.3: IndexGCInterface implementation
         // Remove index entries pointing to dead tuples
-        Status HashIndex::removeDeadEntries(const std::vector<uint64_t> &dead_tids,
+        // PHASE 1.5 TASK 1.5.2b: Migrated to TID struct API
+        Status HashIndex::removeDeadEntries(const std::vector<TID> &dead_tids,
                                             uint64_t *entries_removed_out,
                                             uint64_t *pages_modified_out,
                                             ErrorContext *ctx)
@@ -978,8 +1006,17 @@ namespace scratchbird
                 return Status::OK;
             }
 
-            // Create a sorted set for O(log D) lookup
-            std::set<uint64_t> dead_set(dead_tids.begin(), dead_tids.end());
+            // PHASE 1.5: Convert TID structs to legacy format for lookup
+            // On-disk format still stores uint64_t, so we build a set of legacy TIDs
+            std::set<uint64_t> dead_set;
+            for (const TID &tid : dead_tids)
+            {
+                uint64_t legacy = convertTIDtoLegacy(tid);
+                if (legacy != 0)  // Skip custom tablespace TIDs (not supported in ALPHA)
+                {
+                    dead_set.insert(legacy);
+                }
+            }
 
             if (!buffer_pool_)
             {

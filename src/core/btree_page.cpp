@@ -80,7 +80,8 @@ namespace scratchbird::core
         uint8_t *key_location = reinterpret_cast<uint8_t *>(new_node) + sizeof(SBBTreeNode);
         memcpy(key_location, key.data(), key.size());
         auto *tid_location = reinterpret_cast<uint64_t *>(key_location + key.size());
-        *tid_location = value.tid;
+        // PHASE 1.5: Convert TID struct to legacy format for on-disk storage
+        *tid_location = convertTIDtoLegacy(value.tid);
 
         // Insert the node into the sorted position in the offsets array
         auto *offsets = reinterpret_cast<uint16_t *>(page_data_ + sizeof(SBBTreePage));

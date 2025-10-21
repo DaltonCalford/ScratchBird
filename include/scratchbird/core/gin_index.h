@@ -5,6 +5,7 @@
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/core/uuidv7.h"
 #include "scratchbird/core/index_gc_interface.h"
+#include "scratchbird/core/tid.h"
 #include <cstdint>
 #include <vector>
 #include <memory>
@@ -236,28 +237,32 @@ namespace scratchbird
             ~GinIndex();
 
             // Insert a composite value (e.g., array, JSONB)
+            // PHASE 1.5 TASK 1.5.2f: Migrated to TID struct API
             // Keys are extracted using the provided key_extractor function
-            Status insert(const void *value_data, size_t value_len, uint64_t tuple_id,
+            Status insert(const void *value_data, size_t value_len, const TID &tid,
                           std::function<std::vector<std::vector<uint8_t>>(const void *, size_t)> key_extractor,
                           ErrorContext *ctx = nullptr);
 
             // Find all tuple IDs containing a specific key
             // PHASE 1 TASK 1.1.3: Added Snapshot parameter for MVCC visibility filtering
-            std::vector<uint64_t> find(const void *key_data, size_t key_len,
-                                       struct Snapshot *snapshot,
-                                       ErrorContext *ctx = nullptr);
+            // PHASE 1.5 TASK 1.5.2f: Migrated to TID struct API
+            std::vector<TID> find(const void *key_data, size_t key_len,
+                                  struct Snapshot *snapshot,
+                                  ErrorContext *ctx = nullptr);
 
             // Find tuple IDs matching ALL keys (AND operation)
             // PHASE 1 TASK 1.1.3: Added Snapshot parameter for MVCC visibility filtering
-            std::vector<uint64_t> findAll(const std::vector<std::vector<uint8_t>> &keys,
-                                          struct Snapshot *snapshot,
-                                          ErrorContext *ctx = nullptr);
+            // PHASE 1.5 TASK 1.5.2f: Migrated to TID struct API
+            std::vector<TID> findAll(const std::vector<std::vector<uint8_t>> &keys,
+                                     struct Snapshot *snapshot,
+                                     ErrorContext *ctx = nullptr);
 
             // Find tuple IDs matching ANY key (OR operation)
             // PHASE 1 TASK 1.1.3: Added Snapshot parameter for MVCC visibility filtering
-            std::vector<uint64_t> findAny(const std::vector<std::vector<uint8_t>> &keys,
-                                          struct Snapshot *snapshot,
-                                          ErrorContext *ctx = nullptr);
+            // PHASE 1.5 TASK 1.5.2f: Migrated to TID struct API
+            std::vector<TID> findAny(const std::vector<std::vector<uint8_t>> &keys,
+                                     struct Snapshot *snapshot,
+                                     ErrorContext *ctx = nullptr);
 
             // Merge pending list into main index
             Status mergePendingList(ErrorContext *ctx = nullptr);
@@ -314,30 +319,34 @@ namespace scratchbird
             // ===== Phase 5 Methods =====
 
             // Optimized multi-key query with selectivity-based reordering
-            std::vector<uint64_t> findAllOptimized(
+            // PHASE 1.5 TASK 1.5.2f: Migrated to TID struct API
+            std::vector<TID> findAllOptimized(
                 const std::vector<std::vector<uint8_t>> &keys,
                 const QueryOptions &options,
                 ErrorContext *ctx = nullptr);
 
-            std::vector<uint64_t> findAnyOptimized(
+            std::vector<TID> findAnyOptimized(
                 const std::vector<std::vector<uint8_t>> &keys,
                 const QueryOptions &options,
                 ErrorContext *ctx = nullptr);
 
             // PostgreSQL GIN operator support
-            std::vector<uint64_t> executeOperator(
+            // PHASE 1.5 TASK 1.5.2f: Migrated to TID struct API
+            std::vector<TID> executeOperator(
                 GinOperator op,
                 const std::vector<std::vector<uint8_t>> &left_keys,
                 const std::vector<std::vector<uint8_t>> &right_keys,
                 ErrorContext *ctx = nullptr);
 
             // Wildcard query support
-            std::vector<uint64_t> findWithWildcard(
+            // PHASE 1.5 TASK 1.5.2f: Migrated to TID struct API
+            std::vector<TID> findWithWildcard(
                 const void *pattern, size_t pattern_len,
                 ErrorContext *ctx = nullptr);
 
             // Fuzzy matching with edit distance
-            std::vector<uint64_t> findFuzzy(
+            // PHASE 1.5 TASK 1.5.2f: Migrated to TID struct API
+            std::vector<TID> findFuzzy(
                 const void *key_data, size_t key_len,
                 uint32_t max_edit_distance,
                 ErrorContext *ctx = nullptr);
@@ -407,9 +416,10 @@ namespace scratchbird
             }
 
             // PHASE 2 TASK 2.4: IndexGCInterface implementation
+            // PHASE 1.5 TASK 1.5.2f: Migrated to TID struct API
             // Remove index entries pointing to dead tuples
             // Called by garbage collector after heap sweep identifies dead TIDs
-            Status removeDeadEntries(const std::vector<uint64_t> &dead_tids,
+            Status removeDeadEntries(const std::vector<TID> &dead_tids,
                                      uint64_t *entries_removed_out = nullptr,
                                      uint64_t *pages_modified_out = nullptr,
                                      ErrorContext *ctx = nullptr) override;
@@ -426,8 +436,8 @@ namespace scratchbird
             UuidV7Bytes index_uuid_;
             uint32_t meta_page_;
 
-            // Helper: Insert into pending list
-            Status insertIntoPendingList(const std::vector<uint8_t> &key, uint64_t tuple_id,
+            // Helper: Insert into pending list (internal - uses legacy format)
+            Status insertIntoPendingList(const std::vector<uint8_t> &key, uint64_t tuple_id_legacy,
                                          ErrorContext *ctx);
 
             // Helper: Find or create posting list for a key
@@ -435,8 +445,8 @@ namespace scratchbird
                                            uint64_t *posting_page_out,
                                            ErrorContext *ctx);
 
-            // Helper: Insert TID into posting list
-            Status insertIntoPostingList(uint32_t posting_page, uint64_t tuple_id,
+            // Helper: Insert TID into posting list (internal - uses legacy format)
+            Status insertIntoPostingList(uint32_t posting_page, uint64_t tuple_id_legacy,
                                          ErrorContext *ctx);
 
             // Helper: Convert posting list to posting tree
@@ -444,8 +454,8 @@ namespace scratchbird
 
             // === Posting Tree Operations ===
 
-            // Helper: Insert TID into posting tree
-            Status insertIntoPostingTree(uint32_t posting_page, uint64_t tid,
+            // Helper: Insert TID into posting tree (internal - uses legacy format)
+            Status insertIntoPostingTree(uint32_t posting_page, uint64_t tid_legacy,
                                          ErrorContext *ctx);
 
             // Helper: Search for TID in posting tree (returns true if found)

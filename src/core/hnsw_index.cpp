@@ -8,6 +8,7 @@
 #include "scratchbird/core/error_context.h"
 #include <cstring>
 #include <random>
+#include <set>
 
 namespace scratchbird::core
 {
@@ -88,17 +89,40 @@ std::unique_ptr<HnswIndex> HnswIndex::open(Database *db,
 }
 
 Status HnswIndex::insert(const VectorValue &vector,
-                        uint64_t tuple_id,
+                        const TID &tid,
                         ErrorContext *ctx)
 {
+    // PHASE 1.5: Convert TID to legacy format for storage
+    uint64_t legacy_tid = convertTIDtoLegacy(tid);
+    if (legacy_tid == 0)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED,
+                          "Custom tablespace indexes not yet supported in ALPHA");
+        return Status::NOT_IMPLEMENTED;
+    }
+
     // Stub: Always succeed
+    // TODO: Implement HNSW graph insertion
+    (void)vector;
+    (void)legacy_tid;
     return Status::OK;
 }
 
-Status HnswIndex::remove(uint64_t tuple_id,
+Status HnswIndex::remove(const TID &tid,
                         ErrorContext *ctx)
 {
+    // PHASE 1.5: Convert TID to legacy format for lookup
+    uint64_t legacy_tid = convertTIDtoLegacy(tid);
+    if (legacy_tid == 0)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED,
+                          "Custom tablespace indexes not yet supported in ALPHA");
+        return Status::NOT_IMPLEMENTED;
+    }
+
     // Stub: Always succeed
+    // TODO: Implement HNSW graph node deletion (soft delete: set xmax)
+    (void)legacy_tid;
     return Status::OK;
 }
 
@@ -131,12 +155,24 @@ Status HnswIndex::vacuum(VacuumStats *stats_out, ErrorContext *ctx)
     return Status::OK;
 }
 
-Status HnswIndex::removeDeadEntries(const std::vector<uint64_t> &dead_tids,
+Status HnswIndex::removeDeadEntries(const std::vector<TID> &dead_tids,
                                    uint64_t *entries_removed_out,
                                    uint64_t *pages_modified_out,
                                    ErrorContext *ctx)
 {
+    // PHASE 1.5: Convert TID structs to legacy format set for lookup
+    std::set<uint64_t> dead_set;
+    for (const TID &tid : dead_tids)
+    {
+        uint64_t legacy = convertTIDtoLegacy(tid);
+        if (legacy != 0)  // Skip custom tablespace TIDs
+        {
+            dead_set.insert(legacy);
+        }
+    }
+
     // Stub: Report no entries removed
+    // TODO: Implement HNSW graph node removal and link updates
     if (entries_removed_out)
     {
         *entries_removed_out = 0;
@@ -145,6 +181,8 @@ Status HnswIndex::removeDeadEntries(const std::vector<uint64_t> &dead_tids,
     {
         *pages_modified_out = 0;
     }
+
+    (void)dead_set;  // Avoid unused variable warning
     return Status::OK;
 }
 

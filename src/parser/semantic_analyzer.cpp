@@ -137,6 +137,48 @@ namespace scratchbird
             symbol_table_.addTable(node->tableName(), std::move(table));
         }
 
+        void SemanticAnalyzer::visit(CreateIndexStmt *node)
+        {
+            // Phase 2 Task 2.3: CREATE INDEX semantic analysis
+            // For now, minimal validation - full validation happens in executor
+            // TODO: Add validation when semantic analyzer is fully integrated
+            // - Check table exists
+            // - Check columns exist in table
+            // - Check index name not duplicate
+            (void)node; // Suppress unused parameter warning
+        }
+
+        void SemanticAnalyzer::visit(CreateTablespaceStmt *node)
+        {
+            // Phase 2 Task 2.1: CREATE TABLESPACE semantic analysis
+            // For now, minimal validation - full validation happens in CatalogManager
+            // TODO: Add validation when tablespace catalog is integrated
+            // - Check tablespace name not empty
+            // - Check location path is absolute and valid
+            // - Validate numeric parameters (autoextend_size, max_size, prealloc)
+            (void)node; // Suppress unused parameter warning
+        }
+
+        void SemanticAnalyzer::visit(DropTablespaceStmt *node)
+        {
+            // Phase 2 Task 2.1: DROP TABLESPACE semantic analysis
+            // For now, minimal validation - full validation happens in CatalogManager
+            // TODO: Add validation when tablespace catalog is integrated
+            // - Check tablespace exists
+            // - Check FORCE clause requirements
+            (void)node; // Suppress unused parameter warning
+        }
+
+        void SemanticAnalyzer::visit(AlterTablespaceStmt *node)
+        {
+            // Phase 2 Task 2.2: ALTER TABLESPACE semantic analysis
+            // For now, minimal validation - full validation happens in CatalogManager
+            // TODO: Add validation when tablespace catalog is integrated
+            // - Check tablespace exists
+            // - Validate alteration parameters (e.g., MAXSIZE >= current size)
+            (void)node; // Suppress unused parameter warning
+        }
+
         void SemanticAnalyzer::visit(InsertStmt *node)
         {
             // Resolve table

@@ -1169,4 +1169,184 @@ namespace scratchbird::core
         return Status::OK;
     }
 
+    // ========================================================================
+    // PHASE 3, TASK 3.1.1: Tablespace Auto-Extension
+    // ========================================================================
+
+    Status PageManager::extendTablespace(uint16_t tablespace_id, ErrorContext *ctx)
+    {
+        // Step 1: Validate inputs
+        if (tablespace_id == PRIMARY_TABLESPACE_ID)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                             "Cannot extend tablespace 0 (use extendFile for primary database)");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        if (tablespace_id == 0)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                             "Invalid tablespace ID: 0 is reserved");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        // Step 2: Get file descriptor for this tablespace
+        int fd = db_->getTablespaceFd(tablespace_id);
+        if (fd < 0)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND,
+                             ("Tablespace " + std::to_string(tablespace_id) +
+                              " not found (not open)").c_str());
+            return Status::NOT_FOUND;
+        }
+
+        // Step 3: Read TablespaceHeader to get autoextend config and current state
+        auto header_buffer = std::make_unique<uint8_t[]>(page_size_);
+        ssize_t bytes_read = ::pread(fd, header_buffer.get(), page_size_, 0);
+        if (bytes_read != static_cast<ssize_t>(page_size_))
+        {
+            SET_ERROR_CONTEXT(ctx, Status::IO_ERROR,
+                             ("Failed to read tablespace header for tablespace " +
+                              std::to_string(tablespace_id) + " (read " +
+                              std::to_string(bytes_read) + " of " +
+                              std::to_string(page_size_) + " bytes)").c_str());
+            return Status::IO_ERROR;
+        }
+
+        auto *header = reinterpret_cast<TablespaceHeader *>(header_buffer.get());
+
+        // Step 4: Check if autoextend is enabled
+        if (!header->autoextend_enabled)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                             ("Tablespace " + std::to_string(tablespace_id) +
+                              " has autoextend disabled").c_str());
+            return Status::INVALID_ARGUMENT;
+        }
+
+        // Step 5: Calculate extension size from autoextend_size_mb
+        // Convert MB to pages: (size_mb * 1024 * 1024) / page_size
+        uint64_t autoextend_bytes = static_cast<uint64_t>(header->autoextend_size_mb) * 1024 * 1024;
+        uint64_t pages_to_add = autoextend_bytes / page_size_;
+
+        if (pages_to_add == 0)
+        {
+            // Ensure at least 1 page is added
+            pages_to_add = 1;
+            LOG_WARNING(STORAGE,
+                       "Tablespace %u: autoextend_size_mb=%u too small, extending by 1 page",
+                       tablespace_id, header->autoextend_size_mb);
+        }
+
+        // Step 6: Check MAXSIZE limit before extending
+        uint64_t current_total_pages = header->total_pages;
+        uint64_t new_total_pages = current_total_pages + pages_to_add;
+
+        if (header->max_size_mb > 0)
+        {
+            // Calculate max pages from max_size_mb
+            uint64_t max_bytes = static_cast<uint64_t>(header->max_size_mb) * 1024 * 1024;
+            uint64_t max_pages = max_bytes / page_size_;
+
+            if (new_total_pages > max_pages)
+            {
+                // Would exceed MAXSIZE - try to extend only to max
+                if (current_total_pages >= max_pages)
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::PAGE_FULL,
+                                     ("Tablespace " + std::to_string(tablespace_id) +
+                                      " has reached MAXSIZE (" + std::to_string(header->max_size_mb) +
+                                      " MB, " + std::to_string(max_pages) + " pages)").c_str());
+                    return Status::PAGE_FULL;
+                }
+
+                // Extend only to max_pages
+                pages_to_add = max_pages - current_total_pages;
+                new_total_pages = max_pages;
+
+                LOG_INFO(STORAGE,
+                        "Tablespace %u: limiting extension to MAXSIZE (adding %lu pages to reach %lu pages)",
+                        tablespace_id,
+                        static_cast<unsigned long>(pages_to_add),
+                        static_cast<unsigned long>(new_total_pages));
+            }
+        }
+
+        // Step 7: Use ftruncate() to grow the file
+        off_t new_file_size = static_cast<off_t>(new_total_pages) * page_size_;
+        if (ftruncate(fd, new_file_size) != 0)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::IO_ERROR,
+                             ("Failed to extend tablespace " + std::to_string(tablespace_id) +
+                              " to " + std::to_string(new_total_pages) + " pages (errno=" +
+                              std::to_string(errno) + ", " + std::string(strerror(errno)) + ")").c_str());
+            return Status::IO_ERROR;
+        }
+
+        LOG_INFO(STORAGE,
+                "Extended tablespace %u from %lu to %lu pages (+%lu pages, +%lu MB)",
+                tablespace_id,
+                static_cast<unsigned long>(current_total_pages),
+                static_cast<unsigned long>(new_total_pages),
+                static_cast<unsigned long>(pages_to_add),
+                static_cast<unsigned long>((pages_to_add * page_size_) / (1024 * 1024)));
+
+        // Step 8: Update in-memory FSM to reflect new pages
+        {
+            std::lock_guard<std::mutex> lock(tablespace_fsm_mutex_);
+            auto it = tablespace_fsms_.find(tablespace_id);
+            if (it == tablespace_fsms_.end())
+            {
+                SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND,
+                                 ("FSM not found for tablespace " + std::to_string(tablespace_id)).c_str());
+                return Status::NOT_FOUND;
+            }
+
+            TablespaceFSM &ts_fsm = it->second;
+
+            // Resize bitmap to accommodate new pages
+            size_t old_bitmap_size = ts_fsm.bitmap.size();
+            size_t new_bitmap_size = (new_total_pages + 7) / 8; // Round up to nearest byte
+
+            if (new_bitmap_size > old_bitmap_size)
+            {
+                // Expand bitmap, new bits are 0 (free) by default
+                ts_fsm.bitmap.resize(new_bitmap_size, 0);
+            }
+
+            // Update FSM counters
+            ts_fsm.total_pages = static_cast<uint32_t>(new_total_pages);
+            ts_fsm.free_pages += static_cast<uint32_t>(pages_to_add);
+            ts_fsm.dirty = true;
+
+            LOG_INFO(STORAGE,
+                    "Updated FSM for tablespace %u: total_pages=%u, free_pages=%u",
+                    tablespace_id, ts_fsm.total_pages, ts_fsm.free_pages);
+        }
+
+        // Step 9: Update TablespaceHeader.total_pages and free_pages
+        header->total_pages = new_total_pages;
+        header->free_pages += pages_to_add;
+
+        // Write updated header back to page 0
+        ssize_t bytes_written = ::pwrite(fd, header_buffer.get(), page_size_, 0);
+        if (bytes_written != static_cast<ssize_t>(page_size_))
+        {
+            SET_ERROR_CONTEXT(ctx, Status::IO_ERROR,
+                             ("Failed to update tablespace header for tablespace " +
+                              std::to_string(tablespace_id) + " (wrote " +
+                              std::to_string(bytes_written) + " of " +
+                              std::to_string(page_size_) + " bytes)").c_str());
+            return Status::IO_ERROR;
+        }
+
+        LOG_INFO(STORAGE,
+                "Successfully extended tablespace %u: total_pages=%lu, free_pages=%lu",
+                tablespace_id,
+                static_cast<unsigned long>(new_total_pages),
+                static_cast<unsigned long>(header->free_pages));
+
+        return Status::OK;
+    }
+
 } // namespace scratchbird::core

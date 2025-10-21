@@ -2,6 +2,7 @@
 
 #include "scratchbird/core/status.h"
 #include "scratchbird/core/error_context.h"
+#include "scratchbird/core/tid.h"
 #include <cstdint>
 #include <atomic>
 #include <thread>
@@ -198,9 +199,10 @@ namespace scratchbird::core
         void readConfiguration();
 
         // PHASE 2 TASK 2.6: Clean indexes for dead tuples
+        // PHASE 1.5 TASK 1.5.3: Migrated to TID struct API
         // Called after collectDeadTuples but before prunePage
         // Returns number of index entries removed
-        uint64_t cleanIndexes(uint32_t page_id, const std::vector<uint64_t> &dead_tids,
+        uint64_t cleanIndexes(uint32_t page_id, const std::vector<TID> &dead_tids,
                               ErrorContext *ctx);
 
         // Statistics helpers

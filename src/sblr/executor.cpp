@@ -149,6 +149,26 @@ namespace scratchbird
                         result = ExecutionResult();
                         break;
 
+                    case Opcode::CREATE_INDEX:
+                        executeCreateIndex();
+                        result = ExecutionResult();
+                        break;
+
+                    case Opcode::CREATE_TABLESPACE:
+                        executeCreateTablespace();
+                        result = ExecutionResult();
+                        break;
+
+                    case Opcode::ALTER_TABLESPACE:
+                        executeAlterTablespace();
+                        result = ExecutionResult();
+                        break;
+
+                    case Opcode::DROP_TABLESPACE:
+                        executeDropTablespace();
+                        result = ExecutionResult();
+                        break;
+
                     case Opcode::INSERT:
                         executeInsert();
                         result = ExecutionResult();
@@ -432,6 +452,22 @@ namespace scratchbird
                 error("Expected END_LIST after columns");
             }
 
+            // Read tablespace name (Phase 2 Task 2.3)
+            std::string tablespace_name = readString();
+            uint16_t tablespace_id = 0; // Default tablespace
+
+            // If tablespace name is provided, resolve it to tablespace_id
+            if (!tablespace_name.empty())
+            {
+                core::TablespaceInfo ts_info;
+                auto ts_status = db_->catalog_manager()->getTablespaceByName(tablespace_name, ts_info, nullptr);
+                if (ts_status != core::Status::OK)
+                {
+                    error("Tablespace not found: " + tablespace_name);
+                }
+                tablespace_id = ts_info.tablespace_id;
+            }
+
             // Get default schema (PUBLIC)
             core::CatalogManager::SchemaInfo schema_info;
             auto status = db_->catalog_manager()->getSchema("PUBLIC", schema_info, nullptr);
@@ -443,10 +479,234 @@ namespace scratchbird
             // Create table in catalog
             core::ID table_id;
             status = db_->catalog_manager()->createTable(schema_info.schema_id, table_name, columns,
-                                                         table_id, nullptr);
+                                                         table_id, tablespace_id, nullptr);
             if (status != core::Status::OK)
             {
                 error("Failed to create table");
+            }
+        }
+
+        void Executor::executeCreateIndex()
+        {
+            // Read index name
+            std::string index_name = readString();
+
+            // Read table name
+            std::string table_name = readString();
+
+            // Read is_unique flag
+            bool is_unique = (readByte() != 0);
+
+            // Read column count
+            uint32_t column_count = readInt32();
+
+            // Read column names
+            std::vector<std::string> column_names;
+            for (uint32_t i = 0; i < column_count; i++)
+            {
+                column_names.push_back(readString());
+            }
+
+            // Read tablespace name (Phase 2 Task 2.3)
+            std::string tablespace_name = readString();
+            uint16_t tablespace_id = 0; // Default tablespace
+
+            // If tablespace name is provided, resolve it to tablespace_id
+            if (!tablespace_name.empty())
+            {
+                core::TablespaceInfo ts_info;
+                auto ts_status = db_->catalog_manager()->getTablespaceByName(tablespace_name, ts_info, nullptr);
+                if (ts_status != core::Status::OK)
+                {
+                    error("Tablespace not found: " + tablespace_name);
+                }
+                tablespace_id = ts_info.tablespace_id;
+            }
+
+            // Get default schema (PUBLIC)
+            core::CatalogManager::SchemaInfo schema_info;
+            auto status = db_->catalog_manager()->getSchema("PUBLIC", schema_info, nullptr);
+            if (status != core::Status::OK)
+            {
+                error("Failed to get default schema");
+            }
+
+            // Get table ID by name
+            core::CatalogManager::TableInfo table_info;
+            status = db_->catalog_manager()->getTable(schema_info.schema_id, table_name, table_info, nullptr);
+            if (status != core::Status::OK)
+            {
+                error("Table not found: " + table_name);
+            }
+
+            // Create index in catalog
+            core::ID index_id;
+            status = db_->catalog_manager()->createIndex(table_info.table_id, index_name, column_names,
+                                                         index_id, is_unique, core::CatalogManager::IndexType::BTREE,
+                                                         tablespace_id, nullptr);
+            if (status != core::Status::OK)
+            {
+                error("Failed to create index");
+            }
+        }
+
+        void Executor::executeCreateTablespace()
+        {
+            // Read tablespace name
+            std::string tablespace_name = readString();
+
+            // Read location path
+            std::string location = readString();
+
+            // Read autoextend_enabled (1 byte)
+            bool autoextend_enabled = (readByte() != 0);
+
+            // Read autoextend_size_mb (uint32)
+            uint32_t autoextend_size_mb = readInt32();
+
+            // Read max_size_mb (uint32, 0 = UNLIMITED)
+            uint32_t max_size_mb = readInt32();
+
+            // Read prealloc_pages (uint32)
+            uint32_t prealloc_pages = readInt32();
+
+            // Create tablespace via CatalogManager
+            core::ErrorContext err_ctx;
+            uint16_t tablespace_id;
+            core::Status status = db_->catalog_manager()->createTablespace(
+                tablespace_name, location, autoextend_enabled, autoextend_size_mb, max_size_mb,
+                prealloc_pages, tablespace_id, &err_ctx);
+
+            if (status != core::Status::OK)
+            {
+                std::string err_msg = "Failed to create tablespace '" + tablespace_name + "'";
+                if (!err_ctx.message.empty())
+                {
+                    err_msg += ": " + err_ctx.message;
+                }
+                error(err_msg);
+            }
+        }
+
+        void Executor::executeAlterTablespace()
+        {
+            // Read tablespace name
+            std::string tablespace_name = readString();
+
+            // Read number of alterations
+            uint32_t alteration_count = readInt32();
+
+            // Process each alteration
+            for (uint32_t i = 0; i < alteration_count; i++)
+            {
+                // Read alteration type
+                uint8_t alt_type = readByte();
+
+                core::ErrorContext err_ctx;
+                core::Status status = core::Status::OK;
+
+                switch (alt_type)
+                {
+                    case 0: // SET_AUTOEXTEND
+                    {
+                        bool autoextend_enabled = (readByte() != 0);
+                        // Get current tablespace info to preserve other parameters
+                        core::TablespaceInfo info;
+                        status = db_->catalog_manager()->getTablespaceByName(tablespace_name, info,
+                                                                              &err_ctx);
+                        if (status == core::Status::OK)
+                        {
+                            status = db_->catalog_manager()->updateTablespace(
+                                tablespace_name, autoextend_enabled, info.autoextend_size_mb,
+                                info.max_size_mb, &err_ctx);
+                        }
+                        break;
+                    }
+
+                    case 1: // SET_AUTOEXTEND_SIZE
+                    {
+                        uint32_t autoextend_size_mb = readInt32();
+                        // Get current tablespace info to preserve other parameters
+                        core::TablespaceInfo info;
+                        status = db_->catalog_manager()->getTablespaceByName(tablespace_name, info,
+                                                                              &err_ctx);
+                        if (status == core::Status::OK)
+                        {
+                            status = db_->catalog_manager()->updateTablespace(
+                                tablespace_name, info.autoextend_enabled, autoextend_size_mb,
+                                info.max_size_mb, &err_ctx);
+                        }
+                        break;
+                    }
+
+                    case 2: // SET_MAXSIZE
+                    {
+                        uint32_t max_size_mb = readInt32();
+                        // Get current tablespace info to preserve other parameters
+                        core::TablespaceInfo info;
+                        status = db_->catalog_manager()->getTablespaceByName(tablespace_name, info,
+                                                                              &err_ctx);
+                        if (status == core::Status::OK)
+                        {
+                            status = db_->catalog_manager()->updateTablespace(
+                                tablespace_name, info.autoextend_enabled,
+                                info.autoextend_size_mb, max_size_mb, &err_ctx);
+                        }
+                        break;
+                    }
+
+                    case 3: // RENAME_TO
+                    {
+                        std::string new_name = readString();
+                        status = db_->catalog_manager()->renameTablespace(tablespace_name, new_name,
+                                                                           &err_ctx);
+                        // If rename succeeded, update tablespace_name for subsequent alterations
+                        if (status == core::Status::OK)
+                        {
+                            tablespace_name = new_name;
+                        }
+                        break;
+                    }
+
+                    default:
+                        error("Unknown alteration type: " + std::to_string(alt_type));
+                        return;
+                }
+
+                if (status != core::Status::OK)
+                {
+                    std::string err_msg = "Failed to alter tablespace '" + tablespace_name + "'";
+                    if (!err_ctx.message.empty())
+                    {
+                        err_msg += ": " + err_ctx.message;
+                    }
+                    error(err_msg);
+                    return;
+                }
+            }
+        }
+
+        void Executor::executeDropTablespace()
+        {
+            // Read tablespace name
+            std::string tablespace_name = readString();
+
+            // Read force flag (1 byte)
+            bool force = (readByte() != 0);
+
+            // Drop tablespace via CatalogManager
+            core::ErrorContext err_ctx;
+            core::Status status =
+                db_->catalog_manager()->dropTablespace(tablespace_name, force, &err_ctx);
+
+            if (status != core::Status::OK)
+            {
+                std::string err_msg = "Failed to drop tablespace '" + tablespace_name + "'";
+                if (!err_ctx.message.empty())
+                {
+                    err_msg += ": " + err_ctx.message;
+                }
+                error(err_msg);
             }
         }
 

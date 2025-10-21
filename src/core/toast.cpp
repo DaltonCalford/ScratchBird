@@ -181,8 +181,9 @@ namespace scratchbird::core
             return status;
         }
 
-        status =
-            catalog->createTable(parent_info.schema_id, toast_name, columns, toast_table_id_, ctx);
+        // Create TOAST table in same tablespace as parent (Phase 2 Task 2.3)
+        status = catalog->createTable(parent_info.schema_id, toast_name, columns, toast_table_id_,
+                                      parent_info.tablespace_id, ctx);
         if (status != Status::OK)
         {
             SET_ERROR_CONTEXT(ctx, status, "Failed to create TOAST table");
@@ -195,8 +196,9 @@ namespace scratchbird::core
         std::vector<std::string> index_columns = {"chunk_id", "chunk_seq"};
         ID index_id;
         std::string index_name = toast_name + "_idx";
+        // Create TOAST index in same tablespace as parent (Phase 2 Task 2.3)
         status = catalog->createIndex(toast_table_id_, index_name, index_columns, index_id, false,
-                                      IndexType::BTREE, ctx);
+                                      IndexType::BTREE, parent_info.tablespace_id, ctx);
         if (status != Status::OK)
         {
             SET_ERROR_CONTEXT(ctx, status,
@@ -386,8 +388,11 @@ namespace scratchbird::core
             }
 
             // Delete this chunk
+            // PHASE 1.5: Extract page_id and item_id from TID struct
+            uint32_t page_id = static_cast<uint32_t>(getPageNumber(tuple.tid));
+            uint16_t item_id = getSlot(tuple.tid);
             Status delete_status =
-                storage->deleteTuple(toast_table_id_, tuple.page_id, tuple.item_id, ctx);
+                storage->deleteTuple(toast_table_id_, page_id, item_id, ctx);
             if (delete_status != Status::OK)
             {
                 return delete_status;
@@ -426,8 +431,11 @@ namespace scratchbird::core
             if (chunk_id == value_id)
             {
                 // Delete this chunk
+                // PHASE 1.5: Extract page_id and item_id from TID struct
+                uint32_t page_id = static_cast<uint32_t>(getPageNumber(tuple.tid));
+                uint16_t item_id = getSlot(tuple.tid);
                 Status delete_status =
-                    storage->deleteTuple(toast_table_id_, tuple.page_id, tuple.item_id, ctx);
+                    storage->deleteTuple(toast_table_id_, page_id, item_id, ctx);
                 if (delete_status != Status::OK)
                 {
                     return delete_status;

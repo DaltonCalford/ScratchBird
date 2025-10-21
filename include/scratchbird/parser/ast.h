@@ -30,6 +30,10 @@ namespace scratchbird
         {
             // Statements
             CREATE_TABLE,
+            CREATE_INDEX,      // Phase 2 Task 2.3
+            CREATE_TABLESPACE, // Phase 2 Task 2.1
+            ALTER_TABLESPACE,  // Phase 2 Task 2.2
+            DROP_TABLESPACE,   // Phase 2 Task 2.1
             INSERT,
             SELECT,
             START_TRANSACTION, // Phase 2 Task 2.6
@@ -406,9 +410,10 @@ namespace scratchbird
         public:
             CreateTableStmt(const SourceSpan &span, StringPool::StringId table_name,
                             std::vector<ColumnDef *> columns, StringPool::StringId charset = 0,
-                            StringPool::StringId collation = 0)
+                            StringPool::StringId collation = 0, StringPool::StringId tablespace = 0)
                 : Statement(ASTKind::CREATE_TABLE, span), table_name_(table_name),
-                  columns_(std::move(columns)), charset_(charset), collation_(collation)
+                  columns_(std::move(columns)), charset_(charset), collation_(collation),
+                  tablespace_(tablespace)
             {
             }
 
@@ -428,14 +433,63 @@ namespace scratchbird
             {
                 return collation_;
             }
+            StringPool::StringId tablespace() const // Phase 2 Task 2.3
+            {
+                return tablespace_;
+            }
 
             void accept(ASTVisitor *visitor) override;
 
         private:
             StringPool::StringId table_name_;
             std::vector<ColumnDef *> columns_;
-            StringPool::StringId charset_;   // DEFAULT CHARACTER SET clause
-            StringPool::StringId collation_; // DEFAULT COLLATE clause
+            StringPool::StringId charset_;    // DEFAULT CHARACTER SET clause
+            StringPool::StringId collation_;  // DEFAULT COLLATE clause
+            StringPool::StringId tablespace_; // TABLESPACE clause (Phase 2 Task 2.3)
+        };
+
+        // CREATE INDEX statement (Phase 2 Task 2.3)
+        class CreateIndexStmt : public Statement
+        {
+        public:
+            CreateIndexStmt(const SourceSpan &span, StringPool::StringId index_name,
+                            StringPool::StringId table_name, std::vector<StringPool::StringId> columns,
+                            bool is_unique = false, StringPool::StringId tablespace = 0)
+                : Statement(ASTKind::CREATE_INDEX, span), index_name_(index_name),
+                  table_name_(table_name), columns_(std::move(columns)),
+                  is_unique_(is_unique), tablespace_(tablespace)
+            {
+            }
+
+            StringPool::StringId indexName() const
+            {
+                return index_name_;
+            }
+            StringPool::StringId tableName() const
+            {
+                return table_name_;
+            }
+            const std::vector<StringPool::StringId> &columns() const
+            {
+                return columns_;
+            }
+            bool isUnique() const
+            {
+                return is_unique_;
+            }
+            StringPool::StringId tablespace() const
+            {
+                return tablespace_;
+            }
+
+            void accept(ASTVisitor *visitor) override;
+
+        private:
+            StringPool::StringId index_name_;
+            StringPool::StringId table_name_;
+            std::vector<StringPool::StringId> columns_;
+            bool is_unique_;
+            StringPool::StringId tablespace_;
         };
 
         // INSERT statement
@@ -621,6 +675,136 @@ namespace scratchbird
             void accept(ASTVisitor *visitor) override;
         };
 
+        // CREATE TABLESPACE statement (Phase 2 Task 2.1)
+        class CreateTablespaceStmt : public Statement
+        {
+        public:
+            CreateTablespaceStmt(const SourceSpan &span, StringPool::StringId tablespace_name,
+                                 StringPool::StringId location, bool autoextend_enabled = true,
+                                 uint32_t autoextend_size_mb = 100, uint32_t max_size_mb = 0,
+                                 uint32_t prealloc_pages = 0)
+                : Statement(ASTKind::CREATE_TABLESPACE, span), tablespace_name_(tablespace_name),
+                  location_(location), autoextend_enabled_(autoextend_enabled),
+                  autoextend_size_mb_(autoextend_size_mb), max_size_mb_(max_size_mb),
+                  prealloc_pages_(prealloc_pages)
+            {
+            }
+
+            StringPool::StringId tablespaceName() const
+            {
+                return tablespace_name_;
+            }
+            StringPool::StringId location() const
+            {
+                return location_;
+            }
+            bool autoextendEnabled() const
+            {
+                return autoextend_enabled_;
+            }
+            uint32_t autoextendSizeMB() const
+            {
+                return autoextend_size_mb_;
+            }
+            uint32_t maxSizeMB() const
+            {
+                return max_size_mb_;
+            }
+            uint32_t preallocPages() const
+            {
+                return prealloc_pages_;
+            }
+
+            void accept(ASTVisitor *visitor) override;
+
+        private:
+            StringPool::StringId tablespace_name_;
+            StringPool::StringId location_;
+            bool autoextend_enabled_;
+            uint32_t autoextend_size_mb_; // AUTOEXTEND_SIZE parameter
+            uint32_t max_size_mb_;        // MAXSIZE parameter (0 = UNLIMITED)
+            uint32_t prealloc_pages_;     // PREALLOC parameter
+        };
+
+        // DROP TABLESPACE statement (Phase 2 Task 2.1)
+        class DropTablespaceStmt : public Statement
+        {
+        public:
+            DropTablespaceStmt(const SourceSpan &span, StringPool::StringId tablespace_name,
+                               bool force = false)
+                : Statement(ASTKind::DROP_TABLESPACE, span), tablespace_name_(tablespace_name),
+                  force_(force)
+            {
+            }
+
+            StringPool::StringId tablespaceName() const
+            {
+                return tablespace_name_;
+            }
+            bool force() const
+            {
+                return force_;
+            }
+
+            void accept(ASTVisitor *visitor) override;
+
+        private:
+            StringPool::StringId tablespace_name_;
+            bool force_; // FORCE clause
+        };
+
+        // ALTER TABLESPACE statement (Phase 2 Task 2.2)
+        enum class TablespaceAlterationType : uint8_t
+        {
+            SET_AUTOEXTEND,      // AUTOEXTEND ON|OFF
+            SET_AUTOEXTEND_SIZE, // AUTOEXTEND_SIZE N
+            SET_MAXSIZE,         // MAXSIZE N | UNLIMITED
+            RENAME_TO            // RENAME TO new_name
+        };
+
+        struct TablespaceAlteration
+        {
+            TablespaceAlterationType type;
+            // For SET_AUTOEXTEND
+            bool autoextend_enabled;
+            // For SET_AUTOEXTEND_SIZE and SET_MAXSIZE
+            uint32_t size_value;
+            // For RENAME_TO
+            StringPool::StringId new_name;
+
+            TablespaceAlteration(TablespaceAlterationType t) : type(t), autoextend_enabled(false), size_value(0), new_name(0) {}
+        };
+
+        class AlterTablespaceStmt : public Statement
+        {
+        public:
+            AlterTablespaceStmt(const SourceSpan &span, StringPool::StringId tablespace_name)
+                : Statement(ASTKind::ALTER_TABLESPACE, span), tablespace_name_(tablespace_name)
+            {
+            }
+
+            StringPool::StringId tablespaceName() const
+            {
+                return tablespace_name_;
+            }
+
+            void addAlteration(const TablespaceAlteration &alteration)
+            {
+                alterations_.push_back(alteration);
+            }
+
+            const std::vector<TablespaceAlteration> &alterations() const
+            {
+                return alterations_;
+            }
+
+            void accept(ASTVisitor *visitor) override;
+
+        private:
+            StringPool::StringId tablespace_name_;
+            std::vector<TablespaceAlteration> alterations_;
+        };
+
         // SWEEP DATABASE statement (Phase 3 Task 3.3)
         class SweepStmt : public Statement
         {
@@ -687,6 +871,10 @@ namespace scratchbird
 
             // Statements
             virtual void visit(CreateTableStmt *node) = 0;
+            virtual void visit(CreateIndexStmt *node) = 0;      // Phase 2 Task 2.3
+            virtual void visit(CreateTablespaceStmt *node) = 0; // Phase 2 Task 2.1
+            virtual void visit(AlterTablespaceStmt *node) = 0;  // Phase 2 Task 2.2
+            virtual void visit(DropTablespaceStmt *node) = 0;   // Phase 2 Task 2.1
             virtual void visit(InsertStmt *node) = 0;
             virtual void visit(SelectStmt *node) = 0;
             virtual void visit(StartTransactionStmt *node) = 0; // Phase 2 Task 2.6
@@ -716,6 +904,8 @@ namespace scratchbird
             }
 
             void visit(CreateTableStmt *node) override;
+            void visit(CreateTablespaceStmt *node) override; // Phase 2 Task 2.1
+            void visit(DropTablespaceStmt *node) override;   // Phase 2 Task 2.1
             void visit(InsertStmt *node) override;
             void visit(SelectStmt *node) override;
             void visit(StartTransactionStmt *node) override; // Phase 2 Task 2.6

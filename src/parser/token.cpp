@@ -105,6 +105,10 @@ namespace scratchbird
                     return "CREATE";
                 case TokenType::KW_TABLE:
                     return "TABLE";
+                case TokenType::KW_INDEX:
+                    return "INDEX";
+                case TokenType::KW_UNIQUE:
+                    return "UNIQUE";
                 case TokenType::KW_INSERT:
                     return "INSERT";
                 case TokenType::KW_INTO:
@@ -171,6 +175,36 @@ namespace scratchbird
                     return "LOCK";
                 case TokenType::KW_TIMEOUT:
                     return "TIMEOUT";
+
+                // Tablespace management (Phase 2 Task 2.1)
+                case TokenType::KW_TABLESPACE:
+                    return "TABLESPACE";
+                case TokenType::KW_LOCATION:
+                    return "LOCATION";
+                case TokenType::KW_AUTOEXTEND:
+                    return "AUTOEXTEND";
+                case TokenType::KW_AUTOEXTEND_SIZE:
+                    return "AUTOEXTEND_SIZE";
+                case TokenType::KW_MAXSIZE:
+                    return "MAXSIZE";
+                case TokenType::KW_UNLIMITED:
+                    return "UNLIMITED";
+                case TokenType::KW_PREALLOC:
+                    return "PREALLOC";
+                case TokenType::KW_FORCE:
+                    return "FORCE";
+                case TokenType::KW_DROP:
+                    return "DROP";
+                case TokenType::KW_ON:
+                    return "ON";
+                case TokenType::KW_OFF:
+                    return "OFF";
+                case TokenType::KW_ALTER:
+                    return "ALTER";
+                case TokenType::KW_RENAME:
+                    return "RENAME";
+                case TokenType::KW_TO:
+                    return "TO";
 
                 default:
                     return "UNKNOWN";

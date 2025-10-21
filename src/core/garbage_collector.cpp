@@ -373,7 +373,8 @@ namespace scratchbird::core
         uint32_t space_reclaimed = 0;
 
         // PHASE 2 TASK 2.6: Collect dead TIDs before pruning (for index cleanup)
-        std::vector<uint64_t> dead_tids;
+        // PHASE 1.5 TASK 1.5.3: Migrated to TID struct API
+        std::vector<TID> dead_tids;
         Status collect_status = heap_page.collectDeadTuples(oit, &dead_tids, ctx);
         if (collect_status != Status::OK)
         {
@@ -776,8 +777,9 @@ namespace scratchbird::core
     }
 
     // PHASE 2 TASK 2.6: Clean indexes for dead tuples
+    // PHASE 1.5 TASK 1.5.3: Migrated to TID struct API
     uint64_t GarbageCollector::cleanIndexes(uint32_t page_id,
-                                            const std::vector<uint64_t> &dead_tids,
+                                            const std::vector<TID> &dead_tids,
                                             ErrorContext *ctx)
     {
         if (dead_tids.empty())

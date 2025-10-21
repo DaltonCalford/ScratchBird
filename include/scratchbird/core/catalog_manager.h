@@ -174,6 +174,7 @@ namespace scratchbird::core
         // Table operations
         auto createTable(const ID &schema_id, const std::string &table_name,
                          const std::vector<ColumnInfo> &columns, ID &table_id,
+                         uint16_t tablespace_id = 0, // Phase 2 Task 2.3: default tablespace
                          ErrorContext *ctx = nullptr) -> Status;
 
         auto getTable(const ID &table_id, TableInfo &info, ErrorContext *ctx = nullptr) -> Status;
@@ -195,6 +196,7 @@ namespace scratchbird::core
         auto createIndex(const ID &table_id, const std::string &index_name,
                          const std::vector<std::string> &column_names, ID &index_id,
                          bool is_unique = false, IndexType index_type = IndexType::BTREE,
+                         uint16_t tablespace_id = 0, // Phase 2 Task 2.3: default tablespace
                          ErrorContext *ctx = nullptr) -> Status;
 
         auto getIndex(const ID &index_id, IndexInfo &info, ErrorContext *ctx = nullptr) -> Status;
@@ -293,6 +295,31 @@ namespace scratchbird::core
                                       std::vector<CollationCatalogInfo> &collations,
                                       ErrorContext *ctx = nullptr) -> Status;
         auto deleteCollation(uint32_t collation_id, ErrorContext *ctx = nullptr) -> Status;
+
+        // Tablespace operations (Phase 2 Task 2.1)
+        auto createTablespace(const std::string &tablespace_name, const std::string &location,
+                              bool autoextend_enabled, uint32_t autoextend_size_mb,
+                              uint32_t max_size_mb, uint32_t prealloc_pages, uint16_t &tablespace_id,
+                              ErrorContext *ctx = nullptr) -> Status;
+
+        auto dropTablespace(const std::string &tablespace_name, bool force,
+                            ErrorContext *ctx = nullptr) -> Status;
+
+        auto getTablespace(uint16_t tablespace_id, TablespaceInfo &info,
+                           ErrorContext *ctx = nullptr) -> Status;
+
+        auto getTablespaceByName(const std::string &tablespace_name, TablespaceInfo &info,
+                                 ErrorContext *ctx = nullptr) -> Status;
+
+        auto listTablespaces(std::vector<TablespaceInfo> &tablespaces,
+                             ErrorContext *ctx = nullptr) -> Status;
+
+        auto updateTablespace(const std::string &tablespace_name, bool autoextend_enabled,
+                              uint32_t autoextend_size_mb, uint32_t max_size_mb,
+                              ErrorContext *ctx = nullptr) -> Status; // Phase 2 Task 2.2
+
+        auto renameTablespace(const std::string &old_name, const std::string &new_name,
+                              ErrorContext *ctx = nullptr) -> Status; // Phase 2 Task 2.2
 
         // Catalog statistics
         auto schemaCount() const -> uint32_t

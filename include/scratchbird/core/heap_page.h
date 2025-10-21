@@ -289,9 +289,10 @@ namespace scratchbird::core
                        ErrorContext *ctx = nullptr) -> Status;
 
         // PHASE 2 TASK 2.6: Collect dead tuple IDs (for index cleanup)
+        // PHASE 1.5 TASK 1.5.3: Migrated to TID struct API
         // Returns vector of TIDs for tuples that are garbage (xmax < oit and xmax committed)
         // Called before prunePage() to allow indexes to be cleaned
-        auto collectDeadTuples(uint64_t oit, std::vector<uint64_t> *dead_tids_out,
+        auto collectDeadTuples(uint64_t oit, std::vector<TID> *dead_tids_out,
                                ErrorContext *ctx = nullptr) -> Status;
 
         // Get page header
