@@ -1209,5 +1209,225 @@ namespace scratchbird
             return Status::OK;
         }
 
+        // ============================================================================
+        // PHASE 5 TASK 5.3.1: HASH INDEX TID UPDATES FOR TABLESPACE MIGRATION
+        // ============================================================================
+
+        /**
+         * updateTIDsAfterMigration - Update TIDs in hash index after table migration
+         *
+         * This method scans all buckets (and overflow pages) in the hash index and
+         * updates TIDs that reference migrated heap pages.
+         *
+         * Algorithm:
+         * 1. Load meta page to get directory info and bucket count
+         * 2. Load directory pages to collect unique bucket page numbers
+         * 3. For each bucket:
+         *    a. Follow overflow chain (hbp_overflow_page)
+         *    b. Scan all entries in bucket page
+         *    c. For each entry with he_tuple_id != 0:
+         *       - Extract GPID from legacy TID
+         *       - Check if GPID is in tid_mapping
+         *       - If found, update with new GPID
+         *    d. Mark page as dirty if any TIDs updated
+         * 4. Return statistics
+         *
+         * @param tid_mapping Map of old GPID -> new GPID for migrated pages
+         * @param tids_updated_out Output: Total number of TIDs updated
+         * @param pages_modified_out Output: Total number of bucket pages modified
+         * @param ctx Error context
+         * @return Status::OK on success, error status otherwise
+         */
+        Status HashIndex::updateTIDsAfterMigration(
+            const std::unordered_map<uint64_t, uint64_t> &tid_mapping,
+            uint64_t *tids_updated_out,
+            uint64_t *pages_modified_out,
+            ErrorContext *ctx)
+        {
+            // Initialize output counters
+            if (tids_updated_out != nullptr)
+            {
+                *tids_updated_out = 0;
+            }
+            if (pages_modified_out != nullptr)
+            {
+                *pages_modified_out = 0;
+            }
+
+            // Early exit if no TID mapping
+            if (tid_mapping.empty())
+            {
+                return Status::OK;
+            }
+
+            if (!buffer_pool_)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Buffer pool is null");
+                return Status::INVALID_ARGUMENT;
+            }
+
+            // Statistics
+            uint64_t total_tids_updated = 0;
+            uint64_t total_pages_modified = 0;
+            bool had_errors = false;
+
+            // Load meta page to get directory info
+            void *meta_buffer = nullptr;
+            Status status = buffer_pool_->pinPage(meta_page_, &meta_buffer, ctx);
+            if (status != Status::OK)
+            {
+                SET_ERROR_CONTEXT(ctx, status, "Failed to pin meta page during TID update");
+                return status;
+            }
+
+            auto *meta = reinterpret_cast<SBHashIndexMetaPage *>(meta_buffer);
+            uint32_t global_depth = meta->hip_global_depth;
+            uint64_t directory_page = meta->hip_directory_page;
+
+            buffer_pool_->unpinPage(meta_page_, false, ctx);
+
+            // Calculate number of buckets
+            uint32_t num_buckets = 1U << global_depth;
+
+            // Track visited bucket pages to avoid duplicates (due to directory aliasing)
+            std::set<uint64_t> visited_buckets;
+
+            // Load directory pages and collect unique bucket pages
+            std::vector<uint64_t> bucket_pages;
+            uint64_t current_dir_page = directory_page;
+
+            while (current_dir_page != 0)
+            {
+                void *dir_buffer = nullptr;
+                status = buffer_pool_->pinPage(current_dir_page, &dir_buffer, ctx);
+                if (status != Status::OK)
+                {
+                    LOG_WARNING(CATALOG,
+                               "Hash TID update: Failed to pin directory page %lu: %d",
+                               current_dir_page, static_cast<int>(status));
+                    had_errors = true;
+                    break;
+                }
+
+                auto *dir_page = reinterpret_cast<SBHashDirectoryPage *>(dir_buffer);
+                uint64_t next_dir_page = dir_page->hdp_next_page;
+
+                // Collect bucket pointers from this directory page
+                uint32_t entries_in_this_page = std::min(num_buckets, 1015U);
+                for (uint32_t i = 0; i < entries_in_this_page && bucket_pages.size() < num_buckets; i++)
+                {
+                    uint64_t bucket_page = dir_page->hdp_bucket_pointers[i];
+                    if (bucket_page != 0 && visited_buckets.find(bucket_page) == visited_buckets.end())
+                    {
+                        visited_buckets.insert(bucket_page);
+                        bucket_pages.push_back(bucket_page);
+                    }
+                }
+
+                buffer_pool_->unpinPage(current_dir_page, false, ctx);
+                current_dir_page = next_dir_page;
+            }
+
+            // Now scan all unique bucket pages (and their overflow chains)
+            for (uint64_t bucket_page_num : bucket_pages)
+            {
+                uint64_t current_bucket = bucket_page_num;
+
+                // Follow overflow chain for this bucket
+                while (current_bucket != 0)
+                {
+                    void *bucket_buffer = nullptr;
+                    status = buffer_pool_->pinPage(current_bucket, &bucket_buffer, ctx);
+                    if (status != Status::OK)
+                    {
+                        LOG_WARNING(CATALOG,
+                                   "Hash TID update: Failed to pin bucket page %lu: %d",
+                                   current_bucket, static_cast<int>(status));
+                        had_errors = true;
+                        break;
+                    }
+
+                    auto *bucket = reinterpret_cast<SBHashBucketPage *>(bucket_buffer);
+                    uint16_t entry_count = bucket->hbp_entry_count;
+                    uint64_t overflow_page = bucket->hbp_overflow_page;
+
+                    bool page_modified = false;
+                    uint32_t tids_updated_this_page = 0;
+
+                    // Scan all entries on this bucket page
+                    for (uint16_t i = 0; i < entry_count; i++)
+                    {
+                        HashEntry &entry = bucket->hbp_entries[i];
+
+                        // Skip deleted entries (he_tuple_id == 0)
+                        if (entry.he_tuple_id == 0)
+                        {
+                            continue;
+                        }
+
+                        // Extract GPID from legacy TID format
+                        uint64_t legacy_tid = entry.he_tuple_id;
+                        uint32_t page_id = static_cast<uint32_t>(legacy_tid >> 32);
+                        uint16_t item_id = static_cast<uint16_t>((legacy_tid >> 16) & 0xFFFF);
+                        GPID old_gpid = makeGPID(PRIMARY_TABLESPACE_ID, static_cast<uint64_t>(page_id));
+
+                        // Check if this GPID was migrated
+                        auto it = tid_mapping.find(old_gpid);
+                        if (it != tid_mapping.end())
+                        {
+                            // Found! Update TID with new GPID
+                            GPID new_gpid = it->second;
+
+                            // Extract new page number from new GPID
+                            uint64_t new_page_number = getPageNumber(TID(new_gpid, 0));
+                            uint32_t new_page_id = static_cast<uint32_t>(new_page_number);
+
+                            // Construct new legacy TID with updated page_id
+                            uint64_t new_legacy_tid = (static_cast<uint64_t>(new_page_id) << 32) |
+                                                     (static_cast<uint64_t>(item_id) << 16);
+
+                            // Update the TID in-place
+                            entry.he_tuple_id = new_legacy_tid;
+                            tids_updated_this_page++;
+                            page_modified = true;
+                        }
+                    }
+
+                    // If we modified this page, update statistics
+                    if (page_modified)
+                    {
+                        total_pages_modified++;
+                        total_tids_updated += tids_updated_this_page;
+                    }
+
+                    // Unpin bucket page (mark dirty if modified)
+                    buffer_pool_->unpinPage(current_bucket, page_modified, ctx);
+
+                    // Move to overflow page
+                    current_bucket = overflow_page;
+                }
+            }
+
+            // Update output counters
+            if (tids_updated_out != nullptr)
+            {
+                *tids_updated_out = total_tids_updated;
+            }
+            if (pages_modified_out != nullptr)
+            {
+                *pages_modified_out = total_pages_modified;
+            }
+
+            // Return appropriate status
+            if (had_errors)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::IO_ERROR,
+                                "Errors encountered during Hash index TID update");
+                return Status::IO_ERROR;
+            }
+
+            return Status::OK;
+        }
+
     } // namespace core
 } // namespace scratchbird
