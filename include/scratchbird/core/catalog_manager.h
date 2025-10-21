@@ -321,6 +321,23 @@ namespace scratchbird::core
         auto renameTablespace(const std::string &old_name, const std::string &new_name,
                               ErrorContext *ctx = nullptr) -> Status; // Phase 2 Task 2.2
 
+        /**
+         * updateTablespaceStats - Update tablespace statistics after extension
+         *
+         * @param tablespace_id Tablespace ID
+         * @param total_size_mb New total size in MB
+         * @param free_size_mb New free size in MB
+         * @param last_extended_time Timestamp of last extension
+         * @param ctx Error context
+         * @return Status::OK on success, error status otherwise
+         *
+         * Updates pg_tablespace statistics after tablespace extension.
+         * Called by PageManager::extendTablespace() (Phase 3 Task 3.1.4).
+         */
+        auto updateTablespaceStats(uint16_t tablespace_id, uint64_t total_size_mb,
+                                   uint64_t free_size_mb, uint64_t last_extended_time,
+                                   ErrorContext *ctx = nullptr) -> Status; // Phase 3 Task 3.1.4
+
         // Catalog statistics
         auto schemaCount() const -> uint32_t
         {

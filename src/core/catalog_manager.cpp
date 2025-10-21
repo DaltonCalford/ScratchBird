@@ -4,6 +4,7 @@
 #include "scratchbird/core/page_manager.h"
 #include "scratchbird/core/heap_page.h"
 #include "scratchbird/core/debug.h"
+#include "scratchbird/core/logger.h"
 #include <cstring>
 #include <algorithm>
 
@@ -2394,6 +2395,65 @@ namespace scratchbird::core
 
         // TODO: Update TablespaceHeader on disk (page 0 of tablespace file)
         // This requires PageManager API to write header
+
+        return Status::OK;
+    }
+
+    // ========================================================================
+    // PHASE 3, TASK 3.1.4: Update Tablespace Statistics After Extension
+    // ========================================================================
+
+    auto CatalogManager::updateTablespaceStats(uint16_t tablespace_id, uint64_t total_size_mb,
+                                               uint64_t free_size_mb, uint64_t last_extended_time,
+                                               ErrorContext *ctx) -> Status
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+
+        // Find tablespace in cache
+        auto it = tablespace_cache_.find(tablespace_id);
+        if (it == tablespace_cache_.end())
+        {
+            SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND,
+                              ("Tablespace ID " + std::to_string(tablespace_id) + " not found").c_str());
+            return Status::NOT_FOUND;
+        }
+
+        TablespaceInfo &ts_info = it->second;
+
+        // Update statistics
+        ts_info.total_size_mb = total_size_mb;
+        ts_info.free_size_mb = free_size_mb;
+        ts_info.last_extended_time = last_extended_time;
+
+        // Calculate used size
+        if (total_size_mb >= free_size_mb)
+        {
+            ts_info.used_size_mb = total_size_mb - free_size_mb;
+        }
+        else
+        {
+            // This should never happen, but guard against overflow
+            LOG_WARNING(CATALOG,
+                       "Tablespace %u has free_size_mb (%lu) > total_size_mb (%lu), setting used to 0",
+                       tablespace_id,
+                       static_cast<unsigned long>(free_size_mb),
+                       static_cast<unsigned long>(total_size_mb));
+            ts_info.used_size_mb = 0;
+        }
+
+        // Write updated record to catalog
+        Status status = writeTablespaceRecord(ts_info, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        LOG_INFO(CATALOG,
+                "Updated tablespace %u statistics: total=%lu MB, used=%lu MB, free=%lu MB",
+                tablespace_id,
+                static_cast<unsigned long>(total_size_mb),
+                static_cast<unsigned long>(ts_info.used_size_mb),
+                static_cast<unsigned long>(free_size_mb));
 
         return Status::OK;
     }
