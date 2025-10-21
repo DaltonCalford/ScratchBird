@@ -217,6 +217,16 @@ namespace scratchbird::core
         std::unordered_map<uint16_t, TablespaceFSM> tablespace_fsms_;
         mutable std::mutex tablespace_fsm_mutex_; // Protects tablespace_fsms_
 
+        // === PHASE 3, TASK 3.1.2: Tablespace Extension Mutex ===
+        /**
+         * tablespace_extend_mutex_ - Prevents concurrent tablespace extensions
+         *
+         * This mutex is acquired before checking if extension is needed and released
+         * after extension completes. This ensures only one thread extends a tablespace
+         * at a time, preventing races where multiple threads try to extend simultaneously.
+         */
+        mutable std::mutex tablespace_extend_mutex_; // Protects tablespace extension operations
+
         // Helper methods
         void setBit(uint32_t page_id, bool allocated);
         auto getBit(uint32_t page_id) const -> bool;

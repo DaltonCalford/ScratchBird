@@ -556,26 +556,179 @@ namespace scratchbird::core
             return Status::INVALID_ARGUMENT;
         }
 
-        // Phase 1: Only tablespace 0 (primary file) supported
-        // Future: Support custom tablespaces (Task 1.3)
-        if (tablespace_id != PRIMARY_TABLESPACE_ID)
+        // Handle primary tablespace (0) separately - uses legacy allocatePage()
+        if (tablespace_id == PRIMARY_TABLESPACE_ID)
         {
-            SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED,
-                            "Custom tablespaces not yet implemented (Phase 1, Task 1.3)");
-            return Status::NOT_IMPLEMENTED;
+            uint32_t page_id = 0;
+            Status status = allocatePage(page_id, ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+
+            *gpid_out = makeGPID(PRIMARY_TABLESPACE_ID, static_cast<uint64_t>(page_id));
+            return Status::OK;
         }
 
-        // Allocate page in primary file using existing logic
-        uint32_t page_id = 0;
-        Status status = allocatePage(page_id, ctx);
-        if (status != Status::OK)
+        // === PHASE 3, TASK 3.1.2: Custom Tablespace Allocation with Autoextend ===
+
+        // Acquire extension mutex to prevent concurrent extensions
+        // This mutex is held during the entire allocation attempt to ensure atomicity
+        std::lock_guard<std::mutex> extend_lock(tablespace_extend_mutex_);
+
+        // Try to allocate a page from the tablespace
+        uint64_t allocated_page_number = 0;
+        bool allocation_succeeded = false;
+
         {
-            return status;
+            std::lock_guard<std::mutex> fsm_lock(tablespace_fsm_mutex_);
+            auto it = tablespace_fsms_.find(tablespace_id);
+            if (it == tablespace_fsms_.end())
+            {
+                SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND,
+                                 ("Tablespace " + std::to_string(tablespace_id) +
+                                  " not found (not open)").c_str());
+                return Status::NOT_FOUND;
+            }
+
+            TablespaceFSM &ts_fsm = it->second;
+
+            // Check if there are free pages available
+            if (ts_fsm.free_pages > 0)
+            {
+                // Find a free page in the bitmap
+                for (uint32_t page_num = 0; page_num < ts_fsm.total_pages; page_num++)
+                {
+                    uint32_t byte_index = page_num / 8;
+                    uint32_t bit_index = page_num % 8;
+
+                    // Check if page is free (bit = 0)
+                    if ((ts_fsm.bitmap[byte_index] & (1 << bit_index)) == 0)
+                    {
+                        // Mark page as allocated (set bit to 1)
+                        ts_fsm.bitmap[byte_index] |= (1 << bit_index);
+                        ts_fsm.free_pages--;
+                        ts_fsm.dirty = true;
+
+                        allocated_page_number = page_num;
+                        allocation_succeeded = true;
+
+                        LOG_INFO(STORAGE,
+                                "Allocated page %lu in tablespace %u (free_pages=%u)",
+                                static_cast<unsigned long>(allocated_page_number),
+                                tablespace_id, ts_fsm.free_pages);
+                        break;
+                    }
+                }
+
+                if (!allocation_succeeded)
+                {
+                    // This should never happen if free_pages > 0
+                    LOG_ERROR(STORAGE,
+                             "Tablespace %u reports free_pages=%u but no free page found in bitmap!",
+                             tablespace_id, ts_fsm.free_pages);
+                    SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT,
+                                     ("FSM corruption in tablespace " + std::to_string(tablespace_id) +
+                                      ": free_pages > 0 but no free page in bitmap").c_str());
+                    return Status::PAGE_CORRUPT;
+                }
+            }
         }
 
-        // Convert page_id to GPID (tablespace 0)
-        *gpid_out = makeGPID(PRIMARY_TABLESPACE_ID, static_cast<uint64_t>(page_id));
+        // If allocation succeeded, we're done
+        if (allocation_succeeded)
+        {
+            *gpid_out = makeGPID(tablespace_id, allocated_page_number);
+            return Status::OK;
+        }
 
+        // === No free pages available - try to extend tablespace ===
+
+        LOG_INFO(STORAGE,
+                "Tablespace %u has no free pages, attempting autoextend",
+                tablespace_id);
+
+        // Try to extend the tablespace
+        Status extend_status = extendTablespace(tablespace_id, ctx);
+        if (extend_status != Status::OK)
+        {
+            // Extension failed - return the error from extendTablespace
+            // (could be PAGE_FULL if at MAXSIZE, INVALID_ARGUMENT if autoextend disabled, etc.)
+            LOG_WARNING(STORAGE,
+                       "Failed to extend tablespace %u: status=%d",
+                       tablespace_id, static_cast<int>(extend_status));
+            return extend_status;
+        }
+
+        LOG_INFO(STORAGE,
+                "Successfully extended tablespace %u, retrying allocation",
+                tablespace_id);
+
+        // === Retry allocation after successful extension ===
+
+        {
+            std::lock_guard<std::mutex> fsm_lock(tablespace_fsm_mutex_);
+            auto it = tablespace_fsms_.find(tablespace_id);
+            if (it == tablespace_fsms_.end())
+            {
+                SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND,
+                                 ("Tablespace " + std::to_string(tablespace_id) +
+                                  " disappeared after extension").c_str());
+                return Status::NOT_FOUND;
+            }
+
+            TablespaceFSM &ts_fsm = it->second;
+
+            // After extension, there should definitely be free pages
+            if (ts_fsm.free_pages == 0)
+            {
+                LOG_ERROR(STORAGE,
+                         "Tablespace %u extension succeeded but free_pages still 0!",
+                         tablespace_id);
+                SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT,
+                                 ("Tablespace " + std::to_string(tablespace_id) +
+                                  " extension succeeded but no free pages available").c_str());
+                return Status::PAGE_CORRUPT;
+            }
+
+            // Find a free page (should succeed immediately)
+            for (uint32_t page_num = 0; page_num < ts_fsm.total_pages; page_num++)
+            {
+                uint32_t byte_index = page_num / 8;
+                uint32_t bit_index = page_num % 8;
+
+                // Check if page is free (bit = 0)
+                if ((ts_fsm.bitmap[byte_index] & (1 << bit_index)) == 0)
+                {
+                    // Mark page as allocated (set bit to 1)
+                    ts_fsm.bitmap[byte_index] |= (1 << bit_index);
+                    ts_fsm.free_pages--;
+                    ts_fsm.dirty = true;
+
+                    allocated_page_number = page_num;
+                    allocation_succeeded = true;
+
+                    LOG_INFO(STORAGE,
+                            "Allocated page %lu in tablespace %u after extension (free_pages=%u)",
+                            static_cast<unsigned long>(allocated_page_number),
+                            tablespace_id, ts_fsm.free_pages);
+                    break;
+                }
+            }
+        }
+
+        if (!allocation_succeeded)
+        {
+            LOG_ERROR(STORAGE,
+                     "Tablespace %u extension succeeded but still cannot allocate page!",
+                     tablespace_id);
+            SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT,
+                             ("Tablespace " + std::to_string(tablespace_id) +
+                              " extension succeeded but allocation still failed").c_str());
+            return Status::PAGE_CORRUPT;
+        }
+
+        *gpid_out = makeGPID(tablespace_id, allocated_page_number);
         return Status::OK;
     }
 
