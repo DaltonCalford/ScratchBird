@@ -2410,4 +2410,250 @@ namespace scratchbird::core
         return Status::OK;
     }
 
+    // ============================================================================
+    // PHASE 5 TASK 5.2: B-TREE TID UPDATES FOR TABLESPACE MIGRATION
+    // ============================================================================
+
+    /**
+     * updateTIDsAfterMigration - Update TIDs in B-Tree leaf nodes after table migration
+     *
+     * This method is called when a table has been migrated to a different tablespace.
+     * It traverses all leaf nodes in the B-Tree and updates TIDs that reference
+     * migrated heap pages.
+     *
+     * Algorithm:
+     * 1. Navigate to leftmost leaf page (same as removeDeadEntries)
+     * 2. Scan all leaf pages left-to-right using sibling pointers
+     * 3. For each leaf page:
+     *    a. Scan all index entries (nodes)
+     *    b. For each entry, scan all tuple IDs (TIDs stored as uint64_t)
+     *    c. Extract GPID from TID (upper 64 bits of legacy format)
+     *    d. Check if GPID is in tid_mapping (old GPID -> new GPID)
+     *    e. If found, update TID with new GPID
+     *    f. Mark page as dirty if any TIDs updated
+     * 4. Continue to next leaf via btr_right_sibling pointer
+     * 5. Return total TIDs updated and pages modified
+     *
+     * Note: TIDs are stored on-disk as uint64_t in legacy format:
+     *       (32-bit page_id << 32) | (16-bit item_id << 16)
+     *       The tid_mapping maps GPIDs (full 64-bit GPID values)
+     *
+     * @param tid_mapping Map of old GPID -> new GPID for migrated pages
+     * @param tids_updated_out Output: Total number of TIDs updated
+     * @param pages_modified_out Output: Total number of leaf pages modified
+     * @param ctx Error context
+     * @return Status::OK on success, error status otherwise
+     */
+    Status BTree::updateTIDsAfterMigration(const std::unordered_map<uint64_t, uint64_t> &tid_mapping,
+                                          uint64_t *tids_updated_out,
+                                          uint64_t *pages_modified_out,
+                                          ErrorContext *ctx)
+    {
+        // Initialize output counters
+        if (tids_updated_out != nullptr)
+        {
+            *tids_updated_out = 0;
+        }
+        if (pages_modified_out != nullptr)
+        {
+            *pages_modified_out = 0;
+        }
+
+        // Early exit if no TID mapping (empty table or no migration)
+        if (tid_mapping.empty())
+        {
+            return Status::OK;
+        }
+
+        BufferPool *bp = db_->buffer_pool();
+        if (!bp)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Buffer pool is null");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        // Statistics
+        uint64_t total_tids_updated = 0;
+        uint64_t total_pages_modified = 0;
+        bool had_errors = false;
+
+        // ===== STEP 1: Find the leftmost leaf page =====
+        // Strategy: Start from root and go left at each level until we hit a leaf
+        uint64_t current_page_num = index_info_.idx_root_page;
+
+        // Navigate to leftmost leaf
+        while (true)
+        {
+            void *page_buffer = nullptr;
+            Status pin_status = bp->pinPage(current_page_num, &page_buffer, ctx);
+            if (pin_status != Status::OK)
+            {
+                SET_ERROR_CONTEXT(ctx, pin_status,
+                                "Failed to pin page during TID update navigation");
+                return pin_status;
+            }
+
+            auto *page = reinterpret_cast<SBBTreePage *>(page_buffer);
+            uint16_t level = page->btr_level;
+
+            if (level == 0)
+            {
+                // We've reached a leaf, unpin and break
+                bp->unpinPage(current_page_num, false, ctx);
+                break;
+            }
+
+            // Internal node - go to leftmost child
+            if (page->btr_count == 0)
+            {
+                // Empty internal node - shouldn't happen, but handle gracefully
+                bp->unpinPage(current_page_num, false, ctx);
+                SET_ERROR_CONTEXT(ctx, Status::INDEX_CORRUPTED,
+                                "Empty internal node encountered during TID update");
+                return Status::INDEX_CORRUPTED;
+            }
+
+            // Get the first node to find its left child
+            uint8_t *page_data = reinterpret_cast<uint8_t *>(page_buffer);
+            auto *offsets = reinterpret_cast<uint16_t *>(page_data + sizeof(SBBTreePage));
+            auto *first_node = reinterpret_cast<SBBTreeNode *>(page_data + offsets[0]);
+
+            uint64_t next_page = first_node->btn_child_page;
+            bp->unpinPage(current_page_num, false, ctx);
+
+            current_page_num = next_page;
+        }
+
+        // ===== STEP 2: Scan all leaf pages left-to-right using sibling pointers =====
+        uint64_t leaf_page_num = current_page_num;
+
+        while (leaf_page_num != 0)
+        {
+            void *page_buffer = nullptr;
+            Status pin_status = bp->pinPage(leaf_page_num, &page_buffer, ctx);
+            if (pin_status != Status::OK)
+            {
+                LOG_WARNING(CATALOG,
+                           "B-Tree TID update: Failed to pin leaf page %lu: %d",
+                           leaf_page_num, static_cast<int>(pin_status));
+                had_errors = true;
+                break; // Stop scanning on error
+            }
+
+            auto *page = reinterpret_cast<SBBTreePage *>(page_buffer);
+            uint8_t *page_data = reinterpret_cast<uint8_t *>(page_buffer);
+
+            // Verify this is a leaf page
+            if (page->btr_level != 0)
+            {
+                LOG_WARNING(CATALOG,
+                           "B-Tree TID update: Expected leaf page but got level %u at page %lu",
+                           page->btr_level, leaf_page_num);
+                bp->unpinPage(leaf_page_num, false, ctx);
+                had_errors = true;
+                break;
+            }
+
+            uint16_t entry_count = page->btr_count;
+            uint64_t tids_updated_this_page = 0;
+            bool page_modified = false;
+
+            // ===== STEP 3: Scan all entries on this leaf page =====
+            auto *offsets = reinterpret_cast<uint16_t *>(page_data + sizeof(SBBTreePage));
+
+            for (uint16_t slot = 0; slot < entry_count; slot++)
+            {
+                auto *node = reinterpret_cast<SBBTreeNode *>(page_data + offsets[slot]);
+
+                // Skip deleted entries (from vacuum operations)
+                if ((node->btn_flags & static_cast<uint16_t>(BTreeNodeFlags::DELETED)) != 0)
+                {
+                    continue;
+                }
+
+                // Get tuple IDs for this entry
+                uint16_t key_len = node->btn_key_len;
+                uint32_t tuple_count = node->btn_tuple_count;
+
+                // Tuple IDs are stored right after the key data
+                uint8_t *tuple_ids_ptr = reinterpret_cast<uint8_t *>(node) +
+                                        sizeof(SBBTreeNode) + key_len;
+                auto *tuple_ids = reinterpret_cast<uint64_t *>(tuple_ids_ptr);
+
+                // ===== STEP 4: Update each tuple ID if its GPID is in tid_mapping =====
+                for (uint32_t i = 0; i < tuple_count; i++)
+                {
+                    uint64_t legacy_tid = tuple_ids[i];
+
+                    // Extract GPID from legacy TID format
+                    // Legacy format: (32-bit page_id << 32) | (16-bit item_id << 16)
+                    // GPID is the upper 64 bits when interpreted as full TID
+                    // For legacy format, GPID = makeGPID(0, page_id)
+                    uint32_t page_id = static_cast<uint32_t>(legacy_tid >> 32);
+                    uint16_t item_id = static_cast<uint16_t>((legacy_tid >> 16) & 0xFFFF);
+                    GPID old_gpid = makeGPID(PRIMARY_TABLESPACE_ID, static_cast<uint64_t>(page_id));
+
+                    // Check if this GPID was migrated
+                    auto it = tid_mapping.find(old_gpid);
+                    if (it != tid_mapping.end())
+                    {
+                        // Found! Update TID with new GPID
+                        GPID new_gpid = it->second;
+
+                        // Extract new page number from new GPID
+                        uint64_t new_page_number = getPageNumber(TID(new_gpid, 0));
+                        uint32_t new_page_id = static_cast<uint32_t>(new_page_number);
+
+                        // Construct new legacy TID with updated page_id
+                        uint64_t new_legacy_tid = (static_cast<uint64_t>(new_page_id) << 32) |
+                                                 (static_cast<uint64_t>(item_id) << 16);
+
+                        // Update the TID in-place
+                        tuple_ids[i] = new_legacy_tid;
+                        tids_updated_this_page++;
+                        page_modified = true;
+                    }
+                }
+            }
+
+            // If we modified this page, update statistics
+            if (page_modified)
+            {
+                total_pages_modified++;
+                total_tids_updated += tids_updated_this_page;
+            }
+
+            // Get next leaf page via right sibling pointer
+            uint64_t next_leaf = page->btr_right_sibling;
+
+            // Unpin current page (mark dirty if modified)
+            bp->unpinPage(leaf_page_num, page_modified, ctx);
+
+            // Move to next leaf
+            leaf_page_num = next_leaf;
+        }
+
+        // Update output counters
+        if (tids_updated_out != nullptr)
+        {
+            *tids_updated_out = total_tids_updated;
+        }
+        if (pages_modified_out != nullptr)
+        {
+            *pages_modified_out = total_pages_modified;
+        }
+
+        // Return appropriate status
+        if (had_errors)
+        {
+            // Had some errors but may have updated some TIDs
+            // Caller can check tids_updated_out to see progress
+            SET_ERROR_CONTEXT(ctx, Status::IO_ERROR,
+                            "Errors encountered during B-Tree TID update");
+            return Status::IO_ERROR;
+        }
+
+        return Status::OK;
+    }
+
 } // namespace scratchbird::core
