@@ -920,6 +920,135 @@ namespace scratchbird::core
         return Status::OK;
     }
 
+    // SPRINT 0: Overwrite tuple in-place with back version on different page
+    // This is for cross-page MGA updates where back version was created elsewhere
+    auto HeapPage::overwriteTuple(uint16_t item_id, const uint8_t *new_tuple_data,
+                                  uint32_t new_tuple_size, uint64_t xmax, uint64_t new_xmin,
+                                  uint64_t back_version_gpid, uint16_t back_version_slot,
+                                  ErrorContext *ctx) -> Status
+    {
+        // ====================================================================
+        // FIREBIRD MGA CROSS-PAGE UPDATE - OVERWRITE PRIMARY IN-PLACE
+        // ====================================================================
+        // This method is called when a back version has already been created
+        // on a DIFFERENT page (because primary page was full), and now we
+        // need to overwrite the PRIMARY location with new data.
+        //
+        // Key principles:
+        // 1. Item pointer NEVER changes (stable TID)
+        // 2. Back version already created (on different page)
+        // 3. Primary location overwritten IN-PLACE (new tuple data)
+        // 4. back_version_gpid/slot point to the back version on different page
+        // 5. Indexes remain valid (TID unchanged)
+        // ====================================================================
+
+        if (page_data_ == nullptr)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Page data is null");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        ItemPointer *items = getItemArray();
+        auto *special = getSpecial();
+
+        // Validate item_id
+        if (item_id >= getItemCount())
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Item ID out of range");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        ItemPointer *item_ptr = &items[item_id];
+
+        // Check if item is deleted or unused
+        if (item_ptr->isDeleted() || item_ptr->isUnused())
+        {
+            SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Tuple is deleted or unused");
+            return Status::NOT_FOUND;
+        }
+
+        // Get current tuple location
+        uint32_t old_offset = item_ptr->offset;
+        uint32_t old_length = item_ptr->length;
+
+        // Calculate size needed (TupleHeader + data)
+        uint32_t final_new_tuple_size = sizeof(TupleHeader) + new_tuple_size;
+
+        // Check if new tuple fits in old tuple's space
+        if (final_new_tuple_size <= old_length)
+        {
+            // New tuple fits in old space - overwrite in-place
+            // Copy tuple header + data
+            memcpy(page_data_ + old_offset, new_tuple_data, final_new_tuple_size);
+
+            // Update item pointer length
+            item_ptr->length = final_new_tuple_size;
+        }
+        else
+        {
+            // New tuple is larger - need to allocate new space at end of free area
+            uint32_t free_space = special->pd_upper - special->pd_lower;
+            if (final_new_tuple_size > free_space)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::PAGE_FULL, "Not enough space for larger tuple");
+                return Status::PAGE_FULL;
+            }
+
+            // Allocate space from end of page
+            uint32_t new_offset = special->pd_upper - final_new_tuple_size;
+
+            // Align to 8-byte boundary
+            new_offset = (new_offset / 8) * 8;
+
+            // Validate offset
+            if (new_offset + final_new_tuple_size > page_size_)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "New tuple offset out of bounds");
+                return Status::PAGE_CORRUPT;
+            }
+
+            // Copy new tuple to new location
+            memcpy(page_data_ + new_offset, new_tuple_data, final_new_tuple_size);
+
+            // Update item pointer to new location
+            item_ptr->offset = new_offset;
+            item_ptr->length = final_new_tuple_size;
+
+            // Update upper boundary
+            special->pd_upper = new_offset;
+        }
+
+        // ====================================================================
+        // UPDATE TUPLE HEADER WITH CROSS-PAGE BACK VERSION POINTERS
+        // ====================================================================
+        // This is the CRITICAL part: Set back version to point to different page
+        // ====================================================================
+
+        auto *tuple_hdr = reinterpret_cast<TupleHeader *>(page_data_ + item_ptr->offset);
+
+        // Set transaction IDs
+        tuple_hdr->xmin = new_xmin;  // New version created by this XID
+        tuple_hdr->xmax = 0;          // Not deleted
+
+        // Set back version pointers (CROSS-PAGE!)
+        tuple_hdr->back_version_gpid = back_version_gpid;  // Different page!
+        tuple_hdr->back_version_slot = back_version_slot;
+
+        // Set current TID (UNCHANGED - stable!)
+        uint32_t page_id = header()->page_id;
+        GPID page_gpid = makeGPID(PRIMARY_TABLESPACE_ID, static_cast<uint64_t>(page_id));
+        tuple_hdr->setTID(page_gpid, item_id);  // Same item_id!
+
+        // Clear flags for new primary version
+        tuple_hdr->infomask = 0;
+        tuple_hdr->infomask |= TupleHeader::HEAP_CHAIN;  // Part of version chain
+
+        // Update page statistics
+        updateHeaderStats();
+
+        return Status::OK;
+    }
+
     auto HeapPage::findVisibleVersion(uint16_t item_id, uint64_t snapshot_xid,
                                       const uint8_t **data_out, uint32_t *size_out,
                                       TransactionManager::Snapshot *snapshot, ErrorContext *ctx)

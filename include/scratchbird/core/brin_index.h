@@ -310,6 +310,27 @@ namespace scratchbird
 
             Status getStats(BrinStats *stats_out, ErrorContext *ctx = nullptr);
 
+            /**
+             * PHASE 5 TASK 5.3.4: Update Block Ranges After Tablespace Migration
+             *
+             * Traverses all BRIN pages and updates brn_start_block and brn_end_block fields
+             * based on the provided page mapping (GPID -> GPID).
+             *
+             * **IMPORTANT**: BRIN stores BLOCK RANGES, not individual TIDs!
+             * The mapping is from old GPID to new GPID (page-level, not tuple-level).
+             *
+             * @param page_mapping Map from old GPID (uint64_t) to new GPID (uint64_t)
+             * @param ranges_updated_out Output: number of ranges updated
+             * @param pages_modified_out Output: number of pages modified
+             * @param ctx Error context
+             * @return Status::OK if successful
+             */
+            Status updateBlockRangesAfterMigration(
+                const std::unordered_map<uint64_t, uint64_t> &page_mapping,
+                uint64_t *ranges_updated_out = nullptr,
+                uint64_t *pages_modified_out = nullptr,
+                ErrorContext *ctx = nullptr);
+
         private:
             Database *db_;
             SBBrinIndex index_info_;

@@ -246,6 +246,14 @@ namespace scratchbird::core
                          uint32_t new_tuple_size, uint64_t xmax, uint64_t new_xmin,
                          uint16_t *new_item_id_out, ErrorContext *ctx = nullptr) -> Status;
 
+        // SPRINT 0: Overwrite tuple in-place with back version on different page (MGA cross-page update)
+        // This is for cross-page updates where the back version is created on a different page
+        // but the PRIMARY location is modified in-place (preserving TID stability)
+        auto overwriteTuple(uint16_t item_id, const uint8_t *new_tuple_data,
+                           uint32_t new_tuple_size, uint64_t xmax, uint64_t new_xmin,
+                           uint64_t back_version_gpid, uint16_t back_version_slot,
+                           ErrorContext *ctx = nullptr) -> Status;
+
         // Find visible version of tuple by traversing version chain
         // REQUIRES: snapshot must not be null - cross-page pins are registered with it (Option 3:
         // MVCC Snapshot) Snapshot owns all cross-page pins and cleans them up on transaction

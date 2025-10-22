@@ -20,8 +20,103 @@ namespace scratchbird::core
 
     // Forward declarations
     class PageManager;
+    class TIDResolver;
 
     using ID = UuidV7Bytes;
+
+    /**
+     * MigrationPhase - Phases of ONLINE table migration
+     *
+     * Sprint 4 Task 5.4.1: Migration State Management
+     */
+    enum class MigrationPhase : uint8_t
+    {
+        MIGRATION_NONE = 0,           // No migration in progress
+        MIGRATION_INIT = 1,           // Migration initialized
+        MIGRATION_COPYING = 2,        // Background page copy in progress
+        MIGRATION_CATCH_UP = 3,       // Re-copying dirty pages
+        MIGRATION_READY_FOR_SWAP = 4, // Converged, ready for atomic swap
+        MIGRATION_SWAP = 5,           // Performing atomic swap
+        MIGRATION_CLEANUP = 6,        // Cleaning up source pages
+        MIGRATION_COMPLETE = 7,       // Migration completed successfully
+        MIGRATION_FAILED = 8,         // Migration failed
+        MIGRATION_ABORTED = 9         // Migration aborted by user
+    };
+
+    /**
+     * TableMigrationProgressCallback - Callback for table migration progress updates
+     *
+     * @param pages_copied Number of pages copied so far
+     * @param total_pages Total number of pages to copy
+     * @return true to continue migration, false to cancel
+     *
+     * Phase 4 Task 4.1.3
+     */
+    using TableMigrationProgressCallback = std::function<bool(uint32_t pages_copied, uint32_t total_pages)>;
+
+    /**
+     * TableMigrationState - In-memory state for ONLINE table migration
+     *
+     * Sprint 4 Task 5.4.1: Migration State Management
+     */
+    struct TableMigrationState
+    {
+        ID migration_id;                  // Unique migration ID
+        ID table_id;                      // Table being migrated
+        uint16_t source_tablespace;       // Source tablespace ID
+        uint16_t target_tablespace;       // Target tablespace ID
+        MigrationPhase phase;             // Current migration phase
+        uint64_t migration_xid;           // XID when migration started
+        uint32_t total_pages;             // Total pages to migrate
+        uint32_t pages_copied;            // Pages copied so far
+        uint64_t start_time;              // Timestamp when migration started
+        uint64_t end_time;                // Timestamp when migration completed/failed
+        std::unique_ptr<uint8_t[]> dirty_pages_bitmap; // Bitmap of dirty pages (1 bit per page)
+
+        // Statistics
+        uint32_t catch_up_iterations = 0;      // Number of catch-up iterations
+        uint32_t final_dirty_page_count = 0;   // Dirty pages at swap time
+        uint64_t total_bytes_copied = 0;       // Total bytes copied
+
+        TableMigrationState()
+            : phase(MigrationPhase::MIGRATION_NONE),
+              migration_xid(0),
+              total_pages(0),
+              pages_copied(0),
+              start_time(0),
+              end_time(0)
+        {
+        }
+    };
+
+    /**
+     * Table Migration Batch Processing Constants
+     *
+     * These constants control memory usage during table migration to prevent
+     * excessive memory consumption when migrating large tables.
+     *
+     * Phase 4 Task 4.1.4
+     */
+    namespace TableMigration
+    {
+        // Maximum number of pages to process in a single batch
+        // Limits: With 8KB pages, 1000 pages = ~8MB of heap data
+        // Add TID mapping overhead: ~32 bytes per page = 32KB
+        // Total per batch: ~8.032 MB (well within reasonable memory limits)
+        constexpr uint32_t MAX_BATCH_SIZE_PAGES = 1000;
+
+        // Maximum memory usage per batch (approximate, in MB)
+        // Used for logging and monitoring
+        constexpr uint32_t MAX_BATCH_MEMORY_MB = 10;
+
+        // Minimum batch size for small tables
+        // Even tiny tables should use at least this many pages per batch
+        constexpr uint32_t MIN_BATCH_SIZE_PAGES = 10;
+
+        // Progress callback invocation frequency
+        // Invoke callback at least this many pages (or when batch completes)
+        constexpr uint32_t PROGRESS_CALLBACK_INTERVAL_PAGES = 100;
+    }
 
     // Simple heap page for catalog tables
     struct CatalogHeapPage
@@ -84,12 +179,20 @@ namespace scratchbird::core
             uint64_t row_count = 0; // Estimated row count
             TableType table_type = TableType::HEAP;
             bool has_toast = false;
+            ID toast_table_id;                 // PHASE 5 TASK 5.1.3.1: UUID of TOAST table (zero if none)
             uint16_t tablespace_id = 0;        // Tablespace ID (0 = default)
             uint16_t default_charset = 0;      // Default character set (0 = inherit from schema)
             uint32_t default_collation_id = 0; // Default collation ID (0 = inherit from schema)
             uint32_t storage_params_oid = 0;   // TOAST reference for storage parameters
             uint64_t created_time = 0;
             uint64_t last_modified_time = 0;
+
+            // ONLINE migration fields (Sprint 4 Task 5.4.1)
+            bool migration_in_progress = false;     // True if table is being migrated
+            ID migration_id;                        // Current migration ID
+            uint64_t migration_xid = 0;             // XID when migration started
+            uint16_t migration_target_ts = 0;       // Target tablespace ID
+            uint8_t migration_phase = 0;            // MigrationPhase enum value
         };
 
         // Column information
@@ -338,6 +441,157 @@ namespace scratchbird::core
                                    uint64_t free_size_mb, uint64_t last_extended_time,
                                    ErrorContext *ctx = nullptr) -> Status; // Phase 3 Task 3.1.4
 
+        /**
+         * moveTableToTablespace - Move a table to a different tablespace (OFFLINE mode)
+         *
+         * @param table_id Table ID to move
+         * @param target_tablespace_id Destination tablespace ID
+         * @param online If true, use online migration (REJECTED in Phase 4)
+         * @param progress_callback Optional callback for progress tracking (Phase 4 Task 4.1.3)
+         *                          Called periodically with (pages_copied, total_pages)
+         *                          Return false to cancel migration, true to continue
+         * @param ctx Error context
+         * @return Status::OK on success, error status otherwise
+         *
+         * Offline Migration Process (8 steps):
+         * 1. Reject ONLINE mode (Phase 4 limitation)
+         * 2. Validate table exists and target tablespace is different
+         * 3. Scan all heap pages in source tablespace
+         * 4. Copy heap pages to target tablespace with TID mapping
+         * 5. Update all indexes for this table (apply TID mapping)
+         * 6. Update catalog: TableInfo.tablespace_id = target_tablespace_id
+         * 7. Free old heap pages in source tablespace
+         * 8. Return success
+         *
+         * Progress Tracking (Phase 4 Task 4.1.3):
+         * - Invokes progress_callback periodically (every 5 seconds)
+         * - Logs progress: "Migrating table: X / Y pages copied"
+         * - Supports cancellation: If callback returns false, rollback and return Status::CANCELLED
+         *
+         * Thread-safe: Acquires catalog mutex.
+         * Transaction: Single atomic transaction (all-or-nothing).
+         * Locking: Table is effectively locked during migration (offline operation).
+         *
+         * Phase 4 Task 4.1.2, 4.1.3
+         */
+        auto moveTableToTablespace(const ID &table_id, uint16_t target_tablespace_id, bool online,
+                                   TableMigrationProgressCallback progress_callback = nullptr,
+                                   ErrorContext *ctx = nullptr) -> Status; // Phase 4 Task 4.1.2, 4.1.3
+
+        /**
+         * ONLINE Migration API (Sprint 4 Task 5.4.1)
+         */
+
+        /**
+         * startOnlineMigration - Initialize ONLINE table migration
+         *
+         * @param table_id Table to migrate
+         * @param target_tablespace_id Target tablespace
+         * @param ctx Error context
+         * @return Status::OK on success
+         */
+        auto startOnlineMigration(const ID &table_id, uint16_t target_tablespace_id,
+                                  ErrorContext *ctx = nullptr) -> Status;
+
+        /**
+         * getMigrationState - Get current migration state
+         *
+         * @param migration_id Migration ID
+         * @param ctx Error context
+         * @return Pointer to migration state if found, nullptr otherwise
+         *         Note: Pointer is only valid while migration_mutex_ is held
+         */
+        auto getMigrationState(const ID &migration_id, ErrorContext *ctx = nullptr)
+            -> const TableMigrationState*;
+
+        /**
+         * updateMigrationProgress - Update migration progress
+         *
+         * @param migration_id Migration ID
+         * @param pages_copied Number of pages copied
+         * @param ctx Error context
+         * @return Status::OK on success
+         */
+        auto updateMigrationProgress(const ID &migration_id, uint32_t pages_copied,
+                                     ErrorContext *ctx = nullptr) -> Status;
+
+        /**
+         * setMigrationPhase - Transition migration to new phase
+         *
+         * @param migration_id Migration ID
+         * @param new_phase New migration phase
+         * @param ctx Error context
+         * @return Status::OK on success
+         */
+        auto setMigrationPhase(const ID &migration_id, MigrationPhase new_phase,
+                               ErrorContext *ctx = nullptr) -> Status;
+
+        /**
+         * abortMigration - Abort an active migration
+         *
+         * @param migration_id Migration ID
+         * @param ctx Error context
+         * @return Status::OK on success
+         */
+        auto abortMigration(const ID &migration_id, ErrorContext *ctx = nullptr) -> Status;
+
+        /**
+         * markPageDirty - Mark a page as dirty during migration
+         *
+         * @param migration_id Migration ID
+         * @param page_number Page number in source tablespace
+         * @param ctx Error context
+         * @return Status::OK on success
+         */
+        auto markPageDirty(const ID &migration_id, uint32_t page_number,
+                          ErrorContext *ctx = nullptr) -> Status;
+
+        /**
+         * getDirtyPages - Get list of dirty pages for catch-up
+         *
+         * @param migration_id Migration ID
+         * @param ctx Error context
+         * @return Vector of dirty page numbers
+         */
+        auto getDirtyPages(const ID &migration_id, ErrorContext *ctx = nullptr)
+            -> std::vector<uint32_t>;
+
+        /**
+         * clearDirtyPages - Clear dirty page bitmap
+         *
+         * @param migration_id Migration ID
+         * @param ctx Error context
+         * @return Status::OK on success
+         */
+        auto clearDirtyPages(const ID &migration_id, ErrorContext *ctx = nullptr) -> Status;
+
+        /**
+         * getDirtyPageCount - Get number of dirty pages
+         *
+         * @param migration_id Migration ID
+         * @return Number of dirty pages
+         */
+        auto getDirtyPageCount(const ID &migration_id) -> uint32_t;
+
+        /**
+         * completeMigration - Mark migration as complete and cleanup state
+         *
+         * @param migration_id Migration ID
+         * @param ctx Error context
+         * @return Status::OK on success
+         */
+        auto completeMigration(const ID &migration_id, ErrorContext *ctx = nullptr) -> Status;
+
+        /**
+         * getTableIndexes - Get all indexes for a table
+         *
+         * @param table_id Table ID
+         * @param ctx Error context
+         * @return Vector of index information
+         */
+        auto getTableIndexes(const ID &table_id, ErrorContext *ctx = nullptr)
+            -> std::vector<IndexInfo>;
+
         // Catalog statistics
         auto schemaCount() const -> uint32_t
         {
@@ -358,6 +612,43 @@ namespace scratchbird::core
         auto createSchemaInternal(const std::string &schema_name, const std::string &owner,
                                   ID &schema_id, ErrorContext *ctx = nullptr) -> Status;
 
+        // Index TID update helper (Phase 4 Task 4.1.5)
+        // Updates all index entries for a table to reference new GPIDs after table migration
+        // tid_mapping: Map of old GPID -> new GPID for heap pages
+        // Returns Status::OK on success, error status otherwise
+        auto updateIndexTIDs(const ID &table_id,
+                            const std::unordered_map<uint64_t, uint64_t> &tid_mapping,
+                            ErrorContext *ctx = nullptr) -> Status;
+
+        // Heap page enumeration helper (Phase 5 Task 5.1.1)
+        // Enumerates all heap pages belonging to a table for migration
+        // Uses PageManager::getAllocatedPages() to get candidate pages, then filters
+        // for pages with matching table_id and PageType::HEAP_PAGE
+        // Returns Status::OK on success, error status otherwise
+        auto enumerateTablePages(const ID &table_id,
+                                std::vector<GPID> &pages_out,
+                                ErrorContext *ctx = nullptr) -> Status;
+
+        // Page copying with TID remapping helper (Phase 5 Task 5.1.2)
+        // Copies a heap page from source to target buffer, updating all TID references
+        // Updates: PageHeader.page_id, TupleHeader.ctid_gpid, TupleHeader.back_version_gpid
+        // Recalculates page checksum after modifications
+        // Returns Status::OK on success, error status otherwise
+        auto copyPageWithTIDRemapping(const void *source_buffer,
+                                     void *target_buffer,
+                                     GPID source_gpid,
+                                     GPID target_gpid,
+                                     const std::unordered_map<uint64_t, uint64_t> &tid_mapping,
+                                     ErrorContext *ctx = nullptr) -> Status;
+
+        // Rollback page migration helper (Phase 5 Task 5.1.4)
+        // Deallocates all target pages that were allocated during a failed migration
+        // Iterates tid_mapping and frees all new_gpid pages using freePageGlobal()
+        // Continues freeing even if some pages fail (logs orphaned pages)
+        // Returns Status::OK if all pages freed, Status::IO_ERROR if some failed
+        auto rollbackPageMigration(const std::unordered_map<uint64_t, uint64_t> &tid_mapping,
+                                  ErrorContext *ctx = nullptr) -> Status;
+
         // Catalog page layout - using higher page numbers to avoid conflict
         // with existing system catalog on page 1
         static constexpr uint32_t CATALOG_ROOT_PAGE = 3;
@@ -374,6 +665,10 @@ namespace scratchbird::core
         std::unordered_map<ID, std::vector<ColumnInfo>> column_cache_;
         std::unordered_map<ID, IndexInfo> index_cache_;
         std::unordered_map<uint16_t, TablespaceInfo> tablespace_cache_;  // keyed by tablespace_id
+
+        // ONLINE migration state cache (Sprint 4 Task 5.4.1)
+        std::unordered_map<ID, TableMigrationState> migration_cache_;  // keyed by migration_id
+        mutable std::mutex migration_mutex_;  // Separate mutex for migration operations
 
         // Counters
         uint32_t schema_count_ = 0;

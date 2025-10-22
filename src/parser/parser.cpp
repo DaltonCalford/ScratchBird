@@ -167,9 +167,13 @@ namespace scratchbird
                     {
                         stmt = parseAlterTablespace();
                     }
+                    else if (check(TokenType::KW_TABLE))
+                    {
+                        stmt = parseAlterTable(); // Phase 4 Task 4.1.1
+                    }
                     else
                     {
-                        error("Expected TABLESPACE after ALTER");
+                        error("Expected TABLESPACE or TABLE after ALTER");
                         synchronize();
                     }
                 }
@@ -1494,6 +1498,66 @@ namespace scratchbird
                 synchronize();
                 return nullptr;
             }
+
+            return stmt;
+        }
+
+        Statement *Parser::parseAlterTable()
+        {
+            // ALTER TABLE name SET TABLESPACE tablespace_name [ONLINE]
+            auto start_loc = previous().location;
+
+            if (!consume(TokenType::KW_TABLE, "Expected TABLE after ALTER"))
+            {
+                synchronize();
+                return nullptr;
+            }
+
+            if (!check(TokenType::IDENTIFIER))
+            {
+                error("Expected table name after ALTER TABLE");
+                synchronize();
+                return nullptr;
+            }
+
+            StringPool::StringId table_name = current().value.string_id;
+            advance();
+
+            // Expect SET
+            if (!consume(TokenType::KW_SET, "Expected SET after table name"))
+            {
+                synchronize();
+                return nullptr;
+            }
+
+            // Expect TABLESPACE
+            if (!consume(TokenType::KW_TABLESPACE, "Expected TABLESPACE after SET"))
+            {
+                synchronize();
+                return nullptr;
+            }
+
+            // Get tablespace name
+            if (!check(TokenType::IDENTIFIER))
+            {
+                error("Expected tablespace name after TABLESPACE");
+                synchronize();
+                return nullptr;
+            }
+
+            StringPool::StringId tablespace_name = current().value.string_id;
+            advance();
+
+            // Check for optional ONLINE clause
+            bool online = false;
+            if (match(TokenType::KW_ONLINE))
+            {
+                online = true;
+            }
+
+            // Create ALTER TABLE SET TABLESPACE statement
+            auto *stmt = arena_.make<AlterTableSetTablespaceStmt>(makeSpan(start_loc), table_name,
+                                                                   tablespace_name, online);
 
             return stmt;
         }

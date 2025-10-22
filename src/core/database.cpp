@@ -5,6 +5,7 @@
 #include "scratchbird/core/catalog_manager.h"
 #include "scratchbird/core/storage_engine.h"
 #include "scratchbird/core/transaction_manager.h"
+#include "scratchbird/core/tid_resolver.h" // Sprint 4 Task 5.4.2
 #include "scratchbird/core/lock_manager.h"
 #include "scratchbird/core/vacuum.h"
 #include "scratchbird/core/clog.h"
@@ -692,6 +693,18 @@ namespace scratchbird::core
         {
             close();
             return status;
+        }
+
+        // Initialize TID resolver (Sprint 4 Task 5.4.2)
+        try
+        {
+            tid_resolver_ = std::make_unique<TIDResolver>();
+        }
+        catch (const std::bad_alloc &)
+        {
+            close();
+            SET_ERROR_CONTEXT(ctx, Status::OOM, "Failed to allocate TIDResolver");
+            return Status::OOM;
         }
 
         // Initialize lock manager

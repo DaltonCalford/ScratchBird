@@ -179,6 +179,17 @@ namespace scratchbird
             (void)node; // Suppress unused parameter warning
         }
 
+        void SemanticAnalyzer::visit(AlterTableSetTablespaceStmt *node)
+        {
+            // Phase 4 Task 4.1.1: ALTER TABLE ... SET TABLESPACE semantic analysis
+            // For now, minimal validation - full validation happens in executor
+            // TODO: Add validation when migration logic is implemented
+            // - Check table exists
+            // - Check target tablespace exists
+            // - Validate ONLINE clause (reject in Phase 4)
+            (void)node; // Suppress unused parameter warning
+        }
+
         void SemanticAnalyzer::visit(InsertStmt *node)
         {
             // Resolve table

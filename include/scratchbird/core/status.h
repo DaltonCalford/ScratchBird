@@ -21,6 +21,7 @@ namespace scratchbird::core
         LOCK_TIMEOUT = 3002,
         LOCK_CONFLICT = 3003,
         OOM = 3004,               // Out of memory per ERROR_HANDLING.md
+        CANCELLED = 3005,         // Operation cancelled by user (Phase 4 Task 4.1.3)
         PAGE_FULL = 4001,         // No space available in page
         NOT_FOUND = 4002,         // Tuple/item not found
         NOT_IMPLEMENTED = 4003,   // Feature not implemented

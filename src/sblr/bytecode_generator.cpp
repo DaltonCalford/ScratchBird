@@ -223,6 +223,21 @@ namespace scratchbird
             current_result_->writeByte(node->force() ? 1 : 0);
         }
 
+        void BytecodeGenerator::visit(parser::AlterTableSetTablespaceStmt *node)
+        {
+            // Generate ALTER TABLE SET TABLESPACE bytecode (Phase 4 Task 4.1.6)
+            current_result_->writeOpcode(Opcode::ALTER_TABLE_SET_TABLESPACE);
+
+            // Write table name
+            writeStringId(node->tableName());
+
+            // Write tablespace name
+            writeStringId(node->tablespaceName());
+
+            // Write online flag (1 byte: 0 = offline, 1 = online)
+            current_result_->writeByte(node->online() ? 1 : 0);
+        }
+
         void BytecodeGenerator::visit(parser::InsertStmt *node)
         {
             current_result_->writeOpcode(Opcode::INSERT);
