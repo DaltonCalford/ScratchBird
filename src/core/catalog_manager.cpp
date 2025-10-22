@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <chrono>  // Phase 4 Task 4.1.3: Progress tracking
 #include <thread>  // Phase 4 Task 4.1.3: Sleep simulation in STUB
+#include "scratchbird/core/tid_resolver.h"  // Sprint 5: ONLINE migration
 
 namespace scratchbird::core
 {
@@ -3960,5 +3961,554 @@ namespace scratchbird::core
 
         return indexes;
     }
+
+    // ========================================================================
+    // Sprint 5: ONLINE Migration Execution Engine
+    // ========================================================================
+
+    /**
+     * executeOnlineMigrationCopyingPhase - Sprint 5 Task 5.4.4
+ *
+ * Implements the COPYING phase of ONLINE migration:
+ * 1. Enumerate all heap pages in source tablespace
+ * 2. Copy each page to target tablespace with TID remapping
+ * 3. Record TID mappings in TIDResolver for dual-source visibility
+ * 4. Track progress for monitoring
+ */
+Status CatalogManager::executeOnlineMigrationCopyingPhase(
+    const ID &migration_id, ErrorContext *ctx)
+{
+    LOG_INFO(CATALOG, "executeOnlineMigrationCopyingPhase: Starting COPYING phase");
+
+    // ===== STEP 1: Get migration state =====
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    auto it = migration_cache_.find(migration_id);
+    if (it == migration_cache_.end())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Migration not found");
+        LOG_ERROR(CATALOG, "Migration ID not found in cache");
+        return Status::NOT_FOUND;
+    }
+
+    TableMigrationState &state = it->second;
+
+    // Verify we're in COPYING phase
+    if (state.phase != MigrationPhase::MIGRATION_COPYING)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Migration not in COPYING phase");
+        LOG_ERROR(CATALOG, "Migration phase is %d, expected COPYING (%d)",
+                 static_cast<int>(state.phase),
+                 static_cast<int>(MigrationPhase::MIGRATION_COPYING));
+        return Status::INVALID_ARGUMENT;
+    }
+
+    ID table_id = state.table_id;
+    uint16_t source_ts = state.source_tablespace;
+    uint16_t target_ts = state.target_tablespace;
+
+    LOG_INFO(CATALOG, "COPYING phase: table_id=%s, source_ts=%u, target_ts=%u",
+             "<migration>", source_ts, target_ts);
+
+    // Release lock for long-running operations
+    mutex_.unlock();
+
+    // ===== STEP 2: Enumerate all heap pages =====
+    std::vector<GPID> source_pages;
+    Status status = enumerateTablePages(table_id, source_pages, ctx);
+    if (status != Status::OK)
+    {
+        mutex_.lock();
+        SET_ERROR_CONTEXT(ctx, status, "Failed to enumerate table pages");
+        LOG_ERROR(CATALOG, "Failed to enumerate pages for table");
+        return status;
+    }
+
+    uint32_t total_pages = static_cast<uint32_t>(source_pages.size());
+    LOG_INFO(CATALOG, "Found %u heap pages to copy", total_pages);
+
+    // Update total_pages in state
+    mutex_.lock();
+    state.total_pages = total_pages;
+    state.pages_copied = 0;
+    mutex_.unlock();
+
+    // ===== STEP 3: TID mapping and progress tracking =====
+    std::unordered_map<uint64_t, uint64_t> tid_mapping;
+    uint32_t pages_copied = 0;
+    uint64_t bytes_copied = 0;
+    auto last_log_time = std::chrono::steady_clock::now();
+
+    // ===== STEP 4: Copy each page =====
+    for (GPID source_gpid : source_pages)
+    {
+        // Pin source page (read-only)
+        void *source_buffer = nullptr;
+        status = db_->buffer_pool()->pinPageGlobal(source_gpid, &source_buffer, ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, status, "Failed to pin source page");
+            LOG_ERROR(CATALOG, "Failed to pin source page GPID=%016lx", source_gpid);
+            return status;
+        }
+
+        // Allocate target page in target tablespace
+        GPID target_gpid;
+        status = db_->page_manager()->allocatePageInTablespace(target_ts, &target_gpid, ctx);
+        if (status != Status::OK)
+        {
+            db_->buffer_pool()->unpinPageGlobal(source_gpid, false, ctx);
+            SET_ERROR_CONTEXT(ctx, status, "Failed to allocate target page");
+            LOG_ERROR(CATALOG, "Failed to allocate page in target tablespace %u", target_ts);
+            return status;
+        }
+
+        // Pin target page (will be written)
+        void *target_buffer = nullptr;
+        status = db_->buffer_pool()->pinPageGlobal(target_gpid, &target_buffer, ctx);
+        if (status != Status::OK)
+        {
+            db_->buffer_pool()->unpinPageGlobal(source_gpid, false, ctx);
+            db_->page_manager()->freePageGlobal(target_gpid, ctx);
+            SET_ERROR_CONTEXT(ctx, status, "Failed to pin target page");
+            LOG_ERROR(CATALOG, "Failed to pin target page GPID=%016lx", target_gpid);
+            return status;
+        }
+
+        // Copy page with TID remapping
+        status = copyPageWithTIDRemapping(source_buffer, target_buffer,
+                                         source_gpid, target_gpid,
+                                         tid_mapping, ctx);
+        if (status != Status::OK)
+        {
+            db_->buffer_pool()->unpinPageGlobal(source_gpid, false, ctx);
+            db_->buffer_pool()->unpinPageGlobal(target_gpid, false, ctx);
+            db_->page_manager()->freePageGlobal(target_gpid, ctx);
+            SET_ERROR_CONTEXT(ctx, status, "Failed to copy page with TID remapping");
+            LOG_ERROR(CATALOG, "Failed to copy page %016lx → %016lx",
+                     source_gpid, target_gpid);
+            return status;
+        }
+
+        // Unpin pages
+        db_->buffer_pool()->unpinPageGlobal(source_gpid, false, ctx);  // Source not modified
+        db_->buffer_pool()->unpinPageGlobal(target_gpid, true, ctx);   // Target is dirty
+
+        // Record TID mappings in TIDResolver
+        // Assume max 256 slots per page (conservative estimate)
+        for (uint16_t slot = 0; slot < 256; slot++)
+        {
+            TID source_tid{source_gpid, slot};
+            TID target_tid{target_gpid, slot};
+            db_->tid_resolver()->recordMigration(table_id, source_tid, target_tid, ctx);
+        }
+
+        // Update progress
+        pages_copied++;
+        bytes_copied += db_->page_size();
+
+        // Log progress every 1000 pages or every 5 seconds
+        auto now = std::chrono::steady_clock::now();
+        auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - last_log_time);
+
+        if (pages_copied % 1000 == 0 || elapsed.count() >= 5)
+        {
+            LOG_INFO(CATALOG, "COPYING progress: %u / %u pages (%.1f%%), %lu MB copied",
+                     pages_copied, total_pages,
+                     (100.0 * pages_copied) / total_pages,
+                     bytes_copied / (1024 * 1024));
+            last_log_time = now;
+        }
+
+        // Update state periodically
+        if (pages_copied % 100 == 0)
+        {
+            mutex_.lock();
+            state.pages_copied = pages_copied;
+            state.total_bytes_copied = bytes_copied;
+            mutex_.unlock();
+        }
+    }
+
+    // ===== STEP 5: Update final state =====
+    mutex_.lock();
+    state.pages_copied = pages_copied;
+    state.total_bytes_copied = bytes_copied;
+
+    LOG_INFO(CATALOG, "COPYING phase complete: %u pages, %lu MB copied",
+             pages_copied, bytes_copied / (1024 * 1024));
+
+    return Status::OK;
+}
+
+/**
+ * executeOnlineMigrationCatchUpPhase - Sprint 5 Task 5.4.5
+ *
+ * Implements the CATCH_UP phase of ONLINE migration:
+ * 1. Identify dirty pages (modified during COPYING phase)
+ * 2. Re-copy dirty pages to target tablespace
+ * 3. Repeat until dirty page count falls below threshold or max iterations reached
+ * 4. Prepare for SWAP phase
+ */
+Status CatalogManager::executeOnlineMigrationCatchUpPhase(
+    const ID &migration_id, uint32_t max_iterations,
+    uint32_t dirty_threshold, ErrorContext *ctx)
+{
+    LOG_INFO(CATALOG, "executeOnlineMigrationCatchUpPhase: Starting CATCH_UP phase");
+    LOG_INFO(CATALOG, "Parameters: max_iterations=%u, dirty_threshold=%u",
+             max_iterations, dirty_threshold);
+
+    // ===== STEP 1: Get migration state =====
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    auto it = migration_cache_.find(migration_id);
+    if (it == migration_cache_.end())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Migration not found");
+        LOG_ERROR(CATALOG, "Migration ID not found in cache");
+        return Status::NOT_FOUND;
+    }
+
+    TableMigrationState &state = it->second;
+
+    // Verify we're in CATCH_UP phase
+    if (state.phase != MigrationPhase::MIGRATION_CATCH_UP)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Migration not in CATCH_UP phase");
+        LOG_ERROR(CATALOG, "Migration phase is %d, expected CATCH_UP (%d)",
+                 static_cast<int>(state.phase),
+                 static_cast<int>(MigrationPhase::MIGRATION_CATCH_UP));
+        return Status::INVALID_ARGUMENT;
+    }
+
+    ID table_id = state.table_id;
+    uint16_t source_ts = state.source_tablespace;
+    uint16_t target_ts = state.target_tablespace;
+
+    LOG_INFO(CATALOG, "CATCH_UP phase: table_id=%s, source_ts=%u, target_ts=%u",
+             "<migration>", source_ts, target_ts);
+
+    // Release lock for long-running operations
+    mutex_.unlock();
+
+    // ===== STEP 2: TID mapping =====
+    std::unordered_map<uint64_t, uint64_t> tid_mapping;
+
+    // ===== STEP 3: Iterative catch-up loop =====
+    uint32_t iteration = 0;
+    uint32_t dirty_count = 0;
+
+    for (iteration = 0; iteration < max_iterations; iteration++)
+    {
+        // Get dirty pages
+        std::vector<uint32_t> dirty_pages = getDirtyPages(migration_id, ctx);
+
+        dirty_count = static_cast<uint32_t>(dirty_pages.size());
+
+        LOG_INFO(CATALOG, "CATCH_UP iteration %u: %u dirty pages found",
+                 iteration + 1, dirty_count);
+
+        // Check if we're below threshold
+        if (dirty_count <= dirty_threshold)
+        {
+            LOG_INFO(CATALOG, "CATCH_UP complete: dirty pages (%u) <= threshold (%u)",
+                     dirty_count, dirty_threshold);
+            break;
+        }
+
+        // Re-copy each dirty page
+        uint32_t pages_recopied = 0;
+        Status status;
+        for (uint32_t page_id : dirty_pages)
+        {
+            // Construct source GPID
+            GPID source_gpid = makeGPID(source_ts, page_id);
+
+            // Pin source page
+            void *source_buffer = nullptr;
+            status = db_->buffer_pool()->pinPageGlobal(source_gpid, &source_buffer, ctx);
+            if (status != Status::OK)
+            {
+                SET_ERROR_CONTEXT(ctx, status, "Failed to pin source page during catch-up");
+                LOG_ERROR(CATALOG, "Failed to pin source page GPID=%016lx", source_gpid);
+                return status;
+            }
+
+            // Allocate new target page
+            GPID target_gpid;
+            status = db_->page_manager()->allocatePageInTablespace(target_ts, &target_gpid, ctx);
+            if (status != Status::OK)
+            {
+                db_->buffer_pool()->unpinPageGlobal(source_gpid, false, ctx);
+                SET_ERROR_CONTEXT(ctx, status, "Failed to allocate target page during catch-up");
+                LOG_ERROR(CATALOG, "Failed to allocate page in target tablespace %u", target_ts);
+                return status;
+            }
+
+            // Pin target page
+            void *target_buffer = nullptr;
+            status = db_->buffer_pool()->pinPageGlobal(target_gpid, &target_buffer, ctx);
+            if (status != Status::OK)
+            {
+                db_->buffer_pool()->unpinPageGlobal(source_gpid, false, ctx);
+                db_->page_manager()->freePageGlobal(target_gpid, ctx);
+                SET_ERROR_CONTEXT(ctx, status, "Failed to pin target page during catch-up");
+                LOG_ERROR(CATALOG, "Failed to pin target page GPID=%016lx", target_gpid);
+                return status;
+            }
+
+            // Copy page with TID remapping
+            status = copyPageWithTIDRemapping(source_buffer, target_buffer,
+                                             source_gpid, target_gpid,
+                                             tid_mapping, ctx);
+            if (status != Status::OK)
+            {
+                db_->buffer_pool()->unpinPageGlobal(source_gpid, false, ctx);
+                db_->buffer_pool()->unpinPageGlobal(target_gpid, false, ctx);
+                db_->page_manager()->freePageGlobal(target_gpid, ctx);
+                SET_ERROR_CONTEXT(ctx, status, "Failed to copy page during catch-up");
+                LOG_ERROR(CATALOG, "Failed to copy page %016lx → %016lx",
+                         source_gpid, target_gpid);
+                return status;
+            }
+
+            // Unpin pages
+            db_->buffer_pool()->unpinPageGlobal(source_gpid, false, ctx);
+            db_->buffer_pool()->unpinPageGlobal(target_gpid, true, ctx);
+
+            // Update TID mappings in TIDResolver
+            for (uint16_t slot = 0; slot < 256; slot++)
+            {
+                TID source_tid{source_gpid, slot};
+                TID target_tid{target_gpid, slot};
+                db_->tid_resolver()->recordMigration(table_id, source_tid, target_tid, ctx);
+            }
+
+            pages_recopied++;
+
+            // Log progress every 100 pages
+            if (pages_recopied % 100 == 0)
+            {
+                LOG_INFO(CATALOG, "CATCH_UP iteration %u: %u / %u pages recopied",
+                         iteration + 1, pages_recopied, dirty_count);
+            }
+        }
+
+        LOG_INFO(CATALOG, "CATCH_UP iteration %u complete: %u pages recopied",
+                 iteration + 1, pages_recopied);
+
+        // Clear dirty pages bitmap for next iteration
+        status = clearDirtyPages(migration_id, ctx);
+        if (status != Status::OK)
+        {
+            LOG_WARNING(CATALOG, "Failed to clear dirty pages bitmap (status=%d)",
+                       static_cast<int>(status));
+        }
+
+        // Update statistics
+        mutex_.lock();
+        state.catch_up_iterations = iteration + 1;
+        mutex_.unlock();
+    }
+
+    // ===== STEP 4: Update final state =====
+    mutex_.lock();
+    state.catch_up_iterations = iteration;
+    state.final_dirty_page_count = dirty_count;
+
+    if (dirty_count <= dirty_threshold)
+    {
+        LOG_INFO(CATALOG, "CATCH_UP phase complete: %u iterations, %u dirty pages remaining",
+                 iteration, dirty_count);
+        return Status::OK;
+    }
+    else
+    {
+        LOG_WARNING(CATALOG, "CATCH_UP phase incomplete: max iterations (%u) reached, %u dirty pages remaining",
+                   max_iterations, dirty_count);
+
+        // Still return OK - we'll proceed with SWAP but log the high dirty page count
+        return Status::OK;
+    }
+}
+
+/**
+ * executeOnlineMigrationSwapPhase - Sprint 5 Task 5.4.6
+ *
+ * Implements the SWAP phase of ONLINE migration:
+ * 1. Get TID mappings from TIDResolver
+ * 2. Update all indexes with new TIDs
+ * 3. Atomically update catalog (table.tablespace_id = target)
+ * 4. Free old pages in source tablespace
+ * 5. Clear TIDResolver state
+ * 6. Mark migration complete
+ */
+Status CatalogManager::executeOnlineMigrationSwapPhase(
+    const ID &migration_id, ErrorContext *ctx)
+{
+    LOG_INFO(CATALOG, "executeOnlineMigrationSwapPhase: Starting SWAP phase");
+
+    // ===== STEP 1: Get migration state =====
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    auto it = migration_cache_.find(migration_id);
+    if (it == migration_cache_.end())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Migration not found");
+        LOG_ERROR(CATALOG, "Migration ID not found in cache");
+        return Status::NOT_FOUND;
+    }
+
+    TableMigrationState &state = it->second;
+
+    // Verify we're in SWAP phase
+    if (state.phase != MigrationPhase::MIGRATION_SWAP)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Migration not in SWAP phase");
+        LOG_ERROR(CATALOG, "Migration phase is %d, expected SWAP (%d)",
+                 static_cast<int>(state.phase),
+                 static_cast<int>(MigrationPhase::MIGRATION_SWAP));
+        return Status::INVALID_ARGUMENT;
+    }
+
+    ID table_id = state.table_id;
+    uint16_t source_ts = state.source_tablespace;
+    uint16_t target_ts = state.target_tablespace;
+
+    LOG_INFO(CATALOG, "SWAP phase: table_id=%s, source_ts=%u → target_ts=%u",
+             "<migration>", source_ts, target_ts);
+
+    // Release lock for long-running operations
+    mutex_.unlock();
+
+    // ===== STEP 2: Get TID mappings from TIDResolver =====
+    std::unordered_map<uint64_t, uint64_t> tid_mapping =
+        db_->tid_resolver()->getAllMappings(table_id, ctx);
+
+    LOG_INFO(CATALOG, "Retrieved %zu TID mappings from TIDResolver",
+             tid_mapping.size());
+
+    // ===== STEP 3: Update all indexes with new TIDs =====
+    Status status = updateIndexTIDs(table_id, tid_mapping, ctx);
+    if (status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, status, "Failed to update index TIDs");
+        LOG_ERROR(CATALOG, "Failed to update index TIDs during SWAP phase");
+        return status;
+    }
+
+    LOG_INFO(CATALOG, "Successfully updated all indexes with new TIDs");
+
+    // ===== STEP 4: Atomically update catalog =====
+    mutex_.lock();
+
+    // Get table info
+    TableInfo table_info;
+    status = getTable(table_id, table_info, ctx);
+    if (status != Status::OK)
+    {
+        mutex_.unlock();
+        SET_ERROR_CONTEXT(ctx, status, "Failed to get table info");
+        LOG_ERROR(CATALOG, "Failed to get table info during SWAP");
+        return status;
+    }
+
+    // Update tablespace_id to target
+    uint16_t old_tablespace = table_info.tablespace_id;
+    table_info.tablespace_id = target_ts;
+
+    // Clear migration flags
+    table_info.migration_in_progress = false;
+    table_info.migration_id = ID{};
+    table_info.migration_xid = 0;
+    table_info.migration_target_ts = 0;
+    table_info.migration_phase = static_cast<uint8_t>(MigrationPhase::MIGRATION_NONE);
+
+    // Update in cache
+    table_cache_[table_id] = table_info;
+
+    LOG_INFO(CATALOG, "Updated catalog: table '%s' now in tablespace %u (was %u)",
+             table_info.table_name.c_str(), target_ts, old_tablespace);
+
+    mutex_.unlock();
+
+    // ===== STEP 5: Free old pages in source tablespace =====
+    // Get all source pages to free
+    std::vector<GPID> source_pages;
+    status = enumerateTablePages(table_id, source_pages, ctx);
+    if (status != Status::OK)
+    {
+        LOG_WARNING(CATALOG, "Failed to enumerate source pages for cleanup (status=%d)",
+                   static_cast<int>(status));
+        // Continue anyway - this is cleanup, not critical
+    }
+    else
+    {
+        uint32_t pages_freed = 0;
+        uint32_t pages_failed = 0;
+
+        for (GPID source_gpid : source_pages)
+        {
+            // Only free pages in the OLD source tablespace
+            if (getTablespaceID(source_gpid) == old_tablespace)
+            {
+                status = db_->page_manager()->freePageGlobal(source_gpid, ctx);
+                if (status == Status::OK)
+                {
+                    pages_freed++;
+
+                    // Log every 1000 pages
+                    if (pages_freed % 1000 == 0)
+                    {
+                        LOG_INFO(CATALOG, "Cleanup progress: %u pages freed", pages_freed);
+                    }
+                }
+                else
+                {
+                    pages_failed++;
+                    LOG_WARNING(CATALOG, "Failed to free source page GPID=%016lx (status=%d)",
+                               source_gpid, static_cast<int>(status));
+                }
+            }
+        }
+
+        LOG_INFO(CATALOG, "Cleanup complete: %u pages freed, %u failed",
+                 pages_freed, pages_failed);
+    }
+
+    // ===== STEP 6: Clear TIDResolver state =====
+    status = db_->tid_resolver()->clearMigration(table_id, ctx);
+    if (status != Status::OK)
+    {
+        LOG_WARNING(CATALOG, "Failed to clear TIDResolver state (status=%d)",
+                   static_cast<int>(status));
+        // Continue anyway
+    }
+
+    LOG_INFO(CATALOG, "Cleared TIDResolver state for table");
+
+    // ===== STEP 7: Mark migration complete =====
+    mutex_.lock();
+
+    state.phase = MigrationPhase::MIGRATION_COMPLETE;
+    state.end_time = std::chrono::system_clock::now().time_since_epoch().count();
+
+    LOG_INFO(CATALOG, "SWAP phase complete: migration finished successfully");
+    LOG_INFO(CATALOG, "Migration statistics:");
+    LOG_INFO(CATALOG, "  Total pages: %u", state.total_pages);
+    LOG_INFO(CATALOG, "  Pages copied: %u", state.pages_copied);
+    LOG_INFO(CATALOG, "  Catch-up iterations: %u", state.catch_up_iterations);
+    LOG_INFO(CATALOG, "  Final dirty pages: %u", state.final_dirty_page_count);
+    LOG_INFO(CATALOG, "  Total bytes copied: %lu MB",
+             state.total_bytes_copied / (1024 * 1024));
+
+    // Remove from migration cache (migration is complete)
+    migration_cache_.erase(migration_id);
+
+    mutex_.unlock();
+
+    return Status::OK;
+}
+
 
 } // namespace scratchbird::core
