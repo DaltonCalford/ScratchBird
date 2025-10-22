@@ -171,6 +171,7 @@ namespace scratchbird
             KW_ALTER,  // Phase 2 Task 2.2
             KW_RENAME, // Phase 2 Task 2.2
             KW_TO,     // Phase 2 Task 2.2
+            KW_ONLINE, // Phase 4 Task 4.1.1 - ALTER TABLE ... SET TABLESPACE ... ONLINE
         };
 
         // Location in source file

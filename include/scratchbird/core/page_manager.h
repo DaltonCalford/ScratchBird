@@ -241,6 +241,29 @@ namespace scratchbird::core
          */
         auto getTablespaceMetrics(uint16_t tablespace_id, TablespaceMetrics *metrics_out) const -> bool;
 
+        // === NEW: Page Enumeration API (Phase 5, Task 5.1.1) ===
+
+        /**
+         * getAllocatedPages - Get all allocated pages in a tablespace
+         *
+         * @param tablespace_id Tablespace ID (0 = primary, 1-65535 = custom)
+         * @param pages_out Output vector to receive GPIDs of allocated pages
+         * @param ctx Error context
+         * @return Status::OK on success, error status otherwise
+         *
+         * Scans the FSM bitmap for the specified tablespace and returns a list
+         * of all allocated page GPIDs. This is used during table migration to
+         * enumerate all pages that need to be examined.
+         *
+         * Thread-safe: Acquires tablespace_fsm_mutex_ (or mutex_ for primary).
+         * Performance: O(total_pages) scan of bitmap, typically fast for SSDs.
+         *
+         * Phase 5 Task 5.1.1
+         */
+        auto getAllocatedPages(uint16_t tablespace_id,
+                              std::vector<GPID> &pages_out,
+                              ErrorContext *ctx = nullptr) -> Status;
+
     protected:
         Database *db_;       // Database instance
         uint32_t page_size_; // Page size

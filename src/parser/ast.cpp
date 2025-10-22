@@ -118,6 +118,11 @@ namespace scratchbird
             visitor->visit(this);
         }
 
+        void AlterTableSetTablespaceStmt::accept(ASTVisitor *visitor)
+        {
+            visitor->visit(this);
+        }
+
         void InsertStmt::accept(ASTVisitor *visitor)
         {
             visitor->visit(this);

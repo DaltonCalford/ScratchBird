@@ -430,6 +430,27 @@ namespace scratchbird
                 return "GIN";
             }
 
+            /**
+             * PHASE 5 TASK 5.3.3: Update TIDs after tablespace migration
+             *
+             * Traverses all parts of the GIN index structure and updates TID references
+             * based on the provided TID mapping. Updates:
+             * 1. Pending list entries (if present)
+             * 2. Posting list pages (small lists)
+             * 3. Posting tree leaf nodes (large lists)
+             *
+             * @param tid_mapping Map from old TID (uint64_t) to new TID (uint64_t)
+             * @param tids_updated_out Output: number of TIDs updated
+             * @param pages_modified_out Output: number of pages modified
+             * @param ctx Error context
+             * @return Status::OK if successful
+             */
+            Status updateTIDsAfterMigration(
+                const std::unordered_map<uint64_t, uint64_t> &tid_mapping,
+                uint64_t *tids_updated_out = nullptr,
+                uint64_t *pages_modified_out = nullptr,
+                ErrorContext *ctx = nullptr);
+
         private:
             Database *db_;
             BufferPool *buffer_pool_;

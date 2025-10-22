@@ -342,6 +342,24 @@ namespace scratchbird
 
             Status getStats(HnswStats *stats_out, ErrorContext *ctx = nullptr);
 
+            /**
+             * PHASE 5 TASK 5.3.2: Update TIDs after tablespace migration
+             *
+             * Traverses all layers of the HNSW graph and updates node_tuple_id fields
+             * based on the provided TID mapping.
+             *
+             * @param tid_mapping Map from old TID (uint64_t) to new TID (uint64_t)
+             * @param tids_updated_out Output: number of TIDs updated
+             * @param pages_modified_out Output: number of pages modified
+             * @param ctx Error context
+             * @return Status::OK if successful
+             */
+            Status updateTIDsAfterMigration(
+                const std::unordered_map<uint64_t, uint64_t> &tid_mapping,
+                uint64_t *tids_updated_out = nullptr,
+                uint64_t *pages_modified_out = nullptr,
+                ErrorContext *ctx = nullptr);
+
         private:
             Database *db_;
             SBHnswIndex index_info_;

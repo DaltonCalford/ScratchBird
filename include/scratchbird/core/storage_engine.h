@@ -117,6 +117,11 @@ namespace scratchbird::core
         auto getTuple(uint32_t page_id, uint16_t item_id, Tuple *tuple_out,
                       ErrorContext *ctx = nullptr) -> Status;
 
+        // Get a specific tuple by TID with dual-source visibility (Sprint 4 Task 5.4.2)
+        // Resolves which tablespace to read from during ONLINE migration
+        auto getTuple(const ID &table_id, const TID &tid, Tuple *tuple_out,
+                      ErrorContext *ctx = nullptr) -> Status;
+
         // Delete a tuple (mark as deleted)
         auto deleteTuple(const ID &table_id, uint32_t page_id, uint16_t item_id,
                          ErrorContext *ctx = nullptr) -> Status;

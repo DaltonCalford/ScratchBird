@@ -1853,4 +1853,79 @@ namespace scratchbird::core
         return true;
     }
 
+    // === PHASE 5, TASK 5.1.1: Page Enumeration ===
+
+    Status PageManager::getAllocatedPages(uint16_t tablespace_id,
+                                         std::vector<GPID> &pages_out,
+                                         ErrorContext *ctx)
+    {
+        // Clear output vector
+        pages_out.clear();
+
+        // Handle primary tablespace (0) separately
+        if (tablespace_id == PRIMARY_TABLESPACE_ID)
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+
+            // Scan bitmap for primary tablespace
+            uint32_t total = total_pages_;
+            for (uint32_t page_id = 0; page_id < total; page_id++)
+            {
+                if (getBit(page_id))
+                {
+                    // Page is allocated
+                    GPID gpid = makeGPID(PRIMARY_TABLESPACE_ID, static_cast<uint64_t>(page_id));
+                    pages_out.push_back(gpid);
+                }
+            }
+
+            LOG_DEBUG(STORAGE, "Enumerated %zu allocated pages in primary tablespace",
+                     pages_out.size());
+            return Status::OK;
+        }
+
+        // Handle custom tablespace (1-65535)
+        std::lock_guard<std::mutex> lock(tablespace_fsm_mutex_);
+
+        // Find FSM for this tablespace
+        auto fsm_it = tablespace_fsms_.find(tablespace_id);
+        if (fsm_it == tablespace_fsms_.end())
+        {
+            SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND,
+                            "Tablespace not found or not loaded");
+            return Status::NOT_FOUND;
+        }
+
+        const TablespaceFSM &fsm = fsm_it->second;
+
+        // Scan bitmap
+        uint32_t total = fsm.total_pages;
+        const std::vector<uint8_t> &bitmap = fsm.bitmap;
+
+        for (uint32_t page_num = 0; page_num < total; page_num++)
+        {
+            // Check bit in bitmap
+            uint32_t byte_index = page_num / 8;
+            uint32_t bit_index = page_num % 8;
+
+            if (byte_index >= bitmap.size())
+            {
+                break; // Shouldn't happen, but be safe
+            }
+
+            bool allocated = (bitmap[byte_index] & (1 << bit_index)) != 0;
+            if (allocated)
+            {
+                // Page is allocated
+                GPID gpid = makeGPID(tablespace_id, static_cast<uint64_t>(page_num));
+                pages_out.push_back(gpid);
+            }
+        }
+
+        LOG_DEBUG(STORAGE, "Enumerated %zu allocated pages in tablespace %u",
+                 pages_out.size(), tablespace_id);
+
+        return Status::OK;
+    }
+
 } // namespace scratchbird::core

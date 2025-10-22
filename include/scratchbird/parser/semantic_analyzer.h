@@ -70,10 +70,11 @@ namespace scratchbird
 
             // ASTVisitor interface
             void visit(CreateTableStmt *node) override;
-            void visit(CreateIndexStmt *node) override;      // Phase 2 Task 2.3
-            void visit(CreateTablespaceStmt *node) override; // Phase 2 Task 2.1
-            void visit(AlterTablespaceStmt *node) override;  // Phase 2 Task 2.2
-            void visit(DropTablespaceStmt *node) override;   // Phase 2 Task 2.1
+            void visit(CreateIndexStmt *node) override;             // Phase 2 Task 2.3
+            void visit(CreateTablespaceStmt *node) override;        // Phase 2 Task 2.1
+            void visit(AlterTablespaceStmt *node) override;         // Phase 2 Task 2.2
+            void visit(AlterTableSetTablespaceStmt *node) override; // Phase 4 Task 4.1.1
+            void visit(DropTablespaceStmt *node) override;          // Phase 2 Task 2.1
             void visit(InsertStmt *node) override;
             void visit(SelectStmt *node) override;
             void visit(StartTransactionStmt *node) override; // Phase 2 Task 2.6

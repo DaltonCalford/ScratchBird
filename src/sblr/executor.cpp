@@ -164,6 +164,11 @@ namespace scratchbird
                         result = ExecutionResult();
                         break;
 
+                    case Opcode::ALTER_TABLE_SET_TABLESPACE:
+                        executeAlterTableSetTablespace();
+                        result = ExecutionResult();
+                        break;
+
                     case Opcode::DROP_TABLESPACE:
                         executeDropTablespace();
                         result = ExecutionResult();
@@ -708,6 +713,85 @@ namespace scratchbird
                 }
                 error(err_msg);
             }
+        }
+
+        void Executor::executeAlterTableSetTablespace()
+        {
+            // Phase 4 Task 4.1.6: Execute ALTER TABLE ... SET TABLESPACE
+
+            // Read table name
+            std::string table_name = readString();
+
+            // Read tablespace name
+            std::string tablespace_name = readString();
+
+            // Read online flag (1 byte)
+            bool online = (readByte() != 0);
+
+            // Get default schema (PUBLIC)
+            core::CatalogManager::SchemaInfo schema_info;
+            core::ErrorContext err_ctx;
+            auto status = db_->catalog_manager()->getSchema("PUBLIC", schema_info, &err_ctx);
+            if (status != core::Status::OK)
+            {
+                std::string err_msg = "Failed to get default schema";
+                if (!err_ctx.message.empty())
+                {
+                    err_msg += ": " + err_ctx.message;
+                }
+                error(err_msg);
+                return;
+            }
+
+            // Resolve table name to table ID
+            core::CatalogManager::TableInfo table_info;
+            status = db_->catalog_manager()->getTable(schema_info.schema_id, table_name, table_info,
+                                                       &err_ctx);
+            if (status != core::Status::OK)
+            {
+                std::string err_msg = "Failed to find table '" + table_name + "'";
+                if (!err_ctx.message.empty())
+                {
+                    err_msg += ": " + err_ctx.message;
+                }
+                error(err_msg);
+                return;
+            }
+
+            // Resolve tablespace name to tablespace ID
+            core::TablespaceInfo ts_info;
+            status = db_->catalog_manager()->getTablespaceByName(tablespace_name, ts_info, &err_ctx);
+            if (status != core::Status::OK)
+            {
+                std::string err_msg = "Failed to find tablespace '" + tablespace_name + "'";
+                if (!err_ctx.message.empty())
+                {
+                    err_msg += ": " + err_ctx.message;
+                }
+                error(err_msg);
+                return;
+            }
+
+            // Call CatalogManager::moveTableToTablespace()
+            // Phase 4 Task 4.1.3: Pass nullptr for progress_callback (no progress tracking in executor yet)
+            status = db_->catalog_manager()->moveTableToTablespace(table_info.table_id,
+                                                                    ts_info.tablespace_id, online,
+                                                                    nullptr, // progress_callback
+                                                                    &err_ctx);
+
+            if (status != core::Status::OK)
+            {
+                std::string err_msg = "Failed to move table '" + table_name + "' to tablespace '" +
+                                      tablespace_name + "'";
+                if (!err_ctx.message.empty())
+                {
+                    err_msg += ": " + err_ctx.message;
+                }
+                error(err_msg);
+                return;
+            }
+
+            // Success - no result set to return for DDL
         }
 
         void Executor::executeInsert()

@@ -30,10 +30,11 @@ namespace scratchbird
         {
             // Statements
             CREATE_TABLE,
-            CREATE_INDEX,      // Phase 2 Task 2.3
-            CREATE_TABLESPACE, // Phase 2 Task 2.1
-            ALTER_TABLESPACE,  // Phase 2 Task 2.2
-            DROP_TABLESPACE,   // Phase 2 Task 2.1
+            CREATE_INDEX,              // Phase 2 Task 2.3
+            CREATE_TABLESPACE,         // Phase 2 Task 2.1
+            ALTER_TABLESPACE,          // Phase 2 Task 2.2
+            ALTER_TABLE_SET_TABLESPACE, // Phase 4 Task 4.1.1
+            DROP_TABLESPACE,           // Phase 2 Task 2.1
             INSERT,
             SELECT,
             START_TRANSACTION, // Phase 2 Task 2.6
@@ -805,6 +806,39 @@ namespace scratchbird
             std::vector<TablespaceAlteration> alterations_;
         };
 
+        // ALTER TABLE ... SET TABLESPACE statement (Phase 4 Task 4.1.1)
+        // Moves a table to a different tablespace (offline or online mode)
+        class AlterTableSetTablespaceStmt : public Statement
+        {
+        public:
+            AlterTableSetTablespaceStmt(const SourceSpan &span, StringPool::StringId table_name,
+                                        StringPool::StringId tablespace_name, bool online)
+                : Statement(ASTKind::ALTER_TABLE_SET_TABLESPACE, span), table_name_(table_name),
+                  tablespace_name_(tablespace_name), online_(online)
+            {
+            }
+
+            StringPool::StringId tableName() const
+            {
+                return table_name_;
+            }
+            StringPool::StringId tablespaceName() const
+            {
+                return tablespace_name_;
+            }
+            bool online() const
+            {
+                return online_;
+            }
+
+            void accept(ASTVisitor *visitor) override;
+
+        private:
+            StringPool::StringId table_name_;
+            StringPool::StringId tablespace_name_;
+            bool online_; // true if ONLINE clause present
+        };
+
         // SWEEP DATABASE statement (Phase 3 Task 3.3)
         class SweepStmt : public Statement
         {
@@ -871,10 +905,11 @@ namespace scratchbird
 
             // Statements
             virtual void visit(CreateTableStmt *node) = 0;
-            virtual void visit(CreateIndexStmt *node) = 0;      // Phase 2 Task 2.3
-            virtual void visit(CreateTablespaceStmt *node) = 0; // Phase 2 Task 2.1
-            virtual void visit(AlterTablespaceStmt *node) = 0;  // Phase 2 Task 2.2
-            virtual void visit(DropTablespaceStmt *node) = 0;   // Phase 2 Task 2.1
+            virtual void visit(CreateIndexStmt *node) = 0;             // Phase 2 Task 2.3
+            virtual void visit(CreateTablespaceStmt *node) = 0;        // Phase 2 Task 2.1
+            virtual void visit(AlterTablespaceStmt *node) = 0;         // Phase 2 Task 2.2
+            virtual void visit(AlterTableSetTablespaceStmt *node) = 0; // Phase 4 Task 4.1.1
+            virtual void visit(DropTablespaceStmt *node) = 0;          // Phase 2 Task 2.1
             virtual void visit(InsertStmt *node) = 0;
             virtual void visit(SelectStmt *node) = 0;
             virtual void visit(StartTransactionStmt *node) = 0; // Phase 2 Task 2.6
