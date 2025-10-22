@@ -592,6 +592,60 @@ namespace scratchbird::core
         auto getTableIndexes(const ID &table_id, ErrorContext *ctx = nullptr)
             -> std::vector<IndexInfo>;
 
+        /**
+         * executeOnlineMigrationCopyingPhase - Execute COPYING phase of ONLINE migration
+         *
+         * Scans all heap pages in source tablespace and copies them to target tablespace,
+         * building TID mapping and recording migration in TIDResolver.
+         *
+         * @param migration_id Migration ID
+         * @param ctx Error context
+         * @return Status::OK on success
+         *
+         * Sprint 5 Task 5.4.4: Copying Phase
+         */
+        auto executeOnlineMigrationCopyingPhase(const ID &migration_id,
+                                                ErrorContext *ctx = nullptr) -> Status;
+
+        /**
+         * executeOnlineMigrationCatchUpPhase - Execute CATCH_UP phase of ONLINE migration
+         *
+         * Re-copies pages that were marked dirty during COPYING phase. Iterates until
+         * dirty page count is below threshold or max iterations reached.
+         *
+         * @param migration_id Migration ID
+         * @param max_iterations Maximum catch-up iterations (default 10)
+         * @param dirty_threshold Stop when dirty pages < threshold (default 100)
+         * @param ctx Error context
+         * @return Status::OK on success
+         *
+         * Sprint 5 Task 5.4.5: Catch-Up Phase
+         */
+        auto executeOnlineMigrationCatchUpPhase(const ID &migration_id,
+                                                uint32_t max_iterations = 10,
+                                                uint32_t dirty_threshold = 100,
+                                                ErrorContext *ctx = nullptr) -> Status;
+
+        /**
+         * executeOnlineMigrationSwapPhase - Execute SWAP phase of ONLINE migration
+         *
+         * Atomically swaps table to use target tablespace:
+         * 1. Acquire exclusive lock on table
+         * 2. Update all indexes with TID mapping
+         * 3. Update catalog (table.tablespace_id = target)
+         * 4. Free old pages in source tablespace
+         * 5. Clear TID resolver state
+         * 6. Release lock
+         *
+         * @param migration_id Migration ID
+         * @param ctx Error context
+         * @return Status::OK on success
+         *
+         * Sprint 5 Task 5.4.6: Atomic Swap Phase
+         */
+        auto executeOnlineMigrationSwapPhase(const ID &migration_id,
+                                            ErrorContext *ctx = nullptr) -> Status;
+
         // Catalog statistics
         auto schemaCount() const -> uint32_t
         {

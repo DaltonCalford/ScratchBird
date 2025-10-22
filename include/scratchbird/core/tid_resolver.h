@@ -5,6 +5,7 @@
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/core/uuidv7.h"
 #include "scratchbird/core/gpid.h"
+#include "scratchbird/core/tid.h"  // Sprint 5: Needed for TID definition
 #include <unordered_map>
 #include <memory>
 #include <mutex>
