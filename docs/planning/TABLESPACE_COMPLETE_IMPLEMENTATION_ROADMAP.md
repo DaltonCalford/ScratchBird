@@ -1,10 +1,10 @@
 # Complete Tablespace Implementation Roadmap
 # From Phase 5 to Phase 7 - Full ALPHA Implementation
 
-**Document Status**: ACTIVE PLANNING - **CRITICAL BUG IDENTIFIED**
-**Version**: 1.3 (Updated with Sprint 5 Planning Complete)
+**Document Status**: ACTIVE - Sprint 4 & 5 COMPLETE
+**Version**: 1.4 (Updated with Sprint 4 & 5 Implementation Complete)
 **Date**: October 21, 2025
-**Last Updated**: October 21, 2025 (Sprint 5: Copy and Swap - Implementation Plan Complete)
+**Last Updated**: October 21, 2025 (Sprint 4 & 5: ONLINE Migration Infrastructure + Execution Engine COMPLETE)
 **Architectural Foundation**: Firebird MGA (Multi-Generational Architecture)
 **Target**: ALPHA Release (All Non-Network Engine Functionality)
 
@@ -58,7 +58,17 @@ This document provides a comprehensive roadmap to complete ALL tablespace functi
 **Phase 5.4.0**: ONLINE Migration Architecture Design (8-10 hours)
 - Sprint 3: Architecture design COMPLETE
 
-**Total Completed**: ~140-161 hours
+**Sprint 4**: ONLINE Migration Infrastructure (9.5 hours actual)
+- Task 5.4.1: Migration State Management COMPLETE
+- Task 5.4.2: Dual-Source Visibility (TIDResolver) COMPLETE
+- Task 5.4.3: Write Routing During Migration COMPLETE
+
+**Sprint 5**: ONLINE Migration Execution Engine (4 hours actual)
+- Task 5.4.4: Copying Phase COMPLETE
+- Task 5.4.5: Catch-Up Phase COMPLETE
+- Task 5.4.6: Atomic Swap Phase COMPLETE
+
+**Total Completed**: ~162-185 hours
 
 ### ❌ CRITICAL BUG (MUST FIX FIRST)
 
@@ -77,13 +87,12 @@ This document provides a comprehensive roadmap to complete ALL tablespace functi
 **Phase 5**: OFFLINE Migration
 - Task 5.3.5: GIST Index TID Updates (4-6 hours) - DEFERRED (no implementation found)
 - Task 5.3.6: Full-Text Index (0-4 hours) - COVERED BY GIN
-- Task 5.4: ONLINE Migration (60-80 hours - **MUST IMPLEMENT**)
 
 **Phase 6**: Attach/Detach Operations (20-30 hours - **NEW REQUIREMENT**)
 
 **Phase 7**: Advanced Features (50-66 hours - **NEW REQUIREMENT**, see Phase 7 section)
 
-**Total Remaining**: ~139-188 hours (reduced from 147-198 due to Sprint 3 completion)
+**Total Remaining**: ~82-124 hours (reduced from 139-188 due to Sprint 4 & 5 completion)
 
 ---
 
