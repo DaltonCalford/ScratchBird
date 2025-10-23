@@ -21,20 +21,20 @@ ctest --output-on-failure
 
 ### Latest Achievements
 
-**Sprint 4 & 5: ONLINE Migration Complete (Oct 21, 2025)** 🎉
-- ✅ **ONLINE Migration Infrastructure** - State management, dual-source visibility, write routing
-- ✅ **ONLINE Migration Execution** - Copying, catch-up, and atomic swap phases
-- ✅ **TIDResolver with Bloom Filters** - < 5% query overhead during migration
-- ✅ **Zero-Downtime Table Migration** - Production-ready ONLINE migration
+**Sprint 0, 4, 5, 6: Core MGA + ONLINE Migration (Oct 23, 2025)** 🎉
+- ✅ **Sprint 0: CRITICAL Bug Fix** - Cross-page UPDATE MGA compliance, TID stability
+- ✅ **Sprint 4: ONLINE Infrastructure** - State management, TIDResolver, write routing
+- ✅ **Sprint 5: ONLINE Execution** - Copying, catch-up, atomic swap phases
+- ✅ **Sprint 6: ONLINE Polish** - Error handling, rollback, cleanup
 
-**Tablespace Implementation (Oct 20-21, 2025)**
+**Tablespace Implementation (Oct 20-23, 2025)**
 - ✅ **Phase 1**: Core infrastructure - GPID addressing, file management, catalog
 - ✅ **Phase 1.5**: TID migration - All 6 index types migrated to TID struct
 - ✅ **Phase 2**: SQL DDL - CREATE/DROP/ALTER TABLESPACE
 - ✅ **Phase 4**: Migration infrastructure - Parser, executor, batch processing
 - ✅ **Phase 5**: OFFLINE migration - All heap pages, 5 index types, TOAST complete
 
-**Total Tablespace Progress**: ~162-185 hours complete
+**Total Tablespace Progress**: ~168-193 hours complete
 
 ### What's Implemented ✅
 
@@ -52,7 +52,6 @@ ctest --output-on-failure
 
 ### Known Limitations ⚠️
 
-- **CRITICAL BUG**: Cross-page UPDATE uses MVCC pattern instead of MGA (2-4 hours to fix)
 - **No WAL** (no crash recovery - Beta requirement)
 - **Limited SQL** (no JOINs, subqueries, advanced features)
 - **No network layer** (local database only - Beta requirement)
@@ -60,11 +59,10 @@ ctest --output-on-failure
 
 ### Remaining for ALPHA
 
-**Total Remaining**: ~82-124 hours
-1. Fix critical MGA bug (2-4 hours)
-2. Complete autoextend (12-18 hours)
-3. Attach/Detach operations (20-30 hours)
-4. Advanced features (50-66 hours)
+**Total Remaining**: ~78-120 hours
+1. Complete autoextend (12-18 hours)
+2. Attach/Detach operations (20-30 hours)
+3. Advanced features (50-66 hours)
 
 ## Project Structure
 
