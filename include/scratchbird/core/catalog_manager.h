@@ -442,6 +442,76 @@ namespace scratchbird::core
                                    ErrorContext *ctx = nullptr) -> Status; // Phase 3 Task 3.1.4
 
         /**
+         * attachTablespace - Attach an existing tablespace file to the database
+         *
+         * @param file_path Absolute path to existing .sbts file
+         * @param tablespace_name Name to assign (if empty, use name from file header)
+         * @param tablespace_id_out Output: assigned tablespace ID
+         * @param ctx Error context
+         * @return Status::OK on success, error status otherwise
+         *
+         * Attaches an existing tablespace file (from another database or previously detached).
+         *
+         * Algorithm:
+         * 1. Validate file path exists and is readable
+         * 2. Read and validate TablespaceHeader from file
+         * 3. Check compatibility (page_size must match database)
+         * 4. Check for name conflicts (resolve with renaming if needed)
+         * 5. Allocate new tablespace_id (find first available 1-65535)
+         * 6. Open file descriptor and register in Database
+         * 7. Load FSM into memory (PageManager::openTablespace)
+         * 8. Add entry to pg_tablespace catalog
+         * 9. Update tablespace_cache_
+         *
+         * Validation:
+         * - File must exist and be readable
+         * - Magic number must match (SBTS)
+         * - Page size must match database page_size
+         * - ODS version compatible
+         * - Name must not conflict (or rename allowed)
+         *
+         * Phase 6 Task 6.1.2
+         */
+        auto attachTablespace(const std::string &file_path, const std::string &tablespace_name,
+                              uint16_t &tablespace_id_out, ErrorContext *ctx = nullptr) -> Status;
+
+        /**
+         * detachTablespace - Detach a tablespace from the database
+         *
+         * @param tablespace_name Name of tablespace to detach
+         * @param force If true, migrate tables to primary before detaching
+         * @param ctx Error context
+         * @return Status::OK on success, error status otherwise
+         *
+         * Detaches a tablespace file from the database (closes file, removes catalog entry).
+         *
+         * Algorithm:
+         * 1. Validate tablespace exists
+         * 2. Check if tablespace_id == 0 (cannot detach primary)
+         * 3. Count tables/indexes in tablespace
+         * 4. If tables exist and !force, return error
+         * 5. If force, migrate tables back to primary tablespace first
+         * 6. Flush dirty pages to disk
+         * 7. Close file descriptor (Database::closeTablespace)
+         * 8. Remove from pg_tablespace catalog
+         * 9. Remove from tablespace_cache_
+         *
+         * Validation:
+         * - Cannot detach PRIMARY_TABLESPACE_ID (0)
+         * - If tables exist, require FORCE flag
+         * - Check no active queries using tablespace (future: track active queries)
+         *
+         * FORCE Migration:
+         * - Enumerates all tables in tablespace
+         * - Calls moveTableToTablespace() for each table (OFFLINE mode)
+         * - If any migration fails, rollback previous migrations
+         *
+         * Phase 6 Task 6.2.2, 6.2.3
+         */
+        auto detachTablespace(const std::string &tablespace_name, bool force,
+                              ErrorContext *ctx = nullptr) -> Status;
+
+        /**
          * moveTableToTablespace - Move a table to a different tablespace (OFFLINE mode)
          *
          * @param table_id Table ID to move
