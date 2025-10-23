@@ -13,6 +13,8 @@
 #include <chrono>  // Phase 4 Task 4.1.3: Progress tracking
 #include <thread>  // Phase 4 Task 4.1.3: Sleep simulation in STUB
 #include "scratchbird/core/tid_resolver.h"  // Sprint 5: ONLINE migration
+#include <fcntl.h>   // Phase 6: For open(), O_RDWR
+#include <unistd.h>  // Phase 6: For pread(), close()
 
 namespace scratchbird::core
 {
@@ -2512,7 +2514,7 @@ namespace scratchbird::core
         auto *header = reinterpret_cast<TablespaceHeader *>(header_buffer.get());
 
         // Validate magic number
-        if (header->page_header.magic != SBDB_MAGIC)
+        if (header->page_header.magic != K_MAGIC_SBRD)
         {
             ::close(fd);
             SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
@@ -2585,7 +2587,7 @@ namespace scratchbird::core
 
         // ===== STEP 6: Register file descriptor in Database =====
 
-        Status status = db_->registerTablespace(new_ts_id, fd);
+        Status status = db_->registerTablespaceFile(new_ts_id, fd, ctx);
         if (status != Status::OK)
         {
             ::close(fd);
@@ -2598,8 +2600,7 @@ namespace scratchbird::core
         status = db_->page_manager()->openTablespace(new_ts_id, file_path, ctx);
         if (status != Status::OK)
         {
-            db_->unregisterTablespace(new_ts_id);
-            ::close(fd);
+            db_->unregisterTablespaceFile(new_ts_id, ctx);
             SET_ERROR_CONTEXT(ctx, status, "Failed to open tablespace FSM");
             return status;
         }
@@ -2609,7 +2610,7 @@ namespace scratchbird::core
         TablespaceInfo ts_info;
         ts_info.tablespace_id = new_ts_id;
         ts_info.tablespace_name = final_name;
-        std::memcpy(ts_info.tablespace_uuid.bytes, header->tablespace_uuid.bytes, 16);
+        std::memcpy(ts_info.tablespace_uuid.bytes.data(), header->tablespace_uuid.bytes.data(), 16);
         ts_info.autoextend_enabled = (header->autoextend_enabled != 0);
         ts_info.autoextend_size_mb = header->autoextend_size_mb;
         ts_info.max_size_mb = header->max_size_mb;
@@ -2626,7 +2627,9 @@ namespace scratchbird::core
 
         // Set timestamps
         ts_info.created_time = header->creation_time;
-        ts_info.last_modified_time = getCurrentTimeMicros();
+        ts_info.last_modified_time = std::chrono::duration_cast<std::chrono::microseconds>(
+                                         std::chrono::system_clock::now().time_since_epoch())
+                                         .count();
         ts_info.last_extended_time = 0;  // Will be updated on first extension
 
         // Count tables and indexes in this tablespace
@@ -2653,7 +2656,7 @@ namespace scratchbird::core
         if (status != Status::OK)
         {
             db_->page_manager()->closeTablespace(new_ts_id, ctx);
-            db_->unregisterTablespace(new_ts_id);
+            db_->unregisterTablespaceFile(new_ts_id, ctx);
             SET_ERROR_CONTEXT(ctx, status, "Failed to write tablespace catalog entry");
             return status;
         }
@@ -2794,11 +2797,16 @@ namespace scratchbird::core
         // ===== STEP 6: Flush dirty pages to disk =====
 
         LOG_INFO(CATALOG, "Flushing dirty pages for tablespace '%s'", tablespace_name.c_str());
-        db_->buffer_pool()->flushTablespace(tablespace_id);
+        status = db_->buffer_pool()->flushTablespace(tablespace_id, ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, status, "Failed to flush tablespace dirty pages");
+            return status;
+        }
 
         // ===== STEP 7: Close file descriptor =====
 
-        status = db_->closeTablespace(tablespace_id, ctx);
+        status = db_->page_manager()->closeTablespace(tablespace_id, ctx);
         if (status != Status::OK)
         {
             SET_ERROR_CONTEXT(ctx, status, "Failed to close tablespace file descriptor");
