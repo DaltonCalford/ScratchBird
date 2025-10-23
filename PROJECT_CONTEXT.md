@@ -75,19 +75,16 @@ CI/CD:               100% complete (TSAN, ASAN, Helgrind, Valgrind, Clang-Tidy)
 - Task 5.4.5: Catch-Up Phase (iterative dirty page re-copy)
 - Task 5.4.6: Atomic Swap Phase (index updates + catalog swap)
 
-**Total Completed**: ~162-185 hours
+**Sprint 0**: ✅ COMPLETE - CRITICAL Bug Fix (2-4 hours)
+- Cross-page UPDATE MGA compliance fixed
+- HeapPage::overwriteTuple() implementation complete
+- TID stability verified
+
+**Total Completed**: ~168-193 hours
 
 ---
 
 ## 2. Known Issues
-
-### Critical Bug (BLOCKS ALPHA)
-**Cross-Page UPDATE uses MVCC instead of MGA** (2-4 hours - **CRITICAL**)
-- **Location**: `src/core/storage_engine.cpp:729-762`
-- **Problem**: Creates NEW tuple at NEW location (PostgreSQL MVCC) instead of creating BACK version and modifying PRIMARY in-place (Firebird MGA)
-- **Impact**: Index TIDs become invalid, version chains break
-- **Priority**: 0 (MUST FIX FIRST)
-- **Documentation**: `docs/planning/MVCC_VS_MGA_CODE_REVIEW.md`
 
 ### Minor Issues
 - GIST Index TID Updates not implemented (4-6 hours) - No GIST implementation found
@@ -97,12 +94,11 @@ CI/CD:               100% complete (TSAN, ASAN, Helgrind, Valgrind, Clang-Tidy)
 
 ## 3. Current Priorities
 
-1. **FIX CRITICAL BUG**: Cross-page UPDATE MGA compliance (2-4 hours)
-2. **Complete Phase 3**: Autoextend implementation (12-18 hours)
-3. **Phase 6**: Attach/Detach Operations (20-30 hours)
-4. **Phase 7**: Advanced Features (50-66 hours)
+1. **Complete Phase 3**: Autoextend implementation (12-18 hours)
+2. **Phase 6**: Attach/Detach Operations (20-30 hours)
+3. **Phase 7**: Advanced Features (50-66 hours)
 
-**Total Remaining for ALPHA**: ~82-124 hours
+**Total Remaining for ALPHA**: ~78-120 hours
 
 ---
 
