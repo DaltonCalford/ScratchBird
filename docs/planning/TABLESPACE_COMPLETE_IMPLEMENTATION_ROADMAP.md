@@ -39,8 +39,9 @@ This document provides a comprehensive roadmap to complete ALL tablespace functi
 - ALTER TABLESPACE
 - CREATE TABLE ... TABLESPACE
 
-**Phase 3**: Autoextend and Growth (partial - 4.5 hours actual)
-- Task 3.2: Preallocation COMPLETE
+**Phase 3**: Autoextend and Growth ✅ COMPLETE (16.5 hours actual)
+- Task 3.1: Autoextend Implementation COMPLETE (12-18 hours estimated)
+- Task 3.2: Preallocation COMPLETE (4.5 hours actual)
 
 **Phase 4**: Migration Infrastructure (9.5 hours actual)
 - Parser, catalog manager STUB, progress tracking
@@ -78,12 +79,9 @@ This document provides a comprehensive roadmap to complete ALL tablespace functi
 - Task 5.4.8: Error Handling and Rollback COMPLETE
 - Task 5.4.9: Integration Testing DEFERRED (post-BETA)
 
-**Total Completed**: ~168-193 hours
+**Total Completed**: ~180-205 hours
 
 ### ⏸️ INCOMPLETE (MUST BE COMPLETED FOR ALPHA)
-
-**Phase 3**: Autoextend and Growth
-- Task 3.1: Autoextend Implementation (12-18 hours) - REMAINING
 
 **Phase 5**: OFFLINE Migration
 - Task 5.3.5: GIST Index TID Updates (4-6 hours) - DEFERRED (no implementation found)
@@ -93,7 +91,7 @@ This document provides a comprehensive roadmap to complete ALL tablespace functi
 
 **Phase 7**: Advanced Features (50-66 hours - **NEW REQUIREMENT**, see Phase 7 section)
 
-**Total Remaining**: ~78-120 hours (reduced from 82-124 due to Sprint 0 completion)
+**Total Remaining**: ~66-108 hours (reduced from 78-120 due to Phase 3.1 completion)
 
 ---
 
@@ -1181,7 +1179,7 @@ From `MGA_IMPLEMENTATION.md` lines 970-1006:
 | Phase/Task | Estimated Hours | Priority | Can Parallelize? |
 |------------|----------------|----------|------------------|
 | **Sprint 0** (Bug Fix) | 2-4 | **CRITICAL** | **✅ COMPLETE** |
-| **Phase 3.1** | 12-18 | MEDIUM | No |
+| **Phase 3.1** (Autoextend) | 12-18 | MEDIUM | **✅ COMPLETE** |
 | **Phase 5.1.3** (TOAST) | 8-12 | HIGH | Yes (with 3.1) |
 | **Phase 5.3.2** (Vector/HNSW) | 6-8 | MEDIUM | Yes (with other indexes) |
 | **Phase 5.3.3** (GIN) | 5-7 | MEDIUM | Yes |
@@ -1199,7 +1197,7 @@ From `MGA_IMPLEMENTATION.md` lines 970-1006:
 | **Phase 6.2** (Detach) | 10-15 | HIGH | Yes (with 6.1) |
 | **Phase 7** (ALPHA Scope) | 50-66 | MEDIUM | Partial |
 
-**Total Remaining**: ~78-120 hours (INCLUDING Phase 7 ALPHA scope, EXCLUDING completed Sprint 0, 4, 5, & 6)
+**Total Remaining**: ~66-108 hours (INCLUDING Phase 7 ALPHA scope, EXCLUDING completed Sprint 0, Phase 3.1, Sprints 4, 5, & 6)
 
 **With 1 developer**: ~11-16 weeks
 **With 2 developers** (parallel index types): ~7-10 weeks
