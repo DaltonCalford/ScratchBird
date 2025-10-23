@@ -34,7 +34,7 @@ ctest --output-on-failure
 - ✅ **Phase 4**: Migration infrastructure - Parser, executor, batch processing
 - ✅ **Phase 5**: OFFLINE migration - All heap pages, 5 index types, TOAST complete
 
-**Total Tablespace Progress**: ~168-193 hours complete
+**Total Tablespace Progress**: ~180-205 hours complete
 
 ### What's Implemented ✅
 
@@ -43,7 +43,7 @@ ctest --output-on-failure
 - **MVCC/MGA:** Back versioning, cross-page support, stable TIDs, N2O chains (100%)
 - **Concurrency:** Multi-connection, locking, deadlock detection (100%)
 - **Indexing:** B-tree, Hash, GIN, Bitmap, HNSW, BRIN (100%)
-- **Tablespace:** Multi-file support, OFFLINE migration, ONLINE migration (95%)
+- **Tablespace:** Multi-file support, autoextend, OFFLINE migration, ONLINE migration (95%)
 - **Type System:** 30+ data types, UUIDv7, timezones, collations (95%)
 - **Query Processing:** Lexer, parser, AST, semantic analyzer, bytecode, executor (72%)
 - **Catalog:** System catalog with metadata persistence (75%)
@@ -55,14 +55,12 @@ ctest --output-on-failure
 - **No WAL** (no crash recovery - Beta requirement)
 - **Limited SQL** (no JOINs, subqueries, advanced features)
 - **No network layer** (local database only - Beta requirement)
-- **Partial autoextend** (preallocation complete, autoextend remaining)
 
 ### Remaining for ALPHA
 
-**Total Remaining**: ~78-120 hours
-1. Complete autoextend (12-18 hours)
-2. Attach/Detach operations (20-30 hours)
-3. Advanced features (50-66 hours)
+**Total Remaining**: ~66-108 hours
+1. Attach/Detach operations (20-30 hours)
+2. Advanced features (50-66 hours)
 
 ## Project Structure
 
