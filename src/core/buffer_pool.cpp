@@ -1,6 +1,7 @@
 #include "scratchbird/core/buffer_pool.h"
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/debug.h"
+#include "scratchbird/core/logger.h"
 #include <cstring>
 #include <algorithm>
 #include <cassert>
@@ -303,6 +304,52 @@ namespace scratchbird::core
                 stats_.flushes.fetch_add(1, std::memory_order_relaxed);
             }
         }
+
+        return Status::OK;
+    }
+
+    // PHASE 6, TASK 6.2: Flush all dirty pages for a specific tablespace
+    auto BufferPool::flushTablespace(uint16_t tablespace_id, ErrorContext *ctx) -> Status
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+
+        uint32_t flushed_count = 0;
+
+        // Iterate through all frames in buffer pool
+        for (uint32_t i = 0; i < config_.pool_size; i++)
+        {
+            // Skip invalid or clean frames
+            if (frames_[i].gpid == INVALID_GPID || !frames_[i].is_dirty)
+            {
+                continue;
+            }
+
+            // Extract tablespace_id from GPID
+            uint16_t frame_tablespace_id = getTablespaceID(frames_[i].gpid);
+
+            // Check if this frame belongs to the target tablespace
+            if (frame_tablespace_id == tablespace_id)
+            {
+                // Flush this dirty page
+                Status status = writePageToDisk(frames_[i].gpid, frames_[i].data.get(), ctx);
+                if (status != Status::OK)
+                {
+                    LOG_ERROR(BUFFER,
+                             "Failed to flush page in tablespace %u during flushTablespace()",
+                             tablespace_id);
+                    return status;
+                }
+
+                // Mark as clean
+                frames_[i].is_dirty = false;
+                stats_.flushes.fetch_add(1, std::memory_order_relaxed);
+                flushed_count++;
+            }
+        }
+
+        LOG_DEBUG(BUFFER,
+                 "Flushed %u dirty pages from tablespace %u",
+                 flushed_count, tablespace_id);
 
         return Status::OK;
     }

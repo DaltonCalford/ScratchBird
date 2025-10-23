@@ -175,6 +175,24 @@ namespace scratchbird::core
         auto flushAll(ErrorContext *ctx = nullptr) -> Status;
 
         /**
+         * flushTablespace - Flush all dirty pages for a specific tablespace
+         *
+         * @param tablespace_id Tablespace ID to flush (0 = primary, 1-65535 = custom)
+         * @param ctx Error context
+         * @return Status::OK on success, error status otherwise
+         *
+         * Purpose: Phase 6 detach support. Ensures all dirty pages for a tablespace
+         *          are written to disk before the tablespace is detached.
+         *
+         * Algorithm:
+         *   1. Iterate through all frames in the buffer pool
+         *   2. For each frame with matching tablespace_id:
+         *      - If dirty, call flushPageGlobal(gpid)
+         *   3. Return Status::OK when all pages flushed
+         */
+        auto flushTablespace(uint16_t tablespace_id, ErrorContext *ctx = nullptr) -> Status;
+
+        /**
          * Lock a page for exclusive access (must be pinned first)
          * Caller must call unlockPage() when done
          * @param page_id Page ID to lock
