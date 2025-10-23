@@ -646,6 +646,23 @@ namespace scratchbird::core
         auto executeOnlineMigrationSwapPhase(const ID &migration_id,
                                             ErrorContext *ctx = nullptr) -> Status;
 
+        /**
+         * cancelOnlineMigration - Cancel an in-progress ONLINE migration
+         *
+         * Rolls back the migration and cleans up resources:
+         * - INIT/COPYING/CATCH_UP: Deallocates target pages, clears state
+         * - SWAP: Too late to cancel (would corrupt database)
+         * - CLEANUP/COMPLETE: Already done, nothing to cancel
+         *
+         * Sprint 6 Task 5.4.8: Error Handling and Rollback
+         *
+         * @param migration_id Migration to cancel
+         * @param ctx Error context
+         * @return Status::OK on success, error status otherwise
+         */
+        auto cancelOnlineMigration(const ID &migration_id,
+                                   ErrorContext *ctx = nullptr) -> Status;
+
         // Catalog statistics
         auto schemaCount() const -> uint32_t
         {

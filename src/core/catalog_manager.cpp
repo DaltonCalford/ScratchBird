@@ -4510,5 +4510,165 @@ Status CatalogManager::executeOnlineMigrationSwapPhase(
     return Status::OK;
 }
 
+// ============================================================================
+// Sprint 6 Task 5.4.8: Cancel/Rollback ONLINE Migration
+// ============================================================================
+
+Status CatalogManager::cancelOnlineMigration(
+    const ID &migration_id, ErrorContext *ctx)
+{
+    LOG_INFO(CATALOG, "cancelOnlineMigration: Cancelling migration");
+
+    // ===== STEP 1: Get migration state =====
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    auto it = migration_cache_.find(migration_id);
+    if (it == migration_cache_.end())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Migration not found");
+        LOG_ERROR(CATALOG, "Migration ID not found in cache");
+        return Status::NOT_FOUND;
+    }
+
+    TableMigrationState &state = it->second;
+    ID table_id = state.table_id;
+    uint16_t source_ts = state.source_tablespace;
+    uint16_t target_ts = state.target_tablespace;
+    MigrationPhase phase = state.phase;
+
+    LOG_INFO(CATALOG, "Cancelling migration in phase %d", static_cast<int>(phase));
+
+    // ===== STEP 2: Check if cancellation is allowed =====
+    switch (phase)
+    {
+        case MigrationPhase::MIGRATION_SWAP:
+        case MigrationPhase::MIGRATION_CLEANUP:
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                            "Cannot cancel migration during SWAP or CLEANUP phase - too late");
+            LOG_ERROR(CATALOG, "Cannot cancel migration in phase %d (too late)",
+                     static_cast<int>(phase));
+            return Status::INVALID_ARGUMENT;
+
+        case MigrationPhase::MIGRATION_COMPLETE:
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                            "Migration already complete");
+            LOG_WARNING(CATALOG, "Migration already complete - nothing to cancel");
+            return Status::INVALID_ARGUMENT;
+
+        case MigrationPhase::MIGRATION_FAILED:
+        case MigrationPhase::MIGRATION_ABORTED:
+            LOG_INFO(CATALOG, "Migration already in terminal state - cleaning up");
+            // Fall through to cleanup
+            break;
+
+        case MigrationPhase::MIGRATION_NONE:
+        case MigrationPhase::MIGRATION_INIT:
+        case MigrationPhase::MIGRATION_COPYING:
+        case MigrationPhase::MIGRATION_CATCH_UP:
+        case MigrationPhase::MIGRATION_READY_FOR_SWAP:
+            // These phases can be safely cancelled
+            break;
+    }
+
+    // ===== STEP 3: Mark migration as ABORTED =====
+    state.phase = MigrationPhase::MIGRATION_ABORTED;
+    state.end_time = std::chrono::system_clock::now().time_since_epoch().count();
+
+    LOG_INFO(CATALOG, "Marked migration as ABORTED");
+
+    // Release lock for long-running operations
+    mutex_.unlock();
+
+    // ===== STEP 4: Enumerate target pages for cleanup =====
+    std::vector<GPID> target_pages;
+    Status status = enumerateTablePages(table_id, target_pages, ctx);
+    if (status != Status::OK)
+    {
+        LOG_WARNING(CATALOG, "Failed to enumerate target pages (status=%d) - continuing anyway",
+                   static_cast<int>(status));
+        target_pages.clear();
+    }
+
+    // ===== STEP 5: Free target tablespace pages =====
+    uint32_t pages_freed = 0;
+    uint32_t pages_failed = 0;
+
+    for (GPID gpid : target_pages)
+    {
+        // Only free pages in the TARGET tablespace (not source!)
+        if (getTablespaceID(gpid) == target_ts)
+        {
+            status = db_->page_manager()->freePageGlobal(gpid, ctx);
+            if (status == Status::OK)
+            {
+                pages_freed++;
+
+                // Log progress every 1000 pages
+                if (pages_freed % 1000 == 0)
+                {
+                    LOG_INFO(CATALOG, "Rollback progress: %u target pages freed", pages_freed);
+                }
+            }
+            else
+            {
+                pages_failed++;
+                LOG_WARNING(CATALOG, "Failed to free target page GPID=%016lx (status=%d)",
+                           gpid, static_cast<int>(status));
+            }
+        }
+    }
+
+    LOG_INFO(CATALOG, "Rollback cleanup: %u target pages freed, %u failed",
+             pages_freed, pages_failed);
+
+    // ===== STEP 6: Clear TIDResolver state =====
+    status = db_->tid_resolver()->clearMigration(table_id, ctx);
+    if (status != Status::OK)
+    {
+        LOG_WARNING(CATALOG, "Failed to clear TIDResolver state (status=%d)",
+                   static_cast<int>(status));
+        // Continue anyway
+    }
+
+    LOG_INFO(CATALOG, "Cleared TIDResolver state");
+
+    // ===== STEP 7: Clear table migration flags =====
+    mutex_.lock();
+
+    TableInfo table_info;
+    status = getTable(table_id, table_info, ctx);
+    if (status == Status::OK)
+    {
+        table_info.migration_in_progress = false;
+        table_info.migration_id = ID{};
+        table_info.migration_xid = 0;
+        table_info.migration_target_ts = 0;
+        table_info.migration_phase = static_cast<uint8_t>(MigrationPhase::MIGRATION_NONE);
+
+        table_cache_[table_id] = table_info;
+
+        LOG_INFO(CATALOG, "Cleared migration flags from table '%s'",
+                 table_info.table_name.c_str());
+    }
+    else
+    {
+        LOG_WARNING(CATALOG, "Failed to get table info for cleanup (status=%d)",
+                   static_cast<int>(status));
+    }
+
+    // ===== STEP 8: Remove from migration cache =====
+    migration_cache_.erase(migration_id);
+
+    mutex_.unlock();
+
+    LOG_INFO(CATALOG, "Migration cancelled successfully");
+    LOG_INFO(CATALOG, "Rollback statistics:");
+    LOG_INFO(CATALOG, "  Target pages freed: %u", pages_freed);
+    LOG_INFO(CATALOG, "  Partial pages copied: %u / %u",
+             state.pages_copied, state.total_pages);
+
+    return Status::OK;
+}
+
 
 } // namespace scratchbird::core
