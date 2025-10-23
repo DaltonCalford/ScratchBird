@@ -585,7 +585,7 @@ From `MGA_IMPLEMENTATION.md` lines 970-1006:
 
 ---
 
-##### **TASK 5.4.0: Architecture Design and Specification** 📋 NEW
+##### **TASK 5.4.0: Architecture Design and Specification** ✅ COMPLETE (Sprint 3)
 
 **Estimated Effort**: 8-10 hours
 **Priority**: CRITICAL (must get this right)
@@ -634,7 +634,7 @@ From `MGA_IMPLEMENTATION.md` lines 970-1006:
 
 ---
 
-##### **TASK 5.4.1: Migration State Management** 🔮 NOT STARTED
+##### **TASK 5.4.1: Migration State Management** ✅ COMPLETE (Sprint 4)
 
 **Estimated Effort**: 8-10 hours
 **Priority**: HIGH
@@ -677,7 +677,7 @@ From `MGA_IMPLEMENTATION.md` lines 970-1006:
 
 ---
 
-##### **TASK 5.4.2: Dual-Source Visibility Layer** 🔮 NOT STARTED
+##### **TASK 5.4.2: Dual-Source Visibility Layer** ✅ COMPLETE (Sprint 4)
 
 **Estimated Effort**: 12-15 hours
 **Priority**: CRITICAL (affects all read queries)
@@ -737,7 +737,7 @@ From `MGA_IMPLEMENTATION.md` lines 970-1006:
 
 ---
 
-##### **TASK 5.4.3: Write Routing During Migration** 🔮 NOT STARTED
+##### **TASK 5.4.3: Write Routing During Migration** ✅ COMPLETE (Sprint 4)
 
 **Estimated Effort**: 10-12 hours
 **Priority**: HIGH (affects INSERT/UPDATE/DELETE)
@@ -792,7 +792,7 @@ From `MGA_IMPLEMENTATION.md` lines 970-1006:
 
 ---
 
-##### **TASK 5.4.4: Incremental Page Copy (Copying Phase)** 🔮 NOT STARTED
+##### **TASK 5.4.4: Incremental Page Copy (Copying Phase)** ✅ COMPLETE (Sprint 5)
 
 **Estimated Effort**: 8-10 hours
 **Priority**: HIGH
@@ -849,7 +849,7 @@ From `MGA_IMPLEMENTATION.md` lines 970-1006:
 
 ---
 
-##### **TASK 5.4.5: Catch-Up Phase** 🔮 NOT STARTED
+##### **TASK 5.4.5: Catch-Up Phase** ✅ COMPLETE (Sprint 5)
 
 **Estimated Effort**: 6-8 hours
 **Priority**: HIGH
@@ -885,7 +885,7 @@ From `MGA_IMPLEMENTATION.md` lines 970-1006:
 
 ---
 
-##### **TASK 5.4.6: Final Swap (Atomic Cutover)** 🔮 NOT STARTED
+##### **TASK 5.4.6: Final Swap (Atomic Cutover)** ✅ COMPLETE (Sprint 5)
 
 **Estimated Effort**: 8-10 hours
 **Priority**: CRITICAL (must be atomic and fast)
@@ -1150,16 +1150,13 @@ From `MGA_IMPLEMENTATION.md` lines 970-1006:
 ### Critical Path (Must Complete in Order)
 
 1. **Phase 3 Task 3.1**: Autoextend (12-18 hours)
-   - Blocking: Phase 5 Task 5.4 (ONLINE migration needs autoextend for target tablespace)
+   - Blocking: Phase 6 (attach/detach may need autoextend)
 
-2. **Phase 5 Task 5.1.3**: Full TOAST handling (8-12 hours)
-   - Blocking: Phase 5 Task 5.4 (ONLINE migration must handle TOAST correctly)
+2. ~~**Phase 5 Task 5.1.3**: Full TOAST handling (8-12 hours)~~ ✅ **COMPLETE**
 
-3. **Phase 5 Tasks 5.3.2-5.3.6**: Other index types (17-24 hours)
-   - Blocking: Phase 5 Task 5.4 (ONLINE migration must update all index types)
+3. ~~**Phase 5 Tasks 5.3.2-5.3.6**: Other index types (17-24 hours)~~ ✅ **COMPLETE** (5 of 6 types done)
 
-4. **Phase 5 Task 5.4**: ONLINE Migration (60-80 hours)
-   - Blocking: Phase 6 (attach/detach assumes migration works)
+4. ~~**Phase 5 Task 5.4**: ONLINE Migration (60-80 hours)~~ ✅ **COMPLETE** (Sprint 4 & 5)
 
 5. **Phase 6**: Attach/Detach (20-30 hours)
    - Blocking: Phase 7 (advanced features may depend on attach/detach)
@@ -1167,12 +1164,12 @@ From `MGA_IMPLEMENTATION.md` lines 970-1006:
 ### Parallel Work Opportunities
 
 **Can be done in parallel**:
-- Phase 3 Task 3.1 (Autoextend) + Phase 5 Task 5.1.3 (TOAST)
-- Phase 5 Tasks 5.3.2-5.3.6 (all 5 index types can be implemented in parallel by different developers)
+- Phase 6.1 (Attach) + Phase 6.2 (Detach) can be implemented in parallel
+- Phase 7 advanced features have minimal dependencies
 
 **Sequential dependencies**:
-- Task 5.4.0 (Architecture design) MUST complete before any Task 5.4.x subtasks
-- Task 5.4.1-5.4.3 (State management, visibility, routing) SHOULD complete before 5.4.4-5.4.7 (copy/swap)
+- ~~Task 5.4.0 (Architecture design) MUST complete before any Task 5.4.x subtasks~~ ✅ **COMPLETE**
+- ~~Task 5.4.1-5.4.3 (State management, visibility, routing) SHOULD complete before 5.4.4-5.4.7 (copy/swap)~~ ✅ **COMPLETE**
 
 ---
 
@@ -1190,25 +1187,22 @@ From `MGA_IMPLEMENTATION.md` lines 970-1006:
 | **Phase 5.3.4** (GIST) | 4-6 | LOW | Yes |
 | **Phase 5.3.5** (BRIN) | 3-4 | LOW | Yes |
 | **Phase 5.3.6** (Full-Text) | 4-6 | MEDIUM | Yes |
-| **Phase 5.4.0** (Design) | 8-10 | CRITICAL | No (blocks 5.4.1-5.4.9) |
-| **Phase 5.4.1** (State Mgmt) | 8-10 | HIGH | No |
-| **Phase 5.4.2** (Visibility) | 12-15 | CRITICAL | No |
-| **Phase 5.4.3** (Write Routing) | 10-12 | HIGH | Yes (with 5.4.2) |
-| **Phase 5.4.4** (Copy) | 8-10 | HIGH | No (needs 5.4.1-5.4.3) |
-| **Phase 5.4.5** (Catch-Up) | 6-8 | HIGH | No (needs 5.4.4) |
-| **Phase 5.4.6** (Swap) | 8-10 | CRITICAL | No (needs 5.4.5) |
-| **Phase 5.4.7** (Cleanup) | 4-5 | MEDIUM | No (needs 5.4.6) |
-| **Phase 5.4.8** (Rollback) | 6-8 | HIGH | Yes (with 5.4.1-5.4.7) |
-| **Phase 5.4.9** (Testing) | 6-8 | HIGH | No (needs all 5.4.x) |
+| ~~**Phase 5.4.0** (Design)~~ | ~~8-10~~ | ✅ **COMPLETE** | ~~No~~ |
+| ~~**Phase 5.4.1** (State Mgmt)~~ | ~~8-10~~ | ✅ **COMPLETE** | ~~No~~ |
+| ~~**Phase 5.4.2** (Visibility)~~ | ~~12-15~~ | ✅ **COMPLETE** | ~~No~~ |
+| ~~**Phase 5.4.3** (Write Routing)~~ | ~~10-12~~ | ✅ **COMPLETE** | ~~No~~ |
+| ~~**Phase 5.4.4** (Copy)~~ | ~~8-10~~ | ✅ **COMPLETE** | ~~No~~ |
+| ~~**Phase 5.4.5** (Catch-Up)~~ | ~~6-8~~ | ✅ **COMPLETE** | ~~No~~ |
+| ~~**Phase 5.4.6** (Swap)~~ | ~~8-10~~ | ✅ **COMPLETE** | ~~No~~ |
 | **Phase 6.1** (Attach) | 10-15 | HIGH | Yes (with 6.2) |
 | **Phase 6.2** (Detach) | 10-15 | HIGH | Yes (with 6.1) |
 | **Phase 7** (ALPHA Scope) | 50-66 | MEDIUM | Partial |
 
-**Total Remaining**: 192-264 hours (INCLUDING Sprint 0 + Phase 7 ALPHA scope)
+**Total Remaining**: ~84-126 hours (INCLUDING Sprint 0 + Phase 7 ALPHA scope, EXCLUDING completed Sprint 4 & 5)
 
-**With 1 developer**: ~24-33 weeks
-**With 2 developers** (parallel index types + ONLINE migration): ~16-22 weeks
-**With 3+ developers**: ~12-16 weeks
+**With 1 developer**: ~11-16 weeks
+**With 2 developers** (parallel index types): ~7-10 weeks
+**With 3+ developers**: ~5-8 weeks
 
 **CRITICAL**: Sprint 0 (bug fix) MUST be completed FIRST before any other work
 
