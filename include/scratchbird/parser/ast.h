@@ -35,6 +35,8 @@ namespace scratchbird
             ALTER_TABLESPACE,          // Phase 2 Task 2.2
             ALTER_TABLE_SET_TABLESPACE, // Phase 4 Task 4.1.1
             DROP_TABLESPACE,           // Phase 2 Task 2.1
+            ATTACH_TABLESPACE,         // Phase 6 Task 6.1
+            DETACH_TABLESPACE,         // Phase 6 Task 6.2
             INSERT,
             SELECT,
             START_TRANSACTION, // Phase 2 Task 2.6
@@ -754,6 +756,60 @@ namespace scratchbird
             bool force_; // FORCE clause
         };
 
+        // ATTACH TABLESPACE statement (Phase 6 Task 6.1)
+        class AttachTablespaceStmt : public Statement
+        {
+        public:
+            AttachTablespaceStmt(const SourceSpan &span, StringPool::StringId file_path,
+                                 StringPool::StringId tablespace_name = 0)
+                : Statement(ASTKind::ATTACH_TABLESPACE, span), file_path_(file_path),
+                  tablespace_name_(tablespace_name)
+            {
+            }
+
+            StringPool::StringId filePath() const
+            {
+                return file_path_;
+            }
+            StringPool::StringId tablespaceName() const
+            {
+                return tablespace_name_;
+            }
+
+            void accept(ASTVisitor *visitor) override;
+
+        private:
+            StringPool::StringId file_path_;       // Path to .sbts file
+            StringPool::StringId tablespace_name_; // Optional AS name
+        };
+
+        // DETACH TABLESPACE statement (Phase 6 Task 6.2)
+        class DetachTablespaceStmt : public Statement
+        {
+        public:
+            DetachTablespaceStmt(const SourceSpan &span, StringPool::StringId tablespace_name,
+                                 bool force = false)
+                : Statement(ASTKind::DETACH_TABLESPACE, span), tablespace_name_(tablespace_name),
+                  force_(force)
+            {
+            }
+
+            StringPool::StringId tablespaceName() const
+            {
+                return tablespace_name_;
+            }
+            bool force() const
+            {
+                return force_;
+            }
+
+            void accept(ASTVisitor *visitor) override;
+
+        private:
+            StringPool::StringId tablespace_name_;
+            bool force_; // FORCE clause
+        };
+
         // ALTER TABLESPACE statement (Phase 2 Task 2.2)
         enum class TablespaceAlterationType : uint8_t
         {
@@ -910,6 +966,8 @@ namespace scratchbird
             virtual void visit(AlterTablespaceStmt *node) = 0;         // Phase 2 Task 2.2
             virtual void visit(AlterTableSetTablespaceStmt *node) = 0; // Phase 4 Task 4.1.1
             virtual void visit(DropTablespaceStmt *node) = 0;          // Phase 2 Task 2.1
+            virtual void visit(AttachTablespaceStmt *node) = 0;        // Phase 6 Task 6.1
+            virtual void visit(DetachTablespaceStmt *node) = 0;        // Phase 6 Task 6.2
             virtual void visit(InsertStmt *node) = 0;
             virtual void visit(SelectStmt *node) = 0;
             virtual void visit(StartTransactionStmt *node) = 0; // Phase 2 Task 2.6
@@ -941,6 +999,8 @@ namespace scratchbird
             void visit(CreateTableStmt *node) override;
             void visit(CreateTablespaceStmt *node) override; // Phase 2 Task 2.1
             void visit(DropTablespaceStmt *node) override;   // Phase 2 Task 2.1
+            void visit(AttachTablespaceStmt *node) override; // Phase 6 Task 6.1
+            void visit(DetachTablespaceStmt *node) override; // Phase 6 Task 6.2
             void visit(InsertStmt *node) override;
             void visit(SelectStmt *node) override;
             void visit(StartTransactionStmt *node) override; // Phase 2 Task 2.6

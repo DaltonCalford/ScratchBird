@@ -174,6 +174,16 @@ namespace scratchbird
                         result = ExecutionResult();
                         break;
 
+                    case Opcode::ATTACH_TABLESPACE:
+                        executeAttachTablespace();
+                        result = ExecutionResult();
+                        break;
+
+                    case Opcode::DETACH_TABLESPACE:
+                        executeDetachTablespace();
+                        result = ExecutionResult();
+                        break;
+
                     case Opcode::INSERT:
                         executeInsert();
                         result = ExecutionResult();
@@ -707,6 +717,58 @@ namespace scratchbird
             if (status != core::Status::OK)
             {
                 std::string err_msg = "Failed to drop tablespace '" + tablespace_name + "'";
+                if (!err_ctx.message.empty())
+                {
+                    err_msg += ": " + err_ctx.message;
+                }
+                error(err_msg);
+            }
+        }
+
+        void Executor::executeAttachTablespace()
+        {
+            // Phase 6 Task 6.1: Execute ATTACH TABLESPACE
+
+            // Read file path
+            std::string file_path = readString();
+
+            // Read optional tablespace name
+            std::string tablespace_name = readString();
+
+            // Attach tablespace via CatalogManager
+            core::ErrorContext err_ctx;
+            core::Status status =
+                db_->catalog_manager()->attachTablespace(file_path, tablespace_name, &err_ctx);
+
+            if (status != core::Status::OK)
+            {
+                std::string err_msg = "Failed to attach tablespace '" + file_path + "'";
+                if (!err_ctx.message.empty())
+                {
+                    err_msg += ": " + err_ctx.message;
+                }
+                error(err_msg);
+            }
+        }
+
+        void Executor::executeDetachTablespace()
+        {
+            // Phase 6 Task 6.2: Execute DETACH TABLESPACE
+
+            // Read tablespace name
+            std::string tablespace_name = readString();
+
+            // Read force flag (1 byte)
+            bool force = (readByte() != 0);
+
+            // Detach tablespace via CatalogManager
+            core::ErrorContext err_ctx;
+            core::Status status =
+                db_->catalog_manager()->detachTablespace(tablespace_name, force, &err_ctx);
+
+            if (status != core::Status::OK)
+            {
+                std::string err_msg = "Failed to detach tablespace '" + tablespace_name + "'";
                 if (!err_ctx.message.empty())
                 {
                     err_msg += ": " + err_ctx.message;

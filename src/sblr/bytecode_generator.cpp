@@ -223,6 +223,30 @@ namespace scratchbird
             current_result_->writeByte(node->force() ? 1 : 0);
         }
 
+        void BytecodeGenerator::visit(parser::AttachTablespaceStmt *node)
+        {
+            // Generate ATTACH TABLESPACE bytecode (Phase 6 Task 6.1)
+            current_result_->writeOpcode(Opcode::ATTACH_TABLESPACE);
+
+            // Write file path
+            writeStringId(node->filePath());
+
+            // Write optional tablespace name
+            writeStringId(node->tablespaceName());
+        }
+
+        void BytecodeGenerator::visit(parser::DetachTablespaceStmt *node)
+        {
+            // Generate DETACH TABLESPACE bytecode (Phase 6 Task 6.2)
+            current_result_->writeOpcode(Opcode::DETACH_TABLESPACE);
+
+            // Write tablespace name
+            writeStringId(node->tablespaceName());
+
+            // Write force flag (1 byte: 0 = normal, 1 = FORCE)
+            current_result_->writeByte(node->force() ? 1 : 0);
+        }
+
         void BytecodeGenerator::visit(parser::AlterTableSetTablespaceStmt *node)
         {
             // Generate ALTER TABLE SET TABLESPACE bytecode (Phase 4 Task 4.1.6)

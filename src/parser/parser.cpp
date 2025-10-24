@@ -189,6 +189,30 @@ namespace scratchbird
                         synchronize();
                     }
                 }
+                else if (match(TokenType::KW_ATTACH))
+                {
+                    if (check(TokenType::KW_TABLESPACE))
+                    {
+                        stmt = parseAttachTablespace();
+                    }
+                    else
+                    {
+                        error("Expected TABLESPACE after ATTACH");
+                        synchronize();
+                    }
+                }
+                else if (match(TokenType::KW_DETACH))
+                {
+                    if (check(TokenType::KW_TABLESPACE))
+                    {
+                        stmt = parseDetachTablespace();
+                    }
+                    else
+                    {
+                        error("Expected TABLESPACE after DETACH");
+                        synchronize();
+                    }
+                }
                 else if (isAtEnd())
                 {
                     error("Expected SQL statement, but got end of file");
@@ -1366,6 +1390,77 @@ namespace scratchbird
 
             auto span = makeSpan(start_loc);
             return arena_.make<DropTablespaceStmt>(span, tablespace_name, force);
+        }
+
+        Statement *Parser::parseAttachTablespace()
+        {
+            // ATTACH TABLESPACE 'file_path' [AS 'name']
+            auto start_loc = previous().location;
+
+            if (!consume(TokenType::KW_TABLESPACE, "Expected TABLESPACE after ATTACH"))
+            {
+                synchronize();
+                return nullptr;
+            }
+
+            if (!check(TokenType::STRING_LITERAL))
+            {
+                error("Expected file path (string literal) after ATTACH TABLESPACE");
+                synchronize();
+                return nullptr;
+            }
+
+            StringPool::StringId file_path = current().value.string_id;
+            advance();
+
+            // Parse optional AS clause
+            StringPool::StringId tablespace_name = 0;
+            if (match(TokenType::KW_AS))
+            {
+                if (!check(TokenType::STRING_LITERAL) && !check(TokenType::IDENTIFIER))
+                {
+                    error("Expected tablespace name after AS");
+                    synchronize();
+                    return nullptr;
+                }
+                tablespace_name = current().value.string_id;
+                advance();
+            }
+
+            auto span = makeSpan(start_loc);
+            return arena_.make<AttachTablespaceStmt>(span, file_path, tablespace_name);
+        }
+
+        Statement *Parser::parseDetachTablespace()
+        {
+            // DETACH TABLESPACE name [FORCE]
+            auto start_loc = previous().location;
+
+            if (!consume(TokenType::KW_TABLESPACE, "Expected TABLESPACE after DETACH"))
+            {
+                synchronize();
+                return nullptr;
+            }
+
+            if (!check(TokenType::IDENTIFIER))
+            {
+                error("Expected tablespace name after DETACH TABLESPACE");
+                synchronize();
+                return nullptr;
+            }
+
+            StringPool::StringId tablespace_name = current().value.string_id;
+            advance();
+
+            // Parse optional FORCE clause
+            bool force = false;
+            if (match(TokenType::KW_FORCE))
+            {
+                force = true;
+            }
+
+            auto span = makeSpan(start_loc);
+            return arena_.make<DetachTablespaceStmt>(span, tablespace_name, force);
         }
 
         Statement *Parser::parseAlterTablespace()

@@ -512,6 +512,27 @@ namespace scratchbird::core
                               ErrorContext *ctx = nullptr) -> Status;
 
         /**
+         * compactCatalog - Perform garbage collection on catalog pages
+         *
+         * Removes is_valid=0 records from catalog heap pages to reclaim space.
+         * This should be called periodically or after many DROP/ALTER operations.
+         *
+         * Compacts the following catalog pages:
+         * - pg_tablespace (tablespaces_table_page_)
+         * - pg_schema (schemas_table_page_)
+         * - pg_table (tables_table_page_)
+         * - pg_column (columns_table_page_)
+         * - pg_index (indexes_table_page_)
+         *
+         * @param ctx Error context
+         * @return Status::OK on success, error status otherwise
+         *
+         * Note: This is safe to call at any time; it only compacts pages,
+         *       does not delete any valid catalog entries.
+         */
+        auto compactCatalog(ErrorContext *ctx = nullptr) -> Status;
+
+        /**
          * moveTableToTablespace - Move a table to a different tablespace (OFFLINE mode)
          *
          * @param table_id Table ID to move
@@ -841,6 +862,20 @@ namespace scratchbird::core
         template <typename RecordType>
         auto writeRecordToHeapPage(uint32_t page_id, const RecordType &record, ErrorContext *ctx)
             -> Status;
+
+        // Helper to update a record in-place (Firebird MGA style) or insert if not found
+        template <typename RecordType, typename Predicate>
+        auto updateRecordInHeapPage(uint32_t page_id, Predicate matcher,
+                                    const RecordType &new_record, ErrorContext *ctx) -> Status;
+
+        // Helper to delete a record by marking is_valid=0 (Firebird MGA style)
+        template <typename RecordType, typename Predicate>
+        auto deleteRecordFromHeapPage(uint32_t page_id, Predicate matcher, ErrorContext *ctx)
+            -> Status;
+
+        // Helper to compact catalog page by removing is_valid=0 records (garbage collection)
+        template <typename RecordType>
+        auto compactCatalogHeapPage(uint32_t page_id, ErrorContext *ctx) -> Status;
 
         // Result structure for findRecordInHeapPage
         template <typename RecordType> struct FindResult
