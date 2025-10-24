@@ -142,6 +142,8 @@ namespace scratchbird
             {"RENAME", TokenType::KW_RENAME}, // Phase 2 Task 2.2
             {"TO", TokenType::KW_TO},         // Phase 2 Task 2.2
             {"ONLINE", TokenType::KW_ONLINE}, // Phase 4 Task 4.1.1
+            {"ATTACH", TokenType::KW_ATTACH}, // Phase 6 Task 6.1
+            {"DETACH", TokenType::KW_DETACH}, // Phase 6 Task 6.2
         };
 
         // Case-insensitive string comparison

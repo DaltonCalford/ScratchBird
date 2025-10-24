@@ -30,6 +30,8 @@ namespace scratchbird
             ALTER_TABLESPACE = 0x1A,          // Alter tablespace (Phase 2 Task 2.2)
             DROP_TABLESPACE = 0x19,           // Drop tablespace (Phase 2 Task 2.1)
             ALTER_TABLE_SET_TABLESPACE = 0x1C, // Alter table set tablespace (Phase 4 Task 4.1.6)
+            ATTACH_TABLESPACE = 0x1D,         // Attach tablespace (Phase 6 Task 6.1)
+            DETACH_TABLESPACE = 0x1E,         // Detach tablespace (Phase 6 Task 6.2)
 
             // Data types
             TYPE_INTEGER = 0x20,   // 32-bit integer (INT32)

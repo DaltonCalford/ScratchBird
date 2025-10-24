@@ -113,6 +113,16 @@ namespace scratchbird
             visitor->visit(this);
         }
 
+        void AttachTablespaceStmt::accept(ASTVisitor *visitor)
+        {
+            visitor->visit(this);
+        }
+
+        void DetachTablespaceStmt::accept(ASTVisitor *visitor)
+        {
+            visitor->visit(this);
+        }
+
         void AlterTablespaceStmt::accept(ASTVisitor *visitor)
         {
             visitor->visit(this);
@@ -223,6 +233,26 @@ namespace scratchbird
         {
             printIndent();
             out_ << "DROP TABLESPACE " << pool_.get(node->tablespaceName());
+            if (node->force())
+            {
+                out_ << " FORCE";
+            }
+        }
+
+        void ASTPrinter::visit(AttachTablespaceStmt *node)
+        {
+            printIndent();
+            out_ << "ATTACH TABLESPACE '" << pool_.get(node->filePath()) << "'";
+            if (node->tablespaceName() != 0)
+            {
+                out_ << " AS '" << pool_.get(node->tablespaceName()) << "'";
+            }
+        }
+
+        void ASTPrinter::visit(DetachTablespaceStmt *node)
+        {
+            printIndent();
+            out_ << "DETACH TABLESPACE " << pool_.get(node->tablespaceName());
             if (node->force())
             {
                 out_ << " FORCE";

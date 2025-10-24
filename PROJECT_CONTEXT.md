@@ -1,8 +1,8 @@
 # ScratchBird Project Context
 
-**Last Updated**: 2025-10-21 (Sprint 4 & 5: ONLINE Migration Complete)
-**Version**: Alpha 1.0.3 (Tablespace Infrastructure + ONLINE Migration)
-**Status**: Educational/Development (Production-Ready Core)
+**Last Updated**: 2025-10-23 (Phase 6 + MGA Catalog Compliance Complete)
+**Version**: Alpha 1.0.4 (Complete Tablespace Implementation)
+**Status**: Educational/Development (Production-Ready Tablespace Support)
 
 > **PURPOSE**: This file provides essential context for AI assistants working on ScratchBird.
 > Read this file at session start and after every context compaction.
@@ -62,7 +62,7 @@ CI/CD:               100% complete (TSAN, ASAN, Helgrind, Valgrind, Clang-Tidy)
 
 **Phase 5**: ✅ COMPLETE - OFFLINE Migration (~32-41 hours)
 - All heap page migration complete
-- All 5 index types migrated (B-Tree, Hash, HNSW, GIN, BRIN)
+- All 6 index types migrated (B-Tree, Hash, HNSW, GIN, BRIN, Bitmap)
 - Full TOAST migration complete
 
 **Sprint 4**: ✅ COMPLETE - ONLINE Migration Infrastructure (9.5 hours)
@@ -80,7 +80,27 @@ CI/CD:               100% complete (TSAN, ASAN, Helgrind, Valgrind, Clang-Tidy)
 - HeapPage::overwriteTuple() implementation complete
 - TID stability verified
 
-**Total Completed**: ~180-205 hours
+**Phase 6**: ✅ COMPLETE - Attach/Detach Operations (15 hours)
+- SQL parser integration (ATTACH/DETACH TABLESPACE)
+- Bytecode generation and executor handlers
+- Catalog manager methods (attachTablespace, detachTablespace)
+
+**MGA Catalog Fixes**: ✅ COMPLETE - Catalog MGA Compliance (3 hours)
+- Bug #1 FIXED: ALTER TABLESPACE now updates records in-place (no catalog bloat)
+- Bug #2 FIXED: DROP/DETACH TABLESPACE now marks is_valid=0 (persistent deletion)
+- Added updateRecordInHeapPage() and deleteRecordFromHeapPage() template methods
+- Added compactCatalogHeapPage() and compactCatalog() for garbage collection
+- Unit tests implemented (test_catalog_mga_compliance.cpp)
+
+**Documentation Reorganization**: ✅ COMPLETE (2025-10-23)
+- Moved all STATUS_* files to /docs/status/tablespace/
+- Moved all SPRINT* files to /docs/status/sprints/
+- Moved session summaries to /docs/status/sessions/
+- Moved guides to /docs/guides/
+- Moved audit files to /docs/audit/
+- Clean /docs/ root directory (only INDEX.md, CI_CD_GUIDE.md)
+
+**Total Completed**: ~198-223 hours
 
 ---
 
@@ -94,10 +114,25 @@ CI/CD:               100% complete (TSAN, ASAN, Helgrind, Valgrind, Clang-Tidy)
 
 ## 3. Current Priorities
 
-1. **Phase 6**: Attach/Detach Operations (20-30 hours)
-2. **Phase 7**: Advanced Features (50-66 hours)
+1. ✅ ~~**Phase 6**: Attach/Detach Operations~~ **COMPLETE**
+2. ✅ ~~**MGA Catalog Compliance**~~ **COMPLETE**
+3. ✅ ~~**Documentation Reorganization**~~ **COMPLETE**
+4. 🎯 **Context Variables & Row Identity** (64-94 hours) - IN DESIGN
+   - Context Variables Core (20-28 hours) - HIGH PRIORITY
+     * Direct context variables (CURRENT_USER, CURRENT_TRANSACTION, etc.)
+     * RDB$GET_CONTEXT() and RDB$SET_CONTEXT() functions
+     * PSQL Execution Context (CALLING_PROCEDURE, CALL_STACK, etc.)
+   - Row Identity: sdb$key (8-10 hours) - HIGH PRIORITY
+   - Row Identity: rdb$row_uuid (12-16 hours) - HIGH PRIORITY
+   - Transaction Visibility: rdb$xact_id (8-12 hours) - HIGH PRIORITY
+   - TRANSFER Command (16-24 hours) - MEDIUM PRIORITY
+5. **Phase 7**: Advanced Features (50-66 hours) - NEXT
+   - Statistics & Monitoring (12-16 hours) - MUST HAVE
+   - Backup/Restore (12-16 hours) - MUST HAVE
+   - Compression (12-16 hours) - SHOULD HAVE
+   - Encryption (14-18 hours) - SHOULD HAVE
 
-**Total Remaining for ALPHA**: ~66-108 hours
+**Total Remaining for ALPHA**: ~114-160 hours (Context Variables + Phase 7)
 
 ---
 
@@ -161,12 +196,27 @@ docs/specifications/TRANSACTION_MGA_CORE.md               (transaction isolation
 docs/planning/TABLESPACE_COMPLETE_IMPLEMENTATION_ROADMAP.md  (comprehensive roadmap)
 docs/planning/TABLESPACE_IMPLEMENTATION_PLAN.md              (~1,400 lines)
 docs/planning/MVCC_VS_MGA_CODE_REVIEW.md                     (critical bug analysis)
+docs/planning/SPRINT7_PHASE7_PREPARATION.md                  (Phase 7 prep)
+docs/planning/PHASE7_COMPLETE_SCOPE.md                       (Phase 7 full scope)
+docs/planning/ALPHA_CONTEXT_VARIABLES_DESIGN.md              (Context variables v2.0 - Firebird Ch 12 + PSQL context)
+docs/planning/ALPHA_CONTEXT_VARIABLES_V2_SUMMARY.md          (v2.0 update summary - NEW)
+docs/planning/ALPHA_ROW_IDENTITY_ENHANCED.md                 (Row identity & TRANSFER v2.1)
+docs/planning/ALPHA_ROW_IDENTITY_AND_TRANSACTION_VISIBILITY.md  (Original design v1.0)
 ```
 
 ### Status Documents
 ```
-docs/STATUS_SPRINT4_ONLINE_MIGRATION_INFRASTRUCTURE.md   (Sprint 4 details)
-docs/STATUS_SPRINT5_EXECUTION_ENGINE.md                  (Sprint 5 details)
+docs/status/TABLESPACE_IMPLEMENTATION_COMPLETE.md        (Phases 1-6 complete summary - NEW)
+docs/status/sprints/SPRINT0_MGA_BUG_FIX.md               (Sprint 0 details)
+docs/status/sprints/SPRINT4_ONLINE_MIGRATION_INFRASTRUCTURE.md  (Sprint 4 details)
+docs/status/sprints/SPRINT5_EXECUTION_ENGINE.md          (Sprint 5 details)
+docs/status/sessions/SESSION_SUMMARY_2025_10_23_MGA_CATALOG_COMPLIANCE.md
+```
+
+### Audit Documents
+```
+docs/audit/MGA_COMPLIANCE_REVIEW_TABLESPACE.md           (MGA compliance review)
+docs/audit/INDEX_MGA_ALPHA_READINESS_SUMMARY.md          (Index MGA compliance)
 ```
 
 ### Guides
@@ -294,6 +344,8 @@ valgrind --leak-check=full --show-leak-kinds=all ./tests/scratchbird_tests
 
 ## 10. Update History
 
+- **2025-10-24**: Context Variables v2.0 COMPLETE (Firebird Ch 12 + PSQL execution context, RDB$GET/SET_CONTEXT), Row Identity v2.1
+- **2025-10-23**: Documentation reorganization COMPLETE, Phase 6 COMPLETE, MGA catalog compliance COMPLETE
 - **2025-10-21**: Sprint 4 & 5 COMPLETE (ONLINE migration infrastructure + execution)
 - **2025-10-20**: Phase 1.5 COMPLETE (TID Migration to GPID format)
 - **2025-10-17**: All 21 Alpha issues resolved

@@ -1274,6 +1274,235 @@ namespace scratchbird::core
         return bp->unpinPage(page_id, true, ctx);
     }
 
+    // ============================================================================
+    // updateRecordInHeapPage - Firebird MGA-compliant UPDATE
+    // ============================================================================
+    // Updates a record IN-PLACE (Firebird MGA) if it exists, or appends (INSERT)
+    // if not found. This fixes Bug #1 from MGA_COMPLIANCE_REVIEW_TABLESPACE.md.
+    //
+    // Key MGA Principles:
+    // 1. UPDATE modifies existing record in-place (no new location)
+    // 2. Only INSERT appends new records
+    // 3. No catalog bloat from repeated ALTER operations
+    // ============================================================================
+
+    template <typename RecordType, typename Predicate>
+    auto CatalogManager::updateRecordInHeapPage(uint32_t page_id, Predicate matcher,
+                                                const RecordType &new_record,
+                                                ErrorContext *ctx) -> Status
+    {
+        BufferPool *bp = db_->buffer_pool();
+        void *page_buffer;
+        Status status = bp->pinPage(page_id, &page_buffer, ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, status, "Failed to pin catalog heap page");
+            return status;
+        }
+
+        auto *heap = reinterpret_cast<CatalogHeapPage *>(page_buffer);
+        uint32_t offset = sizeof(CatalogHeapPage);
+        bool found = false;
+
+        // ===== PHASE 1: Search for existing record (MGA UPDATE) =====
+        for (uint32_t i = 0; i < heap->record_count; i++)
+        {
+            auto *record =
+                reinterpret_cast<RecordType *>(reinterpret_cast<uint8_t *>(page_buffer) + offset);
+
+            if (record->is_valid && matcher(*record))
+            {
+                // ✅ FOUND: Update IN-PLACE (Firebird MGA)
+                // This is the key fix - we modify the existing record, not append
+                memcpy(record, &new_record, sizeof(RecordType));
+                found = true;
+
+                // Mark page dirty and increment generation
+                heap->header.generation++;
+
+                // Unpin and return success
+                return bp->unpinPage(page_id, true, ctx);
+            }
+
+            offset += sizeof(RecordType);
+        }
+
+        // ===== PHASE 2: Record not found, append new one (INSERT) =====
+        if (!found)
+        {
+            // Check if we have space for new record
+            if (heap->free_offset + sizeof(RecordType) > db_->page_size())
+            {
+                bp->unpinPage(page_id, false, ctx);
+                SET_ERROR_CONTEXT(ctx, Status::PAGE_FULL, "Catalog heap page full");
+                return Status::PAGE_FULL;
+            }
+
+            // Append new record (INSERT case)
+            auto *dest_record = reinterpret_cast<RecordType *>(
+                reinterpret_cast<uint8_t *>(page_buffer) + heap->free_offset);
+            memcpy(dest_record, &new_record, sizeof(RecordType));
+
+            // Update heap metadata
+            heap->record_count++;
+            heap->free_offset += sizeof(RecordType);
+            heap->header.free_space -= sizeof(RecordType);
+            heap->header.generation++;
+
+            return bp->unpinPage(page_id, true, ctx);
+        }
+
+        // Should never reach here
+        bp->unpinPage(page_id, false, ctx);
+        return Status::OK;
+    }
+
+    // ============================================================================
+    // deleteRecordFromHeapPage - Firebird MGA-compliant DELETE
+    // ============================================================================
+    // Marks a record as deleted by setting is_valid=0 IN-PLACE (Firebird MGA).
+    // This fixes Bug #2 from MGA_COMPLIANCE_REVIEW_TABLESPACE.md.
+    //
+    // Key MGA Principles:
+    // 1. DELETE marks record as invalid in-place (no removal)
+    // 2. Record location unchanged (stable for any references)
+    // 3. Garbage collection will reclaim space later (like Firebird SWEEP)
+    // 4. No catalog bloat from repeated DROP/CREATE cycles
+    // ============================================================================
+
+    template <typename RecordType, typename Predicate>
+    auto CatalogManager::deleteRecordFromHeapPage(uint32_t page_id, Predicate matcher,
+                                                  ErrorContext *ctx) -> Status
+    {
+        BufferPool *bp = db_->buffer_pool();
+        void *page_buffer;
+        Status status = bp->pinPage(page_id, &page_buffer, ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, status, "Failed to pin catalog heap page");
+            return status;
+        }
+
+        auto *heap = reinterpret_cast<CatalogHeapPage *>(page_buffer);
+        uint32_t offset = sizeof(CatalogHeapPage);
+        bool found = false;
+
+        // Search for record to delete
+        for (uint32_t i = 0; i < heap->record_count; i++)
+        {
+            auto *record =
+                reinterpret_cast<RecordType *>(reinterpret_cast<uint8_t *>(page_buffer) + offset);
+
+            if (record->is_valid && matcher(*record))
+            {
+                // ✅ FOUND: Mark as deleted IN-PLACE (Firebird MGA)
+                // This is the key fix - we mark invalid, not remove
+                record->is_valid = 0;
+                found = true;
+
+                // Mark page dirty and increment generation
+                heap->header.generation++;
+
+                // Unpin and return success
+                return bp->unpinPage(page_id, true, ctx);
+            }
+
+            offset += sizeof(RecordType);
+        }
+
+        // Record not found
+        bp->unpinPage(page_id, false, ctx);
+        if (!found)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Record not found for deletion");
+            return Status::NOT_FOUND;
+        }
+
+        return Status::OK;
+    }
+
+    /**
+     * compactCatalogHeapPage - Garbage collection for catalog pages
+     *
+     * Removes is_valid=0 records from catalog heap page by compacting active records.
+     * This reclaims space from deleted tablespaces/tables/indexes.
+     *
+     * Algorithm:
+     * 1. Scan page and collect all is_valid=1 records
+     * 2. Overwrite page with compacted records (no gaps)
+     * 3. Update record_count and free_offset
+     * 4. Reclaim space for future catalog entries
+     *
+     * @tparam RecordType Type of catalog record (e.g., SBTablespaceCatalog)
+     * @param page_id Catalog heap page to compact
+     * @param ctx Error context
+     * @return Status::OK on success, error status otherwise
+     */
+    template <typename RecordType>
+    auto CatalogManager::compactCatalogHeapPage(uint32_t page_id, ErrorContext *ctx) -> Status
+    {
+        BufferPool *bp = db_->buffer_pool();
+        void *page_buffer;
+        Status status = bp->pinPage(page_id, &page_buffer, ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, status, "Failed to pin catalog heap page for compaction");
+            return status;
+        }
+
+        auto *heap = reinterpret_cast<CatalogHeapPage *>(page_buffer);
+        uint32_t read_offset = sizeof(CatalogHeapPage);
+        uint32_t write_offset = sizeof(CatalogHeapPage);
+        uint32_t new_record_count = 0;
+        uint32_t deleted_count = 0;
+
+        // ===== PHASE 1: Compact records in-place =====
+        // Copy valid records forward, overwriting deleted records
+        for (uint32_t i = 0; i < heap->record_count; i++)
+        {
+            auto *read_record =
+                reinterpret_cast<RecordType *>(reinterpret_cast<uint8_t *>(page_buffer) +
+                                                read_offset);
+
+            if (read_record->is_valid)
+            {
+                // Valid record: keep it
+                if (read_offset != write_offset)
+                {
+                    // Need to move record forward (there were deleted records before this)
+                    auto *write_record = reinterpret_cast<RecordType *>(
+                        reinterpret_cast<uint8_t *>(page_buffer) + write_offset);
+                    memcpy(write_record, read_record, sizeof(RecordType));
+                }
+                write_offset += sizeof(RecordType);
+                new_record_count++;
+            }
+            else
+            {
+                // Deleted record: skip it (don't advance write_offset)
+                deleted_count++;
+            }
+
+            read_offset += sizeof(RecordType);
+        }
+
+        // ===== PHASE 2: Update page metadata =====
+        uint32_t old_free_offset = heap->free_offset;
+        heap->record_count = new_record_count;
+        heap->free_offset = write_offset;
+        heap->header.free_space = db_->page_size() - write_offset;
+        heap->header.generation++;
+
+        // Log compaction results
+        uint32_t space_reclaimed = old_free_offset - write_offset;
+        LOG_INFO(CATALOG, "Compacted catalog page %u: removed %u deleted records, "
+                          "reclaimed %u bytes (%u → %u valid records)",
+                 page_id, deleted_count, space_reclaimed, heap->record_count + deleted_count,
+                 new_record_count);
+
+        return bp->unpinPage(page_id, true, ctx);  // Mark dirty
+    }
+
     template <typename RecordType, typename InfoType>
     inline auto CatalogManager::readRecordsToVector(
         uint32_t page_id, std::vector<InfoType> &results,
@@ -1942,8 +2171,18 @@ namespace scratchbird::core
         record.last_modified_time = tablespace.last_modified_time;
         record.last_extended_time = tablespace.last_extended_time;
 
-        // Write to pg_tablespace table
-        return writeRecordToHeapPage<SBTablespaceCatalog>(tablespaces_table_page_, record, ctx);
+        // ===== MGA FIX: Use UPDATE-or-INSERT pattern =====
+        // This fixes Bug #1 from MGA_COMPLIANCE_REVIEW_TABLESPACE.md
+        // Previously: Always appended (PostgreSQL MVCC - WRONG!)
+        // Now: Updates in-place if exists, appends if new (Firebird MGA - CORRECT!)
+
+        // Matcher: Find record with matching tablespace_id
+        auto matcher = [tablespace_id = tablespace.tablespace_id](const SBTablespaceCatalog &r) {
+            return r.is_valid && r.tablespace_id == tablespace_id;
+        };
+
+        return updateRecordInHeapPage<SBTablespaceCatalog>(tablespaces_table_page_, matcher,
+                                                           record, ctx);
     }
 
     auto CatalogManager::readTablespaceRecords(ErrorContext *ctx) -> Status
@@ -2208,12 +2447,25 @@ namespace scratchbird::core
         // TODO: Delete the file from filesystem
         // For now, we just close it and remove from catalog
 
+        // Mark record as deleted in catalog (Firebird MGA - in-place)
+        // This fixes Bug #2 from MGA_COMPLIANCE_REVIEW_TABLESPACE.md
+        auto matcher = [tablespace_id = ts_id](const SBTablespaceCatalog &r) {
+            return r.is_valid && r.tablespace_id == tablespace_id;
+        };
+
+        status = deleteRecordFromHeapPage<SBTablespaceCatalog>(tablespaces_table_page_, matcher,
+                                                                ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, status, "Failed to delete tablespace from catalog");
+            return status;
+        }
+
         // Remove from cache
         tablespace_cache_.erase(ts_id);
 
-        // Mark record as invalid in catalog
-        // TODO: Implement invalidation or compaction of catalog pages
-        // For now, we'll leave the record in place and rely on cache
+        LOG_INFO(CATALOG, "Successfully dropped tablespace '%s' (ID %u)",
+                 tablespace_name.c_str(), ts_id);
 
         return Status::OK;
     }
@@ -2815,11 +3067,19 @@ namespace scratchbird::core
 
         // ===== STEP 8: Remove from pg_tablespace catalog =====
 
-        // Mark tablespace record as deleted in catalog
-        // (writeTablespaceRecord with is_valid=0, or delete logic)
+        // Mark tablespace record as deleted in catalog (Firebird MGA - in-place)
+        // This fixes Bug #2 from MGA_COMPLIANCE_REVIEW_TABLESPACE.md
+        auto matcher = [ts_id = tablespace_id](const SBTablespaceCatalog &r) {
+            return r.is_valid && r.tablespace_id == ts_id;
+        };
 
-        // For now, we'll remove it from the cache and mark as deleted
-        // Full implementation would update the catalog record on disk
+        status = deleteRecordFromHeapPage<SBTablespaceCatalog>(tablespaces_table_page_, matcher,
+                                                                ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, status, "Failed to delete tablespace from catalog");
+            return status;
+        }
 
         LOG_INFO(CATALOG, "Removing tablespace '%s' from catalog", tablespace_name.c_str());
 
@@ -2829,6 +3089,74 @@ namespace scratchbird::core
 
         LOG_INFO(CATALOG, "Successfully detached tablespace '%s' (ID %u)",
                 tablespace_name.c_str(), tablespace_id);
+
+        return Status::OK;
+    }
+
+    /**
+     * compactCatalog - Garbage collection for all catalog pages
+     *
+     * Compacts catalog heap pages to reclaim space from deleted records (is_valid=0).
+     * This method can be called periodically to prevent catalog bloat.
+     *
+     * @param ctx Error context
+     * @return Status::OK on success, error status otherwise
+     */
+    auto CatalogManager::compactCatalog(ErrorContext *ctx) -> Status
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+
+        LOG_INFO(CATALOG, "Starting catalog garbage collection (compaction)");
+
+        Status status;
+        uint32_t total_reclaimed = 0;
+
+        // ===== COMPACT pg_tablespace =====
+        LOG_DEBUG(CATALOG, "Compacting pg_tablespace catalog page");
+        status = compactCatalogHeapPage<SBTablespaceCatalog>(tablespaces_table_page_, ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, status, "Failed to compact pg_tablespace");
+            return status;
+        }
+
+        // ===== COMPACT pg_schema =====
+        LOG_DEBUG(CATALOG, "Compacting pg_schema catalog page");
+        status = compactCatalogHeapPage<SchemaRecord>(schemas_table_page_, ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, status, "Failed to compact pg_schema");
+            return status;
+        }
+
+        // ===== COMPACT pg_table =====
+        LOG_DEBUG(CATALOG, "Compacting pg_table catalog page");
+        status = compactCatalogHeapPage<TableRecord>(tables_table_page_, ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, status, "Failed to compact pg_table");
+            return status;
+        }
+
+        // ===== COMPACT pg_column =====
+        LOG_DEBUG(CATALOG, "Compacting pg_column catalog page");
+        status = compactCatalogHeapPage<ColumnRecord>(columns_table_page_, ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, status, "Failed to compact pg_column");
+            return status;
+        }
+
+        // ===== COMPACT pg_index =====
+        LOG_DEBUG(CATALOG, "Compacting pg_index catalog page");
+        status = compactCatalogHeapPage<IndexRecord>(indexes_table_page_, ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, status, "Failed to compact pg_index");
+            return status;
+        }
+
+        LOG_INFO(CATALOG, "Catalog garbage collection complete");
 
         return Status::OK;
     }

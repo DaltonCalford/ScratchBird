@@ -171,6 +171,8 @@ namespace scratchbird
             void executeAlterTablespace();         // Phase 2 Task 2.2
             void executeAlterTableSetTablespace(); // Phase 4 Task 4.1.6
             void executeDropTablespace();          // Phase 2 Task 2.1
+            void executeAttachTablespace();        // Phase 6 Task 6.1
+            void executeDetachTablespace();        // Phase 6 Task 6.2
             void executeInsert();
             void executeSelect();
             void executeSweep();            // Phase 3 Task 3.3
