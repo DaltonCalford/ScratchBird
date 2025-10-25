@@ -737,8 +737,9 @@ namespace scratchbird
 
             // Attach tablespace via CatalogManager
             core::ErrorContext err_ctx;
+            uint16_t tablespace_id_out;
             core::Status status =
-                db_->catalog_manager()->attachTablespace(file_path, tablespace_name, &err_ctx);
+                db_->catalog_manager()->attachTablespace(file_path, tablespace_name, tablespace_id_out, &err_ctx);
 
             if (status != core::Status::OK)
             {
