@@ -6,6 +6,7 @@
 #include "scratchbird/core/uuidv7.h"
 #include "scratchbird/core/gpid.h"
 #include "scratchbird/core/tid.h"  // Sprint 5: Needed for TID definition
+#include "scratchbird/core/catalog_manager.h"  // Needed for CatalogManager::TableInfo
 #include <unordered_map>
 #include <memory>
 #include <mutex>
@@ -15,9 +16,6 @@ namespace scratchbird::core
 {
 
 using ID = UuidV7Bytes;
-
-// Forward declarations
-class CatalogManager;
 
 /**
  * BloomFilter - Fast probabilistic set membership test

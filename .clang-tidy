@@ -44,7 +44,7 @@ WarningsAsErrors: >
   concurrency-mt-unsafe
 
 HeaderFilterRegex: '(include/scratchbird|src)/.*'
-AnalyzeTemporaryDtors: true
+# AnalyzeTemporaryDtors: true  # Deprecated in newer clang-tidy versions
 FormatStyle: none
 
 CheckOptions:
