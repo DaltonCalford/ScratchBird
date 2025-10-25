@@ -241,6 +241,73 @@ namespace scratchbird::optimizer
          */
         auto estimateNot(double sel) const -> double;
 
+        /**
+         * estimateJoinSelectivity - Estimate selectivity of join condition
+         *
+         * Selectivity determines how many rows the join produces:
+         *   output_rows = left_rows × right_rows × selectivity
+         *
+         * Algorithm:
+         * 1. For equi-joins (col1 = col2):
+         *    - Use n_distinct statistics from both tables
+         *    - Formula: 1 / MAX(n_distinct(col1), n_distinct(col2))
+         *    - Rationale: Each value in smaller domain matches 1/n_distinct of larger
+         *
+         * 2. For foreign key joins (detected via catalog):
+         *    - Formula: 1 / n_distinct(primary_key_col)
+         *    - Rationale: Each FK value matches exactly one PK value
+         *
+         * 3. For range joins (col1 > col2, col1 < col2):
+         *    - Use DEFAULT_RANGE_SEL (0.33)
+         *    - Conservative estimate without cross-table histograms
+         *
+         * 4. For compound joins (col1 = col2 AND col3 = col4):
+         *    - Multiply selectivities (independence assumption)
+         *    - May underestimate for correlated columns
+         *
+         * Example:
+         *   users.id = orders.user_id
+         *   n_distinct(users.id) = 10,000 (primary key)
+         *   n_distinct(orders.user_id) = 5,000 (foreign key)
+         *   selectivity = 1 / MAX(10,000, 5,000) = 1 / 10,000 = 0.0001
+         *   output_rows = 10,000 × 100,000 × 0.0001 = 100,000 (same as orders count)
+         *
+         * @param join_condition Join condition expression (ON clause)
+         *   @param left_table_id Left table ID
+         * @param right_table_id Right table ID
+         * @param ctx Error context
+         * @return Selectivity estimate (0.0 to 1.0)
+         *
+         * Phase 1, Task 3.2
+         */
+        auto estimateJoinSelectivity(const parser::Expression* join_condition,
+                                     const core::ID& left_table_id,
+                                     const core::ID& right_table_id,
+                                     core::ErrorContext* ctx = nullptr)
+            -> double;
+
+    private:
+        /**
+         * estimateEquiJoinSelectivity - Estimate selectivity for equi-join (col1 = col2)
+         *
+         * Uses n_distinct statistics from both columns.
+         *
+         * @param left_col_id Left column ID
+         * @param right_col_id Right column ID
+         * @param left_table_id Left table ID
+         * @param right_table_id Right table ID
+         * @param ctx Error context
+         * @return Selectivity estimate
+         *
+         * Phase 1, Task 3.2
+         */
+        auto estimateEquiJoinSelectivity(const core::ID& left_col_id,
+                                        const core::ID& right_col_id,
+                                        const core::ID& left_table_id,
+                                        const core::ID& right_table_id,
+                                        core::ErrorContext* ctx = nullptr)
+            -> double;
+
     private:
         StatisticsManager *stats_manager_;
 
