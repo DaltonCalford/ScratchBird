@@ -61,6 +61,9 @@ namespace scratchbird
             KW_WHERE,
             KW_NULL,
             KW_NOT,
+            KW_ANALYZE,  // Phase 1 Task 1.1.2: Statistics collection
+            KW_COLUMN,   // Phase 1 Task 1.1.2: ANALYZE ... COLUMN ...
+            KW_SAMPLE,   // Phase 1 Task 1.1.2: ANALYZE ... SAMPLE ...
 
             // Numeric types
             KW_INT,

@@ -78,6 +78,7 @@ namespace scratchbird
                     case TokenType::KW_CREATE:
                     case TokenType::KW_INSERT:
                     case TokenType::KW_SELECT:
+                    case TokenType::KW_ANALYZE:  // Phase 1 Task 1.1.2
                     case TokenType::KW_START:
                     case TokenType::KW_SET:
                     case TokenType::KW_COMMIT:
@@ -140,6 +141,10 @@ namespace scratchbird
                 else if (match(TokenType::KW_SELECT))
                 {
                     stmt = parseSelect();
+                }
+                else if (match(TokenType::KW_ANALYZE))  // Phase 1 Task 1.1.2
+                {
+                    stmt = parseAnalyze();
                 }
                 else if (match(TokenType::KW_START))
                 {
@@ -816,6 +821,73 @@ namespace scratchbird
 
             auto span = makeSpan(start_loc);
             return arena_.make<SelectStmt>(span, std::move(select_list), table_name, where_clause);
+        }
+
+        Statement *Parser::parseAnalyze()
+        {
+            // ANALYZE table_name [COLUMN column_name] [SAMPLE sample_rate]
+            // Phase 1 Task 1.1.2: Statistics collection
+            auto start_loc = previous().location;
+
+            // Parse table name
+            if (!check(TokenType::IDENTIFIER))
+            {
+                error("Expected table name after ANALYZE");
+                synchronize();
+                return nullptr;
+            }
+
+            StringPool::StringId table_name = current().value.string_id;
+            advance();
+
+            // Optional: COLUMN column_name
+            StringPool::StringId column_name = 0;
+            if (match(TokenType::KW_COLUMN))
+            {
+                if (!check(TokenType::IDENTIFIER))
+                {
+                    error("Expected column name after COLUMN");
+                    synchronize();
+                    return nullptr;
+                }
+
+                column_name = current().value.string_id;
+                advance();
+            }
+
+            // Optional: SAMPLE sample_rate
+            float sample_rate = 0.0f;
+            if (match(TokenType::KW_SAMPLE))
+            {
+                if (!check(TokenType::FLOAT_LITERAL) && !check(TokenType::INTEGER_LITERAL))
+                {
+                    error("Expected numeric sample rate after SAMPLE");
+                    synchronize();
+                    return nullptr;
+                }
+
+                if (current().type == TokenType::FLOAT_LITERAL)
+                {
+                    sample_rate = current().value.float_value;
+                }
+                else
+                {
+                    sample_rate = static_cast<float>(current().value.int_value);
+                }
+
+                advance();
+
+                // Validate sample rate (0.0-1.0)
+                if (sample_rate < 0.0f || sample_rate > 1.0f)
+                {
+                    error("Sample rate must be between 0.0 and 1.0");
+                    synchronize();
+                    return nullptr;
+                }
+            }
+
+            auto span = makeSpan(start_loc);
+            return arena_.make<AnalyzeStmt>(span, table_name, column_name, sample_rate);
         }
 
         Statement *Parser::parseStartTransaction()

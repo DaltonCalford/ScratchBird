@@ -302,6 +302,43 @@ namespace scratchbird
             current_table_ = nullptr;
         }
 
+        void SemanticAnalyzer::visit(AnalyzeStmt *node)
+        {
+            // Phase 1 Task 1.1.2: ANALYZE statement semantic analysis
+            // Validate that the table exists
+            TableSymbol *table = resolveTable(node->tableName());
+            if (!table)
+                return;
+
+            // If analyzing a specific column, validate it exists
+            if (!node->analyzeAllColumns())
+            {
+                const ColumnSymbol *column = resolveColumn(node->columnName());
+                if (!column)
+                {
+                    reportError(node, "Column not found in table");
+                    return;
+                }
+            }
+
+            // Sample rate validation already done in parser
+            // No further semantic analysis needed
+        }
+
+        void SemanticAnalyzer::visit(AttachTablespaceStmt *node)
+        {
+            // Phase 6 Task 6.1: Attach tablespace - minimal semantic analysis
+            // Tablespace validation will be done by the executor
+            (void)node; // Suppress unused parameter warning
+        }
+
+        void SemanticAnalyzer::visit(DetachTablespaceStmt *node)
+        {
+            // Phase 6 Task 6.2: Detach tablespace - minimal semantic analysis
+            // Tablespace validation will be done by the executor
+            (void)node; // Suppress unused parameter warning
+        }
+
         void SemanticAnalyzer::visit(StartTransactionStmt *node)
         {
             // Transaction statements don't require semantic analysis
