@@ -23,21 +23,27 @@ ctest --output-on-failure
 
 ### Latest Achievements
 
-**Corrected Code Audit Complete (Oct 25, 2025)** 📋
-- ✅ **Type System**: 90-95% complete (~3,407 lines) - 29 data types implemented
-- ✅ **Index Types**: 95-100% complete (~11,376 lines) - 6 index types fully functional
-- ⚠️ **Functions/Operators**: 25-30% complete (~4,458 lines SBLR) - 20 functions + 11 operators
-- ✅ **Schema Structure**: 100% complete (~6,432 lines) - Full recursive schema support
-- ⚠️ **Parser**: 64% complete (~6,083 lines) - 15 statement types (missing UPDATE/DELETE)
-- ❌ **Query Optimizer**: 0% complete (0 lines) - Specification exists, no implementation
-- ✅ **Storage Engine**: 100% verified (~34,000 lines) - Full MGA/MVCC implementation
+**1:1 Feature Parity Audit Complete (Oct 25, 2025)** 📋 - CORRECTED PERSPECTIVE
 
-**Previous Audit Error Corrected**:
-- ❌ **Oct 24 Audit Claimed**: "Query Processing 0% (all 6 files missing)"
-- ✅ **Reality**: Parser subsystem ~6,083 lines + SBLR subsystem ~4,458 lines = ~10,541 lines exist
-- The Oct 24 audit only searched `/src/core/` and missed `/src/parser/` and `/src/sblr/` entirely
+⚠️ **CRITICAL UPDATE**: Previous percentages used engineering judgment to mark features as "optional."
+**Market Requirement**: ScratchBird must achieve **1:1 feature parity** with ALL 4 target databases.
 
-**Total Verified Code**: ~65,000+ lines production C++ code (corrected from ~34,000)
+**Corrected Completion Percentages** (1:1 Parity vs. All 4 DBs):
+- ⚠️ **Type System**: 60-65% (~3,407 lines) - Missing spatial, network, text search, range types
+- ⚠️ **Index Types**: 70-75% (~11,376 lines) - Missing spatial indexes, expression indexes
+- ❌ **Functions/Operators**: 10-15% (~4,458 lines) - Missing 85-90% of comprehensive library
+- ⚠️ **Schema Structure**: 70-80% (~6,432 lines) - Missing procedure/trigger/view catalogs
+- ❌ **Parser**: 20-25% (~6,083 lines) - Missing UPDATE/DELETE, JOINs, GROUP BY, CTEs, triggers
+- ❌ **Query Optimizer**: 0% (0 lines) - Specification only, no implementation
+- ✅ **Storage Engine**: 100% (~34,000 lines) - Full MGA/MVCC implementation
+
+**Why Percentages Changed**:
+- Previous: Assumed specialized features (spatial, text search, etc.) were "optional"
+- Corrected: ALL features in target databases are REQUIRED for market competitiveness
+- Impact: GIS apps, network tools, full-text search, analytics CANNOT use ScratchBird
+
+**Total Verified Code**: ~65,000+ lines (corrected from ~34,000 after finding parser/SBLR)
+**Total Work Remaining**: ~2,020-3,145 hours (~12-19 months with 1 developer)
 
 ### What's Implemented ✅ (Code-Verified - Oct 25, 2025)
 
@@ -66,23 +72,42 @@ ctest --output-on-failure
 - **No WAL** (no crash recovery - Beta requirement)
 - **No network layer** (local database only - Beta requirement)
 
-### Remaining for Alpha-Ready
+### Remaining for 1:1 Feature Parity
 
-**Per Corrected Code Audit (Oct 25, 2025)**: ~240-380 hours estimated
+**Per 1:1 Parity Audit (Oct 25, 2025)**: ~2,020-3,145 hours estimated (~12-19 months with 1 dev)
 
-**Critical Gaps by Priority**:
-1. ❌ **Query Optimizer** (100-160 hours) - 0% implemented, specification only
-2. ⚠️ **Parser Completion** (35-55 hours) - Add UPDATE/DELETE for core CRUD
-3. ⚠️ **Function Library** (150-200 hours) - If comprehensive functions required vs. minimal viable
-4. ⚠️ **ONLINE Migration** (26-33 hours) - Sprint 5 MigrationWorker if required
+**Phase 1: Critical Blockers** (~400-600 hours) - MUST HAVE for any market viability:
+1. ❌ **Query Optimizer** (100-160h) - Core cost model, statistics, plan selection
+2. ❌ **Core CRUD** (35-55h) - UPDATE, DELETE statements
+3. ❌ **Basic Queries** (100-150h) - JOINs, GROUP BY, ORDER BY, LIMIT
+4. ❌ **Window Functions** (60-90h) - ROW_NUMBER, RANK, LAG, LEAD
+5. ❌ **JSON Functions** (80-120h) - JSON_EXTRACT, JSON_OBJECT (modern apps)
+6. ❌ **Conditional Functions** (20-30h) - COALESCE, NULLIF, CASE
+
+**Phase 2: Competitive Parity** (~800-1,200 hours) - SHOULD HAVE to compete:
+1. ❌ **Spatial Types + Indexes + Functions** (420-630h) - GIS/mapping market
+2. ❌ **Triggers/Procedures** (200-300h) - Business logic in database
+3. ❌ **CTEs and Subqueries** (110-170h) - Complex queries
+4. ❌ **Array/Text Search Functions** (90-140h) - PostgreSQL compatibility
+
+**Phase 3: Full Parity** (~800-1,300 hours) - NICE TO HAVE for complete replacement:
+1. ❌ **Text Search Types** (130-200h) - PostgreSQL full-text search
+2. ❌ **Range Types** (100-150h) - Temporal/booking applications
+3. ❌ **Network Types** (40-60h) - Network/DevOps tools
+4. ❌ **Expression/Filtered Indexes** (120-180h) - Advanced optimization
+5. ❌ **Extended Functions** (300-450h) - String, numeric, datetime, system
+6. ❌ **Sequences, Permissions, Remaining DDL** (80-140h)
+7. ❌ **Bit String, DECFLOAT, ENUM/SET** (90-140h) - Full compatibility
 
 **See Detailed Audit Reports**:
-- `/docs/audit/TYPE_SYSTEM_COMPLETENESS_AUDIT.md` - ✅ 90-95% complete
-- `/docs/audit/INDEX_TYPE_COMPLETENESS_AUDIT.md` - ✅ 95-100% complete
-- `/docs/audit/FUNCTION_COMPLETENESS_AUDIT.md` - ⚠️ 25-30% complete
-- `/docs/audit/SCHEMA_STRUCTURE_AUDIT.md` - ✅ 100% complete
-- `/docs/audit/PARSER_COVERAGE_AUDIT.md` - ⚠️ 64% complete
-- `/docs/audit/QUERY_OPTIMIZATION_AUDIT.md` - ❌ 0% complete
+- `/docs/audit/FEATURE_PARITY_GAP_ANALYSIS.md` - 🔴 CRITICAL gaps identified
+- `/docs/audit/AUDIT_CORRECTIONS_SUMMARY.md` - Why percentages changed
+- `/docs/audit/TYPE_SYSTEM_COMPLETENESS_AUDIT.md` - ⚠️ 60-65% (was 90-95%)
+- `/docs/audit/INDEX_TYPE_COMPLETENESS_AUDIT.md` - ⚠️ 70-75% (was 95-100%)
+- `/docs/audit/FUNCTION_COMPLETENESS_AUDIT.md` - ❌ 10-15% (was 25-30%)
+- `/docs/audit/SCHEMA_STRUCTURE_AUDIT.md` - ⚠️ 70-80% (was 100%)
+- `/docs/audit/PARSER_COVERAGE_AUDIT.md` - ❌ 20-25% (was 64%)
+- `/docs/audit/QUERY_OPTIMIZATION_AUDIT.md` - ❌ 0%
 
 ## Project Structure
 
