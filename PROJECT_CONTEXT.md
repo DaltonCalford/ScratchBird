@@ -1,15 +1,144 @@
 # ScratchBird Project Context
 
-**Last Updated**: 2025-10-24 (Comprehensive Code Audit Complete)
-**Version**: Alpha 1.0.4 (Partial Tablespace Implementation - See Audit Reports)
-**Status**: Educational/Development (Core Engine Production-Ready, ONLINE Migration Incomplete)
+**Last Updated**: 2025-10-25 (Architecture & Design Clarification)
+**Version**: Alpha 1.0.5 (Re-audit in Progress)
+**Status**: Educational/Development (3-Layer Embedded Architecture)
 
 > **PURPOSE**: This file provides essential context for AI assistants working on ScratchBird.
 > Read this file at session start and after every context compaction.
+> **CRITICAL**: Always check /src/sblr/ and /src/parser/ directories - they contain core functionality!
 
 ---
 
-## 1. Current Project State
+## 1. Project Architecture & Design Goals
+
+### **CRITICAL**: 3-Layer Embedded Architecture
+
+ScratchBird is an **embedded database engine** designed as a library for other projects, NOT a standalone database server.
+
+```
+┌─────────────────────────────────────────────────────────┐
+│ Layer 3: Client Applications                            │
+│  - sb_isql (CLI tool for testing)                       │
+│  - Future: Custom applications using the engine         │
+└─────────────────────────────────────────────────────────┘
+                         ↓ uses
+┌─────────────────────────────────────────────────────────┐
+│ Layer 2: Parser Engines (Dialect-Specific Libraries)    │
+│  - libsb_parser_scratchbird.so (Alpha: ScratchBird SQL) │
+│  - Future: libsb_parser_firebird.so                     │
+│  - Future: libsb_parser_postgres.so                     │
+│  - Future: libsb_parser_mysql.so, etc.                  │
+│                                                          │
+│  Responsibilities:                                       │
+│  • SQL → AST parsing (dialect-specific)                 │
+│  • AST → SBLR bytecode generation                       │
+│  • Result formatting (SBLR → dialect format)            │
+│  • Statement caching (per dialect)                      │
+│  • Stateless: one-way translation only                  │
+└─────────────────────────────────────────────────────────┘
+                         ↓ SBLR bytecode
+┌─────────────────────────────────────────────────────────┐
+│ Layer 1: Database Engine (libscratchbird.so)            │
+│  - SBLR bytecode interpreter/executor                   │
+│  - Storage engine (buffer pool, pages, heap)            │
+│  - Transaction manager (Firebird MGA)                   │
+│  - Index engines (6 types: B-tree, Hash, GIN, etc.)     │
+│  - Type system (all types from FB/MySQL/PG/MSSQL)       │
+│  - Catalog manager (system tables, metadata)            │
+│  - All APIs public for direct use                       │
+│                                                          │
+│  Key: Universal backend via SBLR bytecode               │
+└─────────────────────────────────────────────────────────┘
+```
+
+### SBLR: The Universal Interface
+
+**SBLR (ScratchBird Binary Language Runner)** is based on Firebird's BLR with extensions.
+
+- **Purpose**: Dialect-agnostic bytecode for database operations
+- **Design**: Stack-based interpreter with opcode instructions
+- **Location**: `/src/sblr/` and `/include/scratchbird/sblr/`
+- **Key Files**:
+  - `opcodes.h` - Opcode definitions (188 lines)
+  - `executor.h/.cpp` - Bytecode interpreter (3,108 lines)
+  - `bytecode_generator.h/.cpp` - AST → SBLR compiler (1,162 lines)
+
+**CRITICAL**: Parsers translate SQL → SBLR (one-way), engine only understands SBLR.
+
+### Parser Engine Design
+
+- **Separate Libraries**: Each SQL dialect has its own parser library
+- **Stateless**: Connect, send SBLR, get results, disconnect
+- **Version Aware**: Parser checks engine version compatibility at init
+- **Swappable**: Engine upgrades transparent to parser (if API compatible)
+- **Caching**:
+  - Parser caches SQL → SBLR translations (per dialect)
+  - Engine caches SBLR execution plans (universal)
+
+### Alpha Completion Criteria (9 Priorities)
+
+**Priority 1**: Data Type Completeness
+- Support ALL types from FirebirdSQL, MySQL/MariaDB, PostgreSQL, MSSQL
+- Either directly or via domain types
+- **Location to check**: `/src/core/types.cpp`, `/include/scratchbird/core/types.h`
+
+**Priority 2**: Index Type Completeness
+- Support ALL index types from the 4 major databases
+- **Current**: 6 types exist (B-tree, Hash, GIN, HNSW, BRIN, Bitmap)
+- **Check against**: Full index type lists from FB/MySQL/PG/MSSQL
+
+**Priority 3**: Data Manipulation Completeness
+- Casting, math functions, string functions, temporal extraction
+- All low-level operations the 4 major databases perform
+- **Location**: `/src/sblr/executor.cpp` (function implementations)
+
+**Priority 4**: Schema Structure
+- Recursive schema support
+- Well-defined system tables
+- Complete metadata catalog
+
+**Priority 5**: SBLR Complete Implementation
+- Full specification documented
+- All opcodes implemented
+- Supporting API calls complete
+- **Status**: Appears substantially complete, needs verification
+
+**Priority 6**: Query Optimization
+- Statement caching (engine-level, SBLR-based)
+- Statement analysis and query plan generation
+- Parallel worker threads for execution
+
+**Priority 7**: ScratchBird SQL Parser
+- Complete SQL parser for ScratchBird dialect
+- AST → SBLR bytecode generator
+- **Location**: `/src/parser/`, `/src/sblr/bytecode_generator.cpp`
+- **Status**: Exists, needs verification of completeness
+
+**Priority 8**: sb_isql CLI Application
+- Interactive SQL command-line interface
+- Uses Layer 2 (parser) → Layer 1 (engine)
+- Firebird isql-compatible behavior
+- **Status**: Not found yet, needs implementation
+
+**Priority 9**: Complete Documentation
+- Technical specifications
+- Operational guides
+- Developer documentation with code examples
+- Full specifications for engine to this point
+
+**Alpha Definition**: When Priority 1-9 are complete, Alpha is finished → First release
+
+### Beta Requirements (Deferred from Alpha)
+
+- ONLINE Migration (Sprint 4 & 5) - needed for concurrency testing
+- Networking layer
+- WAL (Write-Ahead Logging)
+- Replication
+
+---
+
+## 2. Current Project State
 
 ### Version & Status
 - **Current Version**: Alpha 1.0.3
