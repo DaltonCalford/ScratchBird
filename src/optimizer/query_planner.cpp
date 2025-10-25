@@ -411,24 +411,9 @@ namespace scratchbird::optimizer
                                             core::ErrorContext *ctx) const
         -> double
     {
-        // Phase 1: Simple heuristics
-        // Phase 2 (Task 1.4) will use histogram-based estimation
-
-        if (!select_stmt->whereClause())
-        {
-            // No WHERE clause → all rows pass
-            return 1.0;
-        }
-
-        // For now, use conservative default estimate
-        // Typical WHERE clause selectivity: ~10-30%
-        // We use 0.33 as a reasonable middle ground
-        constexpr double DEFAULT_SELECTIVITY = 0.33;
-
-        DEBUG_LOG_DB("Using default selectivity estimate: " +
-                     std::to_string(DEFAULT_SELECTIVITY));
-
-        return DEFAULT_SELECTIVITY;
+        // Use SelectivityEstimator for histogram-based estimation
+        return selectivity_estimator_.estimateWhereClause(
+            select_stmt->whereClause(), table_id, ctx);
     }
 
     auto QueryPlanner::calculateQualCost(const parser::SelectStmt *select_stmt) const
