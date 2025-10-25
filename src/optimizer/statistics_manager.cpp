@@ -507,7 +507,7 @@ namespace scratchbird::optimizer
         return Status::OK;
     }
 
-    auto StatisticsManager::generateHistogram(const std::vector<uint8_t> &values,
+    auto StatisticsManager::generateHistogram(const std::vector<std::vector<uint8_t>> &values,
                                                uint32_t bucket_count,
                                                HistogramType histogram_type,
                                                std::vector<HistogramBucket> &buckets,
@@ -515,31 +515,160 @@ namespace scratchbird::optimizer
     {
         DEBUG_LOG_DB("Generating histogram");
 
-        // TODO: Phase 1, Task 1.1.5 - Implement histogram generation
+        // Phase 1, Task 1.1.5 - Histogram generation
         //
-        // Equal-Height Histogram:
-        // 1. Sort values
-        // 2. Divide into bucket_count buckets with ~equal number of values
-        // 3. Store min/max of each bucket
-        //
-        // Equal-Width Histogram:
-        // 1. Find min and max values
-        // 2. Divide range into bucket_count equal intervals
-        // 3. Count values in each bucket
+        // Two types supported:
+        // - Equal-Height: Buckets contain ~equal number of values (PostgreSQL-style)
+        // - Equal-Width: Buckets span equal value ranges (MySQL-style)
 
-        SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED,
-                          "generateHistogram not yet implemented");
-        return Status::NOT_IMPLEMENTED;
+        buckets.clear();
+
+        if (values.empty() || bucket_count == 0)
+        {
+            return Status::OK; // No histogram to generate
+        }
+
+        // Filter out NULL values (represented as empty vectors)
+        std::vector<std::vector<uint8_t>> non_null_values;
+        non_null_values.reserve(values.size());
+        for (const auto &value : values)
+        {
+            if (!value.empty())
+            {
+                non_null_values.push_back(value);
+            }
+        }
+
+        if (non_null_values.empty())
+        {
+            return Status::OK; // All values are NULL
+        }
+
+        // Cap bucket count at number of distinct values
+        if (bucket_count > non_null_values.size())
+        {
+            bucket_count = non_null_values.size();
+        }
+
+        if (histogram_type == HistogramType::EQUAL_HEIGHT)
+        {
+            // Equal-Height Histogram (PostgreSQL-style)
+            // Sort values and divide into buckets with ~equal number of values
+
+            // Sort values
+            std::vector<std::vector<uint8_t>> sorted_values = non_null_values;
+            std::sort(sorted_values.begin(), sorted_values.end());
+
+            // Calculate values per bucket
+            size_t values_per_bucket = sorted_values.size() / bucket_count;
+            size_t remainder = sorted_values.size() % bucket_count;
+
+            buckets.reserve(bucket_count);
+            size_t idx = 0;
+
+            for (uint32_t i = 0; i < bucket_count; i++)
+            {
+                HistogramBucket bucket;
+
+                // Calculate how many values in this bucket
+                size_t bucket_size = values_per_bucket + (i < remainder ? 1 : 0);
+
+                if (bucket_size == 0)
+                    break;
+
+                // Set lower bound (first value in bucket)
+                const auto &lower = sorted_values[idx];
+                size_t lower_size = std::min(lower.size(), sizeof(bucket.lower_bound));
+                std::memcpy(bucket.lower_bound, lower.data(), lower_size);
+                if (lower_size < sizeof(bucket.lower_bound))
+                {
+                    std::memset(bucket.lower_bound + lower_size, 0,
+                                sizeof(bucket.lower_bound) - lower_size);
+                }
+
+                // Set upper bound (last value in bucket)
+                const auto &upper = sorted_values[idx + bucket_size - 1];
+                size_t upper_size = std::min(upper.size(), sizeof(bucket.upper_bound));
+                std::memcpy(bucket.upper_bound, upper.data(), upper_size);
+                if (upper_size < sizeof(bucket.upper_bound))
+                {
+                    std::memset(bucket.upper_bound + upper_size, 0,
+                                sizeof(bucket.upper_bound) - upper_size);
+                }
+
+                // Set row count and frequency
+                bucket.row_count = bucket_size;
+                bucket.frequency = static_cast<float>(bucket_size) / static_cast<float>(sorted_values.size());
+
+                // TOAST references (0 = inline data, not TOASTed)
+                bucket.lower_oid = 0;
+                bucket.upper_oid = 0;
+
+                buckets.push_back(bucket);
+                idx += bucket_size;
+            }
+
+            DEBUG_LOG_DB("Generated equal-height histogram with " + std::to_string(buckets.size()) + " buckets");
+        }
+        else if (histogram_type == HistogramType::EQUAL_WIDTH)
+        {
+            // Equal-Width Histogram (MySQL-style)
+            // Divide value range into equal intervals
+
+            // Find min and max values
+            auto min_value = *std::min_element(non_null_values.begin(), non_null_values.end());
+            auto max_value = *std::max_element(non_null_values.begin(), non_null_values.end());
+
+            // For discrete types or single-value columns, fall back to equal-height
+            if (min_value == max_value)
+            {
+                HistogramBucket bucket;
+
+                size_t value_size = std::min(min_value.size(), sizeof(bucket.lower_bound));
+                std::memcpy(bucket.lower_bound, min_value.data(), value_size);
+                std::memcpy(bucket.upper_bound, min_value.data(), value_size);
+
+                if (value_size < sizeof(bucket.lower_bound))
+                {
+                    std::memset(bucket.lower_bound + value_size, 0,
+                                sizeof(bucket.lower_bound) - value_size);
+                    std::memset(bucket.upper_bound + value_size, 0,
+                                sizeof(bucket.upper_bound) - value_size);
+                }
+
+                bucket.row_count = non_null_values.size();
+                bucket.frequency = 1.0f;
+                bucket.lower_oid = 0;
+                bucket.upper_oid = 0;
+
+                buckets.push_back(bucket);
+                DEBUG_LOG_DB("Generated single-bucket histogram (all values equal)");
+                return Status::OK;
+            }
+
+            // For now, equal-width is primarily useful for numeric types
+            // For complex types, we fall back to equal-height
+            // TODO: Implement proper equal-width for numeric types with range calculation
+            DEBUG_LOG_DB("Equal-width histogram for complex types not yet implemented, using equal-height");
+            return generateHistogram(values, bucket_count, HistogramType::EQUAL_HEIGHT, buckets, ctx);
+        }
+        else
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Unknown histogram type");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        return Status::OK;
     }
 
-    auto StatisticsManager::identifyMCVs(const std::vector<uint8_t> &values,
+    auto StatisticsManager::identifyMCVs(const std::vector<std::vector<uint8_t>> &values,
                                           uint32_t max_mcv_count,
                                           std::vector<MCVEntry> &mcv_list,
                                           ErrorContext *ctx) -> Status
     {
         DEBUG_LOG_DB("Identifying Most Common Values");
 
-        // TODO: Phase 1, Task 1.1.6 - Implement MCV identification
+        // Phase 1, Task 1.1.6 - MCV identification
         //
         // Algorithm:
         // 1. Build frequency map (value -> count)
@@ -548,9 +677,82 @@ namespace scratchbird::optimizer
         // 4. Compute frequency as fraction of total values
         // 5. Store in mcv_list
 
-        SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED,
-                          "identifyMCVs not yet implemented");
-        return Status::NOT_IMPLEMENTED;
+        mcv_list.clear();
+
+        if (values.empty() || max_mcv_count == 0)
+        {
+            return Status::OK; // No MCVs to identify
+        }
+
+        // Build frequency map
+        std::unordered_map<std::vector<uint8_t>, uint64_t, VectorHash> frequency_map;
+
+        uint64_t total_non_null = 0;
+        for (const auto &value : values)
+        {
+            if (!value.empty()) // Skip NULLs
+            {
+                frequency_map[value]++;
+                total_non_null++;
+            }
+        }
+
+        if (frequency_map.empty())
+        {
+            return Status::OK; // All values are NULL
+        }
+
+        // Convert to vector for sorting
+        std::vector<std::pair<std::vector<uint8_t>, uint64_t>> freq_vector;
+        freq_vector.reserve(frequency_map.size());
+
+        for (const auto &entry : frequency_map)
+        {
+            freq_vector.push_back(entry);
+        }
+
+        // Sort by frequency (descending)
+        std::sort(freq_vector.begin(), freq_vector.end(),
+                  [](const auto &a, const auto &b)
+                  {
+                      return a.second > b.second; // Higher frequency first
+                  });
+
+        // Take top max_mcv_count entries
+        size_t mcv_count = std::min(static_cast<size_t>(max_mcv_count), freq_vector.size());
+
+        mcv_list.reserve(mcv_count);
+
+        for (size_t i = 0; i < mcv_count; i++)
+        {
+            const auto &value = freq_vector[i].first;
+            uint64_t count = freq_vector[i].second;
+
+            MCVEntry mcv;
+
+            // Copy value data
+            size_t value_size = std::min(value.size(), sizeof(mcv.value_data));
+            std::memcpy(mcv.value_data, value.data(), value_size);
+
+            // Zero out remaining bytes
+            if (value_size < sizeof(mcv.value_data))
+            {
+                std::memset(mcv.value_data + value_size, 0,
+                            sizeof(mcv.value_data) - value_size);
+            }
+
+            // Compute frequency as fraction
+            mcv.frequency = static_cast<float>(count) / static_cast<float>(total_non_null);
+
+            // TOAST reference (0 = inline data, not TOASTed)
+            mcv.value_oid = 0;
+
+            mcv_list.push_back(mcv);
+        }
+
+        DEBUG_LOG_DB("Identified " + std::to_string(mcv_list.size()) + " most common values");
+
+        return Status::OK;
     }
 
     auto StatisticsManager::estimateNDistinct(const std::vector<std::vector<uint8_t>> &values,

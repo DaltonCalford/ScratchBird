@@ -215,7 +215,7 @@ namespace scratchbird::optimizer
          *
          * Phase 1, Task 1.1
          */
-        auto generateHistogram(const std::vector<uint8_t> &values, uint32_t bucket_count,
+        auto generateHistogram(const std::vector<std::vector<uint8_t>> &values, uint32_t bucket_count,
                                HistogramType histogram_type,
                                std::vector<HistogramBucket> &buckets,
                                ErrorContext *ctx = nullptr) -> Status;
@@ -233,7 +233,7 @@ namespace scratchbird::optimizer
          *
          * Phase 1, Task 1.1
          */
-        auto identifyMCVs(const std::vector<uint8_t> &values, uint32_t max_mcv_count,
+        auto identifyMCVs(const std::vector<std::vector<uint8_t>> &values, uint32_t max_mcv_count,
                           std::vector<MCVEntry> &mcv_list, ErrorContext *ctx = nullptr) -> Status;
 
         /**
