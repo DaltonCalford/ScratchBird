@@ -302,6 +302,72 @@ namespace scratchbird
             current_table_ = nullptr;
         }
 
+        void SemanticAnalyzer::visit(UpdateStmt *node)
+        {
+            // Phase 1 Task 2.1: UPDATE statement semantic analysis
+            TableSymbol *table = resolveTable(node->tableName());
+            if (!table)
+                return;
+
+            current_table_ = table;
+            symbol_table_.pushScope();
+
+            for (const auto &col : table->columns)
+            {
+                symbol_table_.addColumn(col.name, col);
+            }
+
+            // Process SET assignments
+            for (const auto &assign : node->assignments())
+            {
+                const ColumnSymbol *col = resolveColumn(assign.column_name);
+                if (!col)
+                {
+                    std::string error_msg = "Column '";
+                    error_msg += string_pool_.get(assign.column_name);
+                    error_msg += "' does not exist";
+                    reportError(node, error_msg);
+                    continue;
+                }
+
+                checkExpression(assign.value);
+            }
+
+            // Process WHERE clause
+            if (node->whereClause())
+            {
+                checkExpression(node->whereClause());
+            }
+
+            symbol_table_.popScope();
+            current_table_ = nullptr;
+        }
+
+        void SemanticAnalyzer::visit(DeleteStmt *node)
+        {
+            // Phase 1 Task 2.2: DELETE statement semantic analysis
+            TableSymbol *table = resolveTable(node->tableName());
+            if (!table)
+                return;
+
+            current_table_ = table;
+            symbol_table_.pushScope();
+
+            for (const auto &col : table->columns)
+            {
+                symbol_table_.addColumn(col.name, col);
+            }
+
+            // Process WHERE clause
+            if (node->whereClause())
+            {
+                checkExpression(node->whereClause());
+            }
+
+            symbol_table_.popScope();
+            current_table_ = nullptr;
+        }
+
         void SemanticAnalyzer::visit(AnalyzeStmt *node)
         {
             // Phase 1 Task 1.1.2: ANALYZE statement semantic analysis

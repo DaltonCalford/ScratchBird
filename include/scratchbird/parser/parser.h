@@ -113,6 +113,8 @@ namespace scratchbird
             Statement *parseDetachTablespace();      // Phase 6 Task 6.2
             Statement *parseInsert();
             Statement *parseSelect();
+            Statement *parseUpdate();                // Phase 1 Task 2.1
+            Statement *parseDelete();                // Phase 1 Task 2.2
             Statement *parseAnalyze();               // Phase 1 Task 1.1.2
             Statement *parseExplain();               // Phase 1 Task 1.5
             Statement *parseStartTransaction();      // Phase 2 Task 2.6
