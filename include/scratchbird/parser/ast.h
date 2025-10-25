@@ -40,6 +40,7 @@ namespace scratchbird
             INSERT,
             SELECT,
             ANALYZE,           // Phase 1 Task 1.1.2: Statistics collection
+            EXPLAIN,           // Phase 1 Task 1.5: EXPLAIN command
             START_TRANSACTION, // Phase 2 Task 2.6
             SET_TRANSACTION,   // Phase 3 Task 3.6
             COMMIT,            // Phase 2 Task 2.6
@@ -612,6 +613,47 @@ namespace scratchbird
             float sample_rate_;                // Sample rate (0.0 = auto, 0.0-1.0 = explicit)
         };
 
+        /**
+         * ExplainStmt - EXPLAIN command (Phase 1 Task 1.5)
+         *
+         * Shows the execution plan for a query without executing it.
+         * Displays cost estimates, row estimates, and access methods.
+         *
+         * Example:
+         *   EXPLAIN SELECT * FROM users WHERE id > 10;
+         *
+         * Output:
+         *   SeqScan on users (cost=0.00..225.00 rows=1000)
+         *     Filter: id > 10
+         */
+        class ExplainStmt : public Statement
+        {
+        public:
+            /**
+             * Constructor
+             *
+             * @param span Source location
+             * @param query The statement to explain (SELECT, INSERT, etc.)
+             */
+            ExplainStmt(const SourceSpan &span, Statement *query)
+                : Statement(ASTKind::EXPLAIN, span), query_(query)
+            {
+            }
+
+            /**
+             * Get the query to explain
+             */
+            Statement *query() const
+            {
+                return query_;
+            }
+
+            void accept(ASTVisitor *visitor) override;
+
+        private:
+            Statement *query_; // The statement to explain
+        };
+
         // Transaction mode flags (Phase 2 Task 2.6)
         enum class TransactionMode : uint8_t
         {
@@ -1010,6 +1052,7 @@ namespace scratchbird
             virtual void visit(InsertStmt *node) = 0;
             virtual void visit(SelectStmt *node) = 0;
             virtual void visit(AnalyzeStmt *node) = 0;          // Phase 1 Task 1.1.2
+            virtual void visit(ExplainStmt *node) = 0;          // Phase 1 Task 1.5
             virtual void visit(StartTransactionStmt *node) = 0; // Phase 2 Task 2.6
             virtual void visit(SetTransactionStmt *node) = 0;   // Phase 3 Task 3.6
             virtual void visit(CommitStmt *node) = 0;           // Phase 2 Task 2.6
@@ -1044,6 +1087,7 @@ namespace scratchbird
             void visit(InsertStmt *node) override;
             void visit(SelectStmt *node) override;
             void visit(AnalyzeStmt *node) override;          // Phase 1 Task 1.1.2
+            void visit(ExplainStmt *node) override;          // Phase 1 Task 1.5
             void visit(StartTransactionStmt *node) override; // Phase 2 Task 2.6
             void visit(SetTransactionStmt *node) override;   // Phase 3 Task 3.6
             void visit(CommitStmt *node) override;           // Phase 2 Task 2.6

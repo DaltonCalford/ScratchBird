@@ -32,6 +32,7 @@ namespace scratchbird
             {"NULL", TokenType::KW_NULL},
             {"NOT", TokenType::KW_NOT},
             {"ANALYZE", TokenType::KW_ANALYZE},  // Phase 1 Task 1.1.2
+            {"EXPLAIN", TokenType::KW_EXPLAIN},  // Phase 1 Task 1.5
             {"COLUMN", TokenType::KW_COLUMN},    // Phase 1 Task 1.1.2
             {"SAMPLE", TokenType::KW_SAMPLE},    // Phase 1 Task 1.1.2
 

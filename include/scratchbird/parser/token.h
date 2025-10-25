@@ -62,6 +62,7 @@ namespace scratchbird
             KW_NULL,
             KW_NOT,
             KW_ANALYZE,  // Phase 1 Task 1.1.2: Statistics collection
+            KW_EXPLAIN,  // Phase 1 Task 1.5: EXPLAIN command
             KW_COLUMN,   // Phase 1 Task 1.1.2: ANALYZE ... COLUMN ...
             KW_SAMPLE,   // Phase 1 Task 1.1.2: ANALYZE ... SAMPLE ...
 
