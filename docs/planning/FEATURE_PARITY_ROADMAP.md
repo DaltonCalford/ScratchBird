@@ -46,7 +46,7 @@ Without these features, ScratchBird **cannot be used** for even simple applicati
 **Status**: Started October 25, 2025
 
 - [ ] **1.1 Statistics Collection** (30-40 hours) ⏳ IN PROGRESS
-  - [ ] Create statistics catalog tables (pg_statistic equivalent)
+  - [x] Create statistics catalog tables (pg_statistic equivalent) ✅ Done Oct 25
   - [ ] Implement ANALYZE command parser support
   - [ ] Implement table sampling (Vitter's Algorithm S)
   - [ ] Implement column statistics collection (null fraction, n_distinct, avg_width)
@@ -54,6 +54,7 @@ Without these features, ScratchBird **cannot be used** for even simple applicati
   - [ ] Implement MCV (Most Common Values) collection
   - [ ] Store statistics in catalog
   - **Deliverable**: `ANALYZE table_name` command works
+  - **Progress**: Catalog structures created, stubs implemented, API designed
 
 - [ ] **1.2 Cost Model** (25-35 hours)
   - [ ] Implement cost configuration structure (seq_page_cost, random_page_cost, cpu_tuple_cost)
@@ -763,6 +764,19 @@ For detailed task breakdowns, see:
 ## Implementation Log
 
 ### October 25, 2025
+
+**Morning Session - Planning & Roadmap**
 - **Started**: Phase 1, Task 1: Query Optimizer Foundation
 - **Started**: Task 1.1: Statistics Collection
 - **Current Focus**: Creating statistics catalog tables
+
+**Afternoon Session - Statistics Infrastructure**
+- **Completed**: Created statistics catalog data structures
+  - `include/scratchbird/optimizer/statistics.h` - ColumnStatistics, TableStatistics, MCVEntry, HistogramBucket structures
+  - `include/scratchbird/optimizer/statistics_manager.h` - StatisticsManager class API design
+  - `src/optimizer/statistics_manager.cpp` - Implementation stubs for all Phase 1.1 methods
+  - `src/CMakeLists.txt` - Added scratchbird_optimizer library
+- **Commit**: 4a7d7a1 - "Phase 1, Task 1.1: Create statistics catalog infrastructure (foundation)"
+- **Progress**: Task 1.1.1 complete (catalog structures created)
+- **Blocker Found**: Existing tid_resolver build errors preventing compilation
+- **Next**: Fix tid_resolver errors, then implement ANALYZE parser support
