@@ -138,6 +138,9 @@ namespace scratchbird
             // Query optimization hints (Phase 1, Task 1.3)
             SCAN_HINT = 0xC0,  // Scan method hint (0=seq, 1=index)
             INDEX_REF = 0xC1,  // Index reference (string - index UUID)
+
+            // EXPLAIN command (Phase 1, Task 1.5)
+            EXPLAIN_PLAN = 0xC2,  // EXPLAIN output (string)
         };
 
         // SBLR Version

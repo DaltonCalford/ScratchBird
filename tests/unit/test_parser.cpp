@@ -393,6 +393,59 @@ TEST_F(ParserTest, MultipleStatements)
     expectParseError("SELECT * FROM t; SELECT * FROM t2");
 }
 
+// ===== EXPLAIN Tests (Phase 1 Task 1.5) =====
+
+TEST_F(ParserTest, ExplainBasic)
+{
+    std::string sql = "EXPLAIN SELECT * FROM users";
+    expectParseSuccess(sql);
+}
+
+TEST_F(ParserTest, ExplainWithWhere)
+{
+    std::string sql = "EXPLAIN SELECT id, name FROM users WHERE id > 10";
+    expectParseSuccess(sql);
+}
+
+TEST_F(ParserTest, ExplainComplex)
+{
+    std::string sql = "EXPLAIN SELECT COUNT(*) FROM products WHERE price > 100";
+    expectParseSuccess(sql);
+}
+
+TEST_F(ParserTest, ExplainStructure)
+{
+    // Verify the AST structure is correct
+    Lexer lexer("EXPLAIN SELECT * FROM t");
+    ASTArena arena;
+    Parser parser(lexer, arena);
+
+    auto result = parser.parseStatement();
+    ASSERT_TRUE(result.success());
+    ASSERT_NE(result.statement(), nullptr);
+
+    // Should be an EXPLAIN statement
+    EXPECT_EQ(result.statement()->kind(), ASTKind::EXPLAIN);
+
+    // Cast to ExplainStmt and verify it has a query
+    auto *explain_stmt = dynamic_cast<ExplainStmt *>(result.statement());
+    ASSERT_NE(explain_stmt, nullptr);
+    ASSERT_NE(explain_stmt->query(), nullptr);
+
+    // The nested query should be a SELECT
+    EXPECT_EQ(explain_stmt->query()->kind(), ASTKind::SELECT);
+}
+
+TEST_F(ParserTest, ExplainErrors)
+{
+    // EXPLAIN without statement
+    expectParseError("EXPLAIN");
+
+    // EXPLAIN with non-SELECT (Phase 1.5 limitation)
+    expectParseError("EXPLAIN INSERT INTO t VALUES (1)");
+    expectParseError("EXPLAIN CREATE TABLE t (id INTEGER)");
+}
+
 // ===== Error Recovery Tests =====
 
 TEST_F(ParserTest, ErrorRecovery)
