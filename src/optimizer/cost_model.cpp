@@ -216,4 +216,132 @@ namespace scratchbird::optimizer
         return params_.cpu_operator_cost;
     }
 
+    auto CostModel::costNestedLoopJoin(const CostEstimate& outer_cost,
+                                       const CostEstimate& inner_cost,
+                                       uint64_t outer_rows,
+                                       uint64_t inner_rows,
+                                       double selectivity,
+                                       core::ErrorContext* ctx)
+        -> CostEstimate
+    {
+        DEBUG_LOG_DB("Estimating nested loop join cost: outer_rows=" + std::to_string(outer_rows) +
+                     ", inner_rows=" + std::to_string(inner_rows) +
+                     ", selectivity=" + std::to_string(selectivity));
+
+        CostEstimate cost;
+
+        // Startup cost: just the outer relation startup
+        // Inner relation is re-scanned for each outer row, so no one-time startup
+        cost.startup_cost = outer_cost.startup_cost;
+
+        // Run cost breakdown:
+        // 1. Scan outer relation completely
+        double outer_scan_cost = outer_cost.run_cost;
+
+        // 2. For each outer row, scan inner relation (inner is re-scanned outer_rows times)
+        //    Note: inner_cost.total_cost includes both startup and run for each inner scan
+        double inner_scan_cost = static_cast<double>(outer_rows) * inner_cost.total_cost;
+
+        // 3. CPU cost of evaluating join condition and materializing output
+        //    Join produces: outer_rows * inner_rows * selectivity output rows
+        uint64_t output_rows = static_cast<uint64_t>(
+            static_cast<double>(outer_rows) * static_cast<double>(inner_rows) * selectivity);
+
+        // Cost of evaluating join condition for each combination
+        // (before selectivity filtering)
+        double join_qual_cost = static_cast<double>(outer_rows) *
+                               static_cast<double>(inner_rows) *
+                               params_.cpu_operator_cost;
+
+        // Cost of materializing output tuples (after selectivity filtering)
+        double output_cost = static_cast<double>(output_rows) * params_.cpu_tuple_cost;
+
+        cost.run_cost = outer_scan_cost + inner_scan_cost + join_qual_cost + output_cost;
+        cost.total_cost = cost.startup_cost + cost.run_cost;
+        cost.rows = output_rows;
+
+        DEBUG_LOG_DB("NestedLoopJoin cost: startup=" + std::to_string(cost.startup_cost) +
+                     ", run=" + std::to_string(cost.run_cost) +
+                     ", total=" + std::to_string(cost.total_cost) +
+                     ", output_rows=" + std::to_string(cost.rows) +
+                     " (outer_scan=" + std::to_string(outer_scan_cost) +
+                     ", inner_scan=" + std::to_string(inner_scan_cost) +
+                     ", join_qual=" + std::to_string(join_qual_cost) + ")");
+
+        return cost;
+    }
+
+    auto CostModel::costHashJoin(const CostEstimate& outer_cost,
+                                 const CostEstimate& inner_cost,
+                                 uint64_t outer_rows,
+                                 uint64_t inner_rows,
+                                 double selectivity,
+                                 core::ErrorContext* ctx)
+        -> CostEstimate
+    {
+        DEBUG_LOG_DB("Estimating hash join cost: outer_rows=" + std::to_string(outer_rows) +
+                     ", inner_rows=" + std::to_string(inner_rows) +
+                     ", selectivity=" + std::to_string(selectivity));
+
+        CostEstimate cost;
+
+        // Hash join phases:
+        // Phase 1 (Build): Scan outer relation and build hash table
+        // Phase 2 (Probe): Scan inner relation and probe hash table
+
+        // Build phase cost:
+        // 1. Scan outer relation completely
+        double outer_scan_cost = outer_cost.total_cost;
+
+        // 2. Build hash table from outer rows
+        //    Hash insertion: compute hash + insert into bucket
+        //    Factor of 2.0 represents hash function computation + insertion overhead
+        constexpr double HASH_BUILD_FACTOR = 2.0;
+        double hash_build_cost = static_cast<double>(outer_rows) *
+                                params_.cpu_tuple_cost * HASH_BUILD_FACTOR;
+
+        // Startup cost = build entire hash table
+        cost.startup_cost = outer_scan_cost + hash_build_cost;
+
+        // Probe phase cost:
+        // 1. Scan inner relation completely
+        double inner_scan_cost = inner_cost.total_cost;
+
+        // 2. Probe hash table for each inner row
+        //    Hash lookup: compute hash + traverse bucket chain
+        //    Factor of 1.5 represents hash function computation + lookup overhead
+        constexpr double HASH_PROBE_FACTOR = 1.5;
+        double hash_probe_cost = static_cast<double>(inner_rows) *
+                                params_.cpu_tuple_cost * HASH_PROBE_FACTOR;
+
+        // 3. CPU cost of evaluating join condition and materializing output
+        uint64_t output_rows = static_cast<uint64_t>(
+            static_cast<double>(outer_rows) * static_cast<double>(inner_rows) * selectivity);
+
+        // For hash join, we only evaluate join condition for matching hash buckets
+        // (much cheaper than nested loop which evaluates for all combinations)
+        // Estimate: evaluate for ~10% of combinations (hash collisions + matches)
+        double join_qual_cost = static_cast<double>(outer_rows) *
+                               static_cast<double>(inner_rows) *
+                               selectivity * 10.0 *  // hash collision factor
+                               params_.cpu_operator_cost;
+
+        // Cost of materializing output tuples
+        double output_cost = static_cast<double>(output_rows) * params_.cpu_tuple_cost;
+
+        cost.run_cost = inner_scan_cost + hash_probe_cost + join_qual_cost + output_cost;
+        cost.total_cost = cost.startup_cost + cost.run_cost;
+        cost.rows = output_rows;
+
+        DEBUG_LOG_DB("HashJoin cost: startup=" + std::to_string(cost.startup_cost) +
+                     ", run=" + std::to_string(cost.run_cost) +
+                     ", total=" + std::to_string(cost.total_cost) +
+                     ", output_rows=" + std::to_string(cost.rows) +
+                     " (hash_build=" + std::to_string(hash_build_cost) +
+                     ", hash_probe=" + std::to_string(hash_probe_cost) +
+                     ", join_qual=" + std::to_string(join_qual_cost) + ")");
+
+        return cost;
+    }
+
 } // namespace scratchbird::optimizer

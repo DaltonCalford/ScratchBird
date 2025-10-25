@@ -2,6 +2,7 @@
 
 #include "scratchbird/core/types.h"
 #include "scratchbird/optimizer/cost_model.h"
+#include "scratchbird/parser/ast.h"  // For JoinType and Expression
 #include <memory>
 #include <string>
 #include <vector>
@@ -16,8 +17,10 @@ namespace scratchbird::optimizer
      */
     enum class PathType
     {
-        SEQ_SCAN,    // Sequential table scan
-        INDEX_SCAN   // Index scan with heap fetch
+        SEQ_SCAN,          // Sequential table scan
+        INDEX_SCAN,        // Index scan with heap fetch
+        NESTED_LOOP_JOIN,  // Nested loop join (Phase 1, Task 3.2)
+        HASH_JOIN          // Hash join (Phase 1, Task 3.2)
     };
 
     /**
@@ -313,6 +316,205 @@ namespace scratchbird::optimizer
         uint64_t heap_tuples_;
         double qual_cost_;
         double correlation_;
+    };
+
+    /**
+     * NestedLoopJoinPath - Nested loop join access path
+     *
+     * Represents decision to join two relations using nested loops.
+     *
+     * Cost calculated by:
+     *   startup = outer_startup
+     *   total = outer_total + (outer_rows * inner_total) + qual_cost
+     *   where qual_cost = outer_rows * inner_rows * selectivity * cpu_tuple_cost
+     *
+     * Example:
+     *   SELECT * FROM users u JOIN orders o ON u.id = o.user_id
+     *   → NestedLoopJoinPath (outer=users, inner=orders_idx, cost=50,100)
+     *
+     * Phase 1, Task 3.2
+     */
+    class NestedLoopJoinPath : public Path
+    {
+    public:
+        /**
+         * Constructor
+         *
+         * @param join_type Type of join (INNER, LEFT, RIGHT, FULL, CROSS)
+         * @param outer_path Outer (left) relation path
+         * @param inner_path Inner (right) relation path
+         * @param join_condition Join condition expression
+         * @param selectivity Estimated selectivity of join condition
+         * @param cost Cost estimate
+         */
+        NestedLoopJoinPath(parser::JoinType join_type,
+                          std::shared_ptr<Path> outer_path,
+                          std::shared_ptr<Path> inner_path,
+                          parser::Expression* join_condition,
+                          double selectivity,
+                          const CostEstimate& cost)
+            : Path(PathType::NESTED_LOOP_JOIN, cost),
+              join_type_(join_type),
+              outer_path_(std::move(outer_path)),
+              inner_path_(std::move(inner_path)),
+              join_condition_(join_condition),
+              selectivity_(selectivity)
+        {
+        }
+
+        /**
+         * Get join type
+         */
+        parser::JoinType joinType() const { return join_type_; }
+
+        /**
+         * Get outer path
+         */
+        const std::shared_ptr<Path>& outerPath() const { return outer_path_; }
+
+        /**
+         * Get inner path
+         */
+        const std::shared_ptr<Path>& innerPath() const { return inner_path_; }
+
+        /**
+         * Get join condition
+         */
+        parser::Expression* joinCondition() const { return join_condition_; }
+
+        /**
+         * Get join selectivity
+         */
+        double selectivity() const { return selectivity_; }
+
+        /**
+         * Convert to string for debugging
+         */
+        auto toString() const -> std::string override
+        {
+            return "NestedLoopJoinPath(cost=" + std::to_string(cost_.total_cost) +
+                   ", rows=" + std::to_string(cost_.rows) +
+                   ", selectivity=" + std::to_string(selectivity_) + ")";
+        }
+
+    private:
+        parser::JoinType join_type_;
+        std::shared_ptr<Path> outer_path_;
+        std::shared_ptr<Path> inner_path_;
+        parser::Expression* join_condition_;
+        double selectivity_;
+    };
+
+    /**
+     * HashJoinPath - Hash join access path
+     *
+     * Represents decision to join two relations using hash table.
+     *
+     * Cost calculated by:
+     *   startup = outer_total + hash_build_cost
+     *   total = startup + inner_total + hash_probe_cost
+     *
+     * Only applicable for equi-joins (join condition contains =).
+     *
+     * Example:
+     *   SELECT * FROM users u JOIN orders o ON u.id = o.user_id
+     *   → HashJoinPath (outer=users, inner=orders, cost=3,075)
+     *
+     * Phase 1, Task 3.2
+     */
+    class HashJoinPath : public Path
+    {
+    public:
+        /**
+         * Constructor
+         *
+         * @param join_type Type of join (INNER, LEFT, RIGHT, FULL)
+         * @param outer_path Outer (build side) relation path
+         * @param inner_path Inner (probe side) relation path
+         * @param join_condition Join condition expression
+         * @param hash_keys_outer Hash key expressions from outer table
+         * @param hash_keys_inner Hash key expressions from inner table
+         * @param selectivity Estimated selectivity of join condition
+         * @param cost Cost estimate
+         */
+        HashJoinPath(parser::JoinType join_type,
+                    std::shared_ptr<Path> outer_path,
+                    std::shared_ptr<Path> inner_path,
+                    parser::Expression* join_condition,
+                    const std::vector<parser::Expression*>& hash_keys_outer,
+                    const std::vector<parser::Expression*>& hash_keys_inner,
+                    double selectivity,
+                    const CostEstimate& cost)
+            : Path(PathType::HASH_JOIN, cost),
+              join_type_(join_type),
+              outer_path_(std::move(outer_path)),
+              inner_path_(std::move(inner_path)),
+              join_condition_(join_condition),
+              hash_keys_outer_(hash_keys_outer),
+              hash_keys_inner_(hash_keys_inner),
+              selectivity_(selectivity)
+        {
+        }
+
+        /**
+         * Get join type
+         */
+        parser::JoinType joinType() const { return join_type_; }
+
+        /**
+         * Get outer (build side) path
+         */
+        const std::shared_ptr<Path>& outerPath() const { return outer_path_; }
+
+        /**
+         * Get inner (probe side) path
+         */
+        const std::shared_ptr<Path>& innerPath() const { return inner_path_; }
+
+        /**
+         * Get join condition
+         */
+        parser::Expression* joinCondition() const { return join_condition_; }
+
+        /**
+         * Get hash keys from outer table
+         */
+        const std::vector<parser::Expression*>& hashKeysOuter() const
+        {
+            return hash_keys_outer_;
+        }
+
+        /**
+         * Get hash keys from inner table
+         */
+        const std::vector<parser::Expression*>& hashKeysInner() const
+        {
+            return hash_keys_inner_;
+        }
+
+        /**
+         * Get join selectivity
+         */
+        double selectivity() const { return selectivity_; }
+
+        /**
+         * Convert to string for debugging
+         */
+        auto toString() const -> std::string override
+        {
+            return "HashJoinPath(cost=" + std::to_string(cost_.total_cost) +
+                   ", rows=" + std::to_string(cost_.rows) +
+                   ", selectivity=" + std::to_string(selectivity_) + ")";
+        }
+
+    private:
+        parser::JoinType join_type_;
+        std::shared_ptr<Path> outer_path_;
+        std::shared_ptr<Path> inner_path_;
+        parser::Expression* join_condition_;
+        std::vector<parser::Expression*> hash_keys_outer_;
+        std::vector<parser::Expression*> hash_keys_inner_;
+        double selectivity_;
     };
 
 } // namespace scratchbird::optimizer

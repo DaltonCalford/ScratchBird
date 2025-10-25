@@ -160,6 +160,69 @@ namespace scratchbird::optimizer
         auto operatorCost(const std::string &op) const -> double;
 
         /**
+         * costNestedLoopJoin - Estimate cost of nested loop join
+         *
+         * Cost formula:
+         *   startup = outer_startup
+         *   run = outer_run + (outer_rows * inner_total) + qual_cost
+         *   qual_cost = outer_rows * inner_rows * selectivity * cpu_tuple_cost
+         *   total = startup + run
+         *   output_rows = outer_rows * inner_rows * selectivity
+         *
+         * For outer joins (LEFT, RIGHT, FULL), output_rows may be higher due to NULL padding.
+         *
+         * @param outer_cost Cost of scanning outer (left) relation
+         * @param inner_cost Cost of scanning inner (right) relation (per outer row)
+         * @param outer_rows Number of rows from outer relation
+         * @param inner_rows Number of rows from inner relation
+         * @param selectivity Selectivity of join condition (0.0-1.0)
+         * @param ctx Error context
+         * @return Cost estimate with startup, run, and total costs
+         *
+         * Phase 1, Task 3.2
+         */
+        auto costNestedLoopJoin(const CostEstimate& outer_cost,
+                               const CostEstimate& inner_cost,
+                               uint64_t outer_rows,
+                               uint64_t inner_rows,
+                               double selectivity,
+                               core::ErrorContext* ctx = nullptr)
+            -> CostEstimate;
+
+        /**
+         * costHashJoin - Estimate cost of hash join
+         *
+         * Cost formula:
+         *   startup = outer_total + hash_build_cost
+         *   hash_build_cost = outer_rows * cpu_tuple_cost * hash_build_factor
+         *   run = inner_total + hash_probe_cost + qual_cost
+         *   hash_probe_cost = inner_rows * cpu_tuple_cost * hash_probe_factor
+         *   qual_cost = output_rows * cpu_tuple_cost
+         *   total = startup + run
+         *   output_rows = outer_rows * inner_rows * selectivity
+         *
+         * Hash join is only applicable for equi-joins (join condition contains =).
+         * Memory usage: hash table size = outer_rows * row_width
+         *
+         * @param outer_cost Cost of scanning outer (build side) relation
+         * @param inner_cost Cost of scanning inner (probe side) relation
+         * @param outer_rows Number of rows from outer relation (build side)
+         * @param inner_rows Number of rows from inner relation (probe side)
+         * @param selectivity Selectivity of join condition (0.0-1.0)
+         * @param ctx Error context
+         * @return Cost estimate with startup, run, and total costs
+         *
+         * Phase 1, Task 3.2
+         */
+        auto costHashJoin(const CostEstimate& outer_cost,
+                         const CostEstimate& inner_cost,
+                         uint64_t outer_rows,
+                         uint64_t inner_rows,
+                         double selectivity,
+                         core::ErrorContext* ctx = nullptr)
+            -> CostEstimate;
+
+        /**
          * Get current cost parameters
          */
         const CostParameters &parameters() const { return params_; }

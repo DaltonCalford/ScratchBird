@@ -4,6 +4,7 @@
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/core/uuidv7.h"
 #include "scratchbird/optimizer/cost_model.h"
+#include "scratchbird/parser/ast.h"  // For JoinType and Expression
 #include <memory>
 #include <string>
 #include <vector>
@@ -24,8 +25,8 @@ namespace scratchbird::optimizer
     {
         SEQ_SCAN,      // Sequential table scan
         INDEX_SCAN,    // Index scan with heap fetch
-        NESTED_LOOP,   // Nested loop join (future)
-        HASH_JOIN,     // Hash join (future)
+        NESTED_LOOP_JOIN,  // Nested loop join (Phase 1, Task 3.2)
+        HASH_JOIN,     // Hash join (Phase 1, Task 3.2)
         MERGE_JOIN,    // Merge join (future)
         SORT,          // Sort operation (future)
         AGGREGATE,     // Aggregation (future)
@@ -415,6 +416,333 @@ namespace scratchbird::optimizer
         double correlation_;
         std::string index_cond_;
         std::string filter_;
+    };
+
+    /**
+     * NestedLoopJoinNode - Nested loop join plan node
+     *
+     * Joins two relations using nested loops:
+     * - For each row in outer relation (left)
+     *   - Scan inner relation (right) and check join condition
+     *   - Emit matching rows
+     *
+     * Properties:
+     * - Startup cost: outer startup cost
+     * - Total cost: outer_cost + (outer_rows * inner_cost) + qual_cost
+     * - Works for all join types (INNER, LEFT, RIGHT, FULL, CROSS)
+     * - Inner can be parameterized (index scan on join key)
+     *
+     * Example:
+     *   Nested Loop Join (cost=100.00..50,100.00 rows=100000)
+     *     Join Cond: (u.id = o.user_id)
+     *     -> SeqScan on users u (cost=0.00..100.00 rows=10000)
+     *     -> IndexScan on orders o using idx_orders_user_id (cost=0.00..5.00 rows=10)
+     *
+     * Phase 1, Task 3.2
+     */
+    class NestedLoopJoinNode : public PlanNode
+    {
+    public:
+        /**
+         * Constructor
+         *
+         * @param join_type Type of join (INNER, LEFT, RIGHT, FULL, CROSS)
+         * @param outer_plan Outer (left) side plan
+         * @param inner_plan Inner (right) side plan
+         * @param join_condition Join condition expression (ON clause, nullptr for CROSS)
+         */
+        NestedLoopJoinNode(parser::JoinType join_type,
+                          std::shared_ptr<PlanNode> outer_plan,
+                          std::shared_ptr<PlanNode> inner_plan,
+                          parser::Expression* join_condition)
+            : PlanNode(PlanNodeType::NESTED_LOOP_JOIN),
+              join_type_(join_type),
+              outer_plan_(std::move(outer_plan)),
+              inner_plan_(std::move(inner_plan)),
+              join_condition_(join_condition)
+        {
+        }
+
+        /**
+         * Get join type
+         */
+        parser::JoinType joinType() const { return join_type_; }
+
+        /**
+         * Get outer (left) plan
+         */
+        const std::shared_ptr<PlanNode>& outerPlan() const { return outer_plan_; }
+
+        /**
+         * Get inner (right) plan
+         */
+        const std::shared_ptr<PlanNode>& innerPlan() const { return inner_plan_; }
+
+        /**
+         * Get join condition
+         */
+        parser::Expression* joinCondition() const { return join_condition_; }
+
+        /**
+         * Set join condition string (for EXPLAIN)
+         */
+        void setJoinCondString(const std::string& join_cond_str)
+        {
+            join_cond_str_ = join_cond_str;
+        }
+
+        /**
+         * Get join condition string
+         */
+        const std::string& joinCondString() const { return join_cond_str_; }
+
+        /**
+         * Convert to string for EXPLAIN
+         *
+         * Format:
+         *   Nested Loop [Join Type] (cost=<startup>..<total> rows=<rows>)
+         *     Join Cond: <condition>
+         *     -> <outer plan>
+         *     -> <inner plan>
+         */
+        auto toString(int indent = 0) const -> std::string override
+        {
+            std::string result(indent * 2, ' ');
+            result += "Nested Loop ";
+
+            // Add join type
+            switch (join_type_)
+            {
+                case parser::JoinType::INNER:
+                    result += "Join";
+                    break;
+                case parser::JoinType::LEFT:
+                    result += "Left Join";
+                    break;
+                case parser::JoinType::RIGHT:
+                    result += "Right Join";
+                    break;
+                case parser::JoinType::FULL:
+                    result += "Full Outer Join";
+                    break;
+                case parser::JoinType::CROSS:
+                    result += "Cross Join";
+                    break;
+            }
+
+            result += " (cost=" + std::to_string(startup_cost_);
+            result += ".." + std::to_string(total_cost_);
+            result += " rows=" + std::to_string(rows_) + ")";
+
+            // Add join condition (if not CROSS join)
+            if (join_type_ != parser::JoinType::CROSS && !join_cond_str_.empty())
+            {
+                result += "\n";
+                result += std::string((indent + 1) * 2, ' ');
+                result += "Join Cond: " + join_cond_str_;
+            }
+
+            // Add outer plan
+            if (outer_plan_)
+            {
+                result += "\n";
+                result += std::string((indent + 1) * 2, ' ');
+                result += "-> " + outer_plan_->toString(indent + 2);
+            }
+
+            // Add inner plan
+            if (inner_plan_)
+            {
+                result += "\n";
+                result += std::string((indent + 1) * 2, ' ');
+                result += "-> " + inner_plan_->toString(indent + 2);
+            }
+
+            return result;
+        }
+
+    private:
+        parser::JoinType join_type_;
+        std::shared_ptr<PlanNode> outer_plan_;
+        std::shared_ptr<PlanNode> inner_plan_;
+        parser::Expression* join_condition_;
+        std::string join_cond_str_;  // For EXPLAIN display
+    };
+
+    /**
+     * HashJoinNode - Hash join plan node
+     *
+     * Joins two relations using hash table:
+     * - Phase 1 (Build): Build hash table from outer relation
+     * - Phase 2 (Probe): Probe hash table with inner relation rows
+     *
+     * Properties:
+     * - Startup cost: Build entire hash table (outer_cost + hash_build_cost)
+     * - Total cost: startup + probe_cost
+     * - Only works for equi-joins (join condition contains =)
+     * - Memory usage: Hash table size = outer_rows * row_width
+     * - Best for: Large tables with equi-join conditions
+     *
+     * Example:
+     *   Hash Join (cost=300.00..3,075.00 rows=100000)
+     *     Hash Cond: (u.id = o.user_id)
+     *     -> SeqScan on users u (cost=0.00..100.00 rows=10000)
+     *     -> SeqScan on orders o (cost=0.00..1000.00 rows=100000)
+     *
+     * Phase 1, Task 3.2
+     */
+    class HashJoinNode : public PlanNode
+    {
+    public:
+        /**
+         * Constructor
+         *
+         * @param join_type Type of join (INNER, LEFT, RIGHT, FULL)
+         * @param outer_plan Outer (build side) plan - usually smaller table
+         * @param inner_plan Inner (probe side) plan - usually larger table
+         * @param join_condition Join condition expression (must contain =)
+         * @param hash_keys_outer Hash key expressions from outer table
+         * @param hash_keys_inner Hash key expressions from inner table
+         */
+        HashJoinNode(parser::JoinType join_type,
+                    std::shared_ptr<PlanNode> outer_plan,
+                    std::shared_ptr<PlanNode> inner_plan,
+                    parser::Expression* join_condition,
+                    const std::vector<parser::Expression*>& hash_keys_outer,
+                    const std::vector<parser::Expression*>& hash_keys_inner)
+            : PlanNode(PlanNodeType::HASH_JOIN),
+              join_type_(join_type),
+              outer_plan_(std::move(outer_plan)),
+              inner_plan_(std::move(inner_plan)),
+              join_condition_(join_condition),
+              hash_keys_outer_(hash_keys_outer),
+              hash_keys_inner_(hash_keys_inner)
+        {
+        }
+
+        /**
+         * Get join type
+         */
+        parser::JoinType joinType() const { return join_type_; }
+
+        /**
+         * Get outer (build side) plan
+         */
+        const std::shared_ptr<PlanNode>& outerPlan() const { return outer_plan_; }
+
+        /**
+         * Get inner (probe side) plan
+         */
+        const std::shared_ptr<PlanNode>& innerPlan() const { return inner_plan_; }
+
+        /**
+         * Get join condition
+         */
+        parser::Expression* joinCondition() const { return join_condition_; }
+
+        /**
+         * Get hash keys from outer table
+         */
+        const std::vector<parser::Expression*>& hashKeysOuter() const
+        {
+            return hash_keys_outer_;
+        }
+
+        /**
+         * Get hash keys from inner table
+         */
+        const std::vector<parser::Expression*>& hashKeysInner() const
+        {
+            return hash_keys_inner_;
+        }
+
+        /**
+         * Set join condition string (for EXPLAIN)
+         */
+        void setJoinCondString(const std::string& join_cond_str)
+        {
+            join_cond_str_ = join_cond_str;
+        }
+
+        /**
+         * Get join condition string
+         */
+        const std::string& joinCondString() const { return join_cond_str_; }
+
+        /**
+         * Convert to string for EXPLAIN
+         *
+         * Format:
+         *   Hash [Join Type] (cost=<startup>..<total> rows=<rows>)
+         *     Hash Cond: <condition>
+         *     -> <outer plan>
+         *     -> <inner plan>
+         */
+        auto toString(int indent = 0) const -> std::string override
+        {
+            std::string result(indent * 2, ' ');
+            result += "Hash ";
+
+            // Add join type
+            switch (join_type_)
+            {
+                case parser::JoinType::INNER:
+                    result += "Join";
+                    break;
+                case parser::JoinType::LEFT:
+                    result += "Left Join";
+                    break;
+                case parser::JoinType::RIGHT:
+                    result += "Right Join";
+                    break;
+                case parser::JoinType::FULL:
+                    result += "Full Outer Join";
+                    break;
+                case parser::JoinType::CROSS:
+                    // Hash join not applicable for CROSS join
+                    result += "Join (ERROR: CROSS join not applicable)";
+                    break;
+            }
+
+            result += " (cost=" + std::to_string(startup_cost_);
+            result += ".." + std::to_string(total_cost_);
+            result += " rows=" + std::to_string(rows_) + ")";
+
+            // Add hash condition
+            if (!join_cond_str_.empty())
+            {
+                result += "\n";
+                result += std::string((indent + 1) * 2, ' ');
+                result += "Hash Cond: " + join_cond_str_;
+            }
+
+            // Add outer plan (build side)
+            if (outer_plan_)
+            {
+                result += "\n";
+                result += std::string((indent + 1) * 2, ' ');
+                result += "-> " + outer_plan_->toString(indent + 2);
+            }
+
+            // Add inner plan (probe side)
+            if (inner_plan_)
+            {
+                result += "\n";
+                result += std::string((indent + 1) * 2, ' ');
+                result += "-> " + inner_plan_->toString(indent + 2);
+            }
+
+            return result;
+        }
+
+    private:
+        parser::JoinType join_type_;
+        std::shared_ptr<PlanNode> outer_plan_;
+        std::shared_ptr<PlanNode> inner_plan_;
+        parser::Expression* join_condition_;
+        std::vector<parser::Expression*> hash_keys_outer_;
+        std::vector<parser::Expression*> hash_keys_inner_;
+        std::string join_cond_str_;  // For EXPLAIN display
     };
 
 } // namespace scratchbird::optimizer
