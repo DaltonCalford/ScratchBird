@@ -75,8 +75,11 @@ namespace scratchbird
             void visit(AlterTablespaceStmt *node) override;         // Phase 2 Task 2.2
             void visit(AlterTableSetTablespaceStmt *node) override; // Phase 4 Task 4.1.1
             void visit(DropTablespaceStmt *node) override;          // Phase 2 Task 2.1
+            void visit(AttachTablespaceStmt *node) override;        // Phase 6 Task 6.1
+            void visit(DetachTablespaceStmt *node) override;        // Phase 6 Task 6.2
             void visit(InsertStmt *node) override;
             void visit(SelectStmt *node) override;
+            void visit(AnalyzeStmt *node) override;                 // Phase 1 Task 1.1.2
             void visit(StartTransactionStmt *node) override; // Phase 2 Task 2.6
             void visit(SetTransactionStmt *node) override;   // Phase 3 Task 3.6
             void visit(CommitStmt *node) override;           // Phase 2 Task 2.6

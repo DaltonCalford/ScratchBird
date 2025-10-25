@@ -143,6 +143,11 @@ namespace scratchbird
             visitor->visit(this);
         }
 
+        void AnalyzeStmt::accept(ASTVisitor *visitor)
+        {
+            visitor->visit(this);
+        }
+
         void StartTransactionStmt::accept(ASTVisitor *visitor)
         {
             visitor->visit(this);
@@ -318,6 +323,22 @@ namespace scratchbird
             {
                 out_ << " WHERE ";
                 node->whereClause()->accept(this);
+            }
+        }
+
+        void ASTPrinter::visit(AnalyzeStmt *node)
+        {
+            printIndent();
+            out_ << "ANALYZE " << pool_.get(node->tableName());
+
+            if (!node->analyzeAllColumns())
+            {
+                out_ << " COLUMN " << pool_.get(node->columnName());
+            }
+
+            if (node->sampleRate() > 0.0f)
+            {
+                out_ << " SAMPLE " << node->sampleRate();
             }
         }
 

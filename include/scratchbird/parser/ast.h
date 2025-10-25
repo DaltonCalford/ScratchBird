@@ -39,6 +39,7 @@ namespace scratchbird
             DETACH_TABLESPACE,         // Phase 6 Task 6.2
             INSERT,
             SELECT,
+            ANALYZE,           // Phase 1 Task 1.1.2: Statistics collection
             START_TRANSACTION, // Phase 2 Task 2.6
             SET_TRANSACTION,   // Phase 3 Task 3.6
             COMMIT,            // Phase 2 Task 2.6
@@ -573,6 +574,44 @@ namespace scratchbird
             Expression *where_clause_;
         };
 
+        // ANALYZE statement (Phase 1 Task 1.1.2: Statistics collection)
+        class AnalyzeStmt : public Statement
+        {
+        public:
+            // ANALYZE table_name [COLUMN column_name] [SAMPLE sample_rate]
+            AnalyzeStmt(const SourceSpan &span, StringPool::StringId table_name,
+                        StringPool::StringId column_name = 0,
+                        float sample_rate = 0.0f)
+                : Statement(ASTKind::ANALYZE, span), table_name_(table_name),
+                  column_name_(column_name), sample_rate_(sample_rate)
+            {
+            }
+
+            StringPool::StringId tableName() const
+            {
+                return table_name_;
+            }
+            StringPool::StringId columnName() const
+            {
+                return column_name_;
+            }
+            float sampleRate() const
+            {
+                return sample_rate_;
+            }
+            bool analyzeAllColumns() const
+            {
+                return column_name_ == 0;
+            }
+
+            void accept(ASTVisitor *visitor) override;
+
+        private:
+            StringPool::StringId table_name_;  // Table to analyze
+            StringPool::StringId column_name_; // Specific column (or INVALID for all columns)
+            float sample_rate_;                // Sample rate (0.0 = auto, 0.0-1.0 = explicit)
+        };
+
         // Transaction mode flags (Phase 2 Task 2.6)
         enum class TransactionMode : uint8_t
         {
@@ -970,6 +1009,7 @@ namespace scratchbird
             virtual void visit(DetachTablespaceStmt *node) = 0;        // Phase 6 Task 6.2
             virtual void visit(InsertStmt *node) = 0;
             virtual void visit(SelectStmt *node) = 0;
+            virtual void visit(AnalyzeStmt *node) = 0;          // Phase 1 Task 1.1.2
             virtual void visit(StartTransactionStmt *node) = 0; // Phase 2 Task 2.6
             virtual void visit(SetTransactionStmt *node) = 0;   // Phase 3 Task 3.6
             virtual void visit(CommitStmt *node) = 0;           // Phase 2 Task 2.6
@@ -1003,6 +1043,7 @@ namespace scratchbird
             void visit(DetachTablespaceStmt *node) override; // Phase 6 Task 6.2
             void visit(InsertStmt *node) override;
             void visit(SelectStmt *node) override;
+            void visit(AnalyzeStmt *node) override;          // Phase 1 Task 1.1.2
             void visit(StartTransactionStmt *node) override; // Phase 2 Task 2.6
             void visit(SetTransactionStmt *node) override;   // Phase 3 Task 3.6
             void visit(CommitStmt *node) override;           // Phase 2 Task 2.6

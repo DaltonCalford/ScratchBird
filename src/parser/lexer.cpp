@@ -31,6 +31,9 @@ namespace scratchbird
             {"WHERE", TokenType::KW_WHERE},
             {"NULL", TokenType::KW_NULL},
             {"NOT", TokenType::KW_NOT},
+            {"ANALYZE", TokenType::KW_ANALYZE},  // Phase 1 Task 1.1.2
+            {"COLUMN", TokenType::KW_COLUMN},    // Phase 1 Task 1.1.2
+            {"SAMPLE", TokenType::KW_SAMPLE},    // Phase 1 Task 1.1.2
 
             // Numeric types
             {"INT", TokenType::KW_INT},
