@@ -2,9 +2,15 @@
 
 #include "scratchbird/parser/ast.h"
 #include "scratchbird/sblr/opcodes.h"
+#include "scratchbird/optimizer/plan_node.h"
 #include <vector>
 #include <memory>
 #include <cstring>
+
+// Forward declaration
+namespace scratchbird::core {
+    class Database;
+}
 
 namespace scratchbird
 {
@@ -90,11 +96,16 @@ namespace scratchbird
         class BytecodeGenerator : public parser::ASTVisitor
         {
         public:
-            BytecodeGenerator(const parser::StringPool &string_pool);
+            BytecodeGenerator(const parser::StringPool &string_pool,
+                            core::Database *database = nullptr);
             ~BytecodeGenerator();
 
             // Generate bytecode for a statement
             BytecodeResult generate(parser::Statement *stmt);
+
+            // NEW: Generate bytecode from optimized PlanNode (Phase 1, Task 1.3)
+            BytecodeResult generateFromPlan(std::shared_ptr<optimizer::PlanNode> plan,
+                                           parser::SelectStmt *original_stmt);
 
             // ASTVisitor interface
             void visit(parser::CreateTableStmt *node) override;
@@ -107,6 +118,7 @@ namespace scratchbird
             void visit(parser::DetachTablespaceStmt *node) override;        // Phase 6 Task 6.2
             void visit(parser::InsertStmt *node) override;
             void visit(parser::SelectStmt *node) override;
+            void visit(parser::AnalyzeStmt *node) override;          // Phase 1 Task 1.1.2
             void visit(parser::StartTransactionStmt *node) override; // Phase 2 Task 2.6
             void visit(parser::SetTransactionStmt *node) override;   // Phase 3 Task 3.6
             void visit(parser::CommitStmt *node) override;           // Phase 2 Task 2.6
@@ -122,6 +134,7 @@ namespace scratchbird
         private:
             const parser::StringPool &string_pool_;
             BytecodeResult *current_result_;
+            core::Database *database_;  // NEW: For accessing query planner
 
             // Helper to write string from string pool
             void writeStringId(parser::StringPool::StringId id);
@@ -131,6 +144,15 @@ namespace scratchbird
 
             // Helper to generate expression bytecode
             void generateExpression(parser::Expression *expr);
+
+            // NEW: Plan node bytecode generation (Phase 1, Task 1.3)
+            void generateSeqScanPlan(scratchbird::optimizer::SeqScanNode *node,
+                                    parser::SelectStmt *stmt);
+            void generateIndexScanPlan(scratchbird::optimizer::IndexScanNode *node,
+                                      parser::SelectStmt *stmt);
+
+            // NEW: Direct SELECT generation (fallback when planner unavailable)
+            void generateDirectSelect(parser::SelectStmt *node);
         };
 
         // Debug helper - disassemble bytecode to readable format
