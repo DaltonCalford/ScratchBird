@@ -7,24 +7,29 @@
 
 ## Executive Summary
 
-**Status**: ✅ **SUBSTANTIALLY COMPLETE (90-95%)**
+**Status**: ⚠️ **PARTIAL COMPLETION (60-65%)** - CORRECTED from "90-95%"
 
-ScratchBird implements **29 unique base data types** covering all major categories. Comparison against the 4 target databases shows excellent coverage with strategic additions:
+**CRITICAL CORRECTION**: Previous assessment incorrectly marked specialized types as "optional" based on engineering judgment. The **market requirement** is **1:1 feature parity** with all 4 target databases.
 
-- **Core SQL Types**: 100% coverage (integers, decimals, floats, strings, binary, date/time, boolean)
-- **Modern Types**: 100% coverage (UUID, JSON, JSONB, XML, VECTOR)
-- **Advanced Types**: Partial (ARRAY, COMPOSITE defined but may need runtime implementation verification)
-- **Unique to ScratchBird**: UINT8, UINT16, UINT32, UINT64, INT128 (extended precision)
+ScratchBird implements **29 unique base data types** covering core SQL. Comparison against the 4 target databases shows:
 
-**Missing Types** (optional for Alpha):
-- Spatial/Geometric types (MySQL POINT/POLYGON, PostgreSQL geometric types, MSSQL geography/geometry)
-- Network address types (PostgreSQL inet, cidr, macaddr)
-- Text search types (PostgreSQL tsvector, tsquery)
-- Legacy types (MSSQL image/text/ntext - deprecated)
-- MySQL ENUM/SET (can be emulated with DOMAINs)
-- MySQL MEDIUMINT (covered by INT32)
-- MySQL YEAR (covered by DATE/INT16)
-- MSSQL smallmoney (covered by MONEY)
+- **Core SQL Types**: ✅ 100% coverage (integers, decimals, floats, strings, binary, date/time, boolean)
+- **Modern Types**: ✅ 100% coverage (UUID, JSON, JSONB, XML, VECTOR)
+- **Advanced Types**: ⚠️ Partial (ARRAY, COMPOSITE defined but may need runtime verification)
+- **Unique to ScratchBird**: ✅ UINT8, UINT16, UINT32, UINT64, INT128 (extended precision)
+
+**MISSING Types** ❌ (REQUIRED for 1:1 parity - NOT optional):
+- **Spatial/Geometric types** (MySQL, PostgreSQL, SQL Server) - ~200-300 hours - 🔴 CRITICAL
+- **Network address types** (PostgreSQL inet, cidr, macaddr) - ~40-60 hours - 🟡 MEDIUM
+- **Text search types** (PostgreSQL tsvector, tsquery) - ~80-120 hours - 🔴 HIGH
+- **Range types** (PostgreSQL int4range, tsrange, daterange) - ~100-150 hours - 🟡 MEDIUM
+- **Bit string types** (PostgreSQL bit(n), MySQL BIT) - ~30-50 hours - 🟢 LOW
+- **DECFLOAT** (Firebird 4.0+ DECFLOAT(16/34)) - ~40-60 hours - 🟢 LOW
+- **ENUM/SET native syntax** (MySQL - can internally use DOMAINs) - ~20-30 hours - 🟡 MEDIUM
+
+**Total Missing Work**: **510-770 hours** (~3-5 months with 1 developer)
+
+**Impact**: GIS applications, network/DevOps tools, full-text search, temporal databases, and Firebird 4.0+ migrations **cannot use ScratchBird** without these types.
 
 ---
 
@@ -532,13 +537,15 @@ ScratchBird implements **29 unique base data types** covering all major categori
 
 **Goal**: "Data Type Completeness (all types from FB/MySQL/PG/MSSQL)"
 
-**Interpretation**:
+**CORRECTED Interpretation (1:1 Feature Parity for Market Competitiveness)**:
 - ✅ All **core SQL types** from 4 databases (integers, floats, decimals, strings, binary, date/time, boolean)
 - ✅ All **modern types** from 4 databases (UUID, JSON, XML, VECTOR)
-- ⚠️ **Specialized types** optional (spatial, network, text search, legacy)
+- ❌ **Specialized types REQUIRED** (spatial, network, text search, range types) - NOT optional
 - ✅ **Type conversion** between all types
 - ✅ **Type validation** and constraint enforcement
 - ✅ **Serialization** for storage
+
+**CRITICAL CORRECTION**: Previous assessment incorrectly marked specialized types as "optional" or "out of scope" based on engineering judgment. The **market requirement** is 1:1 feature parity - if a type exists in ANY of the 4 target databases, users will expect it in ScratchBird.
 
 ### 6.2 Coverage Summary
 
@@ -546,81 +553,175 @@ ScratchBird implements **29 unique base data types** covering all major categori
 |----------|---------------------|----------------------|---------------------------|------------------|
 | Firebird | 19/21 (90%) | N/A (no modern types) | 0/2 (DECFLOAT) | 90% |
 | MySQL | 24/29 (83%) | 1/1 (JSON) | 0/10 (spatial, BIT, ENUM/SET, YEAR) | 83% |
-| PostgreSQL | 26/34 (76%) | 5/5 (JSON, JSONB, UUID, XML, array) | 0/12 (geometric, network, text search, range) | 76% |
+| PostgreSQL | 26/34 (76%) | 5/5 (JSON, JSONB, UUID, XML, array) | **0/12 (geometric, network, text search, range)** | **76%** |
 | MS SQL Server | 27/33 (82%) | 4/4 (UUID, JSON, XML, vector) | 0/4 (geography, geometry, hierarchyid, table) | 82% |
 
-**Weighted Average**: **83% coverage** (weighted by core vs specialized)
+**Previous Assessment**: 83% coverage (core + modern types)
+**Corrected Assessment (1:1 Parity)**: **60-65% coverage** (including ALL specialized types)
 
-**Core Types Only**: **100% coverage** (all core SQL types from all 4 databases)
+### 6.3 Alpha Priority 1 Status - CORRECTED
 
-### 6.3 Alpha Priority 1 Status
+**Status**: ⚠️ **PARTIAL COMPLETION (60-65%)** - NOT 90-95%
 
-**Status**: ✅ **COMPLETE (90-95%)**
-
-**Justification**:
-1. ✅ **All core SQL types implemented**: Integers (9 types), floats (2 types), decimals (2 types), strings (3 types), binary (4 types), date/time (4 types), boolean (1 type)
-2. ✅ **All modern types implemented**: UUID, JSON, JSONB, XML, VECTOR, ARRAY, COMPOSITE
+**What's Implemented** ✅:
+1. ✅ **All core SQL types**: Integers (9 types), floats (2 types), decimals (2 types), strings (3 types), binary (4 types), date/time (4 types), boolean (1 type)
+2. ✅ **All modern types**: UUID, JSON, JSONB, XML, VECTOR, ARRAY, COMPOSITE
 3. ✅ **Extended beyond targets**: INT128, UINT8/16/32/64 (unique to ScratchBird)
 4. ✅ **Type system infrastructure**: TypedValue, TypeSystem, TypeConverter, TypeExtractor all fully implemented
 5. ✅ **Type conversions**: String ↔ all types, numeric ↔ numeric, UUID ↔ binary, JSON ↔ string
 6. ✅ **Type serialization**: All types can be stored and retrieved
-7. ⚠️ **Specialized types intentionally excluded**: Spatial, network, text search, range types (not in Alpha scope)
 
-**Remaining work for 100%**:
-- None for Alpha scope
-- Future: Spatial types (if GIS use case emerges)
-- Future: Range types (if PostgreSQL compatibility required)
-- Future: Text search types (integrated with full-text indexing)
+**What's MISSING** ❌ (REQUIRED for 1:1 Parity):
 
----
+1. ❌ **Spatial/Geometric Types** (CRITICAL - ~200-300 hours)
+   - MySQL: GEOMETRY, POINT, LINESTRING, POLYGON, MULTIPOINT, MULTILINESTRING, MULTIPOLYGON, GEOMETRYCOLLECTION
+   - PostgreSQL: point, line, lseg, box, path, polygon, circle
+   - SQL Server: geometry, geography
+   - **Impact**: GIS/mapping applications cannot use ScratchBird
 
-## 7. Recommendations
+2. ❌ **Network Address Types** (~40-60 hours)
+   - PostgreSQL: inet, cidr, macaddr, macaddr8
+   - **Impact**: Network/DevOps applications cannot migrate from PostgreSQL
 
-### 7.1 Immediate Actions (This Week)
+3. ❌ **Text Search Types** (~80-120 hours)
+   - PostgreSQL: tsvector, tsquery
+   - **Impact**: Full-text search applications cannot use ScratchBird
 
-1. ✅ **NONE** - Type system is complete for Alpha
+4. ❌ **Range Types** (~100-150 hours)
+   - PostgreSQL: int4range, int8range, numrange, tsrange, tstzrange, daterange
+   - **Impact**: Temporal/booking/scheduling applications cannot migrate from PostgreSQL
 
-### 7.2 Short-Term Actions (Next 2-4 Weeks)
+5. ❌ **Bit String Types** (~30-50 hours)
+   - PostgreSQL: bit(n), bit varying(n)
+   - MySQL: BIT(n)
+   - **Impact**: Flag storage and bitmask applications
 
-2. ✅ **Verify ARRAY/COMPOSITE runtime**: Ensure array and composite types work end-to-end (not just type definitions)
-   - Check SBLR opcodes for ARRAY/COMPOSITE operations
-   - Verify storage/retrieval in heap pages
-   - Test serialization/deserialization
+6. ❌ **DECFLOAT** (~40-60 hours)
+   - Firebird 4.0+: DECFLOAT(16), DECFLOAT(34)
+   - **Impact**: Firebird 4.0+ users cannot migrate
 
-3. ✅ **Document type aliases**: Ensure parser recognizes all aliases (SMALLINT → INT16, BIGINT → INT64, etc.)
-   - Check `/src/parser/parser.cpp` for alias handling
-   - Verify parseTypeName() in TypeSystem (types.cpp:597-664)
+7. ⚠️ **ENUM/SET Native Syntax** (~20-30 hours)
+   - MySQL: ENUM, SET
+   - **Impact**: MySQL migrations require manual DOMAIN conversion
 
-4. ✅ **Test type conversions**: Comprehensive test suite for all type conversions
-   - Numeric overflow detection
-   - String parsing edge cases
-   - Implicit vs explicit conversions
+**Total Missing Type Work**: **510-770 hours**
 
-### 7.3 Long-Term Actions (Post-Alpha)
-
-5. ⚠️ **Spatial types extension**: If GIS use case emerges
-   - Evaluate PostGIS model for PostgreSQL compatibility
-   - Consider external library integration (GEOS, GDAL)
-
-6. ⚠️ **Range types extension**: If PostgreSQL compatibility required
-   - Implement int4range, int8range, numrange, tsrange, tstzrange, daterange
-   - Add range operators (overlaps, contains, union, intersection)
-
-7. ⚠️ **Text search types**: Integrate with full-text indexing (Priority 2)
-   - tsvector, tsquery types
-   - Text search operators (@@ contains, @@ matches)
-
-8. ⚠️ **DECFLOAT**: If Firebird 4.0+ compatibility required
-   - IEEE 754 decimal floating-point (16-digit, 34-digit)
-   - Requires separate arithmetic library
+**Remaining work for 100% (1:1 Parity)**:
+- Spatial/geometric types + functions: 200-300 hours
+- Network address types + operators: 40-60 hours
+- Text search types + operators: 80-120 hours
+- Range types + operators: 100-150 hours
+- Bit string types + operators: 30-50 hours
+- DECFLOAT + functions: 40-60 hours
+- ENUM/SET native syntax: 20-30 hours
 
 ---
 
-## 8. Conclusion
+## 7. Recommendations - CORRECTED for 1:1 Parity
 
-**Priority 1 (Data Type Completeness): ✅ COMPLETE (90-95%)**
+### 7.1 Immediate Actions (Next 1-2 Sprints) - CRITICAL
 
-ScratchBird's type system is **substantially complete** for Alpha release. All core SQL types from Firebird, MySQL, PostgreSQL, and MS SQL Server are implemented, with strategic extensions (INT128, unsigned integers) and modern features (UUID, JSON, JSONB, XML, VECTOR).
+**PRIORITY 1: Spatial/Geometric Types** (~200-300 hours)
+1. ❌ **Implement core spatial types**:
+   - POINT, LINESTRING, POLYGON (MySQL/PostgreSQL/SQL Server compatible)
+   - Internal storage format (WKB - Well-Known Binary)
+   - WKT (Well-Known Text) input/output
+   - **Rationale**: GIS/mapping is mainstream, not niche
+
+2. ❌ **Implement spatial functions** (subset):
+   - ST_Distance, ST_Contains, ST_Intersects, ST_Within (most common)
+   - ST_AsText, ST_AsBinary (conversion)
+   - **Rationale**: Spatial types are useless without spatial functions
+
+**PRIORITY 2: Text Search Types** (~80-120 hours)
+3. ❌ **Implement tsvector/tsquery types**:
+   - tsvector storage format (lexeme + positions)
+   - tsquery query syntax
+   - @@ operator (matches)
+   - to_tsvector, to_tsquery functions
+   - **Rationale**: PostgreSQL full-text search is a killer feature
+
+### 7.2 Short-Term Actions (Next 2-4 Months)
+
+**PRIORITY 3: Range Types** (~100-150 hours)
+4. ❌ **Implement range types**:
+   - int4range, int8range, numrange
+   - tsrange, tstzrange, daterange
+   - Range operators (&&, @>, <@, <<, >>)
+   - Range functions (lower, upper, isempty)
+   - **Rationale**: Temporal databases, booking systems depend on ranges
+
+**PRIORITY 4: Network Address Types** (~40-60 hours)
+5. ❌ **Implement network types**:
+   - inet (IPv4/IPv6 with optional netmask)
+   - cidr (IPv4/IPv6 networks)
+   - macaddr/macaddr8 (MAC addresses)
+   - Network operators (<<, >>, &&, ~, &, |)
+   - **Rationale**: Network/DevOps applications use PostgreSQL for these
+
+**PRIORITY 5: Bit String Types** (~30-50 hours)
+6. ❌ **Implement bit string types**:
+   - BIT(n) fixed-length
+   - BIT VARYING(n) variable-length
+   - Bit operators (|, &, #, ~, <<, >>)
+   - **Rationale**: Flag storage, bitmask operations
+
+### 7.3 Medium-Term Actions (Next 6-12 Months)
+
+**PRIORITY 6: DECFLOAT** (~40-60 hours)
+7. ❌ **Implement DECFLOAT for Firebird 4.0+ compatibility**:
+   - DECFLOAT(16) - 64-bit decimal float
+   - DECFLOAT(34) - 128-bit decimal float
+   - IEEE 754 decimal arithmetic
+   - **Rationale**: Firebird 4.0+ users cannot migrate without this
+
+**PRIORITY 7: ENUM/SET Native Syntax** (~20-30 hours)
+8. ⚠️ **Add native ENUM/SET syntax for MySQL compatibility**:
+   - Parser support for ENUM('val1', 'val2') syntax
+   - Parser support for SET('val1', 'val2') syntax
+   - Internal mapping to DOMAIN system (OK)
+   - **Rationale**: MySQL users expect native syntax
+
+### 7.4 Infrastructure Actions (Ongoing)
+
+9. ✅ **Verify ARRAY/COMPOSITE runtime**: Ensure array and composite types work end-to-end
+10. ✅ **Document type aliases**: Ensure parser recognizes all aliases
+11. ✅ **Test type conversions**: Comprehensive test suite
+
+---
+
+## 8. Conclusion - CORRECTED
+
+**Priority 1 (Data Type Completeness): ⚠️ PARTIAL (60-65%)** - NOT 90-95%
+
+**CRITICAL CORRECTION**: The original assessment of "90-95% complete" was based on **engineering judgment** that incorrectly marked specialized types as "optional." The **market requirement** for ScratchBird is **1:1 feature parity** with all 4 target databases.
+
+**What's Implemented** ✅ (60-65%):
+- All core SQL types (29 base types)
+- All modern types (UUID, JSON, JSONB, XML, VECTOR, ARRAY, COMPOSITE)
+- Type system infrastructure (TypedValue, TypeConverter, TypeExtractor, serialization)
+- Extended types (INT128, UINT8/16/32/64)
+
+**What's MISSING** ❌ (35-40% of full parity):
+1. **Spatial/Geometric types** - MySQL, PostgreSQL, SQL Server (~200-300 hours)
+2. **Network address types** - PostgreSQL (~40-60 hours)
+3. **Text search types** - PostgreSQL (~80-120 hours)
+4. **Range types** - PostgreSQL (~100-150 hours)
+5. **Bit string types** - PostgreSQL, MySQL (~30-50 hours)
+6. **DECFLOAT** - Firebird 4.0+ (~40-60 hours)
+7. **ENUM/SET native syntax** - MySQL (~20-30 hours)
+
+**Total Missing Work**: **510-770 hours** (~3-5 months with 1 developer, ~1.5-2.5 months with 2 developers)
+
+**Impact of Missing Types**:
+- **GIS/Mapping applications**: Cannot use ScratchBird (spatial types missing)
+- **Network/DevOps applications**: Cannot migrate from PostgreSQL (network types missing)
+- **Full-text search applications**: Cannot use PostgreSQL-style text search
+- **Temporal/booking systems**: Cannot use range types for date/time ranges
+- **Firebird 4.0+ migrations**: Cannot migrate (DECFLOAT missing)
+- **MySQL migrations**: Require manual ENUM/SET to DOMAIN conversion
+
+**Recommendation**: Implement spatial types and text search types as **CRITICAL priorities** for market competitiveness. These are not optional features - they are required for users to choose ScratchBird over existing databases.
 
 **Strengths**:
 - ✅ Comprehensive coverage of all core SQL types (100%)
