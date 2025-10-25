@@ -539,6 +539,53 @@ namespace scratchbird
             (void)node; // Suppress unused parameter warning
         }
 
+        void BytecodeGenerator::visit(parser::ExplainStmt *node)
+        {
+            // Generate EXPLAIN bytecode (Phase 1 Task 1.5)
+            // EXPLAIN shows the query plan without executing the query
+
+            // Check if database available for planning
+            if (!database_ || !database_->query_planner())
+            {
+                current_result_->addError("EXPLAIN requires database with query planner");
+                return;
+            }
+
+            // Only SELECT supported in Phase 1.5
+            auto *select_stmt = dynamic_cast<parser::SelectStmt*>(node->query());
+            if (!select_stmt)
+            {
+                current_result_->addError("EXPLAIN only supports SELECT statements");
+                return;
+            }
+
+            // Generate query plan
+            core::ErrorContext ctx;
+            auto plan = database_->query_planner()->planQuery(select_stmt, &ctx);
+
+            if (!plan)
+            {
+                std::string error = "Query planning failed";
+                if (!ctx.message.empty())
+                {
+                    error += ": " + ctx.message;
+                }
+                current_result_->addError(error);
+                return;
+            }
+
+            // Format plan as EXPLAIN text using PlanNode::toString()
+            std::string explain_output = "                        QUERY PLAN\n";
+            explain_output += "--------------------------------------------------------\n";
+            explain_output += plan->toString(0);
+
+            // Write EXPLAIN output to bytecode
+            current_result_->writeOpcode(Opcode::EXPLAIN_PLAN);
+            current_result_->writeString(explain_output);
+
+            DEBUG_LOG_DB("Generated EXPLAIN output for query");
+        }
+
         // ===== Expression Visitors =====
 
         void BytecodeGenerator::visit(parser::LiteralExpr *node)

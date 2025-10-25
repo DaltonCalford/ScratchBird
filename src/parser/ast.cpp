@@ -347,6 +347,19 @@ namespace scratchbird
             }
         }
 
+        void ASTPrinter::visit(ExplainStmt *node)
+        {
+            // Phase 1 Task 1.5: EXPLAIN command
+            printIndent();
+            out_ << "EXPLAIN ";
+
+            // Print the nested query
+            if (node->query())
+            {
+                node->query()->accept(this);
+            }
+        }
+
         void ASTPrinter::visit(StartTransactionStmt *node)
         {
             printIndent();
