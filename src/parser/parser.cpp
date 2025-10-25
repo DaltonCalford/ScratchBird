@@ -79,6 +79,7 @@ namespace scratchbird
                     case TokenType::KW_INSERT:
                     case TokenType::KW_SELECT:
                     case TokenType::KW_ANALYZE:  // Phase 1 Task 1.1.2
+                    case TokenType::KW_EXPLAIN:  // Phase 1 Task 1.5
                     case TokenType::KW_START:
                     case TokenType::KW_SET:
                     case TokenType::KW_COMMIT:
@@ -145,6 +146,10 @@ namespace scratchbird
                 else if (match(TokenType::KW_ANALYZE))  // Phase 1 Task 1.1.2
                 {
                     stmt = parseAnalyze();
+                }
+                else if (match(TokenType::KW_EXPLAIN))  // Phase 1 Task 1.5
+                {
+                    stmt = parseExplain();
                 }
                 else if (match(TokenType::KW_START))
                 {
@@ -888,6 +893,37 @@ namespace scratchbird
 
             auto span = makeSpan(start_loc);
             return arena_.make<AnalyzeStmt>(span, table_name, column_name, sample_rate);
+        }
+
+        Statement *Parser::parseExplain()
+        {
+            // EXPLAIN SELECT ...
+            // Phase 1 Task 1.5: EXPLAIN command
+            auto start_loc = previous().location;
+
+            // Parse the statement to explain
+            // For Phase 1.5, only SELECT is supported
+            auto query_result = parseStatement();
+
+            if (!query_result.success() || !query_result.statement())
+            {
+                error("Expected statement after EXPLAIN");
+                synchronize();
+                return nullptr;
+            }
+
+            Statement *query_stmt = query_result.statement();
+
+            // Verify it's a SELECT statement (Phase 1.5 limitation)
+            if (query_stmt->kind() != ASTKind::SELECT)
+            {
+                error("EXPLAIN currently only supports SELECT statements");
+                synchronize();
+                return nullptr;
+            }
+
+            auto span = makeSpan(start_loc);
+            return arena_.make<ExplainStmt>(span, query_stmt);
         }
 
         Statement *Parser::parseStartTransaction()
