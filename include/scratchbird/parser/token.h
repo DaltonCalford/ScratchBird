@@ -68,6 +68,17 @@ namespace scratchbird
             KW_COLUMN,   // Phase 1 Task 1.1.2: ANALYZE ... COLUMN ...
             KW_SAMPLE,   // Phase 1 Task 1.1.2: ANALYZE ... SAMPLE ...
 
+            // JOIN keywords (Phase 1 Task 3.1)
+            KW_JOIN,
+            KW_INNER,
+            KW_LEFT,
+            KW_RIGHT,
+            KW_FULL,
+            KW_OUTER,
+            KW_CROSS,
+            KW_NATURAL,
+            KW_USING,
+
             // Numeric types
             KW_INT,
             KW_INTEGER,

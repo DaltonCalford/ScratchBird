@@ -389,7 +389,72 @@ namespace scratchbird
                 first = false;
             }
 
-            out_ << " FROM " << pool_.get(node->tableName());
+            // Print FROM clause with JOINs (Phase 1 Task 3.1)
+            out_ << " FROM " << pool_.get(node->fromClause().base_table.table_name);
+            if (node->fromClause().base_table.alias != 0)
+            {
+                out_ << " AS " << pool_.get(node->fromClause().base_table.alias);
+            }
+
+            // Print JOIN clauses
+            for (const auto &join : node->fromClause().joins)
+            {
+                // Print join type
+                if (join.natural)
+                    out_ << " NATURAL";
+
+                switch (join.join_type)
+                {
+                    case JoinType::INNER:
+                        out_ << " INNER JOIN";
+                        break;
+                    case JoinType::LEFT:
+                        out_ << " LEFT OUTER JOIN";
+                        break;
+                    case JoinType::RIGHT:
+                        out_ << " RIGHT OUTER JOIN";
+                        break;
+                    case JoinType::FULL:
+                        out_ << " FULL OUTER JOIN";
+                        break;
+                    case JoinType::CROSS:
+                        out_ << " CROSS JOIN";
+                        break;
+                }
+
+                // Print right table
+                out_ << " " << pool_.get(join.right_table.table_name);
+                if (join.right_table.alias != 0)
+                {
+                    out_ << " AS " << pool_.get(join.right_table.alias);
+                }
+
+                // Print join condition
+                switch (join.condition_type)
+                {
+                    case JoinConditionType::ON:
+                        out_ << " ON ";
+                        if (join.on_condition)
+                            join.on_condition->accept(this);
+                        break;
+                    case JoinConditionType::USING:
+                        out_ << " USING (";
+                        first = true;
+                        for (auto col_id : join.using_columns)
+                        {
+                            if (!first)
+                                out_ << ", ";
+                            out_ << pool_.get(col_id);
+                            first = false;
+                        }
+                        out_ << ")";
+                        break;
+                    case JoinConditionType::NATURAL:
+                    case JoinConditionType::CROSS:
+                        // No condition to print
+                        break;
+                }
+            }
 
             if (node->whereClause())
             {

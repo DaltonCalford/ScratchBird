@@ -127,6 +127,11 @@ namespace scratchbird
             ColumnDef *parseColumnDef();
             TypeName parseTypeName();
 
+            // JOIN helpers (Phase 1 Task 3.1)
+            FromClause parseFromClause();
+            TableRef parseTableRef();
+            JoinClause parseJoinClause(const TableRef &left_table);
+
             // Expression parsers
             Expression *parseExpression();
             Expression *parseComparison();

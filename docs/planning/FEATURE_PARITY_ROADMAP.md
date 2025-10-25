@@ -131,34 +131,53 @@ Without these features, ScratchBird **cannot be used** for even simple applicati
 
 ---
 
-#### 3. JOIN Support (40-60 hours) - CRITICAL
+#### 3. JOIN Support (40-60 hours) - CRITICAL ⚠️ PARTIAL
 **Why Third**: Most queries need multi-table joins.
+**Status**: Started October 25, 2025 → **~40% complete** (parser infrastructure done, needs qualified names + planner + executor)
 
-- [ ] **3.1 Parser Support** (15-25 hours)
-  - [ ] Add JOIN clause parsing (INNER JOIN, LEFT JOIN, RIGHT JOIN, FULL OUTER JOIN)
-  - [ ] Add CROSS JOIN parsing
-  - [ ] Add JOIN ... ON condition parsing
-  - [ ] Add JOIN ... USING (columns) parsing
-  - [ ] Add NATURAL JOIN parsing (optional)
-  - [ ] Implement JOIN AST nodes
-  - **Deliverable**: Parser recognizes all JOIN syntax
+- [x] **3.1 Parser Support** (15-25 hours) ✅ ~70% COMPLETE
+  - [x] Add JOIN keywords to lexer (JOIN, INNER, LEFT, RIGHT, FULL, OUTER, CROSS, NATURAL, USING) ✅ Done Oct 25
+  - [x] Create JOIN AST structures (JoinType, JoinConditionType, TableRef, JoinClause, FromClause) ✅ Done Oct 25
+  - [x] Update SelectStmt to support FROM clause with multiple tables ✅ Done Oct 25
+  - [x] Add JOIN clause parsing (INNER, LEFT, RIGHT, FULL OUTER, CROSS) ✅ Done Oct 25
+  - [x] Add CROSS JOIN parsing ✅ Done Oct 25
+  - [x] Add JOIN ... USING (columns) parsing ✅ Done Oct 25
+  - [x] Add NATURAL JOIN parsing ✅ Done Oct 25
+  - [x] Add table alias support (AS keyword optional) ✅ Done Oct 25
+  - [x] Update ASTPrinter to display JOINs ✅ Done Oct 25
+  - [ ] **BLOCKED**: Add qualified column name support (table.column) for JOIN ... ON
+  - [ ] Add JOIN ... ON condition parsing (needs qualified names)
+  - [ ] Add semantic analysis for JOIN operations
+  - **Status**: Parser infrastructure complete, but **qualified column names** (table.column) not yet supported
+  - **Testing**: CROSS JOIN, USING, and NATURAL JOIN work. ON clause blocked by qualified name limitation.
+  - **Deliverable**: Parser recognizes JOIN syntax (partial - ON clause needs qualified names)
 
-- [ ] **3.2 Query Planner for Joins** (15-25 hours)
-  - [ ] Implement join path generation (NestLoop, HashJoin, MergeJoin)
+- [ ] **3.2 Query Planner for Joins** (15-25 hours) ⏸️ NOT STARTED
+  - [ ] Create NestedLoopJoinNode and HashJoinNode plan structures
+  - [ ] Implement join path generation (NestLoop, HashJoin)
   - [ ] Implement nested loop join cost estimation
   - [ ] Implement hash join cost estimation
   - [ ] Implement join ordering (dynamic programming for small joins)
   - [ ] Select cheapest join method
   - **Deliverable**: Optimizer chooses best join strategy
 
-- [ ] **3.3 JOIN Execution** (10-15 hours)
+- [ ] **3.3 JOIN Execution** (10-15 hours) ⏸️ NOT STARTED
+  - [ ] Add JOIN opcodes to SBLR (NESTED_LOOP_JOIN, HASH_JOIN)
   - [ ] Generate SBLR bytecode for nested loop join
   - [ ] Generate SBLR bytecode for hash join (if implemented)
   - [ ] Implement JOIN executor in SBLR
   - [ ] Handle NULL handling in outer joins
   - **Deliverable**: Multi-table SELECT with JOIN works
 
-**Phase 1.3 Completion Criteria**: Multi-table queries with JOINs work correctly
+**Phase 1.3 Completion Status**: ⚠️ **40% complete** - Parser infrastructure done, needs qualified names + planner + executor
+
+**Known Limitations**:
+- ✅ CROSS JOIN works
+- ✅ JOIN ... USING works
+- ✅ NATURAL JOIN works
+- ❌ JOIN ... ON blocked by lack of qualified column name support (table.column)
+- ❌ Query planner doesn't generate join plans yet
+- ❌ Executor doesn't execute joins yet
 
 ---
 

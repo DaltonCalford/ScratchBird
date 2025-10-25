@@ -545,14 +545,79 @@ namespace scratchbird
             }
         };
 
+        // JOIN types (Phase 1 Task 3.1)
+        enum class JoinType : uint8_t
+        {
+            INNER,        // INNER JOIN
+            LEFT,         // LEFT OUTER JOIN
+            RIGHT,        // RIGHT OUTER JOIN
+            FULL,         // FULL OUTER JOIN
+            CROSS         // CROSS JOIN
+        };
+
+        // JOIN condition type
+        enum class JoinConditionType : uint8_t
+        {
+            ON,           // JOIN ... ON condition
+            USING,        // JOIN ... USING (columns)
+            NATURAL,      // NATURAL JOIN (no explicit condition)
+            CROSS         // CROSS JOIN (no condition)
+        };
+
+        // Table reference in FROM clause
+        struct TableRef
+        {
+            StringPool::StringId table_name;
+            StringPool::StringId alias;  // Optional table alias
+
+            TableRef(StringPool::StringId name, StringPool::StringId a = 0)
+                : table_name(name), alias(a) {}
+        };
+
+        // JOIN clause representation
+        struct JoinClause
+        {
+            JoinType join_type;
+            bool natural;  // NATURAL JOIN modifier
+            TableRef right_table;
+            JoinConditionType condition_type;
+            Expression *on_condition;  // For ON condition
+            std::vector<StringPool::StringId> using_columns;  // For USING clause
+
+            JoinClause(JoinType type, bool is_natural, const TableRef &right,
+                      JoinConditionType cond_type, Expression *on_cond = nullptr)
+                : join_type(type), natural(is_natural), right_table(right),
+                  condition_type(cond_type), on_condition(on_cond) {}
+        };
+
+        // FROM clause with table and optional joins
+        struct FromClause
+        {
+            TableRef base_table;
+            std::vector<JoinClause> joins;
+
+            explicit FromClause(const TableRef &base) : base_table(base) {}
+        };
+
         // SELECT statement
         class SelectStmt : public Statement
         {
         public:
+            // Legacy constructor for single table (backwards compatibility)
             SelectStmt(const SourceSpan &span, std::vector<SelectItem> select_list,
                        StringPool::StringId table_name, Expression *where_clause = nullptr)
                 : Statement(ASTKind::SELECT, span), select_list_(std::move(select_list)),
-                  table_name_(table_name), where_clause_(where_clause)
+                  from_clause_(TableRef(table_name)), where_clause_(where_clause),
+                  has_joins_(false)
+            {
+            }
+
+            // New constructor for FROM clause with JOINs (Phase 1 Task 3.1)
+            SelectStmt(const SourceSpan &span, std::vector<SelectItem> select_list,
+                       FromClause from_clause, Expression *where_clause = nullptr)
+                : Statement(ASTKind::SELECT, span), select_list_(std::move(select_list)),
+                  from_clause_(std::move(from_clause)), where_clause_(where_clause),
+                  has_joins_(!from_clause_.joins.empty())
             {
             }
 
@@ -560,10 +625,24 @@ namespace scratchbird
             {
                 return select_list_;
             }
+
+            // Legacy accessor for backwards compatibility
             StringPool::StringId tableName() const
             {
-                return table_name_;
+                return from_clause_.base_table.table_name;
             }
+
+            // New accessor for FROM clause
+            const FromClause &fromClause() const
+            {
+                return from_clause_;
+            }
+
+            bool hasJoins() const
+            {
+                return has_joins_;
+            }
+
             Expression *whereClause() const
             {
                 return where_clause_;
@@ -573,8 +652,9 @@ namespace scratchbird
 
         private:
             std::vector<SelectItem> select_list_;
-            StringPool::StringId table_name_;
+            FromClause from_clause_;  // Replaces table_name_
             Expression *where_clause_;
+            bool has_joins_;
         };
 
         // Assignment for UPDATE SET clause
