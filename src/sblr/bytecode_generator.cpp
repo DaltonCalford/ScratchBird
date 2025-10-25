@@ -672,7 +672,21 @@ namespace scratchbird
 
         void BytecodeGenerator::visit(parser::IdentifierExpr *node)
         {
+            // Phase 1 Task 3.1: Handle qualified column references
             current_result_->writeOpcode(Opcode::COLUMN_REF);
+
+            // Write qualifier if present (for table.column references)
+            if (node->isQualified())
+            {
+                writeStringId(node->qualifier());
+            }
+            else
+            {
+                // Write 0 to indicate no qualifier
+                writeStringId(0);
+            }
+
+            // Write column name
             writeStringId(node->name());
         }
 
