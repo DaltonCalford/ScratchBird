@@ -662,7 +662,15 @@ namespace scratchbird
 
         void ASTPrinter::visit(IdentifierExpr *node)
         {
-            out_ << pool_.get(node->name());
+            // Phase 1 Task 3.1: Handle qualified identifiers (table.column)
+            if (node->isQualified())
+            {
+                out_ << pool_.get(node->qualifier()) << "." << pool_.get(node->name());
+            }
+            else
+            {
+                out_ << pool_.get(node->name());
+            }
         }
 
         void ASTPrinter::visit(BinaryOpExpr *node)
