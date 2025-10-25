@@ -325,6 +325,17 @@ namespace scratchbird
             // No further semantic analysis needed
         }
 
+        void SemanticAnalyzer::visit(ExplainStmt *node)
+        {
+            // Phase 1 Task 1.5: EXPLAIN statement semantic analysis
+            // Analyze the query being explained
+            if (node->query())
+            {
+                node->query()->accept(this);
+            }
+            // EXPLAIN itself has no additional validation
+        }
+
         void SemanticAnalyzer::visit(AttachTablespaceStmt *node)
         {
             // Phase 6 Task 6.1: Attach tablespace - minimal semantic analysis

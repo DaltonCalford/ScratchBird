@@ -148,6 +148,11 @@ namespace scratchbird
             visitor->visit(this);
         }
 
+        void ExplainStmt::accept(ASTVisitor *visitor)
+        {
+            visitor->visit(this);
+        }
+
         void StartTransactionStmt::accept(ASTVisitor *visitor)
         {
             visitor->visit(this);
