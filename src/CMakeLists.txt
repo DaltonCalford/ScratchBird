@@ -71,10 +71,34 @@ set_target_properties(scratchbird_sblr PROPERTIES
     POSITION_INDEPENDENT_CODE ON
 )
 
+# Optimizer library: scratchbird_optimizer
+file(GLOB_RECURSE SCRATCHBIRD_OPTIMIZER_SOURCES
+    optimizer/*.cpp
+)
+
+add_library(scratchbird_optimizer STATIC
+    ${SCRATCHBIRD_OPTIMIZER_SOURCES}
+)
+
+target_include_directories(scratchbird_optimizer PUBLIC
+    ${CMAKE_SOURCE_DIR}/include
+)
+
+target_link_libraries(scratchbird_optimizer PUBLIC
+    scratchbird_core
+)
+
+set_target_properties(scratchbird_optimizer PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED YES
+    CXX_EXTENSIONS NO
+    POSITION_INDEPENDENT_CODE ON
+)
+
 # Main executable (placeholder)
 add_executable(scratchbird main.cpp)
 
-target_link_libraries(scratchbird PRIVATE scratchbird_core scratchbird_parser scratchbird_sblr)
+target_link_libraries(scratchbird PRIVATE scratchbird_core scratchbird_parser scratchbird_sblr scratchbird_optimizer)
 
 set_target_properties(scratchbird PROPERTIES
     CXX_STANDARD 17
@@ -83,7 +107,7 @@ set_target_properties(scratchbird PROPERTIES
 )
 
 # Installation (for future use)
-install(TARGETS scratchbird scratchbird_core scratchbird_parser scratchbird_sblr
+install(TARGETS scratchbird scratchbird_core scratchbird_parser scratchbird_sblr scratchbird_optimizer
     RUNTIME DESTINATION bin
     ARCHIVE DESTINATION lib
     LIBRARY DESTINATION lib
