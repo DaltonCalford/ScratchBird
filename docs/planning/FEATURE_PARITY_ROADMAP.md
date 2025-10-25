@@ -792,4 +792,19 @@ For detailed task breakdowns, see:
   - Added semantic validation for table/column existence
   - Syntax: `ANALYZE table_name [COLUMN column_name] [SAMPLE sample_rate]`
   - ✅ scratchbird_parser builds successfully
-- **Next**: Implement Vitter's Algorithm S (table sampling)
+- **Completed**: Vitter's Algorithm S documentation
+  - Commit: 3a84840 - "Document Vitter's Algorithm S for table sampling"
+  - Documented reservoir sampling algorithm with pseudocode
+  - Identified dependencies: table iterator, row deserialization, catalog integration
+  - Algorithm ready for implementation once dependencies available
+- **Completed**: Statistics Collection design document
+  - Commit: 9b47ef9 - "Add comprehensive Statistics Collection design document"
+  - File: `docs/planning/STATISTICS_COLLECTION_DESIGN.md` (399 lines)
+  - Complete architecture, data flow, and algorithm documentation
+  - Detailed remaining tasks breakdown (Tasks 1.1.4 - 1.1.8)
+  - Design decisions, integration points, and testing strategy
+- **Session Summary**: Task 1.1 is ~35% complete
+  - ✅ Statistics catalog infrastructure
+  - ✅ ANALYZE command parser
+  - ✅ Algorithm documentation
+  - ⏳ Awaiting table iterator for full implementation
