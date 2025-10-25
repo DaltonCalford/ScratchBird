@@ -3,7 +3,7 @@
 **Phase**: Phase 1, Task 1.1 - Query Optimizer Foundation
 **Component**: Statistics Collection
 **Date**: October 25, 2025
-**Status**: In Development (~50% Complete)
+**Status**: In Development (~60% Complete)
 
 ---
 
@@ -47,7 +47,7 @@ Executor → StatisticsManager::analyzeTable()
 
 ## Implementation Status
 
-### ✅ Completed (Tasks 1.1.1 - 1.1.3)
+### ✅ Completed (Tasks 1.1.1 - 1.1.4, 1.1.7)
 
 #### 1. Statistics Data Structures
 **File**: `include/scratchbird/optimizer/statistics.h`
@@ -170,10 +170,45 @@ Phase 2: Geometric skipping
 
 **File**: `src/optimizer/statistics_manager.cpp:149-272`
 
-### 📋 Remaining Tasks (Task 1.1.4 - 1.1.8)
+#### 4. Column Statistics Computation (Task 1.1.4)
 
-#### Task 1.1.4: Column Statistics Computation
-**Estimated**: 8-12 hours
+**Purpose**: Extract column values from sampled tuples and compute statistics
+
+**Implementation**:
+- Integrated with CatalogManager to get table schema
+- Parses TupleHeader and null bitmap from raw tuple bytes
+- Type-aware column value extraction (INT32, INT64, FLOAT64, VARCHAR)
+- Computes null_fraction, avg_width, num_rows, num_nulls
+- Handles variable-length types with proper offset calculation
+- Proper bounds checking to prevent buffer overruns
+
+**File**: `src/optimizer/statistics_manager.cpp:274-493`
+
+#### 5. n_distinct Estimation (Task 1.1.7)
+
+**Purpose**: Estimate number of distinct values in full table from sample
+
+**Algorithm**:
+```
+1. Count distinct values in sample using hash set
+2. If sample_size >= total_rows: return exact count
+3. If distinct_count < 100 or < 10% of sample: return exact count (likely saw everything)
+4. Otherwise: extrapolate linearly with cap at total_rows
+   estimate = distinct_in_sample * (total_rows / sample_size)
+```
+
+**Implementation**:
+- Uses `std::unordered_set` with custom `VectorHash` functor
+- Simple linear extrapolation (can be enhanced with HyperLogLog later)
+- Heuristics for small cardinalities
+- Logarithmic complexity for distinct counting: O(n log d) where d = distinct values
+
+**File**: `src/optimizer/statistics_manager.cpp:543-602`
+
+### 📋 Remaining Tasks (Task 1.1.5 - 1.1.6, 1.1.8)
+
+#### Task 1.1.5: Histogram Generation
+**Estimated**: 6-10 hours
 
 ```cpp
 Status computeColumnStats(const ID &table_id, const ID &column_id,
