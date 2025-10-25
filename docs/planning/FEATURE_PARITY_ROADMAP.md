@@ -779,4 +779,9 @@ For detailed task breakdowns, see:
 - **Commit**: 4a7d7a1 - "Phase 1, Task 1.1: Create statistics catalog infrastructure (foundation)"
 - **Progress**: Task 1.1.1 complete (catalog structures created)
 - **Blocker Found**: Existing tid_resolver build errors preventing compilation
-- **Next**: Fix tid_resolver errors, then implement ANALYZE parser support
+- **Blocker Resolved**: Fixed tid_resolver and optimizer compilation errors
+  - Commit: 81765c4 - "Fix build errors: tid_resolver and optimizer library compilation"
+  - ✅ scratchbird_core builds successfully
+  - ✅ scratchbird_optimizer builds successfully
+  - ⚠️ scratchbird_parser has pre-existing unrelated errors
+- **Next**: Implement ANALYZE parser support
