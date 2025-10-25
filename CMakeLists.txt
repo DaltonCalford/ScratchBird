@@ -44,13 +44,14 @@ else()
 endif()
 
 # Add clang-tidy and clang-format integration
-find_program(CLANG_TIDY clang-tidy)
-if(CLANG_TIDY)
-    set(CMAKE_CXX_CLANG_TIDY ${CLANG_TIDY} -p=${CMAKE_BINARY_DIR})
-    message(STATUS "clang-tidy found, will be used for linting.")
-else()
-    message(WARNING "clang-tidy not found. Linting will be skipped.")
-endif()
+# Temporarily disabled due to incompatible .clang-tidy configuration
+# find_program(CLANG_TIDY clang-tidy)
+# if(CLANG_TIDY)
+#     set(CMAKE_CXX_CLANG_TIDY ${CLANG_TIDY} -p=${CMAKE_BINARY_DIR})
+#     message(STATUS "clang-tidy found, will be used for linting.")
+# else()
+#     message(WARNING "clang-tidy not found. Linting will be skipped.")
+# endif()
 
 find_program(CLANG_FORMAT clang-format)
 if(CLANG_FORMAT)

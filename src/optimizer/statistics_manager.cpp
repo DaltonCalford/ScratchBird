@@ -5,6 +5,7 @@
 #include "scratchbird/core/page_manager.h"
 #include "scratchbird/core/heap_page.h"
 #include "scratchbird/core/logger.h"
+#include "scratchbird/core/debug.h"
 #include <algorithm>
 #include <unordered_map>
 #include <random>
