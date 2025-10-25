@@ -7,6 +7,7 @@
 #include "scratchbird/optimizer/plan_node.h"
 #include "scratchbird/optimizer/cost_model.h"
 #include "scratchbird/optimizer/statistics_manager.h"
+#include "scratchbird/optimizer/selectivity_estimator.h"
 #include "scratchbird/parser/ast.h"
 #include <memory>
 #include <vector>
@@ -51,7 +52,8 @@ namespace scratchbird::optimizer
                      StatisticsManager *stats_manager)
             : db_(db),
               cost_model_(cost_model),
-              stats_manager_(stats_manager)
+              stats_manager_(stats_manager),
+              selectivity_estimator_(stats_manager)
         {
         }
 
@@ -268,6 +270,7 @@ namespace scratchbird::optimizer
         core::Database *db_;
         CostModel cost_model_;
         StatisticsManager *stats_manager_;
+        SelectivityEstimator selectivity_estimator_;
     };
 
 } // namespace scratchbird::optimizer
