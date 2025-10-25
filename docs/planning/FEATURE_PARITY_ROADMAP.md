@@ -41,9 +41,9 @@ Without these features, ScratchBird **cannot be used** for even simple applicati
 
 ### Tasks (Priority Order)
 
-#### 1. Query Optimizer Foundation (100-160 hours) - CRITICAL ⏳ IN PROGRESS
+#### 1. Query Optimizer Foundation (100-160 hours) - CRITICAL ✅ MOSTLY COMPLETE
 **Why First**: Every query needs optimization. Without this, all queries are slow.
-**Status**: Started October 25, 2025
+**Status**: Started October 25, 2025 → 90% complete (only EXPLAIN command remaining)
 
 - [x] **1.1 Statistics Collection** (30-40 hours) ✅ COMPLETE
   - [x] Create statistics catalog structures (ColumnStatistics, TableStatistics, MCVEntry, HistogramBucket) ✅ Done Oct 25
@@ -73,10 +73,11 @@ Without these features, ScratchBird **cannot be used** for even simple applicati
   - [x] Implement path generation for single-table queries ✅ Done Oct 25
   - [x] Implement index selection (choose best index) ✅ Done Oct 25
   - [x] Implement cheapest path selection ✅ Done Oct 25
-  - [ ] Integrate planner between parser and bytecode generator (pending Phase 1.4)
+  - [x] Integrate planner between parser and bytecode generator ✅ Done Oct 25
   - **Deliverable**: Single-table SELECT chooses best access path ✅ DELIVERED
   - **Implementation**: ~2,200 lines (design + code) across PlanNode, Path, QueryPlanner
-  - **Progress**: 80% complete - Core planning complete, integration pending!
+  - **Integration**: BytecodeGenerator enhanced with Database pointer, plan-to-bytecode conversion
+  - **Progress**: 100% complete - Query planner fully integrated with execution pipeline!
 
 - [x] **1.4 Selectivity Estimation** (15-25 hours) ✅ COMPLETE
   - [x] Implement equality selectivity (= operator) ✅ Done Oct 25
