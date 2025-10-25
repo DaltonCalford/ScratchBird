@@ -810,16 +810,8 @@ namespace scratchbird
                 return nullptr;
             }
 
-            if (!check(TokenType::IDENTIFIER))
-            {
-                error("Expected table name after FROM, but got " +
-                      std::string(tokenTypeToString(current().type)));
-                synchronize();
-                return nullptr;
-            }
-
-            StringPool::StringId table_name = current().value.string_id;
-            advance();
+            // Parse FROM clause with potential JOINs (Phase 1 Task 3.1)
+            FromClause from_clause = parseFromClause();
 
             Expression *where_clause = nullptr;
             if (match(TokenType::KW_WHERE))
@@ -833,7 +825,193 @@ namespace scratchbird
             }
 
             auto span = makeSpan(start_loc);
-            return arena_.make<SelectStmt>(span, std::move(select_list), table_name, where_clause);
+
+            // Use new constructor if there are joins, otherwise use legacy for backwards compatibility
+            if (!from_clause.joins.empty())
+            {
+                return arena_.make<SelectStmt>(span, std::move(select_list), std::move(from_clause), where_clause);
+            }
+            else
+            {
+                // Legacy path - single table
+                return arena_.make<SelectStmt>(span, std::move(select_list), from_clause.base_table.table_name, where_clause);
+            }
+        }
+
+        // Parse table reference with optional alias (Phase 1 Task 3.1)
+        TableRef Parser::parseTableRef()
+        {
+            if (!check(TokenType::IDENTIFIER))
+            {
+                error("Expected table name, but got " +
+                      std::string(tokenTypeToString(current().type)));
+                synchronize();
+                return TableRef(0);
+            }
+
+            StringPool::StringId table_name = current().value.string_id;
+            advance();
+
+            // Check for optional alias (AS keyword is optional in SQL)
+            StringPool::StringId alias = 0;
+            if (match(TokenType::KW_AS) || check(TokenType::IDENTIFIER))
+            {
+                if (check(TokenType::IDENTIFIER))
+                {
+                    alias = current().value.string_id;
+                    advance();
+                }
+            }
+
+            return TableRef(table_name, alias);
+        }
+
+        // Parse FROM clause with optional JOINs (Phase 1 Task 3.1)
+        FromClause Parser::parseFromClause()
+        {
+            // Parse base table
+            TableRef base_table = parseTableRef();
+            FromClause from_clause(base_table);
+
+            // Parse optional JOIN clauses
+            while (true)
+            {
+                // Check for JOIN keywords
+                bool is_natural = match(TokenType::KW_NATURAL);
+
+                JoinType join_type = JoinType::INNER;
+
+                // Parse join type
+                if (match(TokenType::KW_CROSS))
+                {
+                    join_type = JoinType::CROSS;
+                    if (!consume(TokenType::KW_JOIN, "Expected JOIN after CROSS"))
+                    {
+                        synchronize();
+                        break;
+                    }
+                }
+                else if (match(TokenType::KW_INNER))
+                {
+                    join_type = JoinType::INNER;
+                    if (!consume(TokenType::KW_JOIN, "Expected JOIN after INNER"))
+                    {
+                        synchronize();
+                        break;
+                    }
+                }
+                else if (match(TokenType::KW_LEFT))
+                {
+                    join_type = JoinType::LEFT;
+                    match(TokenType::KW_OUTER);  // OUTER is optional
+                    if (!consume(TokenType::KW_JOIN, "Expected JOIN after LEFT [OUTER]"))
+                    {
+                        synchronize();
+                        break;
+                    }
+                }
+                else if (match(TokenType::KW_RIGHT))
+                {
+                    join_type = JoinType::RIGHT;
+                    match(TokenType::KW_OUTER);  // OUTER is optional
+                    if (!consume(TokenType::KW_JOIN, "Expected JOIN after RIGHT [OUTER]"))
+                    {
+                        synchronize();
+                        break;
+                    }
+                }
+                else if (match(TokenType::KW_FULL))
+                {
+                    join_type = JoinType::FULL;
+                    match(TokenType::KW_OUTER);  // OUTER is optional
+                    if (!consume(TokenType::KW_JOIN, "Expected JOIN after FULL [OUTER]"))
+                    {
+                        synchronize();
+                        break;
+                    }
+                }
+                else if (match(TokenType::KW_JOIN))
+                {
+                    // Plain JOIN defaults to INNER JOIN
+                    join_type = JoinType::INNER;
+                }
+                else
+                {
+                    // No more joins
+                    break;
+                }
+
+                // Parse right table
+                TableRef right_table = parseTableRef();
+
+                // Parse join condition
+                JoinConditionType condition_type;
+                Expression *on_condition = nullptr;
+                std::vector<StringPool::StringId> using_columns;
+
+                if (join_type == JoinType::CROSS)
+                {
+                    // CROSS JOIN has no condition
+                    condition_type = JoinConditionType::CROSS;
+                }
+                else if (is_natural)
+                {
+                    // NATURAL JOIN
+                    condition_type = JoinConditionType::NATURAL;
+                }
+                else if (match(TokenType::KW_ON))
+                {
+                    // ON condition
+                    condition_type = JoinConditionType::ON;
+                    on_condition = parseExpression();
+                    if (!on_condition)
+                    {
+                        synchronize();
+                        break;
+                    }
+                }
+                else if (match(TokenType::KW_USING))
+                {
+                    // USING (column_list)
+                    condition_type = JoinConditionType::USING;
+                    if (!consume(TokenType::LEFT_PAREN, "Expected '(' after USING"))
+                    {
+                        synchronize();
+                        break;
+                    }
+
+                    do
+                    {
+                        if (!check(TokenType::IDENTIFIER))
+                        {
+                            error("Expected column name in USING clause");
+                            synchronize();
+                            break;
+                        }
+                        using_columns.push_back(current().value.string_id);
+                        advance();
+                    } while (match(TokenType::COMMA));
+
+                    if (!consume(TokenType::RIGHT_PAREN, "Expected ')' after USING column list"))
+                    {
+                        synchronize();
+                        break;
+                    }
+                }
+                else
+                {
+                    error("Expected ON or USING after JOIN");
+                    synchronize();
+                    break;
+                }
+
+                // Create and add the join clause
+                JoinClause join_clause(join_type, is_natural, right_table, condition_type, on_condition);
+                join_clause.using_columns = std::move(using_columns);
+                from_clause.joins.push_back(std::move(join_clause));
+            }
+
+            return from_clause;
         }
 
         Statement *Parser::parseUpdate()

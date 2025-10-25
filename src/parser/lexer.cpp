@@ -38,6 +38,17 @@ namespace scratchbird
             {"COLUMN", TokenType::KW_COLUMN},    // Phase 1 Task 1.1.2
             {"SAMPLE", TokenType::KW_SAMPLE},    // Phase 1 Task 1.1.2
 
+            // JOIN keywords (Phase 1 Task 3.1)
+            {"JOIN", TokenType::KW_JOIN},
+            {"INNER", TokenType::KW_INNER},
+            {"LEFT", TokenType::KW_LEFT},
+            {"RIGHT", TokenType::KW_RIGHT},
+            {"FULL", TokenType::KW_FULL},
+            {"OUTER", TokenType::KW_OUTER},
+            {"CROSS", TokenType::KW_CROSS},
+            {"NATURAL", TokenType::KW_NATURAL},
+            {"USING", TokenType::KW_USING},
+
             // Numeric types
             {"INT", TokenType::KW_INT},
             {"INTEGER", TokenType::KW_INTEGER},
