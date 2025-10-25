@@ -152,21 +152,66 @@ namespace scratchbird::optimizer
     {
         DEBUG_LOG_DB("Sampling table using Vitter's Algorithm S");
 
-        // TODO: Phase 1, Task 1.1.3 - Implement Vitter's Algorithm S
-        //
-        // Algorithm S (Selection Sampling):
-        // 1. Initialize reservoir with first n rows
-        // 2. For each subsequent row i (i > n):
-        //    a. Generate skip count using geometric distribution
-        //    b. Skip that many rows
-        //    c. Replace random reservoir entry with current row
-        // 3. Return reservoir as sample
+        // Phase 1, Task 1.1.3 - Vitter's Algorithm S (Reservoir Sampling)
         //
         // Reference: Vitter, J. S. (1985). Random Sampling with a Reservoir.
         // ACM Transactions on Mathematical Software, 11(1), 37-57.
+        //
+        // This algorithm provides uniform random sampling of large datasets
+        // with a single pass and O(sample_size) memory.
+
+        sample_rows.clear();
+
+        if (sample_size == 0)
+        {
+            return Status::OK; // Nothing to sample
+        }
+
+        // TODO: For now, return a stub implementation
+        // Full implementation requires:
+        // 1. Access to table iterator (HeapPage iteration)
+        // 2. Row deserialization
+        // 3. Integration with CatalogManager for table metadata
+        //
+        // Simplified algorithm for reference:
+        //
+        // std::random_device rd;
+        // std::mt19937 gen(rd());
+        //
+        // // Phase 1: Fill reservoir with first n rows
+        // uint64_t rows_read = 0;
+        // for (rows_read = 0; rows_read < sample_size && has_more_rows; rows_read++)
+        // {
+        //     sample_rows.push_back(read_next_row());
+        // }
+        //
+        // if (rows_read < sample_size)
+        // {
+        //     // Table has fewer rows than sample size
+        //     return Status::OK;
+        // }
+        //
+        // // Phase 2: For each subsequent row, randomly decide whether to include it
+        // double W = std::exp(std::log(std::uniform_real_distribution<>(0.0, 1.0)(gen)) / sample_size);
+        //
+        // while (has_more_rows)
+        // {
+        //     // Skip rows according to geometric distribution
+        //     rows_read += static_cast<uint64_t>(std::floor(std::log(std::uniform_real_distribution<>(0.0, 1.0)(gen)) / std::log(1.0 - W))) + 1;
+        //
+        //     if (!has_more_rows)
+        //         break;
+        //
+        //     // Replace random item in reservoir
+        //     uint64_t replace_idx = std::uniform_int_distribution<uint64_t>(0, sample_size - 1)(gen);
+        //     sample_rows[replace_idx] = read_row_at(rows_read);
+        //
+        //     // Update W for next skip
+        //     W = W * std::exp(std::log(std::uniform_real_distribution<>(0.0, 1.0)(gen)) / sample_size);
+        // }
 
         SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED,
-                          "sampleTable not yet implemented");
+                          "sampleTable requires table iterator implementation");
         return Status::NOT_IMPLEMENTED;
     }
 
