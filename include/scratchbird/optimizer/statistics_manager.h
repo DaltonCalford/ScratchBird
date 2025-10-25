@@ -7,11 +7,11 @@
 #include "scratchbird/core/status.h"
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/core/uuidv7.h"
+#include "scratchbird/core/catalog_manager.h"
 
 namespace scratchbird::core
 {
     class Database;
-    class CatalogManager;
 }
 
 namespace scratchbird::optimizer
@@ -289,6 +289,16 @@ namespace scratchbird::optimizer
          * Combines table_id and column_id into a single uint64_t key.
          */
         static auto getCacheKey(const ID &table_id, const ID &column_id) -> uint64_t;
+
+        /**
+         * extractColumnValues - Extract values for a specific column from sample rows
+         *
+         * Helper function to extract column values from raw tuple data.
+         */
+        auto extractColumnValues(const ID &table_id, const ID &column_id,
+                                const std::vector<std::vector<uint8_t>> &sample_rows,
+                                const std::vector<core::CatalogManager::ColumnInfo> &columns,
+                                ErrorContext *ctx = nullptr) -> std::vector<std::vector<uint8_t>>;
     };
 
 } // namespace scratchbird::optimizer
