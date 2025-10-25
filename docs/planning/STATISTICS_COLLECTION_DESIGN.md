@@ -1,9 +1,9 @@
 # Statistics Collection Design Document
 
-**Phase**: Phase 1, Task 1.1 - Query Optimizer Foundation  
-**Component**: Statistics Collection  
-**Date**: October 25, 2025  
-**Status**: In Development (~35% Complete)
+**Phase**: Phase 1, Task 1.1 - Query Optimizer Foundation
+**Component**: Statistics Collection
+**Date**: October 25, 2025
+**Status**: In Development (~50% Complete)
 
 ---
 
@@ -47,7 +47,7 @@ Executor → StatisticsManager::analyzeTable()
 
 ## Implementation Status
 
-### ✅ Completed (Tasks 1.1.1 - 1.1.2)
+### ✅ Completed (Tasks 1.1.1 - 1.1.3)
 
 #### 1. Statistics Data Structures
 **File**: `include/scratchbird/optimizer/statistics.h`
@@ -118,7 +118,7 @@ private:
 - Implemented parseAnalyze() with validation
 - Semantic analysis validates table/column existence
 
-### ⏳ In Progress (Task 1.1.3)
+### ✅ Completed (Task 1.1.3)
 
 #### Vitter's Algorithm S (Reservoir Sampling)
 
@@ -133,25 +133,25 @@ Output: uniform random sample of n rows
 Phase 1: Fill reservoir
   for i = 0 to n-1:
     reservoir[i] = row[i]
-  
+
   if N <= n:
     return reservoir  # Table smaller than sample size
 
 Phase 2: Geometric skipping
   W = exp(log(random()) / n)
-  
+
   while i < N:
     # Skip rows according to geometric distribution
     i = i + floor(log(random()) / log(1 - W)) + 1
-    
+
     if i < N:
       # Replace random item in reservoir
       j = random_int(0, n-1)
       reservoir[j] = row[i]
-      
+
       # Update W for next iteration
       W = W * exp(log(random()) / n)
-  
+
   return reservoir
 ```
 
@@ -161,26 +161,14 @@ Phase 2: Geometric skipping
 - **Uniformity**: Each row has exactly n/N probability of selection
 - **Single-Pass**: Requires only one pass through the data
 
-**Status**: Algorithm documented, awaiting table iterator infrastructure
+**Implementation**:
+- Fully implemented in `StatisticsManager::sampleTable()`
+- Uses `HeapScanIterator` for sequential table scan
+- `std::mt19937` Mersenne Twister for high-quality random numbers
+- Proper error handling and debug logging
+- Handles edge cases (small tables, empty tables)
 
-### 🔄 Dependencies Identified
-
-To complete the implementation, we need:
-
-1. **Table Iterator API**
-   - Sequential HeapPage traversal
-   - Row-by-row access
-   - TID tracking for sample provenance
-
-2. **Row Deserialization**
-   - Convert heap page format to column values
-   - Handle all data types (29 types implemented)
-   - Support TOAST references for large values
-
-3. **CatalogManager Integration**
-   - Table metadata lookup (schema, columns)
-   - Column type information
-   - Tablespace resolution
+**File**: `src/optimizer/statistics_manager.cpp:149-272`
 
 ### 📋 Remaining Tasks (Task 1.1.4 - 1.1.8)
 
