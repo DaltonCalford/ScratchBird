@@ -47,14 +47,14 @@ Without these features, ScratchBird **cannot be used** for even simple applicati
 
 - [ ] **1.1 Statistics Collection** (30-40 hours) ⏳ IN PROGRESS
   - [x] Create statistics catalog tables (pg_statistic equivalent) ✅ Done Oct 25
-  - [ ] Implement ANALYZE command parser support
+  - [x] Implement ANALYZE command parser support ✅ Done Oct 25
   - [ ] Implement table sampling (Vitter's Algorithm S)
   - [ ] Implement column statistics collection (null fraction, n_distinct, avg_width)
   - [ ] Implement histogram generation (equal-height, equal-width)
   - [ ] Implement MCV (Most Common Values) collection
   - [ ] Store statistics in catalog
   - **Deliverable**: `ANALYZE table_name` command works
-  - **Progress**: Catalog structures created, stubs implemented, API designed
+  - **Progress**: Catalog + parser complete (~30% of Task 1.1)
 
 - [ ] **1.2 Cost Model** (25-35 hours)
   - [ ] Implement cost configuration structure (seq_page_cost, random_page_cost, cpu_tuple_cost)
@@ -784,4 +784,12 @@ For detailed task breakdowns, see:
   - ✅ scratchbird_core builds successfully
   - ✅ scratchbird_optimizer builds successfully
   - ⚠️ scratchbird_parser has pre-existing unrelated errors
-- **Next**: Implement ANALYZE parser support
+- **Completed**: ANALYZE command parser support
+  - Commit: ccc3c9a - "Phase 1, Task 1.1.2: Implement ANALYZE command parser support"
+  - Added ANALYZE, COLUMN, SAMPLE keywords to lexer
+  - Created AnalyzeStmt AST node
+  - Implemented parseAnalyze() method
+  - Added semantic validation for table/column existence
+  - Syntax: `ANALYZE table_name [COLUMN column_name] [SAMPLE sample_rate]`
+  - ✅ scratchbird_parser builds successfully
+- **Next**: Implement Vitter's Algorithm S (table sampling)
