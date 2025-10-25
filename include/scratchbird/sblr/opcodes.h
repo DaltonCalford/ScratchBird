@@ -134,6 +134,10 @@ namespace scratchbird
             TYPE_BLOB = 0xB1,      // Binary large object
             TYPE_BYTEA = 0xB2,     // Byte array (PostgreSQL compatible)
             TYPE_JSON = 0xB3,      // JSON data
+
+            // Query optimization hints (Phase 1, Task 1.3)
+            SCAN_HINT = 0xC0,  // Scan method hint (0=seq, 1=index)
+            INDEX_REF = 0xC1,  // Index reference (string - index UUID)
         };
 
         // SBLR Version

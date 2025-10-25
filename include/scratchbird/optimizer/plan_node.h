@@ -2,10 +2,15 @@
 
 #include "scratchbird/core/types.h"
 #include "scratchbird/core/error_context.h"
+#include "scratchbird/core/uuidv7.h"
 #include "scratchbird/optimizer/cost_model.h"
 #include <memory>
 #include <string>
 #include <vector>
+
+namespace scratchbird::core {
+    using ID = UuidV7Bytes;
+}
 
 namespace scratchbird::optimizer
 {

@@ -1,4 +1,7 @@
 #include "scratchbird/sblr/bytecode_generator.h"
+#include "scratchbird/core/database.h"
+#include "scratchbird/core/debug.h"
+#include "scratchbird/optimizer/query_planner.h"
 #include <sstream>
 #include <iomanip>
 #include <cstring>
@@ -8,8 +11,9 @@ namespace scratchbird
     namespace sblr
     {
 
-        BytecodeGenerator::BytecodeGenerator(const parser::StringPool &string_pool)
-            : string_pool_(string_pool), current_result_(nullptr)
+        BytecodeGenerator::BytecodeGenerator(const parser::StringPool &string_pool,
+                                            core::Database *database)
+            : string_pool_(string_pool), current_result_(nullptr), database_(database)
         {
         }
 
@@ -311,6 +315,34 @@ namespace scratchbird
 
         void BytecodeGenerator::visit(parser::SelectStmt *node)
         {
+            // Try query planner if available (Phase 1, Task 1.3)
+            if (database_ && database_->query_planner())
+            {
+                core::ErrorContext ctx;
+                auto plan = database_->query_planner()->planQuery(node, &ctx);
+
+                if (plan)
+                {
+                    // Use optimized plan
+                    DEBUG_LOG_DB("Using optimized query plan");
+                    generateFromPlan(plan, node);
+                    return;
+                }
+
+                // Planning failed - log warning and fallback
+                if (!ctx.message.empty())
+                {
+                    DEBUG_LOG_DB("Query planning failed: " + ctx.message + ", falling back to direct generation");
+                }
+            }
+
+            // Fallback: Direct bytecode generation (no optimization)
+            DEBUG_LOG_DB("Using direct SELECT generation (no optimization)");
+            generateDirectSelect(node);
+        }
+
+        void BytecodeGenerator::generateDirectSelect(parser::SelectStmt *node)
+        {
             current_result_->writeOpcode(Opcode::SELECT);
 
             // Write select list with overflow check
@@ -495,6 +527,15 @@ namespace scratchbird
         {
             // Generate SWEEP DATABASE bytecode (Phase 3 Task 3.3)
             current_result_->writeOpcode(Opcode::SWEEP);
+            (void)node; // Suppress unused parameter warning
+        }
+
+        void BytecodeGenerator::visit(parser::AnalyzeStmt *node)
+        {
+            // Generate ANALYZE bytecode (Phase 1 Task 1.1.2)
+            // NOTE: ANALYZE is not yet implemented in bytecode executor
+            // For now, just add an error
+            current_result_->addError("ANALYZE statement bytecode generation not yet implemented");
             (void)node; // Suppress unused parameter warning
         }
 
@@ -712,6 +753,147 @@ namespace scratchbird
             {
                 current_result_->writeOpcode(Opcode::NOT_NULL);
             }
+        }
+
+        // ===== Query Planner Integration (Phase 1, Task 1.3) =====
+
+        BytecodeResult BytecodeGenerator::generateFromPlan(
+            std::shared_ptr<optimizer::PlanNode> plan,
+            parser::SelectStmt *original_stmt)
+        {
+            BytecodeResult result;
+            current_result_ = &result;
+
+            // Write version header
+            result.writeOpcode(Opcode::VERSION);
+            result.writeByte(SBLR_VERSION);
+
+            // Dispatch based on plan node type
+            switch (plan->type())
+            {
+            case scratchbird::optimizer::PlanNodeType::SEQ_SCAN:
+                generateSeqScanPlan(
+                    static_cast<scratchbird::optimizer::SeqScanNode *>(plan.get()),
+                    original_stmt);
+                break;
+
+            case scratchbird::optimizer::PlanNodeType::INDEX_SCAN:
+                generateIndexScanPlan(
+                    static_cast<scratchbird::optimizer::IndexScanNode *>(plan.get()),
+                    original_stmt);
+                break;
+
+            default:
+                result.addError("Unsupported plan node type");
+                break;
+            }
+
+            // End marker
+            result.writeOpcode(Opcode::END);
+
+            current_result_ = nullptr;
+            return result;
+        }
+
+        void BytecodeGenerator::generateSeqScanPlan(
+            scratchbird::optimizer::SeqScanNode *node,
+            parser::SelectStmt *stmt)
+        {
+            // Generate SELECT bytecode
+            current_result_->writeOpcode(Opcode::SELECT);
+
+            // Write select list (from original stmt)
+            current_result_->writeOpcode(Opcode::BEGIN_LIST);
+            current_result_->writeInt32(static_cast<uint32_t>(stmt->selectList().size()));
+
+            for (const auto &item : stmt->selectList())
+            {
+                if (item.is_star)
+                {
+                    current_result_->writeOpcode(Opcode::SELECT_STAR);
+                }
+                else
+                {
+                    generateExpression(item.expr);
+                    if (item.alias != 0)
+                    {
+                        current_result_->writeOpcode(Opcode::COLUMN_REF);
+                        writeStringId(item.alias);
+                    }
+                }
+            }
+
+            current_result_->writeOpcode(Opcode::END_LIST);
+
+            // Write table reference
+            current_result_->writeOpcode(Opcode::TABLE_REF);
+            writeStringId(stmt->tableName());
+
+            // Write WHERE clause
+            if (stmt->whereClause())
+            {
+                current_result_->writeOpcode(Opcode::WHERE_CLAUSE);
+                generateExpression(stmt->whereClause());
+            }
+
+            // Write scan hint (for future executor optimization)
+            current_result_->writeOpcode(Opcode::SCAN_HINT);
+            current_result_->writeByte(0); // 0 = Sequential scan
+
+            DEBUG_LOG_DB("Generated SeqScan bytecode with optimizer hint");
+        }
+
+        void BytecodeGenerator::generateIndexScanPlan(
+            scratchbird::optimizer::IndexScanNode *node,
+            parser::SelectStmt *stmt)
+        {
+            // Generate SELECT bytecode
+            current_result_->writeOpcode(Opcode::SELECT);
+
+            // Write select list
+            current_result_->writeOpcode(Opcode::BEGIN_LIST);
+            current_result_->writeInt32(static_cast<uint32_t>(stmt->selectList().size()));
+
+            for (const auto &item : stmt->selectList())
+            {
+                if (item.is_star)
+                {
+                    current_result_->writeOpcode(Opcode::SELECT_STAR);
+                }
+                else
+                {
+                    generateExpression(item.expr);
+                    if (item.alias != 0)
+                    {
+                        current_result_->writeOpcode(Opcode::COLUMN_REF);
+                        writeStringId(item.alias);
+                    }
+                }
+            }
+
+            current_result_->writeOpcode(Opcode::END_LIST);
+
+            // Write table reference
+            current_result_->writeOpcode(Opcode::TABLE_REF);
+            writeStringId(stmt->tableName());
+
+            // Write index reference (NEW: tells executor which index to use)
+            current_result_->writeOpcode(Opcode::INDEX_REF);
+            current_result_->writeString(node->indexId().toString());
+
+            // Write WHERE clause
+            if (stmt->whereClause())
+            {
+                current_result_->writeOpcode(Opcode::WHERE_CLAUSE);
+                generateExpression(stmt->whereClause());
+            }
+
+            // Write scan hint
+            current_result_->writeOpcode(Opcode::SCAN_HINT);
+            current_result_->writeByte(1); // 1 = Index scan
+
+            DEBUG_LOG_DB("Generated IndexScan bytecode with optimizer hint (index: " +
+                         node->indexName() + ")");
         }
 
         // ===== Disassembler Implementation =====
