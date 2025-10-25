@@ -159,6 +159,10 @@ namespace scratchbird::optimizer
         //
         // This algorithm provides uniform random sampling of large datasets
         // with a single pass and O(sample_size) memory.
+        //
+        // Time Complexity: O(n * (1 + log(N/n))) - nearly linear
+        // Space Complexity: O(n) - only reservoir in memory
+        // Uniformity: Each row has exactly n/N probability of selection
 
         sample_rows.clear();
 
@@ -167,52 +171,104 @@ namespace scratchbird::optimizer
             return Status::OK; // Nothing to sample
         }
 
-        // TODO: For now, return a stub implementation
-        // Full implementation requires:
-        // 1. Access to table iterator (HeapPage iteration)
-        // 2. Row deserialization
-        // 3. Integration with CatalogManager for table metadata
-        //
-        // Simplified algorithm for reference:
-        //
-        // std::random_device rd;
-        // std::mt19937 gen(rd());
-        //
-        // // Phase 1: Fill reservoir with first n rows
-        // uint64_t rows_read = 0;
-        // for (rows_read = 0; rows_read < sample_size && has_more_rows; rows_read++)
-        // {
-        //     sample_rows.push_back(read_next_row());
-        // }
-        //
-        // if (rows_read < sample_size)
-        // {
-        //     // Table has fewer rows than sample size
-        //     return Status::OK;
-        // }
-        //
-        // // Phase 2: For each subsequent row, randomly decide whether to include it
-        // double W = std::exp(std::log(std::uniform_real_distribution<>(0.0, 1.0)(gen)) / sample_size);
-        //
-        // while (has_more_rows)
-        // {
-        //     // Skip rows according to geometric distribution
-        //     rows_read += static_cast<uint64_t>(std::floor(std::log(std::uniform_real_distribution<>(0.0, 1.0)(gen)) / std::log(1.0 - W))) + 1;
-        //
-        //     if (!has_more_rows)
-        //         break;
-        //
-        //     // Replace random item in reservoir
-        //     uint64_t replace_idx = std::uniform_int_distribution<uint64_t>(0, sample_size - 1)(gen);
-        //     sample_rows[replace_idx] = read_row_at(rows_read);
-        //
-        //     // Update W for next skip
-        //     W = W * std::exp(std::log(std::uniform_real_distribution<>(0.0, 1.0)(gen)) / sample_size);
-        // }
+        // Create a sequential scan iterator for the table
+        auto iterator = db_->storage_engine()->createScan(table_id, ctx);
+        if (!iterator)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::IO_ERROR,
+                              "Failed to create table scan iterator");
+            return Status::IO_ERROR;
+        }
 
-        SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED,
-                          "sampleTable requires table iterator implementation");
-        return Status::NOT_IMPLEMENTED;
+        // Initialize random number generator
+        std::random_device rd;
+        std::mt19937 gen(rd());
+        std::uniform_real_distribution<double> uniform_real(0.0, 1.0);
+
+        // Phase 1: Fill reservoir with first sample_size rows
+        uint64_t rows_read = 0;
+        Tuple tuple;
+
+        while (rows_read < sample_size && !iterator->isDone())
+        {
+            Status status = iterator->next(&tuple, ctx);
+            if (status != Status::OK)
+            {
+                if (status == Status::NOT_FOUND)
+                {
+                    break; // No more rows
+                }
+                SET_ERROR_CONTEXT(ctx, status, "Failed to read tuple during sampling");
+                return status;
+            }
+
+            // Copy tuple data into sample
+            std::vector<uint8_t> row_data(tuple.data, tuple.data + tuple.data_size);
+            sample_rows.push_back(std::move(row_data));
+            rows_read++;
+        }
+
+        DEBUG_LOG_DB("Filled reservoir with " + std::to_string(rows_read) + " rows");
+
+        // If we read fewer rows than sample size, we're done
+        if (rows_read < sample_size)
+        {
+            DEBUG_LOG_DB("Table has fewer rows than sample size");
+            return Status::OK;
+        }
+
+        // Phase 2: Geometric skipping (Vitter's Algorithm S)
+        // For each subsequent row, use geometric distribution to skip rows
+        // and randomly replace items in the reservoir
+
+        double W = std::exp(std::log(uniform_real(gen)) / static_cast<double>(sample_size));
+
+        while (!iterator->isDone())
+        {
+            // Calculate number of rows to skip according to geometric distribution
+            uint64_t skip = static_cast<uint64_t>(
+                std::floor(std::log(uniform_real(gen)) / std::log(1.0 - W)));
+
+            // Skip the calculated number of rows
+            for (uint64_t i = 0; i <= skip && !iterator->isDone(); i++)
+            {
+                Status status = iterator->next(&tuple, ctx);
+                if (status == Status::NOT_FOUND)
+                {
+                    // Reached end of table
+                    DEBUG_LOG_DB("Completed sampling: " + std::to_string(rows_read) +
+                                 " rows scanned, " + std::to_string(sample_rows.size()) +
+                                 " rows in sample");
+                    return Status::OK;
+                }
+                if (status != Status::OK)
+                {
+                    SET_ERROR_CONTEXT(ctx, status, "Failed to read tuple during sampling");
+                    return status;
+                }
+                rows_read++;
+            }
+
+            if (iterator->isDone())
+            {
+                break;
+            }
+
+            // Replace a random item in the reservoir with the current row
+            std::uniform_int_distribution<uint64_t> uniform_int(0, sample_size - 1);
+            uint64_t replace_idx = uniform_int(gen);
+
+            std::vector<uint8_t> row_data(tuple.data, tuple.data + tuple.data_size);
+            sample_rows[replace_idx] = std::move(row_data);
+
+            // Update W for next iteration
+            W = W * std::exp(std::log(uniform_real(gen)) / static_cast<double>(sample_size));
+        }
+
+        DEBUG_LOG_DB("Completed sampling: " + std::to_string(rows_read) +
+                     " rows scanned, " + std::to_string(sample_rows.size()) + " rows in sample");
+
+        return Status::OK;
     }
 
     auto StatisticsManager::computeColumnStats(const ID &table_id, const ID &column_id,
