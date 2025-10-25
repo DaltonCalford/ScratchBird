@@ -59,6 +59,8 @@ namespace scratchbird
             KW_SELECT,
             KW_FROM,
             KW_WHERE,
+            KW_UPDATE,   // Phase 1 Task 2.1: UPDATE statement
+            KW_DELETE,   // Phase 1 Task 2.2: DELETE statement
             KW_NULL,
             KW_NOT,
             KW_ANALYZE,  // Phase 1 Task 1.1.2: Statistics collection

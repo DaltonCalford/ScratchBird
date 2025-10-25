@@ -118,6 +118,8 @@ namespace scratchbird
             void visit(parser::DetachTablespaceStmt *node) override;        // Phase 6 Task 6.2
             void visit(parser::InsertStmt *node) override;
             void visit(parser::SelectStmt *node) override;
+            void visit(parser::UpdateStmt *node) override;           // Phase 1 Task 2.1
+            void visit(parser::DeleteStmt *node) override;           // Phase 1 Task 2.2
             void visit(parser::AnalyzeStmt *node) override;          // Phase 1 Task 1.1.2
             void visit(parser::ExplainStmt *node) override;          // Phase 1 Task 1.5
             void visit(parser::StartTransactionStmt *node) override; // Phase 2 Task 2.6

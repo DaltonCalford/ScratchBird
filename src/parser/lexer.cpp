@@ -29,6 +29,8 @@ namespace scratchbird
             {"SELECT", TokenType::KW_SELECT},
             {"FROM", TokenType::KW_FROM},
             {"WHERE", TokenType::KW_WHERE},
+            {"UPDATE", TokenType::KW_UPDATE},    // Phase 1 Task 2.1
+            {"DELETE", TokenType::KW_DELETE},    // Phase 1 Task 2.2
             {"NULL", TokenType::KW_NULL},
             {"NOT", TokenType::KW_NOT},
             {"ANALYZE", TokenType::KW_ANALYZE},  // Phase 1 Task 1.1.2

@@ -21,6 +21,8 @@ namespace scratchbird
             CREATE_INDEX = 0x1B,              // Create index (Phase 2 Task 2.3)
             INSERT = 0x11,                    // Insert row
             SELECT = 0x12,                    // Select query
+            UPDATE = 0xC3,                    // Update rows (Phase 1 Task 2.1)
+            DELETE = 0xC4,                    // Delete rows (Phase 1 Task 2.2)
             START_TRANSACTION = 0x13,         // Start transaction (Phase 2 Task 2.6)
             SET_TRANSACTION = 0x17,           // Set transaction parameters (Phase 3 Task 3.6)
             COMMIT = 0x14,                    // Commit transaction (Phase 2 Task 2.6)
@@ -64,6 +66,7 @@ namespace scratchbird
             TABLE_REF = 0x40,  // Table reference (string id)
             COLUMN_REF = 0x41, // Column reference (string id)
             COLUMN_DEF = 0x42, // Column definition
+            ASSIGNMENT = 0x43, // Assignment (column = value) for UPDATE (Phase 1 Task 2.1)
 
             // Expressions
             EXPR_ADD = 0x50,      // Addition

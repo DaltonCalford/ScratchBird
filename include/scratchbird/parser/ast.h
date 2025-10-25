@@ -39,6 +39,8 @@ namespace scratchbird
             DETACH_TABLESPACE,         // Phase 6 Task 6.2
             INSERT,
             SELECT,
+            UPDATE,            // Phase 1 Task 2.1: UPDATE statement
+            DELETE_STMT,       // Phase 1 Task 2.2: DELETE statement (DELETE is a keyword)
             ANALYZE,           // Phase 1 Task 1.1.2: Statistics collection
             EXPLAIN,           // Phase 1 Task 1.5: EXPLAIN command
             START_TRANSACTION, // Phase 2 Task 2.6
@@ -575,6 +577,77 @@ namespace scratchbird
             Expression *where_clause_;
         };
 
+        // Assignment for UPDATE SET clause
+        struct Assignment
+        {
+            StringPool::StringId column_name;
+            Expression *value;
+
+            Assignment(StringPool::StringId col, Expression *val)
+                : column_name(col), value(val)
+            {
+            }
+        };
+
+        // UPDATE statement (Phase 1 Task 2.1)
+        class UpdateStmt : public Statement
+        {
+        public:
+            UpdateStmt(const SourceSpan &span, StringPool::StringId table_name,
+                       std::vector<Assignment> assignments, Expression *where_clause = nullptr)
+                : Statement(ASTKind::UPDATE, span), table_name_(table_name),
+                  assignments_(std::move(assignments)), where_clause_(where_clause)
+            {
+            }
+
+            StringPool::StringId tableName() const
+            {
+                return table_name_;
+            }
+            const std::vector<Assignment> &assignments() const
+            {
+                return assignments_;
+            }
+            Expression *whereClause() const
+            {
+                return where_clause_;
+            }
+
+            void accept(ASTVisitor *visitor) override;
+
+        private:
+            StringPool::StringId table_name_;
+            std::vector<Assignment> assignments_;
+            Expression *where_clause_;
+        };
+
+        // DELETE statement (Phase 1 Task 2.2)
+        class DeleteStmt : public Statement
+        {
+        public:
+            DeleteStmt(const SourceSpan &span, StringPool::StringId table_name,
+                       Expression *where_clause = nullptr)
+                : Statement(ASTKind::DELETE_STMT, span), table_name_(table_name),
+                  where_clause_(where_clause)
+            {
+            }
+
+            StringPool::StringId tableName() const
+            {
+                return table_name_;
+            }
+            Expression *whereClause() const
+            {
+                return where_clause_;
+            }
+
+            void accept(ASTVisitor *visitor) override;
+
+        private:
+            StringPool::StringId table_name_;
+            Expression *where_clause_;
+        };
+
         // ANALYZE statement (Phase 1 Task 1.1.2: Statistics collection)
         class AnalyzeStmt : public Statement
         {
@@ -1051,6 +1124,8 @@ namespace scratchbird
             virtual void visit(DetachTablespaceStmt *node) = 0;        // Phase 6 Task 6.2
             virtual void visit(InsertStmt *node) = 0;
             virtual void visit(SelectStmt *node) = 0;
+            virtual void visit(UpdateStmt *node) = 0;           // Phase 1 Task 2.1
+            virtual void visit(DeleteStmt *node) = 0;           // Phase 1 Task 2.2
             virtual void visit(AnalyzeStmt *node) = 0;          // Phase 1 Task 1.1.2
             virtual void visit(ExplainStmt *node) = 0;          // Phase 1 Task 1.5
             virtual void visit(StartTransactionStmt *node) = 0; // Phase 2 Task 2.6
@@ -1080,14 +1155,19 @@ namespace scratchbird
             }
 
             void visit(CreateTableStmt *node) override;
-            void visit(CreateTablespaceStmt *node) override; // Phase 2 Task 2.1
-            void visit(DropTablespaceStmt *node) override;   // Phase 2 Task 2.1
-            void visit(AttachTablespaceStmt *node) override; // Phase 6 Task 6.1
-            void visit(DetachTablespaceStmt *node) override; // Phase 6 Task 6.2
+            void visit(CreateIndexStmt *node) override;              // Phase 2 Task 2.3
+            void visit(CreateTablespaceStmt *node) override;         // Phase 2 Task 2.1
+            void visit(AlterTablespaceStmt *node) override;          // Phase 2 Task 2.2
+            void visit(AlterTableSetTablespaceStmt *node) override;  // Phase 4 Task 4.1.1
+            void visit(DropTablespaceStmt *node) override;           // Phase 2 Task 2.1
+            void visit(AttachTablespaceStmt *node) override;         // Phase 6 Task 6.1
+            void visit(DetachTablespaceStmt *node) override;         // Phase 6 Task 6.2
             void visit(InsertStmt *node) override;
             void visit(SelectStmt *node) override;
-            void visit(AnalyzeStmt *node) override;          // Phase 1 Task 1.1.2
-            void visit(ExplainStmt *node) override;          // Phase 1 Task 1.5
+            void visit(UpdateStmt *node) override;                   // Phase 1 Task 2.1
+            void visit(DeleteStmt *node) override;                   // Phase 1 Task 2.2
+            void visit(AnalyzeStmt *node) override;                  // Phase 1 Task 1.1.2
+            void visit(ExplainStmt *node) override;                  // Phase 1 Task 1.5
             void visit(StartTransactionStmt *node) override; // Phase 2 Task 2.6
             void visit(SetTransactionStmt *node) override;   // Phase 3 Task 3.6
             void visit(CommitStmt *node) override;           // Phase 2 Task 2.6

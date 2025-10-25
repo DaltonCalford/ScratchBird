@@ -143,6 +143,14 @@ namespace scratchbird
                 {
                     stmt = parseSelect();
                 }
+                else if (match(TokenType::KW_UPDATE))  // Phase 1 Task 2.1
+                {
+                    stmt = parseUpdate();
+                }
+                else if (match(TokenType::KW_DELETE))  // Phase 1 Task 2.2
+                {
+                    stmt = parseDelete();
+                }
                 else if (match(TokenType::KW_ANALYZE))  // Phase 1 Task 1.1.2
                 {
                     stmt = parseAnalyze();
@@ -826,6 +834,120 @@ namespace scratchbird
 
             auto span = makeSpan(start_loc);
             return arena_.make<SelectStmt>(span, std::move(select_list), table_name, where_clause);
+        }
+
+        Statement *Parser::parseUpdate()
+        {
+            // UPDATE table_name SET column1 = value1, column2 = value2, ... [WHERE condition]
+            // Phase 1 Task 2.1: UPDATE statement
+            auto start_loc = previous().location;
+
+            // Parse table name
+            if (!check(TokenType::IDENTIFIER))
+            {
+                error("Expected table name after UPDATE, but got " +
+                      std::string(tokenTypeToString(current().type)));
+                synchronize();
+                return nullptr;
+            }
+
+            StringPool::StringId table_name = current().value.string_id;
+            advance();
+
+            // Expect SET keyword
+            if (!consume(TokenType::KW_SET, "Expected SET after table name in UPDATE"))
+            {
+                synchronize();
+                return nullptr;
+            }
+
+            // Parse assignments: column = value, column = value, ...
+            std::vector<Assignment> assignments;
+            do
+            {
+                if (!check(TokenType::IDENTIFIER))
+                {
+                    error("Expected column name in SET clause, but got " +
+                          std::string(tokenTypeToString(current().type)));
+                    synchronize();
+                    return nullptr;
+                }
+
+                StringPool::StringId column_name = current().value.string_id;
+                advance();
+
+                if (!consume(TokenType::EQUAL, "Expected '=' after column name in SET clause"))
+                {
+                    synchronize();
+                    return nullptr;
+                }
+
+                Expression *value = parseExpression();
+                if (!value)
+                {
+                    synchronize();
+                    return nullptr;
+                }
+
+                assignments.emplace_back(column_name, value);
+
+            } while (match(TokenType::COMMA));
+
+            // Optional WHERE clause
+            Expression *where_clause = nullptr;
+            if (match(TokenType::KW_WHERE))
+            {
+                where_clause = parseExpression();
+                if (!where_clause)
+                {
+                    synchronize();
+                    return nullptr;
+                }
+            }
+
+            auto span = makeSpan(start_loc);
+            return arena_.make<UpdateStmt>(span, table_name, std::move(assignments), where_clause);
+        }
+
+        Statement *Parser::parseDelete()
+        {
+            // DELETE FROM table_name [WHERE condition]
+            // Phase 1 Task 2.2: DELETE statement
+            auto start_loc = previous().location;
+
+            // Expect FROM keyword
+            if (!consume(TokenType::KW_FROM, "Expected FROM after DELETE"))
+            {
+                synchronize();
+                return nullptr;
+            }
+
+            // Parse table name
+            if (!check(TokenType::IDENTIFIER))
+            {
+                error("Expected table name after DELETE FROM, but got " +
+                      std::string(tokenTypeToString(current().type)));
+                synchronize();
+                return nullptr;
+            }
+
+            StringPool::StringId table_name = current().value.string_id;
+            advance();
+
+            // Optional WHERE clause
+            Expression *where_clause = nullptr;
+            if (match(TokenType::KW_WHERE))
+            {
+                where_clause = parseExpression();
+                if (!where_clause)
+                {
+                    synchronize();
+                    return nullptr;
+                }
+            }
+
+            auto span = makeSpan(start_loc);
+            return arena_.make<DeleteStmt>(span, table_name, where_clause);
         }
 
         Statement *Parser::parseAnalyze()

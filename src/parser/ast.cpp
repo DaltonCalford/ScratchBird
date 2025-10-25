@@ -143,6 +143,16 @@ namespace scratchbird
             visitor->visit(this);
         }
 
+        void UpdateStmt::accept(ASTVisitor *visitor)
+        {
+            visitor->visit(this);
+        }
+
+        void DeleteStmt::accept(ASTVisitor *visitor)
+        {
+            visitor->visit(this);
+        }
+
         void AnalyzeStmt::accept(ASTVisitor *visitor)
         {
             visitor->visit(this);
@@ -207,6 +217,63 @@ namespace scratchbird
             out_ << "\n";
             printIndent();
             out_ << ")";
+        }
+
+        void ASTPrinter::visit(CreateIndexStmt *node)
+        {
+            printIndent();
+            out_ << "CREATE";
+            if (node->isUnique())
+                out_ << " UNIQUE";
+            out_ << " INDEX " << pool_.get(node->indexName())
+                 << " ON " << pool_.get(node->tableName()) << " (";
+            bool first = true;
+            for (auto col_id : node->columns())
+            {
+                if (!first)
+                    out_ << ", ";
+                out_ << pool_.get(col_id);
+                first = false;
+            }
+            out_ << ")";
+        }
+
+        void ASTPrinter::visit(AlterTablespaceStmt *node)
+        {
+            printIndent();
+            out_ << "ALTER TABLESPACE " << pool_.get(node->tablespaceName());
+
+            for (const auto &alteration : node->alterations())
+            {
+                switch (alteration.type)
+                {
+                    case TablespaceAlterationType::SET_AUTOEXTEND:
+                        out_ << " AUTOEXTEND " << (alteration.autoextend_enabled ? "ON" : "OFF");
+                        break;
+                    case TablespaceAlterationType::SET_AUTOEXTEND_SIZE:
+                        out_ << " AUTOEXTEND_SIZE " << alteration.size_value;
+                        break;
+                    case TablespaceAlterationType::SET_MAXSIZE:
+                        out_ << " MAXSIZE ";
+                        if (alteration.size_value == 0)
+                            out_ << "UNLIMITED";
+                        else
+                            out_ << alteration.size_value;
+                        break;
+                    case TablespaceAlterationType::RENAME_TO:
+                        out_ << " RENAME TO " << pool_.get(alteration.new_name);
+                        break;
+                }
+            }
+        }
+
+        void ASTPrinter::visit(AlterTableSetTablespaceStmt *node)
+        {
+            printIndent();
+            out_ << "ALTER TABLE " << pool_.get(node->tableName())
+                 << " SET TABLESPACE " << pool_.get(node->tablespaceName());
+            if (node->online())
+                out_ << " ONLINE";
         }
 
         void ASTPrinter::visit(CreateTablespaceStmt *node)
@@ -323,6 +390,42 @@ namespace scratchbird
             }
 
             out_ << " FROM " << pool_.get(node->tableName());
+
+            if (node->whereClause())
+            {
+                out_ << " WHERE ";
+                node->whereClause()->accept(this);
+            }
+        }
+
+        void ASTPrinter::visit(UpdateStmt *node)
+        {
+            // Phase 1 Task 2.1: UPDATE statement
+            printIndent();
+            out_ << "UPDATE " << pool_.get(node->tableName()) << " SET ";
+
+            bool first = true;
+            for (const auto &assign : node->assignments())
+            {
+                if (!first)
+                    out_ << ", ";
+                out_ << pool_.get(assign.column_name) << " = ";
+                assign.value->accept(this);
+                first = false;
+            }
+
+            if (node->whereClause())
+            {
+                out_ << " WHERE ";
+                node->whereClause()->accept(this);
+            }
+        }
+
+        void ASTPrinter::visit(DeleteStmt *node)
+        {
+            // Phase 1 Task 2.2: DELETE statement
+            printIndent();
+            out_ << "DELETE FROM " << pool_.get(node->tableName());
 
             if (node->whereClause())
             {

@@ -390,6 +390,63 @@ namespace scratchbird
             }
         }
 
+        void BytecodeGenerator::visit(parser::UpdateStmt *node)
+        {
+            // Phase 1 Task 2.1: UPDATE statement bytecode generation
+            current_result_->writeOpcode(Opcode::UPDATE);
+
+            // Write table name
+            current_result_->writeOpcode(Opcode::TABLE_REF);
+            writeStringId(node->tableName());
+
+            // Write assignments list
+            size_t assignment_count = node->assignments().size();
+            if (assignment_count > UINT32_MAX)
+            {
+                current_result_->addError("Assignment count exceeds maximum (4 billion)");
+                return;
+            }
+
+            current_result_->writeOpcode(Opcode::BEGIN_LIST);
+            current_result_->writeInt32(static_cast<uint32_t>(assignment_count));
+
+            for (const auto &assignment : node->assignments())
+            {
+                current_result_->writeOpcode(Opcode::ASSIGNMENT);
+                // Write column name
+                current_result_->writeOpcode(Opcode::COLUMN_REF);
+                writeStringId(assignment.column_name);
+                // Write value expression
+                generateExpression(assignment.value);
+            }
+
+            current_result_->writeOpcode(Opcode::END_LIST);
+
+            // Write WHERE clause if present
+            if (node->whereClause())
+            {
+                current_result_->writeOpcode(Opcode::WHERE_CLAUSE);
+                generateExpression(node->whereClause());
+            }
+        }
+
+        void BytecodeGenerator::visit(parser::DeleteStmt *node)
+        {
+            // Phase 1 Task 2.2: DELETE statement bytecode generation
+            current_result_->writeOpcode(Opcode::DELETE);
+
+            // Write table name
+            current_result_->writeOpcode(Opcode::TABLE_REF);
+            writeStringId(node->tableName());
+
+            // Write WHERE clause if present
+            if (node->whereClause())
+            {
+                current_result_->writeOpcode(Opcode::WHERE_CLAUSE);
+                generateExpression(node->whereClause());
+            }
+        }
+
         void BytecodeGenerator::visit(parser::StartTransactionStmt *node)
         {
             // Generate START TRANSACTION bytecode (Phase 2 Task 2.6, Phase 3 Task 3.6)
