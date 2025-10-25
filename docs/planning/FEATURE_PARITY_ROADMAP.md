@@ -135,7 +135,7 @@ Without these features, ScratchBird **cannot be used** for even simple applicati
 **Why Third**: Most queries need multi-table joins.
 **Status**: Started October 25, 2025 → **~70% complete** (parser ✅, semantic analysis ✅, bytecode gen ✅, needs planner + executor)
 
-- [x] **3.1 Parser Support** (15-25 hours) ✅ 100% COMPLETE
+- [x] **3.1 Parser, Semantic Analysis, and Bytecode Generation** (15-25 hours) ✅ 100% COMPLETE
   - [x] Add JOIN keywords to lexer (JOIN, INNER, LEFT, RIGHT, FULL, OUTER, CROSS, NATURAL, USING) ✅ Done Oct 25
   - [x] Create JOIN AST structures (JoinType, JoinConditionType, TableRef, JoinClause, FromClause) ✅ Done Oct 25
   - [x] Update SelectStmt to support FROM clause with multiple tables ✅ Done Oct 25
@@ -159,6 +159,17 @@ Without these features, ScratchBird **cannot be used** for even simple applicati
   - **Status**: ✅ **Parser + Semantic Analysis + Bytecode Gen COMPLETE**
   - **Testing**: ✅ **All 10 tests passing** (INNER, LEFT, RIGHT, FULL, CROSS, NATURAL, USING, ON with qualified names, aliases, multiple joins)
   - **Deliverable**: ✅ Parser, semantic analysis, and bytecode generation all support JOINs
+  - **Implementation**: ~1,200 lines across lexer, parser, AST, semantic analyzer, bytecode generator
+  - **Files Modified**:
+    * `/include/scratchbird/parser/token.h` - JOIN keywords
+    * `/src/parser/lexer.cpp` - Keyword mappings
+    * `/include/scratchbird/parser/ast.h` - JOIN AST structures + qualified IdentifierExpr
+    * `/include/scratchbird/parser/parser.h` - JOIN parsing methods
+    * `/src/parser/parser.cpp` - Complete JOIN parsing logic (~200 lines)
+    * `/src/parser/ast.cpp` - ASTPrinter updates for JOINs and qualified names
+    * `/src/parser/semantic_analyzer.cpp` - JOIN and qualified name semantic analysis
+    * `/src/sblr/bytecode_generator.cpp` - Qualified column reference bytecode
+    * `/test_join_parsing.cpp` - Comprehensive test suite (10 test cases)
 
 - [ ] **3.2 Query Planner for Joins** (15-25 hours) ⏸️ NOT STARTED
   - [ ] Create NestedLoopJoinNode and HashJoinNode plan structures
