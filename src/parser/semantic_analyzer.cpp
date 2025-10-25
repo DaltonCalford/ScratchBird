@@ -253,21 +253,72 @@ namespace scratchbird
 
         void SemanticAnalyzer::visit(SelectStmt *node)
         {
-            // Resolve table
-            TableSymbol *table = resolveTable(node->tableName());
-            if (!table)
-                return;
-
-            // Set current table context
-            current_table_ = table;
+            // Phase 1 Task 3.1: Handle JOINs in SELECT
 
             // Create new scope for column resolution
             symbol_table_.pushScope();
 
-            // Add all table columns to scope
-            for (const auto &col : table->columns)
+            // Resolve base table
+            TableSymbol *base_table = resolveTable(node->fromClause().base_table.table_name);
+            if (!base_table)
+            {
+                symbol_table_.popScope();
+                return;
+            }
+
+            current_table_ = base_table;
+
+            // Add base table columns to scope
+            for (const auto &col : base_table->columns)
             {
                 symbol_table_.addColumn(col.name, col);
+            }
+
+            // Process JOINs if present
+            if (node->hasJoins())
+            {
+                for (const auto &join : node->fromClause().joins)
+                {
+                    // Resolve joined table
+                    TableSymbol *join_table = resolveTable(join.right_table.table_name);
+                    if (!join_table)
+                        continue;
+
+                    // Add joined table columns to scope
+                    for (const auto &col : join_table->columns)
+                    {
+                        symbol_table_.addColumn(col.name, col);
+                    }
+
+                    // Validate join condition
+                    if (join.condition_type == JoinConditionType::ON && join.on_condition)
+                    {
+                        checkExpression(join.on_condition);
+
+                        // JOIN ON condition should be boolean
+                        const ExpressionType *cond_type = getExpressionType(join.on_condition);
+                        if (!cond_type || (cond_type->type.type != DataType::BOOLEAN &&
+                                          cond_type->type.type != DataType::INT32))
+                        {
+                            reportError(join.on_condition, "JOIN ON condition must evaluate to boolean");
+                        }
+                    }
+                    else if (join.condition_type == JoinConditionType::USING)
+                    {
+                        // Validate USING columns exist in both tables
+                        for (auto col_id : join.using_columns)
+                        {
+                            const ColumnSymbol *col = resolveColumn(col_id);
+                            if (!col)
+                            {
+                                std::string error_msg = "Column '";
+                                error_msg += string_pool_.get(col_id);
+                                error_msg += "' in USING clause does not exist";
+                                reportError(node, error_msg);
+                            }
+                        }
+                    }
+                }
             }
 
             // Process select list
@@ -482,17 +533,42 @@ namespace scratchbird
 
         void SemanticAnalyzer::visit(IdentifierExpr *node)
         {
-            // Resolve column
-            const ColumnSymbol *col = resolveColumn(node->name());
-            if (col)
+            // Phase 1 Task 3.1: Handle qualified column names (table.column)
+            if (node->isQualified())
             {
-                setExpressionType(node, ExpressionType(col->type, col->nullable));
+                // Qualified identifier - need to find column in specific table
+                // For now, just try to resolve the column name
+                // TODO: Validate that the qualifier matches an available table/alias
+                const ColumnSymbol *col = resolveColumn(node->name());
+                if (col)
+                {
+                    setExpressionType(node, ExpressionType(col->type, col->nullable));
+                }
+                else
+                {
+                    std::string error_msg = "Column '";
+                    error_msg += string_pool_.get(node->qualifier());
+                    error_msg += ".";
+                    error_msg += string_pool_.get(node->name());
+                    error_msg += "' does not exist";
+                    reportError(node, error_msg);
+                    setExpressionType(node, ExpressionType());
+                }
             }
             else
             {
-                // Error already reported by resolveColumn
-                // Set unknown type
-                setExpressionType(node, ExpressionType());
+                // Unqualified identifier - resolve column
+                const ColumnSymbol *col = resolveColumn(node->name());
+                if (col)
+                {
+                    setExpressionType(node, ExpressionType(col->type, col->nullable));
+                }
+                else
+                {
+                    // Error already reported by resolveColumn
+                    // Set unknown type
+                    setExpressionType(node, ExpressionType());
+                }
             }
         }
 
