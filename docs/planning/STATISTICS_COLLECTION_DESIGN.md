@@ -3,7 +3,7 @@
 **Phase**: Phase 1, Task 1.1 - Query Optimizer Foundation
 **Component**: Statistics Collection
 **Date**: October 25, 2025
-**Status**: In Development (~60% Complete)
+**Status**: In Development (~75% Complete)
 
 ---
 
@@ -47,7 +47,7 @@ Executor → StatisticsManager::analyzeTable()
 
 ## Implementation Status
 
-### ✅ Completed (Tasks 1.1.1 - 1.1.4, 1.1.7)
+### ✅ Completed (Tasks 1.1.1 - 1.1.7 except 1.1.8)
 
 #### 1. Statistics Data Structures
 **File**: `include/scratchbird/optimizer/statistics.h`
@@ -205,9 +205,59 @@ Phase 2: Geometric skipping
 
 **File**: `src/optimizer/statistics_manager.cpp:543-602`
 
-### 📋 Remaining Tasks (Task 1.1.5 - 1.1.6, 1.1.8)
+#### 6. Histogram Generation (Task 1.1.5)
 
-#### Task 1.1.5: Histogram Generation
+**Purpose**: Generate histogram buckets for selectivity estimation
+
+**Equal-Height Algorithm** (PostgreSQL-style):
+```
+1. Filter NULLs and sort values
+2. Calculate values_per_bucket = total_values / bucket_count
+3. Distribute remainder rows evenly (first R buckets get +1 row)
+4. For each bucket:
+   - lower_bound = first value in bucket
+   - upper_bound = last value in bucket
+   - row_count = number of values in bucket
+   - frequency = row_count / total_values
+```
+
+**Equal-Width Algorithm** (MySQL-style):
+- Currently falls back to equal-height for complex types
+- Future: implement range-based bucketing for numeric types
+
+**Implementation**:
+- Handles edge cases (all NULLs, single value, fewer values than buckets)
+- Caps bucket count at number of distinct values
+- Zero-pads values smaller than 256-byte buffer
+- TOAST OID = 0 (inline data)
+
+**File**: `src/optimizer/statistics_manager.cpp:510-662`
+
+#### 7. Most Common Values Identification (Task 1.1.6)
+
+**Purpose**: Identify top-k most frequent values for accurate selectivity
+
+**Algorithm**:
+```
+1. Build frequency map: value -> count (using hash table)
+2. Convert to vector of (value, count) pairs
+3. Sort by count descending
+4. Take top max_mcv_count entries
+5. Compute frequency = count / total_non_null_values
+```
+
+**Implementation**:
+- Uses `std::unordered_map` with `VectorHash` functor
+- Filters NULLs (not counted as MCV)
+- Default max_mcv_count = 100 (PostgreSQL default)
+- Stores value bytes and frequency fraction
+- Time complexity: O(n) for frequency map + O(d log d) for sorting where d = distinct values
+
+**File**: `src/optimizer/statistics_manager.cpp:664-756`
+
+### 📋 Remaining Tasks (Task 1.1.8 only)
+
+#### Task 1.1.8: Catalog Persistence
 **Estimated**: 6-10 hours
 
 ```cpp
