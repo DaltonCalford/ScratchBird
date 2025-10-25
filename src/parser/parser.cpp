@@ -2265,8 +2265,26 @@ namespace scratchbird
                 auto name = current().value.string_id;
                 advance();
 
+                // Check for qualified name (table.column) - Phase 1 Task 3.1
+                if (match(TokenType::DOT))
+                {
+                    // This is a qualified identifier
+                    StringPool::StringId qualifier = name;
+
+                    if (!check(TokenType::IDENTIFIER))
+                    {
+                        error("Expected column name after '.'");
+                        return nullptr;
+                    }
+
+                    StringPool::StringId column_name = current().value.string_id;
+                    advance();
+
+                    auto span = makeSpan(start_loc, previous().location);
+                    return arena_.make<IdentifierExpr>(span, qualifier, column_name);
+                }
                 // Check if this is a function call
-                if (match(TokenType::LEFT_PAREN))
+                else if (match(TokenType::LEFT_PAREN))
                 {
                     // Parse function arguments
                     std::vector<Expression *> args;

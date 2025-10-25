@@ -237,8 +237,15 @@ namespace scratchbird
         class IdentifierExpr : public Expression
         {
         public:
+            // Simple identifier (column name only)
             IdentifierExpr(const SourceSpan &span, StringPool::StringId name)
-                : Expression(ASTKind::IDENTIFIER, span), name_(name)
+                : Expression(ASTKind::IDENTIFIER, span), name_(name), qualifier_(0)
+            {
+            }
+
+            // Qualified identifier (table.column or alias.column) - Phase 1 Task 3.1
+            IdentifierExpr(const SourceSpan &span, StringPool::StringId qualifier, StringPool::StringId name)
+                : Expression(ASTKind::IDENTIFIER, span), name_(name), qualifier_(qualifier)
             {
             }
 
@@ -247,10 +254,21 @@ namespace scratchbird
                 return name_;
             }
 
+            StringPool::StringId qualifier() const
+            {
+                return qualifier_;
+            }
+
+            bool isQualified() const
+            {
+                return qualifier_ != 0;
+            }
+
             void accept(ASTVisitor *visitor) override;
 
         private:
-            StringPool::StringId name_;
+            StringPool::StringId name_;       // Column name
+            StringPool::StringId qualifier_;  // Optional table name or alias
         };
 
         // Binary operation
