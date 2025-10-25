@@ -249,7 +249,7 @@ namespace scratchbird::optimizer
          *
          * Phase 1, Task 1.1
          */
-        auto estimateNDistinct(const std::vector<uint8_t> &values, uint64_t total_rows,
+        auto estimateNDistinct(const std::vector<std::vector<uint8_t>> &values, uint64_t total_rows,
                                uint64_t sample_size) -> uint64_t;
 
         /**

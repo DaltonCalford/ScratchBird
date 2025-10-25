@@ -11,9 +11,24 @@
 #include <random>
 #include <cmath>
 #include <cstring>
+#include <ctime>
+#include <unordered_set>
 
 namespace scratchbird::optimizer
 {
+    // Hash function for std::vector<uint8_t> (for use in unordered_set)
+    struct VectorHash
+    {
+        size_t operator()(const std::vector<uint8_t> &v) const
+        {
+            size_t hash = 0;
+            for (uint8_t byte : v)
+            {
+                hash = hash * 31 + byte;
+            }
+            return hash;
+        }
+    };
 
     StatisticsManager::StatisticsManager(Database *db)
         : db_(db),
@@ -278,20 +293,218 @@ namespace scratchbird::optimizer
     {
         DEBUG_LOG_DB("Computing column statistics from sample");
 
-        // TODO: Phase 1, Task 1.1.4 - Implement column statistics computation
+        // Phase 1, Task 1.1.4 - Column statistics computation
         //
         // Steps:
-        // 1. Extract column values from sample_rows
-        // 2. Compute null_fraction (count NULLs / total)
-        // 3. Estimate n_distinct (using HyperLogLog for large cardinality)
-        // 4. Compute avg_width (average bytes per value)
-        // 5. Identify Most Common Values (top 100 by frequency)
-        // 6. Generate histogram (equal-height or equal-width)
-        // 7. Set metadata (last_analyzed_time, sample_size, sample_rate)
+        // 1. Get table schema from catalog
+        // 2. Extract column values from sample_rows
+        // 3. Compute null_fraction (count NULLs / total)
+        // 4. Estimate n_distinct (using exact count or HyperLogLog)
+        // 5. Compute avg_width (average bytes per value)
+        // 6. Identify Most Common Values (top 100 by frequency)
+        // 7. Generate histogram (equal-height or equal-width)
+        // 8. Set metadata (last_analyzed_time, sample_size, sample_rate)
 
-        SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED,
-                          "computeColumnStats not yet implemented");
-        return Status::NOT_IMPLEMENTED;
+        if (sample_rows.empty())
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Empty sample");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        // Get table and column information from catalog
+        if (!catalog_)
+        {
+            catalog_ = db_->catalog_manager();
+        }
+
+        std::vector<core::CatalogManager::ColumnInfo> columns;
+        Status status = catalog_->getColumns(table_id, columns, ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, status, "Failed to get table columns");
+            return status;
+        }
+
+        // Find the target column
+        size_t target_column_idx = SIZE_MAX;
+        core::CatalogManager::ColumnInfo target_column_info;
+
+        for (size_t i = 0; i < columns.size(); i++)
+        {
+            if (std::memcmp(columns[i].column_id.bytes.data(), column_id.bytes.data(), 16) == 0)
+            {
+                target_column_idx = i;
+                target_column_info = columns[i];
+                break;
+            }
+        }
+
+        if (target_column_idx == SIZE_MAX)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Column not found in table");
+            return Status::NOT_FOUND;
+        }
+
+        // Extract column values from sample rows
+        std::vector<std::vector<uint8_t>> column_values;
+        column_values.reserve(sample_rows.size());
+        uint64_t null_count = 0;
+        uint64_t total_width = 0;
+
+        for (const auto &tuple_data : sample_rows)
+        {
+            if (tuple_data.size() < sizeof(core::TupleHeader))
+            {
+                continue; // Skip malformed tuples
+            }
+
+            // Read TupleHeader
+            const auto *header = reinterpret_cast<const core::TupleHeader *>(tuple_data.data());
+
+            // Get null bitmap if present
+            const uint8_t *null_bitmap = nullptr;
+            if (header->hasNulls() && header->null_bitmap_offset > 0 &&
+                header->null_bitmap_offset < tuple_data.size())
+            {
+                null_bitmap = tuple_data.data() + header->null_bitmap_offset;
+            }
+
+            // Check if our target column is null
+            bool is_null = false;
+            if (null_bitmap)
+            {
+                size_t byte_offset = target_column_idx / 8;
+                size_t bit_pos = target_column_idx % 8;
+                is_null = (null_bitmap[byte_offset] & (1 << bit_pos)) != 0;
+            }
+
+            if (is_null)
+            {
+                null_count++;
+                column_values.push_back(std::vector<uint8_t>()); // Empty vector for NULL
+                continue;
+            }
+
+            // Calculate data offset for our target column
+            size_t data_offset = sizeof(core::TupleHeader);
+            if (header->hasNulls() && null_bitmap)
+            {
+                size_t bitmap_bytes = (columns.size() + 7) / 8;
+                data_offset = header->null_bitmap_offset + bitmap_bytes;
+            }
+
+            // Skip columns before our target
+            for (size_t i = 0; i < target_column_idx; i++)
+            {
+                // Check if this column is null
+                if (null_bitmap)
+                {
+                    size_t byte_offset = i / 8;
+                    size_t bit_pos = i % 8;
+                    if (null_bitmap[byte_offset] & (1 << bit_pos))
+                    {
+                        continue; // Null column, no data to skip
+                    }
+                }
+
+                // Skip this column's data based on its type
+                core::DataType col_type = static_cast<core::DataType>(columns[i].data_type);
+                if (col_type == core::DataType::INT32)
+                {
+                    data_offset += sizeof(int32_t);
+                }
+                else if (col_type == core::DataType::INT64)
+                {
+                    data_offset += sizeof(int64_t);
+                }
+                else if (col_type == core::DataType::FLOAT64)
+                {
+                    data_offset += sizeof(double);
+                }
+                else if (col_type == core::DataType::VARCHAR)
+                {
+                    // VARCHAR has length prefix
+                    if (data_offset + sizeof(uint32_t) > tuple_data.size())
+                        break;
+                    uint32_t len;
+                    std::memcpy(&len, tuple_data.data() + data_offset, sizeof(uint32_t));
+                    data_offset += sizeof(uint32_t) + len;
+                }
+                // TODO: Add support for other types as needed
+            }
+
+            // Extract the target column value
+            core::DataType target_type = static_cast<core::DataType>(target_column_info.data_type);
+            std::vector<uint8_t> value;
+
+            if (target_type == core::DataType::INT32 && data_offset + sizeof(int32_t) <= tuple_data.size())
+            {
+                value.resize(sizeof(int32_t));
+                std::memcpy(value.data(), tuple_data.data() + data_offset, sizeof(int32_t));
+                total_width += sizeof(int32_t);
+            }
+            else if (target_type == core::DataType::INT64 && data_offset + sizeof(int64_t) <= tuple_data.size())
+            {
+                value.resize(sizeof(int64_t));
+                std::memcpy(value.data(), tuple_data.data() + data_offset, sizeof(int64_t));
+                total_width += sizeof(int64_t);
+            }
+            else if (target_type == core::DataType::FLOAT64 && data_offset + sizeof(double) <= tuple_data.size())
+            {
+                value.resize(sizeof(double));
+                std::memcpy(value.data(), tuple_data.data() + data_offset, sizeof(double));
+                total_width += sizeof(double);
+            }
+            else if (target_type == core::DataType::VARCHAR && data_offset + sizeof(uint32_t) <= tuple_data.size())
+            {
+                uint32_t len;
+                std::memcpy(&len, tuple_data.data() + data_offset, sizeof(uint32_t));
+                if (data_offset + sizeof(uint32_t) + len <= tuple_data.size())
+                {
+                    value.resize(sizeof(uint32_t) + len);
+                    std::memcpy(value.data(), tuple_data.data() + data_offset, sizeof(uint32_t) + len);
+                    total_width += len; // Width is actual string length, not including length prefix
+                }
+            }
+
+            column_values.push_back(std::move(value));
+        }
+
+        // Compute statistics
+        stats.table_id = table_id;
+        stats.column_id = column_id;
+        stats.column_name = target_column_info.column_name;
+        stats.data_type = static_cast<core::DataType>(target_column_info.data_type);
+
+        stats.num_rows = sample_rows.size();
+        stats.num_nulls = null_count;
+        stats.null_fraction = static_cast<float>(null_count) / static_cast<float>(sample_rows.size());
+
+        // Compute avg_width (average bytes per non-null value)
+        uint64_t non_null_count = sample_rows.size() - null_count;
+        if (non_null_count > 0)
+        {
+            stats.avg_width = static_cast<float>(total_width) / static_cast<float>(non_null_count);
+        }
+        else
+        {
+            stats.avg_width = 0.0f;
+        }
+
+        // Estimate n_distinct
+        // For now, we'll use exact counting; HyperLogLog can be added later
+        stats.num_distinct = estimateNDistinct(column_values, stats.num_rows, sample_rows.size());
+
+        // Set metadata
+        stats.last_analyzed_time = std::time(nullptr);
+        stats.sample_size = sample_rows.size();
+        stats.sample_rate = 0.0f; // Will be set by caller
+
+        DEBUG_LOG_DB("Column statistics computed: " + std::to_string(stats.num_rows) + " rows, " +
+                     std::to_string(stats.num_nulls) + " nulls, " +
+                     std::to_string(stats.num_distinct) + " distinct");
+
+        return Status::OK;
     }
 
     auto StatisticsManager::generateHistogram(const std::vector<uint8_t> &values,
@@ -340,26 +553,65 @@ namespace scratchbird::optimizer
         return Status::NOT_IMPLEMENTED;
     }
 
-    auto StatisticsManager::estimateNDistinct(const std::vector<uint8_t> &values,
+    auto StatisticsManager::estimateNDistinct(const std::vector<std::vector<uint8_t>> &values,
                                                uint64_t total_rows,
                                                uint64_t sample_size) -> uint64_t
     {
         DEBUG_LOG_DB("Estimating number of distinct values");
 
-        // TODO: Phase 1, Task 1.1.7 - Implement n_distinct estimation
+        // Phase 1, Task 1.1.7 - n_distinct estimation
         //
-        // For small samples: Use exact count
-        // For large samples: Use HyperLogLog algorithm
-        //
-        // Good-Turing estimator:
+        // For now, use exact count in sample with simple extrapolation
+        // Future enhancement: HyperLogLog for large cardinality estimation
+
+        if (values.empty())
+        {
+            return 0;
+        }
+
+        // Count distinct values in sample using a hash set
+        std::unordered_set<std::vector<uint8_t>, VectorHash> distinct_values;
+
+        for (const auto &value : values)
+        {
+            if (!value.empty()) // Skip NULLs (represented as empty vectors)
+            {
+                distinct_values.insert(value);
+            }
+        }
+
+        uint64_t distinct_in_sample = distinct_values.size();
+
+        // If we sampled the entire table, return exact count
+        if (sample_size >= total_rows)
+        {
+            return distinct_in_sample;
+        }
+
+        // For small distinct counts relative to sample size, likely saw everything
+        if (distinct_in_sample < 100 || distinct_in_sample < sample_size / 10)
+        {
+            return distinct_in_sample;
+        }
+
+        // Otherwise, use linear extrapolation with a cap
         // n_distinct_estimate = distinct_in_sample * (total_rows / sample_size)
         //
-        // Improved estimator (Chao's estimator):
-        // Accounts for unobserved values using frequency of singletons
+        // But cap at total_rows since we can't have more distinct values than rows
+        double sample_fraction = static_cast<double>(sample_size) / static_cast<double>(total_rows);
+        uint64_t estimate = static_cast<uint64_t>(
+            static_cast<double>(distinct_in_sample) / sample_fraction);
 
-        // Placeholder: exact count in sample
-        // TODO: Replace with proper estimation
-        return 0;
+        // Cap at total rows
+        if (estimate > total_rows)
+        {
+            estimate = total_rows;
+        }
+
+        DEBUG_LOG_DB("Estimated " + std::to_string(estimate) + " distinct values from " +
+                     std::to_string(distinct_in_sample) + " in sample");
+
+        return estimate;
     }
 
     auto StatisticsManager::storeColumnStatistics(const ColumnStatistics &stats,
