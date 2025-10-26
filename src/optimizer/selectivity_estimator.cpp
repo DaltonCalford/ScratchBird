@@ -489,4 +489,137 @@ namespace scratchbird::optimizer
         return std::max(0.0, std::min(1.0, fraction));
     }
 
+    auto SelectivityEstimator::estimateJoinSelectivity(
+        const parser::Expression* join_condition,
+        const core::ID& left_table_id,
+        const core::ID& right_table_id,
+        core::ErrorContext* ctx)
+        -> double
+    {
+        if (!join_condition)
+        {
+            // CROSS JOIN or NATURAL JOIN without condition
+            // Return 1.0 for now (Cartesian product)
+            DEBUG_LOG_DB("No join condition, using selectivity 1.0");
+            return 1.0;
+        }
+
+        // For Phase 1, use simplified heuristic based on expression type
+        // Full implementation would recursively traverse the expression tree
+
+        // Check if this is a binary operation
+        if (join_condition->kind() == parser::ASTKind::BINARY_OP)
+        {
+            auto* binary_op = static_cast<const parser::BinaryOpExpr*>(join_condition);
+
+            // Check for equality (equi-join)
+            if (binary_op->op() == parser::BinaryOp::EQ)
+            {
+                // Try to extract column references from both sides
+                // For Phase 1, use default equi-join selectivity
+                // Full implementation would call estimateEquiJoinSelectivity
+
+                DEBUG_LOG_DB("Equi-join detected, using default selectivity: " +
+                           std::to_string(DEFAULT_EQUALITY_SEL));
+                return DEFAULT_EQUALITY_SEL;
+            }
+            // Range join (>, <, >=, <=)
+            else if (binary_op->op() == parser::BinaryOp::GT ||
+                    binary_op->op() == parser::BinaryOp::LT ||
+                    binary_op->op() == parser::BinaryOp::GTE ||
+                    binary_op->op() == parser::BinaryOp::LTE)
+            {
+                DEBUG_LOG_DB("Range join detected, using default selectivity: " +
+                           std::to_string(DEFAULT_RANGE_SEL));
+                return DEFAULT_RANGE_SEL;
+            }
+            // AND - multiply selectivities (independence assumption)
+            else if (binary_op->op() == parser::BinaryOp::AND)
+            {
+                double left_sel = estimateJoinSelectivity(
+                    binary_op->left(), left_table_id, right_table_id, ctx);
+                double right_sel = estimateJoinSelectivity(
+                    binary_op->right(), left_table_id, right_table_id, ctx);
+
+                double combined = left_sel * right_sel;
+                DEBUG_LOG_DB("AND join condition: " + std::to_string(left_sel) +
+                           " * " + std::to_string(right_sel) +
+                           " = " + std::to_string(combined));
+                return combined;
+            }
+            // OR - add selectivities and subtract overlap
+            else if (binary_op->op() == parser::BinaryOp::OR)
+            {
+                double left_sel = estimateJoinSelectivity(
+                    binary_op->left(), left_table_id, right_table_id, ctx);
+                double right_sel = estimateJoinSelectivity(
+                    binary_op->right(), left_table_id, right_table_id, ctx);
+
+                // sel(A OR B) = sel(A) + sel(B) - sel(A) * sel(B)
+                double combined = left_sel + right_sel - (left_sel * right_sel);
+                DEBUG_LOG_DB("OR join condition: " + std::to_string(left_sel) +
+                           " + " + std::to_string(right_sel) +
+                           " - overlap = " + std::to_string(combined));
+                return combined;
+            }
+        }
+
+        // Default for unknown join conditions
+        DEBUG_LOG_DB("Unknown join condition type, using default: " +
+                   std::to_string(DEFAULT_RANGE_SEL));
+        return DEFAULT_RANGE_SEL;
+    }
+
+    auto SelectivityEstimator::estimateEquiJoinSelectivity(
+        const core::ID& left_col_id,
+        const core::ID& right_col_id,
+        const core::ID& left_table_id,
+        const core::ID& right_table_id,
+        core::ErrorContext* ctx)
+        -> double
+    {
+        DEBUG_LOG_DB("Estimating equi-join selectivity");
+
+        // Get statistics for both columns
+        ColumnStatistics left_stats, right_stats;
+
+        core::Status left_status = stats_manager_->getColumnStatistics(
+            left_table_id, left_col_id, left_stats, ctx);
+        core::Status right_status = stats_manager_->getColumnStatistics(
+            right_table_id, right_col_id, right_stats, ctx);
+
+        if (left_status != core::Status::OK || right_status != core::Status::OK)
+        {
+            // No statistics available, use default
+            DEBUG_LOG_DB("No statistics for join columns, using default: " +
+                       std::to_string(DEFAULT_EQUALITY_SEL));
+            return DEFAULT_EQUALITY_SEL;
+        }
+
+        // Equi-join selectivity formula:
+        // selectivity = 1 / MAX(n_distinct(left_col), n_distinct(right_col))
+        //
+        // Rationale: Each value in the smaller domain matches approximately
+        // 1/n_distinct of the larger domain
+
+        uint64_t max_distinct = std::max(left_stats.n_distinct, right_stats.n_distinct);
+
+        if (max_distinct == 0)
+        {
+            // Avoid division by zero
+            DEBUG_LOG_DB("n_distinct is 0, using default: " +
+                       std::to_string(DEFAULT_EQUALITY_SEL));
+            return DEFAULT_EQUALITY_SEL;
+        }
+
+        double selectivity = 1.0 / static_cast<double>(max_distinct);
+
+        DEBUG_LOG_DB("Equi-join selectivity: 1 / MAX(" +
+                   std::to_string(left_stats.n_distinct) + ", " +
+                   std::to_string(right_stats.n_distinct) + ") = " +
+                   std::to_string(selectivity));
+
+        return selectivity;
+    }
+
 } // namespace scratchbird::optimizer
