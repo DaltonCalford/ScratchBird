@@ -154,6 +154,14 @@ namespace scratchbird
             void generateIndexScanPlan(scratchbird::optimizer::IndexScanNode *node,
                                       parser::SelectStmt *stmt);
 
+            // NEW: JOIN plan node bytecode generation (Phase 1, Task 3.3)
+            void generateNestedLoopJoinPlan(scratchbird::optimizer::NestedLoopJoinNode *node,
+                                          parser::SelectStmt *stmt);
+            void generateHashJoinPlan(scratchbird::optimizer::HashJoinNode *node,
+                                    parser::SelectStmt *stmt);
+            void generateJoinPlan(scratchbird::optimizer::PlanNode *node,
+                                parser::SelectStmt *stmt);
+
             // NEW: Direct SELECT generation (fallback when planner unavailable)
             void generateDirectSelect(parser::SelectStmt *node);
         };

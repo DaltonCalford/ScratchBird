@@ -144,6 +144,12 @@ namespace scratchbird
 
             // EXPLAIN command (Phase 1, Task 1.5)
             EXPLAIN_PLAN = 0xC2,  // EXPLAIN output (string)
+
+            // JOIN operations (Phase 1, Task 3.3)
+            NESTED_LOOP_JOIN = 0xC5,  // Nested loop join
+            HASH_JOIN = 0xC6,         // Hash join
+            JOIN_TYPE = 0xC7,         // Join type marker (INNER, LEFT, RIGHT, FULL)
+            JOIN_CONDITION = 0xC8,    // Join condition expression
         };
 
         // SBLR Version
