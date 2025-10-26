@@ -901,6 +901,18 @@ namespace scratchbird
                     original_stmt);
                 break;
 
+            case scratchbird::optimizer::PlanNodeType::NESTED_LOOP_JOIN:
+                generateNestedLoopJoinPlan(
+                    static_cast<scratchbird::optimizer::NestedLoopJoinNode *>(plan.get()),
+                    original_stmt);
+                break;
+
+            case scratchbird::optimizer::PlanNodeType::HASH_JOIN:
+                generateHashJoinPlan(
+                    static_cast<scratchbird::optimizer::HashJoinNode *>(plan.get()),
+                    original_stmt);
+                break;
+
             default:
                 result.addError("Unsupported plan node type");
                 break;
@@ -1012,6 +1024,159 @@ namespace scratchbird
 
             DEBUG_LOG_DB("Generated IndexScan bytecode with optimizer hint (index: " +
                          node->indexName() + ")");
+        }
+
+        // ===== JOIN Plan Node Bytecode Generation (Phase 1, Task 3.3) =====
+
+        void BytecodeGenerator::generateNestedLoopJoinPlan(
+            scratchbird::optimizer::NestedLoopJoinNode *node,
+            parser::SelectStmt *stmt)
+        {
+            DEBUG_LOG_DB("Generating Nested Loop Join bytecode");
+
+            // Write JOIN opcode
+            current_result_->writeOpcode(Opcode::NESTED_LOOP_JOIN);
+
+            // Write join type (INNER=0, LEFT=1, RIGHT=2, FULL=3)
+            current_result_->writeOpcode(Opcode::JOIN_TYPE);
+            current_result_->writeByte(static_cast<uint8_t>(node->joinType()));
+
+            // Generate bytecode for outer (left) child
+            generateJoinPlan(node->outerPlan().get(), stmt);
+
+            // Generate bytecode for inner (right) child
+            generateJoinPlan(node->innerPlan().get(), stmt);
+
+            // Write join condition
+            if (node->joinCondition())
+            {
+                current_result_->writeOpcode(Opcode::JOIN_CONDITION);
+                generateExpression(node->joinCondition());
+            }
+
+            DEBUG_LOG_DB("Generated Nested Loop Join bytecode");
+        }
+
+        void BytecodeGenerator::generateHashJoinPlan(
+            scratchbird::optimizer::HashJoinNode *node,
+            parser::SelectStmt *stmt)
+        {
+            DEBUG_LOG_DB("Generating Hash Join bytecode");
+
+            // Write JOIN opcode
+            current_result_->writeOpcode(Opcode::HASH_JOIN);
+
+            // Write join type
+            current_result_->writeOpcode(Opcode::JOIN_TYPE);
+            current_result_->writeByte(static_cast<uint8_t>(node->joinType()));
+
+            // Generate bytecode for outer (probe) child
+            generateJoinPlan(node->outerPlan().get(), stmt);
+
+            // Generate bytecode for inner (build) child
+            generateJoinPlan(node->innerPlan().get(), stmt);
+
+            // Write hash keys for outer side
+            current_result_->writeOpcode(Opcode::BEGIN_LIST);
+            current_result_->writeInt32(static_cast<uint32_t>(node->hashKeysOuter().size()));
+            for (auto *key : node->hashKeysOuter())
+            {
+                generateExpression(key);
+            }
+            current_result_->writeOpcode(Opcode::END_LIST);
+
+            // Write hash keys for inner side
+            current_result_->writeOpcode(Opcode::BEGIN_LIST);
+            current_result_->writeInt32(static_cast<uint32_t>(node->hashKeysInner().size()));
+            for (auto *key : node->hashKeysInner())
+            {
+                generateExpression(key);
+            }
+            current_result_->writeOpcode(Opcode::END_LIST);
+
+            // Write join condition (for non-equality predicates)
+            if (node->joinCondition())
+            {
+                current_result_->writeOpcode(Opcode::JOIN_CONDITION);
+                generateExpression(node->joinCondition());
+            }
+
+            DEBUG_LOG_DB("Generated Hash Join bytecode");
+        }
+
+        void BytecodeGenerator::generateJoinPlan(
+            scratchbird::optimizer::PlanNode *node,
+            parser::SelectStmt *stmt)
+        {
+            // Recursively generate bytecode for JOIN tree nodes
+            switch (node->type())
+            {
+            case scratchbird::optimizer::PlanNodeType::SEQ_SCAN:
+            {
+                auto *scan_node = static_cast<scratchbird::optimizer::SeqScanNode *>(node);
+
+                // Write SELECT for this table scan
+                current_result_->writeOpcode(Opcode::SELECT);
+
+                // Write select list (SELECT *)
+                current_result_->writeOpcode(Opcode::BEGIN_LIST);
+                current_result_->writeInt32(1);
+                current_result_->writeOpcode(Opcode::SELECT_STAR);
+                current_result_->writeOpcode(Opcode::END_LIST);
+
+                // Write table reference
+                current_result_->writeOpcode(Opcode::TABLE_REF);
+                current_result_->writeString(scan_node->tableName());
+
+                // Write scan hint
+                current_result_->writeOpcode(Opcode::SCAN_HINT);
+                current_result_->writeByte(0); // 0 = Sequential scan
+                break;
+            }
+
+            case scratchbird::optimizer::PlanNodeType::INDEX_SCAN:
+            {
+                auto *idx_node = static_cast<scratchbird::optimizer::IndexScanNode *>(node);
+
+                // Write SELECT for this table scan
+                current_result_->writeOpcode(Opcode::SELECT);
+
+                // Write select list (SELECT *)
+                current_result_->writeOpcode(Opcode::BEGIN_LIST);
+                current_result_->writeInt32(1);
+                current_result_->writeOpcode(Opcode::SELECT_STAR);
+                current_result_->writeOpcode(Opcode::END_LIST);
+
+                // Write table reference
+                current_result_->writeOpcode(Opcode::TABLE_REF);
+                current_result_->writeString(idx_node->tableName());
+
+                // Write index reference
+                current_result_->writeOpcode(Opcode::INDEX_REF);
+                current_result_->writeString(idx_node->indexId().toString());
+
+                // Write scan hint
+                current_result_->writeOpcode(Opcode::SCAN_HINT);
+                current_result_->writeByte(1); // 1 = Index scan
+                break;
+            }
+
+            case scratchbird::optimizer::PlanNodeType::NESTED_LOOP_JOIN:
+                generateNestedLoopJoinPlan(
+                    static_cast<scratchbird::optimizer::NestedLoopJoinNode *>(node),
+                    stmt);
+                break;
+
+            case scratchbird::optimizer::PlanNodeType::HASH_JOIN:
+                generateHashJoinPlan(
+                    static_cast<scratchbird::optimizer::HashJoinNode *>(node),
+                    stmt);
+                break;
+
+            default:
+                current_result_->addError("Unsupported JOIN child node type");
+                break;
+            }
         }
 
         // ===== Disassembler Implementation =====
