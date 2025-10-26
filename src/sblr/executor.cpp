@@ -194,6 +194,16 @@ namespace scratchbird
                         result = ExecutionResult(std::move(current_result_set_));
                         break;
 
+                    case Opcode::NESTED_LOOP_JOIN:
+                        executeNestedLoopJoin();
+                        result = ExecutionResult(std::move(current_result_set_));
+                        break;
+
+                    case Opcode::HASH_JOIN:
+                        executeHashJoin();
+                        result = ExecutionResult(std::move(current_result_set_));
+                        break;
+
                     case Opcode::SWEEP:
                         executeSweep();
                         result = ExecutionResult();
@@ -2894,6 +2904,73 @@ namespace scratchbird
             }
 
             return true;
+        }
+
+        // ===== JOIN Execution (Phase 1, Task 3.3) =====
+
+        void Executor::executeNestedLoopJoin()
+        {
+            // Read join type
+            if (readByte() != static_cast<uint8_t>(Opcode::JOIN_TYPE))
+            {
+                error("Expected JOIN_TYPE");
+            }
+            uint8_t join_type_byte = readByte();
+            // parser::JoinType join_type = static_cast<parser::JoinType>(join_type_byte);
+
+            // For Phase 1, implement a simplified nested loop join:
+            // 1. Save current PC to read outer/inner child bytecode
+            // 2. Execute outer child - this should leave results somewhere
+            // 3. For each outer row, execute inner child
+            // 4. Combine rows that match the join condition
+
+            // NOTE: This is a minimal implementation demonstrating the concept.
+            // A full implementation would require:
+            // - Proper multi-table result set handling
+            // - Context switching between outer and inner scans
+            // - NULL handling for outer joins
+            // - Integration with the stack-based expression evaluator
+
+            // For now, create an empty result set to prevent crashes
+            current_result_set_ = std::make_unique<ResultSet>();
+            current_result_set_->addColumn("join_placeholder", core::DataType::VARCHAR);
+
+            // Skip the rest of the JOIN bytecode for now
+            // A full implementation would recursively execute child plans
+            error("JOIN execution not fully implemented - infrastructure complete, executor deferred");
+        }
+
+        void Executor::executeHashJoin()
+        {
+            // Read join type
+            if (readByte() != static_cast<uint8_t>(Opcode::JOIN_TYPE))
+            {
+                error("Expected JOIN_TYPE");
+            }
+            uint8_t join_type_byte = readByte();
+            // parser::JoinType join_type = static_cast<parser::JoinType>(join_type_byte);
+
+            // For Phase 1, implement a simplified hash join:
+            // 1. Execute build side (inner table)
+            // 2. Build hash table on hash keys
+            // 3. Execute probe side (outer table)
+            // 4. Probe hash table for matches
+            // 5. Return combined results
+
+            // NOTE: This is a minimal implementation demonstrating the concept.
+            // A full implementation would require:
+            // - Hash table data structure
+            // - Hash function for join keys
+            // - Multi-column hash key support
+            // - NULL handling for outer joins
+            // - Memory management for large hash tables
+
+            // For now, create an empty result set to prevent crashes
+            current_result_set_ = std::make_unique<ResultSet>();
+            current_result_set_->addColumn("join_placeholder", core::DataType::VARCHAR);
+
+            // Skip the rest of the JOIN bytecode for now
+            error("Hash JOIN execution not fully implemented - infrastructure complete, executor deferred");
         }
 
     } // namespace sblr
