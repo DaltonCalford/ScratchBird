@@ -131,9 +131,9 @@ Without these features, ScratchBird **cannot be used** for even simple applicati
 
 ---
 
-#### 3. JOIN Support (40-60 hours) - CRITICAL ⚠️ ~90% COMPLETE
+#### 3. JOIN Support (40-60 hours) - CRITICAL ⚠️ ~95% COMPLETE
 **Why Third**: Most queries need multi-table joins.
-**Status**: Started October 25, 2025 → **~90% complete** (parser ✅, semantic ✅, bytecode ✅, planner infrastructure ✅, selectivity ✅, needs planner integration + executor)
+**Status**: Started October 25, 2025 → **~95% complete** (parser ✅, semantic ✅, bytecode ✅, planner ✅, selectivity ✅, needs executor only)
 
 - [x] **3.1 Parser, Semantic Analysis, and Bytecode Generation** (15-25 hours) ✅ 100% COMPLETE
   - [x] Add JOIN keywords to lexer (JOIN, INNER, LEFT, RIGHT, FULL, OUTER, CROSS, NATURAL, USING) ✅ Done Oct 25
@@ -171,7 +171,7 @@ Without these features, ScratchBird **cannot be used** for even simple applicati
     * `/src/sblr/bytecode_generator.cpp` - Qualified column reference bytecode
     * `/test_join_parsing.cpp` - Comprehensive test suite (10 test cases)
 
-- [~] **3.2 Query Planner for Joins** (15-25 hours) ⚠️ ~90% COMPLETE
+- [x] **3.2 Query Planner for Joins** (15-25 hours) ✅ 100% COMPLETE
   - [x] Create NestedLoopJoinNode and HashJoinNode plan structures ✅ Done Oct 25/26
   - [x] Create NestedLoopJoinPath and HashJoinPath classes ✅ Done Oct 25/26
   - [x] Implement nested loop join cost estimation (CostModel::costNestedLoopJoin) ✅ Done Oct 25/26
@@ -179,12 +179,12 @@ Without these features, ScratchBird **cannot be used** for even simple applicati
   - [x] Add join selectivity estimation methods (headers + implementation) ✅ Done Oct 25/26
   - [x] Create comprehensive JOIN planner design document ✅ Done Oct 25/26
   - [x] Create JOIN implementation completion guide ✅ Done Oct 26
-  - [ ] Implement join path generation in QueryPlanner ⏸️ Deferred (guide provided)
-  - [ ] Implement hash key extraction from join conditions ⏸️ Deferred (guide provided)
-  - [ ] Implement join ordering (greedy for Phase 1) ⏸️ Deferred (guide provided)
-  - [ ] Integrate with QueryPlanner::planQuery() ⏸️ Deferred (guide provided)
-  - **Status**: ✅ **Infrastructure ~90% complete** (all components done, needs QueryPlanner integration)
-  - **Implementation**: ~1,550 lines (design + code + guide) across 7 files
+  - [x] Implement join path generation in QueryPlanner ✅ Done Oct 26
+  - [x] Implement hash key extraction from join conditions ✅ Done Oct 26
+  - [x] Implement join ordering (greedy for Phase 1) ✅ Done Oct 26
+  - [x] Integrate with QueryPlanner::planQuery() ✅ Done Oct 26
+  - **Status**: ✅ **100% COMPLETE** - All JOIN planning functionality implemented
+  - **Implementation**: ~2,100 lines (design + code + guide) across 11 files
   - **Files Modified/Created**:
     * `/include/scratchbird/optimizer/plan_node.h` - NestedLoopJoinNode, HashJoinNode (~330 lines)
     * `/include/scratchbird/optimizer/path.h` - NestedLoopJoinPath, HashJoinPath (~200 lines)
@@ -194,9 +194,18 @@ Without these features, ScratchBird **cannot be used** for even simple applicati
     * `/src/optimizer/selectivity_estimator.cpp` - Selectivity implementation (~135 lines)
     * `/docs/planning/JOIN_PLANNER_DESIGN.md` - Planner design (370 lines)
     * `/docs/planning/JOIN_IMPLEMENTATION_COMPLETION.md` - Integration guide (625 lines)
-  - **What Works**: All infrastructure, cost estimation, selectivity estimation, EXPLAIN support
-  - **What Remains**: QueryPlanner integration (~5 hours, complete guide provided)
-  - **Deliverable**: ⏸️ **90% complete** - All components ready, integration guide complete
+    * `/include/scratchbird/optimizer/query_planner.h` - JOIN planning methods (~90 lines)
+    * `/src/optimizer/query_planner.cpp` - Complete JOIN integration (~370 lines)
+    * `/src/sblr/bytecode_generator.cpp` - StringPool parameter passing
+  - **What Works**: Complete JOIN query planning with nested loop and hash join support
+  - **Features Implemented**:
+    - planJoinQuery() - Main JOIN orchestrator with greedy join ordering
+    - generateBaseRelationPaths() - Table path generation for base and joined tables
+    - generateJoinPaths() - Nested loop + hash join path generation
+    - isHashJoinApplicable() - Recursive equi-join detection
+    - extractHashKeys() - Multi-column hash key extraction
+    - joinPathToPlanNode() - Recursive path tree to plan node conversion
+  - **Deliverable**: ✅ **100% complete** - Full JOIN query planning ready for executor
 
 - [ ] **3.3 JOIN Execution** (10-15 hours) ⏸️ NOT STARTED
   - [ ] Add JOIN opcodes to SBLR (NESTED_LOOP_JOIN, HASH_JOIN)
@@ -206,7 +215,7 @@ Without these features, ScratchBird **cannot be used** for even simple applicati
   - [ ] Handle NULL handling in outer joins
   - **Deliverable**: Multi-table SELECT with JOIN works
 
-**Phase 1.3 Completion Status**: ⚠️ **~90% complete** - Parser ✅, Semantic ✅, Bytecode ✅, Planner Infrastructure ✅, Selectivity ✅, needs integration + executor
+**Phase 1.3 Completion Status**: ⚠️ **~95% complete** - Parser ✅, Semantic ✅, Bytecode ✅, Planner ✅, Selectivity ✅, needs executor only
 
 **What Works (✅ Complete)**:
 - ✅ All JOIN syntax parsing (INNER, LEFT, RIGHT, FULL, CROSS, NATURAL)
@@ -226,13 +235,14 @@ Without these features, ScratchBird **cannot be used** for even simple applicati
 - ✅ JOIN selectivity estimation (full implementation with AND/OR support)
 - ✅ Comprehensive JOIN planner design document (370 lines)
 - ✅ Complete JOIN implementation guide (625 lines with code examples)
+- ✅ Join path generation in QueryPlanner (planJoinQuery, generateBaseRelationPaths, generateJoinPaths)
+- ✅ Hash key extraction from join conditions (isHashJoinApplicable, extractHashKeys)
+- ✅ Join ordering optimization (greedy heuristic for Phase 1)
+- ✅ QueryPlanner integration (seamless detection and routing)
+- ✅ StringPool parameter passing through planner API
 
-**What Remains (~10%)**:
-- ❌ Join path generation in QueryPlanner (~2 hours, complete guide provided)
-- ❌ Hash key extraction from join conditions (~1 hour, complete guide provided)
-- ❌ Join ordering optimization (~1 hour, greedy heuristic, complete guide provided)
-- ❌ QueryPlanner integration (~1 hour, complete guide provided)
-- ❌ Executor implementation (Task 3.3, ~10-15 hours, complete guide provided)
+**What Remains (~5%)**:
+- ❌ Executor implementation (Task 3.3, ~10-15 hours) - Only remaining piece for full JOIN support!
 
 ---
 
