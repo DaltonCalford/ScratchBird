@@ -9,6 +9,7 @@
 #include "scratchbird/optimizer/statistics_manager.h"
 #include "scratchbird/optimizer/selectivity_estimator.h"
 #include "scratchbird/parser/ast.h"
+#include "scratchbird/parser/token.h"
 #include <memory>
 #include <vector>
 
@@ -68,12 +69,14 @@ namespace scratchbird::optimizer
          *   5. Convert to PlanNode
          *
          * @param select_stmt SELECT statement AST
+         * @param string_pool String pool for resolving StringIds
          * @param ctx Error context
          * @return Execution plan (PlanNode tree) or nullptr on error
          *
          * Phase 1, Task 1.3.3
          */
         auto planQuery(const parser::SelectStmt *select_stmt,
+                       const parser::StringPool &string_pool,
                        core::ErrorContext *ctx = nullptr)
             -> std::shared_ptr<PlanNode>;
 
@@ -83,12 +86,14 @@ namespace scratchbird::optimizer
          * Creates a simple plan that triggers statistics collection.
          *
          * @param analyze_stmt ANALYZE statement AST
+         * @param string_pool String pool for resolving StringIds
          * @param ctx Error context
          * @return Execution plan or nullptr on error
          *
          * Phase 1, Task 1.3.3
          */
         auto planAnalyze(const parser::AnalyzeStmt *analyze_stmt,
+                         const parser::StringPool &string_pool,
                          core::ErrorContext *ctx = nullptr)
             -> std::shared_ptr<PlanNode>;
 
@@ -116,6 +121,7 @@ namespace scratchbird::optimizer
         auto generatePaths(const parser::SelectStmt *select_stmt,
                            const core::ID &table_id,
                            std::vector<std::shared_ptr<Path>> &paths,
+                           const parser::StringPool &string_pool,
                            core::ErrorContext *ctx)
             -> core::Status;
 
@@ -245,7 +251,7 @@ namespace scratchbird::optimizer
          */
         auto estimateSelectivity(const parser::SelectStmt *select_stmt,
                                  const core::ID &table_id,
-                                 core::ErrorContext *ctx) const
+                                 core::ErrorContext *ctx)
             -> double;
 
         /**
@@ -265,6 +271,122 @@ namespace scratchbird::optimizer
          */
         auto calculateQualCost(const parser::SelectStmt *select_stmt) const
             -> double;
+
+        /**
+         * planJoinQuery - Generate execution plan for JOIN query
+         *
+         * Uses greedy join ordering for Phase 1 (joins in query order).
+         * Phase 2 will implement dynamic programming for optimal ordering.
+         *
+         * Algorithm:
+         *   1. Generate path for base table
+         *   2. For each join:
+         *      a. Generate paths for right table
+         *      b. Generate join paths (nested loop + hash)
+         *      c. Select cheapest join path
+         *   3. Convert final path to plan node
+         *
+         * @param select_stmt SELECT statement with JOINs
+         * @param string_pool String pool for resolving StringIds
+         * @param ctx Error context
+         * @return Join execution plan
+         *
+         * Phase 1, Task 3.2
+         */
+        auto planJoinQuery(const parser::SelectStmt *select_stmt,
+                          const parser::StringPool &string_pool,
+                          core::ErrorContext *ctx)
+            -> std::shared_ptr<PlanNode>;
+
+        /**
+         * generateBaseRelationPaths - Generate paths for a single table
+         *
+         * Used for both base table and joined tables.
+         *
+         * @param table_ref Table reference (with optional alias)
+         * @param where_clause Optional WHERE clause (nullptr for joined tables)
+         * @param string_pool String pool for resolving StringIds
+         * @param ctx Error context
+         * @return Vector of paths for the table
+         *
+         * Phase 1, Task 3.2
+         */
+        auto generateBaseRelationPaths(const parser::TableRef &table_ref,
+                                      const parser::Expression *where_clause,
+                                      const parser::StringPool &string_pool,
+                                      core::ErrorContext *ctx)
+            -> std::vector<std::shared_ptr<Path>>;
+
+        /**
+         * generateJoinPaths - Generate join paths for two relations
+         *
+         * Generates:
+         * - Nested loop join path (always applicable)
+         * - Hash join path (only for equi-joins)
+         *
+         * @param left_path Path for left (outer) relation
+         * @param right_path Path for right (inner) relation
+         * @param join_clause Join clause from AST
+         * @param ctx Error context
+         * @return Vector of join paths
+         *
+         * Phase 1, Task 3.2
+         */
+        auto generateJoinPaths(std::shared_ptr<Path> left_path,
+                              std::shared_ptr<Path> right_path,
+                              const parser::JoinClause &join_clause,
+                              core::ErrorContext *ctx)
+            -> std::vector<std::shared_ptr<Path>>;
+
+        /**
+         * isHashJoinApplicable - Check if hash join can be used
+         *
+         * Hash join requires equi-join condition (contains = operator).
+         *
+         * @param join_condition JOIN ON expression
+         * @return true if hash join applicable
+         *
+         * Phase 1, Task 3.2
+         */
+        auto isHashJoinApplicable(const parser::Expression *join_condition) const
+            -> bool;
+
+        /**
+         * extractHashKeys - Extract hash key expressions from equi-join
+         *
+         * Example: "u.id = o.user_id AND u.type = o.type"
+         * → left_keys = [u.id, u.type]
+         * → right_keys = [o.user_id, o.type]
+         *
+         * @param join_condition JOIN ON expression
+         * @param left_keys Output: hash keys from left table
+         * @param right_keys Output: hash keys from right table
+         * @return true if hash keys extracted successfully
+         *
+         * Phase 1, Task 3.2
+         */
+        auto extractHashKeys(const parser::Expression *join_condition,
+                            std::vector<parser::Expression *> &left_keys,
+                            std::vector<parser::Expression *> &right_keys) const
+            -> bool;
+
+        /**
+         * joinPathToPlanNode - Convert join path to plan node
+         *
+         * Recursively converts path tree to plan node tree.
+         * Handles:
+         * - SeqScanPath → SeqScanNode
+         * - IndexScanPath → IndexScanNode
+         * - NestedLoopJoinPath → NestedLoopJoinNode
+         * - HashJoinPath → HashJoinNode
+         *
+         * @param path Path to convert
+         * @return Plan node
+         *
+         * Phase 1, Task 3.2
+         */
+        auto joinPathToPlanNode(std::shared_ptr<Path> path)
+            -> std::shared_ptr<PlanNode>;
 
     private:
         core::Database *db_;
