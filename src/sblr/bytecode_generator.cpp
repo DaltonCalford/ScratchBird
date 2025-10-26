@@ -319,7 +319,7 @@ namespace scratchbird
             if (database_ && database_->query_planner())
             {
                 core::ErrorContext ctx;
-                auto plan = database_->query_planner()->planQuery(node, &ctx);
+                auto plan = database_->query_planner()->planQuery(node, string_pool_, &ctx);
 
                 if (plan)
                 {
@@ -618,7 +618,7 @@ namespace scratchbird
 
             // Generate query plan
             core::ErrorContext ctx;
-            auto plan = database_->query_planner()->planQuery(select_stmt, &ctx);
+            auto plan = database_->query_planner()->planQuery(select_stmt, string_pool_, &ctx);
 
             if (!plan)
             {

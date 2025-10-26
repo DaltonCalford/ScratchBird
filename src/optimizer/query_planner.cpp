@@ -7,32 +7,47 @@ namespace scratchbird::optimizer
 {
 
     auto QueryPlanner::planQuery(const parser::SelectStmt *select_stmt,
+                                  const parser::StringPool &string_pool,
                                   core::ErrorContext *ctx)
         -> std::shared_ptr<PlanNode>
     {
-        DEBUG_LOG_DB("Planning query for table: " +
-                     std::string(select_stmt->tableName().data()));
+        // Check if this is a join query (Phase 1, Task 3.2)
+        if (select_stmt->hasJoins())
+        {
+            DEBUG_LOG_DB("Planning JOIN query");
+            return planJoinQuery(select_stmt, string_pool, ctx);
+        }
+
+        // Single-table query planning (original logic)
+        std::string table_name(string_pool.get(select_stmt->tableName()));
+        DEBUG_LOG_DB("Planning single-table query for: " + table_name);
 
         // Phase 1: Get table ID from catalog
-        std::string table_name(select_stmt->tableName().data());
-        core::ID table_id;
-        core::Status status = db_->catalog_manager()->getTableID(table_name, table_id, ctx);
+        // Get default PUBLIC schema
+        core::CatalogManager::SchemaInfo schema_info;
+        core::Status status = db_->catalog_manager()->getSchema("PUBLIC", schema_info, ctx);
+        if (status != core::Status::OK)
+        {
+            DEBUG_LOG_DB("Failed to get PUBLIC schema");
+            return nullptr;
+        }
+
+        // Look up table in catalog
+        core::CatalogManager::TableInfo table_info;
+        status = db_->catalog_manager()->getTable(schema_info.schema_id, table_name, table_info, ctx);
         if (status != core::Status::OK)
         {
             DEBUG_LOG_DB("Failed to find table: " + table_name);
-            if (ctx)
-            {
-                ctx->recordError(core::ErrorCode::TABLE_NOT_FOUND,
-                                 "Table not found: " + table_name);
-            }
             return nullptr;
         }
+
+        core::ID table_id = table_info.table_id;
 
         DEBUG_LOG_DB("Table ID: " + table_id.toString());
 
         // Phase 2: Generate all feasible paths
         std::vector<std::shared_ptr<Path>> paths;
-        status = generatePaths(select_stmt, table_id, paths, ctx);
+        status = generatePaths(select_stmt, table_id, paths, string_pool, ctx);
         if (status != core::Status::OK || paths.empty())
         {
             DEBUG_LOG_DB("Failed to generate paths");
@@ -64,14 +79,15 @@ namespace scratchbird::optimizer
     }
 
     auto QueryPlanner::planAnalyze(const parser::AnalyzeStmt *analyze_stmt,
+                                    const parser::StringPool &string_pool,
                                     core::ErrorContext *ctx)
         -> std::shared_ptr<PlanNode>
     {
         // For ANALYZE, we don't need a complex plan
         // The executor will call StatisticsManager::analyzeTable() directly
         // This is a placeholder - actual ANALYZE execution happens in executor
-        DEBUG_LOG_DB("Planning ANALYZE for table: " +
-                     std::string(analyze_stmt->tableName().data()));
+        std::string table_name(string_pool.get(analyze_stmt->tableName()));
+        DEBUG_LOG_DB("Planning ANALYZE for table: " + table_name);
 
         // Return nullptr to signal special handling in executor
         // (In a real implementation, we might create an AnalyzeNode)
@@ -81,10 +97,11 @@ namespace scratchbird::optimizer
     auto QueryPlanner::generatePaths(const parser::SelectStmt *select_stmt,
                                       const core::ID &table_id,
                                       std::vector<std::shared_ptr<Path>> &paths,
+                                      const parser::StringPool &string_pool,
                                       core::ErrorContext *ctx)
         -> core::Status
     {
-        std::string table_name(select_stmt->tableName().data());
+        std::string table_name(string_pool.get(select_stmt->tableName()));
 
         // Always generate sequential scan path (always feasible)
         auto seq_scan_path = generateSeqScanPath(select_stmt, table_id, table_name, ctx);
@@ -173,41 +190,29 @@ namespace scratchbird::optimizer
         DEBUG_LOG_DB("Generating index scan paths for " + table_name);
 
         // Get all indexes on table
-        std::vector<core::ID> index_ids;
-        core::Status status = db_->catalog_manager()->getTableIndexes(table_id, index_ids, ctx);
-        if (status != core::Status::OK)
+        auto indexes = db_->catalog_manager()->getTableIndexes(table_id, ctx);
+        if (indexes.empty())
         {
             DEBUG_LOG_DB("No indexes found for table " + table_name);
             return core::Status::OK;  // No indexes is not an error
         }
 
-        DEBUG_LOG_DB("Found " + std::to_string(index_ids.size()) + " indexes");
+        DEBUG_LOG_DB("Found " + std::to_string(indexes.size()) + " indexes");
 
         // Check each index for applicability
-        for (const auto &index_id : index_ids)
+        for (const auto &index_info : indexes)
         {
-            if (!isIndexApplicable(index_id, select_stmt, ctx))
+            if (!isIndexApplicable(index_info.index_id, select_stmt, ctx))
             {
-                DEBUG_LOG_DB("Index " + index_id.toString() + " not applicable");
+                DEBUG_LOG_DB("Index " + index_info.index_name + " not applicable");
                 continue;
             }
 
-            DEBUG_LOG_DB("Index " + index_id.toString() + " is applicable");
-
-            // Get index metadata
-            std::string index_name;
-            std::vector<core::ID> index_columns;
-            status = db_->catalog_manager()->getIndexMetadata(
-                index_id, index_name, index_columns, ctx);
-            if (status != core::Status::OK)
-            {
-                DEBUG_LOG_DB("Failed to get index metadata");
-                continue;
-            }
+            DEBUG_LOG_DB("Index " + index_info.index_name + " is applicable");
 
             // Get table statistics
             TableStatistics table_stats;
-            status = stats_manager_->getTableStatistics(table_id, table_stats, ctx);
+            core::Status status = stats_manager_->getTableStatistics(table_id, table_stats, ctx);
             if (status != core::Status::OK)
             {
                 DEBUG_LOG_DB("No statistics available, using defaults");
@@ -236,11 +241,11 @@ namespace scratchbird::optimizer
 
             // Get correlation from column statistics (if available)
             double correlation = 0.0;  // Default: assume random ordering
-            if (!index_columns.empty())
+            if (!index_info.column_ids.empty())
             {
                 ColumnStatistics col_stats;
-                status = stats_manager_->getColumnStatistics(
-                    table_id, index_columns[0], col_stats, ctx);
+                core::Status status = stats_manager_->getColumnStatistics(
+                    table_id, index_info.column_ids[0], col_stats, ctx);
                 if (status == core::Status::OK)
                 {
                     // Correlation would be stored in col_stats if we had it
@@ -263,7 +268,7 @@ namespace scratchbird::optimizer
                 correlation,
                 ctx);
 
-            DEBUG_LOG_DB("IndexScan cost for " + index_name +
+            DEBUG_LOG_DB("IndexScan cost for " + index_info.index_name +
                          ": startup=" + std::to_string(cost.startup_cost) +
                          ", total=" + std::to_string(cost.total_cost) +
                          ", rows=" + std::to_string(cost.rows));
@@ -272,8 +277,8 @@ namespace scratchbird::optimizer
             auto index_path = std::make_shared<IndexScanPath>(
                 table_id,
                 table_name,
-                index_id,
-                index_name,
+                index_info.index_id,
+                index_info.index_name,
                 index_height,
                 index_pages,
                 index_tuples,
@@ -408,7 +413,7 @@ namespace scratchbird::optimizer
 
     auto QueryPlanner::estimateSelectivity(const parser::SelectStmt *select_stmt,
                                             const core::ID &table_id,
-                                            core::ErrorContext *ctx) const
+                                            core::ErrorContext *ctx)
         -> double
     {
         // Use SelectivityEstimator for histogram-based estimation
@@ -431,6 +436,386 @@ namespace scratchbird::optimizer
         DEBUG_LOG_DB("Qualification cost estimate: " + std::to_string(qual_cost));
 
         return qual_cost;
+    }
+
+    auto QueryPlanner::planJoinQuery(const parser::SelectStmt *select_stmt,
+                                     const parser::StringPool &string_pool,
+                                     core::ErrorContext *ctx)
+        -> std::shared_ptr<PlanNode>
+    {
+        DEBUG_LOG_DB("Planning JOIN query with " +
+                   std::to_string(select_stmt->fromClause().joins.size()) + " joins");
+
+        // For Phase 1: Greedy join ordering (join in query order)
+        // Phase 2 will implement dynamic programming for optimal ordering
+
+        // Step 1: Generate path for base table
+        auto base_paths = generateBaseRelationPaths(
+            select_stmt->fromClause().base_table,
+            select_stmt->whereClause(),
+            string_pool,
+            ctx);
+
+        if (base_paths.empty())
+        {
+            DEBUG_LOG_DB("Failed to generate paths for base table");
+            return nullptr;
+        }
+
+        // Use cheapest path for base table
+        std::shared_ptr<Path> current_path = selectCheapestPath(base_paths);
+
+        // Step 2: For each join, generate paths and select cheapest
+        for (const auto &join : select_stmt->fromClause().joins)
+        {
+            // Generate paths for right table
+            auto right_paths = generateBaseRelationPaths(
+                join.right_table,
+                nullptr,  // No WHERE clause for joined table
+                string_pool,
+                ctx);
+
+            if (right_paths.empty())
+            {
+                DEBUG_LOG_DB("Failed to generate paths for joined table");
+                continue;
+            }
+
+            auto right_path = selectCheapestPath(right_paths);
+
+            // Generate join paths
+            auto join_paths = generateJoinPaths(current_path, right_path, join, ctx);
+
+            if (join_paths.empty())
+            {
+                DEBUG_LOG_DB("Failed to generate join paths");
+                continue;
+            }
+
+            // Select cheapest join path
+            current_path = selectCheapestPath(join_paths);
+
+            DEBUG_LOG_DB("Selected cheapest join path: type=" +
+                       std::to_string(static_cast<int>(current_path->type())) +
+                       ", cost=" + std::to_string(current_path->totalCost()));
+        }
+
+        // Step 3: Convert final path to plan node
+        return joinPathToPlanNode(current_path);
+    }
+
+    auto QueryPlanner::generateBaseRelationPaths(
+        const parser::TableRef &table_ref,
+        const parser::Expression *where_clause,
+        const parser::StringPool &string_pool,
+        core::ErrorContext *ctx)
+        -> std::vector<std::shared_ptr<Path>>
+    {
+        std::vector<std::shared_ptr<Path>> paths;
+
+        // Look up table in catalog
+        std::string table_name(string_pool.get(table_ref.table_name));
+
+        // Get default PUBLIC schema
+        core::CatalogManager::SchemaInfo schema_info;
+        core::Status status = db_->catalog_manager()->getSchema("PUBLIC", schema_info, ctx);
+        if (status != core::Status::OK)
+        {
+            DEBUG_LOG_DB("Failed to get PUBLIC schema");
+            return paths;
+        }
+
+        // Look up table
+        core::CatalogManager::TableInfo table_info;
+        status = db_->catalog_manager()->getTable(schema_info.schema_id, table_name, table_info, ctx);
+        if (status != core::Status::OK)
+        {
+            DEBUG_LOG_DB("Table not found: " + table_name);
+            return paths;
+        }
+
+        core::ID table_id = table_info.table_id;
+
+        // Get table statistics
+        uint64_t num_pages = 100;    // TODO: Get from catalog
+        uint64_t num_tuples = 10000; // TODO: Get from catalog
+
+        double selectivity = 1.0;
+        if (where_clause)
+        {
+            selectivity = selectivity_estimator_.estimateWhereClause(
+                where_clause, table_id, ctx);
+        }
+
+        uint64_t output_rows = static_cast<uint64_t>(num_tuples * selectivity);
+        double qual_cost = where_clause ? 0.01 : 0.0;
+
+        CostEstimate cost = cost_model_.costSeqScan(num_pages, num_tuples, qual_cost, ctx);
+
+        auto seq_scan_path = std::make_shared<SeqScanPath>(
+            table_id,
+            table_name,
+            num_pages,
+            output_rows,
+            qual_cost,
+            cost);
+
+        paths.push_back(seq_scan_path);
+
+        DEBUG_LOG_DB("Generated SeqScan path for " + table_name +
+                   ": cost=" + std::to_string(cost.total_cost) +
+                   ", rows=" + std::to_string(output_rows));
+
+        // TODO: Also generate index scan paths
+
+        return paths;
+    }
+
+    auto QueryPlanner::generateJoinPaths(
+        std::shared_ptr<Path> left_path,
+        std::shared_ptr<Path> right_path,
+        const parser::JoinClause &join_clause,
+        core::ErrorContext *ctx)
+        -> std::vector<std::shared_ptr<Path>>
+    {
+        std::vector<std::shared_ptr<Path>> join_paths;
+
+        // Get table IDs for selectivity estimation
+        core::ID left_table_id;
+        core::ID right_table_id;
+
+        // Extract table IDs from paths
+        if (left_path->type() == PathType::SEQ_SCAN)
+        {
+            auto *seq_path = static_cast<SeqScanPath *>(left_path.get());
+            left_table_id = seq_path->tableId();
+        }
+        if (right_path->type() == PathType::SEQ_SCAN)
+        {
+            auto *seq_path = static_cast<SeqScanPath *>(right_path.get());
+            right_table_id = seq_path->tableId();
+        }
+
+        // Estimate join selectivity
+        double selectivity = selectivity_estimator_.estimateJoinSelectivity(
+            join_clause.on_condition,
+            left_table_id,
+            right_table_id,
+            ctx);
+
+        uint64_t left_rows = left_path->rows();
+        uint64_t right_rows = right_path->rows();
+
+        // 1. Generate Nested Loop Join Path (always applicable)
+        {
+            CostEstimate nl_cost = cost_model_.costNestedLoopJoin(
+                left_path->cost(),
+                right_path->cost(),
+                left_rows,
+                right_rows,
+                selectivity,
+                ctx);
+
+            auto nl_path = std::make_shared<NestedLoopJoinPath>(
+                join_clause.join_type,
+                left_path,
+                right_path,
+                join_clause.on_condition,
+                selectivity,
+                nl_cost);
+
+            join_paths.push_back(nl_path);
+
+            DEBUG_LOG_DB("Generated Nested Loop Join path: cost=" +
+                       std::to_string(nl_cost.total_cost) +
+                       ", rows=" + std::to_string(nl_cost.rows));
+        }
+
+        // 2. Generate Hash Join Path (only if equi-join)
+        if (isHashJoinApplicable(join_clause.on_condition))
+        {
+            std::vector<parser::Expression *> hash_keys_left;
+            std::vector<parser::Expression *> hash_keys_right;
+
+            if (extractHashKeys(join_clause.on_condition, hash_keys_left, hash_keys_right))
+            {
+                // Choose smaller relation as build side
+                std::shared_ptr<Path> build_path = (left_rows < right_rows) ? left_path : right_path;
+                std::shared_ptr<Path> probe_path = (left_rows < right_rows) ? right_path : left_path;
+                uint64_t build_rows = build_path->rows();
+                uint64_t probe_rows = probe_path->rows();
+
+                CostEstimate hash_cost = cost_model_.costHashJoin(
+                    build_path->cost(),
+                    probe_path->cost(),
+                    build_rows,
+                    probe_rows,
+                    selectivity,
+                    ctx);
+
+                auto hash_path = std::make_shared<HashJoinPath>(
+                    join_clause.join_type,
+                    build_path,
+                    probe_path,
+                    join_clause.on_condition,
+                    hash_keys_left,
+                    hash_keys_right,
+                    selectivity,
+                    hash_cost);
+
+                join_paths.push_back(hash_path);
+
+                DEBUG_LOG_DB("Generated Hash Join path: cost=" +
+                           std::to_string(hash_cost.total_cost) +
+                           ", rows=" + std::to_string(hash_cost.rows));
+            }
+        }
+
+        return join_paths;
+    }
+
+    auto QueryPlanner::isHashJoinApplicable(const parser::Expression *join_condition) const
+        -> bool
+    {
+        if (!join_condition)
+            return false;
+
+        // Check if condition contains equality
+        if (join_condition->kind() == parser::ASTKind::BINARY_OP)
+        {
+            auto *binary_op = static_cast<const parser::BinaryOpExpr *>(join_condition);
+
+            if (binary_op->op() == parser::BinaryOp::EQ)
+            {
+                // Simple equality - hash join applicable
+                return true;
+            }
+            else if (binary_op->op() == parser::BinaryOp::AND)
+            {
+                // Compound condition - check if both sides have equality
+                return isHashJoinApplicable(binary_op->left()) &&
+                       isHashJoinApplicable(binary_op->right());
+            }
+        }
+
+        return false;
+    }
+
+    auto QueryPlanner::extractHashKeys(
+        const parser::Expression *join_condition,
+        std::vector<parser::Expression *> &left_keys,
+        std::vector<parser::Expression *> &right_keys) const
+        -> bool
+    {
+        if (!join_condition)
+            return false;
+
+        if (join_condition->kind() == parser::ASTKind::BINARY_OP)
+        {
+            auto *binary_op = static_cast<const parser::BinaryOpExpr *>(join_condition);
+
+            if (binary_op->op() == parser::BinaryOp::EQ)
+            {
+                // Extract left and right column references
+                // Note: This is a simplified version for Phase 1
+                // Phase 2 would verify which columns belong to which table
+                left_keys.push_back(binary_op->left());
+                right_keys.push_back(binary_op->right());
+                return true;
+            }
+            else if (binary_op->op() == parser::BinaryOp::AND)
+            {
+                // Recursively extract from both sides
+                bool left_ok = extractHashKeys(binary_op->left(), left_keys, right_keys);
+                bool right_ok = extractHashKeys(binary_op->right(), left_keys, right_keys);
+                return left_ok && right_ok;
+            }
+        }
+
+        return false;
+    }
+
+    auto QueryPlanner::joinPathToPlanNode(std::shared_ptr<Path> path)
+        -> std::shared_ptr<PlanNode>
+    {
+        if (path->type() == PathType::SEQ_SCAN)
+        {
+            // Leaf node - convert to SeqScanNode
+            auto *seq_path = static_cast<SeqScanPath *>(path.get());
+            auto scan_node = std::make_shared<SeqScanNode>(
+                seq_path->tableId(),
+                seq_path->tableName(),
+                ScanDirection::FORWARD);
+            scan_node->setCost(
+                path->startupCost(),
+                path->totalCost(),
+                path->rows());
+            return scan_node;
+        }
+        else if (path->type() == PathType::INDEX_SCAN)
+        {
+            // Index scan node
+            auto *idx_path = static_cast<IndexScanPath *>(path.get());
+            auto scan_node = std::make_shared<IndexScanNode>(
+                idx_path->tableId(),
+                idx_path->tableName(),
+                idx_path->indexId(),
+                idx_path->indexName(),
+                ScanDirection::FORWARD);
+            scan_node->setCost(
+                path->startupCost(),
+                path->totalCost(),
+                path->rows());
+            return scan_node;
+        }
+        else if (path->type() == PathType::NESTED_LOOP_JOIN)
+        {
+            auto *nl_path = static_cast<NestedLoopJoinPath *>(path.get());
+
+            // Recursively convert children
+            auto outer_node = joinPathToPlanNode(nl_path->outerPath());
+            auto inner_node = joinPathToPlanNode(nl_path->innerPath());
+
+            auto join_node = std::make_shared<NestedLoopJoinNode>(
+                nl_path->joinType(),
+                outer_node,
+                inner_node,
+                nl_path->joinCondition());
+
+            join_node->setCost(
+                path->startupCost(),
+                path->totalCost(),
+                path->rows());
+
+            return join_node;
+        }
+        else if (path->type() == PathType::HASH_JOIN)
+        {
+            auto *hash_path = static_cast<HashJoinPath *>(path.get());
+
+            // Recursively convert children
+            auto outer_node = joinPathToPlanNode(hash_path->outerPath());
+            auto inner_node = joinPathToPlanNode(hash_path->innerPath());
+
+            auto join_node = std::make_shared<HashJoinNode>(
+                hash_path->joinType(),
+                outer_node,
+                inner_node,
+                hash_path->joinCondition(),
+                hash_path->hashKeysOuter(),
+                hash_path->hashKeysInner());
+
+            join_node->setCost(
+                path->startupCost(),
+                path->totalCost(),
+                path->rows());
+
+            return join_node;
+        }
+
+        // Unknown path type
+        DEBUG_LOG_DB("Unknown path type in joinPathToPlanNode");
+        return nullptr;
     }
 
 } // namespace scratchbird::optimizer

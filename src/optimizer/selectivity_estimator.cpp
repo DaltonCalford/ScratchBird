@@ -526,8 +526,8 @@ namespace scratchbird::optimizer
             // Range join (>, <, >=, <=)
             else if (binary_op->op() == parser::BinaryOp::GT ||
                     binary_op->op() == parser::BinaryOp::LT ||
-                    binary_op->op() == parser::BinaryOp::GTE ||
-                    binary_op->op() == parser::BinaryOp::LTE)
+                    binary_op->op() == parser::BinaryOp::GE ||
+                    binary_op->op() == parser::BinaryOp::LE)
             {
                 DEBUG_LOG_DB("Range join detected, using default selectivity: " +
                            std::to_string(DEFAULT_RANGE_SEL));
@@ -602,7 +602,7 @@ namespace scratchbird::optimizer
         // Rationale: Each value in the smaller domain matches approximately
         // 1/n_distinct of the larger domain
 
-        uint64_t max_distinct = std::max(left_stats.n_distinct, right_stats.n_distinct);
+        uint64_t max_distinct = std::max(left_stats.num_distinct, right_stats.num_distinct);
 
         if (max_distinct == 0)
         {
