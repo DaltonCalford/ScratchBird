@@ -175,6 +175,8 @@ namespace scratchbird
             void executeDetachTablespace();        // Phase 6 Task 6.2
             void executeInsert();
             void executeSelect();
+            void executeNestedLoopJoin();   // Phase 1 Task 3.3
+            void executeHashJoin();         // Phase 1 Task 3.3
             void executeSweep();            // Phase 3 Task 3.3
             void executeStartTransaction(); // Phase 2 Task 2.6, Phase 3 Task 3.6
             void executeSetTransaction();   // Phase 3 Task 3.6
