@@ -1,8 +1,8 @@
 # ScratchBird Project Context
 
-**Last Updated**: 2025-10-25 (Architecture & Design Clarification)
-**Version**: Alpha 1.0.5 (Re-audit in Progress)
-**Status**: Educational/Development (3-Layer Embedded Architecture)
+**Last Updated**: 2025-10-27 (Query Planner & Aggregation Infrastructure Complete)
+**Version**: Alpha 1.0.5
+**Status**: Educational/Development (Query Planner 85-90% Complete, Aggregation 70% Complete)
 
 > **PURPOSE**: This file provides essential context for AI assistants working on ScratchBird.
 > Read this file at session start and after every context compaction.
@@ -141,10 +141,10 @@ ScratchBird is an **embedded database engine** designed as a library for other p
 ## 2. Current Project State
 
 ### Version & Status
-- **Current Version**: Alpha 1.0.3
+- **Current Version**: Alpha 1.0.5
 - **Production Ready**: ❌ NO - Educational/Development only
-- **Last Major Update**: October 21, 2025
-- **Active Development**: Tablespace implementation (Sprint 4 PARTIAL, Sprint 5 NOT STARTED)
+- **Last Major Update**: October 27, 2025
+- **Active Development**: Query optimizer & aggregation (Tasks 4-5 ~70% complete, executor pending)
 
 ### Critical Statistics
 ```yaml
@@ -160,7 +160,11 @@ Indexing:
   - HNSW:            100% complete (vector similarity search)
   - BRIN:            100% complete (block range indexes)
 Type System:         95% complete  (30+ types, UUIDv7, timezones, collations)
-Query Processing:    0% complete   (NOT STARTED - all components missing: lexer, parser, AST, semantic, bytecode, executor)
+Query Processing:    65% complete  (Parser 45%, Planner 85%, Bytecode 75%, Executor 30%)
+  - Lexer/Parser:    45% complete  (JOINs ✅, GROUP BY ✅, ORDER BY ✅, LIMIT ✅, UPDATE/DELETE TODO)
+  - Query Planner:   85% complete  (Cost model ✅, Statistics ✅, Planning ✅, Execution ~30%)
+  - Bytecode Gen:    75% complete  (All SQL features generate bytecode)
+  - Executor:        30% complete  (Basic ops ✅, Aggregation/Sorting TODO)
 Catalog:             75% complete  (metadata persistence)
 Code Quality:        98% complete  (RAII, logging, const-correct)
 CI/CD:               100% complete (TSAN, ASAN, Helgrind, Valgrind, Clang-Tidy)
