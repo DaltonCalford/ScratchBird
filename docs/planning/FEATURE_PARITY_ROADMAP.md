@@ -104,30 +104,85 @@ Without these features, ScratchBird **cannot be used** for even simple applicati
 
 ---
 
-#### 2. Core CRUD Operations (35-55 hours) - CRITICAL
+#### 2. Core CRUD Operations (35-55 hours) - CRITICAL ~60% COMPLETE
 **Why Second**: Cannot modify or delete data without these.
+**Status**: Started October 25, 2025 → **60% complete** (parser ✅, semantic ✅, bytecode ✅, executor ❌)
 
-- [ ] **2.1 UPDATE Statement** (20-30 hours)
-  - [ ] Add UPDATE parser support (UPDATE table SET col=val WHERE condition)
-  - [ ] Implement UPDATE AST node
-  - [ ] Implement UPDATE semantic analysis
-  - [ ] Generate SBLR bytecode for UPDATE
-  - [ ] Implement UPDATE executor logic (with MGA versioning)
-  - [ ] Handle indexed column updates (update indexes)
-  - [ ] Add transaction isolation for UPDATE
-  - **Deliverable**: `UPDATE table SET col=val WHERE condition` works
+- [x] **2.1 UPDATE Statement** (20-30 hours) ⚠️ 60% COMPLETE
+  - [x] Add UPDATE parser support (UPDATE table SET col=val WHERE condition) ✅ Done Oct 25
+  - [x] Implement UPDATE AST node ✅ Done Oct 25
+  - [x] Implement UPDATE semantic analysis ✅ Done Oct 25
+  - [x] Generate SBLR bytecode for UPDATE ✅ Done Oct 25
+  - [ ] Implement UPDATE executor logic (with MGA versioning) ❌ TODO
+  - [ ] Handle indexed column updates (update indexes) ❌ TODO
+  - [ ] Add transaction isolation for UPDATE ❌ TODO
+  - **Status**: ⚠️ **60% COMPLETE** - Parser ✅, Semantic ✅, Bytecode ✅, Executor ❌
+  - **Implementation**: ~380 lines across 11 files (Oct 25, 2025)
+  - **Files Modified**:
+    * `/include/scratchbird/parser/token.h` - KW_UPDATE token
+    * `/include/scratchbird/parser/ast.h` - UpdateStmt class, Assignment struct
+    * `/include/scratchbird/parser/parser.h` - parseUpdate() declaration
+    * `/include/scratchbird/parser/semantic_analyzer.h` - visit(UpdateStmt*) declaration
+    * `/include/scratchbird/sblr/bytecode_generator.h` - visit(UpdateStmt*) declaration
+    * `/include/scratchbird/sblr/opcodes.h` - UPDATE (0xC3) and ASSIGNMENT (0x43) opcodes
+    * `/src/parser/lexer.cpp` - UPDATE keyword mapping
+    * `/src/parser/parser.cpp` - parseUpdate() implementation (~60 lines)
+    * `/src/parser/ast.cpp` - ASTPrinter for UPDATE (~50 lines)
+    * `/src/parser/semantic_analyzer.cpp` - UPDATE semantic validation (~35 lines)
+    * `/src/sblr/bytecode_generator.cpp` - UPDATE bytecode generation (~30 lines)
+    * `/test_update_delete_simple.cpp` - Test suite (4 tests passing)
+  - **What Works**: Full parsing, semantic validation, and bytecode generation
+  - **Remaining**: Executor implementation (10-15 hours), index updates (3-5 hours), transaction isolation (2-4 hours)
+  - **Deliverable**: ⚠️ **Partial** - `UPDATE table SET col=val WHERE condition` parses and validates, but execution not implemented
 
-- [ ] **2.2 DELETE Statement** (15-25 hours)
-  - [ ] Add DELETE parser support (DELETE FROM table WHERE condition)
-  - [ ] Implement DELETE AST node
-  - [ ] Implement DELETE semantic analysis
-  - [ ] Generate SBLR bytecode for DELETE
-  - [ ] Implement DELETE executor logic (mark deleted in MGA)
-  - [ ] Handle index cleanup for deleted rows
-  - [ ] Add transaction isolation for DELETE
-  - **Deliverable**: `DELETE FROM table WHERE condition` works
+- [x] **2.2 DELETE Statement** (15-25 hours) ⚠️ 60% COMPLETE
+  - [x] Add DELETE parser support (DELETE FROM table WHERE condition) ✅ Done Oct 25
+  - [x] Implement DELETE AST node ✅ Done Oct 25
+  - [x] Implement DELETE semantic analysis ✅ Done Oct 25
+  - [x] Generate SBLR bytecode for DELETE ✅ Done Oct 25
+  - [ ] Implement DELETE executor logic (mark deleted in MGA) ❌ TODO
+  - [ ] Handle index cleanup for deleted rows ❌ TODO
+  - [ ] Add transaction isolation for DELETE ❌ TODO
+  - **Status**: ⚠️ **60% COMPLETE** - Parser ✅, Semantic ✅, Bytecode ✅, Executor ❌
+  - **Implementation**: ~233 lines across 11 files (Oct 25, 2025)
+  - **Files Modified**:
+    * `/include/scratchbird/parser/token.h` - KW_DELETE token
+    * `/include/scratchbird/parser/ast.h` - DeleteStmt class
+    * `/include/scratchbird/parser/parser.h` - parseDelete() declaration
+    * `/include/scratchbird/parser/semantic_analyzer.h` - visit(DeleteStmt*) declaration
+    * `/include/scratchbird/sblr/bytecode_generator.h` - visit(DeleteStmt*) declaration
+    * `/include/scratchbird/sblr/opcodes.h` - DELETE (0xC4) opcode
+    * `/src/parser/lexer.cpp` - DELETE keyword mapping
+    * `/src/parser/parser.cpp` - parseDelete() implementation (~62 lines)
+    * `/src/parser/ast.cpp` - ASTPrinter for DELETE (~53 lines)
+    * `/src/parser/semantic_analyzer.cpp` - DELETE semantic validation (~31 lines)
+    * `/src/sblr/bytecode_generator.cpp` - DELETE bytecode generation (~27 lines)
+    * `/test_update_delete_simple.cpp` - Test suite (4 tests passing)
+  - **What Works**: Full parsing, semantic validation, and bytecode generation
+  - **Remaining**: Executor implementation (8-12 hours), index cleanup (2-4 hours), transaction isolation (2-4 hours)
+  - **Deliverable**: ⚠️ **Partial** - `DELETE FROM table WHERE condition` parses and validates, but execution not implemented
 
-**Phase 1.2 Completion Criteria**: Full CRUD operations (Create, Read, Update, Delete)
+**Phase 1.2 Completion Status**: ⚠️ **60% COMPLETE** - Parser ✅, Semantic ✅, Bytecode ✅, Executor ❌
+
+**What Works (✅ Complete)**:
+- ✅ UPDATE and DELETE syntax parsing (with/without WHERE clause)
+- ✅ Multiple assignment support in UPDATE (col1=val1, col2=val2, ...)
+- ✅ Optional WHERE clause for both statements
+- ✅ Semantic validation (table existence, column existence, type checking)
+- ✅ WHERE clause expression validation
+- ✅ SBLR bytecode generation (UPDATE, DELETE, ASSIGNMENT opcodes)
+- ✅ All 4 parser tests passing
+
+**What's Missing (❌ TODO)**:
+- ❌ Executor implementation (executeUpdate, executeDelete methods)
+- ❌ MGA versioning for UPDATE (create new tuple version)
+- ❌ MGA deletion for DELETE (mark tuple as deleted)
+- ❌ Index updates when indexed columns change
+- ❌ Index cleanup when rows deleted
+- ❌ Transaction isolation for UPDATE/DELETE
+- ❌ End-to-end execution tests
+
+**Task Remaining Hours**: 12-20 hours (executor: 18-27h, indexes: 5-9h, transaction: 4-8h → ~40% of original estimate)
 
 ---
 
