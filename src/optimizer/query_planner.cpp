@@ -66,8 +66,61 @@ namespace scratchbird::optimizer
 
         DEBUG_LOG_DB("Selected cheapest path: " + cheapest->toString());
 
+        // Phase 3.5: Layer aggregation, sorting, and limiting on top of base path
+        // This transforms the execution plan to support:
+        // - Aggregation (GROUP BY, HAVING, COUNT/SUM/AVG/MIN/MAX)
+        // - Sorting (ORDER BY)
+        // - Limiting (LIMIT/OFFSET)
+        //
+        // Order of layering matters:
+        // 1. Aggregation (reduces rows via GROUP BY)
+        // 2. Sorting (ORDER BY on aggregated results)
+        // 3. Limiting (LIMIT on sorted results)
+
+        std::shared_ptr<Path> final_path = cheapest;
+
+        // Layer 1: Aggregation (Phase 1, Task 4.1)
+        std::vector<parser::AggregateExpr*> aggregates;
+        bool has_aggregates = detectAggregates(select_stmt, aggregates);
+        bool has_group_by = (select_stmt->groupByClause() != nullptr);
+
+        if (has_aggregates || has_group_by)
+        {
+            DEBUG_LOG_DB("Query has aggregation");
+            final_path = addAggregatePath(final_path, select_stmt, aggregates, table_id, ctx);
+            if (!final_path)
+            {
+                DEBUG_LOG_DB("Failed to add aggregate path");
+                return nullptr;
+            }
+        }
+
+        // Layer 2: Sorting (Phase 1, Task 5.1)
+        if (!select_stmt->orderByClause().empty())
+        {
+            DEBUG_LOG_DB("Query has ORDER BY");
+            final_path = addSortPath(final_path, select_stmt, ctx);
+            if (!final_path)
+            {
+                DEBUG_LOG_DB("Failed to add sort path");
+                return nullptr;
+            }
+        }
+
+        // Layer 3: Limiting (Phase 1, Task 5.2)
+        if (select_stmt->hasLimit())
+        {
+            DEBUG_LOG_DB("Query has LIMIT");
+            final_path = addLimitPath(final_path, select_stmt, ctx);
+            if (!final_path)
+            {
+                DEBUG_LOG_DB("Failed to add limit path");
+                return nullptr;
+            }
+        }
+
         // Phase 4: Convert to PlanNode
-        auto plan = pathToPlanNode(cheapest, ctx);
+        auto plan = pathToPlanNode(final_path, ctx);
         if (!plan)
         {
             DEBUG_LOG_DB("Failed to convert path to plan node");
@@ -403,6 +456,78 @@ namespace scratchbird::optimizer
             // TODO: Set index condition and filter from WHERE clause
             plan->setIndexCond("(index condition)");
             plan->setFilter("(additional filter)");
+
+            return plan;
+        }
+        else if (path->type() == PathType::AGGREGATE)
+        {
+            auto agg_path = std::static_pointer_cast<AggregatePath>(path);
+
+            // Recursively convert child path
+            auto child_plan = pathToPlanNode(agg_path->inputPath(), ctx);
+            if (!child_plan)
+            {
+                return nullptr;
+            }
+
+            // Create aggregate node
+            auto plan = std::make_shared<AggregateNode>(
+                child_plan,
+                agg_path->groupingExprs(),
+                agg_path->aggregates(),
+                agg_path->havingClause());
+
+            plan->setCost(
+                path->startupCost(),
+                path->totalCost(),
+                path->rows());
+
+            return plan;
+        }
+        else if (path->type() == PathType::SORT)
+        {
+            auto sort_path = std::static_pointer_cast<SortPath>(path);
+
+            // Recursively convert child path
+            auto child_plan = pathToPlanNode(sort_path->inputPath(), ctx);
+            if (!child_plan)
+            {
+                return nullptr;
+            }
+
+            // Create sort node
+            auto plan = std::make_shared<SortNode>(
+                child_plan,
+                sort_path->orderByItems());
+
+            plan->setCost(
+                path->startupCost(),
+                path->totalCost(),
+                path->rows());
+
+            return plan;
+        }
+        else if (path->type() == PathType::LIMIT)
+        {
+            auto limit_path = std::static_pointer_cast<LimitPath>(path);
+
+            // Recursively convert child path
+            auto child_plan = pathToPlanNode(limit_path->inputPath(), ctx);
+            if (!child_plan)
+            {
+                return nullptr;
+            }
+
+            // Create limit node
+            auto plan = std::make_shared<LimitNode>(
+                child_plan,
+                limit_path->limitCount(),
+                limit_path->offsetCount());
+
+            plan->setCost(
+                path->startupCost(),
+                path->totalCost(),
+                path->rows());
 
             return plan;
         }
@@ -816,6 +941,218 @@ namespace scratchbird::optimizer
         // Unknown path type
         DEBUG_LOG_DB("Unknown path type in joinPathToPlanNode");
         return nullptr;
+    }
+
+    // Phase 1, Task 4.1: Aggregation support
+
+    auto QueryPlanner::detectAggregates(const parser::SelectStmt *select_stmt,
+                                        std::vector<parser::AggregateExpr*>& aggregates) const
+        -> bool
+    {
+        aggregates.clear();
+
+        // Scan SELECT list for aggregate expressions
+        for (const auto& select_item : select_stmt->selectList())
+        {
+            parser::Expression* expr = select_item.expr;
+
+            // Check if expression is an aggregate
+            if (auto agg_expr = dynamic_cast<parser::AggregateExpr*>(expr))
+            {
+                aggregates.push_back(agg_expr);
+            }
+        }
+
+        return !aggregates.empty();
+    }
+
+    auto QueryPlanner::estimateNumGroups(const parser::SelectStmt *select_stmt,
+                                         const core::ID& table_id,
+                                         core::ErrorContext *ctx) const
+        -> uint64_t
+    {
+        // If no GROUP BY, this is simple aggregation (1 group)
+        const auto* group_by = select_stmt->groupByClause();
+        if (!group_by)
+        {
+            return 1;
+        }
+
+        // Estimate based on n_distinct of grouping columns
+        // For now, use a simple heuristic:
+        // - Single column: use n_distinct from statistics
+        // - Multiple columns: multiply n_distinct values (with cap)
+
+        uint64_t num_groups = 1;
+
+        for (const auto& expr : group_by->grouping_exprs)
+        {
+            // For simple case, assume each grouping expression has ~100 distinct values
+            // In production, we would look up actual n_distinct from statistics
+            constexpr uint64_t DEFAULT_DISTINCT = 100;
+            num_groups *= DEFAULT_DISTINCT;
+
+            // Cap at reasonable limit to avoid overflow
+            constexpr uint64_t MAX_GROUPS = 1000000;
+            if (num_groups > MAX_GROUPS)
+            {
+                num_groups = MAX_GROUPS;
+                break;
+            }
+        }
+
+        DEBUG_LOG_DB("Estimated " + std::to_string(num_groups) + " groups for GROUP BY");
+        return num_groups;
+    }
+
+    auto QueryPlanner::estimateRowWidth(const parser::SelectStmt *select_stmt,
+                                        core::ErrorContext *ctx) const
+        -> uint64_t
+    {
+        // Estimate average row width for sort cost estimation
+        // For now, use a simple heuristic based on number of columns
+
+        size_t num_columns = select_stmt->selectList().size();
+
+        // Assume average column width:
+        // - 8 bytes for integers
+        // - 8 bytes for float/double
+        // - 32 bytes for strings (average)
+        constexpr uint64_t AVG_COLUMN_WIDTH = 16;
+
+        uint64_t row_width = num_columns * AVG_COLUMN_WIDTH;
+
+        // Add some overhead for tuple header
+        constexpr uint64_t TUPLE_HEADER_SIZE = 24;
+        row_width += TUPLE_HEADER_SIZE;
+
+        DEBUG_LOG_DB("Estimated row width: " + std::to_string(row_width) + " bytes");
+        return row_width;
+    }
+
+    auto QueryPlanner::addAggregatePath(std::shared_ptr<Path> base_path,
+                                        const parser::SelectStmt *select_stmt,
+                                        const std::vector<parser::AggregateExpr*>& aggregates,
+                                        const core::ID& table_id,
+                                        core::ErrorContext *ctx)
+        -> std::shared_ptr<Path>
+    {
+        DEBUG_LOG_DB("Adding aggregate path");
+
+        // Get GROUP BY clause
+        const auto* group_by = select_stmt->groupByClause();
+
+        // Estimate number of groups
+        uint64_t num_groups = estimateNumGroups(select_stmt, table_id, ctx);
+
+        // Get input rows from base path
+        uint64_t input_rows = base_path->rows();
+
+        // Calculate aggregate cost
+        CostEstimate agg_cost = cost_model_.costAggregate(
+            input_rows,
+            num_groups,
+            aggregates.size(),
+            ctx);
+
+        // Add base path cost
+        agg_cost.startup_cost += base_path->totalCost();
+        agg_cost.total_cost = agg_cost.startup_cost + agg_cost.run_cost;
+
+        // Extract GROUP BY expressions and HAVING clause
+        std::vector<parser::Expression*> grouping_exprs;
+        parser::Expression* having_clause = nullptr;
+        if (group_by)
+        {
+            grouping_exprs = group_by->grouping_exprs;
+            having_clause = group_by->having_clause;
+        }
+
+        // Create aggregate path
+        auto agg_path = std::make_shared<AggregatePath>(
+            base_path,
+            grouping_exprs,
+            aggregates,
+            having_clause,
+            num_groups,
+            agg_cost);
+
+        DEBUG_LOG_DB("Aggregate path: " + agg_path->toString());
+        return agg_path;
+    }
+
+    auto QueryPlanner::addSortPath(std::shared_ptr<Path> base_path,
+                                   const parser::SelectStmt *select_stmt,
+                                   core::ErrorContext *ctx)
+        -> std::shared_ptr<Path>
+    {
+        DEBUG_LOG_DB("Adding sort path");
+
+        // Get ORDER BY clause
+        const auto& order_by = select_stmt->orderByClause();
+
+        // Get input rows from base path
+        uint64_t input_rows = base_path->rows();
+
+        // Estimate row width
+        uint64_t row_width = estimateRowWidth(select_stmt, ctx);
+
+        // Calculate sort cost
+        CostEstimate sort_cost = cost_model_.costSort(
+            input_rows,
+            row_width,
+            order_by.size(),
+            ctx);
+
+        // Add base path cost
+        sort_cost.startup_cost += base_path->totalCost();
+        sort_cost.total_cost = sort_cost.startup_cost + sort_cost.run_cost;
+
+        // Create sort path
+        auto sort_path = std::make_shared<SortPath>(
+            base_path,
+            order_by,
+            row_width,
+            sort_cost);
+
+        DEBUG_LOG_DB("Sort path: " + sort_path->toString());
+        return sort_path;
+    }
+
+    auto QueryPlanner::addLimitPath(std::shared_ptr<Path> base_path,
+                                    const parser::SelectStmt *select_stmt,
+                                    core::ErrorContext *ctx)
+        -> std::shared_ptr<Path>
+    {
+        DEBUG_LOG_DB("Adding limit path");
+
+        // Get LIMIT/OFFSET values
+        int64_t limit_count = select_stmt->limitCount();
+        int64_t offset_count = select_stmt->offsetCount();
+
+        // Get input rows from base path
+        uint64_t input_rows = base_path->rows();
+
+        // Calculate limit cost
+        CostEstimate limit_cost = cost_model_.costLimit(
+            input_rows,
+            limit_count,
+            offset_count,
+            ctx);
+
+        // Add base path startup cost (LIMIT affects run cost, not startup)
+        limit_cost.startup_cost += base_path->startupCost();
+        limit_cost.total_cost = limit_cost.startup_cost + limit_cost.run_cost;
+
+        // Create limit path
+        auto limit_path = std::make_shared<LimitPath>(
+            base_path,
+            limit_count,
+            offset_count,
+            limit_cost);
+
+        DEBUG_LOG_DB("Limit path: " + limit_path->toString());
+        return limit_path;
     }
 
 } // namespace scratchbird::optimizer
