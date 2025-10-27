@@ -199,6 +199,9 @@ namespace scratchbird
                                  size_t where_start_pc,
                                  size_t where_end_pc);
 
+            // Sorting execution helper (Phase 1 Task 1.6.4)
+            void executeSort(std::unique_ptr<ResultSet> input_result_set);
+
             // Expression evaluation
             void evaluateExpression();
             void executeBinaryOp(Opcode op);

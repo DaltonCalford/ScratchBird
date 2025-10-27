@@ -104,9 +104,9 @@ Without these features, ScratchBird **cannot be used** for even simple applicati
 
 ---
 
-#### 1.6 SBLR Executor Implementation (30-45 hours) - CRITICAL BLOCKER ⚠️ 60% COMPLETE
+#### 1.6 SBLR Executor Implementation (30-45 hours) - CRITICAL BLOCKER ⚠️ 80% COMPLETE
 **Why Critical**: Blocks completion of Tasks 2, 4, and 5. Parser/planner/bytecode exist but cannot execute.
-**Status**: Started October 27, 2025 → **60% complete** (UPDATE ✅, DELETE ✅, aggregation ✅, sorting ❌, LIMIT ❌)
+**Status**: Started October 27, 2025 → **80% complete** (UPDATE ✅, DELETE ✅, aggregation ✅, sorting ✅, LIMIT ❌)
 **Priority**: **HIGHEST** - This is the #1 blocker for Phase 1 completion
 
 **Current Situation**:
@@ -120,16 +120,16 @@ Without these features, ScratchBird **cannot be used** for even simple applicati
 - ✅ **UPDATE execution IMPLEMENTED** (Oct 27, 2025 - ~400 lines)
 - ✅ **DELETE execution IMPLEMENTED** (Oct 27, 2025 - ~170 lines)
 - ✅ **Aggregation execution IMPLEMENTED** (Oct 27, 2025 - ~500 lines - HAVING TODO noted)
-- ❌ Sorting execution NOT implemented (ORDER BY)
+- ✅ **Sorting execution IMPLEMENTED** (Oct 27, 2025 - ~220 lines)
 - ❌ LIMIT/OFFSET execution NOT implemented
 
 **Unblocked Tasks**:
 - ✅ Task 2.1: UPDATE Statement (60% → **100% COMPLETE**)
 - ✅ Task 2.2: DELETE Statement (60% → **100% COMPLETE**)
 - ✅ Task 4: Aggregation and Grouping (70% → **~95% COMPLETE** - only HAVING filtering remains)
+- ✅ Task 5.1: Sorting (70% → **100% COMPLETE**)
 
 **Still Blocked Tasks**:
-- Task 5.1: Sorting (70% → needs executor to reach 100%)
 - Task 5.2: LIMIT/OFFSET (70% → needs executor to reach 100%)
 
 - [x] **1.6.1 UPDATE Executor** (10-15 hours) ✅ **COMPLETE** (Oct 27, 2025)
@@ -206,25 +206,26 @@ Without these features, ScratchBird **cannot be used** for even simple applicati
   - **Deliverable**: ✅ **DELIVERED** - `SELECT col, COUNT(*), SUM(val) FROM t GROUP BY col` fully executes (HAVING TODO noted)
   - **Note**: HAVING clause filtering marked as TODO in executeAggregate() - all infrastructure in place
 
-- [ ] **1.6.4 Sorting Executor** (10-14 hours) ❌ HIGH
-  - [ ] Implement executeSort() method in Executor class
-  - [ ] Parse ORDER BY bytecode (sort keys, ASC/DESC, NULLS FIRST/LAST)
-  - [ ] Collect all input rows into memory buffer
-  - [ ] Implement multi-key comparison function:
-    - [ ] Compare rows by each sort key in order
-    - [ ] Handle ASC vs DESC direction
-    - [ ] Handle NULLS FIRST vs NULLS LAST semantics
-    - [ ] Use collation-aware string comparison for text types
-  - [ ] Sort rows using std::sort with custom comparator (O(n log n))
-  - [ ] Alternative: Implement external merge sort for large result sets (Phase 2 enhancement)
-  - [ ] Return sorted result set
-  - **Implementation Estimate**: ~300-400 lines
-  - **Files to Modify**:
-    * `include/scratchbird/sblr/executor.h` - Add executeSort() declaration
-    * `src/sblr/executor.cpp` - Implement sorting execution (~300-400 lines)
-    * `src/sblr/executor.cpp` - Add ORDER_BY, SORT_* opcodes to switch
-  - **Testing**: Create test_sort_execution.cpp with multi-column, ASC/DESC, NULLS ordering tests
-  - **Deliverable**: `SELECT * FROM t ORDER BY col1 ASC, col2 DESC NULLS LAST` executes correctly
+- [x] **1.6.4 Sorting Executor** (10-14 hours) ✅ **COMPLETE** (Oct 27, 2025)
+  - [x] Implement executeSort() method in Executor class ✅ Done Oct 27
+  - [x] Parse ORDER BY bytecode (sort keys, ASC/DESC, NULLS FIRST/LAST) ✅ Done Oct 27
+  - [x] Collect all input rows into memory buffer ✅ Done Oct 27
+  - [x] Implement multi-key comparison function: ✅ Done Oct 27
+    - [x] Compare rows by each sort key in order ✅ Done Oct 27
+    - [x] Handle ASC vs DESC direction ✅ Done Oct 27
+    - [x] Handle NULLS FIRST vs NULLS LAST semantics ✅ Done Oct 27
+    - [x] Use collation-aware string comparison for text types ✅ Done Oct 27
+  - [x] Sort rows using std::sort with custom comparator (O(n log n)) ✅ Done Oct 27
+  - [x] Default NULLS ordering: NULLS LAST for ASC, NULLS FIRST for DESC ✅ Done Oct 27
+  - [x] Integrate sort detection at end of executeSelect() and executeAggregate() ✅ Done Oct 27
+  - **Implementation**: ~220 lines (within estimate)
+  - **Files Modified**:
+    * `include/scratchbird/sblr/executor.h` - Added executeSort() declaration
+    * `src/sblr/executor.cpp` - Implemented executeSort() (~220 lines)
+    * `src/sblr/executor.cpp` - Added ORDER_BY detection in executeSelect() and executeAggregate()
+  - **Testing**: Created test_sort_execution.cpp with ASC/DESC and multi-key sort tests
+  - **Deliverable**: ✅ **DELIVERED** - `SELECT * FROM t ORDER BY col1 ASC, col2 DESC` executes correctly
+  - **Note**: External merge sort for large result sets deferred to Phase 2
 
 - [ ] **1.6.5 LIMIT/OFFSET Executor** (6-8 hours) ❌ MEDIUM
   - [ ] Implement executeLimit() method in Executor class
@@ -555,11 +556,11 @@ Without these features, ScratchBird **cannot be used** for even simple applicati
 
 ---
 
-#### 5. Sorting and Limiting (30-45 hours) - HIGH ⚠️ ~70% COMPLETE
+#### 5. Sorting and Limiting (30-45 hours) - HIGH ⚠️ ~85% COMPLETE
 **Why Fifth**: Most queries need sorted or paginated results.
-**Status**: Started October 27, 2025 → **70% complete** (parser ✅, semantic ✅, planner ✅, bytecode ✅, executor 🔄)
+**Status**: Started October 27, 2025 → **~85% complete** (parser ✅, semantic ✅, planner ✅, bytecode ✅, executor ✅ - LIMIT TODO)
 
-- [x] **5.1 ORDER BY Support** (20-30 hours) ⚠️ 70% COMPLETE
+- [x] **5.1 ORDER BY Support** (20-30 hours) ✅ **100% COMPLETE** (Oct 27, 2025)
   - [x] Add ORDER BY, ASC, DESC, LIMIT, OFFSET keywords to lexer ✅ Done Oct 27
   - [x] Add NULLS FIRST/NULLS LAST parsing ✅ Done Oct 27
   - [x] Create SortOrder enum (ASC, DESC) ✅ Done Oct 27
@@ -575,10 +576,10 @@ Without these features, ScratchBird **cannot be used** for even simple applicati
   - [x] Extend pathToPlanNode() to convert SortPath → SortNode ✅ Done Oct 27
   - [x] Add ORDER_BY, SORT_KEY, SORT_ASC, SORT_DESC, NULLS_FIRST, NULLS_LAST opcodes ✅ Done Oct 27
   - [x] Implement generateSortPlan() bytecode generation ✅ Done Oct 27
-  - [ ] Implement sort executor (quicksort or merge sort) ⚠️ **BLOCKED by Task 1.6.4**
-  - [ ] Implement NULLS FIRST/LAST handling in comparisons ⚠️ **BLOCKED by Task 1.6.4**
-  - **Deliverable**: `SELECT * FROM table ORDER BY col ASC` works (execution pending) → **See Task 1.6.4**
-  - **Implementation**: ~290 lines for parser/planner/bytecode, ~300-400 lines executor TODO (**See Task 1.6.4**)
+  - [x] Implement sort executor (std::sort with custom comparator) ✅ **Done Oct 27 (Task 1.6.4)**
+  - [x] Implement NULLS FIRST/LAST handling in comparisons ✅ **Done Oct 27 (Task 1.6.4)**
+  - **Deliverable**: `SELECT * FROM table ORDER BY col ASC` works ✅ **DELIVERED** (**See Task 1.6.4**)
+  - **Implementation**: ~290 lines for parser/planner/bytecode, ~220 lines executor (**See Task 1.6.4**)
 
 - [x] **5.2 LIMIT/OFFSET Support** (10-15 hours) ⚠️ 70% COMPLETE
   - [x] Add LIMIT, OFFSET keywords to lexer ✅ Done Oct 27

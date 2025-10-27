@@ -13,8 +13,8 @@
 #include <sstream>
 #include <iomanip>
 #include <iostream>
-#include <cstring>
 #include <algorithm>
+#include <cstring>
 #include <chrono>
 #include <map>
 
@@ -2169,6 +2169,226 @@ namespace scratchbird
 
                 current_result_set_->addRow(std::move(result_row));
             }
+
+            // Check for ORDER BY after aggregation
+            if (pc_ < bytecode_size_ && bytecode_[pc_] == static_cast<uint8_t>(Opcode::ORDER_BY))
+            {
+                // Move result set and sort it
+                executeSort(std::move(current_result_set_));
+            }
+        }
+
+        void Executor::executeSort(std::unique_ptr<ResultSet> input_result_set)
+        {
+            // Phase 1 Task 1.6.4: Sorting execution
+
+            // Parse ORDER BY opcode
+            if (readByte() != static_cast<uint8_t>(Opcode::ORDER_BY))
+            {
+                error("Expected ORDER_BY opcode for sorting");
+            }
+
+            uint32_t sort_key_count = readInt32();
+
+            // Parse sort key definitions
+            struct SortKeyDef
+            {
+                size_t column_index;  // Index in result set
+                bool ascending;       // ASC vs DESC
+                bool nulls_first;     // NULLS FIRST vs NULLS LAST
+                bool nulls_specified; // Whether NULLS ordering was specified
+            };
+            std::vector<SortKeyDef> sort_keys;
+
+            for (uint32_t i = 0; i < sort_key_count; i++)
+            {
+                // Read SORT_KEY marker
+                if (readByte() != static_cast<uint8_t>(Opcode::SORT_KEY))
+                {
+                    error("Expected SORT_KEY marker");
+                }
+
+                // Read sort expression (should be COLUMN_REF for result set column)
+                Opcode expr_op = static_cast<Opcode>(readByte());
+                if (expr_op != Opcode::COLUMN_REF)
+                {
+                    error("Only column references supported in ORDER BY for now");
+                }
+
+                std::string col_name = readString();
+
+                // Find column index in result set
+                size_t col_idx = 0;
+                bool found = false;
+                for (size_t j = 0; j < input_result_set->columnCount(); j++)
+                {
+                    if (input_result_set->columnName(j) == col_name)
+                    {
+                        col_idx = j;
+                        found = true;
+                        break;
+                    }
+                }
+
+                if (!found)
+                {
+                    error("Sort column not found in result set: " + col_name);
+                }
+
+                // Read sort direction
+                Opcode dir_op = static_cast<Opcode>(readByte());
+                bool ascending = (dir_op == Opcode::SORT_ASC);
+
+                // Check for NULLS ordering
+                bool nulls_first = false;
+                bool nulls_specified = false;
+
+                if (pc_ < bytecode_size_)
+                {
+                    Opcode next_op = static_cast<Opcode>(bytecode_[pc_]);
+                    if (next_op == Opcode::NULLS_FIRST)
+                    {
+                        readByte(); // Consume
+                        nulls_first = true;
+                        nulls_specified = true;
+                    }
+                    else if (next_op == Opcode::NULLS_LAST)
+                    {
+                        readByte(); // Consume
+                        nulls_first = false;
+                        nulls_specified = true;
+                    }
+                }
+
+                sort_keys.push_back({col_idx, ascending, nulls_first, nulls_specified});
+            }
+
+            // Collect all rows from input result set into a vector
+            std::vector<std::vector<Value>> rows;
+            for (size_t i = 0; i < input_result_set->rowCount(); i++)
+            {
+                std::vector<Value> row;
+                for (size_t j = 0; j < input_result_set->columnCount(); j++)
+                {
+                    row.push_back(input_result_set->getValue(i, j));
+                }
+                rows.push_back(std::move(row));
+            }
+
+            // Define comparison function for multi-key sorting
+            auto compare_rows = [&](const std::vector<Value>& row1, const std::vector<Value>& row2) -> bool
+            {
+                for (const auto& key : sort_keys)
+                {
+                    const Value& val1 = row1[key.column_index];
+                    const Value& val2 = row2[key.column_index];
+
+                    // Handle NULL values
+                    bool val1_is_null = val1.isNull();
+                    bool val2_is_null = val2.isNull();
+
+                    if (val1_is_null && val2_is_null)
+                    {
+                        continue; // Both NULL, equal for this key
+                    }
+
+                    if (val1_is_null || val2_is_null)
+                    {
+                        // Determine NULL ordering
+                        bool nulls_first_for_key;
+                        if (key.nulls_specified)
+                        {
+                            nulls_first_for_key = key.nulls_first;
+                        }
+                        else
+                        {
+                            // Default: NULLS LAST for ASC, NULLS FIRST for DESC
+                            nulls_first_for_key = !key.ascending;
+                        }
+
+                        if (val1_is_null)
+                        {
+                            return nulls_first_for_key;
+                        }
+                        else
+                        {
+                            return !nulls_first_for_key;
+                        }
+                    }
+
+                    // Both values are non-NULL, compare them
+                    int cmp = 0;
+
+                    // Compare based on type
+                    core::DataType type1 = val1.type();
+                    core::DataType type2 = val2.type();
+
+                    if (type1 == core::DataType::VARCHAR || type2 == core::DataType::VARCHAR)
+                    {
+                        // String comparison (use collation-aware comparison)
+                        std::string str1 = val1.toString();
+                        std::string str2 = val2.toString();
+                        cmp = compareStrings(str1, str2);
+                    }
+                    else if (type1 == core::DataType::BOOLEAN || type2 == core::DataType::BOOLEAN)
+                    {
+                        // Boolean comparison
+                        bool b1 = val1.toBoolean();
+                        bool b2 = val2.toBoolean();
+                        if (b1 < b2) cmp = -1;
+                        else if (b1 > b2) cmp = 1;
+                        else cmp = 0;
+                    }
+                    else
+                    {
+                        // Numeric comparison (convert to double)
+                        double d1 = val1.toDouble();
+                        double d2 = val2.toDouble();
+                        if (d1 < d2) cmp = -1;
+                        else if (d1 > d2) cmp = 1;
+                        else cmp = 0;
+                    }
+
+                    if (cmp != 0)
+                    {
+                        // Apply sort direction
+                        if (key.ascending)
+                        {
+                            return cmp < 0;
+                        }
+                        else
+                        {
+                            return cmp > 0;
+                        }
+                    }
+
+                    // Values are equal for this key, continue to next key
+                }
+
+                // All keys are equal
+                return false;
+            };
+
+            // Sort rows using std::sort with custom comparator
+            std::sort(rows.begin(), rows.end(), compare_rows);
+
+            // Build sorted result set
+            current_result_set_ = std::make_unique<ResultSet>();
+
+            // Copy column definitions from input
+            for (size_t i = 0; i < input_result_set->columnCount(); i++)
+            {
+                current_result_set_->addColumn(
+                    input_result_set->columnName(i),
+                    input_result_set->columnType(i)
+                );
+            }
+
+            // Add sorted rows
+            for (auto& row : rows)
+            {
+                current_result_set_->addRow(std::move(row));
+            }
         }
 
         void Executor::executeSelect()
@@ -2467,6 +2687,13 @@ namespace scratchbird
                 }
 
                 current_result_set_->addRow(std::move(result_row));
+            }
+
+            // Check for ORDER BY after SELECT execution
+            if (pc_ < bytecode_size_ && bytecode_[pc_] == static_cast<uint8_t>(Opcode::ORDER_BY))
+            {
+                // Move result set and sort it
+                executeSort(std::move(current_result_set_));
             }
         }
 
