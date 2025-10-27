@@ -150,6 +150,25 @@ namespace scratchbird
             HASH_JOIN = 0xC6,         // Hash join
             JOIN_TYPE = 0xC7,         // Join type marker (INNER, LEFT, RIGHT, FULL)
             JOIN_CONDITION = 0xC8,    // Join condition expression
+
+            // Aggregation and grouping (Phase 1, Task 4.1)
+            GROUP_BY = 0xC9,          // GROUP BY clause marker
+            HAVING = 0xCA,            // HAVING clause marker
+            AGG_INIT = 0xCB,          // Initialize aggregation state
+            AGG_ACCUMULATE = 0xCC,    // Accumulate aggregate value
+            AGG_FINALIZE = 0xCD,      // Finalize aggregate result
+
+            // Sorting (Phase 1, Task 5.1)
+            ORDER_BY = 0xCE,          // ORDER BY clause marker
+            SORT_KEY = 0xCF,          // Sort key expression
+            SORT_ASC = 0xD0,          // Sort ascending
+            SORT_DESC = 0xD1,         // Sort descending
+            NULLS_FIRST = 0xD2,       // NULLS FIRST modifier
+            NULLS_LAST = 0xD3,        // NULLS LAST modifier
+
+            // Limiting (Phase 1, Task 5.2)
+            LIMIT = 0xD4,             // LIMIT clause
+            OFFSET = 0xD5,            // OFFSET clause
         };
 
         // SBLR Version
