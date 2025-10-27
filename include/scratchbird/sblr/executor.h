@@ -11,6 +11,8 @@
 #include <memory>
 #include <variant>
 #include <stack>
+#include <unordered_set>
+#include <unordered_map>
 
 namespace scratchbird
 {
@@ -188,6 +190,15 @@ namespace scratchbird
             // Monitoring/system table execution
             void executeMonitoringQuery(const std::string &table_name);
 
+            // Aggregation execution helper (Phase 1 Task 1.6.3)
+            void executeAggregate(const core::CatalogManager::TableInfo& table_info,
+                                 const std::vector<core::CatalogManager::ColumnInfo>& all_columns,
+                                 const std::vector<std::pair<std::string, std::string>>& select_items,
+                                 bool is_select_star,
+                                 bool has_where,
+                                 size_t where_start_pc,
+                                 size_t where_end_pc);
+
             // Expression evaluation
             void evaluateExpression();
             void executeBinaryOp(Opcode op);
@@ -219,6 +230,41 @@ namespace scratchbird
                                        size_t condition_start_pc, size_t condition_end_pc);
             std::vector<Value> combineRows(const std::vector<Value> &outer_row,
                                            const std::vector<Value> &inner_row);
+
+            // Aggregation execution helpers (Phase 1 Task 1.6.3)
+            struct AggregateAccumulator
+            {
+                enum class AggFunc { COUNT, SUM, AVG, MIN, MAX };
+
+                AggFunc func;
+                bool distinct;
+                Value result;           // Final result
+                int64_t count;          // For COUNT and AVG
+                double sum;             // For SUM and AVG
+                std::unordered_set<std::string> distinct_values; // For DISTINCT
+
+                AggregateAccumulator(AggFunc f, bool d)
+                    : func(f), distinct(d), count(0), sum(0.0) {}
+
+                void accumulate(const Value& val);
+                Value finalize();
+            };
+
+            struct GroupKey
+            {
+                std::vector<Value> values;
+
+                bool operator==(const GroupKey& other) const;
+                size_t hash() const;
+            };
+
+            struct GroupKeyHash
+            {
+                size_t operator()(const GroupKey& key) const { return key.hash(); }
+            };
+
+            using AggregateState = std::vector<AggregateAccumulator>;
+            using GroupMap = std::unordered_map<GroupKey, AggregateState, GroupKeyHash>;
         };
 
     } // namespace sblr

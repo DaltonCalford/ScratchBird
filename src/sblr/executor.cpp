@@ -1679,6 +1679,498 @@ namespace scratchbird
             // in the deleteTuple() method for MGA architecture
         }
 
+        // Aggregation helper implementations (Phase 1 Task 1.6.3)
+        void Executor::AggregateAccumulator::accumulate(const Value& val)
+        {
+            // Skip NULLs for all aggregate functions except COUNT(*)
+            if (val.isNull() && func != AggFunc::COUNT)
+                return;
+
+            // Handle DISTINCT
+            if (distinct)
+            {
+                std::string key = val.toString();
+                if (distinct_values.find(key) != distinct_values.end())
+                    return; // Already seen this value
+                distinct_values.insert(key);
+            }
+
+            switch (func)
+            {
+                case AggFunc::COUNT:
+                    // COUNT(*) counts all rows including NULLs
+                    // COUNT(col) only counts non-NULL values (handled above)
+                    count++;
+                    break;
+
+                case AggFunc::SUM:
+                    sum += val.toDouble();
+                    count++;
+                    break;
+
+                case AggFunc::AVG:
+                    sum += val.toDouble();
+                    count++;
+                    break;
+
+                case AggFunc::MIN:
+                    if (count == 0 || val.toDouble() < result.toDouble())
+                        result = val;
+                    count++;
+                    break;
+
+                case AggFunc::MAX:
+                    if (count == 0 || val.toDouble() > result.toDouble())
+                        result = val;
+                    count++;
+                    break;
+            }
+        }
+
+        Value Executor::AggregateAccumulator::finalize()
+        {
+            switch (func)
+            {
+                case AggFunc::COUNT:
+                    return Value::makeInt64(count);
+
+                case AggFunc::SUM:
+                    return count > 0 ? Value::makeFloat64(sum) : Value::makeNull();
+
+                case AggFunc::AVG:
+                    return count > 0 ? Value::makeFloat64(sum / count) : Value::makeNull();
+
+                case AggFunc::MIN:
+                case AggFunc::MAX:
+                    return count > 0 ? result : Value::makeNull();
+            }
+
+            // Should never reach here
+            return Value::makeNull();
+        }
+
+        bool Executor::GroupKey::operator==(const GroupKey& other) const
+        {
+            if (values.size() != other.values.size())
+                return false;
+
+            for (size_t i = 0; i < values.size(); i++)
+            {
+                // Use toString() for comparison to handle different types uniformly
+                if (values[i].toString() != other.values[i].toString())
+                    return false;
+            }
+
+            return true;
+        }
+
+        size_t Executor::GroupKey::hash() const
+        {
+            // Simple hash combining algorithm
+            size_t h = 0;
+            for (const auto& v : values)
+            {
+                // Combine hash using boost::hash_combine algorithm
+                h ^= std::hash<std::string>{}(v.toString()) + 0x9e3779b9 + (h << 6) + (h >> 2);
+            }
+            return h;
+        }
+
+        void Executor::executeAggregate(
+            const core::CatalogManager::TableInfo& table_info,
+            const std::vector<core::CatalogManager::ColumnInfo>& all_columns,
+            const std::vector<std::pair<std::string, std::string>>& select_items,
+            bool is_select_star,
+            bool has_where,
+            size_t where_start_pc,
+            size_t where_end_pc)
+        {
+            // Phase 1 Task 1.6.3: Aggregation execution
+            // Parse GROUP BY clause if present
+            std::vector<size_t> group_by_expr_pcs;
+            bool has_group_by = false;
+
+            if (pc_ < bytecode_size_ && bytecode_[pc_] == static_cast<uint8_t>(Opcode::GROUP_BY))
+            {
+                has_group_by = true;
+                readByte(); // Consume GROUP_BY opcode
+                uint32_t group_count = readInt32();
+
+                // Save bytecode positions for each grouping expression
+                for (uint32_t i = 0; i < group_count; i++)
+                {
+                    size_t expr_start = pc_;
+                    group_by_expr_pcs.push_back(expr_start);
+
+                    // Skip over expression to find next one
+                    int depth = 0;
+                    while (pc_ < bytecode_size_)
+                    {
+                        Opcode op = static_cast<Opcode>(readByte());
+
+                        if (op == Opcode::LITERAL_INT32)
+                        {
+                            pc_ += 4;
+                            depth++;
+                        }
+                        else if (op == Opcode::LITERAL_INT64)
+                        {
+                            pc_ += 8;
+                            depth++;
+                        }
+                        else if (op == Opcode::LITERAL_DOUBLE)
+                        {
+                            pc_ += 8;
+                            depth++;
+                        }
+                        else if (op == Opcode::LITERAL_STRING || op == Opcode::COLUMN_REF)
+                        {
+                            uint32_t len = readInt32();
+                            pc_ += len;
+                            depth++;
+                        }
+                        else if (op == Opcode::LITERAL_NULL)
+                        {
+                            depth++;
+                        }
+                        else if (op >= Opcode::EXPR_ADD && op <= Opcode::EXPR_OR)
+                        {
+                            depth--;
+                        }
+
+                        if (depth == 1)
+                            break; // Found complete expression
+                    }
+                }
+            }
+
+            // Parse AGG_INIT
+            if (readByte() != static_cast<uint8_t>(Opcode::AGG_INIT))
+            {
+                error("Expected AGG_INIT for aggregation query");
+            }
+
+            uint32_t agg_count = readInt32();
+
+            // Parse aggregate function definitions
+            struct AggDef
+            {
+                AggregateAccumulator::AggFunc func;
+                bool distinct;
+                size_t expr_start_pc;
+                size_t expr_end_pc;
+            };
+            std::vector<AggDef> agg_defs;
+
+            for (uint32_t i = 0; i < agg_count; i++)
+            {
+                Opcode agg_op = static_cast<Opcode>(readByte());
+                AggregateAccumulator::AggFunc func;
+
+                switch (agg_op)
+                {
+                    case Opcode::AGG_COUNT:
+                        func = AggregateAccumulator::AggFunc::COUNT;
+                        break;
+                    case Opcode::AGG_SUM:
+                        func = AggregateAccumulator::AggFunc::SUM;
+                        break;
+                    case Opcode::AGG_AVG:
+                        func = AggregateAccumulator::AggFunc::AVG;
+                        break;
+                    case Opcode::AGG_MIN:
+                        func = AggregateAccumulator::AggFunc::MIN;
+                        break;
+                    case Opcode::AGG_MAX:
+                        func = AggregateAccumulator::AggFunc::MAX;
+                        break;
+                    default:
+                        error("Unknown aggregate function opcode");
+                }
+
+                // Read DISTINCT flag (single byte: 0 or 1)
+                uint8_t distinct_flag = readByte();
+                bool distinct = (distinct_flag != 0);
+
+                // Save expression bytecode position
+                size_t expr_start = pc_;
+
+                // Skip over aggregate expression
+                int depth = 0;
+                while (pc_ < bytecode_size_)
+                {
+                    Opcode op = static_cast<Opcode>(readByte());
+
+                    if (op == Opcode::LITERAL_INT32)
+                    {
+                        pc_ += 4;
+                        depth++;
+                    }
+                    else if (op == Opcode::LITERAL_INT64)
+                    {
+                        pc_ += 8;
+                        depth++;
+                    }
+                    else if (op == Opcode::LITERAL_DOUBLE)
+                    {
+                        pc_ += 8;
+                        depth++;
+                    }
+                    else if (op == Opcode::LITERAL_STRING || op == Opcode::COLUMN_REF)
+                    {
+                        uint32_t len = readInt32();
+                        pc_ += len;
+                        depth++;
+                    }
+                    else if (op == Opcode::LITERAL_NULL || op == Opcode::SELECT_STAR)
+                    {
+                        depth++;
+                    }
+                    else if (op >= Opcode::EXPR_ADD && op <= Opcode::EXPR_OR)
+                    {
+                        depth--;
+                    }
+
+                    if (depth == 1)
+                        break;
+                }
+
+                size_t expr_end = pc_;
+                agg_defs.push_back({func, distinct, expr_start, expr_end});
+            }
+
+            // Check for HAVING clause
+            bool has_having = false;
+            size_t having_start_pc = 0;
+            size_t having_end_pc = 0;
+
+            if (pc_ < bytecode_size_ && bytecode_[pc_] == static_cast<uint8_t>(Opcode::HAVING))
+            {
+                has_having = true;
+                readByte(); // Consume HAVING opcode
+                having_start_pc = pc_;
+
+                // Skip HAVING expression
+                int depth = 1;
+                while (pc_ < bytecode_size_ && depth > 0)
+                {
+                    Opcode op = static_cast<Opcode>(readByte());
+
+                    if (op == Opcode::LITERAL_INT32)
+                    {
+                        pc_ += 4;
+                        depth++;
+                    }
+                    else if (op == Opcode::LITERAL_INT64)
+                    {
+                        pc_ += 8;
+                        depth++;
+                    }
+                    else if (op == Opcode::LITERAL_DOUBLE)
+                    {
+                        pc_ += 8;
+                        depth++;
+                    }
+                    else if (op == Opcode::LITERAL_STRING || op == Opcode::COLUMN_REF)
+                    {
+                        uint32_t len = readInt32();
+                        pc_ += len;
+                        depth++;
+                    }
+                    else if (op == Opcode::LITERAL_NULL)
+                    {
+                        depth++;
+                    }
+                    else if (op >= Opcode::EXPR_ADD && op <= Opcode::EXPR_OR)
+                    {
+                        depth--;
+                    }
+                }
+                having_end_pc = pc_;
+            }
+
+            // Consume AGG_FINALIZE opcode
+            if (readByte() != static_cast<uint8_t>(Opcode::AGG_FINALIZE))
+            {
+                error("Expected AGG_FINALIZE");
+            }
+
+            // Now scan the table and build groups
+            GroupMap groups;
+
+            auto scan_iter = db_->storage_engine()->createScan(table_info.table_id, nullptr);
+            if (!scan_iter)
+            {
+                error("Failed to create table scan iterator");
+            }
+
+            core::Tuple tuple;
+            while (scan_iter->next(&tuple, nullptr) == core::Status::OK)
+            {
+                // Deserialize tuple
+                std::vector<Value> row_values;
+                if (!deserializeTuple(tuple.data, tuple.data_size, all_columns, row_values))
+                {
+                    continue;
+                }
+
+                // Evaluate WHERE clause if present
+                if (has_where)
+                {
+                    size_t saved_pc = pc_;
+                    pc_ = where_start_pc;
+                    current_row_values_ = &row_values;
+                    current_row_columns_ = &all_columns;
+
+                    try
+                    {
+                        evaluateExpression();
+                        Value where_result = pop();
+                        current_row_values_ = nullptr;
+                        current_row_columns_ = nullptr;
+                        pc_ = saved_pc;
+
+                        if (!where_result.toBoolean())
+                        {
+                            continue; // Skip this row
+                        }
+                    }
+                    catch (...)
+                    {
+                        current_row_values_ = nullptr;
+                        current_row_columns_ = nullptr;
+                        pc_ = saved_pc;
+                        throw;
+                    }
+                }
+
+                // Evaluate GROUP BY expressions to build group key
+                GroupKey group_key;
+
+                if (has_group_by)
+                {
+                    for (size_t expr_pc : group_by_expr_pcs)
+                    {
+                        size_t saved_pc = pc_;
+                        pc_ = expr_pc;
+                        current_row_values_ = &row_values;
+                        current_row_columns_ = &all_columns;
+
+                        try
+                        {
+                            evaluateExpression();
+                            Value group_val = pop();
+                            current_row_values_ = nullptr;
+                            current_row_columns_ = nullptr;
+                            pc_ = saved_pc;
+
+                            group_key.values.push_back(group_val);
+                        }
+                        catch (...)
+                        {
+                            current_row_values_ = nullptr;
+                            current_row_columns_ = nullptr;
+                            pc_ = saved_pc;
+                            throw;
+                        }
+                    }
+                }
+                // else: no GROUP BY means single group with empty key
+
+                // Find or create group in hash table
+                auto& group_state = groups[group_key];
+
+                // Initialize accumulators if this is first row in group
+                if (group_state.empty())
+                {
+                    for (const auto& agg_def : agg_defs)
+                    {
+                        group_state.emplace_back(agg_def.func, agg_def.distinct);
+                    }
+                }
+
+                // Accumulate values for each aggregate
+                for (size_t i = 0; i < agg_defs.size(); i++)
+                {
+                    const auto& agg_def = agg_defs[i];
+
+                    // Evaluate aggregate expression
+                    size_t saved_pc = pc_;
+                    pc_ = agg_def.expr_start_pc;
+                    current_row_values_ = &row_values;
+                    current_row_columns_ = &all_columns;
+
+                    try
+                    {
+                        evaluateExpression();
+                        Value agg_val = pop();
+                        current_row_values_ = nullptr;
+                        current_row_columns_ = nullptr;
+                        pc_ = saved_pc;
+
+                        group_state[i].accumulate(agg_val);
+                    }
+                    catch (...)
+                    {
+                        current_row_values_ = nullptr;
+                        current_row_columns_ = nullptr;
+                        pc_ = saved_pc;
+                        throw;
+                    }
+                }
+            }
+
+            // Build result set from groups
+            current_result_set_ = std::make_unique<ResultSet>();
+
+            // Add columns: GROUP BY columns followed by aggregate columns
+            if (has_group_by)
+            {
+                for (size_t i = 0; i < group_by_expr_pcs.size(); i++)
+                {
+                    std::string col_name = "group_" + std::to_string(i);
+                    current_result_set_->addColumn(col_name, core::DataType::VARCHAR);
+                }
+            }
+
+            for (size_t i = 0; i < agg_defs.size(); i++)
+            {
+                std::string agg_name;
+                switch (agg_defs[i].func)
+                {
+                    case AggregateAccumulator::AggFunc::COUNT: agg_name = "COUNT"; break;
+                    case AggregateAccumulator::AggFunc::SUM: agg_name = "SUM"; break;
+                    case AggregateAccumulator::AggFunc::AVG: agg_name = "AVG"; break;
+                    case AggregateAccumulator::AggFunc::MIN: agg_name = "MIN"; break;
+                    case AggregateAccumulator::AggFunc::MAX: agg_name = "MAX"; break;
+                }
+                current_result_set_->addColumn(agg_name, core::DataType::FLOAT64);
+            }
+
+            // Add rows from groups
+            for (auto& [group_key, group_state] : groups)
+            {
+                std::vector<Value> result_row;
+
+                // Add GROUP BY values
+                for (const auto& group_val : group_key.values)
+                {
+                    result_row.push_back(group_val);
+                }
+
+                // Add aggregate results
+                for (auto& accumulator : group_state)
+                {
+                    result_row.push_back(accumulator.finalize());
+                }
+
+                // TODO: Implement HAVING clause filtering
+                // For now, add all groups to result
+
+                current_result_set_->addRow(std::move(result_row));
+            }
+        }
+
         void Executor::executeSelect()
         {
             // Read select list
@@ -1871,6 +2363,30 @@ namespace scratchbird
                 where_end_pc = pc_;
             }
 
+            // Check for aggregation opcodes (GROUP BY or AGG_INIT)
+            bool has_aggregation = false;
+            size_t group_by_start_pc = 0;
+            uint32_t group_by_count = 0;
+            size_t agg_init_pc = 0;
+
+            if (pc_ < bytecode_size_)
+            {
+                Opcode next_op = static_cast<Opcode>(bytecode_[pc_]);
+                if (next_op == Opcode::GROUP_BY || next_op == Opcode::AGG_INIT)
+                {
+                    has_aggregation = true;
+                }
+            }
+
+            // If we have aggregation, handle it differently
+            if (has_aggregation)
+            {
+                executeAggregate(table_info, all_columns, select_items, is_select_star,
+                                has_where, where_start_pc, where_end_pc);
+                return;
+            }
+
+            // Non-aggregation path (existing code)
             // Create table scan iterator
             auto scan_iter = db_->storage_engine()->createScan(table_info.table_id, nullptr);
             if (!scan_iter)
