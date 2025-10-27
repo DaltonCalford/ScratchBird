@@ -768,6 +768,11 @@ namespace scratchbird
             visitor->visit(this);
         }
 
+        void AggregateExpr::accept(ASTVisitor *visitor)
+        {
+            visitor->visit(this);
+        }
+
         void ASTPrinter::visit(CastExpr *node)
         {
             out_ << (node->isTryCast() ? "TRY_CAST(" : "CAST(");
@@ -798,6 +803,45 @@ namespace scratchbird
                     out_ << ", ";
                 arg->accept(this);
                 first = false;
+            }
+
+            out_ << ")";
+        }
+
+        void ASTPrinter::visit(AggregateExpr *node)
+        {
+            // Print aggregate function name
+            switch (node->func())
+            {
+            case AggregateFunc::COUNT:
+                out_ << "COUNT(";
+                break;
+            case AggregateFunc::SUM:
+                out_ << "SUM(";
+                break;
+            case AggregateFunc::AVG:
+                out_ << "AVG(";
+                break;
+            case AggregateFunc::MIN:
+                out_ << "MIN(";
+                break;
+            case AggregateFunc::MAX:
+                out_ << "MAX(";
+                break;
+            }
+
+            if (node->distinct())
+            {
+                out_ << "DISTINCT ";
+            }
+
+            if (node->arg())
+            {
+                node->arg()->accept(this);
+            }
+            else
+            {
+                out_ << "*";  // COUNT(*)
             }
 
             out_ << ")";

@@ -826,16 +826,51 @@ namespace scratchbird
 
             auto span = makeSpan(start_loc);
 
-            // Use new constructor if there are joins, otherwise use legacy for backwards compatibility
+            // Create SELECT statement
+            SelectStmt *stmt;
             if (!from_clause.joins.empty())
             {
-                return arena_.make<SelectStmt>(span, std::move(select_list), std::move(from_clause), where_clause);
+                stmt = arena_.make<SelectStmt>(span, std::move(select_list), std::move(from_clause), where_clause);
             }
             else
             {
                 // Legacy path - single table
-                return arena_.make<SelectStmt>(span, std::move(select_list), from_clause.base_table.table_name, where_clause);
+                stmt = arena_.make<SelectStmt>(span, std::move(select_list), from_clause.base_table.table_name, where_clause);
             }
+
+            // Parse GROUP BY clause (Phase 1 Task 4.1)
+            if (match(TokenType::KW_GROUP))
+            {
+                if (!consume(TokenType::KW_BY, "Expected BY after GROUP"))
+                {
+                    synchronize();
+                    return nullptr;
+                }
+
+                GroupByClause group_by = parseGroupByClause();
+                stmt->setGroupByClause(std::move(group_by));
+            }
+
+            // Parse ORDER BY clause (Phase 1 Task 5.1)
+            if (match(TokenType::KW_ORDER))
+            {
+                if (!consume(TokenType::KW_BY, "Expected BY after ORDER"))
+                {
+                    synchronize();
+                    return nullptr;
+                }
+
+                std::vector<OrderByItem> order_by = parseOrderByClause();
+                stmt->setOrderByClause(std::move(order_by));
+            }
+
+            // Parse LIMIT clause (Phase 1 Task 5.2)
+            if (match(TokenType::KW_LIMIT))
+            {
+                parseLimitClause(stmt);
+            }
+
+            return stmt;
         }
 
         // Parse table reference with optional alias (Phase 1 Task 3.1)
@@ -2260,6 +2295,71 @@ namespace scratchbird
                 return arena_.make<CastExpr>(span, expr, target_type, is_try_cast);
             }
 
+            // Aggregate functions (Phase 1 Task 4.1)
+            if (match(TokenType::KW_COUNT) || match(TokenType::KW_SUM) ||
+                match(TokenType::KW_AVG) || match(TokenType::KW_MIN) || match(TokenType::KW_MAX))
+            {
+                TokenType agg_type = previous().type;
+                AggregateFunc agg_func;
+
+                switch (agg_type)
+                {
+                case TokenType::KW_COUNT:
+                    agg_func = AggregateFunc::COUNT;
+                    break;
+                case TokenType::KW_SUM:
+                    agg_func = AggregateFunc::SUM;
+                    break;
+                case TokenType::KW_AVG:
+                    agg_func = AggregateFunc::AVG;
+                    break;
+                case TokenType::KW_MIN:
+                    agg_func = AggregateFunc::MIN;
+                    break;
+                case TokenType::KW_MAX:
+                    agg_func = AggregateFunc::MAX;
+                    break;
+                default:
+                    error("Unknown aggregate function");
+                    return nullptr;
+                }
+
+                if (!consume(TokenType::LEFT_PAREN, "Expected '(' after aggregate function"))
+                    return nullptr;
+
+                // Check for DISTINCT
+                bool distinct = false;
+                if (match(TokenType::KW_DISTINCT))
+                {
+                    distinct = true;
+                }
+
+                // Parse argument (or * for COUNT(*))
+                Expression *arg = nullptr;
+                if (match(TokenType::STAR))
+                {
+                    // COUNT(*) - arg remains nullptr
+                    if (agg_func != AggregateFunc::COUNT)
+                    {
+                        error("* is only valid with COUNT");
+                        return nullptr;
+                    }
+                }
+                else
+                {
+                    arg = parseExpression();
+                    if (!arg)
+                        return nullptr;
+                }
+
+                auto end_loc = current().location;
+                if (!consume(TokenType::RIGHT_PAREN, "Expected ')' after aggregate function"))
+                    return nullptr;
+
+                auto span = makeSpan(start_loc, end_loc);
+                return arena_.make<AggregateExpr>(span, agg_func, arg, distinct);
+            }
+
             if (check(TokenType::IDENTIFIER))
             {
                 auto name = current().value.string_id;
@@ -2331,6 +2431,108 @@ namespace scratchbird
 
             error("Expected expression, but got " + std::string(tokenTypeToString(current().type)));
             return nullptr;
+        }
+
+        // ===== Aggregation Parsing (Phase 1 Task 4.1) =====
+
+        // Parse GROUP BY clause with optional HAVING
+        GroupByClause Parser::parseGroupByClause()
+        {
+            GroupByClause clause;
+
+            // Parse grouping expressions
+            do
+            {
+                Expression *expr = parseExpression();
+                if (!expr)
+                {
+                    error("Expected expression in GROUP BY");
+                    synchronize();
+                    return clause;
+                }
+                clause.grouping_exprs.push_back(expr);
+            } while (match(TokenType::COMMA));
+
+            // Parse optional HAVING clause
+            if (match(TokenType::KW_HAVING))
+            {
+                clause.having_clause = parseExpression();
+                if (!clause.having_clause)
+                {
+                    error("Expected expression after HAVING");
+                    synchronize();
+                }
+            }
+
+            return clause;
+        }
+
+        // Parse ORDER BY clause
+        std::vector<OrderByItem> Parser::parseOrderByClause()
+        {
+            std::vector<OrderByItem> items;
+
+            do
+            {
+                Expression *expr = parseExpression();
+                if (!expr)
+                {
+                    error("Expected expression in ORDER BY");
+                    synchronize();
+                    return items;
+                }
+
+                // Parse optional ASC/DESC
+                SortOrder order = SortOrder::ASC;  // Default
+                if (match(TokenType::KW_ASC))
+                {
+                    order = SortOrder::ASC;
+                }
+                else if (match(TokenType::KW_DESC))
+                {
+                    order = SortOrder::DESC;
+                }
+
+                // Parse optional NULLS FIRST/LAST (not implementing for now, use default)
+                NullsOrder nulls_order = NullsOrder::DEFAULT;
+
+                items.push_back(OrderByItem(expr, order, nulls_order));
+            } while (match(TokenType::COMMA));
+
+            return items;
+        }
+
+        // Parse LIMIT/OFFSET clause
+        void Parser::parseLimitClause(SelectStmt *stmt)
+        {
+            // LIMIT count
+            if (!check(TokenType::INTEGER_LITERAL))
+            {
+                error("Expected integer literal after LIMIT");
+                synchronize();
+                return;
+            }
+
+            int64_t limit_count = current().value.int_value;
+            advance();
+
+            stmt->setLimitCount(limit_count);
+
+            // Optional OFFSET
+            if (match(TokenType::KW_OFFSET))
+            {
+                if (!check(TokenType::INTEGER_LITERAL))
+                {
+                    error("Expected integer literal after OFFSET");
+                    synchronize();
+                    return;
+                }
+
+                int64_t offset_count = current().value.int_value;
+                advance();
+
+                stmt->setOffsetCount(offset_count);
+            }
         }
 
         // Convenience function
