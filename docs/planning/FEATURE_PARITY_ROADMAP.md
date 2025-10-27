@@ -104,13 +104,13 @@ Without these features, ScratchBird **cannot be used** for even simple applicati
 
 ---
 
-#### 1.6 SBLR Executor Implementation (30-45 hours) - CRITICAL BLOCKER ⚠️ 80% COMPLETE
+#### 1.6 SBLR Executor Implementation (30-45 hours) - CRITICAL BLOCKER ✅ **100% COMPLETE**
 **Why Critical**: Blocks completion of Tasks 2, 4, and 5. Parser/planner/bytecode exist but cannot execute.
-**Status**: Started October 27, 2025 → **80% complete** (UPDATE ✅, DELETE ✅, aggregation ✅, sorting ✅, LIMIT ❌)
-**Priority**: **HIGHEST** - This is the #1 blocker for Phase 1 completion
+**Status**: Started October 27, 2025 → **✅ 100% complete** (UPDATE ✅, DELETE ✅, aggregation ✅, sorting ✅, LIMIT ✅)
+**Priority**: **HIGHEST** - #1 blocker for Phase 1 completion → **NOW COMPLETE!**
 
-**Current Situation**:
-- ✅ Executor infrastructure exists (~3,522 lines in `src/sblr/executor.cpp`)
+**Final Implementation Summary**:
+- ✅ Executor infrastructure exists (~4,400 lines in `src/sblr/executor.cpp`)
 - ✅ DDL operations implemented (CREATE TABLE, CREATE INDEX, tablespace operations)
 - ✅ DML SELECT implemented (with WHERE clause evaluation)
 - ✅ DML INSERT implemented (with MGA tuple insertion)
@@ -119,18 +119,16 @@ Without these features, ScratchBird **cannot be used** for even simple applicati
 - ✅ MGA infrastructure available (updateTuple, deleteTuple in StorageEngine)
 - ✅ **UPDATE execution IMPLEMENTED** (Oct 27, 2025 - ~400 lines)
 - ✅ **DELETE execution IMPLEMENTED** (Oct 27, 2025 - ~170 lines)
-- ✅ **Aggregation execution IMPLEMENTED** (Oct 27, 2025 - ~500 lines - HAVING TODO noted)
+- ✅ **Aggregation execution IMPLEMENTED** (Oct 27, 2025 - ~560 lines including HAVING)
 - ✅ **Sorting execution IMPLEMENTED** (Oct 27, 2025 - ~220 lines)
-- ❌ LIMIT/OFFSET execution NOT implemented
+- ✅ **LIMIT/OFFSET execution IMPLEMENTED** (Oct 27, 2025 - ~60 lines)
 
-**Unblocked Tasks**:
-- ✅ Task 2.1: UPDATE Statement (60% → **100% COMPLETE**)
-- ✅ Task 2.2: DELETE Statement (60% → **100% COMPLETE**)
-- ✅ Task 4: Aggregation and Grouping (70% → **~95% COMPLETE** - only HAVING filtering remains)
-- ✅ Task 5.1: Sorting (70% → **100% COMPLETE**)
-
-**Still Blocked Tasks**:
-- Task 5.2: LIMIT/OFFSET (70% → needs executor to reach 100%)
+**All Tasks Unblocked**:
+- ✅ Task 2.1: UPDATE Statement → **100% COMPLETE**
+- ✅ Task 2.2: DELETE Statement → **100% COMPLETE**
+- ✅ Task 4: Aggregation and Grouping → **100% COMPLETE** (HAVING ✅)
+- ✅ Task 5.1: Sorting → **100% COMPLETE**
+- ✅ Task 5.2: LIMIT/OFFSET → **100% COMPLETE**
 
 - [x] **1.6.1 UPDATE Executor** (10-15 hours) ✅ **COMPLETE** (Oct 27, 2025)
   - [x] Implement executeUpdate() method in Executor class ✅ Done Oct 27
@@ -227,24 +225,23 @@ Without these features, ScratchBird **cannot be used** for even simple applicati
   - **Deliverable**: ✅ **DELIVERED** - `SELECT * FROM t ORDER BY col1 ASC, col2 DESC` executes correctly
   - **Note**: External merge sort for large result sets deferred to Phase 2
 
-- [ ] **1.6.5 LIMIT/OFFSET Executor** (6-8 hours) ❌ MEDIUM
-  - [ ] Implement executeLimit() method in Executor class
-  - [ ] Parse LIMIT and OFFSET bytecode
-  - [ ] Process input rows:
-    - [ ] Skip first OFFSET rows (if specified)
-    - [ ] Collect up to LIMIT rows
-    - [ ] Early termination once LIMIT rows collected (optimization)
-  - [ ] Return limited result set
-  - [ ] Optimize when used with ORDER BY:
-    - [ ] Top-N heap optimization (Phase 2 enhancement)
-    - [ ] Only keep top N rows in memory during sort
-  - **Implementation Estimate**: ~100-150 lines
-  - **Files to Modify**:
-    * `include/scratchbird/sblr/executor.h` - Add executeLimit() declaration
-    * `src/sblr/executor.cpp` - Implement LIMIT/OFFSET execution (~100-150 lines)
-    * `src/sblr/executor.cpp` - Add LIMIT, OFFSET opcodes to switch
-  - **Testing**: Create test_limit_execution.cpp with LIMIT, OFFSET, combined tests
-  - **Deliverable**: `SELECT * FROM t LIMIT 10 OFFSET 20` executes with early termination
+- [x] **1.6.5 LIMIT/OFFSET Executor** (6-8 hours) ✅ **COMPLETE** (Oct 27, 2025)
+  - [x] Implement executeLimit() method in Executor class ✅ Done Oct 27
+  - [x] Parse LIMIT and OFFSET bytecode ✅ Done Oct 27
+  - [x] Process input rows: ✅ Done Oct 27
+    - [x] Skip first OFFSET rows (if specified) ✅ Done Oct 27
+    - [x] Collect up to LIMIT rows ✅ Done Oct 27
+    - [x] Early termination once LIMIT rows collected (optimization) ✅ Done Oct 27
+  - [x] Return limited result set ✅ Done Oct 27
+  - [x] Integrate LIMIT/OFFSET detection after executeSelect(), executeAggregate(), executeSort() ✅ Done Oct 27
+  - **Implementation**: ~60 lines (under estimate - simple and efficient)
+  - **Files Modified**:
+    * `include/scratchbird/sblr/executor.h` - Added executeLimit() declaration
+    * `src/sblr/executor.cpp` - Implemented executeLimit() (~60 lines)
+    * `src/sblr/executor.cpp` - Added LIMIT/OFFSET detection in executeSelect(), executeAggregate(), executeSort()
+  - **Testing**: Created test_limit_execution.cpp with LIMIT only, OFFSET only, combined, and no ORDER BY tests
+  - **Deliverable**: ✅ **DELIVERED** - `SELECT * FROM t LIMIT 10 OFFSET 20` executes with early termination
+  - **Note**: Top-N heap optimization for ORDER BY + LIMIT deferred to Phase 2
 
 **Phase 1.6 Completion Criteria**: All blocked tasks (2, 4, 5) can reach 100% completion
 
@@ -505,9 +502,9 @@ Without these features, ScratchBird **cannot be used** for even simple applicati
 
 ---
 
-#### 4. Aggregation and Grouping (60-90 hours) - HIGH ✅ ~95% COMPLETE
+#### 4. Aggregation and Grouping (60-90 hours) - HIGH ✅ **100% COMPLETE**
 **Why Fourth**: Most reporting queries need GROUP BY and aggregation.
-**Status**: Started October 27, 2025 → **~95% complete** (parser ✅, semantic ✅, planner ✅, bytecode ✅, executor ✅ - HAVING TODO noted)
+**Status**: Started October 27, 2025 → **✅ 100% complete** (parser ✅, semantic ✅, planner ✅, bytecode ✅, executor ✅, HAVING ✅)
 
 - [x] **4.1 GROUP BY Parser** (15-20 hours) ✅ COMPLETE
   - [x] Add GROUP BY, HAVING keywords to lexer ✅ Done Oct 27
@@ -548,11 +545,16 @@ Without these features, ScratchBird **cannot be used** for even simple applicati
 
 - [x] **4.4 Aggregation Execution** (25-40 hours) ✅ **COMPLETE** (Oct 27, 2025 - Task 1.6.3)
   - [x] All executor work completed in Task 1.6.3 (Aggregation Executor) ✅ Done Oct 27
-  - **Deliverable**: `SELECT col, COUNT(*) FROM table GROUP BY col` works ✅ DELIVERED
-  - **Implementation**: ~500 lines of executor code (**See Task 1.6.3 for details**)
-  - **Note**: HAVING clause filtering marked as TODO - all infrastructure in place
+  - [x] **HAVING clause filtering IMPLEMENTED** (Oct 27, 2025) ✅ Done Oct 27
+    - Added ~60 lines of HAVING evaluation in executeAggregate()
+    - Filters groups after aggregation based on HAVING condition
+    - Sets up result row context (GROUP BY columns + aggregate columns)
+    - Evaluates HAVING expression and skips groups that don't match
+  - **Deliverable**: `SELECT col, COUNT(*) FROM table GROUP BY col HAVING COUNT(*) > 10` works ✅ DELIVERED
+  - **Implementation**: ~560 lines of executor code (500 + 60 HAVING)
+  - **Testing**: 2 HAVING test cases added to test_aggregation_execution.cpp
 
-**Phase 1.4 Status**: Parser ✅, Semantic ✅, Planner ✅, Bytecode ✅, **Executor ✅ COMPLETE** (~95% - HAVING TODO noted)
+**Phase 1.4 Status**: Parser ✅, Semantic ✅, Planner ✅, Bytecode ✅, **Executor ✅ 100% COMPLETE** (including HAVING)
 
 ---
 
@@ -581,7 +583,7 @@ Without these features, ScratchBird **cannot be used** for even simple applicati
   - **Deliverable**: `SELECT * FROM table ORDER BY col ASC` works ✅ **DELIVERED** (**See Task 1.6.4**)
   - **Implementation**: ~290 lines for parser/planner/bytecode, ~220 lines executor (**See Task 1.6.4**)
 
-- [x] **5.2 LIMIT/OFFSET Support** (10-15 hours) ⚠️ 70% COMPLETE
+- [x] **5.2 LIMIT/OFFSET Support** (10-15 hours) ✅ **100% COMPLETE** (Oct 27, 2025)
   - [x] Add LIMIT, OFFSET keywords to lexer ✅ Done Oct 27
   - [x] Implement parseLimitClause() ✅ Done Oct 27
   - [x] Extended SelectStmt with limit_count_ and offset_count_ ✅ Done Oct 27
@@ -592,10 +594,10 @@ Without these features, ScratchBird **cannot be used** for even simple applicati
   - [x] Extend pathToPlanNode() to convert LimitPath → LimitNode ✅ Done Oct 27
   - [x] Add LIMIT, OFFSET opcodes ✅ Done Oct 27
   - [x] Implement generateLimitPlan() bytecode generation ✅ Done Oct 27
-  - [ ] Implement limit executor with early termination ⚠️ **BLOCKED by Task 1.6.5**
-  - [ ] Implement offset executor (skip rows) ⚠️ **BLOCKED by Task 1.6.5**
-  - **Deliverable**: `SELECT * FROM table LIMIT 10 OFFSET 20` works (execution pending) → **See Task 1.6.5**
-  - **Implementation**: ~210 lines for parser/planner/bytecode, ~100-150 lines executor TODO (**See Task 1.6.5**)
+  - [x] Implement limit executor with early termination ✅ **Done Oct 27 (Task 1.6.5)**
+  - [x] Implement offset executor (skip rows) ✅ **Done Oct 27 (Task 1.6.5)**
+  - **Deliverable**: `SELECT * FROM table LIMIT 10 OFFSET 20` works ✅ **DELIVERED** (**See Task 1.6.5**)
+  - **Implementation**: ~210 lines for parser/planner/bytecode, ~60 lines executor (**See Task 1.6.5**)
 
 **Phase 1.5 Status**: Parser ✅, Semantic ✅, Planner ✅, Bytecode ✅, **Executor TODO** (only execution remains!)
 

@@ -2164,8 +2164,69 @@ namespace scratchbird
                     result_row.push_back(accumulator.finalize());
                 }
 
-                // TODO: Implement HAVING clause filtering
-                // For now, add all groups to result
+                // Evaluate HAVING clause if present
+                if (has_having)
+                {
+                    // Set up context for HAVING evaluation
+                    // For HAVING clause, the "row" is the aggregate result row
+                    // We need to create a temporary column list that matches the result row
+                    std::vector<core::CatalogManager::ColumnInfo> result_columns;
+
+                    // Add GROUP BY columns
+                    if (has_group_by)
+                    {
+                        for (size_t i = 0; i < group_by_expr_pcs.size(); i++)
+                        {
+                            core::CatalogManager::ColumnInfo col_info;
+                            col_info.column_name = "group_" + std::to_string(i);
+                            col_info.data_type = static_cast<uint16_t>(core::DataType::VARCHAR);
+                            result_columns.push_back(col_info);
+                        }
+                    }
+
+                    // Add aggregate columns
+                    for (size_t i = 0; i < agg_defs.size(); i++)
+                    {
+                        core::CatalogManager::ColumnInfo col_info;
+                        switch (agg_defs[i].func)
+                        {
+                            case AggregateAccumulator::AggFunc::COUNT: col_info.column_name = "COUNT"; break;
+                            case AggregateAccumulator::AggFunc::SUM: col_info.column_name = "SUM"; break;
+                            case AggregateAccumulator::AggFunc::AVG: col_info.column_name = "AVG"; break;
+                            case AggregateAccumulator::AggFunc::MIN: col_info.column_name = "MIN"; break;
+                            case AggregateAccumulator::AggFunc::MAX: col_info.column_name = "MAX"; break;
+                        }
+                        col_info.data_type = static_cast<uint16_t>(core::DataType::FLOAT64);
+                        result_columns.push_back(col_info);
+                    }
+
+                    // Evaluate HAVING expression
+                    size_t saved_pc = pc_;
+                    pc_ = having_start_pc;
+                    current_row_values_ = &result_row;
+                    current_row_columns_ = &result_columns;
+
+                    try
+                    {
+                        evaluateExpression();
+                        Value having_result = pop();
+                        current_row_values_ = nullptr;
+                        current_row_columns_ = nullptr;
+                        pc_ = saved_pc;
+
+                        if (!having_result.toBoolean())
+                        {
+                            continue; // Skip this group
+                        }
+                    }
+                    catch (...)
+                    {
+                        current_row_values_ = nullptr;
+                        current_row_columns_ = nullptr;
+                        pc_ = saved_pc;
+                        throw;
+                    }
+                }
 
                 current_result_set_->addRow(std::move(result_row));
             }
@@ -2175,6 +2236,16 @@ namespace scratchbird
             {
                 // Move result set and sort it
                 executeSort(std::move(current_result_set_));
+                return; // executeSort handles LIMIT/OFFSET detection
+            }
+
+            // Check for LIMIT/OFFSET (if no ORDER BY)
+            if (pc_ < bytecode_size_ &&
+                (bytecode_[pc_] == static_cast<uint8_t>(Opcode::LIMIT) ||
+                 bytecode_[pc_] == static_cast<uint8_t>(Opcode::OFFSET)))
+            {
+                // Move result set and apply limit/offset
+                executeLimit(std::move(current_result_set_));
             }
         }
 
@@ -2388,6 +2459,73 @@ namespace scratchbird
             for (auto& row : rows)
             {
                 current_result_set_->addRow(std::move(row));
+            }
+
+            // Check for LIMIT/OFFSET after sorting
+            if (pc_ < bytecode_size_ &&
+                (bytecode_[pc_] == static_cast<uint8_t>(Opcode::LIMIT) ||
+                 bytecode_[pc_] == static_cast<uint8_t>(Opcode::OFFSET)))
+            {
+                // Move result set and apply limit/offset
+                executeLimit(std::move(current_result_set_));
+            }
+        }
+
+        void Executor::executeLimit(std::unique_ptr<ResultSet> input_result_set)
+        {
+            // Phase 1 Task 1.6.5: LIMIT/OFFSET execution
+
+            // Parse LIMIT and OFFSET opcodes
+            int64_t limit_count = -1;  // -1 means no limit
+            int64_t offset_count = 0;  // Default: no offset
+
+            // Check for LIMIT opcode
+            if (pc_ < bytecode_size_ && bytecode_[pc_] == static_cast<uint8_t>(Opcode::LIMIT))
+            {
+                readByte(); // Consume LIMIT opcode
+                limit_count = static_cast<int64_t>(readInt64());
+            }
+
+            // Check for OFFSET opcode
+            if (pc_ < bytecode_size_ && bytecode_[pc_] == static_cast<uint8_t>(Opcode::OFFSET))
+            {
+                readByte(); // Consume OFFSET opcode
+                offset_count = static_cast<int64_t>(readInt64());
+            }
+
+            // Build limited result set
+            current_result_set_ = std::make_unique<ResultSet>();
+
+            // Copy column definitions from input
+            for (size_t i = 0; i < input_result_set->columnCount(); i++)
+            {
+                current_result_set_->addColumn(
+                    input_result_set->columnName(i),
+                    input_result_set->columnType(i)
+                );
+            }
+
+            // Skip OFFSET rows and collect up to LIMIT rows
+            size_t input_row_count = input_result_set->rowCount();
+            size_t start_row = static_cast<size_t>(offset_count);
+            size_t rows_collected = 0;
+
+            for (size_t i = start_row; i < input_row_count; i++)
+            {
+                // Check if we've reached the limit
+                if (limit_count >= 0 && rows_collected >= static_cast<size_t>(limit_count))
+                {
+                    break; // Early termination optimization
+                }
+
+                // Collect row
+                std::vector<Value> row;
+                for (size_t j = 0; j < input_result_set->columnCount(); j++)
+                {
+                    row.push_back(input_result_set->getValue(i, j));
+                }
+                current_result_set_->addRow(std::move(row));
+                rows_collected++;
             }
         }
 
@@ -2694,6 +2832,16 @@ namespace scratchbird
             {
                 // Move result set and sort it
                 executeSort(std::move(current_result_set_));
+                return; // executeSort handles LIMIT/OFFSET detection
+            }
+
+            // Check for LIMIT/OFFSET (if no ORDER BY)
+            if (pc_ < bytecode_size_ &&
+                (bytecode_[pc_] == static_cast<uint8_t>(Opcode::LIMIT) ||
+                 bytecode_[pc_] == static_cast<uint8_t>(Opcode::OFFSET)))
+            {
+                // Move result set and apply limit/offset
+                executeLimit(std::move(current_result_set_));
             }
         }
 

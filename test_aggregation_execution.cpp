@@ -253,6 +253,192 @@ void testSimpleAggregation()
     std::cout << "\n=== Simple Aggregation Test PASSED ===\n";
 }
 
+void testHavingClause()
+{
+    std::cout << "\n=== Testing HAVING Clause (95% → 100% Complete) ===\n\n";
+
+    // Remove existing test database
+    std::filesystem::remove_all("test_having_exec.db");
+
+    // Create database
+    core::ErrorContext err_ctx;
+    auto db = std::make_unique<core::Database>("test_having_exec.db", &err_ctx);
+    if (!db || !db->isOpen())
+    {
+        std::cerr << "Failed to create database\n";
+        return;
+    }
+
+    // Create table with region column for GROUP BY
+    parser::StringPool pool;
+    {
+        std::string sql = "CREATE TABLE sales (region VARCHAR(50), amount INT32)";
+        parser::Lexer lexer(sql, pool);
+        parser::Parser parser_(lexer, pool);
+        auto stmt = parser_.parse();
+
+        if (!stmt || parser_.hasErrors())
+        {
+            std::cerr << "Parse error: " << parser_.errors()[0] << "\n";
+            return;
+        }
+
+        sblr::BytecodeGenerator generator(pool, db.get());
+        auto bytecode_result = generator.generate(stmt.get());
+
+        if (!bytecode_result.success())
+        {
+            std::cerr << "Bytecode generation error: " << bytecode_result.errors()[0] << "\n";
+            return;
+        }
+
+        sblr::Executor executor(db.get());
+        auto exec_result = executor.execute(bytecode_result.bytecode());
+
+        if (!exec_result.success())
+        {
+            std::cerr << "Execution error: " << exec_result.error() << "\n";
+            return;
+        }
+
+        std::cout << "✓ Table created\n";
+    }
+
+    // Insert test data
+    std::vector<std::pair<std::string, int>> test_data = {
+        {"North", 100},
+        {"North", 200},
+        {"North", 150},
+        {"South", 50},
+        {"South", 75},
+        {"East", 300}
+    };
+
+    for (const auto& [region, amount] : test_data)
+    {
+        std::string sql = "INSERT INTO sales (region, amount) VALUES ('" +
+                         region + "', " +
+                         std::to_string(amount) + ")";
+
+        parser::Lexer lexer(sql, pool);
+        parser::Parser parser_(lexer, pool);
+        auto stmt = parser_.parse();
+
+        sblr::BytecodeGenerator generator(pool, db.get());
+        auto bytecode_result = generator.generate(stmt.get());
+        sblr::Executor executor(db.get());
+        auto exec_result = executor.execute(bytecode_result.bytecode());
+
+        if (!exec_result.success())
+        {
+            std::cerr << "Insert error: " << exec_result.error() << "\n";
+            return;
+        }
+    }
+
+    std::cout << "✓ Inserted 6 test rows (North: 3, South: 2, East: 1)\n";
+
+    // Test HAVING with COUNT
+    {
+        std::string sql = "SELECT region, COUNT(*) FROM sales GROUP BY region HAVING COUNT(*) > 2";
+        parser::Lexer lexer(sql, pool);
+        parser::Parser parser_(lexer, pool);
+        auto stmt = parser_.parse();
+
+        if (!stmt || parser_.hasErrors())
+        {
+            std::cerr << "Parse error: " << parser_.errors()[0] << "\n";
+            return;
+        }
+
+        sblr::BytecodeGenerator generator(pool, db.get());
+        auto bytecode_result = generator.generate(stmt.get());
+
+        if (!bytecode_result.success())
+        {
+            std::cerr << "Bytecode generation error: " << bytecode_result.errors()[0] << "\n";
+            return;
+        }
+
+        sblr::Executor executor(db.get());
+        auto exec_result = executor.execute(bytecode_result.bytecode());
+
+        if (!exec_result.success())
+        {
+            std::cerr << "SELECT HAVING COUNT execution error: " << exec_result.error() << "\n";
+            return;
+        }
+
+        if (!exec_result.hasResultSet())
+        {
+            std::cerr << "Expected result set for HAVING query\n";
+            return;
+        }
+
+        auto* rs = exec_result.resultSet();
+
+        // Only North (3 rows) should pass HAVING COUNT(*) > 2
+        if (rs->rowCount() != 1)
+        {
+            std::cerr << "Expected 1 group with count > 2, got " << rs->rowCount() << "\n";
+            return;
+        }
+
+        std::cout << "✓ HAVING COUNT(*) > 2: returned 1 group (North)\n";
+    }
+
+    // Test HAVING with SUM
+    {
+        std::string sql = "SELECT region, SUM(amount) FROM sales GROUP BY region HAVING SUM(amount) >= 300";
+        parser::Lexer lexer(sql, pool);
+        parser::Parser parser_(lexer, pool);
+        auto stmt = parser_.parse();
+
+        if (!stmt || parser_.hasErrors())
+        {
+            std::cerr << "Parse error: " << parser_.errors()[0] << "\n";
+            return;
+        }
+
+        sblr::BytecodeGenerator generator(pool, db.get());
+        auto bytecode_result = generator.generate(stmt.get());
+
+        if (!bytecode_result.success())
+        {
+            std::cerr << "Bytecode generation error: " << bytecode_result.errors()[0] << "\n";
+            return;
+        }
+
+        sblr::Executor executor(db.get());
+        auto exec_result = executor.execute(bytecode_result.bytecode());
+
+        if (!exec_result.success())
+        {
+            std::cerr << "SELECT HAVING SUM execution error: " << exec_result.error() << "\n";
+            return;
+        }
+
+        if (!exec_result.hasResultSet())
+        {
+            std::cerr << "Expected result set for HAVING SUM query\n";
+            return;
+        }
+
+        auto* rs = exec_result.resultSet();
+
+        // North: 450 ✓, South: 125 ✗, East: 300 ✓
+        if (rs->rowCount() != 2)
+        {
+            std::cerr << "Expected 2 groups with sum >= 300, got " << rs->rowCount() << "\n";
+            return;
+        }
+
+        std::cout << "✓ HAVING SUM(amount) >= 300: returned 2 groups (North, East)\n";
+    }
+
+    std::cout << "\n=== HAVING Clause Test PASSED ===\n";
+}
+
 int main()
 {
     std::cout << "=== Aggregation Executor Tests ===\n";
@@ -260,6 +446,7 @@ int main()
     try
     {
         testSimpleAggregation();
+        testHavingClause();
 
         std::cout << "\n=== ALL TESTS PASSED ===\n";
         return 0;

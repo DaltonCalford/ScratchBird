@@ -202,6 +202,9 @@ namespace scratchbird
             // Sorting execution helper (Phase 1 Task 1.6.4)
             void executeSort(std::unique_ptr<ResultSet> input_result_set);
 
+            // LIMIT/OFFSET execution helper (Phase 1 Task 1.6.5)
+            void executeLimit(std::unique_ptr<ResultSet> input_result_set);
+
             // Expression evaluation
             void evaluateExpression();
             void executeBinaryOp(Opcode op);
