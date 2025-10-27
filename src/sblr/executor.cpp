@@ -1,4 +1,5 @@
 #include "scratchbird/sblr/executor.h"
+#include "scratchbird/parser/ast.h"
 #include "scratchbird/core/catalog_manager.h"
 #include "scratchbird/core/storage_engine.h"
 #include "scratchbird/core/heap_page.h"
@@ -15,6 +16,7 @@
 #include <cstring>
 #include <algorithm>
 #include <chrono>
+#include <map>
 
 namespace scratchbird
 {
@@ -2908,6 +2910,90 @@ namespace scratchbird
 
         // ===== JOIN Execution (Phase 1, Task 3.3) =====
 
+        // Helper: Execute a child plan and return its result set
+        std::unique_ptr<ResultSet> Executor::executeChildPlan()
+        {
+            // Save current result set
+            auto saved_result_set = std::move(current_result_set_);
+
+            // Execute the child SELECT statement
+            // The bytecode should be a complete SELECT statement
+            uint8_t opcode = readByte();
+            if (opcode != static_cast<uint8_t>(Opcode::SELECT))
+            {
+                error("Expected SELECT opcode in JOIN child plan");
+            }
+
+            // Execute the SELECT - this will populate current_result_set_
+            executeSelect();
+
+            // Retrieve and return the result
+            auto child_result = std::move(current_result_set_);
+
+            // Restore previous result set
+            current_result_set_ = std::move(saved_result_set);
+
+            return child_result;
+        }
+
+        // Helper: Combine two rows into one
+        std::vector<Value> Executor::combineRows(const std::vector<Value> &outer_row,
+                                                  const std::vector<Value> &inner_row)
+        {
+            std::vector<Value> combined;
+            combined.reserve(outer_row.size() + inner_row.size());
+            combined.insert(combined.end(), outer_row.begin(), outer_row.end());
+            combined.insert(combined.end(), inner_row.begin(), inner_row.end());
+            return combined;
+        }
+
+        // Helper: Evaluate join condition with two rows
+        bool Executor::evaluateJoinCondition(const std::vector<Value> &outer_row,
+                                              const std::vector<Value> &inner_row,
+                                              const std::vector<core::CatalogManager::ColumnInfo> &outer_columns,
+                                              const std::vector<core::CatalogManager::ColumnInfo> &inner_columns,
+                                              size_t condition_start_pc, size_t condition_end_pc)
+        {
+            // Save current PC
+            size_t saved_pc = pc_;
+            pc_ = condition_start_pc;
+
+            // Combine rows for evaluation
+            std::vector<Value> combined_row = combineRows(outer_row, inner_row);
+
+            // Combine column info
+            std::vector<core::CatalogManager::ColumnInfo> combined_columns;
+            combined_columns.reserve(outer_columns.size() + inner_columns.size());
+            combined_columns.insert(combined_columns.end(), outer_columns.begin(), outer_columns.end());
+            combined_columns.insert(combined_columns.end(), inner_columns.begin(), inner_columns.end());
+
+            // Set up row context
+            current_row_values_ = &combined_row;
+            current_row_columns_ = &combined_columns;
+
+            bool result = true;
+            try
+            {
+                evaluateExpression();
+                Value condition_result = pop();
+                result = condition_result.toBoolean();
+            }
+            catch (...)
+            {
+                current_row_values_ = nullptr;
+                current_row_columns_ = nullptr;
+                pc_ = saved_pc;
+                throw;
+            }
+
+            // Restore state
+            current_row_values_ = nullptr;
+            current_row_columns_ = nullptr;
+            pc_ = saved_pc;
+
+            return result;
+        }
+
         void Executor::executeNestedLoopJoin()
         {
             // Read join type
@@ -2916,28 +3002,232 @@ namespace scratchbird
                 error("Expected JOIN_TYPE");
             }
             uint8_t join_type_byte = readByte();
-            // parser::JoinType join_type = static_cast<parser::JoinType>(join_type_byte);
+            parser::JoinType join_type = static_cast<parser::JoinType>(join_type_byte);
 
-            // For Phase 1, implement a simplified nested loop join:
-            // 1. Save current PC to read outer/inner child bytecode
-            // 2. Execute outer child - this should leave results somewhere
-            // 3. For each outer row, execute inner child
-            // 4. Combine rows that match the join condition
+            // Execute outer (left) child plan
+            auto outer_result = executeChildPlan();
+            if (!outer_result)
+            {
+                error("Failed to execute outer child plan");
+            }
 
-            // NOTE: This is a minimal implementation demonstrating the concept.
-            // A full implementation would require:
-            // - Proper multi-table result set handling
-            // - Context switching between outer and inner scans
-            // - NULL handling for outer joins
-            // - Integration with the stack-based expression evaluator
+            // Save PC position before inner child bytecode
+            size_t inner_child_start_pc = pc_;
 
-            // For now, create an empty result set to prevent crashes
+            // Execute inner child once to get schema (then we'll re-execute for each outer row)
+            auto inner_schema_result = executeChildPlan();
+            if (!inner_schema_result)
+            {
+                error("Failed to execute inner child plan");
+            }
+
+            // Save PC position after inner child bytecode
+            size_t inner_child_end_pc = pc_;
+
+            // Check for join condition
+            bool has_condition = false;
+            size_t condition_start_pc = 0;
+            size_t condition_end_pc = 0;
+
+            if (pc_ < bytecode_size_ &&
+                bytecode_[pc_] == static_cast<uint8_t>(Opcode::JOIN_CONDITION))
+            {
+                has_condition = true;
+                readByte(); // Consume JOIN_CONDITION opcode
+                condition_start_pc = pc_;
+
+                // Skip over condition expression
+                int depth = 1;
+                while (pc_ < bytecode_size_ && depth > 0)
+                {
+                    Opcode op = static_cast<Opcode>(readByte());
+
+                    if (op == Opcode::LITERAL_INT32)
+                    {
+                        pc_ += 4;
+                        depth++;
+                    }
+                    else if (op == Opcode::LITERAL_INT64)
+                    {
+                        pc_ += 8;
+                        depth++;
+                    }
+                    else if (op == Opcode::LITERAL_DOUBLE)
+                    {
+                        pc_ += 8;
+                        depth++;
+                    }
+                    else if (op == Opcode::LITERAL_STRING || op == Opcode::COLUMN_REF)
+                    {
+                        uint32_t len = readInt32();
+                        pc_ += len;
+                        depth++;
+                    }
+                    else if (op == Opcode::LITERAL_NULL)
+                    {
+                        depth++;
+                    }
+                    else if (op >= Opcode::EXPR_ADD && op <= Opcode::EXPR_OR)
+                    {
+                        depth--;
+                    }
+                }
+                condition_end_pc = pc_;
+            }
+
+            // Build combined result set schema
             current_result_set_ = std::make_unique<ResultSet>();
-            current_result_set_->addColumn("join_placeholder", core::DataType::VARCHAR);
 
-            // Skip the rest of the JOIN bytecode for now
-            // A full implementation would recursively execute child plans
-            error("JOIN execution not fully implemented - infrastructure complete, executor deferred");
+            // Add outer columns
+            for (size_t i = 0; i < outer_result->columnCount(); i++)
+            {
+                current_result_set_->addColumn(outer_result->columnName(i),
+                                               outer_result->columnType(i));
+            }
+
+            // Add inner columns
+            for (size_t i = 0; i < inner_schema_result->columnCount(); i++)
+            {
+                current_result_set_->addColumn(inner_schema_result->columnName(i),
+                                               inner_schema_result->columnType(i));
+            }
+
+            // Get column info for condition evaluation (we'll need to reconstruct this)
+            std::vector<core::CatalogManager::ColumnInfo> outer_columns;
+            for (size_t i = 0; i < outer_result->columnCount(); i++)
+            {
+                core::CatalogManager::ColumnInfo col;
+                col.column_name = outer_result->columnName(i);
+                col.data_type = static_cast<uint16_t>(outer_result->columnType(i));
+                outer_columns.push_back(col);
+            }
+
+            std::vector<core::CatalogManager::ColumnInfo> inner_columns;
+            for (size_t i = 0; i < inner_schema_result->columnCount(); i++)
+            {
+                core::CatalogManager::ColumnInfo col;
+                col.column_name = inner_schema_result->columnName(i);
+                col.data_type = static_cast<uint16_t>(inner_schema_result->columnType(i));
+                inner_columns.push_back(col);
+            }
+
+            // Perform nested loop join
+            for (size_t outer_idx = 0; outer_idx < outer_result->rowCount(); outer_idx++)
+            {
+                // Get outer row
+                std::vector<Value> outer_row;
+                for (size_t col = 0; col < outer_result->columnCount(); col++)
+                {
+                    outer_row.push_back(outer_result->getValue(outer_idx, col));
+                }
+
+                // Re-execute inner child for this outer row
+                size_t saved_pc = pc_;
+                pc_ = inner_child_start_pc;
+                auto inner_result = executeChildPlan();
+                pc_ = saved_pc;
+
+                bool outer_row_matched = false;
+
+                // For each inner row
+                for (size_t inner_idx = 0; inner_idx < inner_result->rowCount(); inner_idx++)
+                {
+                    // Get inner row
+                    std::vector<Value> inner_row;
+                    for (size_t col = 0; col < inner_result->columnCount(); col++)
+                    {
+                        inner_row.push_back(inner_result->getValue(inner_idx, col));
+                    }
+
+                    // Evaluate join condition
+                    bool condition_met = true;
+                    if (has_condition)
+                    {
+                        condition_met = evaluateJoinCondition(outer_row, inner_row,
+                                                               outer_columns, inner_columns,
+                                                               condition_start_pc, condition_end_pc);
+                    }
+
+                    if (condition_met)
+                    {
+                        outer_row_matched = true;
+                        // Combine and add to result
+                        auto combined_row = combineRows(outer_row, inner_row);
+                        current_result_set_->addRow(std::move(combined_row));
+                    }
+                }
+
+                // Handle outer joins - add NULL-padded row if no match
+                if (!outer_row_matched && (join_type == parser::JoinType::LEFT ||
+                                           join_type == parser::JoinType::FULL))
+                {
+                    std::vector<Value> null_inner_row;
+                    for (size_t i = 0; i < inner_columns.size(); i++)
+                    {
+                        null_inner_row.push_back(Value()); // NULL value
+                    }
+                    auto combined_row = combineRows(outer_row, null_inner_row);
+                    current_result_set_->addRow(std::move(combined_row));
+                }
+            }
+
+            // Handle RIGHT and FULL outer joins - add unmatched inner rows with NULL outer
+            if (join_type == parser::JoinType::RIGHT || join_type == parser::JoinType::FULL)
+            {
+                // Re-execute inner child one more time
+                size_t saved_pc = pc_;
+                pc_ = inner_child_start_pc;
+                auto inner_result = executeChildPlan();
+                pc_ = saved_pc;
+
+                // For each inner row, check if it matched any outer row
+                for (size_t inner_idx = 0; inner_idx < inner_result->rowCount(); inner_idx++)
+                {
+                    std::vector<Value> inner_row;
+                    for (size_t col = 0; col < inner_result->columnCount(); col++)
+                    {
+                        inner_row.push_back(inner_result->getValue(inner_idx, col));
+                    }
+
+                    bool inner_row_matched = false;
+
+                    // Check against all outer rows
+                    for (size_t outer_idx = 0; outer_idx < outer_result->rowCount(); outer_idx++)
+                    {
+                        std::vector<Value> outer_row;
+                        for (size_t col = 0; col < outer_result->columnCount(); col++)
+                        {
+                            outer_row.push_back(outer_result->getValue(outer_idx, col));
+                        }
+
+                        bool condition_met = true;
+                        if (has_condition)
+                        {
+                            condition_met = evaluateJoinCondition(outer_row, inner_row,
+                                                                   outer_columns, inner_columns,
+                                                                   condition_start_pc, condition_end_pc);
+                        }
+
+                        if (condition_met)
+                        {
+                            inner_row_matched = true;
+                            break;
+                        }
+                    }
+
+                    // Add NULL-padded row if no match
+                    if (!inner_row_matched)
+                    {
+                        std::vector<Value> null_outer_row;
+                        for (size_t i = 0; i < outer_columns.size(); i++)
+                        {
+                            null_outer_row.push_back(Value()); // NULL value
+                        }
+                        auto combined_row = combineRows(null_outer_row, inner_row);
+                        current_result_set_->addRow(std::move(combined_row));
+                    }
+                }
+            }
         }
 
         void Executor::executeHashJoin()
@@ -2948,29 +3238,285 @@ namespace scratchbird
                 error("Expected JOIN_TYPE");
             }
             uint8_t join_type_byte = readByte();
-            // parser::JoinType join_type = static_cast<parser::JoinType>(join_type_byte);
+            parser::JoinType join_type = static_cast<parser::JoinType>(join_type_byte);
 
-            // For Phase 1, implement a simplified hash join:
-            // 1. Execute build side (inner table)
-            // 2. Build hash table on hash keys
-            // 3. Execute probe side (outer table)
-            // 4. Probe hash table for matches
-            // 5. Return combined results
+            // Execute outer (probe) child plan
+            auto outer_result = executeChildPlan();
+            if (!outer_result)
+            {
+                error("Failed to execute outer child plan");
+            }
 
-            // NOTE: This is a minimal implementation demonstrating the concept.
-            // A full implementation would require:
-            // - Hash table data structure
-            // - Hash function for join keys
-            // - Multi-column hash key support
-            // - NULL handling for outer joins
-            // - Memory management for large hash tables
+            // Execute inner (build) child plan
+            auto inner_result = executeChildPlan();
+            if (!inner_result)
+            {
+                error("Failed to execute inner child plan");
+            }
 
-            // For now, create an empty result set to prevent crashes
+            // Read hash keys for outer side
+            if (readByte() != static_cast<uint8_t>(Opcode::BEGIN_LIST))
+            {
+                error("Expected BEGIN_LIST for outer hash keys");
+            }
+            uint32_t outer_key_count = readInt32();
+            std::vector<size_t> outer_key_positions;
+
+            // For now, we'll skip the expression bytecode and just track count
+            // A full implementation would evaluate these expressions
+            for (uint32_t i = 0; i < outer_key_count; i++)
+            {
+                // Skip hash key expression (simplified - assume COLUMN_REF)
+                if (readByte() == static_cast<uint8_t>(Opcode::COLUMN_REF))
+                {
+                    std::string col_name = readString();
+                    // Find column index
+                    for (size_t col_idx = 0; col_idx < outer_result->columnCount(); col_idx++)
+                    {
+                        if (outer_result->columnName(col_idx) == col_name)
+                        {
+                            outer_key_positions.push_back(col_idx);
+                            break;
+                        }
+                    }
+                }
+            }
+
+            if (readByte() != static_cast<uint8_t>(Opcode::END_LIST))
+            {
+                error("Expected END_LIST for outer hash keys");
+            }
+
+            // Read hash keys for inner side
+            if (readByte() != static_cast<uint8_t>(Opcode::BEGIN_LIST))
+            {
+                error("Expected BEGIN_LIST for inner hash keys");
+            }
+            uint32_t inner_key_count = readInt32();
+            std::vector<size_t> inner_key_positions;
+
+            for (uint32_t i = 0; i < inner_key_count; i++)
+            {
+                if (readByte() == static_cast<uint8_t>(Opcode::COLUMN_REF))
+                {
+                    std::string col_name = readString();
+                    for (size_t col_idx = 0; col_idx < inner_result->columnCount(); col_idx++)
+                    {
+                        if (inner_result->columnName(col_idx) == col_name)
+                        {
+                            inner_key_positions.push_back(col_idx);
+                            break;
+                        }
+                    }
+                }
+            }
+
+            if (readByte() != static_cast<uint8_t>(Opcode::END_LIST))
+            {
+                error("Expected END_LIST for inner hash keys");
+            }
+
+            // Check for optional join condition
+            bool has_condition = false;
+            size_t condition_start_pc = 0;
+            size_t condition_end_pc = 0;
+
+            if (pc_ < bytecode_size_ &&
+                bytecode_[pc_] == static_cast<uint8_t>(Opcode::JOIN_CONDITION))
+            {
+                has_condition = true;
+                readByte(); // Consume JOIN_CONDITION
+                condition_start_pc = pc_;
+
+                // Skip condition expression (same logic as nested loop join)
+                int depth = 1;
+                while (pc_ < bytecode_size_ && depth > 0)
+                {
+                    Opcode op = static_cast<Opcode>(readByte());
+                    if (op == Opcode::LITERAL_INT32)
+                    {
+                        pc_ += 4;
+                        depth++;
+                    }
+                    else if (op == Opcode::LITERAL_INT64)
+                    {
+                        pc_ += 8;
+                        depth++;
+                    }
+                    else if (op == Opcode::LITERAL_DOUBLE)
+                    {
+                        pc_ += 8;
+                        depth++;
+                    }
+                    else if (op == Opcode::LITERAL_STRING || op == Opcode::COLUMN_REF)
+                    {
+                        uint32_t len = readInt32();
+                        pc_ += len;
+                        depth++;
+                    }
+                    else if (op == Opcode::LITERAL_NULL)
+                    {
+                        depth++;
+                    }
+                    else if (op >= Opcode::EXPR_ADD && op <= Opcode::EXPR_OR)
+                    {
+                        depth--;
+                    }
+                }
+                condition_end_pc = pc_;
+            }
+
+            // Build hash table from inner result
+            // Hash table: map from hash key -> vector of row indices
+            std::map<std::string, std::vector<size_t>> hash_table;
+
+            for (size_t inner_idx = 0; inner_idx < inner_result->rowCount(); inner_idx++)
+            {
+                // Build hash key from inner row
+                std::string hash_key;
+                for (size_t key_pos : inner_key_positions)
+                {
+                    Value val = inner_result->getValue(inner_idx, key_pos);
+                    hash_key += val.toString() + "|";
+                }
+
+                hash_table[hash_key].push_back(inner_idx);
+            }
+
+            // Build combined result set schema
             current_result_set_ = std::make_unique<ResultSet>();
-            current_result_set_->addColumn("join_placeholder", core::DataType::VARCHAR);
 
-            // Skip the rest of the JOIN bytecode for now
-            error("Hash JOIN execution not fully implemented - infrastructure complete, executor deferred");
+            for (size_t i = 0; i < outer_result->columnCount(); i++)
+            {
+                current_result_set_->addColumn(outer_result->columnName(i),
+                                               outer_result->columnType(i));
+            }
+
+            for (size_t i = 0; i < inner_result->columnCount(); i++)
+            {
+                current_result_set_->addColumn(inner_result->columnName(i),
+                                               inner_result->columnType(i));
+            }
+
+            // Get column info for condition evaluation
+            std::vector<core::CatalogManager::ColumnInfo> outer_columns;
+            for (size_t i = 0; i < outer_result->columnCount(); i++)
+            {
+                core::CatalogManager::ColumnInfo col;
+                col.column_name = outer_result->columnName(i);
+                col.data_type = static_cast<uint16_t>(outer_result->columnType(i));
+                outer_columns.push_back(col);
+            }
+
+            std::vector<core::CatalogManager::ColumnInfo> inner_columns;
+            for (size_t i = 0; i < inner_result->columnCount(); i++)
+            {
+                core::CatalogManager::ColumnInfo col;
+                col.column_name = inner_result->columnName(i);
+                col.data_type = static_cast<uint16_t>(inner_result->columnType(i));
+                inner_columns.push_back(col);
+            }
+
+            // Probe phase: for each outer row, probe hash table
+            std::vector<bool> outer_row_matched(outer_result->rowCount(), false);
+            std::vector<bool> inner_row_matched(inner_result->rowCount(), false);
+
+            for (size_t outer_idx = 0; outer_idx < outer_result->rowCount(); outer_idx++)
+            {
+                // Build hash key from outer row
+                std::string hash_key;
+                for (size_t key_pos : outer_key_positions)
+                {
+                    Value val = outer_result->getValue(outer_idx, key_pos);
+                    hash_key += val.toString() + "|";
+                }
+
+                // Probe hash table
+                auto it = hash_table.find(hash_key);
+                if (it != hash_table.end())
+                {
+                    // Found matching inner rows
+                    for (size_t inner_idx : it->second)
+                    {
+                        // Get rows
+                        std::vector<Value> outer_row;
+                        for (size_t col = 0; col < outer_result->columnCount(); col++)
+                        {
+                            outer_row.push_back(outer_result->getValue(outer_idx, col));
+                        }
+
+                        std::vector<Value> inner_row;
+                        for (size_t col = 0; col < inner_result->columnCount(); col++)
+                        {
+                            inner_row.push_back(inner_result->getValue(inner_idx, col));
+                        }
+
+                        // Evaluate residual join condition if present
+                        bool condition_met = true;
+                        if (has_condition)
+                        {
+                            condition_met = evaluateJoinCondition(outer_row, inner_row,
+                                                                   outer_columns, inner_columns,
+                                                                   condition_start_pc, condition_end_pc);
+                        }
+
+                        if (condition_met)
+                        {
+                            outer_row_matched[outer_idx] = true;
+                            inner_row_matched[inner_idx] = true;
+
+                            // Add combined row to result
+                            auto combined_row = combineRows(outer_row, inner_row);
+                            current_result_set_->addRow(std::move(combined_row));
+                        }
+                    }
+                }
+
+                // Handle LEFT/FULL outer join - add NULL-padded row if no match
+                if (!outer_row_matched[outer_idx] &&
+                    (join_type == parser::JoinType::LEFT || join_type == parser::JoinType::FULL))
+                {
+                    std::vector<Value> outer_row;
+                    for (size_t col = 0; col < outer_result->columnCount(); col++)
+                    {
+                        outer_row.push_back(outer_result->getValue(outer_idx, col));
+                    }
+
+                    std::vector<Value> null_inner_row;
+                    for (size_t i = 0; i < inner_columns.size(); i++)
+                    {
+                        null_inner_row.push_back(Value()); // NULL
+                    }
+
+                    auto combined_row = combineRows(outer_row, null_inner_row);
+                    current_result_set_->addRow(std::move(combined_row));
+                }
+            }
+
+            // Handle RIGHT/FULL outer join - add unmatched inner rows with NULL outer
+            if (join_type == parser::JoinType::RIGHT || join_type == parser::JoinType::FULL)
+            {
+                for (size_t inner_idx = 0; inner_idx < inner_result->rowCount(); inner_idx++)
+                {
+                    if (!inner_row_matched[inner_idx])
+                    {
+                        std::vector<Value> null_outer_row;
+                        for (size_t i = 0; i < outer_columns.size(); i++)
+                        {
+                            null_outer_row.push_back(Value()); // NULL
+                        }
+
+                        std::vector<Value> inner_row;
+                        for (size_t col = 0; col < inner_result->columnCount(); col++)
+                        {
+                            inner_row.push_back(inner_result->getValue(inner_idx, col));
+                        }
+
+                        auto combined_row = combineRows(null_outer_row, inner_row);
+                        current_result_set_->addRow(std::move(combined_row));
+                    }
+                }
+            }
         }
 
     } // namespace sblr
