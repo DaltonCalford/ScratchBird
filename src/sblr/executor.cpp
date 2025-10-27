@@ -191,6 +191,16 @@ namespace scratchbird
                         result = ExecutionResult();
                         break;
 
+                    case Opcode::UPDATE:
+                        executeUpdate();
+                        result = ExecutionResult();
+                        break;
+
+                    case Opcode::DELETE:
+                        executeDelete();
+                        result = ExecutionResult();
+                        break;
+
                     case Opcode::SELECT:
                         executeSelect();
                         result = ExecutionResult(std::move(current_result_set_));
@@ -1098,6 +1108,575 @@ namespace scratchbird
             }
 
             // Success - tuple inserted
+        }
+
+        void Executor::executeUpdate()
+        {
+            // Phase 1 Task 1.6.1: UPDATE executor implementation
+            // UPDATE table_name SET assignments WHERE condition
+
+            // Read TABLE_REF opcode
+            if (readByte() != static_cast<uint8_t>(Opcode::TABLE_REF))
+            {
+                error("Expected TABLE_REF in UPDATE");
+            }
+
+            std::string table_name = readString();
+
+            // Get default schema (PUBLIC)
+            core::CatalogManager::SchemaInfo schema_info;
+            auto status = db_->catalog_manager()->getSchema("PUBLIC", schema_info, nullptr);
+            if (status != core::Status::OK)
+            {
+                error("Failed to get default schema");
+            }
+
+            // Get table from catalog
+            core::CatalogManager::TableInfo table_info;
+            status = db_->catalog_manager()->getTable(schema_info.schema_id, table_name, table_info,
+                                                      nullptr);
+            if (status != core::Status::OK)
+            {
+                error("Table not found: " + table_name);
+            }
+            core::ID table_id = table_info.table_id;
+
+            // Get column information
+            std::vector<core::CatalogManager::ColumnInfo> all_columns;
+            status = db_->catalog_manager()->getColumns(table_id, all_columns, nullptr);
+            if (status != core::Status::OK)
+            {
+                error("Failed to get table columns");
+            }
+
+            // Read assignments list
+            if (readByte() != static_cast<uint8_t>(Opcode::BEGIN_LIST))
+            {
+                error("Expected BEGIN_LIST for assignments");
+            }
+
+            uint32_t assignment_count = readInt32();
+
+            // Parse assignments: save bytecode positions for later evaluation
+            struct AssignmentInfo {
+                std::string column_name;
+                size_t expr_start_pc;
+                size_t expr_end_pc;
+                size_t column_index; // Index into all_columns
+            };
+            std::vector<AssignmentInfo> assignments;
+
+            for (uint32_t i = 0; i < assignment_count; i++)
+            {
+                if (readByte() != static_cast<uint8_t>(Opcode::ASSIGNMENT))
+                {
+                    error("Expected ASSIGNMENT in assignments list");
+                }
+
+                // Read column reference
+                if (readByte() != static_cast<uint8_t>(Opcode::COLUMN_REF))
+                {
+                    error("Expected COLUMN_REF in ASSIGNMENT");
+                }
+
+                std::string col_name = readString();
+
+                // Find column index
+                auto it = std::find_if(all_columns.begin(), all_columns.end(),
+                                       [&col_name](const auto &c)
+                                       { return c.column_name == col_name; });
+
+                if (it == all_columns.end())
+                {
+                    error("Column not found in UPDATE: " + col_name);
+                }
+
+                size_t col_idx = std::distance(all_columns.begin(), it);
+
+                // Save start of value expression
+                size_t expr_start = pc_;
+
+                // Skip over the expression to find its end
+                int depth = 0;
+                while (pc_ < bytecode_size_)
+                {
+                    Opcode op = static_cast<Opcode>(bytecode_[pc_]);
+
+                    // Check if we've reached the next ASSIGNMENT or END_LIST
+                    if (depth == 0 && (op == Opcode::ASSIGNMENT || op == Opcode::END_LIST))
+                    {
+                        break;
+                    }
+
+                    readByte(); // consume opcode
+
+                    // Handle opcodes that affect depth or have data
+                    if (op == Opcode::LITERAL_INT32)
+                    {
+                        pc_ += 4;
+                        depth++;
+                    }
+                    else if (op == Opcode::LITERAL_INT64)
+                    {
+                        pc_ += 8;
+                        depth++;
+                    }
+                    else if (op == Opcode::LITERAL_DOUBLE)
+                    {
+                        pc_ += 8;
+                        depth++;
+                    }
+                    else if (op == Opcode::LITERAL_STRING || op == Opcode::COLUMN_REF)
+                    {
+                        uint32_t len = readInt32();
+                        pc_ += len;
+                        depth++;
+                    }
+                    else if (op == Opcode::LITERAL_NULL)
+                    {
+                        depth++;
+                    }
+                    else if (op >= Opcode::EXPR_ADD && op <= Opcode::EXPR_OR)
+                    {
+                        depth--; // Binary operators: consume 2, produce 1
+                    }
+                }
+
+                size_t expr_end = pc_;
+
+                assignments.push_back({col_name, expr_start, expr_end, col_idx});
+            }
+
+            if (readByte() != static_cast<uint8_t>(Opcode::END_LIST))
+            {
+                error("Expected END_LIST after assignments");
+            }
+
+            // Check for WHERE clause
+            size_t where_start_pc = 0;
+            size_t where_end_pc = 0;
+            bool has_where = false;
+
+            if (pc_ < bytecode_size_ &&
+                bytecode_[pc_] == static_cast<uint8_t>(Opcode::WHERE_CLAUSE))
+            {
+                has_where = true;
+                readByte(); // Consume WHERE_CLAUSE opcode
+                where_start_pc = pc_;
+
+                // Skip over WHERE expression (same logic as SELECT)
+                int depth = 1;
+                while (pc_ < bytecode_size_ && depth > 0)
+                {
+                    Opcode op = static_cast<Opcode>(readByte());
+
+                    if (op == Opcode::LITERAL_INT32)
+                    {
+                        pc_ += 4;
+                        depth++;
+                    }
+                    else if (op == Opcode::LITERAL_INT64)
+                    {
+                        pc_ += 8;
+                        depth++;
+                    }
+                    else if (op == Opcode::LITERAL_DOUBLE)
+                    {
+                        pc_ += 8;
+                        depth++;
+                    }
+                    else if (op == Opcode::LITERAL_STRING || op == Opcode::COLUMN_REF)
+                    {
+                        uint32_t len = readInt32();
+                        pc_ += len;
+                        depth++;
+                    }
+                    else if (op == Opcode::LITERAL_NULL)
+                    {
+                        depth++;
+                    }
+                    else if (op >= Opcode::EXPR_ADD && op <= Opcode::EXPR_OR)
+                    {
+                        depth--;
+                    }
+                }
+                where_end_pc = pc_;
+            }
+
+            // Create table scan iterator
+            auto scan_iter = db_->storage_engine()->createScan(table_id, nullptr);
+            if (!scan_iter)
+            {
+                error("Failed to create table scan iterator");
+            }
+
+            // Scan all tuples and update matching ones
+            int affected_count = 0;
+            core::Tuple tuple;
+
+            while (scan_iter->next(&tuple, nullptr) == core::Status::OK)
+            {
+                // Deserialize current tuple data
+                std::vector<Value> row_values;
+                if (!deserializeTuple(tuple.data, tuple.data_size, all_columns, row_values))
+                {
+                    continue; // Skip malformed tuples
+                }
+
+                // Evaluate WHERE clause if present
+                bool should_update = true;
+                if (has_where)
+                {
+                    size_t saved_pc = pc_;
+                    pc_ = where_start_pc;
+
+                    // Set up row context for column references
+                    current_row_values_ = &row_values;
+                    current_row_columns_ = &all_columns;
+
+                    try
+                    {
+                        evaluateExpression();
+                        Value where_result = pop();
+
+                        current_row_values_ = nullptr;
+                        current_row_columns_ = nullptr;
+
+                        pc_ = saved_pc;
+
+                        should_update = where_result.toBoolean();
+                    }
+                    catch (...)
+                    {
+                        current_row_values_ = nullptr;
+                        current_row_columns_ = nullptr;
+                        pc_ = saved_pc;
+                        throw;
+                    }
+                }
+
+                if (!should_update)
+                {
+                    continue;
+                }
+
+                // Evaluate assignments and update row values
+                for (const auto &assign : assignments)
+                {
+                    size_t saved_pc = pc_;
+                    pc_ = assign.expr_start_pc;
+
+                    // Set up row context for column references in assignment expression
+                    current_row_values_ = &row_values;
+                    current_row_columns_ = &all_columns;
+
+                    try
+                    {
+                        evaluateExpression();
+                        Value new_value = pop();
+
+                        current_row_values_ = nullptr;
+                        current_row_columns_ = nullptr;
+
+                        pc_ = saved_pc;
+
+                        // Update the row value
+                        row_values[assign.column_index] = new_value;
+                    }
+                    catch (...)
+                    {
+                        current_row_values_ = nullptr;
+                        current_row_columns_ = nullptr;
+                        pc_ = saved_pc;
+                        throw;
+                    }
+                }
+
+                // Serialize updated tuple data (same format as INSERT)
+                std::vector<uint8_t> new_tuple_data;
+
+                // Reserve space for TupleHeader
+                new_tuple_data.resize(sizeof(core::TupleHeader));
+
+                // Determine if we need a null bitmap
+                bool has_nulls = false;
+                for (const auto &val : row_values)
+                {
+                    if (val.isNull())
+                    {
+                        has_nulls = true;
+                        break;
+                    }
+                }
+
+                // Add null bitmap if needed
+                if (has_nulls)
+                {
+                    size_t num_bytes = (all_columns.size() + 7) / 8;
+                    size_t bitmap_offset = new_tuple_data.size();
+                    new_tuple_data.resize(new_tuple_data.size() + num_bytes, 0);
+
+                    for (size_t i = 0; i < row_values.size(); i++)
+                    {
+                        if (row_values[i].isNull())
+                        {
+                            size_t byte_idx = i / 8;
+                            size_t bit_idx = i % 8;
+                            new_tuple_data[bitmap_offset + byte_idx] |= (1 << bit_idx);
+                        }
+                    }
+                }
+
+                // Serialize column data
+                for (size_t i = 0; i < row_values.size(); i++)
+                {
+                    if (row_values[i].isNull())
+                    {
+                        continue; // NULL values already marked in bitmap
+                    }
+
+                    const auto &val = row_values[i];
+                    const auto &col = all_columns[i];
+
+                    // Serialize based on column data type
+                    switch (static_cast<core::DataType>(col.data_type))
+                    {
+                        case core::DataType::INT32:
+                        {
+                            int32_t int_val = static_cast<int32_t>(val.toInt64());
+                            new_tuple_data.insert(new_tuple_data.end(),
+                                                  reinterpret_cast<const uint8_t *>(&int_val),
+                                                  reinterpret_cast<const uint8_t *>(&int_val) + 4);
+                            break;
+                        }
+                        case core::DataType::INT64:
+                        {
+                            int64_t long_val = val.toInt64();
+                            new_tuple_data.insert(new_tuple_data.end(),
+                                                  reinterpret_cast<const uint8_t *>(&long_val),
+                                                  reinterpret_cast<const uint8_t *>(&long_val) + 8);
+                            break;
+                        }
+                        case core::DataType::FLOAT64:
+                        {
+                            double dbl_val = val.toDouble();
+                            new_tuple_data.insert(new_tuple_data.end(),
+                                                  reinterpret_cast<const uint8_t *>(&dbl_val),
+                                                  reinterpret_cast<const uint8_t *>(&dbl_val) + 8);
+                            break;
+                        }
+                        case core::DataType::BOOLEAN:
+                        {
+                            bool bool_val = val.toBoolean();
+                            new_tuple_data.push_back(bool_val ? 1 : 0);
+                            break;
+                        }
+                        case core::DataType::VARCHAR:
+                        {
+                            std::string str_val = val.toString();
+                            uint32_t str_len = static_cast<uint32_t>(str_val.size());
+                            new_tuple_data.insert(new_tuple_data.end(),
+                                                  reinterpret_cast<const uint8_t *>(&str_len),
+                                                  reinterpret_cast<const uint8_t *>(&str_len) + 4);
+                            new_tuple_data.insert(new_tuple_data.end(), str_val.begin(), str_val.end());
+                            break;
+                        }
+                        default:
+                            error("Unsupported data type in UPDATE");
+                    }
+                }
+
+                // Call StorageEngine::updateTuple with MGA versioning
+                uint32_t page_id = static_cast<uint32_t>(core::getPageNumber(tuple.tid));
+                uint16_t item_id = core::getSlot(tuple.tid);
+                uint32_t new_page_id;
+                uint16_t new_item_id;
+
+                auto update_status = db_->storage_engine()->updateTuple(
+                    table_id, page_id, item_id,
+                    new_tuple_data.data(), static_cast<uint32_t>(new_tuple_data.size()),
+                    &new_page_id, &new_item_id, nullptr);
+
+                if (update_status != core::Status::OK)
+                {
+                    error("Failed to update tuple in storage");
+                }
+
+                affected_count++;
+            }
+
+            // Note: Index updates are handled automatically by StorageEngine
+            // in the updateTuple() method for MGA architecture
+        }
+
+        void Executor::executeDelete()
+        {
+            // Phase 1 Task 1.6.2: DELETE executor implementation
+            // DELETE FROM table_name WHERE condition
+
+            // Read TABLE_REF opcode
+            if (readByte() != static_cast<uint8_t>(Opcode::TABLE_REF))
+            {
+                error("Expected TABLE_REF in DELETE");
+            }
+
+            std::string table_name = readString();
+
+            // Get default schema (PUBLIC)
+            core::CatalogManager::SchemaInfo schema_info;
+            auto status = db_->catalog_manager()->getSchema("PUBLIC", schema_info, nullptr);
+            if (status != core::Status::OK)
+            {
+                error("Failed to get default schema");
+            }
+
+            // Get table from catalog
+            core::CatalogManager::TableInfo table_info;
+            status = db_->catalog_manager()->getTable(schema_info.schema_id, table_name, table_info,
+                                                      nullptr);
+            if (status != core::Status::OK)
+            {
+                error("Table not found: " + table_name);
+            }
+            core::ID table_id = table_info.table_id;
+
+            // Get column information for WHERE clause evaluation
+            std::vector<core::CatalogManager::ColumnInfo> all_columns;
+            status = db_->catalog_manager()->getColumns(table_id, all_columns, nullptr);
+            if (status != core::Status::OK)
+            {
+                error("Failed to get table columns");
+            }
+
+            // Check for WHERE clause
+            size_t where_start_pc = 0;
+            size_t where_end_pc = 0;
+            bool has_where = false;
+
+            if (pc_ < bytecode_size_ &&
+                bytecode_[pc_] == static_cast<uint8_t>(Opcode::WHERE_CLAUSE))
+            {
+                has_where = true;
+                readByte(); // Consume WHERE_CLAUSE opcode
+                where_start_pc = pc_;
+
+                // Skip over WHERE expression
+                int depth = 1;
+                while (pc_ < bytecode_size_ && depth > 0)
+                {
+                    Opcode op = static_cast<Opcode>(readByte());
+
+                    if (op == Opcode::LITERAL_INT32)
+                    {
+                        pc_ += 4;
+                        depth++;
+                    }
+                    else if (op == Opcode::LITERAL_INT64)
+                    {
+                        pc_ += 8;
+                        depth++;
+                    }
+                    else if (op == Opcode::LITERAL_DOUBLE)
+                    {
+                        pc_ += 8;
+                        depth++;
+                    }
+                    else if (op == Opcode::LITERAL_STRING || op == Opcode::COLUMN_REF)
+                    {
+                        uint32_t len = readInt32();
+                        pc_ += len;
+                        depth++;
+                    }
+                    else if (op == Opcode::LITERAL_NULL)
+                    {
+                        depth++;
+                    }
+                    else if (op >= Opcode::EXPR_ADD && op <= Opcode::EXPR_OR)
+                    {
+                        depth--;
+                    }
+                }
+                where_end_pc = pc_;
+            }
+
+            // Create table scan iterator
+            auto scan_iter = db_->storage_engine()->createScan(table_id, nullptr);
+            if (!scan_iter)
+            {
+                error("Failed to create table scan iterator");
+            }
+
+            // Scan all tuples and delete matching ones
+            int affected_count = 0;
+            core::Tuple tuple;
+
+            while (scan_iter->next(&tuple, nullptr) == core::Status::OK)
+            {
+                // Deserialize tuple data for WHERE evaluation
+                std::vector<Value> row_values;
+                if (!deserializeTuple(tuple.data, tuple.data_size, all_columns, row_values))
+                {
+                    continue; // Skip malformed tuples
+                }
+
+                // Evaluate WHERE clause if present
+                bool should_delete = true;
+                if (has_where)
+                {
+                    size_t saved_pc = pc_;
+                    pc_ = where_start_pc;
+
+                    // Set up row context for column references
+                    current_row_values_ = &row_values;
+                    current_row_columns_ = &all_columns;
+
+                    try
+                    {
+                        evaluateExpression();
+                        Value where_result = pop();
+
+                        current_row_values_ = nullptr;
+                        current_row_columns_ = nullptr;
+
+                        pc_ = saved_pc;
+
+                        should_delete = where_result.toBoolean();
+                    }
+                    catch (...)
+                    {
+                        current_row_values_ = nullptr;
+                        current_row_columns_ = nullptr;
+                        pc_ = saved_pc;
+                        throw;
+                    }
+                }
+
+                if (!should_delete)
+                {
+                    continue;
+                }
+
+                // Call StorageEngine::deleteTuple with MGA soft delete
+                // This sets xmax = current transaction ID
+                core::ConnectionContext *conn_ctx = core::ConnectionContext::getCurrent();
+                uint64_t xmax = conn_ctx ? conn_ctx->getCurrentTransactionId() : 0;
+
+                uint32_t page_id = static_cast<uint32_t>(core::getPageNumber(tuple.tid));
+                uint16_t item_id = core::getSlot(tuple.tid);
+
+                auto delete_status = db_->storage_engine()->deleteTuple(
+                    table_id, page_id, item_id, nullptr);
+
+                if (delete_status != core::Status::OK)
+                {
+                    error("Failed to delete tuple from storage");
+                }
+
+                affected_count++;
+            }
+
+            // Note: Index cleanup is handled automatically by StorageEngine
+            // in the deleteTuple() method for MGA architecture
         }
 
         void Executor::executeSelect()
