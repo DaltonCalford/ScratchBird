@@ -913,6 +913,24 @@ namespace scratchbird
                     original_stmt);
                 break;
 
+            case scratchbird::optimizer::PlanNodeType::AGGREGATE:
+                generateAggregatePlan(
+                    static_cast<scratchbird::optimizer::AggregateNode *>(plan.get()),
+                    original_stmt);
+                break;
+
+            case scratchbird::optimizer::PlanNodeType::SORT:
+                generateSortPlan(
+                    static_cast<scratchbird::optimizer::SortNode *>(plan.get()),
+                    original_stmt);
+                break;
+
+            case scratchbird::optimizer::PlanNodeType::LIMIT:
+                generateLimitPlan(
+                    static_cast<scratchbird::optimizer::LimitNode *>(plan.get()),
+                    original_stmt);
+                break;
+
             default:
                 result.addError("Unsupported plan node type");
                 break;
@@ -1176,6 +1194,164 @@ namespace scratchbird
             default:
                 current_result_->addError("Unsupported JOIN child node type");
                 break;
+            }
+        }
+
+        // ===== Aggregation, Sorting, and Limiting Implementation (Phase 1, Tasks 4-5) =====
+
+        void BytecodeGenerator::visit(parser::AggregateExpr *node)
+        {
+            generateAggregateFunc(node);
+        }
+
+        void BytecodeGenerator::generateAggregateFunc(parser::AggregateExpr *agg_expr)
+        {
+            // Emit aggregate function opcode
+            switch (agg_expr->func())
+            {
+            case parser::AggregateFunc::COUNT:
+                current_result_->writeOpcode(Opcode::AGG_COUNT);
+                break;
+            case parser::AggregateFunc::SUM:
+                current_result_->writeOpcode(Opcode::AGG_SUM);
+                break;
+            case parser::AggregateFunc::AVG:
+                current_result_->writeOpcode(Opcode::AGG_AVG);
+                break;
+            case parser::AggregateFunc::MIN:
+                current_result_->writeOpcode(Opcode::AGG_MIN);
+                break;
+            case parser::AggregateFunc::MAX:
+                current_result_->writeOpcode(Opcode::AGG_MAX);
+                break;
+            }
+
+            // Write DISTINCT flag
+            current_result_->writeByte(agg_expr->distinct() ? 1 : 0);
+
+            // Write argument expression (nullptr for COUNT(*))
+            if (agg_expr->arg())
+            {
+                generateExpression(agg_expr->arg());
+            }
+            else
+            {
+                // COUNT(*) - no argument
+                current_result_->writeOpcode(Opcode::SELECT_STAR);
+            }
+        }
+
+        void BytecodeGenerator::generateAggregatePlan(
+            scratchbird::optimizer::AggregateNode *node,
+            parser::SelectStmt *stmt)
+        {
+            // For aggregate plans, we need to recursively generate the child plan first
+            // Then layer the aggregation on top
+
+            // Write SELECT opcode
+            current_result_->writeOpcode(Opcode::SELECT);
+
+            // Generate child plan (the input to aggregation)
+            auto child_plan = node->childPlan();
+            generateJoinPlan(child_plan.get(), stmt);
+
+            // Emit GROUP BY clause if present
+            const auto& grouping_exprs = node->groupingExprs();
+            if (!grouping_exprs.empty())
+            {
+                current_result_->writeOpcode(Opcode::GROUP_BY);
+                current_result_->writeInt32(static_cast<uint32_t>(grouping_exprs.size()));
+
+                for (auto* expr : grouping_exprs)
+                {
+                    generateExpression(expr);
+                }
+            }
+
+            // Emit aggregate initialization
+            current_result_->writeOpcode(Opcode::AGG_INIT);
+            current_result_->writeInt32(static_cast<uint32_t>(node->aggregates().size()));
+
+            // Emit each aggregate function
+            for (auto* agg_expr : node->aggregates())
+            {
+                generateAggregateFunc(agg_expr);
+            }
+
+            // Emit HAVING clause if present
+            if (node->havingClause())
+            {
+                current_result_->writeOpcode(Opcode::HAVING);
+                generateExpression(node->havingClause());
+            }
+
+            // Emit finalization
+            current_result_->writeOpcode(Opcode::AGG_FINALIZE);
+        }
+
+        void BytecodeGenerator::generateSortPlan(
+            scratchbird::optimizer::SortNode *node,
+            parser::SelectStmt *stmt)
+        {
+            // For sort plans, recursively generate child plan first
+            auto child_plan = node->childPlan();
+            generateJoinPlan(child_plan.get(), stmt);
+
+            // Emit ORDER BY clause
+            const auto& order_by_items = node->orderByItems();
+            current_result_->writeOpcode(Opcode::ORDER_BY);
+            current_result_->writeInt32(static_cast<uint32_t>(order_by_items.size()));
+
+            for (const auto& item : order_by_items)
+            {
+                // Emit sort key marker
+                current_result_->writeOpcode(Opcode::SORT_KEY);
+
+                // Emit expression to sort by
+                generateExpression(item.expr);
+
+                // Emit sort direction
+                if (item.order == parser::SortOrder::ASC)
+                {
+                    current_result_->writeOpcode(Opcode::SORT_ASC);
+                }
+                else
+                {
+                    current_result_->writeOpcode(Opcode::SORT_DESC);
+                }
+
+                // Emit NULLS ordering if specified
+                if (item.nulls_order == parser::NullsOrder::NULLS_FIRST)
+                {
+                    current_result_->writeOpcode(Opcode::NULLS_FIRST);
+                }
+                else if (item.nulls_order == parser::NullsOrder::NULLS_LAST)
+                {
+                    current_result_->writeOpcode(Opcode::NULLS_LAST);
+                }
+            }
+        }
+
+        void BytecodeGenerator::generateLimitPlan(
+            scratchbird::optimizer::LimitNode *node,
+            parser::SelectStmt *stmt)
+        {
+            // For limit plans, recursively generate child plan first
+            auto child_plan = node->childPlan();
+            generateJoinPlan(child_plan.get(), stmt);
+
+            // Emit LIMIT clause
+            if (node->limitCount() >= 0)
+            {
+                current_result_->writeOpcode(Opcode::LIMIT);
+                current_result_->writeInt64(static_cast<uint64_t>(node->limitCount()));
+            }
+
+            // Emit OFFSET clause
+            if (node->offsetCount() >= 0)
+            {
+                current_result_->writeOpcode(Opcode::OFFSET);
+                current_result_->writeInt64(static_cast<uint64_t>(node->offsetCount()));
             }
         }
 
