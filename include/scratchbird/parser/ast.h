@@ -55,6 +55,7 @@ namespace scratchbird
             BINARY_OP,
             CAST,
             FUNCTION_CALL,
+            AGGREGATE_FUNC,  // Phase 1 Task 4.1: Aggregate functions
 
             // Types
             TYPE_NAME,
@@ -378,6 +379,46 @@ namespace scratchbird
             std::vector<Expression *> args_;
         };
 
+        // Aggregate function types (Phase 1 Task 4.1)
+        enum class AggregateFunc : uint8_t
+        {
+            COUNT,
+            SUM,
+            AVG,
+            MIN,
+            MAX
+        };
+
+        // Aggregate function expression (Phase 1 Task 4.1)
+        class AggregateExpr : public Expression
+        {
+        public:
+            AggregateExpr(const SourceSpan &span, AggregateFunc func, Expression *arg, bool distinct = false)
+                : Expression(ASTKind::AGGREGATE_FUNC, span), func_(func), arg_(arg), distinct_(distinct)
+            {
+            }
+
+            AggregateFunc func() const
+            {
+                return func_;
+            }
+            Expression *arg() const
+            {
+                return arg_;
+            }
+            bool distinct() const
+            {
+                return distinct_;
+            }
+
+            void accept(ASTVisitor *visitor) override;
+
+        private:
+            AggregateFunc func_;
+            Expression *arg_;     // nullptr for COUNT(*)
+            bool distinct_;       // true for COUNT(DISTINCT col)
+        };
+
         // ===== Statement Nodes =====
 
         class Statement : public ASTNode
@@ -617,6 +658,43 @@ namespace scratchbird
             explicit FromClause(const TableRef &base) : base_table(base) {}
         };
 
+        // Sort direction for ORDER BY (Phase 1 Task 5.1)
+        enum class SortOrder : uint8_t
+        {
+            ASC,
+            DESC
+        };
+
+        // NULL ordering for ORDER BY (Phase 1 Task 5.1)
+        enum class NullsOrder : uint8_t
+        {
+            DEFAULT,      // Database default
+            NULLS_FIRST,
+            NULLS_LAST
+        };
+
+        // ORDER BY item (Phase 1 Task 5.1)
+        struct OrderByItem
+        {
+            Expression *expr;
+            SortOrder order;
+            NullsOrder nulls_order;
+
+            OrderByItem(Expression *e, SortOrder o = SortOrder::ASC, NullsOrder n = NullsOrder::DEFAULT)
+                : expr(e), order(o), nulls_order(n) {}
+        };
+
+        // GROUP BY clause (Phase 1 Task 4.1)
+        struct GroupByClause
+        {
+            std::vector<Expression *> grouping_exprs;
+            Expression *having_clause;  // Optional HAVING condition
+
+            GroupByClause() : having_clause(nullptr) {}
+            explicit GroupByClause(std::vector<Expression *> exprs, Expression *having = nullptr)
+                : grouping_exprs(std::move(exprs)), having_clause(having) {}
+        };
+
         // SELECT statement
         class SelectStmt : public Statement
         {
@@ -666,6 +744,53 @@ namespace scratchbird
                 return where_clause_;
             }
 
+            // Aggregation accessors (Phase 1 Task 4.1)
+            const GroupByClause *groupByClause() const
+            {
+                return group_by_clause_.grouping_exprs.empty() ? nullptr : &group_by_clause_;
+            }
+            void setGroupByClause(GroupByClause clause)
+            {
+                group_by_clause_ = std::move(clause);
+            }
+
+            // Sorting accessors (Phase 1 Task 5.1)
+            const std::vector<OrderByItem> &orderByClause() const
+            {
+                return order_by_clause_;
+            }
+            void setOrderByClause(std::vector<OrderByItem> clause)
+            {
+                order_by_clause_ = std::move(clause);
+            }
+
+            // Limit accessors (Phase 1 Task 5.2)
+            bool hasLimit() const
+            {
+                return limit_count_ >= 0;
+            }
+            int64_t limitCount() const
+            {
+                return limit_count_;
+            }
+            void setLimitCount(int64_t count)
+            {
+                limit_count_ = count;
+            }
+
+            bool hasOffset() const
+            {
+                return offset_count_ >= 0;
+            }
+            int64_t offsetCount() const
+            {
+                return offset_count_;
+            }
+            void setOffsetCount(int64_t count)
+            {
+                offset_count_ = count;
+            }
+
             void accept(ASTVisitor *visitor) override;
 
         private:
@@ -673,6 +798,16 @@ namespace scratchbird
             FromClause from_clause_;  // Replaces table_name_
             Expression *where_clause_;
             bool has_joins_;
+
+            // Aggregation (Phase 1 Task 4.1)
+            GroupByClause group_by_clause_;
+
+            // Sorting (Phase 1 Task 5.1)
+            std::vector<OrderByItem> order_by_clause_;
+
+            // Limit (Phase 1 Task 5.2)
+            int64_t limit_count_ = -1;   // -1 = no limit
+            int64_t offset_count_ = -1;  // -1 = no offset
         };
 
         // Assignment for UPDATE SET clause
@@ -1238,6 +1373,7 @@ namespace scratchbird
             virtual void visit(BinaryOpExpr *node) = 0;
             virtual void visit(CastExpr *node) = 0;
             virtual void visit(FunctionCallExpr *node) = 0;
+            virtual void visit(AggregateExpr *node) = 0;  // Phase 1 Task 4.1
 
             // Other nodes
             virtual void visit(ColumnDef *node) = 0;
@@ -1276,6 +1412,7 @@ namespace scratchbird
             void visit(BinaryOpExpr *node) override;
             void visit(CastExpr *node) override;
             void visit(FunctionCallExpr *node) override;
+            void visit(AggregateExpr *node) override;  // Phase 1 Task 4.1
             void visit(ColumnDef *node) override;
 
         private:

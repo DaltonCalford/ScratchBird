@@ -79,6 +79,25 @@ namespace scratchbird
             KW_NATURAL,
             KW_USING,
 
+            // Aggregation keywords (Phase 1 Task 4.1)
+            KW_GROUP,
+            KW_BY,
+            KW_HAVING,
+            KW_ORDER,
+            KW_ASC,
+            KW_DESC,
+            KW_LIMIT,
+            KW_OFFSET,
+            KW_DISTINCT,
+            KW_ALL,
+
+            // Aggregate functions (Phase 1 Task 4.1)
+            KW_COUNT,
+            KW_SUM,
+            KW_AVG,
+            KW_MIN,
+            KW_MAX,
+
             // Numeric types
             KW_INT,
             KW_INTEGER,

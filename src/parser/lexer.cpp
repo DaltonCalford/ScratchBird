@@ -49,6 +49,25 @@ namespace scratchbird
             {"NATURAL", TokenType::KW_NATURAL},
             {"USING", TokenType::KW_USING},
 
+            // Aggregation keywords (Phase 1 Task 4.1)
+            {"GROUP", TokenType::KW_GROUP},
+            {"BY", TokenType::KW_BY},
+            {"HAVING", TokenType::KW_HAVING},
+            {"ORDER", TokenType::KW_ORDER},
+            {"ASC", TokenType::KW_ASC},
+            {"DESC", TokenType::KW_DESC},
+            {"LIMIT", TokenType::KW_LIMIT},
+            {"OFFSET", TokenType::KW_OFFSET},
+            {"DISTINCT", TokenType::KW_DISTINCT},
+            {"ALL", TokenType::KW_ALL},
+
+            // Aggregate functions (Phase 1 Task 4.1)
+            {"COUNT", TokenType::KW_COUNT},
+            {"SUM", TokenType::KW_SUM},
+            {"AVG", TokenType::KW_AVG},
+            {"MIN", TokenType::KW_MIN},
+            {"MAX", TokenType::KW_MAX},
+
             // Numeric types
             {"INT", TokenType::KW_INT},
             {"INTEGER", TokenType::KW_INTEGER},
