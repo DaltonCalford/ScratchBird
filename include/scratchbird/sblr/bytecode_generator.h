@@ -132,6 +132,7 @@ namespace scratchbird
             void visit(parser::BinaryOpExpr *node) override;
             void visit(parser::CastExpr *node) override;
             void visit(parser::FunctionCallExpr *node) override;
+            void visit(parser::AggregateExpr *node) override;  // Phase 1 Task 4.1
             void visit(parser::ColumnDef *node) override;
 
         private:
@@ -164,6 +165,17 @@ namespace scratchbird
 
             // NEW: Direct SELECT generation (fallback when planner unavailable)
             void generateDirectSelect(parser::SelectStmt *node);
+
+            // NEW: Aggregation, sorting, and limiting bytecode generation (Phase 1, Task 4-5)
+            void generateAggregatePlan(scratchbird::optimizer::AggregateNode *node,
+                                      parser::SelectStmt *stmt);
+            void generateSortPlan(scratchbird::optimizer::SortNode *node,
+                                 parser::SelectStmt *stmt);
+            void generateLimitPlan(scratchbird::optimizer::LimitNode *node,
+                                  parser::SelectStmt *stmt);
+
+            // Helper to generate aggregate function bytecode
+            void generateAggregateFunc(parser::AggregateExpr *agg_expr);
         };
 
         // Debug helper - disassemble bytecode to readable format
