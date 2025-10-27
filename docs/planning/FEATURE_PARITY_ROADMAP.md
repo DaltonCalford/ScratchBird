@@ -104,18 +104,185 @@ Without these features, ScratchBird **cannot be used** for even simple applicati
 
 ---
 
+#### 1.6 SBLR Executor Implementation (30-45 hours) - CRITICAL BLOCKER ⚠️ 0% COMPLETE
+**Why Critical**: Blocks completion of Tasks 2, 4, and 5. Parser/planner/bytecode exist but cannot execute.
+**Status**: NOT STARTED → **0% complete** (blocking UPDATE, DELETE, aggregation, sorting, LIMIT)
+**Priority**: **HIGHEST** - This is the #1 blocker for Phase 1 completion
+
+**Current Situation**:
+- ✅ Executor infrastructure exists (~3,522 lines in `src/sblr/executor.cpp`)
+- ✅ DDL operations implemented (CREATE TABLE, CREATE INDEX, tablespace operations)
+- ✅ DML SELECT implemented (with WHERE clause evaluation)
+- ✅ DML INSERT implemented (with MGA tuple insertion)
+- ✅ JOIN execution implemented (nested loop and hash join - ~610 lines)
+- ✅ Transaction operations implemented (START, COMMIT, ROLLBACK)
+- ✅ MGA infrastructure available (updateTuple, deleteTuple in StorageEngine)
+- ❌ UPDATE execution NOT implemented
+- ❌ DELETE execution NOT implemented
+- ❌ Aggregation execution NOT implemented (GROUP BY, HAVING, aggregate functions)
+- ❌ Sorting execution NOT implemented (ORDER BY)
+- ❌ LIMIT/OFFSET execution NOT implemented
+
+**Blocked Tasks**:
+- Task 2.1: UPDATE Statement (60% → needs executor to reach 100%)
+- Task 2.2: DELETE Statement (60% → needs executor to reach 100%)
+- Task 4: Aggregation and Grouping (70% → needs executor to reach 100%)
+- Task 5.1: Sorting (70% → needs executor to reach 100%)
+- Task 5.2: LIMIT/OFFSET (70% → needs executor to reach 100%)
+
+- [ ] **1.6.1 UPDATE Executor** (10-15 hours) ❌ CRITICAL
+  - [ ] Implement executeUpdate() method in Executor class
+  - [ ] Parse UPDATE bytecode (TABLE_REF, assignments, WHERE clause)
+  - [ ] Evaluate WHERE clause to find matching tuples (reuse SELECT logic)
+  - [ ] For each matching tuple:
+    - [ ] Evaluate assignment expressions to get new column values
+    - [ ] Call StorageEngine::updateTuple() with MGA versioning
+    - [ ] Create new tuple version with xmin = current transaction ID
+    - [ ] Mark old tuple version with xmax = current transaction ID
+  - [ ] Handle index updates when indexed columns change:
+    - [ ] Delete old index entries for changed indexed columns
+    - [ ] Insert new index entries with new values
+  - [ ] Return affected row count in ExecutionResult
+  - [ ] Add error handling for constraint violations
+  - **Implementation Estimate**: ~250-350 lines
+  - **Files to Modify**:
+    * `include/scratchbird/sblr/executor.h` - Add executeUpdate() declaration
+    * `src/sblr/executor.cpp` - Implement executeUpdate() (~250-350 lines)
+    * `src/sblr/executor.cpp` - Add Opcode::UPDATE case to main execute() switch
+  - **Testing**: Create test_update_execution.cpp with end-to-end UPDATE tests
+  - **Deliverable**: `UPDATE table SET col=val WHERE condition` fully executes with MGA versioning
+
+- [ ] **1.6.2 DELETE Executor** (8-12 hours) ❌ CRITICAL
+  - [ ] Implement executeDelete() method in Executor class
+  - [ ] Parse DELETE bytecode (TABLE_REF, WHERE clause)
+  - [ ] Evaluate WHERE clause to find matching tuples (reuse SELECT logic)
+  - [ ] For each matching tuple:
+    - [ ] Call StorageEngine::deleteTuple() to mark as deleted
+    - [ ] Set xmax = current transaction ID (MGA soft delete)
+    - [ ] Keep tuple physically present for MVCC snapshot isolation
+  - [ ] Handle index cleanup for deleted rows:
+    - [ ] Remove index entries for all indexed columns
+    - [ ] Update index statistics
+  - [ ] Return affected row count in ExecutionResult
+  - [ ] Add error handling for foreign key violations (when FK support added)
+  - **Implementation Estimate**: ~180-250 lines
+  - **Files to Modify**:
+    * `include/scratchbird/sblr/executor.h` - Add executeDelete() declaration
+    * `src/sblr/executor.cpp` - Implement executeDelete() (~180-250 lines)
+    * `src/sblr/executor.cpp` - Add Opcode::DELETE case to main execute() switch
+  - **Testing**: Create test_delete_execution.cpp with end-to-end DELETE tests
+  - **Deliverable**: `DELETE FROM table WHERE condition` fully executes with MGA deletion
+
+- [ ] **1.6.3 Aggregation Executor** (12-18 hours) ❌ HIGH
+  - [ ] Implement executeAggregate() method in Executor class
+  - [ ] Parse GROUP BY bytecode (grouping expressions, aggregate functions, HAVING)
+  - [ ] Implement hash-based grouping:
+    - [ ] Create hash table: `std::unordered_map<GroupKey, AggregateState>`
+    - [ ] GroupKey = tuple of grouping expression values
+    - [ ] AggregateState = accumulators for each aggregate function
+  - [ ] Implement aggregate accumulators:
+    - [ ] COUNT: increment counter (handle DISTINCT with std::unordered_set)
+    - [ ] SUM: accumulate numeric values
+    - [ ] AVG: track sum + count, compute avg during finalization
+    - [ ] MIN: track minimum value seen
+    - [ ] MAX: track maximum value seen
+  - [ ] Process input rows:
+    - [ ] Evaluate grouping expressions to compute group key
+    - [ ] Look up or create AggregateState for this group
+    - [ ] For each aggregate, accumulate the value
+  - [ ] Finalize aggregates:
+    - [ ] For each group, compute final aggregate values (e.g., AVG = sum/count)
+    - [ ] Evaluate HAVING clause (if present) to filter groups
+    - [ ] Build result set with one row per group
+  - [ ] Handle simple aggregation (no GROUP BY):
+    - [ ] Single group with all rows
+    - [ ] Return single result row
+  - **Implementation Estimate**: ~400-500 lines
+  - **Files to Modify**:
+    * `include/scratchbird/sblr/executor.h` - Add executeAggregate() and helper methods
+    * `src/sblr/executor.cpp` - Implement aggregation execution (~400-500 lines)
+    * `src/sblr/executor.cpp` - Add GROUP_BY, HAVING, AGG_* opcodes to switch
+  - **Testing**: Create test_aggregation_execution.cpp with GROUP BY, HAVING, aggregate function tests
+  - **Deliverable**: `SELECT col, COUNT(*), SUM(val) FROM t GROUP BY col HAVING COUNT(*) > 5` executes
+
+- [ ] **1.6.4 Sorting Executor** (10-14 hours) ❌ HIGH
+  - [ ] Implement executeSort() method in Executor class
+  - [ ] Parse ORDER BY bytecode (sort keys, ASC/DESC, NULLS FIRST/LAST)
+  - [ ] Collect all input rows into memory buffer
+  - [ ] Implement multi-key comparison function:
+    - [ ] Compare rows by each sort key in order
+    - [ ] Handle ASC vs DESC direction
+    - [ ] Handle NULLS FIRST vs NULLS LAST semantics
+    - [ ] Use collation-aware string comparison for text types
+  - [ ] Sort rows using std::sort with custom comparator (O(n log n))
+  - [ ] Alternative: Implement external merge sort for large result sets (Phase 2 enhancement)
+  - [ ] Return sorted result set
+  - **Implementation Estimate**: ~300-400 lines
+  - **Files to Modify**:
+    * `include/scratchbird/sblr/executor.h` - Add executeSort() declaration
+    * `src/sblr/executor.cpp` - Implement sorting execution (~300-400 lines)
+    * `src/sblr/executor.cpp` - Add ORDER_BY, SORT_* opcodes to switch
+  - **Testing**: Create test_sort_execution.cpp with multi-column, ASC/DESC, NULLS ordering tests
+  - **Deliverable**: `SELECT * FROM t ORDER BY col1 ASC, col2 DESC NULLS LAST` executes correctly
+
+- [ ] **1.6.5 LIMIT/OFFSET Executor** (6-8 hours) ❌ MEDIUM
+  - [ ] Implement executeLimit() method in Executor class
+  - [ ] Parse LIMIT and OFFSET bytecode
+  - [ ] Process input rows:
+    - [ ] Skip first OFFSET rows (if specified)
+    - [ ] Collect up to LIMIT rows
+    - [ ] Early termination once LIMIT rows collected (optimization)
+  - [ ] Return limited result set
+  - [ ] Optimize when used with ORDER BY:
+    - [ ] Top-N heap optimization (Phase 2 enhancement)
+    - [ ] Only keep top N rows in memory during sort
+  - **Implementation Estimate**: ~100-150 lines
+  - **Files to Modify**:
+    * `include/scratchbird/sblr/executor.h` - Add executeLimit() declaration
+    * `src/sblr/executor.cpp` - Implement LIMIT/OFFSET execution (~100-150 lines)
+    * `src/sblr/executor.cpp` - Add LIMIT, OFFSET opcodes to switch
+  - **Testing**: Create test_limit_execution.cpp with LIMIT, OFFSET, combined tests
+  - **Deliverable**: `SELECT * FROM t LIMIT 10 OFFSET 20` executes with early termination
+
+**Phase 1.6 Completion Criteria**: All blocked tasks (2, 4, 5) can reach 100% completion
+
+**Task Breakdown Summary**:
+- 1.6.1 UPDATE: 10-15 hours (~250-350 lines)
+- 1.6.2 DELETE: 8-12 hours (~180-250 lines)
+- 1.6.3 Aggregation: 12-18 hours (~400-500 lines)
+- 1.6.4 Sorting: 10-14 hours (~300-400 lines)
+- 1.6.5 LIMIT/OFFSET: 6-8 hours (~100-150 lines)
+- **Total**: 46-67 hours, ~1,230-1,650 lines of executor code
+
+**Estimated Total Lines**: ~1,230-1,650 lines across 5 executor methods + test suites
+
+**Impact**:
+- Unblocks Task 2 (UPDATE/DELETE) → enables full CRUD operations
+- Unblocks Task 4 (Aggregation) → enables reporting queries
+- Unblocks Task 5 (Sorting/Limiting) → enables ordered, paginated results
+- Completes Phase 1 "Critical Blockers" except for subqueries
+
+**Notes**:
+- All parser, semantic analysis, planner, and bytecode generation are ALREADY DONE
+- This task ONLY implements the executor layer
+- MGA infrastructure is already in place (StorageEngine::updateTuple, deleteTuple)
+- Transaction isolation already works (xmin/xmax tracking in TupleHeader)
+- Index infrastructure exists and is used by executeInsert (similar pattern for UPDATE/DELETE)
+
+---
+
 #### 2. Core CRUD Operations (35-55 hours) - CRITICAL ~60% COMPLETE
 **Why Second**: Cannot modify or delete data without these.
 **Status**: Started October 25, 2025 → **60% complete** (parser ✅, semantic ✅, bytecode ✅, executor ❌)
 
-- [x] **2.1 UPDATE Statement** (20-30 hours) ⚠️ 60% COMPLETE
+- [x] **2.1 UPDATE Statement** (20-30 hours) ⚠️ 60% COMPLETE → **BLOCKED by Task 1.6.1**
   - [x] Add UPDATE parser support (UPDATE table SET col=val WHERE condition) ✅ Done Oct 25
   - [x] Implement UPDATE AST node ✅ Done Oct 25
   - [x] Implement UPDATE semantic analysis ✅ Done Oct 25
   - [x] Generate SBLR bytecode for UPDATE ✅ Done Oct 25
-  - [ ] Implement UPDATE executor logic (with MGA versioning) ❌ TODO
-  - [ ] Handle indexed column updates (update indexes) ❌ TODO
-  - [ ] Add transaction isolation for UPDATE ❌ TODO
+  - [ ] Implement UPDATE executor logic (with MGA versioning) ❌ **See Task 1.6.1**
+  - [ ] Handle indexed column updates (update indexes) ❌ **See Task 1.6.1**
+  - [ ] Add transaction isolation for UPDATE ❌ **See Task 1.6.1**
   - **Status**: ⚠️ **60% COMPLETE** - Parser ✅, Semantic ✅, Bytecode ✅, Executor ❌
   - **Implementation**: ~380 lines across 11 files (Oct 25, 2025)
   - **Files Modified**:
@@ -135,14 +302,14 @@ Without these features, ScratchBird **cannot be used** for even simple applicati
   - **Remaining**: Executor implementation (10-15 hours), index updates (3-5 hours), transaction isolation (2-4 hours)
   - **Deliverable**: ⚠️ **Partial** - `UPDATE table SET col=val WHERE condition` parses and validates, but execution not implemented
 
-- [x] **2.2 DELETE Statement** (15-25 hours) ⚠️ 60% COMPLETE
+- [x] **2.2 DELETE Statement** (15-25 hours) ⚠️ 60% COMPLETE → **BLOCKED by Task 1.6.2**
   - [x] Add DELETE parser support (DELETE FROM table WHERE condition) ✅ Done Oct 25
   - [x] Implement DELETE AST node ✅ Done Oct 25
   - [x] Implement DELETE semantic analysis ✅ Done Oct 25
   - [x] Generate SBLR bytecode for DELETE ✅ Done Oct 25
-  - [ ] Implement DELETE executor logic (mark deleted in MGA) ❌ TODO
-  - [ ] Handle index cleanup for deleted rows ❌ TODO
-  - [ ] Add transaction isolation for DELETE ❌ TODO
+  - [ ] Implement DELETE executor logic (mark deleted in MGA) ❌ **See Task 1.6.2**
+  - [ ] Handle index cleanup for deleted rows ❌ **See Task 1.6.2**
+  - [ ] Add transaction isolation for DELETE ❌ **See Task 1.6.2**
   - **Status**: ⚠️ **60% COMPLETE** - Parser ✅, Semantic ✅, Bytecode ✅, Executor ❌
   - **Implementation**: ~233 lines across 11 files (Oct 25, 2025)
   - **Files Modified**:
@@ -382,23 +549,10 @@ Without these features, ScratchBird **cannot be used** for even simple applicati
   - **Deliverable**: Bytecode generation for GROUP BY queries ✅ DELIVERED
   - **Implementation**: ~160 lines in bytecode generator
 
-- [ ] **4.4 Aggregation Execution** (25-40 hours) ⚠️ TODO - EXECUTION ONLY REMAINING
-  - [ ] Implement hash table for grouping (hash by group key)
-  - [ ] Implement aggregate accumulator state machine
-  - [ ] Implement AGG_INIT opcode handler
-  - [ ] Implement AGG_ACCUMULATE opcode handler
-  - [ ] Implement AGG_FINALIZE opcode handler
-  - [ ] Implement COUNT() accumulator (count rows)
-  - [ ] Implement SUM() accumulator (sum values)
-  - [ ] Implement AVG() accumulator (sum + count, divide at finalize)
-  - [ ] Implement MIN() accumulator (track minimum)
-  - [ ] Implement MAX() accumulator (track maximum)
-  - [ ] Implement DISTINCT handling (set-based deduplication)
-  - [ ] Implement HAVING filter (post-aggregation filtering)
-  - [ ] Handle NULL values in aggregation (skip NULLs in most aggregates)
-  - [ ] Handle empty groups (COUNT returns 0, others return NULL)
+- [ ] **4.4 Aggregation Execution** (25-40 hours) ⚠️ **BLOCKED by Task 1.6.3** - See Task 1.6.3 for detailed implementation plan
+  - [ ] All executor work moved to Task 1.6.3 (Aggregation Executor)
   - **Deliverable**: `SELECT col, COUNT(*) FROM table GROUP BY col` works
-  - **Estimated Work**: ~400-500 lines of executor code
+  - **Estimated Work**: ~400-500 lines of executor code (**See Task 1.6.3**)
 
 **Phase 1.4 Status**: Parser ✅, Semantic ✅, Planner ✅, Bytecode ✅, **Executor TODO** (only execution remains!)
 
@@ -424,10 +578,10 @@ Without these features, ScratchBird **cannot be used** for even simple applicati
   - [x] Extend pathToPlanNode() to convert SortPath → SortNode ✅ Done Oct 27
   - [x] Add ORDER_BY, SORT_KEY, SORT_ASC, SORT_DESC, NULLS_FIRST, NULLS_LAST opcodes ✅ Done Oct 27
   - [x] Implement generateSortPlan() bytecode generation ✅ Done Oct 27
-  - [ ] Implement sort executor (quicksort or merge sort) ⚠️ TODO
-  - [ ] Implement NULLS FIRST/LAST handling in comparisons ⚠️ TODO
-  - **Deliverable**: `SELECT * FROM table ORDER BY col ASC` works (execution pending)
-  - **Implementation**: ~290 lines for parser/planner/bytecode, ~300-400 lines executor TODO
+  - [ ] Implement sort executor (quicksort or merge sort) ⚠️ **BLOCKED by Task 1.6.4**
+  - [ ] Implement NULLS FIRST/LAST handling in comparisons ⚠️ **BLOCKED by Task 1.6.4**
+  - **Deliverable**: `SELECT * FROM table ORDER BY col ASC` works (execution pending) → **See Task 1.6.4**
+  - **Implementation**: ~290 lines for parser/planner/bytecode, ~300-400 lines executor TODO (**See Task 1.6.4**)
 
 - [x] **5.2 LIMIT/OFFSET Support** (10-15 hours) ⚠️ 70% COMPLETE
   - [x] Add LIMIT, OFFSET keywords to lexer ✅ Done Oct 27
@@ -440,10 +594,10 @@ Without these features, ScratchBird **cannot be used** for even simple applicati
   - [x] Extend pathToPlanNode() to convert LimitPath → LimitNode ✅ Done Oct 27
   - [x] Add LIMIT, OFFSET opcodes ✅ Done Oct 27
   - [x] Implement generateLimitPlan() bytecode generation ✅ Done Oct 27
-  - [ ] Implement limit executor with early termination ⚠️ TODO
-  - [ ] Implement offset executor (skip rows) ⚠️ TODO
-  - **Deliverable**: `SELECT * FROM table LIMIT 10 OFFSET 20` works (execution pending)
-  - **Implementation**: ~210 lines for parser/planner/bytecode, ~100-150 lines executor TODO
+  - [ ] Implement limit executor with early termination ⚠️ **BLOCKED by Task 1.6.5**
+  - [ ] Implement offset executor (skip rows) ⚠️ **BLOCKED by Task 1.6.5**
+  - **Deliverable**: `SELECT * FROM table LIMIT 10 OFFSET 20` works (execution pending) → **See Task 1.6.5**
+  - **Implementation**: ~210 lines for parser/planner/bytecode, ~100-150 lines executor TODO (**See Task 1.6.5**)
 
 **Phase 1.5 Status**: Parser ✅, Semantic ✅, Planner ✅, Bytecode ✅, **Executor TODO** (only execution remains!)
 
