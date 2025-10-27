@@ -223,6 +223,87 @@ namespace scratchbird::optimizer
             -> CostEstimate;
 
         /**
+         * costAggregate - Estimate cost of aggregation with GROUP BY
+         *
+         * Cost formula:
+         *   startup = input_cost.total + hash_build_cost
+         *   hash_build_cost = input_rows * cpu_tuple_cost * 2.0 (hash computation + insertion)
+         *   run = num_groups * (num_aggregates * cpu_operator_cost)
+         *   total = startup + run
+         *   output_rows = num_groups
+         *
+         * For simple aggregation (no GROUP BY), num_groups = 1.
+         * For hash-based grouping, assumes hash table fits in memory.
+         *
+         * @param input_rows Number of input rows
+         * @param num_groups Estimated number of groups (1 for simple aggregation)
+         * @param num_aggregates Number of aggregate functions (COUNT, SUM, etc.)
+         * @param ctx Error context
+         * @return Cost estimate with startup, run, and total costs
+         *
+         * Phase 1, Task 4.1
+         */
+        auto costAggregate(uint64_t input_rows,
+                          uint64_t num_groups,
+                          uint64_t num_aggregates,
+                          core::ErrorContext* ctx = nullptr)
+            -> CostEstimate;
+
+        /**
+         * costSort - Estimate cost of sorting
+         *
+         * Cost formula:
+         *   startup = input_cost.total + sort_cost
+         *   sort_cost = num_rows * log2(num_rows) * comparison_cost
+         *   comparison_cost = num_sort_keys * cpu_operator_cost
+         *   run = num_rows * cpu_tuple_cost (output)
+         *   total = startup + run
+         *   output_rows = num_rows
+         *
+         * Assumes in-memory quicksort. For external sorts (disk-based),
+         * cost would be higher based on sort_mem_cost.
+         *
+         * @param num_rows Number of rows to sort
+         * @param row_width Average row width in bytes
+         * @param num_sort_keys Number of sort keys (ORDER BY expressions)
+         * @param ctx Error context
+         * @return Cost estimate with startup, run, and total costs
+         *
+         * Phase 1, Task 5.1
+         */
+        auto costSort(uint64_t num_rows,
+                     uint64_t row_width,
+                     uint64_t num_sort_keys,
+                     core::ErrorContext* ctx = nullptr)
+            -> CostEstimate;
+
+        /**
+         * costLimit - Estimate cost of LIMIT/OFFSET
+         *
+         * Cost formula:
+         *   startup = input_cost.startup + (offset_count * cpu_tuple_cost)
+         *   run = limit_count * cpu_tuple_cost
+         *   total = startup + run
+         *   output_rows = min(limit_count, input_rows - offset_count)
+         *
+         * LIMIT allows early termination of query execution.
+         * OFFSET requires skipping rows but doesn't reduce input processing.
+         *
+         * @param input_rows Number of input rows
+         * @param limit_count LIMIT value (-1 for no limit)
+         * @param offset_count OFFSET value (-1 for no offset)
+         * @param ctx Error context
+         * @return Cost estimate with startup, run, and total costs
+         *
+         * Phase 1, Task 5.2
+         */
+        auto costLimit(uint64_t input_rows,
+                      int64_t limit_count,
+                      int64_t offset_count,
+                      core::ErrorContext* ctx = nullptr)
+            -> CostEstimate;
+
+        /**
          * Get current cost parameters
          */
         const CostParameters &parameters() const { return params_; }

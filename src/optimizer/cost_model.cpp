@@ -344,4 +344,162 @@ namespace scratchbird::optimizer
         return cost;
     }
 
+    auto CostModel::costAggregate(uint64_t input_rows,
+                                  uint64_t num_groups,
+                                  uint64_t num_aggregates,
+                                  core::ErrorContext* ctx)
+        -> CostEstimate
+    {
+        DEBUG_LOG_DB("Estimating aggregate cost: input_rows=" + std::to_string(input_rows) +
+                     ", num_groups=" + std::to_string(num_groups) +
+                     ", num_aggregates=" + std::to_string(num_aggregates));
+
+        CostEstimate cost;
+
+        // Hash-based aggregation uses a hash table to group rows
+        // For simple aggregation (no GROUP BY), num_groups = 1
+
+        // Startup cost: build hash table and compute aggregates
+        // Each input row is hashed and inserted into hash table
+        // Factor of 2.0 represents hash computation + hash table insertion
+        constexpr double HASH_AGG_FACTOR = 2.0;
+        double hash_build_cost = static_cast<double>(input_rows) *
+                                params_.cpu_tuple_cost * HASH_AGG_FACTOR;
+
+        cost.startup_cost = hash_build_cost;
+
+        // Run cost: finalize aggregates for each group
+        // For each group, we need to compute final aggregate values
+        // (e.g., AVG = sum/count, finalize accumulators)
+        double finalize_cost = static_cast<double>(num_groups) *
+                              static_cast<double>(num_aggregates) *
+                              params_.cpu_operator_cost;
+
+        // Output cost: materialize result rows
+        double output_cost = static_cast<double>(num_groups) * params_.cpu_tuple_cost;
+
+        cost.run_cost = finalize_cost + output_cost;
+        cost.total_cost = cost.startup_cost + cost.run_cost;
+        cost.rows = num_groups;
+
+        DEBUG_LOG_DB("Aggregate cost: startup=" + std::to_string(cost.startup_cost) +
+                     ", run=" + std::to_string(cost.run_cost) +
+                     ", total=" + std::to_string(cost.total_cost) +
+                     ", output_rows=" + std::to_string(cost.rows) +
+                     " (hash_build=" + std::to_string(hash_build_cost) +
+                     ", finalize=" + std::to_string(finalize_cost) + ")");
+
+        return cost;
+    }
+
+    auto CostModel::costSort(uint64_t num_rows,
+                            uint64_t row_width,
+                            uint64_t num_sort_keys,
+                            core::ErrorContext* ctx)
+        -> CostEstimate
+    {
+        DEBUG_LOG_DB("Estimating sort cost: num_rows=" + std::to_string(num_rows) +
+                     ", row_width=" + std::to_string(row_width) +
+                     ", num_sort_keys=" + std::to_string(num_sort_keys));
+
+        CostEstimate cost;
+
+        if (num_rows == 0)
+        {
+            // Empty input, no cost
+            cost.startup_cost = 0.0;
+            cost.run_cost = 0.0;
+            cost.total_cost = 0.0;
+            cost.rows = 0;
+            return cost;
+        }
+
+        // Sort algorithm: in-memory quicksort
+        // Time complexity: O(n log n) comparisons
+        // Each comparison evaluates num_sort_keys expressions
+
+        // Number of comparisons for quicksort: n * log2(n)
+        double num_comparisons = static_cast<double>(num_rows) *
+                                std::log2(static_cast<double>(num_rows));
+
+        // Cost per comparison: evaluate all sort key expressions
+        double comparison_cost = static_cast<double>(num_sort_keys) * params_.cpu_operator_cost;
+
+        // Total sort cost
+        double sort_cost = num_comparisons * comparison_cost;
+
+        // Memory cost: if data doesn't fit in memory, external sort is needed
+        // For now, assume in-memory sort (external sort would add I/O cost)
+        uint64_t memory_bytes = num_rows * row_width;
+        double memory_cost = static_cast<double>(memory_bytes) * params_.sort_mem_cost;
+
+        // Startup cost: perform the sort
+        cost.startup_cost = sort_cost + memory_cost;
+
+        // Run cost: output sorted rows (sequential scan)
+        cost.run_cost = static_cast<double>(num_rows) * params_.cpu_tuple_cost;
+
+        cost.total_cost = cost.startup_cost + cost.run_cost;
+        cost.rows = num_rows;
+
+        DEBUG_LOG_DB("Sort cost: startup=" + std::to_string(cost.startup_cost) +
+                     ", run=" + std::to_string(cost.run_cost) +
+                     ", total=" + std::to_string(cost.total_cost) +
+                     ", output_rows=" + std::to_string(cost.rows) +
+                     " (sort=" + std::to_string(sort_cost) +
+                     ", comparisons=" + std::to_string(num_comparisons) +
+                     ", memory=" + std::to_string(memory_cost) + ")");
+
+        return cost;
+    }
+
+    auto CostModel::costLimit(uint64_t input_rows,
+                             int64_t limit_count,
+                             int64_t offset_count,
+                             core::ErrorContext* ctx)
+        -> CostEstimate
+    {
+        DEBUG_LOG_DB("Estimating limit cost: input_rows=" + std::to_string(input_rows) +
+                     ", limit=" + std::to_string(limit_count) +
+                     ", offset=" + std::to_string(offset_count));
+
+        CostEstimate cost;
+
+        // Handle offset
+        uint64_t offset = 0;
+        if (offset_count > 0)
+        {
+            offset = static_cast<uint64_t>(offset_count);
+        }
+
+        // OFFSET requires scanning and discarding rows
+        double offset_cost = static_cast<double>(offset) * params_.cpu_tuple_cost;
+        cost.startup_cost = offset_cost;
+
+        // Calculate output rows after offset
+        uint64_t rows_after_offset = (offset >= input_rows) ? 0 : (input_rows - offset);
+
+        // Handle limit
+        uint64_t output_rows = rows_after_offset;
+        if (limit_count >= 0)
+        {
+            output_rows = std::min(rows_after_offset, static_cast<uint64_t>(limit_count));
+        }
+
+        // Run cost: materialize limited output rows
+        // LIMIT allows early termination, so we only process output_rows
+        cost.run_cost = static_cast<double>(output_rows) * params_.cpu_tuple_cost;
+
+        cost.total_cost = cost.startup_cost + cost.run_cost;
+        cost.rows = output_rows;
+
+        DEBUG_LOG_DB("Limit cost: startup=" + std::to_string(cost.startup_cost) +
+                     ", run=" + std::to_string(cost.run_cost) +
+                     ", total=" + std::to_string(cost.total_cost) +
+                     ", output_rows=" + std::to_string(cost.rows) +
+                     " (offset_rows=" + std::to_string(offset) + ")");
+
+        return cost;
+    }
+
 } // namespace scratchbird::optimizer
