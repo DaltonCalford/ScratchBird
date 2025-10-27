@@ -286,60 +286,111 @@ Without these features, ScratchBird **cannot be used** for even simple applicati
 
 ---
 
-#### 4. Aggregation and Grouping (60-90 hours) - HIGH
+#### 4. Aggregation and Grouping (60-90 hours) - HIGH ⚠️ ~70% COMPLETE
 **Why Fourth**: Most reporting queries need GROUP BY and aggregation.
+**Status**: Started October 27, 2025 → **70% complete** (parser ✅, semantic ✅, planner ✅, bytecode ✅, executor 🔄)
 
-- [ ] **4.1 GROUP BY Parser** (15-20 hours)
-  - [ ] Add GROUP BY clause parsing
-  - [ ] Add HAVING clause parsing
-  - [ ] Validate GROUP BY columns vs SELECT columns
-  - [ ] Implement GROUP BY AST nodes
-  - **Deliverable**: Parser recognizes GROUP BY and HAVING
+- [x] **4.1 GROUP BY Parser** (15-20 hours) ✅ COMPLETE
+  - [x] Add GROUP BY, HAVING keywords to lexer ✅ Done Oct 27
+  - [x] Add aggregate function keywords (COUNT, SUM, AVG, MIN, MAX, DISTINCT, ALL) ✅ Done Oct 27
+  - [x] Create AggregateFunc enum and AggregateExpr class ✅ Done Oct 27
+  - [x] Create GroupByClause structure with grouping expressions and HAVING ✅ Done Oct 27
+  - [x] Implement parseGroupByClause() - GROUP BY expr [, expr]* [HAVING condition] ✅ Done Oct 27
+  - [x] Implement aggregate function parsing (COUNT/SUM/AVG/MIN/MAX with DISTINCT support) ✅ Done Oct 27
+  - [x] Handle COUNT(*) special case ✅ Done Oct 27
+  - [x] Extended SelectStmt with group_by_clause_ field ✅ Done Oct 27
+  - [x] Validate GROUP BY columns vs SELECT columns in semantic analyzer ✅ Done Oct 27
+  - [x] Prevent nested aggregate functions ✅ Done Oct 27
+  - [x] Type checking for aggregate arguments (SUM/AVG require numeric) ✅ Done Oct 27
+  - **Deliverable**: Parser recognizes GROUP BY and HAVING ✅ DELIVERED
+  - **Implementation**: ~390 lines across lexer, parser, AST, semantic analyzer
 
-- [ ] **4.2 Aggregation Planning** (20-30 hours)
-  - [ ] Implement aggregate plan node
-  - [ ] Detect aggregate functions in SELECT (COUNT, SUM, AVG, MIN, MAX)
-  - [ ] Generate grouping keys
-  - [ ] Plan sort for GROUP BY (if needed)
-  - [ ] Estimate aggregate cost
-  - **Deliverable**: Planner generates aggregate plan
+- [x] **4.2 Aggregation Planning** (20-30 hours) ✅ COMPLETE
+  - [x] Create AggregateNode plan node (~85 lines) ✅ Done Oct 27
+  - [x] Create AggregatePath for planning phase ✅ Done Oct 27
+  - [x] Implement costAggregate() - hash-based grouping cost model ✅ Done Oct 27
+  - [x] Detect aggregate functions in SELECT list (detectAggregates) ✅ Done Oct 27
+  - [x] Estimate number of groups (estimateNumGroups - uses n_distinct heuristics) ✅ Done Oct 27
+  - [x] Layer aggregation paths on top of base scans ✅ Done Oct 27
+  - [x] Extend pathToPlanNode() to convert AggregatePath → AggregateNode ✅ Done Oct 27
+  - [x] Handle simple aggregation (no GROUP BY) vs grouped aggregation ✅ Done Oct 27
+  - **Deliverable**: Planner generates aggregate plan ✅ DELIVERED
+  - **Implementation**: ~560 lines across plan nodes, paths, cost model, query planner
 
-- [ ] **4.3 Aggregation Execution** (25-40 hours)
-  - [ ] Generate SBLR bytecode for GROUP BY
-  - [ ] Implement hash-based grouping in SBLR executor
-  - [ ] Implement aggregate functions (COUNT, SUM, AVG, MIN, MAX)
-  - [ ] Implement HAVING filter
-  - [ ] Handle NULL values in aggregation
+- [x] **4.3 Aggregation Bytecode Generation** (10-15 hours) ✅ COMPLETE
+  - [x] Add GROUP_BY, HAVING, AGG_INIT, AGG_ACCUMULATE, AGG_FINALIZE opcodes ✅ Done Oct 27
+  - [x] Implement visit(AggregateExpr*) for AST traversal ✅ Done Oct 27
+  - [x] Implement generateAggregateFunc() - emits aggregate function bytecode ✅ Done Oct 27
+  - [x] Implement generateAggregatePlan() - full aggregation bytecode generation ✅ Done Oct 27
+  - [x] Handle DISTINCT in aggregate functions ✅ Done Oct 27
+  - [x] Handle COUNT(*) with SELECT_STAR opcode ✅ Done Oct 27
+  - **Deliverable**: Bytecode generation for GROUP BY queries ✅ DELIVERED
+  - **Implementation**: ~160 lines in bytecode generator
+
+- [ ] **4.4 Aggregation Execution** (25-40 hours) ⚠️ TODO - EXECUTION ONLY REMAINING
+  - [ ] Implement hash table for grouping (hash by group key)
+  - [ ] Implement aggregate accumulator state machine
+  - [ ] Implement AGG_INIT opcode handler
+  - [ ] Implement AGG_ACCUMULATE opcode handler
+  - [ ] Implement AGG_FINALIZE opcode handler
+  - [ ] Implement COUNT() accumulator (count rows)
+  - [ ] Implement SUM() accumulator (sum values)
+  - [ ] Implement AVG() accumulator (sum + count, divide at finalize)
+  - [ ] Implement MIN() accumulator (track minimum)
+  - [ ] Implement MAX() accumulator (track maximum)
+  - [ ] Implement DISTINCT handling (set-based deduplication)
+  - [ ] Implement HAVING filter (post-aggregation filtering)
+  - [ ] Handle NULL values in aggregation (skip NULLs in most aggregates)
+  - [ ] Handle empty groups (COUNT returns 0, others return NULL)
   - **Deliverable**: `SELECT col, COUNT(*) FROM table GROUP BY col` works
+  - **Estimated Work**: ~400-500 lines of executor code
 
-**Phase 1.4 Completion Criteria**: Aggregation queries with GROUP BY work
+**Phase 1.4 Status**: Parser ✅, Semantic ✅, Planner ✅, Bytecode ✅, **Executor TODO** (only execution remains!)
 
 ---
 
-#### 5. Sorting and Limiting (30-45 hours) - HIGH
+#### 5. Sorting and Limiting (30-45 hours) - HIGH ⚠️ ~70% COMPLETE
 **Why Fifth**: Most queries need sorted or paginated results.
+**Status**: Started October 27, 2025 → **70% complete** (parser ✅, semantic ✅, planner ✅, bytecode ✅, executor 🔄)
 
-- [ ] **5.1 ORDER BY Support** (20-30 hours)
-  - [ ] Add ORDER BY clause parsing
-  - [ ] Add ASC/DESC parsing
-  - [ ] Add NULLS FIRST/NULLS LAST parsing
-  - [ ] Implement ORDER BY AST nodes
-  - [ ] Generate sort plan node
-  - [ ] Estimate sort cost
-  - [ ] Generate SBLR bytecode for ORDER BY
-  - [ ] Implement sort executor (quicksort or merge sort)
-  - **Deliverable**: `SELECT * FROM table ORDER BY col ASC` works
+- [x] **5.1 ORDER BY Support** (20-30 hours) ⚠️ 70% COMPLETE
+  - [x] Add ORDER BY, ASC, DESC, LIMIT, OFFSET keywords to lexer ✅ Done Oct 27
+  - [x] Add NULLS FIRST/NULLS LAST parsing ✅ Done Oct 27
+  - [x] Create SortOrder enum (ASC, DESC) ✅ Done Oct 27
+  - [x] Create NullsOrder enum (DEFAULT, NULLS_FIRST, NULLS_LAST) ✅ Done Oct 27
+  - [x] Create OrderByItem structure (expr, order, nulls_order) ✅ Done Oct 27
+  - [x] Implement parseOrderByClause() ✅ Done Oct 27
+  - [x] Extended SelectStmt with order_by_clause_ field ✅ Done Oct 27
+  - [x] Create SortNode plan node (~55 lines) ✅ Done Oct 27
+  - [x] Create SortPath for planning phase ✅ Done Oct 27
+  - [x] Implement costSort() - O(n log n) quicksort cost model ✅ Done Oct 27
+  - [x] Implement estimateRowWidth() for sort cost ✅ Done Oct 27
+  - [x] Layer sort paths on top of base scans/aggregates ✅ Done Oct 27
+  - [x] Extend pathToPlanNode() to convert SortPath → SortNode ✅ Done Oct 27
+  - [x] Add ORDER_BY, SORT_KEY, SORT_ASC, SORT_DESC, NULLS_FIRST, NULLS_LAST opcodes ✅ Done Oct 27
+  - [x] Implement generateSortPlan() bytecode generation ✅ Done Oct 27
+  - [ ] Implement sort executor (quicksort or merge sort) ⚠️ TODO
+  - [ ] Implement NULLS FIRST/LAST handling in comparisons ⚠️ TODO
+  - **Deliverable**: `SELECT * FROM table ORDER BY col ASC` works (execution pending)
+  - **Implementation**: ~290 lines for parser/planner/bytecode, ~300-400 lines executor TODO
 
-- [ ] **5.2 LIMIT/OFFSET Support** (10-15 hours)
-  - [ ] Add LIMIT clause parsing
-  - [ ] Add OFFSET clause parsing
-  - [ ] Implement LIMIT/OFFSET AST nodes
-  - [ ] Generate limit plan node
-  - [ ] Generate SBLR bytecode for LIMIT/OFFSET
-  - [ ] Implement limit executor (early termination)
-  - **Deliverable**: `SELECT * FROM table LIMIT 10 OFFSET 20` works
+- [x] **5.2 LIMIT/OFFSET Support** (10-15 hours) ⚠️ 70% COMPLETE
+  - [x] Add LIMIT, OFFSET keywords to lexer ✅ Done Oct 27
+  - [x] Implement parseLimitClause() ✅ Done Oct 27
+  - [x] Extended SelectStmt with limit_count_ and offset_count_ ✅ Done Oct 27
+  - [x] Create LimitNode plan node (~75 lines) ✅ Done Oct 27
+  - [x] Create LimitPath for planning phase ✅ Done Oct 27
+  - [x] Implement costLimit() - early termination cost model ✅ Done Oct 27
+  - [x] Layer limit paths on top of scans/aggregates/sorts ✅ Done Oct 27
+  - [x] Extend pathToPlanNode() to convert LimitPath → LimitNode ✅ Done Oct 27
+  - [x] Add LIMIT, OFFSET opcodes ✅ Done Oct 27
+  - [x] Implement generateLimitPlan() bytecode generation ✅ Done Oct 27
+  - [ ] Implement limit executor with early termination ⚠️ TODO
+  - [ ] Implement offset executor (skip rows) ⚠️ TODO
+  - **Deliverable**: `SELECT * FROM table LIMIT 10 OFFSET 20` works (execution pending)
+  - **Implementation**: ~210 lines for parser/planner/bytecode, ~100-150 lines executor TODO
 
-**Phase 1.5 Completion Criteria**: Sorted and paginated queries work
+**Phase 1.5 Status**: Parser ✅, Semantic ✅, Planner ✅, Bytecode ✅, **Executor TODO** (only execution remains!)
 
 ---
 
