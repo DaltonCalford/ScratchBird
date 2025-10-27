@@ -745,4 +745,221 @@ namespace scratchbird::optimizer
         std::string join_cond_str_;  // For EXPLAIN display
     };
 
+    /**
+     * AggregateNode - Aggregation with optional grouping (Phase 1, Task 4.2)
+     *
+     * Implements GROUP BY and aggregate functions (COUNT, SUM, AVG, MIN, MAX).
+     * Uses hash-based grouping for efficient aggregation.
+     */
+    class AggregateNode : public PlanNode
+    {
+    public:
+        /**
+         * Constructor
+         *
+         * @param child_plan Input plan to aggregate
+         * @param grouping_exprs Expressions to group by (empty for no GROUP BY)
+         * @param aggregates Aggregate expressions in SELECT list
+         * @param having_clause Optional HAVING filter (nullptr if none)
+         */
+        AggregateNode(std::shared_ptr<PlanNode> child_plan,
+                     const std::vector<parser::Expression*>& grouping_exprs,
+                     const std::vector<parser::AggregateExpr*>& aggregates,
+                     parser::Expression* having_clause = nullptr)
+            : PlanNode(PlanNodeType::AGGREGATE),
+              child_plan_(std::move(child_plan)),
+              grouping_exprs_(grouping_exprs),
+              aggregates_(aggregates),
+              having_clause_(having_clause)
+        {
+        }
+
+        /**
+         * Get child plan
+         */
+        const std::shared_ptr<PlanNode>& childPlan() const { return child_plan_; }
+
+        /**
+         * Get grouping expressions
+         */
+        const std::vector<parser::Expression*>& groupingExprs() const { return grouping_exprs_; }
+
+        /**
+         * Get aggregate expressions
+         */
+        const std::vector<parser::AggregateExpr*>& aggregates() const { return aggregates_; }
+
+        /**
+         * Get HAVING clause
+         */
+        parser::Expression* havingClause() const { return having_clause_; }
+
+        /**
+         * Check if this is a simple aggregation (no GROUP BY)
+         */
+        bool isSimpleAggregation() const { return grouping_exprs_.empty(); }
+
+        /**
+         * Generate EXPLAIN output
+         */
+        std::string toString(int indent = 0) const override
+        {
+            std::string result(indent, ' ');
+            result += "Aggregate";
+
+            if (!grouping_exprs_.empty())
+            {
+                result += " (GROUP BY: " + std::to_string(grouping_exprs_.size()) + " expr(s))";
+            }
+
+            result += " (cost=" + std::to_string(total_cost_) +
+                     " rows=" + std::to_string(rows_) + ")\n";
+
+            if (child_plan_)
+            {
+                result += child_plan_->toString(indent + 2);
+            }
+
+            return result;
+        }
+
+    private:
+        std::shared_ptr<PlanNode> child_plan_;
+        std::vector<parser::Expression*> grouping_exprs_;
+        std::vector<parser::AggregateExpr*> aggregates_;
+        parser::Expression* having_clause_;
+    };
+
+    /**
+     * SortNode - Sorting operation (Phase 1, Task 5.1)
+     *
+     * Implements ORDER BY with ASC/DESC and NULLS FIRST/LAST.
+     * Uses quicksort or external merge sort depending on data size.
+     */
+    class SortNode : public PlanNode
+    {
+    public:
+        /**
+         * Constructor
+         *
+         * @param child_plan Input plan to sort
+         * @param order_by_items List of sort keys with direction
+         */
+        SortNode(std::shared_ptr<PlanNode> child_plan,
+                const std::vector<parser::OrderByItem>& order_by_items)
+            : PlanNode(PlanNodeType::SORT),
+              child_plan_(std::move(child_plan)),
+              order_by_items_(order_by_items)
+        {
+        }
+
+        /**
+         * Get child plan
+         */
+        const std::shared_ptr<PlanNode>& childPlan() const { return child_plan_; }
+
+        /**
+         * Get ORDER BY items
+         */
+        const std::vector<parser::OrderByItem>& orderByItems() const { return order_by_items_; }
+
+        /**
+         * Generate EXPLAIN output
+         */
+        std::string toString(int indent = 0) const override
+        {
+            std::string result(indent, ' ');
+            result += "Sort (keys=" + std::to_string(order_by_items_.size()) +
+                     " cost=" + std::to_string(total_cost_) +
+                     " rows=" + std::to_string(rows_) + ")\n";
+
+            if (child_plan_)
+            {
+                result += child_plan_->toString(indent + 2);
+            }
+
+            return result;
+        }
+
+    private:
+        std::shared_ptr<PlanNode> child_plan_;
+        std::vector<parser::OrderByItem> order_by_items_;
+    };
+
+    /**
+     * LimitNode - LIMIT/OFFSET operation (Phase 1, Task 5.2)
+     *
+     * Implements result set limiting and offset for pagination.
+     * Allows early termination of query execution.
+     */
+    class LimitNode : public PlanNode
+    {
+    public:
+        /**
+         * Constructor
+         *
+         * @param child_plan Input plan to limit
+         * @param limit_count Maximum rows to return (-1 for unlimited)
+         * @param offset_count Rows to skip (-1 for no offset)
+         */
+        LimitNode(std::shared_ptr<PlanNode> child_plan,
+                 int64_t limit_count,
+                 int64_t offset_count = -1)
+            : PlanNode(PlanNodeType::LIMIT),
+              child_plan_(std::move(child_plan)),
+              limit_count_(limit_count),
+              offset_count_(offset_count)
+        {
+        }
+
+        /**
+         * Get child plan
+         */
+        const std::shared_ptr<PlanNode>& childPlan() const { return child_plan_; }
+
+        /**
+         * Get limit count
+         */
+        int64_t limitCount() const { return limit_count_; }
+
+        /**
+         * Get offset count
+         */
+        int64_t offsetCount() const { return offset_count_; }
+
+        /**
+         * Generate EXPLAIN output
+         */
+        std::string toString(int indent = 0) const override
+        {
+            std::string result(indent, ' ');
+            result += "Limit";
+
+            if (limit_count_ >= 0)
+            {
+                result += " (count=" + std::to_string(limit_count_);
+                if (offset_count_ >= 0)
+                {
+                    result += " offset=" + std::to_string(offset_count_);
+                }
+                result += ")";
+            }
+
+            result += " (cost=" + std::to_string(total_cost_) +
+                     " rows=" + std::to_string(rows_) + ")\n";
+
+            if (child_plan_)
+            {
+                result += child_plan_->toString(indent + 2);
+            }
+
+            return result;
+        }
+
+    private:
+        std::shared_ptr<PlanNode> child_plan_;
+        int64_t limit_count_;
+        int64_t offset_count_;
+    };
+
 } // namespace scratchbird::optimizer

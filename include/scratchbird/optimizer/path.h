@@ -20,7 +20,10 @@ namespace scratchbird::optimizer
         SEQ_SCAN,          // Sequential table scan
         INDEX_SCAN,        // Index scan with heap fetch
         NESTED_LOOP_JOIN,  // Nested loop join (Phase 1, Task 3.2)
-        HASH_JOIN          // Hash join (Phase 1, Task 3.2)
+        HASH_JOIN,         // Hash join (Phase 1, Task 3.2)
+        AGGREGATE,         // Aggregation (Phase 1, Task 4.1)
+        SORT,              // Sort operation (Phase 1, Task 5.1)
+        LIMIT              // Limit/offset (Phase 1, Task 5.2)
     };
 
     /**
@@ -515,6 +518,257 @@ namespace scratchbird::optimizer
         std::vector<parser::Expression*> hash_keys_outer_;
         std::vector<parser::Expression*> hash_keys_inner_;
         double selectivity_;
+    };
+
+    /**
+     * AggregatePath - Aggregation access path
+     *
+     * Represents decision to perform aggregation with optional GROUP BY.
+     *
+     * Cost calculated by:
+     *   startup = input_cost + hash_build_cost
+     *   total = startup + (num_groups * num_aggregates * cpu_operator_cost)
+     *
+     * Example:
+     *   SELECT dept, COUNT(*) FROM employees GROUP BY dept
+     *   → AggregatePath (cost=1,550, rows=20)
+     *
+     * Phase 1, Task 4.1
+     */
+    class AggregatePath : public Path
+    {
+    public:
+        /**
+         * Constructor
+         *
+         * @param input_path Input path to aggregate
+         * @param grouping_exprs GROUP BY expressions (empty for simple aggregation)
+         * @param aggregates Aggregate function expressions
+         * @param having_clause HAVING clause expression (may be nullptr)
+         * @param num_groups Estimated number of groups (1 for simple aggregation)
+         * @param cost Cost estimate
+         */
+        AggregatePath(std::shared_ptr<Path> input_path,
+                     const std::vector<parser::Expression*>& grouping_exprs,
+                     const std::vector<parser::AggregateExpr*>& aggregates,
+                     parser::Expression* having_clause,
+                     uint64_t num_groups,
+                     const CostEstimate& cost)
+            : Path(PathType::AGGREGATE, cost),
+              input_path_(std::move(input_path)),
+              grouping_exprs_(grouping_exprs),
+              aggregates_(aggregates),
+              having_clause_(having_clause),
+              num_groups_(num_groups)
+        {
+        }
+
+        /**
+         * Get input path
+         */
+        const std::shared_ptr<Path>& inputPath() const { return input_path_; }
+
+        /**
+         * Get GROUP BY expressions
+         */
+        const std::vector<parser::Expression*>& groupingExprs() const
+        {
+            return grouping_exprs_;
+        }
+
+        /**
+         * Get aggregate functions
+         */
+        const std::vector<parser::AggregateExpr*>& aggregates() const
+        {
+            return aggregates_;
+        }
+
+        /**
+         * Get HAVING clause
+         */
+        parser::Expression* havingClause() const { return having_clause_; }
+
+        /**
+         * Get number of groups
+         */
+        uint64_t numGroups() const { return num_groups_; }
+
+        /**
+         * Is this a simple aggregation (no GROUP BY)?
+         */
+        bool isSimpleAggregation() const { return grouping_exprs_.empty(); }
+
+        /**
+         * Convert to string for debugging
+         */
+        auto toString() const -> std::string override
+        {
+            std::string result = "AggregatePath(";
+            if (!grouping_exprs_.empty())
+            {
+                result += "groups=" + std::to_string(num_groups_) + ", ";
+            }
+            result += "aggregates=" + std::to_string(aggregates_.size()) +
+                     ", cost=" + std::to_string(cost_.total_cost) +
+                     ", rows=" + std::to_string(cost_.rows) + ")";
+            return result;
+        }
+
+    private:
+        std::shared_ptr<Path> input_path_;
+        std::vector<parser::Expression*> grouping_exprs_;
+        std::vector<parser::AggregateExpr*> aggregates_;
+        parser::Expression* having_clause_;
+        uint64_t num_groups_;
+    };
+
+    /**
+     * SortPath - Sorting access path
+     *
+     * Represents decision to sort the result set.
+     *
+     * Cost calculated by:
+     *   startup = input_cost + sort_cost
+     *   sort_cost = n * log2(n) * comparison_cost
+     *
+     * Example:
+     *   SELECT * FROM users ORDER BY age DESC, name ASC
+     *   → SortPath (cost=8,250, rows=10000)
+     *
+     * Phase 1, Task 5.1
+     */
+    class SortPath : public Path
+    {
+    public:
+        /**
+         * Constructor
+         *
+         * @param input_path Input path to sort
+         * @param order_by_items ORDER BY expressions with direction
+         * @param row_width Estimated average row width
+         * @param cost Cost estimate
+         */
+        SortPath(std::shared_ptr<Path> input_path,
+                const std::vector<parser::OrderByItem>& order_by_items,
+                uint64_t row_width,
+                const CostEstimate& cost)
+            : Path(PathType::SORT, cost),
+              input_path_(std::move(input_path)),
+              order_by_items_(order_by_items),
+              row_width_(row_width)
+        {
+        }
+
+        /**
+         * Get input path
+         */
+        const std::shared_ptr<Path>& inputPath() const { return input_path_; }
+
+        /**
+         * Get ORDER BY items
+         */
+        const std::vector<parser::OrderByItem>& orderByItems() const
+        {
+            return order_by_items_;
+        }
+
+        /**
+         * Get row width
+         */
+        uint64_t rowWidth() const { return row_width_; }
+
+        /**
+         * Convert to string for debugging
+         */
+        auto toString() const -> std::string override
+        {
+            return "SortPath(keys=" + std::to_string(order_by_items_.size()) +
+                   ", cost=" + std::to_string(cost_.total_cost) +
+                   ", rows=" + std::to_string(cost_.rows) + ")";
+        }
+
+    private:
+        std::shared_ptr<Path> input_path_;
+        std::vector<parser::OrderByItem> order_by_items_;
+        uint64_t row_width_;
+    };
+
+    /**
+     * LimitPath - Limit/offset access path
+     *
+     * Represents decision to limit result set with optional offset.
+     *
+     * Cost calculated by:
+     *   startup = input_startup + (offset_count * cpu_tuple_cost)
+     *   total = startup + (limit_count * cpu_tuple_cost)
+     *
+     * Example:
+     *   SELECT * FROM users LIMIT 10 OFFSET 100
+     *   → LimitPath (cost=112, rows=10)
+     *
+     * Phase 1, Task 5.2
+     */
+    class LimitPath : public Path
+    {
+    public:
+        /**
+         * Constructor
+         *
+         * @param input_path Input path to limit
+         * @param limit_count LIMIT value (-1 for no limit)
+         * @param offset_count OFFSET value (-1 for no offset)
+         * @param cost Cost estimate
+         */
+        LimitPath(std::shared_ptr<Path> input_path,
+                 int64_t limit_count,
+                 int64_t offset_count,
+                 const CostEstimate& cost)
+            : Path(PathType::LIMIT, cost),
+              input_path_(std::move(input_path)),
+              limit_count_(limit_count),
+              offset_count_(offset_count)
+        {
+        }
+
+        /**
+         * Get input path
+         */
+        const std::shared_ptr<Path>& inputPath() const { return input_path_; }
+
+        /**
+         * Get limit count
+         */
+        int64_t limitCount() const { return limit_count_; }
+
+        /**
+         * Get offset count
+         */
+        int64_t offsetCount() const { return offset_count_; }
+
+        /**
+         * Convert to string for debugging
+         */
+        auto toString() const -> std::string override
+        {
+            std::string result = "LimitPath(";
+            if (limit_count_ >= 0)
+            {
+                result += "limit=" + std::to_string(limit_count_);
+                if (offset_count_ >= 0)
+                {
+                    result += ", offset=" + std::to_string(offset_count_);
+                }
+            }
+            result += ", cost=" + std::to_string(cost_.total_cost) +
+                     ", rows=" + std::to_string(cost_.rows) + ")";
+            return result;
+        }
+
+    private:
+        std::shared_ptr<Path> input_path_;
+        int64_t limit_count_;
+        int64_t offset_count_;
     };
 
 } // namespace scratchbird::optimizer
