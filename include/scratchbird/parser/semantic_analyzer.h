@@ -93,6 +93,7 @@ namespace scratchbird
             void visit(BinaryOpExpr *node) override;
             void visit(CastExpr *node) override;
             void visit(FunctionCallExpr *node) override;
+            void visit(AggregateExpr *node) override;  // Phase 1 Task 4.1
             void visit(ColumnDef *node) override;
 
             // Get expression type after analysis
@@ -106,6 +107,11 @@ namespace scratchbird
 
             // Current table context (for column resolution)
             TableSymbol *current_table_ = nullptr;
+
+            // Aggregation context (Phase 1 Task 4.1)
+            bool in_aggregate_ = false;      // Currently inside an aggregate function
+            bool has_aggregates_ = false;    // SELECT list contains aggregates
+            bool in_group_by_ = false;       // Currently analyzing GROUP BY clause
 
             // Helper methods
             void reportError(const SourceLocation &loc, const std::string &message);

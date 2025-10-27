@@ -14,6 +14,31 @@ namespace scratchbird
 
         SemanticAnalyzer::~SemanticAnalyzer() = default;
 
+        // Helper function to check if a type is numeric
+        static bool isNumericType(DataType type)
+        {
+            switch (type)
+            {
+            case DataType::INT8:
+            case DataType::INT16:
+            case DataType::INT32:
+            case DataType::INT64:
+            case DataType::INT128:
+            case DataType::UINT8:
+            case DataType::UINT16:
+            case DataType::UINT32:
+            case DataType::UINT64:
+            case DataType::FLOAT32:
+            case DataType::FLOAT64:
+            case DataType::DECIMAL:
+            case DataType::NUMERIC:
+            case DataType::MONEY:
+                return true;
+            default:
+                return false;
+            }
+        }
+
         SemanticResult SemanticAnalyzer::analyze(Statement *stmt)
         {
             SemanticResult result;
@@ -847,6 +872,89 @@ namespace scratchbird
             {
                 reportError(node, "Unknown function: " + std::string(func_name));
             }
+        }
+
+        void SemanticAnalyzer::visit(AggregateExpr *node)
+        {
+            // Check if we're in a valid context for aggregates
+            if (in_aggregate_)
+            {
+                reportError(node, "Aggregate functions cannot be nested");
+                return;
+            }
+
+            // Mark that we have aggregates
+            has_aggregates_ = true;
+
+            // Set in_aggregate flag to prevent nesting
+            bool prev_in_agg = in_aggregate_;
+            in_aggregate_ = true;
+
+            // Check argument if present
+            if (node->arg())
+            {
+                checkExpression(node->arg());
+
+                // Get argument type
+                const ExpressionType *arg_type = getExpressionType(node->arg());
+                if (!arg_type)
+                {
+                    in_aggregate_ = prev_in_agg;
+                    return;
+                }
+
+                // Type validation based on aggregate function
+                switch (node->func())
+                {
+                case AggregateFunc::SUM:
+                case AggregateFunc::AVG:
+                    // Requires numeric type
+                    if (!isNumericType(arg_type->base_type.type))
+                    {
+                        reportError(node, "SUM/AVG requires numeric argument");
+                    }
+                    break;
+                case AggregateFunc::MIN:
+                case AggregateFunc::MAX:
+                    // Can work with any comparable type
+                    break;
+                case AggregateFunc::COUNT:
+                    // COUNT can work with any type
+                    break;
+                }
+            }
+
+            // Restore flag
+            in_aggregate_ = prev_in_agg;
+
+            // Set result type based on aggregate function
+            DataType result_type;
+            switch (node->func())
+            {
+            case AggregateFunc::COUNT:
+                result_type = DataType::INT64;  // COUNT always returns integer
+                break;
+            case AggregateFunc::SUM:
+            case AggregateFunc::AVG:
+                result_type = DataType::FLOAT64;  // Numeric aggregates return FLOAT64
+                break;
+            case AggregateFunc::MIN:
+            case AggregateFunc::MAX:
+                // MIN/MAX return same type as argument
+                if (node->arg())
+                {
+                    const ExpressionType *arg_type = getExpressionType(node->arg());
+                    if (arg_type)
+                    {
+                        setExpressionType(node, *arg_type);
+                        return;
+                    }
+                }
+                result_type = DataType::VARCHAR;  // Default fallback
+                break;
+            }
+
+            setExpressionType(node, ExpressionType(TypeName(result_type), false));
         }
 
         void SemanticAnalyzer::visit(ColumnDef *node)
