@@ -388,6 +388,109 @@ namespace scratchbird::optimizer
         auto joinPathToPlanNode(std::shared_ptr<Path> path)
             -> std::shared_ptr<PlanNode>;
 
+        /**
+         * detectAggregates - Detect aggregate functions in SELECT list
+         *
+         * Scans the SELECT list for AggregateExpr nodes (COUNT, SUM, AVG, MIN, MAX).
+         *
+         * @param select_stmt SELECT statement
+         * @param aggregates Output: vector of aggregate expressions
+         * @return true if aggregates found
+         *
+         * Phase 1, Task 4.1
+         */
+        auto detectAggregates(const parser::SelectStmt *select_stmt,
+                             std::vector<parser::AggregateExpr*>& aggregates) const
+            -> bool;
+
+        /**
+         * estimateNumGroups - Estimate number of groups for GROUP BY
+         *
+         * Uses n_distinct statistics from columns in GROUP BY clause.
+         * For multiple columns, multiplies n_distinct values (with cap).
+         *
+         * @param select_stmt SELECT statement
+         * @param table_id Table ID
+         * @param ctx Error context
+         * @return Estimated number of groups (1 for simple aggregation)
+         *
+         * Phase 1, Task 4.1
+         */
+        auto estimateNumGroups(const parser::SelectStmt *select_stmt,
+                              const core::ID& table_id,
+                              core::ErrorContext *ctx) const
+            -> uint64_t;
+
+        /**
+         * estimateRowWidth - Estimate average row width in bytes
+         *
+         * Used for sort cost estimation.
+         *
+         * @param select_stmt SELECT statement
+         * @param ctx Error context
+         * @return Estimated row width in bytes
+         *
+         * Phase 1, Task 5.1
+         */
+        auto estimateRowWidth(const parser::SelectStmt *select_stmt,
+                             core::ErrorContext *ctx) const
+            -> uint64_t;
+
+        /**
+         * addAggregatePath - Add aggregation path on top of base path
+         *
+         * Creates AggregatePath with cost estimation.
+         *
+         * @param base_path Base path to aggregate
+         * @param select_stmt SELECT statement
+         * @param aggregates Aggregate expressions
+         * @param table_id Table ID (for num_groups estimation)
+         * @param ctx Error context
+         * @return Aggregate path or nullptr
+         *
+         * Phase 1, Task 4.1
+         */
+        auto addAggregatePath(std::shared_ptr<Path> base_path,
+                             const parser::SelectStmt *select_stmt,
+                             const std::vector<parser::AggregateExpr*>& aggregates,
+                             const core::ID& table_id,
+                             core::ErrorContext *ctx)
+            -> std::shared_ptr<Path>;
+
+        /**
+         * addSortPath - Add sort path on top of base path
+         *
+         * Creates SortPath with cost estimation.
+         *
+         * @param base_path Base path to sort
+         * @param select_stmt SELECT statement
+         * @param ctx Error context
+         * @return Sort path or nullptr
+         *
+         * Phase 1, Task 5.1
+         */
+        auto addSortPath(std::shared_ptr<Path> base_path,
+                        const parser::SelectStmt *select_stmt,
+                        core::ErrorContext *ctx)
+            -> std::shared_ptr<Path>;
+
+        /**
+         * addLimitPath - Add limit path on top of base path
+         *
+         * Creates LimitPath with cost estimation.
+         *
+         * @param base_path Base path to limit
+         * @param select_stmt SELECT statement
+         * @param ctx Error context
+         * @return Limit path or nullptr
+         *
+         * Phase 1, Task 5.2
+         */
+        auto addLimitPath(std::shared_ptr<Path> base_path,
+                         const parser::SelectStmt *select_stmt,
+                         core::ErrorContext *ctx)
+            -> std::shared_ptr<Path>;
+
     private:
         core::Database *db_;
         CostModel cost_model_;
