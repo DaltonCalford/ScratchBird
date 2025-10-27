@@ -131,9 +131,9 @@ Without these features, ScratchBird **cannot be used** for even simple applicati
 
 ---
 
-#### 3. JOIN Support (40-60 hours) - CRITICAL ✅ ~98% COMPLETE
+#### 3. JOIN Support (40-60 hours) - CRITICAL ✅ 100% COMPLETE
 **Why Third**: Most queries need multi-table joins.
-**Status**: Started October 25, 2025 → **~98% complete** (parser ✅, semantic ✅, planner ✅, selectivity ✅, bytecode ✅, executor framework ✅)
+**Status**: Started October 25, 2025 → **100% complete** (parser ✅, semantic ✅, planner ✅, selectivity ✅, bytecode ✅, executor ✅)
 
 - [x] **3.1 Parser, Semantic Analysis, and Bytecode Generation** (15-25 hours) ✅ 100% COMPLETE
   - [x] Add JOIN keywords to lexer (JOIN, INNER, LEFT, RIGHT, FULL, OUTER, CROSS, NATURAL, USING) ✅ Done Oct 25
@@ -207,30 +207,44 @@ Without these features, ScratchBird **cannot be used** for even simple applicati
     - joinPathToPlanNode() - Recursive path tree to plan node conversion
   - **Deliverable**: ✅ **100% complete** - Full JOIN query planning ready for executor
 
-- [x] **3.3 JOIN Execution** (10-15 hours) ✅ ~80% COMPLETE
-  - [x] Add JOIN opcodes to SBLR (NESTED_LOOP_JOIN, HASH_JOIN) ✅ Done Oct 26
+- [x] **3.3 JOIN Execution** (10-15 hours) ✅ 100% COMPLETE
+  - [x] Add JOIN opcodes to SBLR (NESTED_LOOP_JOIN, HASH_JOIN, JOIN_TYPE, JOIN_CONDITION) ✅ Done Oct 26
   - [x] Generate SBLR bytecode for nested loop join ✅ Done Oct 26
   - [x] Generate SBLR bytecode for hash join ✅ Done Oct 26
-  - [x] Implement JOIN tree bytecode generation ✅ Done Oct 26
+  - [x] Implement JOIN tree bytecode generation (recursive child plan support) ✅ Done Oct 26
   - [x] Add JOIN execution framework to executor ✅ Done Oct 26
-  - [x] Implement executeNestedLoopJoin() method ✅ Done Oct 26
-  - [x] Implement executeHashJoin() method ✅ Done Oct 26
+  - [x] Implement executeNestedLoopJoin() with full O(M×N) execution ✅ Done Oct 26
+  - [x] Implement executeHashJoin() with build/probe phases ✅ Done Oct 26
+  - [x] Add helper methods (executeChildPlan, evaluateJoinCondition, combineRows) ✅ Done Oct 26
+  - [x] Implement multi-table result set handling ✅ Done Oct 26
+  - [x] Implement join condition evaluation with combined row context ✅ Done Oct 26
+  - [x] Implement NULL padding for outer joins (LEFT, RIGHT, FULL) ✅ Done Oct 26
+  - [x] Implement hash table for hash join with multi-column key support ✅ Done Oct 26
   - [x] Update execute() dispatcher for JOINs ✅ Done Oct 26
-  - [~] Full JOIN executor logic ⏸️ Deferred (~6-8 hours)
-  - [~] NULL handling in outer joins ⏸️ Deferred
-  - **Status**: ✅ **Infrastructure Complete** (~80% done)
-  - **Implementation**: ~260 lines across 5 files
+  - **Status**: ✅ **100% COMPLETE** - Full JOIN execution with all join types
+  - **Implementation**: ~870 lines across 5 files
   - **Files Modified**:
     * `/include/scratchbird/sblr/opcodes.h` - JOIN opcodes (4 opcodes)
     * `/include/scratchbird/sblr/bytecode_generator.h` - JOIN generation methods (3 methods)
     * `/src/sblr/bytecode_generator.cpp` - Complete bytecode generation (~160 lines)
-    * `/include/scratchbird/sblr/executor.h` - JOIN execution methods (2 methods)
-    * `/src/sblr/executor.cpp` - Executor framework (~76 lines)
-  - **What Works**: Complete end-to-end infrastructure from parser → planner → bytecode → executor framework
-  - **What Remains**: Full execution logic (multi-table result sets, hash tables, context switching, NULL handling)
-  - **Deliverable**: ✅ **80% complete** - All infrastructure ready, full execution deferred as follow-on task
+    * `/include/scratchbird/sblr/executor.h` - JOIN execution methods (5 methods: 2 main + 3 helpers)
+    * `/src/sblr/executor.cpp` - Full executor implementation (~610 lines)
+  - **What Works**: Complete end-to-end JOIN execution from parser → planner → bytecode → executor
+  - **Features Implemented**:
+    - executeNestedLoopJoin() - Full O(M×N) nested loop with outer join support (~320 lines)
+    - executeHashJoin() - Build/probe hash join with outer join support (~290 lines)
+    - executeChildPlan() - Helper to execute child SELECT statements recursively
+    - evaluateJoinCondition() - Evaluates join predicates with combined row context
+    - combineRows() - Merges outer and inner rows into single result row
+    - Multi-table result set construction (combines columns from both sides)
+    - Join condition evaluation with stack-based expression evaluator
+    - NULL padding for LEFT, RIGHT, and FULL OUTER joins
+    - Hash table implementation using std::map for hash joins
+    - Multi-column hash key support
+    - Proper handling of matched/unmatched rows for outer joins
+  - **Deliverable**: ✅ **100% complete** - Full JOIN execution ready for production use
 
-**Phase 1.3 Completion Status**: ✅ **~98% complete** - Parser ✅, Semantic ✅, Planner ✅, Selectivity ✅, Bytecode ✅, Executor Framework ✅
+**Phase 1.3 Completion Status**: ✅ **100% COMPLETE** - Parser ✅, Semantic ✅, Planner ✅, Selectivity ✅, Bytecode ✅, Executor ✅
 
 **What Works (✅ Complete)**:
 - ✅ All JOIN syntax parsing (INNER, LEFT, RIGHT, FULL, CROSS, NATURAL)
@@ -259,15 +273,16 @@ Without these features, ScratchBird **cannot be used** for even simple applicati
 - ✅ Complete bytecode generation for nested loop joins
 - ✅ Complete bytecode generation for hash joins
 - ✅ Recursive JOIN tree bytecode generation
-- ✅ JOIN executor framework (dispatch, method stubs, graceful errors)
-- ✅ executeNestedLoopJoin() method with documented requirements
-- ✅ executeHashJoin() method with documented requirements
+- ✅ Full JOIN executor implementation (executeNestedLoopJoin, executeHashJoin)
+- ✅ Helper methods (executeChildPlan, evaluateJoinCondition, combineRows)
+- ✅ Multi-table result set handling with column combination
+- ✅ Join condition evaluation with combined row context
+- ✅ NULL padding for LEFT, RIGHT, and FULL OUTER joins
+- ✅ Hash table for hash joins (std::map-based with multi-column keys)
+- ✅ Proper matched/unmatched row tracking for outer joins
 - ✅ Main execute() dispatcher updated for JOINs
 
-**What Remains (~2%)**:
-- ❌ Full JOIN executor logic (~6-8 hours) - Multi-table result sets, hash tables, context switching, NULL handling for outer joins
-
-**Note**: All infrastructure is complete. The remaining work is a well-defined, standalone task with clear requirements documented in the code.
+**Task Complete**: ✅ **100% done** - Full JOIN support from end-to-end (parser → planner → bytecode → executor)
 
 ---
 

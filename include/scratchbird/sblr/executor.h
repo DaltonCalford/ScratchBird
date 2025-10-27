@@ -207,6 +207,16 @@ namespace scratchbird
             bool deserializeTuple(const uint8_t *tuple_data, uint32_t tuple_size,
                                   const std::vector<core::CatalogManager::ColumnInfo> &columns,
                                   std::vector<Value> &values_out);
+
+            // JOIN execution helpers (Phase 1 Task 3.3)
+            std::unique_ptr<ResultSet> executeChildPlan();
+            bool evaluateJoinCondition(const std::vector<Value> &outer_row,
+                                       const std::vector<Value> &inner_row,
+                                       const std::vector<core::CatalogManager::ColumnInfo> &outer_columns,
+                                       const std::vector<core::CatalogManager::ColumnInfo> &inner_columns,
+                                       size_t condition_start_pc, size_t condition_end_pc);
+            std::vector<Value> combineRows(const std::vector<Value> &outer_row,
+                                           const std::vector<Value> &inner_row);
         };
 
     } // namespace sblr
