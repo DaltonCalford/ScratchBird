@@ -31,7 +31,6 @@ namespace scratchbird
             case DataType::FLOAT32:
             case DataType::FLOAT64:
             case DataType::DECIMAL:
-            case DataType::NUMERIC:
             case DataType::MONEY:
                 return true;
             default:
@@ -909,7 +908,7 @@ namespace scratchbird
                 case AggregateFunc::SUM:
                 case AggregateFunc::AVG:
                     // Requires numeric type
-                    if (!isNumericType(arg_type->base_type.type))
+                    if (!isNumericType(arg_type->type.type))
                     {
                         reportError(node, "SUM/AVG requires numeric argument");
                     }
