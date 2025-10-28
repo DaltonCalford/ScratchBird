@@ -4198,6 +4198,225 @@ namespace scratchbird
                     break;
                 }
 
+                // JSON functions (Phase 1 Task 7)
+                case Opcode::JSON_EXTRACT:
+                case Opcode::JSON_ARROW:
+                case Opcode::JSON_DOUBLE_ARROW:
+                {
+                    uint8_t arg_count = readByte();
+                    if (arg_count != 2)
+                    {
+                        error("JSON extraction expects 2 arguments (json, path)");
+                    }
+
+                    Value path = pop();
+                    Value json_data = pop();
+
+                    if (json_data.isNull() || path.isNull())
+                    {
+                        push(Value::makeNull());
+                    }
+                    else
+                    {
+                        // TODO: Implement actual JSON path extraction
+                        // For now, return the JSON data as-is (stub implementation)
+                        // In production, parse json_data and extract value at path
+                        if (op == Opcode::JSON_DOUBLE_ARROW)
+                        {
+                            // ->> returns text
+                            push(Value::makeText("{}"));  // Stub: return empty object as text
+                        }
+                        else
+                        {
+                            // -> and JSON_EXTRACT return JSON
+                            push(Value::makeJSON("{}"));  // Stub: return empty object
+                        }
+                    }
+                    break;
+                }
+
+                case Opcode::JSONB_EXTRACT_PATH:
+                {
+                    uint8_t arg_count = readByte();
+                    if (arg_count < 2)
+                    {
+                        error("JSONB_EXTRACT_PATH expects at least 2 arguments");
+                    }
+
+                    // Pop path elements (in reverse order)
+                    std::vector<Value> path_elements;
+                    for (uint8_t i = 0; i < arg_count - 1; i++)
+                    {
+                        path_elements.push_back(pop());
+                    }
+                    Value json_data = pop();
+
+                    if (json_data.isNull())
+                    {
+                        push(Value::makeNull());
+                    }
+                    else
+                    {
+                        // TODO: Implement actual JSONB path extraction
+                        // For now, return stub JSONB value
+                        push(Value::makeJSON("{}"));  // Stub
+                    }
+                    break;
+                }
+
+                case Opcode::JSON_HASH_ARROW:
+                case Opcode::JSON_HASH_DOUBLE_ARROW:
+                {
+                    uint8_t arg_count = readByte();
+                    if (arg_count != 2)
+                    {
+                        error("JSON path operator expects 2 arguments (json, path_array)");
+                    }
+
+                    Value path_array = pop();
+                    Value json_data = pop();
+
+                    if (json_data.isNull() || path_array.isNull())
+                    {
+                        push(Value::makeNull());
+                    }
+                    else
+                    {
+                        // TODO: Implement actual JSON path array extraction
+                        if (op == Opcode::JSON_HASH_DOUBLE_ARROW)
+                        {
+                            push(Value::makeText("{}"));  // Stub
+                        }
+                        else
+                        {
+                            push(Value::makeJSON("{}"));  // Stub
+                        }
+                    }
+                    break;
+                }
+
+                case Opcode::JSON_OBJECT:
+                case Opcode::JSONB_BUILD_OBJECT:
+                {
+                    uint8_t arg_count = readByte();
+                    if (arg_count % 2 != 0)
+                    {
+                        error("JSON_OBJECT expects even number of arguments (key-value pairs)");
+                    }
+
+                    // Pop key-value pairs
+                    std::vector<std::pair<Value, Value>> pairs;
+                    for (uint8_t i = 0; i < arg_count / 2; i++)
+                    {
+                        Value value = pop();
+                        Value key = pop();
+                        pairs.push_back({key, value});
+                    }
+
+                    // TODO: Implement actual JSON object construction
+                    // For now, return stub JSON object
+                    if (op == Opcode::JSONB_BUILD_OBJECT)
+                    {
+                        push(Value::makeJSON("{}"));  // Stub JSONB
+                    }
+                    else
+                    {
+                        push(Value::makeJSON("{}"));  // Stub JSON
+                    }
+                    break;
+                }
+
+                case Opcode::JSON_ARRAY:
+                case Opcode::JSONB_BUILD_ARRAY:
+                {
+                    uint8_t arg_count = readByte();
+
+                    // Pop array elements
+                    std::vector<Value> elements;
+                    for (uint8_t i = 0; i < arg_count; i++)
+                    {
+                        elements.push_back(pop());
+                    }
+
+                    // TODO: Implement actual JSON array construction
+                    // For now, return stub JSON array
+                    push(Value::makeJSON("[]"));  // Stub
+                    break;
+                }
+
+                case Opcode::JSON_SET:
+                case Opcode::JSONB_SET:
+                {
+                    uint8_t arg_count = readByte();
+                    if (arg_count != 3)
+                    {
+                        error("JSON_SET expects 3 arguments (json, path, value)");
+                    }
+
+                    Value new_value = pop();
+                    Value path = pop();
+                    Value json_data = pop();
+
+                    if (json_data.isNull())
+                    {
+                        push(Value::makeNull());
+                    }
+                    else
+                    {
+                        // TODO: Implement actual JSON modification
+                        // For now, return the original JSON
+                        push(json_data);  // Stub: return input unchanged
+                    }
+                    break;
+                }
+
+                case Opcode::JSON_INSERT:
+                {
+                    uint8_t arg_count = readByte();
+                    if (arg_count != 3)
+                    {
+                        error("JSON_INSERT expects 3 arguments (json, path, value)");
+                    }
+
+                    Value value = pop();
+                    Value path = pop();
+                    Value json_data = pop();
+
+                    if (json_data.isNull())
+                    {
+                        push(Value::makeNull());
+                    }
+                    else
+                    {
+                        // TODO: Implement actual JSON insertion
+                        push(json_data);  // Stub: return input unchanged
+                    }
+                    break;
+                }
+
+                case Opcode::JSON_REMOVE:
+                {
+                    uint8_t arg_count = readByte();
+                    if (arg_count != 2)
+                    {
+                        error("JSON_REMOVE expects 2 arguments (json, path)");
+                    }
+
+                    Value path = pop();
+                    Value json_data = pop();
+
+                    if (json_data.isNull())
+                    {
+                        push(Value::makeNull());
+                    }
+                    else
+                    {
+                        // TODO: Implement actual JSON removal
+                        push(json_data);  // Stub: return input unchanged
+                    }
+                    break;
+                }
+
                 default:
                     error("Unknown expression opcode: " + std::to_string(static_cast<int>(op)));
             }
