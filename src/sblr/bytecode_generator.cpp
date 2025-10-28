@@ -931,6 +931,12 @@ namespace scratchbird
                     original_stmt);
                 break;
 
+            case scratchbird::optimizer::PlanNodeType::WINDOW:
+                generateWindowPlan(
+                    static_cast<scratchbird::optimizer::WindowNode *>(plan.get()),
+                    original_stmt);
+                break;
+
             default:
                 result.addError("Unsupported plan node type");
                 break;
@@ -1353,6 +1359,207 @@ namespace scratchbird
                 current_result_->writeOpcode(Opcode::OFFSET);
                 current_result_->writeInt64(static_cast<uint64_t>(node->offsetCount()));
             }
+        }
+
+        // Phase 1, Task 6.3: Window function bytecode generation
+
+        void BytecodeGenerator::generateWindowPlan(
+            scratchbird::optimizer::WindowNode *node,
+            parser::SelectStmt *stmt)
+        {
+            // For window plans, recursively generate child plan first
+            auto child_plan = node->child();
+            generateJoinPlan(child_plan.get(), stmt);
+
+            // Emit WINDOW marker
+            current_result_->writeOpcode(Opcode::WINDOW);
+
+            // Emit count of window functions
+            const auto& window_functions = node->windowFunctions();
+            current_result_->writeInt32(static_cast<uint32_t>(window_functions.size()));
+
+            // Emit each window function
+            for (const auto& win_func : window_functions)
+            {
+                generateWindowFunc(win_func);
+            }
+        }
+
+        void BytecodeGenerator::generateWindowFunc(
+            const optimizer::WindowNode::WindowFunction& win_func)
+        {
+            // Emit function type opcode
+            switch (win_func.func)
+            {
+                case parser::WindowFunc::ROW_NUMBER:
+                    current_result_->writeOpcode(Opcode::WIN_ROW_NUMBER);
+                    break;
+                case parser::WindowFunc::RANK:
+                    current_result_->writeOpcode(Opcode::WIN_RANK);
+                    break;
+                case parser::WindowFunc::DENSE_RANK:
+                    current_result_->writeOpcode(Opcode::WIN_DENSE_RANK);
+                    break;
+                case parser::WindowFunc::LAG:
+                    current_result_->writeOpcode(Opcode::WIN_LAG);
+                    break;
+                case parser::WindowFunc::LEAD:
+                    current_result_->writeOpcode(Opcode::WIN_LEAD);
+                    break;
+                case parser::WindowFunc::FIRST_VALUE:
+                    current_result_->writeOpcode(Opcode::WIN_FIRST_VALUE);
+                    break;
+                case parser::WindowFunc::LAST_VALUE:
+                    current_result_->writeOpcode(Opcode::WIN_LAST_VALUE);
+                    break;
+                case parser::WindowFunc::NTH_VALUE:
+                    current_result_->writeOpcode(Opcode::WIN_NTH_VALUE);
+                    break;
+            }
+
+            // Emit argument count
+            current_result_->writeInt32(static_cast<uint32_t>(win_func.args.size()));
+
+            // Emit each argument expression
+            for (auto* arg_expr : win_func.args)
+            {
+                generateExpression(arg_expr);
+            }
+
+            // Emit window specification
+            generateWindowSpec(win_func.window_spec);
+
+            // Emit output column name
+            current_result_->writeString(win_func.output_column);
+        }
+
+        void BytecodeGenerator::generateWindowSpec(const parser::WindowSpec *spec)
+        {
+            if (!spec)
+            {
+                // No window spec - emit empty marker
+                current_result_->writeOpcode(Opcode::WINDOW_SPEC);
+                current_result_->writeInt32(0); // No PARTITION BY columns
+                current_result_->writeInt32(0); // No ORDER BY columns
+                current_result_->writeInt32(0); // No frame clause
+                return;
+            }
+
+            current_result_->writeOpcode(Opcode::WINDOW_SPEC);
+
+            // Emit PARTITION BY clause
+            const auto& partition_by = spec->partitionBy();
+            current_result_->writeInt32(static_cast<uint32_t>(partition_by.size()));
+            if (!partition_by.empty())
+            {
+                current_result_->writeOpcode(Opcode::PARTITION_BY);
+                for (auto* expr : partition_by)
+                {
+                    generateExpression(expr);
+                }
+            }
+
+            // Emit ORDER BY clause
+            const auto& order_by = spec->orderBy();
+            current_result_->writeInt32(static_cast<uint32_t>(order_by.size()));
+            if (!order_by.empty())
+            {
+                current_result_->writeOpcode(Opcode::WINDOW_ORDER_BY);
+                for (auto* expr : order_by)
+                {
+                    generateExpression(expr);
+                    // TODO: Emit sort direction and nulls handling
+                    // This would require WindowSpec to store OrderByItem info
+                }
+            }
+
+            // Emit frame clause
+            if (spec->hasFrame())
+            {
+                current_result_->writeInt32(1); // Has frame clause
+                generateFrameClause(spec);
+            }
+            else
+            {
+                current_result_->writeInt32(0); // No frame clause
+            }
+        }
+
+        void BytecodeGenerator::generateFrameClause(const parser::WindowSpec *spec)
+        {
+            current_result_->writeOpcode(Opcode::FRAME_CLAUSE);
+
+            // Emit frame mode (ROWS or RANGE)
+            if (spec->frameMode() == parser::FrameMode::ROWS)
+            {
+                current_result_->writeOpcode(Opcode::FRAME_ROWS);
+            }
+            else
+            {
+                current_result_->writeOpcode(Opcode::FRAME_RANGE);
+            }
+
+            // Emit frame start boundary
+            const auto& start = spec->frameStart();
+            switch (start.type)
+            {
+                case parser::FrameBoundaryType::UNBOUNDED_PRECEDING:
+                    current_result_->writeOpcode(Opcode::FRAME_UNBOUNDED_PRECEDING);
+                    break;
+                case parser::FrameBoundaryType::PRECEDING:
+                    current_result_->writeOpcode(Opcode::FRAME_PRECEDING);
+                    generateExpression(start.offset);
+                    break;
+                case parser::FrameBoundaryType::CURRENT_ROW:
+                    current_result_->writeOpcode(Opcode::FRAME_CURRENT_ROW);
+                    break;
+                case parser::FrameBoundaryType::FOLLOWING:
+                    current_result_->writeOpcode(Opcode::FRAME_FOLLOWING);
+                    generateExpression(start.offset);
+                    break;
+                case parser::FrameBoundaryType::UNBOUNDED_FOLLOWING:
+                    current_result_->writeOpcode(Opcode::FRAME_UNBOUNDED_FOLLOWING);
+                    break;
+            }
+
+            // Emit frame end boundary
+            const auto& end = spec->frameEnd();
+            switch (end.type)
+            {
+                case parser::FrameBoundaryType::UNBOUNDED_PRECEDING:
+                    current_result_->writeOpcode(Opcode::FRAME_UNBOUNDED_PRECEDING);
+                    break;
+                case parser::FrameBoundaryType::PRECEDING:
+                    current_result_->writeOpcode(Opcode::FRAME_PRECEDING);
+                    generateExpression(end.offset);
+                    break;
+                case parser::FrameBoundaryType::CURRENT_ROW:
+                    current_result_->writeOpcode(Opcode::FRAME_CURRENT_ROW);
+                    break;
+                case parser::FrameBoundaryType::FOLLOWING:
+                    current_result_->writeOpcode(Opcode::FRAME_FOLLOWING);
+                    generateExpression(end.offset);
+                    break;
+                case parser::FrameBoundaryType::UNBOUNDED_FOLLOWING:
+                    current_result_->writeOpcode(Opcode::FRAME_UNBOUNDED_FOLLOWING);
+                    break;
+            }
+        }
+
+        // Visitor methods for window function AST nodes
+
+        void BytecodeGenerator::visit(parser::WindowFuncExpr *node)
+        {
+            // This is called when generating direct (non-optimized) bytecode
+            // The optimized path uses generateWindowFunc() instead
+            current_result_->addError("Direct window function bytecode generation not yet supported");
+        }
+
+        void BytecodeGenerator::visit(parser::WindowSpec *node)
+        {
+            // This is called when generating direct (non-optimized) bytecode
+            // The optimized path uses generateWindowSpec() instead
+            current_result_->addError("Direct window spec bytecode generation not yet supported");
         }
 
         // ===== Disassembler Implementation =====

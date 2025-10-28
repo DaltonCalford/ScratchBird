@@ -491,6 +491,43 @@ namespace scratchbird::optimizer
                          core::ErrorContext *ctx)
             -> std::shared_ptr<Path>;
 
+        /**
+         * detectWindowFunctions - Detect window functions in SELECT list
+         *
+         * Scans the SELECT list for WindowFuncExpr nodes (ROW_NUMBER, RANK, etc.).
+         *
+         * @param select_stmt SELECT statement
+         * @param window_funcs Output: vector of window function expressions
+         * @return true if window functions found
+         *
+         * Phase 1, Task 6.2
+         */
+        auto detectWindowFunctions(const parser::SelectStmt *select_stmt,
+                                   std::vector<parser::WindowFuncExpr*>& window_funcs) const
+            -> bool;
+
+        /**
+         * addWindowPath - Add window function path on top of base path
+         *
+         * Creates WindowPath with cost estimation.
+         * Window functions require:
+         * - Sorting by PARTITION BY + ORDER BY columns
+         * - Frame window processing
+         *
+         * @param base_path Base path to add window functions to
+         * @param select_stmt SELECT statement
+         * @param window_funcs Window function expressions
+         * @param ctx Error context
+         * @return Window path or nullptr
+         *
+         * Phase 1, Task 6.2
+         */
+        auto addWindowPath(std::shared_ptr<Path> base_path,
+                          const parser::SelectStmt *select_stmt,
+                          const std::vector<parser::WindowFuncExpr*>& window_funcs,
+                          core::ErrorContext *ctx)
+            -> std::shared_ptr<Path>;
+
     private:
         core::Database *db_;
         CostModel cost_model_;

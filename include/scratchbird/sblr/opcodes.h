@@ -169,6 +169,30 @@ namespace scratchbird
             // Limiting (Phase 1, Task 5.2)
             LIMIT = 0xD4,             // LIMIT clause
             OFFSET = 0xD5,            // OFFSET clause
+
+            // Window functions (Phase 1, Task 6.3)
+            WINDOW = 0xD6,            // Window function clause marker
+            WINDOW_SPEC = 0xD7,       // Window specification (OVER clause)
+            PARTITION_BY = 0xD8,      // PARTITION BY clause
+            WINDOW_ORDER_BY = 0xD9,   // ORDER BY within window spec
+            FRAME_CLAUSE = 0xDA,      // Frame clause marker
+            FRAME_ROWS = 0xDB,        // ROWS frame mode
+            FRAME_RANGE = 0xDC,       // RANGE frame mode
+            FRAME_UNBOUNDED_PRECEDING = 0xDD,  // UNBOUNDED PRECEDING boundary
+            FRAME_PRECEDING = 0xDE,   // n PRECEDING boundary
+            FRAME_CURRENT_ROW = 0xDF, // CURRENT ROW boundary
+            FRAME_FOLLOWING = 0xE0,   // n FOLLOWING boundary
+            FRAME_UNBOUNDED_FOLLOWING = 0xE1,  // UNBOUNDED FOLLOWING boundary
+
+            // Window function types
+            WIN_ROW_NUMBER = 0xE2,    // ROW_NUMBER()
+            WIN_RANK = 0xE3,          // RANK()
+            WIN_DENSE_RANK = 0xE4,    // DENSE_RANK()
+            WIN_LAG = 0xE5,           // LAG(expr [, offset [, default]])
+            WIN_LEAD = 0xE6,          // LEAD(expr [, offset [, default]])
+            WIN_FIRST_VALUE = 0xE7,   // FIRST_VALUE(expr)
+            WIN_LAST_VALUE = 0xE8,    // LAST_VALUE(expr)
+            WIN_NTH_VALUE = 0xE9,     // NTH_VALUE(expr, n)
         };
 
         // SBLR Version

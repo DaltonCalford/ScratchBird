@@ -23,7 +23,8 @@ namespace scratchbird::optimizer
         HASH_JOIN,         // Hash join (Phase 1, Task 3.2)
         AGGREGATE,         // Aggregation (Phase 1, Task 4.1)
         SORT,              // Sort operation (Phase 1, Task 5.1)
-        LIMIT              // Limit/offset (Phase 1, Task 5.2)
+        LIMIT,             // Limit/offset (Phase 1, Task 5.2)
+        WINDOW             // Window functions (Phase 1, Task 6.2)
     };
 
     /**
@@ -769,6 +770,60 @@ namespace scratchbird::optimizer
         std::shared_ptr<Path> input_path_;
         int64_t limit_count_;
         int64_t offset_count_;
+    };
+
+    /**
+     * WindowPath - Window function evaluation path
+     *
+     * Represents evaluation of window functions (ROW_NUMBER, RANK, LAG, etc.)
+     * over partitioned and ordered data.
+     *
+     * Phase 1, Task 6.2
+     */
+    class WindowPath : public Path
+    {
+    public:
+        /**
+         * Constructor
+         *
+         * @param input_path Input path to evaluate window functions over
+         * @param window_funcs Window function expressions
+         * @param cost Cost estimate
+         */
+        WindowPath(std::shared_ptr<Path> input_path,
+                  const std::vector<parser::WindowFuncExpr*>& window_funcs,
+                  const CostEstimate& cost)
+            : Path(PathType::WINDOW, cost),
+              input_path_(std::move(input_path)),
+              window_funcs_(window_funcs)
+        {
+        }
+
+        /**
+         * Get input path
+         */
+        const std::shared_ptr<Path>& inputPath() const { return input_path_; }
+
+        /**
+         * Get window function expressions
+         */
+        const std::vector<parser::WindowFuncExpr*>& windowFuncs() const { return window_funcs_; }
+
+        /**
+         * Convert to string for debugging
+         */
+        auto toString() const -> std::string override
+        {
+            std::string result = "WindowPath(";
+            result += "funcs=" + std::to_string(window_funcs_.size());
+            result += ", cost=" + std::to_string(cost_.total_cost);
+            result += ", rows=" + std::to_string(cost_.rows) + ")";
+            return result;
+        }
+
+    private:
+        std::shared_ptr<Path> input_path_;
+        std::vector<parser::WindowFuncExpr*> window_funcs_;
     };
 
 } // namespace scratchbird::optimizer

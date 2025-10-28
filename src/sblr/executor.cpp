@@ -2231,6 +2231,14 @@ namespace scratchbird
                 current_result_set_->addRow(std::move(result_row));
             }
 
+            // Check for WINDOW functions after aggregation (Phase 1 Task 6.5)
+            if (pc_ < bytecode_size_ && bytecode_[pc_] == static_cast<uint8_t>(Opcode::WINDOW))
+            {
+                // Move result set and evaluate window functions
+                executeWindow(std::move(current_result_set_));
+                return; // executeWindow handles ORDER BY and LIMIT/OFFSET detection
+            }
+
             // Check for ORDER BY after aggregation
             if (pc_ < bytecode_size_ && bytecode_[pc_] == static_cast<uint8_t>(Opcode::ORDER_BY))
             {
@@ -2526,6 +2534,200 @@ namespace scratchbird
                 }
                 current_result_set_->addRow(std::move(row));
                 rows_collected++;
+            }
+        }
+
+        // Phase 1, Task 6.5: Window function execution
+
+        void Executor::executeWindow(std::unique_ptr<ResultSet> input_result_set)
+        {
+            // Parse WINDOW opcode
+            if (readByte() != static_cast<uint8_t>(Opcode::WINDOW))
+            {
+                error("Expected WINDOW opcode");
+            }
+
+            uint32_t func_count = readInt32();
+            std::vector<WindowFunctionSpec> window_specs;
+
+            // Parse each window function specification
+            for (uint32_t i = 0; i < func_count; i++)
+            {
+                WindowFunctionSpec spec;
+
+                // Read function type
+                Opcode func_op = static_cast<Opcode>(readByte());
+                switch (func_op)
+                {
+                    case Opcode::WIN_ROW_NUMBER:
+                        spec.func_type = WindowFunctionSpec::FuncType::ROW_NUMBER;
+                        break;
+                    case Opcode::WIN_RANK:
+                        spec.func_type = WindowFunctionSpec::FuncType::RANK;
+                        break;
+                    case Opcode::WIN_DENSE_RANK:
+                        spec.func_type = WindowFunctionSpec::FuncType::DENSE_RANK;
+                        break;
+                    case Opcode::WIN_LAG:
+                        spec.func_type = WindowFunctionSpec::FuncType::LAG;
+                        break;
+                    case Opcode::WIN_LEAD:
+                        spec.func_type = WindowFunctionSpec::FuncType::LEAD;
+                        break;
+                    case Opcode::WIN_FIRST_VALUE:
+                        spec.func_type = WindowFunctionSpec::FuncType::FIRST_VALUE;
+                        break;
+                    case Opcode::WIN_LAST_VALUE:
+                        spec.func_type = WindowFunctionSpec::FuncType::LAST_VALUE;
+                        break;
+                    case Opcode::WIN_NTH_VALUE:
+                        spec.func_type = WindowFunctionSpec::FuncType::NTH_VALUE;
+                        break;
+                    default:
+                        error("Unknown window function opcode");
+                }
+
+                // Read function arguments (these would need to be evaluated per row)
+                // For now, we'll skip detailed parsing and just note the structure
+                uint32_t arg_count = readInt32();
+                for (uint32_t a = 0; a < arg_count; a++)
+                {
+                    // Skip argument expressions for now
+                    // TODO: Parse and store argument expressions
+                    error("Window function argument parsing not fully implemented");
+                }
+
+                // Parse window specification
+                if (readByte() != static_cast<uint8_t>(Opcode::WINDOW_SPEC))
+                {
+                    error("Expected WINDOW_SPEC opcode");
+                }
+
+                // Read PARTITION BY count
+                uint32_t partition_count = readInt32();
+                if (partition_count > 0)
+                {
+                    if (readByte() != static_cast<uint8_t>(Opcode::PARTITION_BY))
+                    {
+                        error("Expected PARTITION_BY opcode");
+                    }
+                    // For now, assume column references
+                    // TODO: Full expression support
+                    for (uint32_t p = 0; p < partition_count; p++)
+                    {
+                        spec.partition_cols.push_back(p); // Placeholder
+                    }
+                }
+
+                // Read ORDER BY count
+                uint32_t order_count = readInt32();
+                if (order_count > 0)
+                {
+                    if (readByte() != static_cast<uint8_t>(Opcode::WINDOW_ORDER_BY))
+                    {
+                        error("Expected WINDOW_ORDER_BY opcode");
+                    }
+                    for (uint32_t o = 0; o < order_count; o++)
+                    {
+                        spec.order_cols.push_back(o); // Placeholder
+                        spec.order_asc.push_back(true); // Placeholder
+                    }
+                }
+
+                // Read frame clause
+                uint32_t has_frame = readInt32();
+                spec.has_frame = (has_frame != 0);
+                if (spec.has_frame)
+                {
+                    if (readByte() != static_cast<uint8_t>(Opcode::FRAME_CLAUSE))
+                    {
+                        error("Expected FRAME_CLAUSE opcode");
+                    }
+
+                    // Read frame mode
+                    Opcode frame_mode_op = static_cast<Opcode>(readByte());
+                    spec.frame_is_rows = (frame_mode_op == Opcode::FRAME_ROWS);
+
+                    // Read frame boundaries (simplified for now)
+                    readByte(); // Frame start boundary type
+                    readByte(); // Frame end boundary type
+                }
+
+                // Read output column name
+                spec.output_column = readString();
+
+                window_specs.push_back(spec);
+            }
+
+            // Create output result set with window function columns
+            current_result_set_ = std::make_unique<ResultSet>();
+
+            // Copy input columns
+            for (size_t i = 0; i < input_result_set->columnCount(); i++)
+            {
+                current_result_set_->addColumn(
+                    input_result_set->columnName(i),
+                    input_result_set->columnType(i)
+                );
+            }
+
+            // Add window function output columns
+            for (const auto& spec : window_specs)
+            {
+                current_result_set_->addColumn(spec.output_column, core::DataType::INT64);
+            }
+
+            // For each row in input, compute window functions
+            // This is a simplified implementation - full implementation would:
+            // 1. Partition rows by PARTITION BY columns
+            // 2. Sort partitions by ORDER BY columns
+            // 3. Compute window functions with frame windows
+
+            for (size_t row_idx = 0; row_idx < input_result_set->rowCount(); row_idx++)
+            {
+                std::vector<Value> output_row;
+
+                // Copy input columns
+                for (size_t col = 0; col < input_result_set->columnCount(); col++)
+                {
+                    output_row.push_back(input_result_set->getValue(row_idx, col));
+                }
+
+                // Compute window functions (simplified - just ROW_NUMBER for now)
+                for (const auto& spec : window_specs)
+                {
+                    Value result;
+
+                    if (spec.func_type == WindowFunctionSpec::FuncType::ROW_NUMBER)
+                    {
+                        // ROW_NUMBER() is 1-indexed
+                        result = core::TypedValue::makeInt64(static_cast<int64_t>(row_idx + 1));
+                    }
+                    else
+                    {
+                        // Placeholder for other window functions
+                        result = core::TypedValue::makeInt64(0);
+                    }
+
+                    output_row.push_back(result);
+                }
+
+                current_result_set_->addRow(std::move(output_row));
+            }
+
+            // Check for ORDER BY after window functions
+            if (pc_ < bytecode_size_ && bytecode_[pc_] == static_cast<uint8_t>(Opcode::ORDER_BY))
+            {
+                executeSort(std::move(current_result_set_));
+                return;
+            }
+
+            // Check for LIMIT/OFFSET
+            if (pc_ < bytecode_size_ &&
+                (bytecode_[pc_] == static_cast<uint8_t>(Opcode::LIMIT) ||
+                 bytecode_[pc_] == static_cast<uint8_t>(Opcode::OFFSET)))
+            {
+                executeLimit(std::move(current_result_set_));
             }
         }
 
@@ -2825,6 +3027,14 @@ namespace scratchbird
                 }
 
                 current_result_set_->addRow(std::move(result_row));
+            }
+
+            // Check for WINDOW functions after SELECT execution (Phase 1 Task 6.5)
+            if (pc_ < bytecode_size_ && bytecode_[pc_] == static_cast<uint8_t>(Opcode::WINDOW))
+            {
+                // Move result set and evaluate window functions
+                executeWindow(std::move(current_result_set_));
+                return; // executeWindow handles ORDER BY and LIMIT/OFFSET detection
             }
 
             // Check for ORDER BY after SELECT execution

@@ -2360,6 +2360,77 @@ namespace scratchbird
                 return arena_.make<AggregateExpr>(span, agg_func, arg, distinct);
             }
 
+            // Window functions (Phase 1 Task 6)
+            if (match(TokenType::KW_ROW_NUMBER) || match(TokenType::KW_RANK) ||
+                match(TokenType::KW_DENSE_RANK) || match(TokenType::KW_LAG) ||
+                match(TokenType::KW_LEAD) || match(TokenType::KW_FIRST_VALUE) ||
+                match(TokenType::KW_LAST_VALUE) || match(TokenType::KW_NTH_VALUE))
+            {
+                TokenType win_type = previous().type;
+                WindowFunc win_func;
+
+                switch (win_type)
+                {
+                case TokenType::KW_ROW_NUMBER:
+                    win_func = WindowFunc::ROW_NUMBER;
+                    break;
+                case TokenType::KW_RANK:
+                    win_func = WindowFunc::RANK;
+                    break;
+                case TokenType::KW_DENSE_RANK:
+                    win_func = WindowFunc::DENSE_RANK;
+                    break;
+                case TokenType::KW_LAG:
+                    win_func = WindowFunc::LAG;
+                    break;
+                case TokenType::KW_LEAD:
+                    win_func = WindowFunc::LEAD;
+                    break;
+                case TokenType::KW_FIRST_VALUE:
+                    win_func = WindowFunc::FIRST_VALUE;
+                    break;
+                case TokenType::KW_LAST_VALUE:
+                    win_func = WindowFunc::LAST_VALUE;
+                    break;
+                case TokenType::KW_NTH_VALUE:
+                    win_func = WindowFunc::NTH_VALUE;
+                    break;
+                default:
+                    error("Unknown window function");
+                    return nullptr;
+                }
+
+                if (!consume(TokenType::LEFT_PAREN, "Expected '(' after window function"))
+                    return nullptr;
+
+                // Parse arguments
+                std::vector<Expression*> args;
+                if (!check(TokenType::RIGHT_PAREN))
+                {
+                    do
+                    {
+                        auto *arg = parseExpression();
+                        if (!arg)
+                            return nullptr;
+                        args.push_back(arg);
+                    } while (match(TokenType::COMMA));
+                }
+
+                if (!consume(TokenType::RIGHT_PAREN, "Expected ')' after window function arguments"))
+                    return nullptr;
+
+                // Parse OVER clause (required for window functions)
+                if (!consume(TokenType::KW_OVER, "Expected OVER clause after window function"))
+                    return nullptr;
+
+                auto *window_spec = parseWindowSpec();
+                if (!window_spec)
+                    return nullptr;
+
+                auto span = makeSpan(start_loc, previous().location);
+                return arena_.make<WindowFuncExpr>(span, win_func, args, window_spec);
+            }
+
             if (check(TokenType::IDENTIFIER))
             {
                 auto name = current().value.string_id;
@@ -2532,6 +2603,177 @@ namespace scratchbird
                 advance();
 
                 stmt->setOffsetCount(offset_count);
+            }
+        }
+
+        // Phase 1 Task 6: Window function parsing
+        WindowSpec *Parser::parseWindowSpec()
+        {
+            auto start_loc = current().location;
+
+            if (!consume(TokenType::LEFT_PAREN, "Expected '(' after OVER"))
+                return nullptr;
+
+            auto *spec = arena_.make<WindowSpec>(makeSpan(start_loc));
+
+            // Parse PARTITION BY clause (optional)
+            if (match(TokenType::KW_PARTITION))
+            {
+                if (!consume(TokenType::KW_BY, "Expected BY after PARTITION"))
+                    return nullptr;
+
+                do
+                {
+                    auto *expr = parseExpression();
+                    if (!expr)
+                        return nullptr;
+                    spec->addPartitionBy(expr);
+                } while (match(TokenType::COMMA));
+            }
+
+            // Parse ORDER BY clause (optional)
+            if (match(TokenType::KW_ORDER))
+            {
+                if (!consume(TokenType::KW_BY, "Expected BY after ORDER"))
+                    return nullptr;
+
+                do
+                {
+                    auto *expr = parseExpression();
+                    if (!expr)
+                        return nullptr;
+
+                    // Parse ASC/DESC (optional, default ASC)
+                    bool ascending = true;
+                    if (match(TokenType::KW_DESC))
+                    {
+                        ascending = false;
+                    }
+                    else
+                    {
+                        match(TokenType::KW_ASC); // Optional ASC keyword
+                    }
+
+                    // Parse NULLS FIRST/LAST (optional)
+                    bool nulls_first = !ascending; // Default: NULLS LAST for ASC, NULLS FIRST for DESC
+                    if (match(TokenType::KW_NULLS))
+                    {
+                        if (match(TokenType::KW_FIRST))
+                        {
+                            nulls_first = true;
+                        }
+                        else if (match(TokenType::KW_LAST))
+                        {
+                            nulls_first = false;
+                        }
+                        else
+                        {
+                            error("Expected FIRST or LAST after NULLS");
+                            return nullptr;
+                        }
+                    }
+
+                    spec->addOrderBy(expr, ascending, nulls_first);
+                } while (match(TokenType::COMMA));
+            }
+
+            // Parse frame clause (optional)
+            if (check(TokenType::KW_ROWS) || check(TokenType::KW_RANGE))
+            {
+                parseFrameClause(spec);
+            }
+
+            if (!consume(TokenType::RIGHT_PAREN, "Expected ')' after window specification"))
+                return nullptr;
+
+            return spec;
+        }
+
+        void Parser::parseFrameClause(WindowSpec *spec)
+        {
+            // Parse frame mode (ROWS or RANGE)
+            FrameMode mode;
+            if (match(TokenType::KW_ROWS))
+            {
+                mode = FrameMode::ROWS;
+            }
+            else if (match(TokenType::KW_RANGE))
+            {
+                mode = FrameMode::RANGE;
+            }
+            else
+            {
+                error("Expected ROWS or RANGE for frame clause");
+                return;
+            }
+
+            // Parse BETWEEN or single boundary
+            if (match(TokenType::KW_BETWEEN))
+            {
+                // Parse start boundary
+                FrameBoundary start = parseFrameBoundary();
+
+                if (!consume(TokenType::KW_AND, "Expected AND in frame clause"))
+                    return;
+
+                // Parse end boundary
+                FrameBoundary end = parseFrameBoundary();
+
+                spec->setFrame(mode, start, end);
+            }
+            else
+            {
+                // Single boundary - this is the start, end is CURRENT ROW
+                FrameBoundary start = parseFrameBoundary();
+                FrameBoundary end(FrameBoundaryType::CURRENT_ROW);
+                spec->setFrame(mode, start, end);
+            }
+        }
+
+        FrameBoundary Parser::parseFrameBoundary()
+        {
+            if (match(TokenType::KW_UNBOUNDED))
+            {
+                if (match(TokenType::KW_PRECEDING))
+                {
+                    return FrameBoundary(FrameBoundaryType::UNBOUNDED_PRECEDING);
+                }
+                else if (match(TokenType::KW_FOLLOWING))
+                {
+                    return FrameBoundary(FrameBoundaryType::UNBOUNDED_FOLLOWING);
+                }
+                else
+                {
+                    error("Expected PRECEDING or FOLLOWING after UNBOUNDED");
+                    return FrameBoundary(FrameBoundaryType::CURRENT_ROW);
+                }
+            }
+
+            if (match(TokenType::KW_CURRENT))
+            {
+                if (!consume(TokenType::KW_ROW, "Expected ROW after CURRENT"))
+                    return FrameBoundary(FrameBoundaryType::CURRENT_ROW);
+
+                return FrameBoundary(FrameBoundaryType::CURRENT_ROW);
+            }
+
+            // Parse offset expression
+            auto *offset_expr = parseExpression();
+            if (!offset_expr)
+                return FrameBoundary(FrameBoundaryType::CURRENT_ROW);
+
+            if (match(TokenType::KW_PRECEDING))
+            {
+                return FrameBoundary(FrameBoundaryType::PRECEDING, offset_expr);
+            }
+            else if (match(TokenType::KW_FOLLOWING))
+            {
+                return FrameBoundary(FrameBoundaryType::FOLLOWING, offset_expr);
+            }
+            else
+            {
+                error("Expected PRECEDING or FOLLOWING after offset expression");
+                return FrameBoundary(FrameBoundaryType::CURRENT_ROW);
             }
         }
 

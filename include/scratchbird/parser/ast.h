@@ -56,6 +56,8 @@ namespace scratchbird
             CAST,
             FUNCTION_CALL,
             AGGREGATE_FUNC,  // Phase 1 Task 4.1: Aggregate functions
+            WINDOW_FUNC,     // Phase 1 Task 6: Window functions
+            WINDOW_SPEC,     // Phase 1 Task 6: Window specification (OVER clause)
 
             // Types
             TYPE_NAME,
@@ -417,6 +419,159 @@ namespace scratchbird
             AggregateFunc func_;
             Expression *arg_;     // nullptr for COUNT(*)
             bool distinct_;       // true for COUNT(DISTINCT col)
+        };
+
+        // Window function types (Phase 1 Task 6)
+        enum class WindowFunc : uint8_t
+        {
+            ROW_NUMBER,
+            RANK,
+            DENSE_RANK,
+            LAG,
+            LEAD,
+            FIRST_VALUE,
+            LAST_VALUE,
+            NTH_VALUE
+        };
+
+        // Window frame boundary type (Phase 1 Task 6)
+        enum class FrameBoundaryType : uint8_t
+        {
+            UNBOUNDED_PRECEDING,
+            PRECEDING,
+            CURRENT_ROW,
+            FOLLOWING,
+            UNBOUNDED_FOLLOWING
+        };
+
+        // Window frame mode (Phase 1 Task 6)
+        enum class FrameMode : uint8_t
+        {
+            ROWS,
+            RANGE
+        };
+
+        // Window frame boundary (Phase 1 Task 6)
+        struct FrameBoundary
+        {
+            FrameBoundaryType type;
+            Expression* offset;  // For PRECEDING/FOLLOWING with offset
+
+            FrameBoundary() : type(FrameBoundaryType::CURRENT_ROW), offset(nullptr) {}
+            FrameBoundary(FrameBoundaryType t, Expression* o = nullptr) : type(t), offset(o) {}
+        };
+
+        // Window specification (OVER clause) (Phase 1 Task 6)
+        class WindowSpec : public ASTNode
+        {
+        public:
+            WindowSpec(const SourceSpan &span)
+                : ASTNode(ASTKind::WINDOW_SPEC, span),
+                  has_frame_(false),
+                  frame_mode_(FrameMode::RANGE)
+            {
+            }
+
+            // PARTITION BY
+            void addPartitionBy(Expression* expr)
+            {
+                partition_by_.push_back(expr);
+            }
+            const std::vector<Expression*>& partitionBy() const
+            {
+                return partition_by_;
+            }
+
+            // ORDER BY
+            void addOrderBy(Expression* expr, bool ascending, bool nulls_first)
+            {
+                order_by_.push_back(expr);
+                order_ascending_.push_back(ascending);
+                order_nulls_first_.push_back(nulls_first);
+            }
+            const std::vector<Expression*>& orderBy() const
+            {
+                return order_by_;
+            }
+            const std::vector<bool>& orderAscending() const
+            {
+                return order_ascending_;
+            }
+            const std::vector<bool>& orderNullsFirst() const
+            {
+                return order_nulls_first_;
+            }
+
+            // Frame clause
+            void setFrame(FrameMode mode, const FrameBoundary& start, const FrameBoundary& end)
+            {
+                has_frame_ = true;
+                frame_mode_ = mode;
+                frame_start_ = start;
+                frame_end_ = end;
+            }
+            bool hasFrame() const
+            {
+                return has_frame_;
+            }
+            FrameMode frameMode() const
+            {
+                return frame_mode_;
+            }
+            const FrameBoundary& frameStart() const
+            {
+                return frame_start_;
+            }
+            const FrameBoundary& frameEnd() const
+            {
+                return frame_end_;
+            }
+
+            void accept(ASTVisitor *visitor) override;
+
+        private:
+            std::vector<Expression*> partition_by_;
+            std::vector<Expression*> order_by_;
+            std::vector<bool> order_ascending_;
+            std::vector<bool> order_nulls_first_;
+            bool has_frame_;
+            FrameMode frame_mode_;
+            FrameBoundary frame_start_;
+            FrameBoundary frame_end_;
+        };
+
+        // Window function expression (Phase 1 Task 6)
+        class WindowFuncExpr : public Expression
+        {
+        public:
+            WindowFuncExpr(const SourceSpan &span, WindowFunc func,
+                          const std::vector<Expression*>& args, WindowSpec* window_spec)
+                : Expression(ASTKind::WINDOW_FUNC, span),
+                  func_(func),
+                  args_(args),
+                  window_spec_(window_spec)
+            {
+            }
+
+            WindowFunc func() const
+            {
+                return func_;
+            }
+            const std::vector<Expression*>& args() const
+            {
+                return args_;
+            }
+            WindowSpec* windowSpec() const
+            {
+                return window_spec_;
+            }
+
+            void accept(ASTVisitor *visitor) override;
+
+        private:
+            WindowFunc func_;
+            std::vector<Expression*> args_;
+            WindowSpec* window_spec_;
         };
 
         // ===== Statement Nodes =====
@@ -1374,6 +1529,8 @@ namespace scratchbird
             virtual void visit(CastExpr *node) = 0;
             virtual void visit(FunctionCallExpr *node) = 0;
             virtual void visit(AggregateExpr *node) = 0;  // Phase 1 Task 4.1
+            virtual void visit(WindowFuncExpr *node) = 0; // Phase 1 Task 6
+            virtual void visit(WindowSpec *node) = 0;     // Phase 1 Task 6
 
             // Other nodes
             virtual void visit(ColumnDef *node) = 0;
@@ -1413,6 +1570,8 @@ namespace scratchbird
             void visit(CastExpr *node) override;
             void visit(FunctionCallExpr *node) override;
             void visit(AggregateExpr *node) override;  // Phase 1 Task 4.1
+            void visit(WindowFuncExpr *node) override; // Phase 1 Task 6
+            void visit(WindowSpec *node) override;     // Phase 1 Task 6
             void visit(ColumnDef *node) override;
 
         private:

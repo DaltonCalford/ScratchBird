@@ -8,6 +8,7 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include <cmath>  // For std::log2
 
 namespace scratchbird::core {
     using ID = UuidV7Bytes;
@@ -28,9 +29,10 @@ namespace scratchbird::optimizer
         NESTED_LOOP_JOIN,  // Nested loop join (Phase 1, Task 3.2)
         HASH_JOIN,     // Hash join (Phase 1, Task 3.2)
         MERGE_JOIN,    // Merge join (future)
-        SORT,          // Sort operation (future)
-        AGGREGATE,     // Aggregation (future)
-        LIMIT          // Limit/offset (future)
+        SORT,          // Sort operation (Phase 1, Task 5.1)
+        AGGREGATE,     // Aggregation (Phase 1, Task 4.2)
+        LIMIT,         // Limit/offset (Phase 1, Task 5.2)
+        WINDOW         // Window function (Phase 1, Task 6.2)
     };
 
     /**
@@ -960,6 +962,135 @@ namespace scratchbird::optimizer
         std::shared_ptr<PlanNode> child_plan_;
         int64_t limit_count_;
         int64_t offset_count_;
+    };
+
+    // Window function node (Phase 1 Task 6.2)
+    // Represents window function evaluation
+    class WindowNode : public PlanNode
+    {
+    public:
+        // Window function specification
+        struct WindowFunction
+        {
+            parser::WindowFunc func;                    // Function type (ROW_NUMBER, RANK, etc.)
+            std::vector<parser::Expression*> args;      // Function arguments
+            parser::WindowSpec* window_spec;            // Window specification (OVER clause)
+            std::string output_column;                  // Output column name
+
+            WindowFunction(parser::WindowFunc f,
+                          const std::vector<parser::Expression*>& a,
+                          parser::WindowSpec* spec,
+                          const std::string& col)
+                : func(f), args(a), window_spec(spec), output_column(col) {}
+        };
+
+        WindowNode(std::shared_ptr<PlanNode> child,
+                   const std::vector<WindowFunction>& window_funcs)
+            : PlanNode(PlanNodeType::WINDOW),
+              child_plan_(std::move(child)),
+              window_functions_(window_funcs)
+        {
+            // Copy cost estimates from child
+            startup_cost_ = child_plan_->startupCost();
+            total_cost_ = child_plan_->totalCost();
+            rows_ = child_plan_->rows();
+
+            // Add window function processing cost
+            // Base cost: sorting cost if ORDER BY present
+            // Processing cost: O(n) per window function
+            double window_cost = 0.0;
+            for (const auto& wf : window_functions_)
+            {
+                // Check if window requires sorting
+                if (wf.window_spec && !wf.window_spec->orderBy().empty())
+                {
+                    // Sorting cost: O(n log n)
+                    double n = static_cast<double>(rows_);
+                    window_cost += n * std::log2(n + 1.0) * 0.01; // CPU cost per comparison
+                }
+                // Processing cost: O(n) per function
+                window_cost += static_cast<double>(rows_) * 0.001;
+            }
+
+            total_cost_ += window_cost;
+
+            // Window functions don't change row count
+            // (they add columns but maintain same number of rows)
+        }
+
+        std::shared_ptr<PlanNode> child() const { return child_plan_; }
+        const std::vector<WindowFunction>& windowFunctions() const { return window_functions_; }
+
+        std::string toString(int indent = 0) const override
+        {
+            std::string result = std::string(indent, ' ') + "Window ";
+            result += "(cost=" + std::to_string(total_cost_);
+            result += " rows=" + std::to_string(rows_) + ")\n";
+
+            // Show window functions
+            for (const auto& wf : window_functions_)
+            {
+                result += std::string(indent + 2, ' ');
+                result += windowFuncToString(wf.func) + " -> " + wf.output_column;
+
+                // Show PARTITION BY
+                if (wf.window_spec && !wf.window_spec->partitionBy().empty())
+                {
+                    result += " PARTITION BY (";
+                    for (size_t i = 0; i < wf.window_spec->partitionBy().size(); i++)
+                    {
+                        if (i > 0) result += ", ";
+                        result += "expr";
+                    }
+                    result += ")";
+                }
+
+                // Show ORDER BY
+                if (wf.window_spec && !wf.window_spec->orderBy().empty())
+                {
+                    result += " ORDER BY (";
+                    for (size_t i = 0; i < wf.window_spec->orderBy().size(); i++)
+                    {
+                        if (i > 0) result += ", ";
+                        result += "expr";
+                    }
+                    result += ")";
+                }
+
+                // Show frame clause
+                if (wf.window_spec && wf.window_spec->hasFrame())
+                {
+                    result += " " + std::string(wf.window_spec->frameMode() == parser::FrameMode::ROWS ? "ROWS" : "RANGE");
+                    result += " BETWEEN ... AND ...";
+                }
+
+                result += "\n";
+            }
+
+            // Show child plan
+            result += child_plan_->toString(indent + 2);
+            return result;
+        }
+
+    private:
+        std::shared_ptr<PlanNode> child_plan_;
+        std::vector<WindowFunction> window_functions_;
+
+        static std::string windowFuncToString(parser::WindowFunc func)
+        {
+            switch (func)
+            {
+                case parser::WindowFunc::ROW_NUMBER: return "ROW_NUMBER";
+                case parser::WindowFunc::RANK: return "RANK";
+                case parser::WindowFunc::DENSE_RANK: return "DENSE_RANK";
+                case parser::WindowFunc::LAG: return "LAG";
+                case parser::WindowFunc::LEAD: return "LEAD";
+                case parser::WindowFunc::FIRST_VALUE: return "FIRST_VALUE";
+                case parser::WindowFunc::LAST_VALUE: return "LAST_VALUE";
+                case parser::WindowFunc::NTH_VALUE: return "NTH_VALUE";
+                default: return "UNKNOWN";
+            }
+        }
     };
 
 } // namespace scratchbird::optimizer

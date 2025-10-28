@@ -205,6 +205,9 @@ namespace scratchbird
             // LIMIT/OFFSET execution helper (Phase 1 Task 1.6.5)
             void executeLimit(std::unique_ptr<ResultSet> input_result_set);
 
+            // Window function execution helper (Phase 1 Task 6.5)
+            void executeWindow(std::unique_ptr<ResultSet> input_result_set);
+
             // Expression evaluation
             void evaluateExpression();
             void executeBinaryOp(Opcode op);
@@ -271,6 +274,49 @@ namespace scratchbird
 
             using AggregateState = std::vector<AggregateAccumulator>;
             using GroupMap = std::unordered_map<GroupKey, AggregateState, GroupKeyHash>;
+
+            // Window function execution helpers (Phase 1 Task 6.5)
+            struct WindowFunctionSpec
+            {
+                enum class FuncType {
+                    ROW_NUMBER, RANK, DENSE_RANK,
+                    LAG, LEAD,
+                    FIRST_VALUE, LAST_VALUE, NTH_VALUE
+                };
+
+                FuncType func_type;
+                std::vector<Value> args;  // Function arguments (already evaluated)
+                std::vector<size_t> partition_cols;  // Column indices for PARTITION BY
+                std::vector<size_t> order_cols;       // Column indices for ORDER BY
+                std::vector<bool> order_asc;          // Sort directions
+                bool has_frame;
+                bool frame_is_rows;  // ROWS vs RANGE
+                int64_t frame_start_offset;  // -1 = UNBOUNDED PRECEDING, 0 = CURRENT ROW
+                int64_t frame_end_offset;    // -1 = UNBOUNDED FOLLOWING, 0 = CURRENT ROW
+                std::string output_column;
+            };
+
+            struct Partition
+            {
+                std::vector<size_t> row_indices;  // Indices into input result set
+                std::vector<Value> partition_key; // Partition BY values for this partition
+            };
+
+            // Helper to compute window function for a partition
+            Value computeWindowFunction(const WindowFunctionSpec& spec,
+                                       const Partition& partition,
+                                       size_t current_row_in_partition,
+                                       const ResultSet* input_result);
+
+            // Helper to identify partition boundaries
+            std::vector<Partition> identifyPartitions(const ResultSet* input_result,
+                                                      const std::vector<size_t>& partition_cols);
+
+            // Helper to sort rows within a partition
+            void sortPartition(Partition& partition,
+                             const ResultSet* input_result,
+                             const std::vector<size_t>& order_cols,
+                             const std::vector<bool>& order_asc);
         };
 
     } // namespace sblr
