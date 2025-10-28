@@ -1630,6 +1630,74 @@ namespace scratchbird
             current_result_->writeByte(static_cast<uint8_t>(node->args().size()));
         }
 
+        void BytecodeGenerator::visit(parser::CoalesceExpr *node)
+        {
+            // Phase 1 Task 8: COALESCE bytecode generation
+            // Generate bytecode for all arguments (they go on stack in order)
+            for (auto *arg : node->args())
+            {
+                arg->accept(this);
+            }
+
+            // Emit COALESCE opcode
+            current_result_->writeByte(static_cast<uint8_t>(Opcode::COALESCE));
+
+            // Emit argument count
+            current_result_->writeByte(static_cast<uint8_t>(node->args().size()));
+        }
+
+        void BytecodeGenerator::visit(parser::NullIfExpr *node)
+        {
+            // Phase 1 Task 8: NULLIF bytecode generation
+            // Generate bytecode for both arguments
+            node->expr1()->accept(this);
+            node->expr2()->accept(this);
+
+            // Emit NULLIF opcode
+            current_result_->writeByte(static_cast<uint8_t>(Opcode::NULLIF));
+        }
+
+        void BytecodeGenerator::visit(parser::CaseExpr *node)
+        {
+            // Phase 1 Task 8: CASE bytecode generation
+            // This generates a simple linearized bytecode that the executor will evaluate sequentially
+
+            // Generate case operand if present (simple CASE)
+            if (node->isSimpleCase())
+            {
+                node->caseOperand()->accept(this);
+            }
+
+            // Generate bytecode for all WHEN conditions and results
+            for (const auto& when : node->whenClauses())
+            {
+                when.condition->accept(this);
+                when.result->accept(this);
+            }
+
+            // Generate bytecode for ELSE result if present
+            if (node->elseResult())
+            {
+                node->elseResult()->accept(this);
+            }
+
+            // Emit CASE_WHEN opcode
+            current_result_->writeByte(static_cast<uint8_t>(Opcode::CASE_WHEN));
+
+            // Emit flags:
+            // bit 0: has case operand (simple CASE)
+            // bit 1: has else clause
+            uint8_t flags = 0;
+            if (node->isSimpleCase())
+                flags |= 0x01;
+            if (node->elseResult())
+                flags |= 0x02;
+            current_result_->writeByte(flags);
+
+            // Emit WHEN clause count
+            current_result_->writeByte(static_cast<uint8_t>(node->whenClauses().size()));
+        }
+
         // ===== Disassembler Implementation =====
 
         std::string BytecodeDisassembler::disassemble(const std::vector<uint8_t> &bytecode)

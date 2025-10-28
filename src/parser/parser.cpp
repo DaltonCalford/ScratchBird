@@ -2537,6 +2537,114 @@ namespace scratchbird
                 return arena_.make<JSONFuncExpr>(span, json_func, args);
             }
 
+            // COALESCE function (Phase 1 Task 8)
+            if (match(TokenType::KW_COALESCE))
+            {
+                if (!consume(TokenType::LEFT_PAREN, "Expected '(' after COALESCE"))
+                    return nullptr;
+
+                std::vector<Expression*> args;
+                do
+                {
+                    auto *arg = parseExpression();
+                    if (!arg)
+                        return nullptr;
+                    args.push_back(arg);
+                } while (match(TokenType::COMMA));
+
+                if (!consume(TokenType::RIGHT_PAREN, "Expected ')' after COALESCE arguments"))
+                    return nullptr;
+
+                auto span = makeSpan(start_loc, previous().location);
+                return arena_.make<CoalesceExpr>(span, args);
+            }
+
+            // NULLIF function (Phase 1 Task 8)
+            if (match(TokenType::KW_NULLIF))
+            {
+                if (!consume(TokenType::LEFT_PAREN, "Expected '(' after NULLIF"))
+                    return nullptr;
+
+                auto *expr1 = parseExpression();
+                if (!expr1)
+                    return nullptr;
+
+                if (!consume(TokenType::COMMA, "Expected ',' between NULLIF arguments"))
+                    return nullptr;
+
+                auto *expr2 = parseExpression();
+                if (!expr2)
+                    return nullptr;
+
+                if (!consume(TokenType::RIGHT_PAREN, "Expected ')' after NULLIF arguments"))
+                    return nullptr;
+
+                auto span = makeSpan(start_loc, previous().location);
+                return arena_.make<NullIfExpr>(span, expr1, expr2);
+            }
+
+            // CASE expression (Phase 1 Task 8)
+            if (match(TokenType::KW_CASE))
+            {
+                Expression* case_operand = nullptr;
+                std::vector<CaseExpr::WhenClause> when_clauses;
+                Expression* else_result = nullptr;
+
+                // Check if this is simple CASE (has operand before WHEN)
+                if (!check(TokenType::KW_WHEN))
+                {
+                    case_operand = parseExpression();
+                    if (!case_operand)
+                        return nullptr;
+                }
+
+                // Parse WHEN clauses
+                while (match(TokenType::KW_WHEN))
+                {
+                    auto *condition = parseExpression();
+                    if (!condition)
+                        return nullptr;
+
+                    if (!consume(TokenType::KW_THEN, "Expected THEN after WHEN condition"))
+                        return nullptr;
+
+                    auto *result = parseExpression();
+                    if (!result)
+                        return nullptr;
+
+                    when_clauses.push_back({condition, result});
+                }
+
+                if (when_clauses.empty())
+                {
+                    error("CASE expression must have at least one WHEN clause");
+                    return nullptr;
+                }
+
+                // Optional ELSE clause
+                if (match(TokenType::KW_ELSE))
+                {
+                    else_result = parseExpression();
+                    if (!else_result)
+                        return nullptr;
+                }
+
+                if (!consume(TokenType::KW_END, "Expected END to close CASE expression"))
+                    return nullptr;
+
+                auto span = makeSpan(start_loc, previous().location);
+                if (case_operand)
+                {
+                    // Simple CASE
+                    return arena_.make<CaseExpr>(span, case_operand, when_clauses, else_result);
+                }
+                else
+                {
+                    // Searched CASE
+                    return arena_.make<CaseExpr>(span, when_clauses, else_result);
+                }
+            }
+
             if (check(TokenType::IDENTIFIER))
             {
                 auto name = current().value.string_id;
