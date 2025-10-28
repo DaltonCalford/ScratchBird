@@ -10,6 +10,7 @@
 #include "scratchbird/core/sweep_manager.h"
 #include "scratchbird/core/garbage_collector.h"
 #include "scratchbird/core/proc_array.h"
+#include <nlohmann/json.hpp>
 #include <sstream>
 #include <iomanip>
 #include <iostream>
@@ -18,10 +19,152 @@
 #include <chrono>
 #include <map>
 
+using json = nlohmann::json;
+
 namespace scratchbird
 {
     namespace sblr
     {
+        // ===== JSON Helper Functions =====
+
+        // Parse JSONPath expression ($.field.subfield[0].nested)
+        // Returns a list of path components
+        static std::vector<std::string> parseJSONPath(const std::string& path) {
+            std::vector<std::string> components;
+
+            // Handle empty path
+            if (path.empty()) {
+                return components;
+            }
+
+            // Handle MySQL-style paths: $.field.subfield
+            if (path[0] == '$') {
+                std::string current;
+                bool in_bracket = false;
+
+                for (size_t i = 1; i < path.length(); i++) {
+                    char c = path[i];
+
+                    if (c == '.' && !in_bracket) {
+                        if (!current.empty()) {
+                            components.push_back(current);
+                            current.clear();
+                        }
+                    } else if (c == '[') {
+                        if (!current.empty()) {
+                            components.push_back(current);
+                            current.clear();
+                        }
+                        in_bracket = true;
+                    } else if (c == ']') {
+                        if (!current.empty()) {
+                            components.push_back(current);
+                            current.clear();
+                        }
+                        in_bracket = false;
+                    } else {
+                        current += c;
+                    }
+                }
+
+                if (!current.empty()) {
+                    components.push_back(current);
+                }
+            } else {
+                // Simple field name
+                components.push_back(path);
+            }
+
+            return components;
+        }
+
+        // Extract value from JSON using path components
+        static json extractJSONValue(const json& j, const std::vector<std::string>& path) {
+            json current = j;
+
+            for (const auto& component : path) {
+                // Try as array index first
+                try {
+                    size_t idx = std::stoull(component);
+                    if (current.is_array() && idx < current.size()) {
+                        current = current[idx];
+                        continue;
+                    }
+                } catch (...) {
+                    // Not a number, treat as object key
+                }
+
+                // Try as object key
+                if (current.is_object() && current.contains(component)) {
+                    current = current[component];
+                } else {
+                    // Path not found, return null
+                    return json();
+                }
+            }
+
+            return current;
+        }
+
+        // Convert Value to json
+        static json valueToJSON(const Value& val) {
+            if (val.isNull()) {
+                return json();
+            }
+
+            switch (val.type()) {
+                case core::DataType::INT8:
+                case core::DataType::INT16:
+                case core::DataType::INT32:
+                case core::DataType::INT64:
+                    return json(val.toInt64());
+
+                case core::DataType::UINT8:
+                case core::DataType::UINT16:
+                case core::DataType::UINT32:
+                case core::DataType::UINT64:
+                    return json(static_cast<uint64_t>(val.toInt64()));
+
+                case core::DataType::FLOAT32:
+                case core::DataType::FLOAT64:
+                    return json(val.toDouble());
+
+                case core::DataType::BOOLEAN:
+                    return json(val.toInt64() != 0);
+
+                case core::DataType::VARCHAR:
+                case core::DataType::TEXT:
+                case core::DataType::CHAR:
+                    return json(val.toString());
+
+                case core::DataType::JSON:
+                    // Parse existing JSON
+                    try {
+                        return json::parse(val.toString());
+                    } catch (...) {
+                        return json();
+                    }
+
+                default:
+                    // For other types, convert to string
+                    return json(val.toString());
+            }
+        }
+
+        // Convert json to Value
+        static Value jsonToValue(const json& j, bool as_text = false) {
+            if (j.is_null()) {
+                return Value::makeNull();
+            }
+
+            if (as_text) {
+                // Return as text string
+                return Value::makeText(j.dump());
+            } else {
+                // Return as JSON type
+                return Value::makeJSON(j.dump());
+            }
+        }
 
         // ===== Value Implementation =====
         // Value is now an alias for core::TypedValue, so no implementation needed here
@@ -4218,18 +4361,28 @@ namespace scratchbird
                     }
                     else
                     {
-                        // TODO: Implement actual JSON path extraction
-                        // For now, return the JSON data as-is (stub implementation)
-                        // In production, parse json_data and extract value at path
-                        if (op == Opcode::JSON_DOUBLE_ARROW)
-                        {
-                            // ->> returns text
-                            push(Value::makeText("{}"));  // Stub: return empty object as text
-                        }
-                        else
-                        {
-                            // -> and JSON_EXTRACT return JSON
-                            push(Value::makeJSON("{}"));  // Stub: return empty object
+                        try {
+                            // Parse JSON data
+                            json j = json::parse(json_data.toString());
+
+                            // Parse JSONPath and extract value
+                            std::vector<std::string> path_components = parseJSONPath(path.toString());
+                            json result = extractJSONValue(j, path_components);
+
+                            // Return based on operator type
+                            if (op == Opcode::JSON_DOUBLE_ARROW)
+                            {
+                                // ->> returns text
+                                push(jsonToValue(result, true));
+                            }
+                            else
+                            {
+                                // -> and JSON_EXTRACT return JSON
+                                push(jsonToValue(result, false));
+                            }
+                        } catch (const json::exception& e) {
+                            // Invalid JSON, return null
+                            push(Value::makeNull());
                         }
                     }
                     break;
@@ -4244,10 +4397,11 @@ namespace scratchbird
                     }
 
                     // Pop path elements (in reverse order)
-                    std::vector<Value> path_elements;
+                    std::vector<std::string> path_components;
                     for (uint8_t i = 0; i < arg_count - 1; i++)
                     {
-                        path_elements.push_back(pop());
+                        Value path_elem = pop();
+                        path_components.insert(path_components.begin(), path_elem.toString());
                     }
                     Value json_data = pop();
 
@@ -4257,9 +4411,19 @@ namespace scratchbird
                     }
                     else
                     {
-                        // TODO: Implement actual JSONB path extraction
-                        // For now, return stub JSONB value
-                        push(Value::makeJSON("{}"));  // Stub
+                        try {
+                            // Parse JSON data
+                            json j = json::parse(json_data.toString());
+
+                            // Extract value using path components
+                            json result = extractJSONValue(j, path_components);
+
+                            // Return as JSON
+                            push(jsonToValue(result, false));
+                        } catch (const json::exception& e) {
+                            // Invalid JSON, return null
+                            push(Value::makeNull());
+                        }
                     }
                     break;
                 }
@@ -4282,14 +4446,47 @@ namespace scratchbird
                     }
                     else
                     {
-                        // TODO: Implement actual JSON path array extraction
-                        if (op == Opcode::JSON_HASH_DOUBLE_ARROW)
-                        {
-                            push(Value::makeText("{}"));  // Stub
-                        }
-                        else
-                        {
-                            push(Value::makeJSON("{}"));  // Stub
+                        try {
+                            // Parse JSON data
+                            json j = json::parse(json_data.toString());
+
+                            // Parse path array (PostgreSQL uses text arrays like '{field,subfield}')
+                            // For now, assume comma-separated path
+                            std::string path_str = path_array.toString();
+                            std::vector<std::string> path_components;
+
+                            // Remove braces if present
+                            if (!path_str.empty() && path_str[0] == '{' && path_str.back() == '}') {
+                                path_str = path_str.substr(1, path_str.length() - 2);
+                            }
+
+                            // Split by comma
+                            std::stringstream ss(path_str);
+                            std::string component;
+                            while (std::getline(ss, component, ',')) {
+                                // Trim whitespace
+                                component.erase(0, component.find_first_not_of(" \t"));
+                                component.erase(component.find_last_not_of(" \t") + 1);
+                                path_components.push_back(component);
+                            }
+
+                            // Extract value using path components
+                            json result = extractJSONValue(j, path_components);
+
+                            // Return based on operator type
+                            if (op == Opcode::JSON_HASH_DOUBLE_ARROW)
+                            {
+                                // #>> returns text
+                                push(jsonToValue(result, true));
+                            }
+                            else
+                            {
+                                // #> returns JSON
+                                push(jsonToValue(result, false));
+                            }
+                        } catch (const json::exception& e) {
+                            // Invalid JSON, return null
+                            push(Value::makeNull());
                         }
                     }
                     break;
@@ -4304,7 +4501,7 @@ namespace scratchbird
                         error("JSON_OBJECT expects even number of arguments (key-value pairs)");
                     }
 
-                    // Pop key-value pairs
+                    // Pop key-value pairs (in reverse order due to stack)
                     std::vector<std::pair<Value, Value>> pairs;
                     for (uint8_t i = 0; i < arg_count / 2; i++)
                     {
@@ -4313,16 +4510,19 @@ namespace scratchbird
                         pairs.push_back({key, value});
                     }
 
-                    // TODO: Implement actual JSON object construction
-                    // For now, return stub JSON object
-                    if (op == Opcode::JSONB_BUILD_OBJECT)
-                    {
-                        push(Value::makeJSON("{}"));  // Stub JSONB
+                    // Reverse to get correct order
+                    std::reverse(pairs.begin(), pairs.end());
+
+                    // Build JSON object
+                    json obj = json::object();
+                    for (const auto& pair : pairs) {
+                        std::string key_str = pair.first.toString();
+                        json val_json = valueToJSON(pair.second);
+                        obj[key_str] = val_json;
                     }
-                    else
-                    {
-                        push(Value::makeJSON("{}"));  // Stub JSON
-                    }
+
+                    // Return as JSON
+                    push(Value::makeJSON(obj.dump()));
                     break;
                 }
 
@@ -4331,16 +4531,24 @@ namespace scratchbird
                 {
                     uint8_t arg_count = readByte();
 
-                    // Pop array elements
+                    // Pop array elements (in reverse order due to stack)
                     std::vector<Value> elements;
                     for (uint8_t i = 0; i < arg_count; i++)
                     {
                         elements.push_back(pop());
                     }
 
-                    // TODO: Implement actual JSON array construction
-                    // For now, return stub JSON array
-                    push(Value::makeJSON("[]"));  // Stub
+                    // Reverse to get correct order
+                    std::reverse(elements.begin(), elements.end());
+
+                    // Build JSON array
+                    json arr = json::array();
+                    for (const auto& elem : elements) {
+                        arr.push_back(valueToJSON(elem));
+                    }
+
+                    // Return as JSON
+                    push(Value::makeJSON(arr.dump()));
                     break;
                 }
 
@@ -4363,9 +4571,63 @@ namespace scratchbird
                     }
                     else
                     {
-                        // TODO: Implement actual JSON modification
-                        // For now, return the original JSON
-                        push(json_data);  // Stub: return input unchanged
+                        try {
+                            // Parse JSON data
+                            json j = json::parse(json_data.toString());
+
+                            // Parse JSONPath
+                            std::vector<std::string> path_components = parseJSONPath(path.toString());
+
+                            // Navigate to parent and set value
+                            if (!path_components.empty()) {
+                                json* current = &j;
+
+                                // Navigate to parent
+                                for (size_t i = 0; i < path_components.size() - 1; i++) {
+                                    const auto& component = path_components[i];
+
+                                    // Try as array index
+                                    try {
+                                        size_t idx = std::stoull(component);
+                                        if (current->is_array() && idx < current->size()) {
+                                            current = &((*current)[idx]);
+                                            continue;
+                                        }
+                                    } catch (...) {}
+
+                                    // Try as object key
+                                    if (current->is_object()) {
+                                        if (!current->contains(component)) {
+                                            (*current)[component] = json::object();
+                                        }
+                                        current = &((*current)[component]);
+                                    } else {
+                                        // Cannot navigate further
+                                        push(json_data);
+                                        break;
+                                    }
+                                }
+
+                                // Set the final value
+                                const auto& final_key = path_components.back();
+                                if (current->is_object()) {
+                                    (*current)[final_key] = valueToJSON(new_value);
+                                } else if (current->is_array()) {
+                                    try {
+                                        size_t idx = std::stoull(final_key);
+                                        if (idx < current->size()) {
+                                            (*current)[idx] = valueToJSON(new_value);
+                                        }
+                                    } catch (...) {}
+                                }
+                            }
+
+                            // Return modified JSON
+                            push(Value::makeJSON(j.dump()));
+                        } catch (const json::exception& e) {
+                            // Invalid JSON, return original
+                            push(json_data);
+                        }
                     }
                     break;
                 }
@@ -4378,7 +4640,7 @@ namespace scratchbird
                         error("JSON_INSERT expects 3 arguments (json, path, value)");
                     }
 
-                    Value value = pop();
+                    Value new_value = pop();
                     Value path = pop();
                     Value json_data = pop();
 
@@ -4388,8 +4650,70 @@ namespace scratchbird
                     }
                     else
                     {
-                        // TODO: Implement actual JSON insertion
-                        push(json_data);  // Stub: return input unchanged
+                        try {
+                            // Parse JSON data
+                            json j = json::parse(json_data.toString());
+
+                            // Parse JSONPath
+                            std::vector<std::string> path_components = parseJSONPath(path.toString());
+
+                            // JSON_INSERT only inserts if path doesn't exist
+                            if (!path_components.empty()) {
+                                json* current = &j;
+                                bool exists = true;
+
+                                // Navigate to parent, checking if path exists
+                                for (size_t i = 0; i < path_components.size() - 1 && exists; i++) {
+                                    const auto& component = path_components[i];
+
+                                    // Try as array index
+                                    try {
+                                        size_t idx = std::stoull(component);
+                                        if (current->is_array() && idx < current->size()) {
+                                            current = &((*current)[idx]);
+                                            continue;
+                                        }
+                                    } catch (...) {}
+
+                                    // Try as object key
+                                    if (current->is_object() && current->contains(component)) {
+                                        current = &((*current)[component]);
+                                    } else {
+                                        exists = false;
+                                    }
+                                }
+
+                                // Check if final key exists
+                                if (exists) {
+                                    const auto& final_key = path_components.back();
+                                    if (current->is_object() && current->contains(final_key)) {
+                                        // Path exists, don't insert
+                                        push(json_data);
+                                        break;
+                                    } else if (current->is_array()) {
+                                        try {
+                                            size_t idx = std::stoull(final_key);
+                                            if (idx < current->size()) {
+                                                // Path exists, don't insert
+                                                push(json_data);
+                                                break;
+                                            }
+                                        } catch (...) {}
+                                    }
+
+                                    // Path doesn't exist, insert value
+                                    if (current->is_object()) {
+                                        (*current)[final_key] = valueToJSON(new_value);
+                                    }
+                                }
+                            }
+
+                            // Return modified JSON
+                            push(Value::makeJSON(j.dump()));
+                        } catch (const json::exception& e) {
+                            // Invalid JSON, return original
+                            push(json_data);
+                        }
                     }
                     break;
                 }
@@ -4411,8 +4735,60 @@ namespace scratchbird
                     }
                     else
                     {
-                        // TODO: Implement actual JSON removal
-                        push(json_data);  // Stub: return input unchanged
+                        try {
+                            // Parse JSON data
+                            json j = json::parse(json_data.toString());
+
+                            // Parse JSONPath
+                            std::vector<std::string> path_components = parseJSONPath(path.toString());
+
+                            // Navigate to parent and remove value
+                            if (!path_components.empty()) {
+                                json* current = &j;
+
+                                // Navigate to parent
+                                for (size_t i = 0; i < path_components.size() - 1; i++) {
+                                    const auto& component = path_components[i];
+
+                                    // Try as array index
+                                    try {
+                                        size_t idx = std::stoull(component);
+                                        if (current->is_array() && idx < current->size()) {
+                                            current = &((*current)[idx]);
+                                            continue;
+                                        }
+                                    } catch (...) {}
+
+                                    // Try as object key
+                                    if (current->is_object() && current->contains(component)) {
+                                        current = &((*current)[component]);
+                                    } else {
+                                        // Path not found, return original
+                                        push(json_data);
+                                        break;
+                                    }
+                                }
+
+                                // Remove the final key
+                                const auto& final_key = path_components.back();
+                                if (current->is_object() && current->contains(final_key)) {
+                                    current->erase(final_key);
+                                } else if (current->is_array()) {
+                                    try {
+                                        size_t idx = std::stoull(final_key);
+                                        if (idx < current->size()) {
+                                            current->erase(current->begin() + idx);
+                                        }
+                                    } catch (...) {}
+                                }
+                            }
+
+                            // Return modified JSON
+                            push(Value::makeJSON(j.dump()));
+                        } catch (const json::exception& e) {
+                            // Invalid JSON, return original
+                            push(json_data);
+                        }
                     }
                     break;
                 }
