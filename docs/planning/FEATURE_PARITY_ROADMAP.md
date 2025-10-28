@@ -29,15 +29,17 @@ This roadmap outlines the work required to achieve **1:1 feature parity** with a
 **Timeline**: 2.5-4 months (1 dev) or 1.25-2 months (2 devs)
 **Total Effort**: 400-600 hours
 **Goal**: Enable basic SQL applications to use ScratchBird
+**Current Progress**: 7/8 tasks complete (87.5%)
 
 ### Blockers Addressed
 Without these features, ScratchBird **cannot be used** for even simple applications:
-- ❌ Cannot modify or delete data (no UPDATE/DELETE)
-- ❌ Cannot perform multi-table queries (no JOINs)
-- ❌ Cannot aggregate data (no GROUP BY)
-- ❌ Cannot perform analytics (no window functions)
-- ❌ Cannot use modern JSON data (no JSON functions)
-- ❌ All queries execute without optimization (no query optimizer)
+- ✅ Cannot modify or delete data (no UPDATE/DELETE) → **FIXED: UPDATE/DELETE complete**
+- ✅ Cannot perform multi-table queries (no JOINs) → **FIXED: All JOIN types complete**
+- ✅ Cannot aggregate data (no GROUP BY) → **FIXED: Aggregation + HAVING complete**
+- ✅ Cannot perform analytics (no window functions) → **FIXED: 8 window functions complete**
+- ✅ Cannot use modern JSON data (no JSON functions) → **FIXED: 14 JSON functions complete**
+- ✅ All queries execute without optimization (no query optimizer) → **FIXED: Cost-based optimizer complete**
+- ⏳ Cannot use conditional expressions → **IN PROGRESS: COALESCE/NULLIF/CASE remaining**
 
 ### Tasks (Priority Order)
 
@@ -644,53 +646,72 @@ Without these features, ScratchBird **cannot be used** for even simple applicati
 
 ---
 
-#### 7. JSON Functions (80-120 hours) - CRITICAL FOR MODERN APPS - **IN PROGRESS** 🚧
+#### 7. JSON Functions (80-120 hours) - CRITICAL FOR MODERN APPS - ✅ **100% COMPLETE**
 **Why Seventh**: Modern web applications heavily use JSON.
 
-- [x] **7.1 JSON Extraction Functions** (30-45 hours) - **INFRASTRUCTURE COMPLETE** ✅
-  - [x] Implement JSON_EXTRACT (path-based extraction) - Parser/Bytecode/Executor stubs ✅
-  - [x] Implement jsonb_extract_path (PostgreSQL style) - Parser/Bytecode/Executor stubs ✅
-  - [x] Implement -> and ->> operators - Full support ✅
-  - [x] Implement #> and #>> operators (path arrays) - Full support ✅
+- [x] **7.1 JSON Extraction Functions** (30-45 hours) - ✅ **PRODUCTION COMPLETE**
+  - [x] Implement JSON_EXTRACT (path-based extraction) - Full production implementation ✅
+  - [x] Implement jsonb_extract_path (PostgreSQL style) - Full production implementation ✅
+  - [x] Implement -> and ->> operators - Full production implementation ✅
+  - [x] Implement #> and #>> operators (path arrays) - Full production implementation ✅
   - [x] Add SBLR opcodes for JSON extraction - 6 opcodes added (0xEA-0xEF) ✅
-  - **Status**: Infrastructure complete, production JSON parsing pending
-  - **Deliverable**: `SELECT data->>'field' FROM table` - Parses & executes (stub values)
+  - [x] Replace executor stubs with nlohmann/json calls ✅
+  - [x] Implement full JSONPath parsing ($.field.subfield[0].nested) ✅
+  - **Status**: Production complete, all extraction functions working
+  - **Deliverable**: `SELECT data->>'field' FROM table` - ✅ WORKING
 
-- [x] **7.2 JSON Construction Functions** (30-45 hours) - **INFRASTRUCTURE COMPLETE** ✅
-  - [x] Implement JSON_OBJECT (build JSON from key-value pairs) - Parser/Bytecode/Executor stubs ✅
-  - [x] Implement JSON_ARRAY (build JSON array) - Parser/Bytecode/Executor stubs ✅
-  - [x] Implement jsonb_build_object (PostgreSQL style) - Parser/Bytecode/Executor stubs ✅
-  - [x] Implement jsonb_build_array (PostgreSQL style) - Parser/Bytecode/Executor stubs ✅
+- [x] **7.2 JSON Construction Functions** (30-45 hours) - ✅ **PRODUCTION COMPLETE**
+  - [x] Implement JSON_OBJECT (build JSON from key-value pairs) - Full production implementation ✅
+  - [x] Implement JSON_ARRAY (build JSON array) - Full production implementation ✅
+  - [x] Implement jsonb_build_object (PostgreSQL style) - Full production implementation ✅
+  - [x] Implement jsonb_build_array (PostgreSQL style) - Full production implementation ✅
   - [x] Add SBLR opcodes for JSON construction - 4 opcodes added (0xF0-0xF3) ✅
-  - **Status**: Infrastructure complete, production JSON construction pending
-  - **Deliverable**: `SELECT JSON_OBJECT('key', value)` - Parses & executes (stub values)
+  - [x] Build objects from key-value pairs with type conversion ✅
+  - [x] Build arrays with mixed types (strings, numbers, booleans, null) ✅
+  - **Status**: Production complete, all construction functions working
+  - **Deliverable**: `SELECT JSON_OBJECT('key', value)` - ✅ WORKING
 
-- [x] **7.3 JSON Modification Functions** (20-30 hours) - **INFRASTRUCTURE COMPLETE** ✅
-  - [x] Implement JSON_SET (set value at path) - Parser/Bytecode/Executor stubs ✅
-  - [x] Implement JSON_INSERT (insert value) - Parser/Bytecode/Executor stubs ✅
-  - [x] Implement JSON_REMOVE (remove value) - Parser/Bytecode/Executor stubs ✅
-  - [x] Implement jsonb_set (PostgreSQL style) - Parser/Bytecode/Executor stubs ✅
+- [x] **7.3 JSON Modification Functions** (20-30 hours) - ✅ **PRODUCTION COMPLETE**
+  - [x] Implement JSON_SET (set value at path) - Full production implementation ✅
+  - [x] Implement JSON_INSERT (insert value) - Full production implementation ✅
+  - [x] Implement JSON_REMOVE (remove value) - Full production implementation ✅
+  - [x] Implement jsonb_set (PostgreSQL style) - Full production implementation ✅
   - [x] Add SBLR opcodes for JSON modification - 4 opcodes added (0xF4-0xF7) ✅
-  - **Status**: Infrastructure complete, production JSON modification pending
-  - **Deliverable**: `SELECT JSON_SET(data, '$.field', 'value')` - Parses & executes (stub values)
+  - [x] Set/create values at path with nested object creation ✅
+  - [x] Insert only if path doesn't exist ✅
+  - [x] Remove fields and array elements ✅
+  - **Status**: Production complete, all modification functions working
+  - **Deliverable**: `SELECT JSON_SET(data, '$.field', 'value')` - ✅ WORKING
 
-**Infrastructure Complete (Commits: 6801a93, 9ad8b4c, 1d019aa, 7c75c82)**:
+**Production Complete (Commit: 2b3a1b4, October 28, 2025)**:
 - ✅ Lexer: 10 keywords + 4 operators (->,->> ,#>,#>>)
 - ✅ Parser: Full JSON function & operator parsing
 - ✅ AST: JSONFuncExpr with 14 function types
 - ✅ Semantic Analysis: Argument validation & type checking
 - ✅ Bytecode: 14 opcodes (0xEA-0xF7) with generation
-- ✅ Executor: Stub implementations with proper stack handling
-- ✅ Tests: 22 parser/semantic tests + 10 library tests
+- ✅ Executor: **Production implementations with nlohmann/json** (~500 lines)
+- ✅ Tests: 22 parser tests + 10 library tests + 21 integration tests = 53 total
 - ✅ JSON Library: nlohmann/json v3.11.3 integrated via FetchContent
+- ✅ JSONPath Parser: parseJSONPath() supports $.field.subfield[0].nested syntax
+- ✅ Helper Functions: extractJSONValue(), valueToJSON(), jsonToValue()
+- ✅ Error Handling: Invalid JSON, NULL inputs, nonexistent paths
+- ✅ MySQL Compatibility: JSON_EXTRACT, JSON_OBJECT, JSON_ARRAY, JSON_SET, JSON_INSERT, JSON_REMOVE
+- ✅ PostgreSQL Compatibility: ->, ->>, #>, #>>, JSONB_* functions
 
-**Production TODO** (15-20 hours remaining):
-- [ ] Replace executor stubs with nlohmann/json calls (8-10 hours)
-- [ ] Implement JSONPath parsing for $.field.subfield syntax (4-6 hours)
-- [ ] Add integration tests with real JSON data (3-4 hours)
-- [ ] Performance optimization for JSONB binary format (optional)
+**All Production Tasks Complete** ✅:
+- [x] Replace executor stubs with nlohmann/json calls (8-10 hours) ✅ Done Oct 28
+- [x] Implement JSONPath parsing for $.field.subfield syntax (4-6 hours) ✅ Done Oct 28
+- [x] Add integration tests with real JSON data (3-4 hours) ✅ Done Oct 28
+- [ ] Performance optimization for JSONB binary format (optional) - Deferred to post-Alpha
 
-**Phase 1.7 Completion Criteria**: JSON data manipulation works - **LIBRARY READY** ✅
+**Phase 1.7 Completion Criteria**: JSON data manipulation works - ✅ **PRODUCTION READY**
+
+**Implementation Summary**:
+- 14 JSON functions fully implemented
+- ~500 lines of production executor code
+- 21 integration tests with real JSON data
+- Full MySQL and PostgreSQL compatibility
+- Complete error handling and edge cases
 
 ---
 
@@ -718,15 +739,17 @@ Without these features, ScratchBird **cannot be used** for even simple applicati
 ### Phase 1 Completion Criteria
 
 **Definition of Done**:
-- ✅ Query optimizer selects optimal plans for single and multi-table queries
-- ✅ Full CRUD operations work (INSERT, SELECT, UPDATE, DELETE)
-- ✅ Multi-table queries with JOINs work
-- ✅ Aggregation with GROUP BY and HAVING works
-- ✅ Sorting with ORDER BY and pagination with LIMIT/OFFSET works
-- ✅ Analytics queries with window functions work
-- ✅ JSON data can be queried and manipulated
-- ✅ Conditional expressions (COALESCE, NULLIF, CASE) work
-- ✅ EXPLAIN shows query plans with costs
+- ✅ Query optimizer selects optimal plans for single and multi-table queries → **DONE (Oct 25)**
+- ✅ Full CRUD operations work (INSERT, SELECT, UPDATE, DELETE) → **DONE (Oct 27)**
+- ✅ Multi-table queries with JOINs work → **DONE (Oct 26)**
+- ✅ Aggregation with GROUP BY and HAVING works → **DONE (Oct 27)**
+- ✅ Sorting with ORDER BY and pagination with LIMIT/OFFSET works → **DONE (Oct 27)**
+- ✅ Analytics queries with window functions work → **DONE (Oct 27)**
+- ✅ JSON data can be queried and manipulated → **DONE (Oct 28) ← NEW!**
+- ⏳ Conditional expressions (COALESCE, NULLIF, CASE) work → **TODO (Task 8)**
+- ✅ EXPLAIN shows query plans with costs → **DONE (Oct 25)**
+
+**Phase 1 Progress**: 7/8 core tasks complete (87.5%)
 
 **Acceptance Test**:
 ```sql
