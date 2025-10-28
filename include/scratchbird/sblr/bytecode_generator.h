@@ -139,6 +139,7 @@ namespace scratchbird
             void visit(parser::CoalesceExpr *node) override;    // Phase 1 Task 8
             void visit(parser::NullIfExpr *node) override;      // Phase 1 Task 8
             void visit(parser::CaseExpr *node) override;        // Phase 1 Task 8
+            void visit(parser::ArrayLiteral *node) override;    // Phase 2 Task 12
             void visit(parser::ColumnDef *node) override;
 
         private:

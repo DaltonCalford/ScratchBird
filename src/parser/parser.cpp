@@ -2146,6 +2146,36 @@ namespace scratchbird
                 {
                     op = BinaryOp::ILIKE;
                 }
+                // Array operators (Phase 2 Task 12)
+                else if (match(TokenType::AMPERSAND_AMPERSAND))
+                {
+                    op = BinaryOp::ARRAY_OVERLAP;
+                }
+                else if (match(TokenType::AT_GREATER))
+                {
+                    op = BinaryOp::ARRAY_CONTAINS;
+                }
+                else if (match(TokenType::LESS_AT))
+                {
+                    op = BinaryOp::ARRAY_CONTAINED_BY;
+                }
+                // Regex operators (Phase 2 Task 13)
+                else if (match(TokenType::TILDE))
+                {
+                    op = BinaryOp::REGEX_MATCH;
+                }
+                else if (match(TokenType::TILDE_STAR))
+                {
+                    op = BinaryOp::REGEX_MATCH_CI;
+                }
+                else if (match(TokenType::EXCLAIM_TILDE))
+                {
+                    op = BinaryOp::REGEX_NOT_MATCH;
+                }
+                else if (match(TokenType::EXCLAIM_TILDE_STAR))
+                {
+                    op = BinaryOp::REGEX_NOT_MATCH_CI;
+                }
                 else
                 {
                     break;
@@ -2331,9 +2361,10 @@ namespace scratchbird
                 return arena_.make<CastExpr>(span, expr, target_type, is_try_cast);
             }
 
-            // Aggregate functions (Phase 1 Task 4.1)
+            // Aggregate functions (Phase 1 Task 4.1, Phase 2 Task 12)
             if (match(TokenType::KW_COUNT) || match(TokenType::KW_SUM) ||
-                match(TokenType::KW_AVG) || match(TokenType::KW_MIN) || match(TokenType::KW_MAX))
+                match(TokenType::KW_AVG) || match(TokenType::KW_MIN) || match(TokenType::KW_MAX) ||
+                match(TokenType::KW_ARRAY_AGG))
             {
                 TokenType agg_type = previous().type;
                 AggregateFunc agg_func;
@@ -2354,6 +2385,9 @@ namespace scratchbird
                     break;
                 case TokenType::KW_MAX:
                     agg_func = AggregateFunc::MAX;
+                    break;
+                case TokenType::KW_ARRAY_AGG:
+                    agg_func = AggregateFunc::ARRAY_AGG;
                     break;
                 default:
                     error("Unknown aggregate function");
@@ -2643,6 +2677,70 @@ namespace scratchbird
                     // Searched CASE
                     return arena_.make<CaseExpr>(span, when_clauses, else_result);
                 }
+            }
+
+            // ARRAY literal: ARRAY[elem1, elem2, ...] (Phase 2 Task 12)
+            if (match(TokenType::KW_ARRAY))
+            {
+                if (!consume(TokenType::LEFT_BRACKET, "Expected '[' after ARRAY"))
+                    return nullptr;
+
+                std::vector<Expression*> elements;
+
+                // Handle empty array
+                if (!check(TokenType::RIGHT_BRACKET))
+                {
+                    do
+                    {
+                        auto *elem = parseExpression();
+                        if (!elem)
+                            return nullptr;
+                        elements.push_back(elem);
+                    } while (match(TokenType::COMMA));
+                }
+
+                if (!consume(TokenType::RIGHT_BRACKET, "Expected ']' after array elements"))
+                    return nullptr;
+
+                auto span = makeSpan(start_loc, previous().location);
+                return arena_.make<ArrayLiteral>(span, elements);
+            }
+
+            // Array functions (Phase 2 Task 12)
+            if (match(TokenType::KW_ARRAY_TO_STRING) || match(TokenType::KW_STRING_TO_ARRAY) ||
+                match(TokenType::KW_ARRAY_APPEND) || match(TokenType::KW_ARRAY_PREPEND) ||
+                match(TokenType::KW_ARRAY_CAT) || match(TokenType::KW_ARRAY_REMOVE) ||
+                match(TokenType::KW_ARRAY_REPLACE) || match(TokenType::KW_ARRAY_LENGTH) ||
+                match(TokenType::KW_ARRAY_DIMS) || match(TokenType::KW_ARRAY_UPPER) ||
+                match(TokenType::KW_ARRAY_LOWER) || match(TokenType::KW_UNNEST))
+            {
+                // Store the function name for later use
+                StringPool::StringId func_name = stringPool().intern(
+                    tokenTypeToString(previous().type)
+                );
+
+                if (!consume(TokenType::LEFT_PAREN, "Expected '(' after array function"))
+                    return nullptr;
+
+                std::vector<Expression*> args;
+
+                // Parse function arguments
+                if (!check(TokenType::RIGHT_PAREN))
+                {
+                    do
+                    {
+                        auto *arg = parseExpression();
+                        if (!arg)
+                            return nullptr;
+                        args.push_back(arg);
+                    } while (match(TokenType::COMMA));
+                }
+
+                if (!consume(TokenType::RIGHT_PAREN, "Expected ')' after array function arguments"))
+                    return nullptr;
+
+                auto span = makeSpan(start_loc, previous().location);
+                return arena_.make<FunctionCallExpr>(span, func_name, args);
             }
 
             if (check(TokenType::IDENTIFIER))

@@ -660,6 +660,27 @@ namespace scratchbird
                         reportError(node->right(), "Right operand must be boolean");
                     }
                     break;
+
+                case BinaryOp::LIKE:
+                case BinaryOp::ILIKE:
+                    // LIKE/ILIKE operators - left is string, right is pattern
+                    // No strict type checking needed, will convert at runtime
+                    break;
+
+                case BinaryOp::ARRAY_OVERLAP:
+                case BinaryOp::ARRAY_CONTAINS:
+                case BinaryOp::ARRAY_CONTAINED_BY:
+                    // Array operators - expect JSON arrays
+                    // No strict type checking needed, will validate at runtime
+                    break;
+
+                case BinaryOp::REGEX_MATCH:
+                case BinaryOp::REGEX_MATCH_CI:
+                case BinaryOp::REGEX_NOT_MATCH:
+                case BinaryOp::REGEX_NOT_MATCH_CI:
+                    // Regex operators - left is string, right is pattern
+                    // No strict type checking needed, will convert at runtime
+                    break;
             }
 
             // Determine result type
@@ -1334,6 +1355,18 @@ namespace scratchbird
 
             // CASE result is nullable (could match no WHEN clause and have no ELSE)
             setExpressionType(node, ExpressionType(TypeName(result_type), true));
+        }
+
+        void SemanticAnalyzer::visit(ArrayLiteral *node)
+        {
+            // Check all array elements
+            for (auto *elem : node->elements())
+            {
+                checkExpression(elem);
+            }
+
+            // Array type is JSON (arrays are stored as JSON)
+            setExpressionType(node, ExpressionType(TypeName(DataType::JSON), false));
         }
 
         void SemanticAnalyzer::visit(ColumnDef *node)

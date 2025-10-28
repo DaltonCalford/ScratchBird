@@ -67,6 +67,7 @@ namespace scratchbird
             {"AVG", TokenType::KW_AVG},
             {"MIN", TokenType::KW_MIN},
             {"MAX", TokenType::KW_MAX},
+            {"ARRAY_AGG", TokenType::KW_ARRAY_AGG},  // Phase 2 Task 12
 
             // Window functions (Phase 1 Task 6)
             {"OVER", TokenType::KW_OVER},
@@ -138,6 +139,7 @@ namespace scratchbird
             {"JSONB", TokenType::KW_JSONB},
             {"XML", TokenType::KW_XML},
             {"VECTOR", TokenType::KW_VECTOR},
+            {"ARRAY", TokenType::KW_ARRAY},  // Phase 2 Task 12
 
             // JSON functions (Phase 1 Task 7)
             {"JSON_EXTRACT", TokenType::KW_JSON_EXTRACT},
@@ -159,6 +161,20 @@ namespace scratchbird
             {"THEN", TokenType::KW_THEN},
             {"ELSE", TokenType::KW_ELSE},
             {"END", TokenType::KW_END},
+
+            // Array functions (Phase 2 Task 12)
+            {"ARRAY_TO_STRING", TokenType::KW_ARRAY_TO_STRING},
+            {"STRING_TO_ARRAY", TokenType::KW_STRING_TO_ARRAY},
+            {"ARRAY_APPEND", TokenType::KW_ARRAY_APPEND},
+            {"ARRAY_PREPEND", TokenType::KW_ARRAY_PREPEND},
+            {"ARRAY_CAT", TokenType::KW_ARRAY_CAT},
+            {"ARRAY_REMOVE", TokenType::KW_ARRAY_REMOVE},
+            {"ARRAY_REPLACE", TokenType::KW_ARRAY_REPLACE},
+            {"ARRAY_LENGTH", TokenType::KW_ARRAY_LENGTH},
+            {"ARRAY_DIMS", TokenType::KW_ARRAY_DIMS},
+            {"ARRAY_UPPER", TokenType::KW_ARRAY_UPPER},
+            {"ARRAY_LOWER", TokenType::KW_ARRAY_LOWER},
+            {"UNNEST", TokenType::KW_UNNEST},
 
             // Type conversion
             {"CAST", TokenType::KW_CAST},
@@ -595,6 +611,12 @@ namespace scratchbird
                         advance();
                         return Token::makeOperator(start_loc, 2, TokenType::NOT_EQUAL);
                     }
+                    else if (currentChar() == '@')
+                    {
+                        // <@ operator (array contained by)
+                        advance();
+                        return Token::makeOperator(start_loc, 2, TokenType::LESS_AT);
+                    }
                     return Token::makeOperator(start_loc, 1, TokenType::LESS_THAN);
 
                 case '>':
@@ -620,6 +642,59 @@ namespace scratchbird
                         return Token::makeOperator(start_loc, 2, TokenType::HASH_ARROW);
                     }
                     return makeError("Unexpected character '#'");
+
+                case '&':
+                    // && operator (array overlap)
+                    advance();
+                    if (currentChar() == '&')
+                    {
+                        advance();
+                        return Token::makeOperator(start_loc, 2, TokenType::AMPERSAND_AMPERSAND);
+                    }
+                    return makeError("Unexpected character '&'");
+
+                case '@':
+                    // @> operator (array contains)
+                    advance();
+                    if (currentChar() == '>')
+                    {
+                        advance();
+                        return Token::makeOperator(start_loc, 2, TokenType::AT_GREATER);
+                    }
+                    return makeError("Unexpected character '@'");
+
+                case '~':
+                    // Regex operators: ~ and ~*
+                    advance();
+                    if (currentChar() == '*')
+                    {
+                        advance();
+                        return Token::makeOperator(start_loc, 2, TokenType::TILDE_STAR);
+                    }
+                    return Token::makeOperator(start_loc, 1, TokenType::TILDE);
+
+                case '!':
+                    // Regex not match operators: !~ and !~*
+                    advance();
+                    if (currentChar() == '~')
+                    {
+                        advance();
+                        if (currentChar() == '*')
+                        {
+                            advance();
+                            return Token::makeOperator(start_loc, 3, TokenType::EXCLAIM_TILDE_STAR);
+                        }
+                        return Token::makeOperator(start_loc, 2, TokenType::EXCLAIM_TILDE);
+                    }
+                    return makeError("Unexpected character '!'");
+
+                case '[':
+                    advance();
+                    return Token::makeOperator(start_loc, 1, TokenType::LEFT_BRACKET);
+
+                case ']':
+                    advance();
+                    return Token::makeOperator(start_loc, 1, TokenType::RIGHT_BRACKET);
 
                 default:
                     advance();

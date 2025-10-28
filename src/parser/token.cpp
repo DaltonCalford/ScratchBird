@@ -254,6 +254,28 @@ namespace scratchbird
                 case TokenType::KW_END:
                     return "END";
 
+                // Array operators (Phase 2 Task 12)
+                case TokenType::AMPERSAND_AMPERSAND:
+                    return "&&";
+                case TokenType::AT_GREATER:
+                    return "@>";
+                case TokenType::LESS_AT:
+                    return "<@";
+                case TokenType::LEFT_BRACKET:
+                    return "[";
+                case TokenType::RIGHT_BRACKET:
+                    return "]";
+
+                // Regex operators (Phase 2 Task 13)
+                case TokenType::TILDE:
+                    return "~";
+                case TokenType::TILDE_STAR:
+                    return "~*";
+                case TokenType::EXCLAIM_TILDE:
+                    return "!~";
+                case TokenType::EXCLAIM_TILDE_STAR:
+                    return "!~*";
+
                 default:
                     return "UNKNOWN";
             }

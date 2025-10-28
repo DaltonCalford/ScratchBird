@@ -53,6 +53,19 @@ namespace scratchbird
             HASH_ARROW,         // #> (JSON path as JSON)
             HASH_DOUBLE_ARROW,  // #>> (JSON path as text)
 
+            // Array operators (Phase 2 Task 12)
+            AMPERSAND_AMPERSAND,  // && (array overlap)
+            AT_GREATER,           // @> (array contains)
+            LESS_AT,              // <@ (array contained by)
+            LEFT_BRACKET,         // [ (array literal)
+            RIGHT_BRACKET,        // ] (array literal)
+
+            // Regex operators (Phase 2 Task 13)
+            TILDE,                // ~ (regex match)
+            TILDE_STAR,           // ~* (regex match case-insensitive)
+            EXCLAIM_TILDE,        // !~ (regex not match)
+            EXCLAIM_TILDE_STAR,   // !~* (regex not match case-insensitive)
+
             // SQL Keywords (minimal set for Alpha)
             // These are detected post-lexing based on identifier content
             KW_CREATE,
@@ -103,6 +116,7 @@ namespace scratchbird
             KW_AVG,
             KW_MIN,
             KW_MAX,
+            KW_ARRAY_AGG,  // Phase 2 Task 12: Array aggregate function
 
             // Window functions (Phase 1 Task 6)
             KW_OVER,
@@ -174,6 +188,7 @@ namespace scratchbird
             KW_JSONB,
             KW_XML,
             KW_VECTOR,
+            KW_ARRAY,  // Phase 2 Task 12: Array type
 
             // JSON functions (Phase 1 Task 7)
             KW_JSON_EXTRACT,
@@ -195,6 +210,20 @@ namespace scratchbird
             KW_THEN,
             KW_ELSE,
             KW_END,
+
+            // Array functions (Phase 2 Task 12)
+            KW_ARRAY_TO_STRING,
+            KW_STRING_TO_ARRAY,
+            KW_ARRAY_APPEND,
+            KW_ARRAY_PREPEND,
+            KW_ARRAY_CAT,
+            KW_ARRAY_REMOVE,
+            KW_ARRAY_REPLACE,
+            KW_ARRAY_LENGTH,
+            KW_ARRAY_DIMS,
+            KW_ARRAY_UPPER,
+            KW_ARRAY_LOWER,
+            KW_UNNEST,
 
             // Type conversion
             KW_CAST,
