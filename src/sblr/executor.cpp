@@ -4793,6 +4793,170 @@ namespace scratchbird
                     break;
                 }
 
+                // Conditional expressions (Phase 1 Task 8)
+                case Opcode::COALESCE:
+                {
+                    uint8_t arg_count = readByte();
+
+                    // Pop all arguments (in reverse order)
+                    std::vector<Value> args;
+                    for (uint8_t i = 0; i < arg_count; i++)
+                    {
+                        args.push_back(pop());
+                    }
+
+                    // Reverse to get correct order
+                    std::reverse(args.begin(), args.end());
+
+                    // Return first non-NULL value
+                    for (const auto& arg : args)
+                    {
+                        if (!arg.isNull())
+                        {
+                            push(arg);
+                            break;
+                        }
+                    }
+
+                    // If all NULL, push NULL
+                    if (args.empty() || std::all_of(args.begin(), args.end(),
+                                                     [](const Value& v) { return v.isNull(); }))
+                    {
+                        push(Value::makeNull());
+                    }
+                    break;
+                }
+
+                case Opcode::NULLIF:
+                {
+                    // Pop two arguments
+                    Value expr2 = pop();
+                    Value expr1 = pop();
+
+                    // If either is NULL, return NULL
+                    if (expr1.isNull() || expr2.isNull())
+                    {
+                        push(Value::makeNull());
+                    }
+                    else
+                    {
+                        // Compare values (same logic as EXPR_EQ)
+                        bool are_equal;
+                        if (core::TypeSystem::isString(expr1.type()) ||
+                            core::TypeSystem::isString(expr2.type()))
+                        {
+                            are_equal = compareStrings(expr1.toString(), expr2.toString()) == 0;
+                        }
+                        else if (expr1.type() == core::DataType::FLOAT64 ||
+                                 expr2.type() == core::DataType::FLOAT64)
+                        {
+                            are_equal = expr1.toDouble() == expr2.toDouble();
+                        }
+                        else
+                        {
+                            are_equal = expr1.toInt64() == expr2.toInt64();
+                        }
+
+                        // If equal, return NULL; otherwise return expr1
+                        if (are_equal)
+                        {
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            push(expr1);
+                        }
+                    }
+                    break;
+                }
+
+                case Opcode::CASE_WHEN:
+                {
+                    uint8_t flags = readByte();
+                    uint8_t when_count = readByte();
+
+                    bool has_case_operand = (flags & 0x01) != 0;
+                    bool has_else = (flags & 0x02) != 0;
+
+                    // Pop ELSE result if present
+                    Value else_result;
+                    if (has_else)
+                    {
+                        else_result = pop();
+                    }
+
+                    // Pop all WHEN results and conditions (in reverse)
+                    std::vector<Value> results;
+                    std::vector<Value> conditions;
+                    for (uint8_t i = 0; i < when_count; i++)
+                    {
+                        results.push_back(pop());
+                        conditions.push_back(pop());
+                    }
+                    std::reverse(results.begin(), results.end());
+                    std::reverse(conditions.begin(), conditions.end());
+
+                    // Pop case operand if present (simple CASE)
+                    Value case_operand;
+                    if (has_case_operand)
+                    {
+                        case_operand = pop();
+                    }
+
+                    // Evaluate WHEN clauses
+                    Value result = Value::makeNull();
+                    bool found_match = false;
+
+                    for (size_t i = 0; i < when_count; i++)
+                    {
+                        bool matches = false;
+
+                        if (has_case_operand)
+                        {
+                            // Simple CASE: compare case_operand with condition
+                            if (!case_operand.isNull() && !conditions[i].isNull())
+                            {
+                                // Use same comparison logic as EXPR_EQ
+                                if (core::TypeSystem::isString(case_operand.type()) ||
+                                    core::TypeSystem::isString(conditions[i].type()))
+                                {
+                                    matches = compareStrings(case_operand.toString(), conditions[i].toString()) == 0;
+                                }
+                                else if (case_operand.type() == core::DataType::FLOAT64 ||
+                                         conditions[i].type() == core::DataType::FLOAT64)
+                                {
+                                    matches = case_operand.toDouble() == conditions[i].toDouble();
+                                }
+                                else
+                                {
+                                    matches = case_operand.toInt64() == conditions[i].toInt64();
+                                }
+                            }
+                        }
+                        else
+                        {
+                            // Searched CASE: evaluate condition as boolean
+                            matches = (!conditions[i].isNull() && conditions[i].toInt64() != 0);
+                        }
+
+                        if (matches)
+                        {
+                            result = results[i];
+                            found_match = true;
+                            break;
+                        }
+                    }
+
+                    // If no match found, use ELSE result (or NULL if no ELSE)
+                    if (!found_match)
+                    {
+                        result = has_else ? else_result : Value::makeNull();
+                    }
+
+                    push(result);
+                    break;
+                }
+
                 default:
                     error("Unknown expression opcode: " + std::to_string(static_cast<int>(op)));
             }

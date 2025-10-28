@@ -715,38 +715,57 @@ Without these features, ScratchBird **cannot be used** for even simple applicati
 
 ---
 
-#### 8. Conditional Functions (20-30 hours) - CRITICAL - **IN PROGRESS** 🚧
+#### 8. Conditional Functions (20-30 hours) - CRITICAL ✅ **100% COMPLETE**
 **Why Eighth**: Basic SQL queries need conditional expressions.
+**Status**: Started October 28, 2025 → **✅ 100% complete** (parser ✅, semantic ✅, bytecode ✅, executor ✅, tests ✅)
 
-- [ ] **8.1 COALESCE and NULLIF** (10-15 hours) - **40% COMPLETE**
+- [x] **8.1 COALESCE and NULLIF** (10-15 hours) ✅ **100% COMPLETE**
   - [x] Add COALESCE/NULLIF lexer support (keywords) ✅
   - [x] Add COALESCE/NULLIF AST nodes ✅
   - [x] Add semantic analysis for type checking ✅
-  - [ ] Add COALESCE parser support
-  - [ ] Add NULLIF parser support
-  - [ ] Add SBLR opcodes
-  - [ ] Implement COALESCE/NULLIF in SBLR executor
-  - **Deliverable**: `SELECT COALESCE(col, 'default') FROM table` works
+  - [x] Add COALESCE parser support ✅ Done Oct 28
+  - [x] Add NULLIF parser support ✅ Done Oct 28
+  - [x] Add SBLR opcodes (COALESCE=0xF8, NULLIF=0xF9) ✅ Done Oct 28
+  - [x] Implement COALESCE/NULLIF in SBLR executor ✅ Done Oct 28
+  - **Deliverable**: `SELECT COALESCE(col, 'default') FROM table` works ✅ **DELIVERED**
 
-- [ ] **8.2 CASE Expression** (10-15 hours) - **40% COMPLETE**
+- [x] **8.2 CASE Expression** (10-15 hours) ✅ **100% COMPLETE**
   - [x] Add CASE WHEN lexer support (keywords: CASE, WHEN, THEN, ELSE, END) ✅
   - [x] Implement CASE AST node (simple and searched forms) ✅
   - [x] Add semantic analysis for type checking ✅
-  - [ ] Add CASE WHEN parser support (simple and searched)
-  - [ ] Generate SBLR bytecode for CASE
-  - [ ] Implement CASE executor
-  - **Deliverable**: `SELECT CASE WHEN col > 10 THEN 'high' ELSE 'low' END` works
+  - [x] Add CASE WHEN parser support (simple and searched) ✅ Done Oct 28
+  - [x] Generate SBLR bytecode for CASE (CASE_WHEN=0xFA) ✅ Done Oct 28
+  - [x] Implement CASE executor with flag-based logic ✅ Done Oct 28
+  - **Deliverable**: `SELECT CASE WHEN col > 10 THEN 'high' ELSE 'low' END` works ✅ **DELIVERED**
 
-**Current Status (Commit bb03ce6, Oct 28)**:
+- [x] **8.3 Comprehensive Testing** (5-10 hours) ✅ **COMPLETE**
+  - [x] Create test_conditional_functions.cpp with 40+ test cases ✅ Done Oct 28
+  - [x] Test COALESCE with multiple arguments and NULL handling ✅
+  - [x] Test NULLIF with type coercion and edge cases ✅
+  - [x] Test simple CASE expressions with various types ✅
+  - [x] Test searched CASE with complex conditions ✅
+  - [x] Test nested conditional functions ✅
+  - [x] Test error cases (invalid syntax, wrong argument counts) ✅
+  - **Deliverable**: All conditional function tests pass ✅ **DELIVERED**
+
+**Current Status (Oct 28, 2025)**:
 - ✅ Lexer: 7 keywords added (COALESCE, NULLIF, CASE, WHEN, THEN, ELSE, END)
 - ✅ AST: 3 expression classes (CoalesceExpr, NullIfExpr, CaseExpr)
 - ✅ Semantic Analysis: Type checking for all 3 expressions
-- ✅ Build: scratchbird_parser builds successfully
-- ⏳ Parser: Not started
-- ⏳ Bytecode: Not started
-- ⏳ Executor: Not started
+- ✅ Parser: Full parsing for all 3 conditional functions (~110 lines)
+- ✅ Bytecode: 3 opcodes and bytecode generation (~70 lines)
+- ✅ Executor: Complete execution logic (~140 lines)
+- ✅ Tests: 40+ comprehensive test cases
+- ✅ Build: All libraries compile successfully
 
-**Phase 1.8 Completion Criteria**: Conditional expressions work in queries
+**Implementation Summary**:
+- Parser: ~110 lines (COALESCE, NULLIF, simple/searched CASE)
+- Opcodes: 3 new opcodes (COALESCE, NULLIF, CASE_WHEN)
+- Bytecode Generator: ~70 lines (3 visitor methods)
+- Executor: ~140 lines (3 opcode handlers with type-aware comparison)
+- Tests: 40+ test cases covering parsing, bytecode generation, and error cases
+
+**Phase 1.8 Completion Criteria**: Conditional expressions work in queries ✅ **COMPLETE**
 
 ---
 
@@ -759,11 +778,11 @@ Without these features, ScratchBird **cannot be used** for even simple applicati
 - ✅ Aggregation with GROUP BY and HAVING works → **DONE (Oct 27)**
 - ✅ Sorting with ORDER BY and pagination with LIMIT/OFFSET works → **DONE (Oct 27)**
 - ✅ Analytics queries with window functions work → **DONE (Oct 27)**
-- ✅ JSON data can be queried and manipulated → **DONE (Oct 28) ← NEW!**
-- ⏳ Conditional expressions (COALESCE, NULLIF, CASE) work → **TODO (Task 8)**
+- ✅ JSON data can be queried and manipulated → **DONE (Oct 28)**
+- ✅ Conditional expressions (COALESCE, NULLIF, CASE) work → **DONE (Oct 28)** ← **NEW!**
 - ✅ EXPLAIN shows query plans with costs → **DONE (Oct 25)**
 
-**Phase 1 Progress**: 7/8 core tasks complete (87.5%)
+**Phase 1 Progress**: 8/8 core tasks complete (**100%**) 🎉
 
 **Acceptance Test**:
 ```sql

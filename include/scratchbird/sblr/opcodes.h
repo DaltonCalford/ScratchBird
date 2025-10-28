@@ -214,6 +214,11 @@ namespace scratchbird
             JSON_INSERT = 0xF5,            // JSON_INSERT(json, path, value)
             JSON_REMOVE = 0xF6,            // JSON_REMOVE(json, path)
             JSONB_SET = 0xF7,              // jsonb_set(jsonb, path_array, value)
+
+            // Conditional expressions (Phase 1 Task 8)
+            COALESCE = 0xF8,               // COALESCE(arg1, arg2, ...) - return first non-null
+            NULLIF = 0xF9,                 // NULLIF(expr1, expr2) - return NULL if equal
+            CASE_WHEN = 0xFA,              // CASE WHEN ... - conditional expression
         };
 
         // SBLR Version
