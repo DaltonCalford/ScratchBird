@@ -62,6 +62,7 @@ target_include_directories(scratchbird_sblr PUBLIC
 target_link_libraries(scratchbird_sblr PUBLIC
     scratchbird_parser
     scratchbird_core
+    nlohmann_json::nlohmann_json
 )
 
 set_target_properties(scratchbird_sblr PROPERTIES
