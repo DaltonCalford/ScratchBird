@@ -173,6 +173,62 @@ namespace scratchbird
         // ===== Value Implementation =====
         // Value is now an alias for core::TypedValue, so no implementation needed here
 
+        // ===== TriggerContext Implementation =====
+        // Wave 2: Trigger Executor Implementation
+
+        class TriggerContext
+        {
+        public:
+            TriggerContext(
+                const core::CatalogManager::TriggerInfo& trigger,
+                const std::vector<Value>* old_row,
+                const std::vector<Value>* new_row,
+                const core::CatalogManager::TableInfo& table_info,
+                const std::vector<core::CatalogManager::ColumnInfo>& columns
+            ) : trigger_(trigger), old_row_(old_row), new_row_(new_row),
+                table_info_(table_info), columns_(columns) {}
+
+            const core::CatalogManager::TriggerInfo& trigger() const { return trigger_; }
+            const core::CatalogManager::TableInfo& tableInfo() const { return table_info_; }
+
+            // Access OLD.column_name
+            Value getOldValue(const std::string& column_name) const
+            {
+                if (!old_row_) return Value::makeNull();
+                size_t col_idx = findColumnIndex(column_name);
+                if (col_idx == static_cast<size_t>(-1)) return Value::makeNull();
+                return (*old_row_)[col_idx];
+            }
+
+            // Access NEW.column_name
+            Value getNewValue(const std::string& column_name) const
+            {
+                if (!new_row_) return Value::makeNull();
+                size_t col_idx = findColumnIndex(column_name);
+                if (col_idx == static_cast<size_t>(-1)) return Value::makeNull();
+                return (*new_row_)[col_idx];
+            }
+
+        private:
+            const core::CatalogManager::TriggerInfo& trigger_;
+            const std::vector<Value>* old_row_;
+            const std::vector<Value>* new_row_;
+            const core::CatalogManager::TableInfo& table_info_;
+            const std::vector<core::CatalogManager::ColumnInfo>& columns_;
+
+            size_t findColumnIndex(const std::string& column_name) const
+            {
+                for (size_t i = 0; i < columns_.size(); i++)
+                {
+                    if (columns_[i].column_name == column_name)
+                    {
+                        return i;
+                    }
+                }
+                return static_cast<size_t>(-1);  // Not found
+            }
+        };
+
         // ===== ResultSet Implementation =====
 
         void ResultSet::addColumn(const std::string &name, core::DataType type)
@@ -387,6 +443,139 @@ namespace scratchbird
                         executeRollback();
                         result = ExecutionResult();
                         break;
+
+                    case Opcode::EXTENDED_OPCODE:
+                    {
+                        uint8_t ext_op = readByte();
+
+                        if (ext_op == static_cast<uint8_t>(Opcode::EXT_WITH_CLAUSE))
+                        {
+                            // Phase 2 Wave 2: Handle WITH clause (CTEs)
+                            uint16_t cte_count = readInt16();
+                            // Clear any previous CTE results
+                            cte_results_.clear();
+                            cte_column_names_.clear();
+                            cte_column_types_.clear();
+                            // CTEs will be materialized by subsequent EXT_CTE_DEF opcodes
+                            // Continue execution without breaking
+                        }
+                        else if (ext_op == static_cast<uint8_t>(Opcode::EXT_CTE_DEF))
+                        {
+                            // Phase 2 Wave 2: Define and materialize a CTE
+                            std::string cte_name = readString();
+
+                            // Save current state
+                            auto saved_result_set = std::move(current_result_set_);
+                            auto saved_table = current_table_;
+
+                            // Execute the CTE query (next opcodes)
+                            current_result_set_ = std::make_unique<ResultSet>();
+
+                            // Read and execute the nested SELECT
+                            Opcode cte_query_op = static_cast<Opcode>(readByte());
+                            if (cte_query_op == Opcode::SELECT)
+                            {
+                                executeSelect();
+
+                                // Store the materialized CTE results
+                                if (current_result_set_)
+                                {
+                                    // Extract column metadata
+                                    std::vector<std::string> col_names;
+                                    std::vector<core::DataType> col_types;
+                                    for (size_t i = 0; i < current_result_set_->columnCount(); ++i)
+                                    {
+                                        col_names.push_back(current_result_set_->columnName(i));
+                                        col_types.push_back(current_result_set_->columnType(i));
+                                    }
+
+                                    // Extract all rows
+                                    std::vector<std::vector<Value>> rows;
+                                    for (size_t r = 0; r < current_result_set_->rowCount(); ++r)
+                                    {
+                                        std::vector<Value> row;
+                                        for (size_t c = 0; c < current_result_set_->columnCount(); ++c)
+                                        {
+                                            row.push_back(current_result_set_->getValue(r, c));
+                                        }
+                                        rows.push_back(std::move(row));
+                                    }
+
+                                    // Store CTE results
+                                    cte_results_[cte_name] = std::move(rows);
+                                    cte_column_names_[cte_name] = std::move(col_names);
+                                    cte_column_types_[cte_name] = std::move(col_types);
+                                }
+                            }
+                            else
+                            {
+                                result = ExecutionResult("CTE query must be a SELECT statement");
+                                break;
+                            }
+
+                            // Restore state
+                            current_result_set_ = std::move(saved_result_set);
+                            current_table_ = saved_table;
+                        }
+                        else if (ext_op == static_cast<uint8_t>(Opcode::EXT_CTE_SCAN))
+                        {
+                            // Phase 2 Wave 2: Scan a CTE (replaces table scan)
+                            std::string cte_name = readString();
+
+                            // Look up CTE results
+                            auto it = cte_results_.find(cte_name);
+                            if (it == cte_results_.end())
+                            {
+                                result = ExecutionResult("CTE '" + cte_name + "' not found");
+                                break;
+                            }
+
+                            // Set up result set with CTE data
+                            if (!current_result_set_)
+                            {
+                                current_result_set_ = std::make_unique<ResultSet>();
+                            }
+
+                            // Add columns from CTE
+                            const auto& col_names = cte_column_names_[cte_name];
+                            const auto& col_types = cte_column_types_[cte_name];
+                            for (size_t i = 0; i < col_names.size(); ++i)
+                            {
+                                current_result_set_->addColumn(col_names[i], col_types[i]);
+                            }
+
+                            // Add all rows from CTE
+                            for (const auto& row : it->second)
+                            {
+                                current_result_set_->addRow(row);
+                            }
+                        }
+                        else if (ext_op == static_cast<uint8_t>(Opcode::EXT_CREATE_TRIGGER))
+                        {
+                            executeCreateTrigger();
+                            result = ExecutionResult();
+                        }
+                        else if (ext_op == static_cast<uint8_t>(Opcode::EXT_DROP_TRIGGER))
+                        {
+                            executeDropTrigger();
+                            result = ExecutionResult();
+                        }
+                        else if (ext_op == static_cast<uint8_t>(Opcode::EXT_SUBQUERY_SCALAR) ||
+                                 ext_op == static_cast<uint8_t>(Opcode::EXT_SUBQUERY_EXISTS) ||
+                                 ext_op == static_cast<uint8_t>(Opcode::EXT_SUBQUERY_IN) ||
+                                 ext_op == static_cast<uint8_t>(Opcode::EXT_SUBQUERY_NOT_IN))
+                        {
+                            // Phase 2 Wave 2 - Agent B: Subquery execution
+                            // These opcodes should not appear at statement level - they are expression-level
+                            result = ExecutionResult("Subquery opcodes must appear within expressions, not at statement level");
+                        }
+                        else
+                        {
+                            result = ExecutionResult("Unknown extended opcode: " +
+                                                     std::to_string(static_cast<int>(ext_op)));
+                        }
+                        break;
+                    }
 
                     default:
                         result = ExecutionResult("Unknown statement opcode: " +
@@ -1242,6 +1431,34 @@ namespace scratchbird
             // - back_version_tid = 0 (no back version for new insert)
             // - ctid_page, ctid_item (from final item position)
 
+            // Wave 2: Fire BEFORE INSERT triggers
+            std::vector<core::CatalogManager::TriggerInfo> before_triggers;
+            core::ErrorContext err_ctx;
+            auto trigger_status = db_->catalog_manager()->listTriggersForTable(
+                table_id,
+                core::CatalogManager::TriggerEvent::INSERT,
+                core::CatalogManager::TriggerTiming::BEFORE,
+                before_triggers,
+                &err_ctx
+            );
+
+            if (trigger_status == core::Status::OK)
+            {
+                for (const auto& trigger : before_triggers)
+                {
+                    if (!trigger.enabled) continue;
+
+                    TriggerContext ctx(trigger, nullptr, &complete_values, table_info, all_columns);
+                    bool should_continue = fireTrigger(ctx);
+
+                    if (!should_continue)
+                    {
+                        // BEFORE trigger prevented operation
+                        return;  // Don't insert
+                    }
+                }
+            }
+
             // Insert tuple via storage engine
             uint32_t page_id;
             uint16_t item_id;
@@ -1252,6 +1469,27 @@ namespace scratchbird
             if (insert_status != core::Status::OK)
             {
                 error("Failed to insert tuple into storage");
+            }
+
+            // Wave 2: Fire AFTER INSERT triggers
+            std::vector<core::CatalogManager::TriggerInfo> after_triggers;
+            trigger_status = db_->catalog_manager()->listTriggersForTable(
+                table_id,
+                core::CatalogManager::TriggerEvent::INSERT,
+                core::CatalogManager::TriggerTiming::AFTER,
+                after_triggers,
+                &err_ctx
+            );
+
+            if (trigger_status == core::Status::OK)
+            {
+                for (const auto& trigger : after_triggers)
+                {
+                    if (!trigger.enabled) continue;
+
+                    TriggerContext ctx(trigger, nullptr, &complete_values, table_info, all_columns);
+                    fireTrigger(ctx);  // AFTER triggers don't prevent operation
+                }
             }
 
             // Success - tuple inserted
@@ -1507,6 +1745,9 @@ namespace scratchbird
                     continue;
                 }
 
+                // Wave 2: Save old row values for triggers
+                std::vector<Value> old_row_values = row_values;
+
                 // Evaluate assignments and update row values
                 for (const auto &assign : assignments)
                 {
@@ -1633,6 +1874,40 @@ namespace scratchbird
                     }
                 }
 
+                // Wave 2: Fire BEFORE UPDATE triggers
+                std::vector<core::CatalogManager::TriggerInfo> before_triggers;
+                core::ErrorContext err_ctx;
+                auto trigger_status = db_->catalog_manager()->listTriggersForTable(
+                    table_id,
+                    core::CatalogManager::TriggerEvent::UPDATE,
+                    core::CatalogManager::TriggerTiming::BEFORE,
+                    before_triggers,
+                    &err_ctx
+                );
+
+                bool should_continue = true;
+                if (trigger_status == core::Status::OK)
+                {
+                    for (const auto& trig : before_triggers)
+                    {
+                        if (!trig.enabled) continue;
+
+                        TriggerContext ctx(trig, &old_row_values, &row_values, table_info, all_columns);
+                        should_continue = fireTrigger(ctx);
+
+                        if (!should_continue)
+                        {
+                            // BEFORE trigger prevented operation
+                            continue;  // Skip this row
+                        }
+                    }
+                }
+
+                if (!should_continue)
+                {
+                    continue;  // Skip this row if trigger prevented update
+                }
+
                 // Call StorageEngine::updateTuple with MGA versioning
                 uint32_t page_id = static_cast<uint32_t>(core::getPageNumber(tuple.tid));
                 uint16_t item_id = core::getSlot(tuple.tid);
@@ -1647,6 +1922,27 @@ namespace scratchbird
                 if (update_status != core::Status::OK)
                 {
                     error("Failed to update tuple in storage");
+                }
+
+                // Wave 2: Fire AFTER UPDATE triggers
+                std::vector<core::CatalogManager::TriggerInfo> after_triggers;
+                trigger_status = db_->catalog_manager()->listTriggersForTable(
+                    table_id,
+                    core::CatalogManager::TriggerEvent::UPDATE,
+                    core::CatalogManager::TriggerTiming::AFTER,
+                    after_triggers,
+                    &err_ctx
+                );
+
+                if (trigger_status == core::Status::OK)
+                {
+                    for (const auto& trig : after_triggers)
+                    {
+                        if (!trig.enabled) continue;
+
+                        TriggerContext ctx(trig, &old_row_values, &row_values, table_info, all_columns);
+                        fireTrigger(ctx);  // AFTER triggers don't prevent operation
+                    }
                 }
 
                 affected_count++;
@@ -1803,6 +2099,40 @@ namespace scratchbird
                     continue;
                 }
 
+                // Wave 2: Fire BEFORE DELETE triggers
+                std::vector<core::CatalogManager::TriggerInfo> before_triggers;
+                core::ErrorContext err_ctx;
+                auto trigger_status = db_->catalog_manager()->listTriggersForTable(
+                    table_id,
+                    core::CatalogManager::TriggerEvent::DELETE,
+                    core::CatalogManager::TriggerTiming::BEFORE,
+                    before_triggers,
+                    &err_ctx
+                );
+
+                bool should_continue = true;
+                if (trigger_status == core::Status::OK)
+                {
+                    for (const auto& trig : before_triggers)
+                    {
+                        if (!trig.enabled) continue;
+
+                        TriggerContext ctx(trig, &row_values, nullptr, table_info, all_columns);
+                        should_continue = fireTrigger(ctx);
+
+                        if (!should_continue)
+                        {
+                            // BEFORE trigger prevented operation
+                            continue;  // Skip this row
+                        }
+                    }
+                }
+
+                if (!should_continue)
+                {
+                    continue;  // Skip this row if trigger prevented delete
+                }
+
                 // Call StorageEngine::deleteTuple with MGA soft delete
                 // This sets xmax = current transaction ID
                 core::ConnectionContext *conn_ctx = core::ConnectionContext::getCurrent();
@@ -1817,6 +2147,27 @@ namespace scratchbird
                 if (delete_status != core::Status::OK)
                 {
                     error("Failed to delete tuple from storage");
+                }
+
+                // Wave 2: Fire AFTER DELETE triggers
+                std::vector<core::CatalogManager::TriggerInfo> after_triggers;
+                trigger_status = db_->catalog_manager()->listTriggersForTable(
+                    table_id,
+                    core::CatalogManager::TriggerEvent::DELETE,
+                    core::CatalogManager::TriggerTiming::AFTER,
+                    after_triggers,
+                    &err_ctx
+                );
+
+                if (trigger_status == core::Status::OK)
+                {
+                    for (const auto& trig : after_triggers)
+                    {
+                        if (!trig.enabled) continue;
+
+                        TriggerContext ctx(trig, &row_values, nullptr, table_info, all_columns);
+                        fireTrigger(ctx);  // AFTER triggers don't prevent operation
+                    }
                 }
 
                 affected_count++;
@@ -3593,6 +3944,126 @@ namespace scratchbird
             }
 
             // Success - transaction rolled back
+        }
+
+        void Executor::executeCreateTrigger()
+        {
+            // Wave 2: Trigger Executor Implementation
+            // Read trigger definition from bytecode
+
+            std::string trigger_name = readString();
+            std::string table_name = readString();
+
+            auto timing = static_cast<core::CatalogManager::TriggerTiming>(readByte());
+            auto event = static_cast<core::CatalogManager::TriggerEvent>(readByte());
+            auto granularity = static_cast<core::CatalogManager::TriggerGranularity>(readByte());
+
+            std::string procedure_name = readString();
+
+            // Get default schema (PUBLIC)
+            core::CatalogManager::SchemaInfo schema_info;
+            auto status = db_->catalog_manager()->getSchema("PUBLIC", schema_info, nullptr);
+            if (status != core::Status::OK)
+            {
+                error("Failed to get default schema");
+            }
+
+            // Get table from catalog
+            core::CatalogManager::TableInfo table_info;
+            status = db_->catalog_manager()->getTable(schema_info.schema_id, table_name, table_info, nullptr);
+            if (status != core::Status::OK)
+            {
+                error("Table not found: " + table_name);
+            }
+
+            // Create TriggerInfo
+            core::CatalogManager::TriggerInfo trigger_info;
+            trigger_info.trigger_name = trigger_name;
+            trigger_info.table_id = table_info.table_id;
+            trigger_info.table_name = table_name;
+            trigger_info.timing = timing;
+            trigger_info.event = event;
+            trigger_info.granularity = granularity;
+            trigger_info.procedure_name = procedure_name;
+            trigger_info.enabled = true;
+            trigger_info.created_time = std::chrono::duration_cast<std::chrono::seconds>(
+                std::chrono::system_clock::now().time_since_epoch()
+            ).count();
+
+            // Store in catalog
+            core::ErrorContext err_ctx;
+            status = db_->catalog_manager()->createTrigger(trigger_info, &err_ctx);
+            if (status != core::Status::OK)
+            {
+                std::string err_msg = "Failed to create trigger";
+                if (!err_ctx.message.empty())
+                {
+                    err_msg += ": " + err_ctx.message;
+                }
+                error(err_msg);
+            }
+        }
+
+        void Executor::executeDropTrigger()
+        {
+            // Wave 2: Trigger Executor Implementation
+            std::string trigger_name = readString();
+
+            core::ErrorContext err_ctx;
+            auto status = db_->catalog_manager()->dropTrigger(trigger_name, &err_ctx);
+            if (status != core::Status::OK)
+            {
+                std::string err_msg = "Failed to drop trigger";
+                if (!err_ctx.message.empty())
+                {
+                    err_msg += ": " + err_ctx.message;
+                }
+                error(err_msg);
+            }
+        }
+
+        bool Executor::fireTrigger(const TriggerContext& ctx)
+        {
+            // Wave 2: Trigger Executor Implementation
+            const auto& trigger = ctx.trigger();
+
+            // Look up trigger procedure
+            auto it = trigger_procedures_.find(trigger.procedure_name);
+            if (it == trigger_procedures_.end())
+            {
+                // For Phase 2, just log warning if procedure not found
+                std::cerr << "Warning: Trigger procedure '"
+                          << trigger.procedure_name << "' not registered\n";
+                return true;  // Continue operation
+            }
+
+            // Execute procedure
+            try
+            {
+                bool should_continue = it->second(ctx);
+                return should_continue;
+            }
+            catch (const std::exception& e)
+            {
+                std::cerr << "Trigger '" << trigger.trigger_name
+                          << "' failed: " << e.what() << "\n";
+
+                // BEFORE triggers: failure prevents operation
+                if (trigger.timing == core::CatalogManager::TriggerTiming::BEFORE)
+                {
+                    return false;
+                }
+
+                // AFTER triggers: log error but continue
+                return true;
+            }
+        }
+
+        void Executor::registerTriggerProcedure(
+            const std::string& name,
+            TriggerProcedure procedure)
+        {
+            trigger_procedures_[name] = std::move(procedure);
         }
 
         void Executor::executeMonitoringQuery(const std::string &table_name)
@@ -5656,6 +6127,277 @@ namespace scratchbird
                         }
 
                         push(Value::makeJSON(arr.dump()));
+                    }
+                    // Subquery execution (Phase 2 Wave 2 - Agent B)
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_SUBQUERY_SCALAR))
+                    {
+                        // Save execution context
+                        auto saved_result_set = std::move(current_result_set_);
+                        auto saved_table = current_table_;
+                        size_t saved_pc = pc_;
+
+                        // Execute subquery
+                        current_result_set_ = std::make_unique<ResultSet>();
+
+                        // Read and execute the nested SELECT
+                        Opcode subquery_op = static_cast<Opcode>(readByte());
+                        if (subquery_op == Opcode::SELECT)
+                        {
+                            executeSelect();
+
+                            // Validate: must return exactly one row and one column
+                            if (!current_result_set_ || current_result_set_->rowCount() == 0)
+                            {
+                                // Scalar subquery with no rows returns NULL
+                                push(Value::makeNull());
+                            }
+                            else if (current_result_set_->rowCount() > 1)
+                            {
+                                error("Scalar subquery returned more than one row");
+                            }
+                            else if (current_result_set_->columnCount() != 1)
+                            {
+                                error("Scalar subquery must return exactly one column");
+                            }
+                            else
+                            {
+                                // Return the single value
+                                push(current_result_set_->getValue(0, 0));
+                            }
+                        }
+                        else
+                        {
+                            error("Subquery must be a SELECT statement");
+                        }
+
+                        // Skip to EXT_SUBQUERY_END marker
+                        while (pc_ < bytecode_.size())
+                        {
+                            uint8_t b = readByte();
+                            if (b == static_cast<uint8_t>(Opcode::EXTENDED_OPCODE))
+                            {
+                                uint8_t ext = readByte();
+                                if (ext == static_cast<uint8_t>(Opcode::EXT_SUBQUERY_END))
+                                {
+                                    break;
+                                }
+                            }
+                        }
+
+                        // Restore context
+                        current_result_set_ = std::move(saved_result_set);
+                        current_table_ = saved_table;
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_SUBQUERY_EXISTS))
+                    {
+                        // Save execution context
+                        auto saved_result_set = std::move(current_result_set_);
+                        auto saved_table = current_table_;
+                        size_t saved_pc = pc_;
+
+                        // Execute subquery
+                        current_result_set_ = std::make_unique<ResultSet>();
+
+                        // Read and execute the nested SELECT
+                        Opcode subquery_op = static_cast<uint8_t>(readByte());
+                        if (subquery_op == Opcode::SELECT)
+                        {
+                            executeSelect();
+
+                            // EXISTS returns true if any rows returned
+                            bool has_rows = current_result_set_ && current_result_set_->rowCount() > 0;
+                            push(Value::makeBoolean(has_rows));
+                        }
+                        else
+                        {
+                            error("Subquery must be a SELECT statement");
+                        }
+
+                        // Skip to EXT_SUBQUERY_END marker
+                        while (pc_ < bytecode_.size())
+                        {
+                            uint8_t b = readByte();
+                            if (b == static_cast<uint8_t>(Opcode::EXTENDED_OPCODE))
+                            {
+                                uint8_t ext = readByte();
+                                if (ext == static_cast<uint8_t>(Opcode::EXT_SUBQUERY_END))
+                                {
+                                    break;
+                                }
+                            }
+                        }
+
+                        // Restore context
+                        current_result_set_ = std::move(saved_result_set);
+                        current_table_ = saved_table;
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_SUBQUERY_IN))
+                    {
+                        // Pop test value (left operand of IN)
+                        Value test_value = pop();
+
+                        // Save execution context
+                        auto saved_result_set = std::move(current_result_set_);
+                        auto saved_table = current_table_;
+                        size_t saved_pc = pc_;
+
+                        // Execute subquery
+                        current_result_set_ = std::make_unique<ResultSet>();
+
+                        // Read and execute the nested SELECT
+                        Opcode subquery_op = static_cast<Opcode>(readByte());
+                        if (subquery_op == Opcode::SELECT)
+                        {
+                            executeSelect();
+
+                            // Validate: must return exactly one column
+                            if (!current_result_set_ || current_result_set_->columnCount() != 1)
+                            {
+                                error("IN subquery must return exactly one column");
+                            }
+
+                            // Build set for membership test with NULL tracking
+                            bool has_null = false;
+                            bool found_match = false;
+
+                            for (size_t r = 0; r < current_result_set_->rowCount(); r++)
+                            {
+                                Value row_value = current_result_set_->getValue(r, 0);
+                                if (row_value.isNull())
+                                {
+                                    has_null = true;
+                                }
+                                else if (!test_value.isNull() && row_value == test_value)
+                                {
+                                    found_match = true;
+                                    break;  // Early exit on match
+                                }
+                            }
+
+                            // SQL NULL semantics for IN
+                            if (test_value.isNull())
+                            {
+                                push(Value::makeNull());  // NULL IN (...) → NULL
+                            }
+                            else if (found_match)
+                            {
+                                push(Value::makeBoolean(true));  // Value found
+                            }
+                            else if (has_null)
+                            {
+                                push(Value::makeNull());  // Not found but NULLs present → NULL
+                            }
+                            else
+                            {
+                                push(Value::makeBoolean(false));  // Not found and no NULLs
+                            }
+                        }
+                        else
+                        {
+                            error("Subquery must be a SELECT statement");
+                        }
+
+                        // Skip to EXT_SUBQUERY_END marker
+                        while (pc_ < bytecode_.size())
+                        {
+                            uint8_t b = readByte();
+                            if (b == static_cast<uint8_t>(Opcode::EXTENDED_OPCODE))
+                            {
+                                uint8_t ext = readByte();
+                                if (ext == static_cast<uint8_t>(Opcode::EXT_SUBQUERY_END))
+                                {
+                                    break;
+                                }
+                            }
+                        }
+
+                        // Restore context
+                        current_result_set_ = std::move(saved_result_set);
+                        current_table_ = saved_table;
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_SUBQUERY_NOT_IN))
+                    {
+                        // Pop test value (left operand of NOT IN)
+                        Value test_value = pop();
+
+                        // Save execution context
+                        auto saved_result_set = std::move(current_result_set_);
+                        auto saved_table = current_table_;
+                        size_t saved_pc = pc_;
+
+                        // Execute subquery
+                        current_result_set_ = std::make_unique<ResultSet>();
+
+                        // Read and execute the nested SELECT
+                        Opcode subquery_op = static_cast<Opcode>(readByte());
+                        if (subquery_op == Opcode::SELECT)
+                        {
+                            executeSelect();
+
+                            // Validate: must return exactly one column
+                            if (!current_result_set_ || current_result_set_->columnCount() != 1)
+                            {
+                                error("NOT IN subquery must return exactly one column");
+                            }
+
+                            // Build set for membership test with NULL tracking
+                            bool has_null = false;
+                            bool found_match = false;
+
+                            for (size_t r = 0; r < current_result_set_->rowCount(); r++)
+                            {
+                                Value row_value = current_result_set_->getValue(r, 0);
+                                if (row_value.isNull())
+                                {
+                                    has_null = true;
+                                }
+                                else if (!test_value.isNull() && row_value == test_value)
+                                {
+                                    found_match = true;
+                                    break;  // Early exit on match
+                                }
+                            }
+
+                            // SQL NULL semantics for NOT IN (inverse of IN)
+                            if (test_value.isNull())
+                            {
+                                push(Value::makeNull());  // NULL NOT IN (...) → NULL
+                            }
+                            else if (found_match)
+                            {
+                                push(Value::makeBoolean(false));  // Value found → false
+                            }
+                            else if (has_null)
+                            {
+                                push(Value::makeNull());  // Not found but NULLs present → NULL
+                            }
+                            else
+                            {
+                                push(Value::makeBoolean(true));  // Not found and no NULLs → true
+                            }
+                        }
+                        else
+                        {
+                            error("Subquery must be a SELECT statement");
+                        }
+
+                        // Skip to EXT_SUBQUERY_END marker
+                        while (pc_ < bytecode_.size())
+                        {
+                            uint8_t b = readByte();
+                            if (b == static_cast<uint8_t>(Opcode::EXTENDED_OPCODE))
+                            {
+                                uint8_t ext = readByte();
+                                if (ext == static_cast<uint8_t>(Opcode::EXT_SUBQUERY_END))
+                                {
+                                    break;
+                                }
+                            }
+                        }
+
+                        // Restore context
+                        current_result_set_ = std::move(saved_result_set);
+                        current_table_ = saved_table;
                     }
                     // Spatial functions (Phase 2 Task 9.1)
                     else if (ext_op == static_cast<uint8_t>(Opcode::EXT_ST_POINT))

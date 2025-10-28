@@ -241,6 +241,12 @@ namespace scratchbird
             {"ONLINE", TokenType::KW_ONLINE}, // Phase 4 Task 4.1.1
             {"ATTACH", TokenType::KW_ATTACH}, // Phase 6 Task 6.1
             {"DETACH", TokenType::KW_DETACH}, // Phase 6 Task 6.2
+
+            // Subquery keywords (Phase 2 Wave 2 - Agent B)
+            {"IN", TokenType::KW_IN},
+            {"EXISTS", TokenType::KW_EXISTS},
+
+            // Note: Trigger keywords (KW_TRIGGER, KW_BEFORE, KW_AFTER, etc.) will be added by Agent C
         };
 
         // Case-insensitive string comparison

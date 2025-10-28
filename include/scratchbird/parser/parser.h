@@ -132,6 +132,9 @@ namespace scratchbird
             TableRef parseTableRef();
             JoinClause parseJoinClause(const TableRef &left_table);
 
+            // CTE helpers (Phase 2 Wave 2)
+            WithClause *parseWithClause();
+
             // Aggregation helpers (Phase 1 Task 4.1)
             GroupByClause parseGroupByClause();
             std::vector<OrderByItem> parseOrderByClause();

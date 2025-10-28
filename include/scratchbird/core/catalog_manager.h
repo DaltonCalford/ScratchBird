@@ -766,6 +766,67 @@ namespace scratchbird::core
             return table_count_;
         }
 
+        // Trigger operations (Phase 2 Wave 2 - Agent C: Basic Triggers)
+        
+        // Trigger timing
+        enum class TriggerTiming : uint8_t
+        {
+            BEFORE = 0,
+            AFTER = 1
+        };
+        
+        // Trigger event
+        enum class TriggerEvent : uint8_t
+        {
+            INSERT = 0,
+            UPDATE = 1,
+            DELETE = 2
+        };
+        
+        // Trigger granularity
+        enum class TriggerGranularity : uint8_t
+        {
+            FOR_EACH_ROW = 0,
+            FOR_EACH_STATEMENT = 1  // Future support
+        };
+        
+        // Trigger information
+        struct TriggerInfo
+        {
+            ID trigger_id;
+            std::string trigger_name;
+            ID table_id;
+            std::string table_name;
+            TriggerTiming timing;
+            TriggerEvent event;
+            TriggerGranularity granularity;
+            std::string procedure_name;
+            bool enabled = true;  // Can be disabled without dropping
+            uint64_t created_time = 0;
+        };
+        
+        // Trigger management methods
+        auto createTrigger(const TriggerInfo &trigger, ErrorContext *ctx = nullptr) -> Status;
+        
+        auto dropTrigger(const std::string &trigger_name, ErrorContext *ctx = nullptr) -> Status;
+        
+        auto getTrigger(const ID &trigger_id, TriggerInfo &info, ErrorContext *ctx = nullptr)
+            -> Status;
+        
+        auto getTriggerByName(const std::string &trigger_name, TriggerInfo &info,
+                              ErrorContext *ctx = nullptr) -> Status;
+        
+        auto listTriggersForTable(const ID &table_id, TriggerEvent event, TriggerTiming timing,
+                                  std::vector<TriggerInfo> &triggers, ErrorContext *ctx = nullptr)
+            -> Status;
+        
+        auto listAllTriggersForTable(const ID &table_id, std::vector<TriggerInfo> &triggers,
+                                     ErrorContext *ctx = nullptr) -> Status;
+        
+        auto enableTrigger(const std::string &trigger_name, bool enable,
+                           ErrorContext *ctx = nullptr) -> Status;
+
+
     private:
         Database *db_;
         mutable std::mutex mutex_;
@@ -827,6 +888,12 @@ namespace scratchbird::core
         std::unordered_map<ID, std::vector<ColumnInfo>> column_cache_;
         std::unordered_map<ID, IndexInfo> index_cache_;
         std::unordered_map<uint16_t, TablespaceInfo> tablespace_cache_;  // keyed by tablespace_id
+        
+        // Trigger storage (Phase 2 Wave 2 - Agent C)
+        std::unordered_map<ID, TriggerInfo> trigger_cache_;  // keyed by trigger_id
+        std::unordered_map<std::string, ID> trigger_name_to_id_;  // name -> ID lookup
+        std::unordered_multimap<ID, ID> table_triggers_;  // table_id -> trigger_id (multiple per table)
+        mutable std::mutex trigger_mutex_;  // Separate mutex for trigger operations
 
         // ONLINE migration state cache (Sprint 4 Task 5.4.1)
         std::unordered_map<ID, TableMigrationState> migration_cache_;  // keyed by migration_id

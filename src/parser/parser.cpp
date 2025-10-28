@@ -129,6 +129,11 @@ namespace scratchbird
                     {
                         stmt = parseCreateIndex();
                     }
+                    // Trigger support will be added by Agent C
+                    // else if (check(TokenType::KW_TRIGGER))
+                    // {
+                    //     stmt = parseCreateTrigger();
+                    // }
                     else
                     {
                         error("Expected TABLE, INDEX, UNIQUE INDEX, or TABLESPACE after CREATE");
@@ -138,6 +143,11 @@ namespace scratchbird
                 else if (match(TokenType::KW_INSERT))
                 {
                     stmt = parseInsert();
+                }
+                else if (match(TokenType::KW_WITH))  // Phase 2 Wave 2: WITH clause (CTEs)
+                {
+                    // WITH clause starts a SELECT statement
+                    stmt = parseSelect();  // parseSelect will handle the WITH clause
                 }
                 else if (match(TokenType::KW_SELECT))
                 {
@@ -201,6 +211,11 @@ namespace scratchbird
                     {
                         stmt = parseDropTablespace();
                     }
+                    // Trigger support will be added by Agent C
+                    // else if (check(TokenType::KW_TRIGGER))
+                    // {
+                    //     stmt = parseDropTrigger();
+                    // }
                     else
                     {
                         error("Expected TABLESPACE after DROP");
@@ -683,6 +698,163 @@ namespace scratchbird
             return TypeName(type, precision, scale);
         }
 
+        // Phase 2 Wave 2 - Agent C: Parse CREATE TRIGGER
+        Statement *Parser::parseCreateTrigger()
+        {
+            // CREATE TRIGGER trigger_name BEFORE|AFTER INSERT|UPDATE|DELETE ON table_name
+            // FOR EACH ROW EXECUTE PROCEDURE procedure_name()
+            
+            auto start_loc = previous().location;
+            
+            // Consume TRIGGER keyword
+            if (!consume(TokenType::KW_TRIGGER, "Expected TRIGGER keyword"))
+            {
+                return nullptr;
+            }
+            
+            // Get trigger name
+            if (!check(TokenType::IDENTIFIER))
+            {
+                error("Expected trigger name after CREATE TRIGGER");
+                return nullptr;
+            }
+            auto trigger_name = lexer_.stringPool().intern(current().value.string_id);
+            advance();
+            
+            // Parse timing: BEFORE or AFTER
+            TriggerTiming timing;
+            if (match(TokenType::KW_BEFORE))
+            {
+                timing = TriggerTiming::BEFORE;
+            }
+            else if (match(TokenType::KW_AFTER))
+            {
+                timing = TriggerTiming::AFTER;
+            }
+            else
+            {
+                error("Expected BEFORE or AFTER after trigger name");
+                return nullptr;
+            }
+            
+            // Parse event: INSERT, UPDATE, or DELETE
+            TriggerEvent event;
+            if (match(TokenType::KW_INSERT))
+            {
+                event = TriggerEvent::INSERT;
+            }
+            else if (match(TokenType::KW_UPDATE))
+            {
+                event = TriggerEvent::UPDATE;
+            }
+            else if (match(TokenType::KW_DELETE))
+            {
+                event = TriggerEvent::DELETE;
+            }
+            else
+            {
+                error("Expected INSERT, UPDATE, or DELETE after trigger timing");
+                return nullptr;
+            }
+            
+            // Parse ON table_name
+            if (!consume(TokenType::KW_ON, "Expected ON after trigger event"))
+            {
+                return nullptr;
+            }
+            
+            if (!check(TokenType::IDENTIFIER))
+            {
+                error("Expected table name after ON");
+                return nullptr;
+            }
+            auto table_name = lexer_.stringPool().intern(current().value.string_id);
+            advance();
+            
+            // Parse FOR EACH ROW
+            if (!consume(TokenType::KW_FOR, "Expected FOR EACH ROW"))
+            {
+                return nullptr;
+            }
+            if (!consume(TokenType::KW_EACH, "Expected FOR EACH ROW"))
+            {
+                return nullptr;
+            }
+            if (!consume(TokenType::KW_ROW, "Expected FOR EACH ROW"))
+            {
+                return nullptr;
+            }
+            
+            TriggerGranularity granularity = TriggerGranularity::FOR_EACH_ROW;
+            
+            // Parse EXECUTE PROCEDURE procedure_name()
+            if (!consume(TokenType::KW_EXECUTE, "Expected EXECUTE PROCEDURE"))
+            {
+                return nullptr;
+            }
+            if (!consume(TokenType::KW_PROCEDURE, "Expected EXECUTE PROCEDURE"))
+            {
+                return nullptr;
+            }
+            
+            if (!check(TokenType::IDENTIFIER))
+            {
+                error("Expected procedure name after EXECUTE PROCEDURE");
+                return nullptr;
+            }
+            auto procedure_name = lexer_.stringPool().intern(current().value.string_id);
+            advance();
+            
+            // Optional parentheses: procedure_name()
+            if (match(TokenType::LEFT_PAREN))
+            {
+                if (!consume(TokenType::RIGHT_PAREN, "Expected ')' after procedure name"))
+                {
+                    return nullptr;
+                }
+            }
+            
+            // Optional semicolon
+            match(TokenType::SEMICOLON);
+            
+            auto span = SourceSpan(start_loc, previous().location);
+            return arena_.make<CreateTriggerStmt>(span, trigger_name, table_name,
+                                                   timing, event, granularity, procedure_name);
+        }
+        
+        // Phase 2 Wave 2 - Agent C: Parse DROP TRIGGER
+        Statement *Parser::parseDropTrigger()
+        {
+            // DROP TRIGGER [IF EXISTS] trigger_name
+            
+            auto start_loc = previous().location;
+            
+            // Consume TRIGGER keyword
+            if (!consume(TokenType::KW_TRIGGER, "Expected TRIGGER keyword"))
+            {
+                return nullptr;
+            }
+            
+            // Check for IF EXISTS (future support)
+            bool if_exists = false;
+            // For now, we'll skip IF EXISTS support
+            
+            // Get trigger name
+            if (!check(TokenType::IDENTIFIER))
+            {
+                error("Expected trigger name after DROP TRIGGER");
+                return nullptr;
+            }
+            auto trigger_name = lexer_.stringPool().intern(current().value.string_id);
+            advance();
+            
+            // Optional semicolon
+            match(TokenType::SEMICOLON);
+            
+            auto span = SourceSpan(start_loc, previous().location);
+            return arena_.make<DropTriggerStmt>(span, trigger_name, if_exists);
+        }
+
         Statement *Parser::parseInsert()
         {
             auto start_loc = previous().location;
@@ -778,6 +950,16 @@ namespace scratchbird
         {
             auto start_loc = previous().location;
 
+            // Parse optional WITH clause (Phase 2 Wave 2: CTE support)
+            WithClause *with_clause = parseWithClause();
+
+            // If WITH clause was parsed, we already consumed SELECT, use current location
+            // Otherwise, use previous location (SELECT keyword location)
+            if (with_clause == nullptr)
+            {
+                // No WITH clause, start_loc is correct (SELECT keyword)
+            }
+
             std::vector<SelectItem> select_list;
 
             // Parse select list
@@ -828,7 +1010,12 @@ namespace scratchbird
 
             // Create SELECT statement
             SelectStmt *stmt;
-            if (!from_clause.joins.empty())
+            if (with_clause)
+            {
+                // Use constructor with WITH clause
+                stmt = arena_.make<SelectStmt>(span, with_clause, std::move(select_list), std::move(from_clause), where_clause);
+            }
+            else if (!from_clause.joins.empty())
             {
                 stmt = arena_.make<SelectStmt>(span, std::move(select_list), std::move(from_clause), where_clause);
             }
@@ -1047,6 +1234,109 @@ namespace scratchbird
             }
 
             return from_clause;
+        }
+
+        // Parse WITH clause (CTEs) - Phase 2 Wave 2
+        WithClause *Parser::parseWithClause()
+        {
+            // Check if WITH keyword is present
+            if (!check(TokenType::KW_WITH))
+            {
+                return nullptr; // No WITH clause
+            }
+
+            auto start_loc = current().location;
+            advance(); // consume WITH
+
+            std::vector<CTEDefinition> ctes;
+
+            // Parse CTEs: cte_name [(col1, col2, ...)] AS (SELECT ...)
+            do
+            {
+                // Parse CTE name
+                if (!check(TokenType::IDENTIFIER))
+                {
+                    error("Expected CTE name after WITH");
+                    synchronize();
+                    return nullptr;
+                }
+
+                StringPool::StringId cte_name = current().value.string_id;
+                advance();
+
+                // Optional column aliases: (col1, col2, ...)
+                std::vector<StringPool::StringId> column_aliases;
+                if (match(TokenType::LEFT_PAREN))
+                {
+                    if (!check(TokenType::RIGHT_PAREN))
+                    {
+                        do
+                        {
+                            if (!check(TokenType::IDENTIFIER))
+                            {
+                                error("Expected column name in CTE column list");
+                                synchronize();
+                                return nullptr;
+                            }
+                            column_aliases.push_back(current().value.string_id);
+                            advance();
+                        } while (match(TokenType::COMMA));
+                    }
+
+                    if (!consume(TokenType::RIGHT_PAREN, "Expected ')' after CTE column list"))
+                    {
+                        synchronize();
+                        return nullptr;
+                    }
+                }
+
+                // Expect AS
+                if (!consume(TokenType::KW_AS, "Expected AS after CTE name"))
+                {
+                    synchronize();
+                    return nullptr;
+                }
+
+                // Parse CTE query: (SELECT ...)
+                if (!consume(TokenType::LEFT_PAREN, "Expected '(' after AS"))
+                {
+                    synchronize();
+                    return nullptr;
+                }
+
+                // Parse SELECT statement
+                if (!consume(TokenType::KW_SELECT, "Expected SELECT in CTE definition"))
+                {
+                    synchronize();
+                    return nullptr;
+                }
+
+                SelectStmt *cte_query = dynamic_cast<SelectStmt *>(parseSelect());
+                if (!cte_query)
+                {
+                    error("Expected SELECT statement in CTE definition");
+                    synchronize();
+                    return nullptr;
+                }
+
+                if (!consume(TokenType::RIGHT_PAREN, "Expected ')' after CTE query"))
+                {
+                    synchronize();
+                    return nullptr;
+                }
+
+                ctes.emplace_back(cte_name, cte_query, std::move(column_aliases));
+
+            } while (match(TokenType::COMMA));
+
+            // After all CTEs are parsed, we expect SELECT
+            if (!consume(TokenType::KW_SELECT, "Expected SELECT after WITH clause"))
+            {
+                synchronize();
+                return nullptr;
+            }
+
+            return arena_.make<WithClause>(std::move(ctes));
         }
 
         Statement *Parser::parseUpdate()
@@ -2176,6 +2466,55 @@ namespace scratchbird
                 {
                     op = BinaryOp::REGEX_NOT_MATCH_CI;
                 }
+                // IN and NOT IN operators (Phase 2 Wave 2 - Agent B)
+                else if (check(TokenType::KW_NOT) || check(TokenType::KW_IN))
+                {
+                    bool is_not = false;
+                    if (match(TokenType::KW_NOT))
+                    {
+                        is_not = true;
+                        if (!consume(TokenType::KW_IN, "Expected IN after NOT"))
+                            return nullptr;
+                    }
+                    else
+                    {
+                        advance();  // consume IN
+                    }
+
+                    if (!consume(TokenType::LEFT_PAREN, "Expected '(' after IN"))
+                        return nullptr;
+
+                    // Check if it's a subquery
+                    if (match(TokenType::KW_SELECT))
+                    {
+                        SelectStmt *subquery = dynamic_cast<SelectStmt *>(parseSelect());
+                        if (!subquery)
+                            return nullptr;
+
+                        if (!consume(TokenType::RIGHT_PAREN, "Expected ')' after IN subquery"))
+                            return nullptr;
+
+                        SubqueryType subquery_type = is_not ? SubqueryType::NOT_IN : SubqueryType::IN;
+                        auto *subquery_expr = arena_.make<SubqueryExpr>(
+                            makeSpan(subquery->span().start, previous().location),
+                            subquery,
+                            subquery_type
+                        );
+
+                        BinaryOp bin_op = is_not ? BinaryOp::NOT_IN : BinaryOp::IN;
+                        auto span = makeSpan(expr->span().start, previous().location);
+                        expr = arena_.make<BinaryOpExpr>(span, bin_op, expr, subquery_expr);
+                        continue;
+                    }
+                    else
+                    {
+                        // IN with value list: IN (1, 2, 3)
+                        // For now, we'll parse this as a series of OR comparisons
+                        // This is a simplified implementation
+                        error("IN with value list not yet implemented - use subquery");
+                        return nullptr;
+                    }
+                }
                 else
                 {
                     break;
@@ -2799,8 +3138,43 @@ namespace scratchbird
                 }
             }
 
+            // EXISTS subquery (Phase 2 Wave 2 - Agent B)
+            if (match(TokenType::KW_EXISTS))
+            {
+                if (!consume(TokenType::LEFT_PAREN, "Expected '(' after EXISTS"))
+                    return nullptr;
+
+                if (!consume(TokenType::KW_SELECT, "Expected SELECT after EXISTS ("))
+                    return nullptr;
+
+                SelectStmt *subquery = dynamic_cast<SelectStmt *>(parseSelect());
+                if (!subquery)
+                    return nullptr;
+
+                if (!consume(TokenType::RIGHT_PAREN, "Expected ')' after EXISTS subquery"))
+                    return nullptr;
+
+                auto span = makeSpan(start_loc, previous().location);
+                return arena_.make<SubqueryExpr>(span, subquery, SubqueryType::EXISTS);
+            }
+
             if (match(TokenType::LEFT_PAREN))
             {
+                // Check if this is a scalar subquery (SELECT ...)
+                if (match(TokenType::KW_SELECT))
+                {
+                    SelectStmt *subquery = dynamic_cast<SelectStmt *>(parseSelect());
+                    if (!subquery)
+                        return nullptr;
+
+                    if (!consume(TokenType::RIGHT_PAREN, "Expected ')' after subquery"))
+                        return nullptr;
+
+                    auto span = makeSpan(start_loc, previous().location);
+                    return arena_.make<SubqueryExpr>(span, subquery, SubqueryType::SCALAR);
+                }
+
+                // Otherwise it's a grouped expression
                 auto *expr = parseExpression();
                 if (!expr)
                     return nullptr;

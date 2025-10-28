@@ -101,6 +101,7 @@ namespace scratchbird
             void visit(NullIfExpr *node) override;     // Phase 1 Task 8
             void visit(CaseExpr *node) override;       // Phase 1 Task 8
             void visit(ArrayLiteral *node) override;   // Phase 2 Task 12
+            void visit(SubqueryExpr *node) override;   // Phase 2 Wave 2 - Agent B
             void visit(ColumnDef *node) override;
 
             // Get expression type after analysis

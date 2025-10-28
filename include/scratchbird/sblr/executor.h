@@ -143,6 +143,12 @@ namespace scratchbird
             size_t pc_; // Program counter
             std::stack<Value> stack_;
 
+            // CTE (Common Table Expression) storage (Phase 2 Wave 2)
+            // Maps CTE name -> materialized result rows
+            std::unordered_map<std::string, std::vector<std::vector<Value>>> cte_results_;
+            std::unordered_map<std::string, std::vector<std::string>> cte_column_names_;
+            std::unordered_map<std::string, std::vector<core::DataType>> cte_column_types_;
+
             // Current statement context
             std::string current_table_;
             std::vector<std::string> current_columns_;
@@ -186,6 +192,10 @@ namespace scratchbird
             void executeSetTransaction();   // Phase 3 Task 3.6
             void executeCommit();           // Phase 2 Task 2.6
             void executeRollback();         // Phase 2 Task 2.6
+
+            // Trigger execution (Wave 2)
+            void executeCreateTrigger();    // CREATE TRIGGER
+            void executeDropTrigger();      // DROP TRIGGER
 
             // Monitoring/system table execution
             void executeMonitoringQuery(const std::string &table_name);
@@ -324,6 +334,24 @@ namespace scratchbird
                              const ResultSet* input_result,
                              const std::vector<size_t>& order_cols,
                              const std::vector<bool>& order_asc);
+
+            // Trigger execution helpers (Wave 2)
+        public:
+            // Forward declaration
+            class TriggerContext;
+
+            // Trigger procedure type: takes TriggerContext, returns true to continue operation
+            using TriggerProcedure = std::function<bool(const TriggerContext&)>;
+
+            // Register a trigger procedure for testing
+            void registerTriggerProcedure(const std::string& name, TriggerProcedure procedure);
+
+        private:
+            // Trigger procedure registry
+            std::unordered_map<std::string, TriggerProcedure> trigger_procedures_;
+
+            // Fire a trigger for the given context
+            bool fireTrigger(const TriggerContext& ctx);
         };
 
     } // namespace sblr

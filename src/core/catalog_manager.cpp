@@ -5368,4 +5368,179 @@ Status CatalogManager::cancelOnlineMigration(
 }
 
 
+
+// ===== Trigger Management (Phase 2 Wave 2 - Agent C) =====
+
+auto CatalogManager::createTrigger(const TriggerInfo &trigger, ErrorContext *ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(trigger_mutex_);
+    
+    // Check trigger name is unique
+    if (trigger_name_to_id_.count(trigger.trigger_name) > 0)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Trigger '%s' already exists", trigger.trigger_name.c_str());
+        return Status::NOT_FOUND;
+    }
+    
+    // Check table exists
+    TableInfo table_info;
+    auto table_result = getTable(trigger.table_id, table_info, nullptr);
+    if (table_result != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Table ID '%s' does not exist", 
+                          UuidV7::uuidToString(trigger.table_id).c_str());
+        return Status::NOT_FOUND;
+    }
+    
+    // Generate trigger ID
+    TriggerInfo trigger_copy = trigger;
+    trigger_copy.trigger_id = UuidV7::generate();
+    trigger_copy.created_time = std::chrono::duration_cast<std::chrono::microseconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
+    trigger_copy.enabled = true;
+    
+    // Store in cache
+    trigger_cache_[trigger_copy.trigger_id] = trigger_copy;
+    trigger_name_to_id_[trigger_copy.trigger_name] = trigger_copy.trigger_id;
+    table_triggers_.insert({trigger_copy.table_id, trigger_copy.trigger_id});
+    
+    LOG_INFO(CATALOG, "Created trigger '%s' on table '%s'", 
+             trigger_copy.trigger_name.c_str(), trigger_copy.table_name.c_str());
+    
+    return Status::OK;
+}
+
+auto CatalogManager::dropTrigger(const std::string &trigger_name, ErrorContext *ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(trigger_mutex_);
+    
+    // Look up trigger
+    auto it = trigger_name_to_id_.find(trigger_name);
+    if (it == trigger_name_to_id_.end())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Trigger '%s' does not exist", trigger_name.c_str());
+        return Status::NOT_FOUND;
+    }
+    
+    ID trigger_id = it->second;
+    const auto& trigger_info = trigger_cache_[trigger_id];
+    
+    // Remove from table_triggers index
+    auto range = table_triggers_.equal_range(trigger_info.table_id);
+    for (auto tit = range.first; tit != range.second; ++tit)
+    {
+        if (tit->second == trigger_id)
+        {
+            table_triggers_.erase(tit);
+            break;
+        }
+    }
+    
+    // Remove from caches
+    trigger_cache_.erase(trigger_id);
+    trigger_name_to_id_.erase(trigger_name);
+    
+    LOG_INFO(CATALOG, "Dropped trigger '%s'", trigger_name.c_str());
+    
+    return Status::OK;
+}
+
+auto CatalogManager::getTrigger(const ID &trigger_id, TriggerInfo &info, ErrorContext *ctx)
+    -> Status
+{
+    std::lock_guard<std::mutex> lock(trigger_mutex_);
+    
+    auto it = trigger_cache_.find(trigger_id);
+    if (it == trigger_cache_.end())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Trigger ID '%s' not found",
+                          UuidV7::uuidToString(trigger_id).c_str());
+        return Status::NOT_FOUND;
+    }
+    
+    info = it->second;
+    return Status::OK;
+}
+
+auto CatalogManager::getTriggerByName(const std::string &trigger_name, TriggerInfo &info,
+                                      ErrorContext *ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(trigger_mutex_);
+    
+    auto it = trigger_name_to_id_.find(trigger_name);
+    if (it == trigger_name_to_id_.end())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Trigger '%s' not found", trigger_name.c_str());
+        return Status::NOT_FOUND;
+    }
+    
+    return getTrigger(it->second, info, ctx);
+}
+
+auto CatalogManager::listTriggersForTable(const ID &table_id, TriggerEvent event,
+                                          TriggerTiming timing,
+                                          std::vector<TriggerInfo> &triggers,
+                                          ErrorContext *ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(trigger_mutex_);
+    
+    triggers.clear();
+    
+    // Find all triggers for this table
+    auto range = table_triggers_.equal_range(table_id);
+    for (auto it = range.first; it != range.second; ++it)
+    {
+        const auto& trigger = trigger_cache_[it->second];
+        
+        // Filter by event, timing, and enabled status
+        if (trigger.event == event && trigger.timing == timing && trigger.enabled)
+        {
+            triggers.push_back(trigger);
+        }
+    }
+    
+    return Status::OK;
+}
+
+auto CatalogManager::listAllTriggersForTable(const ID &table_id,
+                                             std::vector<TriggerInfo> &triggers,
+                                             ErrorContext *ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(trigger_mutex_);
+    
+    triggers.clear();
+    
+    // Find all triggers for this table (regardless of event/timing)
+    auto range = table_triggers_.equal_range(table_id);
+    for (auto it = range.first; it != range.second; ++it)
+    {
+        const auto& trigger = trigger_cache_[it->second];
+        triggers.push_back(trigger);
+    }
+    
+    return Status::OK;
+}
+
+auto CatalogManager::enableTrigger(const std::string &trigger_name, bool enable,
+                                   ErrorContext *ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(trigger_mutex_);
+    
+    // Look up trigger
+    auto it = trigger_name_to_id_.find(trigger_name);
+    if (it == trigger_name_to_id_.end())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Trigger '%s' does not exist", trigger_name.c_str());
+        return Status::NOT_FOUND;
+    }
+    
+    // Update enabled status
+    trigger_cache_[it->second].enabled = enable;
+    
+    LOG_INFO(CATALOG, "Trigger '%s' %s", trigger_name.c_str(),
+             enable ? "enabled" : "disabled");
+    
+    return Status::OK;
+}
+
 } // namespace scratchbird::core
