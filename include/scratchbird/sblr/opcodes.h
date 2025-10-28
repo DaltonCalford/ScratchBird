@@ -219,6 +219,90 @@ namespace scratchbird
             COALESCE = 0xF8,               // COALESCE(arg1, arg2, ...) - return first non-null
             NULLIF = 0xF9,                 // NULLIF(expr1, expr2) - return NULL if equal
             CASE_WHEN = 0xFA,              // CASE WHEN ... - conditional expression
+
+            // Array functions (Phase 2 Task 12) - 0xFB-0xFF range
+            // Array aggregate
+            ARRAY_AGG = 0xFB,              // ARRAY_AGG(expr) - aggregate function
+
+            // Array table function
+            UNNEST = 0xFC,                 // UNNEST(array) - table-valued function
+
+            // Array conversion functions (extended opcodes start at 0x01FB)
+            ARRAY_TO_STRING = 0xFD,        // ARRAY_TO_STRING(array, delim [, null_str])
+            STRING_TO_ARRAY = 0xFE,        // STRING_TO_ARRAY(string, delim [, null_str])
+
+            // Note: Additional array opcodes beyond 0xFF will use extended encoding
+            // Extended format: 0xFF <extended_opcode_byte>
+            EXTENDED_OPCODE = 0xFF,        // Extended opcode marker
+
+            // Extended array opcodes (used with EXTENDED_OPCODE prefix)
+            // Array manipulation functions
+            EXT_ARRAY_APPEND = 0x01,       // ARRAY_APPEND(array, element)
+            EXT_ARRAY_PREPEND = 0x02,      // ARRAY_PREPEND(element, array)
+            EXT_ARRAY_CAT = 0x03,          // ARRAY_CAT(array1, array2)
+            EXT_ARRAY_REMOVE = 0x04,       // ARRAY_REMOVE(array, element)
+            EXT_ARRAY_REPLACE = 0x05,      // ARRAY_REPLACE(array, from, to)
+
+            // Array operators
+            EXT_ARRAY_OVERLAP = 0x10,      // && - array overlap (has common elements)
+            EXT_ARRAY_CONTAINS = 0x11,     // @> - array contains (left contains all of right)
+            EXT_ARRAY_CONTAINED_BY = 0x12, // <@ - array is contained by (left subset of right)
+            EXT_ARRAY_EQ = 0x13,           // = - array equality
+            EXT_ARRAY_NE = 0x14,           // <> - array inequality
+
+            // Array accessor functions
+            EXT_ARRAY_LENGTH = 0x20,       // ARRAY_LENGTH(array, dimension)
+            EXT_ARRAY_DIMS = 0x21,         // ARRAY_DIMS(array) - dimensions as text
+            EXT_ARRAY_UPPER = 0x22,        // ARRAY_UPPER(array, dimension) - upper bound
+            EXT_ARRAY_LOWER = 0x23,        // ARRAY_LOWER(array, dimension) - lower bound
+
+            // Text search and regex functions (Phase 2 Task 13) - 0x30-0x4F range
+            // Regex operators (can be used without EXTENDED_OPCODE prefix due to available space)
+            EXT_REGEX_MATCH = 0x30,        // ~ operator (regex match case-sensitive)
+            EXT_REGEX_MATCH_CI = 0x31,     // ~* operator (regex match case-insensitive)
+            EXT_REGEX_NOT_MATCH = 0x32,    // !~ operator (regex not match case-sensitive)
+            EXT_REGEX_NOT_MATCH_CI = 0x33, // !~* operator (regex not match case-insensitive)
+
+            // Regex functions
+            EXT_REGEXP_MATCHES = 0x34,     // REGEXP_MATCHES(str, pattern [, flags])
+            EXT_REGEXP_REPLACE = 0x35,     // REGEXP_REPLACE(str, pattern, replacement [, flags])
+            EXT_REGEXP_SPLIT_TO_TABLE = 0x36,  // REGEXP_SPLIT_TO_TABLE(str, pattern [, flags])
+            EXT_REGEXP_SPLIT_TO_ARRAY = 0x37,  // REGEXP_SPLIT_TO_ARRAY(str, pattern [, flags])
+
+            // String tokenization
+            EXT_SPLIT_PART = 0x38,         // SPLIT_PART(str, delimiter, field)
+            EXT_STRING_TO_TABLE = 0x39,    // STRING_TO_TABLE(str, delimiter)
+            EXT_UNNEST_TEXT = 0x3A,        // UNNEST_TEXT(text_array)
+
+            // Text utilities
+            EXT_STRPOS = 0x3B,             // STRPOS(str, substring)
+            EXT_POSITION = 0x3C,           // POSITION(substring IN string)
+            EXT_OVERLAY = 0x3D,            // OVERLAY(str PLACING newstr FROM start [FOR length])
+            EXT_QUOTE_LITERAL = 0x3E,      // QUOTE_LITERAL(str)
+            EXT_QUOTE_IDENT = 0x3F,        // QUOTE_IDENT(str)
+
+            // Case conversion and string utilities
+            EXT_INITCAP = 0x40,            // INITCAP(str) - capitalize first letter of each word
+            EXT_ASCII = 0x41,              // ASCII(str) - get ASCII code of first character
+            EXT_CHR = 0x42,                // CHR(code) - convert ASCII code to character
+            EXT_REPEAT = 0x43,             // REPEAT(str, count)
+            EXT_REVERSE = 0x44,            // REVERSE(str)
+
+            // Spatial types and operations (Phase 2 Task 9.1) - 0x50-0x5F range
+            EXT_TYPE_POINT = 0x50,         // POINT data type marker
+            EXT_TYPE_LINESTRING = 0x51,    // LINESTRING data type marker
+            EXT_TYPE_POLYGON = 0x52,       // POLYGON data type marker
+
+            // Spatial constructor functions
+            EXT_ST_POINT = 0x53,           // ST_Point(x, y) - create point
+            EXT_ST_MAKELINE = 0x54,        // ST_MakeLine(...) - create linestring
+            EXT_ST_MAKEPOLYGON = 0x55,     // ST_MakePolygon(...) - create polygon
+
+            // Spatial output functions
+            EXT_ST_ASTEXT = 0x56,          // ST_AsText(geom) - WKT output
+            EXT_ST_ASBINARY = 0x57,        // ST_AsBinary(geom) - WKB output
+            EXT_ST_GEOMETRYTYPE = 0x58,    // ST_GeometryType(geom) - type name
+            EXT_ST_ISVALID = 0x59,         // ST_IsValid(geom) - validation check
         };
 
         // SBLR Version

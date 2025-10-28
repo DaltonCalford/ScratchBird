@@ -18,6 +18,8 @@
 #include <cstring>
 #include <chrono>
 #include <map>
+#include <regex>
+#include <cctype>
 
 using json = nlohmann::json;
 
@@ -1825,8 +1827,8 @@ namespace scratchbird
         // Aggregation helper implementations (Phase 1 Task 1.6.3)
         void Executor::AggregateAccumulator::accumulate(const Value& val)
         {
-            // Skip NULLs for all aggregate functions except COUNT(*)
-            if (val.isNull() && func != AggFunc::COUNT)
+            // Skip NULLs for all aggregate functions except COUNT(*) and ARRAY_AGG
+            if (val.isNull() && func != AggFunc::COUNT && func != AggFunc::ARRAY_AGG)
                 return;
 
             // Handle DISTINCT
@@ -1867,6 +1869,12 @@ namespace scratchbird
                         result = val;
                     count++;
                     break;
+
+                case AggFunc::ARRAY_AGG:
+                    // Collect all values into an array (including NULLs unless filtered)
+                    array_elements.push_back(val);
+                    count++;
+                    break;
             }
         }
 
@@ -1886,6 +1894,56 @@ namespace scratchbird
                 case AggFunc::MIN:
                 case AggFunc::MAX:
                     return count > 0 ? result : Value::makeNull();
+
+                case AggFunc::ARRAY_AGG:
+                {
+                    // Convert accumulated values to JSON array format
+                    json j_array = json::array();
+                    for (const auto& elem : array_elements)
+                    {
+                        if (elem.isNull())
+                        {
+                            j_array.push_back(nullptr);
+                        }
+                        else
+                        {
+                            // Convert Value to appropriate JSON type
+                            switch (elem.type())
+                            {
+                                case core::DataType::INT8:
+                                case core::DataType::INT16:
+                                case core::DataType::INT32:
+                                case core::DataType::INT64:
+                                    j_array.push_back(elem.toInt64());
+                                    break;
+                                case core::DataType::FLOAT32:
+                                case core::DataType::FLOAT64:
+                                    j_array.push_back(elem.toDouble());
+                                    break;
+                                case core::DataType::BOOLEAN:
+                                    j_array.push_back(elem.toBoolean());
+                                    break;
+                                case core::DataType::VARCHAR:
+                                case core::DataType::TEXT:
+                                case core::DataType::CHAR:
+                                    j_array.push_back(elem.toString());
+                                    break;
+                                case core::DataType::JSON:
+                                    // Parse existing JSON and add to array
+                                    try {
+                                        j_array.push_back(json::parse(elem.toString()));
+                                    } catch (...) {
+                                        j_array.push_back(elem.toString());
+                                    }
+                                    break;
+                                default:
+                                    j_array.push_back(elem.toString());
+                                    break;
+                            }
+                        }
+                    }
+                    return Value::makeJSON(j_array.dump());
+                }
             }
 
             // Should never reach here
@@ -2026,6 +2084,9 @@ namespace scratchbird
                         break;
                     case Opcode::AGG_MAX:
                         func = AggregateAccumulator::AggFunc::MAX;
+                        break;
+                    case Opcode::ARRAY_AGG:
+                        func = AggregateAccumulator::AggFunc::ARRAY_AGG;
                         break;
                     default:
                         error("Unknown aggregate function opcode");
@@ -2279,6 +2340,7 @@ namespace scratchbird
             for (size_t i = 0; i < agg_defs.size(); i++)
             {
                 std::string agg_name;
+                core::DataType agg_type = core::DataType::FLOAT64;
                 switch (agg_defs[i].func)
                 {
                     case AggregateAccumulator::AggFunc::COUNT: agg_name = "COUNT"; break;
@@ -2286,8 +2348,12 @@ namespace scratchbird
                     case AggregateAccumulator::AggFunc::AVG: agg_name = "AVG"; break;
                     case AggregateAccumulator::AggFunc::MIN: agg_name = "MIN"; break;
                     case AggregateAccumulator::AggFunc::MAX: agg_name = "MAX"; break;
+                    case AggregateAccumulator::AggFunc::ARRAY_AGG:
+                        agg_name = "ARRAY_AGG";
+                        agg_type = core::DataType::JSON;
+                        break;
                 }
-                current_result_set_->addColumn(agg_name, core::DataType::FLOAT64);
+                current_result_set_->addColumn(agg_name, agg_type);
             }
 
             // Add rows from groups
@@ -2331,6 +2397,7 @@ namespace scratchbird
                     for (size_t i = 0; i < agg_defs.size(); i++)
                     {
                         core::CatalogManager::ColumnInfo col_info;
+                        col_info.data_type = static_cast<uint16_t>(core::DataType::FLOAT64);
                         switch (agg_defs[i].func)
                         {
                             case AggregateAccumulator::AggFunc::COUNT: col_info.column_name = "COUNT"; break;
@@ -2338,8 +2405,11 @@ namespace scratchbird
                             case AggregateAccumulator::AggFunc::AVG: col_info.column_name = "AVG"; break;
                             case AggregateAccumulator::AggFunc::MIN: col_info.column_name = "MIN"; break;
                             case AggregateAccumulator::AggFunc::MAX: col_info.column_name = "MAX"; break;
+                            case AggregateAccumulator::AggFunc::ARRAY_AGG:
+                                col_info.column_name = "ARRAY_AGG";
+                                col_info.data_type = static_cast<uint16_t>(core::DataType::JSON);
+                                break;
                         }
-                        col_info.data_type = static_cast<uint16_t>(core::DataType::FLOAT64);
                         result_columns.push_back(col_info);
                     }
 
@@ -4181,6 +4251,7 @@ namespace scratchbird
                 case Opcode::AGG_MIN:
                 case Opcode::AGG_MAX:
                 case Opcode::AGG_COUNT:
+                case Opcode::ARRAY_AGG:
                 {
                     uint8_t arg_count = readByte();
                     if (arg_count != 1)
@@ -4957,6 +5028,617 @@ namespace scratchbird
                     break;
                 }
 
+                // Array functions (Phase 2 Task 12)
+                case Opcode::ARRAY_TO_STRING:
+                {
+                    uint8_t arg_count = readByte();
+                    if (arg_count < 2 || arg_count > 3)
+                    {
+                        error("ARRAY_TO_STRING expects 2 or 3 arguments (array, delimiter [, null_string])");
+                    }
+
+                    Value null_string = (arg_count == 3) ? pop() : Value::makeNull();
+                    Value delimiter = pop();
+                    Value array = pop();
+
+                    if (array.isNull() || delimiter.isNull())
+                    {
+                        push(Value::makeNull());
+                    }
+                    else
+                    {
+                        try {
+                            // Parse JSON array
+                            json j_array = json::parse(array.toString());
+                            if (!j_array.is_array())
+                            {
+                                push(Value::makeNull());
+                                break;
+                            }
+
+                            std::string result;
+                            std::string delim = delimiter.toString();
+                            std::string null_str = null_string.isNull() ? "" : null_string.toString();
+                            bool first = true;
+
+                            for (const auto& elem : j_array)
+                            {
+                                if (!first) result += delim;
+                                first = false;
+
+                                if (elem.is_null())
+                                {
+                                    result += null_str;
+                                }
+                                else if (elem.is_string())
+                                {
+                                    result += elem.get<std::string>();
+                                }
+                                else
+                                {
+                                    result += elem.dump();
+                                }
+                            }
+
+                            push(Value::makeText(result));
+                        } catch (const json::exception& e) {
+                            push(Value::makeNull());
+                        }
+                    }
+                    break;
+                }
+
+                case Opcode::STRING_TO_ARRAY:
+                {
+                    uint8_t arg_count = readByte();
+                    if (arg_count < 2 || arg_count > 3)
+                    {
+                        error("STRING_TO_ARRAY expects 2 or 3 arguments (string, delimiter [, null_string])");
+                    }
+
+                    Value null_string = (arg_count == 3) ? pop() : Value::makeNull();
+                    Value delimiter = pop();
+                    Value str = pop();
+
+                    if (str.isNull() || delimiter.isNull())
+                    {
+                        push(Value::makeNull());
+                    }
+                    else
+                    {
+                        std::string text = str.toString();
+                        std::string delim = delimiter.toString();
+                        std::string null_str = null_string.isNull() ? "" : null_string.toString();
+
+                        json j_array = json::array();
+
+                        if (delim.empty())
+                        {
+                            // Empty delimiter: split into characters
+                            for (char c : text)
+                            {
+                                j_array.push_back(std::string(1, c));
+                            }
+                        }
+                        else
+                        {
+                            // Split by delimiter
+                            size_t start = 0;
+                            size_t end = text.find(delim);
+                            while (end != std::string::npos)
+                            {
+                                std::string part = text.substr(start, end - start);
+                                if (!null_string.isNull() && part == null_str)
+                                {
+                                    j_array.push_back(nullptr);
+                                }
+                                else
+                                {
+                                    j_array.push_back(part);
+                                }
+                                start = end + delim.length();
+                                end = text.find(delim, start);
+                            }
+                            // Add last part
+                            std::string part = text.substr(start);
+                            if (!null_string.isNull() && part == null_str)
+                            {
+                                j_array.push_back(nullptr);
+                            }
+                            else
+                            {
+                                j_array.push_back(part);
+                            }
+                        }
+
+                        push(Value::makeJSON(j_array.dump()));
+                    }
+                    break;
+                }
+
+                // Extended opcodes for array functions (manipulation, operators, accessors)
+                case Opcode::EXTENDED_OPCODE:
+                {
+                    uint8_t ext_op = readByte();
+
+                    // Array manipulation functions
+                    if (ext_op == static_cast<uint8_t>(Opcode::EXT_ARRAY_APPEND))
+                    {
+                        uint8_t arg_count = readByte();
+                        if (arg_count != 2)
+                        {
+                            error("ARRAY_APPEND expects 2 arguments (array, element)");
+                        }
+
+                        Value element = pop();
+                        Value array = pop();
+
+                        if (array.isNull())
+                        {
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            try {
+                                json j_array = json::parse(array.toString());
+                                if (!j_array.is_array())
+                                {
+                                    j_array = json::array();
+                                }
+
+                                // Append element
+                                j_array.push_back(valueToJSON(element));
+                                push(Value::makeJSON(j_array.dump()));
+                            } catch (const json::exception& e) {
+                                push(Value::makeNull());
+                            }
+                        }
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_ARRAY_PREPEND))
+                    {
+                        uint8_t arg_count = readByte();
+                        if (arg_count != 2)
+                        {
+                            error("ARRAY_PREPEND expects 2 arguments (element, array)");
+                        }
+
+                        Value array = pop();
+                        Value element = pop();
+
+                        if (array.isNull())
+                        {
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            try {
+                                json j_array = json::parse(array.toString());
+                                if (!j_array.is_array())
+                                {
+                                    j_array = json::array();
+                                }
+
+                                // Prepend element
+                                j_array.insert(j_array.begin(), valueToJSON(element));
+                                push(Value::makeJSON(j_array.dump()));
+                            } catch (const json::exception& e) {
+                                push(Value::makeNull());
+                            }
+                        }
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_ARRAY_CAT))
+                    {
+                        uint8_t arg_count = readByte();
+                        if (arg_count != 2)
+                        {
+                            error("ARRAY_CAT expects 2 arguments (array1, array2)");
+                        }
+
+                        Value array2 = pop();
+                        Value array1 = pop();
+
+                        if (array1.isNull() || array2.isNull())
+                        {
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            try {
+                                json j_array1 = json::parse(array1.toString());
+                                json j_array2 = json::parse(array2.toString());
+
+                                if (!j_array1.is_array()) j_array1 = json::array();
+                                if (!j_array2.is_array()) j_array2 = json::array();
+
+                                // Concatenate arrays
+                                for (const auto& elem : j_array2)
+                                {
+                                    j_array1.push_back(elem);
+                                }
+                                push(Value::makeJSON(j_array1.dump()));
+                            } catch (const json::exception& e) {
+                                push(Value::makeNull());
+                            }
+                        }
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_ARRAY_REMOVE))
+                    {
+                        uint8_t arg_count = readByte();
+                        if (arg_count != 2)
+                        {
+                            error("ARRAY_REMOVE expects 2 arguments (array, element)");
+                        }
+
+                        Value element = pop();
+                        Value array = pop();
+
+                        if (array.isNull())
+                        {
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            try {
+                                json j_array = json::parse(array.toString());
+                                if (!j_array.is_array())
+                                {
+                                    push(Value::makeNull());
+                                    break;
+                                }
+
+                                json element_json = valueToJSON(element);
+                                json result = json::array();
+
+                                // Remove all occurrences of element
+                                for (const auto& elem : j_array)
+                                {
+                                    if (elem != element_json)
+                                    {
+                                        result.push_back(elem);
+                                    }
+                                }
+                                push(Value::makeJSON(result.dump()));
+                            } catch (const json::exception& e) {
+                                push(Value::makeNull());
+                            }
+                        }
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_ARRAY_REPLACE))
+                    {
+                        uint8_t arg_count = readByte();
+                        if (arg_count != 3)
+                        {
+                            error("ARRAY_REPLACE expects 3 arguments (array, from, to)");
+                        }
+
+                        Value to_value = pop();
+                        Value from_value = pop();
+                        Value array = pop();
+
+                        if (array.isNull())
+                        {
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            try {
+                                json j_array = json::parse(array.toString());
+                                if (!j_array.is_array())
+                                {
+                                    push(Value::makeNull());
+                                    break;
+                                }
+
+                                json from_json = valueToJSON(from_value);
+                                json to_json = valueToJSON(to_value);
+                                json result = json::array();
+
+                                // Replace all occurrences
+                                for (const auto& elem : j_array)
+                                {
+                                    if (elem == from_json)
+                                    {
+                                        result.push_back(to_json);
+                                    }
+                                    else
+                                    {
+                                        result.push_back(elem);
+                                    }
+                                }
+                                push(Value::makeJSON(result.dump()));
+                            } catch (const json::exception& e) {
+                                push(Value::makeNull());
+                            }
+                        }
+                    }
+                    // Array operators
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_ARRAY_OVERLAP))
+                    {
+                        uint8_t arg_count = readByte();
+                        if (arg_count != 2)
+                        {
+                            error("Array && operator expects 2 arguments");
+                        }
+
+                        Value array2 = pop();
+                        Value array1 = pop();
+
+                        if (array1.isNull() || array2.isNull())
+                        {
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            try {
+                                json j_array1 = json::parse(array1.toString());
+                                json j_array2 = json::parse(array2.toString());
+
+                                if (!j_array1.is_array() || !j_array2.is_array())
+                                {
+                                    push(Value::makeBoolean(false));
+                                    break;
+                                }
+
+                                // Check for common elements
+                                bool has_overlap = false;
+                                for (const auto& elem1 : j_array1)
+                                {
+                                    for (const auto& elem2 : j_array2)
+                                    {
+                                        if (elem1 == elem2)
+                                        {
+                                            has_overlap = true;
+                                            break;
+                                        }
+                                    }
+                                    if (has_overlap) break;
+                                }
+                                push(Value::makeBoolean(has_overlap));
+                            } catch (const json::exception& e) {
+                                push(Value::makeBoolean(false));
+                            }
+                        }
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_ARRAY_CONTAINS))
+                    {
+                        uint8_t arg_count = readByte();
+                        if (arg_count != 2)
+                        {
+                            error("Array @> operator expects 2 arguments");
+                        }
+
+                        Value array2 = pop();
+                        Value array1 = pop();
+
+                        if (array1.isNull() || array2.isNull())
+                        {
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            try {
+                                json j_array1 = json::parse(array1.toString());
+                                json j_array2 = json::parse(array2.toString());
+
+                                if (!j_array1.is_array() || !j_array2.is_array())
+                                {
+                                    push(Value::makeBoolean(false));
+                                    break;
+                                }
+
+                                // Check if array1 contains all elements of array2
+                                bool contains_all = true;
+                                for (const auto& elem2 : j_array2)
+                                {
+                                    bool found = false;
+                                    for (const auto& elem1 : j_array1)
+                                    {
+                                        if (elem1 == elem2)
+                                        {
+                                            found = true;
+                                            break;
+                                        }
+                                    }
+                                    if (!found)
+                                    {
+                                        contains_all = false;
+                                        break;
+                                    }
+                                }
+                                push(Value::makeBoolean(contains_all));
+                            } catch (const json::exception& e) {
+                                push(Value::makeBoolean(false));
+                            }
+                        }
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_ARRAY_CONTAINED_BY))
+                    {
+                        uint8_t arg_count = readByte();
+                        if (arg_count != 2)
+                        {
+                            error("Array <@ operator expects 2 arguments");
+                        }
+
+                        Value array2 = pop();
+                        Value array1 = pop();
+
+                        if (array1.isNull() || array2.isNull())
+                        {
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            try {
+                                json j_array1 = json::parse(array1.toString());
+                                json j_array2 = json::parse(array2.toString());
+
+                                if (!j_array1.is_array() || !j_array2.is_array())
+                                {
+                                    push(Value::makeBoolean(false));
+                                    break;
+                                }
+
+                                // Check if array1 is subset of array2
+                                bool is_subset = true;
+                                for (const auto& elem1 : j_array1)
+                                {
+                                    bool found = false;
+                                    for (const auto& elem2 : j_array2)
+                                    {
+                                        if (elem1 == elem2)
+                                        {
+                                            found = true;
+                                            break;
+                                        }
+                                    }
+                                    if (!found)
+                                    {
+                                        is_subset = false;
+                                        break;
+                                    }
+                                }
+                                push(Value::makeBoolean(is_subset));
+                            } catch (const json::exception& e) {
+                                push(Value::makeBoolean(false));
+                            }
+                        }
+                    }
+                    // Array accessor functions
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_ARRAY_LENGTH))
+                    {
+                        uint8_t arg_count = readByte();
+                        if (arg_count < 1 || arg_count > 2)
+                        {
+                            error("ARRAY_LENGTH expects 1 or 2 arguments (array [, dimension])");
+                        }
+
+                        Value dimension = (arg_count == 2) ? pop() : Value::makeInt32(1);
+                        Value array = pop();
+
+                        if (array.isNull())
+                        {
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            try {
+                                json j_array = json::parse(array.toString());
+                                if (!j_array.is_array())
+                                {
+                                    push(Value::makeNull());
+                                    break;
+                                }
+
+                                // For now, only support 1D arrays (dimension = 1)
+                                push(Value::makeInt64(j_array.size()));
+                            } catch (const json::exception& e) {
+                                push(Value::makeNull());
+                            }
+                        }
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_ARRAY_DIMS))
+                    {
+                        uint8_t arg_count = readByte();
+                        if (arg_count != 1)
+                        {
+                            error("ARRAY_DIMS expects 1 argument (array)");
+                        }
+
+                        Value array = pop();
+
+                        if (array.isNull())
+                        {
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            try {
+                                json j_array = json::parse(array.toString());
+                                if (!j_array.is_array())
+                                {
+                                    push(Value::makeNull());
+                                    break;
+                                }
+
+                                // Return dimensions as text: [1:n]
+                                std::string dims = "[1:" + std::to_string(j_array.size()) + "]";
+                                push(Value::makeText(dims));
+                            } catch (const json::exception& e) {
+                                push(Value::makeNull());
+                            }
+                        }
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_ARRAY_UPPER))
+                    {
+                        uint8_t arg_count = readByte();
+                        if (arg_count < 1 || arg_count > 2)
+                        {
+                            error("ARRAY_UPPER expects 1 or 2 arguments (array [, dimension])");
+                        }
+
+                        Value dimension = (arg_count == 2) ? pop() : Value::makeInt32(1);
+                        Value array = pop();
+
+                        if (array.isNull())
+                        {
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            try {
+                                json j_array = json::parse(array.toString());
+                                if (!j_array.is_array())
+                                {
+                                    push(Value::makeNull());
+                                    break;
+                                }
+
+                                // Upper bound = size (1-indexed)
+                                push(Value::makeInt64(j_array.size()));
+                            } catch (const json::exception& e) {
+                                push(Value::makeNull());
+                            }
+                        }
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_ARRAY_LOWER))
+                    {
+                        uint8_t arg_count = readByte();
+                        if (arg_count < 1 || arg_count > 2)
+                        {
+                            error("ARRAY_LOWER expects 1 or 2 arguments (array [, dimension])");
+                        }
+
+                        Value dimension = (arg_count == 2) ? pop() : Value::makeInt32(1);
+                        Value array = pop();
+
+                        if (array.isNull())
+                        {
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            try {
+                                json j_array = json::parse(array.toString());
+                                if (!j_array.is_array())
+                                {
+                                    push(Value::makeNull());
+                                    break;
+                                }
+
+                                // Lower bound = 1 (PostgreSQL uses 1-based indexing)
+                                push(Value::makeInt64(1));
+                            } catch (const json::exception& e) {
+                                push(Value::makeNull());
+                            }
+                        }
+                    }
+                    else
+                    {
+                        error("Unknown extended opcode: " + std::to_string(ext_op));
+                    }
+                    break;
+                }
+
                 default:
                     error("Unknown expression opcode: " + std::to_string(static_cast<int>(op)));
             }
@@ -5228,6 +5910,158 @@ namespace scratchbird
             return charset_manager_.compare(
                 reinterpret_cast<const uint8_t *>(left.data()), left.length(),
                 reinterpret_cast<const uint8_t *>(right.data()), right.length(), collation_id);
+        }
+
+        // ========== Phase 2 Task 13: Text Search and Regex Functions ==========
+
+        bool Executor::matchRegex(const std::string &text, const std::string &pattern, bool case_insensitive)
+        {
+            try
+            {
+                std::regex::flag_type flags = std::regex::ECMAScript;
+                if (case_insensitive)
+                {
+                    flags |= std::regex::icase;
+                }
+                std::regex re(pattern, flags);
+                return std::regex_search(text, re);
+            }
+            catch (const std::regex_error &e)
+            {
+                error("Invalid regular expression: " + pattern + " (" + e.what() + ")");
+                return false;
+            }
+        }
+
+        std::vector<std::string> Executor::regexMatches(const std::string &text, const std::string &pattern, const std::string &flags)
+        {
+            std::vector<std::string> results;
+            try
+            {
+                std::regex::flag_type re_flags = std::regex::ECMAScript;
+                bool global = false;
+
+                // Parse flags
+                for (char f : flags)
+                {
+                    if (f == 'i')
+                        re_flags |= std::regex::icase;
+                    else if (f == 'g')
+                        global = true;
+                    // 'm' for multiline is implied in ECMAScript
+                }
+
+                std::regex re(pattern, re_flags);
+
+                if (global)
+                {
+                    // Find all matches
+                    auto words_begin = std::sregex_iterator(text.begin(), text.end(), re);
+                    auto words_end = std::sregex_iterator();
+
+                    for (std::sregex_iterator i = words_begin; i != words_end; ++i)
+                    {
+                        std::smatch match = *i;
+                        results.push_back(match.str());
+                    }
+                }
+                else
+                {
+                    // Find first match only
+                    std::smatch match;
+                    if (std::regex_search(text, match, re))
+                    {
+                        results.push_back(match.str());
+                    }
+                }
+            }
+            catch (const std::regex_error &e)
+            {
+                error("Invalid regular expression: " + pattern + " (" + e.what() + ")");
+            }
+            return results;
+        }
+
+        std::string Executor::regexReplace(const std::string &text, const std::string &pattern,
+                                           const std::string &replacement, const std::string &flags)
+        {
+            try
+            {
+                std::regex::flag_type re_flags = std::regex::ECMAScript;
+                bool global = false;
+
+                // Parse flags
+                for (char f : flags)
+                {
+                    if (f == 'i')
+                        re_flags |= std::regex::icase;
+                    else if (f == 'g')
+                        global = true;
+                }
+
+                std::regex re(pattern, re_flags);
+
+                if (global)
+                {
+                    return std::regex_replace(text, re, replacement);
+                }
+                else
+                {
+                    // Replace first match only
+                    std::smatch match;
+                    std::string result = text;
+                    if (std::regex_search(result, match, re))
+                    {
+                        result.replace(match.position(), match.length(), replacement);
+                    }
+                    return result;
+                }
+            }
+            catch (const std::regex_error &e)
+            {
+                error("Invalid regular expression: " + pattern + " (" + e.what() + ")");
+                return text;
+            }
+        }
+
+        std::vector<std::string> Executor::regexSplit(const std::string &text, const std::string &pattern,
+                                                      const std::string &flags)
+        {
+            std::vector<std::string> results;
+            try
+            {
+                std::regex::flag_type re_flags = std::regex::ECMAScript;
+
+                // Parse flags
+                for (char f : flags)
+                {
+                    if (f == 'i')
+                        re_flags |= std::regex::icase;
+                }
+
+                std::regex re(pattern, re_flags);
+
+                // Use sregex_token_iterator to split by regex
+                std::sregex_token_iterator iter(text.begin(), text.end(), re, -1);
+                std::sregex_token_iterator end;
+
+                for (; iter != end; ++iter)
+                {
+                    results.push_back(*iter);
+                }
+
+                // If no matches found, return the whole string
+                if (results.empty())
+                {
+                    results.push_back(text);
+                }
+            }
+            catch (const std::regex_error &e)
+            {
+                error("Invalid regular expression: " + pattern + " (" + e.what() + ")");
+                results.push_back(text);
+            }
+            return results;
         }
 
         bool

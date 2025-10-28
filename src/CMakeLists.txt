@@ -6,8 +6,14 @@ file(GLOB_RECURSE SCRATCHBIRD_CORE_SOURCES
     core/*.cpp
 )
 
+# Spatial library sources
+file(GLOB_RECURSE SCRATCHBIRD_SPATIAL_SOURCES
+    spatial/*.cpp
+)
+
 add_library(scratchbird_core STATIC
     ${SCRATCHBIRD_CORE_SOURCES}
+    ${SCRATCHBIRD_SPATIAL_SOURCES}
 )
 
 target_include_directories(scratchbird_core PUBLIC

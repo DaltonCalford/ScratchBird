@@ -63,6 +63,11 @@ namespace scratchbird::core
         XML = 63,    // XML document
         VECTOR = 64, // Vector embeddings for similarity search (variable dimensions)
 
+        // Spatial types (65-69)
+        POINT = 65,      // Geometric point (x, y)
+        LINESTRING = 66, // Sequence of connected points
+        POLYGON = 67,    // Closed polygon with optional holes
+
         // Array and composite types (70-79)
         ARRAY = 70,     // Array of elements (homogeneous type)
         COMPOSITE = 71, // Record/struct type (heterogeneous types)
@@ -132,6 +137,106 @@ namespace scratchbird::core
     #endif
 
     /**
+     * Spatial types - Geometric primitives following OGC Simple Features specification
+     */
+
+    /**
+     * POINT - Represents a 2D point in space
+     * Total size: 16 bytes (2 x double)
+     */
+    struct Point {
+        double x;
+        double y;
+
+        // Constructors
+        Point() : x(0.0), y(0.0) {}
+        Point(double x_, double y_) : x(x_), y(y_) {}
+
+        // Comparison operators
+        bool operator==(const Point& other) const {
+            return x == other.x && y == other.y;
+        }
+        bool operator!=(const Point& other) const {
+            return !(*this == other);
+        }
+    };
+
+    /**
+     * LINESTRING - Represents a sequence of connected points
+     * Variable size: vector of Points
+     */
+    struct LineString {
+        std::vector<Point> points;
+
+        // Constructors
+        LineString() = default;
+        explicit LineString(std::vector<Point> pts) : points(std::move(pts)) {}
+
+        // Validation
+        bool isValid() const {
+            return points.size() >= 2; // Minimum 2 points for a line
+        }
+
+        // Comparison operators
+        bool operator==(const LineString& other) const {
+            return points == other.points;
+        }
+        bool operator!=(const LineString& other) const {
+            return !(*this == other);
+        }
+    };
+
+    /**
+     * POLYGON - Represents a closed polygon with optional interior rings (holes)
+     * Variable size: vector of rings, each ring is a vector of Points
+     * First ring is exterior, subsequent rings are holes
+     */
+    struct Polygon {
+        std::vector<std::vector<Point>> rings; // First is exterior, rest are holes
+
+        // Constructors
+        Polygon() = default;
+        explicit Polygon(std::vector<Point> exterior) {
+            rings.push_back(std::move(exterior));
+        }
+        explicit Polygon(std::vector<std::vector<Point>> rgs) : rings(std::move(rgs)) {}
+
+        // Validation
+        bool isValid() const {
+            if (rings.empty()) return false;
+            // Exterior ring must have at least 4 points (3 unique + closing point)
+            if (rings[0].size() < 4) return false;
+            // Must be closed (first point == last point)
+            if (rings[0].front() != rings[0].back()) return false;
+            // Each hole must also be valid and closed
+            for (size_t i = 1; i < rings.size(); ++i) {
+                if (rings[i].size() < 4) return false;
+                if (rings[i].front() != rings[i].back()) return false;
+            }
+            return true;
+        }
+
+        // Comparison operators
+        bool operator==(const Polygon& other) const {
+            return rings == other.rings;
+        }
+        bool operator!=(const Polygon& other) const {
+            return !(*this == other);
+        }
+
+        // Accessors
+        const std::vector<Point>& exteriorRing() const {
+            return rings[0];
+        }
+        size_t numInteriorRings() const {
+            return rings.size() > 0 ? rings.size() - 1 : 0;
+        }
+        const std::vector<Point>& interiorRing(size_t index) const {
+            return rings[index + 1];
+        }
+    };
+
+    /**
      * INTERVAL type - represents time intervals
      *
      * Follows PostgreSQL interval model:
@@ -182,6 +287,9 @@ namespace scratchbird::core
                          float,          // FLOAT32
                          double,         // FLOAT64
                          Interval,       // INTERVAL
+                         Point,          // POINT
+                         LineString,     // LINESTRING
+                         Polygon,        // POLYGON
                          std::string,    // VARCHAR, TEXT, CHAR, DECIMAL (as string), JSON
                          std::vector<uint8_t>, // BINARY, VARBINARY, BLOB, BYTEA, UUID
                          bool                  // BOOLEAN
@@ -223,6 +331,13 @@ namespace scratchbird::core
         static TypedValue makeUUID(const std::vector<uint8_t> &v);
         static TypedValue makeUUID(const uint8_t *data, size_t len);
         static TypedValue makeJSON(const std::string &v);
+        static TypedValue makePoint(const Point &v);
+        static TypedValue makePoint(double x, double y);
+        static TypedValue makeLineString(const LineString &v);
+        static TypedValue makeLineString(const std::vector<Point> &points);
+        static TypedValue makePolygon(const Polygon &v);
+        static TypedValue makePolygon(const std::vector<Point> &exterior_ring);
+        static TypedValue makePolygon(const std::vector<std::vector<Point>> &rings);
 
         // Type checking
         DataType type() const
@@ -259,6 +374,9 @@ namespace scratchbird::core
         Interval getInterval() const;
         std::vector<uint8_t> getUUID() const;
         std::string getJSON() const;
+        Point getPoint() const;
+        LineString getLineString() const;
+        Polygon getPolygon() const;
 
         // Generic string conversion (for display)
         std::string toString() const;

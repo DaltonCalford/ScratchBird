@@ -152,6 +152,41 @@ namespace scratchbird::core
         return TypedValue(DataType::JSON, v);
     }
 
+    TypedValue TypedValue::makePoint(const Point &v)
+    {
+        return TypedValue(DataType::POINT, v);
+    }
+
+    TypedValue TypedValue::makePoint(double x, double y)
+    {
+        return TypedValue(DataType::POINT, Point(x, y));
+    }
+
+    TypedValue TypedValue::makeLineString(const LineString &v)
+    {
+        return TypedValue(DataType::LINESTRING, v);
+    }
+
+    TypedValue TypedValue::makeLineString(const std::vector<Point> &points)
+    {
+        return TypedValue(DataType::LINESTRING, LineString(points));
+    }
+
+    TypedValue TypedValue::makePolygon(const Polygon &v)
+    {
+        return TypedValue(DataType::POLYGON, v);
+    }
+
+    TypedValue TypedValue::makePolygon(const std::vector<Point> &exterior_ring)
+    {
+        return TypedValue(DataType::POLYGON, Polygon(exterior_ring));
+    }
+
+    TypedValue TypedValue::makePolygon(const std::vector<std::vector<Point>> &rings)
+    {
+        return TypedValue(DataType::POLYGON, Polygon(rings));
+    }
+
     // Type extraction
     int8_t TypedValue::getInt8() const
     {
@@ -322,6 +357,27 @@ namespace scratchbird::core
         return std::get<std::string>(data_);
     }
 
+    Point TypedValue::getPoint() const
+    {
+        if (type_ != DataType::POINT)
+            throw std::runtime_error("Type mismatch: not POINT");
+        return std::get<Point>(data_);
+    }
+
+    LineString TypedValue::getLineString() const
+    {
+        if (type_ != DataType::LINESTRING)
+            throw std::runtime_error("Type mismatch: not LINESTRING");
+        return std::get<LineString>(data_);
+    }
+
+    Polygon TypedValue::getPolygon() const
+    {
+        if (type_ != DataType::POLYGON)
+            throw std::runtime_error("Type mismatch: not POLYGON");
+        return std::get<Polygon>(data_);
+    }
+
     std::string TypedValue::toString() const
     {
         if (isNull())
@@ -378,6 +434,40 @@ namespace scratchbird::core
                 return TypeConverter::binaryToHex(getBinary());
             case DataType::JSON:
                 return getJSON();
+            case DataType::POINT: {
+                auto pt = getPoint();
+                std::ostringstream oss;
+                oss << "POINT(" << pt.x << " " << pt.y << ")";
+                return oss.str();
+            }
+            case DataType::LINESTRING: {
+                auto line = getLineString();
+                std::ostringstream oss;
+                oss << "LINESTRING(";
+                for (size_t i = 0; i < line.points.size(); ++i) {
+                    if (i > 0) oss << ", ";
+                    oss << line.points[i].x << " " << line.points[i].y;
+                }
+                oss << ")";
+                return oss.str();
+            }
+            case DataType::POLYGON: {
+                auto poly = getPolygon();
+                std::ostringstream oss;
+                oss << "POLYGON(";
+                for (size_t r = 0; r < poly.rings.size(); ++r) {
+                    if (r > 0) oss << ", ";
+                    oss << "(";
+                    const auto& ring = poly.rings[r];
+                    for (size_t i = 0; i < ring.size(); ++i) {
+                        if (i > 0) oss << ", ";
+                        oss << ring[i].x << " " << ring[i].y;
+                    }
+                    oss << ")";
+                }
+                oss << ")";
+                return oss.str();
+            }
             default:
                 return "<unknown>";
         }
@@ -583,6 +673,12 @@ namespace scratchbird::core
                 return "XML";
             case DataType::VECTOR:
                 return "VECTOR";
+            case DataType::POINT:
+                return "POINT";
+            case DataType::LINESTRING:
+                return "LINESTRING";
+            case DataType::POLYGON:
+                return "POLYGON";
             case DataType::ARRAY:
                 return "ARRAY";
             case DataType::COMPOSITE:
@@ -659,6 +755,12 @@ namespace scratchbird::core
             return DataType::XML;
         if (upper == "VECTOR")
             return DataType::VECTOR;
+        if (upper == "POINT")
+            return DataType::POINT;
+        if (upper == "LINESTRING")
+            return DataType::LINESTRING;
+        if (upper == "POLYGON")
+            return DataType::POLYGON;
 
         return std::nullopt;
     }
