@@ -218,6 +218,12 @@ namespace scratchbird
             bool matchPatternRecursive(const std::string &text, size_t text_pos,
                                        const std::string &pattern, size_t pattern_pos);
 
+            // Regex helpers (Phase 2 Task 13)
+            bool matchRegex(const std::string &text, const std::string &pattern, bool case_insensitive);
+            std::vector<std::string> regexMatches(const std::string &text, const std::string &pattern, const std::string &flags);
+            std::string regexReplace(const std::string &text, const std::string &pattern, const std::string &replacement, const std::string &flags);
+            std::vector<std::string> regexSplit(const std::string &text, const std::string &pattern, const std::string &flags);
+
             // Collation-aware string comparison helper
             int compareStrings(const std::string &left, const std::string &right,
                                uint32_t collation_id = 101) const;
@@ -243,7 +249,7 @@ namespace scratchbird
             // Aggregation execution helpers (Phase 1 Task 1.6.3)
             struct AggregateAccumulator
             {
-                enum class AggFunc { COUNT, SUM, AVG, MIN, MAX };
+                enum class AggFunc { COUNT, SUM, AVG, MIN, MAX, ARRAY_AGG };
 
                 AggFunc func;
                 bool distinct;
@@ -251,6 +257,7 @@ namespace scratchbird
                 int64_t count;          // For COUNT and AVG
                 double sum;             // For SUM and AVG
                 std::unordered_set<std::string> distinct_values; // For DISTINCT
+                std::vector<Value> array_elements;  // For ARRAY_AGG
 
                 AggregateAccumulator(AggFunc f, bool d)
                     : func(f), distinct(d), count(0), sum(0.0) {}
