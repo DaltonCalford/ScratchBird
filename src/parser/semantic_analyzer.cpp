@@ -282,6 +282,56 @@ namespace scratchbird
             // Create new scope for column resolution
             symbol_table_.pushScope();
 
+            // Phase 2 Wave 2: Process WITH clause (CTEs) if present
+            if (node->withClause())
+            {
+                for (const auto &cte : node->withClause()->ctes())
+                {
+                    // Check CTE name is unique
+                    if (resolveTable(cte.name))
+                    {
+                        std::string cte_name(string_pool_.get(cte.name));
+                        reportError(node, "CTE name '" + cte_name + "' already defined");
+                        continue;
+                    }
+
+                    // Analyze CTE query first
+                    visit(cte.query);
+
+                    // Create a table symbol for the CTE
+                    auto cte_symbol = std::make_unique<TableSymbol>(cte.name);
+
+                    // If column aliases provided, use them; otherwise use CTE query column names
+                    if (!cte.column_aliases.empty())
+                    {
+                        // For now, just create placeholder columns with the provided aliases
+                        // Full type inference would require examining the CTE query's select list
+                        for (size_t i = 0; i < cte.column_aliases.size(); ++i)
+                        {
+                            ColumnSymbol col;
+                            col.name = cte.column_aliases[i];
+                            col.type = TypeName(DataType::INT32); // Placeholder type
+                            col.nullable = true;
+                            cte_symbol->columns.push_back(col);
+                        }
+                    }
+                    else
+                    {
+                        // Extract column names and types from CTE select list
+                        // For now, create a placeholder column
+                        // TODO: Extract actual column info from CTE select list
+                        ColumnSymbol col;
+                        col.name = cte.name; // Use CTE name as fallback
+                        col.type = TypeName(DataType::INT32);
+                        col.nullable = true;
+                        cte_symbol->columns.push_back(col);
+                    }
+
+                    // Add CTE as a table symbol in current scope
+                    symbol_table_.addTable(cte.name, std::move(cte_symbol));
+                }
+            }
+
             // Resolve base table
             TableSymbol *base_table = resolveTable(node->fromClause().base_table.table_name);
             if (!base_table)
@@ -1369,6 +1419,85 @@ namespace scratchbird
             setExpressionType(node, ExpressionType(TypeName(DataType::JSON), false));
         }
 
+        void SemanticAnalyzer::visit(SubqueryExpr *node)
+        {
+            // Phase 2 Wave 2 - Agent B: Subquery implementation
+
+            // Save outer context for correlated subquery detection
+            // (For now, we don't track correlation - will be enhanced later)
+
+            // Analyze the subquery SELECT statement
+            if (!node->query())
+            {
+                reportError(node, "Subquery has no query statement");
+                setExpressionType(node, ExpressionType(TypeName(DataType::INT32), true));
+                return;
+            }
+
+            // Visit the subquery
+            visit(node->query());
+
+            // Validate based on subquery type
+            switch (node->type())
+            {
+                case SubqueryType::SCALAR:
+                {
+                    // Scalar subquery must return exactly one column
+                    const auto& select_list = node->query()->selectList();
+                    if (select_list.size() != 1)
+                    {
+                        reportError(node, "Scalar subquery must return exactly one column");
+                        setExpressionType(node, ExpressionType(TypeName(DataType::INT32), true));
+                        return;
+                    }
+
+                    // Get the type of the single column
+                    const ExpressionType* col_type = getExpressionType(select_list[0].expr);
+                    if (col_type)
+                    {
+                        // Scalar subquery can return NULL if no rows match
+                        setExpressionType(node, ExpressionType(col_type->type, true));
+                    }
+                    else
+                    {
+                        // Fallback if type unknown
+                        setExpressionType(node, ExpressionType(TypeName(DataType::INT32), true));
+                    }
+                    break;
+                }
+
+                case SubqueryType::EXISTS:
+                {
+                    // EXISTS always returns boolean
+                    setExpressionType(node, ExpressionType(TypeName(DataType::BOOLEAN), false));
+                    break;
+                }
+
+                case SubqueryType::IN:
+                case SubqueryType::NOT_IN:
+                {
+                    // IN/NOT IN subquery must return exactly one column
+                    const auto& select_list = node->query()->selectList();
+                    if (select_list.size() != 1)
+                    {
+                        reportError(node, "IN subquery must return exactly one column");
+                    }
+
+                    // IN/NOT IN returns boolean
+                    // Note: Type compatibility with left operand will be checked in BinaryOpExpr visitor
+                    setExpressionType(node, ExpressionType(TypeName(DataType::BOOLEAN), true));
+                    break;
+                }
+
+                case SubqueryType::ARRAY:
+                {
+                    // ARRAY subquery returns a JSON array
+                    setExpressionType(node, ExpressionType(TypeName(DataType::JSON), false));
+                    break;
+                }
+            }
+        }
+
         void SemanticAnalyzer::visit(ColumnDef *node)
         {
             // Validate column definition
@@ -1376,6 +1505,30 @@ namespace scratchbird
             {
                 reportError(node, "VARCHAR type requires precision");
             }
+        }
+
+        // Phase 2 Wave 2 - Agent C: Trigger visitors
+        void SemanticAnalyzer::visit(CreateTriggerStmt *node)
+        {
+            // Validate that the table exists
+            // Note: Full validation would require catalog access,
+            // which is typically done at execution time.
+            // For now, we just validate basic syntax constraints
+            
+            // Trigger name should not be empty (parser ensures this)
+            // Table name should not be empty (parser ensures this)
+            // Procedure name should not be empty (parser ensures this)
+            
+            // All validation is syntactic at parse time
+            // Semantic validation (table exists, procedure exists) happens at execution
+        }
+        
+        void SemanticAnalyzer::visit(DropTriggerStmt *node)
+        {
+            // Validate DROP TRIGGER statement
+            // Trigger name should not be empty (parser ensures this)
+            
+            // Semantic validation (trigger exists) happens at execution time
         }
 
         // Convenience function

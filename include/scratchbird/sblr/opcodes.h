@@ -306,6 +306,23 @@ namespace scratchbird
             EXT_ST_ASBINARY = 0x57,        // ST_AsBinary(geom) - WKB output
             EXT_ST_GEOMETRYTYPE = 0x58,    // ST_GeometryType(geom) - type name
             EXT_ST_ISVALID = 0x59,         // ST_IsValid(geom) - validation check
+
+            // CTE (Common Table Expression) support (Phase 2 Wave 2 - Agent A) - 0x60-0x6F range
+            EXT_CTE_DEF = 0x60,            // CTE definition marker
+            EXT_CTE_SCAN = 0x61,           // CTE scan operation
+            EXT_WITH_CLAUSE = 0x62,        // WITH clause marker
+            
+            // Trigger opcodes (Phase 2 Wave 2 - Agent C) - 0x70-0x72 range
+            EXT_CREATE_TRIGGER = 0x70,     // CREATE TRIGGER
+            EXT_DROP_TRIGGER = 0x71,       // DROP TRIGGER
+            EXT_FIRE_TRIGGER = 0x72,       // Internal: Fire trigger (used by executor)
+
+            // Subquery opcodes (Phase 2 Wave 2 - Agent B) - 0x73-0x77 range
+            EXT_SUBQUERY_SCALAR = 0x73,    // Scalar subquery (returns single value)
+            EXT_SUBQUERY_EXISTS = 0x74,    // EXISTS subquery (returns boolean)
+            EXT_SUBQUERY_IN = 0x75,        // IN subquery (membership test)
+            EXT_SUBQUERY_NOT_IN = 0x76,    // NOT IN subquery (negated membership)
+            EXT_SUBQUERY_END = 0x77,       // End of subquery marker
         };
 
         // SBLR Version

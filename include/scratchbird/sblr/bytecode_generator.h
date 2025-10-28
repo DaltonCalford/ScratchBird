@@ -6,6 +6,7 @@
 #include <vector>
 #include <memory>
 #include <cstring>
+#include <unordered_set>
 
 // Forward declaration
 namespace scratchbird::core {
@@ -140,6 +141,7 @@ namespace scratchbird
             void visit(parser::NullIfExpr *node) override;      // Phase 1 Task 8
             void visit(parser::CaseExpr *node) override;        // Phase 1 Task 8
             void visit(parser::ArrayLiteral *node) override;    // Phase 2 Task 12
+            void visit(parser::SubqueryExpr *node) override;    // Phase 2 Wave 2 - Agent B
             void visit(parser::ColumnDef *node) override;
 
         private:
@@ -147,8 +149,14 @@ namespace scratchbird
             BytecodeResult *current_result_;
             core::Database *database_;  // NEW: For accessing query planner
 
+            // CTE tracking (Phase 2 Wave 2 - CTE implementation)
+            std::unordered_set<parser::StringPool::StringId> active_ctes_;
+
             // Helper to write string from string pool
             void writeStringId(parser::StringPool::StringId id);
+
+            // Helper to check if a name is an active CTE
+            bool isActiveCTE(parser::StringPool::StringId name_id) const;
 
             // Helper to write data type
             void writeDataType(const parser::TypeName &type);

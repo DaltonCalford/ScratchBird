@@ -2,6 +2,7 @@
 #include "scratchbird/core/debug.h"
 #include "scratchbird/core/catalog_manager.h"
 #include <algorithm>
+#include <unordered_map>
 
 namespace scratchbird::optimizer
 {
@@ -11,6 +12,28 @@ namespace scratchbird::optimizer
                                   core::ErrorContext *ctx)
         -> std::shared_ptr<PlanNode>
     {
+        // Phase 2 Wave 2: Process WITH clause (CTEs) if present
+        std::unordered_map<std::string, std::shared_ptr<PlanNode>> cte_plans;
+        if (select_stmt->withClause())
+        {
+            DEBUG_LOG_DB("Planning WITH clause (CTEs)");
+            for (const auto &cte : select_stmt->withClause()->ctes())
+            {
+                std::string cte_name(string_pool.get(cte.name));
+                DEBUG_LOG_DB("Planning CTE: " + cte_name);
+
+                // Recursively plan the CTE query
+                auto cte_plan = planQuery(cte.query, string_pool, ctx);
+                if (!cte_plan)
+                {
+                    DEBUG_LOG_DB("Failed to plan CTE: " + cte_name);
+                    return nullptr;
+                }
+
+                cte_plans[cte_name] = cte_plan;
+            }
+        }
+
         // Check if this is a join query (Phase 1, Task 3.2)
         if (select_stmt->hasJoins())
         {
@@ -21,6 +44,20 @@ namespace scratchbird::optimizer
         // Single-table query planning (original logic)
         std::string table_name(string_pool.get(select_stmt->tableName()));
         DEBUG_LOG_DB("Planning single-table query for: " + table_name);
+
+        // Phase 2 Wave 2: Check if this is a CTE reference
+        auto cte_it = cte_plans.find(table_name);
+        if (cte_it != cte_plans.end())
+        {
+            DEBUG_LOG_DB("Table is a CTE: " + table_name);
+            // Create a CTEScanNode to scan the materialized CTE
+            auto cte_scan = std::make_shared<CTEScanNode>(table_name, cte_it->second);
+            // Copy cost estimates from the CTE plan
+            cte_scan->setCost(cte_it->second->startupCost(),
+                             cte_it->second->totalCost(),
+                             cte_it->second->rows());
+            return cte_scan;
+        }
 
         // Phase 1: Get table ID from catalog
         // Get default PUBLIC schema

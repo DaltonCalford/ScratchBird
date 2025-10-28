@@ -26,13 +26,15 @@ namespace scratchbird::optimizer
     {
         SEQ_SCAN,      // Sequential table scan
         INDEX_SCAN,    // Index scan with heap fetch
+        CTE_SCAN,      // CTE (Common Table Expression) scan (Phase 2 Wave 2)
         NESTED_LOOP_JOIN,  // Nested loop join (Phase 1, Task 3.2)
         HASH_JOIN,     // Hash join (Phase 1, Task 3.2)
         MERGE_JOIN,    // Merge join (future)
         SORT,          // Sort operation (Phase 1, Task 5.1)
         AGGREGATE,     // Aggregation (Phase 1, Task 4.2)
         LIMIT,         // Limit/offset (Phase 1, Task 5.2)
-        WINDOW         // Window function (Phase 1, Task 6.2)
+        WINDOW,        // Window function (Phase 1, Task 6.2)
+        SUBPLAN        // Subquery execution (Phase 2 Wave 2 - Agent B)
     };
 
     /**
@@ -242,6 +244,70 @@ namespace scratchbird::optimizer
         ScanDirection direction_;
         double qual_cost_;
         std::string filter_;
+    };
+
+    /**
+     * CTEScanNode - CTE (Common Table Expression) scan plan node
+     *
+     * Scans a CTE that was defined in a WITH clause.
+     * The CTE is materialized (executed and stored) once, then scanned.
+     *
+     * Properties:
+     * - Startup cost: cost of materializing the CTE
+     * - Run cost: cost of scanning the materialized results
+     * - CTEs can be referenced multiple times (shared scan)
+     *
+     * Example:
+     *   CTEScan on high_value_orders (cost=100.00..125.00 rows=50)
+     *
+     * Phase 2 Wave 2 - Agent A
+     */
+    class CTEScanNode : public PlanNode
+    {
+    public:
+        /**
+         * Constructor
+         *
+         * @param cte_name CTE name (for EXPLAIN)
+         * @param cte_query The CTE query plan
+         */
+        CTEScanNode(const std::string &cte_name,
+                    std::shared_ptr<PlanNode> cte_query)
+            : PlanNode(PlanNodeType::CTE_SCAN),
+              cte_name_(cte_name),
+              cte_query_(std::move(cte_query))
+        {
+        }
+
+        /**
+         * Get CTE name
+         */
+        const std::string &cteName() const { return cte_name_; }
+
+        /**
+         * Get CTE query plan
+         */
+        const std::shared_ptr<PlanNode> &cteQuery() const { return cte_query_; }
+
+        /**
+         * Convert to string for EXPLAIN
+         *
+         * Format:
+         *   CTEScan on <cte_name> (cost=<startup>..<total> rows=<rows>)
+         */
+        auto toString(int indent = 0) const -> std::string override
+        {
+            std::string result(indent * 2, ' ');
+            result += "CTEScan on " + cte_name_;
+            result += " (cost=" + std::to_string(startup_cost_);
+            result += ".." + std::to_string(total_cost_);
+            result += " rows=" + std::to_string(rows_) + ")";
+            return result;
+        }
+
+    private:
+        std::string cte_name_;
+        std::shared_ptr<PlanNode> cte_query_;
     };
 
     /**
@@ -1091,6 +1157,105 @@ namespace scratchbird::optimizer
                 default: return "UNKNOWN";
             }
         }
+    };
+
+    /**
+     * SubplanNode - Subquery execution plan node
+     *
+     * Represents execution of a subquery within an expression context.
+     * Supports all subquery types:
+     * - SCALAR: Returns single value
+     * - EXISTS: Returns boolean (true if any rows)
+     * - IN/NOT IN: Membership test
+     * - ARRAY: Returns array of values
+     *
+     * Properties:
+     * - Startup cost: Cost of executing subquery
+     * - For correlated subqueries: executed once per outer row
+     * - For uncorrelated subqueries: executed once and cached
+     *
+     * Example:
+     *   Scalar Subquery (cost=50.00..55.00 rows=1)
+     *     -> SeqScan on employees (cost=0.00..50.00 rows=100)
+     *
+     * Phase 2 Wave 2 - Agent B: Subqueries
+     */
+    class SubplanNode : public PlanNode
+    {
+    public:
+        /**
+         * Constructor
+         *
+         * @param subquery_type Type of subquery (SCALAR, EXISTS, IN, etc.)
+         * @param subplan The plan for executing the subquery
+         */
+        SubplanNode(parser::SubqueryType subquery_type,
+                   std::shared_ptr<PlanNode> subplan)
+            : PlanNode(PlanNodeType::SUBPLAN),
+              subquery_type_(subquery_type),
+              subplan_(std::move(subplan))
+        {
+        }
+
+        /**
+         * Get subquery type
+         */
+        parser::SubqueryType subqueryType() const { return subquery_type_; }
+
+        /**
+         * Get subquery plan
+         */
+        const std::shared_ptr<PlanNode>& subplan() const { return subplan_; }
+
+        /**
+         * Convert to string for EXPLAIN
+         *
+         * Format:
+         *   <Type> Subquery (cost=<startup>..<total> rows=<rows>)
+         *     -> <subplan>
+         */
+        std::string toString(int indent = 0) const override
+        {
+            std::string result(indent * 2, ' ');
+
+            // Add subquery type
+            switch (subquery_type_)
+            {
+                case parser::SubqueryType::SCALAR:
+                    result += "Scalar Subquery";
+                    break;
+                case parser::SubqueryType::EXISTS:
+                    result += "Exists Subquery";
+                    break;
+                case parser::SubqueryType::IN:
+                    result += "In Subquery";
+                    break;
+                case parser::SubqueryType::NOT_IN:
+                    result += "Not In Subquery";
+                    break;
+                case parser::SubqueryType::ARRAY:
+                    result += "Array Subquery";
+                    break;
+            }
+
+            result += " (cost=" + std::to_string(startup_cost_);
+            result += ".." + std::to_string(total_cost_);
+            result += " rows=" + std::to_string(rows_) + ")";
+
+            // Add subplan
+            if (subplan_)
+            {
+                result += "\n";
+                result += std::string((indent + 1) * 2, ' ');
+                result += "-> " + subplan_->toString(indent + 2);
+            }
+
+            return result;
+        }
+
+    private:
+        parser::SubqueryType subquery_type_;
+        std::shared_ptr<PlanNode> subplan_;
     };
 
 } // namespace scratchbird::optimizer

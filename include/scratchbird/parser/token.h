@@ -290,6 +290,19 @@ namespace scratchbird
             KW_ONLINE, // Phase 4 Task 4.1.1 - ALTER TABLE ... SET TABLESPACE ... ONLINE
             KW_ATTACH, // Phase 6 Task 6.1 - ATTACH TABLESPACE
             KW_DETACH, // Phase 6 Task 6.2 - DETACH TABLESPACE
+
+            // Subquery keywords (Phase 2 Wave 2 - Agent B)
+            KW_IN,
+            KW_EXISTS,
+
+            // Trigger keywords (Phase 2 Wave 2 - Agent C)
+            KW_TRIGGER,
+            KW_BEFORE,
+            KW_AFTER,
+            KW_EXECUTE,
+            KW_PROCEDURE,
+            KW_OLD,
+            KW_NEW,
         };
 
         // Location in source file

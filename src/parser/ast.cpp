@@ -808,6 +808,11 @@ namespace scratchbird
             visitor->visit(this);
         }
 
+        void SubqueryExpr::accept(ASTVisitor *visitor)
+        {
+            visitor->visit(this);
+        }
+
         void ASTPrinter::visit(CastExpr *node)
         {
             out_ << (node->isTryCast() ? "TRY_CAST(" : "CAST(");
@@ -1190,6 +1195,38 @@ namespace scratchbird
                 first = false;
             }
             out_ << "]";
+        }
+
+        void ASTPrinter::visit(SubqueryExpr *node)
+        {
+            switch (node->type())
+            {
+            case SubqueryType::SCALAR:
+                out_ << "(";
+                node->query()->accept(this);
+                out_ << ")";
+                break;
+            case SubqueryType::EXISTS:
+                out_ << "EXISTS (";
+                node->query()->accept(this);
+                out_ << ")";
+                break;
+            case SubqueryType::IN:
+                out_ << "IN (";
+                node->query()->accept(this);
+                out_ << ")";
+                break;
+            case SubqueryType::NOT_IN:
+                out_ << "NOT IN (";
+                node->query()->accept(this);
+                out_ << ")";
+                break;
+            case SubqueryType::ARRAY:
+                out_ << "ARRAY(";
+                node->query()->accept(this);
+                out_ << ")";
+                break;
+            }
         }
 
     } // namespace parser

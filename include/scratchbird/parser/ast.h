@@ -31,6 +31,8 @@ namespace scratchbird
             // Statements
             CREATE_TABLE,
             CREATE_INDEX,              // Phase 2 Task 2.3
+            CREATE_TRIGGER,            // Phase 2 Wave 2 - Agent C: Basic Triggers
+            DROP_TRIGGER,              // Phase 2 Wave 2 - Agent C: Basic Triggers
             CREATE_TABLESPACE,         // Phase 2 Task 2.1
             ALTER_TABLESPACE,          // Phase 2 Task 2.2
             ALTER_TABLE_SET_TABLESPACE, // Phase 4 Task 4.1.1
@@ -62,6 +64,7 @@ namespace scratchbird
             COALESCE,        // Phase 1 Task 8: COALESCE expression
             NULLIF,          // Phase 1 Task 8: NULLIF expression
             CASE,            // Phase 1 Task 8: CASE expression
+            SUBQUERY,        // Phase 2 Wave 2 - Agent B: Subquery expression
 
             // Types
             TYPE_NAME,
@@ -296,6 +299,8 @@ namespace scratchbird
             OR,
             LIKE,
             ILIKE,
+            IN,          // Phase 2 Wave 2 - Agent B: Subquery IN operator
+            NOT_IN,      // Phase 2 Wave 2 - Agent B: Subquery NOT IN operator
             // Array operators (Phase 2 Task 12)
             ARRAY_OVERLAP,      // && - array overlap
             ARRAY_CONTAINS,     // @> - array contains
@@ -766,6 +771,44 @@ namespace scratchbird
             std::vector<Expression*> elements_;
         };
 
+        // Subquery expression types (Phase 2 Wave 2 - Agent B)
+        enum class SubqueryType : uint8_t
+        {
+            SCALAR,      // Returns single value: (SELECT col FROM ...)
+            EXISTS,      // Returns boolean: EXISTS (SELECT ...)
+            IN,          // Membership test: col IN (SELECT ...)
+            NOT_IN,      // Membership test: col NOT IN (SELECT ...)
+            ARRAY        // Returns array: ARRAY(SELECT ...)
+        };
+
+        // Forward declaration
+        class SelectStmt;
+
+        // Subquery expression (Phase 2 Wave 2 - Agent B)
+        class SubqueryExpr : public Expression
+        {
+        public:
+            SubqueryExpr(const SourceSpan &span, SelectStmt* query, SubqueryType type)
+                : Expression(ASTKind::SUBQUERY, span), query_(query), type_(type)
+            {
+            }
+
+            SelectStmt* query() const
+            {
+                return query_;
+            }
+            SubqueryType type() const
+            {
+                return type_;
+            }
+
+            void accept(ASTVisitor *visitor) override;
+
+        private:
+            SelectStmt* query_;
+            SubqueryType type_;
+        };
+
         // ===== Statement Nodes =====
 
         class Statement : public ASTNode
@@ -1005,6 +1048,38 @@ namespace scratchbird
             explicit FromClause(const TableRef &base) : base_table(base) {}
         };
 
+        // CTE (Common Table Expression) definition - Phase 2 Wave 2
+        struct CTEDefinition
+        {
+            StringPool::StringId name;
+            SelectStmt *query;
+            std::vector<StringPool::StringId> column_aliases; // Optional column aliases
+
+            CTEDefinition(StringPool::StringId n, SelectStmt *q,
+                          std::vector<StringPool::StringId> aliases = {})
+                : name(n), query(q), column_aliases(std::move(aliases))
+            {
+            }
+        };
+
+        // WITH clause (CTE support) - Phase 2 Wave 2
+        class WithClause
+        {
+        public:
+            WithClause(std::vector<CTEDefinition> ctes)
+                : ctes_(std::move(ctes))
+            {
+            }
+
+            const std::vector<CTEDefinition> &ctes() const
+            {
+                return ctes_;
+            }
+
+        private:
+            std::vector<CTEDefinition> ctes_;
+        };
+
         // Sort direction for ORDER BY (Phase 1 Task 5.1)
         enum class SortOrder : uint8_t
         {
@@ -1051,7 +1126,7 @@ namespace scratchbird
                        StringPool::StringId table_name, Expression *where_clause = nullptr)
                 : Statement(ASTKind::SELECT, span), select_list_(std::move(select_list)),
                   from_clause_(TableRef(table_name)), where_clause_(where_clause),
-                  has_joins_(false)
+                  has_joins_(false), with_clause_(nullptr)
             {
             }
 
@@ -1060,7 +1135,17 @@ namespace scratchbird
                        FromClause from_clause, Expression *where_clause = nullptr)
                 : Statement(ASTKind::SELECT, span), select_list_(std::move(select_list)),
                   from_clause_(std::move(from_clause)), where_clause_(where_clause),
-                  has_joins_(!from_clause_.joins.empty())
+                  has_joins_(!from_clause_.joins.empty()), with_clause_(nullptr)
+            {
+            }
+
+            // Constructor with WITH clause (Phase 2 Wave 2)
+            SelectStmt(const SourceSpan &span, WithClause *with_clause,
+                       std::vector<SelectItem> select_list,
+                       FromClause from_clause, Expression *where_clause = nullptr)
+                : Statement(ASTKind::SELECT, span), select_list_(std::move(select_list)),
+                  from_clause_(std::move(from_clause)), where_clause_(where_clause),
+                  has_joins_(!from_clause_.joins.empty()), with_clause_(with_clause)
             {
             }
 
@@ -1089,6 +1174,16 @@ namespace scratchbird
             Expression *whereClause() const
             {
                 return where_clause_;
+            }
+
+            // WITH clause accessor (Phase 2 Wave 2)
+            WithClause *withClause() const
+            {
+                return with_clause_;
+            }
+            void setWithClause(WithClause *with_clause)
+            {
+                with_clause_ = with_clause;
             }
 
             // Aggregation accessors (Phase 1 Task 4.1)
@@ -1145,6 +1240,7 @@ namespace scratchbird
             FromClause from_clause_;  // Replaces table_name_
             Expression *where_clause_;
             bool has_joins_;
+            WithClause *with_clause_;  // Phase 2 Wave 2: CTE support
 
             // Aggregation (Phase 1 Task 4.1)
             GroupByClause group_by_clause_;
@@ -1686,6 +1782,90 @@ namespace scratchbird
             std::vector<TableReservation> table_reservations_; // RESERVING clause tables
         };
 
+        // Trigger timing (Phase 2 Wave 2 - Agent C)
+        enum class TriggerTiming : uint8_t
+        {
+            BEFORE,
+            AFTER
+        };
+
+        // Trigger event (Phase 2 Wave 2 - Agent C)
+        enum class TriggerEvent : uint8_t
+        {
+            INSERT,
+            UPDATE,
+            DELETE
+        };
+
+        // Trigger granularity (Phase 2 Wave 2 - Agent C)
+        enum class TriggerGranularity : uint8_t
+        {
+            FOR_EACH_ROW,
+            FOR_EACH_STATEMENT  // For future support
+        };
+
+        // CREATE TRIGGER statement (Phase 2 Wave 2 - Agent C)
+        class CreateTriggerStmt : public Statement
+        {
+        public:
+            CreateTriggerStmt(const SourceSpan &span,
+                              StringPool::StringId trigger_name,
+                              StringPool::StringId table_name,
+                              TriggerTiming timing,
+                              TriggerEvent event,
+                              TriggerGranularity granularity,
+                              StringPool::StringId procedure_name)
+                : Statement(ASTKind::CREATE_TRIGGER, span),
+                  trigger_name_(trigger_name),
+                  table_name_(table_name),
+                  timing_(timing),
+                  event_(event),
+                  granularity_(granularity),
+                  procedure_name_(procedure_name)
+            {
+            }
+
+            StringPool::StringId triggerName() const { return trigger_name_; }
+            StringPool::StringId tableName() const { return table_name_; }
+            TriggerTiming timing() const { return timing_; }
+            TriggerEvent event() const { return event_; }
+            TriggerGranularity granularity() const { return granularity_; }
+            StringPool::StringId procedureName() const { return procedure_name_; }
+
+            void accept(ASTVisitor *visitor) override;
+
+        private:
+            StringPool::StringId trigger_name_;
+            StringPool::StringId table_name_;
+            TriggerTiming timing_;
+            TriggerEvent event_;
+            TriggerGranularity granularity_;
+            StringPool::StringId procedure_name_;
+        };
+
+        // DROP TRIGGER statement (Phase 2 Wave 2 - Agent C)
+        class DropTriggerStmt : public Statement
+        {
+        public:
+            DropTriggerStmt(const SourceSpan &span,
+                            StringPool::StringId trigger_name,
+                            bool if_exists = false)
+                : Statement(ASTKind::DROP_TRIGGER, span),
+                  trigger_name_(trigger_name),
+                  if_exists_(if_exists)
+            {
+            }
+
+            StringPool::StringId triggerName() const { return trigger_name_; }
+            bool ifExists() const { return if_exists_; }
+
+            void accept(ASTVisitor *visitor) override;
+
+        private:
+            StringPool::StringId trigger_name_;
+            bool if_exists_;
+        };
+
         // ===== Visitor Pattern =====
 
         class ASTVisitor
@@ -1728,6 +1908,7 @@ namespace scratchbird
             virtual void visit(NullIfExpr *node) = 0;     // Phase 1 Task 8
             virtual void visit(CaseExpr *node) = 0;       // Phase 1 Task 8
             virtual void visit(ArrayLiteral *node) = 0;   // Phase 2 Task 12
+            virtual void visit(SubqueryExpr *node) = 0;   // Phase 2 Wave 2 - Agent B
 
             // Other nodes
             virtual void visit(ColumnDef *node) = 0;
@@ -1774,6 +1955,7 @@ namespace scratchbird
             void visit(NullIfExpr *node) override;     // Phase 1 Task 8
             void visit(CaseExpr *node) override;       // Phase 1 Task 8
             void visit(ArrayLiteral *node) override;   // Phase 2 Task 12
+            void visit(SubqueryExpr *node) override;   // Phase 2 Wave 2 - Agent B
             void visit(ColumnDef *node) override;
 
         private:

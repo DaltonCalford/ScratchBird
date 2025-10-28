@@ -71,6 +71,12 @@ namespace scratchbird
             }
         }
 
+        bool BytecodeGenerator::isActiveCTE(parser::StringPool::StringId name_id) const
+        {
+            // Phase 2 Wave 2: Check if name is an active CTE
+            return active_ctes_.find(name_id) != active_ctes_.end();
+        }
+
         void BytecodeGenerator::generateExpression(parser::Expression *expr)
         {
             if (!expr)
@@ -315,6 +321,37 @@ namespace scratchbird
 
         void BytecodeGenerator::visit(parser::SelectStmt *node)
         {
+            // Phase 2 Wave 2: Handle WITH clause (CTEs) if present
+            if (node->withClause())
+            {
+                const auto& ctes = node->withClause()->ctes();
+
+                // Emit WITH_CLAUSE marker with CTE count
+                current_result_->writeOpcode(Opcode::EXTENDED_OPCODE);
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_WITH_CLAUSE));
+                // Write count as 2 bytes (uint16_t)
+                uint16_t cte_count = static_cast<uint16_t>(ctes.size());
+                current_result_->writeByte(static_cast<uint8_t>(cte_count & 0xFF));
+                current_result_->writeByte(static_cast<uint8_t>((cte_count >> 8) & 0xFF));
+
+                // Process each CTE
+                for (const auto& cte : ctes)
+                {
+                    // Add CTE name to active set
+                    active_ctes_.insert(cte.name);
+
+                    // Emit CTE_DEF marker
+                    current_result_->writeOpcode(Opcode::EXTENDED_OPCODE);
+                    current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_CTE_DEF));
+
+                    // Write CTE name
+                    writeStringId(cte.name);
+
+                    // Generate bytecode for CTE query (recursively)
+                    cte.query->accept(this);
+                }
+            }
+
             // Try query planner if available (Phase 1, Task 1.3)
             if (database_ && database_->query_planner())
             {
@@ -326,6 +363,12 @@ namespace scratchbird
                     // Use optimized plan
                     DEBUG_LOG_DB("Using optimized query plan");
                     generateFromPlan(plan, node);
+
+                    // Clear active CTEs after query completes
+                    if (node->withClause())
+                    {
+                        active_ctes_.clear();
+                    }
                     return;
                 }
 
@@ -339,6 +382,12 @@ namespace scratchbird
             // Fallback: Direct bytecode generation (no optimization)
             DEBUG_LOG_DB("Using direct SELECT generation (no optimization)");
             generateDirectSelect(node);
+
+            // Clear active CTEs after query completes
+            if (node->withClause())
+            {
+                active_ctes_.clear();
+            }
         }
 
         void BytecodeGenerator::generateDirectSelect(parser::SelectStmt *node)
@@ -377,9 +426,20 @@ namespace scratchbird
 
             current_result_->writeOpcode(Opcode::END_LIST);
 
-            // Write table name
-            current_result_->writeOpcode(Opcode::TABLE_REF);
-            writeStringId(node->tableName());
+            // Write table name or CTE reference (Phase 2 Wave 2)
+            if (isActiveCTE(node->tableName()))
+            {
+                // This is a CTE reference
+                current_result_->writeOpcode(Opcode::EXTENDED_OPCODE);
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_CTE_SCAN));
+                writeStringId(node->tableName());
+            }
+            else
+            {
+                // Regular table reference
+                current_result_->writeOpcode(Opcode::TABLE_REF);
+                writeStringId(node->tableName());
+            }
 
             // Write WHERE clause if present
             if (node->whereClause())
@@ -2131,6 +2191,49 @@ namespace scratchbird
             current_result_->writeByte(static_cast<uint8_t>(node->elements().size()));
         }
 
+        void BytecodeGenerator::visit(parser::SubqueryExpr *node)
+        {
+            // Phase 2 Wave 2 - Agent B: Subquery bytecode generation
+
+            // Emit extended opcode prefix
+            current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+
+            // Emit subquery type opcode
+            switch (node->type())
+            {
+                case parser::SubqueryType::SCALAR:
+                    current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_SUBQUERY_SCALAR));
+                    break;
+                case parser::SubqueryType::EXISTS:
+                    current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_SUBQUERY_EXISTS));
+                    break;
+                case parser::SubqueryType::IN:
+                    current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_SUBQUERY_IN));
+                    break;
+                case parser::SubqueryType::NOT_IN:
+                    current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_SUBQUERY_NOT_IN));
+                    break;
+                case parser::SubqueryType::ARRAY:
+                    // ARRAY subqueries not yet implemented in executor
+                    current_result_->addError("ARRAY subqueries not yet supported");
+                    return;
+            }
+
+            // Generate bytecode for the subquery SELECT statement
+            if (node->query())
+            {
+                node->query()->accept(this);
+            }
+            else
+            {
+                current_result_->addError("Subquery has no query statement");
+            }
+
+            // Emit subquery end marker
+            current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+            current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_SUBQUERY_END));
+        }
+
         // ===== Disassembler Implementation =====
 
         std::string BytecodeDisassembler::disassemble(const std::vector<uint8_t> &bytecode)
@@ -2428,6 +2531,66 @@ namespace scratchbird
                 default:
                     return "UNKNOWN";
             }
+        }
+
+
+        // Phase 2 Wave 2 - Agent C: Trigger bytecode generation
+        void BytecodeGenerator::visit(parser::CreateTriggerStmt *node)
+        {
+            // Emit extended opcode marker
+            writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+            writeByte(static_cast<uint8_t>(Opcode::EXT_CREATE_TRIGGER));
+            
+            // Emit trigger name
+            std::string trigger_name = pool_.get(node->triggerName());
+            writeUInt32(static_cast<uint32_t>(trigger_name.length()));
+            for (char c : trigger_name)
+            {
+                writeByte(static_cast<uint8_t>(c));
+            }
+            
+            // Emit table name
+            std::string table_name = pool_.get(node->tableName());
+            writeUInt32(static_cast<uint32_t>(table_name.length()));
+            for (char c : table_name)
+            {
+                writeByte(static_cast<uint8_t>(c));
+            }
+            
+            // Emit timing (1 byte)
+            writeByte(static_cast<uint8_t>(node->timing()));
+            
+            // Emit event (1 byte)
+            writeByte(static_cast<uint8_t>(node->event()));
+            
+            // Emit granularity (1 byte)
+            writeByte(static_cast<uint8_t>(node->granularity()));
+            
+            // Emit procedure name
+            std::string procedure_name = pool_.get(node->procedureName());
+            writeUInt32(static_cast<uint32_t>(procedure_name.length()));
+            for (char c : procedure_name)
+            {
+                writeByte(static_cast<uint8_t>(c));
+            }
+        }
+        
+        void BytecodeGenerator::visit(parser::DropTriggerStmt *node)
+        {
+            // Emit extended opcode marker
+            writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+            writeByte(static_cast<uint8_t>(Opcode::EXT_DROP_TRIGGER));
+            
+            // Emit trigger name
+            std::string trigger_name = pool_.get(node->triggerName());
+            writeUInt32(static_cast<uint32_t>(trigger_name.length()));
+            for (char c : trigger_name)
+            {
+                writeByte(static_cast<uint8_t>(c));
+            }
+            
+            // Emit if_exists flag (1 byte)
+            writeByte(node->ifExists() ? 1 : 0);
         }
 
     } // namespace sblr
