@@ -1,8 +1,8 @@
 # ScratchBird Project Context
 
-**Last Updated**: 2025-10-27 (Query Planner & Aggregation Infrastructure Complete)
-**Version**: Alpha 1.0.5
-**Status**: Educational/Development (Query Planner 85-90% Complete, Aggregation 70% Complete)
+**Last Updated**: 2025-10-28 (JSON Functions Infrastructure & Library Integration Complete)
+**Version**: Alpha 1.0.6
+**Status**: Educational/Development (Phase 1: 87.5% Complete - JSON Infrastructure & Window Functions Complete)
 
 > **PURPOSE**: This file provides essential context for AI assistants working on ScratchBird.
 > Read this file at session start and after every context compaction.
@@ -141,10 +141,10 @@ ScratchBird is an **embedded database engine** designed as a library for other p
 ## 2. Current Project State
 
 ### Version & Status
-- **Current Version**: Alpha 1.0.5
+- **Current Version**: Alpha 1.0.6
 - **Production Ready**: ❌ NO - Educational/Development only
-- **Last Major Update**: October 27, 2025
-- **Active Development**: Query optimizer & aggregation (Tasks 4-5 ~70% complete, executor pending)
+- **Last Major Update**: October 28, 2025
+- **Active Development**: Phase 1 Task 7 JSON Functions (70% infrastructure complete, production integration pending)
 
 ### Critical Statistics
 ```yaml
@@ -160,14 +160,15 @@ Indexing:
   - HNSW:            100% complete (vector similarity search)
   - BRIN:            100% complete (block range indexes)
 Type System:         95% complete  (30+ types, UUIDv7, timezones, collations)
-Query Processing:    65% complete  (Parser 45%, Planner 85%, Bytecode 75%, Executor 30%)
-  - Lexer/Parser:    45% complete  (JOINs ✅, GROUP BY ✅, ORDER BY ✅, LIMIT ✅, UPDATE/DELETE TODO)
-  - Query Planner:   85% complete  (Cost model ✅, Statistics ✅, Planning ✅, Execution ~30%)
+Query Processing:    70% complete  (Parser 45%, Planner 85%, Bytecode 75%, Executor 35%)
+  - Lexer/Parser:    45% complete  (JOINs ✅, GROUP BY ✅, ORDER BY ✅, LIMIT ✅, Window ✅, JSON ✅, UPDATE/DELETE TODO)
+  - Query Planner:   85% complete  (Cost model ✅, Statistics ✅, Planning ✅, Execution ~35%)
   - Bytecode Gen:    75% complete  (All SQL features generate bytecode)
-  - Executor:        30% complete  (Basic ops ✅, Aggregation/Sorting TODO)
+  - Executor:        35% complete  (Basic ops ✅, Window ✅, JSON stubs ✅, Aggregation/Sorting TODO)
 Catalog:             75% complete  (metadata persistence)
 Code Quality:        98% complete  (RAII, logging, const-correct)
 CI/CD:               100% complete (TSAN, ASAN, Helgrind, Valgrind, Clang-Tidy)
+JSON Library:        ✅ nlohmann/json v3.11.3 integrated via FetchContent
 ```
 
 ### Tablespace Implementation Status
@@ -492,6 +493,7 @@ valgrind --leak-check=full --show-leak-kinds=all ./tests/scratchbird_tests
 
 ## 10. Update History
 
+- **2025-10-28**: Phase 1 Task 7 JSON Functions 70% COMPLETE (Infrastructure + nlohmann/json v3.11.3 integration), Task 6 Window Functions 100% COMPLETE
 - **2025-10-24**: Context Variables v2.0 COMPLETE (Firebird Ch 12 + PSQL execution context, RDB$GET/SET_CONTEXT), Row Identity v2.1
 - **2025-10-23**: Documentation reorganization COMPLETE, Phase 6 COMPLETE, MGA catalog compliance COMPLETE
 - **2025-10-21**: Sprint 4 & 5 COMPLETE (ONLINE migration infrastructure + execution)
