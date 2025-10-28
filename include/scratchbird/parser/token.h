@@ -187,6 +187,15 @@ namespace scratchbird
             KW_JSONB_BUILD_ARRAY,
             KW_JSONB_SET,
 
+            // Conditional functions (Phase 1 Task 8)
+            KW_COALESCE,
+            KW_NULLIF,
+            KW_CASE,
+            KW_WHEN,
+            KW_THEN,
+            KW_ELSE,
+            KW_END,
+
             // Type conversion
             KW_CAST,
             KW_TRY_CAST,

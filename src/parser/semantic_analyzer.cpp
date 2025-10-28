@@ -1252,6 +1252,90 @@ namespace scratchbird
             setExpressionType(node, ExpressionType(TypeName(result_type), true));
         }
 
+        void SemanticAnalyzer::visit(CoalesceExpr *node)
+        {
+            // Check all arguments
+            for (auto *arg : node->args())
+            {
+                checkExpression(arg);
+            }
+
+            // COALESCE returns the type of the first non-null argument
+            // For simplicity, use the type of the first argument
+            if (!node->args().empty())
+            {
+                auto *first_type = getExpressionType(node->args()[0]);
+                if (first_type)
+                {
+                    // COALESCE result is nullable if all arguments are nullable
+                    setExpressionType(node, *first_type);
+                }
+                else
+                {
+                    // Default to INT if type unknown
+                    setExpressionType(node, ExpressionType(TypeName(DataType::INT32), true));
+                }
+            }
+        }
+
+        void SemanticAnalyzer::visit(NullIfExpr *node)
+        {
+            // Check both arguments
+            checkExpression(node->expr1());
+            checkExpression(node->expr2());
+
+            // NULLIF returns the same type as first argument, but always nullable
+            auto *expr1_type = getExpressionType(node->expr1());
+            if (expr1_type)
+            {
+                setExpressionType(node, ExpressionType(expr1_type->type, true));
+            }
+            else
+            {
+                // Default to INT if type unknown
+                setExpressionType(node, ExpressionType(TypeName(DataType::INT32), true));
+            }
+        }
+
+        void SemanticAnalyzer::visit(CaseExpr *node)
+        {
+            // Check case operand if present (simple CASE)
+            if (node->isSimpleCase())
+            {
+                checkExpression(node->caseOperand());
+            }
+
+            // Check all WHEN conditions and results
+            DataType result_type = DataType::INT32;  // Default type
+            bool found_type = false;
+
+            for (const auto& when : node->whenClauses())
+            {
+                checkExpression(when.condition);
+                checkExpression(when.result);
+
+                // Use the type of the first THEN result
+                if (!found_type)
+                {
+                    auto *result_expr_type = getExpressionType(when.result);
+                    if (result_expr_type)
+                    {
+                        result_type = result_expr_type->type.type;
+                        found_type = true;
+                    }
+                }
+            }
+
+            // Check ELSE result if present
+            if (node->elseResult())
+            {
+                checkExpression(node->elseResult());
+            }
+
+            // CASE result is nullable (could match no WHEN clause and have no ELSE)
+            setExpressionType(node, ExpressionType(TypeName(result_type), true));
+        }
+
         void SemanticAnalyzer::visit(ColumnDef *node)
         {
             // Validate column definition

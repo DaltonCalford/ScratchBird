@@ -59,6 +59,9 @@ namespace scratchbird
             WINDOW_FUNC,     // Phase 1 Task 6: Window functions
             WINDOW_SPEC,     // Phase 1 Task 6: Window specification (OVER clause)
             JSON_FUNC,       // Phase 1 Task 7: JSON functions
+            COALESCE,        // Phase 1 Task 8: COALESCE expression
+            NULLIF,          // Phase 1 Task 8: NULLIF expression
+            CASE,            // Phase 1 Task 8: CASE expression
 
             // Types
             TYPE_NAME,
@@ -625,6 +628,112 @@ namespace scratchbird
         private:
             JSONFunc func_;
             std::vector<Expression*> args_;
+        };
+
+        // COALESCE expression (Phase 1 Task 8)
+        class CoalesceExpr : public Expression
+        {
+        public:
+            CoalesceExpr(const SourceSpan &span, const std::vector<Expression*>& args)
+                : Expression(ASTKind::COALESCE, span),
+                  args_(args)
+            {
+            }
+
+            const std::vector<Expression*>& args() const
+            {
+                return args_;
+            }
+
+            void accept(ASTVisitor *visitor) override;
+
+        private:
+            std::vector<Expression*> args_;
+        };
+
+        // NULLIF expression (Phase 1 Task 8)
+        class NullIfExpr : public Expression
+        {
+        public:
+            NullIfExpr(const SourceSpan &span, Expression* expr1, Expression* expr2)
+                : Expression(ASTKind::NULLIF, span),
+                  expr1_(expr1),
+                  expr2_(expr2)
+            {
+            }
+
+            Expression* expr1() const
+            {
+                return expr1_;
+            }
+            Expression* expr2() const
+            {
+                return expr2_;
+            }
+
+            void accept(ASTVisitor *visitor) override;
+
+        private:
+            Expression* expr1_;
+            Expression* expr2_;
+        };
+
+        // CASE expression (Phase 1 Task 8)
+        class CaseExpr : public Expression
+        {
+        public:
+            struct WhenClause
+            {
+                Expression* condition;  // WHEN condition
+                Expression* result;     // THEN result
+            };
+
+            // Searched CASE: CASE WHEN cond THEN result ... END
+            CaseExpr(const SourceSpan &span,
+                     const std::vector<WhenClause>& when_clauses,
+                     Expression* else_result = nullptr)
+                : Expression(ASTKind::CASE, span),
+                  case_operand_(nullptr),
+                  when_clauses_(when_clauses),
+                  else_result_(else_result)
+            {
+            }
+
+            // Simple CASE: CASE expr WHEN value THEN result ... END
+            CaseExpr(const SourceSpan &span,
+                     Expression* case_operand,
+                     const std::vector<WhenClause>& when_clauses,
+                     Expression* else_result = nullptr)
+                : Expression(ASTKind::CASE, span),
+                  case_operand_(case_operand),
+                  when_clauses_(when_clauses),
+                  else_result_(else_result)
+            {
+            }
+
+            bool isSimpleCase() const
+            {
+                return case_operand_ != nullptr;
+            }
+            Expression* caseOperand() const
+            {
+                return case_operand_;
+            }
+            const std::vector<WhenClause>& whenClauses() const
+            {
+                return when_clauses_;
+            }
+            Expression* elseResult() const
+            {
+                return else_result_;
+            }
+
+            void accept(ASTVisitor *visitor) override;
+
+        private:
+            Expression* case_operand_;  // NULL for searched CASE, non-NULL for simple CASE
+            std::vector<WhenClause> when_clauses_;
+            Expression* else_result_;  // Can be NULL
         };
 
         // ===== Statement Nodes =====
@@ -1585,6 +1694,9 @@ namespace scratchbird
             virtual void visit(WindowFuncExpr *node) = 0; // Phase 1 Task 6
             virtual void visit(WindowSpec *node) = 0;     // Phase 1 Task 6
             virtual void visit(JSONFuncExpr *node) = 0;   // Phase 1 Task 7
+            virtual void visit(CoalesceExpr *node) = 0;   // Phase 1 Task 8
+            virtual void visit(NullIfExpr *node) = 0;     // Phase 1 Task 8
+            virtual void visit(CaseExpr *node) = 0;       // Phase 1 Task 8
 
             // Other nodes
             virtual void visit(ColumnDef *node) = 0;
@@ -1627,6 +1739,9 @@ namespace scratchbird
             void visit(WindowFuncExpr *node) override; // Phase 1 Task 6
             void visit(WindowSpec *node) override;     // Phase 1 Task 6
             void visit(JSONFuncExpr *node) override;   // Phase 1 Task 7
+            void visit(CoalesceExpr *node) override;   // Phase 1 Task 8
+            void visit(NullIfExpr *node) override;     // Phase 1 Task 8
+            void visit(CaseExpr *node) override;       // Phase 1 Task 8
             void visit(ColumnDef *node) override;
 
         private:

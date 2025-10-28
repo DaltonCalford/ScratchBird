@@ -97,6 +97,9 @@ namespace scratchbird
             void visit(WindowFuncExpr *node) override; // Phase 1 Task 6
             void visit(WindowSpec *node) override;     // Phase 1 Task 6
             void visit(JSONFuncExpr *node) override;   // Phase 1 Task 7
+            void visit(CoalesceExpr *node) override;   // Phase 1 Task 8
+            void visit(NullIfExpr *node) override;     // Phase 1 Task 8
+            void visit(CaseExpr *node) override;       // Phase 1 Task 8
             void visit(ColumnDef *node) override;
 
             // Get expression type after analysis

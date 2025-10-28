@@ -238,6 +238,22 @@ namespace scratchbird
                 case TokenType::KW_JSONB_SET:
                     return "JSONB_SET";
 
+                // Conditional functions (Phase 1 Task 8)
+                case TokenType::KW_COALESCE:
+                    return "COALESCE";
+                case TokenType::KW_NULLIF:
+                    return "NULLIF";
+                case TokenType::KW_CASE:
+                    return "CASE";
+                case TokenType::KW_WHEN:
+                    return "WHEN";
+                case TokenType::KW_THEN:
+                    return "THEN";
+                case TokenType::KW_ELSE:
+                    return "ELSE";
+                case TokenType::KW_END:
+                    return "END";
+
                 default:
                     return "UNKNOWN";
             }
