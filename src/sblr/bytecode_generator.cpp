@@ -746,6 +746,36 @@ namespace scratchbird
                 case parser::BinaryOp::ILIKE:
                     current_result_->writeOpcode(Opcode::EXPR_ILIKE);
                     break;
+                // Array operators (Phase 2 Task 12)
+                case parser::BinaryOp::ARRAY_OVERLAP:
+                    current_result_->writeOpcode(Opcode::EXTENDED_OPCODE);
+                    current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_ARRAY_OVERLAP));
+                    break;
+                case parser::BinaryOp::ARRAY_CONTAINS:
+                    current_result_->writeOpcode(Opcode::EXTENDED_OPCODE);
+                    current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_ARRAY_CONTAINS));
+                    break;
+                case parser::BinaryOp::ARRAY_CONTAINED_BY:
+                    current_result_->writeOpcode(Opcode::EXTENDED_OPCODE);
+                    current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_ARRAY_CONTAINED_BY));
+                    break;
+                // Regex operators (Phase 2 Task 13)
+                case parser::BinaryOp::REGEX_MATCH:
+                    current_result_->writeOpcode(Opcode::EXTENDED_OPCODE);
+                    current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_REGEX_MATCH));
+                    break;
+                case parser::BinaryOp::REGEX_MATCH_CI:
+                    current_result_->writeOpcode(Opcode::EXTENDED_OPCODE);
+                    current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_REGEX_MATCH_CI));
+                    break;
+                case parser::BinaryOp::REGEX_NOT_MATCH:
+                    current_result_->writeOpcode(Opcode::EXTENDED_OPCODE);
+                    current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_REGEX_NOT_MATCH));
+                    break;
+                case parser::BinaryOp::REGEX_NOT_MATCH_CI:
+                    current_result_->writeOpcode(Opcode::EXTENDED_OPCODE);
+                    current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_REGEX_NOT_MATCH_CI));
+                    break;
             }
         }
 
@@ -911,6 +941,309 @@ namespace scratchbird
                 }
                 current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
                 current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_ST_ISVALID));
+                return;
+            }
+            // Array functions (Phase 2 Task 12)
+            else if (func_name == "ARRAY_TO_STRING" || func_name == "KW_ARRAY_TO_STRING")
+            {
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::ARRAY_TO_STRING));
+                current_result_->writeByte(static_cast<uint8_t>(node->args().size()));
+                return;
+            }
+            else if (func_name == "STRING_TO_ARRAY" || func_name == "KW_STRING_TO_ARRAY")
+            {
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::STRING_TO_ARRAY));
+                current_result_->writeByte(static_cast<uint8_t>(node->args().size()));
+                return;
+            }
+            else if (func_name == "ARRAY_APPEND" || func_name == "KW_ARRAY_APPEND")
+            {
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_ARRAY_APPEND));
+                return;
+            }
+            else if (func_name == "ARRAY_PREPEND" || func_name == "KW_ARRAY_PREPEND")
+            {
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_ARRAY_PREPEND));
+                return;
+            }
+            else if (func_name == "ARRAY_CAT" || func_name == "KW_ARRAY_CAT")
+            {
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_ARRAY_CAT));
+                return;
+            }
+            else if (func_name == "ARRAY_REMOVE" || func_name == "KW_ARRAY_REMOVE")
+            {
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_ARRAY_REMOVE));
+                return;
+            }
+            else if (func_name == "ARRAY_REPLACE" || func_name == "KW_ARRAY_REPLACE")
+            {
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_ARRAY_REPLACE));
+                return;
+            }
+            else if (func_name == "ARRAY_LENGTH" || func_name == "KW_ARRAY_LENGTH")
+            {
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_ARRAY_LENGTH));
+                return;
+            }
+            else if (func_name == "ARRAY_DIMS" || func_name == "KW_ARRAY_DIMS")
+            {
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_ARRAY_DIMS));
+                return;
+            }
+            else if (func_name == "ARRAY_UPPER" || func_name == "KW_ARRAY_UPPER")
+            {
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_ARRAY_UPPER));
+                return;
+            }
+            else if (func_name == "ARRAY_LOWER" || func_name == "KW_ARRAY_LOWER")
+            {
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_ARRAY_LOWER));
+                return;
+            }
+            else if (func_name == "UNNEST" || func_name == "KW_UNNEST")
+            {
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeOpcode(Opcode::UNNEST);
+                return;
+            }
+            // Text search and regex functions (Phase 2 Task 13)
+            else if (func_name == "REGEXP_MATCHES")
+            {
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_REGEXP_MATCHES));
+                current_result_->writeByte(static_cast<uint8_t>(node->args().size()));
+                return;
+            }
+            else if (func_name == "REGEXP_REPLACE")
+            {
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_REGEXP_REPLACE));
+                current_result_->writeByte(static_cast<uint8_t>(node->args().size()));
+                return;
+            }
+            else if (func_name == "REGEXP_SPLIT_TO_ARRAY")
+            {
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_REGEXP_SPLIT_TO_ARRAY));
+                current_result_->writeByte(static_cast<uint8_t>(node->args().size()));
+                return;
+            }
+            else if (func_name == "REGEXP_SPLIT_TO_TABLE")
+            {
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_REGEXP_SPLIT_TO_TABLE));
+                current_result_->writeByte(static_cast<uint8_t>(node->args().size()));
+                return;
+            }
+            else if (func_name == "SPLIT_PART")
+            {
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_SPLIT_PART));
+                current_result_->writeByte(static_cast<uint8_t>(node->args().size()));
+                return;
+            }
+            else if (func_name == "STRING_TO_TABLE")
+            {
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_STRING_TO_TABLE));
+                current_result_->writeByte(static_cast<uint8_t>(node->args().size()));
+                return;
+            }
+            else if (func_name == "UNNEST_TEXT")
+            {
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_UNNEST_TEXT));
+                return;
+            }
+            else if (func_name == "STRPOS")
+            {
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_STRPOS));
+                current_result_->writeByte(static_cast<uint8_t>(node->args().size()));
+                return;
+            }
+            else if (func_name == "POSITION")
+            {
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_POSITION));
+                current_result_->writeByte(static_cast<uint8_t>(node->args().size()));
+                return;
+            }
+            else if (func_name == "OVERLAY")
+            {
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_OVERLAY));
+                current_result_->writeByte(static_cast<uint8_t>(node->args().size()));
+                return;
+            }
+            else if (func_name == "QUOTE_LITERAL")
+            {
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_QUOTE_LITERAL));
+                return;
+            }
+            else if (func_name == "QUOTE_IDENT")
+            {
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_QUOTE_IDENT));
+                return;
+            }
+            else if (func_name == "INITCAP")
+            {
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_INITCAP));
+                return;
+            }
+            else if (func_name == "ASCII")
+            {
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_ASCII));
+                return;
+            }
+            else if (func_name == "CHR")
+            {
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_CHR));
+                return;
+            }
+            else if (func_name == "REPEAT")
+            {
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_REPEAT));
+                current_result_->writeByte(static_cast<uint8_t>(node->args().size()));
+                return;
+            }
+            else if (func_name == "REVERSE")
+            {
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_REVERSE));
                 return;
             }
             else
@@ -1311,6 +1644,9 @@ namespace scratchbird
                 break;
             case parser::AggregateFunc::MAX:
                 current_result_->writeOpcode(Opcode::AGG_MAX);
+                break;
+            case parser::AggregateFunc::ARRAY_AGG:  // Phase 2 Task 12
+                current_result_->writeOpcode(Opcode::ARRAY_AGG);
                 break;
             }
 
@@ -1778,6 +2114,21 @@ namespace scratchbird
 
             // Emit WHEN clause count
             current_result_->writeByte(static_cast<uint8_t>(node->whenClauses().size()));
+        }
+
+        void BytecodeGenerator::visit(parser::ArrayLiteral *node)
+        {
+            // Phase 2 Task 12: ARRAY literal bytecode generation
+            // Generate bytecode for all array elements
+            for (auto *elem : node->elements())
+            {
+                elem->accept(this);
+            }
+
+            // Emit extended opcode for ARRAY construction
+            current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+            current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_ARRAY_CONSTRUCT));
+            current_result_->writeByte(static_cast<uint8_t>(node->elements().size()));
         }
 
         // ===== Disassembler Implementation =====

@@ -100,6 +100,7 @@ namespace scratchbird
             void visit(CoalesceExpr *node) override;   // Phase 1 Task 8
             void visit(NullIfExpr *node) override;     // Phase 1 Task 8
             void visit(CaseExpr *node) override;       // Phase 1 Task 8
+            void visit(ArrayLiteral *node) override;   // Phase 2 Task 12
             void visit(ColumnDef *node) override;
 
             // Get expression type after analysis

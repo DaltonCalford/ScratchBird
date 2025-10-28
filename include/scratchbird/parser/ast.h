@@ -295,7 +295,16 @@ namespace scratchbird
             AND,
             OR,
             LIKE,
-            ILIKE
+            ILIKE,
+            // Array operators (Phase 2 Task 12)
+            ARRAY_OVERLAP,      // && - array overlap
+            ARRAY_CONTAINS,     // @> - array contains
+            ARRAY_CONTAINED_BY, // <@ - array contained by
+            // Regex operators (Phase 2 Task 13)
+            REGEX_MATCH,        // ~ - regex match
+            REGEX_MATCH_CI,     // ~* - regex match case-insensitive
+            REGEX_NOT_MATCH,    // !~ - regex not match
+            REGEX_NOT_MATCH_CI  // !~* - regex not match case-insensitive
         };
 
         class BinaryOpExpr : public Expression
@@ -385,14 +394,15 @@ namespace scratchbird
             std::vector<Expression *> args_;
         };
 
-        // Aggregate function types (Phase 1 Task 4.1)
+        // Aggregate function types (Phase 1 Task 4.1, Phase 2 Task 12)
         enum class AggregateFunc : uint8_t
         {
             COUNT,
             SUM,
             AVG,
             MIN,
-            MAX
+            MAX,
+            ARRAY_AGG  // Phase 2 Task 12
         };
 
         // Aggregate function expression (Phase 1 Task 4.1)
@@ -734,6 +744,26 @@ namespace scratchbird
             Expression* case_operand_;  // NULL for searched CASE, non-NULL for simple CASE
             std::vector<WhenClause> when_clauses_;
             Expression* else_result_;  // Can be NULL
+        };
+
+        // Array literal expression: ARRAY[elem1, elem2, ...] (Phase 2 Task 12)
+        class ArrayLiteral : public Expression
+        {
+        public:
+            ArrayLiteral(const SourceSpan &span, const std::vector<Expression*>& elements)
+                : Expression(ASTKind::LITERAL, span), elements_(elements)
+            {
+            }
+
+            const std::vector<Expression*>& elements() const
+            {
+                return elements_;
+            }
+
+            void accept(ASTVisitor *visitor) override;
+
+        private:
+            std::vector<Expression*> elements_;
         };
 
         // ===== Statement Nodes =====
@@ -1697,6 +1727,7 @@ namespace scratchbird
             virtual void visit(CoalesceExpr *node) = 0;   // Phase 1 Task 8
             virtual void visit(NullIfExpr *node) = 0;     // Phase 1 Task 8
             virtual void visit(CaseExpr *node) = 0;       // Phase 1 Task 8
+            virtual void visit(ArrayLiteral *node) = 0;   // Phase 2 Task 12
 
             // Other nodes
             virtual void visit(ColumnDef *node) = 0;
@@ -1742,6 +1773,7 @@ namespace scratchbird
             void visit(CoalesceExpr *node) override;   // Phase 1 Task 8
             void visit(NullIfExpr *node) override;     // Phase 1 Task 8
             void visit(CaseExpr *node) override;       // Phase 1 Task 8
+            void visit(ArrayLiteral *node) override;   // Phase 2 Task 12
             void visit(ColumnDef *node) override;
 
         private:

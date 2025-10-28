@@ -256,6 +256,9 @@ namespace scratchbird
             EXT_ARRAY_UPPER = 0x22,        // ARRAY_UPPER(array, dimension) - upper bound
             EXT_ARRAY_LOWER = 0x23,        // ARRAY_LOWER(array, dimension) - lower bound
 
+            // Array construction
+            EXT_ARRAY_CONSTRUCT = 0x24,    // Construct array from stack elements
+
             // Text search and regex functions (Phase 2 Task 13) - 0x30-0x4F range
             // Regex operators (can be used without EXTENDED_OPCODE prefix due to available space)
             EXT_REGEX_MATCH = 0x30,        // ~ operator (regex match case-sensitive)

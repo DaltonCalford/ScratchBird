@@ -5634,6 +5634,29 @@ namespace scratchbird
                             }
                         }
                     }
+                    // Array construction (Phase 2 Task 12)
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_ARRAY_CONSTRUCT))
+                    {
+                        uint8_t count = readByte();
+
+                        // Pop all elements from stack (in reverse order)
+                        std::vector<Value> elements;
+                        elements.reserve(count);
+                        for (uint8_t i = 0; i < count; i++)
+                        {
+                            elements.push_back(pop());
+                        }
+                        std::reverse(elements.begin(), elements.end());
+
+                        // Build JSON array
+                        json arr = json::array();
+                        for (const auto& elem : elements)
+                        {
+                            arr.push_back(valueToJSON(elem));
+                        }
+
+                        push(Value::makeJSON(arr.dump()));
+                    }
                     // Spatial functions (Phase 2 Task 9.1)
                     else if (ext_op == static_cast<uint8_t>(Opcode::EXT_ST_POINT))
                     {
@@ -5892,6 +5915,648 @@ namespace scratchbird
                             }
 
                             push(Value::makeBoolean(is_valid));
+                        }
+                    }
+                    // ========== Phase 2 Task 13: Text Search and Regex Operators ==========
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_REGEX_MATCH))
+                    {
+                        // ~ operator (regex match case-sensitive)
+                        Value pattern = pop();
+                        Value text = pop();
+
+                        if (text.isNull() || pattern.isNull())
+                        {
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            bool matches = matchRegex(text.toString(), pattern.toString(), false);
+                            push(Value::makeBoolean(matches));
+                        }
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_REGEX_MATCH_CI))
+                    {
+                        // ~* operator (regex match case-insensitive)
+                        Value pattern = pop();
+                        Value text = pop();
+
+                        if (text.isNull() || pattern.isNull())
+                        {
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            bool matches = matchRegex(text.toString(), pattern.toString(), true);
+                            push(Value::makeBoolean(matches));
+                        }
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_REGEX_NOT_MATCH))
+                    {
+                        // !~ operator (regex not match case-sensitive)
+                        Value pattern = pop();
+                        Value text = pop();
+
+                        if (text.isNull() || pattern.isNull())
+                        {
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            bool matches = matchRegex(text.toString(), pattern.toString(), false);
+                            push(Value::makeBoolean(!matches));
+                        }
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_REGEX_NOT_MATCH_CI))
+                    {
+                        // !~* operator (regex not match case-insensitive)
+                        Value pattern = pop();
+                        Value text = pop();
+
+                        if (text.isNull() || pattern.isNull())
+                        {
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            bool matches = matchRegex(text.toString(), pattern.toString(), true);
+                            push(Value::makeBoolean(!matches));
+                        }
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_REGEXP_MATCHES))
+                    {
+                        // REGEXP_MATCHES(str, pattern [, flags])
+                        uint8_t arg_count = readByte();
+
+                        Value flags_val;
+                        std::string flags_str = "";
+                        if (arg_count == 3)
+                        {
+                            flags_val = pop();
+                            if (!flags_val.isNull())
+                            {
+                                flags_str = flags_val.toString();
+                            }
+                        }
+
+                        Value pattern = pop();
+                        Value text = pop();
+
+                        if (text.isNull() || pattern.isNull())
+                        {
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            auto matches = regexMatches(text.toString(), pattern.toString(), flags_str);
+
+                            // Return as JSON array
+                            json arr = json::array();
+                            for (const auto& match : matches)
+                            {
+                                arr.push_back(match);
+                            }
+                            push(Value::makeJSON(arr.dump()));
+                        }
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_REGEXP_REPLACE))
+                    {
+                        // REGEXP_REPLACE(str, pattern, replacement [, flags])
+                        uint8_t arg_count = readByte();
+
+                        Value flags_val;
+                        std::string flags_str = "";
+                        if (arg_count == 4)
+                        {
+                            flags_val = pop();
+                            if (!flags_val.isNull())
+                            {
+                                flags_str = flags_val.toString();
+                            }
+                        }
+
+                        Value replacement = pop();
+                        Value pattern = pop();
+                        Value text = pop();
+
+                        if (text.isNull() || pattern.isNull() || replacement.isNull())
+                        {
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            std::string result = regexReplace(text.toString(), pattern.toString(),
+                                                               replacement.toString(), flags_str);
+                            push(Value::makeText(result));
+                        }
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_REGEXP_SPLIT_TO_ARRAY))
+                    {
+                        // REGEXP_SPLIT_TO_ARRAY(str, pattern [, flags])
+                        uint8_t arg_count = readByte();
+
+                        Value flags_val;
+                        std::string flags_str = "";
+                        if (arg_count == 3)
+                        {
+                            flags_val = pop();
+                            if (!flags_val.isNull())
+                            {
+                                flags_str = flags_val.toString();
+                            }
+                        }
+
+                        Value pattern = pop();
+                        Value text = pop();
+
+                        if (text.isNull() || pattern.isNull())
+                        {
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            auto parts = regexSplit(text.toString(), pattern.toString(), flags_str);
+
+                            // Return as JSON array
+                            json arr = json::array();
+                            for (const auto& part : parts)
+                            {
+                                arr.push_back(part);
+                            }
+                            push(Value::makeJSON(arr.dump()));
+                        }
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_REGEXP_SPLIT_TO_TABLE))
+                    {
+                        // REGEXP_SPLIT_TO_TABLE(str, pattern [, flags]) - table-returning function
+                        // For now, returns same as REGEXP_SPLIT_TO_ARRAY (array)
+                        // Parser/executor will handle table expansion
+                        uint8_t arg_count = readByte();
+
+                        Value flags_val;
+                        std::string flags_str = "";
+                        if (arg_count == 3)
+                        {
+                            flags_val = pop();
+                            if (!flags_val.isNull())
+                            {
+                                flags_str = flags_val.toString();
+                            }
+                        }
+
+                        Value pattern = pop();
+                        Value text = pop();
+
+                        if (text.isNull() || pattern.isNull())
+                        {
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            auto parts = regexSplit(text.toString(), pattern.toString(), flags_str);
+
+                            // Return as JSON array
+                            json arr = json::array();
+                            for (const auto& part : parts)
+                            {
+                                arr.push_back(part);
+                            }
+                            push(Value::makeJSON(arr.dump()));
+                        }
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_STRING_TO_TABLE))
+                    {
+                        // STRING_TO_TABLE(str, delimiter) - table-returning function
+                        // For now, returns array (parser will handle table expansion)
+                        uint8_t arg_count = readByte();
+                        if (arg_count != 2)
+                        {
+                            error("STRING_TO_TABLE expects 2 arguments");
+                        }
+
+                        Value delimiter = pop();
+                        Value text = pop();
+
+                        if (text.isNull() || delimiter.isNull())
+                        {
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            std::string str = text.toString();
+                            std::string delim = delimiter.toString();
+
+                            // Split string by delimiter
+                            std::vector<std::string> parts;
+                            size_t start = 0;
+                            size_t pos = str.find(delim);
+
+                            while (pos != std::string::npos)
+                            {
+                                parts.push_back(str.substr(start, pos - start));
+                                start = pos + delim.length();
+                                pos = str.find(delim, start);
+                            }
+                            parts.push_back(str.substr(start));
+
+                            // Return as JSON array
+                            json arr = json::array();
+                            for (const auto& part : parts)
+                            {
+                                arr.push_back(part);
+                            }
+                            push(Value::makeJSON(arr.dump()));
+                        }
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_UNNEST_TEXT))
+                    {
+                        // UNNEST_TEXT(array) - table-returning function
+                        // Takes a text array and returns as table rows
+                        // For now, just passes through the array
+                        Value array = pop();
+
+                        if (array.isNull())
+                        {
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            // If already an array (JSON), pass through
+                            // If a simple value, wrap in array
+                            try {
+                                json j_array = json::parse(array.toString());
+                                if (j_array.is_array())
+                                {
+                                    push(Value::makeJSON(j_array.dump()));
+                                }
+                                else
+                                {
+                                    json arr = json::array();
+                                    arr.push_back(j_array);
+                                    push(Value::makeJSON(arr.dump()));
+                                }
+                            } catch (...) {
+                                // If not JSON, wrap in array
+                                json arr = json::array();
+                                arr.push_back(array.toString());
+                                push(Value::makeJSON(arr.dump()));
+                            }
+                        }
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_SPLIT_PART))
+                    {
+                        // SPLIT_PART(str, delimiter, field)
+                        uint8_t arg_count = readByte();
+                        if (arg_count != 3)
+                        {
+                            error("SPLIT_PART expects 3 arguments");
+                        }
+
+                        Value field_val = pop();
+                        Value delimiter = pop();
+                        Value text = pop();
+
+                        if (text.isNull() || delimiter.isNull() || field_val.isNull())
+                        {
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            std::string str = text.toString();
+                            std::string delim = delimiter.toString();
+                            int32_t field = static_cast<int32_t>(field_val.toInt64());
+
+                            if (field < 1)
+                            {
+                                push(Value::makeText(""));
+                            }
+                            else
+                            {
+                                // Split string by delimiter
+                                std::vector<std::string> parts;
+                                size_t start = 0;
+                                size_t pos = str.find(delim);
+
+                                while (pos != std::string::npos)
+                                {
+                                    parts.push_back(str.substr(start, pos - start));
+                                    start = pos + delim.length();
+                                    pos = str.find(delim, start);
+                                }
+                                parts.push_back(str.substr(start));
+
+                                // Return the requested field (1-indexed)
+                                if (field <= static_cast<int32_t>(parts.size()))
+                                {
+                                    push(Value::makeText(parts[field - 1]));
+                                }
+                                else
+                                {
+                                    push(Value::makeText(""));
+                                }
+                            }
+                        }
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_STRPOS))
+                    {
+                        // STRPOS(str, substring)
+                        uint8_t arg_count = readByte();
+                        if (arg_count != 2)
+                        {
+                            error("STRPOS expects 2 arguments");
+                        }
+
+                        Value substring = pop();
+                        Value text = pop();
+
+                        if (text.isNull() || substring.isNull())
+                        {
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            std::string str = text.toString();
+                            std::string substr = substring.toString();
+
+                            size_t pos = str.find(substr);
+                            if (pos != std::string::npos)
+                            {
+                                push(Value::makeInt32(static_cast<int32_t>(pos + 1))); // 1-indexed
+                            }
+                            else
+                            {
+                                push(Value::makeInt32(0));
+                            }
+                        }
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_POSITION))
+                    {
+                        // POSITION(substring IN string)
+                        uint8_t arg_count = readByte();
+                        if (arg_count != 2)
+                        {
+                            error("POSITION expects 2 arguments");
+                        }
+
+                        Value text = pop();
+                        Value substring = pop();
+
+                        if (text.isNull() || substring.isNull())
+                        {
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            std::string str = text.toString();
+                            std::string substr = substring.toString();
+
+                            size_t pos = str.find(substr);
+                            if (pos != std::string::npos)
+                            {
+                                push(Value::makeInt32(static_cast<int32_t>(pos + 1))); // 1-indexed
+                            }
+                            else
+                            {
+                                push(Value::makeInt32(0));
+                            }
+                        }
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_OVERLAY))
+                    {
+                        // OVERLAY(str PLACING newstr FROM start [FOR length])
+                        uint8_t arg_count = readByte();
+
+                        Value length_val;
+                        bool has_length = (arg_count == 4);
+                        if (has_length)
+                        {
+                            length_val = pop();
+                        }
+
+                        Value start_val = pop();
+                        Value newstr = pop();
+                        Value text = pop();
+
+                        if (text.isNull() || newstr.isNull() || start_val.isNull())
+                        {
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            std::string str = text.toString();
+                            std::string new_str = newstr.toString();
+                            int32_t start = static_cast<int32_t>(start_val.toInt64());
+                            int32_t length = has_length && !length_val.isNull()
+                                ? static_cast<int32_t>(length_val.toInt64())
+                                : static_cast<int32_t>(new_str.length());
+
+                            if (start < 1 || start > static_cast<int32_t>(str.length()) + 1)
+                            {
+                                push(Value::makeText(str));
+                            }
+                            else
+                            {
+                                // Replace substring
+                                std::string result = str.substr(0, start - 1) + new_str;
+                                if (start - 1 + length < static_cast<int32_t>(str.length()))
+                                {
+                                    result += str.substr(start - 1 + length);
+                                }
+                                push(Value::makeText(result));
+                            }
+                        }
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_QUOTE_LITERAL))
+                    {
+                        // QUOTE_LITERAL(str) - escape and quote a string literal
+                        Value text = pop();
+
+                        if (text.isNull())
+                        {
+                            push(Value::makeText("NULL"));
+                        }
+                        else
+                        {
+                            std::string str = text.toString();
+                            std::string result = "'";
+
+                            // Escape single quotes by doubling them
+                            for (char c : str)
+                            {
+                                if (c == '\'')
+                                {
+                                    result += "''";
+                                }
+                                else
+                                {
+                                    result += c;
+                                }
+                            }
+
+                            result += "'";
+                            push(Value::makeText(result));
+                        }
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_QUOTE_IDENT))
+                    {
+                        // QUOTE_IDENT(str) - escape and quote an identifier
+                        Value text = pop();
+
+                        if (text.isNull())
+                        {
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            std::string str = text.toString();
+                            std::string result = "\"";
+
+                            // Escape double quotes by doubling them
+                            for (char c : str)
+                            {
+                                if (c == '"')
+                                {
+                                    result += "\"\"";
+                                }
+                                else
+                                {
+                                    result += c;
+                                }
+                            }
+
+                            result += "\"";
+                            push(Value::makeText(result));
+                        }
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_INITCAP))
+                    {
+                        // INITCAP(str) - capitalize first letter of each word
+                        Value text = pop();
+
+                        if (text.isNull())
+                        {
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            std::string str = text.toString();
+                            bool capitalize_next = true;
+
+                            for (char& c : str)
+                            {
+                                if (std::isspace(static_cast<unsigned char>(c)) || !std::isalnum(static_cast<unsigned char>(c)))
+                                {
+                                    capitalize_next = true;
+                                }
+                                else if (capitalize_next)
+                                {
+                                    c = std::toupper(static_cast<unsigned char>(c));
+                                    capitalize_next = false;
+                                }
+                                else
+                                {
+                                    c = std::tolower(static_cast<unsigned char>(c));
+                                }
+                            }
+
+                            push(Value::makeText(str));
+                        }
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_ASCII))
+                    {
+                        // ASCII(str) - get ASCII code of first character
+                        Value text = pop();
+
+                        if (text.isNull())
+                        {
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            std::string str = text.toString();
+                            if (str.empty())
+                            {
+                                push(Value::makeInt32(0));
+                            }
+                            else
+                            {
+                                push(Value::makeInt32(static_cast<int32_t>(static_cast<unsigned char>(str[0]))));
+                            }
+                        }
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_CHR))
+                    {
+                        // CHR(code) - convert ASCII code to character
+                        Value code_val = pop();
+
+                        if (code_val.isNull())
+                        {
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            int32_t code = static_cast<int32_t>(code_val.toInt64());
+                            if (code < 0 || code > 255)
+                            {
+                                error("CHR value out of range (0-255)");
+                            }
+                            else
+                            {
+                                std::string result(1, static_cast<char>(code));
+                                push(Value::makeText(result));
+                            }
+                        }
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_REPEAT))
+                    {
+                        // REPEAT(str, count)
+                        uint8_t arg_count = readByte();
+                        if (arg_count != 2)
+                        {
+                            error("REPEAT expects 2 arguments");
+                        }
+
+                        Value count_val = pop();
+                        Value text = pop();
+
+                        if (text.isNull() || count_val.isNull())
+                        {
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            std::string str = text.toString();
+                            int32_t count = static_cast<int32_t>(count_val.toInt64());
+
+                            if (count < 0)
+                            {
+                                push(Value::makeText(""));
+                            }
+                            else
+                            {
+                                std::string result;
+                                result.reserve(str.length() * count);
+                                for (int32_t i = 0; i < count; i++)
+                                {
+                                    result += str;
+                                }
+                                push(Value::makeText(result));
+                            }
+                        }
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_REVERSE))
+                    {
+                        // REVERSE(str)
+                        Value text = pop();
+
+                        if (text.isNull())
+                        {
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            std::string str = text.toString();
+                            std::reverse(str.begin(), str.end());
+                            push(Value::makeText(str));
                         }
                     }
                     else

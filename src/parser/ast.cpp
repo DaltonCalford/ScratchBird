@@ -803,6 +803,11 @@ namespace scratchbird
             visitor->visit(this);
         }
 
+        void ArrayLiteral::accept(ASTVisitor *visitor)
+        {
+            visitor->visit(this);
+        }
+
         void ASTPrinter::visit(CastExpr *node)
         {
             out_ << (node->isTryCast() ? "TRY_CAST(" : "CAST(");
@@ -1171,6 +1176,20 @@ namespace scratchbird
             }
 
             out_ << "END";
+        }
+
+        void ASTPrinter::visit(ArrayLiteral *node)
+        {
+            out_ << "ARRAY[";
+            bool first = true;
+            for (auto *elem : node->elements())
+            {
+                if (!first)
+                    out_ << ", ";
+                elem->accept(this);
+                first = false;
+            }
+            out_ << "]";
         }
 
     } // namespace parser
