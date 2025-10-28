@@ -10,6 +10,8 @@
 #include "scratchbird/core/sweep_manager.h"
 #include "scratchbird/core/garbage_collector.h"
 #include "scratchbird/core/proc_array.h"
+#include "scratchbird/spatial/wkt_parser.h"
+#include "scratchbird/spatial/wkb.h"
 #include <nlohmann/json.hpp>
 #include <sstream>
 #include <iomanip>
@@ -5630,6 +5632,266 @@ namespace scratchbird
                             } catch (const json::exception& e) {
                                 push(Value::makeNull());
                             }
+                        }
+                    }
+                    // Spatial functions (Phase 2 Task 9.1)
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_ST_POINT))
+                    {
+                        // ST_Point(x, y) - create point from coordinates
+                        // Stack: [x, y] (y is on top)
+                        Value y_val = pop();
+                        Value x_val = pop();
+
+                        if (y_val.isNull() || x_val.isNull())
+                        {
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            try {
+                                double x = x_val.toDouble();
+                                double y = y_val.toDouble();
+
+                                core::Point point{x, y};
+                                push(Value::makePoint(point));
+                            } catch (...) {
+                                push(Value::makeNull());
+                            }
+                        }
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_ST_MAKELINE))
+                    {
+                        // ST_MakeLine(point1, point2, ...) - create linestring from points
+                        uint8_t arg_count = readByte();
+
+                        if (arg_count < 2)
+                        {
+                            error("ST_MakeLine expects at least 2 points");
+                            break;
+                        }
+
+                        // Pop all points from stack (in reverse order)
+                        std::vector<Value> point_values;
+                        for (uint8_t i = 0; i < arg_count; i++)
+                        {
+                            point_values.push_back(pop());
+                        }
+
+                        // Reverse to get correct order
+                        std::reverse(point_values.begin(), point_values.end());
+
+                        // Check for nulls
+                        bool has_null = false;
+                        for (const auto& pv : point_values)
+                        {
+                            if (pv.isNull() || pv.type() != core::DataType::POINT)
+                            {
+                                has_null = true;
+                                break;
+                            }
+                        }
+
+                        if (has_null)
+                        {
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            try {
+                                core::LineString linestring;
+                                for (const auto& pv : point_values)
+                                {
+                                    linestring.points.push_back(pv.getPoint());
+                                }
+
+                                if (linestring.isValid())
+                                {
+                                    push(Value::makeLineString(linestring));
+                                }
+                                else
+                                {
+                                    push(Value::makeNull());
+                                }
+                            } catch (...) {
+                                push(Value::makeNull());
+                            }
+                        }
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_ST_MAKEPOLYGON))
+                    {
+                        // ST_MakePolygon(linestring) - create polygon from linestring
+                        Value linestring_val = pop();
+
+                        if (linestring_val.isNull() || linestring_val.type() != core::DataType::LINESTRING)
+                        {
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            try {
+                                core::LineString ls = linestring_val.getLineString();
+
+                                // Create polygon from linestring (exterior ring)
+                                core::Polygon polygon;
+                                polygon.rings.push_back(ls.points);
+
+                                if (polygon.isValid())
+                                {
+                                    push(Value::makePolygon(polygon));
+                                }
+                                else
+                                {
+                                    push(Value::makeNull());
+                                }
+                            } catch (...) {
+                                push(Value::makeNull());
+                            }
+                        }
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_ST_ASTEXT))
+                    {
+                        // ST_AsText(geom) - convert geometry to WKT string
+                        Value geom = pop();
+
+                        if (geom.isNull())
+                        {
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            try {
+                                std::string wkt;
+
+                                if (geom.type() == core::DataType::POINT)
+                                {
+                                    wkt = spatial::WKTParser::pointToWKT(geom.getPoint());
+                                }
+                                else if (geom.type() == core::DataType::LINESTRING)
+                                {
+                                    wkt = spatial::WKTParser::lineStringToWKT(geom.getLineString());
+                                }
+                                else if (geom.type() == core::DataType::POLYGON)
+                                {
+                                    wkt = spatial::WKTParser::polygonToWKT(geom.getPolygon());
+                                }
+                                else
+                                {
+                                    push(Value::makeNull());
+                                    break;
+                                }
+
+                                push(Value::makeText(wkt));
+                            } catch (...) {
+                                push(Value::makeNull());
+                            }
+                        }
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_ST_ASBINARY))
+                    {
+                        // ST_AsBinary(geom) - convert geometry to WKB binary
+                        Value geom = pop();
+
+                        if (geom.isNull())
+                        {
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            try {
+                                std::vector<uint8_t> wkb;
+
+                                if (geom.type() == core::DataType::POINT)
+                                {
+                                    wkb = spatial::WKBSerializer::serializePoint(geom.getPoint());
+                                }
+                                else if (geom.type() == core::DataType::LINESTRING)
+                                {
+                                    wkb = spatial::WKBSerializer::serializeLineString(geom.getLineString());
+                                }
+                                else if (geom.type() == core::DataType::POLYGON)
+                                {
+                                    wkb = spatial::WKBSerializer::serializePolygon(geom.getPolygon());
+                                }
+                                else
+                                {
+                                    push(Value::makeNull());
+                                    break;
+                                }
+
+                                // Store as binary string (or BYTEA if available)
+                                std::string binary_str(reinterpret_cast<const char*>(wkb.data()), wkb.size());
+                                push(Value::makeText(binary_str));
+                            } catch (...) {
+                                push(Value::makeNull());
+                            }
+                        }
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_ST_GEOMETRYTYPE))
+                    {
+                        // ST_GeometryType(geom) - get geometry type name
+                        Value geom = pop();
+
+                        if (geom.isNull())
+                        {
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            std::string type_name;
+                            if (geom.type() == core::DataType::POINT)
+                            {
+                                type_name = "POINT";
+                            }
+                            else if (geom.type() == core::DataType::LINESTRING)
+                            {
+                                type_name = "LINESTRING";
+                            }
+                            else if (geom.type() == core::DataType::POLYGON)
+                            {
+                                type_name = "POLYGON";
+                            }
+                            else
+                            {
+                                push(Value::makeNull());
+                                break;
+                            }
+
+                            push(Value::makeText(type_name));
+                        }
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_ST_ISVALID))
+                    {
+                        // ST_IsValid(geom) - validate geometry
+                        Value geom = pop();
+
+                        if (geom.isNull())
+                        {
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            bool is_valid = false;
+
+                            if (geom.type() == core::DataType::POINT)
+                            {
+                                // Points are always valid
+                                is_valid = true;
+                            }
+                            else if (geom.type() == core::DataType::LINESTRING)
+                            {
+                                is_valid = geom.getLineString().isValid();
+                            }
+                            else if (geom.type() == core::DataType::POLYGON)
+                            {
+                                is_valid = geom.getPolygon().isValid();
+                            }
+                            else
+                            {
+                                push(Value::makeNull());
+                                break;
+                            }
+
+                            push(Value::makeBoolean(is_valid));
                         }
                     }
                     else

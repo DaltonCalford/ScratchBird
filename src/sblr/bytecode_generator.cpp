@@ -831,6 +831,88 @@ namespace scratchbird
             {
                 func_opcode = Opcode::FUNC_CURRENT_DATE;
             }
+            // Spatial functions (Phase 2 Task 9.1)
+            else if (func_name == "ST_POINT")
+            {
+                // ST_Point(x, y) - create point from coordinates
+                // Generate arguments first
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                // Emit extended opcode
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_ST_POINT));
+                return;
+            }
+            else if (func_name == "ST_MAKELINE")
+            {
+                // ST_MakeLine(point1, point2, ...) - create linestring from points
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_ST_MAKELINE));
+                // Write argument count for variable args
+                current_result_->writeByte(static_cast<uint8_t>(node->args().size()));
+                return;
+            }
+            else if (func_name == "ST_MAKEPOLYGON")
+            {
+                // ST_MakePolygon(linestring) - create polygon from linestring
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_ST_MAKEPOLYGON));
+                return;
+            }
+            else if (func_name == "ST_ASTEXT")
+            {
+                // ST_AsText(geom) - convert geometry to WKT string
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_ST_ASTEXT));
+                return;
+            }
+            else if (func_name == "ST_ASBINARY")
+            {
+                // ST_AsBinary(geom) - convert geometry to WKB binary
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_ST_ASBINARY));
+                return;
+            }
+            else if (func_name == "ST_GEOMETRYTYPE")
+            {
+                // ST_GeometryType(geom) - get geometry type name
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_ST_GEOMETRYTYPE));
+                return;
+            }
+            else if (func_name == "ST_ISVALID")
+            {
+                // ST_IsValid(geom) - validate geometry
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_ST_ISVALID));
+                return;
+            }
             else
             {
                 current_result_->addError("Unknown function: " + std::string(func_name));

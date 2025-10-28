@@ -87,3 +87,48 @@ TEST_F(SQLToBytecodeTest, CompleteExample)
         testFullPipeline(sql, true); // Skip semantic analysis
     }
 }
+
+// ===== Spatial SQL Integration Tests (Phase 2 Task 9.1) =====
+
+TEST_F(SQLToBytecodeTest, SpatialFunction_ST_Point)
+{
+    testFullPipeline("SELECT ST_POINT(1.5, 2.5) FROM locations", true);
+}
+
+TEST_F(SQLToBytecodeTest, SpatialFunction_ST_AsText)
+{
+    testFullPipeline("SELECT ST_ASTEXT(ST_POINT(1.0, 2.0)) FROM locations", true);
+}
+
+TEST_F(SQLToBytecodeTest, SpatialFunction_ST_GeometryType)
+{
+    testFullPipeline("SELECT ST_GEOMETRYTYPE(ST_POINT(0.0, 0.0)) FROM locations", true);
+}
+
+TEST_F(SQLToBytecodeTest, SpatialFunction_ST_IsValid)
+{
+    testFullPipeline("SELECT ST_ISVALID(ST_POINT(1.0, 2.0)) FROM locations", true);
+}
+
+TEST_F(SQLToBytecodeTest, SpatialFunction_ST_MakeLine)
+{
+    testFullPipeline("SELECT ST_MAKELINE(ST_POINT(0.0, 0.0), ST_POINT(1.0, 1.0)) FROM routes", true);
+}
+
+TEST_F(SQLToBytecodeTest, SpatialFunction_ST_MakePolygon)
+{
+    testFullPipeline("SELECT ST_MAKEPOLYGON(ST_MAKELINE(ST_POINT(0.0, 0.0), ST_POINT(1.0, 0.0))) FROM regions", true);
+}
+
+TEST_F(SQLToBytecodeTest, SpatialFunction_ST_AsBinary)
+{
+    testFullPipeline("SELECT ST_ASBINARY(ST_POINT(5.5, 10.5)) FROM locations", true);
+}
+
+TEST_F(SQLToBytecodeTest, SpatialComplexQuery)
+{
+    testFullPipeline(
+        "SELECT id, ST_ASTEXT(location), ST_GEOMETRYTYPE(location), ST_ISVALID(location) "
+        "FROM places WHERE ST_ISVALID(location) = 1",
+        true);
+}
