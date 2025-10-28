@@ -101,6 +101,16 @@ namespace scratchbird
                 case TokenType::DOT:
                     return ".";
 
+                // JSON operators (Phase 1 Task 7)
+                case TokenType::ARROW:
+                    return "->";
+                case TokenType::DOUBLE_ARROW:
+                    return "->>";
+                case TokenType::HASH_ARROW:
+                    return "#>";
+                case TokenType::HASH_DOUBLE_ARROW:
+                    return "#>>";
+
                 case TokenType::KW_CREATE:
                     return "CREATE";
                 case TokenType::KW_TABLE:
@@ -205,6 +215,28 @@ namespace scratchbird
                     return "RENAME";
                 case TokenType::KW_TO:
                     return "TO";
+
+                // JSON functions (Phase 1 Task 7)
+                case TokenType::KW_JSON_EXTRACT:
+                    return "JSON_EXTRACT";
+                case TokenType::KW_JSON_OBJECT:
+                    return "JSON_OBJECT";
+                case TokenType::KW_JSON_ARRAY:
+                    return "JSON_ARRAY";
+                case TokenType::KW_JSON_SET:
+                    return "JSON_SET";
+                case TokenType::KW_JSON_INSERT:
+                    return "JSON_INSERT";
+                case TokenType::KW_JSON_REMOVE:
+                    return "JSON_REMOVE";
+                case TokenType::KW_JSONB_EXTRACT_PATH:
+                    return "JSONB_EXTRACT_PATH";
+                case TokenType::KW_JSONB_BUILD_OBJECT:
+                    return "JSONB_BUILD_OBJECT";
+                case TokenType::KW_JSONB_BUILD_ARRAY:
+                    return "JSONB_BUILD_ARRAY";
+                case TokenType::KW_JSONB_SET:
+                    return "JSONB_SET";
 
                 default:
                     return "UNKNOWN";

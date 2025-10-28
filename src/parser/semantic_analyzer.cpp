@@ -1137,6 +1137,121 @@ namespace scratchbird
             }
         }
 
+        void SemanticAnalyzer::visit(JSONFuncExpr *node)
+        {
+            // Phase 1 Task 7: JSON function analysis
+
+            // Check all arguments
+            for (auto* arg : node->args())
+            {
+                checkExpression(arg);
+            }
+
+            // Validate argument counts and types based on function
+            switch (node->func())
+            {
+            case JSONFunc::JSON_EXTRACT:
+            case JSONFunc::ARROW:
+            case JSONFunc::DOUBLE_ARROW:
+                // Require 2 arguments: json_value, path
+                if (node->args().size() != 2)
+                {
+                    reportError(node, "JSON extraction requires 2 arguments: json value and path");
+                }
+                break;
+
+            case JSONFunc::HASH_ARROW:
+            case JSONFunc::HASH_DOUBLE_ARROW:
+                // Require 2 arguments: json_value, path_array
+                if (node->args().size() != 2)
+                {
+                    reportError(node, "JSON path extraction requires 2 arguments: json value and path array");
+                }
+                break;
+
+            case JSONFunc::JSONB_EXTRACT_PATH:
+                // Require at least 2 arguments: json_value, path_element1, ...
+                if (node->args().size() < 2)
+                {
+                    reportError(node, "JSONB_EXTRACT_PATH requires at least 2 arguments");
+                }
+                break;
+
+            case JSONFunc::JSON_SET:
+            case JSONFunc::JSONB_SET:
+                // Require 3 arguments: json_value, path, new_value
+                if (node->args().size() != 3)
+                {
+                    reportError(node, "JSON_SET requires 3 arguments: json value, path, and new value");
+                }
+                break;
+
+            case JSONFunc::JSON_INSERT:
+                // Require 3 arguments: json_value, path, value
+                if (node->args().size() != 3)
+                {
+                    reportError(node, "JSON_INSERT requires 3 arguments: json value, path, and value");
+                }
+                break;
+
+            case JSONFunc::JSON_REMOVE:
+                // Require 2 arguments: json_value, path
+                if (node->args().size() != 2)
+                {
+                    reportError(node, "JSON_REMOVE requires 2 arguments: json value and path");
+                }
+                break;
+
+            case JSONFunc::JSON_OBJECT:
+            case JSONFunc::JSONB_BUILD_OBJECT:
+                // Require even number of arguments (key-value pairs)
+                if (node->args().size() % 2 != 0)
+                {
+                    reportError(node, "JSON_OBJECT requires even number of arguments (key-value pairs)");
+                }
+                break;
+
+            case JSONFunc::JSON_ARRAY:
+            case JSONFunc::JSONB_BUILD_ARRAY:
+                // Can have any number of arguments
+                break;
+            }
+
+            // Determine result type based on function
+            DataType result_type;
+            switch (node->func())
+            {
+            case JSONFunc::ARROW:
+            case JSONFunc::HASH_ARROW:
+            case JSONFunc::JSON_EXTRACT:
+            case JSONFunc::JSON_OBJECT:
+            case JSONFunc::JSON_ARRAY:
+            case JSONFunc::JSON_SET:
+            case JSONFunc::JSON_INSERT:
+            case JSONFunc::JSON_REMOVE:
+                // These return JSON type
+                result_type = DataType::JSON;
+                break;
+
+            case JSONFunc::DOUBLE_ARROW:
+            case JSONFunc::HASH_DOUBLE_ARROW:
+                // These return TEXT
+                result_type = DataType::TEXT;
+                break;
+
+            case JSONFunc::JSONB_EXTRACT_PATH:
+            case JSONFunc::JSONB_BUILD_OBJECT:
+            case JSONFunc::JSONB_BUILD_ARRAY:
+            case JSONFunc::JSONB_SET:
+                // These return JSONB type
+                result_type = DataType::JSONB;
+                break;
+            }
+
+            // JSON functions can return NULL
+            setExpressionType(node, ExpressionType(TypeName(result_type), true));
+        }
+
         void SemanticAnalyzer::visit(ColumnDef *node)
         {
             // Validate column definition

@@ -58,6 +58,7 @@ namespace scratchbird
             AGGREGATE_FUNC,  // Phase 1 Task 4.1: Aggregate functions
             WINDOW_FUNC,     // Phase 1 Task 6: Window functions
             WINDOW_SPEC,     // Phase 1 Task 6: Window specification (OVER clause)
+            JSON_FUNC,       // Phase 1 Task 7: JSON functions
 
             // Types
             TYPE_NAME,
@@ -572,6 +573,58 @@ namespace scratchbird
             WindowFunc func_;
             std::vector<Expression*> args_;
             WindowSpec* window_spec_;
+        };
+
+        // JSON function types (Phase 1 Task 7)
+        enum class JSONFunc : uint8_t
+        {
+            // Extraction functions (Task 7.1)
+            JSON_EXTRACT,       // JSON_EXTRACT(json, path)
+            JSONB_EXTRACT_PATH, // jsonb_extract_path(jsonb, path_elem...)
+            ARROW,              // json_col -> 'field' (returns JSON)
+            DOUBLE_ARROW,       // json_col ->> 'field' (returns text)
+            HASH_ARROW,         // json_col #> ARRAY['path', 'to', 'field'] (returns JSON)
+            HASH_DOUBLE_ARROW,  // json_col #>> ARRAY['path', 'to', 'field'] (returns text)
+
+            // Construction functions (Task 7.2)
+            JSON_OBJECT,        // JSON_OBJECT('key1', val1, 'key2', val2, ...)
+            JSON_ARRAY,         // JSON_ARRAY(val1, val2, ...)
+            JSONB_BUILD_OBJECT, // jsonb_build_object('key1', val1, ...)
+            JSONB_BUILD_ARRAY,  // jsonb_build_array(val1, val2, ...)
+
+            // Modification functions (Task 7.3)
+            JSON_SET,           // JSON_SET(json, path, value)
+            JSON_INSERT,        // JSON_INSERT(json, path, value)
+            JSON_REMOVE,        // JSON_REMOVE(json, path)
+            JSONB_SET,          // jsonb_set(jsonb, path_array, value)
+        };
+
+        // JSON function expression (Phase 1 Task 7)
+        class JSONFuncExpr : public Expression
+        {
+        public:
+            JSONFuncExpr(const SourceSpan &span, JSONFunc func,
+                        const std::vector<Expression*>& args)
+                : Expression(ASTKind::JSON_FUNC, span),
+                  func_(func),
+                  args_(args)
+            {
+            }
+
+            JSONFunc func() const
+            {
+                return func_;
+            }
+            const std::vector<Expression*>& args() const
+            {
+                return args_;
+            }
+
+            void accept(ASTVisitor *visitor) override;
+
+        private:
+            JSONFunc func_;
+            std::vector<Expression*> args_;
         };
 
         // ===== Statement Nodes =====
@@ -1531,6 +1584,7 @@ namespace scratchbird
             virtual void visit(AggregateExpr *node) = 0;  // Phase 1 Task 4.1
             virtual void visit(WindowFuncExpr *node) = 0; // Phase 1 Task 6
             virtual void visit(WindowSpec *node) = 0;     // Phase 1 Task 6
+            virtual void visit(JSONFuncExpr *node) = 0;   // Phase 1 Task 7
 
             // Other nodes
             virtual void visit(ColumnDef *node) = 0;
@@ -1572,6 +1626,7 @@ namespace scratchbird
             void visit(AggregateExpr *node) override;  // Phase 1 Task 4.1
             void visit(WindowFuncExpr *node) override; // Phase 1 Task 6
             void visit(WindowSpec *node) override;     // Phase 1 Task 6
+            void visit(JSONFuncExpr *node) override;   // Phase 1 Task 7
             void visit(ColumnDef *node) override;
 
         private:

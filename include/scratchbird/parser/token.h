@@ -47,6 +47,12 @@ namespace scratchbird
             SEMICOLON,   // ;
             DOT,         // .
 
+            // JSON operators (Phase 1 Task 7)
+            ARROW,              // -> (JSON field as JSON)
+            DOUBLE_ARROW,       // ->> (JSON field as text)
+            HASH_ARROW,         // #> (JSON path as JSON)
+            HASH_DOUBLE_ARROW,  // #>> (JSON path as text)
+
             // SQL Keywords (minimal set for Alpha)
             // These are detected post-lexing based on identifier content
             KW_CREATE,
@@ -168,6 +174,18 @@ namespace scratchbird
             KW_JSONB,
             KW_XML,
             KW_VECTOR,
+
+            // JSON functions (Phase 1 Task 7)
+            KW_JSON_EXTRACT,
+            KW_JSON_OBJECT,
+            KW_JSON_ARRAY,
+            KW_JSON_SET,
+            KW_JSON_INSERT,
+            KW_JSON_REMOVE,
+            KW_JSONB_EXTRACT_PATH,
+            KW_JSONB_BUILD_OBJECT,
+            KW_JSONB_BUILD_ARRAY,
+            KW_JSONB_SET,
 
             // Type conversion
             KW_CAST,

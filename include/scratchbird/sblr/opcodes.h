@@ -193,6 +193,27 @@ namespace scratchbird
             WIN_FIRST_VALUE = 0xE7,   // FIRST_VALUE(expr)
             WIN_LAST_VALUE = 0xE8,    // LAST_VALUE(expr)
             WIN_NTH_VALUE = 0xE9,     // NTH_VALUE(expr, n)
+
+            // JSON functions (Phase 1 Task 7)
+            // Extraction functions (Task 7.1)
+            JSON_EXTRACT = 0xEA,           // JSON_EXTRACT(json, path)
+            JSONB_EXTRACT_PATH = 0xEB,     // jsonb_extract_path(jsonb, path_elem...)
+            JSON_ARROW = 0xEC,             // json -> 'field' (returns JSON)
+            JSON_DOUBLE_ARROW = 0xED,      // json ->> 'field' (returns text)
+            JSON_HASH_ARROW = 0xEE,        // json #> array (returns JSON)
+            JSON_HASH_DOUBLE_ARROW = 0xEF, // json #>> array (returns text)
+
+            // Construction functions (Task 7.2)
+            JSON_OBJECT = 0xF0,            // JSON_OBJECT(key1, val1, key2, val2, ...)
+            JSON_ARRAY = 0xF1,             // JSON_ARRAY(val1, val2, ...)
+            JSONB_BUILD_OBJECT = 0xF2,     // jsonb_build_object(key1, val1, ...)
+            JSONB_BUILD_ARRAY = 0xF3,      // jsonb_build_array(val1, val2, ...)
+
+            // Modification functions (Task 7.3)
+            JSON_SET = 0xF4,               // JSON_SET(json, path, value)
+            JSON_INSERT = 0xF5,            // JSON_INSERT(json, path, value)
+            JSON_REMOVE = 0xF6,            // JSON_REMOVE(json, path)
+            JSONB_SET = 0xF7,              // jsonb_set(jsonb, path_array, value)
         };
 
         // SBLR Version
