@@ -674,24 +674,23 @@ Without these features, ScratchBird **cannot be used** for even simple applicati
   - **Status**: Infrastructure complete, production JSON modification pending
   - **Deliverable**: `SELECT JSON_SET(data, '$.field', 'value')` - Parses & executes (stub values)
 
-**Infrastructure Complete (Commits: 6801a93, 9ad8b4c)**:
+**Infrastructure Complete (Commits: 6801a93, 9ad8b4c, 1d019aa, 7c75c82)**:
 - ✅ Lexer: 10 keywords + 4 operators (->,->> ,#>,#>>)
 - ✅ Parser: Full JSON function & operator parsing
 - ✅ AST: JSONFuncExpr with 14 function types
 - ✅ Semantic Analysis: Argument validation & type checking
 - ✅ Bytecode: 14 opcodes (0xEA-0xF7) with generation
 - ✅ Executor: Stub implementations with proper stack handling
-- ✅ Tests: 22 parser/semantic tests
+- ✅ Tests: 22 parser/semantic tests + 10 library tests
+- ✅ JSON Library: nlohmann/json v3.11.3 integrated via FetchContent
 
-**Production TODO** (20-30 hours remaining):
-- [ ] Integrate JSON library (nlohmann/json or rapidjson)
-- [ ] Implement JSONPath parsing and evaluation
-- [ ] Implement actual JSON construction logic
-- [ ] Implement actual JSON modification logic
-- [ ] Add integration tests with real JSON data
-- [ ] Performance optimization for JSONB binary format
+**Production TODO** (15-20 hours remaining):
+- [ ] Replace executor stubs with nlohmann/json calls (8-10 hours)
+- [ ] Implement JSONPath parsing for $.field.subfield syntax (4-6 hours)
+- [ ] Add integration tests with real JSON data (3-4 hours)
+- [ ] Performance optimization for JSONB binary format (optional)
 
-**Phase 1.7 Completion Criteria**: JSON data manipulation works - **INFRASTRUCTURE READY** ✅
+**Phase 1.7 Completion Criteria**: JSON data manipulation works - **LIBRARY READY** ✅
 
 ---
 
