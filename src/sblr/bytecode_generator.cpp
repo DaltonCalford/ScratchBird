@@ -1562,6 +1562,74 @@ namespace scratchbird
             current_result_->addError("Direct window spec bytecode generation not yet supported");
         }
 
+        void BytecodeGenerator::visit(parser::JSONFuncExpr *node)
+        {
+            // Phase 1 Task 7: JSON function bytecode generation
+
+            // Generate bytecode for arguments first (arguments go on stack in order)
+            for (auto *arg : node->args())
+            {
+                arg->accept(this);
+            }
+
+            // Emit the appropriate JSON opcode
+            Opcode json_opcode;
+            switch (node->func())
+            {
+            case parser::JSONFunc::JSON_EXTRACT:
+                json_opcode = Opcode::JSON_EXTRACT;
+                break;
+            case parser::JSONFunc::JSONB_EXTRACT_PATH:
+                json_opcode = Opcode::JSONB_EXTRACT_PATH;
+                break;
+            case parser::JSONFunc::ARROW:
+                json_opcode = Opcode::JSON_ARROW;
+                break;
+            case parser::JSONFunc::DOUBLE_ARROW:
+                json_opcode = Opcode::JSON_DOUBLE_ARROW;
+                break;
+            case parser::JSONFunc::HASH_ARROW:
+                json_opcode = Opcode::JSON_HASH_ARROW;
+                break;
+            case parser::JSONFunc::HASH_DOUBLE_ARROW:
+                json_opcode = Opcode::JSON_HASH_DOUBLE_ARROW;
+                break;
+            case parser::JSONFunc::JSON_OBJECT:
+                json_opcode = Opcode::JSON_OBJECT;
+                break;
+            case parser::JSONFunc::JSON_ARRAY:
+                json_opcode = Opcode::JSON_ARRAY;
+                break;
+            case parser::JSONFunc::JSONB_BUILD_OBJECT:
+                json_opcode = Opcode::JSONB_BUILD_OBJECT;
+                break;
+            case parser::JSONFunc::JSONB_BUILD_ARRAY:
+                json_opcode = Opcode::JSONB_BUILD_ARRAY;
+                break;
+            case parser::JSONFunc::JSON_SET:
+                json_opcode = Opcode::JSON_SET;
+                break;
+            case parser::JSONFunc::JSON_INSERT:
+                json_opcode = Opcode::JSON_INSERT;
+                break;
+            case parser::JSONFunc::JSON_REMOVE:
+                json_opcode = Opcode::JSON_REMOVE;
+                break;
+            case parser::JSONFunc::JSONB_SET:
+                json_opcode = Opcode::JSONB_SET;
+                break;
+            default:
+                current_result_->addError("Unknown JSON function in bytecode generation");
+                return;
+            }
+
+            // Emit the JSON opcode
+            current_result_->writeByte(static_cast<uint8_t>(json_opcode));
+
+            // Emit argument count (helpful for executor to know how many args to pop)
+            current_result_->writeByte(static_cast<uint8_t>(node->args().size()));
+        }
+
         // ===== Disassembler Implementation =====
 
         std::string BytecodeDisassembler::disassemble(const std::vector<uint8_t> &bytecode)

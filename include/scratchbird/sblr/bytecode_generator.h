@@ -135,6 +135,7 @@ namespace scratchbird
             void visit(parser::AggregateExpr *node) override;  // Phase 1 Task 4.1
             void visit(parser::WindowFuncExpr *node) override;  // Phase 1 Task 6.3
             void visit(parser::WindowSpec *node) override;      // Phase 1 Task 6.3
+            void visit(parser::JSONFuncExpr *node) override;    // Phase 1 Task 7
             void visit(parser::ColumnDef *node) override;
 
         private:

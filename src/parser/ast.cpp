@@ -783,6 +783,11 @@ namespace scratchbird
             visitor->visit(this);
         }
 
+        void JSONFuncExpr::accept(ASTVisitor *visitor)
+        {
+            visitor->visit(this);
+        }
+
         void ASTPrinter::visit(CastExpr *node)
         {
             out_ << (node->isTryCast() ? "TRY_CAST(" : "CAST(");
@@ -1002,6 +1007,100 @@ namespace scratchbird
                     break;
                 }
             }
+        }
+
+        void ASTPrinter::visit(JSONFuncExpr *node)
+        {
+            // Print JSON function name
+            switch (node->func())
+            {
+            case JSONFunc::JSON_EXTRACT:
+                out_ << "JSON_EXTRACT(";
+                break;
+            case JSONFunc::JSONB_EXTRACT_PATH:
+                out_ << "JSONB_EXTRACT_PATH(";
+                break;
+            case JSONFunc::ARROW:
+                // Binary operator format: arg1 -> arg2
+                if (node->args().size() >= 2)
+                {
+                    node->args()[0]->accept(this);
+                    out_ << " -> ";
+                    node->args()[1]->accept(this);
+                    return;
+                }
+                out_ << "ARROW(";
+                break;
+            case JSONFunc::DOUBLE_ARROW:
+                // Binary operator format: arg1 ->> arg2
+                if (node->args().size() >= 2)
+                {
+                    node->args()[0]->accept(this);
+                    out_ << " ->> ";
+                    node->args()[1]->accept(this);
+                    return;
+                }
+                out_ << "DOUBLE_ARROW(";
+                break;
+            case JSONFunc::HASH_ARROW:
+                // Binary operator format: arg1 #> arg2
+                if (node->args().size() >= 2)
+                {
+                    node->args()[0]->accept(this);
+                    out_ << " #> ";
+                    node->args()[1]->accept(this);
+                    return;
+                }
+                out_ << "HASH_ARROW(";
+                break;
+            case JSONFunc::HASH_DOUBLE_ARROW:
+                // Binary operator format: arg1 #>> arg2
+                if (node->args().size() >= 2)
+                {
+                    node->args()[0]->accept(this);
+                    out_ << " #>> ";
+                    node->args()[1]->accept(this);
+                    return;
+                }
+                out_ << "HASH_DOUBLE_ARROW(";
+                break;
+            case JSONFunc::JSON_OBJECT:
+                out_ << "JSON_OBJECT(";
+                break;
+            case JSONFunc::JSON_ARRAY:
+                out_ << "JSON_ARRAY(";
+                break;
+            case JSONFunc::JSONB_BUILD_OBJECT:
+                out_ << "JSONB_BUILD_OBJECT(";
+                break;
+            case JSONFunc::JSONB_BUILD_ARRAY:
+                out_ << "JSONB_BUILD_ARRAY(";
+                break;
+            case JSONFunc::JSON_SET:
+                out_ << "JSON_SET(";
+                break;
+            case JSONFunc::JSON_INSERT:
+                out_ << "JSON_INSERT(";
+                break;
+            case JSONFunc::JSON_REMOVE:
+                out_ << "JSON_REMOVE(";
+                break;
+            case JSONFunc::JSONB_SET:
+                out_ << "JSONB_SET(";
+                break;
+            }
+
+            // Print arguments (for non-operator functions)
+            bool first = true;
+            for (auto *arg : node->args())
+            {
+                if (!first)
+                    out_ << ", ";
+                arg->accept(this);
+                first = false;
+            }
+
+            out_ << ")";
         }
 
     } // namespace parser

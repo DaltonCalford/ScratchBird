@@ -139,6 +139,18 @@ namespace scratchbird
             {"XML", TokenType::KW_XML},
             {"VECTOR", TokenType::KW_VECTOR},
 
+            // JSON functions (Phase 1 Task 7)
+            {"JSON_EXTRACT", TokenType::KW_JSON_EXTRACT},
+            {"JSON_OBJECT", TokenType::KW_JSON_OBJECT},
+            {"JSON_ARRAY", TokenType::KW_JSON_ARRAY},
+            {"JSON_SET", TokenType::KW_JSON_SET},
+            {"JSON_INSERT", TokenType::KW_JSON_INSERT},
+            {"JSON_REMOVE", TokenType::KW_JSON_REMOVE},
+            {"JSONB_EXTRACT_PATH", TokenType::KW_JSONB_EXTRACT_PATH},
+            {"JSONB_BUILD_OBJECT", TokenType::KW_JSONB_BUILD_OBJECT},
+            {"JSONB_BUILD_ARRAY", TokenType::KW_JSONB_BUILD_ARRAY},
+            {"JSONB_SET", TokenType::KW_JSONB_SET},
+
             // Type conversion
             {"CAST", TokenType::KW_CAST},
             {"TRY_CAST", TokenType::KW_TRY_CAST},
@@ -522,6 +534,17 @@ namespace scratchbird
                     return Token::makeOperator(start_loc, 1, TokenType::PLUS);
                 case '-':
                     advance();
+                    // Check for JSON operators: -> and ->>
+                    if (currentChar() == '>')
+                    {
+                        advance();
+                        if (currentChar() == '>')
+                        {
+                            advance();
+                            return Token::makeOperator(start_loc, 3, TokenType::DOUBLE_ARROW);
+                        }
+                        return Token::makeOperator(start_loc, 2, TokenType::ARROW);
+                    }
                     return Token::makeOperator(start_loc, 1, TokenType::MINUS);
                 case '*':
                     advance();
@@ -573,6 +596,21 @@ namespace scratchbird
                         return Token::makeOperator(start_loc, 2, TokenType::GREATER_EQUAL);
                     }
                     return Token::makeOperator(start_loc, 1, TokenType::GREATER_THAN);
+
+                case '#':
+                    // JSON path operators: #> and #>>
+                    advance();
+                    if (currentChar() == '>')
+                    {
+                        advance();
+                        if (currentChar() == '>')
+                        {
+                            advance();
+                            return Token::makeOperator(start_loc, 3, TokenType::HASH_DOUBLE_ARROW);
+                        }
+                        return Token::makeOperator(start_loc, 2, TokenType::HASH_ARROW);
+                    }
+                    return makeError("Unexpected character '#'");
 
                 default:
                     advance();

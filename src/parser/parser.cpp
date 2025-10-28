@@ -2201,6 +2201,42 @@ namespace scratchbird
             if (!expr)
                 return nullptr;
 
+            // Handle JSON operators as postfix operators (Phase 1 Task 7)
+            while (match(TokenType::ARROW) || match(TokenType::DOUBLE_ARROW) ||
+                   match(TokenType::HASH_ARROW) || match(TokenType::HASH_DOUBLE_ARROW))
+            {
+                TokenType op_type = previous().type;
+                JSONFunc json_op;
+
+                switch (op_type)
+                {
+                case TokenType::ARROW:
+                    json_op = JSONFunc::ARROW;
+                    break;
+                case TokenType::DOUBLE_ARROW:
+                    json_op = JSONFunc::DOUBLE_ARROW;
+                    break;
+                case TokenType::HASH_ARROW:
+                    json_op = JSONFunc::HASH_ARROW;
+                    break;
+                case TokenType::HASH_DOUBLE_ARROW:
+                    json_op = JSONFunc::HASH_DOUBLE_ARROW;
+                    break;
+                default:
+                    error("Unknown JSON operator");
+                    return nullptr;
+                }
+
+                // Parse right-hand side (field name or path)
+                auto *right = parsePrimary();
+                if (!right)
+                    return nullptr;
+
+                auto span = makeSpan(expr->span().start, right->span().end);
+                std::vector<Expression*> args = {expr, right};
+                expr = arena_.make<JSONFuncExpr>(span, json_op, args);
+            }
+
             while (true)
             {
                 BinaryOp op;
@@ -2429,6 +2465,76 @@ namespace scratchbird
 
                 auto span = makeSpan(start_loc, previous().location);
                 return arena_.make<WindowFuncExpr>(span, win_func, args, window_spec);
+            }
+
+            // JSON functions (Phase 1 Task 7)
+            if (match(TokenType::KW_JSON_EXTRACT) || match(TokenType::KW_JSON_OBJECT) ||
+                match(TokenType::KW_JSON_ARRAY) || match(TokenType::KW_JSON_SET) ||
+                match(TokenType::KW_JSON_INSERT) || match(TokenType::KW_JSON_REMOVE) ||
+                match(TokenType::KW_JSONB_EXTRACT_PATH) || match(TokenType::KW_JSONB_BUILD_OBJECT) ||
+                match(TokenType::KW_JSONB_BUILD_ARRAY) || match(TokenType::KW_JSONB_SET))
+            {
+                TokenType json_type = previous().type;
+                JSONFunc json_func;
+
+                switch (json_type)
+                {
+                case TokenType::KW_JSON_EXTRACT:
+                    json_func = JSONFunc::JSON_EXTRACT;
+                    break;
+                case TokenType::KW_JSON_OBJECT:
+                    json_func = JSONFunc::JSON_OBJECT;
+                    break;
+                case TokenType::KW_JSON_ARRAY:
+                    json_func = JSONFunc::JSON_ARRAY;
+                    break;
+                case TokenType::KW_JSON_SET:
+                    json_func = JSONFunc::JSON_SET;
+                    break;
+                case TokenType::KW_JSON_INSERT:
+                    json_func = JSONFunc::JSON_INSERT;
+                    break;
+                case TokenType::KW_JSON_REMOVE:
+                    json_func = JSONFunc::JSON_REMOVE;
+                    break;
+                case TokenType::KW_JSONB_EXTRACT_PATH:
+                    json_func = JSONFunc::JSONB_EXTRACT_PATH;
+                    break;
+                case TokenType::KW_JSONB_BUILD_OBJECT:
+                    json_func = JSONFunc::JSONB_BUILD_OBJECT;
+                    break;
+                case TokenType::KW_JSONB_BUILD_ARRAY:
+                    json_func = JSONFunc::JSONB_BUILD_ARRAY;
+                    break;
+                case TokenType::KW_JSONB_SET:
+                    json_func = JSONFunc::JSONB_SET;
+                    break;
+                default:
+                    error("Unknown JSON function");
+                    return nullptr;
+                }
+
+                if (!consume(TokenType::LEFT_PAREN, "Expected '(' after JSON function"))
+                    return nullptr;
+
+                // Parse arguments
+                std::vector<Expression*> args;
+                if (!check(TokenType::RIGHT_PAREN))
+                {
+                    do
+                    {
+                        auto *arg = parseExpression();
+                        if (!arg)
+                            return nullptr;
+                        args.push_back(arg);
+                    } while (match(TokenType::COMMA));
+                }
+
+                if (!consume(TokenType::RIGHT_PAREN, "Expected ')' after JSON function arguments"))
+                    return nullptr;
+
+                auto span = makeSpan(start_loc, previous().location);
+                return arena_.make<JSONFuncExpr>(span, json_func, args);
             }
 
             if (check(TokenType::IDENTIFIER))
