@@ -94,6 +94,8 @@ namespace scratchbird
             void visit(CastExpr *node) override;
             void visit(FunctionCallExpr *node) override;
             void visit(AggregateExpr *node) override;  // Phase 1 Task 4.1
+            void visit(WindowFuncExpr *node) override; // Phase 1 Task 6
+            void visit(WindowSpec *node) override;     // Phase 1 Task 6
             void visit(ColumnDef *node) override;
 
             // Get expression type after analysis

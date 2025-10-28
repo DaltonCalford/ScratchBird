@@ -773,6 +773,16 @@ namespace scratchbird
             visitor->visit(this);
         }
 
+        void WindowFuncExpr::accept(ASTVisitor *visitor)
+        {
+            visitor->visit(this);
+        }
+
+        void WindowSpec::accept(ASTVisitor *visitor)
+        {
+            visitor->visit(this);
+        }
+
         void ASTPrinter::visit(CastExpr *node)
         {
             out_ << (node->isTryCast() ? "TRY_CAST(" : "CAST(");
@@ -845,6 +855,153 @@ namespace scratchbird
             }
 
             out_ << ")";
+        }
+
+        void ASTPrinter::visit(WindowFuncExpr *node)
+        {
+            // Print window function name
+            switch (node->func())
+            {
+            case WindowFunc::ROW_NUMBER:
+                out_ << "ROW_NUMBER(";
+                break;
+            case WindowFunc::RANK:
+                out_ << "RANK(";
+                break;
+            case WindowFunc::DENSE_RANK:
+                out_ << "DENSE_RANK(";
+                break;
+            case WindowFunc::LAG:
+                out_ << "LAG(";
+                break;
+            case WindowFunc::LEAD:
+                out_ << "LEAD(";
+                break;
+            case WindowFunc::FIRST_VALUE:
+                out_ << "FIRST_VALUE(";
+                break;
+            case WindowFunc::LAST_VALUE:
+                out_ << "LAST_VALUE(";
+                break;
+            case WindowFunc::NTH_VALUE:
+                out_ << "NTH_VALUE(";
+                break;
+            }
+
+            // Print arguments
+            bool first = true;
+            for (auto *arg : node->args())
+            {
+                if (!first)
+                    out_ << ", ";
+                arg->accept(this);
+                first = false;
+            }
+
+            out_ << ") OVER (";
+
+            // Print window specification
+            if (node->windowSpec())
+            {
+                node->windowSpec()->accept(this);
+            }
+
+            out_ << ")";
+        }
+
+        void ASTPrinter::visit(WindowSpec *node)
+        {
+            bool needs_space = false;
+
+            // PARTITION BY
+            if (!node->partitionBy().empty())
+            {
+                out_ << "PARTITION BY ";
+                bool first = true;
+                for (auto *expr : node->partitionBy())
+                {
+                    if (!first)
+                        out_ << ", ";
+                    expr->accept(this);
+                    first = false;
+                }
+                needs_space = true;
+            }
+
+            // ORDER BY
+            if (!node->orderBy().empty())
+            {
+                if (needs_space)
+                    out_ << " ";
+                out_ << "ORDER BY ";
+                for (size_t i = 0; i < node->orderBy().size(); i++)
+                {
+                    if (i > 0)
+                        out_ << ", ";
+                    node->orderBy()[i]->accept(this);
+                    out_ << (node->orderAscending()[i] ? " ASC" : " DESC");
+                }
+                needs_space = true;
+            }
+
+            // Frame clause
+            if (node->hasFrame())
+            {
+                if (needs_space)
+                    out_ << " ";
+                out_ << (node->frameMode() == FrameMode::ROWS ? "ROWS" : "RANGE");
+                out_ << " BETWEEN ";
+
+                // Start boundary
+                switch (node->frameStart().type)
+                {
+                case FrameBoundaryType::UNBOUNDED_PRECEDING:
+                    out_ << "UNBOUNDED PRECEDING";
+                    break;
+                case FrameBoundaryType::PRECEDING:
+                    if (node->frameStart().offset)
+                        node->frameStart().offset->accept(this);
+                    out_ << " PRECEDING";
+                    break;
+                case FrameBoundaryType::CURRENT_ROW:
+                    out_ << "CURRENT ROW";
+                    break;
+                case FrameBoundaryType::FOLLOWING:
+                    if (node->frameStart().offset)
+                        node->frameStart().offset->accept(this);
+                    out_ << " FOLLOWING";
+                    break;
+                case FrameBoundaryType::UNBOUNDED_FOLLOWING:
+                    out_ << "UNBOUNDED FOLLOWING";
+                    break;
+                }
+
+                out_ << " AND ";
+
+                // End boundary
+                switch (node->frameEnd().type)
+                {
+                case FrameBoundaryType::UNBOUNDED_PRECEDING:
+                    out_ << "UNBOUNDED PRECEDING";
+                    break;
+                case FrameBoundaryType::PRECEDING:
+                    if (node->frameEnd().offset)
+                        node->frameEnd().offset->accept(this);
+                    out_ << " PRECEDING";
+                    break;
+                case FrameBoundaryType::CURRENT_ROW:
+                    out_ << "CURRENT ROW";
+                    break;
+                case FrameBoundaryType::FOLLOWING:
+                    if (node->frameEnd().offset)
+                        node->frameEnd().offset->accept(this);
+                    out_ << " FOLLOWING";
+                    break;
+                case FrameBoundaryType::UNBOUNDED_FOLLOWING:
+                    out_ << "UNBOUNDED FOLLOWING";
+                    break;
+                }
+            }
         }
 
     } // namespace parser

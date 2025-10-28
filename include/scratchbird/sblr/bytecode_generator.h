@@ -133,6 +133,8 @@ namespace scratchbird
             void visit(parser::CastExpr *node) override;
             void visit(parser::FunctionCallExpr *node) override;
             void visit(parser::AggregateExpr *node) override;  // Phase 1 Task 4.1
+            void visit(parser::WindowFuncExpr *node) override;  // Phase 1 Task 6.3
+            void visit(parser::WindowSpec *node) override;      // Phase 1 Task 6.3
             void visit(parser::ColumnDef *node) override;
 
         private:
@@ -174,8 +176,17 @@ namespace scratchbird
             void generateLimitPlan(scratchbird::optimizer::LimitNode *node,
                                   parser::SelectStmt *stmt);
 
+            // NEW: Window function bytecode generation (Phase 1, Task 6.3)
+            void generateWindowPlan(scratchbird::optimizer::WindowNode *node,
+                                   parser::SelectStmt *stmt);
+
             // Helper to generate aggregate function bytecode
             void generateAggregateFunc(parser::AggregateExpr *agg_expr);
+
+            // Helper to generate window function bytecode
+            void generateWindowFunc(const optimizer::WindowNode::WindowFunction& win_func);
+            void generateWindowSpec(const parser::WindowSpec *spec);
+            void generateFrameClause(const parser::WindowSpec *spec);
         };
 
         // Debug helper - disassemble bytecode to readable format

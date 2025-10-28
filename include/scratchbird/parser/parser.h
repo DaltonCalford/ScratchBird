@@ -137,6 +137,11 @@ namespace scratchbird
             std::vector<OrderByItem> parseOrderByClause();
             void parseLimitClause(SelectStmt *stmt);
 
+            // Window function helpers (Phase 1 Task 6)
+            WindowSpec *parseWindowSpec();
+            void parseFrameClause(WindowSpec *spec);
+            FrameBoundary parseFrameBoundary();
+
             // Expression parsers
             Expression *parseExpression();
             Expression *parseComparison();

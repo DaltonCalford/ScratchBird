@@ -956,6 +956,187 @@ namespace scratchbird
             setExpressionType(node, ExpressionType(TypeName(result_type), false));
         }
 
+        void SemanticAnalyzer::visit(WindowFuncExpr *node)
+        {
+            // Phase 1 Task 6: Window function semantic analysis
+
+            // Check arguments based on function type
+            const auto& args = node->args();
+
+            switch (node->func())
+            {
+            case WindowFunc::ROW_NUMBER:
+            case WindowFunc::RANK:
+            case WindowFunc::DENSE_RANK:
+                // These functions take no arguments
+                if (!args.empty())
+                {
+                    reportError(node, "ROW_NUMBER/RANK/DENSE_RANK take no arguments");
+                }
+                break;
+
+            case WindowFunc::LAG:
+            case WindowFunc::LEAD:
+                // These functions require 1-3 arguments: (expr [, offset [, default]])
+                if (args.empty() || args.size() > 3)
+                {
+                    reportError(node, "LAG/LEAD require 1-3 arguments");
+                }
+                else
+                {
+                    // Check first argument (value expression)
+                    checkExpression(args[0]);
+
+                    // Check second argument (offset) if present - must be integer
+                    if (args.size() >= 2)
+                    {
+                        checkExpression(args[1]);
+                        const ExpressionType* offset_type = getExpressionType(args[1]);
+                        if (offset_type && !isNumericType(offset_type->type.type))
+                        {
+                            reportError(node, "LAG/LEAD offset must be numeric");
+                        }
+                    }
+
+                    // Check third argument (default value) if present
+                    if (args.size() >= 3)
+                    {
+                        checkExpression(args[2]);
+                    }
+                }
+                break;
+
+            case WindowFunc::FIRST_VALUE:
+            case WindowFunc::LAST_VALUE:
+                // These functions require exactly 1 argument
+                if (args.size() != 1)
+                {
+                    reportError(node, "FIRST_VALUE/LAST_VALUE require exactly 1 argument");
+                }
+                else
+                {
+                    checkExpression(args[0]);
+                }
+                break;
+
+            case WindowFunc::NTH_VALUE:
+                // This function requires 2 arguments: (expr, n)
+                if (args.size() != 2)
+                {
+                    reportError(node, "NTH_VALUE requires exactly 2 arguments");
+                }
+                else
+                {
+                    checkExpression(args[0]);
+                    checkExpression(args[1]);
+
+                    // Second argument must be integer
+                    const ExpressionType* n_type = getExpressionType(args[1]);
+                    if (n_type && !isNumericType(n_type->type.type))
+                    {
+                        reportError(node, "NTH_VALUE second argument must be numeric");
+                    }
+                }
+                break;
+            }
+
+            // Check window specification
+            if (node->windowSpec())
+            {
+                node->windowSpec()->accept(this);
+            }
+
+            // Set result type based on function
+            DataType result_type;
+            switch (node->func())
+            {
+            case WindowFunc::ROW_NUMBER:
+            case WindowFunc::RANK:
+            case WindowFunc::DENSE_RANK:
+                // These always return INT64
+                result_type = DataType::INT64;
+                break;
+
+            case WindowFunc::LAG:
+            case WindowFunc::LEAD:
+            case WindowFunc::FIRST_VALUE:
+            case WindowFunc::LAST_VALUE:
+            case WindowFunc::NTH_VALUE:
+                // These return the type of their first argument
+                if (!args.empty())
+                {
+                    const ExpressionType* arg_type = getExpressionType(args[0]);
+                    if (arg_type)
+                    {
+                        setExpressionType(node, *arg_type);
+                        return;
+                    }
+                }
+                result_type = DataType::VARCHAR; // Fallback
+                break;
+            }
+
+            setExpressionType(node, ExpressionType(TypeName(result_type), false));
+        }
+
+        void SemanticAnalyzer::visit(WindowSpec *node)
+        {
+            // Phase 1 Task 6: Window specification analysis
+
+            // Check PARTITION BY expressions
+            for (auto* expr : node->partitionBy())
+            {
+                checkExpression(expr);
+            }
+
+            // Check ORDER BY expressions
+            for (auto* expr : node->orderBy())
+            {
+                checkExpression(expr);
+            }
+
+            // Check frame clause if present
+            if (node->hasFrame())
+            {
+                // Validate frame boundaries
+                const auto& start = node->frameStart();
+                const auto& end = node->frameEnd();
+
+                // Check start boundary offset expression
+                if (start.offset)
+                {
+                    checkExpression(start.offset);
+                    const ExpressionType* offset_type = getExpressionType(start.offset);
+                    if (offset_type && !isNumericType(offset_type->type.type))
+                    {
+                        reportError(node, "Frame boundary offset must be numeric");
+                    }
+                }
+
+                // Check end boundary offset expression
+                if (end.offset)
+                {
+                    checkExpression(end.offset);
+                    const ExpressionType* offset_type = getExpressionType(end.offset);
+                    if (offset_type && !isNumericType(offset_type->type.type))
+                    {
+                        reportError(node, "Frame boundary offset must be numeric");
+                    }
+                }
+
+                // Validate frame boundary order
+                // Start must be before end (simplified check)
+                if (start.type == FrameBoundaryType::UNBOUNDED_FOLLOWING)
+                {
+                    reportError(node, "Frame start cannot be UNBOUNDED FOLLOWING");
+                }
+                if (end.type == FrameBoundaryType::UNBOUNDED_PRECEDING)
+                {
+                    reportError(node, "Frame end cannot be UNBOUNDED PRECEDING");
+                }
+            }
+        }
+
         void SemanticAnalyzer::visit(ColumnDef *node)
         {
             // Validate column definition

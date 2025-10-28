@@ -66,16 +66,18 @@ namespace scratchbird::optimizer
 
         DEBUG_LOG_DB("Selected cheapest path: " + cheapest->toString());
 
-        // Phase 3.5: Layer aggregation, sorting, and limiting on top of base path
+        // Phase 3.5: Layer aggregation, window functions, sorting, and limiting on top of base path
         // This transforms the execution plan to support:
         // - Aggregation (GROUP BY, HAVING, COUNT/SUM/AVG/MIN/MAX)
+        // - Window functions (ROW_NUMBER, RANK, LAG, LEAD, etc.)
         // - Sorting (ORDER BY)
         // - Limiting (LIMIT/OFFSET)
         //
-        // Order of layering matters:
+        // Order of layering matters (follows SQL evaluation order):
         // 1. Aggregation (reduces rows via GROUP BY)
-        // 2. Sorting (ORDER BY on aggregated results)
-        // 3. Limiting (LIMIT on sorted results)
+        // 2. Window functions (evaluated after GROUP BY, before ORDER BY)
+        // 3. Sorting (ORDER BY on results with window functions)
+        // 4. Limiting (LIMIT on sorted results)
 
         std::shared_ptr<Path> final_path = cheapest;
 
@@ -95,7 +97,22 @@ namespace scratchbird::optimizer
             }
         }
 
-        // Layer 2: Sorting (Phase 1, Task 5.1)
+        // Layer 2: Window functions (Phase 1, Task 6.2)
+        std::vector<parser::WindowFuncExpr*> window_funcs;
+        bool has_window_funcs = detectWindowFunctions(select_stmt, window_funcs);
+
+        if (has_window_funcs)
+        {
+            DEBUG_LOG_DB("Query has window functions");
+            final_path = addWindowPath(final_path, select_stmt, window_funcs, ctx);
+            if (!final_path)
+            {
+                DEBUG_LOG_DB("Failed to add window path");
+                return nullptr;
+            }
+        }
+
+        // Layer 3: Sorting (Phase 1, Task 5.1)
         if (!select_stmt->orderByClause().empty())
         {
             DEBUG_LOG_DB("Query has ORDER BY");
@@ -107,7 +124,7 @@ namespace scratchbird::optimizer
             }
         }
 
-        // Layer 3: Limiting (Phase 1, Task 5.2)
+        // Layer 4: Limiting (Phase 1, Task 5.2)
         if (select_stmt->hasLimit())
         {
             DEBUG_LOG_DB("Query has LIMIT");
@@ -523,6 +540,56 @@ namespace scratchbird::optimizer
                 child_plan,
                 limit_path->limitCount(),
                 limit_path->offsetCount());
+
+            plan->setCost(
+                path->startupCost(),
+                path->totalCost(),
+                path->rows());
+
+            return plan;
+        }
+        else if (path->type() == PathType::WINDOW)
+        {
+            auto win_path = std::static_pointer_cast<WindowPath>(path);
+
+            // Recursively convert child path
+            auto child_plan = pathToPlanNode(win_path->inputPath(), ctx);
+            if (!child_plan)
+            {
+                return nullptr;
+            }
+
+            // Convert WindowFuncExpr list to WindowNode::WindowFunction list
+            std::vector<WindowNode::WindowFunction> window_functions;
+            for (const auto* win_expr : win_path->windowFuncs())
+            {
+                // Generate output column name (e.g., "row_number_1", "rank_2")
+                std::string func_name;
+                switch (win_expr->func())
+                {
+                    case parser::WindowFunc::ROW_NUMBER: func_name = "row_number"; break;
+                    case parser::WindowFunc::RANK: func_name = "rank"; break;
+                    case parser::WindowFunc::DENSE_RANK: func_name = "dense_rank"; break;
+                    case parser::WindowFunc::LAG: func_name = "lag"; break;
+                    case parser::WindowFunc::LEAD: func_name = "lead"; break;
+                    case parser::WindowFunc::FIRST_VALUE: func_name = "first_value"; break;
+                    case parser::WindowFunc::LAST_VALUE: func_name = "last_value"; break;
+                    case parser::WindowFunc::NTH_VALUE: func_name = "nth_value"; break;
+                }
+
+                std::string output_col = func_name + "_" + std::to_string(window_functions.size() + 1);
+
+                window_functions.emplace_back(
+                    win_expr->func(),
+                    win_expr->args(),
+                    win_expr->windowSpec(),
+                    output_col);
+            }
+
+            // Create window node
+            auto plan = std::make_shared<WindowNode>(
+                child_plan,
+                window_functions);
 
             plan->setCost(
                 path->startupCost(),
@@ -1153,6 +1220,119 @@ namespace scratchbird::optimizer
 
         DEBUG_LOG_DB("Limit path: " + limit_path->toString());
         return limit_path;
+    }
+
+    // Phase 1, Task 6.2: Window function support
+
+    auto QueryPlanner::detectWindowFunctions(const parser::SelectStmt *select_stmt,
+                                            std::vector<parser::WindowFuncExpr*>& window_funcs) const
+        -> bool
+    {
+        window_funcs.clear();
+
+        // Scan SELECT list for window function expressions
+        for (const auto& select_item : select_stmt->selectList())
+        {
+            parser::Expression* expr = select_item.expr;
+
+            // Check if expression is a window function
+            if (auto win_expr = dynamic_cast<parser::WindowFuncExpr*>(expr))
+            {
+                window_funcs.push_back(win_expr);
+            }
+        }
+
+        return !window_funcs.empty();
+    }
+
+    auto QueryPlanner::addWindowPath(std::shared_ptr<Path> base_path,
+                                    const parser::SelectStmt *select_stmt,
+                                    const std::vector<parser::WindowFuncExpr*>& window_funcs,
+                                    core::ErrorContext *ctx)
+        -> std::shared_ptr<Path>
+    {
+        DEBUG_LOG_DB("Adding window path");
+
+        // Get input rows from base path
+        uint64_t input_rows = base_path->rows();
+
+        // Calculate window function processing cost
+        // Window functions require:
+        // 1. Sorting by PARTITION BY + ORDER BY columns (if present)
+        // 2. Frame window processing for each function
+        // 3. Per-row evaluation of window functions
+
+        double window_cost = 0.0;
+        double startup_cost = base_path->startupCost();
+
+        for (const auto* win_func : window_funcs)
+        {
+            const parser::WindowSpec* spec = win_func->windowSpec();
+
+            // Cost 1: Sorting cost (if ORDER BY present)
+            if (spec && !spec->orderBy().empty())
+            {
+                // Sorting cost: O(n log n) comparisons
+                double n = static_cast<double>(input_rows);
+                double sort_cost = n * std::log2(n + 1.0) * cost_model_.operatorCost("=");
+                window_cost += sort_cost;
+            }
+
+            // Cost 2: Partition processing cost
+            // For each partition, we need to:
+            // - Identify partition boundaries: O(n) scan
+            // - Process frame windows within partition
+            double partition_cost = static_cast<double>(input_rows) * cost_model_.operatorCost("=");
+            window_cost += partition_cost;
+
+            // Cost 3: Frame window processing cost
+            // Depends on frame specification and window function type
+            if (spec && spec->hasFrame())
+            {
+                // Frame processing requires maintaining window state
+                // Cost varies by frame mode:
+                // - ROWS: O(1) per row (simple offset arithmetic)
+                // - RANGE: O(log n) per row (need to find frame boundaries)
+                double frame_cost = static_cast<double>(input_rows);
+                if (spec->frameMode() == parser::FrameMode::RANGE)
+                {
+                    frame_cost *= std::log2(static_cast<double>(input_rows) + 1.0);
+                }
+                frame_cost *= cost_model_.operatorCost("=");
+                window_cost += frame_cost;
+            }
+            else
+            {
+                // Default frame: RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+                // This requires accumulating state but no complex lookups
+                double frame_cost = static_cast<double>(input_rows) * cost_model_.operatorCost("=");
+                window_cost += frame_cost;
+            }
+
+            // Cost 4: Function evaluation cost
+            // Depends on function type:
+            // - ROW_NUMBER/RANK/DENSE_RANK: O(1) per row
+            // - LAG/LEAD: O(1) per row (simple offset lookup)
+            // - FIRST_VALUE/LAST_VALUE/NTH_VALUE: O(1) per row (frame boundary lookup)
+            double eval_cost = static_cast<double>(input_rows) * cost_model_.operatorCost("=");
+            window_cost += eval_cost;
+        }
+
+        // Create cost estimate
+        CostEstimate win_cost;
+        win_cost.startup_cost = startup_cost;
+        win_cost.run_cost = base_path->cost().run_cost + window_cost;
+        win_cost.total_cost = win_cost.startup_cost + win_cost.run_cost;
+        win_cost.rows = input_rows; // Window functions don't change row count
+
+        // Create window path
+        auto window_path = std::make_shared<WindowPath>(
+            base_path,
+            window_funcs,
+            win_cost);
+
+        DEBUG_LOG_DB("Window path: " + window_path->toString());
+        return window_path;
     }
 
 } // namespace scratchbird::optimizer
