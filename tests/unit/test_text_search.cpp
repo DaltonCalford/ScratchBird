@@ -22,8 +22,8 @@ protected:
             {
                 // Also test semantic analysis
                 SemanticAnalyzer analyzer(parser.stringPool());
-                result.statement()->accept(&analyzer);
-                EXPECT_FALSE(analyzer.hasErrors()) << "Semantic analysis failed";
+                auto semantic_result = analyzer.analyze(result.statement());
+                EXPECT_TRUE(semantic_result.success()) << "Semantic analysis failed";
             }
         }
         else
