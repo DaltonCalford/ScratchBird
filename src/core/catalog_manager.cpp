@@ -5378,7 +5378,7 @@ auto CatalogManager::createTrigger(const TriggerInfo &trigger, ErrorContext *ctx
     // Check trigger name is unique
     if (trigger_name_to_id_.count(trigger.trigger_name) > 0)
     {
-        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Trigger '%s' already exists", trigger.trigger_name.c_str());
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Trigger already exists");
         return Status::NOT_FOUND;
     }
     
@@ -5387,14 +5387,13 @@ auto CatalogManager::createTrigger(const TriggerInfo &trigger, ErrorContext *ctx
     auto table_result = getTable(trigger.table_id, table_info, nullptr);
     if (table_result != Status::OK)
     {
-        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Table ID '%s' does not exist", 
-                          UuidV7::uuidToString(trigger.table_id).c_str());
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Table does not exist");
         return Status::NOT_FOUND;
     }
     
     // Generate trigger ID
     TriggerInfo trigger_copy = trigger;
-    trigger_copy.trigger_id = UuidV7::generate();
+    trigger_copy.trigger_id = generateUuidV7();
     trigger_copy.created_time = std::chrono::duration_cast<std::chrono::microseconds>(
         std::chrono::system_clock::now().time_since_epoch()).count();
     trigger_copy.enabled = true;
@@ -5413,12 +5412,12 @@ auto CatalogManager::createTrigger(const TriggerInfo &trigger, ErrorContext *ctx
 auto CatalogManager::dropTrigger(const std::string &trigger_name, ErrorContext *ctx) -> Status
 {
     std::lock_guard<std::mutex> lock(trigger_mutex_);
-    
+
     // Look up trigger
     auto it = trigger_name_to_id_.find(trigger_name);
     if (it == trigger_name_to_id_.end())
     {
-        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Trigger '%s' does not exist", trigger_name.c_str());
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Trigger does not exist");
         return Status::NOT_FOUND;
     }
     
@@ -5449,12 +5448,11 @@ auto CatalogManager::getTrigger(const ID &trigger_id, TriggerInfo &info, ErrorCo
     -> Status
 {
     std::lock_guard<std::mutex> lock(trigger_mutex_);
-    
+
     auto it = trigger_cache_.find(trigger_id);
     if (it == trigger_cache_.end())
     {
-        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Trigger ID '%s' not found",
-                          UuidV7::uuidToString(trigger_id).c_str());
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Trigger not found");
         return Status::NOT_FOUND;
     }
     
@@ -5466,11 +5464,11 @@ auto CatalogManager::getTriggerByName(const std::string &trigger_name, TriggerIn
                                       ErrorContext *ctx) -> Status
 {
     std::lock_guard<std::mutex> lock(trigger_mutex_);
-    
+
     auto it = trigger_name_to_id_.find(trigger_name);
     if (it == trigger_name_to_id_.end())
     {
-        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Trigger '%s' not found", trigger_name.c_str());
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Trigger not found");
         return Status::NOT_FOUND;
     }
     
@@ -5525,12 +5523,12 @@ auto CatalogManager::enableTrigger(const std::string &trigger_name, bool enable,
                                    ErrorContext *ctx) -> Status
 {
     std::lock_guard<std::mutex> lock(trigger_mutex_);
-    
+
     // Look up trigger
     auto it = trigger_name_to_id_.find(trigger_name);
     if (it == trigger_name_to_id_.end())
     {
-        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Trigger '%s' does not exist", trigger_name.c_str());
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Trigger does not exist");
         return Status::NOT_FOUND;
     }
     

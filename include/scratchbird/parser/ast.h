@@ -1893,6 +1893,8 @@ namespace scratchbird
             virtual void visit(CommitStmt *node) = 0;           // Phase 2 Task 2.6
             virtual void visit(RollbackStmt *node) = 0;         // Phase 2 Task 2.6
             virtual void visit(SweepStmt *node) = 0;            // Phase 3 Task 3.3
+            virtual void visit(CreateTriggerStmt *node) = 0;    // Phase 2 Wave 2 Agent C
+            virtual void visit(DropTriggerStmt *node) = 0;      // Phase 2 Wave 2 Agent C
 
             // Expressions
             virtual void visit(LiteralExpr *node) = 0;
