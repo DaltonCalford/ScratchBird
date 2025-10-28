@@ -715,22 +715,36 @@ Without these features, ScratchBird **cannot be used** for even simple applicati
 
 ---
 
-#### 8. Conditional Functions (20-30 hours) - CRITICAL
+#### 8. Conditional Functions (20-30 hours) - CRITICAL - **IN PROGRESS** 🚧
 **Why Eighth**: Basic SQL queries need conditional expressions.
 
-- [ ] **8.1 COALESCE and NULLIF** (10-15 hours)
+- [ ] **8.1 COALESCE and NULLIF** (10-15 hours) - **40% COMPLETE**
+  - [x] Add COALESCE/NULLIF lexer support (keywords) ✅
+  - [x] Add COALESCE/NULLIF AST nodes ✅
+  - [x] Add semantic analysis for type checking ✅
   - [ ] Add COALESCE parser support
   - [ ] Add NULLIF parser support
-  - [ ] Implement COALESCE/NULLIF in SBLR executor
   - [ ] Add SBLR opcodes
+  - [ ] Implement COALESCE/NULLIF in SBLR executor
   - **Deliverable**: `SELECT COALESCE(col, 'default') FROM table` works
 
-- [ ] **8.2 CASE Expression** (10-15 hours)
+- [ ] **8.2 CASE Expression** (10-15 hours) - **40% COMPLETE**
+  - [x] Add CASE WHEN lexer support (keywords: CASE, WHEN, THEN, ELSE, END) ✅
+  - [x] Implement CASE AST node (simple and searched forms) ✅
+  - [x] Add semantic analysis for type checking ✅
   - [ ] Add CASE WHEN parser support (simple and searched)
-  - [ ] Implement CASE AST node
   - [ ] Generate SBLR bytecode for CASE
   - [ ] Implement CASE executor
   - **Deliverable**: `SELECT CASE WHEN col > 10 THEN 'high' ELSE 'low' END` works
+
+**Current Status (Commit bb03ce6, Oct 28)**:
+- ✅ Lexer: 7 keywords added (COALESCE, NULLIF, CASE, WHEN, THEN, ELSE, END)
+- ✅ AST: 3 expression classes (CoalesceExpr, NullIfExpr, CaseExpr)
+- ✅ Semantic Analysis: Type checking for all 3 expressions
+- ✅ Build: scratchbird_parser builds successfully
+- ⏳ Parser: Not started
+- ⏳ Bytecode: Not started
+- ⏳ Executor: Not started
 
 **Phase 1.8 Completion Criteria**: Conditional expressions work in queries
 
