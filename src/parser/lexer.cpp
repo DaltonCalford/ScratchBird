@@ -151,6 +151,15 @@ namespace scratchbird
             {"JSONB_BUILD_ARRAY", TokenType::KW_JSONB_BUILD_ARRAY},
             {"JSONB_SET", TokenType::KW_JSONB_SET},
 
+            // Conditional functions (Phase 1 Task 8)
+            {"COALESCE", TokenType::KW_COALESCE},
+            {"NULLIF", TokenType::KW_NULLIF},
+            {"CASE", TokenType::KW_CASE},
+            {"WHEN", TokenType::KW_WHEN},
+            {"THEN", TokenType::KW_THEN},
+            {"ELSE", TokenType::KW_ELSE},
+            {"END", TokenType::KW_END},
+
             // Type conversion
             {"CAST", TokenType::KW_CAST},
             {"TRY_CAST", TokenType::KW_TRY_CAST},

@@ -788,6 +788,21 @@ namespace scratchbird
             visitor->visit(this);
         }
 
+        void CoalesceExpr::accept(ASTVisitor *visitor)
+        {
+            visitor->visit(this);
+        }
+
+        void NullIfExpr::accept(ASTVisitor *visitor)
+        {
+            visitor->visit(this);
+        }
+
+        void CaseExpr::accept(ASTVisitor *visitor)
+        {
+            visitor->visit(this);
+        }
+
         void ASTPrinter::visit(CastExpr *node)
         {
             out_ << (node->isTryCast() ? "TRY_CAST(" : "CAST(");
@@ -1101,6 +1116,61 @@ namespace scratchbird
             }
 
             out_ << ")";
+        }
+
+        void ASTPrinter::visit(CoalesceExpr *node)
+        {
+            out_ << "COALESCE(";
+            bool first = true;
+            for (auto *arg : node->args())
+            {
+                if (!first)
+                    out_ << ", ";
+                arg->accept(this);
+                first = false;
+            }
+            out_ << ")";
+        }
+
+        void ASTPrinter::visit(NullIfExpr *node)
+        {
+            out_ << "NULLIF(";
+            node->expr1()->accept(this);
+            out_ << ", ";
+            node->expr2()->accept(this);
+            out_ << ")";
+        }
+
+        void ASTPrinter::visit(CaseExpr *node)
+        {
+            out_ << "CASE ";
+
+            // Simple CASE: print case operand
+            if (node->isSimpleCase())
+            {
+                node->caseOperand()->accept(this);
+                out_ << " ";
+            }
+
+            // Print WHEN clauses
+            for (const auto& when : node->whenClauses())
+            {
+                out_ << "WHEN ";
+                when.condition->accept(this);
+                out_ << " THEN ";
+                when.result->accept(this);
+                out_ << " ";
+            }
+
+            // Print ELSE clause if present
+            if (node->elseResult())
+            {
+                out_ << "ELSE ";
+                node->elseResult()->accept(this);
+                out_ << " ";
+            }
+
+            out_ << "END";
         }
 
     } // namespace parser
