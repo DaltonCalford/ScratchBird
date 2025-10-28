@@ -2538,59 +2538,59 @@ namespace scratchbird
         void BytecodeGenerator::visit(parser::CreateTriggerStmt *node)
         {
             // Emit extended opcode marker
-            writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
-            writeByte(static_cast<uint8_t>(Opcode::EXT_CREATE_TRIGGER));
-            
+            current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+            current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_CREATE_TRIGGER));
+
             // Emit trigger name
-            std::string trigger_name = pool_.get(node->triggerName());
-            writeUInt32(static_cast<uint32_t>(trigger_name.length()));
+            std::string_view trigger_name = string_pool_.get(node->triggerName());
+            current_result_->writeInt32(static_cast<uint32_t>(trigger_name.length()));
             for (char c : trigger_name)
             {
-                writeByte(static_cast<uint8_t>(c));
+                current_result_->writeByte(static_cast<uint8_t>(c));
             }
-            
+
             // Emit table name
-            std::string table_name = pool_.get(node->tableName());
-            writeUInt32(static_cast<uint32_t>(table_name.length()));
+            std::string_view table_name = string_pool_.get(node->tableName());
+            current_result_->writeInt32(static_cast<uint32_t>(table_name.length()));
             for (char c : table_name)
             {
-                writeByte(static_cast<uint8_t>(c));
+                current_result_->writeByte(static_cast<uint8_t>(c));
             }
-            
+
             // Emit timing (1 byte)
-            writeByte(static_cast<uint8_t>(node->timing()));
-            
+            current_result_->writeByte(static_cast<uint8_t>(node->timing()));
+
             // Emit event (1 byte)
-            writeByte(static_cast<uint8_t>(node->event()));
-            
+            current_result_->writeByte(static_cast<uint8_t>(node->event()));
+
             // Emit granularity (1 byte)
-            writeByte(static_cast<uint8_t>(node->granularity()));
-            
+            current_result_->writeByte(static_cast<uint8_t>(node->granularity()));
+
             // Emit procedure name
-            std::string procedure_name = pool_.get(node->procedureName());
-            writeUInt32(static_cast<uint32_t>(procedure_name.length()));
+            std::string_view procedure_name = string_pool_.get(node->procedureName());
+            current_result_->writeInt32(static_cast<uint32_t>(procedure_name.length()));
             for (char c : procedure_name)
             {
-                writeByte(static_cast<uint8_t>(c));
+                current_result_->writeByte(static_cast<uint8_t>(c));
             }
         }
-        
+
         void BytecodeGenerator::visit(parser::DropTriggerStmt *node)
         {
             // Emit extended opcode marker
-            writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
-            writeByte(static_cast<uint8_t>(Opcode::EXT_DROP_TRIGGER));
-            
+            current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+            current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_DROP_TRIGGER));
+
             // Emit trigger name
-            std::string trigger_name = pool_.get(node->triggerName());
-            writeUInt32(static_cast<uint32_t>(trigger_name.length()));
+            std::string_view trigger_name = string_pool_.get(node->triggerName());
+            current_result_->writeInt32(static_cast<uint32_t>(trigger_name.length()));
             for (char c : trigger_name)
             {
-                writeByte(static_cast<uint8_t>(c));
+                current_result_->writeByte(static_cast<uint8_t>(c));
             }
-            
+
             // Emit if_exists flag (1 byte)
-            writeByte(node->ifExists() ? 1 : 0);
+            current_result_->writeByte(node->ifExists() ? 1 : 0);
         }
 
     } // namespace sblr

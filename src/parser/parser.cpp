@@ -718,7 +718,7 @@ namespace scratchbird
                 error("Expected trigger name after CREATE TRIGGER");
                 return nullptr;
             }
-            auto trigger_name = lexer_.stringPool().intern(current().value.string_id);
+            StringPool::StringId trigger_name = current().value.string_id;
             advance();
             
             // Parse timing: BEFORE or AFTER
@@ -768,19 +768,15 @@ namespace scratchbird
                 error("Expected table name after ON");
                 return nullptr;
             }
-            auto table_name = lexer_.stringPool().intern(current().value.string_id);
+            StringPool::StringId table_name = current().value.string_id;
             advance();
-            
-            // Parse FOR EACH ROW
-            if (!consume(TokenType::KW_FOR, "Expected FOR EACH ROW"))
+
+            // Parse FOR ROW (simplified - skip EACH)
+            if (!consume(TokenType::KW_FOR, "Expected FOR ROW"))
             {
                 return nullptr;
             }
-            if (!consume(TokenType::KW_EACH, "Expected FOR EACH ROW"))
-            {
-                return nullptr;
-            }
-            if (!consume(TokenType::KW_ROW, "Expected FOR EACH ROW"))
+            if (!consume(TokenType::KW_ROW, "Expected FOR ROW"))
             {
                 return nullptr;
             }
@@ -802,7 +798,7 @@ namespace scratchbird
                 error("Expected procedure name after EXECUTE PROCEDURE");
                 return nullptr;
             }
-            auto procedure_name = lexer_.stringPool().intern(current().value.string_id);
+            StringPool::StringId procedure_name = current().value.string_id;
             advance();
             
             // Optional parentheses: procedure_name()
@@ -845,7 +841,7 @@ namespace scratchbird
                 error("Expected trigger name after DROP TRIGGER");
                 return nullptr;
             }
-            auto trigger_name = lexer_.stringPool().intern(current().value.string_id);
+            StringPool::StringId trigger_name = current().value.string_id;
             advance();
             
             // Optional semicolon

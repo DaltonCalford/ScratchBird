@@ -122,6 +122,8 @@ namespace scratchbird
             Statement *parseCommit();                // Phase 2 Task 2.6
             Statement *parseRollback();              // Phase 2 Task 2.6
             Statement *parseSweep();                 // Phase 3 Task 3.3
+            Statement *parseCreateTrigger();         // Phase 2 Wave 2 Agent C
+            Statement *parseDropTrigger();           // Phase 2 Wave 2 Agent C
 
             // CREATE TABLE helpers
             ColumnDef *parseColumnDef();

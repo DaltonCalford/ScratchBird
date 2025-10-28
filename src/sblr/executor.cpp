@@ -176,7 +176,7 @@ namespace scratchbird
         // ===== TriggerContext Implementation =====
         // Wave 2: Trigger Executor Implementation
 
-        class TriggerContext
+        class Executor::TriggerContext
         {
         public:
             TriggerContext(
@@ -1448,7 +1448,7 @@ namespace scratchbird
                 {
                     if (!trigger.enabled) continue;
 
-                    TriggerContext ctx(trigger, nullptr, &complete_values, table_info, all_columns);
+                    TriggerContext ctx(trigger, nullptr, &values, table_info, all_columns);
                     bool should_continue = fireTrigger(ctx);
 
                     if (!should_continue)
@@ -1487,7 +1487,7 @@ namespace scratchbird
                 {
                     if (!trigger.enabled) continue;
 
-                    TriggerContext ctx(trigger, nullptr, &complete_values, table_info, all_columns);
+                    TriggerContext ctx(trigger, nullptr, &values, table_info, all_columns);
                     fireTrigger(ctx);  // AFTER triggers don't prevent operation
                 }
             }
@@ -6171,7 +6171,7 @@ namespace scratchbird
                         }
 
                         // Skip to EXT_SUBQUERY_END marker
-                        while (pc_ < bytecode_.size())
+                        while (pc_ < bytecode_size_)
                         {
                             uint8_t b = readByte();
                             if (b == static_cast<uint8_t>(Opcode::EXTENDED_OPCODE))
@@ -6199,7 +6199,7 @@ namespace scratchbird
                         current_result_set_ = std::make_unique<ResultSet>();
 
                         // Read and execute the nested SELECT
-                        Opcode subquery_op = static_cast<uint8_t>(readByte());
+                        Opcode subquery_op = static_cast<Opcode>(readByte());
                         if (subquery_op == Opcode::SELECT)
                         {
                             executeSelect();
@@ -6214,7 +6214,7 @@ namespace scratchbird
                         }
 
                         // Skip to EXT_SUBQUERY_END marker
-                        while (pc_ < bytecode_.size())
+                        while (pc_ < bytecode_size_)
                         {
                             uint8_t b = readByte();
                             if (b == static_cast<uint8_t>(Opcode::EXTENDED_OPCODE))
@@ -6267,7 +6267,7 @@ namespace scratchbird
                                 {
                                     has_null = true;
                                 }
-                                else if (!test_value.isNull() && row_value == test_value)
+                                else if (!test_value.isNull() && row_value.equals(test_value))
                                 {
                                     found_match = true;
                                     break;  // Early exit on match
@@ -6298,7 +6298,7 @@ namespace scratchbird
                         }
 
                         // Skip to EXT_SUBQUERY_END marker
-                        while (pc_ < bytecode_.size())
+                        while (pc_ < bytecode_size_)
                         {
                             uint8_t b = readByte();
                             if (b == static_cast<uint8_t>(Opcode::EXTENDED_OPCODE))
@@ -6351,7 +6351,7 @@ namespace scratchbird
                                 {
                                     has_null = true;
                                 }
-                                else if (!test_value.isNull() && row_value == test_value)
+                                else if (!test_value.isNull() && row_value.equals(test_value))
                                 {
                                     found_match = true;
                                     break;  // Early exit on match
@@ -6382,7 +6382,7 @@ namespace scratchbird
                         }
 
                         // Skip to EXT_SUBQUERY_END marker
-                        while (pc_ < bytecode_.size())
+                        while (pc_ < bytecode_size_)
                         {
                             uint8_t b = readByte();
                             if (b == static_cast<uint8_t>(Opcode::EXTENDED_OPCODE))
