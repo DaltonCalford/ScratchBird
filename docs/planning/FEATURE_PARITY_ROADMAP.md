@@ -1155,18 +1155,20 @@ These features complete the feature set for full database replacement:
 
 ### Tasks (Priority Order)
 
-#### 14. Text Search Types (130-200 hours) → ✅ **PHASE 1 COMPLETE** (Oct 30)
+#### 14. Text Search Types (130-200 hours) → ✅ **PHASE 1-2 COMPLETE** (Oct 30)
 - [x] **Phase 1: Core Types** (40-50h) → ✅ **COMPLETE** (6h delivered)
   - [x] Implement tsvector type ✅ 100% (parsing, serialization, operations)
   - [x] Implement tsquery type ✅ 100% (parsing, Boolean logic, phrase matching)
   - [x] Integrate into TypedValue system ✅
   - [x] Write comprehensive unit tests ✅ (86/86 passing)
   - **Delivered**: ~1,650 lines, full PostgreSQL format compatibility
-- [ ] **Phase 2: Text Processing** (30-40h) → ⏳ NOT STARTED
-  - [ ] Implement text search configurations
-  - [ ] Implement Porter stemmer
-  - [ ] Implement to_tsvector function
-  - [ ] Implement to_tsquery function
+- [x] **Phase 2: Text Processing** (30-40h) → ✅ **COMPLETE** (Oct 30)
+  - [x] Implement text search configurations ✅ (TSConfig, SimpleConfig, EnglishConfig)
+  - [x] Implement Porter stemmer ✅ (Full 8-step algorithm, ~600 lines)
+  - [x] Implement to_tsvector function ✅ (With stemming and stop words)
+  - [x] Implement to_tsquery functions ✅ (to_tsquery, plainto_tsquery, phraseto_tsquery)
+  - [x] Write comprehensive tests ✅ (62/62 passing)
+  - **Delivered**: ~1,100 lines production code + 373 lines tests
 - [ ] **Phase 3: Operators & Functions** (20-30h) → ⏳ NOT STARTED
   - [ ] Implement @@ match operator
   - [ ] Implement ts_rank function
@@ -1178,7 +1180,8 @@ These features complete the feature set for full database replacement:
   - [ ] Add executor handlers
 
 **Phase 3.1 Completion Criteria**: PostgreSQL-style full-text search works
-**Phase 1 Status**: ✅ Core types implemented and tested
+**Phase 1-2 Status**: ✅ Core types and text processing implemented and tested
+**See**: `/docs/status/TASK_14_PHASE_2_TEXT_PROCESSING_COMPLETE.md` for Phase 2 details
 
 ---
 
