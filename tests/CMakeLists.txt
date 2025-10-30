@@ -242,3 +242,16 @@ set_tests_properties(TemporalRangeTypes PROPERTIES
     LABELS "unit;task15;temporal_range_types"
     TIMEOUT 60
 )
+
+# Task 15 Phase 3: Range Operators Unit Tests
+add_executable(test_range_operators
+    unit/test_range_operators.cpp
+)
+target_link_libraries(test_range_operators
+    scratchbird_core
+)
+add_test(NAME RangeOperators COMMAND test_range_operators)
+set_tests_properties(RangeOperators PROPERTIES
+    LABELS "unit;task15;range_operators"
+    TIMEOUT 60
+)
