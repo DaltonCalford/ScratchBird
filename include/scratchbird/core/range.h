@@ -596,9 +596,30 @@ using Int4Range = Range<int32_t>;
 using Int8Range = Range<int64_t>;
 using NumRange = Range<double>;
 
-// Forward declarations for timestamp types (will be defined elsewhere)
-// using TSRange = Range<Timestamp>;
-// using TSTZRange = Range<TimestampTZ>;
-// using DateRange = Range<Date>;
+// Temporal range types - distinct wrapper structs to enable TypedValue variant storage
+// (DATE, TIMESTAMP stored as int64_t internally but need distinct types for variant)
+struct DateRange : public Range<int64_t> {
+    DateRange() : Range<int64_t>() {}
+    DateRange(std::optional<int64_t> lower, std::optional<int64_t> upper, bool lower_inc = true, bool upper_inc = false)
+        : Range<int64_t>(lower, upper, lower_inc, upper_inc) {}
+    DateRange(std::optional<int64_t> lower, std::optional<int64_t> upper, BoundType lower_type, BoundType upper_type)
+        : Range<int64_t>(lower, upper, lower_type, upper_type) {}
+};
+
+struct TSRange : public Range<int64_t> {
+    TSRange() : Range<int64_t>() {}
+    TSRange(std::optional<int64_t> lower, std::optional<int64_t> upper, bool lower_inc = true, bool upper_inc = false)
+        : Range<int64_t>(lower, upper, lower_inc, upper_inc) {}
+    TSRange(std::optional<int64_t> lower, std::optional<int64_t> upper, BoundType lower_type, BoundType upper_type)
+        : Range<int64_t>(lower, upper, lower_type, upper_type) {}
+};
+
+struct TSTZRange : public Range<int64_t> {
+    TSTZRange() : Range<int64_t>() {}
+    TSTZRange(std::optional<int64_t> lower, std::optional<int64_t> upper, bool lower_inc = true, bool upper_inc = false)
+        : Range<int64_t>(lower, upper, lower_inc, upper_inc) {}
+    TSTZRange(std::optional<int64_t> lower, std::optional<int64_t> upper, BoundType lower_type, BoundType upper_type)
+        : Range<int64_t>(lower, upper, lower_type, upper_type) {}
+};
 
 } // namespace scratchbird::core
