@@ -1155,7 +1155,7 @@ These features complete the feature set for full database replacement:
 
 ### Tasks (Priority Order)
 
-#### 14. Text Search Types (130-200 hours) → ✅ **PHASE 1-3 COMPLETE** (Oct 30)
+#### 14. Text Search Types (130-200 hours) → ✅ **PHASE 1-4 COMPLETE** (Oct 30)
 - [x] **Phase 1: Core Types** (40-50h) → ✅ **COMPLETE** (6h delivered)
   - [x] Implement tsvector type ✅ 100% (parsing, serialization, operations)
   - [x] Implement tsquery type ✅ 100% (parsing, Boolean logic, phrase matching)
@@ -1177,16 +1177,20 @@ These features complete the feature set for full database replacement:
   - [x] Define text search opcodes ✅ (8 opcodes for Phase 5 integration)
   - [x] Write comprehensive tests ✅ (39/39 passing)
   - **Delivered**: ~370 lines production code + 455 lines tests
-- [ ] **Phase 4: GIN Integration** (25-35h) → ⏳ NOT STARTED
-  - [ ] Integrate with GIN indexes
+- [x] **Phase 4: GIN Integration** (25-35h) → ✅ **COMPLETE** (Oct 30)
+  - [x] Implement GIN TSVector operator class ✅ (extractKeys, extractQueryKeys, consistent)
+  - [x] Implement query strategy analysis ✅ (NEED_ALL, NEED_ANY, NEED_RECHECK)
+  - [x] Implement selectivity estimation ✅ (For query planner)
+  - [x] Write comprehensive tests ✅ (89/89 passing)
+  - **Delivered**: ~495 lines production code + 467 lines tests
 - [ ] **Phase 5: SQL Integration** (15-25h) → ⏳ NOT STARTED
   - [ ] Add SQL parser support
   - [ ] Add bytecode generation
   - [ ] Add executor handlers
 
 **Phase 3.1 Completion Criteria**: PostgreSQL-style full-text search works
-**Phase 1-3 Status**: ✅ Core types, text processing, and operators implemented
-**See**: `/docs/status/TASK_14_PHASE_3_OPERATORS_FUNCTIONS_COMPLETE.md` for Phase 3 details
+**Phase 1-4 Status**: ✅ Core types, text processing, operators, and GIN indexing implemented
+**See**: `/docs/status/TASK_14_PHASE_4_GIN_INTEGRATION_COMPLETE.md` for Phase 4 details
 
 ---
 
