@@ -1,8 +1,8 @@
 # ScratchBird Project Context
 
-**Last Updated**: 2025-10-30 (Phase 2 Wave 3 Complete - Spatial/GIS Integration)
-**Version**: Alpha 1.3.0
-**Status**: Educational/Development (**Phase 2: ~85% COMPLETE** 🎉 - Spatial Integration Done)
+**Last Updated**: 2025-10-30 (Phase 3 Task 14.1 Complete - Full-Text Search Core Types)
+**Version**: Alpha 1.4.0
+**Status**: Educational/Development (**Phase 3 Started - Text Search Types** 🎉)
 
 > **PURPOSE**: This file provides essential context for AI assistants working on ScratchBird.
 > Read this file at session start and after every context compaction.
