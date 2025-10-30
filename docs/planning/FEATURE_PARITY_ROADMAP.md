@@ -1155,7 +1155,7 @@ These features complete the feature set for full database replacement:
 
 ### Tasks (Priority Order)
 
-#### 14. Text Search Types (130-200 hours) → ✅ **PHASE 1-2 COMPLETE** (Oct 30)
+#### 14. Text Search Types (130-200 hours) → ✅ **PHASE 1-3 COMPLETE** (Oct 30)
 - [x] **Phase 1: Core Types** (40-50h) → ✅ **COMPLETE** (6h delivered)
   - [x] Implement tsvector type ✅ 100% (parsing, serialization, operations)
   - [x] Implement tsquery type ✅ 100% (parsing, Boolean logic, phrase matching)
@@ -1169,9 +1169,14 @@ These features complete the feature set for full database replacement:
   - [x] Implement to_tsquery functions ✅ (to_tsquery, plainto_tsquery, phraseto_tsquery)
   - [x] Write comprehensive tests ✅ (62/62 passing)
   - **Delivered**: ~1,100 lines production code + 373 lines tests
-- [ ] **Phase 3: Operators & Functions** (20-30h) → ⏳ NOT STARTED
-  - [ ] Implement @@ match operator
-  - [ ] Implement ts_rank function
+- [x] **Phase 3: Operators & Functions** (20-30h) → ✅ **COMPLETE** (Oct 30)
+  - [x] Implement @@ match operator ✅ (ts_match, ts_match_text)
+  - [x] Implement ts_rank function ✅ (TF-IDF with position weights)
+  - [x] Implement ts_rank_weighted ✅ (Custom weight arrays)
+  - [x] Implement ts_rank_cd ✅ (Cover density algorithm)
+  - [x] Define text search opcodes ✅ (8 opcodes for Phase 5 integration)
+  - [x] Write comprehensive tests ✅ (39/39 passing)
+  - **Delivered**: ~370 lines production code + 455 lines tests
 - [ ] **Phase 4: GIN Integration** (25-35h) → ⏳ NOT STARTED
   - [ ] Integrate with GIN indexes
 - [ ] **Phase 5: SQL Integration** (15-25h) → ⏳ NOT STARTED
@@ -1180,8 +1185,8 @@ These features complete the feature set for full database replacement:
   - [ ] Add executor handlers
 
 **Phase 3.1 Completion Criteria**: PostgreSQL-style full-text search works
-**Phase 1-2 Status**: ✅ Core types and text processing implemented and tested
-**See**: `/docs/status/TASK_14_PHASE_2_TEXT_PROCESSING_COMPLETE.md` for Phase 2 details
+**Phase 1-3 Status**: ✅ Core types, text processing, and operators implemented
+**See**: `/docs/status/TASK_14_PHASE_3_OPERATORS_FUNCTIONS_COMPLETE.md` for Phase 3 details
 
 ---
 

@@ -401,6 +401,16 @@ namespace scratchbird
             EXT_PARAM_IN = 0xA6,           // IN parameter marker
             EXT_PARAM_OUT = 0xA7,          // OUT parameter marker
             EXT_PARAM_INOUT = 0xA8,        // INOUT parameter marker
+
+            // Text search opcodes (Phase 3 Task 14.3)
+            EXT_TSMATCH = 0xA9,            // @@ text search match operator (tsvector @@ tsquery)
+            EXT_TS_RANK = 0xAA,            // TS_RANK(tsvector, tsquery) - relevance ranking
+            EXT_TYPE_TSVECTOR = 0xAB,      // TSVECTOR data type marker
+            EXT_TYPE_TSQUERY = 0xAC,       // TSQUERY data type marker
+            EXT_TO_TSVECTOR = 0xAD,        // TO_TSVECTOR(config, text) - text to tsvector
+            EXT_TO_TSQUERY = 0xAE,         // TO_TSQUERY(config, query) - query to tsquery
+            EXT_PLAINTO_TSQUERY = 0xAF,    // PLAINTO_TSQUERY(config, text) - plain text to query
+            EXT_PHRASETO_TSQUERY = 0xB0,   // PHRASETO_TSQUERY(config, text) - phrase to query
         };
 
         // SBLR Version
