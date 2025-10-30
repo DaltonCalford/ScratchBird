@@ -16,6 +16,10 @@
 #include "scratchbird/geo/geodetic.h"
 #include "scratchbird/geo/proj_wrapper.h"
 #include "scratchbird/geo/srid.h"
+#include "scratchbird/core/tsvector.h"
+#include "scratchbird/core/tsquery.h"
+#include "scratchbird/core/ts_functions.h"
+#include "scratchbird/core/ts_operations.h"
 #include <nlohmann/json.hpp>
 #include <sstream>
 #include <iomanip>
@@ -8636,6 +8640,271 @@ namespace scratchbird
                             std::string str = text.toString();
                             std::reverse(str.begin(), str.end());
                             push(Value::makeText(str));
+                        }
+                    }
+                    // ========== Text Search Functions (Task 14 Phase 5) ==========
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_TO_TSVECTOR))
+                    {
+                        // TO_TSVECTOR(config, text) or TO_TSVECTOR(text)
+                        // 2 args: config name, text
+                        // 1 arg: text (uses 'simple' config)
+                        uint8_t arg_count = readByte();
+
+                        std::string config_name;
+                        Value text_val;
+
+                        if (arg_count == 2)
+                        {
+                            text_val = pop();
+                            Value config_val = pop();
+                            config_name = config_val.toString();
+                        }
+                        else if (arg_count == 1)
+                        {
+                            text_val = pop();
+                            config_name = "simple";
+                        }
+                        else
+                        {
+                            error("TO_TSVECTOR expects 1 or 2 arguments, got " + std::to_string(arg_count));
+                        }
+
+                        if (text_val.isNull())
+                        {
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            std::string text = text_val.toString();
+                            auto result = core::to_tsvector(config_name, text);
+
+                            if (result.has_value())
+                            {
+                                push(Value::makeTSVector(*result));
+                            }
+                            else
+                            {
+                                push(Value::makeNull());
+                            }
+                        }
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_TO_TSQUERY))
+                    {
+                        // TO_TSQUERY(config, query) or TO_TSQUERY(query)
+                        uint8_t arg_count = readByte();
+
+                        std::string config_name;
+                        Value query_val;
+
+                        if (arg_count == 2)
+                        {
+                            query_val = pop();
+                            Value config_val = pop();
+                            config_name = config_val.toString();
+                        }
+                        else if (arg_count == 1)
+                        {
+                            query_val = pop();
+                            config_name = "simple";
+                        }
+                        else
+                        {
+                            error("TO_TSQUERY expects 1 or 2 arguments, got " + std::to_string(arg_count));
+                        }
+
+                        if (query_val.isNull())
+                        {
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            std::string query_text = query_val.toString();
+                            auto result = core::to_tsquery(config_name, query_text);
+
+                            if (result.has_value())
+                            {
+                                push(Value::makeTSQuery(*result));
+                            }
+                            else
+                            {
+                                push(Value::makeNull());
+                            }
+                        }
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_PLAINTO_TSQUERY))
+                    {
+                        // PLAINTO_TSQUERY(config, text) or PLAINTO_TSQUERY(text)
+                        uint8_t arg_count = readByte();
+
+                        std::string config_name;
+                        Value text_val;
+
+                        if (arg_count == 2)
+                        {
+                            text_val = pop();
+                            Value config_val = pop();
+                            config_name = config_val.toString();
+                        }
+                        else if (arg_count == 1)
+                        {
+                            text_val = pop();
+                            config_name = "simple";
+                        }
+                        else
+                        {
+                            error("PLAINTO_TSQUERY expects 1 or 2 arguments, got " + std::to_string(arg_count));
+                        }
+
+                        if (text_val.isNull())
+                        {
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            std::string text = text_val.toString();
+                            auto result = core::plainto_tsquery(config_name, text);
+
+                            if (result.has_value())
+                            {
+                                push(Value::makeTSQuery(*result));
+                            }
+                            else
+                            {
+                                push(Value::makeNull());
+                            }
+                        }
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_PHRASETO_TSQUERY))
+                    {
+                        // PHRASETO_TSQUERY(config, text) or PHRASETO_TSQUERY(text)
+                        uint8_t arg_count = readByte();
+
+                        std::string config_name;
+                        Value text_val;
+
+                        if (arg_count == 2)
+                        {
+                            text_val = pop();
+                            Value config_val = pop();
+                            config_name = config_val.toString();
+                        }
+                        else if (arg_count == 1)
+                        {
+                            text_val = pop();
+                            config_name = "simple";
+                        }
+                        else
+                        {
+                            error("PHRASETO_TSQUERY expects 1 or 2 arguments, got " + std::to_string(arg_count));
+                        }
+
+                        if (text_val.isNull())
+                        {
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            std::string text = text_val.toString();
+                            auto result = core::phraseto_tsquery(config_name, text);
+
+                            if (result.has_value())
+                            {
+                                push(Value::makeTSQuery(*result));
+                            }
+                            else
+                            {
+                                push(Value::makeNull());
+                            }
+                        }
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_TSMATCH))
+                    {
+                        // tsvector @@ tsquery or text @@ tsquery
+                        Value right_val = pop();
+                        Value left_val = pop();
+
+                        if (left_val.isNull() || right_val.isNull())
+                        {
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            bool match = false;
+
+                            // Handle tsvector @@ tsquery
+                            if (left_val.type() == core::DataType::TSVECTOR &&
+                                right_val.type() == core::DataType::TSQUERY)
+                            {
+                                auto vec = left_val.getTSVector();
+                                auto query = right_val.getTSQuery();
+                                match = core::ts_match(*vec, *query);
+                            }
+                            // Handle text @@ tsquery (implicit to_tsvector)
+                            else if ((left_val.type() == core::DataType::TEXT ||
+                                     left_val.type() == core::DataType::VARCHAR) &&
+                                    right_val.type() == core::DataType::TSQUERY)
+                            {
+                                std::string text = left_val.toString();
+                                auto query = right_val.getTSQuery();
+                                match = core::ts_match_text(text, *query);
+                            }
+                            // Handle tsquery @@ tsvector (reversed)
+                            else if (left_val.type() == core::DataType::TSQUERY &&
+                                    right_val.type() == core::DataType::TSVECTOR)
+                            {
+                                auto query = left_val.getTSQuery();
+                                auto vec = right_val.getTSVector();
+                                match = core::ts_match(*vec, *query);
+                            }
+                            else
+                            {
+                                error("@@ operator requires tsvector and tsquery operands");
+                            }
+
+                            push(Value::makeBoolean(match));
+                        }
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_TS_RANK))
+                    {
+                        // TS_RANK(tsvector, tsquery [, normalization])
+                        uint8_t arg_count = readByte();
+
+                        int normalization = 0;
+                        Value query_val;
+                        Value vec_val;
+
+                        if (arg_count == 3)
+                        {
+                            Value norm_val = pop();
+                            query_val = pop();
+                            vec_val = pop();
+                            normalization = static_cast<int>(norm_val.toInt64());
+                        }
+                        else if (arg_count == 2)
+                        {
+                            query_val = pop();
+                            vec_val = pop();
+                        }
+                        else
+                        {
+                            error("TS_RANK expects 2 or 3 arguments, got " + std::to_string(arg_count));
+                        }
+
+                        if (vec_val.isNull() || query_val.isNull())
+                        {
+                            push(Value::makeNull());
+                        }
+                        else if (vec_val.type() != core::DataType::TSVECTOR ||
+                                query_val.type() != core::DataType::TSQUERY)
+                        {
+                            error("TS_RANK requires tsvector and tsquery arguments");
+                        }
+                        else
+                        {
+                            auto vec = vec_val.getTSVector();
+                            auto query = query_val.getTSQuery();
+                            double rank = core::ts_rank(*vec, *query, normalization);
+                            push(Value::makeFloat64(rank));
                         }
                     }
                     else

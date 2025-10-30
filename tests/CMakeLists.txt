@@ -203,3 +203,16 @@ set_tests_properties(Wave1Tests PROPERTIES
     LABELS "wave1;phase2"
     TIMEOUT 120
 )
+
+# Task 14 Phase 5: Text Search Type System Integration Tests
+add_executable(test_text_search_types
+    integration/test_text_search_types.cpp
+)
+target_link_libraries(test_text_search_types
+    scratchbird_core
+)
+add_test(NAME TextSearchTypes COMMAND test_text_search_types)
+set_tests_properties(TextSearchTypes PROPERTIES
+    LABELS "integration;task14;phase5"
+    TIMEOUT 60
+)

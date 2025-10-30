@@ -1,5 +1,7 @@
 #include "scratchbird/core/types.h"
 #include "scratchbird/core/timezone.h"
+#include "scratchbird/core/tsvector.h"
+#include "scratchbird/core/tsquery.h"
 #include <cstring>
 #include <cmath>
 #include <sstream>
@@ -185,6 +187,34 @@ namespace scratchbird::core
     TypedValue TypedValue::makePolygon(const std::vector<std::vector<Point>> &rings)
     {
         return TypedValue(DataType::POLYGON, Polygon(rings));
+    }
+
+    TypedValue TypedValue::makeTSVector(const TSVector &v)
+    {
+        return TypedValue(DataType::TSVECTOR, std::make_shared<TSVector>(v));
+    }
+
+    TypedValue TypedValue::makeTSVector(std::shared_ptr<TSVector> v)
+    {
+        return TypedValue(DataType::TSVECTOR, v);
+    }
+
+    TypedValue TypedValue::makeTSQuery(const TSQuery &v)
+    {
+        // TSQuery is non-copyable (contains unique_ptr), so we need to create a copy manually
+        // by serializing and deserializing
+        auto binary = v.toBinary();
+        auto copy = TSQuery::fromBinary(binary.data(), binary.size());
+        if (!copy.has_value())
+        {
+            throw std::runtime_error("Failed to copy TSQuery");
+        }
+        return TypedValue(DataType::TSQUERY, std::make_shared<TSQuery>(std::move(*copy)));
+    }
+
+    TypedValue TypedValue::makeTSQuery(std::shared_ptr<TSQuery> v)
+    {
+        return TypedValue(DataType::TSQUERY, v);
     }
 
     // Type extraction
@@ -378,6 +408,20 @@ namespace scratchbird::core
         return std::get<Polygon>(data_);
     }
 
+    std::shared_ptr<TSVector> TypedValue::getTSVector() const
+    {
+        if (type_ != DataType::TSVECTOR)
+            throw std::runtime_error("Type mismatch: not TSVECTOR");
+        return std::get<std::shared_ptr<TSVector>>(data_);
+    }
+
+    std::shared_ptr<TSQuery> TypedValue::getTSQuery() const
+    {
+        if (type_ != DataType::TSQUERY)
+            throw std::runtime_error("Type mismatch: not TSQUERY");
+        return std::get<std::shared_ptr<TSQuery>>(data_);
+    }
+
     std::string TypedValue::toString() const
     {
         if (isNull())
@@ -467,6 +511,14 @@ namespace scratchbird::core
                 }
                 oss << ")";
                 return oss.str();
+            }
+            case DataType::TSVECTOR: {
+                auto vec = getTSVector();
+                return vec->toString();
+            }
+            case DataType::TSQUERY: {
+                auto query = getTSQuery();
+                return query->toString();
             }
             default:
                 return "<unknown>";
