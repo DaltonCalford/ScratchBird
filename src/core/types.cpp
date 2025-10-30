@@ -233,6 +233,21 @@ namespace scratchbird::core
         return TypedValue(DataType::NUMRANGE, v);
     }
 
+    TypedValue TypedValue::makeDateRange(const DateRange &v)
+    {
+        return TypedValue(DataType::DATERANGE, v);
+    }
+
+    TypedValue TypedValue::makeTSRange(const TSRange &v)
+    {
+        return TypedValue(DataType::TSRANGE, v);
+    }
+
+    TypedValue TypedValue::makeTSTZRange(const TSTZRange &v)
+    {
+        return TypedValue(DataType::TSTZRANGE, v);
+    }
+
     // Type extraction
     int8_t TypedValue::getInt8() const
     {
@@ -459,6 +474,27 @@ namespace scratchbird::core
         return std::get<NumRange>(data_);
     }
 
+    DateRange TypedValue::getDateRange() const
+    {
+        if (type_ != DataType::DATERANGE)
+            throw std::runtime_error("Type mismatch: not DATERANGE");
+        return std::get<DateRange>(data_);
+    }
+
+    TSRange TypedValue::getTSRange() const
+    {
+        if (type_ != DataType::TSRANGE)
+            throw std::runtime_error("Type mismatch: not TSRANGE");
+        return std::get<TSRange>(data_);
+    }
+
+    TSTZRange TypedValue::getTSTZRange() const
+    {
+        if (type_ != DataType::TSTZRANGE)
+            throw std::runtime_error("Type mismatch: not TSTZRANGE");
+        return std::get<TSTZRange>(data_);
+    }
+
     std::string TypedValue::toString() const
     {
         if (isNull())
@@ -567,6 +603,18 @@ namespace scratchbird::core
             }
             case DataType::NUMRANGE: {
                 auto range = getNumRange();
+                return range.toString();
+            }
+            case DataType::DATERANGE: {
+                auto range = getDateRange();
+                return range.toString();
+            }
+            case DataType::TSRANGE: {
+                auto range = getTSRange();
+                return range.toString();
+            }
+            case DataType::TSTZRANGE: {
+                auto range = getTSTZRange();
                 return range.toString();
             }
             default:

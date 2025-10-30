@@ -345,7 +345,10 @@ namespace scratchbird::core
                          std::shared_ptr<TSQuery>,   // TSQUERY
                          Int4Range,       // INT4RANGE
                          Int8Range,       // INT8RANGE
-                         NumRange         // NUMRANGE
+                         NumRange,        // NUMRANGE
+                         DateRange,       // DATERANGE
+                         TSRange,         // TSRANGE
+                         TSTZRange        // TSTZRANGE
                          >;
 
         TypedValue() : type_(DataType::NULL_TYPE), data_(std::monostate{}) {}
@@ -398,6 +401,9 @@ namespace scratchbird::core
         static TypedValue makeInt4Range(const Int4Range &v);
         static TypedValue makeInt8Range(const Int8Range &v);
         static TypedValue makeNumRange(const NumRange &v);
+        static TypedValue makeDateRange(const DateRange &v);
+        static TypedValue makeTSRange(const TSRange &v);
+        static TypedValue makeTSTZRange(const TSTZRange &v);
 
         // Type checking
         DataType type() const
@@ -442,6 +448,9 @@ namespace scratchbird::core
         Int4Range getInt4Range() const;
         Int8Range getInt8Range() const;
         NumRange getNumRange() const;
+        DateRange getDateRange() const;
+        TSRange getTSRange() const;
+        TSTZRange getTSTZRange() const;
 
         // Generic string conversion (for display)
         std::string toString() const;
