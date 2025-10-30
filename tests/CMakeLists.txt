@@ -66,6 +66,7 @@ list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_version_chain_cycle\\.cpp$")
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_wraparound_detection\\.cpp$")
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_xid_validation_fix\\.cpp$")
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_xml\\.cpp$")
+list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_text_search_types\\.cpp$")
 
 # Exclude GIN test files with standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/gin/test_gin_phase4\\.cpp$")

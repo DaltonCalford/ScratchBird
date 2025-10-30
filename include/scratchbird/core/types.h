@@ -5,11 +5,15 @@
 #include <variant>
 #include <optional>
 #include <vector>
+#include <memory>
 #include "scratchbird/core/status.h"
 #include "scratchbird/core/error_context.h"
 
 namespace scratchbird::core
 {
+    // Forward declarations for text search types
+    class TSVector;
+    class TSQuery;
 
     /**
      * Unified Data Type System
@@ -75,6 +79,10 @@ namespace scratchbird::core
         // Array and composite types (72-79)
         ARRAY = 72,     // Array of elements (homogeneous type)
         COMPOSITE = 73, // Record/struct type (heterogeneous types)
+
+        // Text search types (74-75)
+        TSVECTOR = 74,  // Text search vector (document representation)
+        TSQUERY = 75,   // Text search query (search expression)
 
         // Null type (255)
         NULL_TYPE = 255, // SQL NULL
@@ -323,7 +331,9 @@ namespace scratchbird::core
                          Polygon,        // POLYGON
                          std::string,    // VARCHAR, TEXT, CHAR, DECIMAL (as string), JSON
                          std::vector<uint8_t>, // BINARY, VARBINARY, BLOB, BYTEA, UUID
-                         bool                  // BOOLEAN
+                         bool,                  // BOOLEAN
+                         std::shared_ptr<TSVector>,  // TSVECTOR
+                         std::shared_ptr<TSQuery>    // TSQUERY
                          >;
 
         TypedValue() : type_(DataType::NULL_TYPE), data_(std::monostate{}) {}
@@ -369,6 +379,10 @@ namespace scratchbird::core
         static TypedValue makePolygon(const Polygon &v);
         static TypedValue makePolygon(const std::vector<Point> &exterior_ring);
         static TypedValue makePolygon(const std::vector<std::vector<Point>> &rings);
+        static TypedValue makeTSVector(const TSVector &v);
+        static TypedValue makeTSVector(std::shared_ptr<TSVector> v);
+        static TypedValue makeTSQuery(const TSQuery &v);
+        static TypedValue makeTSQuery(std::shared_ptr<TSQuery> v);
 
         // Type checking
         DataType type() const
@@ -408,6 +422,8 @@ namespace scratchbird::core
         Point getPoint() const;
         LineString getLineString() const;
         Polygon getPolygon() const;
+        std::shared_ptr<TSVector> getTSVector() const;
+        std::shared_ptr<TSQuery> getTSQuery() const;
 
         // Generic string conversion (for display)
         std::string toString() const;
