@@ -46,6 +46,7 @@ namespace scratchbird
             COMMA,       // ,
             SEMICOLON,   // ;
             DOT,         // .
+            COLON,       // : (used in :: for type casting)
 
             // JSON operators (Phase 1 Task 7)
             ARROW,              // -> (JSON field as JSON)
@@ -54,11 +55,16 @@ namespace scratchbird
             HASH_DOUBLE_ARROW,  // #>> (JSON path as text)
 
             // Array operators (Phase 2 Task 12)
-            AMPERSAND_AMPERSAND,  // && (array overlap)
-            AT_GREATER,           // @> (array contains)
-            LESS_AT,              // <@ (array contained by)
-            LEFT_BRACKET,         // [ (array literal)
-            RIGHT_BRACKET,        // ] (array literal)
+            AMPERSAND_AMPERSAND,  // && (array overlap, also range overlap in Task 15)
+            AT_GREATER,           // @> (array contains, also range contains in Task 15)
+            LESS_AT,              // <@ (array contained by, also range contained by in Task 15)
+            LEFT_BRACKET,         // [ (array literal, also range bound in Task 15)
+            RIGHT_BRACKET,        // ] (array literal, also range bound in Task 15)
+
+            // Range operators (Task 15 Phase 4)
+            SHIFT_LEFT,           // << (strictly left of)
+            SHIFT_RIGHT,          // >> (strictly right of)
+            MINUS_PIPE_MINUS,     // -|- (adjacent)
 
             // Regex operators (Phase 2 Task 13)
             TILDE,                // ~ (regex match)
@@ -189,6 +195,14 @@ namespace scratchbird
             KW_XML,
             KW_VECTOR,
             KW_ARRAY,  // Phase 2 Task 12: Array type
+
+            // Range types (Task 15 Phase 4)
+            KW_INT4RANGE,
+            KW_INT8RANGE,
+            KW_NUMRANGE,
+            KW_DATERANGE,
+            KW_TSRANGE,
+            KW_TSTZRANGE,
 
             // JSON functions (Phase 1 Task 7)
             KW_JSON_EXTRACT,

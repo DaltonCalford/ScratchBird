@@ -411,6 +411,40 @@ namespace scratchbird
             EXT_TO_TSQUERY = 0xAE,         // TO_TSQUERY(config, query) - query to tsquery
             EXT_PLAINTO_TSQUERY = 0xAF,    // PLAINTO_TSQUERY(config, text) - plain text to query
             EXT_PHRASETO_TSQUERY = 0xB0,   // PHRASETO_TSQUERY(config, text) - phrase to query
+
+            // Range types and operations (Task 15 Phase 5) - 0xB1-0xBF range
+            // Range type markers
+            EXT_TYPE_INT4RANGE = 0xB1,     // INT4RANGE data type marker
+            EXT_TYPE_INT8RANGE = 0xB2,     // INT8RANGE data type marker
+            EXT_TYPE_NUMRANGE = 0xB3,      // NUMRANGE data type marker
+            EXT_TYPE_DATERANGE = 0xB4,     // DATERANGE data type marker
+            EXT_TYPE_TSRANGE = 0xB5,       // TSRANGE data type marker
+            EXT_TYPE_TSTZRANGE = 0xB6,     // TSTZRANGE data type marker
+
+            // Range constructor functions
+            EXT_RANGE_CONSTRUCT = 0xB7,    // Construct range from bounds (lower, upper, bounds_type)
+
+            // Range operators (reuse array operator codes where semantics match)
+            EXT_RANGE_OVERLAPS = 0xB8,     // && - ranges overlap (same as EXT_ARRAY_OVERLAP semantics)
+            EXT_RANGE_CONTAINS_RANGE = 0xB9,    // @> - range contains range (similar to array)
+            EXT_RANGE_CONTAINS_ELEM = 0xBA,     // @> - range contains element
+            EXT_RANGE_CONTAINED_BY = 0xBB,      // <@ - range contained by range
+            EXT_RANGE_STRICTLY_LEFT = 0xBC,     // << - strictly left of
+            EXT_RANGE_STRICTLY_RIGHT = 0xBD,    // >> - strictly right of
+            EXT_RANGE_ADJACENT = 0xBE,     // -|- - adjacent to
+            EXT_RANGE_UNION = 0xBF,        // + - range union
+            EXT_RANGE_INTERSECTION = 0xC0, // & - range intersection
+            EXT_RANGE_DIFFERENCE = 0xC1,   // - - range difference
+
+            // Range accessor functions
+            EXT_RANGE_LOWER = 0xC2,        // LOWER(range) - get lower bound
+            EXT_RANGE_UPPER = 0xC3,        // UPPER(range) - get upper bound
+            EXT_RANGE_ISEMPTY = 0xC4,      // ISEMPTY(range) - check if range is empty
+            EXT_RANGE_LOWER_INC = 0xC5,    // LOWER_INC(range) - check if lower bound is inclusive
+            EXT_RANGE_UPPER_INC = 0xC6,    // UPPER_INC(range) - check if upper bound is inclusive
+            EXT_RANGE_LOWER_INF = 0xC7,    // LOWER_INF(range) - check if lower bound is infinite
+            EXT_RANGE_UPPER_INF = 0xC8,    // UPPER_INF(range) - check if upper bound is infinite
+            EXT_RANGE_MERGE = 0xC9,        // RANGE_MERGE(r1, r2) - smallest range containing both
         };
 
         // SBLR Version
