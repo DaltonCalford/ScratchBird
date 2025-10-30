@@ -32,12 +32,18 @@ test_*_db[0-9]*
 /test_enum_domain
 /test_gin_*
 /test_interval_type
+/test_join_parsing
 /test_jsonb
 /test_minimal_db
 /test_money_type
 /test_record_domain
 /test_set_domain
+/test_subquery_parser
+/test_text_search
+/test_text_search_simple
+/test_update_delete_simple
 /test_variant_domain
+/test_wave1_integration
 /test_wildcard_debug
 /test_xml
 
