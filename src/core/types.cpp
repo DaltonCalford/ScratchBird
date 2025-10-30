@@ -2,6 +2,7 @@
 #include "scratchbird/core/timezone.h"
 #include "scratchbird/core/tsvector.h"
 #include "scratchbird/core/tsquery.h"
+#include "scratchbird/core/range.h"
 #include <cstring>
 #include <cmath>
 #include <sstream>
@@ -217,6 +218,21 @@ namespace scratchbird::core
         return TypedValue(DataType::TSQUERY, v);
     }
 
+    TypedValue TypedValue::makeInt4Range(const Int4Range &v)
+    {
+        return TypedValue(DataType::INT4RANGE, v);
+    }
+
+    TypedValue TypedValue::makeInt8Range(const Int8Range &v)
+    {
+        return TypedValue(DataType::INT8RANGE, v);
+    }
+
+    TypedValue TypedValue::makeNumRange(const NumRange &v)
+    {
+        return TypedValue(DataType::NUMRANGE, v);
+    }
+
     // Type extraction
     int8_t TypedValue::getInt8() const
     {
@@ -422,6 +438,27 @@ namespace scratchbird::core
         return std::get<std::shared_ptr<TSQuery>>(data_);
     }
 
+    Int4Range TypedValue::getInt4Range() const
+    {
+        if (type_ != DataType::INT4RANGE)
+            throw std::runtime_error("Type mismatch: not INT4RANGE");
+        return std::get<Int4Range>(data_);
+    }
+
+    Int8Range TypedValue::getInt8Range() const
+    {
+        if (type_ != DataType::INT8RANGE)
+            throw std::runtime_error("Type mismatch: not INT8RANGE");
+        return std::get<Int8Range>(data_);
+    }
+
+    NumRange TypedValue::getNumRange() const
+    {
+        if (type_ != DataType::NUMRANGE)
+            throw std::runtime_error("Type mismatch: not NUMRANGE");
+        return std::get<NumRange>(data_);
+    }
+
     std::string TypedValue::toString() const
     {
         if (isNull())
@@ -519,6 +556,18 @@ namespace scratchbird::core
             case DataType::TSQUERY: {
                 auto query = getTSQuery();
                 return query->toString();
+            }
+            case DataType::INT4RANGE: {
+                auto range = getInt4Range();
+                return range.toString();
+            }
+            case DataType::INT8RANGE: {
+                auto range = getInt8Range();
+                return range.toString();
+            }
+            case DataType::NUMRANGE: {
+                auto range = getNumRange();
+                return range.toString();
             }
             default:
                 return "<unknown>";

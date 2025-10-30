@@ -8,6 +8,7 @@
 #include <memory>
 #include "scratchbird/core/status.h"
 #include "scratchbird/core/error_context.h"
+#include "scratchbird/core/range.h"
 
 namespace scratchbird::core
 {
@@ -83,6 +84,14 @@ namespace scratchbird::core
         // Text search types (74-75)
         TSVECTOR = 74,  // Text search vector (document representation)
         TSQUERY = 75,   // Text search query (search expression)
+
+        // Range types (76-85)
+        INT4RANGE = 76,  // Range of INT32 values
+        INT8RANGE = 77,  // Range of INT64 values
+        NUMRANGE = 78,   // Range of DECIMAL/FLOAT64 values
+        TSRANGE = 79,    // Range of TIMESTAMP values (without timezone)
+        TSTZRANGE = 80,  // Range of TIMESTAMP values (with timezone)
+        DATERANGE = 81,  // Range of DATE values
 
         // Null type (255)
         NULL_TYPE = 255, // SQL NULL
@@ -333,7 +342,10 @@ namespace scratchbird::core
                          std::vector<uint8_t>, // BINARY, VARBINARY, BLOB, BYTEA, UUID
                          bool,                  // BOOLEAN
                          std::shared_ptr<TSVector>,  // TSVECTOR
-                         std::shared_ptr<TSQuery>    // TSQUERY
+                         std::shared_ptr<TSQuery>,   // TSQUERY
+                         Int4Range,       // INT4RANGE
+                         Int8Range,       // INT8RANGE
+                         NumRange         // NUMRANGE
                          >;
 
         TypedValue() : type_(DataType::NULL_TYPE), data_(std::monostate{}) {}
@@ -383,6 +395,9 @@ namespace scratchbird::core
         static TypedValue makeTSVector(std::shared_ptr<TSVector> v);
         static TypedValue makeTSQuery(const TSQuery &v);
         static TypedValue makeTSQuery(std::shared_ptr<TSQuery> v);
+        static TypedValue makeInt4Range(const Int4Range &v);
+        static TypedValue makeInt8Range(const Int8Range &v);
+        static TypedValue makeNumRange(const NumRange &v);
 
         // Type checking
         DataType type() const
@@ -424,6 +439,9 @@ namespace scratchbird::core
         Polygon getPolygon() const;
         std::shared_ptr<TSVector> getTSVector() const;
         std::shared_ptr<TSQuery> getTSQuery() const;
+        Int4Range getInt4Range() const;
+        Int8Range getInt8Range() const;
+        NumRange getNumRange() const;
 
         // Generic string conversion (for display)
         std::string toString() const;

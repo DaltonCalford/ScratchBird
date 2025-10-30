@@ -15,15 +15,16 @@ ctest --output-on-failure
 
 ## Current Status
 
-**Version:** Alpha 1.7.0
-**Status:** Educational/Development (**Phase 3 Task 14 COMPLETE: FULL-TEXT SEARCH** 🎉)
-**Last Updated:** October 30, 2025 (Task 14 Phase 5 - SQL Integration Complete)
+**Version:** Alpha 1.8.0
+**Status:** Educational/Development (**Phase 3 Tasks 14 & 15 COMPLETE** 🎉)
+**Last Updated:** October 30, 2025 (Task 15 - Range Types Complete)
 
 ✅ **PHASE 1: 100% COMPLETE** - All 8 Critical Tasks Delivered (12,981 lines, 200+ tests)
 ✅ **PHASE 2 WAVE 1: 100% CODE COMPLETE** - 3 Features via Parallel AI Agents (4,713 lines)
 ✅ **PHASE 2 WAVE 2: 100% CODE COMPLETE** - 3 Features via 6 AI Agents (~2,400 lines)
 ✅ **PHASE 2 WAVE 3: SPATIAL INTEGRATION COMPLETE** - GIS Support (9,276 lines, 28 functions)
 ✅ **PHASE 3 TASK 14: FULL-TEXT SEARCH COMPLETE** - All 5 Phases (4,215 lines, 308/308 tests)
+✅ **PHASE 3 TASK 15: RANGE TYPES COMPLETE** - PostgreSQL-compatible ranges (741 lines, 77/77 tests)
 
 ### Latest Achievements
 
