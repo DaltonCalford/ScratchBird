@@ -15,15 +15,15 @@ ctest --output-on-failure
 
 ## Current Status
 
-**Version:** Alpha 1.4.0
-**Status:** Educational/Development (**Phase 3 Task 14 Phase 1-2: TEXT SEARCH TYPES & PROCESSING** 🎉)
-**Last Updated:** October 30, 2025 (Task 14 Phase 2 - Text Processing Complete)
+**Version:** Alpha 1.5.0
+**Status:** Educational/Development (**Phase 3 Task 14 Phase 1-3: FULL-TEXT SEARCH COMPLETE** 🎉)
+**Last Updated:** October 30, 2025 (Task 14 Phase 3 - Operators & Functions Complete)
 
 ✅ **PHASE 1: 100% COMPLETE** - All 8 Critical Tasks Delivered (12,981 lines, 200+ tests)
 ✅ **PHASE 2 WAVE 1: 100% CODE COMPLETE** - 3 Features via Parallel AI Agents (4,713 lines)
 ✅ **PHASE 2 WAVE 2: 100% CODE COMPLETE** - 3 Features via 6 AI Agents (~2,400 lines)
 ✅ **PHASE 2 WAVE 3: SPATIAL INTEGRATION COMPLETE** - GIS Support (9,276 lines, 28 functions)
-✅ **PHASE 3 TASK 14.1-2: TEXT SEARCH COMPLETE** - Core Types & Text Processing (2,750 lines, 148/148 tests)
+✅ **PHASE 3 TASK 14.1-3: FULL-TEXT SEARCH COMPLETE** - Types, Processing, Operators (3,120 lines, 187/187 tests)
 
 ### Latest Achievements
 
@@ -106,6 +106,49 @@ q->matches(*vec);  // true
 ```
 
 **See**: `/docs/status/TASK_14_PHASE_2_TEXT_PROCESSING_COMPLETE.md` for comprehensive report
+
+---
+
+**🎉 Phase 3 Task 14.3: OPERATORS & FUNCTIONS COMPLETE (October 30, 2025)**
+
+**Delivered**: PostgreSQL-compatible match operators and ranking functions for full-text search
+**Total Code**: ~370 lines production code + 455 lines tests
+**Status**: Phase 3 complete, ready for GIN integration (Phase 4) and SQL integration (Phase 5)
+
+| Component | Status | Lines | Highlights |
+|-----------|--------|-------|------------|
+| **Match Operators** | ✅ 100% | 45 | ts_match (@@), ts_match_text, configuration-aware |
+| **Ranking Functions** | ✅ 100% | 200 | ts_rank (TF-IDF), ts_rank_weighted, ts_rank_cd |
+| **Opcodes** | ✅ 100% | 8 | Ready for SQL integration |
+| **Unit Tests** | ✅ 39/39 | 455 | 100% pass rate, comprehensive coverage |
+
+**Key Features**:
+- 🔍 **Match Operator (@@)**: Full Boolean query evaluation (AND, OR, NOT, phrases)
+- 📊 **TF-IDF Ranking**: Position-weighted relevance scoring
+- 🎯 **Cover Density**: Proximity-based ranking for phrase queries
+- ⚖️ **Custom Weights**: User-defined position class weights [D, C, B, A]
+- 📏 **Normalization**: Document length normalization modes
+
+**Example Usage**:
+```cpp
+// Match documents
+auto doc = to_tsvector("english", "PostgreSQL is a powerful database");
+auto q = to_tsquery("english", "database & powerful");
+
+if (ts_match(*doc, *q)) {
+    // Rank for relevance
+    double rank = ts_rank(*doc, *q);
+    std::cout << "Rank: " << rank << std::endl;  // ~0.069
+}
+
+// Text matching with implicit conversion
+bool matches = ts_match_text("I love databases", *q);
+
+// Cover density for phrase queries
+double cd_rank = ts_rank_cd(*doc, *q);  // Proximity-based score
+```
+
+**See**: `/docs/status/TASK_14_PHASE_3_OPERATORS_FUNCTIONS_COMPLETE.md` for comprehensive report
 
 ---
 
