@@ -216,3 +216,16 @@ set_tests_properties(TextSearchTypes PROPERTIES
     LABELS "integration;task14;phase5"
     TIMEOUT 60
 )
+
+# Task 15: Range Types Unit Tests
+add_executable(test_range_types
+    unit/test_range_types.cpp
+)
+target_link_libraries(test_range_types
+    scratchbird_core
+)
+add_test(NAME RangeTypes COMMAND test_range_types)
+set_tests_properties(RangeTypes PROPERTIES
+    LABELS "unit;task15;range_types"
+    TIMEOUT 60
+)
