@@ -141,6 +141,14 @@ namespace scratchbird
             {"VECTOR", TokenType::KW_VECTOR},
             {"ARRAY", TokenType::KW_ARRAY},  // Phase 2 Task 12
 
+            // Range types (Task 15 Phase 4)
+            {"INT4RANGE", TokenType::KW_INT4RANGE},
+            {"INT8RANGE", TokenType::KW_INT8RANGE},
+            {"NUMRANGE", TokenType::KW_NUMRANGE},
+            {"DATERANGE", TokenType::KW_DATERANGE},
+            {"TSRANGE", TokenType::KW_TSRANGE},
+            {"TSTZRANGE", TokenType::KW_TSTZRANGE},
+
             // JSON functions (Phase 1 Task 7)
             {"JSON_EXTRACT", TokenType::KW_JSON_EXTRACT},
             {"JSON_OBJECT", TokenType::KW_JSON_OBJECT},
@@ -606,6 +614,18 @@ namespace scratchbird
                         }
                         return Token::makeOperator(start_loc, 2, TokenType::ARROW);
                     }
+                    // Check for range adjacent operator: -|-
+                    else if (currentChar() == '|')
+                    {
+                        advance();
+                        if (currentChar() == '-')
+                        {
+                            advance();
+                            return Token::makeOperator(start_loc, 3, TokenType::MINUS_PIPE_MINUS);
+                        }
+                        // Just -| is not valid, backtrack conceptually by error
+                        return makeError("Unexpected character sequence '-|'");
+                    }
                     return Token::makeOperator(start_loc, 1, TokenType::MINUS);
                 case '*':
                     advance();
@@ -631,6 +651,10 @@ namespace scratchbird
                 case '.':
                     advance();
                     return Token::makeOperator(start_loc, 1, TokenType::DOT);
+                case ':':
+                    // : is used in :: for type casting
+                    advance();
+                    return Token::makeOperator(start_loc, 1, TokenType::COLON);
                 case '=':
                     advance();
                     return Token::makeOperator(start_loc, 1, TokenType::EQUAL);
@@ -649,9 +673,15 @@ namespace scratchbird
                     }
                     else if (currentChar() == '@')
                     {
-                        // <@ operator (array contained by)
+                        // <@ operator (array/range contained by)
                         advance();
                         return Token::makeOperator(start_loc, 2, TokenType::LESS_AT);
+                    }
+                    else if (currentChar() == '<')
+                    {
+                        // << operator (range strictly left of)
+                        advance();
+                        return Token::makeOperator(start_loc, 2, TokenType::SHIFT_LEFT);
                     }
                     return Token::makeOperator(start_loc, 1, TokenType::LESS_THAN);
 
@@ -661,6 +691,12 @@ namespace scratchbird
                     {
                         advance();
                         return Token::makeOperator(start_loc, 2, TokenType::GREATER_EQUAL);
+                    }
+                    else if (currentChar() == '>')
+                    {
+                        // >> operator (range strictly right of)
+                        advance();
+                        return Token::makeOperator(start_loc, 2, TokenType::SHIFT_RIGHT);
                     }
                     return Token::makeOperator(start_loc, 1, TokenType::GREATER_THAN);
 

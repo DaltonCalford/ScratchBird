@@ -202,7 +202,8 @@ namespace scratchbird
                 INTEGER,
                 FLOAT,
                 STRING,
-                NULL_LITERAL
+                NULL_LITERAL,
+                RANGE  // Task 15 Phase 4: Range literals like '[1,10)'
             };
 
             LiteralExpr(const SourceSpan &span, LiteralType type)
@@ -244,6 +245,16 @@ namespace scratchbird
             {
                 string_value_ = v;
             }
+            void setRangeValue(StringPool::StringId v)
+            {
+                range_value_ = v;  // Store range literal string like '[1,10)'
+            }
+
+            // Range literal accessor (returns string representation)
+            StringPool::StringId rangeValue() const
+            {
+                return range_value_;
+            }
 
             void accept(ASTVisitor *visitor) override;
 
@@ -254,6 +265,7 @@ namespace scratchbird
                 int64_t int_value_;
                 double float_value_;
                 StringPool::StringId string_value_;
+                StringPool::StringId range_value_;  // For RANGE literals
             };
         };
 
@@ -323,7 +335,11 @@ namespace scratchbird
             REGEX_MATCH,        // ~ - regex match
             REGEX_MATCH_CI,     // ~* - regex match case-insensitive
             REGEX_NOT_MATCH,    // !~ - regex not match
-            REGEX_NOT_MATCH_CI  // !~* - regex not match case-insensitive
+            REGEX_NOT_MATCH_CI, // !~* - regex not match case-insensitive
+            // Range operators (Task 15 Phase 4) - reuse array overlap/contains
+            RANGE_STRICTLY_LEFT,  // << - strictly left of
+            RANGE_STRICTLY_RIGHT, // >> - strictly right of
+            RANGE_ADJACENT        // -|- - adjacent
         };
 
         class BinaryOpExpr : public Expression

@@ -100,6 +100,8 @@ namespace scratchbird
                     return ";";
                 case TokenType::DOT:
                     return ".";
+                case TokenType::COLON:
+                    return ":";
 
                 // JSON operators (Phase 1 Task 7)
                 case TokenType::ARROW:
@@ -275,6 +277,28 @@ namespace scratchbird
                     return "!~";
                 case TokenType::EXCLAIM_TILDE_STAR:
                     return "!~*";
+
+                // Range operators (Task 15 Phase 4)
+                case TokenType::SHIFT_LEFT:
+                    return "<<";
+                case TokenType::SHIFT_RIGHT:
+                    return ">>";
+                case TokenType::MINUS_PIPE_MINUS:
+                    return "-|-";
+
+                // Range type keywords (Task 15 Phase 4)
+                case TokenType::KW_INT4RANGE:
+                    return "INT4RANGE";
+                case TokenType::KW_INT8RANGE:
+                    return "INT8RANGE";
+                case TokenType::KW_NUMRANGE:
+                    return "NUMRANGE";
+                case TokenType::KW_DATERANGE:
+                    return "DATERANGE";
+                case TokenType::KW_TSRANGE:
+                    return "TSRANGE";
+                case TokenType::KW_TSTZRANGE:
+                    return "TSTZRANGE";
 
                 default:
                     return "UNKNOWN";

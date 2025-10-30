@@ -255,3 +255,17 @@ set_tests_properties(RangeOperators PROPERTIES
     LABELS "unit;task15;range_operators"
     TIMEOUT 60
 )
+
+# Task 15 Phase 4: Range Lexer Tests
+add_executable(test_range_lexer
+    unit/test_range_lexer.cpp
+)
+target_link_libraries(test_range_lexer
+    scratchbird_parser
+    scratchbird_core
+)
+add_test(NAME RangeLexer COMMAND test_range_lexer)
+set_tests_properties(RangeLexer PROPERTIES
+    LABELS "unit;task15;phase4;lexer"
+    TIMEOUT 60
+)
