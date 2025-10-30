@@ -1155,17 +1155,30 @@ These features complete the feature set for full database replacement:
 
 ### Tasks (Priority Order)
 
-#### 14. Text Search Types (130-200 hours)
-- [ ] Implement tsvector type
-- [ ] Implement tsquery type
-- [ ] Implement @@ match operator
-- [ ] Implement to_tsvector function
-- [ ] Implement to_tsquery function
-- [ ] Implement ts_rank function
-- [ ] Implement text search configurations
-- [ ] Integrate with GIN indexes
+#### 14. Text Search Types (130-200 hours) → ✅ **PHASE 1 COMPLETE** (Oct 30)
+- [x] **Phase 1: Core Types** (40-50h) → ✅ **COMPLETE** (6h delivered)
+  - [x] Implement tsvector type ✅ 100% (parsing, serialization, operations)
+  - [x] Implement tsquery type ✅ 100% (parsing, Boolean logic, phrase matching)
+  - [x] Integrate into TypedValue system ✅
+  - [x] Write comprehensive unit tests ✅ (86/86 passing)
+  - **Delivered**: ~1,650 lines, full PostgreSQL format compatibility
+- [ ] **Phase 2: Text Processing** (30-40h) → ⏳ NOT STARTED
+  - [ ] Implement text search configurations
+  - [ ] Implement Porter stemmer
+  - [ ] Implement to_tsvector function
+  - [ ] Implement to_tsquery function
+- [ ] **Phase 3: Operators & Functions** (20-30h) → ⏳ NOT STARTED
+  - [ ] Implement @@ match operator
+  - [ ] Implement ts_rank function
+- [ ] **Phase 4: GIN Integration** (25-35h) → ⏳ NOT STARTED
+  - [ ] Integrate with GIN indexes
+- [ ] **Phase 5: SQL Integration** (15-25h) → ⏳ NOT STARTED
+  - [ ] Add SQL parser support
+  - [ ] Add bytecode generation
+  - [ ] Add executor handlers
 
 **Phase 3.1 Completion Criteria**: PostgreSQL-style full-text search works
+**Phase 1 Status**: ✅ Core types implemented and tested
 
 ---
 
