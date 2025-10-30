@@ -589,6 +589,117 @@ public:
     {
         return !(*this == other);
     }
+
+    // ============================================================================
+    // PostgreSQL-Compatible Range Operators
+    // ============================================================================
+
+    /**
+     * @brief && operator - Check if ranges overlap
+     * @param other Range to check
+     * @return true if ranges have common elements
+     */
+    bool operator&&(const Range<T>& other) const
+    {
+        return overlaps(other);
+    }
+
+    /**
+     * @brief @> operator - Check if this range contains another range
+     * @param other Range to check
+     * @return true if this range contains other
+     */
+    bool containsRange(const Range<T>& other) const
+    {
+        return contains(other);
+    }
+
+    /**
+     * @brief @> operator - Check if this range contains a value
+     * @param value Value to check
+     * @return true if this range contains value
+     */
+    bool containsElement(const T& value) const
+    {
+        return contains(value);
+    }
+
+    /**
+     * @brief <@ operator - Check if this range is contained by another
+     * @param other Range to check
+     * @return true if other contains this range
+     */
+    bool containedBy(const Range<T>& other) const
+    {
+        return other.contains(*this);
+    }
+
+    /**
+     * @brief << operator - Check if strictly left of
+     * @param other Range to compare
+     * @return true if this range is strictly left of other
+     */
+    bool operator<<(const Range<T>& other) const
+    {
+        return isLeftOf(other);
+    }
+
+    /**
+     * @brief >> operator - Check if strictly right of
+     * @param other Range to compare
+     * @return true if this range is strictly right of other
+     */
+    bool operator>>(const Range<T>& other) const
+    {
+        return isRightOf(other);
+    }
+
+    /**
+     * @brief -|- operator - Check if ranges are adjacent
+     * @param other Range to check
+     * @return true if ranges are adjacent (touching but not overlapping)
+     */
+    bool isAdjacent(const Range<T>& other) const
+    {
+        return isAdjacentTo(other);
+    }
+
+    /**
+     * @brief & operator - Compute intersection of ranges
+     * @param other Range to intersect with
+     * @return Intersection range (may be empty)
+     */
+    Range<T> operator&(const Range<T>& other) const
+    {
+        return intersection(other);
+    }
+
+    /**
+     * @brief + operator - Compute union of ranges
+     * @param other Range to union with
+     * @return Union range, or empty if ranges don't overlap/touch
+     * @throws std::runtime_error if ranges are not contiguous
+     */
+    Range<T> operator+(const Range<T>& other) const
+    {
+        auto result = rangeUnion(other);
+        if (!result.has_value())
+        {
+            throw std::runtime_error("Cannot compute union of non-contiguous ranges");
+        }
+        return *result;
+    }
+
+    /**
+     * @brief - operator - Compute difference of ranges
+     * @param other Range to subtract
+     * @return Difference range (may be empty)
+     * @note This is a simplified version; full implementation would return multirange
+     */
+    Range<T> operator-(const Range<T>& other) const
+    {
+        return difference(other);
+    }
 };
 
 // Type aliases for common range types
