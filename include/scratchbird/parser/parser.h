@@ -125,6 +125,23 @@ namespace scratchbird
             Statement *parseCreateTrigger();         // Phase 2 Wave 2 Agent C
             Statement *parseDropTrigger();           // Phase 2 Wave 2 Agent C
 
+            // PSQL - Stored Procedures and Functions (Phase 2 Task 10.2)
+            Statement *parseCreateFunction();
+            Statement *parseCreateProcedure();
+            std::vector<Parameter*> parseParameterList();
+            Parameter* parseParameter();
+            BlockStmt *parsePSQLBlock();
+            std::vector<VarDeclarationStmt*> parseDeclareSection();
+            VarDeclarationStmt *parseVariableDeclaration();
+            Statement *parseIfStatement();
+            Statement *parseLoopStatement();
+            Statement *parseWhileStatement();
+            Statement *parseExitStatement();
+            Statement *parseReturnStatement();
+            Statement *parseRaiseStatement();
+            Statement *parseAssignmentOrCall();  // Handles := and procedure calls
+            std::vector<ExceptionHandler*> parseExceptionHandlers();
+
             // CREATE TABLE helpers
             ColumnDef *parseColumnDef();
             TypeName parseTypeName();

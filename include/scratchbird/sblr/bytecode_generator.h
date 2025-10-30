@@ -130,6 +130,20 @@ namespace scratchbird
             void visit(parser::SweepStmt *node) override;            // Phase 3 Task 3.3
             void visit(parser::CreateTriggerStmt *node) override;    // Phase 2 Wave 2 Agent C
             void visit(parser::DropTriggerStmt *node) override;      // Phase 2 Wave 2 Agent C
+
+            // PSQL - Stored Procedures and Functions (Phase 2 Task 10.2)
+            void visit(parser::CreateFunctionStmt *node) override;
+            void visit(parser::CreateProcedureStmt *node) override;
+            void visit(parser::BlockStmt *node) override;
+            void visit(parser::VarDeclarationStmt *node) override;
+            void visit(parser::AssignmentStmt *node) override;
+            void visit(parser::IfStmt *node) override;
+            void visit(parser::LoopStmt *node) override;
+            void visit(parser::WhileStmt *node) override;
+            void visit(parser::ExitStmt *node) override;
+            void visit(parser::ReturnStmt *node) override;
+            void visit(parser::RaiseStmt *node) override;
+
             void visit(parser::LiteralExpr *node) override;
             void visit(parser::IdentifierExpr *node) override;
             void visit(parser::BinaryOpExpr *node) override;
@@ -202,6 +216,18 @@ namespace scratchbird
             void generateWindowFunc(const optimizer::WindowNode::WindowFunction& win_func);
             void generateWindowSpec(const parser::WindowSpec *spec);
             void generateFrameClause(const parser::WindowSpec *spec);
+
+            // PSQL - Control flow helpers (Phase 2 Task 10.2)
+            int allocateLabel();  // Allocate new label ID
+            void patchJump(int label_id, int target_offset);  // Patch jump to target
+            int getCurrentOffset() const;  // Get current bytecode offset
+            void emitLabel(int label_id);  // Mark label position
+
+        private:
+            // PSQL label tracking
+            int next_label_id_ = 0;
+            std::unordered_map<int, int> label_positions_;  // label_id -> bytecode offset
+            std::vector<std::pair<int, int>> pending_patches_;  // (bytecode_offset, label_id) to patch
         };
 
         // Debug helper - disassemble bytecode to readable format

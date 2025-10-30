@@ -246,7 +246,37 @@ namespace scratchbird
             {"IN", TokenType::KW_IN},
             {"EXISTS", TokenType::KW_EXISTS},
 
-            // Note: Trigger keywords (KW_TRIGGER, KW_BEFORE, KW_AFTER, etc.) will be added by Agent C
+            // Trigger keywords (Phase 2 Wave 2 - Agent C)
+            {"TRIGGER", TokenType::KW_TRIGGER},
+            {"BEFORE", TokenType::KW_BEFORE},
+            {"AFTER", TokenType::KW_AFTER},
+            {"EXECUTE", TokenType::KW_EXECUTE},
+            {"PROCEDURE", TokenType::KW_PROCEDURE},
+            {"OLD", TokenType::KW_OLD},
+            {"NEW", TokenType::KW_NEW},
+
+            // Stored procedure keywords (Phase 2 Task 10.2)
+            {"FUNCTION", TokenType::KW_FUNCTION},
+            {"RETURNS", TokenType::KW_RETURNS},
+            {"LANGUAGE", TokenType::KW_LANGUAGE},
+            {"BEGIN", TokenType::KW_BEGIN},
+            // "END" already registered for CASE
+            {"DECLARE", TokenType::KW_DECLARE},
+            {"RETURN", TokenType::KW_RETURN},
+            {"IF", TokenType::KW_IF},
+            // "THEN" already registered for CASE
+            // "ELSE" already registered for CASE
+            {"ELSIF", TokenType::KW_ELSIF},
+            {"ENDIF", TokenType::KW_ENDIF},
+            {"LOOP", TokenType::KW_LOOP},
+            {"WHILE", TokenType::KW_WHILE},
+            {"ENDLOOP", TokenType::KW_ENDLOOP},
+            {"EXIT", TokenType::KW_EXIT},
+            // "WHEN" already registered for CASE
+            {"RAISE", TokenType::KW_RAISE},
+            {"EXCEPTION", TokenType::KW_EXCEPTION},
+            {"TRY", TokenType::KW_TRY},
+            {"EXCEPT", TokenType::KW_EXCEPT},
         };
 
         // Case-insensitive string comparison

@@ -232,7 +232,8 @@ namespace scratchbird::core
             FULLTEXT = 3, // Full-text search index
             GIN = 4,      // Generalized Inverted Index
             GIST = 5,     // Generalized Search Tree
-            BRIN = 6      // Block Range Index
+            BRIN = 6,     // Block Range Index
+            RTREE = 7     // R-tree spatial index (Phase 2 Task 9.2)
         };
 
         // Index information
@@ -251,6 +252,9 @@ namespace scratchbird::core
             uint32_t collation_id = 101; // Default: utf8_general_ci (binary comparison)
                                          // TODO(Issue #50): Full integration of collation-aware
                                          // comparisons throughout B-tree and query evaluation
+
+            // R-tree specific parameters (Phase 2 Task 9.2)
+            uint32_t rtree_max_entries = 50; // Maximum entries per R-tree node (M parameter)
         };
 
         CatalogManager(Database *db);
@@ -826,6 +830,77 @@ namespace scratchbird::core
         auto enableTrigger(const std::string &trigger_name, bool enable,
                            ErrorContext *ctx = nullptr) -> Status;
 
+        // ===== PSQL - Stored Procedures and Functions (Phase 2 Task 10.2) =====
+
+        // Parameter mode enum
+        enum class ParameterMode : uint8_t
+        {
+            IN = 0,
+            OUT = 1,
+            INOUT = 2
+        };
+
+        // Parameter information
+        struct ParameterInfo
+        {
+            std::string name;
+            DataType type;
+            uint32_t type_precision = 0;  // For VARCHAR, DECIMAL, etc.
+            uint32_t type_scale = 0;      // For DECIMAL
+            ParameterMode mode = ParameterMode::IN;
+            bool has_default = false;
+            std::string default_value;  // Serialized expression
+        };
+
+        // Function information
+        struct FunctionInfo
+        {
+            ID function_id;                        // UUID v7
+            std::string name;
+            std::vector<ParameterInfo> parameters;
+            DataType return_type = DataType::INT32;
+            uint32_t return_type_precision = 0;
+            uint32_t return_type_scale = 0;
+            bool or_replace = false;
+            bool deterministic = false;
+            std::vector<uint8_t> bytecode;  // Compiled SBLR bytecode
+            std::string source_text;        // Original PSQL source
+            uint64_t created_time = 0;
+            uint64_t modified_time = 0;
+        };
+
+        // Procedure information
+        struct ProcedureInfo
+        {
+            ID procedure_id;                       // UUID v7
+            std::string name;
+            std::vector<ParameterInfo> parameters;
+            bool or_replace = false;
+            std::vector<uint8_t> bytecode;  // Compiled SBLR bytecode
+            std::string source_text;        // Original PSQL source
+            uint64_t created_time = 0;
+            uint64_t modified_time = 0;
+        };
+
+        // Function/Procedure management methods
+        auto registerFunction(const FunctionInfo &info, ErrorContext *ctx = nullptr) -> Status;
+        auto registerProcedure(const ProcedureInfo &info, ErrorContext *ctx = nullptr) -> Status;
+
+        auto getFunction(const std::string &name, FunctionInfo &info_out,
+                        ErrorContext *ctx = nullptr) -> Status;
+        auto getProcedure(const std::string &name, ProcedureInfo &info_out,
+                         ErrorContext *ctx = nullptr) -> Status;
+
+        auto dropFunction(const std::string &name, bool if_exists = false,
+                         ErrorContext *ctx = nullptr) -> Status;
+        auto dropProcedure(const std::string &name, bool if_exists = false,
+                          ErrorContext *ctx = nullptr) -> Status;
+
+        auto listFunctions(std::vector<FunctionInfo> &functions_out,
+                          ErrorContext *ctx = nullptr) -> Status;
+        auto listProcedures(std::vector<ProcedureInfo> &procedures_out,
+                           ErrorContext *ctx = nullptr) -> Status;
+
 
     private:
         Database *db_;
@@ -894,6 +969,11 @@ namespace scratchbird::core
         std::unordered_map<std::string, ID> trigger_name_to_id_;  // name -> ID lookup
         std::unordered_multimap<ID, ID> table_triggers_;  // table_id -> trigger_id (multiple per table)
         mutable std::mutex trigger_mutex_;  // Separate mutex for trigger operations
+
+        // PSQL - Stored Procedures and Functions (Phase 2 Task 10.2)
+        std::unordered_map<std::string, FunctionInfo> functions_;    // keyed by function name
+        std::unordered_map<std::string, ProcedureInfo> procedures_;  // keyed by procedure name
+        mutable std::mutex psql_mutex_;  // Separate mutex for function/procedure operations
 
         // ONLINE migration state cache (Sprint 4 Task 5.4.1)
         std::unordered_map<ID, TableMigrationState> migration_cache_;  // keyed by migration_id

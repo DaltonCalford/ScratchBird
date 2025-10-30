@@ -11,9 +11,15 @@ file(GLOB_RECURSE SCRATCHBIRD_SPATIAL_SOURCES
     spatial/*.cpp
 )
 
+# Geo library sources (SRID and PROJ integration)
+file(GLOB_RECURSE SCRATCHBIRD_GEO_SOURCES
+    geo/*.cpp
+)
+
 add_library(scratchbird_core STATIC
     ${SCRATCHBIRD_CORE_SOURCES}
     ${SCRATCHBIRD_SPATIAL_SOURCES}
+    ${SCRATCHBIRD_GEO_SOURCES}
 )
 
 target_include_directories(scratchbird_core PUBLIC
@@ -23,6 +29,16 @@ target_include_directories(scratchbird_core PUBLIC
 if(LZ4_FOUND)
     target_include_directories(scratchbird_core PUBLIC ${LZ4_INCLUDE_DIRS})
     target_link_libraries(scratchbird_core PUBLIC ${LZ4_LIBRARIES})
+endif()
+
+if(GEOS_FOUND)
+    target_include_directories(scratchbird_core PUBLIC ${GEOS_INCLUDE_DIRS})
+    target_link_libraries(scratchbird_core PUBLIC ${GEOS_LIBRARIES})
+endif()
+
+if(PROJ_FOUND)
+    target_include_directories(scratchbird_core PUBLIC ${PROJ_INCLUDE_DIRS})
+    target_link_libraries(scratchbird_core PUBLIC ${PROJ_LIBRARIES})
 endif()
 
 set_target_properties(scratchbird_core PROPERTIES

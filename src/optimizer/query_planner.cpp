@@ -227,6 +227,14 @@ namespace scratchbird::optimizer
             // Non-fatal - we can still use sequential scan
         }
 
+        // Generate R-tree scan paths for spatial queries (Phase 2, Task 9.2)
+        status = generateRTreeScanPaths(select_stmt, table_id, table_name, paths, ctx);
+        if (status != core::Status::OK)
+        {
+            DEBUG_LOG_DB("R-tree scan path generation had errors (non-fatal)");
+            // Non-fatal - we can still use sequential scan or index scan
+        }
+
         return paths.empty() ? core::Status::NOT_FOUND : core::Status::OK;
     }
 
@@ -424,6 +432,167 @@ namespace scratchbird::optimizer
         return true;
     }
 
+    auto QueryPlanner::isSpatialPredicate(const parser::Expression *expr,
+                                          std::string &column_name,
+                                          std::string &function_name) const
+        -> bool
+    {
+        // Check if expression is a function call
+        auto *func_call = dynamic_cast<const parser::FunctionCallExpr*>(expr);
+        if (!func_call)
+        {
+            return false;
+        }
+
+        // Get function name - need to resolve StringId
+        // For now, we can't easily compare StringIds without the string pool
+        // This is a simplified implementation for Phase 2
+        // TODO: Pass string pool to properly resolve function names
+
+        // Check if first argument is an identifier (column reference)
+        if (func_call->args().empty())
+        {
+            return false;
+        }
+
+        auto *col_ref = dynamic_cast<const parser::IdentifierExpr*>(func_call->args()[0]);
+        if (!col_ref)
+        {
+            return false;
+        }
+
+        // For Phase 2, we'll mark this as a spatial predicate candidate
+        // The actual function name checking will be done during execution
+        // when we have access to the string pool
+        column_name = "(spatial_column)";  // Placeholder
+        function_name = "(spatial_function)";  // Placeholder
+
+        DEBUG_LOG_DB("Found potential spatial predicate function call");
+        return true;
+    }
+
+    auto QueryPlanner::generateRTreeScanPaths(const parser::SelectStmt *select_stmt,
+                                              const core::ID &table_id,
+                                              const std::string &table_name,
+                                              std::vector<std::shared_ptr<Path>> &paths,
+                                              core::ErrorContext *ctx)
+        -> core::Status
+    {
+        // No WHERE clause means no spatial predicates
+        if (!select_stmt->whereClause())
+        {
+            return core::Status::OK;
+        }
+
+        // Find spatial predicates in WHERE clause
+        std::vector<std::pair<std::string, std::string>> spatial_predicates;  // column_name, function_name
+
+        // Simple check: look at WHERE clause expression
+        std::string column_name, function_name;
+        if (isSpatialPredicate(select_stmt->whereClause(), column_name, function_name))
+        {
+            spatial_predicates.push_back({column_name, function_name});
+        }
+
+        // If no spatial predicates found, nothing to do
+        if (spatial_predicates.empty())
+        {
+            DEBUG_LOG_DB("No spatial predicates found for R-tree optimization");
+            return core::Status::OK;
+        }
+
+        // Get all indexes for this table
+        auto indexes = db_->catalog_manager()->getTableIndexes(table_id, ctx);
+
+        // For each R-tree index, create a scan path if spatial predicates exist
+        for (const auto &index_info : indexes)
+        {
+            // Check if this is an R-tree index
+            if (index_info.index_type != core::CatalogManager::IndexType::RTREE)
+            {
+                continue;
+            }
+
+            // If we found spatial predicates, assume this R-tree can be used
+            // Phase 2 simplified approach - proper column matching will be in Phase 3
+            std::string matching_function = spatial_predicates[0].second;
+
+            DEBUG_LOG_DB("R-tree index " + index_info.index_name +
+                        " applicable for spatial predicate " + matching_function);
+
+            // Get table statistics
+            TableStatistics table_stats;
+            core::Status status = stats_manager_->getTableStatistics(table_id, table_stats, ctx);
+            if (status != core::Status::OK)
+            {
+                // Use default statistics
+                table_stats.num_rows = 1000;
+                table_stats.num_pages = 100;
+            }
+
+            // Estimate spatial selectivity
+            // For Phase 2, use simple heuristic: spatial predicates are typically selective
+            double selectivity = 0.01;  // Assume 1% of rows match (conservative estimate)
+            uint64_t estimated_rows = static_cast<uint64_t>(
+                static_cast<double>(table_stats.num_rows) * selectivity);
+
+            if (estimated_rows == 0)
+            {
+                estimated_rows = 1;
+            }
+
+            // R-tree cost estimation
+            constexpr uint64_t DEFAULT_RTREE_HEIGHT = 3;  // Typical R-tree height
+            uint64_t tree_height = DEFAULT_RTREE_HEIGHT;
+
+            // R-tree pages accessed = tree height + matched entries
+            uint64_t tree_pages = tree_height + (estimated_rows / 10);  // ~10 entries per page
+            uint64_t matched_entries = estimated_rows;
+
+            // Heap pages to fetch (spatial: correlation = 0.0, random access)
+            uint64_t heap_pages = std::min(estimated_rows, table_stats.num_pages);
+            uint64_t heap_tuples = estimated_rows;
+
+            // Calculate qualification cost
+            double qual_cost = calculateQualCost(select_stmt);
+
+            // Estimate R-tree scan cost using same model as B-tree index scan
+            CostEstimate cost = cost_model_.costIndexScan(
+                tree_height,
+                tree_pages,
+                matched_entries,
+                heap_pages,
+                heap_tuples,
+                qual_cost,
+                0.0,  // correlation = 0 for spatial (random heap access)
+                ctx);
+
+            DEBUG_LOG_DB("R-tree scan cost for " + index_info.index_name +
+                        ": startup=" + std::to_string(cost.startup_cost) +
+                        ", total=" + std::to_string(cost.total_cost) +
+                        ", rows=" + std::to_string(cost.rows));
+
+            // Create RTreeScanPath
+            auto rtree_path = std::make_shared<RTreeScanPath>(
+                table_id,
+                table_name,
+                index_info.index_id,
+                index_info.index_name,
+                tree_height,
+                tree_pages,
+                matched_entries,
+                heap_pages,
+                heap_tuples,
+                qual_cost,
+                matching_function,
+                cost);
+
+            paths.push_back(rtree_path);
+        }
+
+        return core::Status::OK;
+    }
+
     auto QueryPlanner::selectCheapestPath(const std::vector<std::shared_ptr<Path>> &paths) const
         -> std::shared_ptr<Path>
     {
@@ -509,6 +678,29 @@ namespace scratchbird::optimizer
 
             // TODO: Set index condition and filter from WHERE clause
             plan->setIndexCond("(index condition)");
+            plan->setFilter("(additional filter)");
+
+            return plan;
+        }
+        else if (path->type() == PathType::RTREE_SCAN)
+        {
+            auto rtree_path = std::static_pointer_cast<RTreeScanPath>(path);
+
+            auto plan = std::make_shared<RTreeScanNode>(
+                rtree_path->tableId(),
+                rtree_path->tableName(),
+                rtree_path->indexId(),
+                rtree_path->indexName(),
+                rtree_path->predicateType());
+
+            plan->setCost(
+                path->startupCost(),
+                path->totalCost(),
+                path->rows());
+
+            // TODO: Set spatial condition and filter from WHERE clause
+            // For now, just mark that there is a spatial condition
+            plan->setSpatialCond("(" + rtree_path->predicateType() + " condition)");
             plan->setFilter("(additional filter)");
 
             return plan;

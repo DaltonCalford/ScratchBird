@@ -336,6 +336,87 @@ namespace scratchbird
                              const std::vector<bool>& order_asc);
 
             // Trigger execution helpers (Wave 2)
+            // ===== PSQL - Stored Procedures and Functions (Phase 2 Task 10.2, Phase 4) =====
+
+            // Variable stack frame for PSQL execution
+            struct VariableFrame
+            {
+                std::unordered_map<std::string, Value> variables;
+                VariableFrame* parent;  // For nested blocks
+
+                VariableFrame() : parent(nullptr) {}
+                explicit VariableFrame(VariableFrame* parent_frame) : parent(parent_frame) {}
+            };
+
+            // Variable stack management
+            class VariableStack
+            {
+            public:
+                VariableStack() { pushFrame(); }  // Always have at least one frame
+                ~VariableStack() { while (!frames_.empty()) popFrame(); }
+
+                void pushFrame();
+                void popFrame();
+                void declareVariable(const std::string& name, const Value& value);
+                Value& getVariable(const std::string& name);
+                void setVariable(const std::string& name, const Value& value);
+                bool hasVariable(const std::string& name) const;
+
+            private:
+                std::vector<std::unique_ptr<VariableFrame>> frames_;
+            };
+
+            // Control flow state for loops
+            struct LoopState
+            {
+                size_t loop_start_pc;      // PC at loop beginning
+                size_t loop_end_pc;        // PC after loop end
+                std::string label;         // Optional label for EXIT statement
+                bool exit_requested;       // Set by EXIT statement
+
+                LoopState(size_t start, size_t end, const std::string& lbl = "")
+                    : loop_start_pc(start), loop_end_pc(end), label(lbl), exit_requested(false) {}
+            };
+
+            // Exception frame for PSQL exception handling
+            struct ExceptionFrame
+            {
+                size_t try_start_pc;
+                size_t try_end_pc;
+                std::vector<std::pair<std::string, size_t>> handlers;  // (exception_name, handler_pc)
+
+                ExceptionFrame(size_t start, size_t end) : try_start_pc(start), try_end_pc(end) {}
+            };
+
+            // PSQL execution state
+            std::unique_ptr<VariableStack> variable_stack_;
+            std::vector<LoopState> loop_stack_;
+            std::vector<ExceptionFrame> exception_stack_;
+            bool return_requested_ = false;
+            Value return_value_;
+
+            // PSQL statement execution methods
+            void executeFunction();          // Execute CREATE FUNCTION
+            void executeProcedure();         // Execute CREATE PROCEDURE
+            void executeBlock();             // Execute BEGIN...END block
+            void executeVarDeclaration();    // Execute variable declaration
+            void executeAssignment();        // Execute variable assignment
+            void executeIfStatement();       // Execute IF statement
+            void executeLoopStatement();     // Execute LOOP statement
+            void executeWhileStatement();    // Execute WHILE statement
+            void executeExitStatement();     // Execute EXIT statement
+            void executeReturnStatement();   // Execute RETURN statement
+            void executeRaiseStatement();    // Execute RAISE exception
+
+            // PSQL variable operations
+            void executeVarLoad();           // Load variable onto stack
+            void executeVarStore();          // Store stack value to variable
+
+            // PSQL control flow helpers
+            void executeJump();              // Unconditional jump
+            void executeJumpIfTrue();        // Jump if stack top is true
+            void executeJumpIfFalse();       // Jump if stack top is false
+
         public:
             // Forward declaration
             class TriggerContext;

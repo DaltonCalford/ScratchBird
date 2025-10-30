@@ -188,6 +188,7 @@ set_tests_properties(MultiThreadedStress PROPERTIES
 add_executable(wave1_tests
     unit/test_spatial_types.cpp
     unit/test_text_search.cpp
+    unit/test_multi_geometry.cpp
 )
 target_link_libraries(wave1_tests
     scratchbird_core

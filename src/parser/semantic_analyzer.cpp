@@ -1527,8 +1527,254 @@ namespace scratchbird
         {
             // Validate DROP TRIGGER statement
             // Trigger name should not be empty (parser ensures this)
-            
+
             // Semantic validation (trigger exists) happens at execution time
+        }
+
+        // Phase 2 Task 10.2 - PSQL visitors
+        void SemanticAnalyzer::visit(CreateFunctionStmt *node)
+        {
+            // Function name validation done at parse time
+
+            // Validate return type exists
+            if (!node->returnType())
+            {
+                current_result_->addError(SemanticError(SourceLocation(), "Function must have a return type"));
+                return;
+            }
+
+            // Validate parameters
+            for (const auto* param : node->parameters())
+            {
+                // Parameter name validation done at parse time
+                if (!param->type)
+                {
+                    current_result_->addError(SemanticError(SourceLocation(), "Parameter must have a type"));
+                }
+            }
+
+            // Validate body exists
+            if (node->body())
+            {
+                node->body()->accept(this);
+            }
+        }
+
+        void SemanticAnalyzer::visit(CreateProcedureStmt *node)
+        {
+            // Procedure name validation done at parse time
+
+            // Validate parameters
+            for (const auto* param : node->parameters())
+            {
+                // Parameter name validation done at parse time
+                if (!param->type)
+                {
+                    current_result_->addError(SemanticError(SourceLocation(), "Parameter must have a type"));
+                }
+            }
+
+            // Validate body exists
+            if (node->body())
+            {
+                node->body()->accept(this);
+            }
+        }
+
+        void SemanticAnalyzer::visit(BlockStmt *node)
+        {
+            // Validate variable declarations
+            for (const auto* decl : node->declarations())
+            {
+                if (decl)
+                {
+                    const_cast<VarDeclarationStmt*>(decl)->accept(this);
+                }
+            }
+
+            // Validate statements
+            for (const auto* stmt : node->statements())
+            {
+                if (stmt)
+                {
+                    const_cast<Statement*>(stmt)->accept(this);
+                }
+            }
+
+            // Validate exception handlers (if present)
+            for (const auto* handler : node->exceptionHandlers())
+            {
+                // Basic validation - handler exists
+                if (!handler)
+                {
+                    current_result_->addError(SemanticError(SourceLocation(), "Invalid exception handler"));
+                }
+            }
+        }
+
+        void SemanticAnalyzer::visit(VarDeclarationStmt *node)
+        {
+            // Variable name validation done at parse time
+
+            // Validate type
+            if (!node->type())
+            {
+                current_result_->addError(SemanticError(SourceLocation(), "Variable must have a type"));
+                return;
+            }
+
+            // If default value exists, validate it
+            if (node->defaultValue())
+            {
+                node->defaultValue()->accept(this);
+            }
+        }
+
+        void SemanticAnalyzer::visit(AssignmentStmt *node)
+        {
+            // Assignment target validation done at parse time
+
+            // Validate value expression
+            if (node->value())
+            {
+                node->value()->accept(this);
+            }
+            else
+            {
+                current_result_->addError(SemanticError(SourceLocation(), "Assignment must have a value expression"));
+            }
+        }
+
+        void SemanticAnalyzer::visit(IfStmt *node)
+        {
+            // Validate condition
+            if (node->condition())
+            {
+                node->condition()->accept(this);
+            }
+            else
+            {
+                current_result_->addError(SemanticError(SourceLocation(), "IF statement must have a condition"));
+            }
+
+            // Validate THEN statements
+            for (const auto* stmt : node->thenStatements())
+            {
+                if (stmt)
+                {
+                    const_cast<Statement*>(stmt)->accept(this);
+                }
+            }
+
+            // Validate ELSIF clauses
+            for (const auto* elsif : node->elsifClauses())
+            {
+                if (elsif)
+                {
+                    if (elsif->condition)
+                    {
+                        elsif->condition->accept(this);
+                    }
+                    for (const auto* stmt : elsif->statements)
+                    {
+                        if (stmt)
+                        {
+                            const_cast<Statement*>(stmt)->accept(this);
+                        }
+                    }
+                }
+            }
+
+            // Validate ELSE statements
+            for (const auto* stmt : node->elseStatements())
+            {
+                if (stmt)
+                {
+                    const_cast<Statement*>(stmt)->accept(this);
+                }
+            }
+        }
+
+        void SemanticAnalyzer::visit(LoopStmt *node)
+        {
+            // Validate body statements
+            for (const auto* stmt : node->statements())
+            {
+                if (stmt)
+                {
+                    const_cast<Statement*>(stmt)->accept(this);
+                }
+            }
+        }
+
+        void SemanticAnalyzer::visit(WhileStmt *node)
+        {
+            // Validate condition
+            if (node->condition())
+            {
+                node->condition()->accept(this);
+            }
+            else
+            {
+                current_result_->addError(SemanticError(SourceLocation(), "WHILE statement must have a condition"));
+            }
+
+            // Validate body statements
+            for (const auto* stmt : node->statements())
+            {
+                if (stmt)
+                {
+                    const_cast<Statement*>(stmt)->accept(this);
+                }
+            }
+        }
+
+        void SemanticAnalyzer::visit(ExitStmt *node)
+        {
+            // Validate WHEN condition if present
+            if (node->whenCondition())
+            {
+                node->whenCondition()->accept(this);
+            }
+
+            // Label validation would require tracking active loops
+            // For now, just ensure label ID is valid if present
+            // (actual label existence check would be done at runtime)
+        }
+
+        void SemanticAnalyzer::visit(ReturnStmt *node)
+        {
+            // Validate return value if present
+            if (node->returnValue())
+            {
+                node->returnValue()->accept(this);
+            }
+
+            // Type checking (return value type vs function return type)
+            // would require additional context about current function
+            // For now, just validate the expression is well-formed
+        }
+
+        void SemanticAnalyzer::visit(RaiseStmt *node)
+        {
+            // Validate message expression
+            if (node->message())
+            {
+                node->message()->accept(this);
+            }
+            else
+            {
+                current_result_->addError(SemanticError(SourceLocation(), "RAISE statement must have a message"));
+            }
+
+            // Validate argument expressions
+            for (const auto* arg : node->args())
+            {
+                if (arg)
+                {
+                    const_cast<Expression*>(arg)->accept(this);
+                }
+            }
         }
 
         // Convenience function

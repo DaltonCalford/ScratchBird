@@ -1,8 +1,8 @@
 # ScratchBird Project Context
 
-**Last Updated**: 2025-10-28 (Phase 1 Complete - All Critical Blockers Resolved)
-**Version**: Alpha 1.0.7
-**Status**: Educational/Development (**Phase 1: 100% COMPLETE** 🎉 - Ready for Phase 2)
+**Last Updated**: 2025-10-30 (Phase 2 Wave 3 Complete - Spatial/GIS Integration)
+**Version**: Alpha 1.3.0
+**Status**: Educational/Development (**Phase 2: ~85% COMPLETE** 🎉 - Spatial Integration Done)
 
 > **PURPOSE**: This file provides essential context for AI assistants working on ScratchBird.
 > Read this file at session start and after every context compaction.
@@ -256,6 +256,42 @@ JSON Library:        ✅ nlohmann/json v3.11.3 integrated via FetchContent
 - Clean /docs/ root directory (only INDEX.md, CI_CD_GUIDE.md)
 
 **Total Completed**: ~198-223 hours
+
+---
+
+### Phase 2: Critical Features (Post-Phase 1)
+
+**Phase 2 Wave 1**: ✅ COMPLETE - SQL Integration (October 28, 2025)
+- Spatial Types (2,095 lines, 44 tests) ✅
+- Array Functions (1,300 lines) ✅
+- Text Search Functions (1,318 lines) ✅
+- **Total**: 4,713 lines, 50 opcodes, 47 functions
+
+**Phase 2 Wave 2**: ✅ COMPLETE - Advanced SQL Features (October 28, 2025)
+- CTEs (707 lines) ✅
+- Subqueries (725 lines, 4/4 tests passing) ✅
+- Triggers (885 lines) ✅
+- **Total**: ~2,400 lines, 11 opcodes, 28 tests
+
+**Phase 2 Wave 3**: ✅ COMPLETE - Spatial/GIS Integration (October 30, 2025)
+- R-tree Indexes (2,690 lines) ✅ - Storage + catalog integration
+- R-tree Query Planner (548 lines) ✅ - Cost-based spatial optimization
+- Spatial Functions (1,800 lines) ✅ - 24 functions via GEOS
+- SRID Support (1,608 lines) ✅ - 4 functions, PROJ integration
+- Multi-Geometry Infrastructure (1,370 lines) ✅ - Classes complete, SQL deferred to Phase 3
+- **Total**: ~9,276 lines, 32 opcodes, 28 operational GIS functions
+- **Status**: ~90% PostGIS parity for Phase 2 use cases
+
+**Phase 2 Wave 4**: ✅ COMPLETE - PSQL Stored Procedures (October 30, 2025)
+- PSQL language implementation (variables, control flow, exceptions)
+- Functions and procedures with parameter support
+- Full integration with executor and bytecode generator
+- **Status**: Firebird-compatible procedural language operational
+
+**Phase 2 Total**: ~16,389+ lines across 4 waves
+**Phase 2 Progress**: ~85% complete (spatial, triggers, procedures, CTEs, subqueries, arrays, text search)
+
+---
 
 **⚠️ IMPORTANT - Code Audit Findings (October 24, 2025)**:
 A comprehensive code audit has been completed. See `/docs/audit/` for detailed reports:

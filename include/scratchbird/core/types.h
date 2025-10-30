@@ -63,14 +63,18 @@ namespace scratchbird::core
         XML = 63,    // XML document
         VECTOR = 64, // Vector embeddings for similarity search (variable dimensions)
 
-        // Spatial types (65-69)
+        // Spatial types (65-71)
         POINT = 65,      // Geometric point (x, y)
         LINESTRING = 66, // Sequence of connected points
         POLYGON = 67,    // Closed polygon with optional holes
+        MULTIPOINT = 68,        // Collection of POINT geometries
+        MULTILINESTRING = 69,   // Collection of LINESTRING geometries
+        MULTIPOLYGON = 70,      // Collection of POLYGON geometries
+        GEOMETRYCOLLECTION = 71, // Heterogeneous collection of geometries
 
-        // Array and composite types (70-79)
-        ARRAY = 70,     // Array of elements (homogeneous type)
-        COMPOSITE = 71, // Record/struct type (heterogeneous types)
+        // Array and composite types (72-79)
+        ARRAY = 72,     // Array of elements (homogeneous type)
+        COMPOSITE = 73, // Record/struct type (heterogeneous types)
 
         // Null type (255)
         NULL_TYPE = 255, // SQL NULL
@@ -142,35 +146,46 @@ namespace scratchbird::core
 
     /**
      * POINT - Represents a 2D point in space
-     * Total size: 16 bytes (2 x double)
+     * Total size: 20 bytes (2 x double + 1 x int32_t for SRID)
+     * SRID: Spatial Reference Identifier (0 = undefined, 4326 = WGS84, etc.)
      */
     struct Point {
         double x;
         double y;
+        int32_t srid;  // Spatial Reference Identifier (0 = undefined)
 
         // Constructors
-        Point() : x(0.0), y(0.0) {}
-        Point(double x_, double y_) : x(x_), y(y_) {}
+        Point() : x(0.0), y(0.0), srid(0) {}
+        Point(double x_, double y_) : x(x_), y(y_), srid(0) {}
+        Point(double x_, double y_, int32_t srid_) : x(x_), y(y_), srid(srid_) {}
 
         // Comparison operators
         bool operator==(const Point& other) const {
-            return x == other.x && y == other.y;
+            return x == other.x && y == other.y && srid == other.srid;
         }
         bool operator!=(const Point& other) const {
             return !(*this == other);
         }
+
+        // SRID accessors
+        int32_t getSRID() const { return srid; }
+        void setSRID(int32_t new_srid) { srid = new_srid; }
+        bool hasSRID() const { return srid != 0; }
     };
 
     /**
      * LINESTRING - Represents a sequence of connected points
-     * Variable size: vector of Points
+     * Variable size: vector of Points + SRID
+     * SRID: Spatial Reference Identifier (0 = undefined, 4326 = WGS84, etc.)
      */
     struct LineString {
         std::vector<Point> points;
+        int32_t srid;  // Spatial Reference Identifier (0 = undefined)
 
         // Constructors
-        LineString() = default;
-        explicit LineString(std::vector<Point> pts) : points(std::move(pts)) {}
+        LineString() : srid(0) {}
+        explicit LineString(std::vector<Point> pts) : points(std::move(pts)), srid(0) {}
+        LineString(std::vector<Point> pts, int32_t srid_) : points(std::move(pts)), srid(srid_) {}
 
         // Validation
         bool isValid() const {
@@ -179,27 +194,38 @@ namespace scratchbird::core
 
         // Comparison operators
         bool operator==(const LineString& other) const {
-            return points == other.points;
+            return points == other.points && srid == other.srid;
         }
         bool operator!=(const LineString& other) const {
             return !(*this == other);
         }
+
+        // SRID accessors
+        int32_t getSRID() const { return srid; }
+        void setSRID(int32_t new_srid) { srid = new_srid; }
+        bool hasSRID() const { return srid != 0; }
     };
 
     /**
      * POLYGON - Represents a closed polygon with optional interior rings (holes)
-     * Variable size: vector of rings, each ring is a vector of Points
+     * Variable size: vector of rings, each ring is a vector of Points + SRID
      * First ring is exterior, subsequent rings are holes
+     * SRID: Spatial Reference Identifier (0 = undefined, 4326 = WGS84, etc.)
      */
     struct Polygon {
         std::vector<std::vector<Point>> rings; // First is exterior, rest are holes
+        int32_t srid;  // Spatial Reference Identifier (0 = undefined)
 
         // Constructors
-        Polygon() = default;
-        explicit Polygon(std::vector<Point> exterior) {
+        Polygon() : srid(0) {}
+        explicit Polygon(std::vector<Point> exterior) : srid(0) {
             rings.push_back(std::move(exterior));
         }
-        explicit Polygon(std::vector<std::vector<Point>> rgs) : rings(std::move(rgs)) {}
+        Polygon(std::vector<Point> exterior, int32_t srid_) : srid(srid_) {
+            rings.push_back(std::move(exterior));
+        }
+        explicit Polygon(std::vector<std::vector<Point>> rgs) : rings(std::move(rgs)), srid(0) {}
+        Polygon(std::vector<std::vector<Point>> rgs, int32_t srid_) : rings(std::move(rgs)), srid(srid_) {}
 
         // Validation
         bool isValid() const {
@@ -218,7 +244,7 @@ namespace scratchbird::core
 
         // Comparison operators
         bool operator==(const Polygon& other) const {
-            return rings == other.rings;
+            return rings == other.rings && srid == other.srid;
         }
         bool operator!=(const Polygon& other) const {
             return !(*this == other);
@@ -234,6 +260,11 @@ namespace scratchbird::core
         const std::vector<Point>& interiorRing(size_t index) const {
             return rings[index + 1];
         }
+
+        // SRID accessors
+        int32_t getSRID() const { return srid; }
+        void setSRID(int32_t new_srid) { srid = new_srid; }
+        bool hasSRID() const { return srid != 0; }
     };
 
     /**

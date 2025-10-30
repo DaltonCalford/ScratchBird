@@ -90,6 +90,17 @@ namespace scratchbird
             void visit(SweepStmt *node) override;            // Phase 3 Task 3.3
             void visit(CreateTriggerStmt *node) override;    // Phase 2 Wave 2 Agent C
             void visit(DropTriggerStmt *node) override;      // Phase 2 Wave 2 Agent C
+            void visit(CreateFunctionStmt *node) override;   // Phase 2 Task 10.2 - PSQL
+            void visit(CreateProcedureStmt *node) override;  // Phase 2 Task 10.2 - PSQL
+            void visit(BlockStmt *node) override;            // Phase 2 Task 10.2 - PSQL
+            void visit(VarDeclarationStmt *node) override;   // Phase 2 Task 10.2 - PSQL
+            void visit(AssignmentStmt *node) override;       // Phase 2 Task 10.2 - PSQL
+            void visit(IfStmt *node) override;               // Phase 2 Task 10.2 - PSQL
+            void visit(LoopStmt *node) override;             // Phase 2 Task 10.2 - PSQL
+            void visit(WhileStmt *node) override;            // Phase 2 Task 10.2 - PSQL
+            void visit(ExitStmt *node) override;             // Phase 2 Task 10.2 - PSQL
+            void visit(ReturnStmt *node) override;           // Phase 2 Task 10.2 - PSQL
+            void visit(RaiseStmt *node) override;            // Phase 2 Task 10.2 - PSQL
             void visit(LiteralExpr *node) override;
             void visit(IdentifierExpr *node) override;
             void visit(BinaryOpExpr *node) override;
