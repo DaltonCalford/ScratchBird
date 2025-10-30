@@ -26,6 +26,7 @@ namespace scratchbird::optimizer
     {
         SEQ_SCAN,      // Sequential table scan
         INDEX_SCAN,    // Index scan with heap fetch
+        RTREE_SCAN,    // R-tree spatial index scan (Phase 2, Task 9.2)
         CTE_SCAN,      // CTE (Common Table Expression) scan (Phase 2 Wave 2)
         NESTED_LOOP_JOIN,  // Nested loop join (Phase 1, Task 3.2)
         HASH_JOIN,     // Hash join (Phase 1, Task 3.2)
@@ -483,6 +484,144 @@ namespace scratchbird::optimizer
         double heap_qual_cost_;
         double correlation_;
         std::string index_cond_;
+        std::string filter_;
+    };
+
+    /**
+     * RTreeScanNode - R-tree spatial index scan plan node
+     *
+     * Scans R-tree index to find tuples matching spatial predicate.
+     * R-trees index bounding boxes and support efficient spatial queries.
+     *
+     * Typical predicates:
+     * - ST_Intersects(geometry_column, constant_bbox)
+     * - ST_Contains(geometry_column, constant_point)
+     * - ST_Within(geometry_column, constant_polygon)
+     *
+     * Phase 2, Task 9.2
+     */
+    class RTreeScanNode : public PlanNode
+    {
+    public:
+        /**
+         * Constructor
+         *
+         * @param table_id Table to scan
+         * @param table_name Table name (for EXPLAIN)
+         * @param index_id R-tree index to use
+         * @param index_name Index name (for EXPLAIN)
+         * @param predicate_type Type of spatial predicate
+         */
+        RTreeScanNode(const core::ID &table_id,
+                      const std::string &table_name,
+                      const core::ID &index_id,
+                      const std::string &index_name,
+                      const std::string &predicate_type)
+            : PlanNode(PlanNodeType::RTREE_SCAN),
+              table_id_(table_id),
+              table_name_(table_name),
+              index_id_(index_id),
+              index_name_(index_name),
+              predicate_type_(predicate_type)
+        {
+        }
+
+        /**
+         * Get table ID
+         */
+        const core::ID &tableId() const { return table_id_; }
+
+        /**
+         * Get table name
+         */
+        const std::string &tableName() const { return table_name_; }
+
+        /**
+         * Get index ID
+         */
+        const core::ID &indexId() const { return index_id_; }
+
+        /**
+         * Get index name
+         */
+        const std::string &indexName() const { return index_name_; }
+
+        /**
+         * Get predicate type
+         */
+        const std::string &predicateType() const { return predicate_type_; }
+
+        /**
+         * Set spatial condition (for EXPLAIN display)
+         *
+         * @param spatial_cond Spatial condition string (e.g., "ST_Intersects(location, bbox)")
+         */
+        void setSpatialCond(const std::string &spatial_cond)
+        {
+            spatial_cond_ = spatial_cond;
+        }
+
+        /**
+         * Get spatial condition
+         */
+        const std::string &spatialCond() const { return spatial_cond_; }
+
+        /**
+         * Set filter (additional non-spatial WHERE conditions)
+         *
+         * @param filter Filter condition string
+         */
+        void setFilter(const std::string &filter)
+        {
+            filter_ = filter;
+        }
+
+        /**
+         * Get filter
+         */
+        const std::string &filter() const { return filter_; }
+
+        /**
+         * Convert to human-readable string for EXPLAIN
+         *
+         * Format:
+         *   RTreeScan on <table> using <index> (cost=<startup>..<total> rows=<rows>)
+         *     Spatial Cond: <spatial_cond>
+         *     Filter: <filter>
+         */
+        auto toString(int indent = 0) const -> std::string override
+        {
+            std::string result(indent * 2, ' ');
+            result += "RTreeScan on " + table_name_;
+            result += " using " + index_name_;
+            result += " (cost=" + std::to_string(startup_cost_);
+            result += ".." + std::to_string(total_cost_);
+            result += " rows=" + std::to_string(rows_) + ")";
+
+            if (!spatial_cond_.empty())
+            {
+                result += "\n";
+                result += std::string((indent + 1) * 2, ' ');
+                result += "Spatial Cond: " + spatial_cond_;
+            }
+
+            if (!filter_.empty())
+            {
+                result += "\n";
+                result += std::string((indent + 1) * 2, ' ');
+                result += "Filter: " + filter_;
+            }
+
+            return result;
+        }
+
+    private:
+        core::ID table_id_;
+        std::string table_name_;
+        core::ID index_id_;
+        std::string index_name_;
+        std::string predicate_type_;
+        std::string spatial_cond_;
         std::string filter_;
     };
 

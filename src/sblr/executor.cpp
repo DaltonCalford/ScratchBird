@@ -12,6 +12,10 @@
 #include "scratchbird/core/proc_array.h"
 #include "scratchbird/spatial/wkt_parser.h"
 #include "scratchbird/spatial/wkb.h"
+#include "scratchbird/spatial/geos_wrapper.h"
+#include "scratchbird/geo/geodetic.h"
+#include "scratchbird/geo/proj_wrapper.h"
+#include "scratchbird/geo/srid.h"
 #include <nlohmann/json.hpp>
 #include <sstream>
 #include <iomanip>
@@ -568,6 +572,318 @@ namespace scratchbird
                             // Phase 2 Wave 2 - Agent B: Subquery execution
                             // These opcodes should not appear at statement level - they are expression-level
                             result = ExecutionResult("Subquery opcodes must appear within expressions, not at statement level");
+                        }
+                        // ===== PSQL - Stored Procedures and Functions (Phase 2 Task 10.2, Phase 4-5) =====
+                        else if (ext_op == static_cast<uint8_t>(Opcode::EXT_FUNCTION))
+                        {
+                            executeFunction();
+                            result = ExecutionResult();
+                        }
+                        else if (ext_op == static_cast<uint8_t>(Opcode::EXT_PROCEDURE))
+                        {
+                            executeProcedure();
+                            result = ExecutionResult();
+                        }
+                        else if (ext_op == static_cast<uint8_t>(Opcode::EXT_BLOCK))
+                        {
+                            executeBlock();
+                            result = ExecutionResult();
+                        }
+                        else if (ext_op == static_cast<uint8_t>(Opcode::EXT_DECLARE))
+                        {
+                            executeVarDeclaration();
+                            result = ExecutionResult();
+                        }
+                        else if (ext_op == static_cast<uint8_t>(Opcode::EXT_ASSIGN))
+                        {
+                            executeAssignment();
+                            result = ExecutionResult();
+                        }
+                        else if (ext_op == static_cast<uint8_t>(Opcode::EXT_IF))
+                        {
+                            executeIfStatement();
+                            result = ExecutionResult();
+                        }
+                        else if (ext_op == static_cast<uint8_t>(Opcode::EXT_LOOP))
+                        {
+                            executeLoopStatement();
+                            result = ExecutionResult();
+                        }
+                        else if (ext_op == static_cast<uint8_t>(Opcode::EXT_WHILE))
+                        {
+                            executeWhileStatement();
+                            result = ExecutionResult();
+                        }
+                        else if (ext_op == static_cast<uint8_t>(Opcode::EXT_EXIT))
+                        {
+                            executeExitStatement();
+                            result = ExecutionResult();
+                        }
+                        else if (ext_op == static_cast<uint8_t>(Opcode::EXT_RETURN))
+                        {
+                            executeReturnStatement();
+                            result = ExecutionResult();
+                        }
+                        else if (ext_op == static_cast<uint8_t>(Opcode::EXT_RAISE))
+                        {
+                            executeRaiseStatement();
+                            result = ExecutionResult();
+                        }
+                        else if (ext_op == static_cast<uint8_t>(Opcode::EXT_VAR_LOAD))
+                        {
+                            executeVarLoad();
+                            result = ExecutionResult();
+                        }
+                        else if (ext_op == static_cast<uint8_t>(Opcode::EXT_VAR_STORE))
+                        {
+                            executeVarStore();
+                            result = ExecutionResult();
+                        }
+                        else if (ext_op == static_cast<uint8_t>(Opcode::EXT_JUMP))
+                        {
+                            executeJump();
+                            result = ExecutionResult();
+                        }
+                        else if (ext_op == static_cast<uint8_t>(Opcode::EXT_JUMP_IF_TRUE))
+                        {
+                            executeJumpIfTrue();
+                            result = ExecutionResult();
+                        }
+                        else if (ext_op == static_cast<uint8_t>(Opcode::EXT_JUMP_IF_FALSE))
+                        {
+                            executeJumpIfFalse();
+                            result = ExecutionResult();
+                        }
+                        // ===== Spatial SRID Functions (Phase 2 Task 9.5) =====
+                        else if (ext_op == static_cast<uint8_t>(Opcode::EXT_ST_SRID))
+                        {
+                            // ST_SRID(geom) - get SRID of geometry
+                            Value geom = pop();
+
+                            if (geom.isNull())
+                            {
+                                push(Value::makeNull());
+                            }
+                            else
+                            {
+                                int32_t srid = 0;
+                                if (geom.type() == core::DataType::POINT)
+                                {
+                                    srid = geom.getPoint().getSRID();
+                                }
+                                else if (geom.type() == core::DataType::LINESTRING)
+                                {
+                                    srid = geom.getLineString().getSRID();
+                                }
+                                else if (geom.type() == core::DataType::POLYGON)
+                                {
+                                    srid = geom.getPolygon().getSRID();
+                                }
+                                else
+                                {
+                                    push(Value::makeNull());
+                                    result = ExecutionResult();
+                                    break;
+                                }
+
+                                push(Value::makeInt32(srid));
+                            }
+                            result = ExecutionResult();
+                        }
+                        else if (ext_op == static_cast<uint8_t>(Opcode::EXT_ST_SETSRID))
+                        {
+                            // ST_SetSRID(geom, srid) - set SRID of geometry
+                            Value srid_val = pop();
+                            Value geom = pop();
+
+                            if (geom.isNull() || srid_val.isNull())
+                            {
+                                push(Value::makeNull());
+                            }
+                            else
+                            {
+                                int32_t new_srid = static_cast<int32_t>(srid_val.toInt64());
+
+                                // Create copy with new SRID (don't transform coordinates!)
+                                if (geom.type() == core::DataType::POINT)
+                                {
+                                    core::Point pt = geom.getPoint();
+                                    pt.setSRID(new_srid);
+                                    push(Value::makePoint(pt));
+                                }
+                                else if (geom.type() == core::DataType::LINESTRING)
+                                {
+                                    core::LineString line = geom.getLineString();
+                                    line.setSRID(new_srid);
+                                    push(Value::makeLineString(line));
+                                }
+                                else if (geom.type() == core::DataType::POLYGON)
+                                {
+                                    core::Polygon poly = geom.getPolygon();
+                                    poly.setSRID(new_srid);
+                                    push(Value::makePolygon(poly));
+                                }
+                                else
+                                {
+                                    push(Value::makeNull());
+                                }
+                            }
+                            result = ExecutionResult();
+                        }
+                        else if (ext_op == static_cast<uint8_t>(Opcode::EXT_ST_TRANSFORM))
+                        {
+                            // ST_Transform(geom, target_srid) - transform to different SRID
+                            Value target_srid_val = pop();
+                            Value geom = pop();
+
+                            if (geom.isNull() || target_srid_val.isNull())
+                            {
+                                push(Value::makeNull());
+                                result = ExecutionResult();
+                            }
+                            else
+                            {
+                                int32_t target_srid = static_cast<int32_t>(target_srid_val.toInt64());
+
+#ifdef HAVE_PROJ
+                                try
+                                {
+                                    if (geom.type() == core::DataType::POINT)
+                                    {
+                                        core::Point pt = geom.getPoint();
+                                        int32_t source_srid = pt.getSRID();
+
+                                        if (source_srid == 0)
+                                        {
+                                            error("ST_Transform: geometry must have SRID");
+                                        }
+                                        if (source_srid == target_srid)
+                                        {
+                                            // No transformation needed
+                                            push(geom);
+                                        }
+                                        else
+                                        {
+                                            // Transform coordinates
+                                            geo::PROJTransform transform(source_srid, target_srid);
+                                            double x = pt.x;
+                                            double y = pt.y;
+                                            transform.transform(x, y);
+
+                                            // Create new point with transformed coordinates
+                                            core::Point transformed(x, y, target_srid);
+                                            push(Value::makePoint(transformed));
+                                        }
+                                    }
+                                    else if (geom.type() == core::DataType::LINESTRING)
+                                    {
+                                        core::LineString line = geom.getLineString();
+                                        int32_t source_srid = line.getSRID();
+
+                                        if (source_srid == 0)
+                                        {
+                                            error("ST_Transform: geometry must have SRID");
+                                        }
+                                        if (source_srid == target_srid)
+                                        {
+                                            push(geom);
+                                        }
+                                        else
+                                        {
+                                            // Transform all points
+                                            geo::PROJTransform transform(source_srid, target_srid);
+                                            std::vector<core::Point> transformed_points;
+
+                                            for (const auto &pt : line.points)
+                                            {
+                                                double x = pt.x;
+                                                double y = pt.y;
+                                                transform.transform(x, y);
+                                                transformed_points.emplace_back(x, y, target_srid);
+                                            }
+
+                                            core::LineString transformed(std::move(transformed_points), target_srid);
+                                            push(Value::makeLineString(transformed));
+                                        }
+                                    }
+                                    else if (geom.type() == core::DataType::POLYGON)
+                                    {
+                                        core::Polygon poly = geom.getPolygon();
+                                        int32_t source_srid = poly.getSRID();
+
+                                        if (source_srid == 0)
+                                        {
+                                            error("ST_Transform: geometry must have SRID");
+                                        }
+                                        if (source_srid == target_srid)
+                                        {
+                                            push(geom);
+                                        }
+                                        else
+                                        {
+                                            // Transform all rings
+                                            geo::PROJTransform transform(source_srid, target_srid);
+                                            std::vector<std::vector<core::Point>> transformed_rings;
+
+                                            for (const auto &ring : poly.rings)
+                                            {
+                                                std::vector<core::Point> transformed_ring;
+                                                for (const auto &pt : ring)
+                                                {
+                                                    double x = pt.x;
+                                                    double y = pt.y;
+                                                    transform.transform(x, y);
+                                                    transformed_ring.emplace_back(x, y, target_srid);
+                                                }
+                                                transformed_rings.push_back(std::move(transformed_ring));
+                                            }
+
+                                            core::Polygon transformed(std::move(transformed_rings), target_srid);
+                                            push(Value::makePolygon(transformed));
+                                        }
+                                    }
+                                    else
+                                    {
+                                        push(Value::makeNull());
+                                    }
+                                }
+                                catch (const geo::PROJException &e)
+                                {
+                                    error(std::string("ST_Transform failed: ") + e.what());
+                                }
+#else
+                                error("ST_Transform requires PROJ library (not available)");
+#endif
+                                result = ExecutionResult();
+                            }
+                        }
+                        else if (ext_op == static_cast<uint8_t>(Opcode::EXT_ST_DISTANCE_SPHERE))
+                        {
+                            // ST_Distance_Sphere(geom1, geom2) - geodetic distance (always uses Haversine)
+                            Value geom2 = pop();
+                            Value geom1 = pop();
+
+                            if (geom1.isNull() || geom2.isNull())
+                            {
+                                push(Value::makeNull());
+                            }
+                            else
+                            {
+                                // Only works with points
+                                if (geom1.type() != core::DataType::POINT || geom2.type() != core::DataType::POINT)
+                                {
+                                    error("ST_Distance_Sphere only works with POINT geometries");
+                                }
+
+                                core::Point pt1 = geom1.getPoint();
+                                core::Point pt2 = geom2.getPoint();
+
+                                // Use Haversine formula (assumes geographic coordinates in degrees)
+                                double distance = geo::Geodetic::haversineDistance(pt1.x, pt1.y, pt2.x, pt2.y);
+
+                                push(Value::makeFloat64(distance));
+                            }
+                            result = ExecutionResult();
                         }
                         else
                         {
@@ -6659,6 +6975,1027 @@ namespace scratchbird
                             push(Value::makeBoolean(is_valid));
                         }
                     }
+                    // ========== Phase 2 Task 9.3: Spatial Geometric Operations ==========
+#ifdef HAVE_GEOS
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_ST_BUFFER))
+                    {
+                        // ST_Buffer(geom, distance) - create buffer polygon around geometry
+                        Value distance_val = pop();
+                        Value geom_val = pop();
+
+                        if (geom_val.isNull() || distance_val.isNull())
+                        {
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            try {
+                                double distance = distance_val.toDouble();
+                                spatial::GEOSContext ctx;
+
+                                // Convert ScratchBird geometry to GEOS
+                                spatial::GEOSGeomPtr geos_geom(nullptr, ctx.handle());
+
+                                if (geom_val.type() == core::DataType::POINT)
+                                {
+                                    geos_geom = spatial::pointToGEOS(geom_val.getPoint(), ctx);
+                                }
+                                else if (geom_val.type() == core::DataType::LINESTRING)
+                                {
+                                    geos_geom = spatial::lineStringToGEOS(geom_val.getLineString(), ctx);
+                                }
+                                else if (geom_val.type() == core::DataType::POLYGON)
+                                {
+                                    geos_geom = spatial::polygonToGEOS(geom_val.getPolygon(), ctx);
+                                }
+                                else
+                                {
+                                    push(Value::makeNull());
+                                    break;
+                                }
+
+                                if (!geos_geom)
+                                {
+                                    push(Value::makeNull());
+                                    break;
+                                }
+
+                                // Create buffer (8 segments per quadrant for smoothness)
+                                GEOSGeometry* buffered = GEOSBuffer_r(ctx.handle(), geos_geom.get(), distance, 8);
+                                if (!buffered)
+                                {
+                                    push(Value::makeNull());
+                                    break;
+                                }
+
+                                spatial::GEOSGeomPtr buffered_ptr(buffered, ctx.handle());
+
+                                // Convert back to ScratchBird geometry
+                                auto result = spatial::geosToTypedValue(buffered_ptr.get(), ctx);
+                                if (result)
+                                {
+                                    push(*result);
+                                }
+                                else
+                                {
+                                    push(Value::makeNull());
+                                }
+                            } catch (...) {
+                                push(Value::makeNull());
+                            }
+                        }
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_ST_CONVEXHULL))
+                    {
+                        // ST_ConvexHull(geom) - compute convex hull of geometry
+                        Value geom_val = pop();
+
+                        if (geom_val.isNull())
+                        {
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            try {
+                                spatial::GEOSContext ctx;
+
+                                // Convert ScratchBird geometry to GEOS
+                                spatial::GEOSGeomPtr geos_geom(nullptr, ctx.handle());
+
+                                if (geom_val.type() == core::DataType::POINT)
+                                {
+                                    geos_geom = spatial::pointToGEOS(geom_val.getPoint(), ctx);
+                                }
+                                else if (geom_val.type() == core::DataType::LINESTRING)
+                                {
+                                    geos_geom = spatial::lineStringToGEOS(geom_val.getLineString(), ctx);
+                                }
+                                else if (geom_val.type() == core::DataType::POLYGON)
+                                {
+                                    geos_geom = spatial::polygonToGEOS(geom_val.getPolygon(), ctx);
+                                }
+                                else
+                                {
+                                    push(Value::makeNull());
+                                    break;
+                                }
+
+                                if (!geos_geom)
+                                {
+                                    push(Value::makeNull());
+                                    break;
+                                }
+
+                                // Compute convex hull
+                                GEOSGeometry* hull = GEOSConvexHull_r(ctx.handle(), geos_geom.get());
+                                if (!hull)
+                                {
+                                    push(Value::makeNull());
+                                    break;
+                                }
+
+                                spatial::GEOSGeomPtr hull_ptr(hull, ctx.handle());
+
+                                // Convert back to ScratchBird geometry
+                                auto result = spatial::geosToTypedValue(hull_ptr.get(), ctx);
+                                if (result)
+                                {
+                                    push(*result);
+                                }
+                                else
+                                {
+                                    push(Value::makeNull());
+                                }
+                            } catch (...) {
+                                push(Value::makeNull());
+                            }
+                        }
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_ST_ENVELOPE))
+                    {
+                        // ST_Envelope(geom) - compute minimum bounding box (envelope) of geometry
+                        Value geom_val = pop();
+
+                        if (geom_val.isNull())
+                        {
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            try {
+                                spatial::GEOSContext ctx;
+
+                                // Convert ScratchBird geometry to GEOS
+                                spatial::GEOSGeomPtr geos_geom(nullptr, ctx.handle());
+
+                                if (geom_val.type() == core::DataType::POINT)
+                                {
+                                    geos_geom = spatial::pointToGEOS(geom_val.getPoint(), ctx);
+                                }
+                                else if (geom_val.type() == core::DataType::LINESTRING)
+                                {
+                                    geos_geom = spatial::lineStringToGEOS(geom_val.getLineString(), ctx);
+                                }
+                                else if (geom_val.type() == core::DataType::POLYGON)
+                                {
+                                    geos_geom = spatial::polygonToGEOS(geom_val.getPolygon(), ctx);
+                                }
+                                else
+                                {
+                                    push(Value::makeNull());
+                                    break;
+                                }
+
+                                if (!geos_geom)
+                                {
+                                    push(Value::makeNull());
+                                    break;
+                                }
+
+                                // Compute envelope (bounding box)
+                                GEOSGeometry* envelope = GEOSEnvelope_r(ctx.handle(), geos_geom.get());
+                                if (!envelope)
+                                {
+                                    push(Value::makeNull());
+                                    break;
+                                }
+
+                                spatial::GEOSGeomPtr envelope_ptr(envelope, ctx.handle());
+
+                                // Convert back to ScratchBird geometry
+                                auto result = spatial::geosToTypedValue(envelope_ptr.get(), ctx);
+                                if (result)
+                                {
+                                    push(*result);
+                                }
+                                else
+                                {
+                                    push(Value::makeNull());
+                                }
+                            } catch (...) {
+                                push(Value::makeNull());
+                            }
+                        }
+                    }
+                    // ========== Phase 2 Task 9.3: Spatial Predicates (G2/G4) ==========
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_ST_INTERSECTS))
+                    {
+                        // ST_Intersects(geom1, geom2) - do geometries intersect?
+                        Value geom2_val = pop();
+                        Value geom1_val = pop();
+
+                        if (geom1_val.isNull() || geom2_val.isNull())
+                        {
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            try {
+                                spatial::GEOSContext ctx;
+
+                                // Convert both geometries to GEOS
+                                spatial::GEOSGeomPtr g1(nullptr, ctx.handle());
+                                spatial::GEOSGeomPtr g2(nullptr, ctx.handle());
+
+                                if (geom1_val.type() == core::DataType::POINT)
+                                    g1 = spatial::pointToGEOS(geom1_val.getPoint(), ctx);
+                                else if (geom1_val.type() == core::DataType::LINESTRING)
+                                    g1 = spatial::lineStringToGEOS(geom1_val.getLineString(), ctx);
+                                else if (geom1_val.type() == core::DataType::POLYGON)
+                                    g1 = spatial::polygonToGEOS(geom1_val.getPolygon(), ctx);
+
+                                if (geom2_val.type() == core::DataType::POINT)
+                                    g2 = spatial::pointToGEOS(geom2_val.getPoint(), ctx);
+                                else if (geom2_val.type() == core::DataType::LINESTRING)
+                                    g2 = spatial::lineStringToGEOS(geom2_val.getLineString(), ctx);
+                                else if (geom2_val.type() == core::DataType::POLYGON)
+                                    g2 = spatial::polygonToGEOS(geom2_val.getPolygon(), ctx);
+
+                                if (!g1 || !g2)
+                                {
+                                    push(Value::makeNull());
+                                }
+                                else
+                                {
+                                    char result = GEOSIntersects_r(ctx.handle(), g1.get(), g2.get());
+                                    if (result == 2) // Error
+                                    {
+                                        push(Value::makeNull());
+                                    }
+                                    else
+                                    {
+                                        push(Value::makeBoolean(result == 1));
+                                    }
+                                }
+                            } catch (...) {
+                                push(Value::makeNull());
+                            }
+                        }
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_ST_CONTAINS))
+                    {
+                        // ST_Contains(geom1, geom2) - does geom1 contain geom2?
+                        Value geom2_val = pop();
+                        Value geom1_val = pop();
+
+                        if (geom1_val.isNull() || geom2_val.isNull())
+                        {
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            try {
+                                spatial::GEOSContext ctx;
+
+                                spatial::GEOSGeomPtr g1(nullptr, ctx.handle());
+                                spatial::GEOSGeomPtr g2(nullptr, ctx.handle());
+
+                                if (geom1_val.type() == core::DataType::POINT)
+                                    g1 = spatial::pointToGEOS(geom1_val.getPoint(), ctx);
+                                else if (geom1_val.type() == core::DataType::LINESTRING)
+                                    g1 = spatial::lineStringToGEOS(geom1_val.getLineString(), ctx);
+                                else if (geom1_val.type() == core::DataType::POLYGON)
+                                    g1 = spatial::polygonToGEOS(geom1_val.getPolygon(), ctx);
+
+                                if (geom2_val.type() == core::DataType::POINT)
+                                    g2 = spatial::pointToGEOS(geom2_val.getPoint(), ctx);
+                                else if (geom2_val.type() == core::DataType::LINESTRING)
+                                    g2 = spatial::lineStringToGEOS(geom2_val.getLineString(), ctx);
+                                else if (geom2_val.type() == core::DataType::POLYGON)
+                                    g2 = spatial::polygonToGEOS(geom2_val.getPolygon(), ctx);
+
+                                if (!g1 || !g2)
+                                {
+                                    push(Value::makeNull());
+                                }
+                                else
+                                {
+                                    char result = GEOSContains_r(ctx.handle(), g1.get(), g2.get());
+                                    if (result == 2)
+                                    {
+                                        push(Value::makeNull());
+                                    }
+                                    else
+                                    {
+                                        push(Value::makeBoolean(result == 1));
+                                    }
+                                }
+                            } catch (...) {
+                                push(Value::makeNull());
+                            }
+                        }
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_ST_WITHIN))
+                    {
+                        // ST_Within(geom1, geom2) - is geom1 within geom2?
+                        Value geom2_val = pop();
+                        Value geom1_val = pop();
+
+                        if (geom1_val.isNull() || geom2_val.isNull())
+                        {
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            try {
+                                spatial::GEOSContext ctx;
+
+                                spatial::GEOSGeomPtr g1(nullptr, ctx.handle());
+                                spatial::GEOSGeomPtr g2(nullptr, ctx.handle());
+
+                                if (geom1_val.type() == core::DataType::POINT)
+                                    g1 = spatial::pointToGEOS(geom1_val.getPoint(), ctx);
+                                else if (geom1_val.type() == core::DataType::LINESTRING)
+                                    g1 = spatial::lineStringToGEOS(geom1_val.getLineString(), ctx);
+                                else if (geom1_val.type() == core::DataType::POLYGON)
+                                    g1 = spatial::polygonToGEOS(geom1_val.getPolygon(), ctx);
+
+                                if (geom2_val.type() == core::DataType::POINT)
+                                    g2 = spatial::pointToGEOS(geom2_val.getPoint(), ctx);
+                                else if (geom2_val.type() == core::DataType::LINESTRING)
+                                    g2 = spatial::lineStringToGEOS(geom2_val.getLineString(), ctx);
+                                else if (geom2_val.type() == core::DataType::POLYGON)
+                                    g2 = spatial::polygonToGEOS(geom2_val.getPolygon(), ctx);
+
+                                if (!g1 || !g2)
+                                {
+                                    push(Value::makeNull());
+                                }
+                                else
+                                {
+                                    char result = GEOSWithin_r(ctx.handle(), g1.get(), g2.get());
+                                    if (result == 2)
+                                    {
+                                        push(Value::makeNull());
+                                    }
+                                    else
+                                    {
+                                        push(Value::makeBoolean(result == 1));
+                                    }
+                                }
+                            } catch (...) {
+                                push(Value::makeNull());
+                            }
+                        }
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_ST_EQUALS))
+                    {
+                        // ST_Equals(geom1, geom2) - are geometries spatially equal?
+                        Value geom2_val = pop();
+                        Value geom1_val = pop();
+
+                        if (geom1_val.isNull() || geom2_val.isNull())
+                        {
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            try {
+                                spatial::GEOSContext ctx;
+
+                                spatial::GEOSGeomPtr g1(nullptr, ctx.handle());
+                                spatial::GEOSGeomPtr g2(nullptr, ctx.handle());
+
+                                if (geom1_val.type() == core::DataType::POINT)
+                                    g1 = spatial::pointToGEOS(geom1_val.getPoint(), ctx);
+                                else if (geom1_val.type() == core::DataType::LINESTRING)
+                                    g1 = spatial::lineStringToGEOS(geom1_val.getLineString(), ctx);
+                                else if (geom1_val.type() == core::DataType::POLYGON)
+                                    g1 = spatial::polygonToGEOS(geom1_val.getPolygon(), ctx);
+
+                                if (geom2_val.type() == core::DataType::POINT)
+                                    g2 = spatial::pointToGEOS(geom2_val.getPoint(), ctx);
+                                else if (geom2_val.type() == core::DataType::LINESTRING)
+                                    g2 = spatial::lineStringToGEOS(geom2_val.getLineString(), ctx);
+                                else if (geom2_val.type() == core::DataType::POLYGON)
+                                    g2 = spatial::polygonToGEOS(geom2_val.getPolygon(), ctx);
+
+                                if (!g1 || !g2)
+                                {
+                                    push(Value::makeNull());
+                                }
+                                else
+                                {
+                                    char result = GEOSEquals_r(ctx.handle(), g1.get(), g2.get());
+                                    if (result == 2) // Error
+                                    {
+                                        push(Value::makeNull());
+                                    }
+                                    else
+                                    {
+                                        push(Value::makeBoolean(result == 1));
+                                    }
+                                }
+                            } catch (...) {
+                                push(Value::makeNull());
+                            }
+                        }
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_ST_DISJOINT))
+                    {
+                        // ST_Disjoint(geom1, geom2) - are geometries disjoint?
+                        Value geom2_val = pop();
+                        Value geom1_val = pop();
+
+                        if (geom1_val.isNull() || geom2_val.isNull())
+                        {
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            try {
+                                spatial::GEOSContext ctx;
+
+                                spatial::GEOSGeomPtr g1(nullptr, ctx.handle());
+                                spatial::GEOSGeomPtr g2(nullptr, ctx.handle());
+
+                                if (geom1_val.type() == core::DataType::POINT)
+                                    g1 = spatial::pointToGEOS(geom1_val.getPoint(), ctx);
+                                else if (geom1_val.type() == core::DataType::LINESTRING)
+                                    g1 = spatial::lineStringToGEOS(geom1_val.getLineString(), ctx);
+                                else if (geom1_val.type() == core::DataType::POLYGON)
+                                    g1 = spatial::polygonToGEOS(geom1_val.getPolygon(), ctx);
+
+                                if (geom2_val.type() == core::DataType::POINT)
+                                    g2 = spatial::pointToGEOS(geom2_val.getPoint(), ctx);
+                                else if (geom2_val.type() == core::DataType::LINESTRING)
+                                    g2 = spatial::lineStringToGEOS(geom2_val.getLineString(), ctx);
+                                else if (geom2_val.type() == core::DataType::POLYGON)
+                                    g2 = spatial::polygonToGEOS(geom2_val.getPolygon(), ctx);
+
+                                if (!g1 || !g2)
+                                {
+                                    push(Value::makeNull());
+                                }
+                                else
+                                {
+                                    char result = GEOSDisjoint_r(ctx.handle(), g1.get(), g2.get());
+                                    if (result == 2)
+                                    {
+                                        push(Value::makeNull());
+                                    }
+                                    else
+                                    {
+                                        push(Value::makeBoolean(result == 1));
+                                    }
+                                }
+                            } catch (...) {
+                                push(Value::makeNull());
+                            }
+                        }
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_ST_OVERLAPS))
+                    {
+                        // ST_Overlaps(geom1, geom2) - do geometries overlap?
+                        Value geom2_val = pop();
+                        Value geom1_val = pop();
+
+                        if (geom1_val.isNull() || geom2_val.isNull())
+                        {
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            try {
+                                spatial::GEOSContext ctx;
+
+                                spatial::GEOSGeomPtr g1(nullptr, ctx.handle());
+                                spatial::GEOSGeomPtr g2(nullptr, ctx.handle());
+
+                                if (geom1_val.type() == core::DataType::POINT)
+                                    g1 = spatial::pointToGEOS(geom1_val.getPoint(), ctx);
+                                else if (geom1_val.type() == core::DataType::LINESTRING)
+                                    g1 = spatial::lineStringToGEOS(geom1_val.getLineString(), ctx);
+                                else if (geom1_val.type() == core::DataType::POLYGON)
+                                    g1 = spatial::polygonToGEOS(geom1_val.getPolygon(), ctx);
+
+                                if (geom2_val.type() == core::DataType::POINT)
+                                    g2 = spatial::pointToGEOS(geom2_val.getPoint(), ctx);
+                                else if (geom2_val.type() == core::DataType::LINESTRING)
+                                    g2 = spatial::lineStringToGEOS(geom2_val.getLineString(), ctx);
+                                else if (geom2_val.type() == core::DataType::POLYGON)
+                                    g2 = spatial::polygonToGEOS(geom2_val.getPolygon(), ctx);
+
+                                if (!g1 || !g2)
+                                {
+                                    push(Value::makeNull());
+                                }
+                                else
+                                {
+                                    char result = GEOSOverlaps_r(ctx.handle(), g1.get(), g2.get());
+                                    if (result == 2)
+                                    {
+                                        push(Value::makeNull());
+                                    }
+                                    else
+                                    {
+                                        push(Value::makeBoolean(result == 1));
+                                    }
+                                }
+                            } catch (...) {
+                                push(Value::makeNull());
+                            }
+                        }
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_ST_TOUCHES))
+                    {
+                        // ST_Touches(geom1, geom2) - do geometries touch?
+                        Value geom2_val = pop();
+                        Value geom1_val = pop();
+
+                        if (geom1_val.isNull() || geom2_val.isNull())
+                        {
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            try {
+                                spatial::GEOSContext ctx;
+
+                                spatial::GEOSGeomPtr g1(nullptr, ctx.handle());
+                                spatial::GEOSGeomPtr g2(nullptr, ctx.handle());
+
+                                if (geom1_val.type() == core::DataType::POINT)
+                                    g1 = spatial::pointToGEOS(geom1_val.getPoint(), ctx);
+                                else if (geom1_val.type() == core::DataType::LINESTRING)
+                                    g1 = spatial::lineStringToGEOS(geom1_val.getLineString(), ctx);
+                                else if (geom1_val.type() == core::DataType::POLYGON)
+                                    g1 = spatial::polygonToGEOS(geom1_val.getPolygon(), ctx);
+
+                                if (geom2_val.type() == core::DataType::POINT)
+                                    g2 = spatial::pointToGEOS(geom2_val.getPoint(), ctx);
+                                else if (geom2_val.type() == core::DataType::LINESTRING)
+                                    g2 = spatial::lineStringToGEOS(geom2_val.getLineString(), ctx);
+                                else if (geom2_val.type() == core::DataType::POLYGON)
+                                    g2 = spatial::polygonToGEOS(geom2_val.getPolygon(), ctx);
+
+                                if (!g1 || !g2)
+                                {
+                                    push(Value::makeNull());
+                                }
+                                else
+                                {
+                                    char result = GEOSTouches_r(ctx.handle(), g1.get(), g2.get());
+                                    if (result == 2)
+                                    {
+                                        push(Value::makeNull());
+                                    }
+                                    else
+                                    {
+                                        push(Value::makeBoolean(result == 1));
+                                    }
+                                }
+                            } catch (...) {
+                                push(Value::makeNull());
+                            }
+                        }
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_ST_CROSSES))
+                    {
+                        // ST_Crosses(geom1, geom2) - do geometries cross?
+                        Value geom2_val = pop();
+                        Value geom1_val = pop();
+
+                        if (geom1_val.isNull() || geom2_val.isNull())
+                        {
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            try {
+                                spatial::GEOSContext ctx;
+
+                                spatial::GEOSGeomPtr g1(nullptr, ctx.handle());
+                                spatial::GEOSGeomPtr g2(nullptr, ctx.handle());
+
+                                if (geom1_val.type() == core::DataType::POINT)
+                                    g1 = spatial::pointToGEOS(geom1_val.getPoint(), ctx);
+                                else if (geom1_val.type() == core::DataType::LINESTRING)
+                                    g1 = spatial::lineStringToGEOS(geom1_val.getLineString(), ctx);
+                                else if (geom1_val.type() == core::DataType::POLYGON)
+                                    g1 = spatial::polygonToGEOS(geom1_val.getPolygon(), ctx);
+
+                                if (geom2_val.type() == core::DataType::POINT)
+                                    g2 = spatial::pointToGEOS(geom2_val.getPoint(), ctx);
+                                else if (geom2_val.type() == core::DataType::LINESTRING)
+                                    g2 = spatial::lineStringToGEOS(geom2_val.getLineString(), ctx);
+                                else if (geom2_val.type() == core::DataType::POLYGON)
+                                    g2 = spatial::polygonToGEOS(geom2_val.getPolygon(), ctx);
+
+                                if (!g1 || !g2)
+                                {
+                                    push(Value::makeNull());
+                                }
+                                else
+                                {
+                                    char result = GEOSCrosses_r(ctx.handle(), g1.get(), g2.get());
+                                    if (result == 2)
+                                    {
+                                        push(Value::makeNull());
+                                    }
+                                    else
+                                    {
+                                        push(Value::makeBoolean(result == 1));
+                                    }
+                                }
+                            } catch (...) {
+                                push(Value::makeNull());
+                            }
+                        }
+                    }
+                    // ========== Phase 2 Task 9.3: Spatial Processing Functions (G4) ==========
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_ST_INTERSECTION))
+                    {
+                        // ST_Intersection(geom1, geom2) - compute intersection geometry
+                        Value geom2_val = pop();
+                        Value geom1_val = pop();
+
+                        if (geom1_val.isNull() || geom2_val.isNull())
+                        {
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            try {
+                                spatial::GEOSContext ctx;
+
+                                spatial::GEOSGeomPtr g1(nullptr, ctx.handle());
+                                spatial::GEOSGeomPtr g2(nullptr, ctx.handle());
+
+                                if (geom1_val.type() == core::DataType::POINT)
+                                    g1 = spatial::pointToGEOS(geom1_val.getPoint(), ctx);
+                                else if (geom1_val.type() == core::DataType::LINESTRING)
+                                    g1 = spatial::lineStringToGEOS(geom1_val.getLineString(), ctx);
+                                else if (geom1_val.type() == core::DataType::POLYGON)
+                                    g1 = spatial::polygonToGEOS(geom1_val.getPolygon(), ctx);
+
+                                if (geom2_val.type() == core::DataType::POINT)
+                                    g2 = spatial::pointToGEOS(geom2_val.getPoint(), ctx);
+                                else if (geom2_val.type() == core::DataType::LINESTRING)
+                                    g2 = spatial::lineStringToGEOS(geom2_val.getLineString(), ctx);
+                                else if (geom2_val.type() == core::DataType::POLYGON)
+                                    g2 = spatial::polygonToGEOS(geom2_val.getPolygon(), ctx);
+
+                                if (!g1 || !g2)
+                                {
+                                    push(Value::makeNull());
+                                    break;
+                                }
+
+                                GEOSGeometry* result_geom = GEOSIntersection_r(ctx.handle(), g1.get(), g2.get());
+                                if (!result_geom)
+                                {
+                                    push(Value::makeNull());
+                                    break;
+                                }
+
+                                spatial::GEOSGeomPtr result_ptr(result_geom, ctx.handle());
+
+                                // Check if result is empty
+                                if (GEOSisEmpty_r(ctx.handle(), result_ptr.get()) == 1)
+                                {
+                                    push(Value::makeNull());
+                                }
+                                else
+                                {
+                                    auto result = spatial::geosToTypedValue(result_ptr.get(), ctx);
+                                    if (result)
+                                    {
+                                        push(*result);
+                                    }
+                                    else
+                                    {
+                                        push(Value::makeNull());
+                                    }
+                                }
+                            } catch (...) {
+                                push(Value::makeNull());
+                            }
+                        }
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_ST_UNION))
+                    {
+                        // ST_Union(geom1, geom2) - compute union geometry
+                        Value geom2_val = pop();
+                        Value geom1_val = pop();
+
+                        if (geom1_val.isNull() || geom2_val.isNull())
+                        {
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            try {
+                                spatial::GEOSContext ctx;
+
+                                spatial::GEOSGeomPtr g1(nullptr, ctx.handle());
+                                spatial::GEOSGeomPtr g2(nullptr, ctx.handle());
+
+                                if (geom1_val.type() == core::DataType::POINT)
+                                    g1 = spatial::pointToGEOS(geom1_val.getPoint(), ctx);
+                                else if (geom1_val.type() == core::DataType::LINESTRING)
+                                    g1 = spatial::lineStringToGEOS(geom1_val.getLineString(), ctx);
+                                else if (geom1_val.type() == core::DataType::POLYGON)
+                                    g1 = spatial::polygonToGEOS(geom1_val.getPolygon(), ctx);
+
+                                if (geom2_val.type() == core::DataType::POINT)
+                                    g2 = spatial::pointToGEOS(geom2_val.getPoint(), ctx);
+                                else if (geom2_val.type() == core::DataType::LINESTRING)
+                                    g2 = spatial::lineStringToGEOS(geom2_val.getLineString(), ctx);
+                                else if (geom2_val.type() == core::DataType::POLYGON)
+                                    g2 = spatial::polygonToGEOS(geom2_val.getPolygon(), ctx);
+
+                                if (!g1 || !g2)
+                                {
+                                    push(Value::makeNull());
+                                    break;
+                                }
+
+                                GEOSGeometry* result_geom = GEOSUnion_r(ctx.handle(), g1.get(), g2.get());
+                                if (!result_geom)
+                                {
+                                    push(Value::makeNull());
+                                    break;
+                                }
+
+                                spatial::GEOSGeomPtr result_ptr(result_geom, ctx.handle());
+
+                                auto result = spatial::geosToTypedValue(result_ptr.get(), ctx);
+                                if (result)
+                                {
+                                    push(*result);
+                                }
+                                else
+                                {
+                                    push(Value::makeNull());
+                                }
+                            } catch (...) {
+                                push(Value::makeNull());
+                            }
+                        }
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_ST_DIFFERENCE))
+                    {
+                        // ST_Difference(geom1, geom2) - compute difference (geom1 - geom2)
+                        Value geom2_val = pop();
+                        Value geom1_val = pop();
+
+                        if (geom1_val.isNull() || geom2_val.isNull())
+                        {
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            try {
+                                spatial::GEOSContext ctx;
+
+                                spatial::GEOSGeomPtr g1(nullptr, ctx.handle());
+                                spatial::GEOSGeomPtr g2(nullptr, ctx.handle());
+
+                                if (geom1_val.type() == core::DataType::POINT)
+                                    g1 = spatial::pointToGEOS(geom1_val.getPoint(), ctx);
+                                else if (geom1_val.type() == core::DataType::LINESTRING)
+                                    g1 = spatial::lineStringToGEOS(geom1_val.getLineString(), ctx);
+                                else if (geom1_val.type() == core::DataType::POLYGON)
+                                    g1 = spatial::polygonToGEOS(geom1_val.getPolygon(), ctx);
+
+                                if (geom2_val.type() == core::DataType::POINT)
+                                    g2 = spatial::pointToGEOS(geom2_val.getPoint(), ctx);
+                                else if (geom2_val.type() == core::DataType::LINESTRING)
+                                    g2 = spatial::lineStringToGEOS(geom2_val.getLineString(), ctx);
+                                else if (geom2_val.type() == core::DataType::POLYGON)
+                                    g2 = spatial::polygonToGEOS(geom2_val.getPolygon(), ctx);
+
+                                if (!g1 || !g2)
+                                {
+                                    push(Value::makeNull());
+                                    break;
+                                }
+
+                                GEOSGeometry* result_geom = GEOSDifference_r(ctx.handle(), g1.get(), g2.get());
+                                if (!result_geom)
+                                {
+                                    push(Value::makeNull());
+                                    break;
+                                }
+
+                                spatial::GEOSGeomPtr result_ptr(result_geom, ctx.handle());
+
+                                // Check if result is empty
+                                if (GEOSisEmpty_r(ctx.handle(), result_ptr.get()) == 1)
+                                {
+                                    push(Value::makeNull());
+                                }
+                                else
+                                {
+                                    auto result = spatial::geosToTypedValue(result_ptr.get(), ctx);
+                                    if (result)
+                                    {
+                                        push(*result);
+                                    }
+                                    else
+                                    {
+                                        push(Value::makeNull());
+                                    }
+                                }
+                            } catch (...) {
+                                push(Value::makeNull());
+                            }
+                        }
+                    }
+                    // ========== Phase 2 Task 9.3: Spatial Metrics (G4) ==========
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_ST_AREA))
+                    {
+                        // ST_Area(geom) - compute area of polygon
+                        Value geom_val = pop();
+
+                        if (geom_val.isNull())
+                        {
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            try {
+                                spatial::GEOSContext ctx;
+
+                                spatial::GEOSGeomPtr g(nullptr, ctx.handle());
+
+                                if (geom_val.type() == core::DataType::POINT)
+                                    g = spatial::pointToGEOS(geom_val.getPoint(), ctx);
+                                else if (geom_val.type() == core::DataType::LINESTRING)
+                                    g = spatial::lineStringToGEOS(geom_val.getLineString(), ctx);
+                                else if (geom_val.type() == core::DataType::POLYGON)
+                                    g = spatial::polygonToGEOS(geom_val.getPolygon(), ctx);
+
+                                if (!g)
+                                {
+                                    push(Value::makeNull());
+                                    break;
+                                }
+
+                                double area;
+                                if (GEOSArea_r(ctx.handle(), g.get(), &area) == 0)
+                                {
+                                    push(Value::makeNull());
+                                }
+                                else
+                                {
+                                    push(Value::makeFloat64(area));
+                                }
+                            } catch (...) {
+                                push(Value::makeNull());
+                            }
+                        }
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_ST_LENGTH))
+                    {
+                        // ST_Length(geom) - compute length of linestring
+                        Value geom_val = pop();
+
+                        if (geom_val.isNull())
+                        {
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            try {
+                                spatial::GEOSContext ctx;
+
+                                spatial::GEOSGeomPtr g(nullptr, ctx.handle());
+
+                                if (geom_val.type() == core::DataType::POINT)
+                                    g = spatial::pointToGEOS(geom_val.getPoint(), ctx);
+                                else if (geom_val.type() == core::DataType::LINESTRING)
+                                    g = spatial::lineStringToGEOS(geom_val.getLineString(), ctx);
+                                else if (geom_val.type() == core::DataType::POLYGON)
+                                    g = spatial::polygonToGEOS(geom_val.getPolygon(), ctx);
+
+                                if (!g)
+                                {
+                                    push(Value::makeNull());
+                                    break;
+                                }
+
+                                double length;
+                                if (GEOSLength_r(ctx.handle(), g.get(), &length) == 0)
+                                {
+                                    push(Value::makeNull());
+                                }
+                                else
+                                {
+                                    push(Value::makeFloat64(length));
+                                }
+                            } catch (...) {
+                                push(Value::makeNull());
+                            }
+                        }
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_ST_DISTANCE))
+                    {
+                        // ST_Distance(geom1, geom2) - compute distance between geometries
+                        Value geom2_val = pop();
+                        Value geom1_val = pop();
+
+                        if (geom1_val.isNull() || geom2_val.isNull())
+                        {
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            try {
+                                spatial::GEOSContext ctx;
+
+                                spatial::GEOSGeomPtr g1(nullptr, ctx.handle());
+                                spatial::GEOSGeomPtr g2(nullptr, ctx.handle());
+
+                                if (geom1_val.type() == core::DataType::POINT)
+                                    g1 = spatial::pointToGEOS(geom1_val.getPoint(), ctx);
+                                else if (geom1_val.type() == core::DataType::LINESTRING)
+                                    g1 = spatial::lineStringToGEOS(geom1_val.getLineString(), ctx);
+                                else if (geom1_val.type() == core::DataType::POLYGON)
+                                    g1 = spatial::polygonToGEOS(geom1_val.getPolygon(), ctx);
+
+                                if (geom2_val.type() == core::DataType::POINT)
+                                    g2 = spatial::pointToGEOS(geom2_val.getPoint(), ctx);
+                                else if (geom2_val.type() == core::DataType::LINESTRING)
+                                    g2 = spatial::lineStringToGEOS(geom2_val.getLineString(), ctx);
+                                else if (geom2_val.type() == core::DataType::POLYGON)
+                                    g2 = spatial::polygonToGEOS(geom2_val.getPolygon(), ctx);
+
+                                if (!g1 || !g2)
+                                {
+                                    push(Value::makeNull());
+                                    break;
+                                }
+
+                                double distance;
+                                if (GEOSDistance_r(ctx.handle(), g1.get(), g2.get(), &distance) == 0)
+                                {
+                                    push(Value::makeNull());
+                                }
+                                else
+                                {
+                                    push(Value::makeFloat64(distance));
+                                }
+                            } catch (...) {
+                                push(Value::makeNull());
+                            }
+                        }
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_ST_PERIMETER))
+                    {
+                        // ST_Perimeter(geom) - compute perimeter of polygon
+                        Value geom_val = pop();
+
+                        if (geom_val.isNull())
+                        {
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            try {
+                                spatial::GEOSContext ctx;
+
+                                spatial::GEOSGeomPtr g(nullptr, ctx.handle());
+
+                                if (geom_val.type() == core::DataType::POINT)
+                                    g = spatial::pointToGEOS(geom_val.getPoint(), ctx);
+                                else if (geom_val.type() == core::DataType::LINESTRING)
+                                    g = spatial::lineStringToGEOS(geom_val.getLineString(), ctx);
+                                else if (geom_val.type() == core::DataType::POLYGON)
+                                    g = spatial::polygonToGEOS(geom_val.getPolygon(), ctx);
+
+                                if (!g)
+                                {
+                                    push(Value::makeNull());
+                                    break;
+                                }
+
+                                // For GEOS, perimeter is computed using GEOSLength on the boundary
+                                GEOSGeometry* boundary = GEOSBoundary_r(ctx.handle(), g.get());
+                                if (!boundary)
+                                {
+                                    push(Value::makeNull());
+                                    break;
+                                }
+
+                                spatial::GEOSGeomPtr boundary_ptr(boundary, ctx.handle());
+
+                                double perimeter;
+                                if (GEOSLength_r(ctx.handle(), boundary_ptr.get(), &perimeter) == 0)
+                                {
+                                    push(Value::makeNull());
+                                }
+                                else
+                                {
+                                    push(Value::makeFloat64(perimeter));
+                                }
+                            } catch (...) {
+                                push(Value::makeNull());
+                            }
+                        }
+                    }
+#endif // HAVE_GEOS
                     // ========== Phase 2 Task 13: Text Search and Regex Operators ==========
                     else if (ext_op == static_cast<uint8_t>(Opcode::EXT_REGEX_MATCH))
                     {
@@ -8458,6 +9795,624 @@ namespace scratchbird
                         current_result_set_->addRow(std::move(combined_row));
                     }
                 }
+            }
+        }
+
+        // ===== PSQL - Stored Procedures and Functions (Phase 2 Task 10.2, Phase 4) =====
+
+        // Variable Stack Implementation
+        void Executor::VariableStack::pushFrame()
+        {
+            if (frames_.empty())
+            {
+                frames_.push_back(std::make_unique<VariableFrame>());
+            }
+            else
+            {
+                frames_.push_back(std::make_unique<VariableFrame>(frames_.back().get()));
+            }
+        }
+
+        void Executor::VariableStack::popFrame()
+        {
+            if (!frames_.empty())
+            {
+                frames_.pop_back();
+            }
+        }
+
+        void Executor::VariableStack::declareVariable(const std::string& name, const Value& value)
+        {
+            if (frames_.empty())
+            {
+                throw std::runtime_error("No variable frame available");
+            }
+            frames_.back()->variables[name] = value;
+        }
+
+        Value& Executor::VariableStack::getVariable(const std::string& name)
+        {
+            // Search from current frame up to parent frames
+            for (auto it = frames_.rbegin(); it != frames_.rend(); ++it)
+            {
+                auto var_it = (*it)->variables.find(name);
+                if (var_it != (*it)->variables.end())
+                {
+                    return var_it->second;
+                }
+            }
+            throw std::runtime_error("Variable not found: " + name);
+        }
+
+        void Executor::VariableStack::setVariable(const std::string& name, const Value& value)
+        {
+            // Search from current frame up to parent frames
+            for (auto it = frames_.rbegin(); it != frames_.rend(); ++it)
+            {
+                auto var_it = (*it)->variables.find(name);
+                if (var_it != (*it)->variables.end())
+                {
+                    var_it->second = value;
+                    return;
+                }
+            }
+            throw std::runtime_error("Variable not found: " + name);
+        }
+
+        bool Executor::VariableStack::hasVariable(const std::string& name) const
+        {
+            for (auto it = frames_.rbegin(); it != frames_.rend(); ++it)
+            {
+                if ((*it)->variables.find(name) != (*it)->variables.end())
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        // PSQL Statement Execution
+
+        void Executor::executeFunction()
+        {
+            // Read function name
+            std::string function_name = readString();
+
+            // Read parameter count
+            uint8_t param_count = readByte();
+
+            // Initialize variable stack if not already done
+            if (!variable_stack_)
+            {
+                variable_stack_ = std::make_unique<VariableStack>();
+            }
+
+            // Push new frame for function
+            variable_stack_->pushFrame();
+
+            // Read parameters and bind to variables
+            for (uint8_t i = 0; i < param_count; ++i)
+            {
+                uint8_t mode = readByte();  // IN, OUT, INOUT
+                std::string param_name = readString();
+                uint8_t type_code = readByte();
+
+                // For now, parameters are passed on the stack
+                // Pop value from stack and bind to variable
+                if (!stack_.empty() && mode == 0)  // IN parameter
+                {
+                    Value param_value = pop();
+                    variable_stack_->declareVariable(param_name, param_value);
+                }
+                else
+                {
+                    // OUT/INOUT parameters initialized to NULL
+                    variable_stack_->declareVariable(param_name, Value());
+                }
+            }
+
+            // Read return type
+            uint8_t return_type = readByte();
+
+            // Execute function body (should be a BLOCK)
+            uint8_t block_opcode = readByte();
+            if (block_opcode == static_cast<uint8_t>(Opcode::EXTENDED_OPCODE))
+            {
+                uint8_t ext_opcode = readByte();
+                if (ext_opcode == static_cast<uint8_t>(Opcode::EXT_BLOCK))
+                {
+                    executeBlock();
+                }
+            }
+
+            // Pop function frame
+            variable_stack_->popFrame();
+
+            // Push return value onto stack
+            if (return_requested_)
+            {
+                push(return_value_);
+                return_requested_ = false;
+            }
+            else
+            {
+                push(Value());  // NULL if no return
+            }
+        }
+
+        void Executor::executeProcedure()
+        {
+            // Read procedure name
+            std::string procedure_name = readString();
+
+            // Read parameter count
+            uint8_t param_count = readByte();
+
+            // Initialize variable stack if not already done
+            if (!variable_stack_)
+            {
+                variable_stack_ = std::make_unique<VariableStack>();
+            }
+
+            // Push new frame for procedure
+            variable_stack_->pushFrame();
+
+            // Read parameters and bind to variables
+            for (uint8_t i = 0; i < param_count; ++i)
+            {
+                uint8_t mode = readByte();  // IN, OUT, INOUT
+                std::string param_name = readString();
+                uint8_t type_code = readByte();
+
+                // Parameters passed on stack (IN) or initialized to NULL (OUT/INOUT)
+                if (!stack_.empty() && mode == 0)  // IN parameter
+                {
+                    Value param_value = pop();
+                    variable_stack_->declareVariable(param_name, param_value);
+                }
+                else
+                {
+                    variable_stack_->declareVariable(param_name, Value());
+                }
+            }
+
+            // Execute procedure body (should be a BLOCK)
+            uint8_t block_opcode = readByte();
+            if (block_opcode == static_cast<uint8_t>(Opcode::EXTENDED_OPCODE))
+            {
+                uint8_t ext_opcode = readByte();
+                if (ext_opcode == static_cast<uint8_t>(Opcode::EXT_BLOCK))
+                {
+                    executeBlock();
+                }
+            }
+
+            // Pop procedure frame
+            variable_stack_->popFrame();
+
+            // Procedures don't return values
+            return_requested_ = false;
+        }
+
+        void Executor::executeBlock()
+        {
+            // Read variable declaration count
+            uint8_t var_count = readByte();
+
+            // Push new block frame
+            if (!variable_stack_)
+            {
+                variable_stack_ = std::make_unique<VariableStack>();
+            }
+            variable_stack_->pushFrame();
+
+            // Process variable declarations
+            for (uint8_t i = 0; i < var_count; ++i)
+            {
+                // Should encounter EXT_DECLARE opcode
+                uint8_t ext_marker = readByte();
+                if (ext_marker == static_cast<uint8_t>(Opcode::EXTENDED_OPCODE))
+                {
+                    uint8_t ext_opcode = readByte();
+                    if (ext_opcode == static_cast<uint8_t>(Opcode::EXT_DECLARE))
+                    {
+                        executeVarDeclaration();
+                    }
+                }
+            }
+
+            // Execute statements until END or RETURN
+            while (pc_ < bytecode_size_)
+            {
+                // Check for return request
+                if (return_requested_)
+                {
+                    break;
+                }
+
+                uint8_t opcode = readByte();
+
+                // Check for extended opcodes
+                if (opcode == static_cast<uint8_t>(Opcode::EXTENDED_OPCODE))
+                {
+                    uint8_t ext_opcode = readByte();
+
+                    // Check for block end or other PSQL opcodes
+                    if (ext_opcode == 0xFF)  // END marker (using 0xFF as END)
+                    {
+                        break;
+                    }
+
+                    // Handle PSQL statement opcodes
+                    switch (static_cast<Opcode>(ext_opcode))
+                    {
+                        case Opcode::EXT_ASSIGN:
+                            executeAssignment();
+                            break;
+                        case Opcode::EXT_IF:
+                            executeIfStatement();
+                            break;
+                        case Opcode::EXT_LOOP:
+                            executeLoopStatement();
+                            break;
+                        case Opcode::EXT_WHILE:
+                            executeWhileStatement();
+                            break;
+                        case Opcode::EXT_EXIT:
+                            executeExitStatement();
+                            break;
+                        case Opcode::EXT_RETURN:
+                            executeReturnStatement();
+                            break;
+                        case Opcode::EXT_RAISE:
+                            executeRaiseStatement();
+                            break;
+                        default:
+                            // Unknown opcode, skip
+                            break;
+                    }
+                }
+                else
+                {
+                    // Regular SQL statement opcode - execute normally
+                    pc_--;  // Back up to re-read opcode
+                    break;  // Exit block processing
+                }
+            }
+
+            // Pop block frame
+            variable_stack_->popFrame();
+        }
+
+        void Executor::executeVarDeclaration()
+        {
+            // Read variable name
+            std::string var_name = readString();
+
+            // Read type code
+            uint8_t type_code = readByte();
+
+            // Read has_default flag
+            bool has_default = readByte() != 0;
+
+            Value default_value;
+            if (has_default)
+            {
+                // Evaluate default expression (should be on stack or inline)
+                evaluateExpression();
+                default_value = pop();
+            }
+
+            // Declare variable in current frame
+            variable_stack_->declareVariable(var_name, default_value);
+        }
+
+        void Executor::executeAssignment()
+        {
+            // Read variable name
+            std::string var_name = readString();
+
+            // Evaluate expression (pushes result onto stack)
+            evaluateExpression();
+
+            // Pop value and assign to variable
+            Value value = pop();
+            variable_stack_->setVariable(var_name, value);
+        }
+
+        void Executor::executeIfStatement()
+        {
+            // Evaluate condition (should already be on stack or needs evaluation)
+            evaluateExpression();
+            Value condition = pop();
+
+            // Read jump offset (for false branch)
+            uint32_t false_offset = readInt32();
+
+            // Check condition
+            bool condition_true = false;
+            condition_true = condition.toBoolean();
+            
+
+            if (!condition_true)
+            {
+                // Jump to ELSE or END IF
+                pc_ = false_offset;
+            }
+            // Otherwise, continue executing THEN block
+        }
+
+        void Executor::executeLoopStatement()
+        {
+            // Read loop end offset
+            uint32_t loop_end_offset = readInt32();
+
+            // Read optional label
+            std::string label = readString();
+
+            // Remember loop start
+            size_t loop_start = pc_;
+
+            // Push loop state
+            loop_stack_.emplace_back(loop_start, loop_end_offset, label);
+
+            // Execute loop body until EXIT
+            while (pc_ < bytecode_size_)
+            {
+                // Check for exit request
+                if (!loop_stack_.empty() && loop_stack_.back().exit_requested)
+                {
+                    loop_stack_.back().exit_requested = false;
+                    break;
+                }
+
+                // Execute next statement
+                uint8_t opcode = readByte();
+                if (opcode == static_cast<uint8_t>(Opcode::EXTENDED_OPCODE))
+                {
+                    uint8_t ext_opcode = readByte();
+
+                    if (ext_opcode == 0xFE)  // END LOOP marker
+                    {
+                        // Loop back to start
+                        pc_ = loop_start;
+                        continue;
+                    }
+
+                    // Handle other opcodes...
+                    pc_ -= 2;  // Back up
+                    break;
+                }
+            }
+
+            // Pop loop state
+            if (!loop_stack_.empty())
+            {
+                loop_stack_.pop_back();
+            }
+        }
+
+        void Executor::executeWhileStatement()
+        {
+            // Remember loop start
+            size_t loop_start = pc_;
+
+            // Read loop end offset
+            uint32_t loop_end_offset = readInt32();
+
+            // Read optional label
+            std::string label = readString();
+
+            // Push loop state
+            loop_stack_.emplace_back(loop_start, loop_end_offset, label);
+
+            // Execute while loop
+            while (pc_ < bytecode_size_)
+            {
+                // Evaluate condition
+                evaluateExpression();
+                Value condition = pop();
+
+                bool condition_true = false;
+                condition_true = condition.toBoolean();
+
+                if (!condition_true)
+                {
+                    // Exit loop
+                    pc_ = loop_end_offset;
+                    break;
+                }
+
+                // Check for exit request
+                if (!loop_stack_.empty() && loop_stack_.back().exit_requested)
+                {
+                    loop_stack_.back().exit_requested = false;
+                    pc_ = loop_end_offset;
+                    break;
+                }
+
+                // Execute loop body (simplified - would need proper body parsing)
+                // For now, just advance to next statement
+                break;
+            }
+
+            // Pop loop state
+            if (!loop_stack_.empty())
+            {
+                loop_stack_.pop_back();
+            }
+        }
+
+        void Executor::executeExitStatement()
+        {
+            // Read optional label
+            std::string label = readString();
+
+            // Read optional WHEN condition flag
+            bool has_when = readByte() != 0;
+
+            if (has_when)
+            {
+                // Evaluate WHEN condition
+                evaluateExpression();
+                Value condition = pop();
+
+                bool condition_true = false;
+                condition_true = condition.toBoolean();
+
+                if (!condition_true)
+                {
+                    return;  // Don't exit
+                }
+            }
+
+            // Find matching loop
+            if (label.empty())
+            {
+                // Exit innermost loop
+                if (!loop_stack_.empty())
+                {
+                    loop_stack_.back().exit_requested = true;
+                    pc_ = loop_stack_.back().loop_end_pc;
+                }
+            }
+            else
+            {
+                // Exit labeled loop
+                for (auto it = loop_stack_.rbegin(); it != loop_stack_.rend(); ++it)
+                {
+                    if (it->label == label)
+                    {
+                        it->exit_requested = true;
+                        pc_ = it->loop_end_pc;
+                        break;
+                    }
+                }
+            }
+        }
+
+        void Executor::executeReturnStatement()
+        {
+            // Read has_value flag
+            bool has_value = readByte() != 0;
+
+            if (has_value)
+            {
+                // Evaluate return expression
+                evaluateExpression();
+                return_value_ = pop();
+            }
+            else
+            {
+                return_value_ = Value();  // NULL
+            }
+
+            return_requested_ = true;
+        }
+
+        void Executor::executeRaiseStatement()
+        {
+            // Read exception level (EXCEPTION, NOTICE, WARNING, etc.)
+            uint8_t level = readByte();
+
+            // Read message
+            std::string message = readString();
+
+            // Read argument count
+            uint8_t arg_count = readByte();
+
+            // Evaluate arguments
+            std::vector<Value> args;
+            for (uint8_t i = 0; i < arg_count; ++i)
+            {
+                evaluateExpression();
+                args.push_back(pop());
+            }
+
+            // Format message with arguments (simple implementation)
+            // In a real implementation, would use printf-style formatting
+
+            // Throw exception
+            throw std::runtime_error("PSQL Exception: " + message);
+        }
+
+        // PSQL Variable Operations
+
+        void Executor::executeVarLoad()
+        {
+            // Read variable name
+            std::string var_name = readString();
+
+            // Load variable value onto stack
+            if (variable_stack_ && variable_stack_->hasVariable(var_name))
+            {
+                push(variable_stack_->getVariable(var_name));
+            }
+            else
+            {
+                error("Variable not found: " + var_name);
+            }
+        }
+
+        void Executor::executeVarStore()
+        {
+            // Read variable name
+            std::string var_name = readString();
+
+            // Pop value from stack
+            Value value = pop();
+
+            // Store to variable
+            if (variable_stack_)
+            {
+                variable_stack_->setVariable(var_name, value);
+            }
+            else
+            {
+                error("No variable stack available");
+            }
+        }
+
+        // PSQL Control Flow Helpers
+
+        void Executor::executeJump()
+        {
+            // Read jump offset
+            uint32_t offset = readInt32();
+            pc_ = offset;
+        }
+
+        void Executor::executeJumpIfTrue()
+        {
+            // Read jump offset
+            uint32_t offset = readInt32();
+
+            // Pop condition
+            Value condition = pop();
+
+            // Use toBoolean() which handles various value types
+            bool is_true = condition.toBoolean();
+
+            if (is_true)
+            {
+                pc_ = offset;
+            }
+        }
+
+        void Executor::executeJumpIfFalse()
+        {
+            // Read jump offset
+            uint32_t offset = readInt32();
+
+            // Pop condition
+            Value condition = pop();
+
+            // Use toBoolean() which handles various value types
+            bool is_false = !condition.toBoolean();
+
+            if (is_false)
+            {
+                pc_ = offset;
             }
         }
 

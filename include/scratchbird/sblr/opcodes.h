@@ -307,6 +307,17 @@ namespace scratchbird
             EXT_ST_GEOMETRYTYPE = 0x58,    // ST_GeometryType(geom) - type name
             EXT_ST_ISVALID = 0x59,         // ST_IsValid(geom) - validation check
 
+            // Spatial geometric operations (Task 9.3)
+            EXT_ST_BUFFER = 0x5A,          // ST_Buffer(geom, distance) - create buffer polygon
+            EXT_ST_CONVEXHULL = 0x5B,      // ST_ConvexHull(geom) - convex hull polygon
+            EXT_ST_ENVELOPE = 0x5C,        // ST_Envelope(geom) - bounding box polygon
+
+            // Spatial predicates (Task 9.3 - G2/G4)
+            EXT_ST_INTERSECTS = 0x5D,      // ST_Intersects(geom1, geom2) - do geometries intersect?
+            EXT_ST_CONTAINS = 0x5E,        // ST_Contains(geom1, geom2) - does geom1 contain geom2?
+            EXT_ST_WITHIN = 0x5F,          // ST_Within(geom1, geom2) - is geom1 within geom2?
+            EXT_ST_EQUALS = 0x63,          // ST_Equals(geom1, geom2) - are geometries spatially equal?
+
             // CTE (Common Table Expression) support (Phase 2 Wave 2 - Agent A) - 0x60-0x6F range
             EXT_CTE_DEF = 0x60,            // CTE definition marker
             EXT_CTE_SCAN = 0x61,           // CTE scan operation
@@ -323,6 +334,73 @@ namespace scratchbird
             EXT_SUBQUERY_IN = 0x75,        // IN subquery (membership test)
             EXT_SUBQUERY_NOT_IN = 0x76,    // NOT IN subquery (negated membership)
             EXT_SUBQUERY_END = 0x77,       // End of subquery marker
+
+            // Additional spatial functions (Task 9.3 - G4) - 0x78-0x8F range
+            EXT_ST_DISJOINT = 0x78,        // ST_Disjoint(geom1, geom2) - are geometries disjoint?
+            EXT_ST_OVERLAPS = 0x79,        // ST_Overlaps(geom1, geom2) - do geometries overlap?
+            EXT_ST_TOUCHES = 0x7A,         // ST_Touches(geom1, geom2) - do geometries touch?
+            EXT_ST_CROSSES = 0x7B,         // ST_Crosses(geom1, geom2) - do geometries cross?
+
+            // Spatial processing functions (Task 9.3 - G4)
+            EXT_ST_INTERSECTION = 0x7C,    // ST_Intersection(geom1, geom2) - intersection geometry
+            EXT_ST_UNION = 0x7D,           // ST_Union(geom1, geom2) - union geometry
+            EXT_ST_DIFFERENCE = 0x7E,      // ST_Difference(geom1, geom2) - difference geometry (geom1 - geom2)
+
+            // Spatial metrics (Task 9.3 - G4)
+            EXT_ST_AREA = 0x7F,            // ST_Area(geom) - area of polygon
+            EXT_ST_LENGTH = 0x80,          // ST_Length(geom) - length of linestring
+            EXT_ST_DISTANCE = 0x81,        // ST_Distance(geom1, geom2) - distance between geometries
+            EXT_ST_PERIMETER = 0x82,       // ST_Perimeter(geom) - perimeter of polygon
+
+            // Coordinate system operations (Task 9.5 - S1/S2/S3)
+            EXT_ST_SRID = 0x83,            // ST_SRID(geom) - get SRID of geometry
+            EXT_ST_SETSRID = 0x84,         // ST_SetSRID(geom, srid) - set SRID of geometry
+            EXT_ST_TRANSFORM = 0x85,       // ST_Transform(geom, srid) - transform to different SRID
+            EXT_ST_DISTANCE_SPHERE = 0x86, // ST_Distance_Sphere(geom1, geom2) - geodetic distance
+
+            // Multi-geometry constructors (Task 9.4)
+            EXT_ST_MULTIPOINT = 0x87,      // ST_MultiPoint(...) - create MULTIPOINT
+            EXT_ST_MULTILINESTRING = 0x88, // ST_MultiLineString(...) - create MULTILINESTRING
+            EXT_ST_MULTIPOLYGON = 0x89,    // ST_MultiPolygon(...) - create MULTIPOLYGON
+            EXT_ST_GEOMETRYCOLLECTION = 0x8A, // ST_GeometryCollection(...) - create GEOMETRYCOLLECTION
+            EXT_ST_COLLECT = 0x8B,         // ST_Collect(...) - collect geometries (alias for GeometryCollection)
+
+            // Multi-geometry accessors (Task 9.4)
+            EXT_ST_GEOMETRYN = 0x8C,       // ST_GeometryN(geom, n) - get Nth geometry from collection
+            EXT_ST_NUMGEOMETRIES = 0x8D,   // ST_NumGeometries(geom) - get number of geometries in collection
+            EXT_ST_DUMP = 0x8E,            // ST_Dump(geom) - dump all geometries from collection
+
+            // PSQL - Stored Procedures and Functions (Phase 2 Task 10.2) - 0x90-0xAF range
+            // Procedural language opcodes
+            EXT_FUNCTION = 0x90,           // Function definition
+            EXT_PROCEDURE = 0x91,          // Procedure definition
+            EXT_BLOCK = 0x92,              // BEGIN...END block
+            EXT_DECLARE = 0x93,            // Variable declaration
+            EXT_ASSIGN = 0x94,             // Variable assignment
+            EXT_IF = 0x95,                 // IF statement
+            EXT_ELSIF = 0x96,              // ELSIF clause
+            EXT_ELSE = 0x97,               // ELSE clause
+            EXT_LOOP = 0x98,               // LOOP statement
+            EXT_WHILE = 0x99,              // WHILE loop
+            EXT_EXIT = 0x9A,               // EXIT statement
+            EXT_RETURN = 0x9B,             // RETURN statement
+            EXT_RAISE = 0x9C,              // RAISE exception
+            EXT_TRY = 0x9D,                // TRY block
+            EXT_EXCEPT = 0x9E,             // EXCEPT handler
+            EXT_EXCEPTION_HANDLER = 0x9F,  // Exception handler definition
+
+            // Control flow helpers
+            EXT_JUMP_IF_TRUE = 0xA0,       // Conditional jump (true)
+            EXT_JUMP_IF_FALSE = 0xA1,      // Conditional jump (false)
+            EXT_JUMP = 0xA2,               // Unconditional jump
+            EXT_LABEL = 0xA3,              // Label marker
+
+            // Variable operations
+            EXT_VAR_LOAD = 0xA4,           // Load variable value
+            EXT_VAR_STORE = 0xA5,          // Store to variable
+            EXT_PARAM_IN = 0xA6,           // IN parameter marker
+            EXT_PARAM_OUT = 0xA7,          // OUT parameter marker
+            EXT_PARAM_INOUT = 0xA8,        // INOUT parameter marker
         };
 
         // SBLR Version

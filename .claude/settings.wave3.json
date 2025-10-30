@@ -1,0 +1,186 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(c++:*)",
+      "Bash(clang++:*)",
+      "WebSearch",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)",
+      "Bash(find:*)",
+      "Bash(mv:*)",
+      "Bash(test:*)",
+      "Bash(chmod:*)",
+      "Bash(awk:*)",
+      "WebFetch(domain:www.firebirdsql.org)",
+      "Bash(cmake:*)",
+      "Bash(make:*)",
+      "Bash(/dev/null)",
+      "Bash(g++:*)",
+      "Bash(git revert:*)",
+      "Bash(git reset:*)",
+      "Bash(git fetch:*)",
+      "Bash(git pull:*)",
+      "Bash(git checkout:*)",
+      "Bash(git rebase:*)",
+      "Bash(git restore:*)",
+      "Bash(cat:*)",
+      "Bash(git status)",
+      "Bash(git diff *)",
+      "Read(//tmp/**)",
+      "Read(//home/dcalford/CliWork/**)",
+      "Read(///**)",
+      "Read(//dev/**)",
+
+      "Bash(./test_planner)",
+      "Bash(LD_LIBRARY_PATH=src:$LD_LIBRARY_PATH ./test_planner:*)",
+      "Bash(./test_explain_standalone)",
+      "Bash(./test_update_delete_simple)",
+      "Bash(./test_join_parsing)",
+      "Bash(LD_LIBRARY_PATH=build/src:$LD_LIBRARY_PATH ./test_agg_exec:*)",
+      "Bash(./build/sblr_test:*)",
+      "Bash(./tests/wave1_tests:*)",
+      "Bash(./sblr_test:*)",
+      "Bash(./test_cte)",
+      "Bash(LD_LIBRARY_PATH=./src:$LD_LIBRARY_PATH ./test_subquery:*)",
+      "Bash(./build/test_cte:*)",
+      "Bash(./build/test_subquery:*)",
+
+      "Bash(if [ -f test_planner ])",
+      "Bash(then echo \"=== Compilation successful ===\")",
+      "Bash(fi)",
+      "Bash(if [ -f test_limit_execution.cpp ])",
+      "Bash(then g++ -std=c++20 -I include -o test_limit_execution test_limit_execution.cpp -Lbuild/src -lscratchbird_core -lscratchbird_parser -lscratchbird_sblr -pthread)",
+      "Bash(if [ -f test_subquery_parser.cpp ])",
+      "Bash(then g++ -std=c++17 -I include test_subquery_parser.cpp -o test_subquery_parser)",
+
+      "Bash(/home/dcalford/CliWork/ScratchBird/docs/audit/component_verification_script.sh)",
+      "Bash(bash reorganize_planning_docs.sh:*)",
+      "Bash(/home/dcalford/CliWork/ScratchBird/docs/audit/reorganize_planning_docs.sh)",
+      "Bash(1)",
+
+      "__WAVE_3_PERMISSIONS_START__",
+
+      "__FILE_OPERATIONS__",
+      "Write(//home/dcalford/CliWork/ScratchBird/src/core/rtree.cpp)",
+      "Write(//home/dcalford/CliWork/ScratchBird/src/core/rtree_node.cpp)",
+      "Write(//home/dcalford/CliWork/ScratchBird/include/scratchbird/core/rtree.h)",
+      "Write(//home/dcalford/CliWork/ScratchBird/include/scratchbird/core/rtree_node.h)",
+      "Write(//home/dcalford/CliWork/ScratchBird/tests/unit/test_rtree.cpp)",
+
+      "Write(//home/dcalford/CliWork/ScratchBird/src/geo/geos_wrapper.cpp)",
+      "Write(//home/dcalford/CliWork/ScratchBird/include/scratchbird/geo/geos_wrapper.h)",
+      "Write(//home/dcalford/CliWork/ScratchBird/tests/unit/test_spatial_functions.cpp)",
+
+      "Write(//home/dcalford/CliWork/ScratchBird/src/geo/multi_geometry.cpp)",
+      "Write(//home/dcalford/CliWork/ScratchBird/include/scratchbird/geo/multi_geometry.h)",
+      "Write(//home/dcalford/CliWork/ScratchBird/tests/unit/test_multi_geometry.cpp)",
+
+      "Write(//home/dcalford/CliWork/ScratchBird/src/geo/srid.cpp)",
+      "Write(//home/dcalford/CliWork/ScratchBird/include/scratchbird/geo/srid.h)",
+      "Write(//home/dcalford/CliWork/ScratchBird/src/geo/proj_wrapper.cpp)",
+      "Write(//home/dcalford/CliWork/ScratchBird/include/scratchbird/geo/proj_wrapper.h)",
+      "Write(//home/dcalford/CliWork/ScratchBird/tests/unit/test_srid.cpp)",
+
+      "__EDIT_OPERATIONS__",
+      "Edit(//home/dcalford/CliWork/ScratchBird/src/core/catalog_manager.cpp)",
+      "Edit(//home/dcalford/CliWork/ScratchBird/src/optimizer/query_planner.cpp)",
+      "Edit(//home/dcalford/CliWork/ScratchBird/src/optimizer/cost_model.cpp)",
+      "Edit(//home/dcalford/CliWork/ScratchBird/src/optimizer/selectivity_estimator.cpp)",
+      "Edit(//home/dcalford/CliWork/ScratchBird/src/sblr/executor.cpp)",
+      "Edit(//home/dcalford/CliWork/ScratchBird/src/sblr/bytecode_generator.cpp)",
+      "Edit(//home/dcalford/CliWork/ScratchBird/include/scratchbird/sblr/opcodes.h)",
+      "Edit(//home/dcalford/CliWork/ScratchBird/include/scratchbird/core/index.h)",
+      "Edit(//home/dcalford/CliWork/ScratchBird/src/geo/geometry.cpp)",
+      "Edit(//home/dcalford/CliWork/ScratchBird/src/CMakeLists.txt)",
+
+      "__BUILD_AND_TEST__",
+      "Bash(cd /home/dcalford/CliWork/ScratchBird/build && cmake ..)",
+      "Bash(cd /home/dcalford/CliWork/ScratchBird/build && cmake .. 2>&1)",
+      "Bash(cd /home/dcalford/CliWork/ScratchBird/build && make)",
+      "Bash(cd /home/dcalford/CliWork/ScratchBird/build && make -j$(nproc))",
+      "Bash(cd /home/dcalford/CliWork/ScratchBird/build && make scratchbird_core)",
+      "Bash(cd /home/dcalford/CliWork/ScratchBird/build && make scratchbird_tests)",
+      "Bash(cd /home/dcalford/CliWork/ScratchBird/build && make test_rtree)",
+      "Bash(cd /home/dcalford/CliWork/ScratchBird/build && make test_spatial_functions)",
+
+      "Bash(cd /home/dcalford/CliWork/ScratchBird/build && ctest --output-on-failure)",
+      "Bash(cd /home/dcalford/CliWork/ScratchBird/build && ctest -R test_rtree)",
+      "Bash(cd /home/dcalford/CliWork/ScratchBird/build && ctest -R test_spatial)",
+      "Bash(cd /home/dcalford/CliWork/ScratchBird/build && ctest -R test_multi_geometry)",
+      "Bash(cd /home/dcalford/CliWork/ScratchBird/build && ctest -R test_srid)",
+      "Bash(cd /home/dcalford/CliWork/ScratchBird/build && ctest -V)",
+
+      "Bash(cd /home/dcalford/CliWork/ScratchBird/build && ./test_rtree)",
+      "Bash(cd /home/dcalford/CliWork/ScratchBird/build && ./test_spatial_functions)",
+      "Bash(cd /home/dcalford/CliWork/ScratchBird/build && ./test_multi_geometry)",
+      "Bash(cd /home/dcalford/CliWork/ScratchBird/build && ./test_srid)",
+
+      "__COMPILATION_CHECKS__",
+      "Bash(g++ -std=c++20 -I include -c src/core/rtree.cpp -o /tmp/rtree.o)",
+      "Bash(g++ -std=c++20 -I include -c src/core/rtree_node.cpp -o /tmp/rtree_node.o)",
+      "Bash(g++ -std=c++20 -I include -c src/geo/geos_wrapper.cpp -o /tmp/geos_wrapper.o)",
+      "Bash(g++ -std=c++20 -I include -c src/geo/proj_wrapper.cpp -o /tmp/proj_wrapper.o)",
+      "Bash(g++ -std=c++20 -I include -c src/geo/multi_geometry.cpp -o /tmp/multi_geometry.o)",
+      "Bash(g++ -std=c++20 -I include -fsyntax-only src/core/rtree.cpp)",
+      "Bash(g++ -std=c++20 -I include -fsyntax-only src/core/rtree_node.cpp)",
+      "Bash(g++ -std=c++20 -I include -fsyntax-only src/geo/*.cpp)",
+
+      "__CODE_QUALITY__",
+      "Bash(clang-format --dry-run --Werror src/core/rtree.cpp)",
+      "Bash(clang-format --dry-run --Werror src/geo/*.cpp)",
+      "Bash(clang-format -i src/core/rtree*.cpp)",
+      "Bash(clang-format -i src/geo/*.cpp)",
+      "Bash(wc -l src/core/rtree*.cpp src/core/rtree*.h)",
+      "Bash(wc -l src/geo/*.cpp src/geo/*.h)",
+      "Bash(wc -l tests/unit/test_rtree.cpp)",
+      "Bash(wc -l tests/unit/test_spatial_functions.cpp)",
+
+      "__DEBUGGING__",
+      "Bash(grep -r \"error:\" /home/dcalford/CliWork/ScratchBird/build/ 2>/dev/null)",
+      "Bash(tail -50 /home/dcalford/CliWork/ScratchBird/build/CMakeFiles/CMakeError.log)",
+      "Bash(tail -100 /home/dcalford/CliWork/ScratchBird/build/CMakeFiles/CMakeOutput.log)",
+      "Bash(ls -la /home/dcalford/CliWork/ScratchBird/src/core/rtree*)",
+      "Bash(ls -la /home/dcalford/CliWork/ScratchBird/src/geo/*)",
+      "Bash(find /home/dcalford/CliWork/ScratchBird/src/core -name \"rtree*\" -type f)",
+      "Bash(find /home/dcalford/CliWork/ScratchBird/src/geo -name \"*.cpp\" -type f)",
+
+      "__DOCUMENTATION__",
+      "Edit(//home/dcalford/CliWork/ScratchBird/docs/planning/FEATURE_PARITY_ROADMAP.md)",
+      "Edit(//home/dcalford/CliWork/ScratchBird/README.md)",
+      "Write(//home/dcalford/CliWork/ScratchBird/docs/status/WAVE_3_AGENT_*.md)",
+      "Write(//home/dcalford/CliWork/ScratchBird/docs/status/WAVE_3_*.md)",
+
+      "__WAVE_3_PERMISSIONS_END__"
+    ],
+    "deny": [
+      "Bash(rm -rf *)",
+      "Bash(git push --force *)",
+      "Bash(sudo *)",
+      "Bash(chmod 777 *)"
+    ],
+    "ask": []
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo '📋 Please read CLAUDE.md and PROJECT_CONTEXT.md to understand the project context before starting work.'"
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo '🔄 Memory compaction detected. Please re-read PROJECT_CONTEXT.md to restore project context.'"
+          }
+        ]
+      }
+    ]
+  }
+}

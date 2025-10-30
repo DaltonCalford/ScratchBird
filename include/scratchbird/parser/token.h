@@ -303,6 +303,29 @@ namespace scratchbird
             KW_PROCEDURE,
             KW_OLD,
             KW_NEW,
+
+            // Stored procedure keywords (Phase 2 Task 10.2)
+            KW_FUNCTION,
+            KW_RETURNS,
+            KW_LANGUAGE,
+            KW_BEGIN,
+            // KW_END, - already defined for CASE
+            KW_DECLARE,
+            KW_RETURN,
+            KW_IF,
+            // KW_THEN, - already defined for CASE
+            // KW_ELSE, - already defined for CASE
+            KW_ELSIF,
+            KW_ENDIF,
+            KW_LOOP,
+            KW_WHILE,
+            KW_ENDLOOP,
+            KW_EXIT,
+            // KW_WHEN, - already defined for CASE
+            KW_RAISE,
+            KW_EXCEPTION,
+            KW_TRY,
+            KW_EXCEPT,
         };
 
         // Location in source file

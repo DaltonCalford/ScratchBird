@@ -25,6 +25,10 @@ namespace scratchbird::spatial
         static constexpr uint32_t WKB_POINT = 1;
         static constexpr uint32_t WKB_LINESTRING = 2;
         static constexpr uint32_t WKB_POLYGON = 3;
+        static constexpr uint32_t WKB_MULTIPOINT = 4;
+        static constexpr uint32_t WKB_MULTILINESTRING = 5;
+        static constexpr uint32_t WKB_MULTIPOLYGON = 6;
+        static constexpr uint32_t WKB_GEOMETRYCOLLECTION = 7;
 
         // Byte order markers
         static constexpr uint8_t WKB_XDR = 0; // Big-endian

@@ -1003,6 +1003,341 @@ namespace scratchbird
                 current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_ST_ISVALID));
                 return;
             }
+            // Spatial geometric operations (Phase 2 Task 9.3)
+            else if (func_name == "ST_BUFFER")
+            {
+                // ST_Buffer(geom, distance) - create buffer polygon around geometry
+                if (node->args().size() != 2)
+                {
+                    throw std::runtime_error("ST_Buffer expects 2 arguments (geometry, distance)");
+                }
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_ST_BUFFER));
+                return;
+            }
+            else if (func_name == "ST_CONVEXHULL")
+            {
+                // ST_ConvexHull(geom) - compute convex hull of geometry
+                if (node->args().size() != 1)
+                {
+                    throw std::runtime_error("ST_ConvexHull expects 1 argument (geometry)");
+                }
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_ST_CONVEXHULL));
+                return;
+            }
+            else if (func_name == "ST_ENVELOPE")
+            {
+                // ST_Envelope(geom) - compute minimum bounding box (envelope) of geometry
+                if (node->args().size() != 1)
+                {
+                    throw std::runtime_error("ST_Envelope expects 1 argument (geometry)");
+                }
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_ST_ENVELOPE));
+                return;
+            }
+            // Spatial predicates (Phase 2 Task 9.3 - G2/G4)
+            else if (func_name == "ST_INTERSECTS")
+            {
+                // ST_Intersects(geom1, geom2) - do geometries intersect?
+                if (node->args().size() != 2)
+                {
+                    throw std::runtime_error("ST_Intersects expects 2 arguments (geometry, geometry)");
+                }
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_ST_INTERSECTS));
+                return;
+            }
+            else if (func_name == "ST_CONTAINS")
+            {
+                // ST_Contains(geom1, geom2) - does geom1 contain geom2?
+                if (node->args().size() != 2)
+                {
+                    throw std::runtime_error("ST_Contains expects 2 arguments (geometry, geometry)");
+                }
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_ST_CONTAINS));
+                return;
+            }
+            else if (func_name == "ST_WITHIN")
+            {
+                // ST_Within(geom1, geom2) - is geom1 within geom2?
+                if (node->args().size() != 2)
+                {
+                    throw std::runtime_error("ST_Within expects 2 arguments (geometry, geometry)");
+                }
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_ST_WITHIN));
+                return;
+            }
+            else if (func_name == "ST_EQUALS")
+            {
+                // ST_Equals(geom1, geom2) - are geometries spatially equal?
+                if (node->args().size() != 2)
+                {
+                    throw std::runtime_error("ST_Equals expects 2 arguments (geometry, geometry)");
+                }
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_ST_EQUALS));
+                return;
+            }
+            else if (func_name == "ST_DISJOINT")
+            {
+                // ST_Disjoint(geom1, geom2) - are geometries disjoint?
+                if (node->args().size() != 2)
+                {
+                    throw std::runtime_error("ST_Disjoint expects 2 arguments (geometry, geometry)");
+                }
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_ST_DISJOINT));
+                return;
+            }
+            else if (func_name == "ST_OVERLAPS")
+            {
+                // ST_Overlaps(geom1, geom2) - do geometries overlap?
+                if (node->args().size() != 2)
+                {
+                    throw std::runtime_error("ST_Overlaps expects 2 arguments (geometry, geometry)");
+                }
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_ST_OVERLAPS));
+                return;
+            }
+            else if (func_name == "ST_TOUCHES")
+            {
+                // ST_Touches(geom1, geom2) - do geometries touch?
+                if (node->args().size() != 2)
+                {
+                    throw std::runtime_error("ST_Touches expects 2 arguments (geometry, geometry)");
+                }
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_ST_TOUCHES));
+                return;
+            }
+            else if (func_name == "ST_CROSSES")
+            {
+                // ST_Crosses(geom1, geom2) - do geometries cross?
+                if (node->args().size() != 2)
+                {
+                    throw std::runtime_error("ST_Crosses expects 2 arguments (geometry, geometry)");
+                }
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_ST_CROSSES));
+                return;
+            }
+            // Spatial processing functions (Phase 2 Task 9.3 - G4)
+            else if (func_name == "ST_INTERSECTION")
+            {
+                // ST_Intersection(geom1, geom2) - compute intersection geometry
+                if (node->args().size() != 2)
+                {
+                    throw std::runtime_error("ST_Intersection expects 2 arguments (geometry, geometry)");
+                }
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_ST_INTERSECTION));
+                return;
+            }
+            else if (func_name == "ST_UNION")
+            {
+                // ST_Union(geom1, geom2) - compute union geometry
+                if (node->args().size() != 2)
+                {
+                    throw std::runtime_error("ST_Union expects 2 arguments (geometry, geometry)");
+                }
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_ST_UNION));
+                return;
+            }
+            else if (func_name == "ST_DIFFERENCE")
+            {
+                // ST_Difference(geom1, geom2) - compute difference (geom1 - geom2)
+                if (node->args().size() != 2)
+                {
+                    throw std::runtime_error("ST_Difference expects 2 arguments (geometry, geometry)");
+                }
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_ST_DIFFERENCE));
+                return;
+            }
+            // Spatial metrics (Phase 2 Task 9.3 - G4)
+            else if (func_name == "ST_AREA")
+            {
+                // ST_Area(geom) - compute area of polygon
+                if (node->args().size() != 1)
+                {
+                    throw std::runtime_error("ST_Area expects 1 argument (geometry)");
+                }
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_ST_AREA));
+                return;
+            }
+            else if (func_name == "ST_LENGTH")
+            {
+                // ST_Length(geom) - compute length of linestring
+                if (node->args().size() != 1)
+                {
+                    throw std::runtime_error("ST_Length expects 1 argument (geometry)");
+                }
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_ST_LENGTH));
+                return;
+            }
+            else if (func_name == "ST_DISTANCE")
+            {
+                // ST_Distance(geom1, geom2) - compute distance between geometries
+                if (node->args().size() != 2)
+                {
+                    throw std::runtime_error("ST_Distance expects 2 arguments (geometry, geometry)");
+                }
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_ST_DISTANCE));
+                return;
+            }
+            else if (func_name == "ST_PERIMETER")
+            {
+                // ST_Perimeter(geom) - compute perimeter of polygon
+                if (node->args().size() != 1)
+                {
+                    throw std::runtime_error("ST_Perimeter expects 1 argument (geometry)");
+                }
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_ST_PERIMETER));
+                return;
+            }
+            // SRID functions (Phase 2 Task 9.5)
+            else if (func_name == "ST_SRID")
+            {
+                // ST_SRID(geom) - get SRID of geometry
+                if (node->args().size() != 1)
+                {
+                    throw std::runtime_error("ST_SRID expects 1 argument (geometry)");
+                }
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_ST_SRID));
+                return;
+            }
+            else if (func_name == "ST_SETSRID")
+            {
+                // ST_SetSRID(geom, srid) - set SRID of geometry
+                if (node->args().size() != 2)
+                {
+                    throw std::runtime_error("ST_SetSRID expects 2 arguments (geometry, integer)");
+                }
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_ST_SETSRID));
+                return;
+            }
+            else if (func_name == "ST_TRANSFORM")
+            {
+                // ST_Transform(geom, target_srid) - transform to different SRID
+                if (node->args().size() != 2)
+                {
+                    throw std::runtime_error("ST_Transform expects 2 arguments (geometry, integer)");
+                }
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_ST_TRANSFORM));
+                return;
+            }
+            else if (func_name == "ST_DISTANCE_SPHERE")
+            {
+                // ST_Distance_Sphere(geom1, geom2) - geodetic distance
+                if (node->args().size() != 2)
+                {
+                    throw std::runtime_error("ST_Distance_Sphere expects 2 arguments (geometry, geometry)");
+                }
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_ST_DISTANCE_SPHERE));
+                return;
+            }
             // Array functions (Phase 2 Task 12)
             else if (func_name == "ARRAY_TO_STRING" || func_name == "KW_ARRAY_TO_STRING")
             {
@@ -2591,6 +2926,339 @@ namespace scratchbird
 
             // Emit if_exists flag (1 byte)
             current_result_->writeByte(node->ifExists() ? 1 : 0);
+        }
+
+        // ===== PSQL - Stored Procedures and Functions (Phase 2 Task 10.2) =====
+
+        void BytecodeGenerator::visit(parser::CreateFunctionStmt *node)
+        {
+            // Emit extended opcode
+            current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+            current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_FUNCTION));
+
+            // Emit function name
+            writeStringId(node->name());
+
+            // Emit parameter count
+            current_result_->writeByte(static_cast<uint8_t>(node->parameters().size()));
+
+            // Emit parameters
+            for (const auto *param : node->parameters())
+            {
+                // Parameter mode (IN/OUT/INOUT)
+                current_result_->writeByte(static_cast<uint8_t>(param->mode));
+                // Parameter name
+                writeStringId(param->name);
+                // Parameter type
+                writeDataType(*param->type);
+            }
+
+            // Emit return type
+            writeDataType(*node->returnType());
+
+            // Emit function body (block statement)
+            if (node->body())
+            {
+                node->body()->accept(this);
+            }
+        }
+
+        void BytecodeGenerator::visit(parser::CreateProcedureStmt *node)
+        {
+            // Emit extended opcode
+            current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+            current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_PROCEDURE));
+
+            // Emit procedure name
+            writeStringId(node->name());
+
+            // Emit parameter count
+            current_result_->writeByte(static_cast<uint8_t>(node->parameters().size()));
+
+            // Emit parameters
+            for (const auto *param : node->parameters())
+            {
+                // Parameter mode (IN/OUT/INOUT)
+                current_result_->writeByte(static_cast<uint8_t>(param->mode));
+                // Parameter name
+                writeStringId(param->name);
+                // Parameter type
+                writeDataType(*param->type);
+            }
+
+            // Emit procedure body (block statement)
+            if (node->body())
+            {
+                node->body()->accept(this);
+            }
+        }
+
+        void BytecodeGenerator::visit(parser::BlockStmt *node)
+        {
+            // Emit extended opcode
+            current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+            current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_BLOCK));
+
+            // Emit variable count
+            current_result_->writeByte(static_cast<uint8_t>(node->declarations().size()));
+
+            // Emit variable declarations
+            for (auto *decl : node->declarations())
+            {
+                const_cast<parser::VarDeclarationStmt*>(decl)->accept(this);
+            }
+
+            // Emit statement count
+            current_result_->writeInt32(static_cast<uint32_t>(node->statements().size()));
+
+            // Emit statements
+            for (auto *stmt : node->statements())
+            {
+                const_cast<parser::Statement*>(stmt)->accept(this);
+            }
+
+            // Emit exception handler count
+            current_result_->writeByte(static_cast<uint8_t>(node->exceptionHandlers().size()));
+
+            // Emit exception handlers
+            for (const auto *handler : node->exceptionHandlers())
+            {
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_EXCEPTION_HANDLER));
+                writeStringId(handler->exception_name);
+
+                // Emit handler statement count
+                current_result_->writeInt32(static_cast<uint32_t>(handler->statements.size()));
+                for (auto *stmt : handler->statements)
+                {
+                    const_cast<parser::Statement*>(stmt)->accept(this);
+                }
+            }
+        }
+
+        void BytecodeGenerator::visit(parser::VarDeclarationStmt *node)
+        {
+            // Emit extended opcode
+            current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+            current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_DECLARE));
+
+            // Emit variable name
+            writeStringId(node->name());
+
+            // Emit variable type
+            writeDataType(*node->type());
+
+            // Emit has_default flag
+            current_result_->writeByte(node->defaultValue() ? 1 : 0);
+
+            // Emit default value if present
+            if (node->defaultValue())
+            {
+                generateExpression(node->defaultValue());
+            }
+        }
+
+        void BytecodeGenerator::visit(parser::AssignmentStmt *node)
+        {
+            // Emit extended opcode
+            current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+            current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_ASSIGN));
+
+            // Note: Assignment implementation is stubbed - requires := operator in parser
+            current_result_->addError("Assignment statements not yet fully implemented");
+        }
+
+        void BytecodeGenerator::visit(parser::IfStmt *node)
+        {
+            // Emit extended opcode
+            current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+            current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_IF));
+
+            // Generate condition
+            generateExpression(node->condition());
+
+            // Allocate label for end of IF
+            int end_label = allocateLabel();
+            int else_label = allocateLabel();
+
+            // Jump to else/end if condition is false
+            current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+            current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_JUMP_IF_FALSE));
+            int jump_patch_offset = getCurrentOffset();
+            current_result_->writeInt32(0);  // Placeholder for jump offset
+
+            // Generate THEN statements
+            for (auto *stmt : node->thenStatements())
+            {
+                const_cast<parser::Statement*>(stmt)->accept(this);
+            }
+
+            // Jump to end
+            current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+            current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_JUMP));
+            int end_jump_offset = getCurrentOffset();
+            current_result_->writeInt32(0);  // Placeholder
+
+            // Mark else position
+            emitLabel(else_label);
+            patchJump(else_label, jump_patch_offset);
+
+            // Generate ELSIF clauses (stub)
+            // TODO: Implement ELSIF generation
+
+            // Generate ELSE statements
+            for (auto *stmt : node->elseStatements())
+            {
+                const_cast<parser::Statement*>(stmt)->accept(this);
+            }
+
+            // Mark end position
+            emitLabel(end_label);
+            patchJump(end_label, end_jump_offset);
+        }
+
+        void BytecodeGenerator::visit(parser::LoopStmt *node)
+        {
+            // Emit extended opcode
+            current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+            current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_LOOP));
+
+            int loop_start = allocateLabel();
+            emitLabel(loop_start);
+
+            // Generate loop body
+            for (auto *stmt : node->statements())
+            {
+                const_cast<parser::Statement*>(stmt)->accept(this);
+            }
+
+            // Jump back to start
+            current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+            current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_JUMP));
+            current_result_->writeInt32(getCurrentOffset() - 5);  // Jump back to loop start
+        }
+
+        void BytecodeGenerator::visit(parser::WhileStmt *node)
+        {
+            // Emit extended opcode
+            current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+            current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_WHILE));
+
+            int loop_start = allocateLabel();
+            int loop_end = allocateLabel();
+
+            emitLabel(loop_start);
+
+            // Generate condition
+            generateExpression(node->condition());
+
+            // Jump to end if false
+            current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+            current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_JUMP_IF_FALSE));
+            int jump_offset = getCurrentOffset();
+            current_result_->writeInt32(0);  // Placeholder
+
+            // Generate loop body
+            for (auto *stmt : node->statements())
+            {
+                const_cast<parser::Statement*>(stmt)->accept(this);
+            }
+
+            // Jump back to start
+            current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+            current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_JUMP));
+            current_result_->writeInt32(getCurrentOffset() - 5);
+
+            // Mark end
+            emitLabel(loop_end);
+            patchJump(loop_end, jump_offset);
+        }
+
+        void BytecodeGenerator::visit(parser::ExitStmt *node)
+        {
+            // Emit extended opcode
+            current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+            current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_EXIT));
+
+            // Emit has_condition flag
+            current_result_->writeByte(node->whenCondition() ? 1 : 0);
+
+            // Generate condition if present
+            if (node->whenCondition())
+            {
+                generateExpression(node->whenCondition());
+            }
+        }
+
+        void BytecodeGenerator::visit(parser::ReturnStmt *node)
+        {
+            // Emit extended opcode
+            current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+            current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_RETURN));
+
+            // Emit has_value flag
+            current_result_->writeByte(node->returnValue() ? 1 : 0);
+
+            // Generate return value if present
+            if (node->returnValue())
+            {
+                generateExpression(node->returnValue());
+            }
+        }
+
+        void BytecodeGenerator::visit(parser::RaiseStmt *node)
+        {
+            // Emit extended opcode
+            current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+            current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_RAISE));
+
+            // Emit level (EXCEPTION/NOTICE/WARNING)
+            current_result_->writeByte(static_cast<uint8_t>(node->level()));
+
+            // Generate message expression
+            if (node->message())
+            {
+                generateExpression(node->message());
+            }
+        }
+
+        // PSQL control flow helpers
+        int BytecodeGenerator::allocateLabel()
+        {
+            return next_label_id_++;
+        }
+
+        void BytecodeGenerator::patchJump(int label_id, int jump_offset)
+        {
+            // Record pending patch
+            pending_patches_.push_back({jump_offset, label_id});
+        }
+
+        int BytecodeGenerator::getCurrentOffset() const
+        {
+            return static_cast<int>(current_result_->bytecode().size());
+        }
+
+        void BytecodeGenerator::emitLabel(int label_id)
+        {
+            label_positions_[label_id] = getCurrentOffset();
+
+            // Patch any pending jumps to this label
+            for (auto it = pending_patches_.begin(); it != pending_patches_.end(); )
+            {
+                if (it->second == label_id)
+                {
+                    // Patch the jump offset
+                    int target_offset = label_positions_[label_id];
+                    auto& bytecode = const_cast<std::vector<uint8_t>&>(current_result_->bytecode());
+                    sblr::writeInt32(&bytecode[it->first], target_offset);
+                    it = pending_patches_.erase(it);
+                }
+                else
+                {
+                    ++it;
+                }
+            }
         }
 
     } // namespace sblr

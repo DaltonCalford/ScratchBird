@@ -33,6 +33,8 @@ set(CMAKE_CXX_FLAGS_RELEASE "-O3 -DNDEBUG")
 find_package(PkgConfig)
 if(PkgConfig_FOUND)
     pkg_check_modules(LZ4 liblz4)
+    pkg_check_modules(GEOS geos)
+    pkg_check_modules(PROJ proj)
 endif()
 
 # If LZ4 not found via pkg-config, try to find it manually
@@ -44,12 +46,46 @@ if(NOT LZ4_FOUND)
     endif()
 endif()
 
+# If GEOS not found via pkg-config, try to find it manually
+if(NOT GEOS_FOUND)
+    find_path(GEOS_INCLUDE_DIRS NAMES geos_c.h)
+    find_library(GEOS_LIBRARIES NAMES geos_c)
+    if(GEOS_INCLUDE_DIRS AND GEOS_LIBRARIES)
+        set(GEOS_FOUND TRUE)
+    endif()
+endif()
+
+# If PROJ not found via pkg-config, try to find it manually
+if(NOT PROJ_FOUND)
+    find_path(PROJ_INCLUDE_DIRS NAMES proj.h)
+    find_library(PROJ_LIBRARIES NAMES proj)
+    if(PROJ_INCLUDE_DIRS AND PROJ_LIBRARIES)
+        set(PROJ_FOUND TRUE)
+    endif()
+endif()
+
 # Define macro if LZ4 is available
 if(LZ4_FOUND)
     add_compile_definitions(HAVE_LZ4)
     message(STATUS "LZ4 compression support: ENABLED")
 else()
     message(STATUS "LZ4 compression support: DISABLED (install liblz4-dev to enable)")
+endif()
+
+# Define macro if GEOS is available (Phase 2 Wave 3: Spatial Functions)
+if(GEOS_FOUND)
+    add_compile_definitions(HAVE_GEOS)
+    message(STATUS "GEOS spatial library: ENABLED (${GEOS_VERSION})")
+else()
+    message(STATUS "GEOS spatial library: DISABLED (install libgeos-dev to enable)")
+endif()
+
+# Define macro if PROJ is available (Phase 2 Wave 3: Coordinate Systems)
+if(PROJ_FOUND)
+    add_compile_definitions(HAVE_PROJ)
+    message(STATUS "PROJ coordinate system library: ENABLED (${PROJ_VERSION})")
+else()
+    message(STATUS "PROJ coordinate system library: DISABLED (install libproj-dev to enable)")
 endif()
 
 # Add clang-tidy and clang-format integration

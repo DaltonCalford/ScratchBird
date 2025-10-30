@@ -19,6 +19,7 @@ namespace scratchbird::optimizer
     {
         SEQ_SCAN,          // Sequential table scan
         INDEX_SCAN,        // Index scan with heap fetch
+        RTREE_SCAN,        // R-tree spatial index scan (Phase 2, Task 9.2)
         NESTED_LOOP_JOIN,  // Nested loop join (Phase 1, Task 3.2)
         HASH_JOIN,         // Hash join (Phase 1, Task 3.2)
         AGGREGATE,         // Aggregation (Phase 1, Task 4.1)
@@ -320,6 +321,155 @@ namespace scratchbird::optimizer
         uint64_t heap_tuples_;
         double qual_cost_;
         double correlation_;
+    };
+
+    /**
+     * RTreeScanPath - R-tree spatial index scan access path
+     *
+     * Represents decision to use R-tree index for spatial queries.
+     * R-trees are optimized for bounding box queries and spatial predicates.
+     *
+     * Cost calculated by:
+     *   CostModel::costIndexScan(tree_height, tree_pages, matched_entries,
+     *                            heap_pages, heap_tuples, qual_cost, 0.0)
+     *
+     * Applicable for spatial predicates:
+     *   - ST_Intersects(geom, constant)
+     *   - ST_Contains(geom, constant)
+     *   - ST_Within(geom, constant)
+     *   - ST_DWithin(geom, constant, distance)
+     *
+     * Example:
+     *   SELECT * FROM buildings WHERE ST_Intersects(location, bbox)
+     *   → RTreeScanPath(idx_buildings_location, cost=25.5, rows=100)
+     *
+     * Phase 2, Task 9.2
+     */
+    class RTreeScanPath : public Path
+    {
+    public:
+        /**
+         * Constructor
+         *
+         * @param table_id Table to scan
+         * @param table_name Table name
+         * @param index_id R-tree index to use
+         * @param index_name Index name
+         * @param tree_height R-tree height
+         * @param tree_pages R-tree pages to access
+         * @param matched_entries Estimated matching entries
+         * @param heap_pages Heap pages to access
+         * @param heap_tuples Heap tuples to fetch
+         * @param qual_cost Cost of WHERE clause evaluation
+         * @param predicate_type Type of spatial predicate (for optimization)
+         * @param cost Cost estimate
+         */
+        RTreeScanPath(const core::ID &table_id,
+                      const std::string &table_name,
+                      const core::ID &index_id,
+                      const std::string &index_name,
+                      uint64_t tree_height,
+                      uint64_t tree_pages,
+                      uint64_t matched_entries,
+                      uint64_t heap_pages,
+                      uint64_t heap_tuples,
+                      double qual_cost,
+                      const std::string &predicate_type,
+                      const CostEstimate &cost)
+            : Path(PathType::RTREE_SCAN, cost),
+              table_id_(table_id),
+              table_name_(table_name),
+              index_id_(index_id),
+              index_name_(index_name),
+              tree_height_(tree_height),
+              tree_pages_(tree_pages),
+              matched_entries_(matched_entries),
+              heap_pages_(heap_pages),
+              heap_tuples_(heap_tuples),
+              qual_cost_(qual_cost),
+              predicate_type_(predicate_type)
+        {
+        }
+
+        /**
+         * Get table ID
+         */
+        const core::ID &tableId() const { return table_id_; }
+
+        /**
+         * Get table name
+         */
+        const std::string &tableName() const { return table_name_; }
+
+        /**
+         * Get index ID
+         */
+        const core::ID &indexId() const { return index_id_; }
+
+        /**
+         * Get index name
+         */
+        const std::string &indexName() const { return index_name_; }
+
+        /**
+         * Get tree height
+         */
+        uint64_t treeHeight() const { return tree_height_; }
+
+        /**
+         * Get tree pages
+         */
+        uint64_t treePages() const { return tree_pages_; }
+
+        /**
+         * Get matched entries
+         */
+        uint64_t matchedEntries() const { return matched_entries_; }
+
+        /**
+         * Get heap pages
+         */
+        uint64_t heapPages() const { return heap_pages_; }
+
+        /**
+         * Get heap tuples
+         */
+        uint64_t heapTuples() const { return heap_tuples_; }
+
+        /**
+         * Get qualification cost
+         */
+        double qualCost() const { return qual_cost_; }
+
+        /**
+         * Get predicate type
+         */
+        const std::string &predicateType() const { return predicate_type_; }
+
+        /**
+         * Convert to string for debugging
+         */
+        auto toString() const -> std::string override
+        {
+            return "RTreeScanPath(table=" + table_name_ +
+                   ", index=" + index_name_ +
+                   ", predicate=" + predicate_type_ +
+                   ", cost=" + std::to_string(cost_.total_cost) +
+                   ", rows=" + std::to_string(cost_.rows) + ")";
+        }
+
+    private:
+        core::ID table_id_;
+        std::string table_name_;
+        core::ID index_id_;
+        std::string index_name_;
+        uint64_t tree_height_;
+        uint64_t tree_pages_;
+        uint64_t matched_entries_;
+        uint64_t heap_pages_;
+        uint64_t heap_tuples_;
+        double qual_cost_;
+        std::string predicate_type_;
     };
 
     /**

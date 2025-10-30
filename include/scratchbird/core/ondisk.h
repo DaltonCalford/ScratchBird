@@ -30,6 +30,7 @@ namespace scratchbird::core
         BITMAP_INDEX_DICT = 18,     // Bitmap index dictionary page
         BITMAP_ROARING_ROOT = 19,   // Roaring bitmap root page
         BITMAP_CONTAINER = 20,      // Roaring bitmap container page
+        PAGE_TYPE_RTREE_NODE = 21,  // R-tree node page (internal or leaf)
     };
 
     // Page flags (bitwise OR)

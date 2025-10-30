@@ -7,6 +7,7 @@
 #include "scratchbird/core/logger.h"
 #include "scratchbird/core/btree.h"       // Phase 5 Task 5.2: B-Tree TID updates
 #include "scratchbird/core/hash_index.h"  // Phase 5 Task 5.3.1: Hash index TID updates
+#include "scratchbird/core/rtree.h"       // Phase 2 Task 9.2: R-tree spatial index
 #include <cstring>
 #include "scratchbird/core/toast.h"       // Phase 5 Task 5.1.3: TOAST migration
 #include <algorithm>
@@ -3737,6 +3738,23 @@ namespace scratchbird::core
                 // - Complexity: ~3-4 hours (summary page scan + range updates)
                 break;
 
+            case IndexType::RTREE:
+                // PHASE 2 TASK 9.2: R-tree TID updates - NOT YET IMPLEMENTED
+                LOG_WARNING(CATALOG,
+                           "Index '%s': R-tree index TID update not yet implemented",
+                           index_info.index_name.c_str());
+                LOG_WARNING(CATALOG,
+                           "This index will be INVALID after migration - recommend DROP + RECREATE");
+                LOG_WARNING(CATALOG,
+                           "Workaround: DROP INDEX '%s'; then recreate after migration",
+                           index_info.index_name.c_str());
+                // Future implementation requires:
+                // - Traverse R-tree from root to leaves
+                // - Leaf nodes contain (bbox, TID) pairs
+                // - Update TIDs using tid_mapping
+                // - Complexity: ~4-6 hours (tree traversal + leaf TID updates)
+                break;
+
             default:
                 LOG_WARNING(CATALOG, "Index '%s': Unknown index type %u, skipping",
                           index_info.index_name.c_str(),
@@ -5537,7 +5555,179 @@ auto CatalogManager::enableTrigger(const std::string &trigger_name, bool enable,
     
     LOG_INFO(CATALOG, "Trigger '%s' %s", trigger_name.c_str(),
              enable ? "enabled" : "disabled");
-    
+
+    return Status::OK;
+}
+
+// ===== PSQL - Stored Procedures and Functions (Phase 2 Task 10.2) =====
+
+auto CatalogManager::registerFunction(const FunctionInfo &info, ErrorContext *ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(psql_mutex_);
+
+    // Check if function already exists
+    auto it = functions_.find(info.name);
+    if (it != functions_.end())
+    {
+        if (!info.or_replace)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::CONSTRAINT_VIOLATION,
+                            "Function already exists. Use OR REPLACE to update.");
+            return Status::CONSTRAINT_VIOLATION;
+        }
+
+        // Update existing function
+        it->second = info;
+        LOG_INFO(CATALOG, "Function '%s' replaced", info.name.c_str());
+    }
+    else
+    {
+        // Register new function
+        functions_[info.name] = info;
+        LOG_INFO(CATALOG, "Function '%s' registered", info.name.c_str());
+    }
+
+    return Status::OK;
+}
+
+auto CatalogManager::registerProcedure(const ProcedureInfo &info, ErrorContext *ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(psql_mutex_);
+
+    // Check if procedure already exists
+    auto it = procedures_.find(info.name);
+    if (it != procedures_.end())
+    {
+        if (!info.or_replace)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::CONSTRAINT_VIOLATION,
+                            "Procedure already exists. Use OR REPLACE to update.");
+            return Status::CONSTRAINT_VIOLATION;
+        }
+
+        // Update existing procedure
+        it->second = info;
+        LOG_INFO(CATALOG, "Procedure '%s' replaced", info.name.c_str());
+    }
+    else
+    {
+        // Register new procedure
+        procedures_[info.name] = info;
+        LOG_INFO(CATALOG, "Procedure '%s' registered", info.name.c_str());
+    }
+
+    return Status::OK;
+}
+
+auto CatalogManager::getFunction(const std::string &name, FunctionInfo &info_out,
+                                 ErrorContext *ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(psql_mutex_);
+
+    auto it = functions_.find(name);
+    if (it == functions_.end())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Function not found");
+        return Status::NOT_FOUND;
+    }
+
+    info_out = it->second;
+    return Status::OK;
+}
+
+auto CatalogManager::getProcedure(const std::string &name, ProcedureInfo &info_out,
+                                  ErrorContext *ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(psql_mutex_);
+
+    auto it = procedures_.find(name);
+    if (it == procedures_.end())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Procedure not found");
+        return Status::NOT_FOUND;
+    }
+
+    info_out = it->second;
+    return Status::OK;
+}
+
+auto CatalogManager::dropFunction(const std::string &name, bool if_exists,
+                                  ErrorContext *ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(psql_mutex_);
+
+    auto it = functions_.find(name);
+    if (it == functions_.end())
+    {
+        if (if_exists)
+        {
+            LOG_INFO(CATALOG, "Function '%s' does not exist (IF EXISTS)", name.c_str());
+            return Status::OK;
+        }
+
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Function not found");
+        return Status::NOT_FOUND;
+    }
+
+    functions_.erase(it);
+    LOG_INFO(CATALOG, "Function '%s' dropped", name.c_str());
+
+    return Status::OK;
+}
+
+auto CatalogManager::dropProcedure(const std::string &name, bool if_exists,
+                                   ErrorContext *ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(psql_mutex_);
+
+    auto it = procedures_.find(name);
+    if (it == procedures_.end())
+    {
+        if (if_exists)
+        {
+            LOG_INFO(CATALOG, "Procedure '%s' does not exist (IF EXISTS)", name.c_str());
+            return Status::OK;
+        }
+
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Procedure not found");
+        return Status::NOT_FOUND;
+    }
+
+    procedures_.erase(it);
+    LOG_INFO(CATALOG, "Procedure '%s' dropped", name.c_str());
+
+    return Status::OK;
+}
+
+auto CatalogManager::listFunctions(std::vector<FunctionInfo> &functions_out,
+                                   ErrorContext *ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(psql_mutex_);
+
+    functions_out.clear();
+    functions_out.reserve(functions_.size());
+
+    for (const auto &[name, info] : functions_)
+    {
+        functions_out.push_back(info);
+    }
+
+    return Status::OK;
+}
+
+auto CatalogManager::listProcedures(std::vector<ProcedureInfo> &procedures_out,
+                                    ErrorContext *ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(psql_mutex_);
+
+    procedures_out.clear();
+    procedures_out.reserve(procedures_.size());
+
+    for (const auto &[name, info] : procedures_)
+    {
+        procedures_out.push_back(info);
+    }
+
     return Status::OK;
 }
 

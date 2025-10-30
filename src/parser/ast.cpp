@@ -188,6 +188,73 @@ namespace scratchbird
             visitor->visit(this);
         }
 
+        void CreateTriggerStmt::accept(ASTVisitor *visitor)
+        {
+            visitor->visit(this);
+        }
+
+        void DropTriggerStmt::accept(ASTVisitor *visitor)
+        {
+            visitor->visit(this);
+        }
+
+        // ===== PSQL - Stored Procedures and Functions (Phase 2 Task 10.2) =====
+
+        void CreateFunctionStmt::accept(ASTVisitor *visitor)
+        {
+            visitor->visit(this);
+        }
+
+        void CreateProcedureStmt::accept(ASTVisitor *visitor)
+        {
+            visitor->visit(this);
+        }
+
+        void BlockStmt::accept(ASTVisitor *visitor)
+        {
+            visitor->visit(this);
+        }
+
+        void VarDeclarationStmt::accept(ASTVisitor *visitor)
+        {
+            visitor->visit(this);
+        }
+
+        void AssignmentStmt::accept(ASTVisitor *visitor)
+        {
+            visitor->visit(this);
+        }
+
+        void IfStmt::accept(ASTVisitor *visitor)
+        {
+            visitor->visit(this);
+        }
+
+        void LoopStmt::accept(ASTVisitor *visitor)
+        {
+            visitor->visit(this);
+        }
+
+        void WhileStmt::accept(ASTVisitor *visitor)
+        {
+            visitor->visit(this);
+        }
+
+        void ExitStmt::accept(ASTVisitor *visitor)
+        {
+            visitor->visit(this);
+        }
+
+        void ReturnStmt::accept(ASTVisitor *visitor)
+        {
+            visitor->visit(this);
+        }
+
+        void RaiseStmt::accept(ASTVisitor *visitor)
+        {
+            visitor->visit(this);
+        }
+
         // ===== AST Printer =====
 
         void ASTPrinter::printIndent()

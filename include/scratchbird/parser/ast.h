@@ -33,6 +33,8 @@ namespace scratchbird
             CREATE_INDEX,              // Phase 2 Task 2.3
             CREATE_TRIGGER,            // Phase 2 Wave 2 - Agent C: Basic Triggers
             DROP_TRIGGER,              // Phase 2 Wave 2 - Agent C: Basic Triggers
+            CREATE_FUNCTION,           // Phase 2 Task 10.2 - Stored Procedures
+            CREATE_PROCEDURE,          // Phase 2 Task 10.2 - Stored Procedures
             CREATE_TABLESPACE,         // Phase 2 Task 2.1
             ALTER_TABLESPACE,          // Phase 2 Task 2.2
             ALTER_TABLE_SET_TABLESPACE, // Phase 4 Task 4.1.1
@@ -50,6 +52,18 @@ namespace scratchbird
             COMMIT,            // Phase 2 Task 2.6
             ROLLBACK,          // Phase 2 Task 2.6
             SWEEP,             // Phase 3 Task 3.3
+
+            // Procedural language statements (Phase 2 Task 10.2)
+            BLOCK,             // BEGIN...END block
+            VAR_DECLARATION,   // Variable declaration
+            ASSIGNMENT,        // Variable assignment
+            IF_STMT,           // IF statement
+            LOOP_STMT,         // LOOP statement
+            WHILE_STMT,        // WHILE loop
+            EXIT_STMT,         // EXIT statement
+            RETURN_STMT,       // RETURN statement
+            RAISE_STMT,        // RAISE exception
+            TRY_EXCEPT,        // TRY/EXCEPT block
 
             // Expressions
             LITERAL,
@@ -1866,6 +1880,353 @@ namespace scratchbird
             bool if_exists_;
         };
 
+        // ===== PSQL - Stored Procedures and Functions (Phase 2 Task 10.2) =====
+
+        // Parameter mode for functions/procedures
+        enum class ParameterMode : uint8_t
+        {
+            IN,
+            OUT,
+            INOUT
+        };
+
+        // Parameter declaration
+        struct Parameter
+        {
+            StringPool::StringId name;
+            TypeName* type;
+            ParameterMode mode;
+            Expression* default_value;  // Optional
+
+            Parameter(StringPool::StringId n, TypeName* t, ParameterMode m = ParameterMode::IN, Expression* def = nullptr)
+                : name(n), type(t), mode(m), default_value(def) {}
+        };
+
+        // Variable declaration statement
+        class VarDeclarationStmt : public Statement
+        {
+        public:
+            VarDeclarationStmt(const SourceSpan& span,
+                              StringPool::StringId name,
+                              TypeName* type,
+                              bool is_constant = false,
+                              Expression* default_value = nullptr)
+                : Statement(ASTKind::VAR_DECLARATION, span),
+                  name_(name),
+                  type_(type),
+                  is_constant_(is_constant),
+                  default_value_(default_value)
+            {
+            }
+
+            StringPool::StringId name() const { return name_; }
+            TypeName* type() const { return type_; }
+            bool isConstant() const { return is_constant_; }
+            Expression* defaultValue() const { return default_value_; }
+
+            void accept(ASTVisitor* visitor) override;
+
+        private:
+            StringPool::StringId name_;
+            TypeName* type_;
+            bool is_constant_;
+            Expression* default_value_;
+        };
+
+        // Exception handler
+        struct ExceptionHandler
+        {
+            StringPool::StringId exception_name;  // Can be 0 for OTHERS
+            std::vector<Statement*> statements;
+
+            ExceptionHandler(StringPool::StringId name, std::vector<Statement*> stmts)
+                : exception_name(name), statements(std::move(stmts)) {}
+        };
+
+        // Block statement (BEGIN...END)
+        class BlockStmt : public Statement
+        {
+        public:
+            BlockStmt(const SourceSpan& span,
+                     std::vector<VarDeclarationStmt*> declarations,
+                     std::vector<Statement*> statements,
+                     std::vector<ExceptionHandler*> exception_handlers = {})
+                : Statement(ASTKind::BLOCK, span),
+                  declarations_(std::move(declarations)),
+                  statements_(std::move(statements)),
+                  exception_handlers_(std::move(exception_handlers))
+            {
+            }
+
+            const std::vector<VarDeclarationStmt*>& declarations() const { return declarations_; }
+            const std::vector<Statement*>& statements() const { return statements_; }
+            const std::vector<ExceptionHandler*>& exceptionHandlers() const { return exception_handlers_; }
+
+            void accept(ASTVisitor* visitor) override;
+
+        private:
+            std::vector<VarDeclarationStmt*> declarations_;
+            std::vector<Statement*> statements_;
+            std::vector<ExceptionHandler*> exception_handlers_;
+        };
+
+        // Assignment statement
+        class AssignmentStmt : public Statement
+        {
+        public:
+            AssignmentStmt(const SourceSpan& span,
+                          StringPool::StringId variable,
+                          Expression* value)
+                : Statement(ASTKind::ASSIGNMENT, span),
+                  variable_(variable),
+                  value_(value)
+            {
+            }
+
+            StringPool::StringId variable() const { return variable_; }
+            Expression* value() const { return value_; }
+
+            void accept(ASTVisitor* visitor) override;
+
+        private:
+            StringPool::StringId variable_;
+            Expression* value_;
+        };
+
+        // ELSIF clause for IF statement
+        struct ElsIfClause
+        {
+            Expression* condition;
+            std::vector<Statement*> statements;
+
+            ElsIfClause(Expression* cond, std::vector<Statement*> stmts)
+                : condition(cond), statements(std::move(stmts)) {}
+        };
+
+        // IF statement
+        class IfStmt : public Statement
+        {
+        public:
+            IfStmt(const SourceSpan& span,
+                  Expression* condition,
+                  std::vector<Statement*> then_stmts,
+                  std::vector<ElsIfClause*> elsif_clauses = {},
+                  std::vector<Statement*> else_stmts = {})
+                : Statement(ASTKind::IF_STMT, span),
+                  condition_(condition),
+                  then_stmts_(std::move(then_stmts)),
+                  elsif_clauses_(std::move(elsif_clauses)),
+                  else_stmts_(std::move(else_stmts))
+            {
+            }
+
+            Expression* condition() const { return condition_; }
+            const std::vector<Statement*>& thenStatements() const { return then_stmts_; }
+            const std::vector<ElsIfClause*>& elsifClauses() const { return elsif_clauses_; }
+            const std::vector<Statement*>& elseStatements() const { return else_stmts_; }
+
+            void accept(ASTVisitor* visitor) override;
+
+        private:
+            Expression* condition_;
+            std::vector<Statement*> then_stmts_;
+            std::vector<ElsIfClause*> elsif_clauses_;
+            std::vector<Statement*> else_stmts_;
+        };
+
+        // LOOP statement
+        class LoopStmt : public Statement
+        {
+        public:
+            LoopStmt(const SourceSpan& span,
+                    StringPool::StringId label,
+                    std::vector<Statement*> statements)
+                : Statement(ASTKind::LOOP_STMT, span),
+                  label_(label),
+                  statements_(std::move(statements))
+            {
+            }
+
+            StringPool::StringId label() const { return label_; }
+            const std::vector<Statement*>& statements() const { return statements_; }
+
+            void accept(ASTVisitor* visitor) override;
+
+        private:
+            StringPool::StringId label_;
+            std::vector<Statement*> statements_;
+        };
+
+        // WHILE statement
+        class WhileStmt : public Statement
+        {
+        public:
+            WhileStmt(const SourceSpan& span,
+                     StringPool::StringId label,
+                     Expression* condition,
+                     std::vector<Statement*> statements)
+                : Statement(ASTKind::WHILE_STMT, span),
+                  label_(label),
+                  condition_(condition),
+                  statements_(std::move(statements))
+            {
+            }
+
+            StringPool::StringId label() const { return label_; }
+            Expression* condition() const { return condition_; }
+            const std::vector<Statement*>& statements() const { return statements_; }
+
+            void accept(ASTVisitor* visitor) override;
+
+        private:
+            StringPool::StringId label_;
+            Expression* condition_;
+            std::vector<Statement*> statements_;
+        };
+
+        // EXIT statement
+        class ExitStmt : public Statement
+        {
+        public:
+            ExitStmt(const SourceSpan& span,
+                    StringPool::StringId label = 0,
+                    Expression* when_condition = nullptr)
+                : Statement(ASTKind::EXIT_STMT, span),
+                  label_(label),
+                  when_condition_(when_condition)
+            {
+            }
+
+            StringPool::StringId label() const { return label_; }
+            Expression* whenCondition() const { return when_condition_; }
+
+            void accept(ASTVisitor* visitor) override;
+
+        private:
+            StringPool::StringId label_;
+            Expression* when_condition_;
+        };
+
+        // RETURN statement
+        class ReturnStmt : public Statement
+        {
+        public:
+            ReturnStmt(const SourceSpan& span, Expression* return_value = nullptr)
+                : Statement(ASTKind::RETURN_STMT, span),
+                  return_value_(return_value)
+            {
+            }
+
+            Expression* returnValue() const { return return_value_; }
+
+            void accept(ASTVisitor* visitor) override;
+
+        private:
+            Expression* return_value_;
+        };
+
+        // RAISE statement
+        class RaiseStmt : public Statement
+        {
+        public:
+            enum class Level
+            {
+                EXCEPTION,
+                NOTICE,
+                WARNING,
+                INFO,
+                DEBUG
+            };
+
+            RaiseStmt(const SourceSpan& span,
+                     Level level,
+                     Expression* message,
+                     std::vector<Expression*> args = {})
+                : Statement(ASTKind::RAISE_STMT, span),
+                  level_(level),
+                  message_(message),
+                  args_(std::move(args))
+            {
+            }
+
+            Level level() const { return level_; }
+            Expression* message() const { return message_; }
+            const std::vector<Expression*>& args() const { return args_; }
+
+            void accept(ASTVisitor* visitor) override;
+
+        private:
+            Level level_;
+            Expression* message_;
+            std::vector<Expression*> args_;
+        };
+
+        // CREATE FUNCTION statement
+        class CreateFunctionStmt : public Statement
+        {
+        public:
+            CreateFunctionStmt(const SourceSpan& span,
+                              StringPool::StringId name,
+                              std::vector<Parameter*> parameters,
+                              TypeName* return_type,
+                              bool or_replace,
+                              BlockStmt* body)
+                : Statement(ASTKind::CREATE_FUNCTION, span),
+                  name_(name),
+                  parameters_(std::move(parameters)),
+                  return_type_(return_type),
+                  or_replace_(or_replace),
+                  body_(body)
+            {
+            }
+
+            StringPool::StringId name() const { return name_; }
+            const std::vector<Parameter*>& parameters() const { return parameters_; }
+            TypeName* returnType() const { return return_type_; }
+            bool orReplace() const { return or_replace_; }
+            BlockStmt* body() const { return body_; }
+
+            void accept(ASTVisitor* visitor) override;
+
+        private:
+            StringPool::StringId name_;
+            std::vector<Parameter*> parameters_;
+            TypeName* return_type_;
+            bool or_replace_;
+            BlockStmt* body_;
+        };
+
+        // CREATE PROCEDURE statement
+        class CreateProcedureStmt : public Statement
+        {
+        public:
+            CreateProcedureStmt(const SourceSpan& span,
+                               StringPool::StringId name,
+                               std::vector<Parameter*> parameters,
+                               bool or_replace,
+                               BlockStmt* body)
+                : Statement(ASTKind::CREATE_PROCEDURE, span),
+                  name_(name),
+                  parameters_(std::move(parameters)),
+                  or_replace_(or_replace),
+                  body_(body)
+            {
+            }
+
+            StringPool::StringId name() const { return name_; }
+            const std::vector<Parameter*>& parameters() const { return parameters_; }
+            bool orReplace() const { return or_replace_; }
+            BlockStmt* body() const { return body_; }
+
+            void accept(ASTVisitor* visitor) override;
+
+        private:
+            StringPool::StringId name_;
+            std::vector<Parameter*> parameters_;
+            bool or_replace_;
+            BlockStmt* body_;
+        };
+
         // ===== Visitor Pattern =====
 
         class ASTVisitor
@@ -1895,6 +2256,19 @@ namespace scratchbird
             virtual void visit(SweepStmt *node) = 0;            // Phase 3 Task 3.3
             virtual void visit(CreateTriggerStmt *node) = 0;    // Phase 2 Wave 2 Agent C
             virtual void visit(DropTriggerStmt *node) = 0;      // Phase 2 Wave 2 Agent C
+
+            // PSQL - Stored Procedures and Functions (Phase 2 Task 10.2)
+            virtual void visit(CreateFunctionStmt *node) = 0;
+            virtual void visit(CreateProcedureStmt *node) = 0;
+            virtual void visit(BlockStmt *node) = 0;
+            virtual void visit(VarDeclarationStmt *node) = 0;
+            virtual void visit(AssignmentStmt *node) = 0;
+            virtual void visit(IfStmt *node) = 0;
+            virtual void visit(LoopStmt *node) = 0;
+            virtual void visit(WhileStmt *node) = 0;
+            virtual void visit(ExitStmt *node) = 0;
+            virtual void visit(ReturnStmt *node) = 0;
+            virtual void visit(RaiseStmt *node) = 0;
 
             // Expressions
             virtual void visit(LiteralExpr *node) = 0;

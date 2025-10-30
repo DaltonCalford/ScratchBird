@@ -851,6 +851,487 @@ namespace scratchbird
             return arena_.make<DropTriggerStmt>(span, trigger_name, if_exists);
         }
 
+        // ===== PSQL - Stored Procedures and Functions (Phase 2 Task 10.2) =====
+
+        Statement *Parser::parseCreateFunction()
+        {
+            // CREATE [OR REPLACE] FUNCTION name ( params ) RETURNS type AS block
+            auto start_loc = previous().location;
+
+            // Check for OR REPLACE (not yet in parseStatement switch, so skip for now)
+            bool or_replace = false;
+
+            // Consume FUNCTION keyword
+            if (!consume(TokenType::KW_FUNCTION, "Expected FUNCTION keyword"))
+                return nullptr;
+
+            // Get function name
+            if (!check(TokenType::IDENTIFIER))
+            {
+                error("Expected function name");
+                return nullptr;
+            }
+            StringPool::StringId func_name = current().value.string_id;
+            advance();
+
+            // Parse parameter list
+            if (!consume(TokenType::LEFT_PAREN, "Expected '(' after function name"))
+                return nullptr;
+
+            std::vector<Parameter*> params;
+            if (!check(TokenType::RIGHT_PAREN))
+            {
+                params = parseParameterList();
+            }
+
+            if (!consume(TokenType::RIGHT_PAREN, "Expected ')' after parameters"))
+                return nullptr;
+
+            // Parse RETURNS clause
+            if (!consume(TokenType::KW_RETURNS, "Expected RETURNS clause"))
+                return nullptr;
+
+            TypeName return_type = parseTypeName();
+            TypeName *return_type_ptr = arena_.make<TypeName>(return_type);
+
+            // Parse AS (IS keyword not yet in lexer)
+            if (!check(TokenType::KW_AS))
+            {
+                error("Expected AS before function body");
+                return nullptr;
+            }
+            advance();
+
+            // Parse PSQL block
+            BlockStmt *body = parsePSQLBlock();
+            if (!body)
+                return nullptr;
+
+            auto span = SourceSpan(start_loc, previous().location);
+            // Constructor: (span, name, params, return_type, or_replace, body)
+            return arena_.make<CreateFunctionStmt>(span, func_name, params, return_type_ptr, or_replace, body);
+        }
+
+        Statement *Parser::parseCreateProcedure()
+        {
+            // CREATE [OR REPLACE] PROCEDURE name ( params ) AS block
+            auto start_loc = previous().location;
+
+            bool or_replace = false;
+
+            // Consume PROCEDURE keyword
+            if (!consume(TokenType::KW_PROCEDURE, "Expected PROCEDURE keyword"))
+                return nullptr;
+
+            // Get procedure name
+            if (!check(TokenType::IDENTIFIER))
+            {
+                error("Expected procedure name");
+                return nullptr;
+            }
+            StringPool::StringId proc_name = current().value.string_id;
+            advance();
+
+            // Parse parameter list
+            if (!consume(TokenType::LEFT_PAREN, "Expected '(' after procedure name"))
+                return nullptr;
+
+            std::vector<Parameter*> params;
+            if (!check(TokenType::RIGHT_PAREN))
+            {
+                params = parseParameterList();
+            }
+
+            if (!consume(TokenType::RIGHT_PAREN, "Expected ')' after parameters"))
+                return nullptr;
+
+            // Parse AS (IS keyword not yet in lexer)
+            if (!check(TokenType::KW_AS))
+            {
+                error("Expected AS before procedure body");
+                return nullptr;
+            }
+            advance();
+
+            // Parse PSQL block
+            BlockStmt *body = parsePSQLBlock();
+            if (!body)
+                return nullptr;
+
+            auto span = SourceSpan(start_loc, previous().location);
+            // Constructor: (span, name, params, or_replace, body)
+            return arena_.make<CreateProcedureStmt>(span, proc_name, params, or_replace, body);
+        }
+
+        std::vector<Parameter*> Parser::parseParameterList()
+        {
+            std::vector<Parameter*> params;
+
+            do
+            {
+                Parameter *param = parseParameter();
+                params.push_back(param);
+            } while (match(TokenType::COMMA));
+
+            return params;
+        }
+
+        Parameter* Parser::parseParameter()
+        {
+            // Check for IN/OUT/INOUT - not yet in lexer, so default to IN
+            // TODO: Add IN/OUT/INOUT token support
+            ParameterMode mode = ParameterMode::IN;
+
+            // Parameter name
+            if (!check(TokenType::IDENTIFIER))
+            {
+                error("Expected parameter name");
+                return nullptr;
+            }
+            StringPool::StringId param_name = current().value.string_id;
+            advance();
+
+            // Parameter type
+            TypeName type = parseTypeName();
+            TypeName *type_ptr = arena_.make<TypeName>(type);
+
+            // Optional DEFAULT value
+            Expression *default_value = nullptr;
+            if (check(TokenType::KW_DEFAULT))
+            {
+                advance();
+                default_value = parseExpression();
+            }
+
+            // Allocate Parameter in arena with constructor
+            Parameter *param = arena_.make<Parameter>(param_name, type_ptr, mode, default_value);
+
+            return param;
+        }
+
+        BlockStmt *Parser::parsePSQLBlock()
+        {
+            // [DECLARE declarations] BEGIN statements [EXCEPTION handlers] END
+            auto start_loc = current().location;
+
+            std::vector<VarDeclarationStmt*> declarations;
+            std::vector<Statement*> statements;
+            std::vector<ExceptionHandler*> handlers;
+
+            // Optional DECLARE section
+            if (check(TokenType::KW_DECLARE))
+            {
+                advance();
+                declarations = parseDeclareSection();
+            }
+
+            // BEGIN keyword
+            if (!consume(TokenType::KW_BEGIN, "Expected BEGIN to start block"))
+                return nullptr;
+
+            // Parse statements until END, EXCEPTION, or error
+            while (!check(TokenType::KW_END) && !check(TokenType::KW_EXCEPTION) && !isAtEnd())
+            {
+                Statement *stmt = nullptr;
+
+                // Dispatch to appropriate statement parser
+                if (check(TokenType::KW_IF))
+                {
+                    advance();
+                    stmt = parseIfStatement();
+                }
+                else if (check(TokenType::KW_LOOP))
+                {
+                    advance();
+                    stmt = parseLoopStatement();
+                }
+                else if (check(TokenType::KW_WHILE))
+                {
+                    advance();
+                    stmt = parseWhileStatement();
+                }
+                else if (check(TokenType::KW_EXIT))
+                {
+                    advance();
+                    stmt = parseExitStatement();
+                }
+                else if (check(TokenType::KW_RETURN))
+                {
+                    advance();
+                    stmt = parseReturnStatement();
+                }
+                else if (check(TokenType::KW_RAISE))
+                {
+                    advance();
+                    stmt = parseRaiseStatement();
+                }
+                else if (check(TokenType::IDENTIFIER))
+                {
+                    stmt = parseAssignmentOrCall();
+                }
+                else if (check(TokenType::KW_SELECT))
+                {
+                    advance();
+                    stmt = parseSelect();
+                }
+                else if (check(TokenType::KW_INSERT))
+                {
+                    advance();
+                    stmt = parseInsert();
+                }
+                else if (check(TokenType::KW_UPDATE))
+                {
+                    advance();
+                    stmt = parseUpdate();
+                }
+                else if (check(TokenType::KW_DELETE))
+                {
+                    advance();
+                    stmt = parseDelete();
+                }
+                else
+                {
+                    error("Unexpected token in PSQL block: " + std::string(tokenTypeToString(current().type)));
+                    advance();
+                    continue;
+                }
+
+                if (stmt)
+                    statements.push_back(stmt);
+
+                // Optional semicolon
+                match(TokenType::SEMICOLON);
+            }
+
+            // Optional EXCEPTION section
+            if (check(TokenType::KW_EXCEPTION))
+            {
+                advance();
+                handlers = parseExceptionHandlers();
+            }
+
+            // END keyword
+            if (!consume(TokenType::KW_END, "Expected END to close block"))
+                return nullptr;
+
+            auto span = SourceSpan(start_loc, previous().location);
+            return arena_.make<BlockStmt>(span, declarations, statements, handlers);
+        }
+
+        std::vector<VarDeclarationStmt*> Parser::parseDeclareSection()
+        {
+            std::vector<VarDeclarationStmt*> declarations;
+
+            // Parse declarations until BEGIN
+            while (!check(TokenType::KW_BEGIN) && !isAtEnd())
+            {
+                VarDeclarationStmt *decl = parseVariableDeclaration();
+                if (decl)
+                    declarations.push_back(decl);
+
+                // Consume semicolon
+                if (!consume(TokenType::SEMICOLON, "Expected ';' after variable declaration"))
+                    break;
+            }
+
+            return declarations;
+        }
+
+        VarDeclarationStmt *Parser::parseVariableDeclaration()
+        {
+            // var_name type [DEFAULT expr]
+            auto start_loc = current().location;
+
+            if (!check(TokenType::IDENTIFIER))
+            {
+                error("Expected variable name");
+                return nullptr;
+            }
+            StringPool::StringId var_name = current().value.string_id;
+            advance();
+
+            TypeName var_type = parseTypeName();
+            TypeName *var_type_ptr = arena_.make<TypeName>(var_type);
+
+            Expression *default_value = nullptr;
+            if (check(TokenType::KW_DEFAULT))
+            {
+                advance();
+                default_value = parseExpression();
+            }
+
+            auto span = SourceSpan(start_loc, previous().location);
+            return arena_.make<VarDeclarationStmt>(span, var_name, var_type_ptr, false, default_value);
+        }
+
+        Statement *Parser::parseIfStatement()
+        {
+            // IF condition THEN statements [ELSIF condition THEN statements]* [ELSE statements] END IF
+            auto start_loc = previous().location;
+
+            // Parse main condition
+            Expression *condition = parseExpression();
+            if (!condition)
+                return nullptr;
+
+            if (!consume(TokenType::KW_THEN, "Expected THEN after IF condition"))
+                return nullptr;
+
+            // Parse then-branch statements (stub for now)
+            std::vector<Statement*> then_stmts;
+
+            // Parse ELSIF clauses (stub)
+            std::vector<ElsIfClause*> elsif_clauses;
+
+            // Parse optional ELSE clause (stub)
+            std::vector<Statement*> else_stmts;
+
+            // END IF
+            if (!consume(TokenType::KW_END, "Expected END to close IF statement"))
+                return nullptr;
+            if (!consume(TokenType::KW_IF, "Expected IF after END"))
+                return nullptr;
+
+            auto span = SourceSpan(start_loc, previous().location);
+            return arena_.make<IfStmt>(span, condition, then_stmts, elsif_clauses, else_stmts);
+        }
+
+        Statement *Parser::parseLoopStatement()
+        {
+            // LOOP statements END LOOP
+            auto start_loc = previous().location;
+
+            std::vector<Statement*> body;
+
+            if (!consume(TokenType::KW_END, "Expected END to close LOOP"))
+                return nullptr;
+            if (!consume(TokenType::KW_LOOP, "Expected LOOP after END"))
+                return nullptr;
+
+            auto span = SourceSpan(start_loc, previous().location);
+            return arena_.make<LoopStmt>(span, 0, body);  // label=0, then body
+        }
+
+        Statement *Parser::parseWhileStatement()
+        {
+            // WHILE condition DO statements END WHILE - but we don't have DO keyword
+            // Simplify to: WHILE condition statements END WHILE
+            auto start_loc = previous().location;
+
+            Expression *condition = parseExpression();
+            if (!condition)
+                return nullptr;
+
+            std::vector<Statement*> body;
+
+            if (!consume(TokenType::KW_END, "Expected END to close WHILE"))
+                return nullptr;
+            if (!consume(TokenType::KW_WHILE, "Expected WHILE after END"))
+                return nullptr;
+
+            auto span = SourceSpan(start_loc, previous().location);
+            return arena_.make<WhileStmt>(span, 0, condition, body);  // label=0, condition, body
+        }
+
+        Statement *Parser::parseExitStatement()
+        {
+            // EXIT [WHEN condition]
+            auto start_loc = previous().location;
+
+            Expression *condition = nullptr;
+            if (check(TokenType::KW_WHEN))
+            {
+                advance();
+                condition = parseExpression();
+            }
+
+            auto span = SourceSpan(start_loc, previous().location);
+            return arena_.make<ExitStmt>(span, 0, condition);  // label=0, condition
+        }
+
+        Statement *Parser::parseReturnStatement()
+        {
+            // RETURN [expression]
+            auto start_loc = previous().location;
+
+            Expression *return_value = nullptr;
+            if (!check(TokenType::SEMICOLON) && !check(TokenType::KW_END))
+            {
+                return_value = parseExpression();
+            }
+
+            auto span = SourceSpan(start_loc, previous().location);
+            return arena_.make<ReturnStmt>(span, return_value);
+        }
+
+        Statement *Parser::parseRaiseStatement()
+        {
+            // RAISE [EXCEPTION|NOTICE|WARNING] message
+            auto start_loc = previous().location;
+
+            RaiseStmt::Level level = RaiseStmt::Level::EXCEPTION;
+
+            // Check for level keyword
+            if (check(TokenType::KW_EXCEPTION))
+            {
+                advance();
+                level = RaiseStmt::Level::EXCEPTION;
+            }
+            // TODO: Add NOTICE, WARNING tokens when needed
+
+            // Parse message expression
+            Expression *message = parseExpression();
+            if (!message)
+            {
+                error("Expected message expression after RAISE");
+                return nullptr;
+            }
+
+            std::vector<Expression*> args;
+
+            auto span = SourceSpan(start_loc, previous().location);
+            return arena_.make<RaiseStmt>(span, level, message, args);
+        }
+
+        Statement *Parser::parseAssignmentOrCall()
+        {
+            // identifier := expression  OR  identifier(args)
+            // For now, just return nullptr as we need := operator in lexer
+            error("Assignment statements require := operator (not yet implemented in lexer)");
+            return nullptr;
+        }
+
+        std::vector<ExceptionHandler*> Parser::parseExceptionHandlers()
+        {
+            std::vector<ExceptionHandler*> handlers;
+
+            // WHEN exception_name THEN statements
+            while (check(TokenType::KW_WHEN))
+            {
+                advance();
+
+                StringPool::StringId exception_name = 0;  // Default to OTHERS
+
+                if (check(TokenType::IDENTIFIER))
+                {
+                    exception_name = current().value.string_id;
+                    advance();
+                }
+
+                if (!consume(TokenType::KW_THEN, "Expected THEN after WHEN exception"))
+                    break;
+
+                // Parse handler statements (stub for now)
+                std::vector<Statement*> stmts;
+
+                // Allocate in arena
+                ExceptionHandler *handler = arena_.make<ExceptionHandler>(exception_name, stmts);
+                handlers.push_back(handler);
+            }
+
+            return handlers;
+        }
+
         Statement *Parser::parseInsert()
         {
             auto start_loc = previous().location;

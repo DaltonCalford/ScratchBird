@@ -528,6 +528,57 @@ namespace scratchbird::optimizer
                           core::ErrorContext *ctx)
             -> std::shared_ptr<Path>;
 
+        /**
+         * generateRTreeScanPaths - Generate R-tree spatial index scan paths
+         *
+         * For each R-tree index on table:
+         *   1. Check if index column appears in spatial predicate
+         *   2. Estimate selectivity based on bounding box overlap
+         *   3. Estimate R-tree pages accessed
+         *   4. Create RTreeScanPath with cost estimate
+         *
+         * Applicable for spatial predicates:
+         * - ST_Intersects(geom_column, constant)
+         * - ST_Contains(geom_column, constant)
+         * - ST_Within(geom_column, constant)
+         * - ST_Covers, ST_CoveredBy, ST_Overlaps, etc.
+         *
+         * @param select_stmt SELECT statement
+         * @param table_id Table ID
+         * @param table_name Table name
+         * @param paths Output vector to append R-tree paths
+         * @param ctx Error context
+         * @return Status
+         *
+         * Phase 2, Task 9.2
+         */
+        auto generateRTreeScanPaths(const parser::SelectStmt *select_stmt,
+                                    const core::ID &table_id,
+                                    const std::string &table_name,
+                                    std::vector<std::shared_ptr<Path>> &paths,
+                                    core::ErrorContext *ctx)
+            -> core::Status;
+
+        /**
+         * isSpatialPredicate - Check if expression is a spatial predicate
+         *
+         * Recognizes spatial function calls like:
+         * - ST_Intersects(column, constant)
+         * - ST_Contains(column, constant)
+         * - ST_Within(column, constant)
+         *
+         * @param expr Expression to check
+         * @param column_name Output: column name if spatial predicate
+         * @param function_name Output: spatial function name
+         * @return true if expr is a spatial predicate
+         *
+         * Phase 2, Task 9.2
+         */
+        auto isSpatialPredicate(const parser::Expression *expr,
+                               std::string &column_name,
+                               std::string &function_name) const
+            -> bool;
+
     private:
         core::Database *db_;
         CostModel cost_model_;
