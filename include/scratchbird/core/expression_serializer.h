@@ -1,7 +1,7 @@
 #pragma once
 
 #include "scratchbird/parser/ast.h"
-#include "scratchbird/parser/string_pool.h"
+#include "scratchbird/parser/token.h"
 #include <vector>
 #include <cstdint>
 #include <memory>
