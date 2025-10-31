@@ -1,0 +1,34 @@
+# Standalone CMake for ExpressionMatcher and PredicateMatcher tests
+# Run with: cmake -S . -B build_matchers -f CMakeLists_matchers_test.txt && cmake --build build_matchers
+
+cmake_minimum_required(VERSION 3.15)
+project(matcher_tests)
+
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+# Find GoogleTest
+find_package(GTest REQUIRED)
+include_directories(${GTEST_INCLUDE_DIRS})
+
+# Include directories
+include_directories(include)
+
+# Build matcher test executable
+add_executable(test_matchers
+    tests/unit/test_expression_matcher.cpp
+    tests/unit/test_predicate_matcher.cpp
+    tests/unit/test_matchers_only.cpp
+)
+
+target_link_libraries(test_matchers
+    scratchbird_optimizer
+    scratchbird_core
+    scratchbird_parser
+    scratchbird_sblr
+    ${GTEST_LIBRARIES}
+    pthread
+)
+
+enable_testing()
+add_test(NAME matcher_tests COMMAND test_matchers)

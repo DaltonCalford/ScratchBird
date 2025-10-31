@@ -117,6 +117,36 @@ namespace scratchbird
             int affected_count_ = 0;
         };
 
+        // Task 17 MGA Phase 2.2: Index maintenance statistics
+        struct IndexMaintenanceStats
+        {
+            uint64_t entries_added = 0;
+            uint64_t entries_removed = 0;
+            uint64_t entries_updated = 0;
+            uint64_t expression_evaluations = 0;
+            uint64_t predicate_evaluations = 0;
+            uint64_t invisible_skipped = 0;
+            uint64_t indexes_maintained = 0;
+
+            double total_eval_time_ms = 0.0;
+            double total_insert_time_ms = 0.0;
+            double total_remove_time_ms = 0.0;
+
+            void reset()
+            {
+                entries_added = 0;
+                entries_removed = 0;
+                entries_updated = 0;
+                expression_evaluations = 0;
+                predicate_evaluations = 0;
+                invisible_skipped = 0;
+                indexes_maintained = 0;
+                total_eval_time_ms = 0.0;
+                total_insert_time_ms = 0.0;
+                total_remove_time_ms = 0.0;
+            }
+        };
+
         // SBLR Bytecode Executor
         // NOTE: The executor does not take ownership of the Database pointer.
         // The caller must ensure the Database remains valid for the executor's lifetime.
@@ -130,6 +160,10 @@ namespace scratchbird
 
             // Execute bytecode
             ExecutionResult execute(const std::vector<uint8_t> &bytecode);
+
+            // Task 17 MGA Phase 2.2: Access index maintenance statistics
+            const IndexMaintenanceStats& getIndexStats() const { return index_stats_; }
+            void resetIndexStats() { index_stats_.reset(); }
 
         private:
             core::Database *db_;
@@ -157,6 +191,9 @@ namespace scratchbird
             // Row context for expression evaluation (during SELECT WHERE)
             const std::vector<Value> *current_row_values_ = nullptr;
             const std::vector<core::CatalogManager::ColumnInfo> *current_row_columns_ = nullptr;
+
+            // Task 17 MGA Phase 2.2: Index maintenance statistics
+            IndexMaintenanceStats index_stats_;
 
             // Execution helpers
             uint8_t readByte();
