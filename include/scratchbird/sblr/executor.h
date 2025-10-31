@@ -177,6 +177,32 @@ namespace scratchbird
             void executeCreateIndex();             // Phase 2 Task 2.3
             void buildExpressionIndex(const core::CatalogManager::TableInfo &table_info,
                                      const core::ID &index_id);  // Task 17 Phase 6
+
+            // Task 17 Phase 7: Index maintenance helpers
+            void updateIndexesOnInsert(const core::ID &table_id,
+                                      const core::CatalogManager::TableInfo &table_info,
+                                      const std::vector<core::CatalogManager::ColumnInfo> &all_columns,
+                                      uint32_t page_id,
+                                      uint16_t item_id,
+                                      const std::vector<Value> &row_values);
+
+            void updateIndexesOnUpdate(const core::ID &table_id,
+                                      const core::CatalogManager::TableInfo &table_info,
+                                      const std::vector<core::CatalogManager::ColumnInfo> &all_columns,
+                                      const std::vector<Value> &old_values,
+                                      const std::vector<Value> &new_values,
+                                      core::TID old_tid,
+                                      core::TID new_tid);
+
+            void updateIndexesOnDelete(const core::ID &table_id,
+                                      const core::CatalogManager::TableInfo &table_info,
+                                      const std::vector<core::CatalogManager::ColumnInfo> &all_columns,
+                                      const std::vector<Value> &row_values,
+                                      core::TID tid);
+
+            void serializeIndexKey(const std::vector<Value> &key_values,
+                                  std::vector<uint8_t> &key_bytes_out);
+
             void executeCreateTablespace();        // Phase 2 Task 2.1
             void executeAlterTablespace();         // Phase 2 Task 2.2
             void executeAlterTableSetTablespace(); // Phase 4 Task 4.1.6

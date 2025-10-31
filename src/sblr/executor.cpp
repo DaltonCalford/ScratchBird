@@ -1549,6 +1549,510 @@ namespace scratchbird
             }
         }
 
+        // Task 17 Phase 7: Index maintenance helpers
+        void Executor::updateIndexesOnInsert(
+            const core::ID &table_id,
+            const core::CatalogManager::TableInfo &table_info,
+            const std::vector<core::CatalogManager::ColumnInfo> &all_columns,
+            uint32_t page_id,
+            uint16_t item_id,
+            const std::vector<Value> &row_values)
+        {
+            // Get all indexes for this table
+            std::vector<core::CatalogManager::IndexInfo> indexes;
+            auto status = db_->catalog_manager()->listIndexesForTable(table_id, indexes, nullptr);
+            if (status != core::Status::OK)
+            {
+                return; // No indexes or error - continue
+            }
+
+            core::TID tid(page_id, item_id);
+
+            for (const auto &index_info : indexes)
+            {
+                // Skip if not expression/filtered index (handled by existing code)
+                if (!index_info.is_expression_index && !index_info.is_partial_index)
+                {
+                    continue;
+                }
+
+                // Deserialize expression/predicate
+                parser::StringPool temp_pool;
+                std::vector<parser::Expression *> expressions;
+                parser::Expression *predicate = nullptr;
+
+                if (index_info.is_expression_index)
+                {
+                    expressions = core::ExpressionSerializer::deserializeList(
+                        index_info.expression_data.data(),
+                        index_info.expression_data.size(),
+                        temp_pool);
+                }
+
+                if (index_info.is_partial_index)
+                {
+                    predicate = core::ExpressionSerializer::deserialize(
+                        index_info.predicate_data.data(),
+                        index_info.predicate_data.size(),
+                        temp_pool);
+                }
+
+                // Create evaluator
+                ExpressionEvaluator evaluator(all_columns, &temp_pool);
+
+                // Check predicate
+                if (predicate)
+                {
+                    try
+                    {
+                        bool matches = evaluator.evaluatePredicate(predicate, row_values);
+                        if (!matches)
+                        {
+                            // Row doesn't match filter - skip this index
+                            delete predicate;
+                            for (auto *expr : expressions)
+                                delete expr;
+                            continue;
+                        }
+                    }
+                    catch (...)
+                    {
+                        // Error evaluating - skip
+                        delete predicate;
+                        for (auto *expr : expressions)
+                            delete expr;
+                        continue;
+                    }
+                }
+
+                // Compute key
+                std::vector<Value> key_values;
+                bool skip_index = false;
+                if (index_info.is_expression_index)
+                {
+                    for (auto *expr : expressions)
+                    {
+                        try
+                        {
+                            key_values.push_back(evaluator.evaluate(expr, row_values));
+                        }
+                        catch (...)
+                        {
+                            // Error - skip this index
+                            skip_index = true;
+                            break;
+                        }
+                    }
+                }
+                else
+                {
+                    // Regular columns
+                    for (const auto &col_id : index_info.column_ids)
+                    {
+                        for (size_t i = 0; i < all_columns.size(); i++)
+                        {
+                            if (all_columns[i].column_id == col_id)
+                            {
+                                key_values.push_back(row_values[i]);
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                if (skip_index)
+                {
+                    delete predicate;
+                    for (auto *expr : expressions)
+                        delete expr;
+                    continue;
+                }
+
+                // Serialize key
+                std::vector<uint8_t> key_bytes;
+                serializeIndexKey(key_values, key_bytes);
+
+                // Insert into B-tree
+                auto btree = core::BTree::open(db_, index_info.index_id, index_info.root_page, nullptr);
+                if (btree)
+                {
+                    btree->insert(key_bytes, tid, nullptr);
+                }
+
+                // Cleanup
+                delete predicate;
+                for (auto *expr : expressions)
+                    delete expr;
+            }
+        }
+
+        void Executor::updateIndexesOnUpdate(
+            const core::ID &table_id,
+            const core::CatalogManager::TableInfo &table_info,
+            const std::vector<core::CatalogManager::ColumnInfo> &all_columns,
+            const std::vector<Value> &old_values,
+            const std::vector<Value> &new_values,
+            core::TID old_tid,
+            core::TID new_tid)
+        {
+            std::vector<core::CatalogManager::IndexInfo> indexes;
+            auto status = db_->catalog_manager()->listIndexesForTable(table_id, indexes, nullptr);
+            if (status != core::Status::OK)
+            {
+                return;
+            }
+
+            for (const auto &index_info : indexes)
+            {
+                if (!index_info.is_expression_index && !index_info.is_partial_index)
+                {
+                    continue;
+                }
+
+                parser::StringPool temp_pool;
+                std::vector<parser::Expression *> expressions;
+                parser::Expression *predicate = nullptr;
+
+                if (index_info.is_expression_index)
+                {
+                    expressions = core::ExpressionSerializer::deserializeList(
+                        index_info.expression_data.data(),
+                        index_info.expression_data.size(),
+                        temp_pool);
+                }
+
+                if (index_info.is_partial_index)
+                {
+                    predicate = core::ExpressionSerializer::deserialize(
+                        index_info.predicate_data.data(),
+                        index_info.predicate_data.size(),
+                        temp_pool);
+                }
+
+                ExpressionEvaluator evaluator(all_columns, &temp_pool);
+
+                // Check predicate for both old and new
+                bool in_old = true, in_new = true;
+
+                if (predicate)
+                {
+                    try
+                    {
+                        in_old = evaluator.evaluatePredicate(predicate, old_values);
+                        in_new = evaluator.evaluatePredicate(predicate, new_values);
+                    }
+                    catch (...)
+                    {
+                        // Error - assume not in index
+                        in_old = in_new = false;
+                    }
+                }
+
+                // Compute old and new keys
+                std::vector<uint8_t> old_key, new_key;
+
+                if (in_old)
+                {
+                    std::vector<Value> old_key_vals;
+                    if (index_info.is_expression_index)
+                    {
+                        for (auto *expr : expressions)
+                        {
+                            try
+                            {
+                                old_key_vals.push_back(evaluator.evaluate(expr, old_values));
+                            }
+                            catch (...)
+                            {
+                                in_old = false;
+                                break;
+                            }
+                        }
+                    }
+                    else
+                    {
+                        for (const auto &col_id : index_info.column_ids)
+                        {
+                            for (size_t i = 0; i < all_columns.size(); i++)
+                            {
+                                if (all_columns[i].column_id == col_id)
+                                {
+                                    old_key_vals.push_back(old_values[i]);
+                                    break;
+                                }
+                            }
+                        }
+                    }
+
+                    if (in_old)
+                    {
+                        serializeIndexKey(old_key_vals, old_key);
+                    }
+                }
+
+                if (in_new)
+                {
+                    std::vector<Value> new_key_vals;
+                    if (index_info.is_expression_index)
+                    {
+                        for (auto *expr : expressions)
+                        {
+                            try
+                            {
+                                new_key_vals.push_back(evaluator.evaluate(expr, new_values));
+                            }
+                            catch (...)
+                            {
+                                in_new = false;
+                                break;
+                            }
+                        }
+                    }
+                    else
+                    {
+                        for (const auto &col_id : index_info.column_ids)
+                        {
+                            for (size_t i = 0; i < all_columns.size(); i++)
+                            {
+                                if (all_columns[i].column_id == col_id)
+                                {
+                                    new_key_vals.push_back(new_values[i]);
+                                    break;
+                                }
+                            }
+                        }
+                    }
+
+                    if (in_new)
+                    {
+                        serializeIndexKey(new_key_vals, new_key);
+                    }
+                }
+
+                // Open B-tree
+                auto btree = core::BTree::open(db_, index_info.index_id, index_info.root_page, nullptr);
+                if (!btree)
+                {
+                    delete predicate;
+                    for (auto *expr : expressions)
+                        delete expr;
+                    continue;
+                }
+
+                // Handle four cases
+                if (in_old && in_new)
+                {
+                    // Both in index - delete old, insert new
+                    btree->remove(old_key, old_tid, nullptr);
+                    btree->insert(new_key, new_tid, nullptr);
+                }
+                else if (in_old && !in_new)
+                {
+                    // Was in index, now not - delete
+                    btree->remove(old_key, old_tid, nullptr);
+                }
+                else if (!in_old && in_new)
+                {
+                    // Wasn't in index, now is - insert
+                    btree->insert(new_key, new_tid, nullptr);
+                }
+                // else: neither in index - no change
+
+                // Cleanup
+                delete predicate;
+                for (auto *expr : expressions)
+                    delete expr;
+            }
+        }
+
+        void Executor::updateIndexesOnDelete(
+            const core::ID &table_id,
+            const core::CatalogManager::TableInfo &table_info,
+            const std::vector<core::CatalogManager::ColumnInfo> &all_columns,
+            const std::vector<Value> &row_values,
+            core::TID tid)
+        {
+            std::vector<core::CatalogManager::IndexInfo> indexes;
+            auto status = db_->catalog_manager()->listIndexesForTable(table_id, indexes, nullptr);
+            if (status != core::Status::OK)
+            {
+                return;
+            }
+
+            for (const auto &index_info : indexes)
+            {
+                if (!index_info.is_expression_index && !index_info.is_partial_index)
+                {
+                    continue;
+                }
+
+                parser::StringPool temp_pool;
+                std::vector<parser::Expression *> expressions;
+                parser::Expression *predicate = nullptr;
+
+                if (index_info.is_expression_index)
+                {
+                    expressions = core::ExpressionSerializer::deserializeList(
+                        index_info.expression_data.data(),
+                        index_info.expression_data.size(),
+                        temp_pool);
+                }
+
+                if (index_info.is_partial_index)
+                {
+                    predicate = core::ExpressionSerializer::deserialize(
+                        index_info.predicate_data.data(),
+                        index_info.predicate_data.size(),
+                        temp_pool);
+                }
+
+                ExpressionEvaluator evaluator(all_columns, &temp_pool);
+
+                // Check if row was in index
+                bool in_index = true;
+                if (predicate)
+                {
+                    try
+                    {
+                        in_index = evaluator.evaluatePredicate(predicate, row_values);
+                    }
+                    catch (...)
+                    {
+                        in_index = false;
+                    }
+                }
+
+                if (!in_index)
+                {
+                    // Not in index - nothing to delete
+                    delete predicate;
+                    for (auto *expr : expressions)
+                        delete expr;
+                    continue;
+                }
+
+                // Compute key
+                std::vector<Value> key_values;
+                bool skip_index = false;
+                if (index_info.is_expression_index)
+                {
+                    for (auto *expr : expressions)
+                    {
+                        try
+                        {
+                            key_values.push_back(evaluator.evaluate(expr, row_values));
+                        }
+                        catch (...)
+                        {
+                            skip_index = true;
+                            break;
+                        }
+                    }
+                }
+                else
+                {
+                    for (const auto &col_id : index_info.column_ids)
+                    {
+                        for (size_t i = 0; i < all_columns.size(); i++)
+                        {
+                            if (all_columns[i].column_id == col_id)
+                            {
+                                key_values.push_back(row_values[i]);
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                if (skip_index)
+                {
+                    delete predicate;
+                    for (auto *expr : expressions)
+                        delete expr;
+                    continue;
+                }
+
+                // Serialize and delete
+                std::vector<uint8_t> key_bytes;
+                serializeIndexKey(key_values, key_bytes);
+
+                auto btree = core::BTree::open(db_, index_info.index_id, index_info.root_page, nullptr);
+                if (btree)
+                {
+                    btree->remove(key_bytes, tid, nullptr);
+                }
+
+                // Cleanup
+                delete predicate;
+                for (auto *expr : expressions)
+                    delete expr;
+            }
+        }
+
+        void Executor::serializeIndexKey(const std::vector<Value> &key_values,
+                                          std::vector<uint8_t> &key_bytes_out)
+        {
+            key_bytes_out.clear();
+
+            for (const auto &val : key_values)
+            {
+                if (val.isNull())
+                {
+                    key_bytes_out.push_back(0xFF);
+                }
+                else
+                {
+                    switch (val.type())
+                    {
+                    case core::DataType::INT32:
+                    case core::DataType::INT64:
+                    {
+                        int64_t i = val.getInt64();
+                        key_bytes_out.push_back(0x01);
+                        for (int j = 7; j >= 0; j--)
+                        {
+                            key_bytes_out.push_back((i >> (j * 8)) & 0xFF);
+                        }
+                        break;
+                    }
+                    case core::DataType::VARCHAR:
+                    {
+                        std::string s = val.toString();
+                        key_bytes_out.push_back(0x02);
+                        uint32_t len = s.length();
+                        for (int j = 3; j >= 0; j--)
+                        {
+                            key_bytes_out.push_back((len >> (j * 8)) & 0xFF);
+                        }
+                        key_bytes_out.insert(key_bytes_out.end(), s.begin(), s.end());
+                        break;
+                    }
+                    case core::DataType::FLOAT64:
+                    {
+                        double d = val.toDouble();
+                        key_bytes_out.push_back(0x03);
+                        uint64_t bits;
+                        std::memcpy(&bits, &d, sizeof(double));
+                        for (int j = 7; j >= 0; j--)
+                        {
+                            key_bytes_out.push_back((bits >> (j * 8)) & 0xFF);
+                        }
+                        break;
+                    }
+                    case core::DataType::BOOLEAN:
+                    {
+                        key_bytes_out.push_back(0x04);
+                        key_bytes_out.push_back(val.getBoolean() ? 1 : 0);
+                        break;
+                    }
+                    default:
+                        // Unsupported - use NULL
+                        key_bytes_out.push_back(0xFF);
+                    }
+                }
+            }
+        }
+
         void Executor::executeCreateTablespace()
         {
             // Read tablespace name
@@ -2097,6 +2601,32 @@ namespace scratchbird
                 error("Failed to insert tuple into storage");
             }
 
+            // Task 17 Phase 7: Update expression/filtered indexes
+            // Build full row values in column order (all_columns)
+            std::vector<Value> row_values(all_columns.size());
+            for (size_t i = 0; i < values.size(); i++)
+            {
+                row_values[col_indices[i]] = values[i];
+            }
+            // Fill in default/NULL for columns not specified
+            for (size_t i = 0; i < all_columns.size(); i++)
+            {
+                bool found = false;
+                for (size_t j = 0; j < col_indices.size(); j++)
+                {
+                    if (col_indices[j] == i)
+                    {
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found)
+                {
+                    row_values[i] = Value(); // NULL
+                }
+            }
+            updateIndexesOnInsert(table_id, table_info, all_columns, page_id, item_id, row_values);
+
             // Wave 2: Fire AFTER INSERT triggers
             std::vector<core::CatalogManager::TriggerInfo> after_triggers;
             trigger_status = db_->catalog_manager()->listTriggersForTable(
@@ -2550,6 +3080,11 @@ namespace scratchbird
                     error("Failed to update tuple in storage");
                 }
 
+                // Task 17 Phase 7: Update expression/filtered indexes
+                core::TID old_tid(page_id, item_id);
+                core::TID new_tid(new_page_id, new_item_id);
+                updateIndexesOnUpdate(table_id, table_info, all_columns, old_row_values, row_values, old_tid, new_tid);
+
                 // Wave 2: Fire AFTER UPDATE triggers
                 std::vector<core::CatalogManager::TriggerInfo> after_triggers;
                 trigger_status = db_->catalog_manager()->listTriggersForTable(
@@ -2759,13 +3294,17 @@ namespace scratchbird
                     continue;  // Skip this row if trigger prevented delete
                 }
 
+                // Task 17 Phase 7: Update expression/filtered indexes BEFORE deletion
+                // (indexes need row values, and deletion is a soft delete that marks xmax)
+                uint32_t page_id = static_cast<uint32_t>(core::getPageNumber(tuple.tid));
+                uint16_t item_id = core::getSlot(tuple.tid);
+                core::TID tid(page_id, item_id);
+                updateIndexesOnDelete(table_id, table_info, all_columns, row_values, tid);
+
                 // Call StorageEngine::deleteTuple with MGA soft delete
                 // This sets xmax = current transaction ID
                 core::ConnectionContext *conn_ctx = core::ConnectionContext::getCurrent();
                 uint64_t xmax = conn_ctx ? conn_ctx->getCurrentTransactionId() : 0;
-
-                uint32_t page_id = static_cast<uint32_t>(core::getPageNumber(tuple.tid));
-                uint16_t item_id = core::getSlot(tuple.tid);
 
                 auto delete_status = db_->storage_engine()->deleteTuple(
                     table_id, page_id, item_id, nullptr);
