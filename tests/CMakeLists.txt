@@ -269,3 +269,19 @@ set_tests_properties(RangeLexer PROPERTIES
     LABELS "unit;task15;phase4;lexer"
     TIMEOUT 60
 )
+
+# ============================================================================
+# Task 16: Network Types Tests
+# ============================================================================
+
+add_executable(test_network_types
+    unit/test_network_types.cpp
+)
+target_link_libraries(test_network_types
+    scratchbird_core
+)
+add_test(NAME NetworkTypes COMMAND test_network_types)
+set_tests_properties(NetworkTypes PROPERTIES
+    LABELS "unit;task16;network"
+    TIMEOUT 60
+)
