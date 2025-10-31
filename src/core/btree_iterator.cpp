@@ -120,6 +120,10 @@ namespace scratchbird::core
         auto *page_data = static_cast<uint8_t *>(page_buffer);
         auto *page = reinterpret_cast<SBBTreePage *>(page_data);
 
+        // Task 17 MGA Phase 3.3: Get node structure to access btn_xmin/btn_xmax
+        const auto *offsets = reinterpret_cast<const uint16_t *>(page_data + sizeof(SBBTreePage));
+        const auto *node = reinterpret_cast<const SBBTreeNode *>(page_data + offsets[current_slot_]);
+
         // Get current entry using BTreePage helper
         std::vector<uint8_t> key;
         std::vector<uint64_t> tuple_ids;
@@ -132,6 +136,20 @@ namespace scratchbird::core
             exhausted_ = true;
             SET_ERROR_CONTEXT(ctx, status, "Failed to read node from B-tree page");
             return status;
+        }
+
+        // Task 17 MGA Phase 3.3: Check visibility before returning entry
+        if (!btree_->isEntryVisible(node->btn_xmin, node->btn_xmax, snapshot_))
+        {
+            // Entry not visible - skip to next entry
+            status = moveToNextSlot(ctx);
+            if (status != Status::OK)
+            {
+                exhausted_ = true;
+                return Status::NOT_FOUND;
+            }
+            // Recursively call next() to get next visible entry
+            return next(key_out, tid_out, ctx);
         }
 
         // Check if key is still in range
