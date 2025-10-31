@@ -1,29 +1,34 @@
 # Task 17: Expression and Filtered Indexes - Design & Implementation Plan
 
 **Date**: October 31, 2025
-**Status**: 🚧 **MGA COMPLIANCE IN PROGRESS** (Phase 1: 40% done, 60% remaining)
-**Priority**: 🔴 CRITICAL - MGA compliance Phase 1.1-1.3 COMPLETE, Phase 1.4 next
+**Status**: 🚧 **MGA COMPLIANCE IN PROGRESS** (Phase 1: 46% done, Phase 2 revised)
+**Priority**: 🔴 CRITICAL - MGA Phase 1.1-1.4 COMPLETE, Phase 2 revised (NO undo logging needed!)
 
-> **MAJOR UPDATE - October 31, 2025**: MGA Compliance Phase 1.1-1.3 **COMPLETE**!
+> **MAJOR UPDATE - October 31, 2025**: MGA Rollback Analysis **COMPLETE**! Phase 2 scope REDUCED!
+>
+> **Critical Discovery**: MGA does NOT need undo logging for rollback! Rollback is just marking
+> transaction as ABORTED in TIP - visibility checks automatically hide changes. This saves 7-8 hours!
 >
 > **Implementation Status**: ✅ Core features work, 70% test pass rate
-> **MGA Compliance Status**: 🚧 40% complete (Phase 1.1-1.3 done, 1.4 next)
-> **Production Readiness**: ⚠️ EXPERIMENTAL - Safer than before, but still needs Phases 1.4 & 2 for production
-> **Remaining Work**: 50-79 hours (down from 119-175 hours!)
+> **MGA Compliance Status**: 🚧 46% complete (Phase 1.1-1.4 done, Phase 2 revised)
+> **Production Readiness**: ⚠️ EXPERIMENTAL - Safer than before, but still needs Phase 2-4 for production
+> **Remaining Work**: 38-57 hours (down from 65-95 hours original, 28% reduction!)
 >
 > **Phase 1-9 STATUS**: ✅ COMPLETE - All implementation code working
 > **Phase 10-12 STATUS**: ✅ COMPLETE - 70 test cases written, 45/64 passing (70%)
 > **MGA Phase 1.1**: ✅ COMPLETE - Transaction context added to all index methods
 > **MGA Phase 1.2**: ✅ COMPLETE - Visibility checks added to index building
 > **MGA Phase 1.3**: ✅ COMPLETE - Snapshot infrastructure assessed (not needed for Task 17 writes)
-> **MGA Phase 1.4**: ⏳ NEXT - ExpressionEvaluator updates (4-6 hours)
+> **MGA Phase 1.4**: ✅ COMPLETE - ExpressionEvaluator transaction context added
+> **MGA Phase 2**: 🔄 REVISED - Changed from "Transaction Logging" to "Audit Logging + GC Integration"
 > **Phase 13 STATUS**: ⏳ PENDING - Documentation deferred until full MGA compliance
 >
 > **Key Documents**:
-> - 🔴 `/docs/status/TASK_17_MGA_PHASE_1_3_ASSESSMENT.md` - ⭐ **Phase 1.3 assessment** (NEW)
+> - 🔴 `/docs/status/TASK_17_MGA_ROLLBACK_ANALYSIS.md` - ⭐ **MGA rollback analysis** (NEW - CRITICAL READ!)
+> - `/docs/status/TASK_17_MGA_PHASE_1_3_ASSESSMENT.md` - Phase 1.3 assessment
 > - `/docs/status/TASK_17_MGA_PHASE_1_COMPLETE.md` - MGA Phase 1.1-1.2 completion report
 > - `/docs/status/TASK_17_MGA_INFRASTRUCTURE_ASSESSMENT.md` - MGA infrastructure analysis
-> - `/docs/planning/TASK_17_MGA_COMPLIANCE_IMPLEMENTATION_PLAN.md` - Full MGA implementation plan
+> - `/docs/planning/TASK_17_MGA_COMPLIANCE_IMPLEMENTATION_PLAN.md` - Full MGA implementation plan (NEEDS UPDATE)
 > - `/docs/status/TASK_17_MGA_COMPLIANCE_ANALYSIS.md` - Original compliance analysis (historical)
 > - `/docs/status/TASK_17_PHASE_10_12_COMPLETION_REPORT.md` - Testing completion report
 > - `/docs/status/TASK_17_SESSION_REPORT.md` - Session accomplishments
