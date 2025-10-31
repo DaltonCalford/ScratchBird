@@ -1,7 +1,7 @@
 #pragma once
 
 #include "scratchbird/parser/ast.h"
-#include "scratchbird/parser/string_pool.h"
+#include "scratchbird/parser/token.h"
 #include "scratchbird/core/types.h"
 #include "scratchbird/core/catalog_manager.h"
 #include <vector>
@@ -34,7 +34,7 @@ namespace scratchbird::sblr
          * @param columns Table columns (with names and positions)
          * @param pool String pool for string ID resolution
          */
-        ExpressionEvaluator(const std::vector<ColumnInfo> &columns, StringPool *pool);
+        ExpressionEvaluator(const std::vector<core::CatalogManager::ColumnInfo> &columns, parser::StringPool *pool);
 
         /**
          * Evaluate expression against a row
@@ -42,7 +42,7 @@ namespace scratchbird::sblr
          * @param row Row values (in column order)
          * @return Computed value
          */
-        TypedValue evaluate(const Expression *expr, const std::vector<TypedValue> &row);
+        core::TypedValue evaluate(const parser::Expression *expr, const std::vector<core::TypedValue> &row);
 
         /**
          * Evaluate predicate (must return boolean)
@@ -50,30 +50,30 @@ namespace scratchbird::sblr
          * @param row Row values
          * @return true if predicate is satisfied, false otherwise
          */
-        bool evaluatePredicate(const Expression *predicate, const std::vector<TypedValue> &row);
+        bool evaluatePredicate(const parser::Expression *predicate, const std::vector<core::TypedValue> &row);
 
     private:
-        StringPool *pool_;
-        std::map<StringPool::StringId, size_t> column_positions_; // column name -> row index
+        parser::StringPool *pool_;
+        std::map<parser::StringPool::StringId, size_t> column_positions_; // column name -> row index
 
         // Expression type handlers
-        TypedValue evaluateLiteral(const LiteralExpr *expr, const std::vector<TypedValue> &row);
-        TypedValue evaluateIdentifier(const IdentifierExpr *expr,
-                                       const std::vector<TypedValue> &row);
-        TypedValue evaluateBinaryOp(const BinaryOpExpr *expr, const std::vector<TypedValue> &row);
-        TypedValue evaluateFunctionCall(const FunctionCallExpr *expr,
-                                        const std::vector<TypedValue> &row);
-        TypedValue evaluateCast(const CastExpr *expr, const std::vector<TypedValue> &row);
-        TypedValue evaluateCase(const CaseExpr *expr, const std::vector<TypedValue> &row);
-        TypedValue evaluateAggregate(const AggregateExpr *expr,
-                                      const std::vector<TypedValue> &row);
-        TypedValue evaluateCoalesce(const CoalesceExpr *expr, const std::vector<TypedValue> &row);
-        TypedValue evaluateNullIf(const NullIfExpr *expr, const std::vector<TypedValue> &row);
+        core::TypedValue evaluateLiteral(const parser::LiteralExpr *expr, const std::vector<core::TypedValue> &row);
+        core::TypedValue evaluateIdentifier(const parser::IdentifierExpr *expr,
+                                       const std::vector<core::TypedValue> &row);
+        core::TypedValue evaluateBinaryOp(const parser::BinaryOpExpr *expr, const std::vector<core::TypedValue> &row);
+        core::TypedValue evaluateFunctionCall(const parser::FunctionCallExpr *expr,
+                                        const std::vector<core::TypedValue> &row);
+        core::TypedValue evaluateCast(const parser::CastExpr *expr, const std::vector<core::TypedValue> &row);
+        core::TypedValue evaluateCase(const parser::CaseExpr *expr, const std::vector<core::TypedValue> &row);
+        core::TypedValue evaluateAggregate(const parser::AggregateExpr *expr,
+                                      const std::vector<core::TypedValue> &row);
+        core::TypedValue evaluateCoalesce(const parser::CoalesceExpr *expr, const std::vector<core::TypedValue> &row);
+        core::TypedValue evaluateNullIf(const parser::NullIfExpr *expr, const std::vector<core::TypedValue> &row);
 
         // Helper methods
-        TypedValue castValue(const TypedValue &value, DataType target_type);
-        bool isTruthy(const TypedValue &value);
-        int compareValues(const TypedValue &left, const TypedValue &right);
+        core::TypedValue castValue(const core::TypedValue &value, core::DataType target_type);
+        bool isTruthy(const core::TypedValue &value);
+        int compareValues(const core::TypedValue &left, const core::TypedValue &right);
     };
 
 } // namespace scratchbird::sblr

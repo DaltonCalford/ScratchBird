@@ -20,6 +20,10 @@
 #include "scratchbird/core/tsquery.h"
 #include "scratchbird/core/ts_functions.h"
 #include "scratchbird/core/ts_operations.h"
+#include "scratchbird/core/expression_serializer.h"
+#include "scratchbird/sblr/expression_evaluator.h"
+#include "scratchbird/core/btree.h"
+#include "scratchbird/core/debug.h"
 #include <nlohmann/json.hpp>
 #include <sstream>
 #include <iomanip>
@@ -1202,9 +1206,8 @@ namespace scratchbird
 
             // Read tablespace name (Phase 2 Task 2.3)
             std::string tablespace_name = readString();
-            uint16_t tablespace_id = 0; // Default tablespace
+            uint16_t tablespace_id = 0;
 
-            // If tablespace name is provided, resolve it to tablespace_id
             if (!tablespace_name.empty())
             {
                 core::TablespaceInfo ts_info;
@@ -1214,6 +1217,43 @@ namespace scratchbird
                     error("Tablespace not found: " + tablespace_name);
                 }
                 tablespace_id = ts_info.tablespace_id;
+            }
+
+            // Task 17 Phase 6: Read expression/predicate flags
+            bool has_expressions = (readByte() != 0);
+            bool has_predicate = (readByte() != 0);
+
+            std::vector<uint8_t> expression_data;
+            std::vector<std::string> expression_strings;
+
+            if (has_expressions)
+            {
+                uint32_t expr_data_len = readInt32();
+                expression_data.resize(expr_data_len);
+                for (uint32_t i = 0; i < expr_data_len; i++)
+                {
+                    expression_data[i] = readByte();
+                }
+
+                uint32_t expr_string_count = readInt32();
+                for (uint32_t i = 0; i < expr_string_count; i++)
+                {
+                    expression_strings.push_back(readString());
+                }
+            }
+
+            std::vector<uint8_t> predicate_data;
+            std::string predicate_string;
+
+            if (has_predicate)
+            {
+                uint32_t pred_data_len = readInt32();
+                predicate_data.resize(pred_data_len);
+                for (uint32_t i = 0; i < pred_data_len; i++)
+                {
+                    predicate_data[i] = readByte();
+                }
+                predicate_string = readString();
             }
 
             // Get default schema (PUBLIC)
@@ -1234,12 +1274,278 @@ namespace scratchbird
 
             // Create index in catalog
             core::ID index_id;
-            status = db_->catalog_manager()->createIndex(table_info.table_id, index_name, column_names,
-                                                         index_id, is_unique, core::CatalogManager::IndexType::BTREE,
-                                                         tablespace_id, nullptr);
+
+            if (has_expressions || has_predicate)
+            {
+                // Use new createIndex() overload with expression/predicate support
+                status = db_->catalog_manager()->createIndex(
+                    table_info.table_id, index_name, column_names,
+                    expression_data, predicate_data,
+                    expression_strings, predicate_string,
+                    index_id, is_unique, core::CatalogManager::IndexType::BTREE,
+                    tablespace_id, nullptr);
+            }
+            else
+            {
+                // Use original createIndex() for simple indexes
+                status = db_->catalog_manager()->createIndex(
+                    table_info.table_id, index_name, column_names,
+                    index_id, is_unique, core::CatalogManager::IndexType::BTREE,
+                    tablespace_id, nullptr);
+            }
+
             if (status != core::Status::OK)
             {
                 error("Failed to create index");
+            }
+
+            // Task 17 Phase 6: Build index immediately if it has expressions or predicate
+            if (has_expressions || has_predicate)
+            {
+                buildExpressionIndex(table_info, index_id);
+            }
+        }
+
+        void Executor::buildExpressionIndex(
+            const core::CatalogManager::TableInfo &table_info,
+            const core::ID &index_id)
+        {
+            // 1. Get index info from catalog
+            core::CatalogManager::IndexInfo index_info;
+            auto status = db_->catalog_manager()->getIndex(index_id, index_info, nullptr);
+            if (status != core::Status::OK)
+            {
+                error("Failed to get index info for building");
+            }
+
+            // 2. Get table columns
+            std::vector<core::CatalogManager::ColumnInfo> columns;
+            status = db_->catalog_manager()->getColumns(table_info.table_id, columns, nullptr);
+            if (status != core::Status::OK)
+            {
+                error("Failed to get table columns");
+            }
+
+            // 3. Deserialize expressions and predicate
+            parser::StringPool temp_pool;
+            std::vector<parser::Expression *> expressions;
+            parser::Expression *predicate = nullptr;
+
+            if (index_info.is_expression_index)
+            {
+                expressions = core::ExpressionSerializer::deserializeList(
+                    index_info.expression_data.data(),
+                    index_info.expression_data.size(),
+                    temp_pool);
+            }
+
+            if (index_info.is_partial_index)
+            {
+                predicate = core::ExpressionSerializer::deserialize(
+                    index_info.predicate_data.data(),
+                    index_info.predicate_data.size(),
+                    temp_pool);
+            }
+
+            // 4. Create expression evaluator
+            ExpressionEvaluator evaluator(columns, &temp_pool);
+
+            // 5. Open B-tree for this index
+            auto btree = core::BTree::open(db_, index_info.index_id, index_info.root_page, nullptr);
+            if (!btree)
+            {
+                error("Failed to open B-tree for index building");
+            }
+
+            // 6. Scan table and build index
+            auto scan = db_->storage_engine()->createScan(table_info.table_id, nullptr);
+            if (!scan)
+            {
+                error("Failed to create table scan for index building");
+            }
+
+            size_t rows_indexed = 0;
+            size_t rows_skipped = 0;
+
+            core::Tuple tuple;
+            while (scan->next(&tuple, nullptr) == core::Status::OK)
+            {
+                // Deserialize row into values
+                std::vector<Value> row_values;
+                if (!deserializeTuple(tuple.data, tuple.data_size, columns, row_values))
+                {
+                    rows_skipped++;
+                    continue;
+                }
+
+                // Check predicate (if partial index)
+                if (predicate)
+                {
+                    try
+                    {
+                        bool matches = evaluator.evaluatePredicate(predicate, row_values);
+                        if (!matches)
+                        {
+                            rows_skipped++;
+                            continue; // Skip row not matching WHERE clause
+                        }
+                    }
+                    catch (const std::exception &e)
+                    {
+                        // Predicate evaluation error - skip row
+                        rows_skipped++;
+                        continue;
+                    }
+                }
+
+                // Compute index key
+                std::vector<Value> key_values;
+                bool expr_error = false;
+
+                if (index_info.is_expression_index)
+                {
+                    // Expression index - evaluate expressions
+                    for (auto *expr : expressions)
+                    {
+                        try
+                        {
+                            Value key_val = evaluator.evaluate(expr, row_values);
+                            key_values.push_back(key_val);
+                        }
+                        catch (const std::exception &e)
+                        {
+                            // Expression evaluation error - skip row
+                            expr_error = true;
+                            break;
+                        }
+                    }
+                }
+                else
+                {
+                    // Regular column index (shouldn't reach here, but handle it)
+                    for (const auto &col_id : index_info.column_ids)
+                    {
+                        for (size_t i = 0; i < columns.size(); i++)
+                        {
+                            if (columns[i].column_id == col_id)
+                            {
+                                key_values.push_back(row_values[i]);
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                if (expr_error)
+                {
+                    rows_skipped++;
+                    continue;
+                }
+
+                // Serialize key for B-tree insertion
+                std::vector<uint8_t> key_bytes;
+                bool skip_row = false;
+                for (const auto &val : key_values)
+                {
+                    // Simple serialization - extend for all types
+                    if (val.isNull())
+                    {
+                        key_bytes.push_back(0xFF); // NULL marker
+                    }
+                    else
+                    {
+                        switch (val.type())
+                        {
+                        case core::DataType::INT32:
+                        case core::DataType::INT64:
+                        {
+                            int64_t i = val.getInt64();
+                            key_bytes.push_back(0x01); // INT marker
+                            for (int j = 7; j >= 0; j--)
+                            {
+                                key_bytes.push_back((i >> (j * 8)) & 0xFF);
+                            }
+                            break;
+                        }
+                        case core::DataType::VARCHAR:
+                        {
+                            std::string s = val.toString();
+                            key_bytes.push_back(0x02); // STRING marker
+                            uint32_t len = static_cast<uint32_t>(s.length());
+                            for (int j = 3; j >= 0; j--)
+                            {
+                                key_bytes.push_back((len >> (j * 8)) & 0xFF);
+                            }
+                            key_bytes.insert(key_bytes.end(), s.begin(), s.end());
+                            break;
+                        }
+                        case core::DataType::FLOAT64:
+                        {
+                            double d = val.toDouble();
+                            key_bytes.push_back(0x03); // DOUBLE marker
+                            uint64_t bits;
+                            std::memcpy(&bits, &d, sizeof(double));
+                            for (int j = 7; j >= 0; j--)
+                            {
+                                key_bytes.push_back((bits >> (j * 8)) & 0xFF);
+                            }
+                            break;
+                        }
+                        case core::DataType::BOOLEAN:
+                        {
+                            key_bytes.push_back(0x04); // BOOLEAN marker
+                            key_bytes.push_back(val.getBoolean() ? 1 : 0);
+                            break;
+                        }
+                        default:
+                            // Unsupported type - skip
+                            skip_row = true;
+                            break;
+                        }
+
+                        if (skip_row)
+                        {
+                            break;
+                        }
+                    }
+                }
+
+                if (skip_row)
+                {
+                    rows_skipped++;
+                    continue;
+                }
+
+                // Insert into B-tree
+                status = btree->insert(key_bytes, tuple.tid, nullptr);
+                if (status != core::Status::OK)
+                {
+                    // Log error but continue
+                    rows_skipped++;
+                }
+                else
+                {
+                    rows_indexed++;
+                }
+            }
+
+            // Log completion
+            std::string log_msg = "Built ";
+            if (index_info.is_expression_index) log_msg += "expression ";
+            if (index_info.is_partial_index) log_msg += "partial ";
+            log_msg += "index '" + index_info.index_name + "' with " +
+                       std::to_string(rows_indexed) + " rows (" +
+                       std::to_string(rows_skipped) + " skipped)";
+            DEBUG_LOG_DB(log_msg);
+
+            // Cleanup deserialized expressions
+            for (auto *expr : expressions)
+            {
+                delete expr;
+            }
+            if (predicate)
+            {
+                delete predicate;
             }
         }
 

@@ -175,6 +175,8 @@ namespace scratchbird
             // Statement execution
             void executeCreateTable();
             void executeCreateIndex();             // Phase 2 Task 2.3
+            void buildExpressionIndex(const core::CatalogManager::TableInfo &table_info,
+                                     const core::ID &index_id);  // Task 17 Phase 6
             void executeCreateTablespace();        // Phase 2 Task 2.1
             void executeAlterTablespace();         // Phase 2 Task 2.2
             void executeAlterTableSetTablespace(); // Phase 4 Task 4.1.6

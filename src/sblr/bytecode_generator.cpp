@@ -1,6 +1,7 @@
 #include "scratchbird/sblr/bytecode_generator.h"
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/debug.h"
+#include "scratchbird/core/expression_serializer.h"
 #include "scratchbird/optimizer/query_planner.h"
 #include <sstream>
 #include <iomanip>
@@ -127,7 +128,7 @@ namespace scratchbird
 
         void BytecodeGenerator::visit(parser::CreateIndexStmt *node)
         {
-            // Generate CREATE INDEX bytecode (Phase 2 Task 2.3)
+            // Generate CREATE INDEX bytecode (Phase 2 Task 2.3 + Task 17)
             current_result_->writeOpcode(Opcode::CREATE_INDEX);
 
             // Write index name
@@ -139,18 +140,76 @@ namespace scratchbird
             // Write is_unique flag (1 byte: 0 = non-unique, 1 = unique)
             current_result_->writeByte(node->isUnique() ? 1 : 0);
 
-            // Write column count
-            const auto &columns = node->columns();
-            current_result_->writeInt32(static_cast<uint32_t>(columns.size()));
+            // Task 17: Separate simple columns from expressions
+            const auto &index_columns = node->indexColumns();
+            std::vector<parser::StringPool::StringId> simple_columns;
+            std::vector<parser::Expression *> expressions;
 
-            // Write each column name
-            for (auto column_id : columns)
+            for (const auto &ic : index_columns)
+            {
+                if (ic.is_expression)
+                {
+                    expressions.push_back(ic.expression);
+                }
+                else
+                {
+                    simple_columns.push_back(ic.column_name);
+                }
+            }
+
+            // Write simple column count and names
+            current_result_->writeInt32(static_cast<uint32_t>(simple_columns.size()));
+            for (auto column_id : simple_columns)
             {
                 writeStringId(column_id);
             }
 
             // Write tablespace name (Phase 2 Task 2.3)
             writeStringId(node->tablespace());
+
+            // Task 17: Write expression/predicate flags
+            bool has_expressions = !expressions.empty();
+            bool has_predicate = node->hasWhereClause();
+
+            current_result_->writeByte(has_expressions ? 1 : 0);
+            current_result_->writeByte(has_predicate ? 1 : 0);
+
+            // Serialize expressions
+            if (has_expressions)
+            {
+                auto expr_data = core::ExpressionSerializer::serializeList(expressions);
+                current_result_->writeInt32(static_cast<uint32_t>(expr_data.size()));
+                for (uint8_t byte : expr_data)
+                {
+                    current_result_->writeByte(byte);
+                }
+
+                // Write original expression strings
+                current_result_->writeInt32(static_cast<uint32_t>(expressions.size()));
+                for (size_t i = 0; i < expressions.size(); i++)
+                {
+                    // For now, use generic placeholder
+                    // TODO: Implement Expression::toString() for proper display
+                    std::string expr_str = "<expression_" + std::to_string(i) + ">";
+                    current_result_->writeString(expr_str);
+                }
+            }
+
+            // Serialize predicate
+            if (has_predicate)
+            {
+                parser::Expression *predicate = node->whereClause();
+                auto pred_data = core::ExpressionSerializer::serialize(predicate);
+                current_result_->writeInt32(static_cast<uint32_t>(pred_data.size()));
+                for (uint8_t byte : pred_data)
+                {
+                    current_result_->writeByte(byte);
+                }
+
+                // Write original predicate string
+                std::string pred_str = "<predicate>";
+                current_result_->writeString(pred_str);
+            }
         }
 
         void BytecodeGenerator::visit(parser::CreateTablespaceStmt *node)
