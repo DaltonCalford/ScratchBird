@@ -86,6 +86,7 @@ target_link_libraries(scratchbird_tests
     scratchbird_core
     scratchbird_parser
     scratchbird_sblr
+    scratchbird_optimizer
     GTest::gtest
     GTest::gtest_main
 )
