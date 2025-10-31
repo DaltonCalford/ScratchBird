@@ -9,6 +9,7 @@
 #include "scratchbird/core/status.h"
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/core/range.h"
+#include "scratchbird/core/network.h"
 
 namespace scratchbird::core
 {
@@ -92,6 +93,12 @@ namespace scratchbird::core
         TSRANGE = 79,    // Range of TIMESTAMP values (without timezone)
         TSTZRANGE = 80,  // Range of TIMESTAMP values (with timezone)
         DATERANGE = 81,  // Range of DATE values
+
+        // Network types (86-89)
+        INET = 86,       // IPv4 or IPv6 address with optional subnet
+        CIDR = 87,       // IPv4 or IPv6 network (strict CIDR notation)
+        MACADDR = 88,    // 6-byte MAC address (EUI-48)
+        MACADDR8 = 89,   // 8-byte MAC address (EUI-64)
 
         // Null type (255)
         NULL_TYPE = 255, // SQL NULL
@@ -348,7 +355,11 @@ namespace scratchbird::core
                          NumRange,        // NUMRANGE
                          DateRange,       // DATERANGE
                          TSRange,         // TSRANGE
-                         TSTZRange        // TSTZRANGE
+                         TSTZRange,       // TSTZRANGE
+                         InetAddr,        // INET
+                         Cidr,            // CIDR
+                         MacAddr,         // MACADDR
+                         MacAddr8         // MACADDR8
                          >;
 
         TypedValue() : type_(DataType::NULL_TYPE), data_(std::monostate{}) {}
@@ -404,6 +415,10 @@ namespace scratchbird::core
         static TypedValue makeDateRange(const DateRange &v);
         static TypedValue makeTSRange(const TSRange &v);
         static TypedValue makeTSTZRange(const TSTZRange &v);
+        static TypedValue makeInet(const InetAddr &v);
+        static TypedValue makeCidr(const Cidr &v);
+        static TypedValue makeMacAddr(const MacAddr &v);
+        static TypedValue makeMacAddr8(const MacAddr8 &v);
 
         // Type checking
         DataType type() const
@@ -451,6 +466,10 @@ namespace scratchbird::core
         DateRange getDateRange() const;
         TSRange getTSRange() const;
         TSTZRange getTSTZRange() const;
+        InetAddr getInet() const;
+        Cidr getCidr() const;
+        MacAddr getMacAddr() const;
+        MacAddr8 getMacAddr8() const;
 
         // Generic string conversion (for display)
         std::string toString() const;

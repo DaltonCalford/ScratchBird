@@ -248,6 +248,26 @@ namespace scratchbird::core
         return TypedValue(DataType::TSTZRANGE, v);
     }
 
+    TypedValue TypedValue::makeInet(const InetAddr &v)
+    {
+        return TypedValue(DataType::INET, v);
+    }
+
+    TypedValue TypedValue::makeCidr(const Cidr &v)
+    {
+        return TypedValue(DataType::CIDR, v);
+    }
+
+    TypedValue TypedValue::makeMacAddr(const MacAddr &v)
+    {
+        return TypedValue(DataType::MACADDR, v);
+    }
+
+    TypedValue TypedValue::makeMacAddr8(const MacAddr8 &v)
+    {
+        return TypedValue(DataType::MACADDR8, v);
+    }
+
     // Type extraction
     int8_t TypedValue::getInt8() const
     {
@@ -495,6 +515,34 @@ namespace scratchbird::core
         return std::get<TSTZRange>(data_);
     }
 
+    InetAddr TypedValue::getInet() const
+    {
+        if (type_ != DataType::INET)
+            throw std::runtime_error("Type mismatch: not INET");
+        return std::get<InetAddr>(data_);
+    }
+
+    Cidr TypedValue::getCidr() const
+    {
+        if (type_ != DataType::CIDR)
+            throw std::runtime_error("Type mismatch: not CIDR");
+        return std::get<Cidr>(data_);
+    }
+
+    MacAddr TypedValue::getMacAddr() const
+    {
+        if (type_ != DataType::MACADDR)
+            throw std::runtime_error("Type mismatch: not MACADDR");
+        return std::get<MacAddr>(data_);
+    }
+
+    MacAddr8 TypedValue::getMacAddr8() const
+    {
+        if (type_ != DataType::MACADDR8)
+            throw std::runtime_error("Type mismatch: not MACADDR8");
+        return std::get<MacAddr8>(data_);
+    }
+
     std::string TypedValue::toString() const
     {
         if (isNull())
@@ -617,6 +665,14 @@ namespace scratchbird::core
                 auto range = getTSTZRange();
                 return range.toString();
             }
+            case DataType::INET:
+                return getInet().toString();
+            case DataType::CIDR:
+                return getCidr().toString();
+            case DataType::MACADDR:
+                return getMacAddr().toString();
+            case DataType::MACADDR8:
+                return getMacAddr8().toString();
             default:
                 return "<unknown>";
         }
@@ -832,6 +888,30 @@ namespace scratchbird::core
                 return "ARRAY";
             case DataType::COMPOSITE:
                 return "COMPOSITE";
+            case DataType::TSVECTOR:
+                return "TSVECTOR";
+            case DataType::TSQUERY:
+                return "TSQUERY";
+            case DataType::INT4RANGE:
+                return "INT4RANGE";
+            case DataType::INT8RANGE:
+                return "INT8RANGE";
+            case DataType::NUMRANGE:
+                return "NUMRANGE";
+            case DataType::DATERANGE:
+                return "DATERANGE";
+            case DataType::TSRANGE:
+                return "TSRANGE";
+            case DataType::TSTZRANGE:
+                return "TSTZRANGE";
+            case DataType::INET:
+                return "INET";
+            case DataType::CIDR:
+                return "CIDR";
+            case DataType::MACADDR:
+                return "MACADDR";
+            case DataType::MACADDR8:
+                return "MACADDR8";
             case DataType::NULL_TYPE:
                 return "NULL";
             default:
@@ -910,6 +990,30 @@ namespace scratchbird::core
             return DataType::LINESTRING;
         if (upper == "POLYGON")
             return DataType::POLYGON;
+        if (upper == "TSVECTOR")
+            return DataType::TSVECTOR;
+        if (upper == "TSQUERY")
+            return DataType::TSQUERY;
+        if (upper == "INT4RANGE")
+            return DataType::INT4RANGE;
+        if (upper == "INT8RANGE")
+            return DataType::INT8RANGE;
+        if (upper == "NUMRANGE")
+            return DataType::NUMRANGE;
+        if (upper == "DATERANGE")
+            return DataType::DATERANGE;
+        if (upper == "TSRANGE")
+            return DataType::TSRANGE;
+        if (upper == "TSTZRANGE")
+            return DataType::TSTZRANGE;
+        if (upper == "INET")
+            return DataType::INET;
+        if (upper == "CIDR")
+            return DataType::CIDR;
+        if (upper == "MACADDR")
+            return DataType::MACADDR;
+        if (upper == "MACADDR8")
+            return DataType::MACADDR8;
 
         return std::nullopt;
     }
