@@ -1536,7 +1536,8 @@ namespace scratchbird
                 }
 
                 // Insert into B-tree
-                status = btree->insert(key_bytes, tuple.tid, nullptr);
+                // Task 17 MGA Phase 3.1: Pass xid for btn_xmin tracking
+                status = btree->insert(key_bytes, tuple.tid, xid, nullptr);
                 if (status != core::Status::OK)
                 {
                     // Log error but continue
@@ -1706,7 +1707,8 @@ namespace scratchbird
                 auto btree = core::BTree::open(db_, index_info.index_id, index_info.root_page, nullptr);
                 if (btree)
                 {
-                    btree->insert(key_bytes, tid, nullptr);
+                    // Task 17 MGA Phase 3.1: Pass xid for btn_xmin tracking
+                    btree->insert(key_bytes, tid, xid, nullptr);
 
                     // Task 17 MGA Phase 2.1: Debug logging for insert
                     DEBUG_LOG_INDEX("Index '" + index_info.index_name + "': added entry for tid=" +
@@ -1884,8 +1886,9 @@ namespace scratchbird
                 if (in_old && in_new)
                 {
                     // Both in index - delete old, insert new
-                    btree->remove(old_key, old_tid, nullptr);
-                    btree->insert(new_key, new_tid, nullptr);
+                    // Task 17 MGA Phase 3.1: Pass xid for transaction tracking
+                    btree->remove(old_key, old_tid, xid, nullptr);
+                    btree->insert(new_key, new_tid, xid, nullptr);
                     DEBUG_LOG_INDEX("Index '" + index_info.index_name + "': predicate transition UPDATE " +
                                    "(old_tid=" + std::to_string(old_tid.value()) + " → new_tid=" +
                                    std::to_string(new_tid.value()) + ", xid=" + std::to_string(xid) + ")");
@@ -1896,7 +1899,8 @@ namespace scratchbird
                 else if (in_old && !in_new)
                 {
                     // Was in index, now not - delete
-                    btree->remove(old_key, old_tid, nullptr);
+                    // Task 17 MGA Phase 3.1: Pass xid for transaction tracking
+                    btree->remove(old_key, old_tid, xid, nullptr);
                     DEBUG_LOG_INDEX("Index '" + index_info.index_name + "': predicate transition DELETE " +
                                    "(was in index, now not, tid=" + std::to_string(old_tid.value()) +
                                    ", xid=" + std::to_string(xid) + ")");
@@ -1907,7 +1911,8 @@ namespace scratchbird
                 else if (!in_old && in_new)
                 {
                     // Wasn't in index, now is - insert
-                    btree->insert(new_key, new_tid, nullptr);
+                    // Task 17 MGA Phase 3.1: Pass xid for transaction tracking
+                    btree->insert(new_key, new_tid, xid, nullptr);
                     DEBUG_LOG_INDEX("Index '" + index_info.index_name + "': predicate transition INSERT " +
                                    "(wasn't in index, now is, tid=" + std::to_string(new_tid.value()) +
                                    ", xid=" + std::to_string(xid) + ")");
@@ -2041,7 +2046,8 @@ namespace scratchbird
                 auto btree = core::BTree::open(db_, index_info.index_id, index_info.root_page, nullptr);
                 if (btree)
                 {
-                    btree->remove(key_bytes, tid, nullptr);
+                    // Task 17 MGA Phase 3.1: Pass xid for transaction tracking
+                    btree->remove(key_bytes, tid, xid, nullptr);
 
                     // Task 17 MGA Phase 2.1: Debug logging for delete
                     DEBUG_LOG_INDEX("Index '" + index_info.index_name + "': removed entry for tid=" +

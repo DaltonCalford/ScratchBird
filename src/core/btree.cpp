@@ -304,7 +304,9 @@ namespace scratchbird::core
     }
 
     // PHASE 1.5 TASK 1.5.2a: Migrated to TID struct API
-    auto BTree::insert(const std::vector<uint8_t> &key, const TID &tid, ErrorContext *ctx)
+    // Task 17 MGA Phase 3.1: Added xid parameter for transaction tracking
+    auto BTree::insert(const std::vector<uint8_t> &key, const TID &tid, uint64_t xid,
+                       ErrorContext *ctx)
         -> Status
     {
         // Find the appropriate leaf page for this key
@@ -352,7 +354,8 @@ namespace scratchbird::core
         {
             BTreePage btree_page(reinterpret_cast<uint8_t *>(page_data_ptr), page_size);
 
-            status = btree_page.add_node(key, tuple, ctx);
+            // Task 17 MGA Phase 3.1: Pass xid to add_node for btn_xmin tracking
+            status = btree_page.add_node(key, tuple, xid, ctx);
             if (status == Status::PAGE_FULL)
             {
                 // Page is full - need to split
@@ -376,7 +379,8 @@ namespace scratchbird::core
                 }
 
                 // After split, retry the insert (will re-acquire locks)
-                return insert(key, tid, ctx);
+                // Task 17 MGA Phase 3.1: Pass xid through recursive call
+                return insert(key, tid, xid, ctx);
             }
             else if (status != Status::OK)
             {
@@ -857,9 +861,12 @@ namespace scratchbird::core
     }
 
     // PHASE 1.5 TASK 1.5.2a: Migrated to TID struct API
-    auto BTree::remove(const std::vector<uint8_t> &key, const TID &tid, ErrorContext *ctx)
+    // Task 17 MGA Phase 3.1: Added xid parameter (will be used in Phase 3.2 for markDeleted)
+    auto BTree::remove(const std::vector<uint8_t> &key, const TID &tid, uint64_t xid,
+                       ErrorContext *ctx)
         -> Status
     {
+        // TODO Phase 3.2: Use xid to set btn_xmax instead of physical removal (markDeleted)
         // Find the appropriate leaf page for this key
         uint64_t leaf_page_num;
         Status status = find_leaf_page(key, &leaf_page_num, true, ctx);
@@ -1068,7 +1075,8 @@ namespace scratchbird::core
                     tuple.data = nullptr;
                     tuple.data_size = 0;
 
-                    status = right_btree_page.add_node(node_key, tuple, ctx);
+                    // Task 17 MGA Phase 3.1: Preserve original xmin during page split
+                    status = right_btree_page.add_node(node_key, tuple, node->btn_xmin, ctx);
                     if (status != Status::OK)
                     {
                         bp->unpinPage(left_page_num, false, ctx);

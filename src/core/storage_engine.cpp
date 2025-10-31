@@ -1320,7 +1320,8 @@ namespace scratchbird::core
                 }
 
                 // Remove old entry
-                status = btree->remove(key, old_tid, ctx);
+                // Task 17 MGA Phase 3.1: Pass xid = 0 for system operations (tuple relocation)
+                status = btree->remove(key, old_tid, 0, ctx);
                 if (status != Status::OK && status != Status::NOT_FOUND)
                 {
                     LOG_WARNING(STORAGE, "Failed to remove old entry from BTree index %s: %s",
@@ -1330,7 +1331,8 @@ namespace scratchbird::core
                 }
 
                 // Insert new entry
-                status = btree->insert(key, new_tid, ctx);
+                // Task 17 MGA Phase 3.1: Pass xid = 0 for system operations (tuple relocation)
+                status = btree->insert(key, new_tid, 0, ctx);
                 if (status != Status::OK)
                 {
                     LOG_ERROR(STORAGE, "Failed to insert new entry into BTree index %s: %s",
