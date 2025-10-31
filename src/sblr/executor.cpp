@@ -1545,14 +1545,16 @@ namespace scratchbird
                 }
             }
 
-            // Log completion
+            // Task 17 MGA Phase 2.1: Enhanced debug logging for index maintenance
             std::string log_msg = "Built ";
             if (index_info.is_expression_index) log_msg += "expression ";
             if (index_info.is_partial_index) log_msg += "partial ";
-            log_msg += "index '" + index_info.index_name + "' with " +
-                       std::to_string(rows_indexed) + " rows (" +
-                       std::to_string(rows_skipped) + " skipped)";
-            DEBUG_LOG_DB(log_msg);
+            log_msg += "index '" + index_info.index_name + "' on table '" +
+                       table_info.table_name + "' with " +
+                       std::to_string(rows_indexed) + " rows indexed, " +
+                       std::to_string(rows_skipped) + " rows skipped (xid=" +
+                       std::to_string(xid) + ")";
+            DEBUG_LOG_INDEX(log_msg);
 
             // Cleanup deserialized expressions
             for (auto *expr : expressions)
@@ -1696,6 +1698,10 @@ namespace scratchbird
                 if (btree)
                 {
                     btree->insert(key_bytes, tid, nullptr);
+
+                    // Task 17 MGA Phase 2.1: Debug logging for insert
+                    DEBUG_LOG_INDEX("Index '" + index_info.index_name + "': added entry for tid=" +
+                                   std::to_string(tid.value()) + " (xid=" + std::to_string(xid) + ")");
                 }
 
                 // Cleanup
@@ -1861,22 +1867,31 @@ namespace scratchbird
                     continue;
                 }
 
-                // Handle four cases
+                // Handle four cases (Task 17 MGA Phase 2.1: Added debug logging)
                 if (in_old && in_new)
                 {
                     // Both in index - delete old, insert new
                     btree->remove(old_key, old_tid, nullptr);
                     btree->insert(new_key, new_tid, nullptr);
+                    DEBUG_LOG_INDEX("Index '" + index_info.index_name + "': predicate transition UPDATE " +
+                                   "(old_tid=" + std::to_string(old_tid.value()) + " → new_tid=" +
+                                   std::to_string(new_tid.value()) + ", xid=" + std::to_string(xid) + ")");
                 }
                 else if (in_old && !in_new)
                 {
                     // Was in index, now not - delete
                     btree->remove(old_key, old_tid, nullptr);
+                    DEBUG_LOG_INDEX("Index '" + index_info.index_name + "': predicate transition DELETE " +
+                                   "(was in index, now not, tid=" + std::to_string(old_tid.value()) +
+                                   ", xid=" + std::to_string(xid) + ")");
                 }
                 else if (!in_old && in_new)
                 {
                     // Wasn't in index, now is - insert
                     btree->insert(new_key, new_tid, nullptr);
+                    DEBUG_LOG_INDEX("Index '" + index_info.index_name + "': predicate transition INSERT " +
+                                   "(wasn't in index, now is, tid=" + std::to_string(new_tid.value()) +
+                                   ", xid=" + std::to_string(xid) + ")");
                 }
                 // else: neither in index - no change
 
@@ -2005,6 +2020,10 @@ namespace scratchbird
                 if (btree)
                 {
                     btree->remove(key_bytes, tid, nullptr);
+
+                    // Task 17 MGA Phase 2.1: Debug logging for delete
+                    DEBUG_LOG_INDEX("Index '" + index_info.index_name + "': removed entry for tid=" +
+                                   std::to_string(tid.value()) + " (xid=" + std::to_string(xid) + ")");
                 }
 
                 // Cleanup

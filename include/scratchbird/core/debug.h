@@ -34,5 +34,6 @@ namespace scratchbird::core
 #define DEBUG_LOG_PM(message) DEBUG_LOG("PageManager", message)
 #define DEBUG_LOG_BP(message) DEBUG_LOG("BufferPool", message)
 #define DEBUG_LOG_DB(message) DEBUG_LOG("Database", message)
+#define DEBUG_LOG_INDEX(message) DEBUG_LOG("Index", message)  // Task 17 MGA Phase 2.1
 
 } // namespace scratchbird::core
