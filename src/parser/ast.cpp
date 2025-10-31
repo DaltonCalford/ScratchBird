@@ -1296,5 +1296,71 @@ namespace scratchbird
             }
         }
 
+        // Procedural language statement visitors (stub implementations)
+        void ASTPrinter::visit(CreateTriggerStmt *node)
+        {
+            out_ << "CREATE TRIGGER";
+        }
+
+        void ASTPrinter::visit(DropTriggerStmt *node)
+        {
+            out_ << "DROP TRIGGER";
+        }
+
+        void ASTPrinter::visit(CreateFunctionStmt *node)
+        {
+            out_ << "CREATE FUNCTION";
+        }
+
+        void ASTPrinter::visit(CreateProcedureStmt *node)
+        {
+            out_ << "CREATE PROCEDURE";
+        }
+
+        void ASTPrinter::visit(BlockStmt *node)
+        {
+            out_ << "BEGIN ... END";
+        }
+
+        void ASTPrinter::visit(VarDeclarationStmt *node)
+        {
+            out_ << "DECLARE";
+        }
+
+        void ASTPrinter::visit(AssignmentStmt *node)
+        {
+            out_ << "ASSIGNMENT";
+        }
+
+        void ASTPrinter::visit(IfStmt *node)
+        {
+            out_ << "IF";
+        }
+
+        void ASTPrinter::visit(LoopStmt *node)
+        {
+            out_ << "LOOP";
+        }
+
+        void ASTPrinter::visit(WhileStmt *node)
+        {
+            out_ << "WHILE";
+        }
+
+        void ASTPrinter::visit(ExitStmt *node)
+        {
+            out_ << "EXIT";
+        }
+
+        void ASTPrinter::visit(ReturnStmt *node)
+        {
+            out_ << "RETURN";
+        }
+
+        void ASTPrinter::visit(RaiseStmt *node)
+        {
+            out_ << "RAISE";
+        }
+
     } // namespace parser
 } // namespace scratchbird

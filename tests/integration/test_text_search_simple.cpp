@@ -13,14 +13,22 @@ int main() {
     
     auto result = parser.parseStatement();
     if (!result.success()) {
-        std::cout << "Parse failed: " << result.error() << std::endl;
+        std::cout << "Parse failed";
+        for (const auto& err : result.errors()) {
+            std::cout << ": " << err.message;
+        }
+        std::cout << std::endl;
         return 1;
     }
-    
+
     SemanticAnalyzer analyzer(parser.stringPool());
     auto semantic_result = analyzer.analyze(result.statement());
-    if (!semantic_result->success()) {
-        std::cout << "Semantic analysis failed: " << semantic_result->error() << std::endl;
+    if (!semantic_result.success()) {
+        std::cout << "Semantic analysis failed";
+        for (const auto& err : semantic_result.errors()) {
+            std::cout << ": " << err.message;
+        }
+        std::cout << std::endl;
         return 1;
     }
     
