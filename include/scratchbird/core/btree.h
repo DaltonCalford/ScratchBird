@@ -285,7 +285,9 @@ namespace scratchbird
 
             // Searches for a key within a single B-Tree page using binary search.
             // PHASE 1.5 TASK 1.5.2a: Migrated to TID struct API
+            // Task 17 MGA Phase 3.3: Added snapshot parameter for visibility filtering
             bool searchPage(const SBBTreePage *page, const std::vector<uint8_t> &key,
+                            struct Snapshot *snapshot,
                             std::vector<TID> *tids_out) const;
 
             // Page split operations
@@ -301,6 +303,17 @@ namespace scratchbird
             Status create_new_root(uint64_t left_page_num,
                                    const std::vector<uint8_t> &separator_key,
                                    uint64_t right_page_num, ErrorContext *ctx);
+
+            // Task 17 MGA Phase 3.3: Visibility checking for index entries
+            /**
+             * Check if index entry is visible to snapshot
+             *
+             * @param xmin Transaction that created entry
+             * @param xmax Transaction that deleted entry (0 if active)
+             * @param snapshot Snapshot for visibility check
+             * @return true if visible, false otherwise
+             */
+            bool isEntryVisible(uint64_t xmin, uint64_t xmax, struct Snapshot *snapshot) const;
 
             // Allow iterator to access internal members
             friend class BTreeIterator;
