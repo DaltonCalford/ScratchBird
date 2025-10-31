@@ -996,6 +996,103 @@ namespace scratchbird::core
         return Status::OK;
     }
 
+    // Task 17 MGA Phase 3.2: Soft deletion support (mark deleted instead of physical removal)
+    auto BTree::markDeleted(const std::vector<uint8_t> &key, const TID &tid, uint64_t xmax,
+                           ErrorContext *ctx) -> Status
+    {
+        // Navigate to leaf page containing this key
+        uint64_t leaf_page_num;
+        Status status = find_leaf_page(key, &leaf_page_num, true, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        // Get proc_id from ConnectionContext
+        int32_t proc_id_signed = ConnectionContext::getCurrentProcId();
+        const uint32_t proc_id = (proc_id_signed >= 0) ? static_cast<uint32_t>(proc_id_signed) : 0;
+        LockManager *lock_mgr = db_->lock_manager();
+
+        BufferPool *bp = db_->buffer_pool();
+        void *page_buffer;
+        status = bp->pinPage(leaf_page_num, &page_buffer, ctx);
+        if (status != Status::OK)
+        {
+            // Release lock acquired by find_leaf_page
+            if (lock_mgr != nullptr)
+            {
+                LockTag leaf_tag{};
+                leaf_tag.target_type = LockTarget::LOCK_TARGET_PAGE;
+                leaf_tag.object_uuid = index_info_.idx_uuid;
+                leaf_tag.page_num = leaf_page_num;
+                lock_mgr->releaseLock(proc_id, leaf_tag, LockMode::LOCK_EXCLUSIVE, ctx);
+            }
+            return status;
+        }
+
+        auto *page = reinterpret_cast<SBBTreePage *>(page_buffer);
+        uint8_t *page_data = reinterpret_cast<uint8_t *>(page_buffer);
+
+        // Scan entries on page to find matching key + TID
+        auto *offsets = reinterpret_cast<uint16_t *>(page_data + sizeof(SBBTreePage));
+        bool found = false;
+
+        for (uint16_t i = 0; i < page->btr_count; i++)
+        {
+            auto *node = reinterpret_cast<SBBTreeNode *>(page_data + offsets[i]);
+
+            // Skip already deleted nodes
+            if ((node->btn_flags & static_cast<uint16_t>(BTreeNodeFlags::DELETED)) != 0)
+            {
+                continue;
+            }
+
+            // Extract key
+            uint8_t *node_key_data = reinterpret_cast<uint8_t *>(node) + sizeof(SBBTreeNode);
+            std::vector<uint8_t> node_key(node_key_data, node_key_data + node->btn_key_len);
+
+            // Check if key matches
+            if (compare_keys(key, node_key) == 0)
+            {
+                // Key matches - check if TID matches
+                uint8_t *tid_data = node_key_data + node->btn_key_len;
+                auto *tids = reinterpret_cast<uint64_t *>(tid_data);
+
+                for (uint32_t j = 0; j < node->btn_tuple_count; j++)
+                {
+                    TID node_tid = convertLegacyTID(tids[j]);
+                    if (node_tid == tid)
+                    {
+                        // Found it! Set btn_xmax to mark as deleted
+                        node->btn_xmax = xmax;
+                        found = true;
+                        break;
+                    }
+                }
+            }
+
+            if (found)
+            {
+                break;
+            }
+        }
+
+        // Unpin page (mark dirty if modified)
+        bp->unpinPage(leaf_page_num, found, ctx);
+
+        // Release lock
+        if (lock_mgr != nullptr)
+        {
+            LockTag leaf_tag{};
+            leaf_tag.target_type = LockTarget::LOCK_TARGET_PAGE;
+            leaf_tag.object_uuid = index_info_.idx_uuid;
+            leaf_tag.page_num = leaf_page_num;
+            lock_mgr->releaseLock(proc_id, leaf_tag, LockMode::LOCK_EXCLUSIVE, ctx);
+        }
+
+        return found ? Status::OK : Status::NOT_FOUND;
+    }
+
     // PHASE 1.5 TASK 1.5.2a: Migrated to TID struct API
     auto BTree::split_leaf_page(uint64_t left_page_num, const std::vector<uint8_t> &new_key,
                                 const TID &new_tid, ErrorContext *ctx) -> Status
