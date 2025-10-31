@@ -1383,6 +1383,7 @@ namespace scratchbird
                 if (!db_->storage_engine()->isVisible(hdr->xmin, hdr->xmax, xid))
                 {
                     rows_skipped++;
+                    index_stats_.invisible_skipped++;  // Task 17 MGA Phase 2.2
                     continue;  // Skip invisible tuple (uncommitted or deleted)
                 }
 
@@ -1399,6 +1400,7 @@ namespace scratchbird
                 {
                     try
                     {
+                        index_stats_.predicate_evaluations++;  // Task 17 MGA Phase 2.2
                         bool matches = evaluator.evaluatePredicate(predicate, row_values);
                         if (!matches)
                         {
@@ -1425,6 +1427,7 @@ namespace scratchbird
                     {
                         try
                         {
+                            index_stats_.expression_evaluations++;  // Task 17 MGA Phase 2.2
                             Value key_val = evaluator.evaluate(expr, row_values);
                             key_values.push_back(key_val);
                         }
@@ -1542,6 +1545,7 @@ namespace scratchbird
                 else
                 {
                     rows_indexed++;
+                    index_stats_.entries_added++;  // Task 17 MGA Phase 2.2
                 }
             }
 
@@ -1555,6 +1559,9 @@ namespace scratchbird
                        std::to_string(rows_skipped) + " rows skipped (xid=" +
                        std::to_string(xid) + ")";
             DEBUG_LOG_INDEX(log_msg);
+
+            // Task 17 MGA Phase 2.2: Track index maintenance
+            index_stats_.indexes_maintained++;
 
             // Cleanup deserialized expressions
             for (auto *expr : expressions)
@@ -1626,6 +1633,7 @@ namespace scratchbird
                 {
                     try
                     {
+                        index_stats_.predicate_evaluations++;  // Task 17 MGA Phase 2.2
                         bool matches = evaluator.evaluatePredicate(predicate, row_values);
                         if (!matches)
                         {
@@ -1655,6 +1663,7 @@ namespace scratchbird
                     {
                         try
                         {
+                            index_stats_.expression_evaluations++;  // Task 17 MGA Phase 2.2
                             key_values.push_back(evaluator.evaluate(expr, row_values));
                         }
                         catch (...)
@@ -1702,6 +1711,10 @@ namespace scratchbird
                     // Task 17 MGA Phase 2.1: Debug logging for insert
                     DEBUG_LOG_INDEX("Index '" + index_info.index_name + "': added entry for tid=" +
                                    std::to_string(tid.value()) + " (xid=" + std::to_string(xid) + ")");
+
+                    // Task 17 MGA Phase 2.2: Track statistics
+                    index_stats_.entries_added++;
+                    index_stats_.indexes_maintained++;
                 }
 
                 // Cleanup
@@ -1876,6 +1889,9 @@ namespace scratchbird
                     DEBUG_LOG_INDEX("Index '" + index_info.index_name + "': predicate transition UPDATE " +
                                    "(old_tid=" + std::to_string(old_tid.value()) + " → new_tid=" +
                                    std::to_string(new_tid.value()) + ", xid=" + std::to_string(xid) + ")");
+                    // Task 17 MGA Phase 2.2: Track statistics
+                    index_stats_.entries_updated++;
+                    index_stats_.indexes_maintained++;
                 }
                 else if (in_old && !in_new)
                 {
@@ -1884,6 +1900,9 @@ namespace scratchbird
                     DEBUG_LOG_INDEX("Index '" + index_info.index_name + "': predicate transition DELETE " +
                                    "(was in index, now not, tid=" + std::to_string(old_tid.value()) +
                                    ", xid=" + std::to_string(xid) + ")");
+                    // Task 17 MGA Phase 2.2: Track statistics
+                    index_stats_.entries_removed++;
+                    index_stats_.indexes_maintained++;
                 }
                 else if (!in_old && in_new)
                 {
@@ -1892,6 +1911,9 @@ namespace scratchbird
                     DEBUG_LOG_INDEX("Index '" + index_info.index_name + "': predicate transition INSERT " +
                                    "(wasn't in index, now is, tid=" + std::to_string(new_tid.value()) +
                                    ", xid=" + std::to_string(xid) + ")");
+                    // Task 17 MGA Phase 2.2: Track statistics
+                    index_stats_.entries_added++;
+                    index_stats_.indexes_maintained++;
                 }
                 // else: neither in index - no change
 
@@ -2024,6 +2046,10 @@ namespace scratchbird
                     // Task 17 MGA Phase 2.1: Debug logging for delete
                     DEBUG_LOG_INDEX("Index '" + index_info.index_name + "': removed entry for tid=" +
                                    std::to_string(tid.value()) + " (xid=" + std::to_string(xid) + ")");
+
+                    // Task 17 MGA Phase 2.2: Track statistics
+                    index_stats_.entries_removed++;
+                    index_stats_.indexes_maintained++;
                 }
 
                 // Cleanup
