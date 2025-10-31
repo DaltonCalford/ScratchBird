@@ -1,4 +1,5 @@
 #include <gtest/gtest.h>
+#include <memory>
 #include "scratchbird/optimizer/expression_matcher.h"
 #include "scratchbird/parser/parser.h"
 
@@ -13,28 +14,39 @@ using namespace scratchbird::parser;
 class ExpressionMatcherTest : public ::testing::Test
 {
 protected:
-    Expression *parseExpression(const std::string &expr_str, StringPool &pool)
+    struct ParseResult {
+        std::unique_ptr<Lexer> lexer;
+        std::unique_ptr<ASTArena> arena;
+        std::unique_ptr<Parser> parser;
+        Expression *expr;
+
+        ParseResult() : expr(nullptr) {}
+    };
+
+    ParseResult parseExpression(const std::string &expr_str)
     {
+        ParseResult result;
+
         // Parse as part of a SELECT statement
         std::string sql = "SELECT * FROM t WHERE " + expr_str;
-        Lexer lexer(sql);
-        ASTArena arena;
-        Parser parser(lexer, arena);
+        result.lexer = std::make_unique<Lexer>(sql);
+        result.arena = std::make_unique<ASTArena>();
+        result.parser = std::make_unique<Parser>(*result.lexer, *result.arena);
 
-        auto result = parser.parseStatement();
-        if (!result.success())
+        auto parse_result = result.parser->parseStatement();
+        if (!parse_result.success())
         {
-            return nullptr;
+            return result;
         }
 
-        auto *select_stmt = dynamic_cast<SelectStmt *>(result.statement());
+        auto *select_stmt = dynamic_cast<SelectStmt *>(parse_result.statement());
         if (!select_stmt || !select_stmt->whereClause())
         {
-            return nullptr;
+            return result;
         }
 
-        pool = parser.stringPool();
-        return select_stmt->whereClause();
+        result.expr = select_stmt->whereClause();
+        return result;
     }
 };
 
@@ -44,62 +56,58 @@ protected:
 
 TEST_F(ExpressionMatcherTest, ExactMatchLiteral)
 {
-    StringPool pool1, pool2;
-    auto *expr1 = parseExpression("42", pool1);
-    auto *expr2 = parseExpression("42", pool2);
+    auto result1 = parseExpression("42");
+    auto result2 = parseExpression("42");
 
-    ASSERT_NE(expr1, nullptr);
-    ASSERT_NE(expr2, nullptr);
+    ASSERT_NE(result1.expr, nullptr);
+    ASSERT_NE(result2.expr, nullptr);
 
-    EXPECT_TRUE(ExpressionMatcher::matches(expr1, expr2, &pool1));
+    // Use result1's StringPool since both expressions should match structurally
+    EXPECT_TRUE(ExpressionMatcher::matches(result1.expr, result2.expr, &result1.parser->stringPool()));
 }
 
 TEST_F(ExpressionMatcherTest, ExactMatchIdentifier)
 {
-    StringPool pool1, pool2;
-    auto *expr1 = parseExpression("email", pool1);
-    auto *expr2 = parseExpression("email", pool2);
+    auto result1 = parseExpression("email");
+    auto result2 = parseExpression("email");
 
-    ASSERT_NE(expr1, nullptr);
-    ASSERT_NE(expr2, nullptr);
+    ASSERT_NE(result1.expr, nullptr);
+    ASSERT_NE(result2.expr, nullptr);
 
-    EXPECT_TRUE(ExpressionMatcher::matches(expr1, expr2, &pool1));
+    EXPECT_TRUE(ExpressionMatcher::matches(result1.expr, result2.expr, &result1.parser->stringPool()));
 }
 
 TEST_F(ExpressionMatcherTest, ExactMatchFunctionCall)
 {
-    StringPool pool1, pool2;
-    auto *expr1 = parseExpression("LOWER(email)", pool1);
-    auto *expr2 = parseExpression("LOWER(email)", pool2);
+    auto result1 = parseExpression("LOWER(email)");
+    auto result2 = parseExpression("LOWER(email)");
 
-    ASSERT_NE(expr1, nullptr);
-    ASSERT_NE(expr2, nullptr);
+    ASSERT_NE(result1.expr, nullptr);
+    ASSERT_NE(result2.expr, nullptr);
 
-    EXPECT_TRUE(ExpressionMatcher::matches(expr1, expr2, &pool1));
+    EXPECT_TRUE(ExpressionMatcher::matches(result1.expr, result2.expr, &result1.parser->stringPool()));
 }
 
 TEST_F(ExpressionMatcherTest, ExactMatchBinaryOp)
 {
-    StringPool pool1, pool2;
-    auto *expr1 = parseExpression("price * quantity", pool1);
-    auto *expr2 = parseExpression("price * quantity", pool2);
+    auto result1 = parseExpression("price * quantity");
+    auto result2 = parseExpression("price * quantity");
 
-    ASSERT_NE(expr1, nullptr);
-    ASSERT_NE(expr2, nullptr);
+    ASSERT_NE(result1.expr, nullptr);
+    ASSERT_NE(result2.expr, nullptr);
 
-    EXPECT_TRUE(ExpressionMatcher::matches(expr1, expr2, &pool1));
+    EXPECT_TRUE(ExpressionMatcher::matches(result1.expr, result2.expr, &result1.parser->stringPool()));
 }
 
 TEST_F(ExpressionMatcherTest, ExactMatchComplex)
 {
-    StringPool pool1, pool2;
-    auto *expr1 = parseExpression("(price * 1.1) + tax", pool1);
-    auto *expr2 = parseExpression("(price * 1.1) + tax", pool2);
+    auto result1 = parseExpression("(price * 1.1) + tax");
+    auto result2 = parseExpression("(price * 1.1) + tax");
 
-    ASSERT_NE(expr1, nullptr);
-    ASSERT_NE(expr2, nullptr);
+    ASSERT_NE(result1.expr, nullptr);
+    ASSERT_NE(result2.expr, nullptr);
 
-    EXPECT_TRUE(ExpressionMatcher::matches(expr1, expr2, &pool1));
+    EXPECT_TRUE(ExpressionMatcher::matches(result1.expr, result2.expr, &result1.parser->stringPool()));
 }
 
 // ============================================================================
@@ -108,62 +116,57 @@ TEST_F(ExpressionMatcherTest, ExactMatchComplex)
 
 TEST_F(ExpressionMatcherTest, CommutativeAddition)
 {
-    StringPool pool1, pool2;
-    auto *expr1 = parseExpression("a + b", pool1);
-    auto *expr2 = parseExpression("b + a", pool2);
+    auto result1 = parseExpression("a + b");
+    auto result2 = parseExpression("b + a");
 
-    ASSERT_NE(expr1, nullptr);
-    ASSERT_NE(expr2, nullptr);
+    ASSERT_NE(result1.expr, nullptr);
+    ASSERT_NE(result2.expr, nullptr);
 
-    EXPECT_TRUE(ExpressionMatcher::matches(expr1, expr2, &pool1));
+    EXPECT_TRUE(ExpressionMatcher::matches(result1.expr, result2.expr, &result1.parser->stringPool()));
 }
 
 TEST_F(ExpressionMatcherTest, CommutativeMultiplication)
 {
-    StringPool pool1, pool2;
-    auto *expr1 = parseExpression("price * quantity", pool1);
-    auto *expr2 = parseExpression("quantity * price", pool2);
+    auto result1 = parseExpression("price * quantity");
+    auto result2 = parseExpression("quantity * price");
 
-    ASSERT_NE(expr1, nullptr);
-    ASSERT_NE(expr2, nullptr);
+    ASSERT_NE(result1.expr, nullptr);
+    ASSERT_NE(result2.expr, nullptr);
 
-    EXPECT_TRUE(ExpressionMatcher::matches(expr1, expr2, &pool1));
+    EXPECT_TRUE(ExpressionMatcher::matches(result1.expr, result2.expr, &result1.parser->stringPool()));
 }
 
 TEST_F(ExpressionMatcherTest, CommutativeEquality)
 {
-    StringPool pool1, pool2;
-    auto *expr1 = parseExpression("a = b", pool1);
-    auto *expr2 = parseExpression("b = a", pool2);
+    auto result1 = parseExpression("a = b");
+    auto result2 = parseExpression("b = a");
 
-    ASSERT_NE(expr1, nullptr);
-    ASSERT_NE(expr2, nullptr);
+    ASSERT_NE(result1.expr, nullptr);
+    ASSERT_NE(result2.expr, nullptr);
 
-    EXPECT_TRUE(ExpressionMatcher::matches(expr1, expr2, &pool1));
+    EXPECT_TRUE(ExpressionMatcher::matches(result1.expr, result2.expr, &result1.parser->stringPool()));
 }
 
 TEST_F(ExpressionMatcherTest, NonCommutativeSubtraction)
 {
-    StringPool pool1, pool2;
-    auto *expr1 = parseExpression("a - b", pool1);
-    auto *expr2 = parseExpression("b - a", pool2);
+    auto result1 = parseExpression("a - b");
+    auto result2 = parseExpression("b - a");
 
-    ASSERT_NE(expr1, nullptr);
-    ASSERT_NE(expr2, nullptr);
+    ASSERT_NE(result1.expr, nullptr);
+    ASSERT_NE(result2.expr, nullptr);
 
-    EXPECT_FALSE(ExpressionMatcher::matches(expr1, expr2, &pool1));
+    EXPECT_FALSE(ExpressionMatcher::matches(result1.expr, result2.expr, &result1.parser->stringPool()));
 }
 
 TEST_F(ExpressionMatcherTest, NonCommutativeDivision)
 {
-    StringPool pool1, pool2;
-    auto *expr1 = parseExpression("a / b", pool1);
-    auto *expr2 = parseExpression("b / a", pool2);
+    auto result1 = parseExpression("a / b");
+    auto result2 = parseExpression("b / a");
 
-    ASSERT_NE(expr1, nullptr);
-    ASSERT_NE(expr2, nullptr);
+    ASSERT_NE(result1.expr, nullptr);
+    ASSERT_NE(result2.expr, nullptr);
 
-    EXPECT_FALSE(ExpressionMatcher::matches(expr1, expr2, &pool1));
+    EXPECT_FALSE(ExpressionMatcher::matches(result1.expr, result2.expr, &result1.parser->stringPool()));
 }
 
 // ============================================================================
@@ -172,50 +175,46 @@ TEST_F(ExpressionMatcherTest, NonCommutativeDivision)
 
 TEST_F(ExpressionMatcherTest, NoMatchDifferentLiterals)
 {
-    StringPool pool1, pool2;
-    auto *expr1 = parseExpression("42", pool1);
-    auto *expr2 = parseExpression("99", pool2);
+    auto result1 = parseExpression("42");
+    auto result2 = parseExpression("99");
 
-    ASSERT_NE(expr1, nullptr);
-    ASSERT_NE(expr2, nullptr);
+    ASSERT_NE(result1.expr, nullptr);
+    ASSERT_NE(result2.expr, nullptr);
 
-    EXPECT_FALSE(ExpressionMatcher::matches(expr1, expr2, &pool1));
+    EXPECT_FALSE(ExpressionMatcher::matches(result1.expr, result2.expr, &result1.parser->stringPool()));
 }
 
 TEST_F(ExpressionMatcherTest, NoMatchDifferentIdentifiers)
 {
-    StringPool pool1, pool2;
-    auto *expr1 = parseExpression("email", pool1);
-    auto *expr2 = parseExpression("name", pool2);
+    auto result1 = parseExpression("email");
+    auto result2 = parseExpression("name");
 
-    ASSERT_NE(expr1, nullptr);
-    ASSERT_NE(expr2, nullptr);
+    ASSERT_NE(result1.expr, nullptr);
+    ASSERT_NE(result2.expr, nullptr);
 
-    EXPECT_FALSE(ExpressionMatcher::matches(expr1, expr2, &pool1));
+    EXPECT_FALSE(ExpressionMatcher::matches(result1.expr, result2.expr, &result1.parser->stringPool()));
 }
 
 TEST_F(ExpressionMatcherTest, NoMatchDifferentFunctions)
 {
-    StringPool pool1, pool2;
-    auto *expr1 = parseExpression("LOWER(email)", pool1);
-    auto *expr2 = parseExpression("UPPER(email)", pool2);
+    auto result1 = parseExpression("LOWER(email)");
+    auto result2 = parseExpression("UPPER(email)");
 
-    ASSERT_NE(expr1, nullptr);
-    ASSERT_NE(expr2, nullptr);
+    ASSERT_NE(result1.expr, nullptr);
+    ASSERT_NE(result2.expr, nullptr);
 
-    EXPECT_FALSE(ExpressionMatcher::matches(expr1, expr2, &pool1));
+    EXPECT_FALSE(ExpressionMatcher::matches(result1.expr, result2.expr, &result1.parser->stringPool()));
 }
 
 TEST_F(ExpressionMatcherTest, NoMatchDifferentOperators)
 {
-    StringPool pool1, pool2;
-    auto *expr1 = parseExpression("a + b", pool1);
-    auto *expr2 = parseExpression("a - b", pool2);
+    auto result1 = parseExpression("a + b");
+    auto result2 = parseExpression("a - b");
 
-    ASSERT_NE(expr1, nullptr);
-    ASSERT_NE(expr2, nullptr);
+    ASSERT_NE(result1.expr, nullptr);
+    ASSERT_NE(result2.expr, nullptr);
 
-    EXPECT_FALSE(ExpressionMatcher::matches(expr1, expr2, &pool1));
+    EXPECT_FALSE(ExpressionMatcher::matches(result1.expr, result2.expr, &result1.parser->stringPool()));
 }
 
 // ============================================================================
@@ -224,79 +223,73 @@ TEST_F(ExpressionMatcherTest, NoMatchDifferentOperators)
 
 TEST_F(ExpressionMatcherTest, CanUseExactMatch)
 {
-    StringPool pool1, pool2;
-    auto *query = parseExpression("LOWER(email) = 'test@example.com'", pool1);
-    auto *index = parseExpression("LOWER(email)", pool2);
+    auto result_query = parseExpression("LOWER(email) = 'test@example.com'");
+    auto result_index = parseExpression("LOWER(email)");
 
-    ASSERT_NE(query, nullptr);
-    ASSERT_NE(index, nullptr);
+    ASSERT_NE(result_query.expr, nullptr);
+    ASSERT_NE(result_index.expr, nullptr);
 
-    ExpressionMatchType match_type = ExpressionMatcher::canUse(query, index, &pool1);
+    ExpressionMatchType match_type = ExpressionMatcher::canUse(result_query.expr, result_index.expr, &result_query.parser->stringPool());
     EXPECT_EQ(match_type, ExpressionMatchType::EXACT_MATCH);
 }
 
 TEST_F(ExpressionMatcherTest, CanUseRangeScanGreater)
 {
-    StringPool pool1, pool2;
-    auto *query = parseExpression("LOWER(email) > 'a'", pool1);
-    auto *index = parseExpression("LOWER(email)", pool2);
+    auto result_query = parseExpression("LOWER(email) > 'a'");
+    auto result_index = parseExpression("LOWER(email)");
 
-    ASSERT_NE(query, nullptr);
-    ASSERT_NE(index, nullptr);
+    ASSERT_NE(result_query.expr, nullptr);
+    ASSERT_NE(result_index.expr, nullptr);
 
-    ExpressionMatchType match_type = ExpressionMatcher::canUse(query, index, &pool1);
+    ExpressionMatchType match_type = ExpressionMatcher::canUse(result_query.expr, result_index.expr, &result_query.parser->stringPool());
     EXPECT_EQ(match_type, ExpressionMatchType::RANGE_SCAN);
 }
 
 TEST_F(ExpressionMatcherTest, CanUseRangeScanLess)
 {
-    StringPool pool1, pool2;
-    auto *query = parseExpression("LOWER(email) < 'z'", pool1);
-    auto *index = parseExpression("LOWER(email)", pool2);
+    auto result_query = parseExpression("LOWER(email) < 'z'");
+    auto result_index = parseExpression("LOWER(email)");
 
-    ASSERT_NE(query, nullptr);
-    ASSERT_NE(index, nullptr);
+    ASSERT_NE(result_query.expr, nullptr);
+    ASSERT_NE(result_index.expr, nullptr);
 
-    ExpressionMatchType match_type = ExpressionMatcher::canUse(query, index, &pool1);
+    ExpressionMatchType match_type = ExpressionMatcher::canUse(result_query.expr, result_index.expr, &result_query.parser->stringPool());
     EXPECT_EQ(match_type, ExpressionMatchType::RANGE_SCAN);
 }
 
 TEST_F(ExpressionMatcherTest, CanUseLikePrefixScan)
 {
-    StringPool pool1, pool2;
-    auto *query = parseExpression("LOWER(email) LIKE 'test%'", pool1);
-    auto *index = parseExpression("LOWER(email)", pool2);
+    auto result_query = parseExpression("LOWER(email) LIKE 'test%'");
+    auto result_index = parseExpression("LOWER(email)");
 
-    ASSERT_NE(query, nullptr);
-    ASSERT_NE(index, nullptr);
+    ASSERT_NE(result_query.expr, nullptr);
+    ASSERT_NE(result_index.expr, nullptr);
 
-    ExpressionMatchType match_type = ExpressionMatcher::canUse(query, index, &pool1);
+    ExpressionMatchType match_type = ExpressionMatcher::canUse(result_query.expr, result_index.expr, &result_query.parser->stringPool());
     EXPECT_EQ(match_type, ExpressionMatchType::RANGE_SCAN);
 }
 
 TEST_F(ExpressionMatcherTest, CannotUseLikeSuffixScan)
 {
-    StringPool pool1, pool2;
-    auto *query = parseExpression("LOWER(email) LIKE '%@example.com'", pool1);
-    auto *index = parseExpression("LOWER(email)", pool2);
+    auto result_query = parseExpression("LOWER(email) LIKE '%@example.com'");
+    auto result_index = parseExpression("LOWER(email)");
 
-    ASSERT_NE(query, nullptr);
-    ASSERT_NE(index, nullptr);
+    ASSERT_NE(result_query.expr, nullptr);
+    ASSERT_NE(result_index.expr, nullptr);
 
-    ExpressionMatchType match_type = ExpressionMatcher::canUse(query, index, &pool1);
+    ExpressionMatchType match_type = ExpressionMatcher::canUse(result_query.expr, result_index.expr, &result_query.parser->stringPool());
     EXPECT_EQ(match_type, ExpressionMatchType::NO_MATCH);
 }
 
 TEST_F(ExpressionMatcherTest, CannotUseDifferentExpression)
 {
-    StringPool pool1, pool2;
-    auto *query = parseExpression("UPPER(email) = 'TEST'", pool1);
-    auto *index = parseExpression("LOWER(email)", pool2);
+    auto result_query = parseExpression("UPPER(email) = 'TEST'");
+    auto result_index = parseExpression("LOWER(email)");
 
-    ASSERT_NE(query, nullptr);
-    ASSERT_NE(index, nullptr);
+    ASSERT_NE(result_query.expr, nullptr);
+    ASSERT_NE(result_index.expr, nullptr);
 
-    ExpressionMatchType match_type = ExpressionMatcher::canUse(query, index, &pool1);
+    ExpressionMatchType match_type = ExpressionMatcher::canUse(result_query.expr, result_index.expr, &result_query.parser->stringPool());
     EXPECT_EQ(match_type, ExpressionMatchType::NO_MATCH);
 }
 
@@ -306,26 +299,24 @@ TEST_F(ExpressionMatcherTest, CannotUseDifferentExpression)
 
 TEST_F(ExpressionMatcherTest, CaseInsensitiveColumnNames)
 {
-    StringPool pool1, pool2;
-    auto *expr1 = parseExpression("Email", pool1);
-    auto *expr2 = parseExpression("email", pool2);
+    auto result1 = parseExpression("Email");
+    auto result2 = parseExpression("email");
 
-    ASSERT_NE(expr1, nullptr);
-    ASSERT_NE(expr2, nullptr);
+    ASSERT_NE(result1.expr, nullptr);
+    ASSERT_NE(result2.expr, nullptr);
 
-    EXPECT_TRUE(ExpressionMatcher::matches(expr1, expr2, &pool1));
+    EXPECT_TRUE(ExpressionMatcher::matches(result1.expr, result2.expr, &result1.parser->stringPool()));
 }
 
 TEST_F(ExpressionMatcherTest, CaseInsensitiveFunctionNames)
 {
-    StringPool pool1, pool2;
-    auto *expr1 = parseExpression("LOWER(email)", pool1);
-    auto *expr2 = parseExpression("lower(email)", pool2);
+    auto result1 = parseExpression("LOWER(email)");
+    auto result2 = parseExpression("lower(email)");
 
-    ASSERT_NE(expr1, nullptr);
-    ASSERT_NE(expr2, nullptr);
+    ASSERT_NE(result1.expr, nullptr);
+    ASSERT_NE(result2.expr, nullptr);
 
-    EXPECT_TRUE(ExpressionMatcher::matches(expr1, expr2, &pool1));
+    EXPECT_TRUE(ExpressionMatcher::matches(result1.expr, result2.expr, &result1.parser->stringPool()));
 }
 
 // ============================================================================
@@ -334,38 +325,35 @@ TEST_F(ExpressionMatcherTest, CaseInsensitiveFunctionNames)
 
 TEST_F(ExpressionMatcherTest, ComplexArithmeticExpression)
 {
-    StringPool pool1, pool2;
-    auto *expr1 = parseExpression("(price * quantity) + tax", pool1);
-    auto *expr2 = parseExpression("(price * quantity) + tax", pool2);
+    auto result1 = parseExpression("(price * quantity) + tax");
+    auto result2 = parseExpression("(price * quantity) + tax");
 
-    ASSERT_NE(expr1, nullptr);
-    ASSERT_NE(expr2, nullptr);
+    ASSERT_NE(result1.expr, nullptr);
+    ASSERT_NE(result2.expr, nullptr);
 
-    EXPECT_TRUE(ExpressionMatcher::matches(expr1, expr2, &pool1));
+    EXPECT_TRUE(ExpressionMatcher::matches(result1.expr, result2.expr, &result1.parser->stringPool()));
 }
 
 TEST_F(ExpressionMatcherTest, NestedFunctionCalls)
 {
-    StringPool pool1, pool2;
-    auto *expr1 = parseExpression("LOWER(TRIM(email))", pool1);
-    auto *expr2 = parseExpression("LOWER(TRIM(email))", pool2);
+    auto result1 = parseExpression("LOWER(TRIM(email))");
+    auto result2 = parseExpression("LOWER(TRIM(email))");
 
-    ASSERT_NE(expr1, nullptr);
-    ASSERT_NE(expr2, nullptr);
+    ASSERT_NE(result1.expr, nullptr);
+    ASSERT_NE(result2.expr, nullptr);
 
-    EXPECT_TRUE(ExpressionMatcher::matches(expr1, expr2, &pool1));
+    EXPECT_TRUE(ExpressionMatcher::matches(result1.expr, result2.expr, &result1.parser->stringPool()));
 }
 
 TEST_F(ExpressionMatcherTest, MultipleArguments)
 {
-    StringPool pool1, pool2;
-    auto *expr1 = parseExpression("SUBSTRING(email, 1, 10)", pool1);
-    auto *expr2 = parseExpression("SUBSTRING(email, 1, 10)", pool2);
+    auto result1 = parseExpression("SUBSTRING(email, 1, 10)");
+    auto result2 = parseExpression("SUBSTRING(email, 1, 10)");
 
-    ASSERT_NE(expr1, nullptr);
-    ASSERT_NE(expr2, nullptr);
+    ASSERT_NE(result1.expr, nullptr);
+    ASSERT_NE(result2.expr, nullptr);
 
-    EXPECT_TRUE(ExpressionMatcher::matches(expr1, expr2, &pool1));
+    EXPECT_TRUE(ExpressionMatcher::matches(result1.expr, result2.expr, &result1.parser->stringPool()));
 }
 
 // ============================================================================
@@ -380,20 +368,18 @@ TEST_F(ExpressionMatcherTest, NullExpressions)
 
 TEST_F(ExpressionMatcherTest, OneNullExpression)
 {
-    StringPool pool;
-    auto *expr = parseExpression("email", pool);
+    auto result = parseExpression("email");
 
-    EXPECT_FALSE(ExpressionMatcher::matches(expr, nullptr, &pool));
-    EXPECT_FALSE(ExpressionMatcher::matches(nullptr, expr, &pool));
+    EXPECT_FALSE(ExpressionMatcher::matches(result.expr, nullptr, &result.parser->stringPool()));
+    EXPECT_FALSE(ExpressionMatcher::matches(nullptr, result.expr, &result.parser->stringPool()));
 }
 
 TEST_F(ExpressionMatcherTest, NullStringPool)
 {
-    StringPool pool1, pool2;
-    auto *expr1 = parseExpression("email", pool1);
-    auto *expr2 = parseExpression("email", pool2);
+    auto result1 = parseExpression("email");
+    auto result2 = parseExpression("email");
 
-    EXPECT_FALSE(ExpressionMatcher::matches(expr1, expr2, nullptr));
+    EXPECT_FALSE(ExpressionMatcher::matches(result1.expr, result2.expr, nullptr));
 }
 
 // ============================================================================
@@ -402,45 +388,36 @@ TEST_F(ExpressionMatcherTest, NullStringPool)
 
 TEST_F(ExpressionMatcherTest, RealWorldLowerEmailIndex)
 {
-    StringPool pool1, pool2;
-    auto *query = parseExpression("LOWER(email) = 'test@example.com'", pool1);
-    auto *index = parseExpression("LOWER(email)", pool2);
+    auto result_query = parseExpression("LOWER(email) = 'test@example.com'");
+    auto result_index = parseExpression("LOWER(email)");
 
-    ASSERT_NE(query, nullptr);
-    ASSERT_NE(index, nullptr);
+    ASSERT_NE(result_query.expr, nullptr);
+    ASSERT_NE(result_index.expr, nullptr);
 
-    ExpressionMatchType match_type = ExpressionMatcher::canUse(query, index, &pool1);
+    ExpressionMatchType match_type = ExpressionMatcher::canUse(result_query.expr, result_index.expr, &result_query.parser->stringPool());
     EXPECT_EQ(match_type, ExpressionMatchType::EXACT_MATCH);
 }
 
 TEST_F(ExpressionMatcherTest, RealWorldExtractYearIndex)
 {
-    StringPool pool1, pool2;
-    auto *query = parseExpression("EXTRACT(YEAR FROM created_at) = 2024", pool1);
-    auto *index = parseExpression("EXTRACT(YEAR FROM created_at)", pool2);
+    auto result_query = parseExpression("EXTRACT(YEAR FROM created_at) = 2024");
+    auto result_index = parseExpression("EXTRACT(YEAR FROM created_at)");
 
-    ASSERT_NE(query, nullptr);
-    ASSERT_NE(index, nullptr);
+    ASSERT_NE(result_query.expr, nullptr);
+    ASSERT_NE(result_index.expr, nullptr);
 
-    ExpressionMatchType match_type = ExpressionMatcher::canUse(query, index, &pool1);
+    ExpressionMatchType match_type = ExpressionMatcher::canUse(result_query.expr, result_index.expr, &result_query.parser->stringPool());
     EXPECT_EQ(match_type, ExpressionMatchType::EXACT_MATCH);
 }
 
 TEST_F(ExpressionMatcherTest, RealWorldComputedPriceIndex)
 {
-    StringPool pool1, pool2;
-    auto *query = parseExpression("(price * quantity) > 1000", pool1);
-    auto *index = parseExpression("price * quantity", pool2);
+    auto result_query = parseExpression("(price * quantity) > 1000");
+    auto result_index = parseExpression("price * quantity");
 
-    ASSERT_NE(query, nullptr);
-    ASSERT_NE(index, nullptr);
+    ASSERT_NE(result_query.expr, nullptr);
+    ASSERT_NE(result_index.expr, nullptr);
 
-    ExpressionMatchType match_type = ExpressionMatcher::canUse(query, index, &pool1);
+    ExpressionMatchType match_type = ExpressionMatcher::canUse(result_query.expr, result_index.expr, &result_query.parser->stringPool());
     EXPECT_EQ(match_type, ExpressionMatchType::RANGE_SCAN);
-}
-
-int main(int argc, char **argv)
-{
-    ::testing::InitGoogleTest(&argc, argv);
-    return RUN_ALL_TESTS();
 }

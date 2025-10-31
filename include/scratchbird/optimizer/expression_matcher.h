@@ -102,14 +102,14 @@ namespace scratchbird::optimizer
          * - LOWER(email) LIKE 'test%' → RANGE_SCAN (index on LOWER(email))
          * - LOWER(email) LIKE '%test' → NO_MATCH (can't use index for suffix scan)
          *
-         * @param op Binary operator token type
+         * @param op Binary operator type
          * @param left_expr Left operand
          * @param right_expr Right operand
          * @param index_expr Index expression
          * @param string_pool String pool
          * @return Match type
          */
-        static ExpressionMatchType isOperatorCompatible(TokenType op,
+        static ExpressionMatchType isOperatorCompatible(BinaryOp op,
                                                         const Expression *left_expr,
                                                         const Expression *right_expr,
                                                         const Expression *index_expr,
@@ -136,10 +136,10 @@ namespace scratchbird::optimizer
                                const StringPool *pool);
 
         // Helper methods
-        static bool isCommutativeOperator(TokenType op);
-        static bool isComparisonOperator(TokenType op);
+        static bool isCommutativeOperator(BinaryOp op);
+        static bool isComparisonOperator(BinaryOp op);
         static bool isLikePrefixScan(const LiteralExpr *pattern);
-        static ExpressionMatchType getMatchTypeForOperator(TokenType op);
+        static ExpressionMatchType getMatchTypeForOperator(BinaryOp op);
     };
 
 } // namespace scratchbird::optimizer
