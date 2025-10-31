@@ -2425,6 +2425,21 @@ namespace scratchbird
             void visit(SubqueryExpr *node) override;   // Phase 2 Wave 2 - Agent B
             void visit(ColumnDef *node) override;
 
+            // Procedural language statements (stub implementations)
+            void visit(CreateTriggerStmt *node) override;
+            void visit(DropTriggerStmt *node) override;
+            void visit(CreateFunctionStmt *node) override;
+            void visit(CreateProcedureStmt *node) override;
+            void visit(BlockStmt *node) override;
+            void visit(VarDeclarationStmt *node) override;
+            void visit(AssignmentStmt *node) override;
+            void visit(IfStmt *node) override;
+            void visit(LoopStmt *node) override;
+            void visit(WhileStmt *node) override;
+            void visit(ExitStmt *node) override;
+            void visit(ReturnStmt *node) override;
+            void visit(RaiseStmt *node) override;
+
         private:
             std::ostream &out_;
             const StringPool &pool_;
