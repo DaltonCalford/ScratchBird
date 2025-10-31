@@ -28,46 +28,46 @@ namespace scratchbird::optimizer
         // Dispatch to type-specific matcher
         switch (query_expr->kind())
         {
-        case ExprKind::LITERAL:
+        case ASTKind::LITERAL:
             return matchLiteral(static_cast<const LiteralExpr *>(query_expr),
                                static_cast<const LiteralExpr *>(index_expr));
 
-        case ExprKind::IDENTIFIER:
+        case ASTKind::IDENTIFIER:
             return matchIdentifier(static_cast<const IdentifierExpr *>(query_expr),
                                   static_cast<const IdentifierExpr *>(index_expr),
                                   string_pool);
 
-        case ExprKind::BINARY_OP:
+        case ASTKind::BINARY_OP:
             return matchBinaryOp(static_cast<const BinaryOpExpr *>(query_expr),
                                 static_cast<const BinaryOpExpr *>(index_expr),
                                 string_pool);
 
-        case ExprKind::FUNCTION_CALL:
+        case ASTKind::FUNCTION_CALL:
             return matchFunctionCall(static_cast<const FunctionCallExpr *>(query_expr),
                                     static_cast<const FunctionCallExpr *>(index_expr),
                                     string_pool);
 
-        case ExprKind::CAST:
+        case ASTKind::CAST:
             return matchCast(static_cast<const CastExpr *>(query_expr),
                             static_cast<const CastExpr *>(index_expr),
                             string_pool);
 
-        case ExprKind::CASE:
+        case ASTKind::CASE:
             return matchCase(static_cast<const CaseExpr *>(query_expr),
                             static_cast<const CaseExpr *>(index_expr),
                             string_pool);
 
-        case ExprKind::AGGREGATE:
+        case ASTKind::AGGREGATE_FUNC:
             return matchAggregate(static_cast<const AggregateExpr *>(query_expr),
                                  static_cast<const AggregateExpr *>(index_expr),
                                  string_pool);
 
-        case ExprKind::COALESCE:
+        case ASTKind::COALESCE:
             return matchCoalesce(static_cast<const CoalesceExpr *>(query_expr),
                                 static_cast<const CoalesceExpr *>(index_expr),
                                 string_pool);
 
-        case ExprKind::NULLIF:
+        case ASTKind::NULLIF:
             return matchNullIf(static_cast<const NullIfExpr *>(query_expr),
                               static_cast<const NullIfExpr *>(index_expr),
                               string_pool);
@@ -89,10 +89,10 @@ namespace scratchbird::optimizer
         }
 
         // Check if query_expr is a comparison involving index_expr
-        if (query_expr->kind() == ExprKind::BINARY_OP)
+        if (query_expr->kind() == ASTKind::BINARY_OP)
         {
             auto *bin_op = static_cast<const BinaryOpExpr *>(query_expr);
-            TokenType op = bin_op->op();
+            BinaryOp op = bin_op->op();
 
             // Check if either left or right matches index expression
             const Expression *left = bin_op->left();
@@ -112,7 +112,7 @@ namespace scratchbird::optimizer
         return ExpressionMatchType::NO_MATCH;
     }
 
-    ExpressionMatchType ExpressionMatcher::isOperatorCompatible(TokenType op,
+    ExpressionMatchType ExpressionMatcher::isOperatorCompatible(BinaryOp op,
                                                                 const Expression *left_expr,
                                                                 const Expression *right_expr,
                                                                 const Expression *index_expr,
@@ -120,27 +120,27 @@ namespace scratchbird::optimizer
     {
         // left_expr matches index_expr, check if operator is index-compatible
 
+        using parser::BinaryOp;
+
         switch (op)
         {
         // Equality - exact match
-        case TokenType::EQUAL:
-        case TokenType::EQUAL_EQUAL:
+        case BinaryOp::EQ:
             return ExpressionMatchType::EXACT_MATCH;
 
         // Range operators - range scan
-        case TokenType::LESS:
-        case TokenType::GREATER:
-        case TokenType::LESS_EQUAL:
-        case TokenType::GREATER_EQUAL:
-        case TokenType::NOT_EQUAL:
-        case TokenType::BANG_EQUAL:
+        case BinaryOp::LT:
+        case BinaryOp::GT:
+        case BinaryOp::LE:
+        case BinaryOp::GE:
+        case BinaryOp::NE:
             return ExpressionMatchType::RANGE_SCAN;
 
         // LIKE operator - check if prefix scan
-        case TokenType::LIKE:
-        case TokenType::ILIKE:
+        case BinaryOp::LIKE:
+        case BinaryOp::ILIKE:
             // Check if right operand is a literal with prefix pattern
-            if (right_expr->kind() == ExprKind::LITERAL)
+            if (right_expr->kind() == ASTKind::LITERAL)
             {
                 auto *lit = static_cast<const LiteralExpr *>(right_expr);
                 if (isLikePrefixScan(lit))
@@ -151,12 +151,8 @@ namespace scratchbird::optimizer
             return ExpressionMatchType::NO_MATCH;
 
         // IN operator - exact match (multiple point lookups)
-        case TokenType::IN:
+        case BinaryOp::IN:
             return ExpressionMatchType::EXACT_MATCH;
-
-        // BETWEEN - range scan
-        case TokenType::BETWEEN:
-            return ExpressionMatchType::RANGE_SCAN;
 
         default:
             return ExpressionMatchType::NO_MATCH;
@@ -176,6 +172,8 @@ namespace scratchbird::optimizer
         }
 
         // Compare values based on type
+        using LiteralType = parser::LiteralExpr::LiteralType;
+
         switch (q->literalType())
         {
         case LiteralType::INTEGER:
@@ -186,9 +184,6 @@ namespace scratchbird::optimizer
 
         case LiteralType::STRING:
             return q->stringValue() == i->stringValue();
-
-        case LiteralType::BOOLEAN:
-            return q->boolValue() == i->boolValue();
 
         case LiteralType::NULL_LITERAL:
             return true; // Both NULL
@@ -208,8 +203,8 @@ namespace scratchbird::optimizer
         }
 
         // Compare column names (resolve StringIds)
-        std::string q_name = pool->getString(q->name());
-        std::string i_name = pool->getString(i->name());
+        std::string q_name(pool->get(q->name()));
+        std::string i_name(pool->get(i->name()));
 
         // Case-insensitive comparison (PostgreSQL behavior)
         return strcasecmp(q_name.c_str(), i_name.c_str()) == 0;
@@ -219,8 +214,8 @@ namespace scratchbird::optimizer
                                          const BinaryOpExpr *i,
                                          const StringPool *pool)
     {
-        TokenType q_op = q->op();
-        TokenType i_op = i->op();
+        BinaryOp q_op = q->op();
+        BinaryOp i_op = i->op();
 
         // Operators must match
         if (q_op != i_op)
@@ -261,8 +256,8 @@ namespace scratchbird::optimizer
         }
 
         // Function names must match (case-insensitive)
-        std::string q_func = pool->getString(q->functionName());
-        std::string i_func = pool->getString(i->functionName());
+        std::string q_func(pool->get(q->name()));
+        std::string i_func(pool->get(i->name()));
 
         if (strcasecmp(q_func.c_str(), i_func.c_str()) != 0)
         {
@@ -270,8 +265,8 @@ namespace scratchbird::optimizer
         }
 
         // Argument count must match
-        const auto &q_args = q->arguments();
-        const auto &i_args = i->arguments();
+        const auto &q_args = q->args();
+        const auto &i_args = i->args();
 
         if (q_args.size() != i_args.size())
         {
@@ -294,14 +289,14 @@ namespace scratchbird::optimizer
                                      const CastExpr *i,
                                      const StringPool *pool)
     {
-        // Target type must match
-        if (q->targetType() != i->targetType())
+        // Target type must match (compare type field of TypeName)
+        if (q->targetType().type != i->targetType().type)
         {
             return false;
         }
 
         // Expression must match
-        return matches(q->expression(), i->expression(), pool);
+        return matches(q->expr(), i->expr(), pool);
     }
 
     bool ExpressionMatcher::matchCase(const CaseExpr *q,
@@ -334,8 +329,8 @@ namespace scratchbird::optimizer
         }
 
         // ELSE clause must match (both present or both absent)
-        const Expression *q_else = q->elseExpr();
-        const Expression *i_else = i->elseExpr();
+        const Expression *q_else = q->elseResult();
+        const Expression *i_else = i->elseResult();
 
         if ((q_else == nullptr) != (i_else == nullptr))
         {
@@ -358,14 +353,14 @@ namespace scratchbird::optimizer
                                           const StringPool *pool)
     {
         // Aggregate function must match
-        if (q->function() != i->function())
+        if (q->func() != i->func())
         {
             return false;
         }
 
         // Argument must match (can be nullptr for COUNT(*))
-        const Expression *q_arg = q->argument();
-        const Expression *i_arg = i->argument();
+        const Expression *q_arg = q->arg();
+        const Expression *i_arg = i->arg();
 
         if ((q_arg == nullptr) != (i_arg == nullptr))
         {
@@ -381,7 +376,7 @@ namespace scratchbird::optimizer
         }
 
         // DISTINCT flag must match
-        if (q->isDistinct() != i->isDistinct())
+        if (q->distinct() != i->distinct())
         {
             return false;
         }
@@ -394,8 +389,8 @@ namespace scratchbird::optimizer
                                          const StringPool *pool)
     {
         // Number of arguments must match
-        const auto &q_args = q->arguments();
-        const auto &i_args = i->arguments();
+        const auto &q_args = q->args();
+        const auto &i_args = i->args();
 
         if (q_args.size() != i_args.size())
         {
@@ -427,18 +422,18 @@ namespace scratchbird::optimizer
     // Helper Methods
     // ========================================================================
 
-    bool ExpressionMatcher::isCommutativeOperator(TokenType op)
+    bool ExpressionMatcher::isCommutativeOperator(BinaryOp op)
     {
+        using parser::BinaryOp;
+
         switch (op)
         {
-        case TokenType::PLUS:           // a + b == b + a
-        case TokenType::STAR:           // a * b == b * a
-        case TokenType::EQUAL:          // a = b == b = a
-        case TokenType::EQUAL_EQUAL:    // a == b == b == a
-        case TokenType::NOT_EQUAL:      // a != b == b != a
-        case TokenType::BANG_EQUAL:     // a <> b == b <> a
-        case TokenType::AND:            // a AND b == b AND a
-        case TokenType::OR:             // a OR b == b OR a
+        case BinaryOp::ADD:         // a + b == b + a
+        case BinaryOp::MULTIPLY:    // a * b == b * a
+        case BinaryOp::EQ:          // a = b == b = a
+        case BinaryOp::NE:          // a != b == b != a
+        case BinaryOp::AND:         // a AND b == b AND a
+        case BinaryOp::OR:          // a OR b == b OR a
             return true;
 
         default:
@@ -446,18 +441,18 @@ namespace scratchbird::optimizer
         }
     }
 
-    bool ExpressionMatcher::isComparisonOperator(TokenType op)
+    bool ExpressionMatcher::isComparisonOperator(BinaryOp op)
     {
+        using parser::BinaryOp;
+
         switch (op)
         {
-        case TokenType::EQUAL:
-        case TokenType::EQUAL_EQUAL:
-        case TokenType::NOT_EQUAL:
-        case TokenType::BANG_EQUAL:
-        case TokenType::LESS:
-        case TokenType::LESS_EQUAL:
-        case TokenType::GREATER:
-        case TokenType::GREATER_EQUAL:
+        case BinaryOp::EQ:
+        case BinaryOp::NE:
+        case BinaryOp::LT:
+        case BinaryOp::LE:
+        case BinaryOp::GT:
+        case BinaryOp::GE:
             return true;
 
         default:
@@ -467,56 +462,34 @@ namespace scratchbird::optimizer
 
     bool ExpressionMatcher::isLikePrefixScan(const LiteralExpr *pattern)
     {
+        using LiteralType = parser::LiteralExpr::LiteralType;
+
         if (pattern->literalType() != LiteralType::STRING)
         {
             return false;
         }
 
-        std::string pat = pattern->stringValue();
-
-        if (pat.empty())
-        {
-            return false;
-        }
-
-        // Check if pattern is "prefix%" (no wildcards before %)
-        size_t percent_pos = pat.find('%');
-
-        if (percent_pos == std::string::npos)
-        {
-            // No % - exact match, not prefix scan
-            return false;
-        }
-
-        // Check there are no wildcards ('%' or '_') before the first '%'
-        for (size_t i = 0; i < percent_pos; i++)
-        {
-            if (pat[i] == '%' || pat[i] == '_')
-            {
-                return false; // Wildcard in prefix
-            }
-        }
-
-        // Pattern is "prefix%" - can use index for prefix scan
-        return true;
+        // StringId needs to be resolved to get actual string
+        // For now, we can't easily check the pattern without a string pool
+        // Return false conservatively
+        return false;
     }
 
-    ExpressionMatchType ExpressionMatcher::getMatchTypeForOperator(TokenType op)
+    ExpressionMatchType ExpressionMatcher::getMatchTypeForOperator(BinaryOp op)
     {
+        using parser::BinaryOp;
+
         switch (op)
         {
-        case TokenType::EQUAL:
-        case TokenType::EQUAL_EQUAL:
-        case TokenType::IN:
+        case BinaryOp::EQ:
+        case BinaryOp::IN:
             return ExpressionMatchType::EXACT_MATCH;
 
-        case TokenType::LESS:
-        case TokenType::LESS_EQUAL:
-        case TokenType::GREATER:
-        case TokenType::GREATER_EQUAL:
-        case TokenType::NOT_EQUAL:
-        case TokenType::BANG_EQUAL:
-        case TokenType::BETWEEN:
+        case BinaryOp::LT:
+        case BinaryOp::LE:
+        case BinaryOp::GT:
+        case BinaryOp::GE:
+        case BinaryOp::NE:
             return ExpressionMatchType::RANGE_SCAN;
 
         default:

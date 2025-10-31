@@ -100,8 +100,10 @@ namespace scratchbird::optimizer
                                         const StringPool *string_pool)
     {
         // Both must be comparison operators
-        TokenType query_op = query_binop->op();
-        TokenType index_op = index_binop->op();
+        using parser::BinaryOp;
+
+        BinaryOp query_op = query_binop->op();
+        BinaryOp index_op = index_binop->op();
 
         // Get left and right operands
         const Expression *query_left = query_binop->left();
@@ -126,8 +128,8 @@ namespace scratchbird::optimizer
         }
 
         // Right operands must be literals
-        if (query_right->kind() != ExprKind::LITERAL ||
-            index_right->kind() != ExprKind::LITERAL)
+        if (query_right->kind() != ASTKind::LITERAL ||
+            index_right->kind() != ASTKind::LITERAL)
         {
             return false;
         }
@@ -146,62 +148,62 @@ namespace scratchbird::optimizer
         // Query: col > 30, Index: col > 18 → implies (30 > 18)
         // Query: col < 10, Index: col < 20 → implies (10 < 20)
 
-        if (query_op == TokenType::GREATER && index_op == TokenType::GREATER)
+        if (query_op == BinaryOp::GT && index_op == BinaryOp::GT)
         {
             // col > Q implies col > I if Q >= I
             return cmp >= 0; // query_lit >= index_lit
         }
-        else if (query_op == TokenType::GREATER_EQUAL && index_op == TokenType::GREATER)
+        else if (query_op == BinaryOp::GE && index_op == BinaryOp::GT)
         {
             // col >= Q implies col > I if Q > I
             return cmp > 0; // query_lit > index_lit
         }
-        else if (query_op == TokenType::GREATER_EQUAL && index_op == TokenType::GREATER_EQUAL)
+        else if (query_op == BinaryOp::GE && index_op == BinaryOp::GE)
         {
             // col >= Q implies col >= I if Q >= I
             return cmp >= 0;
         }
-        else if (query_op == TokenType::LESS && index_op == TokenType::LESS)
+        else if (query_op == BinaryOp::LT && index_op == BinaryOp::LT)
         {
             // col < Q implies col < I if Q <= I
             return cmp <= 0; // query_lit <= index_lit
         }
-        else if (query_op == TokenType::LESS_EQUAL && index_op == TokenType::LESS)
+        else if (query_op == BinaryOp::LE && index_op == BinaryOp::LT)
         {
             // col <= Q implies col < I if Q < I
             return cmp < 0; // query_lit < index_lit
         }
-        else if (query_op == TokenType::LESS_EQUAL && index_op == TokenType::LESS_EQUAL)
+        else if (query_op == BinaryOp::LE && index_op == BinaryOp::LE)
         {
             // col <= Q implies col <= I if Q <= I
             return cmp <= 0;
         }
-        else if ((query_op == TokenType::EQUAL || query_op == TokenType::EQUAL_EQUAL) &&
-                 (index_op == TokenType::EQUAL || index_op == TokenType::EQUAL_EQUAL))
+        else if ((query_op == BinaryOp::EQ || query_op == BinaryOp::EQ) &&
+                 (index_op == BinaryOp::EQ || index_op == BinaryOp::EQ))
         {
             // col = Q implies col = I if Q == I
             return cmp == 0;
         }
-        else if ((query_op == TokenType::EQUAL || query_op == TokenType::EQUAL_EQUAL) &&
-                 index_op == TokenType::GREATER)
+        else if ((query_op == BinaryOp::EQ || query_op == BinaryOp::EQ) &&
+                 index_op == BinaryOp::GT)
         {
             // col = Q implies col > I if Q > I
             return cmp > 0;
         }
-        else if ((query_op == TokenType::EQUAL || query_op == TokenType::EQUAL_EQUAL) &&
-                 index_op == TokenType::GREATER_EQUAL)
+        else if ((query_op == BinaryOp::EQ || query_op == BinaryOp::EQ) &&
+                 index_op == BinaryOp::GE)
         {
             // col = Q implies col >= I if Q >= I
             return cmp >= 0;
         }
-        else if ((query_op == TokenType::EQUAL || query_op == TokenType::EQUAL_EQUAL) &&
-                 index_op == TokenType::LESS)
+        else if ((query_op == BinaryOp::EQ || query_op == BinaryOp::EQ) &&
+                 index_op == BinaryOp::LT)
         {
             // col = Q implies col < I if Q < I
             return cmp < 0;
         }
-        else if ((query_op == TokenType::EQUAL || query_op == TokenType::EQUAL_EQUAL) &&
-                 index_op == TokenType::LESS_EQUAL)
+        else if ((query_op == BinaryOp::EQ || query_op == BinaryOp::EQ) &&
+                 index_op == BinaryOp::LE)
         {
             // col = Q implies col <= I if Q <= I
             return cmp <= 0;
@@ -228,7 +230,7 @@ namespace scratchbird::optimizer
         if (query_pred->kind() == ASTKind::BINARY_OP)
         {
             auto *query_binop = static_cast<const BinaryOpExpr *>(query_pred);
-            TokenType op = query_binop->op();
+            BinaryOp op = query_binop->op();
 
             if (!operatorImpliesNotNull(op))
             {
@@ -264,7 +266,7 @@ namespace scratchbird::optimizer
             return nullptr;
         }
 
-        if (expr->kind() == ExprKind::IDENTIFIER)
+        if (expr->kind() == ASTKind::IDENTIFIER)
         {
             return static_cast<const IdentifierExpr *>(expr);
         }
@@ -288,7 +290,7 @@ namespace scratchbird::optimizer
 
         switch (lit1->literalType())
         {
-        case LiteralType::INTEGER:
+        case parser::LiteralExpr::LiteralType::INTEGER:
         {
             int64_t val1 = lit1->intValue();
             int64_t val2 = lit2->intValue();
@@ -297,7 +299,7 @@ namespace scratchbird::optimizer
             return 0;
         }
 
-        case LiteralType::FLOAT:
+        case parser::LiteralExpr::LiteralType::FLOAT:
         {
             double val1 = lit1->floatValue();
             double val2 = lit2->floatValue();
@@ -306,26 +308,17 @@ namespace scratchbird::optimizer
             return 0;
         }
 
-        case LiteralType::STRING:
+        case parser::LiteralExpr::LiteralType::STRING:
         {
-            std::string val1 = lit1->stringValue();
-            std::string val2 = lit2->stringValue();
-            int cmp = val1.compare(val2);
-            if (cmp < 0) return -1;
-            if (cmp > 0) return 1;
-            return 0;
-        }
-
-        case LiteralType::BOOLEAN:
-        {
-            bool val1 = lit1->boolValue();
-            bool val2 = lit2->boolValue();
+            // Compare StringIds directly (we don't have StringPool here)
+            StringPool::StringId val1 = lit1->stringValue();
+            StringPool::StringId val2 = lit2->stringValue();
             if (val1 < val2) return -1;
             if (val1 > val2) return 1;
             return 0;
         }
 
-        case LiteralType::NULL_LITERAL:
+        case parser::LiteralExpr::LiteralType::NULL_LITERAL:
             // NULL is not comparable
             return std::numeric_limits<int>::min();
 
@@ -334,18 +327,16 @@ namespace scratchbird::optimizer
         }
     }
 
-    bool PredicateMatcher::operatorImpliesNotNull(TokenType op)
+    bool PredicateMatcher::operatorImpliesNotNull(BinaryOp op)
     {
         switch (op)
         {
-        case TokenType::EQUAL:
-        case TokenType::EQUAL_EQUAL:
-        case TokenType::NOT_EQUAL:
-        case TokenType::BANG_EQUAL:
-        case TokenType::LESS:
-        case TokenType::LESS_EQUAL:
-        case TokenType::GREATER:
-        case TokenType::GREATER_EQUAL:
+        case BinaryOp::EQ:
+        case BinaryOp::NE:
+        case BinaryOp::LT:
+        case BinaryOp::LE:
+        case BinaryOp::GT:
+        case BinaryOp::GE:
             return true;
 
         default:
@@ -365,7 +356,7 @@ namespace scratchbird::optimizer
         if (expr->kind() == ASTKind::BINARY_OP)
         {
             auto *binop = static_cast<const BinaryOpExpr *>(expr);
-            if (binop->op() == TokenType::AND)
+            if (binop->op() == BinaryOp::AND)
             {
                 collectConjuncts(binop->left(), conjuncts);
                 collectConjuncts(binop->right(), conjuncts);

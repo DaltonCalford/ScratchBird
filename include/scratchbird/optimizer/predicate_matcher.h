@@ -161,7 +161,7 @@ namespace scratchbird::optimizer
          * Operators like =, <, >, <=, >= all imply their operands are NOT NULL
          * (due to NULL propagation rules).
          */
-        static bool operatorImpliesNotNull(TokenType op);
+        static bool operatorImpliesNotNull(BinaryOp op);
 
         /**
          * Recursively collect all AND conjuncts from expression
