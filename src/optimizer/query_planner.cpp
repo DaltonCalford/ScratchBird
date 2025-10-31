@@ -1,6 +1,8 @@
 #include "scratchbird/optimizer/query_planner.h"
+#include "scratchbird/optimizer/expression_matcher.h"
 #include "scratchbird/core/debug.h"
 #include "scratchbird/core/catalog_manager.h"
+#include "scratchbird/core/expression_serializer.h"
 #include <algorithm>
 #include <unordered_map>
 
@@ -220,7 +222,7 @@ namespace scratchbird::optimizer
         }
 
         // Generate index scan paths
-        core::Status status = generateIndexScanPaths(select_stmt, table_id, table_name, paths, ctx);
+        core::Status status = generateIndexScanPaths(select_stmt, table_id, table_name, paths, string_pool, ctx);
         if (status != core::Status::OK)
         {
             DEBUG_LOG_DB("Index scan path generation had errors (non-fatal)");
@@ -299,6 +301,7 @@ namespace scratchbird::optimizer
                                                const core::ID &table_id,
                                                const std::string &table_name,
                                                std::vector<std::shared_ptr<Path>> &paths,
+                                               const parser::StringPool &string_pool,
                                                core::ErrorContext *ctx)
         -> core::Status
     {
@@ -317,7 +320,21 @@ namespace scratchbird::optimizer
         // Check each index for applicability
         for (const auto &index_info : indexes)
         {
-            if (!isIndexApplicable(index_info.index_id, select_stmt, ctx))
+            // Task 17 Phase 8: Check expression indexes
+            bool is_applicable = false;
+            if (index_info.is_expression_index)
+            {
+                // Use ExpressionMatcher for expression indexes
+                is_applicable = isExpressionIndexApplicable(index_info, select_stmt->whereClause(),
+                                                           string_pool, ctx);
+            }
+            else
+            {
+                // Use existing logic for regular column indexes
+                is_applicable = isIndexApplicable(index_info.index_id, select_stmt, ctx);
+            }
+
+            if (!is_applicable)
             {
                 DEBUG_LOG_DB("Index " + index_info.index_name + " not applicable");
                 continue;
@@ -1562,6 +1579,101 @@ namespace scratchbird::optimizer
 
         DEBUG_LOG_DB("Window path: " + window_path->toString());
         return window_path;
+    }
+
+    auto QueryPlanner::isExpressionIndexApplicable(const core::CatalogManager::IndexInfo &index_info,
+                                                   const parser::Expression *where_clause,
+                                                   const parser::StringPool &string_pool,
+                                                   core::ErrorContext *ctx) const
+        -> bool
+    {
+        // Task 17 Phase 8: Expression Index Matching
+
+        // No WHERE clause - expression index not beneficial for full table scan
+        if (!where_clause)
+        {
+            DEBUG_LOG_DB("No WHERE clause - expression index not beneficial");
+            return false;
+        }
+
+        // Deserialize index expressions
+        parser::StringPool temp_pool;
+        std::vector<parser::Expression *> index_expressions;
+
+        try
+        {
+            index_expressions = core::ExpressionSerializer::deserializeList(
+                index_info.expression_data.data(),
+                index_info.expression_data.size(),
+                temp_pool);
+        }
+        catch (...)
+        {
+            DEBUG_LOG_DB("Failed to deserialize expression index");
+            return false;
+        }
+
+        // Check if any index expression matches or can be used by WHERE clause
+        bool applicable = false;
+
+        for (auto *index_expr : index_expressions)
+        {
+            // Try exact match or range scan compatibility
+            ExpressionMatchType match_type = ExpressionMatcher::canUse(where_clause, index_expr, &string_pool);
+
+            if (match_type == ExpressionMatchType::EXACT_MATCH ||
+                match_type == ExpressionMatchType::RANGE_SCAN)
+            {
+                DEBUG_LOG_DB("Expression index can be used: match type = " +
+                           std::to_string(static_cast<int>(match_type)));
+                applicable = true;
+                break;
+            }
+
+            // For complex WHERE clauses (AND/OR), recursively check sub-expressions
+            if (where_clause->kind() == parser::ASTKind::BINARY_OP)
+            {
+                auto *bin_op = static_cast<const parser::BinaryOpExpr *>(where_clause);
+                parser::BinaryOp op = bin_op->op();
+
+                // For AND: check both sides
+                if (op == parser::BinaryOp::AND)
+                {
+                    ExpressionMatchType left_match = ExpressionMatcher::canUse(bin_op->left(), index_expr, &string_pool);
+                    ExpressionMatchType right_match = ExpressionMatcher::canUse(bin_op->right(), index_expr, &string_pool);
+
+                    if (left_match != ExpressionMatchType::NO_MATCH ||
+                        right_match != ExpressionMatchType::NO_MATCH)
+                    {
+                        DEBUG_LOG_DB("Expression index matches part of AND clause");
+                        applicable = true;
+                        break;
+                    }
+                }
+                // For OR: both sides must be compatible (more restrictive)
+                else if (op == parser::BinaryOp::OR)
+                {
+                    ExpressionMatchType left_match = ExpressionMatcher::canUse(bin_op->left(), index_expr, &string_pool);
+                    ExpressionMatchType right_match = ExpressionMatcher::canUse(bin_op->right(), index_expr, &string_pool);
+
+                    if (left_match != ExpressionMatchType::NO_MATCH &&
+                        right_match != ExpressionMatchType::NO_MATCH)
+                    {
+                        DEBUG_LOG_DB("Expression index matches both sides of OR clause");
+                        applicable = true;
+                        break;
+                    }
+                }
+            }
+        }
+
+        // Cleanup deserialized expressions
+        for (auto *expr : index_expressions)
+        {
+            delete expr;
+        }
+
+        return applicable;
     }
 
 } // namespace scratchbird::optimizer

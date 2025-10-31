@@ -174,6 +174,7 @@ namespace scratchbird::optimizer
                                     const core::ID &table_id,
                                     const std::string &table_name,
                                     std::vector<std::shared_ptr<Path>> &paths,
+                                    const parser::StringPool &string_pool,
                                     core::ErrorContext *ctx)
             -> core::Status;
 
@@ -577,6 +578,26 @@ namespace scratchbird::optimizer
         auto isSpatialPredicate(const parser::Expression *expr,
                                std::string &column_name,
                                std::string &function_name) const
+            -> bool;
+
+        /**
+         * isExpressionIndexApplicable - Check if expression index can be used
+         *
+         * Uses ExpressionMatcher to check if any expression in the WHERE clause
+         * matches the index expression.
+         *
+         * @param index_info Index information
+         * @param where_clause WHERE clause expression
+         * @param string_pool String pool for resolving StringIds
+         * @param ctx Error context
+         * @return true if expression index applicable
+         *
+         * Task 17 Phase 8
+         */
+        auto isExpressionIndexApplicable(const core::CatalogManager::IndexInfo &index_info,
+                                        const parser::Expression *where_clause,
+                                        const parser::StringPool &string_pool,
+                                        core::ErrorContext *ctx) const
             -> bool;
 
     private:
