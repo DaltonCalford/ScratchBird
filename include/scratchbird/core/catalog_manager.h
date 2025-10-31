@@ -255,6 +255,18 @@ namespace scratchbird::core
 
             // R-tree specific parameters (Phase 2 Task 9.2)
             uint32_t rtree_max_entries = 50; // Maximum entries per R-tree node (M parameter)
+
+            // Task 17: Expression and Filtered Indexes
+            bool is_expression_index = false;      // Index on expression(s) rather than columns
+            bool is_partial_index = false;         // Index with WHERE clause (filtered)
+            uint32_t expression_oid = 0;           // TOAST reference for serialized expression tree(s)
+            uint32_t predicate_oid = 0;            // TOAST reference for serialized WHERE predicate
+            std::vector<std::string> expression_strings;  // Original SQL expressions (for EXPLAIN, etc.)
+            std::string predicate_string;          // Original WHERE clause SQL (for EXPLAIN, etc.)
+
+            // Binary serialized data (for small expressions, store directly; larger ones use TOAST)
+            std::vector<uint8_t> expression_data;  // Serialized expression list
+            std::vector<uint8_t> predicate_data;   // Serialized WHERE predicate
         };
 
         CatalogManager(Database *db);
@@ -304,6 +316,19 @@ namespace scratchbird::core
                          const std::vector<std::string> &column_names, ID &index_id,
                          bool is_unique = false, IndexType index_type = IndexType::BTREE,
                          uint16_t tablespace_id = 0, // Phase 2 Task 2.3: default tablespace
+                         ErrorContext *ctx = nullptr) -> Status;
+
+        // Task 17: Create index with expressions and/or WHERE clause
+        auto createIndex(const ID &table_id, const std::string &index_name,
+                         const std::vector<std::string> &column_names,
+                         const std::vector<uint8_t> &expression_data,  // Serialized expressions (empty if none)
+                         const std::vector<uint8_t> &predicate_data,   // Serialized WHERE predicate (empty if none)
+                         const std::vector<std::string> &expression_strings,  // Original SQL
+                         const std::string &predicate_string,                 // Original WHERE clause
+                         ID &index_id,
+                         bool is_unique = false,
+                         IndexType index_type = IndexType::BTREE,
+                         uint16_t tablespace_id = 0,
                          ErrorContext *ctx = nullptr) -> Status;
 
         auto getIndex(const ID &index_id, IndexInfo &info, ErrorContext *ctx = nullptr) -> Status;

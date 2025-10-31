@@ -403,19 +403,46 @@ namespace scratchbird
                 return nullptr;
             }
 
-            // Parse column list
-            std::vector<StringPool::StringId> columns;
+            // Parse column/expression list - Task 17
+            std::vector<CreateIndexStmt::IndexColumn> index_columns;
             do
             {
-                if (!check(TokenType::IDENTIFIER))
+                // Check if this is an expression (starts with LEFT_PAREN for explicit grouping)
+                // or a function call
+                if (check(TokenType::LEFT_PAREN))
                 {
-                    error("Expected column name, but got " +
+                    // Expression index: ((expression))
+                    advance(); // consume first (
+                    Expression *expr = parseExpression();
+                    if (!expr)
+                    {
+                        error("Failed to parse expression");
+                        synchronize();
+                        return nullptr;
+                    }
+                    if (!consume(TokenType::RIGHT_PAREN, "Expected ')' after expression"))
+                    {
+                        synchronize();
+                        return nullptr;
+                    }
+                    index_columns.push_back(CreateIndexStmt::IndexColumn(expr));
+                }
+                else if (check(TokenType::IDENTIFIER))
+                {
+                    // Simple column name (not an expression)
+                    // Note: For expression indexes with function calls like LOWER(email),
+                    // use explicit parentheses: CREATE INDEX idx ON table ((LOWER(email)))
+                    StringPool::StringId col_name = current().value.string_id;
+                    advance();
+                    index_columns.push_back(CreateIndexStmt::IndexColumn(col_name));
+                }
+                else
+                {
+                    error("Expected column name or expression, but got " +
                           std::string(tokenTypeToString(current().type)));
                     synchronize();
                     return nullptr;
                 }
-                columns.push_back(current().value.string_id);
-                advance();
             } while (match(TokenType::COMMA));
 
             // Expect closing parenthesis
@@ -423,6 +450,19 @@ namespace scratchbird
             {
                 synchronize();
                 return nullptr;
+            }
+
+            // Parse optional WHERE clause (Task 17: Partial/Filtered indexes)
+            Expression *where_clause = nullptr;
+            if (match(TokenType::KW_WHERE))
+            {
+                where_clause = parseExpression();
+                if (!where_clause)
+                {
+                    error("Failed to parse WHERE clause");
+                    synchronize();
+                    return nullptr;
+                }
             }
 
             // Parse optional TABLESPACE clause (Phase 2 Task 2.3)
@@ -441,8 +481,9 @@ namespace scratchbird
             }
 
             auto span = makeSpan(start_loc);
-            return arena_.make<CreateIndexStmt>(span, index_name, table_name, std::move(columns),
-                                                is_unique, tablespace_name);
+            return arena_.make<CreateIndexStmt>(span, index_name, table_name,
+                                                std::move(index_columns), where_clause, is_unique,
+                                                tablespace_name);
         }
 
         ColumnDef *Parser::parseColumnDef()

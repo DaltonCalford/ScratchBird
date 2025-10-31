@@ -1063,6 +1063,117 @@ namespace scratchbird::core
         return status;
     }
 
+    // Task 17: Create index with expressions and/or WHERE clause
+    auto CatalogManager::createIndex(const ID &table_id, const std::string &index_name,
+                                     const std::vector<std::string> &column_names,
+                                     const std::vector<uint8_t> &expression_data,
+                                     const std::vector<uint8_t> &predicate_data,
+                                     const std::vector<std::string> &expression_strings,
+                                     const std::string &predicate_string,
+                                     ID &index_id,
+                                     bool is_unique, IndexType index_type,
+                                     uint16_t tablespace_id,
+                                     ErrorContext *ctx)
+        -> Status
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+
+        // Verify table exists
+        if (table_cache_.find(table_id) == table_cache_.end())
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                              ("Table not found: " + table_id.toString()).c_str());
+            return Status::INVALID_ARGUMENT;
+        }
+
+        // Check if index already exists
+        for (const auto &[id, info] : index_cache_)
+        {
+            if (info.table_id == table_id && info.index_name == index_name)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                  ("Index already exists: " + index_name).c_str());
+                return Status::INVALID_ARGUMENT;
+            }
+        }
+
+        // Resolve column names to column IDs (if not an expression index)
+        std::vector<ID> column_ids;
+        if (!expression_data.empty())
+        {
+            // Expression index - columns are computed, but we may still need base columns
+            // for certain operations. For now, store empty column_ids.
+            // TODO: Extract referenced columns from expression tree
+        }
+        else
+        {
+            // Regular index - resolve column names
+            for (const auto &col_name : column_names)
+            {
+                ColumnInfo col_info;
+                Status status = getColumn(table_id, col_name, col_info, ctx);
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+                column_ids.push_back(col_info.column_id);
+            }
+        }
+
+        // Allocate root page for index data
+        PageManager *pm = db_->page_manager();
+        uint32_t root_page;
+        Status status = pm->allocatePage(root_page, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        // Create index info
+        IndexInfo index;
+        index.index_id = generateUuidV7();
+        index.table_id = table_id;
+        index.index_name = index_name;
+        index.root_page = root_page;
+        index.tablespace_id = tablespace_id;
+        index.index_type = index_type;
+        index.is_unique = is_unique;
+        index.column_ids = column_ids;
+        index.index_params_oid = 0;
+        index.created_time = std::chrono::duration_cast<std::chrono::microseconds>(
+                                 std::chrono::system_clock::now().time_since_epoch())
+                                 .count();
+
+        // Task 17: Set expression/predicate data
+        index.is_expression_index = !expression_data.empty();
+        index.is_partial_index = !predicate_data.empty();
+        index.expression_data = expression_data;
+        index.predicate_data = predicate_data;
+        index.expression_strings = expression_strings;
+        index.predicate_string = predicate_string;
+
+        // TODO: For large expressions, use TOAST storage
+        // if (expression_data.size() > TOAST_TUPLE_THRESHOLD) { ... }
+
+        // Write index record
+        status = writeIndexRecord(index, ctx);
+        if (status != Status::OK)
+        {
+            pm->freePage(root_page, ctx);
+            return status;
+        }
+
+        // Update cache
+        index_cache_[index.index_id] = index;
+        index_id = index.index_id;
+
+        DEBUG_LOG_DB("Created " << (index.is_expression_index ? "expression " : "")
+                                << (index.is_partial_index ? "partial " : "")
+                                << "index: " << index_name << " (ID: " << index_id.toString() << ")");
+
+        return status;
+    }
+
     auto CatalogManager::getIndex(const ID &index_id, IndexInfo &info, ErrorContext *ctx) -> Status
     {
         std::lock_guard<std::mutex> lock(mutex_);
