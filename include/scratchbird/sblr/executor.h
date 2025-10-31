@@ -175,18 +175,25 @@ namespace scratchbird
             // Statement execution
             void executeCreateTable();
             void executeCreateIndex();             // Phase 2 Task 2.3
-            void buildExpressionIndex(const core::CatalogManager::TableInfo &table_info,
-                                     const core::ID &index_id);  // Task 17 Phase 6
+            // Task 17 Phase 6: Build expression/filtered index
+            // Task 17 MGA Phase 1.1: Added xid parameter for transaction context
+            void buildExpressionIndex(uint64_t xid,
+                                     const core::CatalogManager::TableInfo &table_info,
+                                     const core::ID &index_id);
 
             // Task 17 Phase 7: Index maintenance helpers
-            void updateIndexesOnInsert(const core::ID &table_id,
+            // Task 17 MGA Phase 1.1: Added xid parameter for transaction context
+            void updateIndexesOnInsert(uint64_t xid,
+                                      const core::ID &table_id,
                                       const core::CatalogManager::TableInfo &table_info,
                                       const std::vector<core::CatalogManager::ColumnInfo> &all_columns,
                                       uint32_t page_id,
                                       uint16_t item_id,
                                       const std::vector<Value> &row_values);
 
-            void updateIndexesOnUpdate(const core::ID &table_id,
+            // Task 17 MGA Phase 1.1: Added xid parameter for transaction context
+            void updateIndexesOnUpdate(uint64_t xid,
+                                      const core::ID &table_id,
                                       const core::CatalogManager::TableInfo &table_info,
                                       const std::vector<core::CatalogManager::ColumnInfo> &all_columns,
                                       const std::vector<Value> &old_values,
@@ -194,7 +201,9 @@ namespace scratchbird
                                       core::TID old_tid,
                                       core::TID new_tid);
 
-            void updateIndexesOnDelete(const core::ID &table_id,
+            // Task 17 MGA Phase 1.1: Added xid parameter for transaction context
+            void updateIndexesOnDelete(uint64_t xid,
+                                      const core::ID &table_id,
                                       const core::CatalogManager::TableInfo &table_info,
                                       const std::vector<core::CatalogManager::ColumnInfo> &all_columns,
                                       const std::vector<Value> &row_values,
