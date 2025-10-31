@@ -38,29 +38,30 @@ Phase 10-12 (Comprehensive Testing) has been **partially completed**. High-quali
    - Tests follow GoogleTest framework conventions
    - Comprehensive coverage of both matcher classes
 
-### Blocking Issue ❌
+### Blocking Issue ⚠️ PARTIALLY RESOLVED
 
-**ExpressionSerializer Compilation Errors** (Pre-existing from Phase 1):
+**ExpressionSerializer**: ✅ FIXED (see TASK_17_PHASE_1_SERIALIZER_FIXES.md)
+**ExpressionEvaluator Compilation Errors** (Pre-existing from Phase 1):
 
 ```
-/home/dcalford/CliWork/ScratchBird/src/core/expression_serializer.cpp:219:35: error: 'const class scratchbird::parser::LiteralExpr' has no member named 'value'
-  219 |         writeString(buffer, expr->value());
-      |                                   ^~~~~
-
-/home/dcalford/CliWork/ScratchBird/src/core/expression_serializer.cpp:231:32: error: 'const class scratchbird::parser::IdentifierExpr' has no member named 'hasTable'
-  231 |         bool has_table = expr->hasTable();
-      |                                ^~~~~~~~
-
-... (7 more similar errors)
+/home/dcalford/CliWork/ScratchBird/src/sblr/expression_evaluator.cpp:206:32: error: 'makeString' is not a member of 'scratchbird::core::TypedValue'
+/home/dcalford/CliWork/ScratchBird/src/sblr/expression_evaluator.cpp:217:24: error: 'IS' is not a member of 'scratchbird::parser::BinaryOp'
+/home/dcalford/CliWork/ScratchBird/src/sblr/expression_evaluator.cpp:231:40: error: 'class scratchbird::parser::StringPool' has no member named 'getString'
+... (19 more similar errors)
 ```
 
-**Root Cause**: The ExpressionSerializer was scaffolded in Phase 1 with placeholder API calls that don't match the actual AST class APIs. The correct APIs are:
-- `LiteralExpr`: Use `intValue()`, `floatValue()`, `stringValue()`, `boolValue()` based on `literalType()`, not a generic `value()`
-- `IdentifierExpr`: Uses `name()` (StringId), no `hasTable()` or `tableName()` methods
-- `FunctionCallExpr`: Uses `func()` not `functionName()`, `args()` not `arguments()`
-- `CastExpr`: TypeName cannot be cast to uint32_t, uses `expr()` not `expression()`
+**Root Cause**: The ExpressionEvaluator was scaffolded in Phase 1 with placeholder API calls that don't match actual APIs:
+- `TypedValue`: No `makeString()`, `makeDouble()` factory methods; use constructor
+- `TypedValue`: Methods are `toInt64()` not `toInt()`, `toBoolean()` not `toBool()`/`getBool()`
+- `BinaryOp`: No `IS` or `IS_NOT` enum values
+- `StringPool`: Method is `get()` not `getString()`
+- `FunctionCallExpr`: Methods are `name()` and `args()` not `functionName()` and `arguments()`
+- `CastExpr`: Method is `expr()` not `expression()`, TypeName needs `.type` extraction
+- `DataType`: Values are `FLOAT64` not `DOUBLE`, `VARCHAR`/`TEXT` not `STRING`
 
-**Impact**: Cannot build test suite because `scratchbird_tests` links `scratchbird_core`, which includes the broken serializer.
+**Impact**: Cannot build test suite because `scratchbird_tests` links `scratchbird_sblr`, which includes the broken evaluator.
+
+**Progress**: ExpressionSerializer has been fixed! Only ExpressionEvaluator remains.
 
 ---
 

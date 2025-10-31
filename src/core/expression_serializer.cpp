@@ -45,6 +45,20 @@ namespace scratchbird::core
         writeU32(buffer, id);
     }
 
+    void ExpressionSerializer::writeI64(std::vector<uint8_t> &buffer, int64_t value)
+    {
+        // Write as unsigned, bit pattern preserved
+        writeU64(buffer, static_cast<uint64_t>(value));
+    }
+
+    void ExpressionSerializer::writeF64(std::vector<uint8_t> &buffer, double value)
+    {
+        // Write double as uint64_t bit pattern
+        uint64_t bits;
+        std::memcpy(&bits, &value, sizeof(double));
+        writeU64(buffer, bits);
+    }
+
     // ========================================================================
     // Helper Functions - Read
     // ========================================================================
@@ -100,6 +114,22 @@ namespace scratchbird::core
         // Note: In deserialization, we need to map old string IDs to new ones
         // For now, we'll store the string itself and re-intern it
         return id;
+    }
+
+    int64_t ExpressionSerializer::readI64(const uint8_t *&ptr, const uint8_t *end)
+    {
+        // Read as unsigned, then reinterpret as signed
+        uint64_t uvalue = readU64(ptr, end);
+        return static_cast<int64_t>(uvalue);
+    }
+
+    double ExpressionSerializer::readF64(const uint8_t *&ptr, const uint8_t *end)
+    {
+        // Read uint64 bit pattern, then reinterpret as double
+        uint64_t bits = readU64(ptr, end);
+        double value;
+        std::memcpy(&value, &bits, sizeof(double));
+        return value;
     }
 
     // ========================================================================
@@ -215,8 +245,25 @@ namespace scratchbird::core
         // Write literal type
         writeU8(buffer, static_cast<uint8_t>(expr->literalType()));
 
-        // Write literal value as string
-        writeString(buffer, expr->value());
+        // Write literal value based on type
+        switch (expr->literalType())
+        {
+        case LiteralExpr::LiteralType::INTEGER:
+            writeI64(buffer, expr->intValue());
+            break;
+        case LiteralExpr::LiteralType::FLOAT:
+            writeF64(buffer, expr->floatValue());
+            break;
+        case LiteralExpr::LiteralType::STRING:
+            writeStringId(buffer, expr->stringValue());
+            break;
+        case LiteralExpr::LiteralType::NULL_LITERAL:
+            // No value to write for NULL
+            break;
+        case LiteralExpr::LiteralType::RANGE:
+            writeStringId(buffer, expr->rangeValue());
+            break;
+        }
     }
 
     void ExpressionSerializer::serializeIdentifier(const IdentifierExpr *expr,
@@ -227,12 +274,12 @@ namespace scratchbird::core
         // Write identifier name ID
         writeStringId(buffer, expr->name());
 
-        // Write table name if present
-        bool has_table = expr->hasTable();
-        writeU8(buffer, has_table ? 1 : 0);
-        if (has_table)
+        // Write qualifier (table/alias) if present
+        bool has_qualifier = expr->isQualified();
+        writeU8(buffer, has_qualifier ? 1 : 0);
+        if (has_qualifier)
         {
-            writeStringId(buffer, expr->tableName());
+            writeStringId(buffer, expr->qualifier());
         }
     }
 
@@ -255,10 +302,10 @@ namespace scratchbird::core
         writeU8(buffer, 0); // flags
 
         // Write function name
-        writeStringId(buffer, expr->functionName());
+        writeStringId(buffer, expr->name());
 
         // Write arguments
-        const auto &args = expr->arguments();
+        const auto &args = expr->args();
         writeU8(buffer, static_cast<uint8_t>(args.size()));
         for (auto *arg : args)
         {
@@ -270,11 +317,15 @@ namespace scratchbird::core
     {
         writeU8(buffer, 0); // flags
 
-        // Write target type
-        writeU32(buffer, static_cast<uint32_t>(expr->targetType()));
+        // Write target type - serialize TypeName struct
+        const TypeName &target = expr->targetType();
+        writeU8(buffer, static_cast<uint8_t>(target.type));
+        writeU32(buffer, target.precision);
+        writeU32(buffer, target.scale);
+        writeU8(buffer, target.with_timezone ? 1 : 0);
 
         // Write expression being cast
-        serializeNode(expr->expression(), buffer);
+        serializeNode(expr->expr(), buffer);
     }
 
     void ExpressionSerializer::serializeCase(const CaseExpr *expr, std::vector<uint8_t> &buffer)
@@ -521,11 +572,32 @@ namespace scratchbird::core
     {
         readU8(ptr, end); // flags (unused)
 
-        auto lit_type = static_cast<LiteralType>(readU8(ptr, end));
-        std::string value = readString(ptr, end);
+        auto lit_type = static_cast<parser::LiteralExpr::LiteralType>(readU8(ptr, end));
 
         SourceSpan span; // Dummy span for deserialized expressions
-        return new LiteralExpr(span, lit_type, pool.intern(value));
+        LiteralExpr *lit_expr = new LiteralExpr(span, lit_type);
+
+        // Read value based on type
+        switch (lit_type)
+        {
+        case parser::LiteralExpr::LiteralType::INTEGER:
+            lit_expr->setIntValue(readI64(ptr, end));
+            break;
+        case parser::LiteralExpr::LiteralType::FLOAT:
+            lit_expr->setFloatValue(readF64(ptr, end));
+            break;
+        case parser::LiteralExpr::LiteralType::STRING:
+            lit_expr->setStringValue(readStringId(ptr, end, pool));
+            break;
+        case parser::LiteralExpr::LiteralType::NULL_LITERAL:
+            // No value to read for NULL
+            break;
+        case parser::LiteralExpr::LiteralType::RANGE:
+            lit_expr->setRangeValue(readStringId(ptr, end, pool));
+            break;
+        }
+
+        return lit_expr;
     }
 
     Expression *ExpressionSerializer::deserializeIdentifier(const uint8_t *&ptr, const uint8_t *end,
