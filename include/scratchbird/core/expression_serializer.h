@@ -69,9 +69,13 @@ namespace scratchbird::core
         static uint8_t readU8(const uint8_t *&ptr, const uint8_t *end);
         static uint32_t readU32(const uint8_t *&ptr, const uint8_t *end);
         static uint64_t readU64(const uint8_t *&ptr, const uint8_t *end);
+        static int64_t readI64(const uint8_t *&ptr, const uint8_t *end);
+        static double readF64(const uint8_t *&ptr, const uint8_t *end);
         static std::string readString(const uint8_t *&ptr, const uint8_t *end);
         static StringPool::StringId readStringId(const uint8_t *&ptr, const uint8_t *end,
                                                  StringPool &pool);
+        static void writeI64(std::vector<uint8_t> &buffer, int64_t value);
+        static void writeF64(std::vector<uint8_t> &buffer, double value);
 
         // Type-specific serialization
         static void serializeLiteral(const LiteralExpr *expr, std::vector<uint8_t> &buffer);
