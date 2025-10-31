@@ -1302,11 +1302,15 @@ namespace scratchbird
             // Task 17 Phase 6: Build index immediately if it has expressions or predicate
             if (has_expressions || has_predicate)
             {
-                buildExpressionIndex(table_info, index_id);
+                // Task 17 MGA Phase 1.1: Pass current transaction ID
+                uint64_t xid = db_->storage_engine()->getCurrentXid();
+                buildExpressionIndex(xid, table_info, index_id);
             }
         }
 
+        // Task 17 MGA Phase 1.1: Added xid parameter for transaction context
         void Executor::buildExpressionIndex(
+            uint64_t xid,
             const core::CatalogManager::TableInfo &table_info,
             const core::ID &index_id)
         {
@@ -1370,6 +1374,17 @@ namespace scratchbird
             core::Tuple tuple;
             while (scan->next(&tuple, nullptr) == core::Status::OK)
             {
+                // Task 17 MGA Phase 1.2: Check tuple visibility BEFORE indexing
+                // Extract xmin/xmax from tuple header
+                auto* hdr = reinterpret_cast<const core::TupleHeader*>(tuple.data);
+
+                // Check if tuple is visible to current transaction
+                if (!db_->storage_engine()->isVisible(hdr->xmin, hdr->xmax, xid))
+                {
+                    rows_skipped++;
+                    continue;  // Skip invisible tuple (uncommitted or deleted)
+                }
+
                 // Deserialize row into values
                 std::vector<Value> row_values;
                 if (!deserializeTuple(tuple.data, tuple.data_size, columns, row_values))
@@ -1550,7 +1565,9 @@ namespace scratchbird
         }
 
         // Task 17 Phase 7: Index maintenance helpers
+        // Task 17 MGA Phase 1.1: Added xid parameter for transaction context
         void Executor::updateIndexesOnInsert(
+            uint64_t xid,
             const core::ID &table_id,
             const core::CatalogManager::TableInfo &table_info,
             const std::vector<core::CatalogManager::ColumnInfo> &all_columns,
@@ -1686,7 +1703,9 @@ namespace scratchbird
             }
         }
 
+        // Task 17 MGA Phase 1.1: Added xid parameter for transaction context
         void Executor::updateIndexesOnUpdate(
+            uint64_t xid,
             const core::ID &table_id,
             const core::CatalogManager::TableInfo &table_info,
             const std::vector<core::CatalogManager::ColumnInfo> &all_columns,
@@ -1865,7 +1884,9 @@ namespace scratchbird
             }
         }
 
+        // Task 17 MGA Phase 1.1: Added xid parameter for transaction context
         void Executor::updateIndexesOnDelete(
+            uint64_t xid,
             const core::ID &table_id,
             const core::CatalogManager::TableInfo &table_info,
             const std::vector<core::CatalogManager::ColumnInfo> &all_columns,
@@ -2625,7 +2646,9 @@ namespace scratchbird
                     row_values[i] = Value(); // NULL
                 }
             }
-            updateIndexesOnInsert(table_id, table_info, all_columns, page_id, item_id, row_values);
+            // Task 17 MGA Phase 1.1: Pass current transaction ID
+            uint64_t xid = db_->storage_engine()->getCurrentXid();
+            updateIndexesOnInsert(xid, table_id, table_info, all_columns, page_id, item_id, row_values);
 
             // Wave 2: Fire AFTER INSERT triggers
             std::vector<core::CatalogManager::TriggerInfo> after_triggers;
@@ -3083,7 +3106,9 @@ namespace scratchbird
                 // Task 17 Phase 7: Update expression/filtered indexes
                 core::TID old_tid(page_id, item_id);
                 core::TID new_tid(new_page_id, new_item_id);
-                updateIndexesOnUpdate(table_id, table_info, all_columns, old_row_values, row_values, old_tid, new_tid);
+                // Task 17 MGA Phase 1.1: Pass current transaction ID
+                uint64_t xid = db_->storage_engine()->getCurrentXid();
+                updateIndexesOnUpdate(xid, table_id, table_info, all_columns, old_row_values, row_values, old_tid, new_tid);
 
                 // Wave 2: Fire AFTER UPDATE triggers
                 std::vector<core::CatalogManager::TriggerInfo> after_triggers;
@@ -3299,7 +3324,9 @@ namespace scratchbird
                 uint32_t page_id = static_cast<uint32_t>(core::getPageNumber(tuple.tid));
                 uint16_t item_id = core::getSlot(tuple.tid);
                 core::TID tid(page_id, item_id);
-                updateIndexesOnDelete(table_id, table_info, all_columns, row_values, tid);
+                // Task 17 MGA Phase 1.1: Pass current transaction ID
+                uint64_t xid = db_->storage_engine()->getCurrentXid();
+                updateIndexesOnDelete(xid, table_id, table_info, all_columns, row_values, tid);
 
                 // Call StorageEngine::deleteTuple with MGA soft delete
                 // This sets xmax = current transaction ID
