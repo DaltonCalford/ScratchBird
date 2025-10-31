@@ -19,7 +19,9 @@ namespace scratchbird
                             uint16_t flags) -> Status;
 
             // Node management
+            // Task 17 MGA Phase 3.1: Added xmin parameter for transaction tracking
             Status add_node(const std::vector<uint8_t> &key, const Tuple &value,
+                            uint64_t xmin,  // Transaction ID creating this entry
                             ErrorContext *ctx = nullptr);
             SBBTreeNode *get_node(uint16_t node_index);
             void remove_node(uint16_t node_index);

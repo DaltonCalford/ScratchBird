@@ -48,7 +48,9 @@ namespace scratchbird::core
         return Status::OK;
     }
 
-    auto BTreePage::add_node(const std::vector<uint8_t> &key, const Tuple &value, ErrorContext *ctx)
+    // Task 17 MGA Phase 3.1: Added xmin parameter for transaction tracking
+    auto BTreePage::add_node(const std::vector<uint8_t> &key, const Tuple &value, uint64_t xmin,
+                             ErrorContext *ctx)
         -> Status
     {
         if (!is_leaf())
@@ -73,8 +75,9 @@ namespace scratchbird::core
         new_node->btn_key_len = key.size();
         new_node->btn_tuple_count = 1;
         new_node->btn_child_page = 0;
-        new_node->btn_xmin = 0; // TODO: Integrate with transaction manager
-        new_node->btn_xmax = 0;
+        // Task 17 MGA Phase 3.1: Set btn_xmin from transaction creating this entry
+        new_node->btn_xmin = xmin;  // Transaction ID creating this entry
+        new_node->btn_xmax = 0;      // 0 = entry is active (not deleted)
 
         // Copy key and tuple ID
         uint8_t *key_location = reinterpret_cast<uint8_t *>(new_node) + sizeof(SBBTreeNode);

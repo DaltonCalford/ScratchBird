@@ -170,7 +170,9 @@ namespace scratchbird
                                                uint32_t root_page, ErrorContext *ctx = nullptr);
 
             // PHASE 1.5 TASK 1.5.2a: Migrated to TID struct API
+            // Task 17 MGA Phase 3.1: Added xid parameter for transaction tracking
             Status insert(const std::vector<uint8_t> &key, const TID &tid,
+                          uint64_t xid,  // Transaction ID for btn_xmin
                           ErrorContext *ctx = nullptr);
 
             // PHASE 1 TASK 1.1.1: Added Snapshot parameter for MVCC visibility filtering
@@ -183,7 +185,9 @@ namespace scratchbird
                           ErrorContext *ctx = nullptr);
 
             // PHASE 1.5 TASK 1.5.2a: Migrated to TID struct API
+            // Task 17 MGA Phase 3.1: Added xid parameter for transaction tracking
             Status remove(const std::vector<uint8_t> &key, const TID &tid,
+                          uint64_t xid,  // Transaction ID for btn_xmax
                           ErrorContext *ctx = nullptr);
 
             // Range scan operations
