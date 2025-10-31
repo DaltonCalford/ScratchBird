@@ -1,8 +1,11 @@
 # Task 17: Expression and Filtered Indexes - Design & Implementation Plan
 
-**Date**: October 30, 2025
-**Status**: 🚧 IN PROGRESS
+**Date**: October 31, 2025
+**Status**: 🚧 IN PROGRESS (Foundation Complete - 38%)
 **Priority**: CRITICAL - Core requirement for 1:1 PostgreSQL parity
+
+> **IMPORTANT**: Phases 1-5 (38%) are **COMPLETE**. Foundation is solid.
+> See `/docs/planning/TASK_17_PHASE_6_13_IMPLEMENTATION_PLAN.md` for integration plan.
 
 ## Overview
 
@@ -675,5 +678,29 @@ Mark Task 17 complete in FEATURE_PARITY_ROADMAP.md.
 
 ---
 
-**Last Updated**: October 30, 2025
-**Status**: Design Complete - Beginning Implementation
+## Implementation Status Update (October 31, 2025)
+
+### Foundation Complete ✅ (Phases 1-5)
+
+All core infrastructure is **implemented and functional**:
+- Expression serialization (752 lines)
+- Expression evaluation (452 lines)
+- Parser extensions (expression + WHERE clause)
+- Catalog manager extensions (IndexInfo + new createIndex())
+- All data structures in place
+
+### Next Steps
+
+**Immediate Priority**: Phase 6 (Index Building)
+- Integrate expression evaluator with CREATE INDEX
+- Enable index population during creation
+- Est. 15-20 hours
+
+**See detailed implementation plan**: `/docs/planning/TASK_17_PHASE_6_13_IMPLEMENTATION_PLAN.md`
+
+Phases 7-13 (index maintenance, query planner, testing) represent ~160-215 hours of additional work and can be implemented incrementally.
+
+---
+
+**Last Updated**: October 31, 2025
+**Status**: Foundation Complete (38%), Integration Planning Phase
