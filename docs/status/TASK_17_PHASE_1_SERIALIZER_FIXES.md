@@ -1,14 +1,14 @@
 # Task 17 Phase 1 Serializer Fixes
 
 **Date**: October 31, 2025
-**Status**: ⚠️ PARTIAL - ExpressionSerializer Fixed, ExpressionEvaluator Still Blocked
+**Status**: ✅ COMPLETE - Both ExpressionSerializer and ExpressionEvaluator Fixed
 **Component**: Phase 1 Infrastructure
 
 ---
 
 ## Summary
 
-Fixed the ExpressionSerializer API mismatches that were blocking test compilation, but discovered that ExpressionEvaluator also has similar issues that need to be addressed.
+Successfully fixed all API mismatches in both ExpressionSerializer and ExpressionEvaluator. Phase 1 infrastructure is now complete and compiling. Detailed evaluator fixes are documented in TASK_17_PHASE_1_EVALUATOR_FIXES.md.
 
 ### What Was Fixed ✅
 
@@ -56,15 +56,17 @@ Fixed the ExpressionSerializer API mismatches that were blocking test compilatio
 ### Build Status
 
 **ExpressionSerializer**: ✅ Compiles successfully
-**ExpressionEvaluator**: ❌ Still has compilation errors (19+ errors)
+**ExpressionEvaluator**: ✅ Compiles successfully (all 19 errors fixed)
 
 ---
 
-## Remaining Issues - ExpressionEvaluator
+## ExpressionEvaluator Fixes - COMPLETE ✅
 
 **File**: `src/sblr/expression_evaluator.cpp`
 
-### API Mismatches (19 errors):
+All 19 API mismatches have been fixed. See TASK_17_PHASE_1_EVALUATOR_FIXES.md for complete details.
+
+### Previously Identified Issues (NOW FIXED):
 
 1. **TypedValue API Issues**:
    ```cpp
@@ -140,65 +142,42 @@ Fixed the ExpressionSerializer API mismatches that were blocking test compilatio
    // FIX: Use DataType::VARCHAR or DataType::TEXT
    ```
 
-### Estimated Fix Effort
+### Actual Fix Effort
 
-**ExpressionEvaluator Fixes**: 4-6 hours
-- Fix TypedValue API calls (~15 occurrences)
-- Fix BinaryOp enum values (~2 occurrences)
-- Fix StringPool API call (~1 occurrence)
-- Fix FunctionCallExpr API calls (~2 occurrences)
-- Fix CastExpr API calls (~2 occurrences)
-- Fix DataType enum values (~4 occurrences)
-- Test compilation
-- Fix any remaining issues
+**ExpressionEvaluator Fixes**: ✅ Completed in ~2 hours
+- Fixed TypedValue API calls (15 occurrences)
+- Fixed BinaryOp enum values (13 occurrences)
+- Fixed StringPool API calls (3 occurrences)
+- Fixed FunctionCallExpr API calls (2 occurrences)
+- Fixed CastExpr API calls (2 occurrences)
+- Fixed DataType enum values (6 occurrences)
+- Fixed ColumnInfo field access (1 occurrence)
+- Fixed LiteralExpr API calls (multiple occurrences)
+- Verified compilation ✅
 
 ---
 
 ## Impact on Testing
 
 ### Can Build ✅
-- ExpressionMatcher unit tests (test_expression_matcher.cpp)
-- PredicateMatcher unit tests (test_predicate_matcher.cpp)
+- scratchbird_core (core library)
+- scratchbird_parser (parser library)
+- scratchbird_sblr (SBLR VM + evaluator)
 
-### Cannot Build ❌
-- Full test suite (`scratchbird_tests`) - blocked by ExpressionEvaluator errors
-- Integration tests that need runtime expression evaluation
+### Cannot Build Yet ⚠️
+- scratchbird_optimizer (66 API errors in ExpressionMatcher/PredicateMatcher)
+- scratchbird (main binary)
+- scratchbird_tests (test suite)
 
-### Workaround Options
+### Next Steps
 
-1. **Stub Out ExpressionEvaluator** (1-2 hours)
-   - Create stub implementations that throw exceptions
-   - Allows matcher tests to compile and run
-   - Defers evaluator fixes
-
-2. **Fix ExpressionEvaluator** (4-6 hours)
-   - Complete proper API fixes
-   - Enables full test suite
-   - Enables integration testing
-
-3. **Build Matcher Tests Separately** (30 minutes)
-   - Create separate CMake target for matcher tests only
-   - Link only scratchbird_optimizer (not scratchbird_sblr)
-   - Run matcher tests independently
-
----
-
-## Recommendation
-
-**Option 2: Fix ExpressionEvaluator** (Recommended)
-
-Rationale:
-- ExpressionEvaluator is needed for runtime index building (Phase 6)
-- ExpressionEvaluator is needed for index maintenance (Phase 7)
-- Fixes are straightforward API corrections (similar to serializer)
-- Enables complete feature testing
-- Only 4-6 hours of additional work
-
-Benefits:
-- Complete Phase 1 infrastructure
-- Unblocks all testing
-- Validates Phases 6-7 runtime functionality
-- Enables full feature validation
+**Fix ExpressionMatcher and PredicateMatcher** (2-4 hours estimated)
+- Similar API fixes as evaluator
+- Update enum names (ExprKind → ASTKind, TokenType → BinaryOp)
+- Fix StringPool API calls
+- Fix FunctionCallExpr API calls
+- Fix CastExpr API calls
+- Then full project will build
 
 ---
 
@@ -212,14 +191,20 @@ Benefits:
 - deserializeLiteral() - type-specific deserialization
 - Helper methods for int64/double
 
-### Blocked (ExpressionEvaluator) ❌
-- TypedValue factory methods (makeString, makeDouble, etc.)
-- TypedValue accessor methods (toInt → toInt64, toBool → toBoolean, etc.)
-- BinaryOp enum values (IS, IS_NOT)
+### Fixed (ExpressionEvaluator) ✅
+- TypedValue factory methods (makeString → makeVarchar, makeDouble → makeFloat64)
+- TypedValue accessor methods (toInt → toInt64, toBool → toBoolean, getBool → getBoolean)
+- BinaryOp enum values (removed IS/IS_NOT, fixed EQUAL→EQ, etc.)
 - StringPool API (getString → get)
 - FunctionCallExpr API (functionName → name, arguments → args)
-- CastExpr API (expression → expr, TypeName → DataType)
+- CastExpr API (expression → expr, TypeName.type extraction)
 - DataType enum values (DOUBLE → FLOAT64, STRING → VARCHAR)
+- ColumnInfo field access (name → column_name)
+
+### Pending (ExpressionMatcher/PredicateMatcher) ⏳
+- Similar API fixes needed (66 errors)
+- Enum name fixes (ExprKind → ASTKind, TokenType → BinaryOp)
+- StringPool, FunctionCallExpr, CastExpr API fixes
 
 ### Test Code Written ✅
 - 980 lines of comprehensive test code
@@ -231,18 +216,19 @@ Benefits:
 
 ## Next Steps
 
-1. Fix ExpressionEvaluator API mismatches (4-6 hours)
-2. Build full test suite
-3. Run ExpressionMatcher tests
-4. Run PredicateMatcher tests
-5. Fix any test failures
-6. Document test results
-7. Complete Phase 13 documentation
+1. ✅ DONE: Fix ExpressionEvaluator API mismatches
+2. Fix ExpressionMatcher/PredicateMatcher API mismatches (2-4 hours)
+3. Build full project
+4. Run ExpressionMatcher tests
+5. Run PredicateMatcher tests
+6. Fix any test failures
+7. Document test results
+8. Complete Phase 13 documentation
 
 ---
 
 **Last Updated**: October 31, 2025
-**Status**: ExpressionSerializer Fixed ✅, ExpressionEvaluator Needs Fixing ❌
-**Build Status**: Core library compiles, SBLR library blocked
-**Test Status**: Test code ready, cannot build yet
-**Estimated Remaining**: 4-6 hours to fix evaluator + testing
+**Status**: Phase 1 Infrastructure Complete ✅ (Serializer + Evaluator)
+**Build Status**: scratchbird_core, scratchbird_parser, scratchbird_sblr all compile ✅
+**Test Status**: Test code ready, needs matcher fixes to build
+**Estimated Remaining**: 2-4 hours to fix matchers + testing

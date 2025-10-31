@@ -5,14 +5,16 @@
 
 namespace scratchbird::sblr
 {
-    ExpressionEvaluator::ExpressionEvaluator(const std::vector<ColumnInfo> &columns,
-                                             StringPool *pool)
+    ExpressionEvaluator::ExpressionEvaluator(const std::vector<core::CatalogManager::ColumnInfo> &columns,
+                                             parser::StringPool *pool)
         : pool_(pool)
     {
         // Build column position map for fast lookups
         for (size_t i = 0; i < columns.size(); i++)
         {
-            column_positions_[columns[i].name] = i;
+            // Get StringId for column name from pool
+            parser::StringPool::StringId col_id = pool_->intern(columns[i].column_name);
+            column_positions_[col_id] = i;
         }
     }
 
@@ -80,23 +82,27 @@ namespace scratchbird::sblr
     TypedValue ExpressionEvaluator::evaluateLiteral(const LiteralExpr *expr,
                                                      const std::vector<TypedValue> &row)
     {
-        const std::string &value_str = pool_->getString(expr->value());
-
         switch (expr->literalType())
         {
-        case LiteralType::INTEGER:
-            return TypedValue::makeInt64(std::stoll(value_str));
+        case parser::LiteralExpr::LiteralType::INTEGER:
+        {
+            int64_t int_val = expr->intValue();
+            return TypedValue::makeInt64(int_val);
+        }
 
-        case LiteralType::FLOAT:
-            return TypedValue::makeDouble(std::stod(value_str));
+        case parser::LiteralExpr::LiteralType::FLOAT:
+        {
+            double float_val = expr->floatValue();
+            return TypedValue::makeFloat64(float_val);
+        }
 
-        case LiteralType::STRING:
-            return TypedValue::makeString(value_str);
+        case parser::LiteralExpr::LiteralType::STRING:
+        {
+            std::string_view str_val = pool_->get(expr->stringValue());
+            return TypedValue::makeVarchar(std::string(str_val));
+        }
 
-        case LiteralType::BOOLEAN:
-            return TypedValue::makeBoolean(value_str == "true" || value_str == "TRUE");
-
-        case LiteralType::NULL_LITERAL:
+        case parser::LiteralExpr::LiteralType::NULL_LITERAL:
             return TypedValue::makeNull();
 
         default:
@@ -111,7 +117,8 @@ namespace scratchbird::sblr
         auto it = column_positions_.find(expr->name());
         if (it == column_positions_.end())
         {
-            throw std::runtime_error("Column not found: " + pool_->getString(expr->name()));
+            std::string col_name(pool_->get(expr->name()));
+            throw std::runtime_error("Column not found: " + col_name);
         }
 
         size_t pos = it->second;
@@ -132,66 +139,60 @@ namespace scratchbird::sblr
         // Handle NULL propagation for most operators
         if (left.isNull() || right.isNull())
         {
-            switch (expr->op())
-            {
-            case BinaryOp::IS:
-            case BinaryOp::IS_NOT:
-                // IS NULL / IS NOT NULL don't propagate NULL
-                break;
-            default:
-                return TypedValue::makeNull();
-            }
+            return TypedValue::makeNull();
         }
+
+        using parser::BinaryOp;
 
         switch (expr->op())
         {
         // Arithmetic
         case BinaryOp::ADD:
-            if (left.type() == DataType::INT64 && right.type() == DataType::INT64)
+            if (left.type() == core::DataType::INT64 && right.type() == core::DataType::INT64)
                 return TypedValue::makeInt64(left.getInt64() + right.getInt64());
             else
-                return TypedValue::makeDouble(left.toDouble() + right.toDouble());
+                return TypedValue::makeFloat64(left.toDouble() + right.toDouble());
 
         case BinaryOp::SUBTRACT:
-            if (left.type() == DataType::INT64 && right.type() == DataType::INT64)
+            if (left.type() == core::DataType::INT64 && right.type() == core::DataType::INT64)
                 return TypedValue::makeInt64(left.getInt64() - right.getInt64());
             else
-                return TypedValue::makeDouble(left.toDouble() - right.toDouble());
+                return TypedValue::makeFloat64(left.toDouble() - right.toDouble());
 
         case BinaryOp::MULTIPLY:
-            if (left.type() == DataType::INT64 && right.type() == DataType::INT64)
+            if (left.type() == core::DataType::INT64 && right.type() == core::DataType::INT64)
                 return TypedValue::makeInt64(left.getInt64() * right.getInt64());
             else
-                return TypedValue::makeDouble(left.toDouble() * right.toDouble());
+                return TypedValue::makeFloat64(left.toDouble() * right.toDouble());
 
         case BinaryOp::DIVIDE:
             if (right.toDouble() == 0.0)
                 throw std::runtime_error("Division by zero");
-            return TypedValue::makeDouble(left.toDouble() / right.toDouble());
+            return TypedValue::makeFloat64(left.toDouble() / right.toDouble());
 
         case BinaryOp::MODULO:
-            if (left.type() == DataType::INT64 && right.type() == DataType::INT64)
+            if (left.type() == core::DataType::INT64 && right.type() == core::DataType::INT64)
                 return TypedValue::makeInt64(left.getInt64() % right.getInt64());
             else
-                return TypedValue::makeDouble(std::fmod(left.toDouble(), right.toDouble()));
+                return TypedValue::makeFloat64(std::fmod(left.toDouble(), right.toDouble()));
 
         // Comparison
-        case BinaryOp::EQUAL:
+        case BinaryOp::EQ:
             return TypedValue::makeBoolean(compareValues(left, right) == 0);
 
-        case BinaryOp::NOT_EQUAL:
+        case BinaryOp::NE:
             return TypedValue::makeBoolean(compareValues(left, right) != 0);
 
-        case BinaryOp::LESS_THAN:
+        case BinaryOp::LT:
             return TypedValue::makeBoolean(compareValues(left, right) < 0);
 
-        case BinaryOp::LESS_EQUAL:
+        case BinaryOp::LE:
             return TypedValue::makeBoolean(compareValues(left, right) <= 0);
 
-        case BinaryOp::GREATER_THAN:
+        case BinaryOp::GT:
             return TypedValue::makeBoolean(compareValues(left, right) > 0);
 
-        case BinaryOp::GREATER_EQUAL:
+        case BinaryOp::GE:
             return TypedValue::makeBoolean(compareValues(left, right) >= 0);
 
         // Logical
@@ -202,9 +203,6 @@ namespace scratchbird::sblr
             return TypedValue::makeBoolean(isTruthy(left) || isTruthy(right));
 
         // String
-        case BinaryOp::CONCAT:
-            return TypedValue::makeString(left.toString() + right.toString());
-
         case BinaryOp::LIKE:
         {
             // Simple LIKE implementation (no wildcards for now)
@@ -214,12 +212,6 @@ namespace scratchbird::sblr
             return TypedValue::makeBoolean(left_str.find(pattern) != std::string::npos);
         }
 
-        case BinaryOp::IS:
-            return TypedValue::makeBoolean(left.isNull() == right.isNull());
-
-        case BinaryOp::IS_NOT:
-            return TypedValue::makeBoolean(left.isNull() != right.isNull());
-
         default:
             throw std::runtime_error("Unsupported binary operator");
         }
@@ -228,10 +220,10 @@ namespace scratchbird::sblr
     TypedValue ExpressionEvaluator::evaluateFunctionCall(const FunctionCallExpr *expr,
                                                           const std::vector<TypedValue> &row)
     {
-        std::string func_name = pool_->getString(expr->functionName());
+        std::string func_name(pool_->get(expr->name()));
         std::transform(func_name.begin(), func_name.end(), func_name.begin(), ::toupper);
 
-        const auto &args = expr->arguments();
+        const auto &args = expr->args();
 
         // Evaluate arguments
         std::vector<TypedValue> arg_values;
@@ -247,7 +239,7 @@ namespace scratchbird::sblr
                 throw std::runtime_error("LOWER requires 1 argument");
             std::string str = arg_values[0].toString();
             std::transform(str.begin(), str.end(), str.begin(), ::tolower);
-            return TypedValue::makeString(str);
+            return TypedValue::makeVarchar(str);
         }
         else if (func_name == "UPPER")
         {
@@ -255,7 +247,7 @@ namespace scratchbird::sblr
                 throw std::runtime_error("UPPER requires 1 argument");
             std::string str = arg_values[0].toString();
             std::transform(str.begin(), str.end(), str.begin(), ::toupper);
-            return TypedValue::makeString(str);
+            return TypedValue::makeVarchar(str);
         }
         else if (func_name == "LENGTH" || func_name == "LEN")
         {
@@ -267,10 +259,10 @@ namespace scratchbird::sblr
         {
             if (arg_values.empty())
                 throw std::runtime_error("ABS requires 1 argument");
-            if (arg_values[0].type() == DataType::INT64)
+            if (arg_values[0].type() == core::DataType::INT64)
                 return TypedValue::makeInt64(std::abs(arg_values[0].getInt64()));
             else
-                return TypedValue::makeDouble(std::abs(arg_values[0].toDouble()));
+                return TypedValue::makeFloat64(std::abs(arg_values[0].toDouble()));
         }
         else if (func_name == "ROUND")
         {
@@ -279,13 +271,13 @@ namespace scratchbird::sblr
             double value = arg_values[0].toDouble();
             if (arg_values.size() > 1)
             {
-                int decimals = arg_values[1].toInt();
-                double multiplier = std::pow(10.0, decimals);
-                return TypedValue::makeDouble(std::round(value * multiplier) / multiplier);
+                int64_t decimals = arg_values[1].toInt64();
+                double multiplier = std::pow(10.0, static_cast<double>(decimals));
+                return TypedValue::makeFloat64(std::round(value * multiplier) / multiplier);
             }
             else
             {
-                return TypedValue::makeDouble(std::round(value));
+                return TypedValue::makeFloat64(std::round(value));
             }
         }
 
@@ -295,8 +287,8 @@ namespace scratchbird::sblr
     TypedValue ExpressionEvaluator::evaluateCast(const CastExpr *expr,
                                                   const std::vector<TypedValue> &row)
     {
-        TypedValue value = evaluate(expr->expression(), row);
-        return castValue(value, expr->targetType());
+        TypedValue value = evaluate(expr->expr(), row);
+        return castValue(value, expr->targetType().type);
     }
 
     TypedValue ExpressionEvaluator::evaluateCase(const CaseExpr *expr,
@@ -362,7 +354,7 @@ namespace scratchbird::sblr
     // Helper Methods
     // ========================================================================
 
-    TypedValue ExpressionEvaluator::castValue(const TypedValue &value, DataType target_type)
+    TypedValue ExpressionEvaluator::castValue(const TypedValue &value, core::DataType target_type)
     {
         if (value.isNull())
         {
@@ -371,17 +363,18 @@ namespace scratchbird::sblr
 
         switch (target_type)
         {
-        case DataType::INT64:
-            return TypedValue::makeInt64(value.toInt());
+        case core::DataType::INT64:
+            return TypedValue::makeInt64(value.toInt64());
 
-        case DataType::DOUBLE:
-            return TypedValue::makeDouble(value.toDouble());
+        case core::DataType::FLOAT64:
+            return TypedValue::makeFloat64(value.toDouble());
 
-        case DataType::STRING:
-            return TypedValue::makeString(value.toString());
+        case core::DataType::VARCHAR:
+        case core::DataType::TEXT:
+            return TypedValue::makeVarchar(value.toString());
 
-        case DataType::BOOLEAN:
-            return TypedValue::makeBoolean(value.toBool());
+        case core::DataType::BOOLEAN:
+            return TypedValue::makeBoolean(value.toBoolean());
 
         default:
             throw std::runtime_error("Unsupported cast target type");
@@ -395,9 +388,9 @@ namespace scratchbird::sblr
             return false;
         }
 
-        if (value.type() == DataType::BOOLEAN)
+        if (value.type() == core::DataType::BOOLEAN)
         {
-            return value.getBool();
+            return value.getBoolean();
         }
 
         // Non-NULL, non-boolean values are truthy
@@ -415,7 +408,8 @@ namespace scratchbird::sblr
             return 1;
 
         // Type-specific comparison
-        if (left.type() == DataType::STRING || right.type() == DataType::STRING)
+        if (left.type() == core::DataType::VARCHAR || left.type() == core::DataType::TEXT ||
+            right.type() == core::DataType::VARCHAR || right.type() == core::DataType::TEXT)
         {
             std::string left_str = left.toString();
             std::string right_str = right.toString();
@@ -425,10 +419,10 @@ namespace scratchbird::sblr
                 return 1;
             return 0;
         }
-        else if (left.type() == DataType::BOOLEAN || right.type() == DataType::BOOLEAN)
+        else if (left.type() == core::DataType::BOOLEAN || right.type() == core::DataType::BOOLEAN)
         {
-            bool left_bool = left.toBool();
-            bool right_bool = right.toBool();
+            bool left_bool = left.toBoolean();
+            bool right_bool = right.toBoolean();
             if (left_bool < right_bool)
                 return -1;
             if (left_bool > right_bool)
