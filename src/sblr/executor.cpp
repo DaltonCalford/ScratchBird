@@ -1352,7 +1352,8 @@ namespace scratchbird
             }
 
             // 4. Create expression evaluator
-            ExpressionEvaluator evaluator(columns, &temp_pool);
+            // Task 17 MGA Phase 1.4: Pass database and transaction ID for visibility checks
+            ExpressionEvaluator evaluator(columns, &temp_pool, db_, xid);
 
             // 5. Open B-tree for this index
             auto btree = core::BTree::open(db_, index_info.index_id, index_info.root_page, nullptr);
@@ -1615,7 +1616,8 @@ namespace scratchbird
                 }
 
                 // Create evaluator
-                ExpressionEvaluator evaluator(all_columns, &temp_pool);
+                // Task 17 MGA Phase 1.4: Pass database and transaction ID for visibility checks
+                ExpressionEvaluator evaluator(all_columns, &temp_pool, db_, xid);
 
                 // Check predicate
                 if (predicate)
@@ -1748,7 +1750,8 @@ namespace scratchbird
                         temp_pool);
                 }
 
-                ExpressionEvaluator evaluator(all_columns, &temp_pool);
+                // Task 17 MGA Phase 1.4: Pass database and transaction ID for visibility checks
+                ExpressionEvaluator evaluator(all_columns, &temp_pool, db_, xid);
 
                 // Check predicate for both old and new
                 bool in_old = true, in_new = true;
@@ -1927,7 +1930,8 @@ namespace scratchbird
                         temp_pool);
                 }
 
-                ExpressionEvaluator evaluator(all_columns, &temp_pool);
+                // Task 17 MGA Phase 1.4: Pass database and transaction ID for visibility checks
+                ExpressionEvaluator evaluator(all_columns, &temp_pool, db_, xid);
 
                 // Check if row was in index
                 bool in_index = true;

@@ -1,13 +1,19 @@
 #include "scratchbird/sblr/expression_evaluator.h"
+#include "scratchbird/core/database.h"
+#include "scratchbird/core/storage_engine.h"
+#include "scratchbird/core/heap_page.h"
 #include <stdexcept>
 #include <cmath>
 #include <algorithm>
 
 namespace scratchbird::sblr
 {
+    // Task 17 MGA Phase 1.4: Updated constructor to include transaction context
     ExpressionEvaluator::ExpressionEvaluator(const std::vector<core::CatalogManager::ColumnInfo> &columns,
-                                             parser::StringPool *pool)
-        : pool_(pool)
+                                             parser::StringPool *pool,
+                                             core::Database *db,
+                                             uint64_t xid)
+        : pool_(pool), db_(db), xid_(xid)
     {
         // Build column position map for fast lookups
         for (size_t i = 0; i < columns.size(); i++)
@@ -440,6 +446,78 @@ namespace scratchbird::sblr
                 return 1;
             return 0;
         }
+    }
+
+    // ========================================================================
+    // Task 17 MGA Phase 1.4: Transaction-Aware Evaluation
+    // ========================================================================
+
+    bool ExpressionEvaluator::evaluateForTuple(const Expression *expr,
+                                               const core::TID &tid,
+                                               TypedValue &result_out)
+    {
+        // Task 17 MGA Phase 1.4: Method skeleton with visibility checking
+        //
+        // NOTE: This method is not yet fully implemented. Full implementation requires:
+        // 1. Table ID (to call getTuple correctly)
+        // 2. Column information (for deserialization)
+        // 3. deserializeTuple implementation
+        //
+        // The infrastructure is in place (transaction context, visibility checks),
+        // but the complete implementation is deferred until needed.
+
+        (void)expr;  // Suppress unused parameter warning
+        (void)tid;
+        (void)result_out;
+
+        // Check if we have database context
+        if (!db_)
+        {
+            throw std::runtime_error("ExpressionEvaluator::evaluateForTuple requires database context");
+        }
+
+        // Future implementation would:
+        // 1. Fetch tuple: db_->storage_engine()->getTuple(table_id, tid, &tuple, nullptr)
+        // 2. Check visibility: isVisible(hdr->xmin, hdr->xmax, xid_)
+        // 3. Deserialize tuple to TypedValue vector
+        // 4. Evaluate expression: result_out = evaluate(expr, row_values)
+        // 5. Return true on success
+
+        throw std::runtime_error("ExpressionEvaluator::evaluateForTuple not yet fully implemented - requires table context");
+    }
+
+    bool ExpressionEvaluator::evaluatePredicateForTuple(const Expression *predicate,
+                                                        const core::TID &tid,
+                                                        bool &result_out)
+    {
+        // Task 17 MGA Phase 1.4: Method skeleton with visibility checking
+        //
+        // NOTE: This method is not yet fully implemented. Full implementation requires:
+        // 1. Table ID (to call getTuple correctly)
+        // 2. Column information (for deserialization)
+        // 3. deserializeTuple implementation
+        //
+        // The infrastructure is in place (transaction context, visibility checks),
+        // but the complete implementation is deferred until needed.
+
+        (void)predicate;  // Suppress unused parameter warning
+        (void)tid;
+        (void)result_out;
+
+        // Check if we have database context
+        if (!db_)
+        {
+            throw std::runtime_error("ExpressionEvaluator::evaluatePredicateForTuple requires database context");
+        }
+
+        // Future implementation would:
+        // 1. Fetch tuple: db_->storage_engine()->getTuple(table_id, tid, &tuple, nullptr)
+        // 2. Check visibility: isVisible(hdr->xmin, hdr->xmax, xid_)
+        // 3. Deserialize tuple to TypedValue vector
+        // 4. Evaluate predicate: result_out = evaluatePredicate(predicate, row_values)
+        // 5. Return true on success
+
+        throw std::runtime_error("ExpressionEvaluator::evaluatePredicateForTuple not yet fully implemented - requires table context");
     }
 
 } // namespace scratchbird::sblr
