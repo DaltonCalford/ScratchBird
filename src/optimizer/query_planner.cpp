@@ -1,5 +1,6 @@
 #include "scratchbird/optimizer/query_planner.h"
 #include "scratchbird/optimizer/expression_matcher.h"
+#include "scratchbird/optimizer/predicate_matcher.h"
 #include "scratchbird/core/debug.h"
 #include "scratchbird/core/catalog_manager.h"
 #include "scratchbird/core/expression_serializer.h"
@@ -1587,87 +1588,151 @@ namespace scratchbird::optimizer
                                                    core::ErrorContext *ctx) const
         -> bool
     {
-        // Task 17 Phase 8: Expression Index Matching
+        // Task 17 Phase 8-9: Expression Index and Filtered Index Matching
 
-        // No WHERE clause - expression index not beneficial for full table scan
+        // No WHERE clause - expression/filtered index not beneficial for full table scan
         if (!where_clause)
         {
-            DEBUG_LOG_DB("No WHERE clause - expression index not beneficial");
+            DEBUG_LOG_DB("No WHERE clause - expression/filtered index not beneficial");
             return false;
         }
 
-        // Deserialize index expressions
+        // Deserialize index expressions and predicate
         parser::StringPool temp_pool;
         std::vector<parser::Expression *> index_expressions;
+        parser::Expression *index_predicate = nullptr;
 
-        try
+        // Task 17 Phase 8: Deserialize expression index columns
+        if (index_info.is_expression_index)
         {
-            index_expressions = core::ExpressionSerializer::deserializeList(
-                index_info.expression_data.data(),
-                index_info.expression_data.size(),
-                temp_pool);
-        }
-        catch (...)
-        {
-            DEBUG_LOG_DB("Failed to deserialize expression index");
-            return false;
+            try
+            {
+                index_expressions = core::ExpressionSerializer::deserializeList(
+                    index_info.expression_data.data(),
+                    index_info.expression_data.size(),
+                    temp_pool);
+            }
+            catch (...)
+            {
+                DEBUG_LOG_DB("Failed to deserialize expression index");
+                return false;
+            }
         }
 
-        // Check if any index expression matches or can be used by WHERE clause
+        // Task 17 Phase 9: Deserialize filtered index predicate
+        if (index_info.is_partial_index)
+        {
+            try
+            {
+                index_predicate = core::ExpressionSerializer::deserialize(
+                    index_info.predicate_data.data(),
+                    index_info.predicate_data.size(),
+                    temp_pool);
+            }
+            catch (...)
+            {
+                DEBUG_LOG_DB("Failed to deserialize filtered index predicate");
+                // Cleanup expressions
+                for (auto *expr : index_expressions)
+                {
+                    delete expr;
+                }
+                return false;
+            }
+        }
+
+        // Task 17 Phase 9: Check if query predicate implies index predicate
+        // If this is a filtered index, the query WHERE clause must imply the index WHERE clause
+        if (index_info.is_partial_index && index_predicate)
+        {
+            bool predicate_satisfied = PredicateMatcher::implies(where_clause, index_predicate, &string_pool);
+
+            if (!predicate_satisfied)
+            {
+                DEBUG_LOG_DB("Query predicate does not imply filtered index predicate - cannot use index");
+                // Cleanup
+                delete index_predicate;
+                for (auto *expr : index_expressions)
+                {
+                    delete expr;
+                }
+                return false;
+            }
+
+            DEBUG_LOG_DB("Query predicate implies filtered index predicate - can use index");
+        }
+
+        // Task 17 Phase 8: Check if any index expression matches or can be used by WHERE clause
         bool applicable = false;
 
-        for (auto *index_expr : index_expressions)
+        // If this is a regular filtered index (not expression index), check column match
+        if (!index_info.is_expression_index)
         {
-            // Try exact match or range scan compatibility
-            ExpressionMatchType match_type = ExpressionMatcher::canUse(where_clause, index_expr, &string_pool);
-
-            if (match_type == ExpressionMatchType::EXACT_MATCH ||
-                match_type == ExpressionMatchType::RANGE_SCAN)
+            // For non-expression filtered indexes, we still need to check if the
+            // indexed columns are used in the query - delegate to existing logic
+            // This is handled by the caller's isIndexApplicable() check
+            applicable = true; // Predicate already checked above
+        }
+        else
+        {
+            // Expression index - check if expressions match query
+            for (auto *index_expr : index_expressions)
             {
-                DEBUG_LOG_DB("Expression index can be used: match type = " +
-                           std::to_string(static_cast<int>(match_type)));
-                applicable = true;
-                break;
-            }
+                // Try exact match or range scan compatibility
+                ExpressionMatchType match_type = ExpressionMatcher::canUse(where_clause, index_expr, &string_pool);
 
-            // For complex WHERE clauses (AND/OR), recursively check sub-expressions
-            if (where_clause->kind() == parser::ASTKind::BINARY_OP)
-            {
-                auto *bin_op = static_cast<const parser::BinaryOpExpr *>(where_clause);
-                parser::BinaryOp op = bin_op->op();
-
-                // For AND: check both sides
-                if (op == parser::BinaryOp::AND)
+                if (match_type == ExpressionMatchType::EXACT_MATCH ||
+                    match_type == ExpressionMatchType::RANGE_SCAN)
                 {
-                    ExpressionMatchType left_match = ExpressionMatcher::canUse(bin_op->left(), index_expr, &string_pool);
-                    ExpressionMatchType right_match = ExpressionMatcher::canUse(bin_op->right(), index_expr, &string_pool);
-
-                    if (left_match != ExpressionMatchType::NO_MATCH ||
-                        right_match != ExpressionMatchType::NO_MATCH)
-                    {
-                        DEBUG_LOG_DB("Expression index matches part of AND clause");
-                        applicable = true;
-                        break;
-                    }
+                    DEBUG_LOG_DB("Expression index can be used: match type = " +
+                               std::to_string(static_cast<int>(match_type)));
+                    applicable = true;
+                    break;
                 }
-                // For OR: both sides must be compatible (more restrictive)
-                else if (op == parser::BinaryOp::OR)
-                {
-                    ExpressionMatchType left_match = ExpressionMatcher::canUse(bin_op->left(), index_expr, &string_pool);
-                    ExpressionMatchType right_match = ExpressionMatcher::canUse(bin_op->right(), index_expr, &string_pool);
 
-                    if (left_match != ExpressionMatchType::NO_MATCH &&
-                        right_match != ExpressionMatchType::NO_MATCH)
+                // For complex WHERE clauses (AND/OR), recursively check sub-expressions
+                if (where_clause->kind() == parser::ASTKind::BINARY_OP)
+                {
+                    auto *bin_op = static_cast<const parser::BinaryOpExpr *>(where_clause);
+                    parser::BinaryOp op = bin_op->op();
+
+                    // For AND: check both sides
+                    if (op == parser::BinaryOp::AND)
                     {
-                        DEBUG_LOG_DB("Expression index matches both sides of OR clause");
-                        applicable = true;
-                        break;
+                        ExpressionMatchType left_match = ExpressionMatcher::canUse(bin_op->left(), index_expr, &string_pool);
+                        ExpressionMatchType right_match = ExpressionMatcher::canUse(bin_op->right(), index_expr, &string_pool);
+
+                        if (left_match != ExpressionMatchType::NO_MATCH ||
+                            right_match != ExpressionMatchType::NO_MATCH)
+                        {
+                            DEBUG_LOG_DB("Expression index matches part of AND clause");
+                            applicable = true;
+                            break;
+                        }
+                    }
+                    // For OR: both sides must be compatible (more restrictive)
+                    else if (op == parser::BinaryOp::OR)
+                    {
+                        ExpressionMatchType left_match = ExpressionMatcher::canUse(bin_op->left(), index_expr, &string_pool);
+                        ExpressionMatchType right_match = ExpressionMatcher::canUse(bin_op->right(), index_expr, &string_pool);
+
+                        if (left_match != ExpressionMatchType::NO_MATCH &&
+                            right_match != ExpressionMatchType::NO_MATCH)
+                        {
+                            DEBUG_LOG_DB("Expression index matches both sides of OR clause");
+                            applicable = true;
+                            break;
+                        }
                     }
                 }
             }
         }
 
-        // Cleanup deserialized expressions
+        // Cleanup deserialized expressions and predicate
+        if (index_predicate)
+        {
+            delete index_predicate;
+        }
         for (auto *expr : index_expressions)
         {
             delete expr;

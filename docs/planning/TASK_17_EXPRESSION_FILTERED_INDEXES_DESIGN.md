@@ -1,14 +1,15 @@
 # Task 17: Expression and Filtered Indexes - Design & Implementation Plan
 
 **Date**: October 31, 2025
-**Status**: 🚧 IN PROGRESS (Phases 1-8 Complete - 62%)
+**Status**: 🚧 IN PROGRESS (Phases 1-9 Complete - 70%)
 **Priority**: CRITICAL - Core requirement for 1:1 PostgreSQL parity
 
-> **IMPORTANT**: Phases 1-8 (62%) are **COMPLETE**. Query planner now automatically uses expression indexes!
+> **IMPORTANT**: Phases 1-9 (70%) are **COMPLETE**. Query planner now automatically uses expression and filtered indexes!
+> See `/docs/status/TASK_17_PHASE_9_COMPLETE.md` for Phase 9 completion details.
 > See `/docs/status/TASK_17_PHASE_8_COMPLETE.md` for Phase 8 completion details.
 > See `/docs/status/TASK_17_PHASE_7_COMPLETE.md` for Phase 7 completion details.
 > See `/docs/status/TASK_17_PHASE_6_COMPLETE.md` for Phase 6 completion details.
-> See `/docs/planning/TASK_17_COMPLETE_IMPLEMENTATION_GUIDE.md` for Phases 9-13 implementation guide.
+> See `/docs/planning/TASK_17_COMPLETE_IMPLEMENTATION_GUIDE.md` for Phases 10-13 implementation guide.
 
 ## Overview
 
