@@ -1,9 +1,9 @@
 # Task 17: MGA Compliance Implementation Plan (REVISED)
 
 **Date**: October 31, 2025
-**Status**: ✅ **Phase 1 COMPLETE** (46%), Phase 2-4 REVISED
+**Status**: ✅ **Phase 1-2 COMPLETE** (54%), Phase 3-4 PENDING
 **Priority**: 🔴 CRITICAL
-**Estimated Effort**: 38-57 hours (down from 65-95 hours, 28% reduction!)
+**Estimated Effort**: 30-49 hours remaining (down from 65-95 hours, 28% reduction!)
 
 ---
 
@@ -95,13 +95,19 @@ for (entry in leaf_page) {
 
 ---
 
-## Remaining Work
+## Completed Work
 
-### Phase 2: Audit Logging + GC Integration (8-12 hours, was 15-20h)
+### ✅ Phase 2: Audit Logging + GC Integration (2.5 hours actual, 8-12 hours estimated)
 
-**Scope REDUCED** - No undo logging, just monitoring and cleanup
+**Status**: ✅ **COMPLETE** - All three sub-phases finished
+**Actual Effort**: 2.5 hours (79% faster than estimated!)
 
-#### 2.1 Optional Debug Logging (2-3 hours)
+**See**:
+- `docs/status/TASK_17_MGA_PHASE_2_1_COMPLETE.md` - Debug logging
+- `docs/status/TASK_17_MGA_PHASE_2_2_COMPLETE.md` - Statistics tracking
+- `docs/status/TASK_17_MGA_PHASE_2_3_COMPLETE.md` - GC integration (pre-existing)
+
+#### ✅ 2.1 Optional Debug Logging (1 hour actual, 2-3 hours estimated)
 
 **Purpose**: Debugging and monitoring (NOT for rollback)
 
@@ -126,9 +132,9 @@ LOG_TRACE(INDEX, "Index %s: predicate transition (in_old=%d, in_new=%d)",
 
 **Configuration**: Controlled by log level (TRACE/DEBUG), off by default
 
-**Effort**: 2-3 hours
+**Status**: ✅ COMPLETE
 
-#### 2.2 Statistics Tracking (2-3 hours)
+#### ✅ 2.2 Statistics Tracking (1.5 hours actual, 2-3 hours estimated)
 
 **Purpose**: Performance monitoring and metrics
 
@@ -161,9 +167,9 @@ LOG_INFO(INDEX, "Index maintenance complete: +%lu -%lu ~%lu entries",
          stats.entries_added, stats.entries_removed, stats.entries_updated);
 ```
 
-**Effort**: 2-3 hours
+**Status**: ✅ COMPLETE
 
-#### 2.3 GC Integration (4-6 hours)
+#### ✅ 2.3 GC Integration (0 hours actual, 4-6 hours estimated)
 
 **Purpose**: Clean up dead index entries (deferred cleanup, NOT rollback)
 
@@ -249,13 +255,17 @@ Status BTree::removeDeadEntries(
 - B-tree scans leaf pages and removes matching entries
 - **This is space reclamation, NOT rollback!**
 
-**Protocol**: See `/docs/specifications/INDEX_GC_PROTOCOL.md`
+**Protocol**: See `include/scratchbird/core/index_gc_interface.h`
 
-**Effort**: 4-6 hours
+**Status**: ✅ COMPLETE (pre-existing implementation in codebase)
 
-**Total Phase 2**: 8-12 hours
+**Discovery**: The B-tree already implements `IndexGCInterface` and `removeDeadEntries()` is fully functional (209 lines, lines 2203-2411 in `src/core/btree.cpp`). Expression and filtered indexes automatically benefit from this infrastructure.
+
+**Total Phase 2**: 2.5 hours actual (79% faster than 8-12 hour estimate!)
 
 ---
+
+## Remaining Work
 
 ### Phase 3: B-tree MGA Enhancements (10-15 hours)
 
