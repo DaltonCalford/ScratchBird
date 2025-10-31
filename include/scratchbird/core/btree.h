@@ -190,6 +190,25 @@ namespace scratchbird
                           uint64_t xid,  // Transaction ID for btn_xmax
                           ErrorContext *ctx = nullptr);
 
+            // Task 17 MGA Phase 3.2: Soft deletion support (mark deleted instead of physical removal)
+            /**
+             * Mark index entry as deleted by setting btn_xmax
+             *
+             * More efficient than physical removal - entry remains in index but becomes
+             * invisible to transactions >= xmax (if xmax transaction commits).
+             * Physical removal happens later during GC/vacuum.
+             *
+             * @param key Index key
+             * @param tid Tuple ID to mark deleted
+             * @param xmax Transaction ID deleting this entry
+             * @param ctx Error context
+             * @return Status::OK on success, Status::NOT_FOUND if entry not found
+             */
+            Status markDeleted(const std::vector<uint8_t> &key,
+                              const TID &tid,
+                              uint64_t xmax,
+                              ErrorContext *ctx = nullptr);
+
             // Range scan operations
             // PHASE 1 TASK 1.1.1: Added Snapshot parameter for MVCC visibility filtering
             std::unique_ptr<BTreeIterator>
