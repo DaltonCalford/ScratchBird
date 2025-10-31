@@ -934,16 +934,53 @@ namespace scratchbird
             StringPool::StringId tablespace_; // TABLESPACE clause (Phase 2 Task 2.3)
         };
 
-        // CREATE INDEX statement (Phase 2 Task 2.3)
+        // CREATE INDEX statement (Phase 2 Task 2.3 + Task 17)
         class CreateIndexStmt : public Statement
         {
         public:
+            // Task 17: Index column can be either a simple column or an expression
+            struct IndexColumn
+            {
+                StringPool::StringId column_name;  // For simple column reference
+                Expression *expression;            // For expression index (nullptr if simple column)
+                bool is_expression;                // True if expression, false if column
+
+                // Constructor for simple column
+                IndexColumn(StringPool::StringId col)
+                    : column_name(col), expression(nullptr), is_expression(false)
+                {
+                }
+
+                // Constructor for expression
+                IndexColumn(Expression *expr)
+                    : column_name(0), expression(expr), is_expression(true)
+                {
+                }
+            };
+
+            // Constructor for backward compatibility (simple columns only)
             CreateIndexStmt(const SourceSpan &span, StringPool::StringId index_name,
                             StringPool::StringId table_name, std::vector<StringPool::StringId> columns,
                             bool is_unique = false, StringPool::StringId tablespace = 0)
                 : Statement(ASTKind::CREATE_INDEX, span), index_name_(index_name),
-                  table_name_(table_name), columns_(std::move(columns)),
-                  is_unique_(is_unique), tablespace_(tablespace)
+                  table_name_(table_name), is_unique_(is_unique), tablespace_(tablespace),
+                  where_clause_(nullptr)
+            {
+                // Convert column names to IndexColumn structures
+                for (auto col : columns)
+                {
+                    index_columns_.push_back(IndexColumn(col));
+                }
+            }
+
+            // Task 17: New constructor supporting expressions and WHERE clause
+            CreateIndexStmt(const SourceSpan &span, StringPool::StringId index_name,
+                            StringPool::StringId table_name, std::vector<IndexColumn> index_columns,
+                            Expression *where_clause = nullptr, bool is_unique = false,
+                            StringPool::StringId tablespace = 0)
+                : Statement(ASTKind::CREATE_INDEX, span), index_name_(index_name),
+                  table_name_(table_name), index_columns_(std::move(index_columns)),
+                  where_clause_(where_clause), is_unique_(is_unique), tablespace_(tablespace)
             {
             }
 
@@ -955,10 +992,47 @@ namespace scratchbird
             {
                 return table_name_;
             }
-            const std::vector<StringPool::StringId> &columns() const
+
+            // Legacy column accessor (for backward compatibility)
+            const std::vector<StringPool::StringId> columns() const
             {
-                return columns_;
+                std::vector<StringPool::StringId> cols;
+                for (const auto &ic : index_columns_)
+                {
+                    if (!ic.is_expression)
+                    {
+                        cols.push_back(ic.column_name);
+                    }
+                }
+                return cols;
             }
+
+            // Task 17: New accessors
+            const std::vector<IndexColumn> &indexColumns() const
+            {
+                return index_columns_;
+            }
+
+            Expression *whereClause() const
+            {
+                return where_clause_;
+            }
+
+            bool hasWhereClause() const
+            {
+                return where_clause_ != nullptr;
+            }
+
+            bool hasExpressions() const
+            {
+                for (const auto &ic : index_columns_)
+                {
+                    if (ic.is_expression)
+                        return true;
+                }
+                return false;
+            }
+
             bool isUnique() const
             {
                 return is_unique_;
@@ -973,7 +1047,8 @@ namespace scratchbird
         private:
             StringPool::StringId index_name_;
             StringPool::StringId table_name_;
-            std::vector<StringPool::StringId> columns_;
+            std::vector<IndexColumn> index_columns_;  // Task 17: Columns or expressions
+            Expression *where_clause_;                // Task 17: WHERE clause for partial indexes
             bool is_unique_;
             StringPool::StringId tablespace_;
         };
