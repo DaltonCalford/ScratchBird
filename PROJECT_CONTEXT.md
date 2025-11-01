@@ -499,10 +499,40 @@ valgrind --leak-check=full --show-leak-kinds=all ./tests/scratchbird_tests
 
 **CRITICAL**: ScratchBird uses Firebird MGA, NOT PostgreSQL MVCC.
 
+**⚠️ MANDATORY READING**: Before ANY transaction or index work, you MUST read `/MGA_RULES.md`
+
+This file contains 15 absolute rules that MUST be followed. Violations mean the code is architecturally WRONG.
+
+### The Fundamental Difference
+
+**PostgreSQL MVCC**: Uses **Snapshots** - arrays of active transaction IDs checked for visibility
+**Firebird MGA**: Uses **TIP** (Transaction Inventory Pages) - bitmap lookups for transaction state
+
+**If you see `Snapshot` structures or `isSnapshotVisible()` calls, it's WRONG.**
+
+### Detection Rules (from MGA_RULES.md)
+
+**MVCC Contamination Indicators** (❌ ALL WRONG):
+- `Snapshot` structure
+- `snapshot` parameter names
+- `isSnapshotVisible()` function calls
+- Forward pointers (old → new)
+- Tuples created at new locations
+- Index TID updates on every UPDATE
+
+**MGA Compliance Indicators** (✅ ALL REQUIRED):
+- TIP (Transaction Inventory Page) implementation
+- `getTransactionState(xid)` function calls
+- `TxState` enum (TX_COMMITTED, TX_ACTIVE, TX_ABORTED)
+- OIT/OAT/OST transaction markers
+- Back pointers (new → old)
+- In-place updates with stable TIDs
+
 ### Key Differences
 
 | Aspect | Firebird MGA (ScratchBird) | PostgreSQL MVCC |
 |--------|----------------------------|-----------------|
+| **Visibility Check** | TIP bitmap lookup | Snapshot array check |
 | **Update Strategy** | In-place modification | Append-only |
 | **Old Versions** | Back versions (delta or full) | Old tuples left in place |
 | **Version Chain** | Newest → Oldest (N2O) | Oldest → Newest (O2N) |
@@ -516,6 +546,8 @@ valgrind --leak-check=full --show-leak-kinds=all ./tests/scratchbird_tests
 - **Visibility**: Traverse back chain from primary to find visible version
 - **Garbage Collection**: Sweep removes old back versions
 
+**See `/MGA_RULES.md` for complete specifications and examples.**
+
 ---
 
 ## 9. Final Reminders
@@ -523,19 +555,25 @@ valgrind --leak-check=full --show-leak-kinds=all ./tests/scratchbird_tests
 ### For AI Assistants
 
 **DO:**
-- ✅ Read this file at every session start
-- ✅ Re-read after context compaction
+- ✅ Read this file AND `/MGA_RULES.md` at every session start
+- ✅ Re-read both files after context compaction
+- ✅ **BEFORE any transaction/index work**: Read `/MGA_RULES.md` first
 - ✅ Check roadmap for current priorities
 - ✅ Verify against specifications before implementing
-- ✅ Use Firebird MGA model for UPDATE/DELETE operations
+- ✅ Use Firebird MGA model (TIP-based visibility)
 - ✅ Maintain stable TIDs (no TID changes on UPDATE)
+- ✅ In-place updates with back versions
 
 **DON'T:**
-- ❌ Use PostgreSQL MVCC patterns (append-only updates)
+- ❌ Use PostgreSQL MVCC patterns (snapshots, append-only)
+- ❌ Implement `Snapshot` structures or `isSnapshotVisible()` APIs
+- ❌ Use forward-versioning (old → new pointers)
 - ❌ Update index TIDs unless indexed column changes
 - ❌ Create new tuple locations on UPDATE
-- ❌ Implement features without checking specs
+- ❌ Implement features without checking specs and `/MGA_RULES.md`
 - ❌ Skip error handling or logging
+
+**CRITICAL**: If you violate `/MGA_RULES.md`, the code is architecturally WRONG and must be rewritten. No exceptions.
 
 ### Key Facts
 - **64-bit XIDs**: No wraparound issues
