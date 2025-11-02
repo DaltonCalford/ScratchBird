@@ -20,28 +20,6 @@
 namespace scratchbird::core
 {
 
-    // Snapshot cleanup implementation
-    void TransactionManager::Snapshot::cleanup()
-    {
-        // HIGH-4 FIX: Protect pinned_pages access with mutex
-        std::lock_guard<std::mutex> lock(pinned_pages_mutex_);
-
-        if (buffer_pool != nullptr)
-        {
-            for (uint32_t page_id : pinned_pages)
-            {
-                buffer_pool->unpinPage(page_id, false, nullptr);
-            }
-            pinned_pages.clear();
-            buffer_pool = nullptr;
-        }
-    }
-
-    TransactionManager::Snapshot::~Snapshot()
-    {
-        cleanup();
-    }
-
     TransactionManager::TransactionManager(Database *db)
         : db_(db), buffer_pool_(db->buffer_pool()), page_manager_(db->page_manager())
     {
@@ -853,84 +831,77 @@ namespace scratchbird::core
         return state == TransactionState::COMMITTED;
     }
 
-    auto TransactionManager::isSnapshotVisible(uint64_t xid, const Snapshot *snapshot) -> bool
+    auto TransactionManager::isVersionVisible(uint64_t version_xid, uint64_t reader_xid) -> bool
     {
-        // Null snapshot check
-        if (snapshot == nullptr)
+        // ===========================================================================================
+        // FIREBIRD MGA VISIBILITY - TIP-based, NOT snapshot-based
+        // Per MGA_RULES.md Rule 3 (lines 121-145)
+        // ===========================================================================================
+
+        // 1. Own changes always visible
+        //    A transaction can always see its own uncommitted changes
+        if (version_xid == reader_xid)
         {
-            LOG_WARNING(TRANSACTION, "isSnapshotVisible called with null snapshot for XID %lu",
-                        xid);
-            return false;
+            return true;
         }
 
-        // 1. Validate XID - protect against corrupted tuple headers
-        if (!isXidInRange(xid))
+        // 2. Frozen tuples are always visible
+        //    FROZEN_XID = 2, used for tuples that survived VACUUM/sweep
+        if (version_xid <= FROZEN_XID)
+        {
+            return true;
+        }
+
+        // 3. Validate XID range - protect against corrupted tuple headers
+        if (!isXidInRange(version_xid))
         {
             // ISSUE 3.4 FIX: Rate limit logging in hot path to prevent log spam
-            // Only log first occurrence per invalid XID to avoid performance degradation
-            static thread_local std::unordered_set<uint64_t> logged_invalid_snapshot_xids;
-            if (logged_invalid_snapshot_xids.find(xid) == logged_invalid_snapshot_xids.end())
+            static thread_local std::unordered_set<uint64_t> logged_invalid_xids;
+            if (logged_invalid_xids.find(version_xid) == logged_invalid_xids.end())
             {
-                LOG_WARNING(TRANSACTION, "Invalid XID %lu in snapshot visibility check - "
-                          "further occurrences suppressed", xid);
-                logged_invalid_snapshot_xids.insert(xid);
+                LOG_WARNING(TRANSACTION,
+                           "Invalid XID %lu in MGA visibility check - further occurrences suppressed",
+                           version_xid);
+                logged_invalid_xids.insert(version_xid);
 
                 // Limit set size to prevent unbounded memory growth
-                if (logged_invalid_snapshot_xids.size() > 1000)
+                if (logged_invalid_xids.size() > 1000)
                 {
-                    logged_invalid_snapshot_xids.clear();
+                    logged_invalid_xids.clear();
                 }
             }
             return false;
         }
 
-        // 2. Future transaction (started after snapshot was taken) - INVISIBLE
-        //    Any XID >= xmax did not exist when snapshot was created
-        if (xid >= snapshot->xmax)
+        // 4. Look up transaction state in TIP (Transaction Inventory Page)
+        //    This is THE CORE of Firebird MGA visibility
+        //    We use TIP, NOT snapshots with active transaction arrays
+        TransactionState state;
+        ErrorContext ctx;
+        Status status = getTransactionState(version_xid, state, &ctx);
+
+        if (status != Status::OK)
         {
+            // If TIP lookup fails, assume not visible for safety
+            LOG_WARNING(TRANSACTION,
+                       "Failed to get transaction state for XID %lu in visibility check",
+                       version_xid);
             return false;
         }
 
-        // 3. Frozen tuples are always visible
-        //    FROZEN_XID = 2, used for tuples that survived VACUUM
-        if (xid <= FROZEN_XID)
+        // 5. Only committed transactions older than reader are visible
+        //    This is Firebird MGA semantics:
+        //    - ACTIVE transactions: not visible (still in progress)
+        //    - ABORTED transactions: not visible (rolled back)
+        //    - COMMITTED transactions: visible only if older than reader
+        //    - PREPARED transactions: not visible (2PC limbo state)
+        if (state == TransactionState::COMMITTED && version_xid < reader_xid)
         {
             return true;
         }
 
-        // 4. Transaction was active at snapshot time - INVISIBLE
-        //    Binary search in sorted active_xids array (O(log N))
-        //    Note: active_xids is sorted by getSnapshot()
-        if (std::binary_search(snapshot->active_xids.begin(), snapshot->active_xids.end(), xid))
-        {
-            return false; // Transaction was in-progress at snapshot time
-        }
-
-        // 5. Old transaction (started before oldest active transaction)
-        //    These must be committed to be visible
-        if (xid < snapshot->xmin)
-        {
-            TransactionState state;
-            if (getTransactionState(xid, state, nullptr) != Status::OK)
-            {
-                // Error getting state - for safety, assume visible if old
-                return true;
-            }
-            return state == TransactionState::COMMITTED;
-        }
-
-        // 6. Transaction started after xmin but before xmax,
-        //    and was NOT in the active list at snapshot time
-        //    This means it must have committed BEFORE the snapshot
-        //    Verify it's actually committed
-        TransactionState state;
-        if (getTransactionState(xid, state, nullptr) != Status::OK)
-        {
-            // Error getting state - assume not visible for safety
-            return false;
-        }
-
-        return state == TransactionState::COMMITTED;
+        // All other cases: not visible
+        return false;
     }
 
     auto TransactionManager::getBackendXid(uint32_t proc_id) const -> uint64_t
@@ -941,101 +912,6 @@ namespace scratchbird::core
         return xid;
     }
 
-    auto TransactionManager::getSnapshot(Snapshot &snapshot_out, ErrorContext *ctx) -> Status
-    {
-        // CRITICAL FIX (CRITICAL-3): Lock ordering documentation
-        // This method follows correct lock hierarchy: mutex_ → ProcArray::array_lock
-        // 1. Acquire mutex_ (protects transaction state)
-        // 2. Then acquire ProcArray::array_lock (protects process control blocks)
-        // This ordering MUST be maintained to prevent deadlock!
-        std::lock_guard<std::mutex> lock(mutex_);
-
-        snapshot_out.xmax = next_xid_.load(std::memory_order_acquire);
-        snapshot_out.active_xids.clear();
-
-        // Get active transactions from ProcArray
-        // NOTE: getActiveTransactions() internally acquires ProcArray::array_lock
-        // This is safe because we're following the correct lock order: mutex_ → array_lock
-        uint64_t oldest_xmin = 0;
-        Status status =
-            ProcArrayManager::getActiveTransactions(&snapshot_out.active_xids, &oldest_xmin, ctx);
-        if (status != Status::OK)
-        {
-            // Fallback to simple snapshot if ProcArray not available
-            snapshot_out.xmin = FROZEN_XID + 1;
-            return Status::OK;
-        }
-
-        // OPTIMIZATION: For read-only transactions, filter out other read-only transactions
-        // from the active_xids list. Read-only transactions don't create write conflicts,
-        // so they don't need to be tracked for visibility purposes.
-        // This reduces memory usage and improves snapshot visibility check performance.
-        ConnectionContext *current_ctx = ConnectionContext::getCurrent();
-        if (current_ctx && current_ctx->isReadOnly())
-        {
-            // Get ProcArray to check read-only status of active transactions
-            ProcArray *proc_array = ProcArrayManager::getInstance();
-            if (proc_array)
-            {
-                // LOCK ORDERING: mutex_ already held, now acquire ProcArray::array_lock (read lock)
-                // This is CORRECT order: mutex_ → ProcArray::array_lock
-                // NOTE: This is a second acquisition of array_lock (first was in getActiveTransactions)
-                // but that's safe because rdlocks are reentrant for the same thread
-                pthread_rwlock_rdlock(&proc_array->array_lock);
-
-                ProcessControlBlock *pcbs = reinterpret_cast<ProcessControlBlock *>(
-                    reinterpret_cast<uint8_t *>(proc_array) + sizeof(ProcArray));
-
-                // Filter active_xids to only include write transactions
-                std::vector<uint64_t> filtered_xids;
-                filtered_xids.reserve(snapshot_out.active_xids.size());
-
-                for (uint64_t active_xid : snapshot_out.active_xids)
-                {
-                    // Find this XID in proc array
-                    bool is_write_txn = true; // Assume write if not found
-                    for (uint32_t i = 0; i < proc_array->max_backends; ++i)
-                    {
-                        if (pcbs[i].is_active && pcbs[i].xid == active_xid)
-                        {
-                            is_write_txn = !pcbs[i].is_read_only;
-                            break;
-                        }
-                    }
-
-                    // Only include write transactions
-                    if (is_write_txn)
-                    {
-                        filtered_xids.push_back(active_xid);
-                    }
-                }
-
-                pthread_rwlock_unlock(&proc_array->array_lock);
-
-                // Track statistics
-                size_t original_size = snapshot_out.active_xids.size();
-                size_t filtered_size = filtered_xids.size();
-                uint64_t xids_filtered = original_size - filtered_size;
-
-                snapshot_out.active_xids = std::move(filtered_xids);
-
-                stats_.readonly_snapshots++;
-                stats_.readonly_snapshot_xids_filtered += xids_filtered;
-
-                LOG_DEBUG(TRANSACTION,
-                          "Read-only snapshot optimization: filtered %zu active XIDs down to %zu "
-                          "write XIDs",
-                          original_size, filtered_size);
-            }
-        }
-
-        snapshot_out.xmin = (oldest_xmin != 0) ? oldest_xmin : FROZEN_XID + 1;
-
-        // Sort active_xids for efficient binary search in isSnapshotVisible()
-        std::sort(snapshot_out.active_xids.begin(), snapshot_out.active_xids.end());
-
-        return Status::OK;
-    }
 
     auto TransactionManager::allocateTipPage(uint32_t &page_id_out, ErrorContext *ctx) -> Status
     {
