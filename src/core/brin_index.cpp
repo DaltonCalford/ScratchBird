@@ -85,7 +85,7 @@ Status BrinIndex::insert(const std::vector<uint8_t> &value,
 
 Status BrinIndex::scan(const std::vector<uint8_t> *min_value,
                       const std::vector<uint8_t> *max_value,
-                      struct Snapshot *snapshot,
+                      uint64_t current_xid,
                       std::vector<uint32_t> *block_numbers_out,
                       ErrorContext *ctx)
 {
@@ -198,9 +198,11 @@ int BrinIndex::compare_values(const uint8_t *v1, uint16_t v1_len,
 }
 
 bool BrinIndex::is_range_visible(const SBBrinRange *range,
-                                 struct Snapshot *snapshot,
+                                 uint64_t current_xid,
                                  ErrorContext *ctx) const
 {
+    // Stub: Always return true (no visibility filtering implemented yet)
+    // TODO: When implemented, use TransactionManager::isVersionVisible(range->xmin, current_xid)
     return true;
 }
 

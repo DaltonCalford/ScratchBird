@@ -20,9 +20,8 @@ namespace scratchbird
         class Database;
         class BufferPool;
         class PageManager;
-        class TransactionManager;
+        class TransactionManager; // For TIP-based visibility checks (Firebird MGA)
         struct ErrorContext;
-        struct Snapshot;
 
         /**
          * HNSW (Hierarchical Navigable Small World) Index - Vector similarity search
@@ -52,11 +51,11 @@ namespace scratchbird
          *                   xmax=0         xmax=0         xmax=15 (deleted)
          * ```
          *
-         * ## MGA Compliance (Phase 4A.2 - October 2025)
+         * ## MGA Compliance (Phase 6 - November 2025)
          *
          * - **xmin/xmax tracking**: Each node has xmin/xmax
-         * - **Snapshot isolation**: Snapshot parameter in search/insert APIs
-         * - **Visibility filtering**: During graph traversal, skip deleted nodes
+         * - **TIP-based visibility**: TransactionId parameter in search/insert APIs (NOT snapshots)
+         * - **Visibility filtering**: During graph traversal, skip deleted nodes using TIP
          * - **Garbage collection**: removeDeadEntries() for dead node removal
          * - **Stable TIDs**: Nodes reference stable tuple IDs (heap TIDs)
          *
@@ -263,15 +262,15 @@ namespace scratchbird
             /**
              * KNN search: Find k nearest neighbors
              *
-             * Phase 4A.2.4: KNN search with MVCC visibility
+             * Firebird MGA: KNN search with TIP-based visibility filtering
              * - Greedy search from top layer down
              * - Beam search for accuracy
-             * - Snapshot parameter for MVCC visibility filtering
+             * - Uses TIP-based visibility filtering (NOT snapshots)
              * - Returns k nearest neighbors sorted by distance
              *
              * @param query_vector Query vector
              * @param k Number of neighbors to return
-             * @param snapshot MVCC snapshot for visibility (nullptr = return all)
+             * @param current_xid Current transaction ID for TIP-based visibility
              * @param results_out Output: k nearest neighbors with distances
              * @param ctx Error context
              * @return Status OK if successful
@@ -280,10 +279,12 @@ namespace scratchbird
              *   SELECT id, embedding <-> '[0.1, 0.2, ...]' AS distance
              *   FROM documents
              *   ORDER BY distance LIMIT 10
+             *
+             * Per MGA_RULES.md Rule 11: Use TransactionId, NOT Snapshot*
              */
             Status search(const VectorValue &query_vector,
                           uint32_t k,
-                          struct Snapshot *snapshot,
+                          uint64_t current_xid,
                           std::vector<HnswSearchResult> *results_out,
                           ErrorContext *ctx = nullptr);
 
@@ -379,7 +380,7 @@ namespace scratchbird
                                 uint32_t k,
                                 uint16_t layer,
                                 uint64_t entry_point,
-                                struct Snapshot *snapshot,
+                                uint64_t current_xid,
                                 std::vector<HnswSearchResult> *results_out,
                                 ErrorContext *ctx);
 
@@ -389,11 +390,11 @@ namespace scratchbird
             double compute_distance(const VectorValue &a, const VectorValue &b) const;
 
             /**
-             * Check if node is visible to snapshot
-             * Phase 4A.2.4: MGA visibility checking
+             * Check if node is visible to current transaction
+             * Firebird MGA: Uses TIP-based visibility checking (NOT snapshots)
              */
             bool is_node_visible(const SBHnswNode *node,
-                                 struct Snapshot *snapshot,
+                                 uint64_t current_xid,
                                  ErrorContext *ctx) const;
 
             /**

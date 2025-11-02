@@ -129,7 +129,7 @@ Status HnswIndex::remove(const TID &tid,
 
 Status HnswIndex::search(const VectorValue &query_vector,
                         uint32_t k,
-                        struct Snapshot *snapshot,
+                        uint64_t current_xid,
                         std::vector<HnswSearchResult> *results_out,
                         ErrorContext *ctx)
 {
@@ -217,7 +217,7 @@ Status HnswIndex::find_nearest(const VectorValue &query,
                               uint32_t k,
                               uint16_t layer,
                               uint64_t entry_point,
-                              struct Snapshot *snapshot,
+                              uint64_t current_xid,
                               std::vector<HnswSearchResult> *results_out,
                               ErrorContext *ctx)
 {
@@ -232,9 +232,11 @@ double HnswIndex::compute_distance(const VectorValue &a, const VectorValue &b) c
 }
 
 bool HnswIndex::is_node_visible(const SBHnswNode *node,
-                                struct Snapshot *snapshot,
+                                uint64_t current_xid,
                                 ErrorContext *ctx) const
 {
+    // Stub: Always return true (no visibility filtering implemented yet)
+    // TODO: When implemented, use TransactionManager::isVersionVisible(node->xmin, current_xid)
     return true;
 }
 

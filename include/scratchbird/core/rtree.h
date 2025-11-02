@@ -21,7 +21,7 @@ class BufferPool;
 class PageManager;
 class TransactionManager;
 struct ErrorContext;
-struct Snapshot;
+// Firebird MGA: TransactionManager used for TIP-based visibility checks (NOT snapshots)
 
 /**
  * RTree - R-tree Spatial Index with R*-tree optimizations
@@ -63,11 +63,11 @@ struct Snapshot;
  *    - Choose seeds that maximize wasted area
  *    - Assign entries to minimize total area
  *
- * ## MGA Compliance
+ * ## MGA Compliance (Phase 6 - November 2025)
  *
  * - **xmin/xmax tracking**: Each entry has xmin/xmax
- * - **Snapshot isolation**: Snapshot parameter in search/insert APIs
- * - **Visibility filtering**: During tree traversal, skip deleted entries
+ * - **TIP-based visibility**: TransactionId parameter in search/insert APIs (NOT snapshots)
+ * - **Visibility filtering**: During tree traversal, skip deleted entries using TIP
  * - **Garbage collection**: removeDeadEntries() for dead entry removal
  * - **Stable TIDs**: Entries reference stable tuple IDs (heap TIDs)
  *
@@ -262,26 +262,32 @@ public:
      *
      * @param bbox Bounding box of the spatial object
      * @param tid Tuple ID (row ID in heap)
-     * @param snapshot Snapshot for MGA visibility (nullptr = current transaction)
+     * @param current_xid Current transaction ID for TIP-based visibility
      * @param ctx Error context
      * @return Status
+     *
+     * Per MGA_RULES.md Rule 11: Use TransactionId, NOT Snapshot*
      */
     Status insert(const BoundingBox& bbox,
                  const TID& tid,
-                 struct Snapshot* snapshot,
+                 uint64_t current_xid,
                  ErrorContext* ctx = nullptr);
 
     /**
      * Search for entries that intersect with the given bounding box
      *
+     * Firebird MGA: Uses TIP-based visibility filtering (NOT snapshots)
+     *
      * @param bbox Query bounding box
-     * @param snapshot Snapshot for MGA visibility
+     * @param current_xid Current transaction ID for TIP-based visibility
      * @param tids_out Output: matching tuple IDs
      * @param ctx Error context
      * @return Status
+     *
+     * Per MGA_RULES.md Rule 11: Use TransactionId, NOT Snapshot*
      */
     Status search(const BoundingBox& bbox,
-                 struct Snapshot* snapshot,
+                 uint64_t current_xid,
                  std::vector<TID>* tids_out,
                  ErrorContext* ctx = nullptr);
 
@@ -290,13 +296,15 @@ public:
      *
      * @param bbox Bounding box of the spatial object
      * @param tid Tuple ID to remove
-     * @param snapshot Snapshot for MGA visibility
+     * @param current_xid Current transaction ID for TIP-based visibility
      * @param ctx Error context
      * @return Status
+     *
+     * Per MGA_RULES.md Rule 11: Use TransactionId, NOT Snapshot*
      */
     Status remove(const BoundingBox& bbox,
                  const TID& tid,
-                 struct Snapshot* snapshot,
+                 uint64_t current_xid,
                  ErrorContext* ctx = nullptr);
 
     /**
@@ -380,10 +388,10 @@ private:
      * 4. Return the leaf node
      *
      * @param bbox Bounding box to insert
-     * @param snapshot Snapshot for visibility checks
+     * @param current_xid Current transaction ID for TIP-based visibility checks
      * @return Leaf node to insert into
      */
-    RTreeNode* chooseLeaf(const BoundingBox& bbox, struct Snapshot* snapshot);
+    RTreeNode* chooseLeaf(const BoundingBox& bbox, uint64_t current_xid);
 
     /**
      * Split a node that has overflowed
@@ -410,9 +418,9 @@ private:
      *
      * @param leaf Leaf node that was modified
      * @param new_sibling New sibling from split (nullptr if no split)
-     * @param snapshot Snapshot for visibility checks
+     * @param current_xid Current transaction ID for TIP-based visibility checks
      */
-    void adjustTree(RTreeNode* leaf, RTreeNode* new_sibling, struct Snapshot* snapshot);
+    void adjustTree(RTreeNode* leaf, RTreeNode* new_sibling, uint64_t current_xid);
 
     /**
      * Forced reinsert optimization (R*-tree)
@@ -422,10 +430,10 @@ private:
      *
      * @param node Node that overflowed
      * @param new_entry Entry that caused overflow
-     * @param snapshot Snapshot for visibility checks
+     * @param current_xid Current transaction ID for TIP-based visibility checks
      * @return true if reinsert resolved overflow, false if split needed
      */
-    bool forceReinsert(RTreeNode* node, const RTreeEntry& new_entry, struct Snapshot* snapshot);
+    bool forceReinsert(RTreeNode* node, const RTreeEntry& new_entry, uint64_t current_xid);
 
     /**
      * Condense the tree after deletion
@@ -438,9 +446,9 @@ private:
      *
      * @param leaf Leaf node to remove from
      * @param entry_index Index of entry to remove
-     * @param snapshot Snapshot for visibility checks
+     * @param current_xid Current transaction ID for TIP-based visibility checks
      */
-    void condenseTree(RTreeNode* leaf, size_t entry_index, struct Snapshot* snapshot);
+    void condenseTree(RTreeNode* leaf, size_t entry_index, uint64_t current_xid);
 
     // ========================================================================
     // Helper Methods
@@ -471,13 +479,15 @@ private:
     Status allocatePage(RTreeNode* node);
 
     /**
-     * Check if an entry is visible to the given snapshot
+     * Check if an entry is visible to the current transaction
+     *
+     * Firebird MGA: Uses TIP-based visibility checking (NOT snapshots)
      *
      * @param entry Entry to check
-     * @param snapshot Snapshot for visibility
+     * @param current_xid Current transaction ID for TIP-based visibility
      * @return true if visible
      */
-    bool isEntryVisible(const RTreeEntry& entry, struct Snapshot* snapshot) const;
+    bool isEntryVisible(const RTreeEntry& entry, uint64_t current_xid) const;
 
     /**
      * Update index statistics

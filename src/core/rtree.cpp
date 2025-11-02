@@ -164,7 +164,7 @@ std::unique_ptr<RTree> RTree::open(Database* db,
 
 Status RTree::insert(const BoundingBox& bbox,
                     const TID& tid,
-                    Snapshot* snapshot,
+                    uint64_t current_xid,
                     ErrorContext* ctx)
 {
     std::unique_lock<std::shared_mutex> lock(mutex_);
@@ -194,7 +194,7 @@ Status RTree::insert(const BoundingBox& bbox,
     entry.is_deleted = false;
 
     // Choose leaf node to insert into
-    RTreeNode* leaf = chooseLeaf(bbox, snapshot);
+    RTreeNode* leaf = chooseLeaf(bbox, current_xid);
     if (!leaf)
     {
         if (ctx)
@@ -208,18 +208,18 @@ Status RTree::insert(const BoundingBox& bbox,
     if (leaf->isFull())
     {
         // Try forced reinsert first (R*-tree optimization)
-        if (!forceReinsert(leaf, entry, snapshot))
+        if (!forceReinsert(leaf, entry, current_xid))
         {
             // Reinsert failed, need to split
             std::unique_ptr<RTreeNode> new_sibling = splitNode(leaf, entry);
-            adjustTree(leaf, new_sibling.get(), snapshot);
+            adjustTree(leaf, new_sibling.get(), current_xid);
         }
     }
     else
     {
         // Add entry to leaf
         leaf->addEntry(entry);
-        adjustTree(leaf, nullptr, snapshot);
+        adjustTree(leaf, nullptr, current_xid);
     }
 
     // Update statistics
@@ -235,7 +235,7 @@ Status RTree::insert(const BoundingBox& bbox,
 // ============================================================================
 
 Status RTree::search(const BoundingBox& bbox,
-                    Snapshot* snapshot,
+                    uint64_t current_xid,
                     std::vector<TID>* tids_out,
                     ErrorContext* ctx)
 {
@@ -314,8 +314,8 @@ Status RTree::search(const BoundingBox& bbox,
             const RTreeEntry& entry = node->getEntry(i);
             entries_tested++;
 
-            // Skip deleted entries (MGA visibility check)
-            if (!isEntryVisible(entry, snapshot))
+            // Skip deleted entries (Firebird MGA TIP-based visibility check)
+            if (!isEntryVisible(entry, current_xid))
                 continue;
 
             // Check if entry's MBR intersects with query bbox
@@ -346,7 +346,7 @@ Status RTree::search(const BoundingBox& bbox,
 
 Status RTree::remove(const BoundingBox& bbox,
                     const TID& tid,
-                    Snapshot* snapshot,
+                    uint64_t current_xid,
                     ErrorContext* ctx)
 {
     std::unique_lock<std::shared_mutex> lock(mutex_);
@@ -751,7 +751,7 @@ uint16_t RTree::getHeight() const
 // Core R-tree Algorithms
 // ============================================================================
 
-RTreeNode* RTree::chooseLeaf(const BoundingBox& bbox, Snapshot* snapshot)
+RTreeNode* RTree::chooseLeaf(const BoundingBox& bbox, uint64_t current_xid)
 {
     // Load root if not cached
     if (!root_)
@@ -809,7 +809,7 @@ std::unique_ptr<RTreeNode> RTree::splitNode(RTreeNode* node, const RTreeEntry& n
     return new_sibling;
 }
 
-void RTree::adjustTree(RTreeNode* leaf, RTreeNode* new_sibling, Snapshot* snapshot)
+void RTree::adjustTree(RTreeNode* leaf, RTreeNode* new_sibling, uint64_t current_xid)
 {
     LOG_DEBUG(BTREE, "Adjusting tree after modification");
 
@@ -892,7 +892,7 @@ void RTree::adjustTree(RTreeNode* leaf, RTreeNode* new_sibling, Snapshot* snapsh
     }
 }
 
-bool RTree::forceReinsert(RTreeNode* node, const RTreeEntry& new_entry, Snapshot* snapshot)
+bool RTree::forceReinsert(RTreeNode* node, const RTreeEntry& new_entry, uint64_t current_xid)
 {
     // R*-tree forced reinsert optimization
     // Remove and reinsert ~30% of entries that are farthest from center
@@ -959,7 +959,7 @@ bool RTree::forceReinsert(RTreeNode* node, const RTreeEntry& new_entry, Snapshot
     return true;
 }
 
-void RTree::condenseTree(RTreeNode* leaf, size_t entry_index, Snapshot* snapshot)
+void RTree::condenseTree(RTreeNode* leaf, size_t entry_index, uint64_t current_xid)
 {
     // NOTE: This method is kept for API compatibility but is not used
     // The full condenseTree algorithm is implemented directly in remove()
@@ -1128,7 +1128,7 @@ Status RTree::allocatePage(RTreeNode* node)
     return Status::OK;
 }
 
-bool RTree::isEntryVisible(const RTreeEntry& entry, Snapshot* snapshot) const
+bool RTree::isEntryVisible(const RTreeEntry& entry, uint64_t current_xid) const
 {
     // NOTE: For Firebird MGA architecture, visibility filtering is best done at the
     // heap level when fetching tuples via HeapPage::findVisibleVersion().
