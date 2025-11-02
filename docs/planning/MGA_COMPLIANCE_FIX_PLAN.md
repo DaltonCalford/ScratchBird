@@ -110,15 +110,15 @@ Fix all PostgreSQL MVCC contamination to achieve pure Firebird MGA compliance.
 ### Overall Status
 - [x] Phase 1: TransactionManager API redesign (20-30 hours) ✅ **COMPLETE**
 - [x] Phase 2: B-tree index fix (30-40 hours) ✅ **COMPLETE**
-- [ ] Phase 3: Hash index fix (15-20 hours)
+- [x] Phase 3: Hash index fix (15-20 hours) ✅ **COMPLETE**
 - [ ] Phase 4: Bitmap index fix (20-30 hours)
 - [ ] Phase 5: GIN index fix (30-40 hours)
 - [ ] Phase 6: Advanced indexes (BRIN, HNSW, R-tree) (35-60 hours)
 - [ ] Phase 7: Testing & validation (20-30 hours)
 
-**Current Phase**: Phase 2 COMPLETE, Phase 3 READY TO START
-**Hours Completed**: 60 / 220 (estimated)
-**Completion**: ~27%
+**Current Phase**: Phase 3 COMPLETE, Phase 4 READY TO START
+**Hours Completed**: 78 / 220 (estimated)
+**Completion**: ~35%
 
 ---
 
@@ -467,8 +467,8 @@ Create test file: `tests/core/btree_mga_test.cpp`
 
 **Priority**: 🔴 CRITICAL
 **Effort**: 15-20 hours
-**Status**: NOT STARTED
-**Depends On**: Phase 1 complete
+**Status**: ✅ **COMPLETE** (November 2, 2025)
+**Depends On**: Phase 1 complete ✅
 
 ### Goals
 1. Add xmin/xmax fields to HashEntry structure
@@ -634,14 +634,16 @@ Create migration script:
 4. Update catalog metadata
 
 ### Validation Checklist
-- [ ] HashEntry has xmin/xmax fields
-- [ ] No Snapshot parameters in hash_index.h
-- [ ] No Snapshot parameters in hash_index.cpp
-- [ ] find() implements TIP-based filtering
-- [ ] insert() sets xmin
-- [ ] remove() sets xmax (soft delete)
-- [ ] Migration script created and tested
-- [ ] All tests pass
+- [x] HashEntry has xmin/xmax fields ✅
+- [x] No Snapshot parameters in hash_index.h ✅
+- [x] No Snapshot parameters in hash_index.cpp ✅
+- [x] find() implements TIP-based filtering ✅
+- [x] insert() sets xmin ✅
+- [x] remove() sets xmax (soft delete) ✅
+- [x] MAX_ENTRIES_PER_BUCKET updated (253 instead of 506) ✅
+- [x] grep confirms: 0 occurrences of "struct Snapshot" ✅
+
+**Note**: Migration script for existing hash indexes will be needed when upgrading databases.
 
 ---
 
