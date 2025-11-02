@@ -6,7 +6,7 @@
 #include "scratchbird/core/connection_context.h"
 #include "scratchbird/core/logger.h"
 #include "scratchbird/core/heap_page.h" // For ItemPointer, TupleHeader, HeapPageSpecial
-#include "scratchbird/core/transaction_manager.h" // For Snapshot, TransactionState, isSnapshotVisible
+#include "scratchbird/core/transaction_manager.h" // For TransactionState, isVersionVisible (Firebird MGA)
 #include <cstring>
 #include <algorithm>
 #include <thread>
@@ -335,10 +335,10 @@ namespace scratchbird
         }
 
         // Find all tuple IDs containing a specific key
-        // PHASE 1 TASK 1.1.3: Added Snapshot parameter (not yet used - Phase 1 Task 1.2 will implement filtering)
+        // Firebird MGA: Uses TIP-based visibility filtering (NOT snapshots)
         // PHASE 1.5: Return TID structs instead of uint64_t
         std::vector<TID> GinIndex::find(const void *key_data, size_t key_len,
-                                             Snapshot *snapshot,
+                                             uint64_t current_xid,
                                              ErrorContext *ctx)
         {
             std::vector<TID> results;
@@ -367,9 +367,9 @@ namespace scratchbird
                 }
                 else
                 {
-                    // PHASE 1 TASK 1.4: Filter TIDs from main posting list by heap tuple visibility
-                    // This ensures we only return TIDs for tuples that are visible to the snapshot
-                    legacy_results = filterTidsByVisibility(legacy_results, snapshot, ctx);
+                    // Firebird MGA: Filter TIDs from main posting list by heap tuple visibility using TIP
+                    // This ensures we only return TIDs for tuples that are visible to current_xid
+                    legacy_results = filterTidsByVisibility(legacy_results, current_xid, ctx);
 
                     // PHASE 1.5: Convert legacy uint64_t to TID structs
                     for (uint64_t legacy_tid : legacy_results)
@@ -1944,10 +1944,10 @@ namespace scratchbird
 
         // Multi-key operations (Phase 4)
         // Find TIDs matching ALL keys (AND operation)
-        // PHASE 1 TASK 1.1.3: Added Snapshot parameter (not yet used - Phase 1 Task 1.2 will implement filtering)
+        // Firebird MGA: Uses TIP-based visibility filtering (NOT snapshots)
         // PHASE 1.5: Return TID structs instead of uint64_t
         std::vector<TID> GinIndex::findAll(const std::vector<std::vector<uint8_t>> &keys,
-                                                Snapshot *snapshot,
+                                                uint64_t current_xid,
                                                 ErrorContext *ctx)
         {
             std::vector<TID> result;
@@ -1982,8 +1982,8 @@ namespace scratchbird
                     return result;
                 }
 
-                // PHASE 1 TASK 1.4: Filter TIDs by heap tuple visibility
-                tids = filterTidsByVisibility(tids, snapshot, ctx);
+                // Firebird MGA: Filter TIDs by heap tuple visibility using TIP
+                tids = filterTidsByVisibility(tids, current_xid, ctx);
 
                 // If any key has no visible TIDs, intersection is empty
                 if (tids.empty())
@@ -2007,10 +2007,10 @@ namespace scratchbird
         }
 
         // Find TIDs matching ANY key (OR operation)
-        // PHASE 1 TASK 1.1.3: Added Snapshot parameter (not yet used - Phase 1 Task 1.2 will implement filtering)
+        // Firebird MGA: Uses TIP-based visibility filtering (NOT snapshots)
         // PHASE 1.5: Return TID structs instead of uint64_t
         std::vector<TID> GinIndex::findAny(const std::vector<std::vector<uint8_t>> &keys,
-                                                Snapshot *snapshot,
+                                                uint64_t current_xid,
                                                 ErrorContext *ctx)
         {
             std::vector<TID> result;
@@ -2045,8 +2045,8 @@ namespace scratchbird
                     continue;
                 }
 
-                // PHASE 1 TASK 1.4: Filter TIDs by heap tuple visibility
-                tids = filterTidsByVisibility(tids, snapshot, ctx);
+                // Firebird MGA: Filter TIDs by heap tuple visibility using TIP
+                tids = filterTidsByVisibility(tids, current_xid, ctx);
 
                 // Skip empty TID lists
                 if (tids.empty())
@@ -2197,41 +2197,32 @@ namespace scratchbird
             return result;
         }
 
-        // ===== PHASE 1 TASK 1.4: MVCC Visibility Helpers =====
+        // ===== Firebird MGA: TIP-based Visibility Helpers =====
 
-        // Helper: Check if a transaction is visible to a snapshot
-        // Returns true if the transaction (xmin) is visible to the given snapshot
-        bool GinIndex::isTransactionVisible(uint64_t xmin, const Snapshot *snapshot, ErrorContext *ctx)
+        // Helper: Check if a transaction is visible to current transaction
+        // Returns true if the transaction (xmin) is visible to the reader (current_xid)
+        // Uses TIP (Transaction Inventory Pages), NOT snapshots
+        bool GinIndex::isTransactionVisible(uint64_t xmin, uint64_t current_xid, ErrorContext *ctx)
         {
-            // NULL snapshot means no filtering - all committed transactions visible
-            if (snapshot == nullptr)
+            // Own changes always visible (Firebird MGA Rule 3)
+            if (xmin == current_xid)
             {
-                // Fall back to READ COMMITTED semantics - check if transaction is committed
-                TransactionState state;
-                Status status = db_->transaction_manager()->getTransactionState(xmin, state, ctx);
-                return (status == Status::OK && state == TransactionState::COMMITTED);
+                return true;
             }
 
-            // Use snapshot visibility check from TransactionManager
-            // Cast from incomplete type to actual TransactionManager::Snapshot
-            return db_->transaction_manager()->isSnapshotVisible(xmin,
-                reinterpret_cast<const TransactionManager::Snapshot *>(snapshot));
+            // Use TIP-based visibility check from TransactionManager
+            return db_->transaction_manager()->isVersionVisible(xmin, current_xid);
         }
 
         // Helper: Filter TID list by heap tuple visibility
-        // For each TID, checks if the corresponding heap tuple is visible to the snapshot
+        // For each TID, checks if the corresponding heap tuple is visible to current transaction
+        // Uses TIP-based visibility (Firebird MGA), NOT snapshots
         // Returns a new vector containing only visible TIDs
         std::vector<uint64_t> GinIndex::filterTidsByVisibility(const std::vector<uint64_t> &tids,
-                                                                const Snapshot *snapshot,
+                                                                uint64_t current_xid,
                                                                 ErrorContext *ctx)
         {
             std::vector<uint64_t> visible_tids;
-
-            // If no snapshot provided, return all TIDs (no filtering)
-            if (snapshot == nullptr)
-            {
-                return tids;
-            }
 
             // Reserve space to avoid reallocations
             visible_tids.reserve(tids.size());
@@ -2292,20 +2283,24 @@ namespace scratchbird
                 // Get tuple header
                 auto *tuple_header = reinterpret_cast<struct TupleHeader *>(page_data + item_ptr->offset);
 
-                // Check visibility using snapshot
-                // Tuple is visible if:
-                // 1. xmin is visible (inserting transaction committed and visible to snapshot)
-                // 2. xmax is not visible (deleting transaction not yet visible, or no deletion)
+                // Firebird MGA: Check visibility using TIP-based visibility
+                // Own changes always visible (MGA Rule 3)
+                bool visible = (tuple_header->xmin == current_xid);
 
-                // Cast snapshot pointer to actual TransactionManager::Snapshot type
-                auto *txn_snapshot = reinterpret_cast<const TransactionManager::Snapshot *>(snapshot);
+                if (!visible)
+                {
+                    // Tuple is visible if:
+                    // 1. xmin is visible (inserting transaction committed and visible to current_xid)
+                    // 2. xmax is not visible (deleting transaction not yet visible, or no deletion)
+                    bool xmin_visible = txn_manager->isVersionVisible(tuple_header->xmin, current_xid);
+                    bool xmax_visible = (tuple_header->xmax != 0) &&
+                                        txn_manager->isVersionVisible(tuple_header->xmax, current_xid);
 
-                bool xmin_visible = txn_manager->isSnapshotVisible(tuple_header->xmin, txn_snapshot);
-                bool xmax_visible = (tuple_header->xmax != 0) &&
-                                    txn_manager->isSnapshotVisible(tuple_header->xmax, txn_snapshot);
+                    visible = (xmin_visible && !xmax_visible);
+                }
 
                 // Tuple is visible if inserted by visible transaction and not deleted by visible transaction
-                if (xmin_visible && !xmax_visible)
+                if (visible)
                 {
                     visible_tids.push_back(tid);
                 }

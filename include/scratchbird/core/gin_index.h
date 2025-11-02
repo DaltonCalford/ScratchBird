@@ -18,10 +18,8 @@ namespace scratchbird
         // Forward declarations
         class Database;
         class BufferPool;
-        class TransactionManager; // For MVCC visibility checks
+        class TransactionManager; // For TIP-based visibility checks (Firebird MGA)
         struct ErrorContext;
-        // Note: Snapshot is used as an incomplete type in method signatures
-        // The actual type is TransactionManager::Snapshot, defined in transaction_manager.h
 
         // ===== GIN Index Constants =====
 
@@ -244,24 +242,24 @@ namespace scratchbird
                           ErrorContext *ctx = nullptr);
 
             // Find all tuple IDs containing a specific key
-            // PHASE 1 TASK 1.1.3: Added Snapshot parameter for MVCC visibility filtering
-            // PHASE 1.5 TASK 1.5.2f: Migrated to TID struct API
+            // Firebird MGA: Uses TIP-based visibility filtering (NOT snapshots)
+            // Per MGA_RULES.md Rule 11: Use TransactionId, NOT Snapshot*
             std::vector<TID> find(const void *key_data, size_t key_len,
-                                  struct Snapshot *snapshot,
+                                  uint64_t current_xid,
                                   ErrorContext *ctx = nullptr);
 
             // Find tuple IDs matching ALL keys (AND operation)
-            // PHASE 1 TASK 1.1.3: Added Snapshot parameter for MVCC visibility filtering
-            // PHASE 1.5 TASK 1.5.2f: Migrated to TID struct API
+            // Firebird MGA: Uses TIP-based visibility filtering (NOT snapshots)
+            // Per MGA_RULES.md Rule 11: Use TransactionId, NOT Snapshot*
             std::vector<TID> findAll(const std::vector<std::vector<uint8_t>> &keys,
-                                     struct Snapshot *snapshot,
+                                     uint64_t current_xid,
                                      ErrorContext *ctx = nullptr);
 
             // Find tuple IDs matching ANY key (OR operation)
-            // PHASE 1 TASK 1.1.3: Added Snapshot parameter for MVCC visibility filtering
-            // PHASE 1.5 TASK 1.5.2f: Migrated to TID struct API
+            // Firebird MGA: Uses TIP-based visibility filtering (NOT snapshots)
+            // Per MGA_RULES.md Rule 11: Use TransactionId, NOT Snapshot*
             std::vector<TID> findAny(const std::vector<std::vector<uint8_t>> &keys,
-                                     struct Snapshot *snapshot,
+                                     uint64_t current_xid,
                                      ErrorContext *ctx = nullptr);
 
             // Merge pending list into main index
@@ -592,18 +590,19 @@ namespace scratchbird
             static std::vector<uint64_t> unionTidLists(
                 const std::vector<std::vector<uint64_t>> &tid_lists);
 
-            // ===== PHASE 1 TASK 1.4: MVCC Visibility Helpers =====
+            // ===== Firebird MGA: TIP-based Visibility Helpers =====
 
-            // Helper: Check if a transaction is visible to a snapshot
-            // Similar to B-Tree visibility check helper
-            // Returns true if the transaction (xmin) is visible to the given snapshot
-            bool isTransactionVisible(uint64_t xmin, const struct Snapshot *snapshot, ErrorContext *ctx);
+            // Helper: Check if a transaction is visible to current transaction
+            // Uses TIP (Transaction Inventory Pages), NOT snapshots
+            // Returns true if the transaction (xmin) is visible to the reader (current_xid)
+            bool isTransactionVisible(uint64_t xmin, uint64_t current_xid, ErrorContext *ctx);
 
             // Helper: Filter TID list by heap tuple visibility
-            // For each TID, checks if the corresponding heap tuple is visible to the snapshot
+            // For each TID, checks if the corresponding heap tuple is visible to current transaction
+            // Uses TIP-based visibility (Firebird MGA), NOT snapshots
             // Returns a new vector containing only visible TIDs
             std::vector<uint64_t> filterTidsByVisibility(const std::vector<uint64_t> &tids,
-                                                          const struct Snapshot *snapshot,
+                                                          uint64_t current_xid,
                                                           ErrorContext *ctx);
 
             // ===== Phase 6 Helper Methods =====
