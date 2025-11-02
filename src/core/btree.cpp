@@ -9,7 +9,7 @@
 #include "scratchbird/core/page_manager.h"
 #include "scratchbird/core/lock_manager.h"
 #include "scratchbird/core/connection_context.h"
-#include "scratchbird/core/transaction_manager.h"  // Task 17 MGA Phase 3.3: For Snapshot and isSnapshotVisible
+#include "scratchbird/core/transaction_manager.h"  // Firebird MGA: For isVersionVisible (TIP-based visibility)
 #include "scratchbird/core/logger.h"
 
 namespace scratchbird::core
@@ -439,7 +439,7 @@ namespace scratchbird::core
     // PHASE 1.5 TASK 1.5.2a: Migrated to TID struct API
     // Task 17 MGA Phase 3.3: Added snapshot parameter for visibility filtering
     auto BTree::searchPage(const SBBTreePage *page, const std::vector<uint8_t> &key,
-                           struct Snapshot *snapshot,
+                           uint64_t current_xid,
                            std::vector<TID> *tids_out) const -> bool
     {
         const auto *page_data = reinterpret_cast<const uint8_t *>(page);
@@ -546,11 +546,11 @@ namespace scratchbird::core
             const uint8_t *node_key_data =
                 reinterpret_cast<const uint8_t *>(node) + sizeof(SBBTreeNode);
 
-            // Task 17 MGA Phase 3.3: Check visibility before returning TIDs
-            // Only return TIDs if entry is visible to snapshot
-            if (!isEntryVisible(node->btn_xmin, node->btn_xmax, snapshot))
+            // Firebird MGA: Check visibility before returning TIDs using TIP-based visibility
+            // Only return TIDs if entry is visible to the current transaction
+            if (!isEntryVisible(node->btn_xmin, node->btn_xmax, current_xid))
             {
-                return false; // Entry exists but not visible to this snapshot
+                return false; // Entry exists but not visible to this transaction
             }
 
             // PHASE 1.5: Convert stored uint64_t to TID struct
@@ -803,7 +803,7 @@ namespace scratchbird::core
     // PHASE 1 TASK 1.1.1: Added Snapshot parameter (not yet used - Phase 1 Task 1.2 will implement filtering)
     // PHASE 1.5 TASK 1.5.2a: Migrated to TID struct API
     auto BTree::search(const std::vector<uint8_t> &key,
-                       Snapshot *snapshot,
+                       uint64_t current_xid,
                        std::vector<TID> *tids_out,
                        ErrorContext *ctx) -> Status
     {
@@ -838,8 +838,8 @@ namespace scratchbird::core
 
         const auto *page = reinterpret_cast<const SBBTreePage *>(page_data_ptr);
 
-        // Task 17 MGA Phase 3.3: Pass snapshot to searchPage for visibility filtering
-        bool found = searchPage(page, key, snapshot, tids_out);
+        // Firebird MGA: Pass transaction ID to searchPage for TIP-based visibility filtering
+        bool found = searchPage(page, key, current_xid, tids_out);
 
         bp->unpinPage(leaf_page_num, false, ctx);
 
@@ -853,8 +853,8 @@ namespace scratchbird::core
             lock_mgr->releaseLock(proc_id, leaf_tag, LockMode::LOCK_SHARE, ctx);
         }
 
-        // Task 17 MGA Phase 3.3: Index-level visibility filtering now active
-        // Entries with btn_xmin/btn_xmax are filtered at index level using isEntryVisible()
+        // Firebird MGA: Index-level TIP-based visibility filtering active
+        // Entries with btn_xmin/btn_xmax are filtered at index level using isVersionVisible()
         // This provides 10-100x speedup for queries with many deleted tuples by avoiding
         // unnecessary heap page accesses.
 
@@ -1099,11 +1099,16 @@ namespace scratchbird::core
         return found ? Status::OK : Status::NOT_FOUND;
     }
 
-    // Task 17 MGA Phase 3.3: Check if index entry is visible to snapshot
-    bool BTree::isEntryVisible(uint64_t xmin, uint64_t xmax, struct Snapshot *snapshot) const
+    // Firebird MGA: Check if index entry is visible using TIP-based visibility
+    bool BTree::isEntryVisible(uint64_t xmin, uint64_t xmax, uint64_t reader_xid) const
     {
-        // If no snapshot provided, entry is always visible (used by VACUUM, etc.)
-        if (snapshot == nullptr)
+        // ===========================================================================================
+        // FIREBIRD MGA VISIBILITY - TIP-based, NOT snapshot-based
+        // Per MGA_RULES.md Rule 3 (lines 121-145)
+        // ===========================================================================================
+
+        // If no transaction specified, entry is always visible (used by VACUUM, etc.)
+        if (reader_xid == 0)
         {
             return true;
         }
@@ -1121,11 +1126,15 @@ namespace scratchbird::core
             return true;
         }
 
-        // Check if creating transaction (xmin) is visible to snapshot
-        // isSnapshotVisible returns true if the transaction committed before snapshot was taken
-        // Cast to TransactionManager::Snapshot* for API compatibility
-        auto *txn_snapshot = reinterpret_cast<const TransactionManager::Snapshot *>(snapshot);
-        if (!txn_mgr->isSnapshotVisible(xmin, txn_snapshot))
+        // Own changes always visible
+        if (xmin == reader_xid)
+        {
+            return true;
+        }
+
+        // Check if creating transaction (xmin) is visible using TIP-based visibility
+        // This is Firebird MGA: checks if xmin is COMMITTED and older than reader
+        if (!txn_mgr->isVersionVisible(xmin, reader_xid))
         {
             return false; // Entry not created or created by uncommitted/aborted transaction
         }
@@ -1133,14 +1142,14 @@ namespace scratchbird::core
         // Check if deleting transaction (xmax) affects visibility
         if (xmax != 0)
         {
-            // If deletion is visible in snapshot, entry was deleted before snapshot
-            if (txn_mgr->isSnapshotVisible(xmax, txn_snapshot))
+            // If deleting transaction is visible, the entry is deleted
+            if (txn_mgr->isVersionVisible(xmax, reader_xid))
             {
-                return false; // Deleted before our snapshot - not visible
+                return false; // Entry was deleted
             }
         }
 
-        return true; // Entry is visible to this snapshot
+        return true; // Entry is visible
     }
 
     // PHASE 1.5 TASK 1.5.2a: Migrated to TID struct API
