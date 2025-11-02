@@ -432,7 +432,8 @@ namespace scratchbird::core
                 case IsolationLevel::SNAPSHOT:
                 case IsolationLevel::SNAPSHOT_TABLE_STABILITY:
                 {
-                    // SNAPSHOT: Use snapshot-based visibility
+                    // Firebird MGA: SNAPSHOT isolation uses TIP-based visibility
+                    // Extract snapshot_xid from the snapshot structure
                     const TransactionManager::Snapshot *snapshot = conn_ctx->getSnapshot();
 
                     if (snapshot == nullptr)
@@ -454,13 +455,17 @@ namespace scratchbird::core
                         return true;
                     }
 
-                    // Check if creating transaction is visible in snapshot
-                    if (!tm->isSnapshotVisible(xmin, snapshot))
+                    // Firebird MGA: Use snapshot_xid with TIP-based visibility
+                    // The snapshot_xid represents the transaction ID when the snapshot was taken
+                    uint64_t snapshot_xid = snapshot->snapshot_xid;
+
+                    // Tuple is visible if created before snapshot and not deleted before snapshot
+                    if (!tm->isVersionVisible(xmin, snapshot_xid))
                     {
                         return false;
                     }
 
-                    // If deleted, check if deleting transaction is visible in snapshot
+                    // If deleted, check if deletion is visible in snapshot
                     if (xmax != 0)
                     {
                         // Special case: deleted by current transaction
@@ -469,8 +474,8 @@ namespace scratchbird::core
                             return false; // We deleted it - not visible
                         }
 
-                        // Check if deletion is visible in snapshot
-                        if (tm->isSnapshotVisible(xmax, snapshot))
+                        // Check if deletion is visible using TIP
+                        if (tm->isVersionVisible(xmax, snapshot_xid))
                         {
                             return false; // Deletion committed before snapshot - not visible
                         }
@@ -481,16 +486,17 @@ namespace scratchbird::core
 
                 case IsolationLevel::READ_COMMITTED_READ_CONSISTENCY:
                 {
-                    // READ COMMITTED READ CONSISTENCY: Statement-level snapshot
-                    // If statement snapshot exists, use it; otherwise fall back to READ COMMITTED
-                    const TransactionManager::Snapshot *stmt_snapshot =
-                        conn_ctx->getStatementSnapshot();
+                    // Firebird MGA: READ COMMITTED READ CONSISTENCY uses statement-level TIP visibility
+                    // Extract snapshot_xid from the statement snapshot structure
+                    const TransactionManager::Snapshot *stmt_snapshot = conn_ctx->getStatementSnapshot();
 
                     if (stmt_snapshot != nullptr)
                     {
-                        // Use statement snapshot (similar to SNAPSHOT isolation)
+                        // Use statement snapshot_xid with TIP-based visibility
+                        uint64_t stmt_snapshot_xid = stmt_snapshot->snapshot_xid;
+
                         // Check if creating transaction is visible in statement snapshot
-                        if (!tm->isSnapshotVisible(xmin, stmt_snapshot))
+                        if (!tm->isVersionVisible(xmin, stmt_snapshot_xid))
                         {
                             return false;
                         }
@@ -505,8 +511,8 @@ namespace scratchbird::core
                                 return false; // We deleted it - not visible
                             }
 
-                            // Check if deletion is visible in statement snapshot
-                            if (tm->isSnapshotVisible(xmax, stmt_snapshot))
+                            // Check if deletion is visible using TIP
+                            if (tm->isVersionVisible(xmax, stmt_snapshot_xid))
                             {
                                 return false; // Deletion committed before statement - not visible
                             }
