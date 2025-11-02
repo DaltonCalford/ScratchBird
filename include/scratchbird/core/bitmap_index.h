@@ -157,33 +157,33 @@ namespace scratchbird
                 ErrorContext *ctx = nullptr);
 
             // Find all tuple IDs matching a value
-            // PHASE 1 TASK 1.1.4: Added Snapshot parameter for MVCC visibility filtering
-            // PHASE 1.5 TASK 1.5.2c: Migrated to TID struct API
+            // Firebird MGA: Uses TIP-based visibility filtering (NOT snapshots)
+            // Per MGA_RULES.md Rule 11: Use TransactionId, NOT Snapshot*
             std::vector<TID> find(
                 const void *value_data,
                 size_t value_len,
-                struct Snapshot *snapshot,
+                uint64_t current_xid,
                 ErrorContext *ctx = nullptr);
 
             // Logical operations on bitmaps
-            // PHASE 1 TASK 1.1.4: Added Snapshot parameter for MVCC visibility filtering
-            // PHASE 1.5 TASK 1.5.2c: Migrated to TID struct API
+            // Firebird MGA: Uses TIP-based visibility filtering (NOT snapshots)
+            // Per MGA_RULES.md Rule 11: Use TransactionId, NOT Snapshot*
             std::vector<TID> findAnd(
                 const std::vector<const void *> &values,
                 const std::vector<size_t> &value_lens,
-                struct Snapshot *snapshot,
+                uint64_t current_xid,
                 ErrorContext *ctx = nullptr);
 
             std::vector<TID> findOr(
                 const std::vector<const void *> &values,
                 const std::vector<size_t> &value_lens,
-                struct Snapshot *snapshot,
+                uint64_t current_xid,
                 ErrorContext *ctx = nullptr);
 
             std::vector<TID> findNot(
                 const void *value_data,
                 size_t value_len,
-                struct Snapshot *snapshot,
+                uint64_t current_xid,
                 ErrorContext *ctx = nullptr);
 
             // Get statistics
@@ -201,13 +201,13 @@ namespace scratchbird
             // Get index UUID
             const UuidV7Bytes &getUuid() const { return index_uuid_; }
 
-            // PHASE 1 TASK 1.5: Visibility helper for post-filtering TIDs
-            // PHASE 1.5 TASK 1.5.2c: Migrated to TID struct API
-            // Note: Snapshot is used as an incomplete type in method signatures
-            // The actual type is TransactionManager::Snapshot, defined in transaction_manager.h
+            // Firebird MGA: Visibility helper for post-filtering TIDs using TIP lookups
             // This helper filters a list of TIDs by checking heap tuple visibility
+            // Note: Bitmap indexes still use post-filtering (20-40% overhead) because
+            //       they don't store xmin/xmax in the bitmap entries themselves
+            // Per MGA_RULES.md Rule 11: Use TransactionId, NOT Snapshot*
             std::vector<TID> filterTidsByVisibility(const std::vector<TID> &tids,
-                                                     const struct Snapshot *snapshot,
+                                                     uint64_t current_xid,
                                                      ErrorContext *ctx);
 
             // PHASE 2 TASK 2.5: IndexGCInterface implementation

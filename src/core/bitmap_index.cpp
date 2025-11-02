@@ -7,7 +7,7 @@
 #include "scratchbird/core/ondisk.h"
 #include "scratchbird/core/logger.h"
 #include "scratchbird/core/heap_page.h"           // For ItemPointer, TupleHeader, HeapPageSpecial
-#include "scratchbird/core/transaction_manager.h" // For Snapshot, TransactionState, isSnapshotVisible
+#include "scratchbird/core/transaction_manager.h" // For TransactionState, isVersionVisible (TIP-based visibility)
 #include <cstring>
 #include <algorithm>
 #include <functional>
@@ -414,16 +414,16 @@ namespace scratchbird
         // This is a post-filter that checks heap tuple visibility for each TID returned by bitmap operations
         // NOTE: This is less efficient than B-Tree/Hash visibility (20-40% overhead) because:
         //       - Bitmap returns TIDs directly, not pointers to heap tuples
-        //       - We must access heap pages separately to check visibility
-        //       - Full MVCC redesign would require storing xmin/xmax in bitmap entries (deferred to Beta)
+        //       - We must access heap pages separately to check visibility via TIP (Firebird MGA)
+        //       - Full optimization would require storing xmin/xmax in bitmap entries (future enhancement)
         std::vector<TID> BitmapIndex::filterTidsByVisibility(const std::vector<TID> &tids,
-                                                              const Snapshot *snapshot,
+                                                              uint64_t current_xid,
                                                               ErrorContext *ctx)
         {
             std::vector<TID> visible_tids;
 
-            // If no snapshot provided, return all TIDs (no filtering)
-            if (snapshot == nullptr)
+            // If no transaction specified, return all TIDs (no filtering)
+            if (current_xid == 0)
             {
                 return tids;
             }
@@ -470,16 +470,29 @@ namespace scratchbird
                 // Read tuple header
                 auto *tuple_header = reinterpret_cast<TupleHeader *>(page_data + item.offset);
 
-                // Check visibility using snapshot
-                // Cast snapshot pointer to actual TransactionManager::Snapshot type
-                auto *txn_snapshot = reinterpret_cast<const TransactionManager::Snapshot *>(snapshot);
+                // ===========================================================================================
+                // FIREBIRD MGA VISIBILITY - TIP-based, NOT snapshot-based
+                // Per MGA_RULES.md Rule 3 (lines 121-145)
+                // ===========================================================================================
+                // Note: Bitmap indexes still require heap access for visibility (20-40% overhead)
+                //       because bitmap entries don't store xmin/xmax. This is architecturally
+                //       correct but less efficient than B-tree/Hash indexes.
 
-                bool xmin_visible = txn_manager->isSnapshotVisible(tuple_header->xmin, txn_snapshot);
-                bool xmax_visible = (tuple_header->xmax != 0) &&
-                                    txn_manager->isSnapshotVisible(tuple_header->xmax, txn_snapshot);
+                // Own changes always visible
+                bool visible = (tuple_header->xmin == current_xid);
 
-                // Tuple is visible if inserted by visible transaction and not deleted by visible transaction
-                if (xmin_visible && !xmax_visible)
+                if (!visible)
+                {
+                    // Check if creating transaction is visible using TIP
+                    bool xmin_visible = txn_manager->isVersionVisible(tuple_header->xmin, current_xid);
+                    bool xmax_visible = (tuple_header->xmax != 0) &&
+                                        txn_manager->isVersionVisible(tuple_header->xmax, current_xid);
+
+                    // Tuple is visible if inserted by visible transaction and not deleted by visible transaction
+                    visible = (xmin_visible && !xmax_visible);
+                }
+
+                if (visible)
                 {
                     visible_tids.push_back(tid);
                 }
@@ -493,7 +506,7 @@ namespace scratchbird
         std::vector<TID> BitmapIndex::find(
             const void *value_data,
             size_t value_len,
-            Snapshot *snapshot,
+            uint64_t current_xid,
             ErrorContext *ctx)
         {
             std::vector<TID> results;
@@ -523,8 +536,8 @@ namespace scratchbird
                 results.push_back(tid);
             }
 
-            // PHASE 1 TASK 1.5: Post-filter results by heap tuple visibility
-            results = filterTidsByVisibility(results, snapshot, ctx);
+            // Firebird MGA: Post-filter results by heap tuple visibility using TIP lookups
+            results = filterTidsByVisibility(results, current_xid, ctx);
 
             return results;
         }
@@ -532,7 +545,7 @@ namespace scratchbird
         std::vector<TID> BitmapIndex::findAnd(
             const std::vector<const void *> &values,
             const std::vector<size_t> &value_lens,
-            Snapshot *snapshot,
+            uint64_t current_xid,
             ErrorContext *ctx)
         {
             std::vector<TID> results;
@@ -575,8 +588,8 @@ namespace scratchbird
                 results.push_back(tid);
             }
 
-            // PHASE 1 TASK 1.5: Post-filter results by heap tuple visibility
-            results = filterTidsByVisibility(results, snapshot, ctx);
+            // Firebird MGA: Post-filter results by heap tuple visibility using TIP lookups
+            results = filterTidsByVisibility(results, current_xid, ctx);
 
             return results;
         }
@@ -584,7 +597,7 @@ namespace scratchbird
         std::vector<TID> BitmapIndex::findOr(
             const std::vector<const void *> &values,
             const std::vector<size_t> &value_lens,
-            Snapshot *snapshot,
+            uint64_t current_xid,
             ErrorContext *ctx)
         {
             std::vector<TID> results;
@@ -630,8 +643,8 @@ namespace scratchbird
                 results.push_back(tid);
             }
 
-            // PHASE 1 TASK 1.5: Post-filter results by heap tuple visibility
-            results = filterTidsByVisibility(results, snapshot, ctx);
+            // Firebird MGA: Post-filter results by heap tuple visibility using TIP lookups
+            results = filterTidsByVisibility(results, current_xid, ctx);
 
             return results;
         }
