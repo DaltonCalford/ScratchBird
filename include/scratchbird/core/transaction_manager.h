@@ -91,7 +91,7 @@ namespace scratchbird::core
     //
     // Examples of correct lock ordering:
     //   updateTransactionMarkers():  mutex_ → ProcArray::array_lock (rdlock) ✓ CORRECT
-    //   getSnapshot():               mutex_ → ProcArray::array_lock (rdlock) ✓ CORRECT
+    //   isVersionVisible():          mutex_ → (no ProcArray lock needed) ✓ CORRECT
     //   beginTransaction():          mutex_ → ProcArray::array_lock (wrlock via setTransactionId) ✓ CORRECT
     //
     // ===========================================================================================
@@ -221,45 +221,26 @@ namespace scratchbird::core
         auto getBackendXid(uint32_t proc_id) const -> uint64_t;
 
         // ===========================================================================================
-        // SNAPSHOT ISOLATION SUPPORT
+        // FIREBIRD MGA VISIBILITY API
         // ===========================================================================================
 
-        // Snapshot isolation support
-        struct Snapshot
-        {
-            uint64_t xmin;                     // Oldest active XID
-            uint64_t xmax;                     // Next XID to be assigned
-            std::vector<uint64_t> active_xids; // Active XIDs at snapshot time
-
-            // MVCC cross-page pin tracking
-            // When following version chains across pages, we pin pages for the snapshot duration
-            std::vector<uint32_t> pinned_pages; // Pages pinned for this snapshot
-            BufferPool *buffer_pool =
-                nullptr; // BufferPool to unpin pages (set when first pin occurs)
-
-            // HIGH-4 FIX: Protect pinned_pages vector from concurrent access
-            // Multiple threads can traverse version chains with the same snapshot, causing
-            // concurrent push_back() calls to pinned_pages. This mutex prevents vector corruption.
-            mutable std::mutex pinned_pages_mutex_;
-
-            // Cleanup method - unpins all pages when snapshot released
-            // LOCKING: Thread-safe. Uses BufferPool API which handles locking internally.
-            void cleanup();
-
-            ~Snapshot();
-        };
-
-        // Get current snapshot (for MVCC)
-        // LOCKING: Thread-safe. Acquires mutex_ internally, then acquires ProcArray read lock.
-        //          Lock order: mutex_ → ProcArray::array_lock (rwlock read).
-        auto getSnapshot(Snapshot &snapshot_out, ErrorContext *ctx = nullptr) -> Status;
-
-        // Check if a transaction is visible using snapshot isolation (SNAPSHOT semantics)
-        // Returns true if xid is visible according to the snapshot
-        // CRITICAL FIX (CRITICAL-2 side-effect): Removed const because this calls getTransactionState()
-        // which modifies the cache. This is part of the cache consistency fix.
-        // LOCKING: Thread-safe. Acquires mutex_ internally via isXidInRange() and getTransactionState().
-        auto isSnapshotVisible(uint64_t xid, const Snapshot *snapshot) -> bool;
+        /**
+         * Check if a tuple version is visible to a transaction (Firebird MGA).
+         * Uses TIP (Transaction Inventory Page) lookup, NOT snapshots.
+         *
+         * Per MGA_RULES.md Rule 3:
+         * - Own changes always visible (version_xid == reader_xid)
+         * - Otherwise: version must be COMMITTED and older than reader
+         *
+         * This is the CORE of Firebird MGA visibility semantics.
+         *
+         * @param version_xid Transaction ID that created the version
+         * @param reader_xid Transaction ID of the reader
+         * @return true if version is visible to reader
+         *
+         * LOCKING: Thread-safe. Acquires mutex_ internally via getTransactionState().
+         */
+        auto isVersionVisible(uint64_t version_xid, uint64_t reader_xid) -> bool;
 
         // ===========================================================================================
         // STATISTICS AND CONFIGURATION
