@@ -19,9 +19,8 @@ namespace scratchbird
         class Database;
         class BufferPool;
         class PageManager;
-        class TransactionManager;
+        class TransactionManager; // For TIP-based visibility checks (Firebird MGA)
         struct ErrorContext;
-        struct Snapshot;
 
         /**
          * BRIN (Block Range Index) - Space-efficient index for time-series data
@@ -55,11 +54,11 @@ namespace scratchbird
          *         ↓ Skip Range 2 (min=5001 > 300)
          * ```
          *
-         * ## MGA Compliance (Phase 4A.1 - October 2025)
+         * ## MGA Compliance (Phase 6 - November 2025)
          *
          * - **xmin/xmax tracking**: Each range summary has xmin/xmax
-         * - **Snapshot isolation**: Snapshot parameter in scan API
-         * - **Visibility filtering**: Via heap layer (Firebird MGA)
+         * - **TIP-based visibility**: TransactionId parameter in scan API (NOT snapshots)
+         * - **Visibility filtering**: Via TIP lookups (Firebird MGA)
          * - **Garbage collection**: removeDeadEntries() for dead ranges
          * - **Stable TIDs**: Ranges reference stable block numbers
          *
@@ -221,13 +220,12 @@ namespace scratchbird
             /**
              * Scan ranges and return block numbers that might contain matching values
              *
-             * Phase 4A.1.3: Added Snapshot parameter for MVCC visibility filtering.
-             * For Firebird MGA: Snapshot is used to filter returned block numbers
-             * via visibility checks on range summaries (xmin/xmax).
+             * Firebird MGA: Uses TIP-based visibility filtering (NOT snapshots)
+             * Returns block numbers filtered by TIP visibility checks on range summaries.
              *
              * @param min_value Minimum value (nullptr for -infinity)
              * @param max_value Maximum value (nullptr for +infinity)
-             * @param snapshot MVCC snapshot for visibility (nullptr = return all)
+             * @param current_xid Current transaction ID for TIP-based visibility
              * @param block_numbers_out Output: block numbers to scan
              * @param ctx Error context
              * @return Status OK if successful
@@ -235,10 +233,12 @@ namespace scratchbird
              * Example:
              *   WHERE value BETWEEN 100 AND 200
              *   → Returns blocks from ranges where [min,max] overlaps [100,200]
+             *
+             * Per MGA_RULES.md Rule 11: Use TransactionId, NOT Snapshot*
              */
             Status scan(const std::vector<uint8_t> *min_value,
                         const std::vector<uint8_t> *max_value,
-                        struct Snapshot *snapshot,
+                        uint64_t current_xid,
                         std::vector<uint32_t> *block_numbers_out,
                         ErrorContext *ctx = nullptr);
 
@@ -360,11 +360,11 @@ namespace scratchbird
                                const uint8_t *v2, uint16_t v2_len) const;
 
             /**
-             * Check if range summary is visible to snapshot
-             * Phase 4A.1.3: MGA visibility checking
+             * Check if range summary is visible to current transaction
+             * Firebird MGA: Uses TIP-based visibility checking (NOT snapshots)
              */
             bool is_range_visible(const SBBrinRange *range,
-                                  struct Snapshot *snapshot,
+                                  uint64_t current_xid,
                                   ErrorContext *ctx) const;
 
             /**
