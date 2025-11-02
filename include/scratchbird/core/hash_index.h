@@ -54,15 +54,18 @@ namespace scratchbird
 
         static_assert(sizeof(SBHashDirectoryPage) == 8192, "Directory page must be exactly 8KB");
 
-        // Hash Entry - Stores hash and tuple ID
+        // Hash Entry - Stores hash, tuple ID, and transaction tracking
+        // Firebird MGA: Added xmin/xmax for TIP-based visibility (NOT snapshots)
         struct HashEntry
         {
             uint64_t he_key_hash; // Full 64-bit hash of the key
             uint64_t he_tuple_id; // TupleId (page_id << 32 | item_id)
                                   // Special value: 0 means deleted entry
+            uint64_t he_xmin;     // Transaction that created this entry
+            uint64_t he_xmax;     // Transaction that deleted this entry (0 if active)
         } __attribute__((packed));
 
-        static_assert(sizeof(HashEntry) == 16, "HashEntry must be 16 bytes");
+        static_assert(sizeof(HashEntry) == 32, "HashEntry must be 32 bytes");
 
         // Bucket Page - Stores hash entries
         struct SBHashBucketPage
@@ -73,13 +76,13 @@ namespace scratchbird
             uint32_t hbp_deleted_count;              // Number of deleted entries (4 bytes)
             uint64_t hbp_overflow_page;              // Next overflow page (0 if none) (8 bytes)
             uint8_t hbp_reserved[16];                // Reserved for alignment (16 bytes)
-            HashEntry hbp_entries[(8192 - 96) / 16]; // Hash entries (506 entries)
+            HashEntry hbp_entries[(8192 - 96) / 32]; // Hash entries (253 entries with xmin/xmax)
         } __attribute__((packed));
 
         static_assert(sizeof(SBHashBucketPage) == 8192, "Bucket page must be exactly 8KB");
 
-        // Maximum entries per bucket page
-        constexpr uint16_t MAX_ENTRIES_PER_BUCKET = (8192 - 96) / 16;
+        // Maximum entries per bucket page (reduced from 506 to 253 due to xmin/xmax fields)
+        constexpr uint16_t MAX_ENTRIES_PER_BUCKET = (8192 - 96) / 32;
 
         // ===== Hash Index Class =====
 
@@ -106,24 +109,24 @@ namespace scratchbird
             // Insert a key-value pair
             // key_data: pointer to key data
             // key_len: length of key in bytes
-            // PHASE 1.5 TASK 1.5.2b: Migrated to TID struct API
+            // xid: Transaction ID that is creating this entry (for he_xmin)
             Status insert(const void *key_data, size_t key_len, const TID &tid,
-                          ErrorContext *ctx = nullptr);
+                          uint64_t xid, ErrorContext *ctx = nullptr);
 
             // Find all tuple IDs for a given key
-            // PHASE 1 TASK 1.1.2: Added Snapshot parameter for MVCC visibility filtering
+            // Firebird MGA: Uses TIP-based visibility filtering (NOT snapshots)
             // Returns a vector of TIDs (may be empty if key not found)
-            // Pass nullptr for snapshot to return ALL matching TIDs (used by VACUUM)
-            // PHASE 1.5 TASK 1.5.2b: Migrated to TID struct API
+            // Pass 0 for current_xid to return ALL matching TIDs (used by VACUUM)
+            // Per MGA_RULES.md Rule 11: Use TransactionId, NOT Snapshot*
             std::vector<TID> find(const void *key_data, size_t key_len,
-                                  struct Snapshot *snapshot,
+                                  uint64_t current_xid,
                                   ErrorContext *ctx = nullptr);
 
             // Remove a specific entry
             // Only removes the entry matching both key and tid
-            // PHASE 1.5 TASK 1.5.2b: Migrated to TID struct API
+            // xid: Transaction ID that is deleting this entry (for he_xmax soft delete)
             Status remove(const void *key_data, size_t key_len, const TID &tid,
-                          ErrorContext *ctx = nullptr);
+                          uint64_t xid, ErrorContext *ctx = nullptr);
 
             // Vacuum the index - remove deleted entries and consolidate pages
             Status vacuum(ErrorContext *ctx = nullptr);

@@ -315,9 +315,9 @@ namespace scratchbird
         }
 
         // Insert operation
-        // PHASE 1.5 TASK 1.5.2b: Migrated to TID struct API
+        // Firebird MGA: Sets xmin to creating transaction
         Status HashIndex::insert(const void *key_data, size_t key_len, const TID &tid,
-                                 ErrorContext *ctx)
+                                 uint64_t xid, ErrorContext *ctx)
         {
             // PHASE 1.5: Convert TID to legacy format for storage
             uint64_t legacy_tid = convertTIDtoLegacy(tid);
@@ -362,9 +362,12 @@ namespace scratchbird
                 if (bucket->hbp_entry_count < MAX_ENTRIES_PER_BUCKET)
                 {
                     // Add entry (storing legacy format)
+                    // Firebird MGA: Set xmin to creating transaction, xmax to 0 (not deleted)
                     HashEntry &entry = bucket->hbp_entries[bucket->hbp_entry_count];
                     entry.he_key_hash = hash;
                     entry.he_tuple_id = legacy_tid;
+                    entry.he_xmin = xid;  // Transaction that created this entry
+                    entry.he_xmax = 0;    // Not deleted
                     bucket->hbp_entry_count++;
 
                     buffer_pool_->unpinPage(current_page, true, ctx);
@@ -404,7 +407,7 @@ namespace scratchbird
                     }
 
                     // Retry insert after split
-                    return insert(key_data, key_len, tid, ctx);
+                    return insert(key_data, key_len, tid, xid, ctx);
                 }
                 else
                 {
@@ -662,10 +665,10 @@ namespace scratchbird
         }
 
         // Find operation
-        // PHASE 1 TASK 1.1.2: Added Snapshot parameter (not yet used - Phase 1 Task 1.2 will implement filtering)
-        // PHASE 1.5 TASK 1.5.2b: Migrated to TID struct API
+        // Firebird MGA: Uses TIP-based visibility filtering (NOT snapshots)
+        // Per MGA_RULES.md Rule 11: Uses TransactionId for visibility checks
         std::vector<TID> HashIndex::find(const void *key_data, size_t key_len,
-                                         Snapshot *snapshot,
+                                         uint64_t current_xid,
                                          ErrorContext *ctx)
         {
             std::vector<TID> results;
@@ -684,6 +687,9 @@ namespace scratchbird
             {
                 return results;
             }
+
+            // Get transaction manager for TIP-based visibility checks
+            TransactionManager *txn_mgr = db_->transaction_manager();
 
             // Scan bucket and overflow chain
             uint32_t current_page = bucket_page;
@@ -706,9 +712,35 @@ namespace scratchbird
                     // Check if hash matches and entry is not deleted
                     if (entry.he_key_hash == hash && entry.he_tuple_id != 0)
                     {
-                        // PHASE 1.5: Convert stored uint64_t to TID struct
-                        TID tid = convertLegacyTID(entry.he_tuple_id);
-                        results.push_back(tid);
+                        // Firebird MGA: Check visibility using TIP-based visibility (NOT snapshots)
+                        // If current_xid is 0, return all entries (used by VACUUM)
+                        bool visible = (current_xid == 0);
+
+                        if (!visible && txn_mgr != nullptr)
+                        {
+                            // Own changes always visible
+                            if (entry.he_xmin == current_xid)
+                            {
+                                visible = true;
+                            }
+                            // Check if creating transaction is visible
+                            else if (txn_mgr->isVersionVisible(entry.he_xmin, current_xid))
+                            {
+                                // Entry is visible if not deleted OR deletion not yet visible
+                                if (entry.he_xmax == 0 ||
+                                    !txn_mgr->isVersionVisible(entry.he_xmax, current_xid))
+                                {
+                                    visible = true;
+                                }
+                            }
+                        }
+
+                        if (visible)
+                        {
+                            // Convert stored uint64_t to TID struct
+                            TID tid = convertLegacyTID(entry.he_tuple_id);
+                            results.push_back(tid);
+                        }
                     }
                 }
 
@@ -717,17 +749,13 @@ namespace scratchbird
                 current_page = next_page;
             }
 
-            // MVCC filtering: For hash indexes in Firebird MGA, visibility filtering
-            // is done at the storage layer when fetching tuples
-            (void)snapshot;
-
             return results;
         }
 
         // Remove operation
-        // PHASE 1.5 TASK 1.5.2b: Migrated to TID struct API
+        // Firebird MGA: Uses soft delete (set xmax) instead of physical removal
         Status HashIndex::remove(const void *key_data, size_t key_len, const TID &tid,
-                                 ErrorContext *ctx)
+                                 uint64_t xid, ErrorContext *ctx)
         {
             // PHASE 1.5: Convert TID to legacy format for comparison
             uint64_t legacy_tid = convertTIDtoLegacy(tid);
@@ -776,8 +804,10 @@ namespace scratchbird
 
                     if (entry.he_key_hash == hash && entry.he_tuple_id == legacy_tid)
                     {
-                        // Mark as deleted
-                        entry.he_tuple_id = 0;
+                        // Firebird MGA: Soft delete - set xmax instead of physical removal
+                        // This allows transactions to still see the entry until their snapshot
+                        // Do NOT set he_tuple_id = 0 (that was PostgreSQL MVCC pattern)
+                        entry.he_xmax = xid;  // Mark as deleted by this transaction
                         bucket->hbp_deleted_count++;
                         found = true;
 
