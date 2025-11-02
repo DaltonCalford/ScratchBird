@@ -175,12 +175,11 @@ namespace scratchbird
                           uint64_t xid,  // Transaction ID for btn_xmin
                           ErrorContext *ctx = nullptr);
 
-            // PHASE 1 TASK 1.1.1: Added Snapshot parameter for MVCC visibility filtering
-            // For Firebird MGA: Snapshot is used to filter returned TIDs via heap visibility checks
-            // Pass nullptr to return ALL matching TIDs (used by VACUUM/internal operations)
-            // PHASE 1.5 TASK 1.5.2a: Migrated to TID struct API
+            // Firebird MGA: Uses TIP-based visibility filtering (NOT snapshots)
+            // Pass 0 as current_xid to return ALL matching TIDs (used by VACUUM/internal operations)
+            // Per MGA_RULES.md Rule 11: Use TransactionId, NOT Snapshot*
             Status search(const std::vector<uint8_t> &key,
-                          struct Snapshot *snapshot,
+                          uint64_t current_xid,  // Transaction ID for visibility checks
                           std::vector<TID> *tids_out,
                           ErrorContext *ctx = nullptr);
 
@@ -210,11 +209,12 @@ namespace scratchbird
                               ErrorContext *ctx = nullptr);
 
             // Range scan operations
-            // PHASE 1 TASK 1.1.1: Added Snapshot parameter for MVCC visibility filtering
+            // Firebird MGA: Uses TIP-based visibility filtering (NOT snapshots)
+            // Per MGA_RULES.md Rule 11: Use TransactionId, NOT Snapshot*
             std::unique_ptr<BTreeIterator>
             rangeScan(const std::vector<uint8_t> *start_key, // nullptr for beginning
                       const std::vector<uint8_t> *end_key,   // nullptr for end
-                      struct Snapshot *snapshot,              // MVCC snapshot for visibility
+                      uint64_t current_xid,                  // Transaction ID for visibility
                       bool start_inclusive = true, bool end_inclusive = false,
                       ErrorContext *ctx = nullptr);
 
@@ -284,10 +284,10 @@ namespace scratchbird
                                   bool write_lock, ErrorContext *ctx);
 
             // Searches for a key within a single B-Tree page using binary search.
-            // PHASE 1.5 TASK 1.5.2a: Migrated to TID struct API
-            // Task 17 MGA Phase 3.3: Added snapshot parameter for visibility filtering
+            // Firebird MGA: Uses TIP-based visibility filtering
+            // Per MGA_RULES.md Rule 11: Use TransactionId, NOT Snapshot*
             bool searchPage(const SBBTreePage *page, const std::vector<uint8_t> &key,
-                            struct Snapshot *snapshot,
+                            uint64_t current_xid,
                             std::vector<TID> *tids_out) const;
 
             // Page split operations
@@ -304,16 +304,20 @@ namespace scratchbird
                                    const std::vector<uint8_t> &separator_key,
                                    uint64_t right_page_num, ErrorContext *ctx);
 
-            // Task 17 MGA Phase 3.3: Visibility checking for index entries
+            // Firebird MGA: TIP-based visibility checking for index entries
             /**
-             * Check if index entry is visible to snapshot
+             * Check if index entry is visible using Firebird MGA visibility rules
+             *
+             * Per MGA_RULES.md Rule 3:
+             * - Entry created by xmin is visible if: xmin == reader_xid OR (xmin is COMMITTED and xmin < reader_xid)
+             * - Entry is deleted if: xmax != 0 AND xmax is visible
              *
              * @param xmin Transaction that created entry
              * @param xmax Transaction that deleted entry (0 if active)
-             * @param snapshot Snapshot for visibility check
+             * @param reader_xid Transaction ID checking visibility
              * @return true if visible, false otherwise
              */
-            bool isEntryVisible(uint64_t xmin, uint64_t xmax, struct Snapshot *snapshot) const;
+            bool isEntryVisible(uint64_t xmin, uint64_t xmax, uint64_t reader_xid) const;
 
             // Allow iterator to access internal members
             friend class BTreeIterator;
@@ -332,10 +336,11 @@ namespace scratchbird
         class BTreeIterator
         {
         public:
-            // PHASE 1 TASK 1.1.1: Added Snapshot parameter for MVCC visibility filtering
+            // Firebird MGA: Uses TIP-based visibility filtering (NOT snapshots)
+            // Per MGA_RULES.md Rule 11: Use TransactionId, NOT Snapshot*
             BTreeIterator(BTree *btree, const std::vector<uint8_t> *start_key,
                           const std::vector<uint8_t> *end_key,
-                          struct Snapshot *snapshot,
+                          uint64_t current_xid,
                           bool start_inclusive,
                           bool end_inclusive);
             ~BTreeIterator();
@@ -357,8 +362,9 @@ namespace scratchbird
             BTree *btree_;
             Database *db_;
 
-            // PHASE 1 TASK 1.1.1: MVCC snapshot for visibility filtering
-            struct Snapshot *snapshot_; // Can be nullptr to return all tuples
+            // Firebird MGA: Transaction ID for TIP-based visibility filtering
+            // Pass 0 to return all tuples (used by VACUUM/internal operations)
+            uint64_t current_xid_;
 
             // Range bounds
             std::vector<uint8_t> start_key_;
