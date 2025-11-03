@@ -1,458 +1,342 @@
 # ScratchBird Project Context
 
-**Last Updated**: 2025-10-30 (Phase 3 Task 14.1 Complete - Full-Text Search Core Types)
-**Version**: Alpha 1.4.0
-**Status**: Educational/Development (**Phase 3 Started - Text Search Types** 🎉)
+**Last Updated**: November 3, 2025
+**Version**: Alpha (Engine Phase 1 - In Progress)
+**Status**: Educational/Development - 60% Complete
 
 > **PURPOSE**: This file provides essential context for AI assistants working on ScratchBird.
 > Read this file at session start and after every context compaction.
 > **CRITICAL**: Always check /src/sblr/ and /src/parser/ directories - they contain core functionality!
+> **MANDATORY**: Read `/MGA_RULES.md` before ANY transaction or index work.
 
 ---
 
-## 1. Project Architecture & Design Goals
+## 1. Current Implementation Status (What's Actually Complete)
 
-### **CRITICAL**: 3-Layer Embedded Architecture
+### ✅ Core Infrastructure (95% Complete)
 
-ScratchBird is an **embedded database engine** designed as a library for other projects, NOT a standalone database server.
+**Storage Engine** (100%):
+- Buffer pool with LRU page caching
+- Heap page management with back-versioning
+- TOAST (The Oversized-Attribute Storage Technique) for large objects
+- Tablespace system with GPID addressing (64-bit: 16-bit tablespace + 48-bit page)
+- Cross-page UPDATE support with stable TIDs
+
+**Transaction Management** (100%):
+- **Firebird MGA** (Multi-Generational Architecture) - **TOP PRIORITY** ✅
+- TIP-based visibility (Transaction Inventory Pages)
+- 4 isolation levels: READ UNCOMMITTED, READ COMMITTED, REPEATABLE READ, SERIALIZABLE
+- In-place updates with back-versioning
+- Stable TIDs (indexes never updated unless indexed column changes)
+- Garbage collection and sweep
+- **Zero PostgreSQL MVCC contamination** - mandatory compliance
+
+**Indexes** (4/12 types, 33%):
+- ✅ **B-Tree**: Production-quality, prefix compression, TIP-based visibility (~33K lines)
+- ✅ **Hash**: Extendible hashing, TIP-based visibility (1,464 lines)
+- ✅ **Bitmap**: Roaring compression, TIP post-filtering (1,379 lines)
+- ✅ **R-Tree**: Spatial indexing, full TIP integration
+- ⚠️ **HNSW**: Stub (510 lines) - vector search
+- ⚠️ **BRIN**: Stub (404 lines) - block range indexes
+- ⚠️ **GIN**: Partial implementation - inverted indexes
+- ❌ **GiST, SP-GiST, Full-Text, Columnstore, LSM-Tree**: Not implemented
+
+**Data Types** (83/86 types, 97%):
+- All numeric types (INT8-INT128, UINT8-UINT64, DECIMAL, FLOAT, MONEY)
+- All string types (CHAR, VARCHAR, TEXT) with UTF-8 support
+- All temporal types (DATE, TIME, TIMESTAMP, INTERVAL)
+- Binary types (BINARY, VARBINARY, BLOB, BYTEA)
+- Special types (UUID, JSON/JSONB, XML, BOOLEAN)
+- Spatial types (POINT, LINESTRING, POLYGON, MULTI* variants)
+- Array types, Range types, Network types
+- Text search types (TSVECTOR, TSQUERY)
+- ⚠️ COMPOSITE, VECTOR, VARIANT - Type exists but operations stubbed
+
+**SQL Execution** (15/35 statements, 43%):
+- ✅ SELECT (WHERE, JOIN, GROUP BY, HAVING, ORDER BY, LIMIT, window functions)
+- ✅ INSERT, UPDATE, DELETE
+- ✅ CREATE TABLE, CREATE INDEX
+- ✅ CREATE/ALTER/DROP TABLESPACE, ATTACH/DETACH TABLESPACE
+- ✅ BEGIN, COMMIT, ROLLBACK, SAVEPOINT
+- ❌ ALTER TABLE, DROP TABLE/INDEX - Not implemented
+- ❌ CREATE/DROP VIEW, CREATE/DROP SEQUENCE - Not implemented
+- ❌ GRANT/REVOKE - Not implemented
+- ❌ MERGE, TRUNCATE, CTEs (WITH clause) - Not implemented
+- ❌ Triggers (CREATE exists, execution stubbed), Stored procedures (bytecode stubbed)
+
+**Built-in Functions** (60/100, 60%):
+- ✅ String: 11 (LENGTH, SUBSTRING, UPPER, LOWER, TRIM, CONCAT, CONVERT, COLLATE, etc.)
+- ✅ Aggregate: 6 (COUNT, SUM, AVG, MIN, MAX, ARRAY_AGG)
+- ✅ Window: 8 (ROW_NUMBER, RANK, DENSE_RANK, LAG, LEAD, FIRST_VALUE, LAST_VALUE, NTH_VALUE)
+- ✅ JSON: 13 (JSON_EXTRACT, JSON_OBJECT, JSON_ARRAY, JSON_SET, operators, etc.)
+- ✅ Array: 12 (ARRAY_APPEND, ARRAY_CAT, ARRAY_LENGTH, UNNEST, etc.)
+- ✅ Date/Time: 6 (NOW, CURRENT_DATE, DATE_ADD, DATE_SUB, DATE_DIFF, AT TIME ZONE)
+- ✅ Conditional: 3 (COALESCE, NULLIF, CASE)
+- ✅ Regex: 4 (REGEXP_MATCHES, REGEXP_REPLACE, REGEXP_SPLIT_*)
+- ✅ Spatial: 4+ (ST_Point, ST_Distance, ST_Contains, ST_Intersects)
+- ❌ Math: **0** - No mathematical functions (no SIN, COS, SQRT, etc.)
+- ❌ Statistical, Cryptographic, XML - Not implemented
+- ⚠️ LIKE operator - Stub (wildcards not implemented)
+
+**Constraints** (2/10, 20%):
+- ✅ NOT NULL
+- ✅ Data type validation
+- ⚠️ CHECK - Catalog exists, evaluation stubbed
+- ⚠️ UNIQUE - Indexes exist, enforcement hooks missing
+- ⚠️ DEFAULT - Parser recognizes, execution missing
+- ❌ PRIMARY KEY - No special handling beyond unique index
+- ❌ FOREIGN KEY - Not implemented
+- ❌ Exclusion constraints - Not implemented
+- ❌ Generated/computed columns - Not implemented
+
+### 🎯 MGA Compliance - HIGHEST PRIORITY ✅
+
+**Status**: 100% Firebird MGA Compliant (Completed November 2, 2025)
+
+**Critical Achievements**:
+- ✅ All 7 implemented index types use TIP-based `isVersionVisible(xmin, current_xid)`
+- ✅ Storage layer SNAPSHOT isolation uses TIP lookups (not snapshot arrays)
+- ✅ Zero `Snapshot*` parameters in any API
+- ✅ Zero `isSnapshotVisible()` calls in codebase
+- ✅ O(1) TIP lookups (< 100ns per visibility check)
+- ✅ In-place updates with back-versioning (not append-only)
+- ✅ Stable TIDs (indexes never change unless indexed column modified)
+- ✅ Newest-to-Oldest (N2O) version chains
+
+**MANDATORY READING**: `/MGA_RULES.md` - 15 absolute rules for MGA compliance
+- Read BEFORE any transaction or index work
+- Violations are architecturally WRONG and must be rewritten
+- No exceptions, no mixing with PostgreSQL MVCC
+
+**Key MGA Concepts**:
+- **TIP (Transaction Inventory Pages)**: 2-bit bitmap (ACTIVE, COMMITTED, ABORTED, LIMBO)
+- **Visibility**: `isVersionVisible(version_xid, reader_xid)` checks TIP, not snapshots
+- **Updates**: Modify primary in-place, create back version with old data
+- **Version Chains**: Primary → back version → older back version (N2O)
+- **Garbage Collection**: Sweep removes back versions older than OIT
+
+### 📊 Latest Achievements
+
+**November 3, 2025:**
+- ✅ SQL Identifier UTF-8 Complete (6 phases, 128 characters, 512 bytes, 86 tests)
+- ✅ TOAST MGA Compliance Complete (6 phases, 28-byte chunk format, TIP-based visibility)
+- ✅ Archived planning documents to `/docs/planning/archive/`
+- ✅ Created comprehensive ALPHA Phase 1 Implementation Plan
+
+**November 2, 2025:**
+- ✅ Firebird MGA Compliance Complete (7 phases, all indexes TIP-compliant)
+
+---
+
+## 2. Active Work Plan
+
+**Current Plan**: `/docs/planning/ALPHA_PHASE1_COMPLETE_IMPLEMENTATION_PLAN.md`
+
+**Goal**: 100% feature completeness for engine embedding (Phase 1 ALPHA)
+
+**Timeline**: 6-9 months (with 3 developers)
+**Remaining Work**: ~1,755-2,425 hours
+
+**Critical Implementation Priorities**:
+
+1. **Index Implementations** (8 types, 740-1,020 hours):
+   - GIN (Generalized Inverted Index) - 80-120 hours
+   - GiST (Generalized Search Tree) - 100-140 hours
+   - SP-GiST (Space-Partitioned GiST) - 80-120 hours
+   - BRIN completion - 60-80 hours
+   - HNSW completion - 120-160 hours
+   - Full-Text Search - 60-80 hours
+   - Columnstore - 140-180 hours
+   - LSM-Tree - 100-140 hours
+
+2. **Data Type Completions** (110-160 hours):
+   - COMPOSITE type operations (30-40 hours)
+   - VECTOR element access and operations (20-30 hours)
+   - VARIANT type operations (40-60 hours)
+   - Domain support (60-80 hours) - **CRITICAL**
+
+3. **Built-in Functions** (115-165 hours):
+   - Mathematical functions (30-40 hours) - **CRITICAL** (0 functions currently)
+   - Statistical functions (25-35 hours)
+   - Cryptographic functions (15-20 hours)
+   - XML functions (40-50 hours)
+   - Advanced string functions (15-25 hours)
+   - LIKE operator wildcard support (10-15 hours) - **CRITICAL**
+
+4. **SQL Statement Completions** (420-580 hours):
+   - DDL modifications (ALTER TABLE, DROP statements) - 80-100 hours **CRITICAL**
+   - Security (GRANT/REVOKE) - 80-100 hours **CRITICAL**
+   - Views and materialized views - 60-80 hours
+   - Sequences - 30-40 hours
+   - Advanced DML (MERGE, TRUNCATE, RETURNING, CTEs) - 80-110 hours
+
+5. **Constraint Implementations** (230-320 hours):
+   - CHECK constraints - 25-35 hours
+   - UNIQUE enforcement - 30-40 hours
+   - DEFAULT values - 15-20 hours
+   - PRIMARY KEY - 20-30 hours
+   - FOREIGN KEY - 100-140 hours **CRITICAL**
+   - Exclusion constraints - 50-70 hours
+   - Generated/computed columns - 40-50 hours
+
+6. **PSQL/Stored Procedures** (140-180 hours):
+   - Complete bytecode generation - 80-100 hours **CRITICAL**
+   - Cursors - 30-40 hours
+   - Exception handling - 30-40 hours
+   - Triggers execution - 60-80 hours
+
+**After Phase 1 Complete**: Parser separation into embeddable library + standalone SQL application
+
+---
+
+## 3. Architecture & Design Principles
+
+### 3-Layer Embedded Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────┐
 │ Layer 3: Client Applications                            │
-│  - sb_isql (CLI tool for testing)                       │
-│  - Future: Custom applications using the engine         │
+│  - sb_isql (CLI tool) or custom applications            │
 └─────────────────────────────────────────────────────────┘
                          ↓ uses
 ┌─────────────────────────────────────────────────────────┐
 │ Layer 2: Parser Engines (Dialect-Specific Libraries)    │
-│  - libsb_parser_scratchbird.so (Alpha: ScratchBird SQL) │
-│  - Future: libsb_parser_firebird.so                     │
-│  - Future: libsb_parser_postgres.so                     │
-│  - Future: libsb_parser_mysql.so, etc.                  │
-│                                                          │
-│  Responsibilities:                                       │
-│  • SQL → AST parsing (dialect-specific)                 │
-│  • AST → SBLR bytecode generation                       │
-│  • Result formatting (SBLR → dialect format)            │
-│  • Statement caching (per dialect)                      │
-│  • Stateless: one-way translation only                  │
+│  - libsb_parser_scratchbird.so (ScratchBird SQL)        │
+│  - Future: Firebird, PostgreSQL, MySQL parsers          │
+│  • SQL → AST → SBLR bytecode (one-way translation)      │
 └─────────────────────────────────────────────────────────┘
                          ↓ SBLR bytecode
 ┌─────────────────────────────────────────────────────────┐
 │ Layer 1: Database Engine (libscratchbird.so)            │
 │  - SBLR bytecode interpreter/executor                   │
-│  - Storage engine (buffer pool, pages, heap)            │
-│  - Transaction manager (Firebird MGA)                   │
-│  - Index engines (6 types: B-tree, Hash, GIN, etc.)     │
-│  - Type system (all types from FB/MySQL/PG/MSSQL)       │
-│  - Catalog manager (system tables, metadata)            │
-│  - All APIs public for direct use                       │
-│                                                          │
-│  Key: Universal backend via SBLR bytecode               │
+│  - Storage, transactions, indexes, catalog              │
+│  - Universal backend via SBLR                           │
 └─────────────────────────────────────────────────────────┘
 ```
 
-### SBLR: The Universal Interface
+### SBLR (ScratchBird Binary Language Runner)
 
-**SBLR (ScratchBird Binary Language Runner)** is based on Firebird's BLR with extensions.
+**Purpose**: Dialect-agnostic bytecode for database operations (based on Firebird BLR)
+**Location**: `/src/sblr/` and `/include/scratchbird/sblr/`
+**Design**: Stack-based interpreter with opcode instructions
 
-- **Purpose**: Dialect-agnostic bytecode for database operations
-- **Design**: Stack-based interpreter with opcode instructions
-- **Location**: `/src/sblr/` and `/include/scratchbird/sblr/`
-- **Key Files**:
-  - `opcodes.h` - Opcode definitions (188 lines)
-  - `executor.h/.cpp` - Bytecode interpreter (3,108 lines)
-  - `bytecode_generator.h/.cpp` - AST → SBLR compiler (1,162 lines)
+**Key Files**:
+- `opcodes.h` - Opcode definitions
+- `executor.cpp` - Bytecode interpreter (3,108 lines)
+- `bytecode_generator.cpp` - AST → SBLR compiler (1,162 lines)
 
-**CRITICAL**: Parsers translate SQL → SBLR (one-way), engine only understands SBLR.
+### Firebird MGA vs PostgreSQL MVCC
 
-### Parser Engine Design
+**CRITICAL**: ScratchBird uses **Firebird MGA**, NOT PostgreSQL MVCC
 
-- **Separate Libraries**: Each SQL dialect has its own parser library
-- **Stateless**: Connect, send SBLR, get results, disconnect
-- **Version Aware**: Parser checks engine version compatibility at init
-- **Swappable**: Engine upgrades transparent to parser (if API compatible)
-- **Caching**:
-  - Parser caches SQL → SBLR translations (per dialect)
-  - Engine caches SBLR execution plans (universal)
+**Detection Rules** (from `/MGA_RULES.md`):
 
-### Alpha Completion Criteria (9 Priorities)
+**❌ WRONG (PostgreSQL MVCC)**:
+- `Snapshot` structures
+- `isSnapshotVisible()` calls
+- Forward pointers (old → new)
+- Append-only updates
+- Index TID updates on every UPDATE
 
-**Priority 1**: Data Type Completeness
-- Support ALL types from FirebirdSQL, MySQL/MariaDB, PostgreSQL, MSSQL
-- Either directly or via domain types
-- **Location to check**: `/src/core/types.cpp`, `/include/scratchbird/core/types.h`
+**✅ CORRECT (Firebird MGA)**:
+- TIP (Transaction Inventory Pages)
+- `getTransactionState(xid)` calls
+- `isVersionVisible(version_xid, reader_xid)`
+- Back pointers (new → old)
+- In-place updates
+- Stable TIDs
 
-**Priority 2**: Index Type Completeness
-- Support ALL index types from the 4 major databases
-- **Current**: 6 types exist (B-tree, Hash, GIN, HNSW, BRIN, Bitmap)
-- **Check against**: Full index type lists from FB/MySQL/PG/MSSQL
+**Key Differences**:
 
-**Priority 3**: Data Manipulation Completeness
-- Casting, math functions, string functions, temporal extraction
-- All low-level operations the 4 major databases perform
-- **Location**: `/src/sblr/executor.cpp` (function implementations)
-
-**Priority 4**: Schema Structure
-- Recursive schema support
-- Well-defined system tables
-- Complete metadata catalog
-
-**Priority 5**: SBLR Complete Implementation
-- Full specification documented
-- All opcodes implemented
-- Supporting API calls complete
-- **Status**: Appears substantially complete, needs verification
-
-**Priority 6**: Query Optimization
-- Statement caching (engine-level, SBLR-based)
-- Statement analysis and query plan generation
-- Parallel worker threads for execution
-
-**Priority 7**: ScratchBird SQL Parser
-- Complete SQL parser for ScratchBird dialect
-- AST → SBLR bytecode generator
-- **Location**: `/src/parser/`, `/src/sblr/bytecode_generator.cpp`
-- **Status**: Exists, needs verification of completeness
-
-**Priority 8**: sb_isql CLI Application
-- Interactive SQL command-line interface
-- Uses Layer 2 (parser) → Layer 1 (engine)
-- Firebird isql-compatible behavior
-- **Status**: Not found yet, needs implementation
-
-**Priority 9**: Complete Documentation
-- Technical specifications
-- Operational guides
-- Developer documentation with code examples
-- Full specifications for engine to this point
-
-**Alpha Definition**: When Priority 1-9 are complete, Alpha is finished → First release
-
-### Beta Requirements (Deferred from Alpha)
-
-- ONLINE Migration (Sprint 4 & 5) - needed for concurrency testing
-- Networking layer
-- WAL (Write-Ahead Logging)
-- Replication
+| Aspect | Firebird MGA | PostgreSQL MVCC |
+|--------|--------------|-----------------|
+| Visibility | TIP bitmap (O(1)) | Snapshot array (O(N)) |
+| Updates | In-place + back versions | Append-only |
+| Version Chain | Newest → Oldest (N2O) | Oldest → Newest (O2N) |
+| Index Updates | Only if column changed | Every UPDATE |
+| TID Stability | Stable forever | Changes on UPDATE |
 
 ---
 
-## 2. Current Project State
+## 4. Critical File Locations
 
-### Version & Status
-- **Current Version**: Alpha 1.0.7
-- **Production Ready**: ❌ NO - Educational/Development only
-- **Last Major Update**: October 28, 2025
-- **Active Development**: ✅ **Phase 1 COMPLETE** - Ready for Phase 2 planning
-
-### Phase 1 Completion (Oct 28, 2025)
-**Status**: ✅ **100% COMPLETE** - All 8 critical tasks delivered
-
-| Task | Implementation | Status |
-|------|----------------|--------|
-| Query Optimizer | 3,653 lines | ✅ 100% |
-| UPDATE/DELETE | 1,183 lines | ✅ 100% |
-| JOINs | 3,910 lines | ✅ 100% |
-| Aggregation | 1,510 lines | ✅ 100% |
-| Sorting/Limiting | 855 lines | ✅ 100% |
-| Window Functions | 1,050 lines | ✅ 100% |
-| JSON Functions | 500 lines | ✅ 100% |
-| Conditional Functions | 320 lines | ✅ 100% |
-
-**Total**: 12,981 lines + 200+ test cases
-
-**Audit Result**: Zero critical blockers, 92 non-blocking TODOs
-**Documentation**: `/docs/audit/PHASE_1_COMPLETION_AUDIT.md`
-
-### Critical Statistics
-```yaml
-Storage Engine:      100% complete (buffer pool, pages, TOAST, compression, MGA)
-Transaction System:  100% complete (Firebird MGA, 4 isolation levels)
-MVCC/MGA:           100% complete (back versioning, cross-page support)
-Concurrency:         100% complete (ConnectionContext, locking, deadlock detection)
-Indexing:
-  - B-tree:          100% complete (with prefix compression)
-  - Hash:            100% complete
-  - GIN:             100% complete (with posting list compression)
-  - Bitmap:          100% complete (Roaring compression)
-  - HNSW:            100% complete (vector similarity search)
-  - BRIN:            100% complete (block range indexes)
-Type System:         95% complete  (30+ types, UUIDv7, timezones, collations)
-Query Processing:    ✅ Phase 1 100% complete (all critical features working)
-  - Lexer/Parser:    ✅ Phase 1 complete (JOINs, GROUP BY, ORDER BY, LIMIT, Window, JSON, Conditional)
-  - Query Planner:   ✅ 100% complete (Cost model, Statistics, Planning, EXPLAIN)
-  - Bytecode Gen:    ✅ Phase 1 complete (All Phase 1 features generate bytecode)
-  - Executor:        ✅ Phase 1 complete (CRUD, JOINs, Aggregation, Sorting, Window, JSON, Conditional)
-Catalog:             75% complete  (metadata persistence)
-Code Quality:        98% complete  (RAII, logging, const-correct, zero FIXME/HACK)
-CI/CD:               100% complete (TSAN, ASAN, Helgrind, Valgrind, Clang-Tidy)
-JSON Library:        ✅ nlohmann/json v3.11.3 integrated via FetchContent
+### Core Implementation
+```
+src/core/buffer_pool.cpp            - Buffer management
+src/core/heap_page.cpp               - Record storage with back-versioning
+src/core/toast.cpp                   - Large object storage (823 lines)
+src/core/transaction_manager.cpp    - TIP-based transaction management
+src/core/btree.cpp                   - B-Tree index (~33K lines)
+src/core/hash_index.cpp              - Hash index (1,464 lines)
+src/core/bitmap_index.cpp            - Bitmap index (1,379 lines)
+src/core/rtree.cpp                   - R-Tree spatial index
+src/core/catalog_manager.cpp        - System catalog
 ```
 
-### Tablespace Implementation Status
-
-**Phase 1**: ✅ COMPLETE - Core Infrastructure (33 hours)
-- GPID addressing system (64-bit: 16-bit tablespace + 48-bit page)
-- Tablespace file management
-- Catalog structures (pg_tablespace)
-
-**Phase 1.5**: ✅ COMPLETE - TID Migration (8 hours)
-- All 6 index types migrated to TID struct API
-- Heap layer, storage engine, garbage collector updated
-
-**Phase 2**: ✅ COMPLETE - SQL DDL (21 hours)
-- CREATE/DROP/ALTER TABLESPACE
-- CREATE TABLE ... TABLESPACE
-
-**Phase 3**: ✅ COMPLETE - Autoextend and Growth (16.5 hours)
-- Task 3.1: Autoextend Implementation COMPLETE
-- Task 3.2: Preallocation COMPLETE
-
-**Phase 4**: ✅ COMPLETE - Migration Infrastructure (9.5 hours)
-- Parser, catalog manager infrastructure
-- Batch processing, index TID update, executor
-
-**Phase 5**: ✅ COMPLETE - OFFLINE Migration (~32-41 hours)
-- All heap page migration complete
-- All 6 index types migrated (B-Tree, Hash, HNSW, GIN, BRIN, Bitmap)
-- Full TOAST migration complete
-
-**Sprint 4**: ⚠️ PARTIAL (~33% complete) - ONLINE Migration Infrastructure
-- Task 5.4.1: Migration State Management ⚠️ NOT VERIFIED (needs catalog_manager.cpp audit)
-- Task 5.4.2: Dual-Source Visibility ✅ COMPLETE (TIDResolver: tid_resolver.h/cpp, 557 lines verified)
-- Task 5.4.3: Write Routing During Migration ⚠️ PARTIAL (some evidence in storage_engine.cpp, needs verification)
-
-**Sprint 5**: ❌ NOT IMPLEMENTED (0% complete) - ONLINE Migration Execution
-- Task 5.4.4: Copying Phase ❌ NOT IMPLEMENTED (migration_worker.h/cpp do not exist)
-- Task 5.4.5: Catch-Up Phase ❌ NOT IMPLEMENTED
-- Task 5.4.6: Atomic Swap Phase ❌ NOT IMPLEMENTED
-- **CRITICAL**: MigrationWorker class and all 5 execution methods are missing
-- **Estimated Effort**: 26-33 hours to implement
-
-**Sprint 0**: ✅ COMPLETE - CRITICAL Bug Fix (2-4 hours)
-- Cross-page UPDATE MGA compliance fixed
-- HeapPage::overwriteTuple() implementation complete
-- TID stability verified
-
-**Phase 6**: ✅ COMPLETE - Attach/Detach Operations (15 hours)
-- SQL parser integration (ATTACH/DETACH TABLESPACE)
-- Bytecode generation and executor handlers
-- Catalog manager methods (attachTablespace, detachTablespace)
-
-**MGA Catalog Fixes**: ✅ COMPLETE - Catalog MGA Compliance (3 hours)
-- Bug #1 FIXED: ALTER TABLESPACE now updates records in-place (no catalog bloat)
-- Bug #2 FIXED: DROP/DETACH TABLESPACE now marks is_valid=0 (persistent deletion)
-- Added updateRecordInHeapPage() and deleteRecordFromHeapPage() template methods
-- Added compactCatalogHeapPage() and compactCatalog() for garbage collection
-- Unit tests implemented (test_catalog_mga_compliance.cpp)
-
-**Documentation Reorganization**: ✅ COMPLETE (2025-10-23)
-- Moved all STATUS_* files to /docs/status/tablespace/
-- Moved all SPRINT* files to /docs/status/sprints/
-- Moved session summaries to /docs/status/sessions/
-- Moved guides to /docs/guides/
-- Moved audit files to /docs/audit/
-- Clean /docs/ root directory (only INDEX.md, CI_CD_GUIDE.md)
-
-**Total Completed**: ~198-223 hours
-
----
-
-### Phase 2: Critical Features (Post-Phase 1)
-
-**Phase 2 Wave 1**: ✅ COMPLETE - SQL Integration (October 28, 2025)
-- Spatial Types (2,095 lines, 44 tests) ✅
-- Array Functions (1,300 lines) ✅
-- Text Search Functions (1,318 lines) ✅
-- **Total**: 4,713 lines, 50 opcodes, 47 functions
-
-**Phase 2 Wave 2**: ✅ COMPLETE - Advanced SQL Features (October 28, 2025)
-- CTEs (707 lines) ✅
-- Subqueries (725 lines, 4/4 tests passing) ✅
-- Triggers (885 lines) ✅
-- **Total**: ~2,400 lines, 11 opcodes, 28 tests
-
-**Phase 2 Wave 3**: ✅ COMPLETE - Spatial/GIS Integration (October 30, 2025)
-- R-tree Indexes (2,690 lines) ✅ - Storage + catalog integration
-- R-tree Query Planner (548 lines) ✅ - Cost-based spatial optimization
-- Spatial Functions (1,800 lines) ✅ - 24 functions via GEOS
-- SRID Support (1,608 lines) ✅ - 4 functions, PROJ integration
-- Multi-Geometry Infrastructure (1,370 lines) ✅ - Classes complete, SQL deferred to Phase 3
-- **Total**: ~9,276 lines, 32 opcodes, 28 operational GIS functions
-- **Status**: ~90% PostGIS parity for Phase 2 use cases
-
-**Phase 2 Wave 4**: ✅ COMPLETE - PSQL Stored Procedures (October 30, 2025)
-- PSQL language implementation (variables, control flow, exceptions)
-- Functions and procedures with parameter support
-- Full integration with executor and bytecode generator
-- **Status**: Firebird-compatible procedural language operational
-
-**Phase 2 Total**: ~16,389+ lines across 4 waves
-**Phase 2 Progress**: ~85% complete (spatial, triggers, procedures, CTEs, subqueries, arrays, text search)
-
----
-
-**⚠️ IMPORTANT - Code Audit Findings (October 24, 2025)**:
-A comprehensive code audit has been completed. See `/docs/audit/` for detailed reports:
-- **CRITICAL_DISCREPANCIES_SUMMARY.md** - 3 critical gaps identified (Sprint 4/5, Query Processing)
-- **COMPREHENSIVE_CODE_AUDIT_2025-10-24.md** - Full verification with file:line references
-- **ALPHA_COMPLETENESS_ASSESSMENT.md** - Alpha NOT READY (~40-45% gap)
-- **README.md** in /docs/audit/ - Start here for navigation
-
-**Key Audit Findings**:
-- ✅ Core storage engine verified complete (~34,000 lines)
-- ❌ Query Processing 0% (claimed 72%) - all 6 files missing
-- ❌ Sprint 5 0% (claimed 100%) - MigrationWorker does not exist
-- ⚠️ Sprint 4 ~33% (claimed 100%) - Only TIDResolver verified
-
----
-
-## 2. Known Issues
-
-### Minor Issues
-- GIST Index TID Updates not implemented (4-6 hours) - No GIST implementation found
-- Known circular dependency in tid_resolver.h (documented, does not block BETA)
-
----
-
-## 3. Current Priorities
-
-1. ✅ ~~**Phase 6**: Attach/Detach Operations~~ **COMPLETE**
-2. ✅ ~~**MGA Catalog Compliance**~~ **COMPLETE**
-3. ✅ ~~**Documentation Reorganization**~~ **COMPLETE**
-4. 🎯 **Context Variables & Row Identity** (64-94 hours) - IN DESIGN
-   - Context Variables Core (20-28 hours) - HIGH PRIORITY
-     * Direct context variables (CURRENT_USER, CURRENT_TRANSACTION, etc.)
-     * RDB$GET_CONTEXT() and RDB$SET_CONTEXT() functions
-     * PSQL Execution Context (CALLING_PROCEDURE, CALL_STACK, etc.)
-   - Row Identity: sdb$key (8-10 hours) - HIGH PRIORITY
-   - Row Identity: rdb$row_uuid (12-16 hours) - HIGH PRIORITY
-   - Transaction Visibility: rdb$xact_id (8-12 hours) - HIGH PRIORITY
-   - TRANSFER Command (16-24 hours) - MEDIUM PRIORITY
-5. **Phase 7**: Advanced Features (50-66 hours) - NEXT
-   - Statistics & Monitoring (12-16 hours) - MUST HAVE
-   - Backup/Restore (12-16 hours) - MUST HAVE
-   - Compression (12-16 hours) - SHOULD HAVE
-   - Encryption (14-18 hours) - SHOULD HAVE
-
-**Total Remaining for ALPHA**: ~114-160 hours (Context Variables + Phase 7)
-
----
-
-## 4. Architecture Quick Reference
-
-### Core Design Principles
-- **Transaction Model**: Firebird MGA (Multi-Generational Architecture)
-  - In-place modification with back versions
-  - Stable TIDs (indexes never updated unless indexed column changes)
-  - Newest-to-Oldest (N2O) version chains
-- **MVCC**: Snapshot isolation, 4 isolation levels
-- **Storage**: TOAST for large objects, LZ4 compression
-- **Concurrency**: Always-in-transaction model, ConnectionContext for thread-local state
-- **Memory Safety**: RAII everywhere, smart pointers
-
-### Key Components
+### Parser & Executor
 ```
-Storage:       buffer_pool.cpp, page_manager.cpp, heap_page.cpp, toast.cpp
-Transactions:  transaction_manager.cpp, clog.cpp, proc_array.cpp
-Indexes:       btree.cpp, gin_index.cpp, bitmap_index.cpp, hash_index.cpp, hnsw_index.cpp, brin_index.cpp
-Types:         types.cpp, decimal_arithmetic.cpp, jsonb.cpp, xml.cpp
-Parser:        lexer.cpp, parser.cpp, ast.cpp, semantic_analyzer.cpp
-Executor:      executor.cpp, bytecode_generator.cpp
-Catalog:       catalog_manager.cpp
+src/parser/parser.cpp                - SQL parser
+src/parser/semantic_analyzer.cpp    - Semantic analysis
+src/sblr/bytecode_generator.cpp     - AST → SBLR compiler
+src/sblr/executor.cpp                - SBLR interpreter
+src/sblr/expression_evaluator.cpp   - Expression evaluation
 ```
 
-### ONLINE Migration Architecture (Sprint 4 & 5)
-
-**State Machine**: INIT → COPYING → CATCH_UP → READY_FOR_SWAP → SWAP → CLEANUP → COMPLETE
-
-**Key Components**:
-- **TIDResolver**: Three-tier lookup (Bloom filter → exact mapping → query cache)
-  - Bloom filter: ~1-2ns lookup, 1% false positive rate
-  - Exact TID mapping: source TID → target TID
-  - Query cache: Per-query caching for repeated lookups
-- **Dirty Page Bitmap**: Tracks pages modified during COPYING phase
-- **Write Routing**: INSERTs → target tablespace, UPDATEs/DELETEs → original location
-- **Dual-Source Visibility**: Queries read from both source and target during migration
-
-**Performance Target**: < 5% query overhead during migration
-
-**Files**:
-- `include/scratchbird/core/tid_resolver.h` (251 lines)
-- `src/core/tid_resolver.cpp` (308 lines)
-- `include/scratchbird/core/catalog_manager.h` (migration methods)
-- `src/core/catalog_manager.cpp` (execution phases, ~475 lines)
-
----
-
-## 5. Essential File Locations
-
-### Specifications
+### Documentation
 ```
-docs/specifications/TABLESPACE_SPECIFICATION.md           (~1,700 lines)
-docs/specifications/MGA_IMPLEMENTATION.md                 (MGA core spec)
-docs/specifications/TRANSACTION_MGA_CORE.md               (transaction isolation)
-```
-
-### Planning Documents
-```
-docs/planning/TABLESPACE_COMPLETE_IMPLEMENTATION_ROADMAP.md  (comprehensive roadmap)
-docs/planning/TABLESPACE_IMPLEMENTATION_PLAN.md              (~1,400 lines)
-docs/planning/MVCC_VS_MGA_CODE_REVIEW.md                     (critical bug analysis)
-docs/planning/SPRINT7_PHASE7_PREPARATION.md                  (Phase 7 prep)
-docs/planning/PHASE7_COMPLETE_SCOPE.md                       (Phase 7 full scope)
-docs/planning/ALPHA_CONTEXT_VARIABLES_DESIGN.md              (Context variables v2.0 - Firebird Ch 12 + PSQL context)
-docs/planning/ALPHA_CONTEXT_VARIABLES_V2_SUMMARY.md          (v2.0 update summary - NEW)
-docs/planning/ALPHA_ROW_IDENTITY_ENHANCED.md                 (Row identity & TRANSFER v2.1)
-docs/planning/ALPHA_ROW_IDENTITY_AND_TRANSACTION_VISIBILITY.md  (Original design v1.0)
-```
-
-### Status Documents
-```
-docs/status/TABLESPACE_IMPLEMENTATION_COMPLETE.md        (Phases 1-6 complete summary - NEW)
-docs/status/sprints/SPRINT0_MGA_BUG_FIX.md               (Sprint 0 details)
-docs/status/sprints/SPRINT4_ONLINE_MIGRATION_INFRASTRUCTURE.md  (Sprint 4 details)
-docs/status/sprints/SPRINT5_EXECUTION_ENGINE.md          (Sprint 5 details)
-docs/status/sessions/SESSION_SUMMARY_2025_10_23_MGA_CATALOG_COMPLIANCE.md
-```
-
-### Audit Documents
-```
-docs/audit/MGA_COMPLIANCE_REVIEW_TABLESPACE.md           (MGA compliance review)
-docs/audit/INDEX_MGA_ALPHA_READINESS_SUMMARY.md          (Index MGA compliance)
-```
-
-### Guides
-```
-docs/guides/PHASE_1_5_MIGRATION_GUIDE.md                 (TID migration guide)
-docs/guides/ERROR_HANDLING_GUIDE.md
-docs/guides/CONCURRENCY_PATTERNS.md
-docs/guides/RESOURCE_MANAGEMENT.md
-docs/guides/LOCKING_PROTOCOL.md
+/MGA_RULES.md                                            - **MANDATORY** MGA architecture rules
+/PROJECT_CONTEXT.md                                      - This file
+/docs/planning/ALPHA_PHASE1_COMPLETE_IMPLEMENTATION_PLAN.md  - Active work plan
+/docs/ALPHA_ENGINE_READINESS_SUMMARY.md                  - Detailed feature analysis
+/docs/specifications/MGA_IMPLEMENTATION.md               - MGA architecture spec
+/docs/specifications/FIREBIRD_TRANSACTION_MODEL_SPEC.md  - Transaction model
 ```
 
 ---
 
-## 6. Coding Standards Summary
+## 5. Development Guidelines
+
+### For AI Assistants
+
+**MANDATORY READING**:
+1. Read `/MGA_RULES.md` at session start
+2. Re-read `/MGA_RULES.md` after context compaction
+3. Read `/MGA_RULES.md` BEFORE any transaction or index work
+
+**DO**:
+- ✅ Use Firebird MGA model (TIP-based visibility)
+- ✅ Maintain stable TIDs (no changes on UPDATE)
+- ✅ In-place updates with back versions
+- ✅ Check active work plan before implementing features
+- ✅ Follow error handling patterns (Status enum, ErrorContext)
+- ✅ Use RAII for all resources
+
+**DON'T**:
+- ❌ Use PostgreSQL MVCC patterns (snapshots, `isSnapshotVisible()`)
+- ❌ Implement `Snapshot` structures
+- ❌ Use forward-versioning (old → new pointers)
+- ❌ Update index TIDs unless indexed column changes
+- ❌ Create new tuple locations on UPDATE
+- ❌ Skip reading `/MGA_RULES.md` before transaction work
+
+**CRITICAL**: Violating `/MGA_RULES.md` means the code is architecturally WRONG and must be rewritten. No exceptions.
 
 ### Error Handling
-- Return `Status` enum for all operations
-- Use `ErrorContext*` for detailed error messages
-- `SET_ERROR_CONTEXT()` macro for errors
-- No exceptions in core engine
+```cpp
+Status operation(ErrorContext* ctx) {
+    if (error) {
+        SET_ERROR_CONTEXT(ctx, Status::ERROR_CODE, "Error message");
+        return Status::ERROR_CODE;
+    }
+    return Status::OK;
+}
+```
 
 ### Memory Management
 - RAII everywhere (smart pointers, lock guards)
 - `std::unique_ptr` for ownership
 - `std::shared_ptr` for shared ownership
 - No manual `new`/`delete`
-
-### Concurrency
-- Always acquire locks in consistent order (page → metadata)
-- Use `std::lock_guard<std::mutex>` for all locks
-- ConnectionContext for thread-local state
-- No global mutable state
 
 ### Logging
 ```cpp
@@ -464,133 +348,51 @@ LOG_ERROR(Category::BUFFER, "Message");
 
 ---
 
-## 7. Quick Commands
+## 6. Quick Commands
 
 ### Build
 ```bash
-cd build && cmake .. && make -j$(nproc)
+mkdir build && cd build
+cmake .. && make -j$(nproc)
 ```
 
 ### Run Tests
 ```bash
-cd build && ctest -V
+cd build && ctest --output-on-failure
 ```
 
-### Clang-Tidy
+### Build Types
 ```bash
-cd build && run-clang-tidy -p . ../src
-```
-
-### Memory Checks
-```bash
-# TSAN (thread safety)
-cd build && cmake -DCMAKE_BUILD_TYPE=TSan .. && make && ./tests/scratchbird_tests
-
-# ASAN (memory errors)
-cd build && cmake -DCMAKE_BUILD_TYPE=ASan .. && make && ./tests/scratchbird_tests
-
-# Valgrind
-valgrind --leak-check=full --show-leak-kinds=all ./tests/scratchbird_tests
+cmake -DCMAKE_BUILD_TYPE=Debug ..      # Default
+cmake -DCMAKE_BUILD_TYPE=Release ..    # Optimized
+cmake -DCMAKE_BUILD_TYPE=TSan ..       # Thread safety
+cmake -DCMAKE_BUILD_TYPE=ASan ..       # Memory errors
 ```
 
 ---
 
-## 8. Firebird MGA vs PostgreSQL MVCC
+## 7. Project Status Summary
 
-**CRITICAL**: ScratchBird uses Firebird MGA, NOT PostgreSQL MVCC.
+**Version**: Alpha (Engine Phase 1)
+**Completion**: 60%
+**MGA Compliance**: 100% ✅
+**Active Plan**: `/docs/planning/ALPHA_PHASE1_COMPLETE_IMPLEMENTATION_PLAN.md`
+**Timeline**: 6-9 months to Phase 1 completion (with 3 developers)
 
-**⚠️ MANDATORY READING**: Before ANY transaction or index work, you MUST read `/MGA_RULES.md`
+**Top Priorities**:
+1. Complete all 8 remaining index types
+2. Implement all 40 missing mathematical functions
+3. Add DDL modification operations (ALTER/DROP TABLE)
+4. Implement security system (GRANT/REVOKE)
+5. Complete constraint enforcement (CHECK, FOREIGN KEY, DEFAULT, UNIQUE)
+6. Complete PSQL bytecode execution (procedures, triggers, cursors)
+7. Add views, sequences, CTEs
+8. Complete data type operations (COMPOSITE, VECTOR, VARIANT, Domains)
 
-This file contains 15 absolute rules that MUST be followed. Violations mean the code is architecturally WRONG.
-
-### The Fundamental Difference
-
-**PostgreSQL MVCC**: Uses **Snapshots** - arrays of active transaction IDs checked for visibility
-**Firebird MGA**: Uses **TIP** (Transaction Inventory Pages) - bitmap lookups for transaction state
-
-**If you see `Snapshot` structures or `isSnapshotVisible()` calls, it's WRONG.**
-
-### Detection Rules (from MGA_RULES.md)
-
-**MVCC Contamination Indicators** (❌ ALL WRONG):
-- `Snapshot` structure
-- `snapshot` parameter names
-- `isSnapshotVisible()` function calls
-- Forward pointers (old → new)
-- Tuples created at new locations
-- Index TID updates on every UPDATE
-
-**MGA Compliance Indicators** (✅ ALL REQUIRED):
-- TIP (Transaction Inventory Page) implementation
-- `getTransactionState(xid)` function calls
-- `TxState` enum (TX_COMMITTED, TX_ACTIVE, TX_ABORTED)
-- OIT/OAT/OST transaction markers
-- Back pointers (new → old)
-- In-place updates with stable TIDs
-
-### Key Differences
-
-| Aspect | Firebird MGA (ScratchBird) | PostgreSQL MVCC |
-|--------|----------------------------|-----------------|
-| **Visibility Check** | TIP bitmap lookup | Snapshot array check |
-| **Update Strategy** | In-place modification | Append-only |
-| **Old Versions** | Back versions (delta or full) | Old tuples left in place |
-| **Version Chain** | Newest → Oldest (N2O) | Oldest → Newest (O2N) |
-| **Index Updates** | Only if indexed column changes | On every UPDATE |
-| **TID Stability** | Stable (never changes) | Changes on UPDATE |
-
-### Implementation Impact
-- **UPDATE**: Must create back version and modify primary in-place
-- **DELETE**: Mark primary as deleted, back versions remain
-- **Indexes**: Store stable TIDs pointing to primary location
-- **Visibility**: Traverse back chain from primary to find visible version
-- **Garbage Collection**: Sweep removes old back versions
-
-**See `/MGA_RULES.md` for complete specifications and examples.**
+**After Phase 1**: Parser separation → embeddable library + standalone SQL application
 
 ---
 
-## 9. Final Reminders
-
-### For AI Assistants
-
-**DO:**
-- ✅ Read this file AND `/MGA_RULES.md` at every session start
-- ✅ Re-read both files after context compaction
-- ✅ **BEFORE any transaction/index work**: Read `/MGA_RULES.md` first
-- ✅ Check roadmap for current priorities
-- ✅ Verify against specifications before implementing
-- ✅ Use Firebird MGA model (TIP-based visibility)
-- ✅ Maintain stable TIDs (no TID changes on UPDATE)
-- ✅ In-place updates with back versions
-
-**DON'T:**
-- ❌ Use PostgreSQL MVCC patterns (snapshots, append-only)
-- ❌ Implement `Snapshot` structures or `isSnapshotVisible()` APIs
-- ❌ Use forward-versioning (old → new pointers)
-- ❌ Update index TIDs unless indexed column changes
-- ❌ Create new tuple locations on UPDATE
-- ❌ Implement features without checking specs and `/MGA_RULES.md`
-- ❌ Skip error handling or logging
-
-**CRITICAL**: If you violate `/MGA_RULES.md`, the code is architecturally WRONG and must be rewritten. No exceptions.
-
-### Key Facts
-- **64-bit XIDs**: No wraparound issues
-- **Stable TIDs**: Index entries never change (unless indexed column modified)
-- **Back Versions**: UUID-based pointers for distributed support
-- **Always-In-Transaction**: Every operation has a transaction
-- **Zero Heap Fragmentation**: Firebird MGA design prevents it
-
----
-
-## 10. Update History
-
-- **2025-10-28**: Phase 1 Task 7 JSON Functions 70% COMPLETE (Infrastructure + nlohmann/json v3.11.3 integration), Task 6 Window Functions 100% COMPLETE
-- **2025-10-24**: Context Variables v2.0 COMPLETE (Firebird Ch 12 + PSQL execution context, RDB$GET/SET_CONTEXT), Row Identity v2.1
-- **2025-10-23**: Documentation reorganization COMPLETE, Phase 6 COMPLETE, MGA catalog compliance COMPLETE
-- **2025-10-21**: Sprint 4 & 5 COMPLETE (ONLINE migration infrastructure + execution)
-- **2025-10-20**: Phase 1.5 COMPLETE (TID Migration to GPID format)
-- **2025-10-17**: All 21 Alpha issues resolved
-- **2025-10-16**: MGA Phases 1-4 complete
-- **2025-10-14**: Phase 1 audit complete (23 critical issues resolved)
+**Last Updated**: November 3, 2025
+**Status**: Phase 1 ALPHA - 60% Complete
+**Next Milestone**: Begin Phase 1A (Critical Blockers) per implementation plan

@@ -1,6 +1,6 @@
 # ScratchBird Database Engine
 
-An educational relational database engine built from scratch featuring Firebird-style MGA (Multi-Generational Architecture), multi-tablespace support, MVCC with all isolation levels, 6 index types, TOAST storage, and comprehensive transaction management.
+A relational database engine built from scratch featuring **Firebird-style MGA (Multi-Generational Architecture)**, comprehensive index types, TOAST storage, and full transaction management.
 
 ## Quick Start
 
@@ -15,394 +15,161 @@ ctest --output-on-failure
 
 ## Current Status
 
-**Version:** Alpha 1.8.1
-**Status:** Educational/Development (**Phase 3 Tasks 14-16 COMPLETE** 🎉)
-**Last Updated:** November 2, 2025 (Task 16 - Network Types + MGA Compliance Complete)
-
-✅ **PHASE 1: 100% COMPLETE** - All 8 Critical Tasks Delivered (12,981 lines, 200+ tests)
-✅ **PHASE 2 WAVE 1: 100% CODE COMPLETE** - 3 Features via Parallel AI Agents (4,713 lines)
-✅ **PHASE 2 WAVE 2: 100% CODE COMPLETE** - 3 Features via 6 AI Agents (~2,400 lines)
-✅ **PHASE 2 WAVE 3: SPATIAL INTEGRATION COMPLETE** - GIS Support (9,276 lines, 28 functions)
-✅ **PHASE 3 TASK 14: FULL-TEXT SEARCH COMPLETE** - All 5 Phases (4,215 lines, 308/308 tests)
-✅ **PHASE 3 TASK 15: RANGE TYPES COMPLETE** - PostgreSQL-compatible ranges (741 lines, 77/77 tests)
-✅ **PHASE 3 TASK 16: NETWORK TYPES COMPLETE** - INET, CIDR, MACADDR, MACADDR8 (523 lines, 67/67 tests)
-✅ **FIREBIRD MGA COMPLIANCE ACHIEVED** - 100% TIP-based visibility across all index types
-
-### Latest Achievements
-
-**🎉 Firebird MGA Compliance Complete (November 2, 2025)**
-
-**Achievement**: 100% Firebird Multi-Generational Architecture compliance across entire codebase
-**Impact**: Zero PostgreSQL MVCC contamination, O(1) TIP-based visibility for all index types
-
-| Component | Status | Validation |
-|-----------|--------|------------|
-| **Storage Layer** | ✅ 100% | All isolation levels use TIP-based `isVersionVisible()` |
-| **Index Visibility** | ✅ 100% | All 7 index types (B-tree, Hash, GIN, Bitmap, BRIN, HNSW, R-tree) |
-| **API Compliance** | ✅ 100% | Zero `Snapshot*` parameters, all APIs use `current_xid` |
-| **Test Coverage** | ✅ 100% | Unit tests, integration tests, performance benchmarks |
-
-**Key Achievements**:
-- 🔍 **Zero Snapshot Contamination**: Eliminated all `isSnapshotVisible()` calls across codebase
-- ⚡ **O(1) TIP Lookups**: < 100ns per visibility check (vs O(N) snapshot array searches)
-- 📊 **Proven Scalability**: TIP performance remains constant as transaction count grows
-- 🎯 **PostgreSQL MVCC Eliminated**: Pure Firebird MGA implementation
-
-**Files Modified**:
-- `src/core/storage_engine.cpp` - SNAPSHOT isolation fixed to use TIP
-- All 7 index implementations validated for TIP-based visibility
-- Comprehensive test suites created for MGA compliance validation
-
-**See**: `/docs/planning/MGA_COMPLIANCE_FIX_PLAN.md` for complete implementation roadmap
-
----
-
-**🎉 Phase 3 Task 14.1: FULL-TEXT SEARCH CORE TYPES COMPLETE (October 30, 2025)**
-
-**Delivered**: PostgreSQL-compatible `tsvector` and `tsquery` types with full parsing, serialization, and matching
-**Total Code**: ~1,650 lines production code + 400 lines tests
-**Status**: Phase 1 complete, ready for text processing (Phase 2)
-
-| Component | Status | Lines | Highlights |
-|-----------|--------|-------|------------|
-| **TSVector Type** | ✅ 100% | 950 | PostgreSQL format, positions, weights, binary serialization |
-| **TSQuery Type** | ✅ 100% | 1,000 | Boolean logic (AND/OR/NOT), phrase matching, parser |
-| **Type Integration** | ✅ 100% | 35 | Added to DataType enum, TypedValue system |
-| **Unit Tests** | ✅ 86/86 | 400 | 100% pass rate, comprehensive coverage |
-
-**Key Features**:
-- 📝 **PostgreSQL Format**: `'word':1,2A,3B` text format compatibility
-- 🔍 **Boolean Queries**: `(cat | dog) & !rat` with full expression tree
-- 📏 **Phrase Matching**: `quick <2> brown` distance-based proximity
-- 💾 **Binary Serialization**: Compact storage format for GIN indexes
-- ⚡ **O(log n) Lookup**: Sorted lexeme storage with binary search
-
-**Example Usage**:
-```cpp
-// Parse tsvector from text
-auto vec = TSVector::fromString("'quick':1,4 'brown':2A 'fox':3B");
-
-// Parse tsquery
-auto q = TSQuery::fromString("(cat | dog) & !rat");
-
-// Evaluate match
-bool matches = q->matches(vec);
-
-// Phrase matching
-auto phrase = TSQuery::fromString("quick <2> fox");
-phrase->matches(vec);  // true
-```
-
-**See**: `/docs/status/TASK_14_PHASE_1_COMPLETE.md` for comprehensive report
-
----
-
-**🎉 Phase 3 Task 14.2: TEXT PROCESSING COMPLETE (October 30, 2025)**
-
-**Delivered**: PostgreSQL-compatible text search configurations with Porter stemmer and conversion functions
-**Total Code**: ~1,100 lines production code + 373 lines tests
-**Status**: Phase 2 complete, ready for SQL integration (Phase 3)
-
-| Component | Status | Lines | Highlights |
-|-----------|--------|-------|------------|
-| **TSConfig System** | ✅ 100% | 165 | Registry pattern, SimpleConfig, EnglishConfig |
-| **Porter Stemmer** | ✅ 100% | 620 | Full 8-step algorithm, ~600 lines stemming logic |
-| **Conversion Functions** | ✅ 100% | 240 | to_tsvector, to_tsquery, plainto_tsquery, phraseto_tsquery |
-| **Unit Tests** | ✅ 62/62 | 373 | 100% pass rate, comprehensive coverage |
-
-**Key Features**:
-- 🔤 **Language Configurations**: Extensible system for language-specific processing
-- 📊 **Porter Stemmer**: Full 8-step algorithm ("running" → "run", "itemization" → "item")
-- 🛑 **Stop Words**: 34 English stop words ("the", "a", "is", etc.)
-- 🔄 **Conversion Functions**: Transform text/queries with stemming and normalization
-- ⚡ **Query Processing**: Recursive stemming through query expression trees
-
-**Example Usage**:
-```cpp
-// Convert text to tsvector with English processing
-auto vec = to_tsvector("english", "I am running with cats");
-// Result: 'cat':5 'run':3 (stop words filtered, stems applied)
-
-// Plain text to query
-auto q = plainto_tsquery("english", "running cats");
-// Result: 'run' & 'cat' (AND-connected, stemmed)
-
-// Phrase query
-auto phrase = phraseto_tsquery("english", "quick brown fox");
-// Result: 'quick' <1> 'brown' <1> 'fox' (adjacent words)
-
-// Check match
-q->matches(*vec);  // true
-```
-
-**See**: `/docs/status/TASK_14_PHASE_2_TEXT_PROCESSING_COMPLETE.md` for comprehensive report
-
----
-
-**🎉 Phase 3 Task 14.3: OPERATORS & FUNCTIONS COMPLETE (October 30, 2025)**
-
-**Delivered**: PostgreSQL-compatible match operators and ranking functions for full-text search
-**Total Code**: ~370 lines production code + 455 lines tests
-**Status**: Phase 3 complete, ready for GIN integration (Phase 4) and SQL integration (Phase 5)
-
-| Component | Status | Lines | Highlights |
-|-----------|--------|-------|------------|
-| **Match Operators** | ✅ 100% | 45 | ts_match (@@), ts_match_text, configuration-aware |
-| **Ranking Functions** | ✅ 100% | 200 | ts_rank (TF-IDF), ts_rank_weighted, ts_rank_cd |
-| **Opcodes** | ✅ 100% | 8 | Ready for SQL integration |
-| **Unit Tests** | ✅ 39/39 | 455 | 100% pass rate, comprehensive coverage |
-
-**Key Features**:
-- 🔍 **Match Operator (@@)**: Full Boolean query evaluation (AND, OR, NOT, phrases)
-- 📊 **TF-IDF Ranking**: Position-weighted relevance scoring
-- 🎯 **Cover Density**: Proximity-based ranking for phrase queries
-- ⚖️ **Custom Weights**: User-defined position class weights [D, C, B, A]
-- 📏 **Normalization**: Document length normalization modes
-
-**Example Usage**:
-```cpp
-// Match documents
-auto doc = to_tsvector("english", "PostgreSQL is a powerful database");
-auto q = to_tsquery("english", "database & powerful");
-
-if (ts_match(*doc, *q)) {
-    // Rank for relevance
-    double rank = ts_rank(*doc, *q);
-    std::cout << "Rank: " << rank << std::endl;  // ~0.069
-}
-
-// Text matching with implicit conversion
-bool matches = ts_match_text("I love databases", *q);
-
-// Cover density for phrase queries
-double cd_rank = ts_rank_cd(*doc, *q);  // Proximity-based score
-```
-
-**See**: `/docs/status/TASK_14_PHASE_3_OPERATORS_FUNCTIONS_COMPLETE.md` for comprehensive report
-
----
-
-**🎉 Phase 2 Wave 3: SPATIAL/GIS INTEGRATION COMPLETE (October 30, 2025)**
-
-**Delivered**: Production-ready GIS capabilities with R-tree spatial indexes and 28 operational SQL functions
-**Total Code**: ~9,276 lines across 5 major tasks
-**Status**: 100% Phase 2 spatial integration complete, multi-geometry SQL deferred to Phase 3
-
-| Component | Status | Lines | Highlights |
-|-----------|--------|-------|------------|
-| **R-tree Indexes** | ✅ 100% | 2,690 | Query planner integration, cost-based optimization |
-| **R-tree Planner** | ✅ 100% | 548 | Automatic index selection, spatial predicates |
-| **Spatial Functions** | ✅ 100% | 1,800 | 24 functions via GEOS (predicates, operations, measurements) |
-| **SRID Support** | ✅ 100% | 1,608 | 4 functions, PROJ integration, coordinate transformations |
-| **Multi-Geometry** | ✅ Infrastructure | 1,370 | Classes complete, SQL layer deferred to Phase 3 |
-
-**Key Features**:
-- 🗺️ **28 Operational GIS Functions**: ST_Intersects, ST_Contains, ST_Buffer, ST_Transform, etc.
-- 🌲 **R-tree Spatial Indexes**: Automatic query optimization with cost-based selection
-- 🌍 **Full SRID Support**: WGS84, Web Mercator, coordinate transformations via PROJ
-- 📊 **~90% PostGIS Parity**: Competitive with PostgreSQL/PostGIS for Phase 2 use cases
-
-**Example Query**:
-```sql
--- Create spatial index
-CREATE SPATIAL INDEX idx_location ON places(location);
-
--- Optimized spatial query (uses R-tree automatically)
-SELECT name FROM places
-WHERE ST_Intersects(location, ST_MakePolygon(...));
-```
-
-**See**: `/docs/status/PHASE_2_TASK_9_SPATIAL_COMPLETE.md` for comprehensive report
-
----
-
-**🎉 Phase 2 Wave 2: 100% CODE COMPLETE + COMPILES (October 28, 2025)**
-
-**Method**: 6 autonomous AI agents (3 initial + 3 completion agents, ~6-7 hours total)
-**Result**: ~2,400 lines production code, 100% complete for all 3 features, **all libraries compile**
-
-| Feature | Final Lines | Status | Highlights |
-|---------|-------------|--------|------------|
-| **CTEs** | ~707 | ✅ 100% | Parser ✅ Planner ✅ Bytecode ✅ Executor ✅ |
-| **Subqueries** | ~725 | ✅ 100% + Tests | SCALAR, IN, EXISTS, NOT IN - 4/4 tests PASSING |
-| **Triggers** | ~885 | ✅ 100% | BEFORE/AFTER on INSERT/UPDATE/DELETE |
-
-**Wave 2 Complete Delivery**:
-- ~2,400 lines of production code
-- 11 new opcodes (CTEs: 3, Subqueries: 5, Triggers: 3)
-- 28 comprehensive tests
-- 25 files modified/created
-- 70-75% time savings vs. manual development
-- ✅ **Compilation fixed**: All 4 core libraries build successfully
-
-**See**: `/docs/status/WAVE_2_COMPLETION_SUMMARY.md` for complete analysis
-
----
-
-**🎉 Phase 2 Wave 1: SQL Integration Complete (October 28, 2025)**
-
-| Feature | Status | Total Lines | Tests |
-|---------|--------|-------------|-------|
-| **Spatial Types** | ✅ 100% COMPLETE | 2,095 | 44/44 pass |
-| **Array Functions** | ✅ 100% COMPLETE | 1,300 | Compiles ✅ |
-| **Text Search** | ✅ 100% COMPLETE | 1,318 | Compiles ✅ |
-
-**Total**: 4,713 lines, 50 opcodes, 47 functions+operators, 92% time savings
-
-**See**: `/docs/status/WAVE_1_FINAL_DELIVERY.md`
-
----
-
-**Previous: 🎉 Phase 1 Complete** - All 8 Critical Tasks Delivered
-
-| Task | Feature | Status | Lines | Tests |
-|------|---------|--------|-------|-------|
-| 1 | Query Optimizer | ✅ 100% | 3,653 | Multiple |
-| 2 | UPDATE/DELETE | ✅ 100% | 1,183 | 7 files |
-| 3 | JOINs | ✅ 100% | 3,910 | 10+ cases |
-| 4 | Aggregation | ✅ 100% | 1,510 | 2+ files |
-| 5 | Sorting/Limiting | ✅ 100% | 855 | 2 files |
-| 6 | Window Functions | ✅ 100% | 1,050 | 60+ cases |
-| 7 | JSON Functions | ✅ 100% | 500 | 53 tests |
-| 8 | Conditional Functions | ✅ 100% | 320 | 40+ cases |
-
-**Phase 1 Total**: 12,981 lines of production code + 200+ test cases
-
-**Phase 1 Acceptance Test - ALL Features Working:**
-```sql
-EXPLAIN
-SELECT
-    u.name,
-    COUNT(o.id) as order_count,
-    SUM(o.total) as total_spent,
-    COALESCE(u.email, 'no-email') as email,
-    ROW_NUMBER() OVER (ORDER BY SUM(o.total) DESC) as rank,
-    CASE
-        WHEN SUM(o.total) > 10000 THEN 'premium'
-        WHEN SUM(o.total) > 1000 THEN 'regular'
-        ELSE 'basic'
-    END as tier,
-    o.metadata->>'preferences' as prefs
-FROM users u
-LEFT JOIN orders o ON u.id = o.user_id
-WHERE u.created_at > '2024-01-01'
-GROUP BY u.id, u.name, u.email, o.metadata
-HAVING COUNT(o.id) > 5
-ORDER BY total_spent DESC
-LIMIT 100;
-```
-
-**Features Demonstrated**:
-- ✅ Query Optimization (EXPLAIN)
-- ✅ Multi-table queries (LEFT JOIN)
-- ✅ Filtering (WHERE)
-- ✅ Aggregation (COUNT, SUM, GROUP BY)
-- ✅ Post-aggregation filtering (HAVING)
-- ✅ Window functions (ROW_NUMBER)
-- ✅ Conditional logic (COALESCE, CASE)
-- ✅ JSON operations (->>, metadata access)
-- ✅ Sorting and pagination (ORDER BY, LIMIT)
-
-**Previous: 1:1 Feature Parity Audit Complete (Oct 25, 2025)** 📋 - CORRECTED PERSPECTIVE
-
-⚠️ **CRITICAL UPDATE**: Previous percentages used engineering judgment to mark features as "optional."
-**Market Requirement**: ScratchBird must achieve **1:1 feature parity** with ALL 4 target databases.
-
-**Corrected Completion Percentages** (1:1 Parity vs. All 4 DBs):
-- ⚠️ **Type System**: 60-65% (~3,407 lines) - Missing spatial, network, text search, range types
-- ⚠️ **Index Types**: 70-75% (~11,376 lines) - Missing spatial indexes, expression indexes
-- ❌ **Functions/Operators**: 10-15% (~4,458 lines) - Missing 85-90% of comprehensive library
-- ⚠️ **Schema Structure**: 70-80% (~6,432 lines) - Missing procedure/trigger/view catalogs
-- ⚠️ **Parser**: 45-50% (~6,720 lines) - JOINs ✅, GROUP BY ✅, ORDER BY ✅, LIMIT ✅, UPDATE/DELETE TODO
-- ⚠️ **Query Optimizer**: 85-90% (~3,700 lines) - Cost model ✅, Statistics ✅, Planner ✅, Execution ~30%
-- ✅ **Storage Engine**: 100% (~34,000 lines) - Full MGA/MVCC implementation
-
-**Why Percentages Changed**:
-- Previous: Assumed specialized features (spatial, text search, etc.) were "optional"
-- Corrected: ALL features in target databases are REQUIRED for market competitiveness
-- Impact: GIS apps, network tools, full-text search, analytics CANNOT use ScratchBird
-
-**Total Verified Code**: ~67,300+ lines (was ~65,000, added ~2,300 lines for aggregation/sorting)
-**Total Work Remaining**: ~1,820-2,945 hours (~11-18 months with 1 developer, reduced by 200 hours)
-
-### What's Implemented ✅ (Code-Verified - Oct 25, 2025)
-
-- **Storage Engine:** Buffer pool, page management, heap pages, TOAST (✅ 100% verified)
-- **Transaction Management:** Firebird MGA, 4 isolation levels, sweep, GC (✅ 100% verified)
-- **MVCC/MGA:** Back versioning, cross-page support, stable TIDs, N2O chains (✅ 100% verified)
-- **Concurrency:** Multi-connection, locking, deadlock detection (✅ 100% verified)
-- **Indexing:** B-tree, Hash, GIN, Bitmap, HNSW, BRIN (✅ all 6 types exist, ~11,376 lines verified)
-- **Tablespace:** Core infrastructure, GPID/TID, autoextend (✅ verified, ⚠️ ONLINE migration incomplete)
-- **Type System:** 29 data types, UUIDv7, timezones, collations (✅ 90-95% complete, ~3,407 lines)
-- **Parser:** Lexer, AST, semantic analyzer (⚠️ 45-50% - ~6,720 lines, JOINs/GROUP BY ✅, UPDATE/DELETE TODO)
-- **Query Executor:** SBLR bytecode generator + executor (⚠️ 30-35% functions, ~4,600 lines)
-- **Query Optimizer:** Cost-based optimization, statistics (⚠️ 85-90% - ~3,700 lines, execution ~30%)
-- **Schema Catalog:** Recursive schema, 7 catalog structures (✅ 100% complete, ~6,432 lines)
-- **Code Quality:** RAII, comprehensive logging, const-correct APIs (✅ verified in audit)
-- **CI/CD:** TSAN, ASAN, Helgrind, Valgrind, Clang-Tidy (⚠️ configs not verified)
-
-### Known Limitations ⚠️
-
-**Per Corrected Audit (Updated Oct 27, 2025)**:
-
-- **Query Optimizer ~85-90% Complete** (⚠️ Cost model ✅, Statistics ✅, Planner ✅, Execution ~30%)
-- **Incomplete Parser** (⚠️ 45-50% - JOINs ✅, GROUP BY ✅, ORDER BY ✅, missing UPDATE/DELETE)
-- **Minimal Functions** (⚠️ 30-35% - ~25 functions vs. ~200+ in production databases)
-- **Incomplete ONLINE Migration** (❌ Sprint 5 not implemented, ⚠️ Sprint 4 partial)
-- **No WAL** (no crash recovery - Beta requirement)
-- **No network layer** (local database only - Beta requirement)
-
-### Remaining for 1:1 Feature Parity
-
-**Per 1:1 Parity Audit (Oct 25, 2025)**: ~2,020-3,145 hours estimated (~12-19 months with 1 dev)
-
-**Phase 1: Critical Blockers** ✅ **100% COMPLETE** (Oct 28, 2025):
-1. ✅ **Query Optimizer** (100-160h) - Cost model, statistics, plan selection, EXPLAIN
-2. ✅ **Core CRUD** (35-55h) - UPDATE, DELETE statements with WHERE clause
-3. ✅ **Basic Queries** (30-50h) - JOINs (all types), GROUP BY, ORDER BY, LIMIT
-4. ✅ **Window Functions** (60-90h) - 8 functions: ROW_NUMBER, RANK, DENSE_RANK, LAG, LEAD, etc.
-5. ✅ **JSON Functions** (80-120h) - 14 functions with nlohmann/json integration
-6. ✅ **Conditional Functions** (20-30h) - COALESCE, NULLIF, CASE (simple and searched)
-
-**Audit Result**: Zero blocking TODOs, 92 non-critical TODOs (optimizations and future phases)
-
-**Phase 2: Competitive Parity** (~800-1,200 hours) → **~85% COMPLETE** (Oct 30, 2025):
-1. ✅ **Spatial Types + Indexes + Functions** (420-630h) - **COMPLETE** (R-tree + 28 functions operational)
-2. ✅ **Triggers/Procedures** (200-300h) - **COMPLETE** (Triggers + PSQL stored procedures)
-3. ✅ **CTEs and Subqueries** (110-170h) - **COMPLETE** (Wave 2)
-4. ✅ **Array/Text Search Functions** (90-140h) - **COMPLETE** (Wave 1 + verification)
-
-**Phase 3: Full Parity** (~800-1,300 hours) - NICE TO HAVE for complete replacement:
-1. ❌ **Text Search Types** (130-200h) - PostgreSQL full-text search
-2. ❌ **Range Types** (100-150h) - Temporal/booking applications
-3. ❌ **Network Types** (40-60h) - Network/DevOps tools
-4. ❌ **Expression/Filtered Indexes** (120-180h) - Advanced optimization
-5. ❌ **Extended Functions** (300-450h) - String, numeric, datetime, system
-6. ❌ **Sequences, Permissions, Remaining DDL** (80-140h)
-7. ❌ **Bit String, DECFLOAT, ENUM/SET** (90-140h) - Full compatibility
-
-**See Detailed Audit Reports**:
-- ✅ `/docs/audit/PHASE_1_COMPLETION_AUDIT.md` - **NEW!** Phase 1 completion verification (Oct 28, 2025)
-- `/docs/audit/FEATURE_PARITY_GAP_ANALYSIS.md` - 🔴 CRITICAL gaps identified
-- `/docs/audit/AUDIT_CORRECTIONS_SUMMARY.md` - Why percentages changed
-- `/docs/audit/TYPE_SYSTEM_COMPLETENESS_AUDIT.md` - ⚠️ 60-65% (was 90-95%)
-- `/docs/audit/INDEX_TYPE_COMPLETENESS_AUDIT.md` - ⚠️ 70-75% (was 95-100%)
-- `/docs/audit/FUNCTION_COMPLETENESS_AUDIT.md` - ❌ 10-15% (was 25-30%)
-- `/docs/audit/SCHEMA_STRUCTURE_AUDIT.md` - ⚠️ 70-80% (was 100%)
-- `/docs/audit/PARSER_COVERAGE_AUDIT.md` - ❌ 20-25% (was 64%)
-- `/docs/audit/QUERY_OPTIMIZATION_AUDIT.md` - ❌ 0%
+**Version:** Alpha (Engine Phase 1 - In Progress)
+**Last Updated:** November 3, 2025
+**Status:** Educational/Development - **60% Complete**
+
+### ✅ Completed Infrastructure (95% Complete)
+
+**Core Storage & Transactions** (100%):
+- Firebird MGA (Multi-Generational Architecture) - TIP-based visibility
+- Buffer pool, page management, heap pages
+- TOAST (The Oversized-Attribute Storage Technique) for large objects
+- Transaction management with 4 isolation levels
+- MVCC with back-versioning and stable TIDs
+- Garbage collection and sweep
+
+**Indexes** (4/12 types complete, 33%):
+- ✅ B-Tree - Production ready with prefix compression
+- ✅ Hash - Extendible hashing
+- ✅ Bitmap - Roaring compression for low-cardinality columns
+- ✅ R-Tree - Spatial indexing
+- ⚠️ HNSW - Stub (vector search)
+- ⚠️ BRIN - Stub (block range indexes)
+- ⚠️ GIN - Partial (inverted indexes)
+- ❌ GiST, SP-GiST, Full-Text, Columnstore, LSM-Tree - Not implemented
+
+**Data Types** (83/86 types, 97%):
+- All numeric types (INT8-INT128, UINT8-UINT64, DECIMAL, FLOAT, MONEY)
+- All string types (CHAR, VARCHAR, TEXT)
+- All temporal types (DATE, TIME, TIMESTAMP, INTERVAL)
+- Binary types (BINARY, VARBINARY, BLOB, BYTEA)
+- Special types (UUID, JSON/JSONB, XML, BOOLEAN)
+- Spatial types (POINT, LINESTRING, POLYGON, etc.)
+- Array types, Range types, Network types (INET, CIDR, MACADDR)
+- Text search types (TSVECTOR, TSQUERY)
+- ⚠️ COMPOSITE, VECTOR, VARIANT - Partial implementation
+
+**SQL Execution** (15/35 statements, 43%):
+- ✅ SELECT (with WHERE, JOIN, GROUP BY, HAVING, ORDER BY, LIMIT)
+- ✅ INSERT, UPDATE, DELETE
+- ✅ CREATE TABLE, CREATE INDEX, CREATE/ALTER/DROP TABLESPACE
+- ✅ BEGIN, COMMIT, ROLLBACK, SAVEPOINT
+- ✅ Window functions (ROW_NUMBER, RANK, LAG, LEAD, etc.)
+- ✅ JSON functions, Array functions, Spatial functions
+- ❌ ALTER TABLE, DROP TABLE/INDEX - Not implemented
+- ❌ GRANT/REVOKE - Not implemented
+- ❌ Views, Sequences, Triggers (execution), CTEs - Not implemented
+
+**Built-in Functions** (60/100, 60%):
+- ✅ String: 11 functions (LENGTH, SUBSTRING, UPPER, LOWER, TRIM, etc.)
+- ✅ Aggregate: 6 functions (COUNT, SUM, AVG, MIN, MAX, ARRAY_AGG)
+- ✅ Window: 8 functions
+- ✅ JSON: 13 functions
+- ✅ Array: 12 functions
+- ✅ Date/Time: 6 functions
+- ✅ Conditional: 3 functions (COALESCE, NULLIF, CASE)
+- ❌ Math: 0 functions (no SIN, COS, SQRT, etc.)
+- ❌ Statistical, Cryptographic, XML functions - Not implemented
+
+### 🎯 MGA Compliance - TOP PRIORITY ✅
+
+**Status:** 100% Firebird MGA Compliant (Completed November 2, 2025)
+
+- ✅ Pure TIP-based visibility (Transaction Inventory Pages)
+- ✅ Zero PostgreSQL MVCC contamination
+- ✅ In-place updates with back-versioning
+- ✅ Stable TIDs (indexes never updated unless indexed column changes)
+- ✅ O(1) transaction state lookups (< 100ns)
+- ✅ All index types use `isVersionVisible(xmin, current_xid)`
+- ✅ No snapshot arrays, no `isSnapshotVisible()` calls
+
+**See:** `/MGA_RULES.md` for mandatory MGA architecture rules
+
+### 📋 Current Work
+
+**Active Plan:** `/docs/planning/ALPHA_PHASE1_COMPLETE_IMPLEMENTATION_PLAN.md`
+
+**Goal:** 100% feature completeness for engine embedding (Phase 1)
+**Timeline:** 6-9 months (with 3 developers)
+**Remaining Work:** ~1,755-2,425 hours
+
+**Critical Priorities:**
+1. Complete all 8 remaining index types (GIN, GiST, SP-GiST, BRIN, HNSW, Full-Text, Columnstore, LSM-Tree)
+2. DDL modifications (ALTER TABLE, DROP statements)
+3. Security system (GRANT/REVOKE)
+4. All built-in functions (especially 40 missing mathematical functions)
+5. Complete constraints (CHECK, FOREIGN KEY, DEFAULT, UNIQUE enforcement)
+6. Complete PSQL/stored procedures (bytecode execution)
+7. Views, sequences, triggers, CTEs
+8. Complete data type operations (COMPOSITE, VECTOR, VARIANT, Domains)
+
+**After Phase 1:** Parser separation into embeddable library + standalone application
+
+### 📊 Latest Achievements
+
+**November 3, 2025 - SQL Identifier UTF-8 Complete:**
+- ✅ 128-character UTF-8 identifiers (SQL:2016 §5.2)
+- ✅ 512-byte storage (supports all UTF-8 characters)
+- ✅ Proper character boundary integrity
+- ✅ 86 comprehensive test cases
+
+**November 2-3, 2025 - TOAST MGA Compliance Complete:**
+- ✅ 28-byte TOAST chunk format with explicit xmin/xmax
+- ✅ TIP-based visibility for TOAST
+- ✅ All 7 index types detoast before indexing
+- ✅ TOAST garbage collection
+
+**November 2, 2025 - Firebird MGA Compliance Complete:**
+- ✅ All indexes use TIP-based visibility
+- ✅ Storage layer SNAPSHOT isolation uses TIP
+- ✅ Zero PostgreSQL MVCC contamination
+
+## Architecture Highlights
+
+### Firebird MGA (Multi-Generational Architecture)
+
+**Pure TIP-based visibility** - O(1) transaction state lookups
+- Transaction Inventory Pages store 2 bits per transaction
+- States: ACTIVE, COMMITTED, ABORTED, LIMBO
+- No snapshot arrays (PostgreSQL MVCC eliminated)
+
+**In-place updates with back versions:**
+- Primary record modified in-place
+- Old data stored as back versions
+- Newest-to-Oldest (N2O) version chains
+- Zero heap fragmentation by design
+
+**Stable TIDs:**
+- Indexes store permanent TIDs
+- Index entries never change (unless indexed column modified)
+- No index bloat from updates to non-indexed columns
+
+### Storage Engine
+
+- **Buffer Pool:** LRU page caching
+- **Heap Pages:** Record storage with back-version chains
+- **TOAST:** Out-of-line storage for large attributes
+- **Tablespaces:** Multi-file support with GPID addressing
+
+### Transaction Management
+
+- **4 Isolation Levels:** READ UNCOMMITTED, READ COMMITTED, REPEATABLE READ, SERIALIZABLE
+- **MVCC:** Multi-Version Concurrency Control via back-versioning
+- **Locking:** Deadlock detection, multi-granularity locks
+- **Garbage Collection:** Sweep removes old back versions
 
 ## Project Structure
 
 - **`docs/`** - All documentation
-  - `specifications/` - TABLESPACE_SPECIFICATION.md, MGA_IMPLEMENTATION.md
-  - `planning/` - TABLESPACE_COMPLETE_IMPLEMENTATION_ROADMAP.md
-  - `guides/` - Developer guides (locking, error handling, concurrency, resources)
-  - `STATUS_*.md` - Sprint completion reports
+  - `planning/` - Implementation plans and roadmaps
+  - `specifications/` - Architecture specifications
+  - `status/` - Completion reports
+  - `audit/` - Code audits and gap analyses
 - **`src/`** - Source code
   - `core/` - Storage engine, indexes, transactions, catalog
   - `parser/` - SQL parser
-  - `sblr/` - Query executor
+  - `sblr/` - Query executor (ScratchBird Binary Language Runner)
 - **`tests/`** - Test suites
   - `unit/` - Unit tests
   - `integration/` - Integration tests
@@ -410,24 +177,20 @@ LIMIT 100;
 
 ## Development Process
 
-1. **READ FIRST**: Review corrected audit reports in `/docs/audit/` (Oct 25, 2025):
-   - `TYPE_SYSTEM_COMPLETENESS_AUDIT.md` - ✅ 90-95% complete
-   - `INDEX_TYPE_COMPLETENESS_AUDIT.md` - ✅ 95-100% complete
-   - `FUNCTION_COMPLETENESS_AUDIT.md` - ⚠️ 25-30% complete
-   - `SCHEMA_STRUCTURE_AUDIT.md` - ✅ 100% complete
-   - `PARSER_COVERAGE_AUDIT.md` - ⚠️ 64% complete
-   - `QUERY_OPTIMIZATION_AUDIT.md` - ❌ 0% complete
-2. Review [PROJECT_CONTEXT.md](PROJECT_CONTEXT.md) for current state
-3. Review [TABLESPACE_COMPLETE_IMPLEMENTATION_ROADMAP.md](docs/planning/TABLESPACE_COMPLETE_IMPLEMENTATION_ROADMAP.md) for priorities
-4. Check [TODO.md](docs/development/TODO.md) for work items
-5. Review developer documentation:
-   - [Locking Protocol](docs/LOCKING_PROTOCOL.md)
-   - [Error Handling Guide](docs/ERROR_HANDLING_GUIDE.md)
-   - [Concurrency Patterns](docs/CONCURRENCY_PATTERNS.md)
-   - [Resource Management](docs/RESOURCE_MANAGEMENT.md)
-6. Follow [Coding Standards](docs/development/CODING_STANDARDS.md)
-7. Run sanitizers before commit: `./tools/run_sanitizers.sh --all`
-8. Run tests frequently with `ctest --output-on-failure`
+1. **READ FIRST:**
+   - [PROJECT_CONTEXT.md](PROJECT_CONTEXT.md) - Current project state
+   - [MGA_RULES.md](MGA_RULES.md) - **MANDATORY** Firebird MGA architecture rules
+   - [ALPHA_PHASE1_COMPLETE_IMPLEMENTATION_PLAN.md](docs/planning/ALPHA_PHASE1_COMPLETE_IMPLEMENTATION_PLAN.md) - Current work plan
+
+2. **Before ANY transaction/index work:** Read `/MGA_RULES.md` - violations are architecturally WRONG
+
+3. **Review documentation:**
+   - [ALPHA_ENGINE_READINESS_SUMMARY.md](docs/ALPHA_ENGINE_READINESS_SUMMARY.md) - Detailed feature analysis
+   - Developer guides in `/docs/guides/`
+
+4. **Follow standards:** [CODING_STANDARDS.md](docs/development/CODING_STANDARDS.md)
+
+5. **Run tests frequently:** `ctest --output-on-failure`
 
 ## Building
 
@@ -462,48 +225,7 @@ cd build && ctest --output-on-failure
 
 # Run specific tests
 ctest -R "test_name"
-
-# Run sanitizers
-./tools/run_sanitizers.sh --all
 ```
-
-## Architecture Highlights
-
-### Firebird MGA (Multi-Generational Architecture) - 100% COMPLIANT ✅
-- **Pure TIP-based visibility** - O(1) transaction state lookups via Transaction Inventory Pages
-- **In-place updates** with back versions (not PostgreSQL's append-only model)
-- **Stable TIDs** - indexes never updated unless indexed column changes
-- **N2O version chains** - Newest-to-Oldest traversal
-- **Zero heap fragmentation** by design
-- **Zero PostgreSQL MVCC contamination** - no snapshot arrays, no `isSnapshotVisible()` calls
-
-**MGA Implementation Details**:
-- All 7 index types use `isVersionVisible(xmin, current_xid)` for visibility checks
-- Transaction states tracked via 2-bit TIP entries (ACTIVE, COMMITTED, ABORTED, LIMBO)
-- Storage layer SNAPSHOT isolation uses `snapshot_xid` with TIP lookups
-- Own changes always visible (`xmin == current_xid`) - MGA Rule 3
-- See `/docs/specifications/MGA_IMPLEMENTATION.md` for complete architecture
-
-### Tablespace System
-- **GPID Addressing** - 64-bit (16-bit tablespace + 48-bit page)
-- **ONLINE Migration** - Zero-downtime table migration with < 5% overhead
-- **Dual-Source Visibility** - TIDResolver with Bloom filters
-- **Multi-file Support** - Storage tiering, data lifecycle management
-
-### Index Types (All MGA-Compliant with TIP-Based Visibility)
-1. **B-Tree** - General purpose, with prefix compression, TIP-based visibility
-2. **Hash** - Equality lookups, xmin/xmax fields for soft deletes
-3. **GIN** - Inverted index for arrays, full-text, TIP post-filtering
-4. **Bitmap** - Low-cardinality columns, Roaring compression, TIP post-filtering
-5. **HNSW** - Vector similarity search (ANN), TIP-aware
-6. **BRIN** - Block range indexes for sequential data, TIP-aware
-7. **R-Tree** - Spatial indexes with bounding boxes, full TIP integration
-
-**All index types**:
-- Use `current_xid` parameters (not `Snapshot*`)
-- Perform visibility checks via `isVersionVisible(xmin, current_xid)`
-- No index bloat from updates to non-indexed columns (stable TIDs)
-- See test suites in `/tests/unit/test_index_mga_compliance.cpp`
 
 ## License
 
