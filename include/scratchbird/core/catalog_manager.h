@@ -150,6 +150,38 @@ namespace scratchbird::core
      * - Columns
      * - Indexes (future)
      * - Constraints (future)
+     *
+     * SQL Identifier UTF-8 Support (November 2025):
+     *
+     * Identifier Limits:
+     * - Maximum length: 128 UTF-8 characters (SQL:2016 §5.2)
+     * - Maximum storage: 512 bytes (supports all UTF-8 characters)
+     * - Encoding: UTF-8 only
+     *
+     * Storage Format:
+     * - All identifiers stored in fixed char[512] arrays
+     * - Supports 128 characters of any UTF-8 encoding (1-4 bytes per char)
+     * - Validation ensures both character limit (128) and byte limit (512)
+     * - Invalid UTF-8 rejected at validation level
+     *
+     * Validation Process:
+     * 1. UTF8Utils::validateStorageCapacity() checks:
+     *    - Character count ≤ 128 (SQL standard)
+     *    - Byte count ≤ 512 (storage capacity)
+     *    - Valid UTF-8 encoding (RFC 3629)
+     * 2. UTF8Utils::writeToBuffer() safely writes to catalog:
+     *    - Truncates at character boundaries (no split multi-byte chars)
+     *    - Ensures null-termination at position 511
+     *    - Returns error if validation fails
+     *
+     * Examples:
+     * - "café" - 4 characters, 5 bytes (valid)
+     * - "北京_table" - 9 characters, 15 bytes (valid)
+     * - "idx_😀" - 5 characters, 8 bytes (valid)
+     * - 128 emoji - 128 characters, 512 bytes (valid, maximum)
+     * - 129 emoji - 129 characters, 516 bytes (INVALID, exceeds limits)
+     *
+     * Reference: docs/specifications/character_sets_and_collations.md
      */
     class CatalogManager
     {
