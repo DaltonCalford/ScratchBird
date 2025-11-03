@@ -21,6 +21,14 @@ namespace scratchbird
         constexpr uint32_t DB_VERSION_ALPHA_1_0_1 = 0x00010001;        // v0.1.0.1
         constexpr uint32_t DB_COMPAT_VERSION_ALPHA_1_0_1 = 0x00010001; // v0.1.0.1
 
+        // TOAST MGA Compliance - New 28-byte chunk format with xmin/xmax
+        constexpr uint32_t DB_VERSION_ALPHA_1_8_2 = 0x00010802;        // v0.1.8.2 - TOAST MGA format
+        constexpr uint32_t DB_COMPAT_VERSION_ALPHA_1_8_2 = 0x00010802; // Requires v0.1.8.2+
+
+        // Current version (updated for TOAST MGA compliance - Phase 1 complete)
+        constexpr uint32_t DB_VERSION_CURRENT = DB_VERSION_ALPHA_1_8_2;
+        constexpr uint32_t DB_COMPAT_VERSION_CURRENT = DB_COMPAT_VERSION_ALPHA_1_8_2;
+
         // Forward declarations
         class PageManager;
         class BufferPool;

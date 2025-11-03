@@ -45,9 +45,12 @@ namespace scratchbird::core
 #pragma pack(pop)
 
 // TOAST chunk - one piece of a large value
+// Firebird MGA compliant: includes xmin/xmax for TIP-based visibility
 #pragma pack(push, 1)
     struct ToastChunk
     {
+        uint64_t xmin;                            // Transaction that created this chunk (Firebird MGA)
+        uint64_t xmax;                            // Transaction that deleted this chunk (0 if active)
         uint32_t chunk_id;                        // Unique ID of the owning TOAST value
         uint32_t chunk_seq;                       // Sequence number (0-based)
         uint32_t chunk_size;                      // Size of data in this chunk
