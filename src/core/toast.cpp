@@ -506,23 +506,33 @@ namespace scratchbird::core
 
             uint32_t chunk_size = std::min(TOAST_MAX_CHUNK_SIZE, size - offset);
 
-            // Build tuple data manually
-            // Format: chunk_id (4 bytes) | chunk_seq (4 bytes) | chunk_size (4 bytes) | data
+            // Build tuple data with Firebird MGA compliance
+            // Format: xmin (8) | xmax (8) | chunk_id (4) | chunk_seq (4) | chunk_size (4) | data
+            // 28-byte header + data
             std::vector<uint8_t> tuple_data;
-            tuple_data.reserve(12 + chunk_size);
+            tuple_data.reserve(28 + chunk_size);
+
+            // Add xmin (transaction that created this chunk) - Firebird MGA
+            tuple_data.insert(tuple_data.end(), reinterpret_cast<const uint8_t *>(&xmin),
+                              reinterpret_cast<const uint8_t *>(&xmin) + 8);
+
+            // Add xmax (initially 0 - not deleted) - Firebird MGA
+            uint64_t xmax_value = 0;
+            tuple_data.insert(tuple_data.end(), reinterpret_cast<const uint8_t *>(&xmax_value),
+                              reinterpret_cast<const uint8_t *>(&xmax_value) + 8);
 
             // Add chunk_id
             uint32_t id = value_id;
-            tuple_data.insert(tuple_data.end(), reinterpret_cast<uint8_t *>(&id),
-                              reinterpret_cast<uint8_t *>(&id) + 4);
+            tuple_data.insert(tuple_data.end(), reinterpret_cast<const uint8_t *>(&id),
+                              reinterpret_cast<const uint8_t *>(&id) + 4);
 
             // Add chunk_seq
-            tuple_data.insert(tuple_data.end(), reinterpret_cast<uint8_t *>(&seq),
-                              reinterpret_cast<uint8_t *>(&seq) + 4);
+            tuple_data.insert(tuple_data.end(), reinterpret_cast<const uint8_t *>(&seq),
+                              reinterpret_cast<const uint8_t *>(&seq) + 4);
 
             // Add chunk_size
-            tuple_data.insert(tuple_data.end(), reinterpret_cast<uint8_t *>(&chunk_size),
-                              reinterpret_cast<uint8_t *>(&chunk_size) + 4);
+            tuple_data.insert(tuple_data.end(), reinterpret_cast<const uint8_t *>(&chunk_size),
+                              reinterpret_cast<const uint8_t *>(&chunk_size) + 4);
 
             // Add chunk data
             tuple_data.insert(tuple_data.end(), data + offset, data + offset + chunk_size);
@@ -602,13 +612,24 @@ namespace scratchbird::core
         Tuple tuple;
         while ((status = scan->next(&tuple, ctx)) == Status::OK)
         {
-            // Parse tuple format: chunk_id | chunk_seq | chunk_size | data
-            if ((tuple.data == nullptr) || tuple.data_size < 12)
+            // Parse tuple format: xmin (8) | xmax (8) | chunk_id (4) | chunk_seq (4) | chunk_size (4) | data
+            // 28-byte header + data (Firebird MGA compliant)
+            if ((tuple.data == nullptr) || tuple.data_size < 28)
             {
                 continue;
             }
 
             const uint8_t *ptr = tuple.data;
+
+            // Parse xmin (bytes 0-7) - Firebird MGA
+            uint64_t chunk_xmin = *reinterpret_cast<const uint64_t *>(ptr);
+            ptr += 8;
+
+            // Parse xmax (bytes 8-15) - Firebird MGA
+            uint64_t chunk_xmax = *reinterpret_cast<const uint64_t *>(ptr);
+            ptr += 8;
+
+            // Parse chunk_id (bytes 16-19)
             uint32_t chunk_id = *reinterpret_cast<const uint32_t *>(ptr);
 
             if (chunk_id != value_id)
@@ -618,16 +639,24 @@ namespace scratchbird::core
             }
 
             ptr += 4;
+            // Parse chunk_seq (bytes 20-23)
             uint32_t chunk_seq = *reinterpret_cast<const uint32_t *>(ptr);
             ptr += 4;
+            // Parse chunk_size (bytes 24-27)
             uint32_t chunk_size = *reinterpret_cast<const uint32_t *>(ptr);
             ptr += 4;
 
             // Validate chunk size
-            if (chunk_size > TOAST_MAX_CHUNK_SIZE || 12 + chunk_size > tuple.data_size)
+            if (chunk_size > TOAST_MAX_CHUNK_SIZE || 28 + chunk_size > tuple.data_size)
             {
                 continue;
             }
+
+            // TODO Phase 2: Add TIP-based visibility check here
+            // For now, accept all chunks (Phase 1 focus is format only)
+            // if (!ToastVisibility::isChunkVisible(chunk_xmin, chunk_xmax, xmin, tm_)) {
+            //     continue;  // Skip invisible chunk
+            // }
 
             // Extract chunk data
             std::vector<uint8_t> chunk_data(chunk_size);
@@ -682,13 +711,24 @@ namespace scratchbird::core
         Status status;
         while ((status = scan->next(&tuple, ctx)) == Status::OK)
         {
-            // Parse tuple format: chunk_id | chunk_seq | chunk_size | data
-            if ((tuple.data == nullptr) || tuple.data_size < 12)
+            // Parse tuple format: xmin (8) | xmax (8) | chunk_id (4) | chunk_seq (4) | chunk_size (4) | data
+            // 28-byte header + data (Firebird MGA compliant)
+            if ((tuple.data == nullptr) || tuple.data_size < 28)
             {
                 continue;
             }
 
             const uint8_t *ptr = tuple.data;
+
+            // Parse xmin (bytes 0-7) - Firebird MGA
+            uint64_t chunk_xmin = *reinterpret_cast<const uint64_t *>(ptr);
+            ptr += 8;
+
+            // Parse xmax (bytes 8-15) - Firebird MGA
+            uint64_t chunk_xmax = *reinterpret_cast<const uint64_t *>(ptr);
+            ptr += 8;
+
+            // Parse chunk_id (bytes 16-19)
             uint32_t chunk_id = *reinterpret_cast<const uint32_t *>(ptr);
             ptr += 4;
 
@@ -697,14 +737,22 @@ namespace scratchbird::core
                 continue;
             }
 
+            // Parse chunk_seq (bytes 20-23)
             uint32_t chunk_seq = *reinterpret_cast<const uint32_t *>(ptr);
             ptr += 4;
 
+            // Parse chunk_size (bytes 24-27)
             uint32_t chunk_size = *reinterpret_cast<const uint32_t *>(ptr);
             ptr += 4;
 
+            // TODO Phase 2: Add TIP-based visibility check here
+            // For now, accept all chunks (Phase 1 focus is format only)
+            // if (!ToastVisibility::isChunkVisible(chunk_xmin, chunk_xmax, xmin, tm_)) {
+            //     continue;  // Skip invisible chunk
+            // }
+
             // Validate chunk size
-            if (chunk_size > TOAST_MAX_CHUNK_SIZE || 12 + chunk_size > tuple.data_size)
+            if (chunk_size > TOAST_MAX_CHUNK_SIZE || 28 + chunk_size > tuple.data_size)
             {
                 continue;
             }
