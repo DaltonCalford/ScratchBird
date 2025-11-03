@@ -1,0 +1,1626 @@
+# TOAST MGA Compliance Fix Plan - ScratchBird Database
+
+**Created**: November 2, 2025
+**Status**: ACTIVE - CRITICAL PRIORITY
+**Goal**: Fix all TOAST implementation issues and achieve 100% Firebird MGA compliance
+**Estimated Effort**: 4-5 weeks (160-200 hours)
+
+---
+
+## 🔴 EXECUTIVE SUMMARY
+
+### The Problem
+
+**ScratchBird's TOAST implementation is functionally complete for basic operations but has CRITICAL MGA compliance violations and index integration failures.**
+
+Based on audit report `/docs/audit/02_TOAST_IMPLEMENTATION_AUDIT.md`, the following critical issues were identified:
+
+1. ❌ **CRITICAL**: TOAST chunks do NOT track xmin/xmax in on-disk format (PostgreSQL TupleHeader only)
+2. ❌ **CRITICAL**: TOAST visibility uses snapshot-based model, NOT TIP-based (Firebird MGA violation)
+3. ❌ **HIGH**: ALL 7 index types index TOAST pointer bytes instead of actual values (BROKEN)
+4. ❌ **HIGH**: Garbage collector does NOT clean up orphaned TOAST chunks (storage leaks)
+5. ❌ **MEDIUM**: No reference counting for shared TOAST values
+6. ❌ **MEDIUM**: No crash recovery for partial TOAST operations
+
+### Current MGA Compliance Score
+
+**Overall MGA Compliance**: **1/6 (17%)** ❌
+
+| MGA Requirement | Status | Issue |
+|----------------|--------|-------|
+| TOAST chunks track xmin | ❌ FAIL | Only in TupleHeader, not TOAST data |
+| TOAST chunks track xmax | ❌ FAIL | Only in TupleHeader, not TOAST data |
+| TIP-based visibility | ❌ FAIL | Uses snapshot-based visibility |
+| Independent of snapshot | ❌ FAIL | Depends on snapshot_xid |
+| Garbage collection | ❌ FAIL | Skips TOAST tables entirely |
+| Version chain support | ✅ PASS | Cleanup on update works |
+
+### Impact
+
+**Do NOT use TOAST for production until these issues are fixed.**
+
+- **Data Correctness**: All indexes return wrong results for TOASTed columns
+- **Storage Leaks**: Orphaned TOAST chunks accumulate indefinitely
+- **MGA Violations**: TOAST does not follow Firebird architecture
+- **Performance**: Long-running transactions hold TOAST chunks visible
+
+---
+
+## 📋 MANDATORY READING BEFORE ANY WORK
+
+**CRITICAL**: Read these documents BEFORE starting any TOAST MGA compliance work:
+
+### 1. Audit Report (MUST READ FIRST)
+- **File**: `/docs/audit/02_TOAST_IMPLEMENTATION_AUDIT.md`
+- **Why**: Complete analysis of all TOAST issues
+- **Key Sections**:
+  - Section 3: Critical MGA Compliance Issues
+  - Section 4: Index TOAST Handling Audit
+  - Section 6: Critical Bugs Identified
+
+### 2. MGA Rules (REQUIRED)
+- **File**: `/MGA_RULES.md`
+- **Why**: Understand Firebird MGA vs PostgreSQL MVCC
+- **Key Rules**:
+  - Rule 0: Fundamental distinction (TIP vs snapshots)
+  - Rule 1: Transaction state tracking via TIP
+  - Rule 2: Version visibility via TIP lookups
+
+### 3. TOAST Specifications
+- **File**: `/docs/specifications/TOAST_LOB_STORAGE.md`
+- **File**: `/docs/specifications/HEAP_TOAST_INTEGRATION.md`
+- **Why**: Understand intended TOAST architecture
+
+### 4. MGA Implementation Spec
+- **File**: `/docs/specifications/MGA_IMPLEMENTATION.md`
+- **Why**: Understand TIP-based visibility implementation
+
+### 5. Recent MGA Compliance Work
+- **File**: `/docs/planning/MGA_COMPLIANCE_FIX_PLAN.md`
+- **Why**: See how we achieved index layer MGA compliance
+- **Lessons**: Hybrid approach works (extract snapshot_xid for TIP lookups)
+
+---
+
+## 🎯 IMPLEMENTATION PHASES
+
+### Phase Overview
+
+- [x] Phase 0: Preparation & Planning (5-8 hours) ✅ **CURRENT**
+- [ ] Phase 1: TOAST Chunk Format Redesign (20-30 hours)
+- [ ] Phase 2: TIP-Based Visibility Implementation (15-25 hours)
+- [ ] Phase 3: Index TOAST Integration (40-60 hours)
+- [ ] Phase 4: Garbage Collection Implementation (25-35 hours)
+- [ ] Phase 5: Crash Recovery & WAL Integration (20-30 hours)
+- [ ] Phase 6: Testing & Validation (20-30 hours)
+- [ ] Phase 7: Documentation & Optimization (15-20 hours)
+
+**Total Estimated Hours**: 160-238 hours (4-6 weeks with 1 developer)
+
+---
+
+## 🔧 PHASE 0: Preparation & Planning
+
+**Status**: ✅ COMPLETE
+**Duration**: 5-8 hours
+**Goal**: Read audit, understand issues, create comprehensive plan
+
+### Tasks
+
+- [x] Read audit report completely
+- [x] Read MGA rules and specifications
+- [x] Review recent MGA compliance work for lessons learned
+- [x] Create comprehensive implementation plan
+- [x] Identify all affected files
+
+### Affected Files Inventory
+
+**TOAST Core**:
+- `include/scratchbird/core/toast.h` (163 lines)
+- `src/core/toast.cpp` (823 lines)
+
+**Heap Integration**:
+- `include/scratchbird/core/heap_page.h` (350 lines)
+- `src/core/heap_page.cpp` (1790 lines)
+
+**Storage Engine**:
+- `include/scratchbird/core/storage_engine.h` (193 lines)
+- `src/core/storage_engine.cpp` (300+ lines)
+
+**All 7 Index Types**:
+- `include/scratchbird/core/btree.h` + `src/core/btree.cpp`
+- `include/scratchbird/core/hash_index.h` + `src/core/hash_index.cpp`
+- `include/scratchbird/core/gin_index.h` + `src/core/gin_index.cpp`
+- `include/scratchbird/core/hnsw_index.h` + `src/core/hnsw_index.cpp`
+- `include/scratchbird/core/brin_index.h` + `src/core/brin_index.cpp`
+- `include/scratchbird/core/bitmap_index.h` + `src/core/bitmap_index.cpp`
+- `include/scratchbird/core/rtree.h` + `src/core/rtree.cpp`
+
+**Garbage Collection**:
+- `include/scratchbird/core/garbage_collector.h` (226 lines)
+- `src/core/garbage_collector.cpp` (200+ lines)
+- `src/core/vacuum.cpp` (300+ lines)
+
+**Transaction Management**:
+- `include/scratchbird/core/transaction_manager.h`
+- `src/core/transaction_manager.cpp`
+
+---
+
+## 🔧 PHASE 1: TOAST Chunk Format Redesign
+
+**Status**: PENDING
+**Duration**: 20-30 hours
+**Goal**: Add explicit xmin/xmax to TOAST chunk on-disk format
+**Priority**: CRITICAL
+
+### Current Problem
+
+**File**: `src/core/toast.cpp:509-528`
+
+Current TOAST chunk format:
+```
+chunk_id (4 bytes) | chunk_seq (4 bytes) | chunk_size (4 bytes) | data (variable)
+= 12-byte header + data
+```
+
+xmin/xmax are only tracked in TupleHeader (PostgreSQL style), NOT in TOAST data itself.
+
+### Target Solution
+
+New TOAST chunk format (Firebird MGA compliant):
+```
+xmin (8 bytes) | xmax (8 bytes) | chunk_id (4 bytes) | chunk_seq (4 bytes) |
+chunk_size (4 bytes) | data (variable)
+= 28-byte header + data
+```
+
+### Implementation Tasks
+
+#### Task 1.1: Update ToastChunk Structure
+**File**: `include/scratchbird/core/toast.h:41-49`
+**Duration**: 1 hour
+
+**Changes**:
+```cpp
+// OLD (in-memory only):
+struct ToastChunk {
+    uint32_t chunk_id;
+    uint32_t chunk_seq;
+    uint32_t chunk_size;
+    std::vector<uint8_t> data;
+};
+
+// NEW (matches on-disk format):
+struct ToastChunk {
+    uint64_t xmin;              // Transaction that created this chunk
+    uint64_t xmax;              // Transaction that deleted this chunk (or 0)
+    uint32_t chunk_id;          // Unique TOAST value ID
+    uint32_t chunk_seq;         // Chunk sequence number (0, 1, 2, ...)
+    uint32_t chunk_size;        // Size of this chunk
+    std::vector<uint8_t> data;  // Chunk data
+};
+```
+
+**Validation**:
+- ToastChunk structure has xmin/xmax fields ✅
+- Structure layout matches on-disk format ✅
+
+#### Task 1.2: Update writeToastChunks() to Write xmin/xmax
+**File**: `src/core/toast.cpp:509-528`
+**Duration**: 3-4 hours
+
+**Current Code** (WRONG):
+```cpp
+// Build tuple data manually
+// Format: chunk_id (4 bytes) | chunk_seq (4 bytes) | chunk_size (4 bytes) | data
+std::vector<uint8_t> tuple_data;
+tuple_data.reserve(12 + chunk_size);
+
+// Add chunk_id
+uint32_t id = value_id;
+tuple_data.insert(tuple_data.end(), reinterpret_cast<uint8_t *>(&id),
+                  reinterpret_cast<uint8_t *>(&id) + 4);
+
+// Add chunk_seq
+tuple_data.insert(tuple_data.end(), reinterpret_cast<uint8_t *>(&seq),
+                  reinterpret_cast<uint8_t *>(&seq) + 4);
+
+// Add chunk_size
+tuple_data.insert(tuple_data.end(), reinterpret_cast<uint8_t *>(&chunk_size),
+                  reinterpret_cast<uint8_t *>(&chunk_size) + 4);
+
+// Add chunk data
+tuple_data.insert(tuple_data.end(), data + offset, data + offset + chunk_size);
+```
+
+**New Code** (CORRECT - Firebird MGA):
+```cpp
+// Build tuple data with MGA compliance
+// Format: xmin (8) | xmax (8) | chunk_id (4) | chunk_seq (4) | chunk_size (4) | data
+std::vector<uint8_t> tuple_data;
+tuple_data.reserve(28 + chunk_size);  // 28-byte header + data
+
+// Add xmin (transaction that created this chunk)
+tuple_data.insert(tuple_data.end(), reinterpret_cast<const uint8_t *>(&xmin),
+                  reinterpret_cast<const uint8_t *>(&xmin) + 8);
+
+// Add xmax (initially 0)
+uint64_t xmax_value = 0;
+tuple_data.insert(tuple_data.end(), reinterpret_cast<const uint8_t *>(&xmax_value),
+                  reinterpret_cast<const uint8_t *>(&xmax_value) + 8);
+
+// Add chunk_id
+uint32_t id = value_id;
+tuple_data.insert(tuple_data.end(), reinterpret_cast<const uint8_t *>(&id),
+                  reinterpret_cast<const uint8_t *>(&id) + 4);
+
+// Add chunk_seq
+tuple_data.insert(tuple_data.end(), reinterpret_cast<const uint8_t *>(&seq),
+                  reinterpret_cast<const uint8_t *>(&seq) + 4);
+
+// Add chunk_size
+tuple_data.insert(tuple_data.end(), reinterpret_cast<const uint8_t *>(&chunk_size),
+                  reinterpret_cast<const uint8_t *>(&chunk_size) + 4);
+
+// Add chunk data
+tuple_data.insert(tuple_data.end(), data + offset, data + offset + chunk_size);
+```
+
+**Validation**:
+- xmin written to tuple data ✅
+- xmax written to tuple data ✅
+- Tuple data size = 28 + chunk_size ✅
+
+#### Task 1.3: Update readToastChunks() to Read xmin/xmax
+**File**: `src/core/toast.cpp:557-657`
+**Duration**: 3-4 hours
+
+**Changes**:
+1. Parse 28-byte header instead of 12-byte header
+2. Extract xmin (bytes 0-7)
+3. Extract xmax (bytes 8-15)
+4. Extract chunk_id (bytes 16-19)
+5. Extract chunk_seq (bytes 20-23)
+6. Extract chunk_size (bytes 24-27)
+7. Store in ToastChunk structure
+
+**Validation**:
+- Correctly reads xmin from chunk ✅
+- Correctly reads xmax from chunk ✅
+- Backward compatibility handled (reject old format) ✅
+
+#### Task 1.4: Update ToastTableEntry Usage
+**File**: `include/scratchbird/core/toast.h:59-67`
+**Duration**: 1-2 hours
+
+**Current**:
+```cpp
+struct ToastTableEntry {
+    uint64_t xmin;             // Transaction that created this
+    uint64_t xmax;             // Transaction that deleted this (or 0)
+    uint32_t value_id;         // Unique TOAST value ID
+    uint32_t chunk_seq;        // Chunk sequence number
+    uint32_t chunk_size;       // Size of this chunk
+    std::vector<uint8_t> data; // Chunk data
+};
+```
+
+**Action**: Ensure all ToastTableEntry usage populates xmin/xmax from parsed chunk data, not TupleHeader.
+
+**Validation**:
+- ToastTableEntry.xmin comes from chunk data ✅
+- ToastTableEntry.xmax comes from chunk data ✅
+
+#### Task 1.5: Database Schema Version Bump
+**File**: `include/scratchbird/core/database.h`
+**Duration**: 1 hour
+
+**Action**: Bump schema version to indicate new TOAST format.
+
+**Changes**:
+- Add `SCHEMA_VERSION_TOAST_MGA` constant
+- Update `Database::open()` to check schema version
+- Reject opening old databases with incompatible TOAST format
+
+**Validation**:
+- Old databases rejected with clear error message ✅
+
+#### Task 1.6: Migration Strategy (Optional)
+**Duration**: 4-6 hours (if needed)
+
+**Options**:
+1. **No Migration** (Recommended for alpha): Reject old databases, require rebuild
+2. **Online Migration**: Convert old TOAST chunks to new format on first read
+3. **Offline Migration**: Provide migration tool
+
+**Recommendation**: Option 1 (No Migration) - database is in alpha stage.
+
+### Phase 1 Validation Checklist
+
+- [ ] ToastChunk structure has xmin/xmax fields
+- [ ] writeToastChunks() writes 28-byte header with xmin/xmax
+- [ ] readToastChunks() reads 28-byte header correctly
+- [ ] ToastTableEntry populated from chunk data
+- [ ] Schema version bumped
+- [ ] Unit tests pass (after Phase 6)
+
+### Phase 1 Testing
+
+**Create**: `tests/unit/test_toast_chunk_format.cpp`
+
+Test cases:
+1. Write chunk with xmin, read back correctly
+2. Write chunk with xmin/xmax, verify both fields
+3. Verify 28-byte header format
+4. Reject old 12-byte format gracefully
+
+---
+
+## 🔧 PHASE 2: TIP-Based Visibility Implementation
+
+**Status**: PENDING
+**Duration**: 15-25 hours
+**Goal**: Replace snapshot-based visibility with TIP-based visibility for TOAST
+**Priority**: CRITICAL
+
+### Current Problem
+
+**File**: `src/core/heap_page.cpp:1321-1327`
+
+Current visibility (PostgreSQL MVCC - WRONG):
+```cpp
+// Check visibility
+// Simple visibility: xmin <= snapshot_xid < xmax
+if (tuple_hdr->xmin <= snapshot_xid) {
+    if (effective_xmax == 0 || effective_xmax > snapshot_xid) {
+        visible = true;
+    }
+}
+```
+
+This is **snapshot-based visibility** (PostgreSQL), NOT **TIP-based visibility** (Firebird MGA).
+
+### Target Solution
+
+TOAST chunks use **TIP-based visibility**:
+- Check transaction state via TIP: `getTransactionState(xmin)`
+- Use `isVersionVisible(xmin, current_xid)` for visibility checks
+- Independent of transaction snapshots
+
+### Lessons from Recent MGA Compliance Work
+
+**Reference**: `/docs/planning/MGA_COMPLIANCE_FIX_PLAN.md`
+
+From storage layer MGA compliance fix:
+- Hybrid approach works: Keep Snapshot structure, extract `snapshot_xid` for TIP
+- Use `isVersionVisible(xmin, snapshot_xid)` instead of `isSnapshotVisible(xmin, snapshot)`
+- No need to remove Snapshot structures entirely
+
+### Implementation Tasks
+
+#### Task 2.1: Create ToastVisibility Helper Class
+**File**: `include/scratchbird/core/toast_visibility.h` (NEW)
+**Duration**: 3-4 hours
+
+**Purpose**: Encapsulate TOAST visibility logic using TIP.
+
+**Class Definition**:
+```cpp
+namespace scratchbird::core {
+
+class ToastVisibility {
+public:
+    // Check if TOAST chunk is visible to current transaction
+    // Uses TIP-based visibility (Firebird MGA)
+    static bool isChunkVisible(
+        uint64_t chunk_xmin,
+        uint64_t chunk_xmax,
+        uint64_t current_xid,
+        TransactionManager* tm
+    );
+
+    // Check if chunk was created by current transaction (always visible)
+    // MGA Rule 3: Own changes always visible
+    static bool isOwnChunk(
+        uint64_t chunk_xmin,
+        uint64_t current_xid
+    );
+
+    // Check if chunk is deleted (xmax set and visible)
+    static bool isChunkDeleted(
+        uint64_t chunk_xmax,
+        uint64_t current_xid,
+        TransactionManager* tm
+    );
+};
+
+} // namespace scratchbird::core
+```
+
+**Implementation** (`src/core/toast_visibility.cpp`):
+```cpp
+bool ToastVisibility::isChunkVisible(
+    uint64_t chunk_xmin,
+    uint64_t chunk_xmax,
+    uint64_t current_xid,
+    TransactionManager* tm)
+{
+    // MGA Rule 3: Own changes always visible
+    if (chunk_xmin == current_xid) {
+        return true;
+    }
+
+    // Check if creating transaction is visible via TIP
+    if (!tm->isVersionVisible(chunk_xmin, current_xid)) {
+        return false;  // Creating transaction not visible
+    }
+
+    // Check if chunk is deleted
+    if (chunk_xmax != 0) {
+        // If we deleted it, not visible
+        if (chunk_xmax == current_xid) {
+            return false;
+        }
+
+        // Check if deletion is visible via TIP
+        if (tm->isVersionVisible(chunk_xmax, current_xid)) {
+            return false;  // Deletion visible, chunk not visible
+        }
+    }
+
+    return true;  // Chunk visible
+}
+
+bool ToastVisibility::isOwnChunk(uint64_t chunk_xmin, uint64_t current_xid)
+{
+    return chunk_xmin == current_xid;
+}
+
+bool ToastVisibility::isChunkDeleted(
+    uint64_t chunk_xmax,
+    uint64_t current_xid,
+    TransactionManager* tm)
+{
+    if (chunk_xmax == 0) {
+        return false;  // Not deleted
+    }
+
+    if (chunk_xmax == current_xid) {
+        return true;  // We deleted it
+    }
+
+    // Check if deletion is visible via TIP
+    return tm->isVersionVisible(chunk_xmax, current_xid);
+}
+```
+
+**Validation**:
+- Uses `isVersionVisible()` (TIP-based) ✅
+- Does NOT use snapshots ✅
+- Implements MGA Rule 3 (own changes visible) ✅
+
+#### Task 2.2: Update detoastValue() to Use TIP Visibility
+**File**: `src/core/toast.cpp:284-330`
+**Duration**: 4-5 hours
+
+**Current Code** (uses heap tuple visibility - WRONG):
+```cpp
+Status ToastManager::detoastValue(const uint8_t *pointer_data, size_t pointer_size,
+                                  std::vector<uint8_t> *detoasted_value,
+                                  uint64_t xid, ErrorContext *ctx)
+{
+    // ... decode pointer ...
+
+    // Read chunks via readToastChunks()
+    return readToastChunks(value_id, detoasted_value, xid, ctx);
+}
+```
+
+**New Code** (TIP-based visibility):
+```cpp
+Status ToastManager::detoastValue(const uint8_t *pointer_data, size_t pointer_size,
+                                  std::vector<uint8_t> *detoasted_value,
+                                  uint64_t xid, ErrorContext *ctx)
+{
+    // ... decode pointer ...
+
+    // Read chunks with TIP-based visibility
+    return readToastChunks(value_id, detoasted_value, xid, ctx);
+}
+```
+
+#### Task 2.3: Update readToastChunks() to Check TIP Visibility
+**File**: `src/core/toast.cpp:557-657`
+**Duration**: 5-7 hours
+
+**Changes**:
+1. Parse xmin/xmax from chunk data (from Phase 1)
+2. Call `ToastVisibility::isChunkVisible(xmin, xmax, current_xid, tm)`
+3. Skip chunks that are not visible
+4. Return error if no visible chunks found
+
+**New Code**:
+```cpp
+Status ToastManager::readToastChunks(uint32_t value_id,
+                                     std::vector<uint8_t> *result,
+                                     uint64_t current_xid,
+                                     ErrorContext *ctx)
+{
+    // ... B-tree scan to find chunks ...
+
+    for (each chunk found in scan) {
+        // Parse chunk header (28 bytes)
+        uint64_t chunk_xmin = parseUint64(chunk_data, 0);
+        uint64_t chunk_xmax = parseUint64(chunk_data, 8);
+        uint32_t chunk_id = parseUint32(chunk_data, 16);
+        uint32_t chunk_seq = parseUint32(chunk_data, 20);
+        uint32_t chunk_size = parseUint32(chunk_data, 24);
+
+        // TIP-based visibility check (Firebird MGA)
+        if (!ToastVisibility::isChunkVisible(chunk_xmin, chunk_xmax,
+                                             current_xid, tm_)) {
+            continue;  // Skip invisible chunk
+        }
+
+        // Assemble visible chunk
+        result->insert(result->end(),
+                      chunk_data + 28,
+                      chunk_data + 28 + chunk_size);
+    }
+
+    return Status::OK;
+}
+```
+
+**Validation**:
+- Uses `ToastVisibility::isChunkVisible()` ✅
+- TIP-based visibility check ✅
+- No snapshot dependency ✅
+
+#### Task 2.4: Update deleteToastValue() to Set xmax
+**File**: `src/core/toast.cpp:332-403`
+**Duration**: 3-4 hours
+
+**Current Code** (deletes chunks physically):
+```cpp
+Status ToastManager::deleteToastValue(const uint8_t *pointer_data, size_t pointer_size,
+                                      uint64_t xid, ErrorContext *ctx)
+{
+    // ... decode pointer ...
+
+    // Physically delete chunks from TOAST table
+    // Delete via B-tree scan
+}
+```
+
+**New Code** (soft delete - set xmax):
+```cpp
+Status ToastManager::deleteToastValue(const uint8_t *pointer_data, size_t pointer_size,
+                                      uint64_t xid, ErrorContext *ctx)
+{
+    // ... decode pointer ...
+
+    // Soft delete: Set xmax on all chunks
+    // Scan for chunks with matching value_id
+    for (each chunk) {
+        // Read current chunk data
+        uint64_t chunk_xmin = parseUint64(chunk_data, 0);
+        uint64_t chunk_xmax = parseUint64(chunk_data, 8);
+
+        // Set xmax to current transaction
+        chunk_xmax = xid;
+
+        // Update chunk in place (modify xmax field)
+        updateChunkXmax(chunk_page, chunk_offset, xid);
+    }
+
+    return Status::OK;
+}
+```
+
+**Note**: This requires implementing in-place xmax update, similar to heap tuple updates.
+
+**Validation**:
+- Sets xmax instead of physical delete ✅
+- Uses TIP-based soft delete ✅
+
+### Phase 2 Validation Checklist
+
+- [ ] ToastVisibility helper class created
+- [ ] isChunkVisible() uses TIP (not snapshots)
+- [ ] readToastChunks() checks TIP visibility
+- [ ] deleteToastValue() sets xmax (soft delete)
+- [ ] No snapshot dependencies in TOAST code
+- [ ] MGA Rule 3 implemented (own changes visible)
+
+### Phase 2 Testing
+
+**Create**: `tests/unit/test_toast_tip_visibility.cpp`
+
+Test cases:
+1. Transaction A writes TOAST, B reads (should see)
+2. Transaction A writes TOAST but aborts, B reads (should NOT see)
+3. Transaction A writes TOAST, transaction B deletes (sets xmax), C reads (depends on TIP state)
+4. Transaction writes TOAST, reads own chunks (MGA Rule 3 - always visible)
+5. Long-running transaction doesn't hold TOAST chunks visible (TIP independence)
+
+---
+
+## 🔧 PHASE 3: Index TOAST Integration
+
+**Status**: PENDING
+**Duration**: 40-60 hours
+**Goal**: Fix all 7 index types to detoast values before indexing
+**Priority**: HIGH (data correctness)
+
+### Current Problem
+
+**All index types index TOAST pointer bytes (18 bytes) instead of actual values.**
+
+**Evidence**: No `isToastPointer()` or `detoastValue()` calls in any index insert paths.
+
+**Impact**:
+- B-tree sorted by pointer values, not actual values
+- Hash indexes hash pointer bytes, not actual data
+- GIN indexes pointer as token, breaking full-text search
+- All queries return wrong results for TOASTed columns
+
+### Implementation Strategy
+
+For each index type:
+1. Detect TOAST pointers before indexing
+2. Detoast value if pointer detected
+3. Index actual value instead of pointer
+4. Handle detoasting errors gracefully
+
+### Common TOAST Detection Helper
+
+**File**: `include/scratchbird/core/toast.h`
+**Duration**: 2 hours
+
+Add static helper:
+```cpp
+class ToastManager {
+public:
+    // ... existing methods ...
+
+    // Check if data is a TOAST pointer
+    static bool isToastPointer(const uint8_t* data, size_t size);
+
+    // Detoast a value if it's a TOAST pointer, otherwise return original
+    Status detoastIfNeeded(
+        const uint8_t* data,
+        size_t size,
+        std::vector<uint8_t>* result,
+        uint64_t xid,
+        ErrorContext* ctx
+    );
+};
+```
+
+Implementation:
+```cpp
+bool ToastManager::isToastPointer(const uint8_t* data, size_t size)
+{
+    // TOAST pointer is exactly 18 bytes
+    if (size != 18) {
+        return false;
+    }
+
+    // Check magic bytes (first 2 bytes)
+    uint16_t magic = *reinterpret_cast<const uint16_t*>(data);
+    return magic == TOAST_POINTER_MAGIC;
+}
+
+Status ToastManager::detoastIfNeeded(
+    const uint8_t* data,
+    size_t size,
+    std::vector<uint8_t>* result,
+    uint64_t xid,
+    ErrorContext* ctx)
+{
+    if (isToastPointer(data, size)) {
+        return detoastValue(data, size, result, xid, ctx);
+    } else {
+        // Not a TOAST pointer, return original data
+        result->assign(data, data + size);
+        return Status::OK;
+    }
+}
+```
+
+### Task 3.1: B-Tree Index TOAST Integration
+**File**: `src/core/btree.cpp:309-407`
+**Duration**: 5-7 hours
+
+**Current Code** (WRONG - indexes pointer):
+```cpp
+auto BTree::insert(const std::vector<uint8_t> &key, const TID &tid, uint64_t xid,
+                   ErrorContext *ctx) -> Status
+{
+    // ... lock acquisition ...
+
+    // Insert key directly - NO detoasting check
+    Status status = insertInternal(key, tid, xid, ctx);
+
+    return status;
+}
+```
+
+**New Code** (CORRECT - detoasts before indexing):
+```cpp
+auto BTree::insert(const std::vector<uint8_t> &key, const TID &tid, uint64_t xid,
+                   ErrorContext *ctx) -> Status
+{
+    // ... lock acquisition ...
+
+    // Check if key is a TOAST pointer
+    std::vector<uint8_t> actual_key;
+    if (ToastManager::isToastPointer(key.data(), key.size())) {
+        // Detoast value
+        Status status = toast_mgr_->detoastValue(
+            key.data(), key.size(), &actual_key, xid, ctx);
+        if (status != Status::OK) {
+            return status;  // Detoasting failed
+        }
+    } else {
+        // Not a TOAST pointer, use as-is
+        actual_key = key;
+    }
+
+    // Insert actual value, not pointer
+    Status status = insertInternal(actual_key, tid, xid, ctx);
+
+    return status;
+}
+```
+
+**Additional Changes**:
+- Store ToastManager reference in BTree class
+- Pass ToastManager during BTree construction
+- Handle detoasting errors
+
+**Validation**:
+- B-tree detects TOAST pointers ✅
+- B-tree detoasts before indexing ✅
+- B-tree indexes actual values ✅
+
+### Task 3.2: Hash Index TOAST Integration
+**File**: `src/core/hash_index.cpp`
+**Duration**: 5-7 hours
+
+**Similar Changes**:
+```cpp
+Status HashIndex::insert(const uint8_t* key, size_t key_size,
+                         const TID& tid, uint64_t xid, ErrorContext* ctx)
+{
+    // Detoast if needed
+    std::vector<uint8_t> actual_key;
+    if (ToastManager::isToastPointer(key, key_size)) {
+        Status status = toast_mgr_->detoastValue(
+            key, key_size, &actual_key, xid, ctx);
+        if (status != Status::OK) {
+            return status;
+        }
+    } else {
+        actual_key.assign(key, key + key_size);
+    }
+
+    // Hash actual value, not pointer
+    uint32_t hash_value = computeHash(actual_key.data(), actual_key.size());
+
+    // ... insert into hash bucket ...
+}
+```
+
+**Validation**:
+- Hash index detects TOAST pointers ✅
+- Hash index detoasts before hashing ✅
+- Hash index hashes actual values ✅
+
+### Task 3.3: GIN Index TOAST Integration
+**File**: `src/core/gin_index.cpp`
+**Duration**: 6-8 hours
+
+**Complexity**: GIN indexes arrays and text - may need to detoast array elements individually.
+
+**Changes**:
+```cpp
+Status GinIndex::insert(const std::vector<uint8_t>& value, const TID& tid,
+                        ErrorContext* ctx)
+{
+    // For arrays: detoast entire array first, then extract elements
+    std::vector<uint8_t> actual_value;
+    if (ToastManager::isToastPointer(value.data(), value.size())) {
+        Status status = toast_mgr_->detoastValue(
+            value.data(), value.size(), &actual_value, tid.xmin, ctx);
+        if (status != Status::OK) {
+            return status;
+        }
+    } else {
+        actual_value = value;
+    }
+
+    // Extract tokens from actual value (not pointer)
+    std::vector<std::string> tokens = extractTokens(actual_value);
+
+    // Index each token
+    for (const auto& token : tokens) {
+        insertToken(token, tid);
+    }
+
+    return Status::OK;
+}
+```
+
+**Validation**:
+- GIN index detects TOAST pointers ✅
+- GIN index detoasts before tokenization ✅
+- Full-text search works on actual values ✅
+
+### Task 3.4: HNSW Index TOAST Integration
+**File**: `src/core/hnsw_index.cpp`
+**Duration**: 5-7 hours
+
+**Changes**:
+```cpp
+Status HNSWIndex::insert(const std::vector<float>& vector, const TID& tid,
+                         uint64_t xid, ErrorContext* ctx)
+{
+    // Check if vector data is TOASTed
+    const uint8_t* vector_bytes = reinterpret_cast<const uint8_t*>(vector.data());
+    size_t vector_size = vector.size() * sizeof(float);
+
+    std::vector<uint8_t> actual_vector_bytes;
+    if (ToastManager::isToastPointer(vector_bytes, vector_size)) {
+        Status status = toast_mgr_->detoastValue(
+            vector_bytes, vector_size, &actual_vector_bytes, xid, ctx);
+        if (status != Status::OK) {
+            return status;
+        }
+
+        // Convert bytes back to float vector
+        const float* floats = reinterpret_cast<const float*>(actual_vector_bytes.data());
+        size_t num_floats = actual_vector_bytes.size() / sizeof(float);
+        std::vector<float> actual_vector(floats, floats + num_floats);
+
+        // Insert actual vector, not pointer
+        return insertInternal(actual_vector, tid, xid, ctx);
+    } else {
+        // Not TOASTed, insert as-is
+        return insertInternal(vector, tid, xid, ctx);
+    }
+}
+```
+
+**Validation**:
+- HNSW index detects TOAST pointers ✅
+- HNSW index detoasts before embedding ✅
+- Vector search works on actual vectors ✅
+
+### Task 3.5: BRIN Index TOAST Integration
+**File**: `src/core/brin_index.cpp`
+**Duration**: 4-6 hours
+
+**Changes**:
+```cpp
+Status BrinIndex::scan(const uint8_t* min_value, const uint8_t* max_value,
+                       uint64_t current_xid, std::vector<uint32_t>* block_numbers,
+                       ErrorContext* ctx)
+{
+    // Detoast min/max values if needed
+    std::vector<uint8_t> actual_min, actual_max;
+
+    if (min_value && ToastManager::isToastPointer(min_value, 18)) {
+        toast_mgr_->detoastValue(min_value, 18, &actual_min, current_xid, ctx);
+    } else if (min_value) {
+        actual_min.assign(min_value, min_value + /* size */);
+    }
+
+    if (max_value && ToastManager::isToastPointer(max_value, 18)) {
+        toast_mgr_->detoastValue(max_value, 18, &actual_max, current_xid, ctx);
+    } else if (max_value) {
+        actual_max.assign(max_value, max_value + /* size */);
+    }
+
+    // Scan using actual values
+    return scanInternal(actual_min.data(), actual_max.data(), block_numbers, ctx);
+}
+```
+
+**Validation**:
+- BRIN index detects TOAST pointers ✅
+- BRIN index detoasts range values ✅
+- Range queries work on actual values ✅
+
+### Task 3.6: Bitmap Index TOAST Integration
+**File**: `src/core/bitmap_index.cpp`
+**Duration**: 4-6 hours
+
+**Changes**:
+```cpp
+Status BitmapIndex::insert(const uint8_t* value, size_t value_size, const TID& tid,
+                           ErrorContext* ctx)
+{
+    // Detoast if needed
+    std::vector<uint8_t> actual_value;
+    if (ToastManager::isToastPointer(value, value_size)) {
+        Status status = toast_mgr_->detoastValue(
+            value, value_size, &actual_value, tid.xmin, ctx);
+        if (status != Status::OK) {
+            return status;
+        }
+    } else {
+        actual_value.assign(value, value + value_size);
+    }
+
+    // Create bitmap for actual value, not pointer
+    return insertInternal(actual_value.data(), actual_value.size(), tid, ctx);
+}
+```
+
+**Validation**:
+- Bitmap index detects TOAST pointers ✅
+- Bitmap index detoasts before bitmap creation ✅
+- Bitmap queries work on actual values ✅
+
+### Task 3.7: R-Tree Index TOAST Integration
+**File**: `src/core/rtree.cpp`
+**Duration**: 5-7 hours
+
+**Changes**:
+```cpp
+Status RTree::insert(const BoundingBox& bbox, const TID& tid, uint64_t xid,
+                     ErrorContext* ctx)
+{
+    // Check if bounding box data is TOASTed
+    const uint8_t* bbox_bytes = reinterpret_cast<const uint8_t*>(&bbox);
+    size_t bbox_size = sizeof(BoundingBox);
+
+    std::vector<uint8_t> actual_bbox_bytes;
+    if (ToastManager::isToastPointer(bbox_bytes, bbox_size)) {
+        Status status = toast_mgr_->detoastValue(
+            bbox_bytes, bbox_size, &actual_bbox_bytes, xid, ctx);
+        if (status != Status::OK) {
+            return status;
+        }
+
+        // Convert bytes back to BoundingBox
+        const BoundingBox* actual_bbox =
+            reinterpret_cast<const BoundingBox*>(actual_bbox_bytes.data());
+
+        // Insert actual bounding box, not pointer
+        return insertInternal(*actual_bbox, tid, xid, ctx);
+    } else {
+        // Not TOASTed, insert as-is
+        return insertInternal(bbox, tid, xid, ctx);
+    }
+}
+```
+
+**Validation**:
+- R-tree index detects TOAST pointers ✅
+- R-tree index detoasts before insertion ✅
+- Spatial queries work on actual geometries ✅
+
+### Phase 3 Validation Checklist
+
+- [ ] All 7 index types detect TOAST pointers
+- [ ] All 7 index types detoast before indexing
+- [ ] All 7 index types index actual values
+- [ ] Detoasting errors handled gracefully
+- [ ] ToastManager reference passed to all indexes
+- [ ] No index indexes TOAST pointer bytes
+
+### Phase 3 Testing
+
+**Create**: `tests/integration/test_index_toast_integration.cpp`
+
+Test cases for each index type:
+1. Create index on column with TOASTed values
+2. Insert TOASTed values
+3. Query via index, verify correct results
+4. Verify index contains actual values, not pointers
+5. Test all index-specific operations (range queries, similarity search, etc.)
+
+---
+
+## 🔧 PHASE 4: Garbage Collection Implementation
+
+**Status**: PENDING
+**Duration**: 25-35 hours
+**Goal**: Implement TOAST chunk garbage collection
+**Priority**: HIGH (storage leaks)
+
+### Current Problem
+
+**Garbage collector skips TOAST tables entirely.**
+
+**Evidence**: `src/core/vacuum.cpp:145-149`
+```cpp
+// Skip TOAST tables and system tables
+if (table.table_type == CatalogManager::TableType::TOAST) {
+    continue;
+}
+```
+
+**Impact**:
+- Orphaned TOAST chunks from aborted transactions accumulate
+- TOAST tables grow indefinitely
+- No recovery for crashed deletions
+- Storage leaks
+
+### Implementation Tasks
+
+#### Task 4.1: TOAST Orphan Detection
+**File**: `src/core/garbage_collector.cpp`
+**Duration**: 8-10 hours
+
+**Create**: `GarbageCollector::detectOrphanedToastChunks()`
+
+**Algorithm**:
+1. Scan all heap tables
+2. Collect all TOAST value IDs referenced by heap tuples
+3. Scan TOAST table
+4. Identify TOAST chunks with value_ids NOT in reference set
+5. Mark orphans for deletion
+
+**Implementation**:
+```cpp
+Status GarbageCollector::detectOrphanedToastChunks(
+    uint32_t toast_table_id,
+    std::unordered_set<uint32_t>* orphaned_value_ids,
+    ErrorContext* ctx)
+{
+    // Step 1: Collect referenced TOAST value IDs from heap
+    std::unordered_set<uint32_t> referenced_value_ids;
+
+    for (each heap table) {
+        for (each heap page) {
+            for (each tuple) {
+                if (tuple has TOAST pointer) {
+                    uint32_t value_id = extractValueId(toast_pointer);
+                    referenced_value_ids.insert(value_id);
+                }
+            }
+        }
+    }
+
+    // Step 2: Scan TOAST table for all value IDs
+    std::unordered_set<uint32_t> toast_value_ids;
+
+    for (each TOAST chunk) {
+        uint32_t value_id = parseUint32(chunk_data, 16);  // offset 16
+        toast_value_ids.insert(value_id);
+    }
+
+    // Step 3: Find orphans (in TOAST but not in heap)
+    for (uint32_t value_id : toast_value_ids) {
+        if (referenced_value_ids.find(value_id) == referenced_value_ids.end()) {
+            orphaned_value_ids->insert(value_id);
+        }
+    }
+
+    return Status::OK;
+}
+```
+
+**Validation**:
+- Detects orphaned TOAST chunks ✅
+- Doesn't delete referenced chunks ✅
+
+#### Task 4.2: TOAST Chunk Cleanup
+**File**: `src/core/garbage_collector.cpp`
+**Duration**: 6-8 hours
+
+**Create**: `GarbageCollector::cleanOrphanedToastChunks()`
+
+**Implementation**:
+```cpp
+Status GarbageCollector::cleanOrphanedToastChunks(
+    uint32_t toast_table_id,
+    const std::unordered_set<uint32_t>& orphaned_value_ids,
+    uint64_t* chunks_deleted,
+    ErrorContext* ctx)
+{
+    *chunks_deleted = 0;
+
+    for (uint32_t value_id : orphaned_value_ids) {
+        // Delete all chunks for this value_id
+        Status status = deleteToastValueById(toast_table_id, value_id, ctx);
+        if (status == Status::OK) {
+            (*chunks_deleted)++;
+        }
+    }
+
+    return Status::OK;
+}
+
+Status GarbageCollector::deleteToastValueById(
+    uint32_t toast_table_id,
+    uint32_t value_id,
+    ErrorContext* ctx)
+{
+    // Scan TOAST table B-tree for chunks with matching value_id
+    // Physically delete each chunk
+    // (Since orphans have no parent, safe to delete physically)
+
+    return Status::OK;
+}
+```
+
+**Validation**:
+- Deletes orphaned chunks ✅
+- Doesn't delete referenced chunks ✅
+
+#### Task 4.3: Integrate TOAST GC into Vacuum
+**File**: `src/core/vacuum.cpp:145-149`
+**Duration**: 4-6 hours
+
+**Current Code** (WRONG - skips TOAST):
+```cpp
+// Skip TOAST tables and system tables
+if (table.table_type == CatalogManager::TableType::TOAST) {
+    continue;
+}
+```
+
+**New Code** (CORRECT - processes TOAST):
+```cpp
+// Process TOAST tables for orphan cleanup
+if (table.table_type == CatalogManager::TableType::TOAST) {
+    LOG_INFO(VACUUM, "Running orphan cleanup for TOAST table: {}", table.table_name);
+
+    std::unordered_set<uint32_t> orphaned_value_ids;
+    gc_->detectOrphanedToastChunks(table.table_id, &orphaned_value_ids, ctx);
+
+    if (!orphaned_value_ids.empty()) {
+        uint64_t chunks_deleted = 0;
+        gc_->cleanOrphanedToastChunks(table.table_id, orphaned_value_ids,
+                                      &chunks_deleted, ctx);
+        LOG_INFO(VACUUM, "Cleaned {} orphaned TOAST chunks", chunks_deleted);
+    }
+
+    continue;  // Don't process TOAST as regular table
+}
+```
+
+**Validation**:
+- Vacuum processes TOAST tables ✅
+- Orphan detection runs during vacuum ✅
+- Orphan cleanup runs during vacuum ✅
+
+#### Task 4.4: TIP-Based TOAST GC
+**File**: `src/core/garbage_collector.cpp`
+**Duration**: 7-9 hours
+
+**Create**: `GarbageCollector::cleanToastChunksByTIP()`
+
+**Purpose**: Delete TOAST chunks where xmax is set and committed (TIP-based).
+
+**Implementation**:
+```cpp
+Status GarbageCollector::cleanToastChunksByTIP(
+    uint32_t toast_table_id,
+    uint64_t* chunks_deleted,
+    ErrorContext* ctx)
+{
+    *chunks_deleted = 0;
+
+    // Scan TOAST table
+    for (each TOAST chunk) {
+        uint64_t chunk_xmin = parseUint64(chunk_data, 0);
+        uint64_t chunk_xmax = parseUint64(chunk_data, 8);
+
+        // If chunk has xmax set
+        if (chunk_xmax != 0) {
+            // Check TIP state of xmax transaction
+            TransactionState xmax_state = tm_->getTransactionState(chunk_xmax);
+
+            // If xmax transaction committed, chunk is deleted
+            if (xmax_state == TransactionState::COMMITTED) {
+                // Physically delete chunk
+                deleteChunkPhysically(chunk_page, chunk_offset, ctx);
+                (*chunks_deleted)++;
+            }
+            // If xmax aborted, clear xmax (chunk still alive)
+            else if (xmax_state == TransactionState::ABORTED) {
+                clearChunkXmax(chunk_page, chunk_offset, ctx);
+            }
+        }
+    }
+
+    return Status::OK;
+}
+```
+
+**Validation**:
+- Uses TIP to check xmax state ✅
+- Deletes chunks with committed xmax ✅
+- Clears xmax for aborted deletions ✅
+
+### Phase 4 Validation Checklist
+
+- [ ] Orphan detection implemented
+- [ ] Orphan cleanup implemented
+- [ ] Vacuum processes TOAST tables
+- [ ] TIP-based TOAST GC implemented
+- [ ] No storage leaks
+- [ ] Aborted transactions cleaned up
+
+### Phase 4 Testing
+
+**Create**: `tests/integration/test_toast_garbage_collection.cpp`
+
+Test cases:
+1. Create orphaned TOAST chunks (abort transaction), verify GC cleans them
+2. Delete TOAST value (set xmax), verify GC physically deletes after commit
+3. Delete TOAST value but abort, verify GC clears xmax
+4. Run vacuum, verify TOAST tables processed
+5. Stress test: Create many orphans, verify all cleaned
+
+---
+
+## 🔧 PHASE 5: Crash Recovery & WAL Integration
+
+**Status**: PENDING
+**Duration**: 20-30 hours
+**Goal**: Add WAL logging for TOAST operations and crash recovery
+**Priority**: MEDIUM (correctness)
+
+### Implementation Tasks
+
+#### Task 5.1: WAL Log Types for TOAST
+**File**: `include/scratchbird/core/wal.h`
+**Duration**: 2-3 hours
+
+**Add WAL log types**:
+```cpp
+enum class WALLogType : uint8_t {
+    // ... existing types ...
+
+    // TOAST operations
+    TOAST_INSERT_CHUNK,      // Insert TOAST chunk
+    TOAST_DELETE_CHUNK,      // Soft delete (set xmax)
+    TOAST_PHYSICAL_DELETE,   // Physical delete (GC)
+    TOAST_UPDATE_XMAX,       // Update xmax field
+};
+```
+
+#### Task 5.2: Log TOAST Chunk Insert
+**File**: `src/core/toast.cpp:writeToastChunks()`
+**Duration**: 5-7 hours
+
+**Add WAL logging**:
+```cpp
+Status ToastManager::writeToastChunks(...) {
+    // ... create chunk data ...
+
+    // Insert chunk
+    Status status = storage->insertTuple(toast_table_id_, tuple_data.data(),
+                                         tuple_data.size(), &page_id, &item_id, ctx);
+
+    // WAL logging
+    if (status == Status::OK) {
+        wal_->logToastInsertChunk(toast_table_id_, value_id, seq,
+                                   page_id, item_id, xmin, tuple_data);
+    }
+
+    return status;
+}
+```
+
+#### Task 5.3: Log TOAST Chunk Delete
+**File**: `src/core/toast.cpp:deleteToastValue()`
+**Duration**: 5-7 hours
+
+**Add WAL logging**:
+```cpp
+Status ToastManager::deleteToastValue(...) {
+    // ... set xmax on chunks ...
+
+    // WAL logging
+    for (each chunk updated) {
+        wal_->logToastDeleteChunk(toast_table_id_, value_id, chunk_seq,
+                                   page_id, item_id, xmax);
+    }
+
+    return Status::OK;
+}
+```
+
+#### Task 5.4: Implement TOAST Recovery
+**File**: `src/core/recovery.cpp`
+**Duration**: 8-12 hours
+
+**Add recovery handlers**:
+```cpp
+Status Recovery::recoverToastInsertChunk(WALRecord* record) {
+    // Re-insert TOAST chunk
+    // Restore xmin/xmax from WAL record
+}
+
+Status Recovery::recoverToastDeleteChunk(WALRecord* record) {
+    // Restore xmax on TOAST chunk
+}
+
+Status Recovery::recoverToastPhysicalDelete(WALRecord* record) {
+    // Remove TOAST chunk
+}
+```
+
+### Phase 5 Validation Checklist
+
+- [ ] WAL log types for TOAST added
+- [ ] TOAST insert logged
+- [ ] TOAST delete logged
+- [ ] TOAST recovery implemented
+- [ ] Crash recovery tested
+
+### Phase 5 Testing
+
+**Create**: `tests/integration/test_toast_crash_recovery.cpp`
+
+Test cases:
+1. Insert TOAST chunks, crash before commit, verify recovery
+2. Delete TOAST chunks, crash before commit, verify recovery
+3. Orphan detection after crash
+
+---
+
+## 🔧 PHASE 6: Testing & Validation
+
+**Status**: PENDING
+**Duration**: 20-30 hours
+**Goal**: Comprehensive testing of TOAST MGA compliance
+**Priority**: CRITICAL
+
+### Testing Strategy
+
+#### Unit Tests (10 hours)
+1. `test_toast_chunk_format.cpp` - Chunk format with xmin/xmax
+2. `test_toast_tip_visibility.cpp` - TIP-based visibility
+3. `test_toast_detoast_helper.cpp` - Detoasting helpers
+
+#### Integration Tests (10 hours)
+1. `test_index_toast_integration.cpp` - All 7 index types
+2. `test_toast_garbage_collection.cpp` - GC and orphan cleanup
+3. `test_toast_crash_recovery.cpp` - WAL and recovery
+
+#### Stress Tests (10 hours)
+1. `test_toast_concurrency.cpp` - Concurrent TOAST operations
+2. `test_toast_long_running_txn.cpp` - Long-running transactions
+3. `test_toast_large_values.cpp` - Very large TOASTed values (>1GB)
+
+### Test Coverage Goals
+
+- [ ] TOAST chunk format: 100%
+- [ ] TIP-based visibility: 100%
+- [ ] Index integration: 100% (all 7 types)
+- [ ] Garbage collection: 100%
+- [ ] Crash recovery: 100%
+
+### Manual Testing Checklist
+
+- [ ] Create table with TOASTed column
+- [ ] Insert values > 2KB (trigger TOAST)
+- [ ] Create B-tree index on TOASTed column
+- [ ] Query via index, verify correct results
+- [ ] Delete TOASTed values, run vacuum
+- [ ] Verify no orphaned chunks
+- [ ] Crash database during TOAST operation
+- [ ] Restart, verify recovery
+
+---
+
+## 🔧 PHASE 7: Documentation & Optimization
+
+**Status**: PENDING
+**Duration**: 15-20 hours
+**Goal**: Document TOAST MGA compliance and optimize performance
+**Priority**: MEDIUM
+
+### Documentation Tasks (10 hours)
+
+#### Task 7.1: Update TOAST Specifications
+**Files**:
+- `docs/specifications/TOAST_LOB_STORAGE.md`
+- `docs/specifications/HEAP_TOAST_INTEGRATION.md`
+
+**Add**:
+- Document new 28-byte chunk format
+- Explain TIP-based visibility
+- Document garbage collection
+- Add examples
+
+#### Task 7.2: Create TOAST MGA Compliance Summary
+**File**: `docs/status/TOAST_MGA_COMPLIANCE_COMPLETE.md` (NEW)
+
+**Contents**:
+- Executive summary of all fixes
+- Before/after comparison
+- MGA compliance scorecard (now 6/6)
+- Performance metrics
+
+#### Task 7.3: Update API Documentation
+**Files**: All TOAST header files
+
+**Add**:
+- Document ToastVisibility class
+- Document detoasting in indexes
+- Add usage examples
+
+### Optimization Tasks (5-10 hours)
+
+#### Task 7.4: TOAST Chunk Caching
+**File**: `src/core/toast.cpp`
+**Duration**: 5-7 hours
+
+**Add**: LRU cache for frequently accessed TOAST chunks.
+
+#### Task 7.5: Batch TOAST Operations
+**File**: `src/core/toast.cpp`
+**Duration**: 3-5 hours
+
+**Add**: Batch detoasting for sequential scans.
+
+---
+
+## 📊 PROGRESS TRACKING
+
+### Phase Completion Matrix
+
+| Phase | Status | Hours Est | Hours Actual | Completion % |
+|-------|--------|-----------|--------------|--------------|
+| Phase 0: Planning | ✅ COMPLETE | 5-8 | TBD | 100% |
+| Phase 1: Chunk Format | ⏳ PENDING | 20-30 | - | 0% |
+| Phase 2: TIP Visibility | ⏳ PENDING | 15-25 | - | 0% |
+| Phase 3: Index Integration | ⏳ PENDING | 40-60 | - | 0% |
+| Phase 4: Garbage Collection | ⏳ PENDING | 25-35 | - | 0% |
+| Phase 5: Crash Recovery | ⏳ PENDING | 20-30 | - | 0% |
+| Phase 6: Testing | ⏳ PENDING | 20-30 | - | 0% |
+| Phase 7: Documentation | ⏳ PENDING | 15-20 | - | 0% |
+| **TOTAL** | **0% COMPLETE** | **160-238** | **0** | **0%** |
+
+### Current Status
+
+**Current Phase**: Phase 0 (Planning) ✅ COMPLETE
+**Next Phase**: Phase 1 (Chunk Format Redesign)
+**Overall Completion**: 0 / 238 hours (0%)
+
+---
+
+## 🎯 ACCEPTANCE CRITERIA
+
+### Critical (Must-Have for Production)
+
+- [ ] TOAST chunks track xmin/xmax in on-disk format (28-byte header)
+- [ ] TOAST uses TIP-based visibility (not snapshots)
+- [ ] All 7 index types detoast before indexing
+- [ ] Garbage collector cleans orphaned TOAST chunks
+- [ ] MGA compliance scorecard: 6/6 (100%)
+- [ ] All critical bugs fixed (BUG-TOAST-001 through BUG-TOAST-004)
+
+### High Priority (Important for Correctness)
+
+- [ ] Crash recovery for TOAST operations
+- [ ] WAL logging for TOAST
+- [ ] Comprehensive test coverage (>90%)
+- [ ] No storage leaks under stress testing
+
+### Medium Priority (Nice to Have)
+
+- [ ] TOAST chunk caching
+- [ ] Batch detoasting
+- [ ] Performance optimization
+- [ ] Complete documentation
+
+---
+
+## 📚 REFERENCE LINKS
+
+### Primary Documents
+- **Audit Report**: `/docs/audit/02_TOAST_IMPLEMENTATION_AUDIT.md`
+- **MGA Rules**: `/MGA_RULES.md`
+- **TOAST Specs**: `/docs/specifications/TOAST_LOB_STORAGE.md`
+- **Heap Integration**: `/docs/specifications/HEAP_TOAST_INTEGRATION.md`
+
+### Related Work
+- **Index MGA Compliance**: `/docs/planning/MGA_COMPLIANCE_FIX_PLAN.md`
+- **Storage Engine MGA Fix**: Commit b4ccd33 (November 2, 2025)
+
+### Code References
+- **TOAST Core**: `include/scratchbird/core/toast.h`, `src/core/toast.cpp`
+- **Heap Integration**: `include/scratchbird/core/heap_page.h`, `src/core/heap_page.cpp`
+- **Index Types**: All 7 index files in `src/core/` and `include/scratchbird/core/`
+
+---
+
+## 🔍 VALIDATION COMMANDS
+
+### Grep Validations (After Completion)
+
+```bash
+# 1. Verify TOAST chunks have 28-byte header
+grep -r "28 +" src/core/toast.cpp | grep "chunk_size"
+
+# 2. Verify ToastVisibility usage (TIP-based)
+grep -r "ToastVisibility::" src/core/toast.cpp
+
+# 3. Verify no snapshot-based visibility in TOAST
+grep -r "snapshot_xid" src/core/toast.cpp | grep -v "// OLD:"
+
+# 4. Verify all indexes call detoastIfNeeded
+grep -r "detoastIfNeeded" src/core/*index*.cpp | wc -l  # Should be 7+
+
+# 5. Verify TOAST GC in vacuum
+grep -r "cleanOrphanedToastChunks" src/core/vacuum.cpp
+```
+
+### Compliance Scorecard (After Completion)
+
+| MGA Requirement | Before | After | Status |
+|----------------|--------|-------|--------|
+| TOAST chunks track xmin | ❌ | ✅ | FIXED |
+| TOAST chunks track xmax | ❌ | ✅ | FIXED |
+| TIP-based visibility | ❌ | ✅ | FIXED |
+| Independent of snapshot | ❌ | ✅ | FIXED |
+| Garbage collection | ❌ | ✅ | FIXED |
+| Version chain support | ✅ | ✅ | PASS |
+| **TOTAL** | **1/6 (17%)** | **6/6 (100%)** | **✅** |
+
+---
+
+## ⚠️ RISKS & MITIGATION
+
+### Risk 1: Schema Incompatibility
+**Risk**: New 28-byte format breaks existing databases.
+**Mitigation**: Bump schema version, reject old databases with clear error.
+
+### Risk 2: Performance Regression
+**Risk**: Detoasting in indexes adds overhead.
+**Mitigation**: Add TOAST chunk caching, batch operations.
+
+### Risk 3: Incomplete Index Coverage
+**Risk**: Miss TOAST handling in some index type.
+**Mitigation**: Comprehensive testing for all 7 index types.
+
+### Risk 4: Orphan Detection Bugs
+**Risk**: False positives/negatives in orphan detection.
+**Mitigation**: Conservative detection, extensive testing.
+
+---
+
+## 🎓 LESSONS FROM MGA COMPLIANCE WORK
+
+From `/docs/planning/MGA_COMPLIANCE_FIX_PLAN.md` (completed November 2, 2025):
+
+1. **Hybrid Approach Works**:
+   - Kept Snapshot structure, extracted `snapshot_xid` for TIP
+   - Avoided massive refactoring
+   - Applied same pattern to TOAST
+
+2. **Test Coverage Critical**:
+   - Unit tests caught edge cases
+   - Integration tests validated cross-component behavior
+   - Performance benchmarks proved O(1) scalability
+
+3. **Incremental Migration**:
+   - Fixed highest impact first (storage layer)
+   - Validated each phase before proceeding
+   - Created comprehensive test suites
+
+4. **Documentation Prevents Regression**:
+   - Clear API contracts
+   - Architecture diagrams
+   - Compliance validation scripts
+
+**Apply these lessons to TOAST work.**
+
+---
+
+**Document Version**: 1.0
+**Created**: November 2, 2025
+**Status**: ACTIVE PLAN
+**Next Review**: After Phase 1 completion
