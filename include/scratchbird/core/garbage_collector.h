@@ -145,6 +145,24 @@ namespace scratchbird::core
         // Integration with sweep
         void notifySweepComplete(uint64_t old_oit, uint64_t new_oit);
 
+        // Phase 4: TOAST Garbage Collection
+        // Detect orphaned TOAST chunks (referenced by no heap tuples)
+        Status detectOrphanedToastChunks(const ID& toast_table_id,
+                                         std::unordered_set<uint32_t>* orphaned_value_ids,
+                                         ErrorContext* ctx = nullptr);
+
+        // Clean orphaned TOAST chunks
+        Status cleanOrphanedToastChunks(const ID& toast_table_id,
+                                        const std::unordered_set<uint32_t>& orphaned_value_ids,
+                                        uint64_t* chunks_deleted,
+                                        ErrorContext* ctx = nullptr);
+
+        // TIP-based TOAST garbage collection
+        // Cleans chunks where xmax is committed (via TIP lookup)
+        Status cleanToastChunksByTIP(const ID& toast_table_id,
+                                     uint64_t* chunks_deleted,
+                                     ErrorContext* ctx = nullptr);
+
     private:
         Database *db_;
         TransactionManager *txn_manager_;

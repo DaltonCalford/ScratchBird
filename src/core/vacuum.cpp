@@ -6,9 +6,11 @@
 #include "scratchbird/core/catalog_manager.h"
 #include "scratchbird/core/transaction_manager.h"
 #include "scratchbird/core/error_context.h"
+#include "scratchbird/core/garbage_collector.h" // Phase 4: TOAST GC
 #include <chrono>
 #include <cstring>
 #include <unordered_map>
+#include <unordered_set> // Phase 4: TOAST GC
 
 namespace scratchbird::core
 {
@@ -142,13 +144,52 @@ namespace scratchbird::core
             // Vacuum each table
             for (const auto &table : tables)
             {
-                // Skip TOAST tables and system tables
+                // Phase 4 Task 4.3: Process TOAST tables for garbage collection
                 if (table.table_type == CatalogManager::TableType::TOAST)
                 {
-                    continue;
+                    // TOAST table - run orphan cleanup and TIP-based GC
+                    auto* gc = db_->garbage_collector();
+                    if (gc)
+                    {
+                        // Step 1: Detect orphaned TOAST chunks
+                        std::unordered_set<uint32_t> orphaned_value_ids;
+                        Status orphan_status = gc->detectOrphanedToastChunks(table.table_id,
+                                                                              &orphaned_value_ids,
+                                                                              ctx);
+
+                        if (orphan_status == Status::OK && !orphaned_value_ids.empty())
+                        {
+                            // Step 2: Clean orphaned chunks
+                            uint64_t orphans_deleted = 0;
+                            Status clean_status = gc->cleanOrphanedToastChunks(table.table_id,
+                                                                               orphaned_value_ids,
+                                                                               &orphans_deleted,
+                                                                               ctx);
+
+                            if (clean_status == Status::OK)
+                            {
+                                LOG_INFO(VACUUM, "TOAST table %s: cleaned %lu orphaned chunks",
+                                        table.table_name.c_str(), orphans_deleted);
+                            }
+                        }
+
+                        // Step 3: TIP-based garbage collection
+                        uint64_t tip_deleted = 0;
+                        Status tip_status = gc->cleanToastChunksByTIP(table.table_id,
+                                                                       &tip_deleted,
+                                                                       ctx);
+
+                        if (tip_status == Status::OK && tip_deleted > 0)
+                        {
+                            LOG_INFO(VACUUM, "TOAST table %s: TIP-based GC deleted %lu chunks",
+                                    table.table_name.c_str(), tip_deleted);
+                        }
+                    }
+
+                    continue; // Don't process TOAST as regular table
                 }
 
-                // Vacuum this table
+                // Regular table - vacuum normally
                 VacuumStats table_stats;
                 status = vacuumTable(table.table_id, &table_stats, ctx);
                 if (status == Status::OK)
