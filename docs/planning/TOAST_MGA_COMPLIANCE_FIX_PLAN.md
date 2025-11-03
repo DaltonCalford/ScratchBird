@@ -90,15 +90,16 @@ Based on audit report `/docs/audit/02_TOAST_IMPLEMENTATION_AUDIT.md`, the follow
 - [x] Phase 0: Preparation & Planning (5-8 hours) ✅ COMPLETE
 - [x] Phase 1: TOAST Chunk Format Redesign (20-30 hours) ✅ COMPLETE (November 2, 2025)
 - [x] Phase 2: TIP-Based Visibility Implementation (15-25 hours) ✅ COMPLETE (November 2, 2025)
-- [ ] Phase 3: Storage Layer TOAST Integration (20-30 hours) ⏳ **IN PROGRESS** (November 3, 2025)
+- [x] Phase 3: Storage Layer TOAST Integration (20-30 hours) ✅ **COMPLETE** (November 3, 2025)
 - [ ] Phase 4: Garbage Collection Implementation (25-35 hours) ⏳ **NEXT**
 - [ ] ~~Phase 5: Crash Recovery & WAL Integration~~ ❌ **REMOVED** - MGA does not use WAL for core operations
 - [ ] Phase 5: Testing & Validation (20-30 hours) [Renumbered from Phase 6]
 - [ ] Phase 6: Documentation & Optimization (15-20 hours) [Renumbered from Phase 7]
 
 **Total Estimated Hours**: 120-165 hours (3-4 weeks with 1 developer) - Revised
-**Hours Completed**: ~40 hours (Phase 0 + Phase 1 + Phase 2)
-**Hours Remaining**: ~80-125 hours
+**Hours Completed**: ~65 hours (Phase 0 + Phase 1 + Phase 2 + Phase 3)
+**Hours Remaining**: ~55-100 hours
+**Completion**: ~45% (3 of 6 phases complete)
 
 ---
 
@@ -704,8 +705,9 @@ Test cases:
 
 ## 🔧 PHASE 3: Storage Layer TOAST Integration
 
-**Status**: ⏳ IN PROGRESS (November 3, 2025)
+**Status**: ✅ COMPLETE (November 3, 2025)
 **Duration**: 20-30 hours (Revised from 40-60 hours after architectural analysis)
+**Actual Duration**: ~25 hours
 **Goal**: Implement storage layer detoasting before index operations
 **Priority**: HIGH (data correctness)
 
@@ -1026,14 +1028,44 @@ Status RTree::insert(const BoundingBox& bbox, const TID& tid, uint64_t xid,
 
 ### Phase 3 Testing
 
-**Create**: `tests/integration/test_index_toast_integration.cpp`
+**Create**: `tests/integration/test_storage_toast_indexing.cpp` ✅ CREATED
 
-Test cases for each index type:
-1. Create index on column with TOASTed values
-2. Insert TOASTed values
-3. Query via index, verify correct results
-4. Verify index contains actual values, not pointers
-5. Test all index-specific operations (range queries, similarity search, etc.)
+Test cases implemented:
+1. InsertWithToastAndBTreeIndex - Insert with TOAST + index
+2. UpdateWithChangedIndexedColumn - Update indexed column, verify TID stability
+3. UpdateWithUnchangedIndexedColumn - MGA optimization test
+4. MultipleIndexesSameToastColumn - Cache hit test
+5. ToastPointerDetection - Validate isToastPointer()
+6. DetoastIfNeeded - Validate detoastIfNeeded()
+
+### Phase 3 Completion Summary
+
+**Implementation Completed** (November 3, 2025):
+- ✅ Task 3.1: IndexKeyExtractor helper class (earlier)
+- ✅ Task 3.2: Storage engine insert path integration (~180 lines)
+- ✅ Task 3.3: Storage engine update path integration (~220 lines)
+- ✅ Integration test suite created (6 test cases)
+
+**Files Modified**:
+1. `src/core/storage_engine.cpp` - Added automatic index maintenance (+400 lines)
+2. `tests/integration/test_storage_toast_indexing.cpp` - New integration tests
+3. `docs/status/PHASE3_STORAGE_ENGINE_INTEGRATION_COMPLETE.md` - Status doc
+
+**Architecture Achieved**:
+- ✅ Clean separation: Indexes never see TOAST pointers
+- ✅ MGA compliance: TID stability maintained
+- ✅ Performance: Detoasting cache prevents repeated work
+- ✅ MGA optimization: Skip index updates when keys unchanged
+
+**Reference Documents**:
+- Implementation: `/docs/status/PHASE3_STORAGE_ENGINE_INTEGRATION_COMPLETE.md`
+- Analysis: `/docs/analysis/TOAST_INDEX_INTEGRATION_ANALYSIS.md`
+- Options: `/docs/analysis/TOAST_INDEX_OPTIONS_ANALYSIS.md`
+
+**Remaining Work**:
+- Manual end-to-end testing with real database
+- Support for additional data types (BOOLEAN, DATE, TIMESTAMP, etc.)
+- Performance benchmarking
 
 ---
 
