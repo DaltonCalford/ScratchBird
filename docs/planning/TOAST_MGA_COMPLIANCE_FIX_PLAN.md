@@ -1366,112 +1366,9 @@ Result: Data consistent, no corruption, no WAL needed
 **Goal**: Comprehensive testing of TOAST MGA compliance
 **Priority**: CRITICAL
 
-### Testing Strategy
+### ⚠️ NOTE: No WAL Testing Required
 
-#### Unit Tests (10 hours)
-**File**: `include/scratchbird/core/wal.h`
-**Duration**: 2-3 hours
-
-**Add WAL log types**:
-```cpp
-enum class WALLogType : uint8_t {
-    // ... existing types ...
-
-    // TOAST operations
-    TOAST_INSERT_CHUNK,      // Insert TOAST chunk
-    TOAST_DELETE_CHUNK,      // Soft delete (set xmax)
-    TOAST_PHYSICAL_DELETE,   // Physical delete (GC)
-    TOAST_UPDATE_XMAX,       // Update xmax field
-};
-```
-
-#### Task 5.2: Log TOAST Chunk Insert
-**File**: `src/core/toast.cpp:writeToastChunks()`
-**Duration**: 5-7 hours
-
-**Add WAL logging**:
-```cpp
-Status ToastManager::writeToastChunks(...) {
-    // ... create chunk data ...
-
-    // Insert chunk
-    Status status = storage->insertTuple(toast_table_id_, tuple_data.data(),
-                                         tuple_data.size(), &page_id, &item_id, ctx);
-
-    // WAL logging
-    if (status == Status::OK) {
-        wal_->logToastInsertChunk(toast_table_id_, value_id, seq,
-                                   page_id, item_id, xmin, tuple_data);
-    }
-
-    return status;
-}
-```
-
-#### Task 5.3: Log TOAST Chunk Delete
-**File**: `src/core/toast.cpp:deleteToastValue()`
-**Duration**: 5-7 hours
-
-**Add WAL logging**:
-```cpp
-Status ToastManager::deleteToastValue(...) {
-    // ... set xmax on chunks ...
-
-    // WAL logging
-    for (each chunk updated) {
-        wal_->logToastDeleteChunk(toast_table_id_, value_id, chunk_seq,
-                                   page_id, item_id, xmax);
-    }
-
-    return Status::OK;
-}
-```
-
-#### Task 5.4: Implement TOAST Recovery
-**File**: `src/core/recovery.cpp`
-**Duration**: 8-12 hours
-
-**Add recovery handlers**:
-```cpp
-Status Recovery::recoverToastInsertChunk(WALRecord* record) {
-    // Re-insert TOAST chunk
-    // Restore xmin/xmax from WAL record
-}
-
-Status Recovery::recoverToastDeleteChunk(WALRecord* record) {
-    // Restore xmax on TOAST chunk
-}
-
-Status Recovery::recoverToastPhysicalDelete(WALRecord* record) {
-    // Remove TOAST chunk
-}
-```
-
-### Phase 5 Validation Checklist
-
-- [ ] WAL log types for TOAST added
-- [ ] TOAST insert logged
-- [ ] TOAST delete logged
-- [ ] TOAST recovery implemented
-- [ ] Crash recovery tested
-
-### Phase 5 Testing
-
-**Create**: `tests/integration/test_toast_crash_recovery.cpp`
-
-Test cases:
-1. Insert TOAST chunks, crash before commit, verify recovery
-2. Delete TOAST chunks, crash before commit, verify recovery
-3. Orphan detection after crash
-
----
-
-## 🔧 PHASE 6: Testing & Validation
-
-**Status**: PENDING
-**Duration**: 20-30 hours
-**Goal**: Comprehensive testing of TOAST MGA compliance
-**Priority**: CRITICAL
+**CRITICAL**: MGA does NOT use WAL for core operations. TOAST crash recovery is handled via TIP state, not WAL replay. The following tests verify MGA-compliant behavior WITHOUT any WAL dependencies.
 
 ### Testing Strategy
 
@@ -1481,9 +1378,9 @@ Test cases:
 3. `test_toast_detoast_helper.cpp` - Detoasting helpers
 
 #### Integration Tests (10 hours)
-1. `test_index_toast_integration.cpp` - All 7 index types
-2. `test_toast_garbage_collection.cpp` - GC and orphan cleanup
-3. `test_toast_crash_recovery.cpp` - WAL and recovery
+1. `test_storage_toast_integration.cpp` - Storage layer detoasting before index operations
+2. `test_toast_garbage_collection.cpp` - GC and orphan cleanup via sweep
+3. `test_toast_crash_recovery_mga.cpp` - TIP-based crash recovery (NO WAL)
 
 #### Stress Tests (10 hours)
 1. `test_toast_concurrency.cpp` - Concurrent TOAST operations
@@ -1492,26 +1389,28 @@ Test cases:
 
 ### Test Coverage Goals
 
-- [ ] TOAST chunk format: 100%
-- [ ] TIP-based visibility: 100%
-- [ ] Index integration: 100% (all 7 types)
-- [ ] Garbage collection: 100%
-- [ ] Crash recovery: 100%
+- [ ] TOAST chunk format (28-byte header with xmin/xmax): 100%
+- [ ] TIP-based visibility (NO snapshots): 100%
+- [ ] Storage layer integration (IndexKeyExtractor): 100%
+- [ ] Garbage collection (sweep-based, TIP-aware): 100%
+- [ ] Crash recovery (TIP state recovery, NO WAL): 100%
 
 ### Manual Testing Checklist
 
 - [ ] Create table with TOASTed column
 - [ ] Insert values > 2KB (trigger TOAST)
 - [ ] Create B-tree index on TOASTed column
-- [ ] Query via index, verify correct results
-- [ ] Delete TOASTed values, run vacuum
-- [ ] Verify no orphaned chunks
-- [ ] Crash database during TOAST operation
-- [ ] Restart, verify recovery
+- [ ] Query via index, verify correct results (index has actual value, not pointer)
+- [ ] Delete TOASTed values, run sweep (vacuum)
+- [ ] Verify no orphaned chunks (swept via TIP state)
+- [ ] Crash database during TOAST operation (before commit)
+- [ ] Restart, verify TIP marks transaction as aborted
+- [ ] Verify TOAST chunks invisible (TIP-based visibility)
+- [ ] Run sweep, verify aborted chunks physically removed
 
 ---
 
-## 🔧 PHASE 7: Documentation & Optimization
+## 🔧 PHASE 6: Documentation & Optimization (Renumbered from Phase 7)
 
 **Status**: PENDING
 **Duration**: 15-20 hours
@@ -1600,19 +1499,19 @@ Test cases:
 
 ### Critical (Must-Have for Production)
 
-- [ ] TOAST chunks track xmin/xmax in on-disk format (28-byte header)
-- [ ] TOAST uses TIP-based visibility (not snapshots)
-- [ ] All 7 index types detoast before indexing
-- [ ] Garbage collector cleans orphaned TOAST chunks
+- [x] TOAST chunks track xmin/xmax in on-disk format (28-byte header) ✅ Phase 1 Complete
+- [x] TOAST uses TIP-based visibility (not snapshots) ✅ Phase 2 Complete
+- [ ] Storage layer detoasts before indexing (IndexKeyExtractor) ⏳ Phase 3 In Progress
+- [ ] Garbage collector cleans orphaned TOAST chunks (sweep-based)
 - [ ] MGA compliance scorecard: 6/6 (100%)
 - [ ] All critical bugs fixed (BUG-TOAST-001 through BUG-TOAST-004)
 
 ### High Priority (Important for Correctness)
 
-- [ ] Crash recovery for TOAST operations
-- [ ] WAL logging for TOAST
+- [ ] TIP-based crash recovery (NO WAL - uses TIP state only)
 - [ ] Comprehensive test coverage (>90%)
 - [ ] No storage leaks under stress testing
+- [ ] Sweep (vacuum) removes aborted TOAST chunks via TIP checks
 
 ### Medium Priority (Nice to Have)
 
