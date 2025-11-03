@@ -344,4 +344,99 @@ namespace scratchbird::core
         return true;
     }
 
+    std::string UTF8Utils::truncateToBytes(std::string_view str, size_t max_bytes)
+    {
+        // Edge cases
+        if (max_bytes == 0)
+        {
+            return "";
+        }
+
+        // Reserve 1 byte for null terminator
+        size_t max_content = max_bytes - 1;
+
+        // If string already fits, return as-is
+        if (str.size() <= max_content)
+        {
+            return std::string(str);
+        }
+
+        // Find last complete UTF-8 character that fits
+        size_t byte_pos = 0;
+        size_t last_safe_pos = 0;
+
+        while (byte_pos < str.size() && byte_pos < max_content)
+        {
+            uint8_t first_byte = static_cast<uint8_t>(str[byte_pos]);
+            size_t char_bytes = getCharacterLength(first_byte);
+
+            // Invalid UTF-8, stop here
+            if (char_bytes == 0)
+            {
+                break;
+            }
+
+            // Check if complete character fits
+            if (byte_pos + char_bytes <= max_content)
+            {
+                // This character fits completely
+                last_safe_pos = byte_pos + char_bytes;
+                byte_pos += char_bytes;
+            }
+            else
+            {
+                // Adding this character would exceed limit, stop
+                break;
+            }
+        }
+
+        return std::string(str.substr(0, last_safe_pos));
+    }
+
+    Status UTF8Utils::validateStorageCapacity(std::string_view str,
+                                              size_t max_chars,
+                                              size_t max_bytes,
+                                              ErrorContext* ctx)
+    {
+        // Check character count (SQL standard: 128 characters)
+        size_t char_count = countCharacters(str);
+        if (char_count == 0 && !str.empty())
+        {
+            // Invalid UTF-8
+            if (ctx)
+            {
+                ctx->status = Status::INVALID_ARGUMENT;
+                ctx->message = "Invalid UTF-8 encoding in identifier";
+            }
+            return Status::INVALID_ARGUMENT;
+        }
+
+        if (char_count > max_chars)
+        {
+            if (ctx)
+            {
+                ctx->status = Status::INVALID_ARGUMENT;
+                ctx->message = "Identifier exceeds maximum length: " +
+                              std::to_string(char_count) + " characters (maximum " +
+                              std::to_string(max_chars) + ")";
+            }
+            return Status::INVALID_ARGUMENT;
+        }
+
+        // Check byte count (storage capacity including null terminator)
+        if (str.size() + 1 > max_bytes)
+        {
+            if (ctx)
+            {
+                ctx->status = Status::INVALID_ARGUMENT;
+                ctx->message = "Identifier exceeds storage capacity: " +
+                              std::to_string(str.size()) + " bytes (maximum " +
+                              std::to_string(max_bytes - 1) + " bytes + null terminator)";
+            }
+            return Status::INVALID_ARGUMENT;
+        }
+
+        return Status::OK;
+    }
+
 } // namespace scratchbird::core

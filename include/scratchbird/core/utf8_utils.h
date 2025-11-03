@@ -4,9 +4,12 @@
 #include <string>
 #include <string_view>
 #include <optional>
+#include "scratchbird/core/status.h"
 
 namespace scratchbird::core
 {
+    // Forward declaration
+    struct ErrorContext;
 
     /**
      * UTF-8 Utility Functions
@@ -95,6 +98,51 @@ namespace scratchbird::core
          * @return true if identifier is valid (1-128 characters)
          */
         static bool isValidIdentifierLength(std::string_view identifier);
+
+        /**
+         * Truncate UTF-8 string to fit in maximum byte count without splitting characters
+         *
+         * Ensures the resulting string:
+         * - Fits within max_bytes (including null terminator)
+         * - Does not split UTF-8 multi-byte characters
+         * - Is valid UTF-8
+         *
+         * @param str Input string
+         * @param max_bytes Maximum byte count (including space for null terminator)
+         * @return Truncated string that fits in max_bytes without splitting UTF-8 characters
+         *
+         * Examples:
+         *   truncateToBytes("hello", 128) → "hello" (5 bytes + null = 6 bytes)
+         *   truncateToBytes("hello world", 6) → "hello" (5 bytes + null = 6 bytes)
+         *   truncateToBytes("你好世界", 7) → "你好" (6 bytes + null = 7 bytes)
+         *   truncateToBytes("你好世界", 6) → "你" (3 bytes + null = 4 bytes, "你好" would be 7)
+         */
+        static std::string truncateToBytes(std::string_view str, size_t max_bytes);
+
+        /**
+         * Validate that a UTF-8 string can be stored in fixed-size storage
+         *
+         * Checks both character count and byte count limits.
+         *
+         * @param str Input string
+         * @param max_chars Maximum character count (SQL standard: 128)
+         * @param max_bytes Maximum byte count (storage capacity including null terminator)
+         * @param ctx Error context for detailed error messages (optional)
+         * @return Status::OK if valid, error status with message otherwise
+         *
+         * Error Cases:
+         * - Returns INVALID_ARGUMENT if character count exceeds max_chars
+         * - Returns INVALID_ARGUMENT if byte count exceeds max_bytes
+         *
+         * Examples:
+         *   validateStorageCapacity("hello", 128, 512, ctx) → Status::OK
+         *   validateStorageCapacity(std::string(200, 'a'), 128, 512, ctx) → INVALID_ARGUMENT (too many chars)
+         *   validateStorageCapacity(std::string(200, '你'), 200, 512, ctx) → INVALID_ARGUMENT (too many bytes)
+         */
+        static Status validateStorageCapacity(std::string_view str,
+                                              size_t max_chars,
+                                              size_t max_bytes,
+                                              ErrorContext* ctx = nullptr);
 
     private:
         // Helper to check if code point is valid Unicode

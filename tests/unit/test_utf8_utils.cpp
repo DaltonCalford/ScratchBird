@@ -423,3 +423,315 @@ TEST_F(UTF8UtilsTest, PracticalSQLIdentifierExamples)
     std::string long_identifier(129, 'x');
     EXPECT_FALSE(UTF8Utils::isValidIdentifierLength(long_identifier));
 }
+
+// ==================== PHASE 1: NEW FUNCTIONS ====================
+
+// Test 26: truncateToBytes - ASCII Strings
+TEST_F(UTF8UtilsTest, TruncateToBytesASCII)
+{
+    // String already fits
+    EXPECT_EQ(UTF8Utils::truncateToBytes("hello", 128), "hello"); // 5 bytes + null = 6 bytes
+    EXPECT_EQ(UTF8Utils::truncateToBytes("hello", 10), "hello");
+
+    // Exact fit (including null terminator)
+    EXPECT_EQ(UTF8Utils::truncateToBytes("hello", 6), "hello"); // 5 bytes + null = 6 bytes
+
+    // Truncation needed
+    EXPECT_EQ(UTF8Utils::truncateToBytes("hello world", 6), "hello"); // 5 bytes + null = 6 bytes
+    EXPECT_EQ(UTF8Utils::truncateToBytes("hello world", 7), "hello "); // 6 bytes + null = 7 bytes
+    EXPECT_EQ(UTF8Utils::truncateToBytes("hello world", 11), "hello worl"); // 10 bytes + null = 11 bytes
+
+    // Edge case: max_bytes = 1 (only null terminator)
+    EXPECT_EQ(UTF8Utils::truncateToBytes("hello", 1), "");
+
+    // Edge case: max_bytes = 0
+    EXPECT_EQ(UTF8Utils::truncateToBytes("hello", 0), "");
+}
+
+// Test 27: truncateToBytes - Multi-Byte Characters (2-byte)
+TEST_F(UTF8UtilsTest, TruncateToBytesTwoByteChars)
+{
+    // café = c(1) + a(1) + f(1) + é(2) = 5 bytes total
+
+    // String fits
+    EXPECT_EQ(UTF8Utils::truncateToBytes("café", 128), "café");
+    EXPECT_EQ(UTF8Utils::truncateToBytes("café", 6), "café"); // 5 bytes + null = 6 bytes
+
+    // Truncate before é (would split multi-byte character)
+    EXPECT_EQ(UTF8Utils::truncateToBytes("café", 5), "caf"); // Can't include é (would be 5 bytes + null = 6)
+    EXPECT_EQ(UTF8Utils::truncateToBytes("café", 4), "caf"); // 3 bytes + null = 4 bytes
+
+    // Multiple 2-byte characters: ñoño = ñ(2) + o(1) + ñ(2) + o(1) = 6 bytes
+    EXPECT_EQ(UTF8Utils::truncateToBytes("ñoño", 7), "ñoño"); // 6 bytes + null = 7 bytes
+    EXPECT_EQ(UTF8Utils::truncateToBytes("ñoño", 6), "ñoñ"); // 5 bytes + null = 6 bytes (can't fit last 'o')
+    EXPECT_EQ(UTF8Utils::truncateToBytes("ñoño", 5), "ño"); // 3 bytes + null = 4 bytes (can't fit second ñ)
+}
+
+// Test 28: truncateToBytes - Multi-Byte Characters (3-byte CJK)
+TEST_F(UTF8UtilsTest, TruncateToBytesThreeByteChars)
+{
+    // 你好世界 = 你(3) + 好(3) + 世(3) + 界(3) = 12 bytes total
+
+    // String fits
+    EXPECT_EQ(UTF8Utils::truncateToBytes("你好世界", 128), "你好世界");
+    EXPECT_EQ(UTF8Utils::truncateToBytes("你好世界", 13), "你好世界"); // 12 bytes + null = 13 bytes
+
+    // Truncate to 2 characters: 你好 = 6 bytes
+    EXPECT_EQ(UTF8Utils::truncateToBytes("你好世界", 7), "你好"); // 6 bytes + null = 7 bytes
+
+    // Truncate to 1 character (can't fit second character in 6 bytes)
+    EXPECT_EQ(UTF8Utils::truncateToBytes("你好世界", 6), "你"); // 3 bytes + null = 4 bytes (6 would split 好)
+
+    // Exact boundary: 3 characters = 9 bytes
+    EXPECT_EQ(UTF8Utils::truncateToBytes("你好世界", 10), "你好世"); // 9 bytes + null = 10 bytes
+}
+
+// Test 29: truncateToBytes - Multi-Byte Characters (4-byte Emoji)
+TEST_F(UTF8UtilsTest, TruncateToBytesFourByteChars)
+{
+    // 🎉 = 4 bytes
+    EXPECT_EQ(UTF8Utils::truncateToBytes("🎉", 5), "🎉"); // 4 bytes + null = 5 bytes
+    EXPECT_EQ(UTF8Utils::truncateToBytes("🎉", 4), ""); // Can't fit (would be 4 bytes + null = 5)
+
+    // Hello 🎉 = H(1) + e(1) + l(1) + l(1) + o(1) + space(1) + 🎉(4) = 10 bytes
+    EXPECT_EQ(UTF8Utils::truncateToBytes("Hello 🎉", 11), "Hello 🎉"); // 10 bytes + null = 11 bytes
+    EXPECT_EQ(UTF8Utils::truncateToBytes("Hello 🎉", 10), "Hello "); // 6 bytes + null = 7 bytes (can't fit emoji)
+    EXPECT_EQ(UTF8Utils::truncateToBytes("Hello 🎉", 7), "Hello "); // 6 bytes + null = 7 bytes
+
+    // Multiple emoji: 👍👎 = 👍(4) + 👎(4) = 8 bytes
+    EXPECT_EQ(UTF8Utils::truncateToBytes("👍👎", 9), "👍👎"); // 8 bytes + null = 9 bytes
+    EXPECT_EQ(UTF8Utils::truncateToBytes("👍👎", 8), "👍"); // 4 bytes + null = 5 bytes (can't fit second emoji)
+    EXPECT_EQ(UTF8Utils::truncateToBytes("👍👎", 5), "👍"); // 4 bytes + null = 5 bytes
+}
+
+// Test 30: truncateToBytes - Mixed Multi-Byte Characters
+TEST_F(UTF8UtilsTest, TruncateToBytesMixed)
+{
+    // Hello café 你好 🎉!
+    // H(1) + e(1) + l(1) + l(1) + o(1) + space(1) + c(1) + a(1) + f(1) + é(2) + space(1) +
+    // 你(3) + 好(3) + space(1) + 🎉(4) + !(1) = 24 bytes total
+
+    std::string mixed = "Hello café 你好 🎉!";
+
+    // Full string
+    EXPECT_EQ(UTF8Utils::truncateToBytes(mixed, 128), mixed);
+    EXPECT_EQ(UTF8Utils::truncateToBytes(mixed, 25), mixed); // 24 bytes + null = 25 bytes
+
+    // Truncate before emoji: "Hello café 你好 " = 20 bytes
+    EXPECT_EQ(UTF8Utils::truncateToBytes(mixed, 21), "Hello café 你好 "); // 20 bytes + null = 21 bytes
+
+    // Truncate to "Hello café " = 11 bytes (can't fit 你 which would make it 14)
+    EXPECT_EQ(UTF8Utils::truncateToBytes(mixed, 12), "Hello café "); // 11 bytes + null = 12 bytes
+}
+
+// Test 31: truncateToBytes - Character Boundary Integrity
+TEST_F(UTF8UtilsTest, TruncateToBytesCharacterBoundaryIntegrity)
+{
+    // Ensure truncated strings are always valid UTF-8 (no split characters)
+
+    std::vector<std::pair<std::string, size_t>> test_cases = {
+        {"café", 5},        // Would split é at byte 4
+        {"你好", 5},        // Would split 好 at byte 4-5
+        {"🎉", 4},          // Would split emoji at bytes 1-3
+        {"Hello 🎉", 10},   // Would split emoji
+        {"你好世界", 8},    // Would split 世 at bytes 7-8
+    };
+
+    for (const auto& [str, max_bytes] : test_cases) {
+        std::string truncated = UTF8Utils::truncateToBytes(str, max_bytes);
+
+        // Verify result is valid UTF-8
+        EXPECT_TRUE(UTF8Utils::isValidUTF8(truncated))
+            << "Truncated string is not valid UTF-8: " << truncated;
+
+        // Verify result fits in max_bytes (including null terminator)
+        EXPECT_LE(truncated.size() + 1, max_bytes)
+            << "Truncated string exceeds max_bytes";
+    }
+}
+
+// Test 32: truncateToBytes - Empty String Edge Cases
+TEST_F(UTF8UtilsTest, TruncateToBytesEmptyString)
+{
+    EXPECT_EQ(UTF8Utils::truncateToBytes("", 128), "");
+    EXPECT_EQ(UTF8Utils::truncateToBytes("", 10), "");
+    EXPECT_EQ(UTF8Utils::truncateToBytes("", 1), "");
+    EXPECT_EQ(UTF8Utils::truncateToBytes("", 0), "");
+}
+
+// Test 33: validateStorageCapacity - Valid Cases
+TEST_F(UTF8UtilsTest, ValidateStorageCapacityValid)
+{
+    ErrorContext ctx;
+
+    // ASCII string well within limits
+    EXPECT_EQ(UTF8Utils::validateStorageCapacity("hello", 128, 512, &ctx), Status::OK);
+
+    // Exactly 128 characters (ASCII)
+    std::string exactly_128_ascii(128, 'x');
+    EXPECT_EQ(UTF8Utils::validateStorageCapacity(exactly_128_ascii, 128, 512, &ctx), Status::OK);
+
+    // 128 characters (multi-byte) that fit in 512 bytes
+    // 128 × 2-byte chars = 256 bytes + null = 257 bytes (fits in 512)
+    std::string chars_128_2byte;
+    for (int i = 0; i < 128; ++i) {
+        chars_128_2byte += "é"; // 2 bytes each
+    }
+    EXPECT_EQ(UTF8Utils::validateStorageCapacity(chars_128_2byte, 128, 512, &ctx), Status::OK);
+
+    // Short multi-byte strings
+    EXPECT_EQ(UTF8Utils::validateStorageCapacity("café", 128, 512, &ctx), Status::OK);
+    EXPECT_EQ(UTF8Utils::validateStorageCapacity("你好", 128, 512, &ctx), Status::OK);
+    EXPECT_EQ(UTF8Utils::validateStorageCapacity("🎉", 128, 512, &ctx), Status::OK);
+}
+
+// Test 34: validateStorageCapacity - Character Count Exceeded
+TEST_F(UTF8UtilsTest, ValidateStorageCapacityCharacterCountExceeded)
+{
+    ErrorContext ctx;
+
+    // 129 ASCII characters (exceeds 128 character limit)
+    std::string chars_129(129, 'x');
+    EXPECT_EQ(UTF8Utils::validateStorageCapacity(chars_129, 128, 512, &ctx),
+              Status::INVALID_ARGUMENT);
+    EXPECT_TRUE(ctx.message.find("exceeds maximum length") != std::string::npos);
+    EXPECT_TRUE(ctx.message.find("129 characters") != std::string::npos);
+
+    // 200 ASCII characters
+    std::string chars_200(200, 'x');
+    ctx = ErrorContext(); // Reset
+    EXPECT_EQ(UTF8Utils::validateStorageCapacity(chars_200, 128, 512, &ctx),
+              Status::INVALID_ARGUMENT);
+    EXPECT_TRUE(ctx.message.find("200 characters") != std::string::npos);
+
+    // 129 multi-byte characters (exceeds character limit even though bytes might fit)
+    std::string chars_129_multibyte;
+    for (int i = 0; i < 129; ++i) {
+        chars_129_multibyte += "你"; // 3 bytes each = 387 bytes total (fits in 512 bytes)
+    }
+    ctx = ErrorContext(); // Reset
+    EXPECT_EQ(UTF8Utils::validateStorageCapacity(chars_129_multibyte, 128, 512, &ctx),
+              Status::INVALID_ARGUMENT);
+    EXPECT_TRUE(ctx.message.find("129 characters") != std::string::npos);
+}
+
+// Test 35: validateStorageCapacity - Byte Count Exceeded
+TEST_F(UTF8UtilsTest, ValidateStorageCapacityByteCountExceeded)
+{
+    ErrorContext ctx;
+
+    // 100 characters but exceeds byte limit
+    // 100 × 4-byte chars = 400 bytes + null = 401 bytes
+    // Set max_bytes to 300 (too small)
+    std::string chars_100_4byte;
+    for (int i = 0; i < 100; ++i) {
+        chars_100_4byte += "🎉"; // 4 bytes each
+    }
+    EXPECT_EQ(UTF8Utils::validateStorageCapacity(chars_100_4byte, 128, 300, &ctx),
+              Status::INVALID_ARGUMENT);
+    EXPECT_TRUE(ctx.message.find("exceeds storage capacity") != std::string::npos);
+    EXPECT_TRUE(ctx.message.find("400 bytes") != std::string::npos);
+
+    // 128 characters (valid count) but 128 × 4 = 512 bytes + null = 513 bytes (exceeds 512)
+    std::string chars_128_4byte;
+    for (int i = 0; i < 128; ++i) {
+        chars_128_4byte += "🎉"; // 4 bytes each
+    }
+    ctx = ErrorContext(); // Reset
+    EXPECT_EQ(UTF8Utils::validateStorageCapacity(chars_128_4byte, 128, 512, &ctx),
+              Status::INVALID_ARGUMENT);
+    EXPECT_TRUE(ctx.message.find("exceeds storage capacity") != std::string::npos);
+    EXPECT_TRUE(ctx.message.find("512 bytes") != std::string::npos);
+}
+
+// Test 36: validateStorageCapacity - Invalid UTF-8
+TEST_F(UTF8UtilsTest, ValidateStorageCapacityInvalidUTF8)
+{
+    ErrorContext ctx;
+
+    // Invalid UTF-8 sequence
+    std::string invalid = makeInvalidUTF8();
+    EXPECT_EQ(UTF8Utils::validateStorageCapacity(invalid, 128, 512, &ctx),
+              Status::INVALID_ARGUMENT);
+    EXPECT_TRUE(ctx.message.find("Invalid UTF-8") != std::string::npos);
+
+    // Overlong encoding
+    ctx = ErrorContext(); // Reset
+    std::string overlong = makeOverlongEncoding();
+    // Note: countCharacters returns 0 for invalid UTF-8
+    EXPECT_EQ(UTF8Utils::validateStorageCapacity(overlong, 128, 512, &ctx),
+              Status::INVALID_ARGUMENT);
+}
+
+// Test 37: validateStorageCapacity - Edge Cases
+TEST_F(UTF8UtilsTest, ValidateStorageCapacityEdgeCases)
+{
+    ErrorContext ctx;
+
+    // Empty string (technically valid, but might be rejected by higher-level validation)
+    EXPECT_EQ(UTF8Utils::validateStorageCapacity("", 128, 512, &ctx), Status::OK);
+
+    // Single character
+    EXPECT_EQ(UTF8Utils::validateStorageCapacity("x", 128, 512, &ctx), Status::OK);
+    EXPECT_EQ(UTF8Utils::validateStorageCapacity("你", 128, 512, &ctx), Status::OK);
+    EXPECT_EQ(UTF8Utils::validateStorageCapacity("🎉", 128, 512, &ctx), Status::OK);
+
+    // Exactly at character limit (128 chars)
+    std::string exactly_128(128, 'x');
+    EXPECT_EQ(UTF8Utils::validateStorageCapacity(exactly_128, 128, 512, &ctx), Status::OK);
+
+    // Exactly at byte limit (511 bytes + null = 512)
+    std::string exactly_511(511, 'x');
+    EXPECT_EQ(UTF8Utils::validateStorageCapacity(exactly_511, 512, 512, &ctx), Status::OK);
+}
+
+// Test 38: validateStorageCapacity - NULL ErrorContext
+TEST_F(UTF8UtilsTest, ValidateStorageCapacityNullContext)
+{
+    // Should not crash when ctx is nullptr
+    EXPECT_EQ(UTF8Utils::validateStorageCapacity("hello", 128, 512, nullptr), Status::OK);
+
+    std::string too_many_chars(200, 'x');
+    EXPECT_EQ(UTF8Utils::validateStorageCapacity(too_many_chars, 128, 512, nullptr),
+              Status::INVALID_ARGUMENT);
+}
+
+// Test 39: validateStorageCapacity - Realistic Catalog Storage Scenarios
+TEST_F(UTF8UtilsTest, ValidateStorageCapacityRealisticScenarios)
+{
+    ErrorContext ctx;
+
+    // Catalog storage: char[512] for 128-character identifiers
+    // SQL standard: 128 characters maximum
+    // Storage: 512 bytes (128 chars × 4 bytes max per char)
+
+    // Scenario 1: 64 Chinese characters (192 bytes) - VALID
+    std::string chinese_64;
+    for (int i = 0; i < 64; ++i) {
+        chinese_64 += "你"; // 3 bytes each = 192 bytes total
+    }
+    EXPECT_EQ(UTF8Utils::validateStorageCapacity(chinese_64, 128, 512, &ctx), Status::OK);
+
+    // Scenario 2: 128 mixed characters - VALID
+    std::string mixed_128 = std::string(64, 'x') + std::string(32, 'é') + "你好世界";
+    // 64 ASCII (64 bytes) + 32 × é (64 bytes) + 4 CJK (12 bytes) = 140 bytes
+    EXPECT_LT(UTF8Utils::countCharacters(mixed_128), 128u);
+    EXPECT_EQ(UTF8Utils::validateStorageCapacity(mixed_128, 128, 512, &ctx), Status::OK);
+
+    // Scenario 3: 128 emoji characters (512 bytes) - EXCEEDS byte limit
+    std::string emoji_128;
+    for (int i = 0; i < 128; ++i) {
+        emoji_128 += "🎉"; // 4 bytes each = 512 bytes + null = 513 bytes
+    }
+    ctx = ErrorContext(); // Reset
+    EXPECT_EQ(UTF8Utils::validateStorageCapacity(emoji_128, 128, 512, &ctx),
+              Status::INVALID_ARGUMENT);
+    EXPECT_TRUE(ctx.message.find("exceeds storage capacity") != std::string::npos);
+
+    // Scenario 4: Old catalog storage char[128] - FAILS for multi-byte
+    // 64 Chinese characters (192 bytes) exceeds 128-byte storage
+    ctx = ErrorContext(); // Reset
+    EXPECT_EQ(UTF8Utils::validateStorageCapacity(chinese_64, 128, 128, &ctx),
+              Status::INVALID_ARGUMENT);
+    EXPECT_TRUE(ctx.message.find("exceeds storage capacity") != std::string::npos);
+}
