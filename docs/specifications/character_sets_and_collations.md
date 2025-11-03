@@ -473,9 +473,306 @@ Character sets and timezones work together:
 - ✅ Connection and column-level timezone context
 - ✅ 22 comprehensive tests (all passing)
 
+## SQL Identifier UTF-8 Support
+
+**Implementation Date**: November 3, 2025
+**Status**: COMPLETE ✅
+**Reference**: docs/planning/SQL_IDENTIFIER_UTF8_FIX_PLAN.md
+
+### Overview
+
+ScratchBird fully supports UTF-8 identifiers (schema names, table names, column names, index names) with SQL standard compliance and proper multi-byte character handling.
+
+### Limits
+
+- **Character Limit**: 128 UTF-8 characters (SQL:2016 §5.2)
+- **Byte Limit**: 512 bytes (storage capacity)
+- **Encoding**: UTF-8 only
+
+**Rationale**: SQL standard specifies 128-character maximum for identifiers. UTF-8 characters can be 1-4 bytes each, so 128 characters × 4 bytes = 512 bytes maximum storage requirement.
+
+### Storage
+
+Catalog records use fixed-size `char[512]` arrays to support:
+- 128 ASCII characters (1 byte each = 128 bytes)
+- 128 2-byte UTF-8 characters (256 bytes) - e.g., Latin-1 extended: é, ñ, ü
+- 128 3-byte UTF-8 characters (384 bytes) - e.g., CJK: 你好, 日本語, 한글
+- 128 4-byte UTF-8 characters (512 bytes maximum) - e.g., Emoji: 😀, 🎉
+
+**Previous Implementation (BROKEN)**:
+- Used `char[128]` arrays (only 128 bytes)
+- Could only store 32 4-byte UTF-8 characters
+- Multi-byte identifiers truncated or corrupted
+
+**Fixed Implementation**:
+- Uses `char[512]` arrays (512 bytes)
+- Supports full 128-character SQL standard limit
+- All UTF-8 characters handled correctly
+
+### Validation
+
+Identifiers are validated at two levels:
+
+1. **UTF8Utils Validation** (`src/core/utf8_utils.cpp`)
+   - Validates UTF-8 encoding correctness (RFC 3629)
+   - Rejects overlong encodings (security)
+   - Rejects UTF-16 surrogates (invalid in UTF-8)
+   - Checks character count ≤ 128
+   - Checks byte count ≤ 512
+
+2. **Catalog Layer** (`src/core/catalog_manager.cpp`)
+   - Calls UTF8Utils::writeToBuffer() for all identifiers
+   - Ensures null-termination at position 511
+   - Validates storage capacity before writing
+   - Returns clear error messages on validation failure
+
+### Examples
+
+**Valid Identifiers**:
+```sql
+-- ASCII (4 characters, 5 bytes including 'é')
+CREATE SCHEMA café;
+
+-- Chinese (9 characters, 15 bytes: 6 ASCII + 6 bytes for 北京)
+CREATE TABLE 北京_table (id INT);
+
+-- Emoji (5 characters, 8 bytes: 4 ASCII + 4 bytes for 😀)
+CREATE INDEX idx_😀 ON test_table (col);
+
+-- Mixed UTF-8 (25 characters, ~40 bytes)
+CREATE TABLE global_café_北京_😀 (
+    id INT,
+    name_名前 VARCHAR(100),
+    status_😀 VARCHAR(50)
+);
+
+-- Maximum ASCII (128 characters, 128 bytes)
+CREATE SCHEMA aaaaaaa...aaaaaa; -- 128 'a' characters
+
+-- Maximum 2-byte chars (128 characters, 256 bytes)
+CREATE SCHEMA ééééééé...éééééé; -- 128 'é' characters
+
+-- Maximum 3-byte chars (128 characters, 384 bytes)
+CREATE SCHEMA 你你你你...你你你你; -- 128 '你' characters
+```
+
+**Invalid Identifiers**:
+```sql
+-- Exceeds character limit (129 > 128)
+CREATE SCHEMA aaaaaaa...aaaaaaa_EXTRA; -- 134 characters
+-- ERROR: Identifier exceeds maximum length of 128 characters
+
+-- Exceeds byte limit (130 × 4 = 520 bytes > 512)
+CREATE SCHEMA 😀😀😀...😀😀😀; -- 130 emoji
+-- ERROR: Identifier exceeds storage capacity of 512 bytes (520 bytes)
+
+-- Empty identifier
+CREATE TABLE "" (id INT);
+-- ERROR: Identifier cannot be empty
+
+-- Invalid UTF-8 sequence
+CREATE TABLE "\xFF\xFE" (id INT);
+-- ERROR: Invalid UTF-8 encoding in identifier
+```
+
+### Catalog Structure
+
+All identifier fields in catalog records use `char[512]`:
+
+```cpp
+// Schema Record (src/core/catalog_manager.cpp)
+struct SchemaRecord {
+    uint64_t schema_id;
+    char schema_name[512];  // 128 chars × 4 bytes/char max
+    char owner[512];        // 128 chars × 4 bytes/char max
+    // ...
+};
+
+// Table Record
+struct TableRecord {
+    uint64_t table_id;
+    uint64_t schema_id;
+    char table_name[512];   // 128 chars × 4 bytes/char max
+    // ...
+};
+
+// Column Record
+struct ColumnRecord {
+    uint64_t table_id;
+    uint16_t column_id;
+    char column_name[512];  // 128 chars × 4 bytes/char max
+    // ...
+};
+
+// Index Record
+struct IndexRecord {
+    uint64_t index_id;
+    uint64_t table_id;
+    char index_name[512];   // 128 chars × 4 bytes/char max
+    // ...
+};
+```
+
+### UTF-8 Utility Functions
+
+**Core Functions** (`include/scratchbird/core/utf8_utils.h`):
+
+```cpp
+// Count UTF-8 characters (not bytes)
+static size_t countCharacters(const std::string& str);
+
+// Validate UTF-8 encoding
+static bool isValidUTF8(const std::string& str);
+
+// Truncate to byte boundary (preserves character integrity)
+static std::string truncateToBytes(const std::string& str, size_t max_bytes);
+
+// Validate identifier (128 char limit, valid UTF-8)
+static Status isValidIdentifier(const std::string& str, ErrorContext* ctx);
+
+// Validate storage capacity (char and byte limits)
+static Status validateStorageCapacity(
+    const std::string& str,
+    size_t max_chars,
+    size_t max_bytes,
+    ErrorContext* ctx
+);
+
+// Write to buffer with validation
+static Status writeToBuffer(
+    const std::string& str,
+    char* buffer,
+    size_t buffer_size,
+    size_t max_chars,
+    size_t max_bytes,
+    ErrorContext* ctx
+);
+```
+
+### Character Boundary Integrity
+
+**Critical**: Multi-byte UTF-8 characters must never be split.
+
+Example:
+```cpp
+// "你好世界" = 4 Chinese chars, 12 bytes (3 bytes each)
+
+// WRONG: Truncate at byte 10 (splits "世" character)
+std::string wrong = str.substr(0, 10); // CORRUPTED UTF-8
+
+// RIGHT: Truncate at character boundary
+std::string correct = UTF8Utils::truncateToBytes("你好世界", 10);
+// Returns: "你好世" (9 bytes, respects character boundary)
+```
+
+All UTF-8 functions preserve character boundaries to prevent corruption.
+
+### SQL Parser Integration
+
+**Quoted Identifiers** (case-sensitive):
+```sql
+-- UTF-8 identifiers must be quoted
+CREATE SCHEMA "café_schema";    -- Preserves exact case and UTF-8
+CREATE TABLE "北京" (id INT);    -- Chinese characters
+CREATE INDEX "idx_😀" ON t (c);  -- Emoji characters
+```
+
+**Unquoted Identifiers** (normalized to lowercase):
+```sql
+-- ASCII only, normalized to lowercase
+CREATE SCHEMA MySchema;  -- Stored as: myschema
+CREATE TABLE Users (id INT); -- Stored as: users
+```
+
+**Note**: Non-ASCII characters in unquoted identifiers may require parser updates (future enhancement).
+
+### Testing
+
+**Test Coverage**: 86 test cases (1,868 lines)
+
+1. **Unit Tests** (`tests/unit/test_utf8_utils.cpp`)
+   - 38 tests for UTF8Utils functions
+   - Character counting, validation, truncation
+   - All character sets: ASCII, Latin-1, CJK, Emoji
+
+2. **Integration Tests** (`tests/integration/test_catalog_utf8_identifiers.cpp`)
+   - 22 tests for catalog layer
+   - Schema, table, column, index creation
+   - Round-trip persistence verification
+
+3. **SQL Tests** (`tests/sql/test_utf8_identifiers.sql`)
+   - 26 SQL scenarios
+   - Real-world use cases
+   - Error cases and boundary conditions
+
+**Character Sets Tested**:
+- ASCII, Latin-1 (é, ñ, ü)
+- Chinese (你好), Japanese (日本語), Korean (한글)
+- Emoji (😀, 🎉, 💯)
+- Cyrillic (данные), Arabic (بيانات)
+- Mixed scripts
+
+### Migration Notes
+
+**Breaking Change**: Catalog format change (128 bytes → 512 bytes)
+
+**Impact**: Existing databases created before November 2025 are incompatible.
+
+**Migration Path**:
+1. Export data: `scratchbird dump mydb > backup.sql`
+2. Create new database with updated version
+3. Import data: `scratchbird restore mydb < backup.sql`
+
+**Rationale**: This change fixes critical data corruption bugs with multi-byte UTF-8 identifiers and ensures SQL standard compliance.
+
+### Performance Impact
+
+**Catalog Storage**: +384 bytes per identifier field
+- Schema record: 128→512 bytes (2 fields) = +768 bytes
+- Table record: 128→512 bytes (1 field) = +384 bytes
+- Column record: 128→512 bytes (1 field) = +384 bytes
+- Index record: 128→512 bytes (1 field) = +384 bytes
+
+**Memory Impact**: Minimal (catalog cached in memory)
+
+**Validation Overhead**: Negligible
+- UTF-8 validation: O(n) where n = byte length
+- Character counting: O(n) where n = byte length
+- Typical identifier: <50 bytes, <1μs validation time
+
+### Implementation Phases
+
+- ✅ **Phase 1**: UTF8Utils enhancements (truncateToBytes, validateStorageCapacity)
+- ✅ **Phase 2**: Catalog storage expansion (char[128] → char[512])
+- ✅ **Phase 3**: Catalog write logic fixes (strncpy → UTF-8 validation)
+- ✅ **Phase 4**: Catalog read logic safety (defensive null-termination)
+- ✅ **Phase 5**: Testing & validation (86 test cases)
+- ✅ **Phase 6**: Documentation (this section)
+
+### Related Issues Fixed
+
+1. **Multi-byte identifier truncation** - Fixed by 512-byte storage
+2. **strncpy data corruption** - Fixed by UTF-8 aware writing
+3. **Missing character count validation** - Fixed by UTF8Utils::isValidIdentifier
+4. **Missing byte capacity validation** - Fixed by validateStorageCapacity
+5. **No round-trip testing** - Fixed by comprehensive integration tests
+
+### References
+
+- SQL:2016 §5.2 - Identifier length limits (128 characters)
+- RFC 3629 - UTF-8, a transformation format of ISO 10646
+- Unicode Standard 15.0 - Character encoding
+- docs/planning/SQL_IDENTIFIER_UTF8_FIX_PLAN.md - Implementation plan
+- docs/status/PHASE1_UTF8_UTILS_ENHANCEMENTS_COMPLETE.md - Phase 1 status
+- docs/status/PHASE2_CATALOG_STORAGE_EXPANSION_COMPLETE.md - Phase 2 status
+- docs/status/PHASE3_CATALOG_WRITE_LOGIC_FIXES_COMPLETE.md - Phase 3 status
+- docs/status/PHASE4_CATALOG_READ_SAFETY_COMPLETE.md - Phase 4 status
+- docs/status/PHASE5_SQL_UTF8_TESTING_COMPLETE.md - Phase 5 status
+
 ## Notes
 
 - All system catalog objects (table names, column names, etc.) must be UTF-8
+- **SQL identifiers now support full 128-character UTF-8 names (512-byte storage)**
 - String literals in SQL are assumed to be in the connection character set
 - Client applications should send/receive data in UTF-8 by default
 - Binary data (BLOB, BYTEA) is NOT affected by character sets
