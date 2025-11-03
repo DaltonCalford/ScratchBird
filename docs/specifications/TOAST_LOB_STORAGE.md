@@ -55,10 +55,33 @@ struct ToastPointer {
 
 ### TOAST Table Schema
 
-Each regular table can have an associated TOAST table named `pg_toast_<table_id>` with columns:
-- `chunk_id` (INT) - TOAST value ID
-- `chunk_seq` (INT) - Chunk sequence number
-- `chunk_data` (BYTEA) - Actual chunk data
+Each regular table can have an associated TOAST table named `pg_toast_<table_id>` with chunks stored as tuples.
+
+**TOAST Chunk Format** (MGA-Compliant, 28-byte header):
+
+```cpp
+struct ToastChunk {
+    // MGA Transaction Fields (16 bytes)
+    uint64_t xmin;           // Creating transaction ID
+    uint64_t xmax;           // Deleting transaction ID (0 = not deleted)
+
+    // TOAST Metadata (12 bytes)
+    uint32_t value_id;       // TOAST value ID
+    uint32_t chunk_seq;      // Chunk sequence number (0-based)
+    uint32_t chunk_size;     // Size of chunk_data in bytes
+
+    // Chunk Data (variable length, up to TOAST_MAX_CHUNK_SIZE)
+    uint8_t  chunk_data[];   // Actual chunk bytes
+};
+```
+
+**Total Header Size**: 28 bytes (xmin + xmax + value_id + chunk_seq + chunk_size)
+
+**Key MGA Compliance Features**:
+- **xmin**: Transaction that created this chunk (for visibility)
+- **xmax**: Transaction that deleted this chunk (0 = active, non-zero = deleted)
+- **TIP-based visibility**: Chunk visibility determined by TIP state, NOT snapshots
+- **Independent lifecycle**: Each chunk is independently versioned
 
 ### Chunking Process
 
@@ -104,6 +127,195 @@ Status status = toast_mgr.delete_toast_value(
 );
 ```
 
+**Note**: Deletion sets xmax on all chunks for the value. Physical deletion happens during garbage collection (vacuum/sweep).
+
+## TIP-Based Visibility (MGA Compliance)
+
+**CRITICAL**: TOAST chunks use **TIP (Transaction Inventory Pages)** for visibility, NOT snapshot-based visibility like PostgreSQL.
+
+### Visibility Rules
+
+A TOAST chunk is **visible** to a transaction if:
+
+1. **xmin is committed** (via TIP lookup)
+   - TIP shows xmin transaction as `TX_COMMITTED`
+   - Chunk was successfully created
+
+2. **xmax is NOT committed** (via TIP lookup)
+   - If `xmax == 0`: Chunk not deleted
+   - If `xmax != 0` and TIP shows `TX_ACTIVE` or `TX_ABORTED`: Deletion not finalized
+
+**Visibility Check** (from `ToastVisibility::isChunkVisible`):
+
+```cpp
+bool isChunkVisible(uint64_t chunk_xmin, uint64_t chunk_xmax,
+                   uint64_t current_xmin, TransactionManager* tm)
+{
+    // Check xmin: Must be committed
+    if (!tm->isTransactionVisible(chunk_xmin, current_xmin)) {
+        return false;  // Creating transaction not visible
+    }
+
+    // Check xmax: If set, must NOT be committed
+    if (chunk_xmax != 0) {
+        if (tm->isTransactionVisible(chunk_xmax, current_xmin)) {
+            return false;  // Deleting transaction committed
+        }
+    }
+
+    return true;  // Chunk is visible
+}
+```
+
+### Key Differences from PostgreSQL MVCC
+
+| Aspect | PostgreSQL (MVCC/WAL) | ScratchBird (MGA/TIP) |
+|--------|----------------------|----------------------|
+| Visibility Source | Snapshot + WAL | TIP state only |
+| Crash Recovery | WAL replay | TIP state check |
+| Transaction State | In-memory + WAL | TIP (2-bit state) |
+| Chunk Lifecycle | Snapshot-based | TIP-based |
+| Garbage Collection | Snapshot horizon | TIP state + orphan detection |
+
+### Transaction States (TIP)
+
+Each transaction has one of 4 states in TIP:
+
+- **TX_ACTIVE** (0b00): Transaction in progress
+- **TX_COMMITTED** (0b01): Transaction completed successfully
+- **TX_ABORTED** (0b10): Transaction rolled back
+- **TX_LIMBO** (0b11): Two-phase commit pending
+
+**TOAST Visibility Logic**:
+- Chunks created by `TX_ACTIVE` → Invisible to other transactions
+- Chunks created by `TX_COMMITTED` → Visible to later transactions
+- Chunks created by `TX_ABORTED` → Invisible to all (orphans)
+- Chunks deleted by `TX_COMMITTED` → Invisible to all
+- Chunks deleted by `TX_ABORTED` → Still visible (delete rolled back)
+
+### Crash Recovery
+
+**Without WAL** (MGA approach):
+
+1. Database crashes during TOAST operation
+2. On restart, check TIP for transaction state
+3. If transaction is `TX_ACTIVE` → Mark as `TX_ABORTED` in TIP
+4. TOAST chunks with aborted xmin become invisible
+5. Garbage collection (sweep) physically removes orphaned chunks
+
+**NO WAL replay needed** - all state recovered from TIP.
+
+## Garbage Collection (MGA-Compliant)
+
+TOAST chunks are garbage collected during database vacuum/sweep using a **3-phase approach**:
+
+### Phase 1: Orphan Detection
+
+**Problem**: TOAST chunks whose parent tuples have been deleted or aborted.
+
+**Solution**: Scan heap tables for TOAST pointer references, identify unreferenced chunks.
+
+```cpp
+GarbageCollector* gc = db->garbage_collector();
+std::unordered_set<uint32_t> orphaned_value_ids;
+
+// Detect orphans: chunks not referenced by any heap tuple
+Status status = gc->detectOrphanedToastChunks(
+    toast_table_id,
+    &orphaned_value_ids,
+    &ctx
+);
+```
+
+**Algorithm**:
+1. Scan all heap tables looking for TOAST pointers
+2. Build set of referenced value IDs
+3. Scan TOAST table for all value IDs
+4. Find orphans: value IDs in TOAST but not referenced
+
+### Phase 2: Orphan Cleanup
+
+**Solution**: Physically delete all chunks for orphaned values.
+
+```cpp
+uint64_t chunks_deleted = 0;
+
+Status status = gc->cleanOrphanedToastChunks(
+    toast_table_id,
+    orphaned_value_ids,  // From Phase 1
+    &chunks_deleted,
+    &ctx
+);
+```
+
+**Note**: Orphaned chunks have no parent tuples, so safe to delete physically without transaction coordination.
+
+### Phase 3: TIP-Based GC
+
+**Problem**: TOAST chunks where xmax transaction has committed (deletion finalized).
+
+**Solution**: Use TIP to check xmax state, physically delete chunks with committed xmax.
+
+```cpp
+uint64_t chunks_deleted = 0;
+
+Status status = gc->cleanToastChunksByTIP(
+    toast_table_id,
+    &chunks_deleted,
+    &ctx
+);
+```
+
+**Algorithm**:
+1. Scan TOAST table
+2. For each chunk with `xmax != 0`:
+   - Check TIP state of xmax transaction
+   - If xmax is `TX_COMMITTED`: Physically delete chunk
+   - If xmax is `TX_ABORTED`: TODO - Clear xmax (chunk still alive)
+
+### Vacuum Integration
+
+TOAST garbage collection is integrated into database vacuum:
+
+```cpp
+// From src/core/vacuum.cpp
+if (table.table_type == CatalogManager::TableType::TOAST) {
+    auto* gc = db_->garbage_collector();
+
+    // Phase 1: Detect orphans
+    std::unordered_set<uint32_t> orphaned_value_ids;
+    gc->detectOrphanedToastChunks(table.table_id, &orphaned_value_ids, ctx);
+
+    // Phase 2: Clean orphans
+    if (!orphaned_value_ids.empty()) {
+        uint64_t orphans_deleted = 0;
+        gc->cleanOrphanedToastChunks(table.table_id, orphaned_value_ids,
+                                    &orphans_deleted, ctx);
+    }
+
+    // Phase 3: TIP-based GC
+    uint64_t tip_deleted = 0;
+    gc->cleanToastChunksByTIP(table.table_id, &tip_deleted, ctx);
+}
+```
+
+### GC Performance
+
+**Time Complexity**:
+- Orphan detection: O(H + T) where H = heap tuples, T = TOAST chunks
+- Orphan cleanup: O(T * O) where O = orphans found
+- TIP-based GC: O(T) - full TOAST table scan
+
+**Space Complexity**:
+- Orphan detection: O(R + T) where R = references
+- Orphan cleanup: O(O) for TID collection
+- TIP-based GC: O(D) where D = chunks to delete
+
+**Optimization Opportunities**:
+- Parallelize orphan detection (partition heap scan)
+- Cache TIP pages (reduce lookup overhead)
+- Skip clean TOAST tables (no orphans in N passes)
+
 ## Compression Integration
 
 When `ToastStrategy::EXTERNAL` is used:
@@ -132,19 +344,64 @@ When `ToastStrategy::EXTERNAL` is used:
 ## Testing
 
 ### Unit Tests
-1. **BasicToastOperations** - Simple TOAST/detoast cycle
-2. **CompressedToast** - Compression with TOAST
-3. **MultipleChunks** - Values spanning multiple chunks
-4. **ToastDelete** - Deletion handling
-5. **StrategySelection** - Automatic strategy choice
-6. **EdgeCases** - Boundary conditions
 
-### Test Coverage
+**Files**:
+- `tests/unit/test_toast_operations.cpp` - Basic TOAST operations
+- `tests/unit/test_toast_cleanup.cpp` - Cleanup operations
+- `tests/unit/test_toast_format.cpp` - Chunk format validation
+- `tests/unit/test_toast_tip_visibility.cpp` - **TIP visibility rules (8 tests)**
+
+**Key Tests** (test_toast_tip_visibility.cpp):
+1. **ActiveTransaction_ChunkInvisible** - Chunks from active txns invisible to others
+2. **CommittedTransaction_ChunkVisible** - Chunks from committed txns visible
+3. **AbortedTransaction_ChunkInvisible** - Chunks from aborted txns invisible
+4. **DeletedByCommittedTxn_ChunkInvisible** - Committed xmax makes chunks invisible
+5. **DeletedByAbortedTxn_ChunkVisible** - Aborted xmax keeps chunks visible
+6. **DeletedByActiveTxn_ChunkVisibleToOthers** - Active xmax keeps chunks visible to others
+7. **TIPStateTransitions_TransactionLifecycle** - Validates TX_ACTIVE → TX_COMMITTED
+8. **SnapshotIsolation_SameTransactionSeesOwnChanges** - Transaction sees own uncommitted chunks
+
+### Integration Tests
+
+**Files**:
+- `tests/integration/test_storage_toast_indexing.cpp` - Storage integration, index detoasting
+- `tests/integration/test_toast_garbage_collection.cpp` - Orphan detection, TIP-based GC (6 tests)
+- `tests/integration/test_toast_crash_recovery_mga.cpp` - **MGA crash recovery (6 tests)**
+
+**Key Tests** (test_toast_crash_recovery_mga.cpp):
+1. **CrashBeforeCommit_ChunksInvisible** - Validates TIP marks crashed transactions aborted
+2. **CrashAfterCommit_ChunksVisible** - Validates committed data persists via TIP
+3. **CrashDuringDelete_XmaxHandling** - Validates TIP-based xmax visibility
+4. **MultipleCrashes_IdempotentRecovery** - Validates recovery is idempotent
+5. **CrashWithSweep_FullCleanup** - Validates sweep uses TIP for GC
+6. **TIPStatePersistence** - Validates TIP persists across restarts
+
+### Stress Tests
+
+**Files**:
+- `tests/stress/test_toast_concurrency.cpp` - **Concurrent TOAST operations (5 tests)**
+
+**Key Tests**:
+1. **ConcurrentInserts_NoConflicts** - 10 threads × 10 inserts (100 concurrent operations)
+2. **ConcurrentReads_SnapshotIsolation** - 20 threads reading concurrently
+3. **ConcurrentInsertAndRead_Isolation** - 5 writers + 10 readers for 5 seconds
+4. **ConcurrentDeletes_TIPVisibility** - 10 threads deleting concurrently
+5. **HighContention_ManyTransactionsSameValue** - 50 threads reading same value
+
+### Test Coverage Summary
+
+**Overall**:
+- 8 test files (~3,550 lines total)
+- 43+ test cases (unit, integration, stress)
 - ✅ All page sizes (8KB - 128KB)
 - ✅ Values from 0 to 100+ chunks
 - ✅ Compressed and uncompressed
 - ✅ Strategy selection logic
 - ✅ Error handling
+- ✅ **MGA compliance (TIP-based visibility)**
+- ✅ **Crash recovery (TIP state, no WAL)**
+- ✅ **Concurrent operations (snapshot isolation)**
+- ✅ **Garbage collection (3-phase GC)**
 
 ## Future Enhancements
 
@@ -173,7 +430,7 @@ When `ToastStrategy::EXTERNAL` is used:
 ### With Storage Engine
 - TOAST tables are regular tables
 - Use standard tuple operations
-- Subject to same MVCC rules
+- Subject to same MGA visibility rules (TIP-based)
 
 ### With Catalog Manager
 - TOAST tables created in same schema
@@ -184,6 +441,36 @@ When `ToastStrategy::EXTERNAL` is used:
 - TOAST chunks cached like regular pages
 - LRU eviction applies
 - No special handling needed
+
+### With Indexes (Critical for MGA)
+
+**Problem**: Indexes store actual values, not TOAST pointers. If a TOASTed value is indexed, the index must store the detoasted value.
+
+**Solution**: `IndexKeyExtractor` helper class detoasts values before index insertion.
+
+```cpp
+// From src/core/btree.cpp
+IndexKeyExtractor key_extractor(schema, db);
+
+// Extract and detoast indexed columns
+std::vector<IndexKey> keys;
+Status status = key_extractor.extractKeys(tuple, index_columns, &keys, ctx);
+
+// Keys now contain detoasted values, ready for index insertion
+for (const auto& key : keys) {
+    btree->insert(key, tid, ctx);
+}
+```
+
+**Why This Matters**:
+- Index lookups must return actual values, not pointers
+- Index comparisons must work on actual data
+- Index scans must not require TOAST table access
+
+**Implementation**: `src/core/index_key_extractor.cpp` (lines 85-150)
+- Detects TOAST pointers via magic byte (0x01)
+- Calls `detoastValue()` to retrieve full value
+- Handles errors gracefully (falls back to pointer if detoast fails)
 
 ## Best Practices
 

@@ -17,44 +17,87 @@ namespace scratchbird::core
     class PageManager;
     struct ErrorContext;
 
-    // TOAST (The Oversized-Attribute Storage Technique) constants
-    constexpr uint32_t TOAST_TUPLE_THRESHOLD = 2000; // Minimum size to consider TOASTing
+    /**
+     * TOAST (The Oversized-Attribute Storage Technique)
+     *
+     * MGA-Compliant Implementation:
+     * - Uses TIP (Transaction Inventory Pages) for visibility, NOT snapshots
+     * - TOAST chunks include xmin/xmax for transaction versioning
+     * - Crash recovery via TIP state, NO WAL replay
+     * - Garbage collection integrated into vacuum (3-phase GC)
+     *
+     * Constants:
+     */
+    constexpr uint32_t TOAST_TUPLE_THRESHOLD = 2000; // Minimum size to consider TOASTing (2KB)
     constexpr uint32_t TOAST_TUPLE_TARGET = 2000;    // Target size after TOASTing
-    constexpr uint32_t TOAST_MAX_CHUNK_SIZE = 1996;  // Max chunk size (leaves room for headers)
+    constexpr uint32_t TOAST_MAX_CHUNK_SIZE = 1996;  // Max chunk size (leaves room for 28-byte header)
 
-    // TOAST strategies
+    /**
+     * TOAST Storage Strategies
+     *
+     * Determines how large values are stored:
+     */
     enum class ToastStrategy : uint8_t
     {
-        PLAIN = 0,      // Store inline (no TOAST)
-        EXTENDED = 1,   // Store out-of-line, uncompressed
-        COMPRESSED = 2, // Store inline, compressed
-        EXTERNAL = 3,   // Store out-of-line, compressed
+        PLAIN = 0,      // Store inline (no TOAST) - for small values < 2KB
+        EXTENDED = 1,   // Store out-of-line, uncompressed - for medium values or incompressible data
+        COMPRESSED = 2, // Store inline, compressed - not implemented (future)
+        EXTERNAL = 3,   // Store out-of-line, compressed - for large compressible values
     };
 
-// TOAST pointer - stored in main tuple instead of actual data
+    /**
+     * TOAST Pointer Structure (18 bytes)
+     *
+     * Stored in main tuple instead of actual data when value is TOASTed.
+     * Points to chunks stored in TOAST table.
+     *
+     * Magic Byte Detection: va_header == 0x01 indicates a TOAST pointer
+     */
 #pragma pack(push, 1)
     struct ToastPointer
     {
-        uint8_t va_header;      // Varlena header byte (0x01 = TOAST)
+        uint8_t va_header;      // Varlena header byte (0x01 = TOAST magic byte)
         uint8_t va_tag;         // Type tag and compression info
         uint32_t va_rawsize;    // Original (uncompressed) data size
-        uint32_t va_extsize;    // External stored size
+        uint32_t va_extsize;    // External stored size (after compression if applicable)
         uint32_t va_valueid;    // Unique identifier for this TOAST value
         uint32_t va_toastrelid; // TOAST table ID
     };
 #pragma pack(pop)
 
-// TOAST chunk - one piece of a large value
-// Firebird MGA compliant: includes xmin/xmax for TIP-based visibility
+    /**
+     * TOAST Chunk Structure (28-byte header + data)
+     *
+     * MGA-Compliant Chunk Format:
+     * - xmin/xmax for transaction versioning (16 bytes)
+     * - value_id/chunk_seq/chunk_size for TOAST metadata (12 bytes)
+     * - chunk_data for actual data (variable length, up to TOAST_MAX_CHUNK_SIZE)
+     *
+     * Total Header Size: 28 bytes
+     *
+     * Visibility:
+     * - Chunk visible if xmin committed (via TIP) AND xmax NOT committed (via TIP)
+     * - Uses ToastVisibility::isChunkVisible() for TIP-based visibility checks
+     *
+     * Crash Recovery:
+     * - If transaction crashes, TIP marks it as TX_ABORTED
+     * - Chunks with aborted xmin become invisible
+     * - Garbage collection physically removes orphaned chunks
+     */
 #pragma pack(push, 1)
     struct ToastChunk
     {
-        uint64_t xmin;                            // Transaction that created this chunk (Firebird MGA)
-        uint64_t xmax;                            // Transaction that deleted this chunk (0 if active)
-        uint32_t chunk_id;                        // Unique ID of the owning TOAST value
-        uint32_t chunk_seq;                       // Sequence number (0-based)
-        uint32_t chunk_size;                      // Size of data in this chunk
-        uint8_t chunk_data[TOAST_MAX_CHUNK_SIZE]; // Actual data
+        // MGA Transaction Fields (16 bytes)
+        uint64_t xmin;       // Transaction that created this chunk (for visibility via TIP)
+        uint64_t xmax;       // Transaction that deleted this chunk (0 = active, non-zero = deleted)
+
+        // TOAST Metadata (12 bytes)
+        uint32_t chunk_id;   // Unique ID of the owning TOAST value
+        uint32_t chunk_seq;  // Sequence number (0-based)
+        uint32_t chunk_size; // Size of data in this chunk
+
+        // Chunk Data (variable length, up to TOAST_MAX_CHUNK_SIZE)
+        uint8_t chunk_data[TOAST_MAX_CHUNK_SIZE]; // Actual data bytes
     };
 #pragma pack(pop)
 
