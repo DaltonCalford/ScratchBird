@@ -25,6 +25,20 @@ namespace scratchbird::core
     using ID = UuidV7Bytes;
 
     /**
+     * CatalogConstants - Catalog layer storage limits
+     *
+     * Phase 2: SQL Identifier UTF-8 Fix Plan
+     * These constants define the storage capacity for SQL identifiers in the catalog.
+     */
+    namespace CatalogConstants
+    {
+        // SQL standard identifier limits
+        constexpr size_t MAX_IDENTIFIER_CHARS = 128;   // SQL standard: 128 characters
+        constexpr size_t MAX_IDENTIFIER_BYTES = 512;   // Storage: 128 chars × 4 bytes/char (max UTF-8)
+        constexpr size_t MAX_IDENTIFIER_STORAGE = 512; // Including null terminator
+    }
+
+    /**
      * MigrationPhase - Phases of ONLINE table migration
      *
      * Sprint 4 Task 5.4.1: Migration State Management
