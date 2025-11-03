@@ -16,6 +16,7 @@
 #include "scratchbird/core/tid_resolver.h"  // Sprint 5: ONLINE migration
 #include <fcntl.h>   // Phase 6: For open(), O_RDWR
 #include <unistd.h>  // Phase 6: For pread(), close()
+#include "scratchbird/core/utf8_utils.h"  // Phase 3: SQL Identifier UTF-8 Fix
 
 namespace scratchbird::core
 {
@@ -1655,13 +1656,39 @@ namespace scratchbird::core
 
     auto CatalogManager::writeSchemaRecord(const SchemaInfo &schema, ErrorContext *ctx) -> Status
     {
+        // Phase 3: Validate schema name UTF-8 storage capacity
+        Status validation = UTF8Utils::validateStorageCapacity(
+            schema.schema_name,
+            CatalogConstants::MAX_IDENTIFIER_CHARS,
+            CatalogConstants::MAX_IDENTIFIER_STORAGE,
+            ctx
+        );
+        if (validation != Status::OK) {
+            return validation;
+        }
+
+        // Phase 3: Validate owner name UTF-8 storage capacity
+        validation = UTF8Utils::validateStorageCapacity(
+            schema.owner,
+            CatalogConstants::MAX_IDENTIFIER_CHARS,
+            CatalogConstants::MAX_IDENTIFIER_STORAGE,
+            ctx
+        );
+        if (validation != Status::OK) {
+            return validation;
+        }
+
         SchemaRecord record;
         memset(&record, 0, sizeof(SchemaRecord)); // Initialize all fields to zero
         record.schema_id = schema.schema_id;
-        strncpy(record.schema_name, schema.schema_name.c_str(), 127);
-        record.schema_name[127] = '\0';
-        strncpy(record.owner, schema.owner.c_str(), 127);
-        record.owner[127] = '\0';
+
+        // Phase 3: Safe UTF-8 copy (already validated to fit)
+        std::memcpy(record.schema_name, schema.schema_name.c_str(), schema.schema_name.size());
+        record.schema_name[schema.schema_name.size()] = '\0';
+
+        // Phase 3: Safe UTF-8 copy (already validated to fit)
+        std::memcpy(record.owner, schema.owner.c_str(), schema.owner.size());
+        record.owner[schema.owner.size()] = '\0';
         record.default_tablespace_id = schema.default_tablespace_id;
         record.permissions = schema.permissions;
         record.default_charset = schema.default_charset;
@@ -1698,12 +1725,25 @@ namespace scratchbird::core
 
     auto CatalogManager::writeTableRecord(const TableInfo &table, ErrorContext *ctx) -> Status
     {
+        // Phase 3: Validate table name UTF-8 storage capacity
+        Status validation = UTF8Utils::validateStorageCapacity(
+            table.table_name,
+            CatalogConstants::MAX_IDENTIFIER_CHARS,
+            CatalogConstants::MAX_IDENTIFIER_STORAGE,
+            ctx
+        );
+        if (validation != Status::OK) {
+            return validation;
+        }
+
         TableRecord record;
         memset(&record, 0, sizeof(TableRecord)); // Initialize all fields to zero
         record.table_id = table.table_id;
         record.schema_id = table.schema_id;
-        strncpy(record.table_name, table.table_name.c_str(), 127);
-        record.table_name[127] = '\0';
+
+        // Phase 3: Safe UTF-8 copy (already validated to fit)
+        std::memcpy(record.table_name, table.table_name.c_str(), table.table_name.size());
+        record.table_name[table.table_name.size()] = '\0';
         record.root_page = table.root_page;
         record.column_count = table.column_count;
         record.row_count = table.row_count;
@@ -1809,12 +1849,25 @@ namespace scratchbird::core
     {
         for (const auto &col : columns)
         {
+            // Phase 3: Validate column name UTF-8 storage capacity
+            Status validation = UTF8Utils::validateStorageCapacity(
+                col.column_name,
+                CatalogConstants::MAX_IDENTIFIER_CHARS,
+                CatalogConstants::MAX_IDENTIFIER_STORAGE,
+                ctx
+            );
+            if (validation != Status::OK) {
+                return validation;
+            }
+
             ColumnRecord record;
             memset(&record, 0, sizeof(ColumnRecord)); // Initialize all fields to zero
             record.table_id = table_id;
             record.column_id = col.column_id;
-            strncpy(record.column_name, col.column_name.c_str(), 127);
-            record.column_name[127] = '\0';
+
+            // Phase 3: Safe UTF-8 copy (already validated to fit)
+            std::memcpy(record.column_name, col.column_name.c_str(), col.column_name.size());
+            record.column_name[col.column_name.size()] = '\0';
             record.ordinal = col.ordinal;
             record.data_type = col.data_type;
             record.type_precision = col.type_precision;
@@ -1893,12 +1946,25 @@ namespace scratchbird::core
 
     auto CatalogManager::writeIndexRecord(const IndexInfo &index, ErrorContext *ctx) -> Status
     {
+        // Phase 3: Validate index name UTF-8 storage capacity
+        Status validation = UTF8Utils::validateStorageCapacity(
+            index.index_name,
+            CatalogConstants::MAX_IDENTIFIER_CHARS,
+            CatalogConstants::MAX_IDENTIFIER_STORAGE,
+            ctx
+        );
+        if (validation != Status::OK) {
+            return validation;
+        }
+
         IndexRecord record;
         memset(&record, 0, sizeof(IndexRecord)); // Initialize all fields to zero
         record.index_id = index.index_id;
         record.table_id = index.table_id;
-        strncpy(record.index_name, index.index_name.c_str(), 127);
-        record.index_name[127] = '\0';
+
+        // Phase 3: Safe UTF-8 copy (already validated to fit)
+        std::memcpy(record.index_name, index.index_name.c_str(), index.index_name.size());
+        record.index_name[index.index_name.size()] = '\0';
         record.root_page = index.root_page;
         record.index_type = static_cast<uint8_t>(index.index_type);
         record.is_unique = static_cast<uint8_t>(index.is_unique);
@@ -2244,14 +2310,26 @@ namespace scratchbird::core
     auto CatalogManager::writeTablespaceRecord(const TablespaceInfo &tablespace, ErrorContext *ctx)
         -> Status
     {
+        // Phase 3: Validate tablespace name UTF-8 storage capacity (64 bytes, not 512)
+        // Note: Tablespace names are limited to 63 characters (separate from SQL identifier standard)
+        Status validation = UTF8Utils::validateStorageCapacity(
+            tablespace.tablespace_name,
+            63,   // Tablespace-specific limit (not CatalogConstants::MAX_IDENTIFIER_CHARS)
+            64,   // Tablespace storage capacity (char[64])
+            ctx
+        );
+        if (validation != Status::OK) {
+            return validation;
+        }
+
         // Convert TablespaceInfo to SBTablespaceCatalog
         SBTablespaceCatalog record = {};
         record.is_valid = 1;
         record.tablespace_id = tablespace.tablespace_id;
 
-        // Copy tablespace_name (max 63 chars + null)
-        std::strncpy(record.tablespace_name, tablespace.tablespace_name.c_str(), 63);
-        record.tablespace_name[63] = '\0';
+        // Phase 3: Safe UTF-8 copy (already validated to fit, max 63 chars + null)
+        std::memcpy(record.tablespace_name, tablespace.tablespace_name.c_str(), tablespace.tablespace_name.size());
+        record.tablespace_name[tablespace.tablespace_name.size()] = '\0';
 
         // Copy UUID
         std::memcpy(&record.tablespace_uuid, &tablespace.tablespace_uuid, sizeof(UuidV7Bytes));
