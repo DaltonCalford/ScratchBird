@@ -481,6 +481,48 @@ namespace scratchbird::core
         return ToastStrategy::EXTENDED; // Out-of-line, uncompressed
     }
 
+    // Phase 3: Index TOAST Integration - Helper methods
+    auto ToastManager::isToastPointer(const uint8_t *data, size_t size) -> bool
+    {
+        // TOAST pointer is exactly 18 bytes
+        if (size != sizeof(ToastPointer))
+        {
+            return false;
+        }
+
+        // Check magic bytes (first 2 bytes of ToastPointer)
+        // ToastPointer format: va_header (2) | va_rawsize (4) | va_extsize (4) |
+        //                      va_valueid (4) | va_toastrelid (4)
+        const ToastPointer *ptr = reinterpret_cast<const ToastPointer *>(data);
+
+        // Check if va_header indicates external storage
+        // TOAST strategies: PLAIN=0, EXTENDED=1, COMPRESSED=2, EXTERNAL=3
+        uint16_t header = ptr->va_header;
+        ToastStrategy strategy = static_cast<ToastStrategy>(header & 0x03);
+
+        return (strategy == ToastStrategy::EXTENDED ||
+                strategy == ToastStrategy::EXTERNAL ||
+                strategy == ToastStrategy::COMPRESSED);
+    }
+
+    auto ToastManager::detoastIfNeeded(const uint8_t *data, size_t size,
+                                       std::vector<uint8_t> *result, uint64_t xid,
+                                       ErrorContext *ctx) -> Status
+    {
+        if (isToastPointer(data, size))
+        {
+            // Data is a TOAST pointer, detoast it
+            const ToastPointer *pointer = reinterpret_cast<const ToastPointer *>(data);
+            return detoastValue(pointer, result, xid, ctx);
+        }
+        else
+        {
+            // Not a TOAST pointer, return original data
+            result->assign(data, data + size);
+            return Status::OK;
+        }
+    }
+
     auto ToastManager::writeToastChunks(uint32_t value_id, const uint8_t *data, uint32_t size,
                                         uint64_t xmin, ErrorContext *ctx) -> Status
     {
