@@ -795,9 +795,9 @@ public:
 - Caching logic implemented ✅
 
 #### Task 3.2: Integrate with Storage Engine Insert Path
-**File**: `src/core/storage_engine.cpp` or `src/core/heap_page.cpp`
+**File**: `src/core/storage_engine.cpp`
 **Duration**: 6-8 hours
-**Status**: ⏳ PENDING
+**Status**: ✅ COMPLETE (November 3, 2025)
 
 **Purpose**: Use `IndexKeyExtractor` in storage engine's tuple insert path.
 

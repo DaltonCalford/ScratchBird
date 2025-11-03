@@ -15,6 +15,7 @@
 #include "scratchbird/core/garbage_collector.h"
 #include "scratchbird/core/logger.h"
 #include "scratchbird/core/tid_resolver.h" // Sprint 4 Task 5.4.2
+#include "scratchbird/core/index_key_extractor.h" // Phase 3 Task 3.2: Storage Layer TOAST Integration
 #include <cstring>
 #include <new>
 
@@ -109,6 +110,174 @@ namespace scratchbird::core
             {
                 // Mark page as dirty in migration state (for catch-up phase)
                 catalog_manager_->markPageDirty(table_info.migration_id, page_id, ctx);
+            }
+
+            // Phase 3 Task 3.2: Update indexes with detoasted values
+            // Get all indexes for this table
+            std::vector<CatalogManager::IndexInfo> indexes;
+            Status index_status = catalog_manager_->listIndexesForTable(table_id, indexes, ctx);
+
+            if (index_status == Status::OK && !indexes.empty())
+            {
+                // Get column information for extracting index keys
+                std::vector<CatalogManager::ColumnInfo> columns;
+                index_status = catalog_manager_->getColumns(table_id, columns, ctx);
+
+                if (index_status == Status::OK)
+                {
+                    // Create TID for this tuple
+                    TID tid = TID(makeGPID(PRIMARY_TABLESPACE_ID, static_cast<uint64_t>(page_id)), item_id);
+
+                    // Create IndexKeyExtractor for detoasting
+                    IndexKeyExtractor extractor;
+
+                    // Extract column offsets and sizes from tuple
+                    // Based on deserializeTuple() implementation in executor.cpp
+                    std::vector<size_t> column_offsets;
+                    std::vector<size_t> column_sizes;
+
+                    const auto *header = reinterpret_cast<const TupleHeader *>(tuple_data);
+                    size_t data_offset = sizeof(TupleHeader);
+
+                    // Check for null bitmap
+                    const uint8_t *null_bitmap = nullptr;
+                    if (header->hasNulls() && header->null_bitmap_offset > 0 &&
+                        header->null_bitmap_offset < tuple_size)
+                    {
+                        null_bitmap = tuple_data + header->null_bitmap_offset;
+                        size_t bitmap_bytes = (columns.size() + 7) / 8;
+                        data_offset = header->null_bitmap_offset + bitmap_bytes;
+                    }
+
+                    // Calculate column offsets and sizes
+                    column_offsets.reserve(columns.size());
+                    column_sizes.reserve(columns.size());
+
+                    size_t current_offset = data_offset;
+                    for (size_t i = 0; i < columns.size(); i++)
+                    {
+                        // Check if column is NULL
+                        bool is_null = false;
+                        if (null_bitmap)
+                        {
+                            size_t byte_offset = i / 8;
+                            size_t bit_pos = i % 8;
+                            is_null = (null_bitmap[byte_offset] & (1 << bit_pos)) != 0;
+                        }
+
+                        if (is_null)
+                        {
+                            // NULL column has no data
+                            column_offsets.push_back(0);
+                            column_sizes.push_back(0);
+                            continue;
+                        }
+
+                        // Determine column size based on type
+                        DataType col_type = static_cast<DataType>(columns[i].data_type);
+                        size_t col_size = 0;
+
+                        switch (col_type)
+                        {
+                            case DataType::INT32:
+                                col_size = sizeof(int32_t);
+                                break;
+                            case DataType::INT64:
+                                col_size = sizeof(int64_t);
+                                break;
+                            case DataType::FLOAT64:
+                                col_size = sizeof(double);
+                                break;
+                            case DataType::VARCHAR:
+                            case DataType::TEXT:
+                                // Variable-length: read uint32_t length prefix
+                                if (current_offset + sizeof(uint32_t) <= tuple_size)
+                                {
+                                    uint32_t len;
+                                    std::memcpy(&len, tuple_data + current_offset, sizeof(uint32_t));
+                                    col_size = sizeof(uint32_t) + len;
+                                }
+                                break;
+                            default:
+                                // For unknown types, skip this column
+                                col_size = 0;
+                                break;
+                        }
+
+                        column_offsets.push_back(current_offset);
+                        column_sizes.push_back(col_size);
+                        current_offset += col_size;
+                    }
+
+                    // Update each index
+                    for (const auto &index_info : indexes)
+                    {
+                        // Convert column IDs to column indices
+                        std::vector<uint16_t> column_indices;
+                        for (const auto &col_id : index_info.column_ids)
+                        {
+                            // Find column index by ID
+                            for (size_t i = 0; i < columns.size(); i++)
+                            {
+                                if (columns[i].column_id == col_id)
+                                {
+                                    column_indices.push_back(static_cast<uint16_t>(i));
+                                    break;
+                                }
+                            }
+                        }
+
+                        // Extract index key with automatic detoasting
+                        std::vector<uint8_t> key;
+                        Status extract_status = extractor.extractKey(
+                            tuple_data, tuple_size,
+                            column_offsets, column_sizes,
+                            column_indices,
+                            toast_mgr, current_xid,
+                            &key, ctx);
+
+                        if (extract_status != Status::OK)
+                        {
+                            LOG_WARNING(STORAGE, "Failed to extract index key for index %s: %s",
+                                        index_info.index_name.c_str(),
+                                        ctx ? ctx->message.c_str() : "unknown error");
+                            continue; // Skip this index
+                        }
+
+                        // Insert into index based on type
+                        if (index_info.index_type == CatalogManager::IndexType::BTREE)
+                        {
+                            auto btree = BTree::open(db_, index_info.index_id, index_info.root_page, ctx);
+                            if (btree)
+                            {
+                                Status insert_status = btree->insert(key, tid, current_xid, ctx);
+                                if (insert_status != Status::OK)
+                                {
+                                    LOG_ERROR(STORAGE, "Failed to insert into BTree index %s: %s",
+                                              index_info.index_name.c_str(),
+                                              ctx ? ctx->message.c_str() : "unknown error");
+                                }
+                            }
+                        }
+                        else if (index_info.index_type == CatalogManager::IndexType::HASH)
+                        {
+                            auto hash_index = HashIndex::open(db_, index_info.index_id, index_info.root_page, ctx);
+                            if (hash_index)
+                            {
+                                Status insert_status = hash_index->insert(key.data(), key.size(), tid, ctx);
+                                if (insert_status != Status::OK)
+                                {
+                                    LOG_ERROR(STORAGE, "Failed to insert into Hash index %s: %s",
+                                              index_info.index_name.c_str(),
+                                              ctx ? ctx->message.c_str() : "unknown error");
+                                }
+                            }
+                        }
+                    }
+
+                    // Clear detoasting cache
+                    extractor.clearCache();
+                }
             }
 
             if (page_id_out != nullptr)
@@ -856,6 +1025,197 @@ namespace scratchbird::core
         if (status == Status::OK)
         {
             // Success - new version on same page
+            // Phase 3 Task 3.3: Update indexes if indexed columns changed
+            // MGA benefit: If indexed columns unchanged, TID is stable and indexes remain valid!
+
+            // Get old tuple data to compare with new tuple
+            const ItemPointer *items = reinterpret_cast<const ItemPointer *>(page_data + sizeof(PageHeader));
+            uint32_t old_offset = items[item_id].offset;
+            uint32_t old_length = items[item_id].length;
+            const uint8_t *old_tuple_data = page_data + old_offset;
+
+            // Get all indexes for this table
+            std::vector<CatalogManager::IndexInfo> indexes;
+            Status index_status = catalog_manager_->listIndexesForTable(table_id, indexes, ctx);
+
+            if (index_status == Status::OK && !indexes.empty())
+            {
+                // Get column information
+                std::vector<CatalogManager::ColumnInfo> columns;
+                index_status = catalog_manager_->getColumns(table_id, columns, ctx);
+
+                if (index_status == Status::OK)
+                {
+                    // Create TID for this tuple (stable across update!)
+                    TID tid = TID(makeGPID(PRIMARY_TABLESPACE_ID, static_cast<uint64_t>(page_id)), item_id);
+
+                    // Create IndexKeyExtractor for detoasting
+                    IndexKeyExtractor extractor;
+
+                    // Helper lambda to extract column offsets/sizes from tuple
+                    auto extractColumnLayout = [&columns](const uint8_t *tuple_data, uint32_t tuple_size,
+                                                          std::vector<size_t> &offsets, std::vector<size_t> &sizes) {
+                        offsets.clear();
+                        sizes.clear();
+                        offsets.reserve(columns.size());
+                        sizes.reserve(columns.size());
+
+                        const auto *header = reinterpret_cast<const TupleHeader *>(tuple_data);
+                        size_t data_offset = sizeof(TupleHeader);
+
+                        // Check for null bitmap
+                        const uint8_t *null_bitmap = nullptr;
+                        if (header->hasNulls() && header->null_bitmap_offset > 0 &&
+                            header->null_bitmap_offset < tuple_size)
+                        {
+                            null_bitmap = tuple_data + header->null_bitmap_offset;
+                            size_t bitmap_bytes = (columns.size() + 7) / 8;
+                            data_offset = header->null_bitmap_offset + bitmap_bytes;
+                        }
+
+                        size_t current_offset = data_offset;
+                        for (size_t i = 0; i < columns.size(); i++)
+                        {
+                            // Check if column is NULL
+                            bool is_null = false;
+                            if (null_bitmap)
+                            {
+                                size_t byte_offset = i / 8;
+                                size_t bit_pos = i % 8;
+                                is_null = (null_bitmap[byte_offset] & (1 << bit_pos)) != 0;
+                            }
+
+                            if (is_null)
+                            {
+                                offsets.push_back(0);
+                                sizes.push_back(0);
+                                continue;
+                            }
+
+                            // Determine column size based on type
+                            DataType col_type = static_cast<DataType>(columns[i].data_type);
+                            size_t col_size = 0;
+
+                            switch (col_type)
+                            {
+                                case DataType::INT32:
+                                    col_size = sizeof(int32_t);
+                                    break;
+                                case DataType::INT64:
+                                    col_size = sizeof(int64_t);
+                                    break;
+                                case DataType::FLOAT64:
+                                    col_size = sizeof(double);
+                                    break;
+                                case DataType::VARCHAR:
+                                case DataType::TEXT:
+                                    if (current_offset + sizeof(uint32_t) <= tuple_size)
+                                    {
+                                        uint32_t len;
+                                        std::memcpy(&len, tuple_data + current_offset, sizeof(uint32_t));
+                                        col_size = sizeof(uint32_t) + len;
+                                    }
+                                    break;
+                                default:
+                                    col_size = 0;
+                                    break;
+                            }
+
+                            offsets.push_back(current_offset);
+                            sizes.push_back(col_size);
+                            current_offset += col_size;
+                        }
+                    };
+
+                    // Extract old and new tuple layouts
+                    std::vector<size_t> old_offsets, old_sizes, new_offsets, new_sizes;
+                    extractColumnLayout(old_tuple_data, old_length, old_offsets, old_sizes);
+                    extractColumnLayout(new_tuple_data, new_tuple_size, new_offsets, new_sizes);
+
+                    // Check each index to see if indexed columns changed
+                    for (const auto &index_info : indexes)
+                    {
+                        // Convert column IDs to column indices
+                        std::vector<uint16_t> column_indices;
+                        for (const auto &col_id : index_info.column_ids)
+                        {
+                            for (size_t i = 0; i < columns.size(); i++)
+                            {
+                                if (columns[i].column_id == col_id)
+                                {
+                                    column_indices.push_back(static_cast<uint16_t>(i));
+                                    break;
+                                }
+                            }
+                        }
+
+                        // Extract OLD and NEW keys
+                        std::vector<uint8_t> old_key, new_key;
+                        Status old_status = extractor.extractKeyForUpdate(
+                            old_tuple_data, old_length, old_offsets, old_sizes,
+                            new_tuple_data, new_tuple_size, new_offsets, new_sizes,
+                            column_indices,
+                            getOrCreateToastManager(table_id, ctx),
+                            xmax,
+                            &old_key, &new_key, ctx);
+
+                        if (old_status != Status::OK)
+                        {
+                            LOG_WARNING(STORAGE, "Failed to extract keys for index %s: %s",
+                                        index_info.index_name.c_str(),
+                                        ctx ? ctx->message.c_str() : "unknown error");
+                            continue;
+                        }
+
+                        // Check if keys are different
+                        if (old_key == new_key)
+                        {
+                            // Keys unchanged - no index update needed (MGA TID stability!)
+                            continue;
+                        }
+
+                        // Keys changed - update index
+                        if (index_info.index_type == CatalogManager::IndexType::BTREE)
+                        {
+                            auto btree = BTree::open(db_, index_info.index_id, index_info.root_page, ctx);
+                            if (btree)
+                            {
+                                // Remove old key
+                                btree->remove(old_key, tid, xmax, ctx);
+                                // Insert new key (same TID!)
+                                Status insert_status = btree->insert(new_key, tid, xmax, ctx);
+                                if (insert_status != Status::OK)
+                                {
+                                    LOG_ERROR(STORAGE, "Failed to update BTree index %s: %s",
+                                              index_info.index_name.c_str(),
+                                              ctx ? ctx->message.c_str() : "unknown error");
+                                }
+                            }
+                        }
+                        else if (index_info.index_type == CatalogManager::IndexType::HASH)
+                        {
+                            auto hash_index = HashIndex::open(db_, index_info.index_id, index_info.root_page, ctx);
+                            if (hash_index)
+                            {
+                                // Remove old key
+                                hash_index->remove(old_key.data(), old_key.size(), tid, ctx);
+                                // Insert new key (same TID!)
+                                Status insert_status = hash_index->insert(new_key.data(), new_key.size(), tid, ctx);
+                                if (insert_status != Status::OK)
+                                {
+                                    LOG_ERROR(STORAGE, "Failed to update Hash index %s: %s",
+                                              index_info.index_name.c_str(),
+                                              ctx ? ctx->message.c_str() : "unknown error");
+                                }
+                            }
+                        }
+                    }
+
+                    // Clear detoasting cache
+                    extractor.clearCache();
+                }
+            }
+
             if (new_page_id_out != nullptr)
             {
                 *new_page_id_out = page_id;
