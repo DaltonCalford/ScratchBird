@@ -50,8 +50,8 @@ namespace scratchbird::core
     struct SchemaRecord
     {
         ID schema_id;
-        char schema_name[128];          // SQL standard: 128 characters
-        char owner[128];                // SQL standard: 128 characters
+        char schema_name[512];          // SQL standard: 128 characters (512 bytes = 128 chars × 4 bytes/char max UTF-8)
+        char owner[512];                // SQL standard: 128 characters (512 bytes = 128 chars × 4 bytes/char max UTF-8)
         uint16_t default_tablespace_id; // Default tablespace for new tables
         uint16_t permissions;           // Bitmask of schema permissions
         uint16_t default_charset;       // CharacterSet enum (0 = inherit from database)
@@ -81,7 +81,7 @@ namespace scratchbird::core
     {
         ID table_id;
         ID schema_id;
-        char table_name[128]; // SQL standard: 128 characters
+        char table_name[512]; // SQL standard: 128 characters (512 bytes = 128 chars × 4 bytes/char max UTF-8)
         uint32_t root_page;
         uint32_t column_count;
         uint64_t row_count;
@@ -103,7 +103,7 @@ namespace scratchbird::core
     {
         ID table_id;
         ID column_id;
-        char column_name[128]; // SQL standard: 128 characters
+        char column_name[512]; // SQL standard: 128 characters (512 bytes = 128 chars × 4 bytes/char max UTF-8)
         uint16_t ordinal;      // Column position in table
         uint16_t data_type;
         uint32_t type_precision; // For DECIMAL, VECTOR dimensions, VARCHAR length
@@ -146,7 +146,7 @@ namespace scratchbird::core
     {
         ID index_id;
         ID table_id;
-        char index_name[128]; // SQL standard: 128 characters
+        char index_name[512]; // SQL standard: 128 characters (512 bytes = 128 chars × 4 bytes/char max UTF-8)
         uint32_t root_page;
         uint8_t index_type; // IndexType enum
         uint8_t is_unique;
@@ -236,7 +236,7 @@ namespace scratchbird::core
     {
         ID constraint_id;
         ID table_id;
-        char constraint_name[128];  // SQL standard: 128 characters
+        char constraint_name[512];  // SQL standard: 128 characters (512 bytes = 128 chars × 4 bytes/char max UTF-8)
         uint8_t constraint_type;    // ConstraintType enum
         uint8_t is_deferrable;      // Can be deferred to end of transaction
         uint8_t initially_deferred; // Initially deferred or immediate
@@ -257,7 +257,7 @@ namespace scratchbird::core
     {
         ID sequence_id;
         ID schema_id;
-        char sequence_name[128]; // SQL standard: 128 characters
+        char sequence_name[512]; // SQL standard: 128 characters (512 bytes = 128 chars × 4 bytes/char max UTF-8)
         int64_t current_value;
         int64_t increment_by;
         int64_t min_value;
@@ -275,7 +275,7 @@ namespace scratchbird::core
     {
         ID view_id;
         ID schema_id;
-        char view_name[128];     // SQL standard: 128 characters
+        char view_name[512];     // SQL standard: 128 characters (512 bytes = 128 chars × 4 bytes/char max UTF-8)
         uint32_t definition_oid; // TOAST reference for view definition SQL
         uint8_t is_materialized; // 1 if materialized view
         uint8_t reserved[3];
@@ -290,7 +290,7 @@ namespace scratchbird::core
     {
         ID trigger_id;
         ID table_id;
-        char trigger_name[128]; // SQL standard: 128 characters
+        char trigger_name[512]; // SQL standard: 128 characters (512 bytes = 128 chars × 4 bytes/char max UTF-8)
         uint8_t trigger_timing; // 0=BEFORE, 1=AFTER, 2=INSTEAD OF
         uint8_t trigger_events; // Bitmask: 0x01=INSERT, 0x02=UPDATE, 0x04=DELETE
         uint8_t for_each_row;   // 1 if FOR EACH ROW, 0 if FOR EACH STATEMENT
