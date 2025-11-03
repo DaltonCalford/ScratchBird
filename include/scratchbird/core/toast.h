@@ -116,6 +116,15 @@ namespace scratchbird::core
         static auto chooseStrategy(const uint8_t *data, uint32_t size, bool compress_enabled = true)
             -> ToastStrategy;
 
+        // Check if data is a TOAST pointer (Phase 3: Index TOAST Integration)
+        // Returns true if the data is exactly 18 bytes and has TOAST pointer magic
+        static auto isToastPointer(const uint8_t *data, size_t size) -> bool;
+
+        // Detoast a value if it's a TOAST pointer, otherwise return original data
+        // (Phase 3: Index TOAST Integration helper for index insert operations)
+        auto detoastIfNeeded(const uint8_t *data, size_t size, std::vector<uint8_t> *result,
+                            uint64_t xid, ErrorContext *ctx = nullptr) -> Status;
+
         // Get TOAST table ID for a regular table
         [[nodiscard]] auto toastTableId() const -> const ID &
         {

@@ -310,6 +310,17 @@ namespace scratchbird::core
                        ErrorContext *ctx)
         -> Status
     {
+        // Phase 3 TODO: TOAST detoasting for index keys
+        // ARCHITECTURAL LIMITATION: Indexes don't have ToastManager reference
+        // Solution requires one of:
+        // 1. Pass ToastManager* as parameter to insert() (breaks API)
+        // 2. Store ToastManager* in BTree class (requires table_id lookup)
+        // 3. Detoast at higher level (StorageEngine/QueryExecutor) before calling insert()
+        //
+        // Recommended approach: Option 3 - detoast keys before index insert
+        // Current behavior: If key contains TOAST pointer, indexes pointer bytes (INCORRECT)
+        // This will be fixed in a future architectural enhancement.
+
         // Find the appropriate leaf page for this key
         uint64_t leaf_page_num;
         Status status = find_leaf_page(key, &leaf_page_num, true, ctx);
