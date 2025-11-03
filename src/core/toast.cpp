@@ -1,4 +1,5 @@
 #include "scratchbird/core/toast.h"
+#include "scratchbird/core/toast_visibility.h"
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/heap_page.h"
 #include "scratchbird/core/buffer_pool.h"
@@ -6,6 +7,7 @@
 #include "scratchbird/core/storage_engine.h"
 #include "scratchbird/core/catalog_manager.h"
 #include "scratchbird/core/compression.h"
+#include "scratchbird/core/transaction_manager.h"
 #include <cstring>
 #include <algorithm>
 
@@ -387,8 +389,15 @@ namespace scratchbird::core
                 break;
             }
 
-            // Delete this chunk
-            // PHASE 1.5: Extract page_id and item_id from TID struct
+            // TODO Phase 2 Enhancement: Implement soft delete by updating xmax field
+            // For now, use physical delete as a temporary measure
+            // Soft delete would require:
+            // 1. Read current chunk data
+            // 2. Update xmax field (bytes 8-15) to current xmax parameter
+            // 3. Write back updated chunk
+            // This requires heap tuple update support (HeapPage::updateTupleInPlace)
+            //
+            // Current approach: Physical delete (will be replaced in future enhancement)
             uint32_t page_id = static_cast<uint32_t>(getPageNumber(tuple.tid));
             uint16_t item_id = getSlot(tuple.tid);
             Status delete_status =
@@ -430,8 +439,9 @@ namespace scratchbird::core
             uint32_t chunk_id = *reinterpret_cast<const uint32_t *>(tuple.data);
             if (chunk_id == value_id)
             {
-                // Delete this chunk
-                // PHASE 1.5: Extract page_id and item_id from TID struct
+                // TODO Phase 2 Enhancement: Implement soft delete by updating xmax field
+                // For now, use physical delete as a temporary measure
+                // (Same limitation as deleteToastValue() above)
                 uint32_t page_id = static_cast<uint32_t>(getPageNumber(tuple.tid));
                 uint16_t item_id = getSlot(tuple.tid);
                 Status delete_status =
@@ -652,11 +662,13 @@ namespace scratchbird::core
                 continue;
             }
 
-            // TODO Phase 2: Add TIP-based visibility check here
-            // For now, accept all chunks (Phase 1 focus is format only)
-            // if (!ToastVisibility::isChunkVisible(chunk_xmin, chunk_xmax, xmin, tm_)) {
-            //     continue;  // Skip invisible chunk
-            // }
+            // Phase 2: TIP-based visibility check (Firebird MGA)
+            // Check if this chunk is visible to the current transaction
+            TransactionManager *tm = db_->transaction_manager();
+            if (!ToastVisibility::isChunkVisible(chunk_xmin, chunk_xmax, xmin, tm))
+            {
+                continue; // Skip invisible chunk
+            }
 
             // Extract chunk data
             std::vector<uint8_t> chunk_data(chunk_size);
@@ -745,11 +757,13 @@ namespace scratchbird::core
             uint32_t chunk_size = *reinterpret_cast<const uint32_t *>(ptr);
             ptr += 4;
 
-            // TODO Phase 2: Add TIP-based visibility check here
-            // For now, accept all chunks (Phase 1 focus is format only)
-            // if (!ToastVisibility::isChunkVisible(chunk_xmin, chunk_xmax, xmin, tm_)) {
-            //     continue;  // Skip invisible chunk
-            // }
+            // Phase 2: TIP-based visibility check (Firebird MGA)
+            // Check if this chunk is visible to the current transaction
+            TransactionManager *tm = db_->transaction_manager();
+            if (!ToastVisibility::isChunkVisible(chunk_xmin, chunk_xmax, xmin, tm))
+            {
+                continue; // Skip invisible chunk
+            }
 
             // Validate chunk size
             if (chunk_size > TOAST_MAX_CHUNK_SIZE || 28 + chunk_size > tuple.data_size)
