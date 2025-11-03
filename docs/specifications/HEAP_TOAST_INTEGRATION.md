@@ -1,8 +1,13 @@
 # Heap-TOAST Integration
 
-## IMPLEMENTATION STATUS: 🟢 FULLY IMPLEMENTED (Updated 2025-10-01)
+## IMPLEMENTATION STATUS: 🟢 FULLY IMPLEMENTED - MGA COMPLIANT (Updated 2025-11-03)
 
-**All TOAST functionality is now complete and operational:**
+**All TOAST functionality is now complete and MGA-compliant:**
+- ✅ **MGA Compliance**: 28-byte chunk header with xmin/xmax (Phase 1)
+- ✅ **TIP-Based Visibility**: Uses TIP for transaction state, not snapshots (Phase 2)
+- ✅ **Index Integration**: IndexKeyExtractor detoasts before indexing (Phase 3)
+- ✅ **Garbage Collection**: 3-phase GC (orphan detection, cleanup, TIP-based) (Phase 4)
+- ✅ **Comprehensive Testing**: 8 test files, 43+ test cases (Phase 5)
 - ✅ Value ID recovery on database reopen (fixes data corruption risk)
 - ✅ Chunk cleanup on partial write failures (fixes storage leaks)
 - ✅ B-tree index scan for efficient deletion (O(log n) instead of O(n))
@@ -11,10 +16,19 @@
 - ✅ Automatic chunking and reassembly
 - ✅ Integration with heap storage
 
-**Key Fixes (October 2025):**
-- `ToastManager::initialize()` now scans TOAST table to find max value_id (line 89-90)
-- `ToastManager::write_to_toast()` tracks inserted chunks and cleans up on failure (lines 460-508)
-- `ToastManager::delete_toast_value()` uses B-tree index scan when available (lines 324-357)
+**MGA Compliance Achievements (November 2025)**:
+- 28-byte chunk format: xmin (8) + xmax (8) + value_id (4) + chunk_seq (4) + chunk_size (4)
+- TIP-based visibility: `ToastVisibility::isChunkVisible()` uses TIP, not snapshots
+- Crash recovery: TIP state recovery, NO WAL replay
+- Garbage collection: Vacuum processes TOAST tables with 3-phase GC
+- **MGA Scorecard**: 6/6 (100%) - FULL MGA COMPLIANCE
+
+**Key Implementation Files**:
+- `include/scratchbird/core/toast.h` - TOAST chunk format, ToastVisibility class
+- `src/core/toast.cpp` - ToastManager, TIP-based visibility
+- `src/core/index_key_extractor.cpp` - Index detoasting (Phase 3)
+- `src/core/garbage_collector.cpp` - TOAST GC (Phase 4)
+- `src/core/vacuum.cpp` - TOAST table processing (Phase 4)
 
 ## Overview
 
