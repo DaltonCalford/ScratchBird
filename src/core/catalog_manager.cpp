@@ -1706,6 +1706,11 @@ namespace scratchbird::core
     {
         auto converter = [](const SchemaRecord &record, SchemaInfo &info)
         {
+            // Phase 4: Safety check - ensure null-termination at max position
+            // This is defensive programming in case of corrupted catalog data
+            const_cast<char&>(record.schema_name[511]) = '\0';
+            const_cast<char&>(record.owner[511]) = '\0';
+
             info.schema_id = record.schema_id;
             info.schema_name = record.schema_name;
             info.owner = record.owner;
@@ -1823,6 +1828,9 @@ namespace scratchbird::core
     {
         auto converter = [](const TableRecord &record, TableInfo &info)
         {
+            // Phase 4: Safety check - ensure null-termination at max position
+            const_cast<char&>(record.table_name[511]) = '\0';
+
             info.table_id = record.table_id;
             info.schema_id = record.schema_id;
             info.table_name = record.table_name;
@@ -1907,6 +1915,9 @@ namespace scratchbird::core
 
         auto converter = [](const ColumnRecord &record, ColumnInfo &info)
         {
+            // Phase 4: Safety check - ensure null-termination at max position
+            const_cast<char&>(record.column_name[511]) = '\0';
+
             info.table_id = record.table_id;
             info.column_id = record.column_id;
             info.column_name = record.column_name;
@@ -1984,6 +1995,9 @@ namespace scratchbird::core
     {
         auto converter = [](const IndexRecord &record, IndexInfo &info)
         {
+            // Phase 4: Safety check - ensure null-termination at max position
+            const_cast<char&>(record.index_name[511]) = '\0';
+
             info.index_id = record.index_id;
             info.table_id = record.table_id;
             info.index_name = record.index_name;
@@ -2400,6 +2414,10 @@ namespace scratchbird::core
 
             if (record->is_valid)
             {
+                // Phase 4: Safety check - ensure null-termination at max position
+                // Tablespace names use char[64] (not char[512])
+                record->tablespace_name[63] = '\0';
+
                 // Convert SBTablespaceCatalog to TablespaceInfo
                 TablespaceInfo info;
                 info.tablespace_id = record->tablespace_id;
