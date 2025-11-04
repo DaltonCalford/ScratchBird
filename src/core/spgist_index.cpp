@@ -15,6 +15,7 @@
 #include "scratchbird/core/logger.h"
 #include <algorithm>
 #include <cstring>
+#include <set>
 
 namespace scratchbird::core
 {
@@ -22,6 +23,14 @@ namespace scratchbird::core
 // Constants
 constexpr uint16_t SPGIST_MAX_ENTRIES_PER_PAGE = 100;
 constexpr uint16_t SPGIST_LEAF_THRESHOLD = 50; // Split leaf when exceeding this
+
+// Helper struct for collecting leaf entries during split/GC
+struct LeafEntry {
+    std::vector<uint8_t> value;
+    TID tid;
+    uint64_t xmin;
+    uint64_t xmax;
+};
 
 // =============================================================================
 // SPGiSTIndex Implementation
@@ -373,18 +382,28 @@ Status SPGiSTIndex::splitNode(uint64_t page_num, ErrorContext* ctx)
         return status;
     }
 
-    // Collect all leaf values
+    uint64_t current_xid = txn_manager_->getCurrentXid();
+
+    // Collect all leaf values and their TIDs/xmin/xmax
+    std::vector<LeafEntry> entries;
     std::vector<std::vector<uint8_t>> values;
+
     uint8_t* entry_ptr = reinterpret_cast<uint8_t*>(page) + sizeof(SBSPGiSTPage);
 
     for (uint16_t i = 0; i < page->spgist_count; ++i)
     {
         SBSPGiSTLeafTuple* leaf = reinterpret_cast<SBSPGiSTLeafTuple*>(entry_ptr);
 
-        std::vector<uint8_t> value(leaf->leaf_valueSize);
-        std::memcpy(value.data(), entry_ptr + sizeof(SBSPGiSTLeafTuple),
+        LeafEntry entry;
+        entry.value.resize(leaf->leaf_valueSize);
+        std::memcpy(entry.value.data(), entry_ptr + sizeof(SBSPGiSTLeafTuple),
                    leaf->leaf_valueSize);
-        values.push_back(value);
+        entry.tid = leaf->leaf_tid;
+        entry.xmin = leaf->leaf_xmin;
+        entry.xmax = leaf->leaf_xmax;
+
+        entries.push_back(entry);
+        values.push_back(entry.value);
 
         entry_ptr += leaf->leaf_size;
     }
@@ -396,11 +415,137 @@ Status SPGiSTIndex::splitNode(uint64_t page_num, ErrorContext* ctx)
 
     opclass_->pickSplit(values, prefix, labels, assignments);
 
-    // Convert leaf to inner node
-    // TODO: Allocate child pages and distribute values
+    size_t num_partitions = labels.size();
 
-    LOG_DEBUG(CATALOG, "SP-GiST: Split leaf page %lu into %zu partitions",
-             page_num, labels.size());
+    // Allocate child pages (one per partition)
+    std::vector<uint64_t> child_pages(num_partitions);
+    std::vector<SBSPGiSTPage*> child_page_ptrs(num_partitions);
+
+    for (size_t i = 0; i < num_partitions; ++i)
+    {
+        status = allocatePage(&child_pages[i], ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        status = loadPage(child_pages[i], &child_page_ptrs[i], ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        // Initialize child page as leaf
+        std::memset(child_page_ptrs[i], 0, sizeof(SBSPGiSTPage));
+
+        child_page_ptrs[i]->spgist_header.magic = K_MAGIC_SBRD;
+        child_page_ptrs[i]->spgist_header.version = static_cast<uint16_t>(DB_VERSION_ALPHA_1_0_1);
+        child_page_ptrs[i]->spgist_header.page_type = static_cast<uint16_t>(PageType::PAGE_TYPE_SPGIST);
+        child_page_ptrs[i]->spgist_header.page_size = 8192;
+        child_page_ptrs[i]->spgist_header.page_id = static_cast<uint32_t>(child_pages[i]);
+        child_page_ptrs[i]->spgist_header.checksum = 0;
+        child_page_ptrs[i]->spgist_header.lsn = 0;
+        child_page_ptrs[i]->spgist_header.flags = 0;
+        std::memcpy(child_page_ptrs[i]->spgist_header.database_uuid, db_->uuid().bytes.data(), 16);
+
+        child_page_ptrs[i]->spgist_index_uuid = index_uuid_;
+        child_page_ptrs[i]->spgist_table_uuid = table_uuid_;
+        child_page_ptrs[i]->spgist_flags = 0;
+        child_page_ptrs[i]->spgist_node_type = static_cast<uint16_t>(SPGiSTNodeType::LEAF);
+        child_page_ptrs[i]->spgist_count = 0;
+        child_page_ptrs[i]->spgist_free_space = 8192 - sizeof(SBSPGiSTPage);
+        child_page_ptrs[i]->spgist_opclass_id = opclass_->getOpClassId();
+        child_page_ptrs[i]->spgist_parent_page = page_num;
+        child_page_ptrs[i]->spgist_xmin = current_xid;
+        child_page_ptrs[i]->spgist_xmax = 0;
+    }
+
+    // Distribute entries to child pages based on assignments
+    for (size_t i = 0; i < entries.size(); ++i)
+    {
+        size_t partition = assignments[i];
+        SBSPGiSTPage* child = child_page_ptrs[partition];
+
+        // Calculate entry size
+        uint16_t entry_size = sizeof(SBSPGiSTLeafTuple) + entries[i].value.size();
+
+        // Add entry to child page
+        uint8_t* child_entry_ptr = reinterpret_cast<uint8_t*>(child) +
+                                   sizeof(SBSPGiSTPage) +
+                                   (8192 - sizeof(SBSPGiSTPage) - child->spgist_free_space);
+
+        SBSPGiSTLeafTuple* leaf = reinterpret_cast<SBSPGiSTLeafTuple*>(child_entry_ptr);
+        leaf->leaf_size = entry_size;
+        leaf->leaf_valueSize = entries[i].value.size();
+        leaf->leaf_tid = entries[i].tid;
+        leaf->leaf_xmin = entries[i].xmin;  // Preserve original xmin
+        leaf->leaf_xmax = entries[i].xmax;  // Preserve original xmax
+
+        std::memcpy(child_entry_ptr + sizeof(SBSPGiSTLeafTuple),
+                   entries[i].value.data(), entries[i].value.size());
+
+        child->spgist_count++;
+        child->spgist_free_space -= entry_size;
+    }
+
+    // Convert current page to inner node
+    std::memset(page, 0, 8192);
+
+    // Re-initialize page header
+    page->spgist_header.magic = K_MAGIC_SBRD;
+    page->spgist_header.version = static_cast<uint16_t>(DB_VERSION_ALPHA_1_0_1);
+    page->spgist_header.page_type = static_cast<uint16_t>(PageType::PAGE_TYPE_SPGIST);
+    page->spgist_header.page_size = 8192;
+    page->spgist_header.page_id = static_cast<uint32_t>(page_num);
+    page->spgist_header.checksum = 0;
+    page->spgist_header.lsn = 0;
+    page->spgist_header.flags = 0;
+    std::memcpy(page->spgist_header.database_uuid, db_->uuid().bytes.data(), 16);
+
+    page->spgist_index_uuid = index_uuid_;
+    page->spgist_table_uuid = table_uuid_;
+    page->spgist_flags = 0;
+    page->spgist_node_type = static_cast<uint16_t>(SPGiSTNodeType::INNER);
+    page->spgist_count = 1;  // One inner tuple
+    page->spgist_opclass_id = opclass_->getOpClassId();
+    page->spgist_xmin = current_xid;
+    page->spgist_xmax = 0;
+
+    // Create inner tuple
+    entry_ptr = reinterpret_cast<uint8_t*>(page) + sizeof(SBSPGiSTPage);
+    SBSPGiSTInnerTuple* inner = reinterpret_cast<SBSPGiSTInnerTuple*>(entry_ptr);
+
+    inner->inner_nNodes = num_partitions;
+    inner->inner_prefixSize = prefix.size();
+    inner->inner_xmin = current_xid;
+    inner->inner_xmax = 0;
+
+    // Calculate total inner tuple size
+    size_t label_size = labels.empty() ? 0 : labels[0].size();  // Assume fixed label size
+    inner->inner_size = sizeof(SBSPGiSTInnerTuple) +
+                       prefix.size() +
+                       (num_partitions * label_size) +
+                       (num_partitions * sizeof(uint64_t));
+
+    // Write prefix
+    entry_ptr += sizeof(SBSPGiSTInnerTuple);
+    std::memcpy(entry_ptr, prefix.data(), prefix.size());
+    entry_ptr += prefix.size();
+
+    // Write node labels
+    for (size_t i = 0; i < num_partitions; ++i)
+    {
+        std::memcpy(entry_ptr, labels[i].data(), label_size);
+        entry_ptr += label_size;
+    }
+
+    // Write child page numbers
+    std::memcpy(entry_ptr, child_pages.data(), num_partitions * sizeof(uint64_t));
+
+    page->spgist_free_space = 8192 - sizeof(SBSPGiSTPage) - inner->inner_size;
+
+    LOG_DEBUG(CATALOG, "SP-GiST: Split leaf page %lu into %zu partitions (%zu entries distributed)",
+             page_num, labels.size(), entries.size());
 
     return Status::OK;
 }
@@ -412,11 +557,110 @@ Status SPGiSTIndex::remove(const std::vector<uint8_t>& value,
 {
     std::unique_lock lock(mutex_);
 
-    // Logical deletion: find entry and set xmax
-    // TODO: Implement entry lookup and deletion
+    Status status = removeRecursive(root_page_, value, tid, current_xid, ctx);
+    if (status == Status::OK)
+    {
+        deleted_count_++;
+    }
 
-    deleted_count_++;
-    return Status::OK;
+    return status;
+}
+
+Status SPGiSTIndex::removeRecursive(uint64_t page_num,
+                                   const std::vector<uint8_t>& value,
+                                   const TID& tid,
+                                   uint64_t current_xid,
+                                   ErrorContext* ctx)
+{
+    SBSPGiSTPage* page = nullptr;
+    Status status = loadPage(page_num, &page, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    SPGiSTNodeType node_type = static_cast<SPGiSTNodeType>(page->spgist_node_type);
+
+    if (node_type == SPGiSTNodeType::LEAF)
+    {
+        // Search for matching entry in leaf
+        uint8_t* entry_ptr = reinterpret_cast<uint8_t*>(page) + sizeof(SBSPGiSTPage);
+
+        for (uint16_t i = 0; i < page->spgist_count; ++i)
+        {
+            SBSPGiSTLeafTuple* leaf = reinterpret_cast<SBSPGiSTLeafTuple*>(entry_ptr);
+
+            // Check if TID matches
+            if (leaf->leaf_tid.gpid == tid.gpid && leaf->leaf_tid.slot == tid.slot)
+            {
+                // Found the entry - mark as deleted with xmax
+                if (leaf->leaf_xmax == 0)  // Only if not already deleted
+                {
+                    leaf->leaf_xmax = current_xid;
+                    LOG_DEBUG(CATALOG, "SP-GiST: Marked entry as deleted (TID %lu:%u, xmax=%lu)",
+                             tid.gpid, tid.slot, current_xid);
+                    return Status::OK;
+                }
+                else
+                {
+                    // Already deleted
+                    return Status::NOT_FOUND;
+                }
+            }
+
+            entry_ptr += leaf->leaf_size;
+        }
+
+        // Entry not found in this leaf
+        return Status::NOT_FOUND;
+    }
+    else  // SPGiSTNodeType::INNER
+    {
+        // Extract inner node information
+        uint8_t* entry_ptr = reinterpret_cast<uint8_t*>(page) + sizeof(SBSPGiSTPage);
+        SBSPGiSTInnerTuple* inner = reinterpret_cast<SBSPGiSTInnerTuple*>(entry_ptr);
+
+        // Extract prefix
+        std::vector<uint8_t> prefix(inner->inner_prefixSize);
+        std::memcpy(prefix.data(), entry_ptr + sizeof(SBSPGiSTInnerTuple),
+                   inner->inner_prefixSize);
+
+        // Extract labels and child pages
+        entry_ptr += sizeof(SBSPGiSTInnerTuple) + inner->inner_prefixSize;
+
+        size_t label_size = (inner->inner_nNodes > 0) ?
+                           (inner->inner_size - sizeof(SBSPGiSTInnerTuple) -
+                            inner->inner_prefixSize - (inner->inner_nNodes * sizeof(uint64_t))) /
+                            inner->inner_nNodes : 0;
+
+        std::vector<SPGiSTNodeLabel> node_labels;
+        uint8_t* child_pages_ptr = entry_ptr + (inner->inner_nNodes * label_size);
+        uint64_t* child_pages = reinterpret_cast<uint64_t*>(child_pages_ptr);
+
+        for (uint16_t i = 0; i < inner->inner_nNodes; ++i)
+        {
+            SPGiSTNodeLabel label;
+            label.data.resize(label_size);
+            std::memcpy(label.data.data(), entry_ptr + (i * label_size), label_size);
+            label.child_page = child_pages[i];
+            node_labels.push_back(label);
+        }
+
+        // Ask operator class which child to traverse
+        SPGiSTTraversal traversal = opclass_->choose(prefix, node_labels, value);
+
+        if (traversal.match_type == SPGiSTMatchType::MATCH_NODE)
+        {
+            // Descend into specific child
+            uint64_t child_page = node_labels[traversal.node_index].child_page;
+            return removeRecursive(child_page, value, tid, current_xid, ctx);
+        }
+        else
+        {
+            // For MATCH_SPLIT or MATCH_ADD_NODE, entry doesn't exist yet
+            return Status::NOT_FOUND;
+        }
+    }
 }
 
 Status SPGiSTIndex::removeDeadEntries(const std::vector<TID>& dead_tids,
@@ -426,15 +670,153 @@ Status SPGiSTIndex::removeDeadEntries(const std::vector<TID>& dead_tids,
 {
     std::unique_lock lock(mutex_);
 
-    // TODO: Traverse tree and physically remove entries pointing to dead_tids
-    LOG_INFO(CATALOG, "SP-GiST garbage collection: %zu dead TIDs to remove",
-             dead_tids.size());
+    if (dead_tids.empty())
+    {
+        if (entries_removed_out) *entries_removed_out = 0;
+        if (pages_modified_out) *pages_modified_out = 0;
+        return Status::OK;
+    }
 
-    // Placeholder: report 0 for now
-    if (entries_removed_out) *entries_removed_out = 0;
-    if (pages_modified_out) *pages_modified_out = 0;
+    // Create a set for fast lookup
+    std::set<TID> dead_set;
+    for (const auto& tid : dead_tids)
+    {
+        dead_set.insert(tid);
+    }
 
-    return Status::OK;
+    uint64_t entries_removed = 0;
+    uint64_t pages_modified = 0;
+
+    Status status = removeDeadEntriesRecursive(root_page_, dead_set,
+                                               &entries_removed, &pages_modified, ctx);
+
+    if (status == Status::OK)
+    {
+        deleted_count_ -= entries_removed;
+        LOG_INFO(CATALOG, "SP-GiST garbage collection: removed %lu entries from %lu pages",
+                 entries_removed, pages_modified);
+    }
+
+    if (entries_removed_out) *entries_removed_out = entries_removed;
+    if (pages_modified_out) *pages_modified_out = pages_modified;
+
+    return status;
+}
+
+Status SPGiSTIndex::removeDeadEntriesRecursive(uint64_t page_num,
+                                               const std::set<TID>& dead_set,
+                                               uint64_t* entries_removed,
+                                               uint64_t* pages_modified,
+                                               ErrorContext* ctx)
+{
+    SBSPGiSTPage* page = nullptr;
+    Status status = loadPage(page_num, &page, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    SPGiSTNodeType node_type = static_cast<SPGiSTNodeType>(page->spgist_node_type);
+
+    if (node_type == SPGiSTNodeType::LEAF)
+    {
+        // Scan leaf entries and collect live ones
+        std::vector<LeafEntry> live_entries;
+        uint8_t* entry_ptr = reinterpret_cast<uint8_t*>(page) + sizeof(SBSPGiSTPage);
+
+        for (uint16_t i = 0; i < page->spgist_count; ++i)
+        {
+            SBSPGiSTLeafTuple* leaf = reinterpret_cast<SBSPGiSTLeafTuple*>(entry_ptr);
+
+            // Check if this TID is in the dead set
+            if (dead_set.find(leaf->leaf_tid) != dead_set.end())
+            {
+                // Dead entry - skip it
+                (*entries_removed)++;
+            }
+            else
+            {
+                // Live entry - keep it
+                LeafEntry entry;
+                entry.value.resize(leaf->leaf_valueSize);
+                std::memcpy(entry.value.data(), entry_ptr + sizeof(SBSPGiSTLeafTuple),
+                           leaf->leaf_valueSize);
+                entry.tid = leaf->leaf_tid;
+                entry.xmin = leaf->leaf_xmin;
+                entry.xmax = leaf->leaf_xmax;
+                live_entries.push_back(entry);
+            }
+
+            entry_ptr += leaf->leaf_size;
+        }
+
+        // If we removed any entries, rewrite the page
+        if (live_entries.size() != page->spgist_count)
+        {
+            // Clear entry area
+            entry_ptr = reinterpret_cast<uint8_t*>(page) + sizeof(SBSPGiSTPage);
+            uint16_t new_count = 0;
+            uint16_t bytes_used = 0;
+
+            // Rewrite live entries
+            for (const auto& entry : live_entries)
+            {
+                uint16_t entry_size = sizeof(SBSPGiSTLeafTuple) + entry.value.size();
+
+                SBSPGiSTLeafTuple* leaf = reinterpret_cast<SBSPGiSTLeafTuple*>(entry_ptr);
+                leaf->leaf_size = entry_size;
+                leaf->leaf_valueSize = entry.value.size();
+                leaf->leaf_tid = entry.tid;
+                leaf->leaf_xmin = entry.xmin;
+                leaf->leaf_xmax = entry.xmax;
+
+                std::memcpy(entry_ptr + sizeof(SBSPGiSTLeafTuple),
+                           entry.value.data(), entry.value.size());
+
+                entry_ptr += entry_size;
+                bytes_used += entry_size;
+                new_count++;
+            }
+
+            // Update page metadata
+            page->spgist_count = new_count;
+            page->spgist_free_space = 8192 - sizeof(SBSPGiSTPage) - bytes_used;
+
+            (*pages_modified)++;
+        }
+
+        return Status::OK;
+    }
+    else  // SPGiSTNodeType::INNER
+    {
+        // Extract inner node information
+        uint8_t* entry_ptr = reinterpret_cast<uint8_t*>(page) + sizeof(SBSPGiSTPage);
+        SBSPGiSTInnerTuple* inner = reinterpret_cast<SBSPGiSTInnerTuple*>(entry_ptr);
+
+        // Calculate label size and get child pages
+        entry_ptr += sizeof(SBSPGiSTInnerTuple) + inner->inner_prefixSize;
+
+        size_t label_size = (inner->inner_nNodes > 0) ?
+                           (inner->inner_size - sizeof(SBSPGiSTInnerTuple) -
+                            inner->inner_prefixSize - (inner->inner_nNodes * sizeof(uint64_t))) /
+                            inner->inner_nNodes : 0;
+
+        uint8_t* child_pages_ptr = entry_ptr + (inner->inner_nNodes * label_size);
+        uint64_t* child_pages = reinterpret_cast<uint64_t*>(child_pages_ptr);
+
+        // Recursively clean all children
+        for (uint16_t i = 0; i < inner->inner_nNodes; ++i)
+        {
+            status = removeDeadEntriesRecursive(child_pages[i], dead_set,
+                                               entries_removed, pages_modified, ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+        }
+
+        return Status::OK;
+    }
 }
 
 bool SPGiSTIndex::isEntryVisible(uint64_t xmin, uint64_t xmax, uint64_t current_xid) const

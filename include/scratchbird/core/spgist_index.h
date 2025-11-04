@@ -13,6 +13,7 @@
 #include <functional>
 #include <string>
 #include <map>
+#include <set>
 
 namespace scratchbird::core
 {
@@ -403,6 +404,18 @@ private:
 
     Status splitNode(uint64_t page_num,
                     ErrorContext* ctx);
+
+    Status removeRecursive(uint64_t page_num,
+                          const std::vector<uint8_t>& value,
+                          const TID& tid,
+                          uint64_t current_xid,
+                          ErrorContext* ctx);
+
+    Status removeDeadEntriesRecursive(uint64_t page_num,
+                                     const std::set<TID>& dead_set,
+                                     uint64_t* entries_removed,
+                                     uint64_t* pages_modified,
+                                     ErrorContext* ctx);
 
     // Helper methods
     bool isEntryVisible(uint64_t xmin, uint64_t xmax, uint64_t current_xid) const;
