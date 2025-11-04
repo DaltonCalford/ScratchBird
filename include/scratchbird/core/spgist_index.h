@@ -12,6 +12,7 @@
 #include <shared_mutex>
 #include <functional>
 #include <string>
+#include <map>
 
 namespace scratchbird::core
 {
@@ -139,7 +140,7 @@ struct SBSPGiSTPage
     uint64_t spgist_total_entries;   // Total entries in entire index
     uint64_t spgist_deleted_entries; // Deleted entries
 
-    uint8_t spgist_padding[48]; // Padding to align entries (total: 208 bytes)
+    uint8_t spgist_padding[52]; // Padding to align entries (total: 208 bytes)
 
     // Variable-size entries follow immediately after header
 };
@@ -318,7 +319,7 @@ public:
 /**
  * SP-GiST index implementation
  */
-class SPGiSTIndex : public IndexGarbageCollectorInterface
+class SPGiSTIndex : public IndexGCInterface
 {
 public:
     SPGiSTIndex(Database* db,
@@ -372,9 +373,12 @@ public:
                   uint64_t current_xid,
                   ErrorContext* ctx);
 
-    // IndexGarbageCollectorInterface
-    Status removeDeadEntries(uint64_t oldest_active_xid, ErrorContext* ctx) override;
-    uint64_t getDeadEntryCount() const override;
+    // IndexGCInterface
+    Status removeDeadEntries(const std::vector<TID>& dead_tids,
+                            uint64_t* entries_removed_out = nullptr,
+                            uint64_t* pages_modified_out = nullptr,
+                            ErrorContext* ctx = nullptr) override;
+    const char* indexTypeName() const override { return "SP-GiST"; }
 
     // Index metadata
     const ID& getIndexUUID() const { return index_uuid_; }
