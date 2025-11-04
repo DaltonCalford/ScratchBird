@@ -427,7 +427,7 @@ Status RTree::remove(const BoundingBox& bbox,
             const RTreeEntry& entry = current->getEntry(i);
 
             // Skip deleted entries
-            if (!isEntryVisible(entry, snapshot))
+            if (!isEntryVisible(entry, current_xid))
                 continue;
 
             // Check if this child's MBR could contain our entry
@@ -471,7 +471,7 @@ Status RTree::remove(const BoundingBox& bbox,
         const RTreeEntry& entry = leaf->getEntry(i);
 
         // Skip deleted entries
-        if (!isEntryVisible(entry, snapshot))
+        if (!isEntryVisible(entry, current_xid))
             continue;
 
         // Match by TID and bbox
@@ -596,7 +596,7 @@ Status RTree::remove(const BoundingBox& bbox,
     for (const auto& orphan : orphaned_entries)
     {
         LOG_DEBUG(BTREE, "Reinserting orphaned entry");
-        Status reinsert_status = insert(orphan.bbox, orphan.row_id, snapshot, ctx);
+        Status reinsert_status = insert(orphan.bbox, orphan.row_id, current_xid, ctx);
         if (reinsert_status != Status::OK)
         {
             LOG_ERROR(BTREE, "Failed to reinsert orphaned entry");
@@ -1137,7 +1137,7 @@ bool RTree::isEntryVisible(const RTreeEntry& entry, uint64_t current_xid) const
     //
     // The snapshot parameter is accepted for future optimization possibilities.
     // For now, we only filter based on the deleted flag.
-    (void)snapshot; // Acknowledge snapshot for API completeness
+    (void)current_xid; // Acknowledge snapshot for API completeness
 
     // Simple visibility check: entry is visible if not deleted
     return !entry.is_deleted;

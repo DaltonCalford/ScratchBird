@@ -97,8 +97,8 @@ protected:
     TransactionManager::Snapshot getSnapshot()
     {
         ErrorContext ctx;
-        TransactionManager::Snapshot snapshot;
-        auto status = txn_mgr_->getSnapshot(snapshot, &ctx);
+        // MGA: Snapshot removed - uint64_t current_xid = txn_mgr_->getCurrentXid();
+        auto status = // MGA: getSnapshot removed;
         EXPECT_EQ(status, Status::OK) << "Failed to get snapshot";
         return snapshot;
     }

@@ -8,25 +8,25 @@ namespace scratchbird::core
 {
 
     // BTree::rangeScan implementation
-    // PHASE 1 TASK 1.1.1: Added Snapshot parameter
+    // FIREBIRD MGA: Uses current_xid for TIP-based visibility (NOT snapshots)
     auto BTree::rangeScan(const std::vector<uint8_t> *start_key,
                           const std::vector<uint8_t> *end_key,
-                          Snapshot *snapshot,
+                          uint64_t current_xid,
                           bool start_inclusive,
                           bool end_inclusive, ErrorContext *ctx) -> std::unique_ptr<BTreeIterator>
     {
-        return std::make_unique<BTreeIterator>(this, start_key, end_key, snapshot, start_inclusive,
+        return std::make_unique<BTreeIterator>(this, start_key, end_key, current_xid, start_inclusive,
                                                end_inclusive);
     }
 
     // BTreeIterator implementation
-    // PHASE 1 TASK 1.1.1: Added Snapshot parameter
+    // FIREBIRD MGA: Uses current_xid for TIP-based visibility (NOT snapshots)
     BTreeIterator::BTreeIterator(BTree *btree, const std::vector<uint8_t> *start_key,
                                  const std::vector<uint8_t> *end_key,
-                                 Snapshot *snapshot,
+                                 uint64_t current_xid,
                                  bool start_inclusive,
                                  bool end_inclusive)
-        : btree_(btree), db_(btree->db_), snapshot_(snapshot), has_start_(start_key != nullptr),
+        : btree_(btree), db_(btree->db_), current_xid_(current_xid), has_start_(start_key != nullptr),
           has_end_(end_key != nullptr), start_inclusive_(start_inclusive),
           end_inclusive_(end_inclusive), current_page_(0), current_slot_(0),
           current_tuple_index_(0), initialized_(false), exhausted_(false), scanned_count_(0)
@@ -138,8 +138,8 @@ namespace scratchbird::core
             return status;
         }
 
-        // Task 17 MGA Phase 3.3: Check visibility before returning entry
-        if (!btree_->isEntryVisible(node->btn_xmin, node->btn_xmax, snapshot_))
+        // FIREBIRD MGA: Check visibility using TIP-based visibility with current_xid
+        if (!btree_->isEntryVisible(node->btn_xmin, node->btn_xmax, current_xid_))
         {
             // Entry not visible - skip to next entry
             status = moveToNextSlot(ctx);

@@ -413,16 +413,15 @@ TEST_F(ConcurrentPageAccessTest, SnapshotConsistencyUnderConcurrentMods) {
         });
     }
 
-    // Snapshot threads - take snapshots concurrently with writes
+    // Snapshot threads - get current XID concurrently with writes (MGA: no snapshots)
     for (int t = 0; t < NUM_SNAPSHOT_THREADS; ++t) {
         threads.emplace_back([&]() {
             ErrorContext ctx;
             for (int i = 0; i < ITERATIONS; ++i) {
-                TransactionManager::Snapshot snapshot;
-                Status s = txn_mgr_->getSnapshot(snapshot, &ctx);
-                if (s == Status::OK) {
+                // FIREBIRD MGA: Just get current XID, no snapshot needed
+                uint64_t current_xid = txn_mgr_->getCurrentXid();
+                if (current_xid > 0) {
                     successful_snapshots.fetch_add(1);
-                    snapshot.cleanup();
                 } else {
                     errors.fetch_add(1);
                 }

@@ -264,7 +264,7 @@ namespace scratchbird::core
                             auto hash_index = HashIndex::open(db_, index_info.index_id, index_info.root_page, ctx);
                             if (hash_index)
                             {
-                                Status insert_status = hash_index->insert(key.data(), key.size(), tid, ctx);
+                                Status insert_status = hash_index->insert(key.data(), key.size(), tid, current_xid, ctx);
                                 if (insert_status != Status::OK)
                                 {
                                     LOG_ERROR(STORAGE, "Failed to insert into Hash index %s: %s",
@@ -601,40 +601,17 @@ namespace scratchbird::core
                 case IsolationLevel::SNAPSHOT:
                 case IsolationLevel::SNAPSHOT_TABLE_STABILITY:
                 {
-                    // Firebird MGA: SNAPSHOT isolation uses TIP-based visibility
-                    // Extract snapshot_xid from the snapshot structure
-                    const TransactionManager::Snapshot *snapshot = conn_ctx->getSnapshot();
+                    // Firebird MGA: SNAPSHOT isolation uses transaction start XID with TIP-based visibility
+                    // current_xid represents the XID when the transaction started
+                    // No snapshot structures needed - TIP provides all visibility info
 
-                    if (snapshot == nullptr)
-                    {
-                        LOG_WARNING(
-                            STORAGE,
-                            "SNAPSHOT isolation without snapshot - falling back to READ COMMITTED");
-                        // Fallback to READ COMMITTED semantics
-                        if (!tm->isTransactionVisible(xmin, current_xid))
-                        {
-                            return false;
-                        }
-
-                        if (xmax != 0 && tm->isTransactionVisible(xmax, current_xid))
-                        {
-                            return false;
-                        }
-
-                        return true;
-                    }
-
-                    // Firebird MGA: Use snapshot_xid with TIP-based visibility
-                    // The snapshot_xid represents the transaction ID when the snapshot was taken
-                    uint64_t snapshot_xid = snapshot->snapshot_xid;
-
-                    // Tuple is visible if created before snapshot and not deleted before snapshot
-                    if (!tm->isVersionVisible(xmin, snapshot_xid))
+                    // Tuple is visible if created before transaction start and not deleted before transaction start
+                    if (!tm->isVersionVisible(xmin, current_xid))
                     {
                         return false;
                     }
 
-                    // If deleted, check if deletion is visible in snapshot
+                    // If deleted, check if deletion is visible
                     if (xmax != 0)
                     {
                         // Special case: deleted by current transaction
@@ -644,9 +621,9 @@ namespace scratchbird::core
                         }
 
                         // Check if deletion is visible using TIP
-                        if (tm->isVersionVisible(xmax, snapshot_xid))
+                        if (tm->isVersionVisible(xmax, current_xid))
                         {
-                            return false; // Deletion committed before snapshot - not visible
+                            return false; // Deletion committed before transaction start - not visible
                         }
                     }
 
@@ -655,56 +632,33 @@ namespace scratchbird::core
 
                 case IsolationLevel::READ_COMMITTED_READ_CONSISTENCY:
                 {
-                    // Firebird MGA: READ COMMITTED READ CONSISTENCY uses statement-level TIP visibility
-                    // Extract snapshot_xid from the statement snapshot structure
-                    const TransactionManager::Snapshot *stmt_snapshot = conn_ctx->getStatementSnapshot();
+                    // Firebird MGA: READ COMMITTED READ CONSISTENCY uses statement-level XID with TIP visibility
+                    // Get statement XID (returns current_xid if no statement-level XID set)
+                    uint64_t stmt_xid = conn_ctx->getStatementXID();
 
-                    if (stmt_snapshot != nullptr)
+                    // Check if creating transaction is visible at statement start
+                    if (!tm->isVersionVisible(xmin, stmt_xid))
                     {
-                        // Use statement snapshot_xid with TIP-based visibility
-                        uint64_t stmt_snapshot_xid = stmt_snapshot->snapshot_xid;
-
-                        // Check if creating transaction is visible in statement snapshot
-                        if (!tm->isVersionVisible(xmin, stmt_snapshot_xid))
-                        {
-                            return false;
-                        }
-
-                        // If deleted, check if deleting transaction is visible in statement
-                        // snapshot
-                        if (xmax != 0)
-                        {
-                            // Special case: deleted by current transaction
-                            if (xmax == current_xid)
-                            {
-                                return false; // We deleted it - not visible
-                            }
-
-                            // Check if deletion is visible using TIP
-                            if (tm->isVersionVisible(xmax, stmt_snapshot_xid))
-                            {
-                                return false; // Deletion committed before statement - not visible
-                            }
-                        }
-
-                        return true;
+                        return false;
                     }
-                    else
+
+                    // If deleted, check if deleting transaction is visible at statement start
+                    if (xmax != 0)
                     {
-                        // No statement snapshot - fall back to READ COMMITTED semantics
-                        // This happens between statements (normal READ COMMITTED behavior)
-                        if (!tm->isTransactionVisible(xmin, current_xid))
+                        // Special case: deleted by current transaction
+                        if (xmax == current_xid)
                         {
-                            return false;
+                            return false; // We deleted it - not visible
                         }
 
-                        if (xmax != 0 && tm->isTransactionVisible(xmax, current_xid))
+                        // Check if deletion is visible using TIP
+                        if (tm->isVersionVisible(xmax, stmt_xid))
                         {
-                            return false;
+                            return false; // Deletion committed before statement - not visible
                         }
-
-                        return true;
                     }
+
+                    return true;
                 }
 
                 default:
@@ -1198,9 +1152,9 @@ namespace scratchbird::core
                             if (hash_index)
                             {
                                 // Remove old key
-                                hash_index->remove(old_key.data(), old_key.size(), tid, ctx);
+                                hash_index->remove(old_key.data(), old_key.size(), tid, xmax, ctx);
                                 // Insert new key (same TID!)
-                                Status insert_status = hash_index->insert(new_key.data(), new_key.size(), tid, ctx);
+                                Status insert_status = hash_index->insert(new_key.data(), new_key.size(), tid, xmax, ctx);
                                 if (insert_status != Status::OK)
                                 {
                                     LOG_ERROR(STORAGE, "Failed to update Hash index %s: %s",
@@ -1451,7 +1405,7 @@ namespace scratchbird::core
         current_key_ = key;
 
         // PHASE 1 TASK 1.1.5: Pass nullptr for snapshot (Phase 1 Task 1.2 will pass actual snapshot)
-        status = btree.search(key, nullptr, &current_tuple_ids_, ctx);
+        status = btree.search(key, 0, &current_tuple_ids_, ctx);
         if (status == Status::NOT_FOUND)
         {
             // No matching key found, mark as done
@@ -1723,7 +1677,7 @@ namespace scratchbird::core
                 }
 
                 // Remove old entry
-                status = hash_index->remove(key.data(), key.size(), old_tid, ctx);
+                status = hash_index->remove(key.data(), key.size(), old_tid, 0, ctx);
                 if (status != Status::OK && status != Status::NOT_FOUND)
                 {
                     LOG_WARNING(STORAGE, "Failed to remove old entry from Hash index %s: %s",
@@ -1733,7 +1687,7 @@ namespace scratchbird::core
                 }
 
                 // Insert new entry
-                status = hash_index->insert(key.data(), key.size(), new_tid, ctx);
+                status = hash_index->insert(key.data(), key.size(), new_tid, 0, ctx);
                 if (status != Status::OK)
                 {
                     LOG_ERROR(STORAGE, "Failed to insert new entry into Hash index %s: %s",

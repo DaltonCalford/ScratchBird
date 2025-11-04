@@ -255,11 +255,11 @@ namespace scratchbird::core
                            ErrorContext *ctx = nullptr) -> Status;
 
         // Find visible version of tuple by traversing version chain
-        // REQUIRES: snapshot must not be null - cross-page pins are registered with it (Option 3:
-        // MVCC Snapshot) Snapshot owns all cross-page pins and cleans them up on transaction
-        // commit/rollback
-        auto findVisibleVersion(uint16_t item_id, uint64_t snapshot_xid, const uint8_t **data_out,
-                                uint32_t *size_out, TransactionManager::Snapshot *snapshot,
+        // FIREBIRD MGA: Uses TIP-based visibility, NOT snapshots
+        // NOTE: Currently only supports same-page back versions (Alpha limitation)
+        // Cross-page back versions will be added in future release
+        auto findVisibleVersion(uint16_t item_id, uint64_t current_xid, const uint8_t **data_out,
+                                uint32_t *size_out,
                                 ErrorContext *ctx = nullptr) -> Status;
 
         // Check if there's enough space for a tuple

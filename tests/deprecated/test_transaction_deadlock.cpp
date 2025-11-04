@@ -84,7 +84,7 @@ int main()
                 for (int i = 0; i < ITERATIONS; i++)
                 {
                     ErrorContext thread_ctx;
-                    TransactionManager::Snapshot snapshot;
+                    // MGA: Snapshot removed - uint64_t current_xid = txn_mgr_->getCurrentXid();
 
                     Status status = txn_mgr->getSnapshot(snapshot, &thread_ctx);
                     if (status != Status::OK)

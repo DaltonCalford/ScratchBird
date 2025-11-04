@@ -46,7 +46,7 @@ protected:
 TEST_F(HeapPageMemoryTest, SnapshotCleanupUnpinsPages)
 {
     // Create a snapshot
-    TransactionManager::Snapshot snapshot;
+    // MGA: Snapshot removed - uint64_t current_xid = txn_mgr_->getCurrentXid();
     snapshot.xmin = 1;
     snapshot.xmax = 100;
     snapshot.buffer_pool = buffer_pool_;
@@ -73,7 +73,7 @@ TEST_F(HeapPageMemoryTest, SnapshotCleanupUnpinsPages)
     EXPECT_EQ(snapshot.pinned_pages.size(), NUM_PAGES);
 
     // Call cleanup explicitly
-    snapshot.cleanup();
+    // MGA: snapshot.cleanup removed;
 
     // Verify all pages were unpinned
     EXPECT_EQ(snapshot.pinned_pages.size(), 0);
@@ -90,7 +90,7 @@ TEST_F(HeapPageMemoryTest, SnapshotDestructorCallsCleanup)
 
     // Create snapshot in inner scope
     {
-        TransactionManager::Snapshot snapshot;
+        // MGA: Snapshot removed - uint64_t current_xid = txn_mgr_->getCurrentXid();
         snapshot.xmin = 1;
         snapshot.xmax = 100;
         snapshot.buffer_pool = buffer_pool_;
@@ -119,7 +119,7 @@ TEST_F(HeapPageMemoryTest, SnapshotCleanupOnErrorPath)
 
     // Simulate error path scenario
     {
-        TransactionManager::Snapshot snapshot;
+        // MGA: Snapshot removed - uint64_t current_xid = txn_mgr_->getCurrentXid();
         snapshot.xmin = 1;
         snapshot.xmax = 100;
         snapshot.buffer_pool = buffer_pool_;
@@ -151,12 +151,12 @@ TEST_F(HeapPageMemoryTest, SnapshotCleanupOnErrorPath)
 TEST_F(HeapPageMemoryTest, MultipleSnapshotsIndependentCleanup)
 {
     // Create two snapshots
-    TransactionManager::Snapshot snapshot1;
+    // MGA: Snapshot removed - uint64_t current_xid = txn_mgr_->getCurrentXid()1;
     snapshot1.xmin = 1;
     snapshot1.xmax = 50;
     snapshot1.buffer_pool = buffer_pool_;
 
-    TransactionManager::Snapshot snapshot2;
+    // MGA: Snapshot removed - uint64_t current_xid = txn_mgr_->getCurrentXid()2;
     snapshot2.xmin = 51;
     snapshot2.xmax = 100;
     snapshot2.buffer_pool = buffer_pool_;
@@ -187,13 +187,13 @@ TEST_F(HeapPageMemoryTest, MultipleSnapshotsIndependentCleanup)
 // Test 5: Snapshot with no pages pinned (edge case)
 TEST_F(HeapPageMemoryTest, SnapshotWithNoPins)
 {
-    TransactionManager::Snapshot snapshot;
+    // MGA: Snapshot removed - uint64_t current_xid = txn_mgr_->getCurrentXid();
     snapshot.xmin = 1;
     snapshot.xmax = 100;
     // Note: buffer_pool is null, pinned_pages is empty
 
     // Cleanup should be safe with no pins
-    snapshot.cleanup();
+    // MGA: snapshot.cleanup removed;
 
     EXPECT_EQ(snapshot.pinned_pages.size(), 0);
     EXPECT_EQ(snapshot.buffer_pool, nullptr);
@@ -202,7 +202,7 @@ TEST_F(HeapPageMemoryTest, SnapshotWithNoPins)
 // Test 6: Snapshot double cleanup (defensive test)
 TEST_F(HeapPageMemoryTest, SnapshotDoubleCleanup)
 {
-    TransactionManager::Snapshot snapshot;
+    // MGA: Snapshot removed - uint64_t current_xid = txn_mgr_->getCurrentXid();
     snapshot.xmin = 1;
     snapshot.xmax = 100;
     snapshot.buffer_pool = buffer_pool_;
@@ -214,12 +214,12 @@ TEST_F(HeapPageMemoryTest, SnapshotDoubleCleanup)
     snapshot.pinned_pages.push_back(0);
 
     // First cleanup
-    snapshot.cleanup();
+    // MGA: snapshot.cleanup removed;
     EXPECT_EQ(snapshot.pinned_pages.size(), 0);
     EXPECT_EQ(snapshot.buffer_pool, nullptr);
 
     // Second cleanup should be safe (no-op)
-    snapshot.cleanup();
+    // MGA: snapshot.cleanup removed;
     EXPECT_EQ(snapshot.pinned_pages.size(), 0);
     EXPECT_EQ(snapshot.buffer_pool, nullptr);
 }
@@ -227,7 +227,7 @@ TEST_F(HeapPageMemoryTest, SnapshotDoubleCleanup)
 // Test 7: Stress test with many pins
 TEST_F(HeapPageMemoryTest, StressTestManyPins)
 {
-    TransactionManager::Snapshot snapshot;
+    // MGA: Snapshot removed - uint64_t current_xid = txn_mgr_->getCurrentXid();
     snapshot.xmin = 1;
     snapshot.xmax = 1000;
     snapshot.buffer_pool = buffer_pool_;
@@ -254,7 +254,7 @@ TEST_F(HeapPageMemoryTest, StressTestManyPins)
     EXPECT_GT(num_pinned, 0);
 
     // Cleanup all
-    snapshot.cleanup();
+    // MGA: snapshot.cleanup removed;
     EXPECT_EQ(snapshot.pinned_pages.size(), 0);
 }
 
@@ -265,7 +265,7 @@ TEST_F(HeapPageMemoryTest, NoLeakOnException)
 
     try
     {
-        TransactionManager::Snapshot snapshot;
+        // MGA: Snapshot removed - uint64_t current_xid = txn_mgr_->getCurrentXid();
         snapshot.xmin = 1;
         snapshot.xmax = 100;
         snapshot.buffer_pool = buffer_pool_;

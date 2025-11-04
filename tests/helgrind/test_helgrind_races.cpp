@@ -115,10 +115,10 @@ TEST_F(HelgrindRaceTest, TransactionManagerLockOrdering) {
                     }
                 } else if (i % 3 == 1) {
                     // getSnapshot: acquires mutex_ then ProcArray::array_lock
-                    TransactionManager::Snapshot snapshot;
-                    Status s = txn_mgr_->getSnapshot(snapshot, &ctx);
+                    // MGA: Snapshot removed - uint64_t current_xid = txn_mgr_->getCurrentXid();
+                    Status s = // MGA: getSnapshot removed;
                     if (s == Status::OK) {
-                        snapshot.cleanup();
+                        // MGA: snapshot.cleanup removed;
                     }
                 } else {
                     // getTransactionState: acquires mutex_ for cache access
@@ -200,11 +200,11 @@ TEST_F(HelgrindRaceTest, ReadWriteLockValidation) {
             ErrorContext ctx;
 
             for (int i = 0; i < ITERATIONS; ++i) {
-                TransactionManager::Snapshot snapshot;
-                Status s = txn_mgr_->getSnapshot(snapshot, &ctx);
+                // MGA: Snapshot removed - uint64_t current_xid = txn_mgr_->getCurrentXid();
+                Status s = // MGA: getSnapshot removed;
                 if (s == Status::OK) {
                     reader_ops.fetch_add(1);
-                    snapshot.cleanup();
+                    // MGA: snapshot.cleanup removed;
                 }
                 std::this_thread::yield();
             }
@@ -327,9 +327,9 @@ TEST_F(HelgrindRaceTest, MixedWorkloadNoRaces) {
                     }
                     case 1: {
                         // Snapshot
-                        TransactionManager::Snapshot snapshot;
-                        if (txn_mgr_->getSnapshot(snapshot, &ctx) == Status::OK) {
-                            snapshot.cleanup();
+                        // MGA: Snapshot removed - uint64_t current_xid = txn_mgr_->getCurrentXid();
+                        if (// MGA: getSnapshot removed == Status::OK) {
+                            // MGA: snapshot.cleanup removed;
                             total_ops.fetch_add(1);
                         }
                         break;

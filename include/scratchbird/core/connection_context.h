@@ -105,24 +105,24 @@ namespace scratchbird::core
             return xact_start_time_;
         }
 
-        // Get current snapshot (for SNAPSHOT isolation)
-        const TransactionManager::Snapshot *getSnapshot() const
+        // FIREBIRD MGA: Transaction visibility uses current XID, not snapshots
+        // For SNAPSHOT isolation, we simply use the XID at transaction start
+        // For READ_COMMITTED, we use the XID at statement start
+        // No snapshot structures needed - TIP provides all visibility info
+
+        // Statement XID support (for READ_COMMITTED_READ_CONSISTENCY)
+        // Get current statement XID (returns current_xid if no statement-level XID)
+        uint64_t getStatementXID() const
         {
-            return snapshot_.get();
+            return statement_xid_ != 0 ? statement_xid_ : current_xid_;
         }
 
-        // Statement snapshot support (for READ_COMMITTED_READ_CONSISTENCY)
-        // Get current statement snapshot (may be null)
-        const TransactionManager::Snapshot *getStatementSnapshot() const
-        {
-            return statement_snapshot_.get();
-        }
+        // Create a new statement XID (for READ_COMMITTED_READ_CONSISTENCY)
+        // This captures the "current" XID for the statement duration
+        void createStatementXID();
 
-        // Create a new statement snapshot (for READ_COMMITTED_READ_CONSISTENCY)
-        Status createStatementSnapshot(ErrorContext *ctx = nullptr);
-
-        // Clear the statement snapshot
-        void clearStatementSnapshot();
+        // Clear the statement XID
+        void clearStatementXID();
 
         // Check if termination has been requested (for long transaction monitor)
         // Returns Status::IO_ERROR if termination requested, Status::OK otherwise
@@ -177,12 +177,13 @@ namespace scratchbird::core
         IsolationLevel next_isolation_level_; // Staged isolation level
         bool next_is_read_only_;              // Staged read-only flag
 
-        // Snapshot for SNAPSHOT isolation
-        std::unique_ptr<TransactionManager::Snapshot> snapshot_;
+        // FIREBIRD MGA: No snapshot structures needed
+        // Transaction visibility is determined by current_xid_ and TIP lookups
 
-        // Statement snapshot for READ_COMMITTED_READ_CONSISTENCY
-        // Created at statement start, cleared at statement end
-        std::unique_ptr<TransactionManager::Snapshot> statement_snapshot_;
+        // Statement XID for READ_COMMITTED_READ_CONSISTENCY
+        // Captures XID at statement start for consistent reads within statement
+        // 0 = no statement-level XID (use transaction XID)
+        uint64_t statement_xid_;
 
         // Table reservations for SNAPSHOT TABLE STABILITY
         std::vector<TableReservation> table_reservations_;
@@ -195,8 +196,8 @@ namespace scratchbird::core
             uint64_t xid;                        // Transaction ID at savepoint creation
             uint32_t command_id;                 // Command ID at savepoint (for future use)
 
-            // Snapshot at savepoint creation (for potential restore)
-            std::unique_ptr<TransactionManager::Snapshot> snapshot;
+            // FIREBIRD MGA: No snapshot needed - use XID for visibility
+            // XID field above is sufficient for rollback
 
             // Track tuples modified after this savepoint
             // For rollback, we need to mark inserted tuples as aborted

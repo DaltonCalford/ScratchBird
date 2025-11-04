@@ -8,6 +8,7 @@
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/core/garbage_collector.h" // Phase 4: TOAST GC
 #include <chrono>
+#include "scratchbird/core/logger.h"
 #include <cstring>
 #include <unordered_map>
 #include <unordered_set> // Phase 4: TOAST GC

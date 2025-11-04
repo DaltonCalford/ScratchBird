@@ -545,7 +545,7 @@ DISABLED_TEST_F(BrinMVCCTest, RangeUpdateWithMinMaxChanges)
 
     // Query that should match updated range [1000, 5000]
     Snapshot snapshot;
-    status = txn_mgr_->getSnapshot(snapshot, &ctx);
+    status = // MGA: getSnapshot removed;
     ASSERT_EQ(status, Status::OK);
     std::vector<uint8_t> min_val = encodeUint64(2000);
     std::vector<uint8_t> max_val = encodeUint64(4000);

@@ -5,6 +5,7 @@
  */
 
 #include "scratchbird/core/utf8_utils.h"
+#include "scratchbird/core/error_context.h"
 #include <algorithm>
 
 namespace scratchbird::core
@@ -405,7 +406,7 @@ namespace scratchbird::core
             // Invalid UTF-8
             if (ctx)
             {
-                ctx->status = Status::INVALID_ARGUMENT;
+                ctx->code = Status::INVALID_ARGUMENT;
                 ctx->message = "Invalid UTF-8 encoding in identifier";
             }
             return Status::INVALID_ARGUMENT;
@@ -415,7 +416,7 @@ namespace scratchbird::core
         {
             if (ctx)
             {
-                ctx->status = Status::INVALID_ARGUMENT;
+                ctx->code = Status::INVALID_ARGUMENT;
                 ctx->message = "Identifier exceeds maximum length: " +
                               std::to_string(char_count) + " characters (maximum " +
                               std::to_string(max_chars) + ")";
@@ -428,7 +429,7 @@ namespace scratchbird::core
         {
             if (ctx)
             {
-                ctx->status = Status::INVALID_ARGUMENT;
+                ctx->code = Status::INVALID_ARGUMENT;
                 ctx->message = "Identifier exceeds storage capacity: " +
                               std::to_string(str.size()) + " bytes (maximum " +
                               std::to_string(max_bytes - 1) + " bytes + null terminator)";

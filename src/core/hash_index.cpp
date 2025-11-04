@@ -3,6 +3,7 @@
 #include "scratchbird/core/buffer_pool.h"
 #include "scratchbird/core/page_manager.h"
 #include "scratchbird/core/hash_functions.h"
+#include "scratchbird/core/transaction_manager.h"  // For isVersionVisible()
 #include "scratchbird/core/logger.h"
 #include <cstring>
 #include <algorithm>
