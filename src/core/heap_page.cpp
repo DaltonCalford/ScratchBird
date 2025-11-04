@@ -1049,29 +1049,29 @@ namespace scratchbird::core
         return Status::OK;
     }
 
-    auto HeapPage::findVisibleVersion(uint16_t item_id, uint64_t snapshot_xid,
+    auto HeapPage::findVisibleVersion(uint16_t item_id, uint64_t current_xid,
                                       const uint8_t **data_out, uint32_t *size_out,
-                                      TransactionManager::Snapshot *snapshot, ErrorContext *ctx)
+                                      ErrorContext *ctx)
         -> Status
     {
         // ====================================================================
         // FIREBIRD MGA BACK VERSION TRAVERSAL (Newest-to-Oldest)
         // ====================================================================
         // This function traverses BACKWARD through version chains to find
-        // the visible version for a given snapshot.
+        // the visible version for the current transaction.
         //
         // Key principles:
         // 1. Start at PRIMARY location (item_id) - newest version
         // 2. Follow back_version_tid pointers BACKWARD (N2O traversal)
         // 3. Back versions stored by OFFSET (not item_id)
         // 4. Only same-page back versions supported (Alpha limitation)
+        // 5. Uses TIP-based visibility (Firebird MGA), NOT snapshots
         // ====================================================================
 
-        // Snapshot is required for Option 3: MVCC Snapshot Pin Management
-        if (snapshot == nullptr)
+        // Validate inputs
+        if (data_out == nullptr)
         {
-            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
-                              "findVisibleVersion requires a snapshot for MVCC pin management");
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "data_out cannot be null");
             return Status::INVALID_ARGUMENT;
         }
 
@@ -1081,7 +1081,7 @@ namespace scratchbird::core
         bool is_back_version = false;  // Track if we're at back version (offset-based)
         uint32_t current_offset = 0;  // For back versions accessed by offset
 
-        // Current page pointers
+        // Current page pointers (Alpha: only same-page back versions supported)
         uint8_t *current_page_data = page_data_;
         uint32_t current_page_size = page_size_;
 
@@ -1286,15 +1286,15 @@ namespace scratchbird::core
                          (tuple_hdr->infomask & TupleHeader::HEAP_XMAX_COMMITTED))
                 {
                     // Deleted by a committed transaction
-                    // Check if deleted before our snapshot
-                    if (effective_xmax <= snapshot_xid)
+                    // Check if deleted before our transaction
+                    if (effective_xmax <= current_xid)
                     {
                         visible = false;
                         hint_bits_definitive = true;
                     }
                     else
                     {
-                        // Deleted after our snapshot - still visible
+                        // Deleted after our transaction started - still visible
                         visible = true;
                         hint_bits_definitive = true;
                     }
@@ -1316,11 +1316,11 @@ namespace scratchbird::core
             // Slow path: Need to check transaction state if hint bits aren't definitive
             if (!hint_bits_definitive)
             {
-                // Check visibility of this version
-                // Simple visibility: xmin <= snapshot_xid < xmax
-                if (tuple_hdr->xmin <= snapshot_xid)
+                // Check visibility of this version using Firebird MGA TIP-based visibility
+                // Simple visibility: xmin <= current_xid < xmax
+                if (tuple_hdr->xmin <= current_xid)
                 {
-                    if (effective_xmax == 0 || effective_xmax > snapshot_xid)
+                    if (effective_xmax == 0 || effective_xmax > current_xid)
                     {
                         visible = true;
                     }
@@ -1334,7 +1334,7 @@ namespace scratchbird::core
                     ErrorContext hint_ctx; // Use separate error context for hint bit operations
 
                     // Set xmin hint bits
-                    if (tuple_hdr->xmin <= snapshot_xid)
+                    if (tuple_hdr->xmin <= current_xid)
                     {
                         TransactionState xmin_state;
                         if (txn_mgr->getTransactionState(tuple_hdr->xmin, xmin_state, &hint_ctx) ==
@@ -1352,7 +1352,7 @@ namespace scratchbird::core
                     }
 
                     // Set xmax hint bits
-                    if (effective_xmax != 0 && effective_xmax <= snapshot_xid)
+                    if (effective_xmax != 0 && effective_xmax <= current_xid)
                     {
                         TransactionState xmax_state;
                         if (txn_mgr->getTransactionState(effective_xmax, xmax_state, &hint_ctx) ==
@@ -1370,13 +1370,12 @@ namespace scratchbird::core
                     }
 
                     // NOTE: Hint bits are written opportunistically during visibility checks
-                    // The page is modified in-memory, but we don't explicitly mark it dirty
-                    // since we don't control the pin/unpin cycle (snapshot owns the pins).
+                    // The page is modified in-memory, but we don't explicitly mark it dirty.
                     // Hint bits will be persisted if:
                     // 1. The page is modified by another operation (update/delete) before eviction
                     // 2. The page is explicitly flushed
                     // Lost hint bits are acceptable - they're a performance optimization that
-                    // can be recreated on next visibility check. This matches PostgreSQL behavior.
+                    // can be recreated on next visibility check.
                 }
             }
 
@@ -1396,15 +1395,14 @@ namespace scratchbird::core
                     *size_out = length;
                 }
 
-                // Safe to return pointer because snapshot owns all cross-page pins
-                // Pins will be cleaned up when transaction commits/rollbacks
+                // Safe to return pointer - page is pinned by caller
                 return Status::OK;
             }
 
             // ====================================================================
             // NOT VISIBLE: Follow BACK version chain (N2O traversal)
             // ====================================================================
-            // This version is not visible to our snapshot.
+            // This version is not visible to our transaction.
             // Follow back version pointer BACKWARD to older version.
             if (tuple_hdr->hasBackVersion())
             {
@@ -1421,76 +1419,27 @@ namespace scratchbird::core
                 // Check if we need to follow version chain to another page
                 if (back_page_num != static_cast<uint64_t>(current_page_id))
                 {
-                    // CROSS-PAGE BACK VERSION CHAIN
-                    // Phase 4: Full cross-page support (CRITICAL PATH - NOW IMPLEMENTED)
-                    if (buffer_pool == nullptr)
-                    {
-                        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
-                                          "Cross-page version chain requires Database/BufferPool");
-                        return Status::INVALID_ARGUMENT;
-                    }
-
-                    // Pin the back version page
-                    void *back_page_buffer = nullptr;
-                    Status status = buffer_pool->pinPage(back_page_num, &back_page_buffer, ctx);
-                    if (status != Status::OK)
-                    {
-                        SET_ERROR_CONTEXT(ctx, status, "Failed to pin back version page");
-                        return status;
-                    }
-
-                    // Register pin with snapshot (Option 3: MVCC Snapshot)
-                    // Snapshot owns the pin and will clean up on transaction commit/rollback
-                    // EXCEPTION SAFETY (ERROR-CRITICAL-2 Priority 1): Protect snapshot pin tracking
-                    // If push_back fails, page remains pinned but not tracked = BUFFER POOL LEAK!
-                    // HIGH-4 FIX: Protect pinned_pages vector with mutex to prevent concurrent modification
-                    try
-                    {
-                        std::lock_guard<std::mutex> lock(snapshot->pinned_pages_mutex_);
-                        snapshot->pinned_pages.push_back(back_page_num);
-                    }
-                    catch (const std::bad_alloc &)
-                    {
-                        // CRITICAL: Failed to track pinned page - must unpin to prevent leak
-                        buffer_pool->unpinPage(back_page_num, false, ctx);
-                        LOG_ERROR(STORAGE,
-                                  "OOM tracking snapshot pin for page %u - unpinned to prevent leak",
-                                  back_page_num);
-                        SET_ERROR_CONTEXT(ctx, Status::OOM,
-                                          "Out of memory tracking cross-page version pins");
-                        return Status::OOM;
-                    }
-                    if (snapshot->buffer_pool == nullptr)
-                    {
-                        snapshot->buffer_pool = buffer_pool;
-                    }
-
-                    // Switch to the back version page
-                    current_page_data = static_cast<uint8_t *>(back_page_buffer);
-                    current_page_size = page_size_; // Assume same page size
-                    current_page_id = back_page_num;
-                    current_offset = back_offset;
-                    is_back_version = true; // Now accessing by offset
+                    // CROSS-PAGE BACK VERSION CHAIN - Not supported in Alpha
+                    SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED,
+                                      "Cross-page back versions not yet supported (Alpha limitation)");
+                    return Status::NOT_IMPLEMENTED;
                 }
-                else
-                {
-                    // Same-page back version - update offset and set flag
-                    current_offset = back_offset;
-                    is_back_version = true; // Switch to offset-based access
-                }
+
+                // Same-page back version - update offset and set flag
+                current_offset = back_offset;
+                is_back_version = true; // Switch to offset-based access
 
                 chain_length++;
             }
             else
             {
                 // End of chain, no visible version found
-                // Snapshot owns all cross-page pins - it will clean up
                 SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "No visible version in chain");
                 return Status::NOT_FOUND;
             }
         }
 
-        // Chain too long - snapshot will clean up pins
+        // Chain too long - possible cycle or corruption
         SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "Version chain too long or cyclic");
         return Status::PAGE_CORRUPT;
     }

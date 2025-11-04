@@ -204,9 +204,9 @@ TEST_F(MultiThreadStressTest, HundredFiftyThreadsMixedWorkload) {
                     }
                     case 2: {
                         // Snapshot operation
-                        TransactionManager::Snapshot snapshot;
-                        if (txn_mgr_->getSnapshot(snapshot, &ctx) == Status::OK) {
-                            snapshot.cleanup();
+                        // MGA: Snapshot removed - uint64_t current_xid = txn_mgr_->getCurrentXid();
+                        if (// MGA: getSnapshot removed == Status::OK) {
+                            // MGA: snapshot.cleanup removed;
                             successful_ops.fetch_add(1);
                         } else {
                             errors.fetch_add(1);

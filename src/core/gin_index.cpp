@@ -411,7 +411,7 @@ namespace scratchbird
 
                         // PHASE 1 TASK 1.4: Check visibility using passed-in snapshot or transaction state
                         // Pending list entries have xmin field for MVCC visibility
-                        bool is_visible = isTransactionVisible(entry.xmin, snapshot, ctx);
+                        bool is_visible = isTransactionVisible(entry.xmin, current_xid, ctx);
 
                         // If visible and key matches, add TID to results
                         if (is_visible)
@@ -2358,7 +2358,7 @@ namespace scratchbird
             // If optimization is disabled, use standard findAll
             if (!options.optimize_key_order)
             {
-                return findAll(keys, nullptr, ctx);
+                return findAll(keys, 0, ctx);
             }
 
             // Estimate cardinality for each key
@@ -2390,7 +2390,7 @@ namespace scratchbird
 
             // Use standard findAll with optimized key order
             // PHASE 1 TASK 1.1.5: Pass nullptr for snapshot (Phase 1 Task 1.2 will pass actual snapshot)
-            return findAll(sorted_keys, nullptr, ctx);
+            return findAll(sorted_keys, 0, ctx);
         }
 
         // Optimized multi-key OR query
@@ -2403,7 +2403,7 @@ namespace scratchbird
             // For OR queries, key order doesn't significantly affect performance
             // So we just delegate to standard findAny
             // Future optimization: parallel execution
-            return findAny(keys, nullptr, ctx);
+            return findAny(keys, 0, ctx);
         }
 
         // PostgreSQL GIN operator support
@@ -2420,11 +2420,11 @@ namespace scratchbird
             {
             case GinOperator::CONTAINS: // @> - left contains right
                 // All right keys must be present in documents
-                return findAll(right_keys, nullptr, ctx);
+                return findAll(right_keys, 0, ctx);
 
             case GinOperator::CONTAINED_BY: // <@ - left contained by right
                 // At least one left key must be present
-                return findAny(left_keys, nullptr, ctx);
+                return findAny(left_keys, 0, ctx);
 
             case GinOperator::OVERLAP: // && - has common elements
                 // Any key from either set
@@ -2432,7 +2432,7 @@ namespace scratchbird
                     std::vector<std::vector<uint8_t>> all_keys;
                     all_keys.insert(all_keys.end(), left_keys.begin(), left_keys.end());
                     all_keys.insert(all_keys.end(), right_keys.begin(), right_keys.end());
-                    return findAny(all_keys, nullptr, ctx);
+                    return findAny(all_keys, 0, ctx);
                 }
 
             case GinOperator::EQUALS: // = - exact match
@@ -2441,24 +2441,24 @@ namespace scratchbird
                     std::vector<std::vector<uint8_t>> all_keys;
                     all_keys.insert(all_keys.end(), left_keys.begin(), left_keys.end());
                     all_keys.insert(all_keys.end(), right_keys.begin(), right_keys.end());
-                    return findAll(all_keys, nullptr, ctx);
+                    return findAll(all_keys, 0, ctx);
                 }
 
             case GinOperator::EXISTS: // ? - key exists
                 // At least one left key exists
-                return findAny(left_keys, nullptr, ctx);
+                return findAny(left_keys, 0, ctx);
 
             case GinOperator::EXISTS_ANY: // ?| - any key exists
                 // At least one key from the set exists
-                return findAny(left_keys, nullptr, ctx);
+                return findAny(left_keys, 0, ctx);
 
             case GinOperator::EXISTS_ALL: // ?& - all keys exist
                 // All keys must exist
-                return findAll(left_keys, nullptr, ctx);
+                return findAll(left_keys, 0, ctx);
 
             case GinOperator::TEXT_SEARCH: // @@ - full text search
                 // Treat as ALL operation (all terms must be present)
-                return findAll(left_keys, nullptr, ctx);
+                return findAll(left_keys, 0, ctx);
 
             default:
                 SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Unknown GIN operator");
@@ -2579,14 +2579,108 @@ namespace scratchbird
                 return pat_idx == pattern_str.size() && key_idx == key_str.size();
             };
 
-            // Scan entry tree leaves for matching keys
-            // For simplicity, we'll just use find() to test, but a real implementation
-            // would optimize this with tree traversal
-            // TODO: Optimize by traversing the entry tree and collecting matching keys
+            // Scan entry tree leaves for matching keys using full tree traversal
 
-            // For now, return empty (needs full tree scan implementation)
-            SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED,
-                              "Wildcard queries require full index scan - not yet implemented");
+            // Helper lambda to scan entry tree leaf and collect matching keys
+            std::function<void(uint32_t)> scanLeafForWildcard = [&](uint32_t leaf_page)
+            {
+                uint8_t *leaf_data = nullptr;
+                Status scan_status = buffer_pool_->pinPage(leaf_page, (void **)&leaf_data, ctx);
+                if (scan_status != Status::OK)
+                {
+                    return;
+                }
+
+                auto *leaf = reinterpret_cast<SBGinEntryTreeLeaf *>(leaf_data);
+                uint16_t entry_count = leaf->get_entry_count;
+
+                // Scan all entries in this leaf
+                for (uint16_t i = 0; i < entry_count && i < MAX_ENTRY_TREE_LEAF_ENTRIES; i++)
+                {
+                    uint16_t offset = leaf->get_offsets[i];
+                    if (offset == 0 || offset >= db_->page_size())
+                        continue;
+
+                    auto *entry = reinterpret_cast<GinEntryTreeLeafEntry *>(leaf_data + offset);
+
+                    // Extract key
+                    std::vector<uint8_t> key(entry->key_data, entry->key_data + entry->key_len);
+
+                    // Check if key matches pattern
+                    if (matches_pattern(key))
+                    {
+                        matching_keys.push_back(key);
+                    }
+                }
+
+                buffer_pool_->unpinPage(leaf_page, false, ctx);
+            };
+
+            // Helper lambda to traverse entry tree (depth-first)
+            std::function<void(uint32_t)> traverseTree = [&](uint32_t page_num)
+            {
+                uint8_t *page_data = nullptr;
+                Status scan_status = buffer_pool_->pinPage(page_num, (void **)&page_data, ctx);
+                if (scan_status != Status::OK)
+                {
+                    return;
+                }
+
+                // Check if leaf or internal
+                auto *leaf = reinterpret_cast<SBGinEntryTreeLeaf *>(page_data);
+                bool is_leaf = (leaf->get_is_leaf != 0);
+
+                if (is_leaf)
+                {
+                    buffer_pool_->unpinPage(page_num, false, ctx);
+                    scanLeafForWildcard(page_num);
+                }
+                else
+                {
+                    // Internal node - recurse to children
+                    auto *internal = reinterpret_cast<SBGinEntryTreeInternal *>(page_data);
+                    uint16_t entry_count = internal->get_entry_count;
+
+                    // Collect child pages before unpinning
+                    std::vector<uint32_t> children;
+                    for (uint16_t i = 0; i < entry_count && i < MAX_ENTRY_TREE_INTERNAL_ENTRIES; i++)
+                    {
+                        uint16_t offset = internal->get_offsets[i];
+                        if (offset == 0 || offset >= db_->page_size())
+                            continue;
+
+                        auto *entry = reinterpret_cast<GinEntryTreeInternalEntry *>(page_data + offset);
+                        if (entry->child_page != 0)
+                        {
+                            children.push_back(entry->child_page);
+                        }
+                    }
+
+                    // Rightmost child
+                    if (internal->get_rightmost_child != 0)
+                    {
+                        children.push_back(internal->get_rightmost_child);
+                    }
+
+                    buffer_pool_->unpinPage(page_num, false, ctx);
+
+                    // Recurse to children
+                    for (uint32_t child : children)
+                    {
+                        traverseTree(child);
+                    }
+                }
+            };
+
+            // Start traversal from root
+            traverseTree(root_page);
+
+            // Now find TIDs for all matching keys (OR operation)
+            if (!matching_keys.empty())
+            {
+                return findAny(matching_keys, 0, ctx);
+            }
+
             return result;
         }
 
@@ -2662,11 +2756,112 @@ namespace scratchbird
                 return result;
             }
 
-            // Collect all keys within edit distance
-            // This requires scanning the entry tree
-            // For simplicity, marking as not implemented - needs full tree scan
-            SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED,
-                              "Fuzzy matching requires full index scan - not yet implemented");
+            // Collect all keys within edit distance by scanning the entry tree
+            std::vector<std::vector<uint8_t>> matching_keys;
+
+            // Helper lambda to scan entry tree leaf and collect keys within edit distance
+            std::function<void(uint32_t)> scanLeafForFuzzy = [&](uint32_t leaf_page)
+            {
+                uint8_t *leaf_data = nullptr;
+                Status scan_status = buffer_pool_->pinPage(leaf_page, (void **)&leaf_data, ctx);
+                if (scan_status != Status::OK)
+                {
+                    return;
+                }
+
+                auto *leaf = reinterpret_cast<SBGinEntryTreeLeaf *>(leaf_data);
+                uint16_t entry_count = leaf->get_entry_count;
+
+                // Scan all entries in this leaf
+                for (uint16_t i = 0; i < entry_count && i < MAX_ENTRY_TREE_LEAF_ENTRIES; i++)
+                {
+                    uint16_t offset = leaf->get_offsets[i];
+                    if (offset == 0 || offset >= db_->page_size())
+                        continue;
+
+                    auto *entry = reinterpret_cast<GinEntryTreeLeafEntry *>(leaf_data + offset);
+
+                    // Extract key
+                    std::vector<uint8_t> key(entry->key_data, entry->key_data + entry->key_len);
+
+                    // Calculate edit distance
+                    uint32_t distance = levenshtein_distance(search_key, key);
+
+                    // Check if within threshold
+                    if (distance <= max_edit_distance)
+                    {
+                        matching_keys.push_back(key);
+                    }
+                }
+
+                buffer_pool_->unpinPage(leaf_page, false, ctx);
+            };
+
+            // Helper lambda to traverse entry tree (depth-first)
+            std::function<void(uint32_t)> traverseTree = [&](uint32_t page_num)
+            {
+                uint8_t *page_data = nullptr;
+                Status scan_status = buffer_pool_->pinPage(page_num, (void **)&page_data, ctx);
+                if (scan_status != Status::OK)
+                {
+                    return;
+                }
+
+                // Check if leaf or internal
+                auto *leaf = reinterpret_cast<SBGinEntryTreeLeaf *>(page_data);
+                bool is_leaf = (leaf->get_is_leaf != 0);
+
+                if (is_leaf)
+                {
+                    buffer_pool_->unpinPage(page_num, false, ctx);
+                    scanLeafForFuzzy(page_num);
+                }
+                else
+                {
+                    // Internal node - recurse to children
+                    auto *internal = reinterpret_cast<SBGinEntryTreeInternal *>(page_data);
+                    uint16_t entry_count = internal->get_entry_count;
+
+                    // Collect child pages before unpinning
+                    std::vector<uint32_t> children;
+                    for (uint16_t i = 0; i < entry_count && i < MAX_ENTRY_TREE_INTERNAL_ENTRIES; i++)
+                    {
+                        uint16_t offset = internal->get_offsets[i];
+                        if (offset == 0 || offset >= db_->page_size())
+                            continue;
+
+                        auto *entry = reinterpret_cast<GinEntryTreeInternalEntry *>(page_data + offset);
+                        if (entry->child_page != 0)
+                        {
+                            children.push_back(entry->child_page);
+                        }
+                    }
+
+                    // Rightmost child
+                    if (internal->get_rightmost_child != 0)
+                    {
+                        children.push_back(internal->get_rightmost_child);
+                    }
+
+                    buffer_pool_->unpinPage(page_num, false, ctx);
+
+                    // Recurse to children
+                    for (uint32_t child : children)
+                    {
+                        traverseTree(child);
+                    }
+                }
+            };
+
+            // Start traversal from root
+            traverseTree(root_page);
+
+            // Now find TIDs for all matching keys (OR operation)
+            if (!matching_keys.empty())
+            {
+                return findAny(matching_keys, 0, ctx);
+            }
+
             return result;
         }
 
@@ -2846,7 +3041,7 @@ namespace scratchbird
                 // Use standard implementation for single thread or single key
                 // PHASE 1 TASK 1.1.5: Pass nullptr for snapshot (Phase 1 Task 1.2 will pass actual snapshot)
                 // PHASE 1.5: findAll returns TID, convert to legacy format for internal use
-                std::vector<TID> tid_results = findAll(keys, nullptr, ctx);
+                std::vector<TID> tid_results = findAll(keys, 0, ctx);
                 for (const TID &tid : tid_results)
                 {
                     uint64_t legacy_tid = convertTIDtoLegacy(tid);
@@ -2937,7 +3132,7 @@ namespace scratchbird
             if (max_threads <= 1 || keys.size() <= 1)
             {
                 // PHASE 1.5: findAny returns TID, convert to legacy format for internal use
-                std::vector<TID> tid_results = findAny(keys, nullptr, ctx);
+                std::vector<TID> tid_results = findAny(keys, 0, ctx);
                 for (const TID &tid : tid_results)
                 {
                     uint64_t legacy_tid = convertTIDtoLegacy(tid);
@@ -3027,7 +3222,7 @@ namespace scratchbird
 
             // Union all matching keys' TID lists
             // PHASE 1.5: findAny returns TID, convert to legacy format for internal use
-            std::vector<TID> tid_results = findAny(matching_keys, nullptr, ctx);
+            std::vector<TID> tid_results = findAny(matching_keys, 0, ctx);
             for (const TID &tid : tid_results)
             {
                 uint64_t legacy_tid = convertTIDtoLegacy(tid);
@@ -3284,7 +3479,7 @@ namespace scratchbird
 
             // Union all matching keys
             // PHASE 1.5: findAny returns TID, convert to legacy format for internal use
-            std::vector<TID> tid_results = findAny(matching_keys, nullptr, ctx);
+            std::vector<TID> tid_results = findAny(matching_keys, 0, ctx);
             for (const TID &tid : tid_results)
             {
                 uint64_t legacy_tid = convertTIDtoLegacy(tid);
@@ -3369,15 +3564,29 @@ namespace scratchbird
                 return result;
             }
 
-            // This is a simplified implementation
+            // This is a simplified implementation that delegates to findFuzzy()
             // A full implementation would:
-            // 1. Build a BK-tree from indexed keys
+            // 1. Build a BK-tree from indexed keys for faster distance calculations
             // 2. Use BK-tree for efficient distance-bounded search
-            // 3. Cache the BK-tree for repeated queries
+            // 3. Cache the BK-tree structure for repeated queries
+            //
+            // For now, we use the full tree scan implementation in findFuzzy()
+            // which provides correct results but is not optimized with BK-tree
 
-            // For now, mark as not fully optimized
-            SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED,
-                              "Full BK-tree optimization not yet implemented - use findFuzzy() for basic support");
+            // Call the complete findFuzzy() implementation (returns TID structs)
+            std::vector<TID> tid_results = findFuzzy(key_data, key_len, max_edit_distance, ctx);
+
+            // Convert TID structs back to legacy uint64_t format for Phase 6 API
+            result.reserve(tid_results.size());
+            for (const TID &tid : tid_results)
+            {
+                uint64_t legacy = convertTIDtoLegacy(tid);
+                if (legacy != 0) // Skip custom tablespace TIDs
+                {
+                    result.push_back(legacy);
+                }
+            }
+
             return result;
         }
 

@@ -346,12 +346,9 @@ namespace scratchbird
                 if (conn_ctx && conn_ctx->getIsolationLevel() ==
                                     core::IsolationLevel::READ_COMMITTED_READ_CONSISTENCY)
                 {
-                    core::ErrorContext err_ctx;
-                    core::Status status = conn_ctx->createStatementSnapshot(&err_ctx);
-                    if (status == core::Status::OK)
-                    {
-                        created_stmt_snapshot = true;
-                    }
+                    // Create statement XID for consistent reads within this statement
+                    conn_ctx->createStatementXID();
+                    created_stmt_snapshot = true;
                     // Non-fatal if snapshot creation fails - fall back to READ COMMITTED semantics
                 }
 
@@ -910,7 +907,7 @@ namespace scratchbird
                 // Clear statement snapshot after successful execution
                 if (created_stmt_snapshot && conn_ctx)
                 {
-                    conn_ctx->clearStatementSnapshot();
+                    conn_ctx->clearStatementXID();
                 }
 
                 return result;
@@ -920,7 +917,7 @@ namespace scratchbird
                 // Clear statement snapshot on error
                 if (created_stmt_snapshot && conn_ctx)
                 {
-                    conn_ctx->clearStatementSnapshot();
+                    conn_ctx->clearStatementXID();
                 }
                 return ExecutionResult(std::string("Execution error: ") + e.what());
             }

@@ -3,6 +3,7 @@
 #include "scratchbird/core/status.h"
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/core/tid.h"
+#include "scratchbird/core/storage_engine.h"  // For ID type (UuidV7Bytes)
 #include <cstdint>
 #include <atomic>
 #include <thread>
@@ -17,7 +18,6 @@ namespace scratchbird::core
     // Forward declarations
     class Database;
     class TransactionManager;
-    class StorageEngine;
 
     // Garbage collection policy
     enum class GCPolicy

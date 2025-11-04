@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <vector>
 #include <memory>
+#include <random>
 
 namespace scratchbird
 {
@@ -422,6 +423,53 @@ namespace scratchbird
              */
             Status prune_connections(uint64_t node_tid, uint16_t layer,
                                      ErrorContext *ctx);
+
+            /**
+             * Create a new node in the graph
+             */
+            Status create_node(const VectorValue &vector,
+                              uint64_t tuple_id,
+                              uint16_t layer,
+                              const std::vector<uint64_t> &neighbors,
+                              uint64_t current_xid,
+                              ErrorContext *ctx);
+
+            /**
+             * Find entry point (node with highest layer)
+             */
+            uint64_t find_entry_point(ErrorContext *ctx) const;
+
+            /**
+             * Get maximum layer in the index
+             */
+            uint16_t get_max_layer() const;
+
+            /**
+             * Calculate the size of a node in bytes
+             */
+            size_t calculate_node_size(const SBHnswNode *node) const;
+            size_t calculate_node_size(uint16_t num_neighbors, uint16_t vector_len) const;
+
+            /**
+             * Get vector data from a node
+             */
+            Status get_node_vector(uint64_t tuple_id,
+                                   VectorValue *vector_out,
+                                   ErrorContext *ctx);
+
+            /**
+             * Reorganize page when updating a node's neighbors
+             * This handles variable-sized nodes and preserves MGA fields
+             */
+            Status reorganize_page_for_node_update(
+                uint64_t page_num,
+                uint64_t target_tid,
+                uint16_t new_num_neighbors,
+                const std::vector<uint64_t> &new_neighbors,
+                ErrorContext *ctx);
+
+            // Random number generator for layer selection
+            mutable std::mt19937 rng_;
 
             // Probability decay for layer selection (default: 1/ln(2))
             static constexpr double ML = 1.0 / 0.693147180559945309417;

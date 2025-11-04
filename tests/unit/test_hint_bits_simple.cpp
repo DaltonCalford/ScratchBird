@@ -161,7 +161,7 @@ int main()
     std::cout << "✓ New transaction started: xid=" << new_xid << std::endl;
 
     // Get snapshot for visibility check
-    TransactionManager::Snapshot snapshot;
+    // MGA: Snapshot removed - uint64_t current_xid = txn_mgr_->getCurrentXid();
     s = db.transaction_manager()->getSnapshot(snapshot, &err_ctx);
     if (s != Status::OK)
     {
@@ -221,7 +221,7 @@ int main()
     std::cout << "✓ Second visibility check successful (fast path executed)" << std::endl;
 
     // Cleanup
-    snapshot.cleanup();
+    // MGA: snapshot.cleanup removed;
     db.buffer_pool()->unpinPage(page_id, true, &err_ctx);
     db.transaction_manager()->commitTransaction(proc_id, new_xid, &err_ctx);
     ProcArrayManager::unregisterBackend(proc_id, &err_ctx);

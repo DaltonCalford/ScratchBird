@@ -24,7 +24,7 @@ namespace scratchbird::core
           lock_timeout_seconds_(config::DEFAULT_LOCK_TIMEOUT_SECONDS) // Default: 60 second timeout
           ,
           settings_staged_(false), next_isolation_level_(IsolationLevel::SNAPSHOT),
-          next_is_read_only_(false), snapshot_(nullptr)
+          next_is_read_only_(false), statement_xid_(0)
     {
         assert(db != nullptr && "Database must not be null");
         assert(txn_manager_ != nullptr && "TransactionManager must not be null");
@@ -54,14 +54,14 @@ namespace scratchbird::core
           lock_timeout_seconds_(other.lock_timeout_seconds_),
           settings_staged_(other.settings_staged_),
           next_isolation_level_(other.next_isolation_level_),
-          next_is_read_only_(other.next_is_read_only_), snapshot_(std::move(other.snapshot_)),
-          statement_snapshot_(std::move(other.statement_snapshot_)),
+          next_is_read_only_(other.next_is_read_only_), statement_xid_(other.statement_xid_),
           table_reservations_(std::move(other.table_reservations_))
     {
         // Clear other's state
         other.db_ = nullptr;
         other.txn_manager_ = nullptr;
         other.current_xid_ = 0;
+        other.statement_xid_ = 0;
     }
 
     ConnectionContext &ConnectionContext::operator=(ConnectionContext &&other) noexcept
@@ -88,14 +88,14 @@ namespace scratchbird::core
             settings_staged_ = other.settings_staged_;
             next_isolation_level_ = other.next_isolation_level_;
             next_is_read_only_ = other.next_is_read_only_;
-            snapshot_ = std::move(other.snapshot_);
-            statement_snapshot_ = std::move(other.statement_snapshot_);
+            statement_xid_ = other.statement_xid_;
             table_reservations_ = std::move(other.table_reservations_);
 
             // Clear other's state
             other.db_ = nullptr;
             other.txn_manager_ = nullptr;
             other.current_xid_ = 0;
+            other.statement_xid_ = 0;
         }
         return *this;
     }
@@ -482,9 +482,8 @@ namespace scratchbird::core
             }
         }
 
-        // Clear snapshots if any
-        snapshot_.reset();
-        statement_snapshot_.reset();
+        // Clear statement XID (FIREBIRD MGA: No snapshots)
+        statement_xid_ = 0;
 
         // Clear savepoint stack (transaction ending clears all savepoints)
         savepoint_stack_.clear();
@@ -520,49 +519,34 @@ namespace scratchbird::core
         }
     }
 
+    // FIREBIRD MGA: No snapshot creation needed
+    // Transaction visibility is determined by current_xid and TIP lookups
+    // This function is kept for API compatibility but does nothing
     Status ConnectionContext::createSnapshot(ErrorContext *ctx)
     {
-        auto snapshot = std::make_unique<TransactionManager::Snapshot>();
-
-        Status s = txn_manager_->getSnapshot(*snapshot, ctx);
-        if (s != Status::OK)
-        {
-            return s;
-        }
-
-        snapshot_ = std::move(snapshot);
-
-        LOG_DEBUG(TRANSACTION, "Created snapshot: xmin=%lu, xmax=%lu, active_xids=%zu",
-                  snapshot_->xmin, snapshot_->xmax, snapshot_->active_xids.size());
-
+        // For SNAPSHOT isolation, current_xid_ is already set at transaction start
+        // No additional snapshot structure needed
+        LOG_DEBUG(TRANSACTION, "Transaction visibility using XID %lu (Firebird MGA)", current_xid_);
         return Status::OK;
     }
 
-    Status ConnectionContext::createStatementSnapshot(ErrorContext *ctx)
+    void ConnectionContext::createStatementXID()
     {
-        auto snapshot = std::make_unique<TransactionManager::Snapshot>();
-
-        Status s = txn_manager_->getSnapshot(*snapshot, ctx);
-        if (s != Status::OK)
+        // For READ_COMMITTED_READ_CONSISTENCY, capture current XID for statement duration
+        // This provides consistent reads within a single statement
+        if (txn_manager_ != nullptr)
         {
-            return s;
+            statement_xid_ = txn_manager_->getCurrentXid();
+            LOG_DEBUG(TRANSACTION, "Created statement XID: %lu", statement_xid_);
         }
-
-        statement_snapshot_ = std::move(snapshot);
-
-        LOG_DEBUG(TRANSACTION, "Created statement snapshot: xmin=%lu, xmax=%lu, active_xids=%zu",
-                  statement_snapshot_->xmin, statement_snapshot_->xmax,
-                  statement_snapshot_->active_xids.size());
-
-        return Status::OK;
     }
 
-    void ConnectionContext::clearStatementSnapshot()
+    void ConnectionContext::clearStatementXID()
     {
-        if (statement_snapshot_)
+        if (statement_xid_ != 0)
         {
-            LOG_DEBUG(TRANSACTION, "Cleared statement snapshot");
-            statement_snapshot_.reset();
+            LOG_DEBUG(TRANSACTION, "Cleared statement XID %lu", statement_xid_);
+            statement_xid_ = 0;
         }
     }
 
@@ -639,15 +623,8 @@ namespace scratchbird::core
         sp.xid = current_xid_;
         sp.command_id = command_id_;
 
-        // Save current snapshot (if we have one)
-        if (snapshot_)
-        {
-            sp.snapshot = std::make_unique<TransactionManager::Snapshot>();
-            sp.snapshot->xmin = snapshot_->xmin;
-            sp.snapshot->xmax = snapshot_->xmax;
-            sp.snapshot->active_xids = snapshot_->active_xids;
-            // Note: We don't copy buffer_pool or pinned_pages - those are transient
-        }
+        // FIREBIRD MGA: No snapshot needed - XID is sufficient for rollback
+        // Savepoint just marks a point in transaction for potential rollback
 
         // Add to stack
         savepoint_stack_.push_back(std::move(sp));
