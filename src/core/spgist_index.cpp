@@ -884,6 +884,84 @@ Status SPGiSTIndex::allocatePage(uint64_t* page_num, ErrorContext* ctx)
     return Status::OK;
 }
 
+SPGiSTIndex::SPGiSTStats SPGiSTIndex::getStats() const
+{
+    std::shared_lock lock(mutex_);
+
+    SPGiSTStats stats;
+    stats.total_entries = entry_count_;
+    stats.deleted_entries = deleted_count_;
+    stats.max_depth = 0;
+    stats.avg_leaf_density = 0.0;
+
+    // Calculate tree depth and average density via recursive traversal
+    if (root_page_ != 0)
+    {
+        uint64_t total_leaf_pages = 0;
+        uint64_t total_leaf_entries = 0;
+
+        calculateStatsRecursive(root_page_, 1, &stats.max_depth,
+                               &total_leaf_pages, &total_leaf_entries);
+
+        if (total_leaf_pages > 0)
+        {
+            stats.avg_leaf_density = static_cast<double>(total_leaf_entries) / total_leaf_pages;
+        }
+    }
+
+    return stats;
+}
+
+void SPGiSTIndex::calculateStatsRecursive(uint64_t page_num,
+                                         uint64_t current_depth,
+                                         uint64_t* max_depth,
+                                         uint64_t* total_leaf_pages,
+                                         uint64_t* total_leaf_entries) const
+{
+    SBSPGiSTPage* page = nullptr;
+    ErrorContext ctx;
+    Status status = const_cast<SPGiSTIndex*>(this)->loadPage(page_num, &page, &ctx);
+    if (status != Status::OK)
+    {
+        return;
+    }
+
+    if (current_depth > *max_depth)
+    {
+        *max_depth = current_depth;
+    }
+
+    SPGiSTNodeType node_type = static_cast<SPGiSTNodeType>(page->spgist_node_type);
+
+    if (node_type == SPGiSTNodeType::LEAF)
+    {
+        (*total_leaf_pages)++;
+        (*total_leaf_entries) += page->spgist_count;
+    }
+    else  // INNER
+    {
+        // Extract child pages and recurse
+        uint8_t* entry_ptr = reinterpret_cast<uint8_t*>(page) + sizeof(SBSPGiSTPage);
+        SBSPGiSTInnerTuple* inner = reinterpret_cast<SBSPGiSTInnerTuple*>(entry_ptr);
+
+        entry_ptr += sizeof(SBSPGiSTInnerTuple) + inner->inner_prefixSize;
+
+        size_t label_size = (inner->inner_nNodes > 0) ?
+                           (inner->inner_size - sizeof(SBSPGiSTInnerTuple) -
+                            inner->inner_prefixSize - (inner->inner_nNodes * sizeof(uint64_t))) /
+                            inner->inner_nNodes : 0;
+
+        uint8_t* child_pages_ptr = entry_ptr + (inner->inner_nNodes * label_size);
+        uint64_t* child_pages = reinterpret_cast<uint64_t*>(child_pages_ptr);
+
+        for (uint16_t i = 0; i < inner->inner_nNodes; ++i)
+        {
+            calculateStatsRecursive(child_pages[i], current_depth + 1,
+                                   max_depth, total_leaf_pages, total_leaf_entries);
+        }
+    }
+}
+
 // =============================================================================
 // SPGiSTOperatorClassRegistry Implementation
 // =============================================================================

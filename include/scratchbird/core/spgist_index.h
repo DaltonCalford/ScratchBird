@@ -386,6 +386,17 @@ public:
     const ID& getTableUUID() const { return table_uuid_; }
     uint64_t getRootPage() const { return root_page_; }
     uint64_t getEntryCount() const { return entry_count_; }
+    uint64_t getDeletedCount() const { return deleted_count_; }
+
+    // Statistics
+    struct SPGiSTStats {
+        uint64_t total_entries;
+        uint64_t deleted_entries;
+        uint64_t max_depth;
+        double avg_leaf_density;
+    };
+
+    SPGiSTStats getStats() const;
 
 private:
     // Core operations
@@ -421,6 +432,12 @@ private:
     bool isEntryVisible(uint64_t xmin, uint64_t xmax, uint64_t current_xid) const;
     Status loadPage(uint64_t page_num, SBSPGiSTPage** page, ErrorContext* ctx);
     Status allocatePage(uint64_t* page_num, ErrorContext* ctx);
+
+    void calculateStatsRecursive(uint64_t page_num,
+                                 uint64_t current_depth,
+                                 uint64_t* max_depth,
+                                 uint64_t* total_leaf_pages,
+                                 uint64_t* total_leaf_entries) const;
 
     // Member variables
     Database* db_;
