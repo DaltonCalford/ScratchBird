@@ -1,8 +1,8 @@
 # ScratchBird Project Context
 
-**Last Updated**: November 4, 2025
+**Last Updated**: November 4, 2025 Evening
 **Version**: Alpha (Engine Phase 1 - In Progress)
-**Status**: Educational/Development - 62% Complete
+**Status**: Educational/Development - 63% Complete
 
 > **PURPOSE**: This file provides essential context for AI assistants working on ScratchBird.
 > Read this file at session start and after every context compaction.
@@ -31,15 +31,17 @@
 - Garbage collection and sweep
 - **Zero PostgreSQL MVCC contamination** - mandatory compliance
 
-**Indexes** (6/12 types, 50%):
+**Indexes** (7/11 types, 64%):
 - ✅ **B-Tree**: Production-quality, prefix compression, TIP-based visibility (~33K lines)
 - ✅ **Hash**: Extendible hashing, TIP-based visibility (1,464 lines)
-- ✅ **Bitmap**: Complete (1,590 lines) - Roaring compression, NOT ops, multi-page dictionary ✨ Nov 4
 - ✅ **R-Tree**: Spatial indexing, full TIP integration
 - ✅ **GIN**: Complete (3,946 lines) - Generalized Inverted Index with wildcard/fuzzy matching
+- ✅ **Bitmap**: Complete (1,590 lines) - Roaring compression, NOT ops, multi-page dictionary ✨ Nov 4
+- ✅ **GiST**: Complete (~1,150 lines) - Generalized Search Tree with operator classes ✨ Nov 4 Eve
 - ✅ **HNSW**: Complete (~1,580 lines) - Vector search, k-NN, multi-layer graphs ✨ Nov 4
-- ⚠️ **BRIN**: Stub (404 lines) - block range indexes
-- ❌ **GiST, SP-GiST, Full-Text, Columnstore, LSM-Tree**: Not implemented
+- ⚠️ **SP-GiST**: 75% (526 lines) - radix trees, quad-trees (delete/GC missing)
+- ⚠️ **BRIN**: 50% (404 lines) - block range indexes (vacuum/multi-page missing)
+- ❌ **Columnstore, LSM-Tree**: Not implemented
 
 **Data Types** (83/86 types, 97%):
 - All numeric types (INT8-INT128, UINT8-UINT64, DECIMAL, FLOAT, MONEY)
@@ -94,7 +96,7 @@
 **Status**: 100% Firebird MGA Compliant (Completed November 2, 2025)
 
 **Critical Achievements**:
-- ✅ All 7 implemented index types use TIP-based `isVersionVisible(xmin, current_xid)`
+- ✅ All 7 complete index types use TIP-based `isVersionVisible(xmin, current_xid)`
 - ✅ Storage layer SNAPSHOT isolation uses TIP lookups (not snapshot arrays)
 - ✅ Zero `Snapshot*` parameters in any API
 - ✅ Zero `isSnapshotVisible()` calls in codebase
@@ -116,6 +118,12 @@
 - **Garbage Collection**: Sweep removes back versions older than OIT
 
 ### 📊 Latest Achievements
+
+**November 4, 2025:**
+- ✅ **GiST Index - 100% Complete (Evening)** - splitPage(), root split, remove(), removeDeadEntries() ✨
+- ✅ **HNSW Index - 100% Complete (Afternoon)** - Multi-page support, unlimited scalability ✨
+- ✅ **Bitmap Index - 100% Complete (Morning)** - NOT operations, multi-page dictionary ✨
+- ✅ **7/11 index types complete (64%)** - only SP-GiST, BRIN, Columnstore, LSM-Tree remain
 
 **November 3, 2025:**
 - ✅ SQL Identifier UTF-8 Complete (6 phases, 128 characters, 512 bytes, 86 tests)

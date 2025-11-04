@@ -31,6 +31,7 @@ namespace scratchbird::core
         BITMAP_ROARING_ROOT = 19,   // Roaring bitmap root page
         BITMAP_CONTAINER = 20,      // Roaring bitmap container page
         PAGE_TYPE_RTREE_NODE = 21,  // R-tree node page (internal or leaf)
+        PAGE_TYPE_GIST = 22,        // GiST index page
     };
 
     // Page flags (bitwise OR)

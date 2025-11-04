@@ -12,6 +12,7 @@
 #include <shared_mutex>
 #include <functional>
 #include <string>
+#include <map>
 
 namespace scratchbird::core
 {
@@ -132,6 +133,7 @@ struct SBGiSTPage
     uint16_t gist_free_space; // Free space in bytes
     uint16_t gist_level;      // Tree level (0 = leaf)
     uint32_t gist_opclass_id; // Operator class ID
+    uint8_t gist_reserved[20]; // Reserved for alignment (pad to 32 bytes)
 
     // Sibling navigation (24 bytes)
     uint64_t gist_left_sibling;  // Left sibling page number
@@ -310,7 +312,7 @@ public:
 /**
  * GiST index implementation
  */
-class GiSTIndex : public IndexGarbageCollectorInterface
+class GiSTIndex
 {
 public:
     /**
@@ -403,9 +405,9 @@ public:
                            std::vector<TID>& results,
                            ErrorContext* ctx);
 
-    // IndexGarbageCollectorInterface implementation
-    Status removeDeadEntries(uint64_t oldest_active_xid, ErrorContext* ctx) override;
-    uint64_t getDeadEntryCount() const override;
+    // Garbage collection methods
+    Status removeDeadEntries(uint64_t oldest_active_xid, ErrorContext* ctx);
+    uint64_t getDeadEntryCount() const;
 
     // Index metadata
     const ID& getIndexUUID() const { return index_uuid_; }
@@ -441,6 +443,17 @@ private:
                         const GiSTPredicate& predicate,
                         uint64_t* chosen_child,
                         ErrorContext* ctx);
+
+    Status removeRecursive(uint64_t page_num,
+                          const GiSTPredicate& predicate,
+                          const TID& tid,
+                          uint64_t current_xid,
+                          ErrorContext* ctx);
+
+    Status removeDeadEntriesRecursive(uint64_t page_num,
+                                      uint64_t oldest_active_xid,
+                                      uint64_t* removed_count,
+                                      ErrorContext* ctx);
 
     // Helper methods
     bool isEntryVisible(uint64_t xmin, uint64_t xmax, uint64_t current_xid) const;

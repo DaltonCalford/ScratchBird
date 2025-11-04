@@ -56,8 +56,7 @@ Status GiSTIndex::initialize(ErrorContext* ctx)
 {
     std::unique_lock lock(mutex_);
 
-    LOG_INFO(INDEX, "Initializing GiST index %s with operator class %s",
-             uuidToString(index_uuid_).c_str(),
+    LOG_INFO(CATALOG, "Initializing GiST index with operator class %s",
              opclass_->getOpClassName().c_str());
 
     // Allocate root page
@@ -76,7 +75,24 @@ Status GiSTIndex::initialize(ErrorContext* ctx)
     }
 
     std::memset(root, 0, sizeof(SBGiSTPage));
-    initPageHeader(&root->gist_header, PageType::GIST_INDEX_PAGE);
+
+    // Initialize page header fields
+    root->gist_header.magic = K_MAGIC_SBRD;
+    root->gist_header.version = static_cast<uint16_t>(DB_VERSION_ALPHA_1_0_1);
+    root->gist_header.page_type = static_cast<uint16_t>(PageType::PAGE_TYPE_GIST);
+    root->gist_header.page_size = 8192;
+    root->gist_header.page_id = root_page_;
+    root->gist_header.checksum = 0;
+    root->gist_header.lsn = 0;
+    root->gist_header.flags = 0;
+    std::memcpy(root->gist_header.database_uuid, db_->uuid().bytes.data(), 16);
+    root->gist_header.generation = 0;
+    root->gist_header.free_space = 0;
+    root->gist_header.item_count = 0;
+    root->gist_header.free_offset = 0;
+    root->gist_header.special_size = 0;
+
+    // Initialize GiST-specific fields
     root->gist_index_uuid = index_uuid_;
     root->gist_table_uuid = table_uuid_;
     root->gist_flags = static_cast<uint16_t>(GiSTFlags::ROOT) |
@@ -90,8 +106,8 @@ Status GiSTIndex::initialize(ErrorContext* ctx)
 
     height_ = 1;
 
-    LOG_INFO(INDEX, "GiST index %s initialized with root page %lu",
-             uuidToString(index_uuid_).c_str(), root_page_);
+    LOG_INFO(CATALOG, "GiST index %s initialized with root page %lu",
+             index_uuid_.toString().c_str(), root_page_);
 
     return Status::OK;
 }
@@ -133,23 +149,109 @@ Status GiSTIndex::insert(const GiSTPredicate& predicate,
 
         // Initialize new root with two children
         std::memset(new_root, 0, sizeof(SBGiSTPage));
-        initPageHeader(&new_root->gist_header, PageType::GIST_INDEX_PAGE);
+
+        // Initialize page header
+        new_root->gist_header.magic = K_MAGIC_SBRD;
+        new_root->gist_header.version = static_cast<uint16_t>(DB_VERSION_ALPHA_1_0_1);
+        new_root->gist_header.page_type = static_cast<uint16_t>(PageType::PAGE_TYPE_GIST);
+        new_root->gist_header.page_size = 8192;
+        new_root->gist_header.page_id = root_page_;
+        new_root->gist_header.checksum = 0;
+        new_root->gist_header.lsn = 0;
+        new_root->gist_header.flags = 0;
+        std::memcpy(new_root->gist_header.database_uuid, db_->uuid().bytes.data(), 16);
+        new_root->gist_header.generation = 0;
+        new_root->gist_header.free_space = 0;
+        new_root->gist_header.item_count = 0;
+        new_root->gist_header.free_offset = 0;
+        new_root->gist_header.special_size = 0;
+
+        // Initialize GiST-specific fields
         new_root->gist_index_uuid = index_uuid_;
         new_root->gist_table_uuid = table_uuid_;
         new_root->gist_flags = static_cast<uint16_t>(GiSTFlags::ROOT);
         new_root->gist_level = height_;
         new_root->gist_opclass_id = opclass_->getOpClassId();
         new_root->gist_xmin = current_xid;
-        new_root->gist_count = 2;
+        new_root->gist_xmax = 0;
+        new_root->gist_count = 0;
+        new_root->gist_free_space = 8192 - sizeof(SBGiSTPage);
 
-        // Create predicates for old root and new right page
-        // TODO: Add entries pointing to old_root and new_right_page
-        // This requires storing the union predicates
+        // We need to get the union predicate for the old_root (left side)
+        // Since splitPage was already called on old_root, we need to compute its union
+        // For now, we'll scan the old_root page to get all entries and compute union
+
+        SBGiSTPage* old_root_page = nullptr;
+        status = loadPage(old_root, &old_root_page, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        // Collect all predicates from old_root to compute union
+        std::vector<GiSTPredicate> old_root_predicates;
+        uint8_t* entry_ptr = reinterpret_cast<uint8_t*>(old_root_page) + sizeof(SBGiSTPage);
+        for (uint16_t i = 0; i < old_root_page->gist_count; ++i)
+        {
+            SBGiSTEntry* entry = reinterpret_cast<SBGiSTEntry*>(entry_ptr);
+            GiSTPredicate pred;
+            pred.opclass_id = old_root_page->gist_opclass_id;
+            pred.data.resize(entry->entry_pred_size);
+            std::memcpy(pred.data.data(), entry_ptr + sizeof(SBGiSTEntry), entry->entry_pred_size);
+            old_root_predicates.push_back(pred);
+            entry_ptr += entry->entry_size;
+        }
+
+        GiSTPredicate old_root_pred = opclass_->unionPredicates(old_root_predicates);
+
+        // Unpin old_root (we're done reading it)
+        buffer_pool_->unpinPage(static_cast<uint32_t>(old_root), false, ctx);
+
+        // Add entry pointing to old_root (left child)
+        uint8_t* new_root_entry_ptr = reinterpret_cast<uint8_t*>(new_root) + sizeof(SBGiSTPage);
+        uint16_t left_entry_size = sizeof(SBGiSTEntry) + old_root_pred.data.size();
+
+        SBGiSTEntry* left_entry = reinterpret_cast<SBGiSTEntry*>(new_root_entry_ptr);
+        left_entry->entry_size = left_entry_size;
+        left_entry->entry_flags = 0;
+        left_entry->entry_pred_size = old_root_pred.data.size();
+        left_entry->entry_child_page = old_root;
+        left_entry->entry_xmin = current_xid;
+        left_entry->entry_xmax = 0;
+
+        // Copy predicate data
+        std::memcpy(new_root_entry_ptr + sizeof(SBGiSTEntry), old_root_pred.data.data(),
+                   old_root_pred.data.size());
+
+        new_root->gist_count++;
+        new_root->gist_free_space -= left_entry_size;
+
+        // Add entry pointing to new_right_page (right child)
+        new_root_entry_ptr += left_entry_size;
+        uint16_t right_entry_size = sizeof(SBGiSTEntry) + new_right_pred.data.size();
+
+        SBGiSTEntry* right_entry = reinterpret_cast<SBGiSTEntry*>(new_root_entry_ptr);
+        right_entry->entry_size = right_entry_size;
+        right_entry->entry_flags = 0;
+        right_entry->entry_pred_size = new_right_pred.data.size();
+        right_entry->entry_child_page = new_right_page;
+        right_entry->entry_xmin = current_xid;
+        right_entry->entry_xmax = 0;
+
+        // Copy predicate data
+        std::memcpy(new_root_entry_ptr + sizeof(SBGiSTEntry), new_right_pred.data.data(),
+                   new_right_pred.data.size());
+
+        new_root->gist_count++;
+        new_root->gist_free_space -= right_entry_size;
+
+        // Mark new root as dirty
+        buffer_pool_->unpinPage(static_cast<uint32_t>(root_page_), true, ctx);
 
         height_++;
 
-        LOG_DEBUG(INDEX, "GiST root split, new root page %lu, height %u",
-                 root_page_, height_);
+        LOG_DEBUG(CATALOG, "GiST root split, new root page %lu, height %u, left child %lu, right child %lu",
+                 root_page_, height_, old_root, new_right_page);
     }
 
     entry_count_++;
@@ -182,7 +284,8 @@ Status GiSTIndex::insertRecursive(uint64_t page_num,
         uint16_t entry_size = sizeof(SBGiSTEntry) + predicate.data.size();
         if (page->gist_free_space < entry_size)
         {
-            // Need to split
+            // Need to split - unpin first
+            buffer_pool_->unpinPage(static_cast<uint32_t>(page_num), false, ctx);
             return splitPage(page_num, nullptr, new_right_pred, new_right_page, ctx);
         }
 
@@ -206,6 +309,9 @@ Status GiSTIndex::insertRecursive(uint64_t page_num,
         page->gist_count++;
         page->gist_free_space -= entry_size;
         page->gist_total_entries++;
+
+        // Mark page as dirty
+        buffer_pool_->unpinPage(static_cast<uint32_t>(page_num), true, ctx);
 
         return Status::OK;
     }
@@ -232,8 +338,48 @@ Status GiSTIndex::insertRecursive(uint64_t page_num,
         // If child split, insert the new pointer
         if (child_new_right != 0)
         {
-            // TODO: Insert new entry pointing to child_new_right
-            // Check if this page needs to split too
+            // Check if page has space for the new entry
+            uint16_t entry_size = sizeof(SBGiSTEntry) + child_new_pred.data.size();
+            if (page->gist_free_space < entry_size)
+            {
+                // Need to split this internal node too
+                // First, unpin the current page
+                buffer_pool_->unpinPage(static_cast<uint32_t>(page_num), false, ctx);
+
+                // Split this page and propagate upward
+                return splitPage(page_num, nullptr, new_right_pred, new_right_page, ctx);
+            }
+
+            // Add entry for new child page
+            uint8_t* entry_ptr = reinterpret_cast<uint8_t*>(page) +
+                                sizeof(SBGiSTPage) +
+                                (8192 - sizeof(SBGiSTPage) - page->gist_free_space);
+
+            SBGiSTEntry* entry = reinterpret_cast<SBGiSTEntry*>(entry_ptr);
+            entry->entry_size = entry_size;
+            entry->entry_flags = 0;
+            entry->entry_pred_size = child_new_pred.data.size();
+            entry->entry_child_page = child_new_right;
+            entry->entry_xmin = current_xid;
+            entry->entry_xmax = 0;
+
+            // Copy predicate data
+            std::memcpy(entry_ptr + sizeof(SBGiSTEntry), child_new_pred.data.data(),
+                       child_new_pred.data.size());
+
+            page->gist_count++;
+            page->gist_free_space -= entry_size;
+
+            // Mark page as dirty
+            buffer_pool_->unpinPage(static_cast<uint32_t>(page_num), true, ctx);
+
+            LOG_DEBUG(CATALOG, "Added split child entry to internal page %lu, new child %lu",
+                     page_num, child_new_right);
+        }
+        else
+        {
+            // No split, just unpin the page (not modified)
+            buffer_pool_->unpinPage(static_cast<uint32_t>(page_num), false, ctx);
         }
 
         return Status::OK;
@@ -328,11 +474,128 @@ Status GiSTIndex::remove(const GiSTPredicate& predicate,
     std::unique_lock lock(mutex_);
 
     // Logical deletion: find entry and set xmax
-    // TODO: Implement entry lookup and deletion
-    // For now, just increment deleted count
+    // Use a recursive helper to traverse the tree and find the entry
+    Status status = removeRecursive(root_page_, predicate, tid, current_xid, ctx);
+    if (status == Status::OK)
+    {
+        deleted_count_++;
+    }
 
-    deleted_count_++;
-    return Status::OK;
+    return status;
+}
+
+Status GiSTIndex::removeRecursive(uint64_t page_num,
+                                  const GiSTPredicate& predicate,
+                                  const TID& tid,
+                                  uint64_t current_xid,
+                                  ErrorContext* ctx)
+{
+    SBGiSTPage* page = nullptr;
+    Status status = loadPage(page_num, &page, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    bool is_leaf = (page->gist_flags & static_cast<uint16_t>(GiSTFlags::LEAF)) != 0;
+    bool found = false;
+
+    if (is_leaf)
+    {
+        // Search for the entry with matching TID
+        uint8_t* entry_ptr = reinterpret_cast<uint8_t*>(page) + sizeof(SBGiSTPage);
+        for (uint16_t i = 0; i < page->gist_count; ++i)
+        {
+            SBGiSTEntry* entry = reinterpret_cast<SBGiSTEntry*>(entry_ptr);
+
+            // Skip already deleted entries
+            if (entry->entry_xmax != 0)
+            {
+                entry_ptr += entry->entry_size;
+                continue;
+            }
+
+            // Check if this is the entry we're looking for (match by TID)
+            if (entry->entry_row_id.gpid == tid.gpid && entry->entry_row_id.slot == tid.slot)
+            {
+                // Found it - set xmax for logical deletion (MGA compliance)
+                entry->entry_xmax = current_xid;
+                found = true;
+
+                LOG_DEBUG(CATALOG, "GiST removed entry from leaf page %lu, TID (%u, %u), xmax=%lu",
+                         page_num, tid.gpid, tid.slot, current_xid);
+
+                // Mark page as dirty
+                buffer_pool_->unpinPage(static_cast<uint32_t>(page_num), true, ctx);
+                return Status::OK;
+            }
+
+            entry_ptr += entry->entry_size;
+        }
+
+        // Not found on this leaf
+        buffer_pool_->unpinPage(static_cast<uint32_t>(page_num), false, ctx);
+        return Status::NOT_FOUND;
+    }
+    else
+    {
+        // Internal node - find the subtree that might contain the entry
+        uint8_t* entry_ptr = reinterpret_cast<uint8_t*>(page) + sizeof(SBGiSTPage);
+        for (uint16_t i = 0; i < page->gist_count; ++i)
+        {
+            SBGiSTEntry* entry = reinterpret_cast<SBGiSTEntry*>(entry_ptr);
+
+            // Skip deleted entries
+            if (entry->entry_xmax != 0)
+            {
+                entry_ptr += entry->entry_size;
+                continue;
+            }
+
+            // Extract predicate
+            GiSTPredicate entry_pred;
+            entry_pred.opclass_id = page->gist_opclass_id;
+            entry_pred.data.resize(entry->entry_pred_size);
+            std::memcpy(entry_pred.data.data(), entry_ptr + sizeof(SBGiSTEntry),
+                       entry->entry_pred_size);
+
+            // Check if this subtree could contain the entry
+            // Use "overlaps" strategy to check if predicates are consistent
+            if (opclass_->consistent(entry_pred, predicate.data, GiSTStrategy::OVERLAPS))
+            {
+                uint64_t child_page = entry->entry_child_page;
+
+                // Unpin current page before recursing
+                buffer_pool_->unpinPage(static_cast<uint32_t>(page_num), false, ctx);
+
+                // Recurse into child
+                status = removeRecursive(child_page, predicate, tid, current_xid, ctx);
+                if (status == Status::OK)
+                {
+                    return Status::OK;
+                }
+                // If NOT_FOUND, continue searching other subtrees
+                // (predicate overlap is not exact, so entry might be in another subtree)
+
+                // Re-pin page for next iteration
+                status = loadPage(page_num, &page, ctx);
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+                entry_ptr = reinterpret_cast<uint8_t*>(page) + sizeof(SBGiSTPage);
+                // Restart loop (need to recalculate entry_ptr positions)
+                i = (uint16_t)-1; // Will be incremented to 0
+                continue;
+            }
+
+            entry_ptr += entry->entry_size;
+        }
+
+        // Not found in any subtree
+        buffer_pool_->unpinPage(static_cast<uint32_t>(page_num), false, ctx);
+        return Status::NOT_FOUND;
+    }
 }
 
 Status GiSTIndex::nearestNeighbor(const std::vector<uint8_t>& query,
@@ -456,11 +719,151 @@ Status GiSTIndex::splitPage(uint64_t page_num,
         return status;
     }
 
-    // TODO: Distribute entries to left and right pages
-    // TODO: Compute union predicates for both pages
+    // Load the new right page
+    SBGiSTPage* right_page = nullptr;
+    status = loadPage(*new_right_page, &right_page, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
 
-    LOG_DEBUG(INDEX, "GiST page %lu split into %lu and %lu",
-             page_num, page_num, *new_right_page);
+    // Initialize right page header (copy metadata from left page)
+    right_page->gist_index_uuid = page->gist_index_uuid;
+    right_page->gist_table_uuid = page->gist_table_uuid;
+    right_page->gist_flags = page->gist_flags & ~static_cast<uint16_t>(GiSTFlags::ROOT);  // Not root
+    right_page->gist_count = 0;
+    right_page->gist_free_space = 8192 - sizeof(SBGiSTPage);  // Start with full free space
+    right_page->gist_level = page->gist_level;
+    right_page->gist_opclass_id = page->gist_opclass_id;
+    right_page->gist_left_sibling = page_num;
+    right_page->gist_right_sibling = page->gist_right_sibling;
+    right_page->gist_parent_page = page->gist_parent_page;
+    right_page->gist_xmin = page->gist_xmin;  // MGA: Same creation transaction
+    right_page->gist_xmax = 0;  // MGA: Not deleted
+    right_page->gist_lsn = 0;
+    right_page->gist_total_entries = 0;
+    right_page->gist_deleted_entries = 0;
+
+    // Update left page sibling pointer
+    page->gist_right_sibling = *new_right_page;
+
+    // Distribute entries to left and right pages
+    // First, collect all original entries (we need full entry data, not just predicates)
+    std::vector<std::vector<uint8_t>> entry_data;
+    entry_data.reserve(page->gist_count);
+
+    uint8_t* entry_data_ptr = reinterpret_cast<uint8_t*>(page) + sizeof(SBGiSTPage);
+    for (uint16_t i = 0; i < page->gist_count; ++i)
+    {
+        SBGiSTEntry* entry = reinterpret_cast<SBGiSTEntry*>(entry_data_ptr);
+
+        // Copy entire entry (header + predicate data)
+        std::vector<uint8_t> entry_copy(entry->entry_size);
+        std::memcpy(entry_copy.data(), entry_data_ptr, entry->entry_size);
+        entry_data.push_back(std::move(entry_copy));
+
+        entry_data_ptr += entry->entry_size;
+    }
+
+    // Clear left page (reset to empty)
+    page->gist_count = 0;
+    page->gist_free_space = 8192 - sizeof(SBGiSTPage);
+
+    // Write entries to left page based on left_indices
+    uint8_t* left_ptr = reinterpret_cast<uint8_t*>(page) + sizeof(SBGiSTPage);
+    std::vector<GiSTPredicate> left_predicates;
+
+    for (size_t idx : left_indices)
+    {
+        if (idx >= entry_data.size())
+        {
+            LOG_ERROR(CATALOG, "GiST split: Invalid left index %zu (max %zu)", idx, entry_data.size());
+            continue;
+        }
+
+        const std::vector<uint8_t>& entry_bytes = entry_data[idx];
+        SBGiSTEntry* src_entry = reinterpret_cast<SBGiSTEntry*>(
+            const_cast<uint8_t*>(entry_bytes.data()));
+
+        // Check if entry fits
+        if (page->gist_free_space < entry_bytes.size())
+        {
+            LOG_ERROR(CATALOG, "GiST split: Left page full during distribution");
+            return Status::PAGE_CORRUPT;
+        }
+
+        // Copy entry to left page
+        std::memcpy(left_ptr, entry_bytes.data(), entry_bytes.size());
+
+        // Collect predicate for union computation
+        GiSTPredicate pred;
+        pred.opclass_id = page->gist_opclass_id;
+        pred.data.resize(src_entry->entry_pred_size);
+        std::memcpy(pred.data.data(), entry_bytes.data() + sizeof(SBGiSTEntry),
+                   src_entry->entry_pred_size);
+        left_predicates.push_back(pred);
+
+        left_ptr += entry_bytes.size();
+        page->gist_count++;
+        page->gist_free_space -= entry_bytes.size();
+    }
+
+    // Write entries to right page based on right_indices
+    uint8_t* right_ptr = reinterpret_cast<uint8_t*>(right_page) + sizeof(SBGiSTPage);
+    std::vector<GiSTPredicate> right_predicates;
+
+    for (size_t idx : right_indices)
+    {
+        if (idx >= entry_data.size())
+        {
+            LOG_ERROR(CATALOG, "GiST split: Invalid right index %zu (max %zu)", idx, entry_data.size());
+            continue;
+        }
+
+        const std::vector<uint8_t>& entry_bytes = entry_data[idx];
+        SBGiSTEntry* src_entry = reinterpret_cast<SBGiSTEntry*>(
+            const_cast<uint8_t*>(entry_bytes.data()));
+
+        // Check if entry fits
+        if (right_page->gist_free_space < entry_bytes.size())
+        {
+            LOG_ERROR(CATALOG, "GiST split: Right page full during distribution");
+            return Status::PAGE_CORRUPT;
+        }
+
+        // Copy entry to right page
+        std::memcpy(right_ptr, entry_bytes.data(), entry_bytes.size());
+
+        // Collect predicate for union computation
+        GiSTPredicate pred;
+        pred.opclass_id = page->gist_opclass_id;
+        pred.data.resize(src_entry->entry_pred_size);
+        std::memcpy(pred.data.data(), entry_bytes.data() + sizeof(SBGiSTEntry),
+                   src_entry->entry_pred_size);
+        right_predicates.push_back(pred);
+
+        right_ptr += entry_bytes.size();
+        right_page->gist_count++;
+        right_page->gist_free_space -= entry_bytes.size();
+    }
+
+    // Compute union predicates for both pages
+    if (left_pred != nullptr && !left_predicates.empty())
+    {
+        *left_pred = opclass_->unionPredicates(left_predicates);
+    }
+
+    if (right_pred != nullptr && !right_predicates.empty())
+    {
+        *right_pred = opclass_->unionPredicates(right_predicates);
+    }
+
+    LOG_DEBUG(CATALOG, "GiST page %lu split into %lu (%u entries) and %lu (%u entries)",
+             page_num, page_num, page->gist_count, *new_right_page, right_page->gist_count);
+
+    // Unpin both pages (mark as dirty)
+    buffer_pool_->unpinPage(static_cast<uint32_t>(page_num), true, ctx);
+    buffer_pool_->unpinPage(static_cast<uint32_t>(*new_right_page), true, ctx);
 
     return Status::OK;
 }
@@ -509,9 +912,131 @@ Status GiSTIndex::removeDeadEntries(uint64_t oldest_active_xid, ErrorContext* ct
 {
     std::unique_lock lock(mutex_);
 
-    // TODO: Traverse tree and physically remove entries where xmax < oldest_active_xid
-    LOG_INFO(INDEX, "GiST garbage collection: %lu dead entries to remove",
-             deleted_count_);
+    // Traverse tree and physically remove entries where xmax < oldest_active_xid
+    uint64_t removed_count = 0;
+    Status status = removeDeadEntriesRecursive(root_page_, oldest_active_xid, &removed_count, ctx);
+
+    if (status == Status::OK)
+    {
+        deleted_count_ -= removed_count;
+        LOG_INFO(CATALOG, "GiST garbage collection: removed %lu dead entries, %lu remaining",
+                 removed_count, deleted_count_);
+    }
+
+    return status;
+}
+
+Status GiSTIndex::removeDeadEntriesRecursive(uint64_t page_num,
+                                             uint64_t oldest_active_xid,
+                                             uint64_t* removed_count,
+                                             ErrorContext* ctx)
+{
+    SBGiSTPage* page = nullptr;
+    Status status = loadPage(page_num, &page, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    bool is_leaf = (page->gist_flags & static_cast<uint16_t>(GiSTFlags::LEAF)) != 0;
+    bool page_modified = false;
+
+    if (!is_leaf)
+    {
+        // Internal node - first recursively clean children
+        uint8_t* entry_ptr = reinterpret_cast<uint8_t*>(page) + sizeof(SBGiSTPage);
+        for (uint16_t i = 0; i < page->gist_count; ++i)
+        {
+            SBGiSTEntry* entry = reinterpret_cast<SBGiSTEntry*>(entry_ptr);
+
+            // Only visit live entries (we'll clean up dead ones below)
+            if (entry->entry_xmax == 0 || entry->entry_xmax >= oldest_active_xid)
+            {
+                uint64_t child_page = entry->entry_child_page;
+
+                // Unpin current page before recursing
+                buffer_pool_->unpinPage(static_cast<uint32_t>(page_num), page_modified, ctx);
+
+                // Recurse into child
+                status = removeDeadEntriesRecursive(child_page, oldest_active_xid, removed_count, ctx);
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+
+                // Re-pin page
+                status = loadPage(page_num, &page, ctx);
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+                // Note: entry_ptr is now invalid, will be recalculated below
+            }
+
+            entry_ptr += entry->entry_size;
+        }
+    }
+
+    // Now physically remove dead entries from this page
+    // Collect live entries
+    std::vector<std::vector<uint8_t>> live_entries;
+    uint8_t* entry_ptr = reinterpret_cast<uint8_t*>(page) + sizeof(SBGiSTPage);
+
+    for (uint16_t i = 0; i < page->gist_count; ++i)
+    {
+        SBGiSTEntry* entry = reinterpret_cast<SBGiSTEntry*>(entry_ptr);
+
+        // Check if entry is dead (xmax < oldest_active_xid)
+        if (entry->entry_xmax != 0 && entry->entry_xmax < oldest_active_xid)
+        {
+            // Entry is dead - skip it (physical removal)
+            (*removed_count)++;
+            page_modified = true;
+
+            LOG_DEBUG(CATALOG, "GiST GC: removing dead entry from page %lu, xmax=%lu < oldest=%lu",
+                     page_num, entry->entry_xmax, oldest_active_xid);
+        }
+        else
+        {
+            // Entry is live - keep it
+            std::vector<uint8_t> entry_copy(entry->entry_size);
+            std::memcpy(entry_copy.data(), entry_ptr, entry->entry_size);
+            live_entries.push_back(std::move(entry_copy));
+        }
+
+        entry_ptr += entry->entry_size;
+    }
+
+    // If we removed any entries, rewrite the page
+    if (page_modified)
+    {
+        // Clear page
+        page->gist_count = 0;
+        page->gist_free_space = 8192 - sizeof(SBGiSTPage);
+
+        // Write back live entries
+        uint8_t* write_ptr = reinterpret_cast<uint8_t*>(page) + sizeof(SBGiSTPage);
+        for (const auto& entry_data : live_entries)
+        {
+            std::memcpy(write_ptr, entry_data.data(), entry_data.size());
+            write_ptr += entry_data.size();
+            page->gist_count++;
+            page->gist_free_space -= entry_data.size();
+        }
+
+        // Update total entries count
+        page->gist_total_entries -= (*removed_count);
+
+        // Clear HAS_GARBAGE flag if all garbage removed
+        if (page->gist_deleted_entries > 0)
+        {
+            page->gist_deleted_entries = 0;
+            page->gist_flags &= ~static_cast<uint16_t>(GiSTFlags::HAS_GARBAGE);
+        }
+    }
+
+    // Unpin page (mark dirty if modified)
+    buffer_pool_->unpinPage(static_cast<uint32_t>(page_num), page_modified, ctx);
 
     return Status::OK;
 }
@@ -554,8 +1079,9 @@ bool GiSTIndex::isEntryVisible(uint64_t xmin, uint64_t xmax, uint64_t current_xi
 Status GiSTIndex::loadPage(uint64_t page_num, SBGiSTPage** page, ErrorContext* ctx)
 {
     // Pin page from buffer pool
-    uint8_t* page_data = buffer_pool_->pinPage(page_num, ctx);
-    if (page_data == nullptr)
+    void* page_buffer = nullptr;
+    Status status = buffer_pool_->pinPage(static_cast<uint32_t>(page_num), &page_buffer, ctx);
+    if (status != Status::OK)
     {
         if (ctx)
         {
@@ -565,7 +1091,7 @@ Status GiSTIndex::loadPage(uint64_t page_num, SBGiSTPage** page, ErrorContext* c
         return Status::IO_ERROR;
     }
 
-    *page = reinterpret_cast<SBGiSTPage*>(page_data);
+    *page = reinterpret_cast<SBGiSTPage*>(page_buffer);
     return Status::OK;
 }
 
@@ -576,8 +1102,9 @@ Status GiSTIndex::allocatePage(uint64_t* page_num, ErrorContext* ctx)
     static uint64_t next_page = 1;
     *page_num = next_page++;
 
-    uint8_t* page_data = buffer_pool_->pinPage(*page_num, ctx);
-    if (page_data == nullptr)
+    void* page_buffer = nullptr;
+    Status status = buffer_pool_->pinPage(static_cast<uint32_t>(*page_num), &page_buffer, ctx);
+    if (status != Status::OK)
     {
         if (ctx)
         {
@@ -610,7 +1137,7 @@ void GiSTOperatorClassRegistry::registerOperatorClass(
     opclasses_by_id_[id] = opclass;
     opclasses_by_name_[name] = opclass;
 
-    LOG_INFO(INDEX, "Registered GiST operator class: %s (ID %u)",
+    LOG_INFO(CATALOG, "Registered GiST operator class: %s (ID %u)",
              name.c_str(), id);
 }
 
