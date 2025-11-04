@@ -502,44 +502,64 @@ Status HnswIndex::getStats(HnswStats *stats_out, ErrorContext *ctx)
     uint8_t *page_data = static_cast<uint8_t *>(page_buffer);
     SBHnswPage *page = reinterpret_cast<SBHnswPage *>(page_data);
 
-    // Scan all nodes and calculate statistics
-    uint32_t total_nodes = 0;
-    uint32_t deleted_nodes = 0;
+    // Scan all pages (multi-page support) - start from root and follow sibling chain
+    uint64_t current_page_num = index_info_.idx_root_page;
+    uint64_t total_pages = 0;
+    uint64_t total_nodes = 0;
+    uint64_t deleted_nodes = 0;
     uint64_t total_connections = 0;
     uint16_t max_layer = 0;
 
-    size_t offset = sizeof(SBHnswPage);
-    for (uint16_t i = 0; i < page->hnsw_count; i++)
+    while (current_page_num != 0)
     {
-        SBHnswNode *node = reinterpret_cast<SBHnswNode *>(page_data + offset);
-
-        total_nodes++;
-
-        // Check if deleted (xmax != 0)
-        if (node->node_xmax != 0)
+        // Pin current page
+        status = buffer_pool->pinPage(current_page_num, &page_buffer, ctx);
+        if (status != Status::OK)
         {
-            deleted_nodes++;
+            return status;
         }
 
-        // Sum connections
-        total_connections += node->node_num_neighbors;
+        page_data = static_cast<uint8_t *>(page_buffer);
+        page = reinterpret_cast<SBHnswPage *>(page_data);
+        total_pages++;
 
-        // Track max layer
-        if (node->node_layer > max_layer)
+        // Scan all nodes on this page
+        size_t offset = sizeof(SBHnswPage);
+        for (uint16_t i = 0; i < page->hnsw_count; i++)
         {
-            max_layer = node->node_layer;
+            SBHnswNode *node = reinterpret_cast<SBHnswNode *>(page_data + offset);
+
+            total_nodes++;
+
+            // Check if deleted (xmax != 0)
+            if (node->node_xmax != 0)
+            {
+                deleted_nodes++;
+            }
+
+            // Sum connections
+            total_connections += node->node_num_neighbors;
+
+            // Track max layer
+            if (node->node_layer > max_layer)
+            {
+                max_layer = node->node_layer;
+            }
+
+            size_t node_size = calculate_node_size(node);
+            offset += node_size;
         }
 
-        size_t node_size = calculate_node_size(node);
-        offset += node_size;
+        // Move to next page in sibling chain
+        uint64_t next_page_num = page->hnsw_right_sibling;
+        buffer_pool->unpinPage(current_page_num, false, ctx);
+        current_page_num = next_page_num;
     }
-
-    buffer_pool->unpinPage(index_info_.idx_root_page, false, ctx);
 
     // Fill output statistics
     stats_out->total_nodes = total_nodes;
     stats_out->deleted_nodes = deleted_nodes;
-    stats_out->total_pages = 1; // Simplified: single page in current implementation
+    stats_out->total_pages = total_pages; // Now counts all pages in sibling chain
     stats_out->max_layer = max_layer;
 
     // Calculate average connections
@@ -984,16 +1004,110 @@ Status HnswIndex::create_node(const VectorValue &vector,
 
     uint8_t *page_data = static_cast<uint8_t*>(page_buffer);
     SBHnswPage *page = reinterpret_cast<SBHnswPage*>(page_data);
+    uint64_t active_page_num = index_info_.idx_root_page; // Track which page we're using
 
     // Calculate node size
     size_t vector_size = vector.getDimensions() * sizeof(float);
     size_t node_size = sizeof(SBHnswNode) + neighbors.size() * sizeof(uint64_t) + vector_size;
 
+    // Check if page is full - if so, allocate new page
     if (page->hnsw_free_space < node_size)
     {
+        LOG_DEBUG(STORAGE, "HNSW: Root page full (%u bytes free, need %zu), allocating new page",
+                  page->hnsw_free_space, node_size);
+
         buffer_pool->unpinPage(index_info_.idx_root_page, false, ctx);
-        SET_ERROR_CONTEXT(ctx, Status::PAGE_FULL, "HNSW page full");
-        return Status::PAGE_FULL;
+
+        // Allocate new page for this layer
+        PageManager *page_mgr = db_->page_manager();
+        if (!page_mgr)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "No page manager");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        uint32_t new_page_num;
+        status = page_mgr->allocatePage(new_page_num, ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, status, "Failed to allocate new HNSW page");
+            return status;
+        }
+
+        // Pin the new page
+        void *new_page_buffer = nullptr;
+        status = buffer_pool->pinPage(new_page_num, &new_page_buffer, ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, status, "Failed to pin new HNSW page");
+            return status;
+        }
+
+        // Initialize new page
+        uint8_t *new_page_data = static_cast<uint8_t*>(new_page_buffer);
+        SBHnswPage *new_page = reinterpret_cast<SBHnswPage*>(new_page_data);
+        std::memset(new_page_data, 0, 8192);
+
+        // Copy header from root page (need to re-pin root to read it)
+        void *root_buffer = nullptr;
+        status = buffer_pool->pinPage(index_info_.idx_root_page, &root_buffer, ctx);
+        if (status != Status::OK)
+        {
+            buffer_pool->unpinPage(new_page_num, false, ctx);
+            SET_ERROR_CONTEXT(ctx, status, "Failed to re-pin root page");
+            return status;
+        }
+
+        SBHnswPage *root_page = reinterpret_cast<SBHnswPage*>(root_buffer);
+
+        // Initialize new page header (copy metadata from root)
+        new_page->hnsw_index_uuid = root_page->hnsw_index_uuid;
+        new_page->hnsw_table_uuid = root_page->hnsw_table_uuid;
+        new_page->hnsw_flags = 0;
+        new_page->hnsw_count = 0;
+        new_page->hnsw_free_space = 8192 - sizeof(SBHnswPage);
+        new_page->hnsw_layer = layer;
+        new_page->hnsw_m = root_page->hnsw_m;
+        new_page->hnsw_dimensions = root_page->hnsw_dimensions;
+        new_page->hnsw_distance_metric = root_page->hnsw_distance_metric;
+        new_page->hnsw_xmin = current_xid;
+        new_page->hnsw_xmax = 0;
+        new_page->hnsw_lsn = 0;
+        new_page->hnsw_total_nodes = 0;
+        new_page->hnsw_deleted_nodes = 0;
+
+        // Link new page as right sibling of root
+        new_page->hnsw_left_sibling = index_info_.idx_root_page;
+        new_page->hnsw_right_sibling = root_page->hnsw_right_sibling;
+
+        // Update root page's right sibling pointer
+        uint64_t old_right_sibling = root_page->hnsw_right_sibling;
+        root_page->hnsw_right_sibling = new_page_num;
+
+        // If there was a previous right sibling, update its left pointer
+        if (old_right_sibling != 0)
+        {
+            void *old_right_buffer = nullptr;
+            Status sibling_status = buffer_pool->pinPage(old_right_sibling, &old_right_buffer, ctx);
+            if (sibling_status == Status::OK)
+            {
+                SBHnswPage *old_right_page = reinterpret_cast<SBHnswPage*>(old_right_buffer);
+                old_right_page->hnsw_left_sibling = new_page_num;
+                buffer_pool->unpinPage(old_right_sibling, true, ctx); // Mark dirty
+            }
+            // If sibling update fails, continue anyway - we can still insert the node
+        }
+
+        buffer_pool->unpinPage(index_info_.idx_root_page, true, ctx); // Mark dirty (updated right_sibling)
+
+        // Now use the new page for insertion
+        page_buffer = new_page_buffer;
+        page_data = new_page_data;
+        page = new_page;
+        active_page_num = new_page_num; // Update active page number
+
+        LOG_INFO(STORAGE, "HNSW: Allocated new page %u for layer %u (linked after root %u)",
+                 new_page_num, layer, index_info_.idx_root_page);
     }
 
     // Find insertion point
@@ -1039,10 +1153,10 @@ Status HnswIndex::create_node(const VectorValue &vector,
     page->hnsw_free_space -= node_size;
     page->hnsw_total_nodes++;
 
-    buffer_pool->unpinPage(index_info_.idx_root_page, true, ctx);
+    buffer_pool->unpinPage(active_page_num, true, ctx); // Unpin the actual page we used
 
-    LOG_DEBUG(GENERAL, "HNSW: Created node TID %lu at layer %u with %zu neighbors",
-             tuple_id, layer, neighbors.size());
+    LOG_DEBUG(GENERAL, "HNSW: Created node TID %lu at layer %u with %zu neighbors on page %lu",
+             tuple_id, layer, neighbors.size(), active_page_num);
 
     return Status::OK;
 }
@@ -1164,37 +1278,48 @@ Status HnswIndex::find_node(uint64_t tuple_id,
         return Status::INVALID_ARGUMENT;
     }
 
-    // Pin root page
-    void *page_buffer = nullptr;
-    Status status = buffer_pool->pinPage(index_info_.idx_root_page, &page_buffer, ctx);
-    if (status != Status::OK)
+    // Start from root page and scan through sibling chain (multi-page support)
+    uint64_t current_page_num = index_info_.idx_root_page;
+
+    while (current_page_num != 0)
     {
-        return status;
-    }
-
-    uint8_t *page_data = static_cast<uint8_t*>(page_buffer);
-    SBHnswPage *page = reinterpret_cast<SBHnswPage*>(page_data);
-
-    // Linear scan for node
-    size_t offset = sizeof(SBHnswPage);
-    for (uint16_t i = 0; i < page->hnsw_count; i++)
-    {
-        SBHnswNode *node = reinterpret_cast<SBHnswNode*>(page_data + offset);
-
-        if (node->node_tuple_id == tuple_id)
+        // Pin current page
+        void *page_buffer = nullptr;
+        Status status = buffer_pool->pinPage(current_page_num, &page_buffer, ctx);
+        if (status != Status::OK)
         {
-            *node_out = node;
-            *page_num_out = index_info_.idx_root_page;
-            // Note: Page remains pinned - caller must unpin
-            return Status::OK;
+            return status;
         }
 
-        size_t node_size = sizeof(SBHnswNode) + node->node_num_neighbors * sizeof(uint64_t) + node->node_vector_len;
-        offset += node_size;
+        uint8_t *page_data = static_cast<uint8_t*>(page_buffer);
+        SBHnswPage *page = reinterpret_cast<SBHnswPage*>(page_data);
+
+        // Linear scan for node on this page
+        size_t offset = sizeof(SBHnswPage);
+        for (uint16_t i = 0; i < page->hnsw_count; i++)
+        {
+            SBHnswNode *node = reinterpret_cast<SBHnswNode*>(page_data + offset);
+
+            if (node->node_tuple_id == tuple_id)
+            {
+                *node_out = node;
+                *page_num_out = current_page_num;
+                // Note: Page remains pinned - caller must unpin
+                return Status::OK;
+            }
+
+            size_t node_size = sizeof(SBHnswNode) + node->node_num_neighbors * sizeof(uint64_t) + node->node_vector_len;
+            offset += node_size;
+        }
+
+        // Node not found on this page, move to right sibling
+        uint64_t next_page_num = page->hnsw_right_sibling;
+        buffer_pool->unpinPage(current_page_num, false, ctx);
+        current_page_num = next_page_num;
     }
 
-    buffer_pool->unpinPage(index_info_.idx_root_page, false, ctx);
-    SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "HNSW node not found");
+    // Node not found in any page
+    SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "HNSW node not found in any page");
     return Status::NOT_FOUND;
 }
 
