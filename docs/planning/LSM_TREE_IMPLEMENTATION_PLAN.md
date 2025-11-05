@@ -2,8 +2,8 @@
 
 **Project**: ScratchBird Database Engine
 **Component**: LSM-Tree (Log-Structured Merge-Tree)
-**Status**: PHASE 1 COMPLETE - PHASE 2 STARTING (November 5, 2025)
-**Estimated Effort**: 80-110 hours remaining (20-30 hours completed)
+**Status**: PHASE 2 COMPLETE - PHASE 3 STARTING (November 5, 2025)
+**Estimated Effort**: 60-90 hours remaining (40-60 hours completed)
 **Specification**: `/docs/specifications/LSM_TREE_SPEC.md`
 
 ---
@@ -1024,12 +1024,12 @@ Orchestrate all components: memtable, SSTables, compaction, WAL, Bloom filter.
 - [x] Task 2.5: Memtable Range Scan (4-6 hours) ✅
 - [x] Task 2.6: Unit Tests for Memtable (4-6 hours) ✅ - 8 tests passing
 
-**Phase 2: SSTable Writer** (20-30 hours)
-- [ ] Task 3.1: SSTable Footer Structure (2-3 hours)
-- [ ] Task 3.2: SSTableWriter Class (4-6 hours)
-- [ ] Task 3.3: SSTableWriter addEntry Implementation (8-10 hours)
-- [ ] Task 3.4: SSTableWriter finish Implementation (6-8 hours)
-- [ ] Task 3.5: Unit Tests for SSTable Writer (4-6 hours)
+**Phase 2: SSTable Writer** (20-30 hours) ✅ **COMPLETE** - November 5, 2025
+- [x] Task 3.1: SSTable Footer Structure (2-3 hours) ✅
+- [x] Task 3.2: SSTableWriter Class (4-6 hours) ✅
+- [x] Task 3.3: SSTableWriter addEntry Implementation (8-10 hours) ✅
+- [x] Task 3.4: SSTableWriter finish Implementation (6-8 hours) ✅
+- [ ] Task 3.5: Unit Tests for SSTable Writer (4-6 hours) - IN PROGRESS
 
 **Phase 3: SSTable Reader** (20-30 hours)
 - [ ] Task 4.1: SSTableReader Class (4-6 hours)
