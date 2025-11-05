@@ -171,8 +171,9 @@ Status LSMCompactionManager::selectCompactionTask(CompactionTask *task, ErrorCon
         // Find overlapping SSTables in Level 1
         findOverlappingSSTables(1, global_min_key, global_max_key, &task->overlapping_sstables);
 
-        // Get oldest active transaction for garbage collection
-        task->oldest_active_xid = txn_mgr_->getOldestActiveXid();
+        // Get OIT (Oldest Interesting Transaction) for Firebird MGA garbage collection
+        // Per Firebird spec: "Record versions created by transactions < OIT can be garbage collected"
+        task->oit = txn_mgr_->getOldestXid();
 
         return Status::OK;
     }
@@ -205,7 +206,8 @@ Status LSMCompactionManager::selectCompactionTask(CompactionTask *task, ErrorCon
                 // Find overlapping SSTables in target level
                 findOverlappingSSTables(task->target_level, min_key, max_key, &task->overlapping_sstables);
 
-                task->oldest_active_xid = txn_mgr_->getOldestActiveXid();
+                // Get OIT for MGA garbage collection
+                task->oit = txn_mgr_->getOldestXid();
 
                 return Status::OK;
             }
@@ -230,8 +232,8 @@ Status LSMCompactionManager::executeCompaction(const CompactionTask &task, Error
     std::vector<std::string> all_inputs = task.source_sstables;
     all_inputs.insert(all_inputs.end(), task.overlapping_sstables.begin(), task.overlapping_sstables.end());
 
-    // Perform K-way merge
-    Status status = kWayMerge(all_inputs, output_path, task.oldest_active_xid, ctx);
+    // Perform K-way merge with MGA garbage collection using OIT
+    Status status = kWayMerge(all_inputs, output_path, task.oit, ctx);
     if (status != Status::OK)
     {
         return status;
@@ -371,13 +373,16 @@ void LSMCompactionManager::findOverlappingSSTables(uint32_t level,
  *
  * CRITICAL: Firebird MGA compliance
  * - Uses TransactionId, NOT Snapshot
- * - Garbage collection based on oldest active transaction
+ * - Garbage collection based on OIT (Oldest Interesting Transaction)
+ * - Per Firebird spec: "Record versions with xmax < OIT can be garbage collected"
  * - Deduplication: Keep newest version (highest sequence number)
- * - Tombstone removal: Discard DELETE entries
+ * - Tombstone removal: Discard DELETE entries when safe
+ *
+ * @param oit Oldest Interesting Transaction - boundary below which all transactions are committed
  */
 Status LSMCompactionManager::kWayMerge(const std::vector<std::string> &source_sstables,
                                         const std::string &output_path,
-                                        uint64_t oldest_active_xid,
+                                        uint64_t oit,
                                         ErrorContext *ctx)
 {
     // Open all source SSTables
@@ -455,13 +460,13 @@ Status LSMCompactionManager::kWayMerge(const std::vector<std::string> &source_ss
         }
         else
         {
-            // Garbage collection (MGA rules)
-            if (canGarbageCollect(current, oldest_active_xid))
+            // Garbage collection (MGA rules using OIT)
+            if (canGarbageCollect(current, oit))
             {
                 entries_skipped_gc++;
             }
-            // Tombstone removal (if entry is DELETE and we're confident it's no longer needed)
-            else if (current.entry_type == ENTRY_TYPE_DELETE && current.xmin < oldest_active_xid)
+            // Tombstone removal (if entry is DELETE and xmin < OIT, all transactions can see the delete)
+            else if (current.entry_type == ENTRY_TYPE_DELETE && current.xmin < oit)
             {
                 // Safe to remove tombstone if:
                 // - The DELETE is committed
@@ -543,9 +548,16 @@ Status LSMCompactionManager::kWayMerge(const std::vector<std::string> &source_ss
  * CRITICAL: Firebird MGA compliance
  * - Entry must be deleted (xmax != 0)
  * - Both xmin and xmax must be committed
- * - No active transaction can see this version (xmax < oldest_active_xid)
+ * - xmax < OIT (Oldest Interesting Transaction)
+ *
+ * Per Firebird spec:
+ * "OIT = Oldest transaction NOT in committed state"
+ * "Record versions created by transactions < OIT can be garbage collected"
+ * "All back versions with xmax < OIT are candidates for removal"
+ *
+ * @param oit Oldest Interesting Transaction - boundary below which all transactions are committed
  */
-bool LSMCompactionManager::canGarbageCollect(const MergeEntry &entry, uint64_t oldest_active_xid) const
+bool LSMCompactionManager::canGarbageCollect(const MergeEntry &entry, uint64_t oit) const
 {
     // Entry must be deleted (xmax != 0)
     if (entry.xmax == 0)
@@ -563,9 +575,10 @@ bool LSMCompactionManager::canGarbageCollect(const MergeEntry &entry, uint64_t o
         return false;
     }
 
-    // No active transaction can see this version
-    // An entry is invisible to all if xmax < oldest_active_xid
-    if (entry.xmax < oldest_active_xid)
+    // Firebird MGA: Entry can be garbage collected if xmax < OIT
+    // OIT is the boundary below which ALL transactions are committed
+    // Therefore, no transaction can see versions with xmax < OIT
+    if (entry.xmax < oit)
     {
         return true;
     }
