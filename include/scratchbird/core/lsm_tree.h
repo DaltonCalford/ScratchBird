@@ -437,5 +437,133 @@ private:
     uint32_t calculateChecksum();
 };
 
+/**
+ * SSTable Reader - Read immutable on-disk sorted string tables
+ *
+ * Read path:
+ * 1. open() - Read footer, parse index, load bloom filter
+ * 2. get() - Bloom check → Binary search index → Read block → MGA filter
+ * 3. scan() - Range scan with start/end keys
+ *
+ * Optimizations:
+ * - Bloom filter reduces unnecessary I/O (1% false positive)
+ * - Binary searchable index for O(log n) block location
+ * - MGA visibility filtering (TIP-based)
+ */
+class SSTableReader
+{
+public:
+    explicit SSTableReader(const std::string &file_path);
+    ~SSTableReader();
+
+    /**
+     * Open SSTable and read metadata
+     *
+     * - Reads footer from end of file
+     * - Validates magic number and version
+     * - Loads bloom filter into memory
+     * - Parses index block
+     */
+    Status open(ErrorContext *ctx = nullptr);
+
+    /**
+     * Get value for key (point query)
+     *
+     * Steps:
+     * 1. Check bloom filter (skip if not present)
+     * 2. Binary search index to find data block
+     * 3. Read data block
+     * 4. Scan entries in block for key
+     * 5. Apply MGA visibility filtering
+     *
+     * @param key Key to search for
+     * @param current_xid Current transaction ID
+     * @param txn_mgr Transaction manager for visibility checks
+     * @param value_out Output value (if found)
+     * @param found Output flag (true if found and visible)
+     * @return Status::OK on success
+     */
+    Status get(const std::vector<uint8_t> &key,
+               uint64_t current_xid,
+               TransactionManager *txn_mgr,
+               std::vector<uint8_t> *value_out,
+               bool *found,
+               ErrorContext *ctx = nullptr);
+
+    /**
+     * Range scan with start/end keys
+     *
+     * @param start_key Start key (inclusive), empty for beginning
+     * @param end_key End key (exclusive), empty for end
+     * @param current_xid Current transaction ID
+     * @param txn_mgr Transaction manager
+     * @param results Output vector of (key, value) pairs
+     */
+    Status scan(const std::vector<uint8_t> &start_key,
+                const std::vector<uint8_t> &end_key,
+                uint64_t current_xid,
+                TransactionManager *txn_mgr,
+                std::vector<std::pair<std::vector<uint8_t>, std::vector<uint8_t>>> *results,
+                ErrorContext *ctx = nullptr);
+
+    // Getters
+    uint64_t getNumEntries() const { return footer_.num_entries; }
+    std::vector<uint8_t> getMinKey() const;
+    std::vector<uint8_t> getMaxKey() const;
+    bool isOpen() const { return is_open_; }
+
+private:
+    std::string file_path_;
+    std::ifstream file_;
+    bool is_open_;
+
+    // Metadata from footer
+    SSTableFooter footer_;
+
+    // Index entries (loaded at open)
+    std::vector<IndexEntry> index_entries_;
+
+    // Bloom filter (loaded at open)
+    LSMBloomFilter *bloom_filter_;
+
+    /**
+     * Find index entry containing key using binary search
+     *
+     * Returns index of data block that might contain key
+     * Returns -1 if key is definitely not in SSTable
+     */
+    int findBlockIndex(const std::vector<uint8_t> &key) const;
+
+    /**
+     * Read data block at given offset
+     *
+     * @param block_offset Byte offset of block
+     * @param block_size Size of block in bytes
+     * @param block_data Output buffer for block data
+     */
+    Status readBlock(uint64_t block_offset,
+                     uint64_t block_size,
+                     std::vector<uint8_t> *block_data,
+                     ErrorContext *ctx);
+
+    /**
+     * Parse entries from data block
+     *
+     * Deserializes all entries in block
+     */
+    Status parseBlockEntries(const std::vector<uint8_t> &block_data,
+                             std::vector<MemtableEntry> *entries,
+                             ErrorContext *ctx);
+
+    /**
+     * Check if entry is visible to current transaction (MGA)
+     *
+     * Uses Firebird MGA rules (TIP-based visibility)
+     */
+    bool isEntryVisible(const MemtableEntry &entry,
+                       uint64_t current_xid,
+                       TransactionManager *txn_mgr) const;
+};
+
 } // namespace core
 } // namespace scratchbird
