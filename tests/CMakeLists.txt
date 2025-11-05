@@ -439,3 +439,35 @@ set_tests_properties(ColumnstoreSimpleE2E PROPERTIES
     LABELS "integration;columnstore;e2e;phase7;simple"
     TIMEOUT 30
 )
+
+# Load test (100K-1M rows) - Full version, may have issues
+add_executable(test_columnstore_load
+    stress/test_columnstore_load.cpp
+)
+target_link_libraries(test_columnstore_load
+    scratchbird_core
+    scratchbird_parser
+    scratchbird_sblr
+    scratchbird_optimizer
+)
+add_test(NAME ColumnstoreLoad COMMAND test_columnstore_load)
+set_tests_properties(ColumnstoreLoad PROPERTIES
+    LABELS "stress;columnstore;load;phase7;performance"
+    TIMEOUT 180
+)
+
+# Simple load test (50K rows) - Stable version
+add_executable(test_columnstore_load_simple
+    stress/test_columnstore_load_simple.cpp
+)
+target_link_libraries(test_columnstore_load_simple
+    scratchbird_core
+    scratchbird_parser
+    scratchbird_sblr
+    scratchbird_optimizer
+)
+add_test(NAME ColumnstoreLoadSimple COMMAND test_columnstore_load_simple)
+set_tests_properties(ColumnstoreLoadSimple PROPERTIES
+    LABELS "stress;columnstore;load;phase7;simple"
+    TIMEOUT 120
+)
