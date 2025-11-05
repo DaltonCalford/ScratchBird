@@ -1,8 +1,8 @@
 # ScratchBird Project Context
 
-**Last Updated**: November 5, 2025 Afternoon (LSM-Tree Phase 2 Complete)
+**Last Updated**: November 5, 2025 Evening (LSM-Tree Phase 3 Complete)
 **Version**: Alpha (Engine Phase 1 - In Progress)
-**Status**: Educational/Development - 69% Complete
+**Status**: Educational/Development - 70% Complete
 
 > **PURPOSE**: This file provides essential context for AI assistants working on ScratchBird.
 > Read this file at session start and after every context compaction.
@@ -42,7 +42,7 @@
 - ✅ **SP-GiST**: Complete (~1,200 lines) - All operations, all insertion cases ✨ Nov 4 Eve
 - ✅ **BRIN**: Complete (~1,262 lines) - Vacuum, multi-page, revmap, statistics ✨ Nov 4 Eve
 - ✅ **Columnstore**: Complete (~1,850 lines) - RLE/Dictionary/Bitpack compression, SIMD batch scans, 50K row load tests ✨ Nov 5 Morn
-- 🔧 **LSM-Tree**: Phase 2/8 Complete (~1,630 lines) - Memtable + SSTable Writer with Bloom filters ✨ Nov 5 Aft
+- 🔧 **LSM-Tree**: Phase 3/8 Complete (~2,130 lines) - Memtable + SSTable Writer/Reader with MGA visibility ✨ Nov 5 Eve
 
 **Data Types** (83/86 types, 97%):
 - All numeric types (INT8-INT128, UINT8-UINT64, DECIMAL, FLOAT, MONEY)
@@ -121,12 +121,14 @@
 ### 📊 Latest Achievements
 
 **November 5, 2025:**
-- 🔧 **LSM-Tree Index - Phase 2/8 Complete (Afternoon)** - Memtable + SSTable Writer (~1,630 lines) ✨
+- 🔧 **LSM-Tree Index - Phase 3/8 Complete (Evening)** - Memtable + SSTable Writer/Reader (~2,130 lines) ✨
   - **Phase 1**: Red-Black Tree memtable with full MGA compliance (8 tests passing)
   - **Phase 2**: SSTable Writer with disk serialization, Bloom filters, index blocks
+  - **Phase 3**: SSTable Reader with point queries, range scans, TIP-based visibility (5 tests passing)
+  - Binary search on index for O(log n) block lookup
+  - Bloom filter optimization to avoid unnecessary I/O
+  - Full Firebird MGA compliance with transaction visibility checks
   - File format: [Data Blocks][Index Block][Bloom Filter][Footer] (584-byte footer)
-  - Entry serialization preserves xmin/xmax for MGA visibility
-  - Bloom filter: 10 bits/key, ~1% false positive rate (early Phase 6 implementation)
 - ✅ **Columnstore Index - 100% Complete (Morning)** - 7 phases, compression + SIMD + segments (~1,850 lines) ✨
   - RLE/Dictionary/Bit-packing compression algorithms
   - AVX2 SIMD batch predicate evaluation (8x INT32, 4x INT64 parallel)
@@ -171,7 +173,7 @@
    - HNSW completion - ✅ COMPLETE (120-160 hours)
    - Full-Text Search - ✅ COMPLETE (60-80 hours)
    - Columnstore - ✅ COMPLETE (140-180 hours) ✨ Nov 5 Morn
-   - LSM-Tree - Phase 2/8 Complete, 60-90 hours remaining ✨ Nov 5 Aft
+   - LSM-Tree - Phase 3/8 Complete, 50-75 hours remaining ✨ Nov 5 Eve
 
 2. **Data Type Completions** (110-160 hours):
    - COMPOSITE type operations (30-40 hours)
@@ -417,6 +419,6 @@ cmake -DCMAKE_BUILD_TYPE=ASan ..       # Memory errors
 
 ---
 
-**Last Updated**: November 5, 2025 Afternoon
-**Status**: Phase 1 ALPHA - 69% Complete
-**Next Milestone**: Complete LSM-Tree (Phases 3-8), then address Phase 1A critical blockers
+**Last Updated**: November 5, 2025 Evening
+**Status**: Phase 1 ALPHA - 70% Complete
+**Next Milestone**: Complete LSM-Tree (Phases 4-8), then address Phase 1A critical blockers
