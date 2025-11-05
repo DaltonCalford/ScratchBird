@@ -303,36 +303,51 @@ bool Memtable::isEntryVisible(const MemtableEntry &entry,
 }
 
 // ============================================================================
-// Bloom Filter Implementation (Phase 6 stub - basic functionality)
+// LSM Bloom Filter Implementation (Phase 6 stub - basic functionality)
 // ============================================================================
 
-BloomFilter::BloomFilter(size_t expected_keys, double false_positive_rate)
+LSMBloomFilter::LSMBloomFilter(size_t expected_keys, double false_positive_rate)
 {
+    // Ensure reasonable inputs
+    if (expected_keys == 0)
+        expected_keys = 1;
+    if (false_positive_rate <= 0.0 || false_positive_rate >= 1.0)
+        false_positive_rate = 0.01;
+
     // Calculate optimal bit array size
     // Formula: m = -(n * ln(p)) / (ln(2)^2)
     // where n = expected_keys, p = false_positive_rate
-    num_bits_ = static_cast<size_t>(
-        -(static_cast<double>(expected_keys) * std::log(false_positive_rate)) /
-        (std::log(2.0) * std::log(2.0)));
+    double m = -(static_cast<double>(expected_keys) * std::log(false_positive_rate)) /
+               (std::log(2.0) * std::log(2.0));
+
+    // Clamp to reasonable size (max 1MB bit array = 8MB)
+    if (m > 8 * 1024 * 1024)
+        m = 8 * 1024 * 1024;
+    if (m < 8)
+        m = 8;
+
+    num_bits_ = static_cast<size_t>(m);
 
     // Calculate optimal number of hash functions
     // Formula: k = (m / n) * ln(2)
     num_hashes_ = static_cast<size_t>(
         (static_cast<double>(num_bits_) / static_cast<double>(expected_keys)) * std::log(2.0));
 
-    // Ensure at least 1 hash function
+    // Clamp hash functions to reasonable range
     if (num_hashes_ < 1)
         num_hashes_ = 1;
+    if (num_hashes_ > 10)
+        num_hashes_ = 10;
 
     // Allocate bit array (rounded up to bytes)
     bits_.resize((num_bits_ + 7) / 8, 0);
 }
 
-BloomFilter::~BloomFilter()
+LSMBloomFilter::~LSMBloomFilter()
 {
 }
 
-void BloomFilter::add(const std::vector<uint8_t> &key)
+void LSMBloomFilter::add(const std::vector<uint8_t> &key)
 {
     // Use multiple hash functions (double hashing with MurmurHash3-style)
     uint64_t hash1 = 0;
@@ -355,7 +370,7 @@ void BloomFilter::add(const std::vector<uint8_t> &key)
     }
 }
 
-bool BloomFilter::mightContain(const std::vector<uint8_t> &key) const
+bool LSMBloomFilter::mightContain(const std::vector<uint8_t> &key) const
 {
     // Check if all bits are set
     uint64_t hash1 = 0;
@@ -382,7 +397,7 @@ bool BloomFilter::mightContain(const std::vector<uint8_t> &key) const
     return true; // Might be present (or false positive)
 }
 
-void BloomFilter::serialize(std::vector<uint8_t> *output) const
+void LSMBloomFilter::serialize(std::vector<uint8_t> *output) const
 {
     output->clear();
 
@@ -398,7 +413,7 @@ void BloomFilter::serialize(std::vector<uint8_t> *output) const
     output->insert(output->end(), bits_.begin(), bits_.end());
 }
 
-BloomFilter *BloomFilter::deserialize(const std::vector<uint8_t> &data)
+LSMBloomFilter *LSMBloomFilter::deserialize(const std::vector<uint8_t> &data)
 {
     if (data.size() < 16)
     {
@@ -412,7 +427,7 @@ BloomFilter *BloomFilter::deserialize(const std::vector<uint8_t> &data)
     size_t num_hashes = *reinterpret_cast<const size_t *>(data.data() + sizeof(size_t));
 
     // Create bloom filter
-    BloomFilter *bf = new BloomFilter(1, 0.01); // Dummy params
+    LSMBloomFilter *bf = new LSMBloomFilter(1, 0.01); // Dummy params
     bf->num_bits_ = num_bits;
     bf->num_hashes_ = num_hashes;
 
