@@ -471,3 +471,22 @@ set_tests_properties(ColumnstoreLoadSimple PROPERTIES
     LABELS "stress;columnstore;load;phase7;simple"
     TIMEOUT 120
 )
+
+# ============================================================================
+# LSM-Tree Index Tests - Phase 1: Memtable
+# ============================================================================
+
+add_executable(test_lsm_memtable
+    unit/test_lsm_memtable.cpp
+)
+target_link_libraries(test_lsm_memtable
+    scratchbird_core
+    scratchbird_parser
+    scratchbird_sblr
+    scratchbird_optimizer
+)
+add_test(NAME LSMMemtable COMMAND test_lsm_memtable)
+set_tests_properties(LSMMemtable PROPERTIES
+    LABELS "unit;lsm;memtable;phase1"
+    TIMEOUT 60
+)
