@@ -22,6 +22,10 @@ list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/deprecated/.*")
 
 # Temporarily exclude standalone test files with main() that haven't been converted to GoogleTest format
 # These files will be converted incrementally to GoogleTest TEST/TEST_F format
+list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_columnstore_rle\\.cpp$")
+list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_columnstore_dict\\.cpp$")
+list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_columnstore_bitpack\\.cpp$")
+list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_columnstore_predicate\\.cpp$")
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_advanced_domain\\.cpp$")
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_array\\.cpp$")
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_btree_delete_parent_update\\.cpp$")
@@ -285,4 +289,80 @@ add_test(NAME NetworkTypes COMMAND test_network_types)
 set_tests_properties(NetworkTypes PROPERTIES
     LABELS "unit;task16;network"
     TIMEOUT 60
+)
+
+# ============================================================================
+# Columnstore Index Tests - Phase 1: RLE Compression
+# ============================================================================
+
+add_executable(test_columnstore_rle
+    unit/test_columnstore_rle.cpp
+)
+target_link_libraries(test_columnstore_rle
+    scratchbird_core
+    scratchbird_parser
+    scratchbird_sblr
+    scratchbird_optimizer
+)
+add_test(NAME ColumnstoreRLE COMMAND test_columnstore_rle)
+set_tests_properties(ColumnstoreRLE PROPERTIES
+    LABELS "unit;columnstore;rle;phase1"
+    TIMEOUT 120
+)
+
+# ============================================================================
+# Columnstore Index Tests - Phase 2: Dictionary Encoding
+# ============================================================================
+
+add_executable(test_columnstore_dict
+    unit/test_columnstore_dict.cpp
+)
+target_link_libraries(test_columnstore_dict
+    scratchbird_core
+    scratchbird_parser
+    scratchbird_sblr
+    scratchbird_optimizer
+)
+add_test(NAME ColumnstoreDictionary COMMAND test_columnstore_dict)
+set_tests_properties(ColumnstoreDictionary PROPERTIES
+    LABELS "unit;columnstore;dictionary;phase2"
+    TIMEOUT 120
+)
+
+# ============================================================================
+# Columnstore Index Tests - Phase 3: Bit-Packing
+# ============================================================================
+
+add_executable(test_columnstore_bitpack
+    unit/test_columnstore_bitpack.cpp
+)
+target_link_libraries(test_columnstore_bitpack
+    scratchbird_core
+    scratchbird_parser
+    scratchbird_sblr
+    scratchbird_optimizer
+)
+add_test(NAME ColumnstoreBitpack COMMAND test_columnstore_bitpack)
+set_tests_properties(ColumnstoreBitpack PROPERTIES
+    LABELS "unit;columnstore;bitpack;phase3"
+    TIMEOUT 120
+)
+
+# ============================================================================
+# Columnstore Index Tests - Phase 4: Predicate Pushdown
+# ============================================================================
+
+add_executable(test_columnstore_predicate
+    unit/test_columnstore_predicate.cpp
+)
+target_link_libraries(test_columnstore_predicate
+    scratchbird_core
+    scratchbird_parser
+    scratchbird_sblr
+    scratchbird_optimizer
+)
+add_test(NAME ColumnstorePredicate COMMAND test_columnstore_predicate)
+set_tests_properties(ColumnstorePredicate PROPERTIES
+    LABELS "unit;columnstore;predicate;phase4"
+    TIMEOUT 120
 )

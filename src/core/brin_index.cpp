@@ -126,7 +126,17 @@ std::unique_ptr<BrinIndex> BrinIndex::open(Database *db,
     index_info.idx_root_page = root_page;
     index_info.idx_range_size = 128;
 
-    return std::make_unique<BrinIndex>(db, index_info);
+    auto index = std::make_unique<BrinIndex>(db, index_info);
+
+    // Build revmap for O(1) lookups
+    Status status = index->build_revmap(ctx);
+    if (status != Status::OK)
+    {
+        LOG_WARNING(GENERAL, "BRIN: Failed to build revmap, will use linear scan");
+        // Don't fail - revmap is optional optimization
+    }
+
+    return index;
 }
 
 Status BrinIndex::insert(const std::vector<uint8_t> &value,
@@ -153,13 +163,60 @@ Status BrinIndex::insert(const std::vector<uint8_t> &value,
     uint32_t range_start = range_index * index_info_.idx_range_size;
     uint32_t range_end = range_start + index_info_.idx_range_size - 1;
 
-    // Pin root page
+    // Try O(1) revmap lookup first
+    uint32_t current_page_num = revmap_lookup(range_start);
     void *page_buffer = nullptr;
-    Status status = buffer_pool->pinPage(index_info_.idx_root_page, &page_buffer, ctx);
-    if (status != Status::OK || !page_buffer)
+    Status status;
+
+    if (current_page_num != 0)
     {
-        SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to pin BRIN page");
-        return Status::IO_ERROR;
+        // Revmap hit - pin the page directly
+        status = buffer_pool->pinPage(current_page_num, &page_buffer, ctx);
+        if (status != Status::OK || !page_buffer)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to pin BRIN page from revmap");
+            return Status::IO_ERROR;
+        }
+    }
+    else
+    {
+        // Revmap miss - fall back to linear scan
+        current_page_num = index_info_.idx_root_page;
+
+        // Traverse pages to find the right one
+        while (current_page_num != 0)
+        {
+            status = buffer_pool->pinPage(current_page_num, &page_buffer, ctx);
+            if (status != Status::OK || !page_buffer)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to pin BRIN page");
+                return Status::IO_ERROR;
+            }
+
+            uint8_t *temp_page_data = static_cast<uint8_t*>(page_buffer);
+            SBBrinPage *temp_page = reinterpret_cast<SBBrinPage*>(temp_page_data);
+
+            // Check if this page covers the target range
+            if (temp_page->brin_count == 0 ||
+                (range_start >= temp_page->brin_first_block && range_start <= temp_page->brin_last_block))
+            {
+                // This page should contain the range (or is empty)
+                break;
+            }
+
+            // Check if we need to go to the next page
+            uint64_t next_page = temp_page->brin_right_sibling;
+            buffer_pool->unpinPage(current_page_num, false, ctx);
+
+            if (next_page == 0)
+            {
+                // No more pages - use the last page
+                status = buffer_pool->pinPage(current_page_num, &page_buffer, ctx);
+                break;
+            }
+
+            current_page_num = static_cast<uint32_t>(next_page);
+        }
     }
 
     uint8_t *page_data = static_cast<uint8_t*>(page_buffer);
@@ -217,9 +274,19 @@ Status BrinIndex::insert(const std::vector<uint8_t> &value,
 
         if (page->brin_free_space < new_range_size)
         {
-            buffer_pool->unpinPage(index_info_.idx_root_page, false, ctx);
-            SET_ERROR_CONTEXT(ctx, Status::PAGE_FULL, "BRIN page full");
-            return Status::PAGE_FULL;
+            // Page is full - split it
+            buffer_pool->unpinPage(current_page_num, false, ctx);
+
+            LOG_DEBUG(GENERAL, "BRIN: Page %u full, splitting before insert", current_page_num);
+            status = split_page(current_page_num, ctx);
+            if (status != Status::OK)
+            {
+                SET_ERROR_CONTEXT(ctx, status, "Failed to split BRIN page");
+                return status;
+            }
+
+            // Retry insertion after split (recursive call)
+            return insert(value, block_number, ctx);
         }
 
         // Create new range at end
@@ -242,13 +309,16 @@ Status BrinIndex::insert(const std::vector<uint8_t> &value,
         page->brin_free_space -= new_range_size;
         page->brin_ranges_total++;
 
+        // Add to revmap
+        revmap_add(range_start, current_page_num);
+
         updated = true;
 
-        LOG_DEBUG(GENERAL, "BRIN: Added new range [%u-%u] to page",
-                 range_start, range_end);
+        LOG_DEBUG(GENERAL, "BRIN: Added new range [%u-%u] to page %u",
+                 range_start, range_end, current_page_num);
     }
 
-    buffer_pool->unpinPage(index_info_.idx_root_page, updated, ctx);
+    buffer_pool->unpinPage(current_page_num, updated, ctx);
 
     return Status::OK;
 }
@@ -276,64 +346,79 @@ Status BrinIndex::scan(const std::vector<uint8_t> *min_value,
         return Status::INVALID_ARGUMENT;
     }
 
-    // Pin root page
-    void *page_buffer = nullptr;
-    Status status = buffer_pool->pinPage(index_info_.idx_root_page, &page_buffer, ctx);
-    if (status != Status::OK || !page_buffer)
+    // Traverse all pages in the sibling chain
+    uint32_t current_page_num = index_info_.idx_root_page;
+    uint64_t total_ranges = 0;
+
+    while (current_page_num != 0)
     {
-        SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to pin BRIN page");
-        return Status::IO_ERROR;
-    }
-
-    uint8_t *page_data = static_cast<uint8_t*>(page_buffer);
-    SBBrinPage *page = reinterpret_cast<SBBrinPage*>(page_data);
-
-    // Scan all ranges
-    uint8_t *range_ptr = page_data + sizeof(SBBrinPage);
-
-    for (uint16_t i = 0; i < page->brin_count; ++i)
-    {
-        SBBrinRange *range = reinterpret_cast<SBBrinRange*>(range_ptr);
-
-        // Check MGA visibility
-        if (!isRangeVisible(range->brn_xmin, range->brn_xmax, current_xid, txn_mgr))
+        void *page_buffer = nullptr;
+        Status status = buffer_pool->pinPage(current_page_num, &page_buffer, ctx);
+        if (status != Status::OK || !page_buffer)
         {
-            // Skip invisible range
-            size_t range_size = sizeof(SBBrinRange) + range->brn_min_len + range->brn_max_len;
-            range_ptr += range_size;
-            continue;
+            SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to pin BRIN page");
+            return Status::IO_ERROR;
         }
 
-        // Extract min/max values
-        uint8_t *min_ptr = range_ptr + sizeof(SBBrinRange);
-        uint8_t *max_ptr = min_ptr + range->brn_min_len;
+        uint8_t *page_data = static_cast<uint8_t*>(page_buffer);
+        SBBrinPage *page = reinterpret_cast<SBBrinPage*>(page_data);
 
-        std::vector<uint8_t> range_min(min_ptr, min_ptr + range->brn_min_len);
-        std::vector<uint8_t> range_max(max_ptr, max_ptr + range->brn_max_len);
+        // Scan all ranges on this page
+        uint8_t *range_ptr = page_data + sizeof(SBBrinPage);
 
-        // Check if range overlaps with query
-        if (BrinMinmaxOps::rangeOverlaps(range_min, range_max, min_value, max_value))
+        for (uint16_t i = 0; i < page->brin_count; ++i)
         {
-            // Add all blocks in this range
-            for (uint32_t block = range->brn_start_block;
-                 block <= range->brn_end_block; ++block)
+            SBBrinRange *range = reinterpret_cast<SBBrinRange*>(range_ptr);
+
+            // Check MGA visibility
+            if (!isRangeVisible(range->brn_xmin, range->brn_xmax, current_xid, txn_mgr))
             {
-                block_numbers_out->push_back(block);
+                // Skip invisible range
+                size_t range_size = sizeof(SBBrinRange) + range->brn_min_len + range->brn_max_len;
+                range_ptr += range_size;
+                continue;
             }
 
-            LOG_DEBUG(GENERAL, "BRIN: Range [%u-%u] matched query",
-                     range->brn_start_block, range->brn_end_block);
+            // Extract min/max values
+            uint8_t *min_ptr = range_ptr + sizeof(SBBrinRange);
+            uint8_t *max_ptr = min_ptr + range->brn_min_len;
+
+            std::vector<uint8_t> range_min(min_ptr, min_ptr + range->brn_min_len);
+            std::vector<uint8_t> range_max(max_ptr, max_ptr + range->brn_max_len);
+
+            // Check if range overlaps with query
+            if (BrinMinmaxOps::rangeOverlaps(range_min, range_max, min_value, max_value))
+            {
+                // Add all blocks in this range
+                for (uint32_t block = range->brn_start_block;
+                     block <= range->brn_end_block; ++block)
+                {
+                    block_numbers_out->push_back(block);
+                }
+
+                LOG_DEBUG(GENERAL, "BRIN: Range [%u-%u] matched query",
+                         range->brn_start_block, range->brn_end_block);
+            }
+
+            // Move to next range
+            size_t range_size = sizeof(SBBrinRange) + range->brn_min_len + range->brn_max_len;
+            range_ptr += range_size;
         }
 
-        // Move to next range
-        size_t range_size = sizeof(SBBrinRange) + range->brn_min_len + range->brn_max_len;
-        range_ptr += range_size;
+        total_ranges += page->brin_count;
+
+        // Move to next page
+        uint64_t next_page = page->brin_right_sibling;
+        buffer_pool->unpinPage(current_page_num, false, ctx);
+
+        if (next_page == 0)
+            break;
+
+        current_page_num = static_cast<uint32_t>(next_page);
     }
 
-    buffer_pool->unpinPage(index_info_.idx_root_page, false, ctx);
-
-    LOG_INFO(GENERAL, "BRIN scan: returned %zu blocks from %u ranges",
-             block_numbers_out->size(), page->brin_count);
+    LOG_INFO(GENERAL, "BRIN scan: returned %zu blocks from %lu ranges",
+             block_numbers_out->size(), total_ranges);
 
     return Status::OK;
 }
@@ -408,7 +493,58 @@ Status BrinIndex::vacuum(VacuumStats *stats_out, ErrorContext *ctx)
     }
 
     // Remove dead ranges (compact page)
-    // TODO: Implement actual range removal and compaction
+    if (!dead_ranges.empty())
+    {
+        // Compact the page by removing dead ranges
+        // We'll rebuild the page with only live ranges
+
+        std::vector<uint8_t> live_ranges_data;
+        uint8_t *read_ptr = page_data + sizeof(SBBrinPage);
+
+        for (uint16_t i = 0; i < page->brin_count; ++i)
+        {
+            SBBrinRange *range = reinterpret_cast<SBBrinRange*>(read_ptr);
+            size_t range_size = sizeof(SBBrinRange) + range->brn_min_len + range->brn_max_len;
+
+            // Check if this range is dead
+            bool is_dead = std::find(dead_ranges.begin(), dead_ranges.end(), i) != dead_ranges.end();
+
+            if (!is_dead)
+            {
+                // Keep this range - copy to temporary buffer
+                live_ranges_data.insert(live_ranges_data.end(),
+                                       read_ptr,
+                                       read_ptr + range_size);
+            }
+            else
+            {
+                // Remove from revmap
+                revmap_remove(range->brn_start_block);
+            }
+
+            read_ptr += range_size;
+        }
+
+        // Now rewrite the page with only live ranges
+        uint8_t *write_ptr = page_data + sizeof(SBBrinPage);
+        if (!live_ranges_data.empty())
+        {
+            std::memcpy(write_ptr, live_ranges_data.data(), live_ranges_data.size());
+        }
+
+        // Update page metadata
+        uint16_t old_count = page->brin_count;
+        page->brin_count = old_count - static_cast<uint16_t>(dead_ranges.size());
+        page->brin_ranges_deleted += dead_ranges.size();
+
+        // Recalculate free space
+        size_t used_space = sizeof(SBBrinPage) + live_ranges_data.size();
+        page->brin_free_space = 8192 - used_space;
+
+        LOG_DEBUG(GENERAL, "BRIN vacuum: compacted page, removed %zu ranges, reclaimed %zu bytes",
+                 dead_ranges.size(),
+                 dead_ranges.size() > 0 ? (8192 - used_space) - page->brin_free_space : 0);
+    }
 
     buffer_pool->unpinPage(index_info_.idx_root_page, ranges_removed > 0, ctx);
 
@@ -417,7 +553,8 @@ Status BrinIndex::vacuum(VacuumStats *stats_out, ErrorContext *ctx)
         stats_out->ranges_visited = ranges_visited;
         stats_out->ranges_removed = ranges_removed;
         stats_out->ranges_updated = 0;
-        stats_out->bytes_reclaimed = 0;
+        stats_out->bytes_reclaimed = ranges_removed > 0 ?
+            (ranges_removed * (sizeof(SBBrinRange) + 32)) : 0; // Estimate 32 bytes per min/max
     }
 
     LOG_INFO(GENERAL, "BRIN vacuum: visited %lu ranges, removed %lu",
@@ -476,25 +613,79 @@ Status BrinIndex::getStats(BrinStats *stats_out, ErrorContext *ctx)
         return Status::INVALID_ARGUMENT;
     }
 
-    // Pin root page
-    void *page_buffer = nullptr;
-    Status status = buffer_pool->pinPage(index_info_.idx_root_page, &page_buffer, ctx);
-    if (status != Status::OK || !page_buffer)
+    // Traverse all pages to collect statistics
+    uint32_t current_page_num = index_info_.idx_root_page;
+    uint64_t total_ranges = 0;
+    uint64_t deleted_ranges = 0;
+    uint64_t total_pages = 0;
+    uint32_t min_block = UINT32_MAX;
+    uint32_t max_block = 0;
+    uint64_t total_blocks_in_ranges = 0;
+
+    while (current_page_num != 0)
     {
-        SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to pin BRIN page");
-        return Status::IO_ERROR;
+        void *page_buffer = nullptr;
+        Status status = buffer_pool->pinPage(current_page_num, &page_buffer, ctx);
+        if (status != Status::OK || !page_buffer)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to pin BRIN page");
+            return Status::IO_ERROR;
+        }
+
+        uint8_t *page_data = static_cast<uint8_t*>(page_buffer);
+        SBBrinPage *page = reinterpret_cast<SBBrinPage*>(page_data);
+
+        total_pages++;
+        total_ranges += page->brin_count;
+        deleted_ranges += page->brin_ranges_deleted;
+
+        // Scan ranges on this page
+        uint8_t *range_ptr = page_data + sizeof(SBBrinPage);
+        for (uint16_t i = 0; i < page->brin_count; ++i)
+        {
+            SBBrinRange *range = reinterpret_cast<SBBrinRange*>(range_ptr);
+
+            // Track global block range
+            if (range->brn_start_block < min_block)
+                min_block = range->brn_start_block;
+            if (range->brn_end_block > max_block)
+                max_block = range->brn_end_block;
+
+            // Count blocks covered by this range
+            total_blocks_in_ranges += (range->brn_end_block - range->brn_start_block + 1);
+
+            size_t range_size = sizeof(SBBrinRange) + range->brn_min_len + range->brn_max_len;
+            range_ptr += range_size;
+        }
+
+        // Move to next page
+        uint64_t next_page = page->brin_right_sibling;
+        buffer_pool->unpinPage(current_page_num, false, ctx);
+
+        if (next_page == 0)
+            break;
+
+        current_page_num = static_cast<uint32_t>(next_page);
     }
 
-    uint8_t *page_data = static_cast<uint8_t*>(page_buffer);
-    SBBrinPage *page = reinterpret_cast<SBBrinPage*>(page_data);
+    // Fill output statistics
+    stats_out->total_ranges = total_ranges;
+    stats_out->deleted_ranges = deleted_ranges;
+    stats_out->total_pages = total_pages;
+    stats_out->blocks_covered = (min_block <= max_block) ? (max_block - min_block + 1) : 0;
 
-    stats_out->total_ranges = page->brin_ranges_total;
-    stats_out->deleted_ranges = page->brin_ranges_deleted;
-    stats_out->total_pages = 1; // Simplified: only root page
-    stats_out->blocks_covered = page->brin_last_block - page->brin_first_block + 1;
-    stats_out->avg_range_selectivity = 0.0; // TODO: Calculate
-
-    buffer_pool->unpinPage(index_info_.idx_root_page, false, ctx);
+    // Calculate average range selectivity
+    // Selectivity = (blocks in ranges) / (total blocks covered)
+    // Higher selectivity means ranges are more densely packed (better index quality)
+    if (stats_out->blocks_covered > 0)
+    {
+        stats_out->avg_range_selectivity =
+            static_cast<double>(total_blocks_in_ranges) / static_cast<double>(stats_out->blocks_covered);
+    }
+    else
+    {
+        stats_out->avg_range_selectivity = 0.0;
+    }
 
     return Status::OK;
 }
@@ -527,6 +718,281 @@ static bool isRangeVisible(uint64_t xmin, uint64_t xmax,
     }
 
     return true;
+}
+
+// =============================================================================
+// Revmap Implementation (Phase 3)
+// =============================================================================
+
+Status BrinIndex::build_revmap(ErrorContext *ctx)
+{
+    if (!db_)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "No database");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    BufferPool *buffer_pool = db_->buffer_pool();
+    if (!buffer_pool)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "No buffer pool");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    std::unique_lock lock(revmap_mutex_);
+    revmap_.clear();
+
+    // Traverse all pages and build revmap
+    uint32_t current_page_num = index_info_.idx_root_page;
+    uint64_t ranges_mapped = 0;
+
+    while (current_page_num != 0)
+    {
+        void *page_buffer = nullptr;
+        Status status = buffer_pool->pinPage(current_page_num, &page_buffer, ctx);
+        if (status != Status::OK || !page_buffer)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to pin BRIN page");
+            return Status::IO_ERROR;
+        }
+
+        uint8_t *page_data = static_cast<uint8_t*>(page_buffer);
+        SBBrinPage *page = reinterpret_cast<SBBrinPage*>(page_data);
+
+        // Map all ranges on this page
+        uint8_t *range_ptr = page_data + sizeof(SBBrinPage);
+        for (uint16_t i = 0; i < page->brin_count; ++i)
+        {
+            SBBrinRange *range = reinterpret_cast<SBBrinRange*>(range_ptr);
+            revmap_[range->brn_start_block] = current_page_num;
+            ranges_mapped++;
+
+            size_t range_size = sizeof(SBBrinRange) + range->brn_min_len + range->brn_max_len;
+            range_ptr += range_size;
+        }
+
+        // Move to next page
+        uint64_t next_page = page->brin_right_sibling;
+        buffer_pool->unpinPage(current_page_num, false, ctx);
+
+        if (next_page == 0)
+            break;
+
+        current_page_num = static_cast<uint32_t>(next_page);
+    }
+
+    LOG_INFO(GENERAL, "BRIN: Built revmap with %lu range entries", ranges_mapped);
+
+    return Status::OK;
+}
+
+void BrinIndex::revmap_add(uint32_t range_start_block, uint32_t page_num)
+{
+    std::unique_lock lock(revmap_mutex_);
+    revmap_[range_start_block] = page_num;
+}
+
+void BrinIndex::revmap_remove(uint32_t range_start_block)
+{
+    std::unique_lock lock(revmap_mutex_);
+    revmap_.erase(range_start_block);
+}
+
+uint32_t BrinIndex::revmap_lookup(uint32_t range_start_block) const
+{
+    std::shared_lock lock(revmap_mutex_);
+    auto it = revmap_.find(range_start_block);
+    if (it != revmap_.end())
+    {
+        return it->second;
+    }
+    return 0; // Not found
+}
+
+// =============================================================================
+// Page Split Implementation (Phase 2)
+// =============================================================================
+
+Status BrinIndex::split_page(uint64_t page_num, ErrorContext *ctx)
+{
+    if (!db_)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "No database");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    BufferPool *buffer_pool = db_->buffer_pool();
+    PageManager *page_mgr = db_->page_manager();
+    TransactionManager *txn_mgr = db_->transaction_manager();
+
+    if (!buffer_pool || !page_mgr || !txn_mgr)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Missing components");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    uint64_t current_xid = txn_mgr->getCurrentXid();
+
+    // Pin the page to split
+    void *page_buffer = nullptr;
+    Status status = buffer_pool->pinPage(static_cast<uint32_t>(page_num), &page_buffer, ctx);
+    if (status != Status::OK || !page_buffer)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to pin BRIN page for split");
+        return Status::IO_ERROR;
+    }
+
+    uint8_t *page_data = static_cast<uint8_t*>(page_buffer);
+    SBBrinPage *page = reinterpret_cast<SBBrinPage*>(page_data);
+
+    // Allocate new sibling page
+    uint32_t new_page_num = 0;
+    status = page_mgr->allocatePage(new_page_num, ctx);
+    if (status != Status::OK)
+    {
+        buffer_pool->unpinPage(static_cast<uint32_t>(page_num), false, ctx);
+        SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to allocate new BRIN page");
+        return Status::IO_ERROR;
+    }
+
+    // Pin new page
+    void *new_page_buffer = nullptr;
+    status = buffer_pool->pinPage(new_page_num, &new_page_buffer, ctx);
+    if (status != Status::OK || !new_page_buffer)
+    {
+        buffer_pool->unpinPage(static_cast<uint32_t>(page_num), false, ctx);
+        SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to pin new BRIN page");
+        return Status::IO_ERROR;
+    }
+
+    uint8_t *new_page_data = static_cast<uint8_t*>(new_page_buffer);
+    SBBrinPage *new_page = reinterpret_cast<SBBrinPage*>(new_page_data);
+
+    // Initialize new page header (manual initialization)
+    new_page->brin_header.magic = K_MAGIC_SBRD;
+    new_page->brin_header.version = static_cast<uint16_t>(DB_VERSION_ALPHA_1_0_1);
+    new_page->brin_header.page_type = static_cast<uint16_t>(PageType::PAGE_TYPE_BRIN);
+    new_page->brin_header.page_size = 8192;
+    new_page->brin_header.page_id = new_page_num;
+    new_page->brin_header.checksum = 0;
+    new_page->brin_header.lsn = 0;
+    new_page->brin_header.flags = 0;
+    std::memcpy(new_page->brin_header.database_uuid, db_->uuid().bytes.data(), 16);
+    new_page->brin_header.generation = 0;
+    new_page->brin_header.free_space = 0;
+    new_page->brin_header.item_count = 0;
+    new_page->brin_header.free_offset = 0;
+    new_page->brin_header.special_size = 0;
+
+    // Initialize BRIN metadata
+    std::memcpy(new_page->brin_index_uuid.bytes.data(), index_info_.idx_uuid.bytes.data(), 16);
+    std::memcpy(new_page->brin_table_uuid.bytes.data(), index_info_.idx_table_uuid.bytes.data(), 16);
+    new_page->brin_flags = 0;
+    new_page->brin_count = 0;
+    new_page->brin_free_space = 8192 - sizeof(SBBrinPage);
+    new_page->brin_range_size = page->brin_range_size;
+    new_page->brin_first_block = 0;  // Will be updated
+    new_page->brin_last_block = 0;   // Will be updated
+    new_page->brin_left_sibling = page_num;
+    new_page->brin_right_sibling = page->brin_right_sibling;
+    new_page->brin_xmin = current_xid;
+    new_page->brin_xmax = 0;
+    new_page->brin_lsn = 0;
+    new_page->brin_ranges_total = 0;
+    new_page->brin_ranges_deleted = 0;
+    std::memset(new_page->brin_padding, 0, sizeof(new_page->brin_padding));
+
+    // Split ranges: Move upper half to new page
+    uint16_t split_point = page->brin_count / 2;
+    uint8_t *range_ptr = page_data + sizeof(SBBrinPage);
+    uint8_t *new_range_ptr = new_page_data + sizeof(SBBrinPage);
+
+    // Skip to split point
+    for (uint16_t i = 0; i < split_point; ++i)
+    {
+        SBBrinRange *range = reinterpret_cast<SBBrinRange*>(range_ptr);
+        size_t range_size = sizeof(SBBrinRange) + range->brn_min_len + range->brn_max_len;
+        range_ptr += range_size;
+    }
+
+    // Copy upper half to new page
+    size_t bytes_to_move = 0;
+    uint8_t *copy_start = range_ptr;
+    uint32_t new_first_block = UINT32_MAX;
+    uint32_t new_last_block = 0;
+
+    for (uint16_t i = split_point; i < page->brin_count; ++i)
+    {
+        SBBrinRange *range = reinterpret_cast<SBBrinRange*>(range_ptr);
+        size_t range_size = sizeof(SBBrinRange) + range->brn_min_len + range->brn_max_len;
+
+        // Track block range
+        if (range->brn_start_block < new_first_block)
+            new_first_block = range->brn_start_block;
+        if (range->brn_end_block > new_last_block)
+            new_last_block = range->brn_end_block;
+
+        bytes_to_move += range_size;
+        range_ptr += range_size;
+    }
+
+    // Copy ranges to new page
+    std::memcpy(new_range_ptr, copy_start, bytes_to_move);
+
+    // Update revmap for moved ranges
+    range_ptr = copy_start;
+    for (uint16_t i = split_point; i < page->brin_count; ++i)
+    {
+        SBBrinRange *range = reinterpret_cast<SBBrinRange*>(range_ptr);
+        revmap_add(range->brn_start_block, new_page_num);
+        size_t range_size = sizeof(SBBrinRange) + range->brn_min_len + range->brn_max_len;
+        range_ptr += range_size;
+    }
+
+    // Update new page metadata
+    new_page->brin_count = page->brin_count - split_point;
+    new_page->brin_free_space = 8192 - sizeof(SBBrinPage) - bytes_to_move;
+    new_page->brin_first_block = new_first_block;
+    new_page->brin_last_block = new_last_block;
+    new_page->brin_ranges_total = page->brin_count - split_point;
+
+    // Update original page metadata
+    page->brin_count = split_point;
+    page->brin_free_space = 8192 - sizeof(SBBrinPage) - (copy_start - (page_data + sizeof(SBBrinPage)));
+    page->brin_right_sibling = new_page_num;
+
+    // Update last_block for original page
+    range_ptr = page_data + sizeof(SBBrinPage);
+    uint32_t orig_last_block = 0;
+    for (uint16_t i = 0; i < page->brin_count; ++i)
+    {
+        SBBrinRange *range = reinterpret_cast<SBBrinRange*>(range_ptr);
+        if (range->brn_end_block > orig_last_block)
+            orig_last_block = range->brn_end_block;
+        size_t range_size = sizeof(SBBrinRange) + range->brn_min_len + range->brn_max_len;
+        range_ptr += range_size;
+    }
+    page->brin_last_block = orig_last_block;
+
+    // If original page had a right sibling, update its left pointer
+    if (new_page->brin_right_sibling != 0)
+    {
+        void *right_buffer = nullptr;
+        if (buffer_pool->pinPage(static_cast<uint32_t>(new_page->brin_right_sibling), &right_buffer, ctx) == Status::OK)
+        {
+            SBBrinPage *right_page = reinterpret_cast<SBBrinPage*>(right_buffer);
+            right_page->brin_left_sibling = new_page_num;
+            buffer_pool->unpinPage(static_cast<uint32_t>(new_page->brin_right_sibling), true, ctx);
+        }
+    }
+
+    buffer_pool->unpinPage(new_page_num, true, ctx);
+    buffer_pool->unpinPage(static_cast<uint32_t>(page_num), true, ctx);
+
+    LOG_INFO(GENERAL, "BRIN: Split page %lu into %lu (ranges: %u / %u)",
+             page_num, static_cast<uint64_t>(new_page_num), split_point, new_page->brin_count);
+
+    return Status::OK;
 }
 
 } // namespace scratchbird::core

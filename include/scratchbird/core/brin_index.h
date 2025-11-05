@@ -9,6 +9,8 @@
 #include <cstdint>
 #include <vector>
 #include <memory>
+#include <unordered_map>
+#include <shared_mutex>
 
 namespace scratchbird
 {
@@ -335,6 +337,12 @@ namespace scratchbird
             Database *db_;
             SBBrinIndex index_info_;
 
+            // Revmap: Maps range_start_block → page_number for O(1) lookup
+            // Key: range starting block number (e.g., 0, 128, 256, ...)
+            // Value: page number containing that range
+            std::unordered_map<uint32_t, uint32_t> revmap_;
+            mutable std::shared_mutex revmap_mutex_;
+
             // Helper methods
 
             /**
@@ -379,6 +387,27 @@ namespace scratchbird
              * Split BRIN page if full
              */
             Status split_page(uint64_t page_num, ErrorContext *ctx);
+
+            /**
+             * Build/rebuild revmap by scanning all pages
+             */
+            Status build_revmap(ErrorContext *ctx);
+
+            /**
+             * Add range to revmap
+             */
+            void revmap_add(uint32_t range_start_block, uint32_t page_num);
+
+            /**
+             * Remove range from revmap
+             */
+            void revmap_remove(uint32_t range_start_block);
+
+            /**
+             * Lookup page number for a range
+             * Returns 0 if not found (will fall back to linear scan)
+             */
+            uint32_t revmap_lookup(uint32_t range_start_block) const;
         };
 
     } // namespace core
