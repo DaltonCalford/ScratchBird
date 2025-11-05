@@ -1268,6 +1268,148 @@ static bool evaluatePredicate(int64_t value, bool is_null,
     }
 }
 
+#if defined(__AVX2__)
+#include <immintrin.h>
+
+/**
+ * SIMD-accelerated predicate evaluation for INT32 arrays (Phase 5)
+ *
+ * Processes 8 INT32 values at once using AVX2 instructions.
+ * Returns a bitmask where bit i is set if value i matches the predicate.
+ *
+ * @param values Pointer to array of at least 8 INT32 values (must be 32-byte aligned)
+ * @param predicate Predicate to evaluate
+ * @return 8-bit mask (bit i set = value i matches)
+ */
+static inline uint8_t evaluatePredicateSIMD_INT32(const int32_t *values,
+                                                  const ColumnPredicate &predicate)
+{
+    // Load 8 INT32 values into AVX2 register (256 bits = 8 x 32 bits)
+    __m256i vec_values = _mm256_loadu_si256(reinterpret_cast<const __m256i *>(values));
+
+    // Broadcast predicate value to all 8 lanes
+    __m256i vec_predicate = _mm256_set1_epi32(static_cast<int32_t>(predicate.value));
+
+    // Perform comparison based on operator
+    __m256i cmp_result;
+    switch (predicate.op)
+    {
+    case ColumnPredicate::Op::EQUAL:
+        cmp_result = _mm256_cmpeq_epi32(vec_values, vec_predicate);
+        break;
+
+    case ColumnPredicate::Op::LESS_THAN:
+        cmp_result = _mm256_cmpgt_epi32(vec_predicate, vec_values);  // predicate > value = value < predicate
+        break;
+
+    case ColumnPredicate::Op::GREATER_THAN:
+        cmp_result = _mm256_cmpgt_epi32(vec_values, vec_predicate);
+        break;
+
+    case ColumnPredicate::Op::NOT_EQUAL:
+    {
+        // NOT EQUAL = ~(EQUAL)
+        __m256i eq = _mm256_cmpeq_epi32(vec_values, vec_predicate);
+        cmp_result = _mm256_xor_si256(eq, _mm256_set1_epi32(-1));  // Invert
+        break;
+    }
+
+    case ColumnPredicate::Op::LESS_EQUAL:
+    {
+        // LESS_EQUAL = NOT(GREATER_THAN)
+        __m256i gt = _mm256_cmpgt_epi32(vec_values, vec_predicate);
+        cmp_result = _mm256_xor_si256(gt, _mm256_set1_epi32(-1));  // Invert
+        break;
+    }
+
+    case ColumnPredicate::Op::GREATER_EQUAL:
+    {
+        // GREATER_EQUAL = NOT(LESS_THAN)
+        __m256i lt = _mm256_cmpgt_epi32(vec_predicate, vec_values);
+        cmp_result = _mm256_xor_si256(lt, _mm256_set1_epi32(-1));  // Invert
+        break;
+    }
+
+    default:
+        // Unsupported operator, return all zeros
+        return 0;
+    }
+
+    // Convert comparison result to bitmask
+    // Each lane is either 0xFFFFFFFF (match) or 0x00000000 (no match)
+    int mask = _mm256_movemask_ps(_mm256_castsi256_ps(cmp_result));
+
+    return static_cast<uint8_t>(mask);
+}
+
+/**
+ * SIMD-accelerated predicate evaluation for INT64 arrays (Phase 5)
+ *
+ * Processes 4 INT64 values at once using AVX2 instructions.
+ * Returns a bitmask where bit i is set if value i matches the predicate.
+ *
+ * @param values Pointer to array of at least 4 INT64 values (must be 32-byte aligned)
+ * @param predicate Predicate to evaluate
+ * @return 4-bit mask (bit i set = value i matches)
+ */
+static inline uint8_t evaluatePredicateSIMD_INT64(const int64_t *values,
+                                                  const ColumnPredicate &predicate)
+{
+    // Load 4 INT64 values into AVX2 register (256 bits = 4 x 64 bits)
+    __m256i vec_values = _mm256_loadu_si256(reinterpret_cast<const __m256i *>(values));
+
+    // Broadcast predicate value to all 4 lanes
+    __m256i vec_predicate = _mm256_set1_epi64x(predicate.value);
+
+    // Perform comparison based on operator
+    __m256i cmp_result;
+    switch (predicate.op)
+    {
+    case ColumnPredicate::Op::EQUAL:
+        cmp_result = _mm256_cmpeq_epi64(vec_values, vec_predicate);
+        break;
+
+    case ColumnPredicate::Op::LESS_THAN:
+        cmp_result = _mm256_cmpgt_epi64(vec_predicate, vec_values);  // predicate > value
+        break;
+
+    case ColumnPredicate::Op::GREATER_THAN:
+        cmp_result = _mm256_cmpgt_epi64(vec_values, vec_predicate);
+        break;
+
+    case ColumnPredicate::Op::NOT_EQUAL:
+    {
+        __m256i eq = _mm256_cmpeq_epi64(vec_values, vec_predicate);
+        cmp_result = _mm256_xor_si256(eq, _mm256_set1_epi64x(-1));
+        break;
+    }
+
+    case ColumnPredicate::Op::LESS_EQUAL:
+    {
+        __m256i gt = _mm256_cmpgt_epi64(vec_values, vec_predicate);
+        cmp_result = _mm256_xor_si256(gt, _mm256_set1_epi64x(-1));
+        break;
+    }
+
+    case ColumnPredicate::Op::GREATER_EQUAL:
+    {
+        __m256i lt = _mm256_cmpgt_epi64(vec_predicate, vec_values);
+        cmp_result = _mm256_xor_si256(lt, _mm256_set1_epi64x(-1));
+        break;
+    }
+
+    default:
+        return 0;
+    }
+
+    // Convert to bitmask
+    int mask = _mm256_movemask_pd(_mm256_castsi256_pd(cmp_result));
+
+    return static_cast<uint8_t>(mask);
+}
+
+#endif // __AVX2__
+
 /**
  * Apply predicate to a segment and return matching offsets
  *
@@ -1319,6 +1461,151 @@ Status ColumnstoreIndex::applyPredicate(const ColumnSegment &segment,
     {
         uint32_t batch_end = std::min(batch_start + BATCH_SIZE, segment.row_count);
 
+#if defined(__AVX2__)
+        // SIMD-accelerated path for INT32 (Phase 5)
+        if (segment.data_type == DataType::INT32 &&
+            predicate.op != ColumnPredicate::Op::IS_NULL &&
+            predicate.op != ColumnPredicate::Op::IS_NOT_NULL)
+        {
+            const int32_t *int32_data = reinterpret_cast<const int32_t *>(data_ptr);
+
+            // Process 8 values at a time with SIMD
+            uint32_t i = batch_start;
+            for (; i + 8 <= batch_end; i += 8)
+            {
+                // Check for NULLs in this batch
+                bool has_nulls = false;
+                for (uint32_t j = 0; j < 8; ++j)
+                {
+                    if ((i + j) < segment.null_bitmap.size() && segment.null_bitmap[i + j])
+                    {
+                        has_nulls = true;
+                        break;
+                    }
+                }
+
+                if (!has_nulls)
+                {
+                    // No NULLs - use SIMD
+                    uint8_t mask = evaluatePredicateSIMD_INT32(&int32_data[i], predicate);
+
+                    // Add matching offsets
+                    for (uint32_t j = 0; j < 8; ++j)
+                    {
+                        if (mask & (1 << j))
+                        {
+                            matching_offsets->push_back(i + j);
+                        }
+                    }
+                }
+                else
+                {
+                    // Has NULLs - fall back to scalar processing
+                    for (uint32_t j = 0; j < 8; ++j)
+                    {
+                        bool is_null = (i + j) < segment.null_bitmap.size() ? segment.null_bitmap[i + j] : false;
+                        if (!is_null)
+                        {
+                            int64_t value = static_cast<int64_t>(int32_data[i + j]);
+                            if (evaluatePredicate(value, is_null, predicate))
+                            {
+                                matching_offsets->push_back(i + j);
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Process remaining values (< 8) with scalar code
+            for (; i < batch_end; ++i)
+            {
+                bool is_null = (i < segment.null_bitmap.size()) ? segment.null_bitmap[i] : false;
+                if (!is_null)
+                {
+                    int64_t value = static_cast<int64_t>(int32_data[i]);
+                    if (evaluatePredicate(value, is_null, predicate))
+                    {
+                        matching_offsets->push_back(i);
+                    }
+                }
+            }
+
+            continue;  // Skip to next batch
+        }
+
+        // SIMD-accelerated path for INT64 (Phase 5)
+        if (segment.data_type == DataType::INT64 &&
+            predicate.op != ColumnPredicate::Op::IS_NULL &&
+            predicate.op != ColumnPredicate::Op::IS_NOT_NULL)
+        {
+            const int64_t *int64_data = reinterpret_cast<const int64_t *>(data_ptr);
+
+            // Process 4 values at a time with SIMD
+            uint32_t i = batch_start;
+            for (; i + 4 <= batch_end; i += 4)
+            {
+                // Check for NULLs in this batch
+                bool has_nulls = false;
+                for (uint32_t j = 0; j < 4; ++j)
+                {
+                    if ((i + j) < segment.null_bitmap.size() && segment.null_bitmap[i + j])
+                    {
+                        has_nulls = true;
+                        break;
+                    }
+                }
+
+                if (!has_nulls)
+                {
+                    // No NULLs - use SIMD
+                    uint8_t mask = evaluatePredicateSIMD_INT64(&int64_data[i], predicate);
+
+                    // Add matching offsets
+                    for (uint32_t j = 0; j < 4; ++j)
+                    {
+                        if (mask & (1 << j))
+                        {
+                            matching_offsets->push_back(i + j);
+                        }
+                    }
+                }
+                else
+                {
+                    // Has NULLs - fall back to scalar processing
+                    for (uint32_t j = 0; j < 4; ++j)
+                    {
+                        bool is_null = (i + j) < segment.null_bitmap.size() ? segment.null_bitmap[i + j] : false;
+                        if (!is_null)
+                        {
+                            int64_t value = int64_data[i + j];
+                            if (evaluatePredicate(value, is_null, predicate))
+                            {
+                                matching_offsets->push_back(i + j);
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Process remaining values (< 4) with scalar code
+            for (; i < batch_end; ++i)
+            {
+                bool is_null = (i < segment.null_bitmap.size()) ? segment.null_bitmap[i] : false;
+                if (!is_null)
+                {
+                    int64_t value = int64_data[i];
+                    if (evaluatePredicate(value, is_null, predicate))
+                    {
+                        matching_offsets->push_back(i);
+                    }
+                }
+            }
+
+            continue;  // Skip to next batch
+        }
+#endif // __AVX2__
+
+        // Scalar fallback path (for non-AVX2 systems or other data types)
         for (uint32_t i = batch_start; i < batch_end; ++i)
         {
             // Check NULL
@@ -1446,17 +1733,73 @@ Status ColumnstoreIndex::readSegment(uint32_t segment_page,
         return Status::INVALID_ARGUMENT;
     }
 
-    // Phase 1: Stub implementation
-    // TODO: Read segment page and decompress
-    //
-    // Algorithm:
-    // 1. Pin segment page
-    // 2. Read SBColumnstorePage header
-    // 3. Read compressed data
-    // 4. Decompress based on compression_type
-    // 5. Unpin page
+    BufferPool *buffer_pool = db_->buffer_pool();
+    if (!buffer_pool)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Buffer pool not available");
+        return Status::INVALID_ARGUMENT;
+    }
 
-    segment_out->row_count = 0;
+    // Pin segment page
+    void *page_buffer = nullptr;
+    Status status = buffer_pool->pinPage(segment_page, &page_buffer, ctx);
+    if (status != Status::OK)
+        return status;
+
+    auto *page = static_cast<const SBColumnstorePage *>(page_buffer);
+
+    // Read metadata
+    segment_out->column_uuid = page->cs_column_uuid;
+    segment_out->data_type = static_cast<DataType>(page->cs_data_type);
+    segment_out->row_count = page->cs_row_count;
+    segment_out->null_count = page->cs_null_count;
+    segment_out->compression = static_cast<CompressionType>(page->cs_compression_type);
+    segment_out->first_tid = page->cs_first_tid;
+    segment_out->last_tid = page->cs_last_tid;
+    segment_out->min_value = page->cs_min_value;
+    segment_out->max_value = page->cs_max_value;
+
+    // Read compressed data
+    const uint8_t *compressed_data = reinterpret_cast<const uint8_t *>(page) + sizeof(SBColumnstorePage);
+    std::vector<uint8_t> compressed(compressed_data, compressed_data + page->cs_compressed_size);
+
+    // Unpin page (we have the data we need)
+    buffer_pool->unpinPage(segment_page, false, ctx);
+
+    // Decompress based on compression type
+    switch (segment_out->compression)
+    {
+    case CompressionType::NONE:
+        // No compression - data is already decompressed
+        segment_out->data = std::move(compressed);
+        break;
+
+    case CompressionType::RLE:
+        status = decompressRLE(compressed, segment_out->data_type,
+                              segment_out->row_count, segment_out, ctx);
+        if (status != Status::OK)
+            return status;
+        break;
+
+    case CompressionType::DICTIONARY:
+        // TODO: Load dictionary from page and decompress
+        // For now, return error
+        SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED,
+                         "Dictionary decompression not yet implemented in readSegment");
+        return Status::NOT_IMPLEMENTED;
+
+    case CompressionType::BITPACK:
+        status = decompressBitpack(compressed, segment_out->data_type,
+                                  segment_out->row_count, segment_out, ctx);
+        if (status != Status::OK)
+            return status;
+        break;
+
+    default:
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Unknown compression type");
+        return Status::INVALID_ARGUMENT;
+    }
+
     return Status::OK;
 }
 
@@ -1573,6 +1916,261 @@ Status ColumnstoreIndex::flushSegment(const ID &column_uuid, ErrorContext *ctx)
 
     // Clear buffer now that it's flushed
     buffer.clear();
+
+    return Status::OK;
+}
+
+// ============================================================================
+// Batch Scan Iterator (Phase 5)
+// ============================================================================
+
+Status ColumnstoreIndex::beginScan(const ID &column_uuid,
+                                   const ColumnPredicate *predicate,
+                                   uint64_t current_xid,
+                                   ColumnScanIterator *iterator_out,
+                                   ErrorContext *ctx)
+{
+    if (!iterator_out)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Iterator output is null");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    // Initialize iterator
+    iterator_out->column_uuid = column_uuid;
+    iterator_out->current_segment_page = index_info_.idx_root_page;
+    iterator_out->offset_in_segment = 0;
+    iterator_out->current_xid = current_xid;
+    iterator_out->scan_complete = false;
+    iterator_out->segment_cached = false;
+
+    // Set predicate
+    if (predicate)
+    {
+        iterator_out->predicate = *predicate;
+        iterator_out->has_predicate = true;
+    }
+    else
+    {
+        iterator_out->has_predicate = false;
+    }
+
+    // If root page is 0, there are no segments yet
+    if (index_info_.idx_root_page == 0)
+    {
+        iterator_out->scan_complete = true;
+    }
+
+    return Status::OK;
+}
+
+Status ColumnstoreIndex::scanNext(ColumnScanIterator *iterator,
+                                  ColumnScanBatch *batch_out,
+                                  ErrorContext *ctx)
+{
+    if (!iterator || !batch_out)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Iterator or batch output is null");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    // Clear output batch
+    batch_out->tids.clear();
+    batch_out->values.clear();
+    batch_out->null_flags.clear();
+    batch_out->count = 0;
+
+    // Check if scan is already complete
+    if (iterator->scan_complete)
+    {
+        return Status::OK;
+    }
+
+    BufferPool *buffer_pool = db_->buffer_pool();
+    if (!buffer_pool)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Buffer pool not available");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    const uint32_t BATCH_SIZE = 1024;
+
+    // Traverse segments until we have a full batch or reach the end
+    while (iterator->current_segment_page != 0 && batch_out->count < BATCH_SIZE)
+    {
+        // Load segment if not cached
+        if (!iterator->segment_cached)
+        {
+            Status status = readSegment(iterator->current_segment_page,
+                                       &iterator->cached_segment, ctx);
+            if (status != Status::OK)
+                return status;
+
+            iterator->segment_cached = true;
+            iterator->offset_in_segment = 0;
+        }
+
+        ColumnSegment &segment = iterator->cached_segment;
+
+        // Check MGA visibility for this segment
+        if (!isValueVisible(segment.first_tid, 0, iterator->current_xid, ctx))
+        {
+            // Entire segment is invisible, skip to next
+            void *page_buffer = nullptr;
+            Status status = buffer_pool->pinPage(iterator->current_segment_page, &page_buffer, ctx);
+            if (status != Status::OK)
+                return status;
+
+            auto *page = static_cast<const SBColumnstorePage *>(page_buffer);
+            iterator->current_segment_page = page->cs_next_segment;
+            buffer_pool->unpinPage(iterator->current_segment_page, false, ctx);
+
+            iterator->segment_cached = false;
+            continue;
+        }
+
+        // Apply predicate pushdown: Check if entire segment can be skipped
+        if (iterator->has_predicate &&
+            canSkipSegment(segment.min_value, segment.max_value, iterator->predicate))
+        {
+            // Skip this segment entirely
+            void *page_buffer = nullptr;
+            Status status = buffer_pool->pinPage(iterator->current_segment_page, &page_buffer, ctx);
+            if (status != Status::OK)
+                return status;
+
+            auto *page = static_cast<const SBColumnstorePage *>(page_buffer);
+            iterator->current_segment_page = page->cs_next_segment;
+            buffer_pool->unpinPage(iterator->current_segment_page, false, ctx);
+
+            iterator->segment_cached = false;
+            continue;
+        }
+
+        // Process values from this segment
+        size_t value_size = getDataTypeSize(segment.data_type);
+        const uint8_t *data_ptr = segment.data.data();
+
+        while (iterator->offset_in_segment < segment.row_count &&
+               batch_out->count < BATCH_SIZE)
+        {
+            uint32_t i = iterator->offset_in_segment;
+
+            // Check NULL
+            bool is_null = (i < segment.null_bitmap.size()) ? segment.null_bitmap[i] : false;
+
+            // Read value
+            int64_t value = 0;
+            if (!is_null && value_size > 0)
+            {
+                switch (segment.data_type)
+                {
+                case DataType::INT8:
+                    value = static_cast<int64_t>(*reinterpret_cast<const int8_t *>(data_ptr + i * value_size));
+                    break;
+                case DataType::INT16:
+                    value = static_cast<int64_t>(*reinterpret_cast<const int16_t *>(data_ptr + i * value_size));
+                    break;
+                case DataType::INT32:
+                    value = static_cast<int64_t>(*reinterpret_cast<const int32_t *>(data_ptr + i * value_size));
+                    break;
+                case DataType::INT64:
+                    value = *reinterpret_cast<const int64_t *>(data_ptr + i * value_size);
+                    break;
+                case DataType::UINT8:
+                    value = static_cast<int64_t>(*reinterpret_cast<const uint8_t *>(data_ptr + i * value_size));
+                    break;
+                case DataType::UINT16:
+                    value = static_cast<int64_t>(*reinterpret_cast<const uint16_t *>(data_ptr + i * value_size));
+                    break;
+                case DataType::UINT32:
+                    value = static_cast<int64_t>(*reinterpret_cast<const uint32_t *>(data_ptr + i * value_size));
+                    break;
+                case DataType::UINT64:
+                    value = static_cast<int64_t>(*reinterpret_cast<const uint64_t *>(data_ptr + i * value_size));
+                    break;
+                default:
+                    break;
+                }
+            }
+
+            // Apply predicate if provided
+            bool matches = true;
+            if (iterator->has_predicate)
+            {
+                matches = evaluatePredicate(value, is_null, iterator->predicate);
+            }
+
+            if (matches)
+            {
+                // Add to batch
+                uint64_t tid = segment.first_tid + i;
+                batch_out->tids.push_back(tid);
+
+                // Copy value data
+                if (is_null)
+                {
+                    batch_out->values.push_back(0);
+                }
+                else if (value_size > 0)
+                {
+                    const uint8_t *value_ptr = data_ptr + (i * value_size);
+                    batch_out->values.insert(batch_out->values.end(),
+                                            value_ptr, value_ptr + value_size);
+                }
+
+                batch_out->null_flags.push_back(is_null);
+                batch_out->count++;
+            }
+
+            iterator->offset_in_segment++;
+        }
+
+        // Check if we've finished this segment
+        if (iterator->offset_in_segment >= segment.row_count)
+        {
+            // Move to next segment
+            void *page_buffer = nullptr;
+            Status status = buffer_pool->pinPage(iterator->current_segment_page, &page_buffer, ctx);
+            if (status != Status::OK)
+                return status;
+
+            auto *page = static_cast<const SBColumnstorePage *>(page_buffer);
+            iterator->current_segment_page = page->cs_next_segment;
+            buffer_pool->unpinPage(iterator->current_segment_page, false, ctx);
+
+            iterator->segment_cached = false;
+            iterator->offset_in_segment = 0;
+
+            // Check if we've reached the end
+            if (iterator->current_segment_page == 0)
+            {
+                iterator->scan_complete = true;
+                break;
+            }
+        }
+    }
+
+    batch_out->data_type = iterator->segment_cached ?
+        iterator->cached_segment.data_type : DataType::INT32;
+
+    return Status::OK;
+}
+
+Status ColumnstoreIndex::endScan(ColumnScanIterator *iterator,
+                                 ErrorContext *ctx)
+{
+    if (!iterator)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Iterator is null");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    // Clear cached segment data
+    iterator->cached_segment.data.clear();
+    iterator->cached_segment.null_bitmap.clear();
+    iterator->segment_cached = false;
+    iterator->scan_complete = true;
 
     return Status::OK;
 }
