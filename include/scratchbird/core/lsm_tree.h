@@ -28,6 +28,8 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <fstream>
+#include <cstring>
 #include <cstdint>
 #include <string>
 
@@ -270,6 +272,166 @@ private:
     bool isEntryVisible(const MemtableEntry &entry,
                        uint64_t current_xid,
                        TransactionManager *txn_mgr) const;
+};
+
+// ============================================================================
+// SSTable (Sorted String Table) - On-Disk Immutable Files
+// ============================================================================
+
+/**
+ * SSTable Footer - Fixed-size metadata at end of file
+ *
+ * Layout:
+ * - Magic number for file format validation
+ * - Offsets to index block and bloom filter
+ * - Min/max keys for quick range checks
+ * - Checksum for data integrity
+ */
+#pragma pack(push, 1)
+struct SSTableFooter
+{
+    static constexpr uint64_t MAGIC_NUMBER = 0x5353544142ULL; // "SSTAB"
+    static constexpr uint16_t VERSION = 1;
+    static constexpr size_t MAX_KEY_SIZE = 256;
+
+    uint64_t magic;          // Magic number: 0x5353544142 ("SSTAB")
+    uint16_t version;        // File format version (1)
+    uint64_t index_offset;   // Byte offset of index block
+    uint64_t bloom_offset;   // Byte offset of Bloom filter
+    uint64_t num_entries;    // Total number of key-value pairs
+    uint64_t min_key_len;    // Min key length
+    uint8_t min_key[256];    // Min key (truncated if > 256 bytes)
+    uint64_t max_key_len;    // Max key length
+    uint8_t max_key[256];    // Max key (truncated if > 256 bytes)
+    uint32_t checksum;       // CRC32 of file (except this field)
+};
+#pragma pack(pop)
+
+/**
+ * Index Entry - Points to data block containing keys
+ *
+ * Binary searchable array in SSTable index block
+ */
+struct IndexEntry
+{
+    std::vector<uint8_t> first_key; // First key in data block
+    uint64_t block_offset;          // Byte offset of data block
+    uint64_t block_size;            // Size of data block in bytes
+};
+
+/**
+ * Bloom Filter - Probabilistic membership test
+ *
+ * Phase 6 implementation - stub for now
+ * 10 bits/key → ~1% false positive rate
+ */
+class BloomFilter
+{
+public:
+    BloomFilter(size_t expected_keys = 1000, double false_positive_rate = 0.01);
+    ~BloomFilter();
+
+    // Add key to bloom filter
+    void add(const std::vector<uint8_t> &key);
+
+    // Check if key might be present (may return false positives)
+    bool mightContain(const std::vector<uint8_t> &key) const;
+
+    // Serialize bloom filter to byte array
+    void serialize(std::vector<uint8_t> *output) const;
+
+    // Deserialize bloom filter from byte array
+    static BloomFilter *deserialize(const std::vector<uint8_t> &data);
+
+private:
+    std::vector<uint8_t> bits_;
+    size_t num_bits_;
+    size_t num_hashes_;
+};
+
+/**
+ * SSTable Writer - Flush memtable to immutable on-disk file
+ *
+ * Write path:
+ * 1. open() - Create file
+ * 2. addEntry() - Add entries in sorted order (multiple calls)
+ * 3. finish() - Flush final block, write index/bloom/footer
+ *
+ * File format:
+ * [Data Block 0][Data Block 1]...[Index Block][Bloom Filter][Footer]
+ */
+class SSTableWriter
+{
+public:
+    explicit SSTableWriter(const std::string &file_path, size_t block_size = 4096);
+    ~SSTableWriter();
+
+    /**
+     * Open file for writing
+     */
+    Status open(ErrorContext *ctx = nullptr);
+
+    /**
+     * Add entry to SSTable
+     *
+     * REQUIREMENT: Must be called in sorted key order!
+     *
+     * @param key Entry key
+     * @param value Entry value
+     * @param sequence_number Monotonic sequence
+     * @param entry_type 0=Insert, 1=Delete
+     * @param xmin MGA: Transaction that created
+     * @param xmax MGA: Transaction that deleted (0 if active)
+     */
+    Status addEntry(const std::vector<uint8_t> &key,
+                    const std::vector<uint8_t> &value,
+                    uint64_t sequence_number,
+                    uint8_t entry_type,
+                    uint64_t xmin,
+                    uint64_t xmax,
+                    ErrorContext *ctx = nullptr);
+
+    /**
+     * Finish writing SSTable
+     *
+     * - Flushes final data block
+     * - Writes index block
+     * - Writes bloom filter
+     * - Writes footer with metadata
+     * - Closes file
+     */
+    Status finish(ErrorContext *ctx = nullptr);
+
+    // Getters
+    uint64_t getNumEntries() const { return num_entries_; }
+    const std::vector<uint8_t> &getMinKey() const { return min_key_; }
+    const std::vector<uint8_t> &getMaxKey() const { return max_key_; }
+
+private:
+    std::string file_path_;
+    std::ofstream file_;
+    size_t block_size_;
+
+    // Current data block being written
+    std::vector<uint8_t> current_block_;
+    uint64_t current_block_offset_;
+
+    // Index entries (one per data block)
+    std::vector<IndexEntry> index_entries_;
+
+    // Bloom filter for all keys
+    BloomFilter bloom_filter_;
+
+    // Metadata
+    std::vector<uint8_t> min_key_;
+    std::vector<uint8_t> max_key_;
+    uint64_t num_entries_;
+
+    // Flush current block to disk
+    Status flushBlock(ErrorContext *ctx);
+
+    // Calculate CRC32 checksum
+    uint32_t calculateChecksum();
 };
 
 } // namespace core
