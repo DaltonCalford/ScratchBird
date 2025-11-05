@@ -566,3 +566,22 @@ set_tests_properties(LSMBloomFilter PROPERTIES
     LABELS "unit;lsm;bloom;filter;phase5"
     TIMEOUT 120
 )
+
+# ============================================================================
+# LSM-Tree Index Tests - Phase 6: Integration
+# ============================================================================
+
+add_executable(test_lsm_tree_simple
+    integration/test_lsm_tree_simple.cpp
+)
+target_link_libraries(test_lsm_tree_simple
+    scratchbird_core
+    scratchbird_parser
+    scratchbird_sblr
+    scratchbird_optimizer
+)
+add_test(NAME LSMTreeSimple COMMAND test_lsm_tree_simple)
+set_tests_properties(LSMTreeSimple PROPERTIES
+    LABELS "integration;lsm;simple;phase6"
+    TIMEOUT 120
+)
