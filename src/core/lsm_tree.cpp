@@ -683,5 +683,495 @@ uint32_t SSTableWriter::calculateChecksum()
     return 0xDEADBEEF;
 }
 
+// ============================================================================
+// SSTable Reader Implementation
+// ============================================================================
+
+SSTableReader::SSTableReader(const std::string &file_path)
+    : file_path_(file_path),
+      is_open_(false),
+      bloom_filter_(nullptr)
+{
+}
+
+SSTableReader::~SSTableReader()
+{
+    if (file_.is_open())
+    {
+        file_.close();
+    }
+    if (bloom_filter_ != nullptr)
+    {
+        delete bloom_filter_;
+    }
+}
+
+Status SSTableReader::open(ErrorContext *ctx)
+{
+    // Open file in binary read mode
+    file_.open(file_path_, std::ios::binary | std::ios::in);
+
+    if (!file_.is_open())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::FILE_NOT_FOUND, "Failed to open SSTable file for reading");
+        return Status::FILE_NOT_FOUND;
+    }
+
+    // Get file size
+    file_.seekg(0, std::ios::end);
+    size_t file_size = file_.tellg();
+
+    if (file_size < sizeof(SSTableFooter))
+    {
+        SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "SSTable file too small");
+        file_.close();
+        return Status::IO_ERROR;
+    }
+
+    // Read footer from end of file
+    size_t footer_offset = file_size - sizeof(SSTableFooter);
+    file_.seekg(footer_offset, std::ios::beg);
+    file_.read(reinterpret_cast<char *>(&footer_), sizeof(footer_));
+
+    if (!file_.good())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to read footer");
+        file_.close();
+        return Status::IO_ERROR;
+    }
+
+    // Validate magic number
+    if (footer_.magic != SSTableFooter::MAGIC_NUMBER)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Invalid SSTable magic number");
+        file_.close();
+        return Status::IO_ERROR;
+    }
+
+    // Validate version
+    if (footer_.version != SSTableFooter::VERSION)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Unsupported SSTable version");
+        file_.close();
+        return Status::IO_ERROR;
+    }
+
+    // Read bloom filter
+    size_t bloom_size = footer_offset - footer_.bloom_offset;
+    std::vector<uint8_t> bloom_data(bloom_size);
+    file_.seekg(footer_.bloom_offset, std::ios::beg);
+    file_.read(reinterpret_cast<char *>(bloom_data.data()), bloom_size);
+
+    if (!file_.good())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to read bloom filter");
+        file_.close();
+        return Status::IO_ERROR;
+    }
+
+    bloom_filter_ = LSMBloomFilter::deserialize(bloom_data);
+    if (bloom_filter_ == nullptr)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to deserialize bloom filter");
+        file_.close();
+        return Status::IO_ERROR;
+    }
+
+    // Read index block
+    file_.seekg(footer_.index_offset, std::ios::beg);
+
+    while (file_.tellg() < static_cast<std::streampos>(footer_.bloom_offset))
+    {
+        // Read index entry: [key_len][key][offset][size]
+        uint16_t key_len;
+        file_.read(reinterpret_cast<char *>(&key_len), sizeof(key_len));
+
+        if (!file_.good())
+            break;
+
+        IndexEntry idx;
+        idx.first_key.resize(key_len);
+        file_.read(reinterpret_cast<char *>(idx.first_key.data()), key_len);
+        file_.read(reinterpret_cast<char *>(&idx.block_offset), sizeof(idx.block_offset));
+        file_.read(reinterpret_cast<char *>(&idx.block_size), sizeof(idx.block_size));
+
+        if (!file_.good())
+        {
+            SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to read index entry");
+            delete bloom_filter_;
+            bloom_filter_ = nullptr;
+            file_.close();
+            return Status::IO_ERROR;
+        }
+
+        index_entries_.push_back(idx);
+    }
+
+    is_open_ = true;
+    return Status::OK;
+}
+
+std::vector<uint8_t> SSTableReader::getMinKey() const
+{
+    return std::vector<uint8_t>(footer_.min_key, footer_.min_key + footer_.min_key_len);
+}
+
+std::vector<uint8_t> SSTableReader::getMaxKey() const
+{
+    return std::vector<uint8_t>(footer_.max_key, footer_.max_key + footer_.max_key_len);
+}
+
+int SSTableReader::findBlockIndex(const std::vector<uint8_t> &key) const
+{
+    // Binary search to find block containing key
+    // Returns index of block where key might be found
+
+    if (index_entries_.empty())
+    {
+        return -1;
+    }
+
+    // Check if key is before first block
+    if (key < index_entries_[0].first_key)
+    {
+        return -1;
+    }
+
+    // Binary search for last block where first_key <= key
+    int left = 0;
+    int right = index_entries_.size() - 1;
+    int result = 0;
+
+    while (left <= right)
+    {
+        int mid = left + (right - left) / 2;
+
+        if (index_entries_[mid].first_key <= key)
+        {
+            result = mid;
+            left = mid + 1;
+        }
+        else
+        {
+            right = mid - 1;
+        }
+    }
+
+    return result;
+}
+
+Status SSTableReader::readBlock(uint64_t block_offset,
+                                 uint64_t block_size,
+                                 std::vector<uint8_t> *block_data,
+                                 ErrorContext *ctx)
+{
+    block_data->resize(block_size);
+    file_.seekg(block_offset, std::ios::beg);
+    file_.read(reinterpret_cast<char *>(block_data->data()), block_size);
+
+    if (!file_.good())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to read data block");
+        return Status::IO_ERROR;
+    }
+
+    return Status::OK;
+}
+
+Status SSTableReader::parseBlockEntries(const std::vector<uint8_t> &block_data,
+                                         std::vector<MemtableEntry> *entries,
+                                         ErrorContext *ctx)
+{
+    entries->clear();
+
+    size_t offset = 0;
+
+    while (offset < block_data.size())
+    {
+        // Check if we have enough data for key_len
+        if (offset + sizeof(uint16_t) > block_data.size())
+            break;
+
+        // Read key_len
+        uint16_t key_len;
+        std::memcpy(&key_len, &block_data[offset], sizeof(key_len));
+        offset += sizeof(key_len);
+
+        // Check if we have enough data for key
+        if (offset + key_len > block_data.size())
+            break;
+
+        // Read key
+        MemtableEntry entry;
+        entry.key.assign(block_data.begin() + offset, block_data.begin() + offset + key_len);
+        offset += key_len;
+
+        // Read value_len
+        if (offset + sizeof(uint32_t) > block_data.size())
+            break;
+
+        uint32_t value_len;
+        std::memcpy(&value_len, &block_data[offset], sizeof(value_len));
+        offset += sizeof(value_len);
+
+        // Read value
+        if (offset + value_len > block_data.size())
+            break;
+
+        entry.value.assign(block_data.begin() + offset, block_data.begin() + offset + value_len);
+        offset += value_len;
+
+        // Read sequence_number
+        if (offset + sizeof(uint64_t) > block_data.size())
+            break;
+
+        std::memcpy(&entry.sequence_number, &block_data[offset], sizeof(entry.sequence_number));
+        offset += sizeof(entry.sequence_number);
+
+        // Read entry_type
+        if (offset + sizeof(uint8_t) > block_data.size())
+            break;
+
+        entry.entry_type = block_data[offset];
+        offset += sizeof(uint8_t);
+
+        // Read xmin
+        if (offset + sizeof(uint64_t) > block_data.size())
+            break;
+
+        std::memcpy(&entry.xmin, &block_data[offset], sizeof(entry.xmin));
+        offset += sizeof(entry.xmin);
+
+        // Read xmax
+        if (offset + sizeof(uint64_t) > block_data.size())
+            break;
+
+        std::memcpy(&entry.xmax, &block_data[offset], sizeof(entry.xmax));
+        offset += sizeof(entry.xmax);
+
+        entries->push_back(entry);
+    }
+
+    return Status::OK;
+}
+
+bool SSTableReader::isEntryVisible(const MemtableEntry &entry,
+                                    uint64_t current_xid,
+                                    TransactionManager *txn_mgr) const
+{
+    // FIREBIRD MGA VISIBILITY RULES
+    // See /MGA_RULES.md for complete specification
+
+    // Rule 1: Own changes always visible
+    if (entry.xmin == current_xid)
+    {
+        return entry.xmax == 0 || entry.xmax != current_xid;
+    }
+
+    // Rule 2: Check if creator transaction is committed
+    // Use TIP-based visibility (NO PostgreSQL Snapshot!)
+    TransactionState xmin_state;
+    Status status = txn_mgr->getTransactionState(entry.xmin, xmin_state, nullptr);
+    if (status != Status::OK || xmin_state != TransactionState::COMMITTED)
+    {
+        // Not committed = not visible
+        return false;
+    }
+
+    // Rule 3: Creator must be older than current transaction
+    if (entry.xmin >= current_xid)
+    {
+        // Future transaction = not visible
+        return false;
+    }
+
+    // Rule 4: Check if deleted
+    if (entry.xmax != 0)
+    {
+        // Entry was deleted - check if deletion is visible
+        if (entry.xmax == current_xid)
+        {
+            // Deleted by us = not visible
+            return false;
+        }
+
+        TransactionState xmax_state;
+        status = txn_mgr->getTransactionState(entry.xmax, xmax_state, nullptr);
+        if (status == Status::OK && xmax_state == TransactionState::COMMITTED && entry.xmax < current_xid)
+        {
+            // Deletion committed and older = not visible
+            return false;
+        }
+    }
+
+    // Entry is visible
+    return true;
+}
+
+Status SSTableReader::get(const std::vector<uint8_t> &key,
+                           uint64_t current_xid,
+                           TransactionManager *txn_mgr,
+                           std::vector<uint8_t> *value_out,
+                           bool *found,
+                           ErrorContext *ctx)
+{
+    *found = false;
+
+    if (!is_open_)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "SSTable not open");
+        return Status::IO_ERROR;
+    }
+
+    // Step 1: Check bloom filter
+    if (!bloom_filter_->mightContain(key))
+    {
+        // Definitely not present
+        return Status::OK;
+    }
+
+    // Step 2: Check if key is in range
+    std::vector<uint8_t> min_key = getMinKey();
+    std::vector<uint8_t> max_key = getMaxKey();
+
+    if (key < min_key || key > max_key)
+    {
+        return Status::OK;
+    }
+
+    // Step 3: Binary search index to find data block
+    int block_idx = findBlockIndex(key);
+    if (block_idx < 0)
+    {
+        return Status::OK;
+    }
+
+    // Step 4: Read data block
+    const IndexEntry &idx = index_entries_[block_idx];
+    std::vector<uint8_t> block_data;
+    Status status = readBlock(idx.block_offset, idx.block_size, &block_data, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    // Step 5: Parse entries from block
+    std::vector<MemtableEntry> entries;
+    status = parseBlockEntries(block_data, &entries, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    // Step 6: Search for key in entries (with MGA visibility)
+    for (const auto &entry : entries)
+    {
+        if (entry.key == key)
+        {
+            // Check visibility
+            if (isEntryVisible(entry, current_xid, txn_mgr))
+            {
+                if (entry.entry_type == ENTRY_TYPE_INSERT)
+                {
+                    *value_out = entry.value;
+                    *found = true;
+                    return Status::OK;
+                }
+                else if (entry.entry_type == ENTRY_TYPE_DELETE)
+                {
+                    // Tombstone
+                    *found = false;
+                    return Status::OK;
+                }
+            }
+        }
+    }
+
+    return Status::OK;
+}
+
+Status SSTableReader::scan(const std::vector<uint8_t> &start_key,
+                            const std::vector<uint8_t> &end_key,
+                            uint64_t current_xid,
+                            TransactionManager *txn_mgr,
+                            std::vector<std::pair<std::vector<uint8_t>, std::vector<uint8_t>>> *results,
+                            ErrorContext *ctx)
+{
+    results->clear();
+
+    if (!is_open_)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "SSTable not open");
+        return Status::IO_ERROR;
+    }
+
+    // Determine range of blocks to scan
+    int start_block = 0;
+    int end_block = index_entries_.size() - 1;
+
+    if (!start_key.empty())
+    {
+        start_block = findBlockIndex(start_key);
+        if (start_block < 0)
+            start_block = 0;
+    }
+
+    // Scan blocks in range
+    std::vector<uint8_t> last_key;
+
+    for (int block_idx = start_block; block_idx <= end_block; ++block_idx)
+    {
+        const IndexEntry &idx = index_entries_[block_idx];
+
+        // Read block
+        std::vector<uint8_t> block_data;
+        Status status = readBlock(idx.block_offset, idx.block_size, &block_data, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        // Parse entries
+        std::vector<MemtableEntry> entries;
+        status = parseBlockEntries(block_data, &entries, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        // Filter entries by range and visibility
+        for (const auto &entry : entries)
+        {
+            // Check if in range
+            if (!start_key.empty() && entry.key < start_key)
+                continue;
+
+            if (!end_key.empty() && entry.key >= end_key)
+                return Status::OK; // Done
+
+            // Skip duplicate keys (keep only newest visible version)
+            if (entry.key == last_key)
+                continue;
+
+            // Check visibility
+            if (isEntryVisible(entry, current_xid, txn_mgr))
+            {
+                if (entry.entry_type == ENTRY_TYPE_INSERT)
+                {
+                    results->push_back({entry.key, entry.value});
+                    last_key = entry.key;
+                }
+                else if (entry.entry_type == ENTRY_TYPE_DELETE)
+                {
+                    // Tombstone - skip this key
+                    last_key = entry.key;
+                }
+            }
+        }
+    }
+
+    return Status::OK;
+}
+
 } // namespace core
 } // namespace scratchbird

@@ -509,3 +509,22 @@ set_tests_properties(LSMSSTableWriter PROPERTIES
     LABELS "unit;lsm;sstable;writer;phase2"
     TIMEOUT 60
 )
+
+# ============================================================================
+# LSM-Tree Index Tests - Phase 3: SSTable Reader
+# ============================================================================
+
+add_executable(test_lsm_sstable_reader
+    unit/test_lsm_sstable_reader.cpp
+)
+target_link_libraries(test_lsm_sstable_reader
+    scratchbird_core
+    scratchbird_parser
+    scratchbird_sblr
+    scratchbird_optimizer
+)
+add_test(NAME LSMSSTableReader COMMAND test_lsm_sstable_reader)
+set_tests_properties(LSMSSTableReader PROPERTIES
+    LABELS "unit;lsm;sstable;reader;phase3"
+    TIMEOUT 60
+)
