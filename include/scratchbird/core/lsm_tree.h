@@ -34,6 +34,8 @@
 #include <string>
 #include <queue>
 #include <cmath>
+#include <thread>
+#include <atomic>
 
 namespace scratchbird
 {
@@ -838,6 +840,238 @@ private:
      * Delete old SSTable files
      */
     void deleteOldSSTables(const std::vector<std::string> &sstable_paths);
+};
+
+// ============================================================================
+// LSMTreeIndex - Orchestrates all LSM-Tree components
+// ============================================================================
+
+/**
+ * LSMTreeIndex - Complete LSM-Tree index orchestrating all components
+ *
+ * Architecture:
+ * - Active memtable: Recent writes (in-memory)
+ * - Immutable memtable: Being flushed to disk (in-memory, read-only)
+ * - Level 0-3 SSTables: On-disk sorted files
+ * - Compaction manager: Background merging and garbage collection
+ *
+ * Write path:
+ * 1. Write to active memtable
+ * 2. If full, mark as immutable and create new active memtable
+ * 3. Background: Flush immutable memtable to Level 0 SSTable
+ * 4. Background: Compact Level 0 → Level 1 when 4+ files
+ *
+ * Read path:
+ * 1. Check active memtable
+ * 2. Check immutable memtable
+ * 3. Check Level 0 SSTables (newest first)
+ * 4. Check Level 1-3 SSTables (use Bloom filters to skip files)
+ *
+ * MGA Compliance:
+ * - All entries have xmin/xmax for visibility
+ * - Uses TransactionManager for visibility checks
+ * - Garbage collection during compaction (OIT-based)
+ */
+class LSMTreeIndex
+{
+public:
+    /**
+     * Constructor
+     *
+     * @param index_path Base directory for SSTables
+     * @param txn_mgr Transaction manager for MGA visibility
+     * @param memtable_size_mb Maximum memtable size in MB (default 4 MB)
+     */
+    explicit LSMTreeIndex(const std::string &index_path,
+                         TransactionManager *txn_mgr,
+                         size_t memtable_size_mb = 4);
+    ~LSMTreeIndex();
+
+    /**
+     * Create new LSM-Tree index
+     *
+     * - Creates index directory
+     * - Initializes metadata
+     *
+     * @param ctx Error context
+     * @return Status
+     */
+    Status create(ErrorContext *ctx = nullptr);
+
+    /**
+     * Open existing LSM-Tree index
+     *
+     * - Load existing SSTables from disk
+     * - Build level metadata
+     * - Start background compaction thread
+     *
+     * @param ctx Error context
+     * @return Status
+     */
+    Status open(ErrorContext *ctx = nullptr);
+
+    /**
+     * Close LSM-Tree index
+     *
+     * - Flush active memtable to disk
+     * - Stop background compaction thread
+     * - Close all SSTables
+     *
+     * @param ctx Error context
+     * @return Status
+     */
+    Status close(ErrorContext *ctx = nullptr);
+
+    /**
+     * Put key-value pair
+     *
+     * - Insert into active memtable
+     * - Trigger flush if memtable full
+     *
+     * @param key Variable-length key
+     * @param value Variable-length value
+     * @param xid Transaction ID
+     * @param ctx Error context
+     * @return Status
+     */
+    Status put(const std::vector<uint8_t> &key,
+               const std::vector<uint8_t> &value,
+               uint64_t xid,
+               ErrorContext *ctx = nullptr);
+
+    /**
+     * Get value for key
+     *
+     * Read path:
+     * 1. Check active memtable
+     * 2. Check immutable memtable
+     * 3. Check Level 0-3 SSTables (newest first)
+     * 4. Use Bloom filters to skip files
+     *
+     * @param key Variable-length key
+     * @param xid Current transaction ID
+     * @param value_out Output value (if found)
+     * @param found Output flag indicating if key was found
+     * @param ctx Error context
+     * @return Status
+     */
+    Status get(const std::vector<uint8_t> &key,
+               uint64_t xid,
+               std::vector<uint8_t> *value_out,
+               bool *found,
+               ErrorContext *ctx = nullptr);
+
+    /**
+     * Remove key (insert tombstone)
+     *
+     * - Insert DELETE entry into memtable
+     * - Actual deletion happens during compaction
+     *
+     * @param key Variable-length key
+     * @param xid Transaction ID
+     * @param ctx Error context
+     * @return Status
+     */
+    Status remove(const std::vector<uint8_t> &key,
+                  uint64_t xid,
+                  ErrorContext *ctx = nullptr);
+
+    /**
+     * Range scan (NOT IMPLEMENTED IN PHASE 6)
+     *
+     * Future implementation will perform k-way merge across:
+     * - Active memtable
+     * - Immutable memtable
+     * - All Level 0-3 SSTables
+     *
+     * @param start_key Start key (inclusive)
+     * @param end_key End key (exclusive)
+     * @param xid Current transaction ID
+     * @param entries_out Output entries
+     * @param ctx Error context
+     * @return Status
+     */
+    Status scan(const std::vector<uint8_t> &start_key,
+                const std::vector<uint8_t> &end_key,
+                uint64_t xid,
+                std::vector<MemtableEntry> *entries_out,
+                ErrorContext *ctx = nullptr);
+
+    /**
+     * Flush active memtable to disk
+     *
+     * - Mark active memtable as immutable
+     * - Create new active memtable
+     * - Flush immutable memtable to Level 0 SSTable
+     * - Add SSTable to compaction manager
+     *
+     * @param ctx Error context
+     * @return Status
+     */
+    Status flush(ErrorContext *ctx = nullptr);
+
+    /**
+     * Get statistics
+     *
+     * @param stats_out Output statistics
+     * @param ctx Error context
+     * @return Status
+     */
+    struct Statistics
+    {
+        size_t active_memtable_size;
+        size_t active_memtable_entries;
+        size_t immutable_memtable_size;
+        size_t immutable_memtable_entries;
+        uint64_t level0_sstables;
+        uint64_t level1_sstables;
+        uint64_t level2_sstables;
+        uint64_t level3_sstables;
+        uint64_t total_size_bytes;
+    };
+
+    Status getStatistics(Statistics *stats_out, ErrorContext *ctx = nullptr);
+
+private:
+    std::string index_path_;                    // Base directory for SSTables
+    TransactionManager *txn_mgr_;               // Transaction manager for MGA
+    size_t memtable_max_size_;                  // Max memtable size (bytes)
+
+    // Memtables
+    std::unique_ptr<Memtable> active_memtable_;     // Active memtable (writes)
+    std::unique_ptr<Memtable> immutable_memtable_;  // Immutable memtable (being flushed)
+    mutable std::mutex memtable_mutex_;             // Protects memtable pointers
+
+    // SSTables (Levels 0-3)
+    std::vector<std::vector<std::unique_ptr<SSTableReader>>> sstables_;  // sstables_[level][index]
+    mutable std::mutex sstables_mutex_;                                   // Protects SSTable vectors
+
+    // Compaction
+    std::unique_ptr<LSMCompactionManager> compaction_mgr_;
+    std::atomic<bool> compaction_shutdown_;     // Signal to stop compaction thread
+    std::thread compaction_thread_;             // Background compaction thread
+
+    /**
+     * Background compaction thread function
+     */
+    void compactionThreadFunc();
+
+    /**
+     * Flush immutable memtable to Level 0 SSTable
+     *
+     * Internal method (caller must hold memtable_mutex_)
+     */
+    Status flushImmutableMemtable(ErrorContext *ctx);
+
+    /**
+     * Generate SSTable path
+     */
+    std::string generateSSTablePath(uint32_t level);
+
+    /**
+     * Load existing SSTables from disk
+     */
+    Status loadExistingSSTables(ErrorContext *ctx);
 };
 
 } // namespace core
