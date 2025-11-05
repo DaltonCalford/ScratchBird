@@ -385,3 +385,22 @@ set_tests_properties(ColumnstoreBatchPerformance PROPERTIES
     LABELS "stress;columnstore;batch;simd;phase5;performance"
     TIMEOUT 300
 )
+
+# ============================================================================
+# Columnstore Index Tests - Phase 6: Segment Management
+# ============================================================================
+
+add_executable(test_columnstore_segments
+    integration/test_columnstore_segments.cpp
+)
+target_link_libraries(test_columnstore_segments
+    scratchbird_core
+    scratchbird_parser
+    scratchbird_sblr
+    scratchbird_optimizer
+)
+add_test(NAME ColumnstoreSegments COMMAND test_columnstore_segments)
+set_tests_properties(ColumnstoreSegments PROPERTIES
+    LABELS "integration;columnstore;segments;phase6"
+    TIMEOUT 120
+)
