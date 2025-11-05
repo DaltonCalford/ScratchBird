@@ -32,6 +32,7 @@
 #include <cstring>
 #include <cstdint>
 #include <string>
+#include <queue>
 
 namespace scratchbird
 {
@@ -563,7 +564,207 @@ private:
     bool isEntryVisible(const MemtableEntry &entry,
                        uint64_t current_xid,
                        TransactionManager *txn_mgr) const;
+
+public:
+    /**
+     * Load all entries from SSTable (for compaction)
+     *
+     * This method reads ALL entries without visibility filtering
+     * Used by compaction to access invisible entries for garbage collection
+     *
+     * @param entries Output vector of all entries
+     * @return Status::OK on success
+     */
+    Status loadAllEntries(std::vector<MemtableEntry> *entries, ErrorContext *ctx = nullptr);
+};
+
+/**
+ * ============================================================================
+ * PHASE 4: COMPACTION
+ * ============================================================================
+ */
+
+/**
+ * Compaction Strategy
+ *
+ * - LEVELED: SSTables organized in levels (0-3), merges when level is full
+ * - TIERED: Time-based windows, merges when too many SSTables in window
+ */
+enum class CompactionStrategy
+{
+    LEVELED = 0,
+    TIERED = 1
+};
+
+/**
+ * Level Metadata
+ *
+ * Tracks SSTables at each level
+ */
+struct LevelMetadata
+{
+    uint32_t level;                              // Level number (0-3)
+    uint64_t size_bytes;                         // Total size of SSTables at this level
+    uint64_t size_limit_bytes;                   // Maximum size before triggering compaction
+    std::vector<std::string> sstable_paths;      // File paths of SSTables at this level
+
+    LevelMetadata()
+        : level(0), size_bytes(0), size_limit_bytes(0) {}
+
+    LevelMetadata(uint32_t lvl, uint64_t limit)
+        : level(lvl), size_bytes(0), size_limit_bytes(limit) {}
+};
+
+/**
+ * Compaction Task
+ *
+ * Describes a compaction operation: merge source SSTables into target level
+ */
+struct CompactionTask
+{
+    uint32_t source_level;                       // Source level (e.g., 0 for L0→L1)
+    uint32_t target_level;                       // Target level (e.g., 1 for L0→L1)
+    std::vector<std::string> source_sstables;    // SSTables to merge
+    std::vector<std::string> overlapping_sstables; // Overlapping SSTables in target level
+    uint64_t oldest_active_xid;                  // For garbage collection
+
+    CompactionTask()
+        : source_level(0), target_level(0), oldest_active_xid(0) {}
+};
+
+/**
+ * Merge Entry
+ *
+ * Used in priority queue for K-way merge
+ */
+struct MergeEntry
+{
+    std::vector<uint8_t> key;
+    std::vector<uint8_t> value;
+    uint64_t sequence_number;
+    uint8_t entry_type;
+    uint64_t xmin;
+    uint64_t xmax;
+    uint32_t source_level;                       // Which level this entry came from
+    size_t source_index;                         // Index in source SSTables array
+    size_t entry_index;                          // Index within current data block
+
+    // For priority queue: smallest key comes first
+    bool operator>(const MergeEntry &other) const
+    {
+        if (key != other.key)
+        {
+            return key > other.key;
+        }
+        // If keys equal, higher level (newer) wins
+        if (source_level != other.source_level)
+        {
+            return source_level < other.source_level;
+        }
+        // If same level, higher sequence number wins
+        return sequence_number < other.sequence_number;
+    }
+};
+
+/**
+ * LSM Compaction Manager
+ *
+ * Handles compaction of SSTables:
+ * - K-way merge of sorted files
+ * - Garbage collection (MGA-compliant)
+ * - Level management
+ */
+class LSMCompactionManager
+{
+public:
+    explicit LSMCompactionManager(TransactionManager *txn_mgr);
+    ~LSMCompactionManager();
+
+    /**
+     * Initialize level metadata
+     */
+    Status initialize(ErrorContext *ctx = nullptr);
+
+    /**
+     * Add SSTable to level
+     */
+    Status addSSTable(uint32_t level, const std::string &sstable_path, uint64_t file_size, ErrorContext *ctx = nullptr);
+
+    /**
+     * Check if compaction is needed at any level
+     */
+    bool needsCompaction() const;
+
+    /**
+     * Select compaction task
+     */
+    Status selectCompactionTask(CompactionTask *task, ErrorContext *ctx = nullptr);
+
+    /**
+     * Execute compaction task
+     *
+     * - K-way merge of source SSTables
+     * - Garbage collection (remove old versions)
+     * - Tombstone removal
+     * - Atomic replacement
+     */
+    Status executeCompaction(const CompactionTask &task, ErrorContext *ctx = nullptr);
+
+    /**
+     * Get level metadata
+     */
+    const LevelMetadata &getLevel(uint32_t level) const;
+
+    /**
+     * Get statistics
+     */
+    void getStatistics(uint64_t *total_sstables, uint64_t *total_size_bytes) const;
+
+private:
+    TransactionManager *txn_mgr_;
+    std::vector<LevelMetadata> levels_;          // Level 0-3 metadata
+    mutable std::mutex mutex_;                    // Protects level metadata
+
+    /**
+     * Find overlapping SSTables in target level
+     */
+    void findOverlappingSSTables(uint32_t level,
+                                  const std::vector<uint8_t> &min_key,
+                                  const std::vector<uint8_t> &max_key,
+                                  std::vector<std::string> *overlapping);
+
+    /**
+     * K-way merge implementation
+     */
+    Status kWayMerge(const std::vector<std::string> &source_sstables,
+                     const std::string &output_path,
+                     uint64_t oldest_active_xid,
+                     ErrorContext *ctx);
+
+    /**
+     * Check if entry can be garbage collected (MGA rules)
+     *
+     * CRITICAL: Firebird MGA compliance
+     * - Entry must be deleted (xmax != 0)
+     * - Both xmin and xmax must be committed
+     * - No active transaction can see this version (xmax < oldest_active_xid)
+     */
+    bool canGarbageCollect(const MergeEntry &entry, uint64_t oldest_active_xid) const;
+
+    /**
+     * Atomically replace old SSTables with new ones
+     */
+    Status replaceSSTablesAtomic(uint32_t target_level,
+                                  const std::vector<std::string> &old_sstables,
+                                  const std::vector<std::string> &new_sstables,
+                                  ErrorContext *ctx);
+
+    /**
+     * Delete old SSTable files
+     */
+    void deleteOldSSTables(const std::vector<std::string> &sstable_paths);
 };
 
 } // namespace core
 } // namespace scratchbird
+

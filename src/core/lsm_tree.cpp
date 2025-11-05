@@ -1173,5 +1173,53 @@ Status SSTableReader::scan(const std::vector<uint8_t> &start_key,
     return Status::OK;
 }
 
+/**
+ * Load all entries from SSTable (for compaction)
+ *
+ * Reads ALL entries without visibility filtering
+ * Used by compaction to access invisible entries for garbage collection
+ */
+Status SSTableReader::loadAllEntries(std::vector<MemtableEntry> *entries, ErrorContext *ctx)
+{
+    if (!is_open_)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::FILE_NOT_FOUND, "SSTable not open");
+        return Status::FILE_NOT_FOUND;
+    }
+
+    if (!entries)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "entries is nullptr");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    entries->clear();
+
+    // Read all data blocks using the index
+    for (const auto &idx : index_entries_)
+    {
+        // Read data block
+        std::vector<uint8_t> block_data;
+        Status status = readBlock(idx.block_offset, idx.block_size, &block_data, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        // Parse entries from block (WITHOUT visibility filtering)
+        std::vector<MemtableEntry> block_entries;
+        status = parseBlockEntries(block_data, &block_entries, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        // Append all entries
+        entries->insert(entries->end(), block_entries.begin(), block_entries.end());
+    }
+
+    return Status::OK;
+}
+
 } // namespace core
 } // namespace scratchbird
