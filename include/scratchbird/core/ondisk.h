@@ -33,6 +33,8 @@ namespace scratchbird::core
         PAGE_TYPE_RTREE_NODE = 21,  // R-tree node page (internal or leaf)
         PAGE_TYPE_GIST = 22,        // GiST index page
         PAGE_TYPE_SPGIST = 23,      // SP-GiST index page
+        PAGE_TYPE_BRIN = 24,        // BRIN (Block Range Index) page
+        PAGE_TYPE_COLUMNSTORE = 25, // Columnstore index page
     };
 
     // Page flags (bitwise OR)

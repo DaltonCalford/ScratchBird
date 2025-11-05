@@ -247,15 +247,242 @@ Status SPGiSTIndex::insertRecursive(uint64_t page_num,
                 break;
 
             case SPGiSTMatchType::MATCH_ADD_NODE:
-                // Need to add new child node
-                // TODO: Allocate new leaf page and add to inner node
-                LOG_DEBUG(CATALOG, "SP-GiST: MATCH_ADD_NODE not yet implemented");
-                break;
+            {
+                // Need to add new child node to this inner node
+                // Allocate a new leaf page
+                uint64_t new_leaf_page;
+                status = allocatePage(&new_leaf_page, ctx);
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+
+                // Initialize the new leaf page
+                SBSPGiSTPage* new_page = nullptr;
+                status = loadPage(new_leaf_page, &new_page, ctx);
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+
+                // Manual PageHeader initialization
+                new_page->spgist_header.magic = K_MAGIC_SBRD;
+                new_page->spgist_header.version = static_cast<uint16_t>(DB_VERSION_ALPHA_1_0_1);
+                new_page->spgist_header.page_type = static_cast<uint16_t>(PageType::PAGE_TYPE_SPGIST);
+                new_page->spgist_header.page_size = 8192;
+                new_page->spgist_header.page_id = static_cast<uint32_t>(new_leaf_page);
+                new_page->spgist_header.checksum = 0;
+                new_page->spgist_header.lsn = 0;
+                new_page->spgist_header.flags = 0;
+                std::memcpy(new_page->spgist_header.database_uuid, db_->uuid().bytes.data(), 16);
+                new_page->spgist_header.generation = 0;
+                new_page->spgist_header.free_space = 8192 - sizeof(SBSPGiSTPage);
+                new_page->spgist_header.item_count = 0;
+                new_page->spgist_header.free_offset = 0;
+                new_page->spgist_header.special_size = 0;
+
+                // Initialize SP-GiST specific fields
+                std::memcpy(new_page->spgist_index_uuid.bytes.data(), index_uuid_.bytes.data(), 16);
+                std::memcpy(new_page->spgist_table_uuid.bytes.data(), table_uuid_.bytes.data(), 16);
+                new_page->spgist_flags = 0;
+                new_page->spgist_node_type = static_cast<uint16_t>(SPGiSTNodeType::LEAF);
+                new_page->spgist_count = 0;
+                new_page->spgist_free_space = 8192 - sizeof(SBSPGiSTPage);
+                new_page->spgist_opclass_id = opclass_->getOpClassId();
+                new_page->spgist_parent_page = page_num;
+                new_page->spgist_xmin = current_xid;
+                new_page->spgist_xmax = 0;
+                new_page->spgist_lsn = 0;
+                new_page->spgist_total_entries = 0;
+                new_page->spgist_deleted_entries = 0;
+
+                // Now update the current inner node to add this new child
+                // Calculate size needed for new label + child page pointer
+                size_t new_label_size = traversal.prefix.size();
+                if (config.labelSize > 0)
+                {
+                    new_label_size = config.labelSize;
+                }
+                size_t addition_size = new_label_size + sizeof(uint64_t);
+
+                // Check if there's space in the inner node
+                if (page->spgist_free_space < addition_size)
+                {
+                    // No space to add new child - need to handle this
+                    // For now, return error (could split parent in future)
+                    if (ctx)
+                    {
+                        ctx->code = Status::PAGE_FULL;
+                        ctx->message = "No space in inner node to add child";
+                    }
+                    return Status::PAGE_FULL;
+                }
+
+                // Update the inner tuple to include new child
+                inner->inner_nNodes++;
+                inner->inner_size += addition_size;
+
+                // Write new label at end of labels array
+                uint8_t* new_label_ptr = entry_ptr + sizeof(SBSPGiSTInnerTuple) +
+                                        inner->inner_prefixSize +
+                                        ((inner->inner_nNodes - 1) * label_size);
+                std::memcpy(new_label_ptr, traversal.prefix.data(),
+                           std::min(new_label_size, traversal.prefix.size()));
+
+                // Write new child page pointer at end of child pages array
+                uint8_t* new_child_ptr = new_label_ptr + label_size * inner->inner_nNodes +
+                                        ((inner->inner_nNodes - 1) * sizeof(uint64_t));
+                std::memcpy(new_child_ptr, &new_leaf_page, sizeof(uint64_t));
+
+                page->spgist_free_space -= addition_size;
+
+                LOG_DEBUG(CATALOG, "SP-GiST: Added new child leaf page %lu to inner node %lu",
+                         new_leaf_page, page_num);
+
+                // Now insert the value into the new leaf page
+                return insertRecursive(new_leaf_page, value, tid, current_xid, level + 1, ctx);
+            }
 
             case SPGiSTMatchType::MATCH_SPLIT:
-                // Need to split current node
-                LOG_DEBUG(CATALOG, "SP-GiST: MATCH_SPLIT not yet implemented");
-                break;
+            {
+                // Need to split the current inner node
+                // This is complex - we need to:
+                // 1. Ask operator class how to split with pickSplit()
+                // 2. Redistribute all children to new partitions
+                // 3. Create new inner nodes as needed
+
+                // For now, collect all current child values (we don't have them easily)
+                // This is a limitation - SP-GiST inner split requires more context
+                // about what values led to each child.
+
+                // As a workaround, we can try to just add a new partition
+                // by treating this similarly to MATCH_ADD_NODE but with
+                // the operator class's split labels
+
+                if (traversal.new_labels.empty())
+                {
+                    if (ctx)
+                    {
+                        ctx->code = Status::PAGE_CORRUPT;
+                        ctx->message = "MATCH_SPLIT with no new labels";
+                    }
+                    return Status::PAGE_CORRUPT;
+                }
+
+                // Allocate new child pages for each new partition
+                std::vector<uint64_t> new_child_pages;
+                for (size_t i = 0; i < traversal.new_labels.size(); ++i)
+                {
+                    uint64_t new_page_num;
+                    status = allocatePage(&new_page_num, ctx);
+                    if (status != Status::OK)
+                    {
+                        return status;
+                    }
+
+                    // Initialize new leaf page
+                    SBSPGiSTPage* new_child = nullptr;
+                    status = loadPage(new_page_num, &new_child, ctx);
+                    if (status != Status::OK)
+                    {
+                        return status;
+                    }
+
+                    // Manual PageHeader initialization
+                    new_child->spgist_header.magic = K_MAGIC_SBRD;
+                    new_child->spgist_header.version = static_cast<uint16_t>(DB_VERSION_ALPHA_1_0_1);
+                    new_child->spgist_header.page_type = static_cast<uint16_t>(PageType::PAGE_TYPE_SPGIST);
+                    new_child->spgist_header.page_size = 8192;
+                    new_child->spgist_header.page_id = static_cast<uint32_t>(new_page_num);
+                    new_child->spgist_header.checksum = 0;
+                    new_child->spgist_header.lsn = 0;
+                    new_child->spgist_header.flags = 0;
+                    std::memcpy(new_child->spgist_header.database_uuid, db_->uuid().bytes.data(), 16);
+                    new_child->spgist_header.generation = 0;
+                    new_child->spgist_header.free_space = 8192 - sizeof(SBSPGiSTPage);
+                    new_child->spgist_header.item_count = 0;
+                    new_child->spgist_header.free_offset = 0;
+                    new_child->spgist_header.special_size = 0;
+
+                    // Initialize SP-GiST fields
+                    std::memcpy(new_child->spgist_index_uuid.bytes.data(), index_uuid_.bytes.data(), 16);
+                    std::memcpy(new_child->spgist_table_uuid.bytes.data(), table_uuid_.bytes.data(), 16);
+                    new_child->spgist_flags = 0;
+                    new_child->spgist_node_type = static_cast<uint16_t>(SPGiSTNodeType::LEAF);
+                    new_child->spgist_count = 0;
+                    new_child->spgist_free_space = 8192 - sizeof(SBSPGiSTPage);
+                    new_child->spgist_opclass_id = opclass_->getOpClassId();
+                    new_child->spgist_parent_page = page_num;
+                    new_child->spgist_xmin = current_xid;
+                    new_child->spgist_xmax = 0;
+                    new_child->spgist_lsn = 0;
+                    new_child->spgist_total_entries = 0;
+                    new_child->spgist_deleted_entries = 0;
+
+                    new_child_pages.push_back(new_page_num);
+                }
+
+                // Rebuild the inner tuple with new labels and children
+                // This is simplified - in reality we'd redistribute existing children
+                size_t new_label_size = config.labelSize > 0 ? config.labelSize : 4;
+                size_t new_data_size = sizeof(SBSPGiSTInnerTuple) +
+                                      prefix.size() +
+                                      (traversal.new_labels.size() * new_label_size) +
+                                      (traversal.new_labels.size() * sizeof(uint64_t));
+
+                if (new_data_size > page->spgist_free_space + inner->inner_size)
+                {
+                    // Not enough space even with replacement
+                    if (ctx)
+                    {
+                        ctx->code = Status::PAGE_FULL;
+                        ctx->message = "Insufficient space for inner node split";
+                    }
+                    return Status::PAGE_FULL;
+                }
+
+                // Rewrite inner tuple
+                inner->inner_nNodes = static_cast<uint16_t>(traversal.new_labels.size());
+                inner->inner_size = static_cast<uint16_t>(new_data_size);
+
+                // Write new labels
+                uint8_t* label_ptr = entry_ptr + sizeof(SBSPGiSTInnerTuple) + inner->inner_prefixSize;
+                for (size_t i = 0; i < traversal.new_labels.size(); ++i)
+                {
+                    std::memcpy(label_ptr, traversal.new_labels[i].data(),
+                               std::min(new_label_size, traversal.new_labels[i].size()));
+                    label_ptr += new_label_size;
+                }
+
+                // Write new child page pointers
+                for (size_t i = 0; i < new_child_pages.size(); ++i)
+                {
+                    std::memcpy(label_ptr, &new_child_pages[i], sizeof(uint64_t));
+                    label_ptr += sizeof(uint64_t);
+                }
+
+                page->spgist_free_space = 8192 - sizeof(SBSPGiSTPage) - new_data_size;
+
+                LOG_DEBUG(CATALOG, "SP-GiST: Split inner node %lu into %lu partitions",
+                         page_num, traversal.new_labels.size());
+
+                // Now retry insertion - ask operator class where to go
+                SPGiSTTraversal retry = opclass_->choose(prefix, node_labels, value);
+                if (retry.match_type == SPGiSTMatchType::MATCH_NODE &&
+                    retry.node_index < new_child_pages.size())
+                {
+                    return insertRecursive(new_child_pages[retry.node_index], value, tid,
+                                         current_xid, level + 1, ctx);
+                }
+
+                // If we still can't insert, something is wrong
+                if (ctx)
+                {
+                    ctx->code = Status::INDEX_CORRUPTED;
+                    ctx->message = "Cannot insert after inner node split";
+                }
+                return Status::INDEX_CORRUPTED;
+            }
         }
 
         return Status::OK;

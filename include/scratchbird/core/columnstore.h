@@ -10,6 +10,8 @@
 #include <vector>
 #include <memory>
 #include <optional>
+#include <unordered_map>
+#include <mutex>
 
 namespace scratchbird::core
 {
@@ -191,6 +193,60 @@ struct ColumnSegment
 };
 
 /**
+ * Dictionary for dictionary encoding
+ */
+struct Dictionary
+{
+    std::unordered_map<std::string, uint32_t> value_to_code;  // String value -> integer code
+    std::vector<std::string> code_to_value;  // Integer code -> string value
+    uint32_t next_code;  // Next available code
+
+    Dictionary() : next_code(0) {}
+
+    // Add value to dictionary, return code
+    uint32_t addValue(const std::string& value)
+    {
+        auto it = value_to_code.find(value);
+        if (it != value_to_code.end())
+        {
+            return it->second;  // Already in dictionary
+        }
+
+        uint32_t code = next_code++;
+        value_to_code[value] = code;
+        code_to_value.push_back(value);
+        return code;
+    }
+
+    // Get code for value (returns -1 if not found)
+    int32_t getCode(const std::string& value) const
+    {
+        auto it = value_to_code.find(value);
+        return (it != value_to_code.end()) ? static_cast<int32_t>(it->second) : -1;
+    }
+
+    // Get value for code
+    bool getValue(uint32_t code, std::string* value_out) const
+    {
+        if (code >= code_to_value.size())
+            return false;
+        *value_out = code_to_value[code];
+        return true;
+    }
+
+    // Get dictionary size
+    size_t size() const { return code_to_value.size(); }
+
+    // Clear dictionary
+    void clear()
+    {
+        value_to_code.clear();
+        code_to_value.clear();
+        next_code = 0;
+    }
+};
+
+/**
  * Columnstore Index metadata (stored in catalog)
  */
 struct SBColumnstoreIndex
@@ -313,11 +369,7 @@ public:
 
     Status getStats(ColumnstoreStats *stats_out, ErrorContext *ctx = nullptr);
 
-private:
-    Database *db_;
-    SBColumnstoreIndex index_info_;
-
-    // Helper methods
+    // Compression methods (public for testing)
 
     /**
      * Compress segment using RLE
@@ -336,12 +388,90 @@ private:
                         ErrorContext *ctx);
 
     /**
+     * Compress segment using dictionary encoding
+     */
+    Status compressDictionary(const ColumnSegment &segment,
+                              std::vector<uint8_t> *compressed_out,
+                              Dictionary *dict_out,
+                              ErrorContext *ctx);
+
+    /**
+     * Decompress dictionary-encoded segment
+     */
+    Status decompressDictionary(const std::vector<uint8_t> &compressed,
+                               const Dictionary &dict,
+                               DataType data_type,
+                               uint32_t row_count,
+                               ColumnSegment *segment_out,
+                               ErrorContext *ctx);
+
+    /**
+     * Compress segment using bit-packing
+     *
+     * Minimizes storage by packing values into the minimum number of bits needed.
+     * Example: Values 0-7 need only 3 bits each instead of 32 bits (int32_t).
+     *
+     * Algorithm:
+     * 1. Find min/max values in segment
+     * 2. Calculate bits needed: ceil(log2(max - min + 1))
+     * 3. Subtract min from all values (normalize to 0)
+     * 4. Pack normalized values into bit array
+     *
+     * @param segment Input segment with integer values
+     * @param compressed_out Output compressed data
+     * @param ctx Error context
+     */
+    Status compressBitpack(const ColumnSegment &segment,
+                          std::vector<uint8_t> *compressed_out,
+                          ErrorContext *ctx);
+
+    /**
+     * Decompress bit-packed segment
+     *
+     * @param compressed Compressed bit-packed data
+     * @param data_type Original data type
+     * @param row_count Number of values
+     * @param segment_out Output decompressed segment
+     * @param ctx Error context
+     */
+    Status decompressBitpack(const std::vector<uint8_t> &compressed,
+                            DataType data_type,
+                            uint32_t row_count,
+                            ColumnSegment *segment_out,
+                            ErrorContext *ctx);
+
+    /**
      * Apply predicate to segment (predicate pushdown)
+     *
+     * This method implements batch predicate evaluation with min/max pruning.
+     * It returns matching offsets for values that satisfy the predicate.
+     *
+     * @param segment Input segment to filter
+     * @param predicate Predicate to apply
+     * @param matching_offsets Output vector of matching offsets
+     * @param ctx Error context
      */
     Status applyPredicate(const ColumnSegment &segment,
                          const ColumnPredicate &predicate,
                          std::vector<uint32_t> *matching_offsets,
                          ErrorContext *ctx);
+
+private:
+    Database *db_;
+    SBColumnstoreIndex index_info_;
+
+    // Insert buffering (per-column buffers)
+    struct BufferedValue
+    {
+        std::vector<uint8_t> data;
+        bool is_null;
+        uint64_t tid;
+        uint64_t xmin;
+    };
+    std::unordered_map<ID, std::vector<BufferedValue>> column_buffers_;
+    std::mutex buffer_mutex_;
+
+    // Helper methods
 
     /**
      * Find segment containing TID
@@ -373,6 +503,11 @@ private:
                        uint64_t value_xmax,
                        uint64_t current_xid,
                        ErrorContext *ctx) const;
+
+    /**
+     * Flush buffered values to a segment
+     */
+    Status flushSegment(const ID &column_uuid, ErrorContext *ctx);
 };
 
 } // namespace scratchbird::core
