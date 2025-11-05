@@ -528,3 +528,22 @@ set_tests_properties(LSMSSTableReader PROPERTIES
     LABELS "unit;lsm;sstable;reader;phase3"
     TIMEOUT 60
 )
+
+# ============================================================================
+# LSM-Tree Index Tests - Phase 4: Compaction
+# ============================================================================
+
+add_executable(test_lsm_compaction
+    unit/test_lsm_compaction.cpp
+)
+target_link_libraries(test_lsm_compaction
+    scratchbird_core
+    scratchbird_parser
+    scratchbird_sblr
+    scratchbird_optimizer
+)
+add_test(NAME LSMCompaction COMMAND test_lsm_compaction)
+set_tests_properties(LSMCompaction PROPERTIES
+    LABELS "unit;lsm;compaction;kway;gc;phase4"
+    TIMEOUT 60
+)
