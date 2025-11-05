@@ -343,6 +343,7 @@ public:
     static std::unique_ptr<ColumnstoreIndex> open(Database *db,
                                                    const UuidV7Bytes &index_uuid,
                                                    uint32_t root_page,
+                                                   uint32_t segment_size = 1024,
                                                    ErrorContext *ctx = nullptr);
 
     /**

@@ -80,74 +80,12 @@ Status ColumnstoreIndex::create(Database *db,
         return Status::INVALID_ARGUMENT;
     }
 
-    // Get managers
-    PageManager *page_mgr = db->page_manager();
-    BufferPool *buffer_pool = db->buffer_pool();
-    TransactionManager *txn_mgr = db->transaction_manager();
-
-    if (!page_mgr || !buffer_pool || !txn_mgr)
-    {
-        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Required managers not available");
-        return Status::INVALID_ARGUMENT;
-    }
-
-    // Allocate root segment page
-    uint32_t root_page = 0;
-    Status status = page_mgr->allocatePage(root_page, ctx);
-    if (status != Status::OK)
-        return status;
-
-    // Pin and initialize root page
-    void *page_buffer = nullptr;
-    status = buffer_pool->pinPage(root_page, &page_buffer, ctx);
-    if (status != Status::OK)
-        return status;
-
-    auto *root = static_cast<SBColumnstorePage *>(page_buffer);
-    std::memset(root, 0, sizeof(SBColumnstorePage));
-
-    // Initialize header - manual initialization (no helper exists)
-    root->cs_header.magic = K_MAGIC_SBRD;
-    root->cs_header.version = static_cast<uint16_t>(DB_VERSION_ALPHA_1_0_1);
-    root->cs_header.page_type = static_cast<uint16_t>(PageType::PAGE_TYPE_COLUMNSTORE);
-    root->cs_header.page_size = 8192;
-    root->cs_header.page_id = root_page;
-    root->cs_header.checksum = 0;
-    root->cs_header.lsn = 0;
-    root->cs_header.flags = 0;
-    std::memcpy(root->cs_header.database_uuid, db->uuid().bytes.data(), 16);
-    root->cs_header.generation = 0;
-    root->cs_header.free_space = 0;
-    root->cs_header.item_count = 0;
-    root->cs_header.free_offset = 0;
-    root->cs_header.special_size = 0;
-
-    // Initialize metadata
-    std::memcpy(&root->cs_index_uuid, &index_uuid, sizeof(ID));
-    std::memcpy(&root->cs_table_uuid, &table_uuid, sizeof(ID));
-    std::memcpy(&root->cs_column_uuid, &column_uuids[0], sizeof(ID));  // First column
-
-    root->cs_flags = 0;
-    root->cs_row_count = 0;
-    root->cs_null_count = 0;
-    root->cs_compression_type = static_cast<uint8_t>(compression);
-    root->cs_compressed_size = 0;
-    root->cs_uncompressed_size = 0;
-
-    // MGA compliance
-    root->cs_xmin = txn_mgr->getCurrentXid();
-    root->cs_xmax = 0;
-    root->cs_lsn = 0;
-
-    // Sibling pointers
-    root->cs_prev_segment = 0;
-    root->cs_next_segment = 0;
-
-    // Unpin page
-    buffer_pool->unpinPage(root_page, true, ctx);
+    // Phase 6: Don't allocate a root page immediately
+    // The first segment flushed will become the root
+    // This avoids having an empty placeholder page
 
     if (root_page_out)
-        *root_page_out = root_page;
+        *root_page_out = 0;  // No root yet
 
     return Status::OK;
 }
@@ -155,16 +93,18 @@ Status ColumnstoreIndex::create(Database *db,
 std::unique_ptr<ColumnstoreIndex> ColumnstoreIndex::open(Database *db,
                                                          const UuidV7Bytes &index_uuid,
                                                          uint32_t root_page,
+                                                         uint32_t segment_size,
                                                          ErrorContext *ctx)
 {
     if (!db)
         return nullptr;
 
-    // TODO: Read metadata from catalog
+    // Phase 6: Temporary - pass segment_size as parameter
+    // TODO: Read metadata from catalog in Phase 7
     SBColumnstoreIndex index_info;
     std::memcpy(&index_info.idx_uuid, &index_uuid, sizeof(ID));
     index_info.idx_root_page = root_page;
-    index_info.idx_segment_size = 1024;
+    index_info.idx_segment_size = segment_size;  // Use passed parameter
     index_info.idx_compression_type = static_cast<uint8_t>(CompressionType::RLE);
     index_info.idx_total_segments = 0;
     index_info.idx_total_rows = 0;
@@ -353,13 +293,63 @@ Status ColumnstoreIndex::getStats(ColumnstoreStats *stats_out, ErrorContext *ctx
         return Status::INVALID_ARGUMENT;
     }
 
-    // Phase 1: Return basic stats
-    stats_out->total_segments = index_info_.idx_total_segments;
-    stats_out->total_rows = index_info_.idx_total_rows;
-    stats_out->compressed_bytes = 0;
-    stats_out->uncompressed_bytes = 0;
-    stats_out->compression_ratio = 1.0;
-    stats_out->null_count = 0;
+    BufferPool *buffer_pool = db_->buffer_pool();
+    if (!buffer_pool)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Buffer pool not available");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    // Initialize counters
+    uint64_t total_segments = 0;
+    uint64_t total_rows = 0;
+    uint64_t total_compressed = 0;
+    uint64_t total_uncompressed = 0;
+    uint64_t total_nulls = 0;
+
+    // Traverse segment chain and collect statistics
+    uint32_t current_page = index_info_.idx_root_page;
+
+    while (current_page != 0)
+    {
+        // Pin segment page
+        void *page_buffer = nullptr;
+        Status status = buffer_pool->pinPage(current_page, &page_buffer, ctx);
+        if (status != Status::OK)
+            return status;
+
+        auto *page = static_cast<const SBColumnstorePage *>(page_buffer);
+
+        // Collect statistics from this segment
+        total_segments++;
+        total_rows += page->cs_row_count;
+        total_compressed += page->cs_compressed_size;
+        total_uncompressed += page->cs_uncompressed_size;
+        total_nulls += page->cs_null_count;
+
+        // Move to next segment
+        uint32_t next_page = page->cs_next_segment;
+        buffer_pool->unpinPage(current_page, false, ctx);
+
+        current_page = next_page;
+    }
+
+    // Fill output statistics
+    stats_out->total_segments = total_segments;
+    stats_out->total_rows = total_rows;
+    stats_out->compressed_bytes = total_compressed;
+    stats_out->uncompressed_bytes = total_uncompressed;
+    stats_out->null_count = total_nulls;
+
+    // Calculate compression ratio
+    if (total_compressed > 0)
+    {
+        stats_out->compression_ratio = static_cast<double>(total_uncompressed) / total_compressed;
+    }
+    else
+    {
+        stats_out->compression_ratio = 1.0;
+    }
 
     return Status::OK;
 }
@@ -1672,17 +1662,45 @@ Status ColumnstoreIndex::findSegment(const ID &column_uuid,
         return Status::INVALID_ARGUMENT;
     }
 
-    // Phase 1: Stub implementation
-    // TODO: Traverse segment chain to find segment containing TID
-    //
-    // Algorithm:
-    // 1. Start at root_page
-    // 2. Follow cs_next_segment pointers
-    // 3. Check if tid is in range [cs_first_tid, cs_last_tid]
-    // 4. Return segment page when found
+    BufferPool *buffer_pool = db_->buffer_pool();
+    if (!buffer_pool)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Buffer pool not available");
+        return Status::INVALID_ARGUMENT;
+    }
 
-    *segment_page_out = index_info_.idx_root_page;
-    return Status::OK;
+    // Start at root page and traverse segment chain
+    uint32_t current_page = index_info_.idx_root_page;
+
+    while (current_page != 0)
+    {
+        // Pin segment page
+        void *page_buffer = nullptr;
+        Status status = buffer_pool->pinPage(current_page, &page_buffer, ctx);
+        if (status != Status::OK)
+            return status;
+
+        auto *page = static_cast<const SBColumnstorePage *>(page_buffer);
+
+        // Check if TID is in this segment's range
+        if (tid >= page->cs_first_tid && tid <= page->cs_last_tid)
+        {
+            // Found the segment!
+            *segment_page_out = current_page;
+            buffer_pool->unpinPage(current_page, false, ctx);
+            return Status::OK;
+        }
+
+        // Move to next segment
+        uint32_t next_page = page->cs_next_segment;
+        buffer_pool->unpinPage(current_page, false, ctx);
+
+        current_page = next_page;
+    }
+
+    // TID not found in any segment
+    SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Segment containing TID not found");
+    return Status::NOT_FOUND;
 }
 
 Status ColumnstoreIndex::createSegment(const ID &column_uuid,
@@ -1696,28 +1714,131 @@ Status ColumnstoreIndex::createSegment(const ID &column_uuid,
         return Status::INVALID_ARGUMENT;
     }
 
-    // Phase 1: Stub implementation
-    // TODO: Create new segment page and write compressed data
-    //
-    // Algorithm:
-    // 1. Compress segment using compressRLE()
-    // 2. Allocate new page
-    // 3. Write compressed data to page
-    // 4. Update min/max values
-    // 5. Set xmin for MGA
-    // 6. Link to previous segment
-
     PageManager *page_mgr = db_->page_manager();
-    if (!page_mgr)
+    BufferPool *buffer_pool = db_->buffer_pool();
+    TransactionManager *txn_mgr = db_->transaction_manager();
+
+    if (!page_mgr || !buffer_pool || !txn_mgr)
     {
-        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Page manager not available");
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Required managers not available");
         return Status::INVALID_ARGUMENT;
     }
 
+    // Step 1: Compress segment based on compression type
+    std::vector<uint8_t> compressed;
+    Status status;
+
+    switch (segment.compression)
+    {
+    case CompressionType::NONE:
+        // No compression - use raw data
+        compressed = segment.data;
+        break;
+
+    case CompressionType::RLE:
+        status = compressRLE(segment, &compressed, ctx);
+        if (status != Status::OK)
+            return status;
+        break;
+
+    case CompressionType::DICTIONARY:
+        // Dictionary encoding requires dictionary to be stored separately
+        // For Phase 6, we'll defer dictionary support to avoid complexity
+        SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED,
+                         "Dictionary compression not yet supported in createSegment");
+        return Status::NOT_IMPLEMENTED;
+
+    case CompressionType::BITPACK:
+        status = compressBitpack(segment, &compressed, ctx);
+        if (status != Status::OK)
+            return status;
+        break;
+
+    default:
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Unknown compression type");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    // Step 2: Check if compressed data fits in a single page
+    const size_t HEADER_SIZE = sizeof(SBColumnstorePage);
+    const size_t PAGE_SIZE = 8192;  // Assuming 8KB pages
+    const size_t MAX_DATA_SIZE = PAGE_SIZE - HEADER_SIZE;
+
+    if (compressed.size() > MAX_DATA_SIZE)
+    {
+        // TODO: Support multi-page segments in future
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                         "Segment too large (multi-page segments not yet supported)");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    // Step 3: Allocate new page
     uint32_t new_page = 0;
-    Status status = page_mgr->allocatePage(new_page, ctx);
+    status = page_mgr->allocatePage(new_page, ctx);
     if (status != Status::OK)
         return status;
+
+    // Step 4: Pin page and initialize
+    void *page_buffer = nullptr;
+    status = buffer_pool->pinPage(new_page, &page_buffer, ctx);
+    if (status != Status::OK)
+        return status;
+
+    auto *page = static_cast<SBColumnstorePage *>(page_buffer);
+    std::memset(page, 0, sizeof(SBColumnstorePage));
+
+    // Step 5: Initialize page header
+    page->cs_header.magic = K_MAGIC_SBRD;
+    page->cs_header.version = static_cast<uint16_t>(DB_VERSION_ALPHA_1_0_1);
+    page->cs_header.page_type = static_cast<uint16_t>(PageType::PAGE_TYPE_COLUMNSTORE);
+    page->cs_header.page_size = PAGE_SIZE;
+    page->cs_header.page_id = new_page;
+    page->cs_header.checksum = 0;
+    page->cs_header.lsn = 0;
+    page->cs_header.flags = 0;
+    std::memcpy(page->cs_header.database_uuid, db_->uuid().bytes.data(), 16);
+    page->cs_header.generation = 0;
+    page->cs_header.free_space = MAX_DATA_SIZE - compressed.size();
+    page->cs_header.item_count = 1;  // One segment per page
+    page->cs_header.free_offset = 0;
+    page->cs_header.special_size = 0;
+
+    // Step 6: Initialize columnstore metadata
+    page->cs_index_uuid = index_info_.idx_uuid;
+    page->cs_table_uuid = index_info_.idx_table_uuid;
+    page->cs_column_uuid = column_uuid;
+
+    page->cs_flags = static_cast<uint16_t>(ColumnstoreFlags::COMPRESSED);
+    page->cs_row_count = segment.row_count;
+    page->cs_null_count = segment.null_count;
+    page->cs_compression_type = static_cast<uint8_t>(segment.compression);
+    page->cs_data_type = static_cast<uint8_t>(segment.data_type);
+    page->cs_compressed_size = static_cast<uint32_t>(compressed.size());
+    page->cs_uncompressed_size = static_cast<uint32_t>(segment.data.size());
+
+    // Step 7: Set min/max values (for predicate pushdown)
+    page->cs_min_value = segment.min_value;
+    page->cs_max_value = segment.max_value;
+
+    // Step 8: Set TID range
+    page->cs_first_tid = segment.first_tid;
+    page->cs_last_tid = segment.last_tid;
+
+    // Step 9: Set MGA fields
+    page->cs_xmin = txn_mgr->getCurrentXid();
+    page->cs_xmax = 0;  // Active
+    page->cs_lsn = 0;
+
+    // Step 10: Initialize sibling pointers (will be updated by caller if needed)
+    page->cs_prev_segment = 0;
+    page->cs_next_segment = 0;
+
+    // Step 11: Write compressed data to page
+    uint8_t *data_area = reinterpret_cast<uint8_t *>(page) + HEADER_SIZE;
+    std::memcpy(data_area, compressed.data(), compressed.size());
+
+    // Step 12: Unpin page (mark dirty)
+    buffer_pool->unpinPage(new_page, true, ctx);
 
     *segment_page_out = new_page;
     return Status::OK;
@@ -1904,15 +2025,82 @@ Status ColumnstoreIndex::flushSegment(const ID &column_uuid, ErrorContext *ctx)
     segment.min_value = min_val;
     segment.max_value = max_val;
 
-    // Compress segment using RLE
-    std::vector<uint8_t> compressed;
-    Status status = compressRLE(segment, &compressed, ctx);
+    // Create segment page and write compressed data to disk
+    uint32_t new_segment_page = 0;
+    Status status = createSegment(column_uuid, segment, &new_segment_page, ctx);
     if (status != Status::OK)
         return status;
 
-    // Create segment page and write compressed data
-    // TODO: Implement createSegment() fully to write to disk
-    // For Phase 1, we'll just clear the buffer (compression tested separately)
+    // Link to previous segment if there is one
+    BufferPool *buffer_pool = db_->buffer_pool();
+    if (!buffer_pool)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Buffer pool not available");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    // Find the last segment in the chain
+    if (index_info_.idx_root_page == 0)
+    {
+        // This is the first segment - make it the root
+        index_info_.idx_root_page = new_segment_page;
+    }
+    else
+    {
+        // Traverse to find the last segment
+        uint32_t current_page = index_info_.idx_root_page;
+        uint32_t prev_page = 0;
+
+        while (current_page != 0)
+        {
+            void *page_buffer = nullptr;
+            status = buffer_pool->pinPage(current_page, &page_buffer, ctx);
+            if (status != Status::OK)
+                return status;
+
+            auto *page = static_cast<const SBColumnstorePage *>(page_buffer);
+            uint32_t next_page = page->cs_next_segment;
+
+            buffer_pool->unpinPage(current_page, false, ctx);
+
+            if (next_page == 0)
+            {
+                // Found the last segment
+                prev_page = current_page;
+                break;
+            }
+
+            current_page = next_page;
+        }
+
+        if (prev_page != 0)
+        {
+            // Link previous segment to new segment
+            void *page_buffer = nullptr;
+            status = buffer_pool->pinPage(prev_page, &page_buffer, ctx);
+            if (status != Status::OK)
+                return status;
+
+            auto *prev_seg = static_cast<SBColumnstorePage *>(page_buffer);
+            prev_seg->cs_next_segment = new_segment_page;
+
+            buffer_pool->unpinPage(prev_page, true, ctx);  // Mark dirty
+
+            // Set prev pointer in new segment
+            status = buffer_pool->pinPage(new_segment_page, &page_buffer, ctx);
+            if (status != Status::OK)
+                return status;
+
+            auto *new_seg = static_cast<SBColumnstorePage *>(page_buffer);
+            new_seg->cs_prev_segment = prev_page;
+
+            buffer_pool->unpinPage(new_segment_page, true, ctx);  // Mark dirty
+        }
+    }
+
+    // Update index statistics
+    index_info_.idx_total_segments++;
+    index_info_.idx_total_rows += segment.row_count;
 
     // Clear buffer now that it's flushed
     buffer.clear();
