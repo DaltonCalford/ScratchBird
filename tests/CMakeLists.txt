@@ -585,3 +585,35 @@ set_tests_properties(LSMTreeSimple PROPERTIES
     LABELS "integration;lsm;simple;phase6"
     TIMEOUT 120
 )
+
+# Comprehensive integration test
+add_executable(test_lsm_tree_comprehensive
+    integration/test_lsm_tree_comprehensive.cpp
+)
+target_link_libraries(test_lsm_tree_comprehensive
+    scratchbird_core
+    scratchbird_parser
+    scratchbird_sblr
+    scratchbird_optimizer
+)
+add_test(NAME LSMTreeComprehensive COMMAND test_lsm_tree_comprehensive)
+set_tests_properties(LSMTreeComprehensive PROPERTIES
+    LABELS "integration;lsm;comprehensive;phase7"
+    TIMEOUT 180
+)
+
+# Stress test (100K+ keys)
+add_executable(test_lsm_tree_stress
+    stress/test_lsm_tree_stress.cpp
+)
+target_link_libraries(test_lsm_tree_stress
+    scratchbird_core
+    scratchbird_parser
+    scratchbird_sblr
+    scratchbird_optimizer
+)
+add_test(NAME LSMTreeStress COMMAND test_lsm_tree_stress)
+set_tests_properties(LSMTreeStress PROPERTIES
+    LABELS "stress;lsm;performance;phase7"
+    TIMEOUT 300
+)
