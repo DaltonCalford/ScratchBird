@@ -547,3 +547,22 @@ set_tests_properties(LSMCompaction PROPERTIES
     LABELS "unit;lsm;compaction;kway;gc;phase4"
     TIMEOUT 60
 )
+
+# ============================================================================
+# LSM-Tree Index Tests - Phase 5: Bloom Filter
+# ============================================================================
+
+add_executable(test_lsm_bloom_filter
+    unit/test_lsm_bloom_filter.cpp
+)
+target_link_libraries(test_lsm_bloom_filter
+    scratchbird_core
+    scratchbird_parser
+    scratchbird_sblr
+    scratchbird_optimizer
+)
+add_test(NAME LSMBloomFilter COMMAND test_lsm_bloom_filter)
+set_tests_properties(LSMBloomFilter PROPERTIES
+    LABELS "unit;lsm;bloom;filter;phase5"
+    TIMEOUT 120
+)

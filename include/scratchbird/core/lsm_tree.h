@@ -33,6 +33,7 @@
 #include <cstdint>
 #include <string>
 #include <queue>
+#include <cmath>
 
 namespace scratchbird
 {
@@ -326,31 +327,99 @@ struct IndexEntry
  * Note: Different from the TID-based BloomFilter in tid_resolver.h
  * This is optimized for LSM-Tree key lookups with variable-length byte arrays
  *
- * Phase 6 implementation - basic functionality
+ * Phase 5 implementation - basic functionality
  * 10 bits/key → ~1% false positive rate
+ *
+ * Uses FNV-1a hash function with multiple seeds for k hash functions
  */
 class LSMBloomFilter
 {
 public:
+    /**
+     * Construct Bloom filter with expected number of keys and target false positive rate
+     *
+     * @param expected_keys Estimated number of keys to be added
+     * @param false_positive_rate Target false positive rate (default 1%)
+     */
     LSMBloomFilter(size_t expected_keys = 1000, double false_positive_rate = 0.01);
     ~LSMBloomFilter();
 
-    // Add key to bloom filter
+    /**
+     * Add key to bloom filter
+     *
+     * @param key Variable-length key
+     */
     void add(const std::vector<uint8_t> &key);
 
-    // Check if key might be present (may return false positives)
+    /**
+     * Check if key might be present (may return false positives)
+     *
+     * @param key Variable-length key
+     * @return true if key might be present, false if definitely not present
+     */
     bool mightContain(const std::vector<uint8_t> &key) const;
 
-    // Serialize bloom filter to byte array
+    /**
+     * Serialize bloom filter to byte array
+     *
+     * Format: [num_bits (8 bytes)][num_hashes (8 bytes)][bit array]
+     *
+     * @param output Output byte array
+     */
     void serialize(std::vector<uint8_t> *output) const;
 
-    // Deserialize bloom filter from byte array
+    /**
+     * Deserialize bloom filter from byte array
+     *
+     * @param data Serialized bloom filter data
+     * @return Deserialized bloom filter (caller owns pointer)
+     */
     static LSMBloomFilter *deserialize(const std::vector<uint8_t> &data);
 
+    /**
+     * Get size of bloom filter in bytes
+     *
+     * @return Size in bytes
+     */
+    size_t getSizeBytes() const;
+
 private:
-    std::vector<uint8_t> bits_;
-    size_t num_bits_;
-    size_t num_hashes_;
+    std::vector<uint8_t> bits_;  // Bit array (packed into bytes)
+    size_t num_bits_;            // Total number of bits
+    size_t num_hashes_;          // Number of hash functions
+
+    /**
+     * Calculate optimal number of bits for Bloom filter
+     *
+     * Formula: m = -n * ln(p) / (ln(2)^2)
+     * where n = number of keys, p = false positive rate
+     *
+     * @param n Number of keys
+     * @param p False positive rate
+     * @return Number of bits
+     */
+    static size_t calculateNumBits(size_t n, double p);
+
+    /**
+     * Calculate optimal number of hash functions
+     *
+     * Formula: k = (m / n) * ln(2)
+     * where m = number of bits, n = number of keys
+     *
+     * @param m Number of bits
+     * @param n Number of keys
+     * @return Number of hash functions
+     */
+    static size_t calculateNumHashes(size_t m, size_t n);
+
+    /**
+     * Hash function using FNV-1a with seed
+     *
+     * @param key Variable-length key
+     * @param seed Seed value (0 to num_hashes-1)
+     * @return 64-bit hash value
+     */
+    uint64_t hash(const std::vector<uint8_t> &key, size_t seed) const;
 };
 
 /**
