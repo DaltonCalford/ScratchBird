@@ -404,3 +404,38 @@ set_tests_properties(ColumnstoreSegments PROPERTIES
     LABELS "integration;columnstore;segments;phase6"
     TIMEOUT 120
 )
+
+# ============================================================================
+# Columnstore Index Tests - Phase 7: Comprehensive End-to-End Testing
+# ============================================================================
+
+add_executable(test_columnstore_end_to_end
+    integration/test_columnstore_end_to_end.cpp
+)
+target_link_libraries(test_columnstore_end_to_end
+    scratchbird_core
+    scratchbird_parser
+    scratchbird_sblr
+    scratchbird_optimizer
+)
+add_test(NAME ColumnstoreEndToEnd COMMAND test_columnstore_end_to_end)
+set_tests_properties(ColumnstoreEndToEnd PROPERTIES
+    LABELS "integration;columnstore;e2e;phase7;comprehensive"
+    TIMEOUT 180
+)
+
+# Simple E2E test (minimal version to avoid hang issues)
+add_executable(test_columnstore_simple_e2e
+    integration/test_columnstore_simple_e2e.cpp
+)
+target_link_libraries(test_columnstore_simple_e2e
+    scratchbird_core
+    scratchbird_parser
+    scratchbird_sblr
+    scratchbird_optimizer
+)
+add_test(NAME ColumnstoreSimpleE2E COMMAND test_columnstore_simple_e2e)
+set_tests_properties(ColumnstoreSimpleE2E PROPERTIES
+    LABELS "integration;columnstore;e2e;phase7;simple"
+    TIMEOUT 30
+)
