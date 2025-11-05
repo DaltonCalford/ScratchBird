@@ -626,10 +626,10 @@ struct CompactionTask
     uint32_t target_level;                       // Target level (e.g., 1 for L0→L1)
     std::vector<std::string> source_sstables;    // SSTables to merge
     std::vector<std::string> overlapping_sstables; // Overlapping SSTables in target level
-    uint64_t oldest_active_xid;                  // For garbage collection
+    uint64_t oit;                                // OIT (Oldest Interesting Transaction) for MGA garbage collection
 
     CompactionTask()
-        : source_level(0), target_level(0), oldest_active_xid(0) {}
+        : source_level(0), target_level(0), oit(0) {}
 };
 
 /**
@@ -735,10 +735,12 @@ private:
 
     /**
      * K-way merge implementation
+     *
+     * @param oit Oldest Interesting Transaction (OIT) for Firebird MGA garbage collection
      */
     Status kWayMerge(const std::vector<std::string> &source_sstables,
                      const std::string &output_path,
-                     uint64_t oldest_active_xid,
+                     uint64_t oit,
                      ErrorContext *ctx);
 
     /**
@@ -747,9 +749,13 @@ private:
      * CRITICAL: Firebird MGA compliance
      * - Entry must be deleted (xmax != 0)
      * - Both xmin and xmax must be committed
-     * - No active transaction can see this version (xmax < oldest_active_xid)
+     * - xmax < OIT (no transaction can see this version)
+     *
+     * Per Firebird spec: "Record versions created by transactions < OIT can be garbage collected"
+     *
+     * @param oit Oldest Interesting Transaction - boundary below which all transactions are committed
      */
-    bool canGarbageCollect(const MergeEntry &entry, uint64_t oldest_active_xid) const;
+    bool canGarbageCollect(const MergeEntry &entry, uint64_t oit) const;
 
     /**
      * Atomically replace old SSTables with new ones
