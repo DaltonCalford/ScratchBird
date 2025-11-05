@@ -320,16 +320,19 @@ struct IndexEntry
 };
 
 /**
- * Bloom Filter - Probabilistic membership test
+ * LSM Bloom Filter - Probabilistic membership test for variable-length keys
  *
- * Phase 6 implementation - stub for now
+ * Note: Different from the TID-based BloomFilter in tid_resolver.h
+ * This is optimized for LSM-Tree key lookups with variable-length byte arrays
+ *
+ * Phase 6 implementation - basic functionality
  * 10 bits/key → ~1% false positive rate
  */
-class BloomFilter
+class LSMBloomFilter
 {
 public:
-    BloomFilter(size_t expected_keys = 1000, double false_positive_rate = 0.01);
-    ~BloomFilter();
+    LSMBloomFilter(size_t expected_keys = 1000, double false_positive_rate = 0.01);
+    ~LSMBloomFilter();
 
     // Add key to bloom filter
     void add(const std::vector<uint8_t> &key);
@@ -341,7 +344,7 @@ public:
     void serialize(std::vector<uint8_t> *output) const;
 
     // Deserialize bloom filter from byte array
-    static BloomFilter *deserialize(const std::vector<uint8_t> &data);
+    static LSMBloomFilter *deserialize(const std::vector<uint8_t> &data);
 
 private:
     std::vector<uint8_t> bits_;
@@ -420,7 +423,7 @@ private:
     std::vector<IndexEntry> index_entries_;
 
     // Bloom filter for all keys
-    BloomFilter bloom_filter_;
+    LSMBloomFilter bloom_filter_;
 
     // Metadata
     std::vector<uint8_t> min_key_;
