@@ -366,3 +366,22 @@ set_tests_properties(ColumnstorePredicate PROPERTIES
     LABELS "unit;columnstore;predicate;phase4"
     TIMEOUT 120
 )
+
+# ============================================================================
+# Columnstore Index Tests - Phase 5: Batch Processing & SIMD
+# ============================================================================
+
+add_executable(test_columnstore_batch_performance
+    stress/test_columnstore_batch_performance.cpp
+)
+target_link_libraries(test_columnstore_batch_performance
+    scratchbird_core
+    scratchbird_parser
+    scratchbird_sblr
+    scratchbird_optimizer
+)
+add_test(NAME ColumnstoreBatchPerformance COMMAND test_columnstore_batch_performance)
+set_tests_properties(ColumnstoreBatchPerformance PROPERTIES
+    LABELS "stress;columnstore;batch;simd;phase5;performance"
+    TIMEOUT 300
+)
