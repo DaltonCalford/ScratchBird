@@ -7,6 +7,7 @@
 #include "scratchbird/core/lsm_tree.h"
 #include "scratchbird/core/database.h"
 #include <algorithm>
+#include <cmath>
 
 namespace scratchbird
 {
@@ -299,6 +300,372 @@ bool Memtable::isEntryVisible(const MemtableEntry &entry,
 
     // Entry is visible
     return true;
+}
+
+// ============================================================================
+// Bloom Filter Implementation (Phase 6 stub - basic functionality)
+// ============================================================================
+
+BloomFilter::BloomFilter(size_t expected_keys, double false_positive_rate)
+{
+    // Calculate optimal bit array size
+    // Formula: m = -(n * ln(p)) / (ln(2)^2)
+    // where n = expected_keys, p = false_positive_rate
+    num_bits_ = static_cast<size_t>(
+        -(static_cast<double>(expected_keys) * std::log(false_positive_rate)) /
+        (std::log(2.0) * std::log(2.0)));
+
+    // Calculate optimal number of hash functions
+    // Formula: k = (m / n) * ln(2)
+    num_hashes_ = static_cast<size_t>(
+        (static_cast<double>(num_bits_) / static_cast<double>(expected_keys)) * std::log(2.0));
+
+    // Ensure at least 1 hash function
+    if (num_hashes_ < 1)
+        num_hashes_ = 1;
+
+    // Allocate bit array (rounded up to bytes)
+    bits_.resize((num_bits_ + 7) / 8, 0);
+}
+
+BloomFilter::~BloomFilter()
+{
+}
+
+void BloomFilter::add(const std::vector<uint8_t> &key)
+{
+    // Use multiple hash functions (double hashing with MurmurHash3-style)
+    uint64_t hash1 = 0;
+    uint64_t hash2 = 1;
+
+    // Simple hash function (replace with MurmurHash3 in Phase 6)
+    for (uint8_t byte : key)
+    {
+        hash1 = hash1 * 31 + byte;
+        hash2 = hash2 * 37 + byte;
+    }
+
+    // Set bits using double hashing
+    for (size_t i = 0; i < num_hashes_; ++i)
+    {
+        uint64_t combined = (hash1 + i * hash2) % num_bits_;
+        size_t byte_idx = combined / 8;
+        size_t bit_idx = combined % 8;
+        bits_[byte_idx] |= (1 << bit_idx);
+    }
+}
+
+bool BloomFilter::mightContain(const std::vector<uint8_t> &key) const
+{
+    // Check if all bits are set
+    uint64_t hash1 = 0;
+    uint64_t hash2 = 1;
+
+    for (uint8_t byte : key)
+    {
+        hash1 = hash1 * 31 + byte;
+        hash2 = hash2 * 37 + byte;
+    }
+
+    for (size_t i = 0; i < num_hashes_; ++i)
+    {
+        uint64_t combined = (hash1 + i * hash2) % num_bits_;
+        size_t byte_idx = combined / 8;
+        size_t bit_idx = combined % 8;
+
+        if (!(bits_[byte_idx] & (1 << bit_idx)))
+        {
+            return false; // Definitely not present
+        }
+    }
+
+    return true; // Might be present (or false positive)
+}
+
+void BloomFilter::serialize(std::vector<uint8_t> *output) const
+{
+    output->clear();
+
+    // Write num_bits (8 bytes)
+    const uint8_t *num_bits_ptr = reinterpret_cast<const uint8_t *>(&num_bits_);
+    output->insert(output->end(), num_bits_ptr, num_bits_ptr + sizeof(num_bits_));
+
+    // Write num_hashes (8 bytes)
+    const uint8_t *num_hashes_ptr = reinterpret_cast<const uint8_t *>(&num_hashes_);
+    output->insert(output->end(), num_hashes_ptr, num_hashes_ptr + sizeof(num_hashes_));
+
+    // Write bit array
+    output->insert(output->end(), bits_.begin(), bits_.end());
+}
+
+BloomFilter *BloomFilter::deserialize(const std::vector<uint8_t> &data)
+{
+    if (data.size() < 16)
+    {
+        return nullptr; // Invalid data
+    }
+
+    // Read num_bits
+    size_t num_bits = *reinterpret_cast<const size_t *>(data.data());
+
+    // Read num_hashes
+    size_t num_hashes = *reinterpret_cast<const size_t *>(data.data() + sizeof(size_t));
+
+    // Create bloom filter
+    BloomFilter *bf = new BloomFilter(1, 0.01); // Dummy params
+    bf->num_bits_ = num_bits;
+    bf->num_hashes_ = num_hashes;
+
+    // Read bit array
+    size_t expected_bytes = (num_bits + 7) / 8;
+    if (data.size() < 16 + expected_bytes)
+    {
+        delete bf;
+        return nullptr; // Invalid data
+    }
+
+    bf->bits_.assign(data.begin() + 16, data.begin() + 16 + expected_bytes);
+
+    return bf;
+}
+
+// ============================================================================
+// SSTable Writer Implementation
+// ============================================================================
+
+SSTableWriter::SSTableWriter(const std::string &file_path, size_t block_size)
+    : file_path_(file_path),
+      block_size_(block_size),
+      current_block_offset_(0),
+      num_entries_(0),
+      bloom_filter_(1000, 0.01) // Default: 1000 keys, 1% false positive
+{
+}
+
+SSTableWriter::~SSTableWriter()
+{
+    if (file_.is_open())
+    {
+        file_.close();
+    }
+}
+
+Status SSTableWriter::open(ErrorContext *ctx)
+{
+    // Open file in binary write mode
+    file_.open(file_path_, std::ios::binary | std::ios::out | std::ios::trunc);
+
+    if (!file_.is_open())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::FILE_NOT_FOUND, "Failed to open SSTable file for writing");
+        return Status::FILE_NOT_FOUND;
+    }
+
+    current_block_offset_ = 0;
+    num_entries_ = 0;
+    current_block_.clear();
+    index_entries_.clear();
+    min_key_.clear();
+    max_key_.clear();
+
+    return Status::OK;
+}
+
+Status SSTableWriter::addEntry(const std::vector<uint8_t> &key,
+                                const std::vector<uint8_t> &value,
+                                uint64_t sequence_number,
+                                uint8_t entry_type,
+                                uint64_t xmin,
+                                uint64_t xmax,
+                                ErrorContext *ctx)
+{
+    // Update min/max keys
+    if (num_entries_ == 0)
+    {
+        min_key_ = key;
+    }
+    max_key_ = key;
+
+    // Add to Bloom filter
+    bloom_filter_.add(key);
+
+    // Serialize entry: [key_len][key][value_len][value][seq][type][xmin][xmax]
+    std::vector<uint8_t> serialized;
+
+    // Key length (2 bytes)
+    uint16_t key_len = static_cast<uint16_t>(key.size());
+    const uint8_t *key_len_ptr = reinterpret_cast<const uint8_t *>(&key_len);
+    serialized.insert(serialized.end(), key_len_ptr, key_len_ptr + sizeof(key_len));
+
+    // Key data
+    serialized.insert(serialized.end(), key.begin(), key.end());
+
+    // Value length (4 bytes)
+    uint32_t value_len = static_cast<uint32_t>(value.size());
+    const uint8_t *value_len_ptr = reinterpret_cast<const uint8_t *>(&value_len);
+    serialized.insert(serialized.end(), value_len_ptr, value_len_ptr + sizeof(value_len));
+
+    // Value data
+    serialized.insert(serialized.end(), value.begin(), value.end());
+
+    // Sequence number (8 bytes)
+    const uint8_t *seq_ptr = reinterpret_cast<const uint8_t *>(&sequence_number);
+    serialized.insert(serialized.end(), seq_ptr, seq_ptr + sizeof(sequence_number));
+
+    // Entry type (1 byte)
+    serialized.push_back(entry_type);
+
+    // MGA fields: xmin (8 bytes)
+    const uint8_t *xmin_ptr = reinterpret_cast<const uint8_t *>(&xmin);
+    serialized.insert(serialized.end(), xmin_ptr, xmin_ptr + sizeof(xmin));
+
+    // MGA fields: xmax (8 bytes)
+    const uint8_t *xmax_ptr = reinterpret_cast<const uint8_t *>(&xmax);
+    serialized.insert(serialized.end(), xmax_ptr, xmax_ptr + sizeof(xmax));
+
+    // Check if adding entry would exceed block size
+    if (!current_block_.empty() && current_block_.size() + serialized.size() > block_size_)
+    {
+        // Flush current block
+        Status status = flushBlock(ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+    }
+
+    // If this is the first entry in a new block, record index entry
+    if (current_block_.empty())
+    {
+        IndexEntry idx;
+        idx.first_key = key;
+        idx.block_offset = current_block_offset_;
+        idx.block_size = 0; // Will be filled on flush
+        index_entries_.push_back(idx);
+    }
+
+    // Add entry to current block
+    current_block_.insert(current_block_.end(), serialized.begin(), serialized.end());
+    num_entries_++;
+
+    return Status::OK;
+}
+
+Status SSTableWriter::flushBlock(ErrorContext *ctx)
+{
+    if (current_block_.empty())
+    {
+        return Status::OK; // Nothing to flush
+    }
+
+    // Write current block to file
+    file_.write(reinterpret_cast<const char *>(current_block_.data()), current_block_.size());
+
+    if (!file_.good())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to write data block");
+        return Status::IO_ERROR;
+    }
+
+    // Update last index entry with block size
+    if (!index_entries_.empty())
+    {
+        index_entries_.back().block_size = current_block_.size();
+    }
+
+    // Update offset for next block
+    current_block_offset_ += current_block_.size();
+
+    // Clear current block
+    current_block_.clear();
+
+    return Status::OK;
+}
+
+Status SSTableWriter::finish(ErrorContext *ctx)
+{
+    // Flush last block
+    if (!current_block_.empty())
+    {
+        Status status = flushBlock(ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+    }
+
+    // Write index block
+    uint64_t index_offset = file_.tellp();
+
+    for (const auto &idx : index_entries_)
+    {
+        // Serialize index entry: [key_len][key][offset][size]
+        uint16_t key_len = static_cast<uint16_t>(idx.first_key.size());
+        file_.write(reinterpret_cast<const char *>(&key_len), sizeof(key_len));
+        file_.write(reinterpret_cast<const char *>(idx.first_key.data()), key_len);
+        file_.write(reinterpret_cast<const char *>(&idx.block_offset), sizeof(idx.block_offset));
+        file_.write(reinterpret_cast<const char *>(&idx.block_size), sizeof(idx.block_size));
+    }
+
+    if (!file_.good())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to write index block");
+        return Status::IO_ERROR;
+    }
+
+    // Write Bloom filter
+    uint64_t bloom_offset = file_.tellp();
+    std::vector<uint8_t> bloom_data;
+    bloom_filter_.serialize(&bloom_data);
+    file_.write(reinterpret_cast<const char *>(bloom_data.data()), bloom_data.size());
+
+    if (!file_.good())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to write bloom filter");
+        return Status::IO_ERROR;
+    }
+
+    // Write footer
+    SSTableFooter footer;
+    footer.magic = SSTableFooter::MAGIC_NUMBER;
+    footer.version = SSTableFooter::VERSION;
+    footer.index_offset = index_offset;
+    footer.bloom_offset = bloom_offset;
+    footer.num_entries = num_entries_;
+
+    // Min key
+    footer.min_key_len = min_key_.size();
+    size_t min_copy_len = std::min(min_key_.size(), SSTableFooter::MAX_KEY_SIZE);
+    std::memcpy(footer.min_key, min_key_.data(), min_copy_len);
+    std::memset(footer.min_key + min_copy_len, 0, SSTableFooter::MAX_KEY_SIZE - min_copy_len);
+
+    // Max key
+    footer.max_key_len = max_key_.size();
+    size_t max_copy_len = std::min(max_key_.size(), SSTableFooter::MAX_KEY_SIZE);
+    std::memcpy(footer.max_key, max_key_.data(), max_copy_len);
+    std::memset(footer.max_key + max_copy_len, 0, SSTableFooter::MAX_KEY_SIZE - max_copy_len);
+
+    // Calculate checksum (Phase 6: proper CRC32, for now use placeholder)
+    footer.checksum = calculateChecksum();
+
+    file_.write(reinterpret_cast<const char *>(&footer), sizeof(footer));
+
+    if (!file_.good())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to write footer");
+        return Status::IO_ERROR;
+    }
+
+    file_.close();
+
+    return Status::OK;
+}
+
+uint32_t SSTableWriter::calculateChecksum()
+{
+    // Phase 6: Implement proper CRC32
+    // For now, return placeholder
+    return 0xDEADBEEF;
 }
 
 } // namespace core
