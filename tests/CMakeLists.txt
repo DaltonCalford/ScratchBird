@@ -366,3 +366,108 @@ set_tests_properties(ColumnstorePredicate PROPERTIES
     LABELS "unit;columnstore;predicate;phase4"
     TIMEOUT 120
 )
+
+# ============================================================================
+# Columnstore Index Tests - Phase 5: Batch Processing & SIMD
+# ============================================================================
+
+add_executable(test_columnstore_batch_performance
+    stress/test_columnstore_batch_performance.cpp
+)
+target_link_libraries(test_columnstore_batch_performance
+    scratchbird_core
+    scratchbird_parser
+    scratchbird_sblr
+    scratchbird_optimizer
+)
+add_test(NAME ColumnstoreBatchPerformance COMMAND test_columnstore_batch_performance)
+set_tests_properties(ColumnstoreBatchPerformance PROPERTIES
+    LABELS "stress;columnstore;batch;simd;phase5;performance"
+    TIMEOUT 300
+)
+
+# ============================================================================
+# Columnstore Index Tests - Phase 6: Segment Management
+# ============================================================================
+
+add_executable(test_columnstore_segments
+    integration/test_columnstore_segments.cpp
+)
+target_link_libraries(test_columnstore_segments
+    scratchbird_core
+    scratchbird_parser
+    scratchbird_sblr
+    scratchbird_optimizer
+)
+add_test(NAME ColumnstoreSegments COMMAND test_columnstore_segments)
+set_tests_properties(ColumnstoreSegments PROPERTIES
+    LABELS "integration;columnstore;segments;phase6"
+    TIMEOUT 120
+)
+
+# ============================================================================
+# Columnstore Index Tests - Phase 7: Comprehensive End-to-End Testing
+# ============================================================================
+
+add_executable(test_columnstore_end_to_end
+    integration/test_columnstore_end_to_end.cpp
+)
+target_link_libraries(test_columnstore_end_to_end
+    scratchbird_core
+    scratchbird_parser
+    scratchbird_sblr
+    scratchbird_optimizer
+)
+add_test(NAME ColumnstoreEndToEnd COMMAND test_columnstore_end_to_end)
+set_tests_properties(ColumnstoreEndToEnd PROPERTIES
+    LABELS "integration;columnstore;e2e;phase7;comprehensive"
+    TIMEOUT 180
+)
+
+# Simple E2E test (minimal version to avoid hang issues)
+add_executable(test_columnstore_simple_e2e
+    integration/test_columnstore_simple_e2e.cpp
+)
+target_link_libraries(test_columnstore_simple_e2e
+    scratchbird_core
+    scratchbird_parser
+    scratchbird_sblr
+    scratchbird_optimizer
+)
+add_test(NAME ColumnstoreSimpleE2E COMMAND test_columnstore_simple_e2e)
+set_tests_properties(ColumnstoreSimpleE2E PROPERTIES
+    LABELS "integration;columnstore;e2e;phase7;simple"
+    TIMEOUT 30
+)
+
+# Load test (100K-1M rows) - Full version, may have issues
+add_executable(test_columnstore_load
+    stress/test_columnstore_load.cpp
+)
+target_link_libraries(test_columnstore_load
+    scratchbird_core
+    scratchbird_parser
+    scratchbird_sblr
+    scratchbird_optimizer
+)
+add_test(NAME ColumnstoreLoad COMMAND test_columnstore_load)
+set_tests_properties(ColumnstoreLoad PROPERTIES
+    LABELS "stress;columnstore;load;phase7;performance"
+    TIMEOUT 180
+)
+
+# Simple load test (50K rows) - Stable version
+add_executable(test_columnstore_load_simple
+    stress/test_columnstore_load_simple.cpp
+)
+target_link_libraries(test_columnstore_load_simple
+    scratchbird_core
+    scratchbird_parser
+    scratchbird_sblr
+    scratchbird_optimizer
+)
+add_test(NAME ColumnstoreLoadSimple COMMAND test_columnstore_load_simple)
+set_tests_properties(ColumnstoreLoadSimple PROPERTIES
+    LABELS "stress;columnstore;load;phase7;simple"
+    TIMEOUT 120
+)

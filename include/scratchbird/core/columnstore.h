@@ -296,6 +296,32 @@ struct ColumnPredicate
 };
 
 /**
+ * Scan iterator state (for multi-call scans)
+ *
+ * Phase 5: Tracks position across multiple scan() calls
+ * Allows processing large result sets in batches of 1024 rows
+ */
+struct ColumnScanIterator
+{
+    ID column_uuid;                  // Column being scanned
+    uint32_t current_segment_page;   // Current segment page number (0 = done)
+    uint32_t offset_in_segment;      // Offset within current segment
+    uint64_t current_xid;            // Transaction ID for visibility
+    ColumnPredicate predicate;       // Filter predicate
+    bool has_predicate;              // Whether predicate is set
+    bool scan_complete;              // True when scan has finished
+
+    // Cached decompressed segment data (to avoid repeated decompression)
+    ColumnSegment cached_segment;
+    bool segment_cached;
+
+    ColumnScanIterator()
+        : current_segment_page(0), offset_in_segment(0),
+          current_xid(0), has_predicate(false), scan_complete(false),
+          segment_cached(false) {}
+};
+
+/**
  * Columnstore Index Implementation
  */
 class ColumnstoreIndex
@@ -317,6 +343,7 @@ public:
     static std::unique_ptr<ColumnstoreIndex> open(Database *db,
                                                    const UuidV7Bytes &index_uuid,
                                                    uint32_t root_page,
+                                                   uint32_t segment_size = 1024,
                                                    ErrorContext *ctx = nullptr);
 
     /**
@@ -338,9 +365,10 @@ public:
                  ErrorContext *ctx = nullptr);
 
     /**
-     * Scan column with optional predicate
+     * Scan column with optional predicate (buffered values only)
      *
-     * Phase 1: Sequential scan with simple filtering
+     * Phase 1-4: Sequential scan with simple filtering (buffered values only)
+     * Phase 5: Use beginScan/scanNext/endScan for full disk segment scanning
      *
      * @param column_uuid Column to scan
      * @param predicate Optional filter predicate
@@ -353,6 +381,58 @@ public:
                uint64_t current_xid,
                ColumnScanBatch *batch_out,
                ErrorContext *ctx = nullptr);
+
+    /**
+     * Begin a batch scan iterator (Phase 5)
+     *
+     * Initializes an iterator for scanning a column in batches.
+     * Use scanNext() to retrieve batches of up to 1024 rows.
+     * Call endScan() when finished to clean up resources.
+     *
+     * Example:
+     *   ColumnScanIterator iter;
+     *   index->beginScan(column_uuid, &predicate, xid, &iter, &ctx);
+     *   while (!iter.scan_complete) {
+     *       ColumnScanBatch batch;
+     *       index->scanNext(&iter, &batch, &ctx);
+     *       // Process batch...
+     *   }
+     *   index->endScan(&iter, &ctx);
+     *
+     * @param column_uuid Column to scan
+     * @param predicate Optional filter predicate (NULL for no filter)
+     * @param current_xid Current transaction ID for visibility
+     * @param iterator_out Output iterator state
+     * @param ctx Error context
+     */
+    Status beginScan(const ID &column_uuid,
+                    const ColumnPredicate *predicate,
+                    uint64_t current_xid,
+                    ColumnScanIterator *iterator_out,
+                    ErrorContext *ctx = nullptr);
+
+    /**
+     * Get next batch from scan iterator (Phase 5)
+     *
+     * Returns up to 1024 rows per call.
+     * Sets iterator->scan_complete = true when no more rows.
+     *
+     * @param iterator Scan iterator (updated with new position)
+     * @param batch_out Output batch (cleared and filled)
+     * @param ctx Error context
+     */
+    Status scanNext(ColumnScanIterator *iterator,
+                   ColumnScanBatch *batch_out,
+                   ErrorContext *ctx = nullptr);
+
+    /**
+     * End scan iterator and clean up resources (Phase 5)
+     *
+     * @param iterator Scan iterator to clean up
+     * @param ctx Error context
+     */
+    Status endScan(ColumnScanIterator *iterator,
+                  ErrorContext *ctx = nullptr);
 
     /**
      * Get statistics
