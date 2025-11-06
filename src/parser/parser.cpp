@@ -350,7 +350,7 @@ namespace scratchbird
 
         Statement *Parser::parseCreateIndex()
         {
-            // CREATE [UNIQUE] INDEX index_name ON table_name (column_list) [TABLESPACE tablespace_name]
+            // CREATE [UNIQUE] INDEX index_name ON table_name [USING index_type] (column_list) [WHERE condition] [TABLESPACE tablespace_name]
             auto start_loc = previous().location;
 
             // Check for UNIQUE
@@ -395,6 +395,22 @@ namespace scratchbird
             }
             StringPool::StringId table_name = current().value.string_id;
             advance();
+
+            // Parse optional USING clause (LSM Integration Phase 2 Task 2.1)
+            // Syntax: CREATE INDEX ... ON table USING {BTREE|HASH|LSM|...} (columns)
+            StringPool::StringId index_type = 0;
+            if (match(TokenType::KW_USING))
+            {
+                if (!check(TokenType::IDENTIFIER))
+                {
+                    error("Expected index type after USING (e.g., BTREE, HASH, LSM), but got " +
+                          std::string(tokenTypeToString(current().type)));
+                    synchronize();
+                    return nullptr;
+                }
+                index_type = current().value.string_id;
+                advance();
+            }
 
             // Expect opening parenthesis
             if (!consume(TokenType::LEFT_PAREN, "Expected '(' after table name"))
@@ -483,7 +499,7 @@ namespace scratchbird
             auto span = makeSpan(start_loc);
             return arena_.make<CreateIndexStmt>(span, index_name, table_name,
                                                 std::move(index_columns), where_clause, is_unique,
-                                                tablespace_name);
+                                                tablespace_name, index_type);
         }
 
         ColumnDef *Parser::parseColumnDef()
