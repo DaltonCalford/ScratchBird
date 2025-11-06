@@ -390,6 +390,25 @@ namespace scratchbird::core
         auto listIndexesForTable(const ID &table_id, std::vector<IndexInfo> &indexes,
                                  ErrorContext *ctx = nullptr) -> Status;
 
+        // LSM Integration Phase 3.3: Index object cache management
+        /**
+         * Get cached index object pointer
+         *
+         * @param index_id Index ID
+         * @param type_out Output: Index type (optional)
+         * @return Index object pointer (nullptr if not cached)
+         */
+        void* getIndexPtr(const ID &index_id, IndexType *type_out = nullptr);
+
+        /**
+         * Close and remove all cached index objects
+         * Called on database shutdown
+         *
+         * @param ctx Error context
+         * @return Status::OK on success
+         */
+        Status closeAllIndexes(ErrorContext *ctx = nullptr);
+
         // Timezone operations (pg_timezone system table)
         struct TimezoneInfo
         {
@@ -1039,6 +1058,16 @@ namespace scratchbird::core
         std::unordered_map<ID, std::vector<ColumnInfo>> column_cache_;
         std::unordered_map<ID, IndexInfo> index_cache_;
         std::unordered_map<uint16_t, TablespaceInfo> tablespace_cache_;  // keyed by tablespace_id
+
+        // LSM Integration Phase 3.3: Index object cache
+        // Maps index_id -> (index_ptr, index_type) for actual index objects
+        struct IndexHandle
+        {
+            void *index_ptr;
+            IndexType index_type;
+        };
+        std::unordered_map<ID, IndexHandle> index_object_cache_;
+        mutable std::mutex index_object_mutex_;  // Separate mutex for index object operations
         
         // Trigger storage (Phase 2 Wave 2 - Agent C)
         std::unordered_map<ID, TriggerInfo> trigger_cache_;  // keyed by trigger_id

@@ -8,6 +8,7 @@
 #include "scratchbird/core/btree.h"       // Phase 5 Task 5.2: B-Tree TID updates
 #include "scratchbird/core/hash_index.h"  // Phase 5 Task 5.3.1: Hash index TID updates
 #include "scratchbird/core/rtree.h"       // Phase 2 Task 9.2: R-tree spatial index
+#include "scratchbird/core/index_factory.h"  // LSM Integration Phase 3: Index factory
 #include <cstring>
 #include "scratchbird/core/toast.h"       // Phase 5 Task 5.1.3: TOAST migration
 #include <algorithm>
@@ -1131,7 +1132,24 @@ namespace scratchbird::core
 
         DEBUG_LOG_DB("Created index: " << index_name << " (ID: " << index_id.toString() << ")");
 
-        return status;
+        // LSM Integration Phase 3.2: Instantiate actual index object
+        void *index_ptr = nullptr;
+        status = IndexFactory::createIndex(index_type, db_, index, &index_ptr, ctx);
+        if (status != Status::OK)
+        {
+            // Rollback: Remove catalog entry
+            index_cache_.erase(index.index_id);
+            pm->freePage(root_page, ctx);
+            return status;
+        }
+
+        // Add to index object cache
+        {
+            std::lock_guard<std::mutex> lock(index_object_mutex_);
+            index_object_cache_[index.index_id] = {index_ptr, index_type};
+        }
+
+        return Status::OK;
     }
 
     // Task 17: Create index with expressions and/or WHERE clause
@@ -1242,7 +1260,24 @@ namespace scratchbird::core
                                 << (index.is_partial_index ? "partial " : "")
                                 << "index: " << index_name << " (ID: " << index_id.toString() << ")");
 
-        return status;
+        // LSM Integration Phase 3.2: Instantiate actual index object
+        void *index_ptr = nullptr;
+        status = IndexFactory::createIndex(index_type, db_, index, &index_ptr, ctx);
+        if (status != Status::OK)
+        {
+            // Rollback: Remove catalog entry
+            index_cache_.erase(index.index_id);
+            pm->freePage(root_page, ctx);
+            return status;
+        }
+
+        // Add to index object cache
+        {
+            std::lock_guard<std::mutex> lock(index_object_mutex_);
+            index_object_cache_[index.index_id] = {index_ptr, index_type};
+        }
+
+        return Status::OK;
     }
 
     auto CatalogManager::getIndex(const ID &index_id, IndexInfo &info, ErrorContext *ctx) -> Status
@@ -6006,6 +6041,47 @@ auto CatalogManager::listProcedures(std::vector<ProcedureInfo> &procedures_out,
     }
 
     return Status::OK;
+}
+
+// LSM Integration Phase 3.3: Index object cache management
+
+void* CatalogManager::getIndexPtr(const ID &index_id, IndexType *type_out)
+{
+    std::lock_guard<std::mutex> lock(index_object_mutex_);
+
+    auto it = index_object_cache_.find(index_id);
+    if (it == index_object_cache_.end())
+    {
+        return nullptr;
+    }
+
+    if (type_out)
+    {
+        *type_out = it->second.index_type;
+    }
+
+    return it->second.index_ptr;
+}
+
+Status CatalogManager::closeAllIndexes(ErrorContext *ctx)
+{
+    std::lock_guard<std::mutex> lock(index_object_mutex_);
+
+    Status overall_status = Status::OK;
+
+    for (auto &[index_id, handle] : index_object_cache_)
+    {
+        Status status = IndexFactory::closeIndex(handle.index_type, handle.index_ptr, ctx);
+        if (status != Status::OK)
+        {
+            DEBUG_LOG_DB("Failed to close index " << index_id.toString() << ": " << statusToString(status));
+            overall_status = status;  // Track first error
+        }
+    }
+
+    index_object_cache_.clear();
+
+    return overall_status;
 }
 
 } // namespace scratchbird::core
