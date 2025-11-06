@@ -471,3 +471,149 @@ set_tests_properties(ColumnstoreLoadSimple PROPERTIES
     LABELS "stress;columnstore;load;phase7;simple"
     TIMEOUT 120
 )
+
+# ============================================================================
+# LSM-Tree Index Tests - Phase 1: Memtable
+# ============================================================================
+
+add_executable(test_lsm_memtable
+    unit/test_lsm_memtable.cpp
+)
+target_link_libraries(test_lsm_memtable
+    scratchbird_core
+    scratchbird_parser
+    scratchbird_sblr
+    scratchbird_optimizer
+)
+add_test(NAME LSMMemtable COMMAND test_lsm_memtable)
+set_tests_properties(LSMMemtable PROPERTIES
+    LABELS "unit;lsm;memtable;phase1"
+    TIMEOUT 60
+)
+
+# ============================================================================
+# LSM-Tree Index Tests - Phase 2: SSTable Writer
+# ============================================================================
+
+add_executable(test_lsm_sstable_writer
+    unit/test_lsm_sstable_writer.cpp
+)
+target_link_libraries(test_lsm_sstable_writer
+    scratchbird_core
+    scratchbird_parser
+    scratchbird_sblr
+    scratchbird_optimizer
+)
+add_test(NAME LSMSSTableWriter COMMAND test_lsm_sstable_writer)
+set_tests_properties(LSMSSTableWriter PROPERTIES
+    LABELS "unit;lsm;sstable;writer;phase2"
+    TIMEOUT 60
+)
+
+# ============================================================================
+# LSM-Tree Index Tests - Phase 3: SSTable Reader
+# ============================================================================
+
+add_executable(test_lsm_sstable_reader
+    unit/test_lsm_sstable_reader.cpp
+)
+target_link_libraries(test_lsm_sstable_reader
+    scratchbird_core
+    scratchbird_parser
+    scratchbird_sblr
+    scratchbird_optimizer
+)
+add_test(NAME LSMSSTableReader COMMAND test_lsm_sstable_reader)
+set_tests_properties(LSMSSTableReader PROPERTIES
+    LABELS "unit;lsm;sstable;reader;phase3"
+    TIMEOUT 60
+)
+
+# ============================================================================
+# LSM-Tree Index Tests - Phase 4: Compaction
+# ============================================================================
+
+add_executable(test_lsm_compaction
+    unit/test_lsm_compaction.cpp
+)
+target_link_libraries(test_lsm_compaction
+    scratchbird_core
+    scratchbird_parser
+    scratchbird_sblr
+    scratchbird_optimizer
+)
+add_test(NAME LSMCompaction COMMAND test_lsm_compaction)
+set_tests_properties(LSMCompaction PROPERTIES
+    LABELS "unit;lsm;compaction;kway;gc;phase4"
+    TIMEOUT 60
+)
+
+# ============================================================================
+# LSM-Tree Index Tests - Phase 5: Bloom Filter
+# ============================================================================
+
+add_executable(test_lsm_bloom_filter
+    unit/test_lsm_bloom_filter.cpp
+)
+target_link_libraries(test_lsm_bloom_filter
+    scratchbird_core
+    scratchbird_parser
+    scratchbird_sblr
+    scratchbird_optimizer
+)
+add_test(NAME LSMBloomFilter COMMAND test_lsm_bloom_filter)
+set_tests_properties(LSMBloomFilter PROPERTIES
+    LABELS "unit;lsm;bloom;filter;phase5"
+    TIMEOUT 120
+)
+
+# ============================================================================
+# LSM-Tree Index Tests - Phase 6: Integration
+# ============================================================================
+
+add_executable(test_lsm_tree_simple
+    integration/test_lsm_tree_simple.cpp
+)
+target_link_libraries(test_lsm_tree_simple
+    scratchbird_core
+    scratchbird_parser
+    scratchbird_sblr
+    scratchbird_optimizer
+)
+add_test(NAME LSMTreeSimple COMMAND test_lsm_tree_simple)
+set_tests_properties(LSMTreeSimple PROPERTIES
+    LABELS "integration;lsm;simple;phase6"
+    TIMEOUT 120
+)
+
+# Comprehensive integration test
+add_executable(test_lsm_tree_comprehensive
+    integration/test_lsm_tree_comprehensive.cpp
+)
+target_link_libraries(test_lsm_tree_comprehensive
+    scratchbird_core
+    scratchbird_parser
+    scratchbird_sblr
+    scratchbird_optimizer
+)
+add_test(NAME LSMTreeComprehensive COMMAND test_lsm_tree_comprehensive)
+set_tests_properties(LSMTreeComprehensive PROPERTIES
+    LABELS "integration;lsm;comprehensive;phase7"
+    TIMEOUT 180
+)
+
+# Stress test (100K+ keys)
+add_executable(test_lsm_tree_stress
+    stress/test_lsm_tree_stress.cpp
+)
+target_link_libraries(test_lsm_tree_stress
+    scratchbird_core
+    scratchbird_parser
+    scratchbird_sblr
+    scratchbird_optimizer
+)
+add_test(NAME LSMTreeStress COMMAND test_lsm_tree_stress)
+set_tests_properties(LSMTreeStress PROPERTIES
+    LABELS "stress;lsm;performance;phase7"
+    TIMEOUT 300
+)
