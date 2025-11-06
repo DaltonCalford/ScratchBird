@@ -8,6 +8,7 @@
 #include "scratchbird/core/btree.h"       // Phase 5 Task 5.2: B-Tree TID updates
 #include "scratchbird/core/hash_index.h"  // Phase 5 Task 5.3.1: Hash index TID updates
 #include "scratchbird/core/rtree.h"       // Phase 2 Task 9.2: R-tree spatial index
+#include "scratchbird/core/index_factory.h"  // LSM Integration Phase 3: Index factory
 #include <cstring>
 #include "scratchbird/core/toast.h"       // Phase 5 Task 5.1.3: TOAST migration
 #include <algorithm>
@@ -339,6 +340,76 @@ namespace scratchbird::core
     // Collation record on disk - see updated CollationRecord structure below at line ~194
 
 #pragma pack(pop)
+
+    // ========================================================================
+    // Index Type Helper Functions (LSM Integration Plan Phase 1)
+    // ========================================================================
+
+    /**
+     * Convert string to IndexType enum
+     *
+     * Supports both exact names and common aliases (case-insensitive):
+     * - "LSM", "LSMTREE", "LSM-TREE" → IndexType::LSM
+     * - "SPGIST", "SP-GIST" → IndexType::SPGIST
+     * - "VECTOR", "HNSW" → IndexType::HNSW
+     * - etc.
+     */
+    std::optional<CatalogManager::IndexType> parseIndexType(const std::string &type_str)
+    {
+        static const std::unordered_map<std::string, CatalogManager::IndexType> type_map = {
+            {"BTREE", CatalogManager::IndexType::BTREE},
+            {"B-TREE", CatalogManager::IndexType::BTREE},
+            {"HASH", CatalogManager::IndexType::HASH},
+            {"HNSW", CatalogManager::IndexType::HNSW},
+            {"VECTOR", CatalogManager::IndexType::HNSW},  // Alias
+            {"FULLTEXT", CatalogManager::IndexType::FULLTEXT},
+            {"GIN", CatalogManager::IndexType::GIN},
+            {"GIST", CatalogManager::IndexType::GIST},
+            {"BRIN", CatalogManager::IndexType::BRIN},
+            {"RTREE", CatalogManager::IndexType::RTREE},
+            {"R-TREE", CatalogManager::IndexType::RTREE},  // Alias
+            {"SPGIST", CatalogManager::IndexType::SPGIST},
+            {"SP-GIST", CatalogManager::IndexType::SPGIST},  // Alias
+            {"BITMAP", CatalogManager::IndexType::BITMAP},
+            {"COLUMNSTORE", CatalogManager::IndexType::COLUMNSTORE},
+            {"LSM", CatalogManager::IndexType::LSM},
+            {"LSMTREE", CatalogManager::IndexType::LSM},  // Alias
+            {"LSM-TREE", CatalogManager::IndexType::LSM}  // Alias
+        };
+
+        // Convert to uppercase for case-insensitive comparison
+        std::string upper = type_str;
+        std::transform(upper.begin(), upper.end(), upper.begin(),
+                      [](unsigned char c) { return std::toupper(c); });
+
+        auto it = type_map.find(upper);
+        return (it != type_map.end()) ? std::optional<CatalogManager::IndexType>(it->second) : std::nullopt;
+    }
+
+    /**
+     * Convert IndexType enum to string representation
+     */
+    std::string indexTypeToString(CatalogManager::IndexType type)
+    {
+        switch (type)
+        {
+            case CatalogManager::IndexType::BTREE: return "BTREE";
+            case CatalogManager::IndexType::HASH: return "HASH";
+            case CatalogManager::IndexType::HNSW: return "HNSW";
+            case CatalogManager::IndexType::FULLTEXT: return "FULLTEXT";
+            case CatalogManager::IndexType::GIN: return "GIN";
+            case CatalogManager::IndexType::GIST: return "GIST";
+            case CatalogManager::IndexType::BRIN: return "BRIN";
+            case CatalogManager::IndexType::RTREE: return "RTREE";
+            case CatalogManager::IndexType::SPGIST: return "SPGIST";
+            case CatalogManager::IndexType::BITMAP: return "BITMAP";
+            case CatalogManager::IndexType::COLUMNSTORE: return "COLUMNSTORE";
+            case CatalogManager::IndexType::LSM: return "LSM";
+            default: return "UNKNOWN";
+        }
+    }
+
+    // ========================================================================
 
     CatalogManager::CatalogManager(Database *db) : db_(db)
     {
@@ -1061,7 +1132,24 @@ namespace scratchbird::core
 
         DEBUG_LOG_DB("Created index: " << index_name << " (ID: " << index_id.toString() << ")");
 
-        return status;
+        // LSM Integration Phase 3.2: Instantiate actual index object
+        void *index_ptr = nullptr;
+        status = IndexFactory::createIndex(index_type, db_, index, &index_ptr, ctx);
+        if (status != Status::OK)
+        {
+            // Rollback: Remove catalog entry
+            index_cache_.erase(index.index_id);
+            pm->freePage(root_page, ctx);
+            return status;
+        }
+
+        // Add to index object cache
+        {
+            std::lock_guard<std::mutex> lock(index_object_mutex_);
+            index_object_cache_[index.index_id] = {index_ptr, index_type};
+        }
+
+        return Status::OK;
     }
 
     // Task 17: Create index with expressions and/or WHERE clause
@@ -1172,7 +1260,24 @@ namespace scratchbird::core
                                 << (index.is_partial_index ? "partial " : "")
                                 << "index: " << index_name << " (ID: " << index_id.toString() << ")");
 
-        return status;
+        // LSM Integration Phase 3.2: Instantiate actual index object
+        void *index_ptr = nullptr;
+        status = IndexFactory::createIndex(index_type, db_, index, &index_ptr, ctx);
+        if (status != Status::OK)
+        {
+            // Rollback: Remove catalog entry
+            index_cache_.erase(index.index_id);
+            pm->freePage(root_page, ctx);
+            return status;
+        }
+
+        // Add to index object cache
+        {
+            std::lock_guard<std::mutex> lock(index_object_mutex_);
+            index_object_cache_[index.index_id] = {index_ptr, index_type};
+        }
+
+        return Status::OK;
     }
 
     auto CatalogManager::getIndex(const ID &index_id, IndexInfo &info, ErrorContext *ctx) -> Status
@@ -5936,6 +6041,47 @@ auto CatalogManager::listProcedures(std::vector<ProcedureInfo> &procedures_out,
     }
 
     return Status::OK;
+}
+
+// LSM Integration Phase 3.3: Index object cache management
+
+void* CatalogManager::getIndexPtr(const ID &index_id, IndexType *type_out)
+{
+    std::lock_guard<std::mutex> lock(index_object_mutex_);
+
+    auto it = index_object_cache_.find(index_id);
+    if (it == index_object_cache_.end())
+    {
+        return nullptr;
+    }
+
+    if (type_out)
+    {
+        *type_out = it->second.index_type;
+    }
+
+    return it->second.index_ptr;
+}
+
+Status CatalogManager::closeAllIndexes(ErrorContext *ctx)
+{
+    std::lock_guard<std::mutex> lock(index_object_mutex_);
+
+    Status overall_status = Status::OK;
+
+    for (auto &[index_id, handle] : index_object_cache_)
+    {
+        Status status = IndexFactory::closeIndex(handle.index_type, handle.index_ptr, ctx);
+        if (status != Status::OK)
+        {
+            DEBUG_LOG_DB("Failed to close index " << index_id.toString() << ": " << statusToString(status));
+            overall_status = status;  // Track first error
+        }
+    }
+
+    index_object_cache_.clear();
+
+    return overall_status;
 }
 
 } // namespace scratchbird::core

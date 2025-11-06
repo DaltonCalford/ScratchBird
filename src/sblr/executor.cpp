@@ -1216,6 +1216,15 @@ namespace scratchbird
                 tablespace_id = ts_info.tablespace_id;
             }
 
+            // LSM Integration Phase 2 Task 2.3: Read index type from bytecode
+            uint8_t index_type_byte = readByte();
+            core::CatalogManager::IndexType index_type = core::CatalogManager::IndexType::BTREE;  // Default
+            if (index_type_byte != 0xFF)
+            {
+                // Convert byte to enum (0xFF means use default BTREE)
+                index_type = static_cast<core::CatalogManager::IndexType>(index_type_byte);
+            }
+
             // Task 17 Phase 6: Read expression/predicate flags
             bool has_expressions = (readByte() != 0);
             bool has_predicate = (readByte() != 0);
@@ -1279,7 +1288,7 @@ namespace scratchbird
                     table_info.table_id, index_name, column_names,
                     expression_data, predicate_data,
                     expression_strings, predicate_string,
-                    index_id, is_unique, core::CatalogManager::IndexType::BTREE,
+                    index_id, is_unique, index_type,  // LSM Integration: Use parsed index type
                     tablespace_id, nullptr);
             }
             else
@@ -1287,7 +1296,7 @@ namespace scratchbird
                 // Use original createIndex() for simple indexes
                 status = db_->catalog_manager()->createIndex(
                     table_info.table_id, index_name, column_names,
-                    index_id, is_unique, core::CatalogManager::IndexType::BTREE,
+                    index_id, is_unique, index_type,  // LSM Integration: Use parsed index type
                     tablespace_id, nullptr);
             }
 

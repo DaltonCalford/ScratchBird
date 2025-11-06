@@ -128,6 +128,44 @@ namespace scratchbird::optimizer
             -> CostEstimate;
 
         /**
+         * costLSMScan - Estimate cost of LSM-Tree index scan
+         *
+         * LSM-Tree characteristics:
+         * - Read path: Check memtable → immutable memtable → L0-L3 SSTables
+         * - Point lookup: O(log N) memtable + up to 4 SSTable lookups (with Bloom filters)
+         * - Range scan: K-way merge across memtable + SSTables
+         * - Trade-off: Slower reads than B-Tree, but better write performance
+         *
+         * Cost formula:
+         *   startup = memtable_cpu_cost + bloom_filter_checks
+         *   index_cost = sstable_reads * random_page_cost + index_tuples * cpu_index_tuple_cost
+         *   heap_cost = heap_pages * effective_random_page_cost + heap_tuples * (cpu_tuple_cost + qual_cost)
+         *   total = startup + index_cost + heap_cost
+         *
+         * Key differences from B-Tree:
+         * - No index_height (LSM is flat within each level)
+         * - More random reads (multiple SSTables)
+         * - Bloom filters reduce disk I/O for non-existent keys
+         *
+         * @param num_levels Number of LSM levels with data (0-4 typically)
+         * @param avg_sstables_per_level Average SSTables per level to scan
+         * @param index_tuples Number of index entries scanned
+         * @param heap_pages Number of heap pages accessed
+         * @param heap_tuples Number of heap tuples fetched
+         * @param qual_cost Cost of evaluating WHERE clause per tuple
+         * @param correlation Physical ordering correlation (-1.0 to 1.0, 0.0 = random)
+         * @param ctx Error context
+         * @return Cost estimate with startup, run, and total costs
+         *
+         * LSM Integration Phase 5, Task 5.2
+         */
+        auto costLSMScan(uint64_t num_levels, uint64_t avg_sstables_per_level,
+                         uint64_t index_tuples, uint64_t heap_pages,
+                         uint64_t heap_tuples, double qual_cost,
+                         double correlation = 0.0, core::ErrorContext *ctx = nullptr)
+            -> CostEstimate;
+
+        /**
          * effectiveRandomPageCost - Calculate cache-adjusted random page cost
          *
          * When a table fits in cache, random access is nearly as cheap as sequential.

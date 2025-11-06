@@ -2,6 +2,7 @@
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/debug.h"
 #include "scratchbird/core/expression_serializer.h"
+#include "scratchbird/core/catalog_manager.h"  // LSM Integration: For parseIndexType()
 #include "scratchbird/optimizer/query_planner.h"
 #include <sstream>
 #include <iomanip>
@@ -166,6 +167,21 @@ namespace scratchbird
 
             // Write tablespace name (Phase 2 Task 2.3)
             writeStringId(node->tablespace());
+
+            // LSM Integration Phase 2 Task 2.2: Write index type
+            // Convert string index type to enum and serialize
+            uint8_t index_type_byte = 0xFF;  // 0xFF = default (BTREE)
+            if (node->hasIndexType())
+            {
+                std::string index_type_str = string_pool_.getString(node->indexType());
+                auto index_type_opt = core::parseIndexType(index_type_str);
+                if (index_type_opt.has_value())
+                {
+                    index_type_byte = static_cast<uint8_t>(index_type_opt.value());
+                }
+                // If parsing fails, we'll use 0xFF (default)
+            }
+            current_result_->writeByte(index_type_byte);
 
             // Task 17: Write expression/predicate flags
             bool has_expressions = !expressions.empty();
