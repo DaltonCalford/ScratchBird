@@ -6,6 +6,7 @@
 #include "scratchbird/core/expression_serializer.h"
 #include <algorithm>
 #include <unordered_map>
+#include <cmath>  // LSM Integration: for std::ceil, std::log2
 
 namespace scratchbird::optimizer
 {
@@ -390,21 +391,52 @@ namespace scratchbird::optimizer
             // Calculate qualification cost
             double qual_cost = calculateQualCost(select_stmt);
 
-            // Estimate index scan cost
-            CostEstimate cost = cost_model_.costIndexScan(
-                index_height,
-                index_pages,
-                index_tuples,
-                heap_pages,
-                heap_tuples,
-                qual_cost,
-                correlation,
-                ctx);
+            // LSM Integration Phase 5: Use appropriate cost model for index type
+            CostEstimate cost;
+            if (index_info.index_type == core::CatalogManager::IndexType::LSM)
+            {
+                // LSM-Tree cost estimation
+                // Estimate number of levels and SSTables based on table size
+                uint64_t num_levels = std::min(4UL, static_cast<uint64_t>(
+                    std::ceil(std::log2(static_cast<double>(table_stats.num_rows) / 1000.0))));
+                if (num_levels == 0) num_levels = 1;  // At least one level
 
-            DEBUG_LOG_DB("IndexScan cost for " + index_info.index_name +
-                         ": startup=" + std::to_string(cost.startup_cost) +
-                         ", total=" + std::to_string(cost.total_cost) +
-                         ", rows=" + std::to_string(cost.rows));
+                uint64_t avg_sstables_per_level = 2;  // Conservative estimate
+
+                cost = cost_model_.costLSMScan(
+                    num_levels,
+                    avg_sstables_per_level,
+                    index_tuples,
+                    heap_pages,
+                    heap_tuples,
+                    qual_cost,
+                    correlation,
+                    ctx);
+
+                DEBUG_LOG_DB("LSMScan cost for " + index_info.index_name +
+                             ": startup=" + std::to_string(cost.startup_cost) +
+                             ", total=" + std::to_string(cost.total_cost) +
+                             ", rows=" + std::to_string(cost.rows) +
+                             " (levels=" + std::to_string(num_levels) + ")");
+            }
+            else
+            {
+                // B-Tree or other index types: use traditional index scan cost
+                cost = cost_model_.costIndexScan(
+                    index_height,
+                    index_pages,
+                    index_tuples,
+                    heap_pages,
+                    heap_tuples,
+                    qual_cost,
+                    correlation,
+                    ctx);
+
+                DEBUG_LOG_DB("IndexScan cost for " + index_info.index_name +
+                             ": startup=" + std::to_string(cost.startup_cost) +
+                             ", total=" + std::to_string(cost.total_cost) +
+                             ", rows=" + std::to_string(cost.rows));
+            }
 
             // Create IndexScanPath
             auto index_path = std::make_shared<IndexScanPath>(
