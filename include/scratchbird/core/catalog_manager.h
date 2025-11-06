@@ -272,14 +272,19 @@ namespace scratchbird::core
         // Index types
         enum class IndexType : uint8_t
         {
-            BTREE = 0,    // B-tree index (default)
-            HASH = 1,     // Hash index
-            VECTOR = 2,   // Vector similarity index (HNSW, IVF, etc.)
-            FULLTEXT = 3, // Full-text search index
-            GIN = 4,      // Generalized Inverted Index
-            GIST = 5,     // Generalized Search Tree
-            BRIN = 6,     // Block Range Index
-            RTREE = 7     // R-tree spatial index (Phase 2 Task 9.2)
+            BTREE = 0,        // B-tree index (default)
+            HASH = 1,         // Hash index
+            HNSW = 2,         // Vector similarity index (renamed from VECTOR)
+            VECTOR = 2,       // Alias for HNSW (backward compatibility)
+            FULLTEXT = 3,     // Full-text search index (GIN-based)
+            GIN = 4,          // Generalized Inverted Index
+            GIST = 5,         // Generalized Search Tree
+            BRIN = 6,         // Block Range Index
+            RTREE = 7,        // R-tree spatial index
+            SPGIST = 8,       // Space-Partitioned GiST
+            BITMAP = 9,       // Bitmap index
+            COLUMNSTORE = 10, // Columnstore index
+            LSM = 11          // LSM-Tree (Log-Structured Merge-Tree)
         };
 
         // Index information
@@ -1273,6 +1278,28 @@ namespace scratchbird::core
         // Helper to allocate catalog pages
         auto allocateCatalogPage(uint32_t &page_id, ErrorContext *ctx) -> Status;
     };
+
+    // ========================================================================
+    // Index Type Helper Functions (LSM Integration Plan Phase 1)
+    // ========================================================================
+
+    /**
+     * Convert string to IndexType enum (case-insensitive with aliases)
+     *
+     * @param type_str Index type string (e.g., "LSM", "BTREE", "HNSW")
+     * @return IndexType enum value, or nullopt if invalid
+     */
+    std::optional<CatalogManager::IndexType> parseIndexType(const std::string &type_str);
+
+    /**
+     * Convert IndexType enum to string representation
+     *
+     * @param type Index type enum value
+     * @return String representation (e.g., "LSM", "BTREE", "HNSW")
+     */
+    std::string indexTypeToString(CatalogManager::IndexType type);
+
+    // ========================================================================
 
     // DataType enum is now defined in types.h
 

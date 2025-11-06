@@ -340,6 +340,76 @@ namespace scratchbird::core
 
 #pragma pack(pop)
 
+    // ========================================================================
+    // Index Type Helper Functions (LSM Integration Plan Phase 1)
+    // ========================================================================
+
+    /**
+     * Convert string to IndexType enum
+     *
+     * Supports both exact names and common aliases (case-insensitive):
+     * - "LSM", "LSMTREE", "LSM-TREE" → IndexType::LSM
+     * - "SPGIST", "SP-GIST" → IndexType::SPGIST
+     * - "VECTOR", "HNSW" → IndexType::HNSW
+     * - etc.
+     */
+    std::optional<CatalogManager::IndexType> parseIndexType(const std::string &type_str)
+    {
+        static const std::unordered_map<std::string, CatalogManager::IndexType> type_map = {
+            {"BTREE", CatalogManager::IndexType::BTREE},
+            {"B-TREE", CatalogManager::IndexType::BTREE},
+            {"HASH", CatalogManager::IndexType::HASH},
+            {"HNSW", CatalogManager::IndexType::HNSW},
+            {"VECTOR", CatalogManager::IndexType::HNSW},  // Alias
+            {"FULLTEXT", CatalogManager::IndexType::FULLTEXT},
+            {"GIN", CatalogManager::IndexType::GIN},
+            {"GIST", CatalogManager::IndexType::GIST},
+            {"BRIN", CatalogManager::IndexType::BRIN},
+            {"RTREE", CatalogManager::IndexType::RTREE},
+            {"R-TREE", CatalogManager::IndexType::RTREE},  // Alias
+            {"SPGIST", CatalogManager::IndexType::SPGIST},
+            {"SP-GIST", CatalogManager::IndexType::SPGIST},  // Alias
+            {"BITMAP", CatalogManager::IndexType::BITMAP},
+            {"COLUMNSTORE", CatalogManager::IndexType::COLUMNSTORE},
+            {"LSM", CatalogManager::IndexType::LSM},
+            {"LSMTREE", CatalogManager::IndexType::LSM},  // Alias
+            {"LSM-TREE", CatalogManager::IndexType::LSM}  // Alias
+        };
+
+        // Convert to uppercase for case-insensitive comparison
+        std::string upper = type_str;
+        std::transform(upper.begin(), upper.end(), upper.begin(),
+                      [](unsigned char c) { return std::toupper(c); });
+
+        auto it = type_map.find(upper);
+        return (it != type_map.end()) ? std::optional<CatalogManager::IndexType>(it->second) : std::nullopt;
+    }
+
+    /**
+     * Convert IndexType enum to string representation
+     */
+    std::string indexTypeToString(CatalogManager::IndexType type)
+    {
+        switch (type)
+        {
+            case CatalogManager::IndexType::BTREE: return "BTREE";
+            case CatalogManager::IndexType::HASH: return "HASH";
+            case CatalogManager::IndexType::HNSW: return "HNSW";
+            case CatalogManager::IndexType::FULLTEXT: return "FULLTEXT";
+            case CatalogManager::IndexType::GIN: return "GIN";
+            case CatalogManager::IndexType::GIST: return "GIST";
+            case CatalogManager::IndexType::BRIN: return "BRIN";
+            case CatalogManager::IndexType::RTREE: return "RTREE";
+            case CatalogManager::IndexType::SPGIST: return "SPGIST";
+            case CatalogManager::IndexType::BITMAP: return "BITMAP";
+            case CatalogManager::IndexType::COLUMNSTORE: return "COLUMNSTORE";
+            case CatalogManager::IndexType::LSM: return "LSM";
+            default: return "UNKNOWN";
+        }
+    }
+
+    // ========================================================================
+
     CatalogManager::CatalogManager(Database *db) : db_(db)
     {
         DEBUG_LOG_DB("CatalogManager created");
