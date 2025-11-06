@@ -167,6 +167,12 @@ namespace scratchbird
                 return header_ ? header_->total_pages : 0;
             }
 
+            // LSM Integration: Get database path (for LSM-Tree index directories)
+            const std::string &path() const
+            {
+                return path_;
+            }
+
             // === LEGACY API: tablespace 0 only ===
             // Read/write pages
             Status read_page(uint32_t page_id, void *buffer, ErrorContext *ctx = nullptr) const;

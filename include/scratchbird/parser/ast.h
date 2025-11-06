@@ -961,10 +961,11 @@ namespace scratchbird
             // Constructor for backward compatibility (simple columns only)
             CreateIndexStmt(const SourceSpan &span, StringPool::StringId index_name,
                             StringPool::StringId table_name, std::vector<StringPool::StringId> columns,
-                            bool is_unique = false, StringPool::StringId tablespace = 0)
+                            bool is_unique = false, StringPool::StringId tablespace = 0,
+                            StringPool::StringId index_type = 0)
                 : Statement(ASTKind::CREATE_INDEX, span), index_name_(index_name),
                   table_name_(table_name), is_unique_(is_unique), tablespace_(tablespace),
-                  where_clause_(nullptr)
+                  where_clause_(nullptr), index_type_(index_type)
             {
                 // Convert column names to IndexColumn structures
                 for (auto col : columns)
@@ -977,10 +978,11 @@ namespace scratchbird
             CreateIndexStmt(const SourceSpan &span, StringPool::StringId index_name,
                             StringPool::StringId table_name, std::vector<IndexColumn> index_columns,
                             Expression *where_clause = nullptr, bool is_unique = false,
-                            StringPool::StringId tablespace = 0)
+                            StringPool::StringId tablespace = 0, StringPool::StringId index_type = 0)
                 : Statement(ASTKind::CREATE_INDEX, span), index_name_(index_name),
                   table_name_(table_name), index_columns_(std::move(index_columns)),
-                  where_clause_(where_clause), is_unique_(is_unique), tablespace_(tablespace)
+                  where_clause_(where_clause), is_unique_(is_unique), tablespace_(tablespace),
+                  index_type_(index_type)
             {
             }
 
@@ -1042,6 +1044,17 @@ namespace scratchbird
                 return tablespace_;
             }
 
+            // LSM Integration: Index type accessor (Phase 2 Task 2.1)
+            StringPool::StringId indexType() const
+            {
+                return index_type_;
+            }
+
+            bool hasIndexType() const
+            {
+                return index_type_ != 0;
+            }
+
             void accept(ASTVisitor *visitor) override;
 
         private:
@@ -1051,6 +1064,7 @@ namespace scratchbird
             Expression *where_clause_;                // Task 17: WHERE clause for partial indexes
             bool is_unique_;
             StringPool::StringId tablespace_;
+            StringPool::StringId index_type_;  // LSM Integration: Index type (e.g., "LSM", "BTREE")
         };
 
         // INSERT statement

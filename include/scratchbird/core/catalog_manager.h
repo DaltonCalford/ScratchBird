@@ -272,14 +272,19 @@ namespace scratchbird::core
         // Index types
         enum class IndexType : uint8_t
         {
-            BTREE = 0,    // B-tree index (default)
-            HASH = 1,     // Hash index
-            VECTOR = 2,   // Vector similarity index (HNSW, IVF, etc.)
-            FULLTEXT = 3, // Full-text search index
-            GIN = 4,      // Generalized Inverted Index
-            GIST = 5,     // Generalized Search Tree
-            BRIN = 6,     // Block Range Index
-            RTREE = 7     // R-tree spatial index (Phase 2 Task 9.2)
+            BTREE = 0,        // B-tree index (default)
+            HASH = 1,         // Hash index
+            HNSW = 2,         // Vector similarity index (renamed from VECTOR)
+            VECTOR = 2,       // Alias for HNSW (backward compatibility)
+            FULLTEXT = 3,     // Full-text search index (GIN-based)
+            GIN = 4,          // Generalized Inverted Index
+            GIST = 5,         // Generalized Search Tree
+            BRIN = 6,         // Block Range Index
+            RTREE = 7,        // R-tree spatial index
+            SPGIST = 8,       // Space-Partitioned GiST
+            BITMAP = 9,       // Bitmap index
+            COLUMNSTORE = 10, // Columnstore index
+            LSM = 11          // LSM-Tree (Log-Structured Merge-Tree)
         };
 
         // Index information
@@ -384,6 +389,25 @@ namespace scratchbird::core
 
         auto listIndexesForTable(const ID &table_id, std::vector<IndexInfo> &indexes,
                                  ErrorContext *ctx = nullptr) -> Status;
+
+        // LSM Integration Phase 3.3: Index object cache management
+        /**
+         * Get cached index object pointer
+         *
+         * @param index_id Index ID
+         * @param type_out Output: Index type (optional)
+         * @return Index object pointer (nullptr if not cached)
+         */
+        void* getIndexPtr(const ID &index_id, IndexType *type_out = nullptr);
+
+        /**
+         * Close and remove all cached index objects
+         * Called on database shutdown
+         *
+         * @param ctx Error context
+         * @return Status::OK on success
+         */
+        Status closeAllIndexes(ErrorContext *ctx = nullptr);
 
         // Timezone operations (pg_timezone system table)
         struct TimezoneInfo
@@ -1034,6 +1058,16 @@ namespace scratchbird::core
         std::unordered_map<ID, std::vector<ColumnInfo>> column_cache_;
         std::unordered_map<ID, IndexInfo> index_cache_;
         std::unordered_map<uint16_t, TablespaceInfo> tablespace_cache_;  // keyed by tablespace_id
+
+        // LSM Integration Phase 3.3: Index object cache
+        // Maps index_id -> (index_ptr, index_type) for actual index objects
+        struct IndexHandle
+        {
+            void *index_ptr;
+            IndexType index_type;
+        };
+        std::unordered_map<ID, IndexHandle> index_object_cache_;
+        mutable std::mutex index_object_mutex_;  // Separate mutex for index object operations
         
         // Trigger storage (Phase 2 Wave 2 - Agent C)
         std::unordered_map<ID, TriggerInfo> trigger_cache_;  // keyed by trigger_id
@@ -1273,6 +1307,28 @@ namespace scratchbird::core
         // Helper to allocate catalog pages
         auto allocateCatalogPage(uint32_t &page_id, ErrorContext *ctx) -> Status;
     };
+
+    // ========================================================================
+    // Index Type Helper Functions (LSM Integration Plan Phase 1)
+    // ========================================================================
+
+    /**
+     * Convert string to IndexType enum (case-insensitive with aliases)
+     *
+     * @param type_str Index type string (e.g., "LSM", "BTREE", "HNSW")
+     * @return IndexType enum value, or nullopt if invalid
+     */
+    std::optional<CatalogManager::IndexType> parseIndexType(const std::string &type_str);
+
+    /**
+     * Convert IndexType enum to string representation
+     *
+     * @param type Index type enum value
+     * @return String representation (e.g., "LSM", "BTREE", "HNSW")
+     */
+    std::string indexTypeToString(CatalogManager::IndexType type);
+
+    // ========================================================================
 
     // DataType enum is now defined in types.h
 

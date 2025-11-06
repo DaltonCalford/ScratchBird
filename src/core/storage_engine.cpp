@@ -11,6 +11,7 @@
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/core/btree.h"
 #include "scratchbird/core/hash_index.h"
+#include "scratchbird/core/lsm_tree.h"  // LSM Integration Phase 4
 #include "scratchbird/core/toast.h"
 #include "scratchbird/core/garbage_collector.h"
 #include "scratchbird/core/logger.h"
@@ -29,6 +30,122 @@ namespace scratchbird::core
     }
 
     StorageEngine::~StorageEngine() = default;
+
+    // LSM Integration Phase 4: Helper method to insert into any index type
+    namespace {
+        Status insertIntoIndex(
+            CatalogManager::IndexType index_type,
+            void *index_ptr,
+            const std::vector<uint8_t> &key,
+            const TID &tid,
+            uint64_t xid,
+            ErrorContext *ctx)
+        {
+            if (!index_ptr)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Null index pointer");
+                return Status::INVALID_ARGUMENT;
+            }
+
+            switch (index_type)
+            {
+                case CatalogManager::IndexType::BTREE:
+                {
+                    auto *btree = static_cast<BTree*>(index_ptr);
+                    return btree->insert(key, tid, xid, ctx);
+                }
+
+                case CatalogManager::IndexType::LSM:
+                {
+                    auto *lsm = static_cast<LSMTreeIndex*>(index_ptr);
+                    // LSM-Tree stores TID as value
+                    std::vector<uint8_t> tid_bytes(sizeof(TID));
+                    std::memcpy(tid_bytes.data(), &tid, sizeof(TID));
+                    return lsm->put(key, tid_bytes, xid, ctx);
+                }
+
+                case CatalogManager::IndexType::HASH:
+                {
+                    auto *hash = static_cast<HashIndex*>(index_ptr);
+                    return hash->insert(key.data(), key.size(), tid, xid, ctx);
+                }
+
+                case CatalogManager::IndexType::GIN:
+                case CatalogManager::IndexType::GIST:
+                case CatalogManager::IndexType::BRIN:
+                case CatalogManager::IndexType::RTREE:
+                case CatalogManager::IndexType::SPGIST:
+                case CatalogManager::IndexType::BITMAP:
+                case CatalogManager::IndexType::COLUMNSTORE:
+                case CatalogManager::IndexType::HNSW:
+                {
+                    // Other index types not yet implemented
+                    SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED,
+                        "Index type not yet implemented for DML operations");
+                    return Status::NOT_IMPLEMENTED;
+                }
+
+                default:
+                    SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Unknown index type");
+                    return Status::INVALID_ARGUMENT;
+            }
+        }
+
+        Status removeFromIndex(
+            CatalogManager::IndexType index_type,
+            void *index_ptr,
+            const std::vector<uint8_t> &key,
+            const TID &tid,
+            uint64_t xid,
+            ErrorContext *ctx)
+        {
+            if (!index_ptr)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Null index pointer");
+                return Status::INVALID_ARGUMENT;
+            }
+
+            switch (index_type)
+            {
+                case CatalogManager::IndexType::BTREE:
+                {
+                    auto *btree = static_cast<BTree*>(index_ptr);
+                    return btree->remove(key, tid, xid, ctx);
+                }
+
+                case CatalogManager::IndexType::LSM:
+                {
+                    auto *lsm = static_cast<LSMTreeIndex*>(index_ptr);
+                    // LSM-Tree uses remove() which inserts a tombstone
+                    return lsm->remove(key, xid, ctx);
+                }
+
+                case CatalogManager::IndexType::HASH:
+                {
+                    auto *hash = static_cast<HashIndex*>(index_ptr);
+                    return hash->remove(key.data(), key.size(), tid, xid, ctx);
+                }
+
+                case CatalogManager::IndexType::GIN:
+                case CatalogManager::IndexType::GIST:
+                case CatalogManager::IndexType::BRIN:
+                case CatalogManager::IndexType::RTREE:
+                case CatalogManager::IndexType::SPGIST:
+                case CatalogManager::IndexType::BITMAP:
+                case CatalogManager::IndexType::COLUMNSTORE:
+                case CatalogManager::IndexType::HNSW:
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED,
+                        "Index type not yet implemented for DML operations");
+                    return Status::NOT_IMPLEMENTED;
+                }
+
+                default:
+                    SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Unknown index type");
+                    return Status::INVALID_ARGUMENT;
+            }
+        }
+    } // anonymous namespace
 
     auto StorageEngine::insertTuple(const ID &table_id, const uint8_t *tuple_data,
                                     uint32_t tuple_size, uint32_t *page_id_out,
@@ -244,34 +361,27 @@ namespace scratchbird::core
                             continue; // Skip this index
                         }
 
-                        // Insert into index based on type
-                        if (index_info.index_type == CatalogManager::IndexType::BTREE)
+                        // LSM Integration Phase 4: Use index cache instead of opening each time
+                        CatalogManager::IndexType actual_index_type;
+                        void *index_ptr = catalog_manager_->getIndexPtr(index_info.index_id, &actual_index_type);
+
+                        if (index_ptr)
                         {
-                            auto btree = BTree::open(db_, index_info.index_id, index_info.root_page, ctx);
-                            if (btree)
+                            Status insert_status = insertIntoIndex(
+                                actual_index_type, index_ptr, key, tid, current_xid, ctx);
+
+                            if (insert_status != Status::OK)
                             {
-                                Status insert_status = btree->insert(key, tid, current_xid, ctx);
-                                if (insert_status != Status::OK)
-                                {
-                                    LOG_ERROR(STORAGE, "Failed to insert into BTree index %s: %s",
-                                              index_info.index_name.c_str(),
-                                              ctx ? ctx->message.c_str() : "unknown error");
-                                }
+                                LOG_ERROR(STORAGE, "Failed to insert into %s index %s: %s",
+                                          indexTypeToString(actual_index_type).c_str(),
+                                          index_info.index_name.c_str(),
+                                          ctx ? ctx->message.c_str() : "unknown error");
                             }
                         }
-                        else if (index_info.index_type == CatalogManager::IndexType::HASH)
+                        else
                         {
-                            auto hash_index = HashIndex::open(db_, index_info.index_id, index_info.root_page, ctx);
-                            if (hash_index)
-                            {
-                                Status insert_status = hash_index->insert(key.data(), key.size(), tid, current_xid, ctx);
-                                if (insert_status != Status::OK)
-                                {
-                                    LOG_ERROR(STORAGE, "Failed to insert into Hash index %s: %s",
-                                              index_info.index_name.c_str(),
-                                              ctx ? ctx->message.c_str() : "unknown error");
-                                }
-                            }
+                            LOG_WARNING(STORAGE, "Index %s not found in cache, skipping",
+                                        index_info.index_name.c_str());
                         }
                     }
 
@@ -489,6 +599,168 @@ namespace scratchbird::core
             if (db_->garbage_collector() != nullptr)
             {
                 db_->garbage_collector()->markPageDirty(page_id);
+            }
+
+            // LSM Integration Phase 4: Remove from all indexes
+            std::vector<CatalogManager::IndexInfo> indexes;
+            Status index_status = catalog_manager_->listIndexesForTable(table_id, indexes, ctx);
+
+            if (index_status == Status::OK && !indexes.empty())
+            {
+                // Get column information for extracting index keys
+                std::vector<CatalogManager::ColumnInfo> columns;
+                index_status = catalog_manager_->getColumns(table_id, columns, ctx);
+
+                if (index_status == Status::OK)
+                {
+                    // Create TID for this tuple
+                    TID tid = TID(makeGPID(PRIMARY_TABLESPACE_ID, static_cast<uint64_t>(page_id)), item_id);
+
+                    // Get tuple data to extract keys
+                    const ItemPointer *items = reinterpret_cast<const ItemPointer *>(page_data + sizeof(PageHeader));
+                    if (item_id < heap_page.getItemCount())
+                    {
+                        uint32_t tuple_offset = items[item_id].offset;
+                        uint32_t tuple_length = items[item_id].length;
+                        const uint8_t *tuple_data = page_data + tuple_offset;
+
+                        // Create IndexKeyExtractor
+                        IndexKeyExtractor extractor;
+
+                        // Calculate column offsets (similar to insertTuple)
+                        std::vector<size_t> column_offsets;
+                        std::vector<size_t> column_sizes;
+                        const auto *header = reinterpret_cast<const TupleHeader *>(tuple_data);
+                        size_t data_offset = sizeof(TupleHeader);
+
+                        // Check for null bitmap
+                        const uint8_t *null_bitmap = nullptr;
+                        if (header->hasNulls() && header->null_bitmap_offset > 0 &&
+                            header->null_bitmap_offset < tuple_length)
+                        {
+                            null_bitmap = tuple_data + header->null_bitmap_offset;
+                            size_t bitmap_bytes = (columns.size() + 7) / 8;
+                            data_offset = header->null_bitmap_offset + bitmap_bytes;
+                        }
+
+                        // Calculate column offsets and sizes
+                        column_offsets.reserve(columns.size());
+                        column_sizes.reserve(columns.size());
+
+                        size_t current_offset = data_offset;
+                        for (size_t i = 0; i < columns.size(); i++)
+                        {
+                            bool is_null = false;
+                            if (null_bitmap)
+                            {
+                                size_t byte_offset = i / 8;
+                                size_t bit_pos = i % 8;
+                                is_null = (null_bitmap[byte_offset] & (1 << bit_pos)) != 0;
+                            }
+
+                            if (is_null)
+                            {
+                                column_offsets.push_back(0);
+                                column_sizes.push_back(0);
+                                continue;
+                            }
+
+                            DataType col_type = static_cast<DataType>(columns[i].data_type);
+                            size_t col_size = 0;
+
+                            switch (col_type)
+                            {
+                                case DataType::INT32:
+                                    col_size = sizeof(int32_t);
+                                    break;
+                                case DataType::INT64:
+                                    col_size = sizeof(int64_t);
+                                    break;
+                                case DataType::FLOAT64:
+                                    col_size = sizeof(double);
+                                    break;
+                                case DataType::VARCHAR:
+                                case DataType::TEXT:
+                                    if (current_offset + sizeof(uint32_t) <= tuple_length)
+                                    {
+                                        uint32_t len;
+                                        std::memcpy(&len, tuple_data + current_offset, sizeof(uint32_t));
+                                        col_size = sizeof(uint32_t) + len;
+                                    }
+                                    break;
+                                default:
+                                    col_size = 0;
+                                    break;
+                            }
+
+                            column_offsets.push_back(current_offset);
+                            column_sizes.push_back(col_size);
+                            current_offset += col_size;
+                        }
+
+                        // Remove from each index
+                        for (const auto &index_info : indexes)
+                        {
+                            // Convert column IDs to column indices
+                            std::vector<uint16_t> column_indices;
+                            for (const auto &col_id : index_info.column_ids)
+                            {
+                                for (size_t i = 0; i < columns.size(); i++)
+                                {
+                                    if (columns[i].column_id == col_id)
+                                    {
+                                        column_indices.push_back(static_cast<uint16_t>(i));
+                                        break;
+                                    }
+                                }
+                            }
+
+                            // Extract index key
+                            std::vector<uint8_t> key;
+                            Status extract_status = extractor.extractKey(
+                                tuple_data, tuple_length,
+                                column_offsets, column_sizes,
+                                column_indices,
+                                getOrCreateToastManager(table_id, ctx),
+                                current_xid,
+                                &key, ctx);
+
+                            if (extract_status != Status::OK)
+                            {
+                                LOG_WARNING(STORAGE, "Failed to extract index key for deletion from index %s: %s",
+                                            index_info.index_name.c_str(),
+                                            ctx ? ctx->message.c_str() : "unknown error");
+                                continue;
+                            }
+
+                            // Remove from index using cache
+                            CatalogManager::IndexType actual_index_type;
+                            void *index_ptr = catalog_manager_->getIndexPtr(index_info.index_id, &actual_index_type);
+
+                            if (index_ptr)
+                            {
+                                Status remove_status = removeFromIndex(
+                                    actual_index_type, index_ptr, key, tid, current_xid, ctx);
+
+                                if (remove_status != Status::OK)
+                                {
+                                    LOG_ERROR(STORAGE, "Failed to remove from %s index %s: %s",
+                                              indexTypeToString(actual_index_type).c_str(),
+                                              index_info.index_name.c_str(),
+                                              ctx ? ctx->message.c_str() : "unknown error");
+                                }
+                            }
+                            else
+                            {
+                                LOG_WARNING(STORAGE, "Index %s not found in cache, skipping deletion",
+                                            index_info.index_name.c_str());
+                            }
+                        }
+
+                        // Clear detoasting cache
+                        extractor.clearCache();
+                    }
+                }
             }
         }
 
@@ -1128,40 +1400,40 @@ namespace scratchbird::core
                             continue;
                         }
 
-                        // Keys changed - update index
-                        if (index_info.index_type == CatalogManager::IndexType::BTREE)
+                        // LSM Integration Phase 4: Keys changed - update index using cache
+                        CatalogManager::IndexType actual_index_type;
+                        void *index_ptr = catalog_manager_->getIndexPtr(index_info.index_id, &actual_index_type);
+
+                        if (index_ptr)
                         {
-                            auto btree = BTree::open(db_, index_info.index_id, index_info.root_page, ctx);
-                            if (btree)
+                            // Remove old key
+                            Status remove_status = removeFromIndex(
+                                actual_index_type, index_ptr, old_key, tid, xmax, ctx);
+
+                            if (remove_status != Status::OK)
                             {
-                                // Remove old key
-                                btree->remove(old_key, tid, xmax, ctx);
-                                // Insert new key (same TID!)
-                                Status insert_status = btree->insert(new_key, tid, xmax, ctx);
-                                if (insert_status != Status::OK)
-                                {
-                                    LOG_ERROR(STORAGE, "Failed to update BTree index %s: %s",
-                                              index_info.index_name.c_str(),
-                                              ctx ? ctx->message.c_str() : "unknown error");
-                                }
+                                LOG_WARNING(STORAGE, "Failed to remove old key from %s index %s: %s",
+                                            indexTypeToString(actual_index_type).c_str(),
+                                            index_info.index_name.c_str(),
+                                            ctx ? ctx->message.c_str() : "unknown error");
+                            }
+
+                            // Insert new key (same TID!)
+                            Status insert_status = insertIntoIndex(
+                                actual_index_type, index_ptr, new_key, tid, xmax, ctx);
+
+                            if (insert_status != Status::OK)
+                            {
+                                LOG_ERROR(STORAGE, "Failed to insert new key into %s index %s: %s",
+                                          indexTypeToString(actual_index_type).c_str(),
+                                          index_info.index_name.c_str(),
+                                          ctx ? ctx->message.c_str() : "unknown error");
                             }
                         }
-                        else if (index_info.index_type == CatalogManager::IndexType::HASH)
+                        else
                         {
-                            auto hash_index = HashIndex::open(db_, index_info.index_id, index_info.root_page, ctx);
-                            if (hash_index)
-                            {
-                                // Remove old key
-                                hash_index->remove(old_key.data(), old_key.size(), tid, xmax, ctx);
-                                // Insert new key (same TID!)
-                                Status insert_status = hash_index->insert(new_key.data(), new_key.size(), tid, xmax, ctx);
-                                if (insert_status != Status::OK)
-                                {
-                                    LOG_ERROR(STORAGE, "Failed to update Hash index %s: %s",
-                                              index_info.index_name.c_str(),
-                                              ctx ? ctx->message.c_str() : "unknown error");
-                                }
-                            }
+                            LOG_WARNING(STORAGE, "Index %s not found in cache, skipping update",
+                                        index_info.index_name.c_str());
                         }
                     }
 

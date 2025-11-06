@@ -113,6 +113,83 @@ namespace scratchbird::optimizer
         return cost;
     }
 
+    auto CostModel::costLSMScan(uint64_t num_levels, uint64_t avg_sstables_per_level,
+                                 uint64_t index_tuples, uint64_t heap_pages,
+                                 uint64_t heap_tuples, double qual_cost,
+                                 double correlation, core::ErrorContext *ctx)
+        -> CostEstimate
+    {
+        DEBUG_LOG_DB("Estimating LSM scan cost: num_levels=" + std::to_string(num_levels) +
+                     ", avg_sstables_per_level=" + std::to_string(avg_sstables_per_level) +
+                     ", heap_pages=" + std::to_string(heap_pages) +
+                     ", correlation=" + std::to_string(correlation));
+
+        CostEstimate cost;
+
+        // Startup cost: LSM-Tree read path
+        // 1. Check memtable (in-memory, very cheap)
+        double memtable_cost = 10.0 * params_.cpu_operator_cost;  // ~10 comparisons for RB-tree lookup
+
+        // 2. Check immutable memtable (in-memory, very cheap)
+        double immutable_memtable_cost = 10.0 * params_.cpu_operator_cost;
+
+        // 3. Bloom filter checks for each SSTable level (CPU only, no I/O if negative)
+        // Each Bloom filter check is ~3-5 hash computations
+        uint64_t total_sstables = num_levels * avg_sstables_per_level;
+        double bloom_filter_cost = static_cast<double>(total_sstables) * 4.0 * params_.cpu_operator_cost;
+
+        cost.startup_cost = memtable_cost + immutable_memtable_cost + bloom_filter_cost;
+
+        // Index scan cost: read SSTable pages
+        // Key insight: LSM-Tree may need to read from multiple SSTables per level
+        // Each SSTable requires random page reads (B-Tree within SSTable)
+        // Bloom filters reduce false positives, assume 30% false positive rate
+        constexpr double BLOOM_FALSE_POSITIVE_RATE = 0.30;
+        double expected_sstable_reads = static_cast<double>(total_sstables) * BLOOM_FALSE_POSITIVE_RATE;
+
+        // Each SSTable read: 1-2 pages for internal B-Tree (small index within SSTable)
+        constexpr double AVG_PAGES_PER_SSTABLE_READ = 1.5;
+        uint64_t estimated_index_pages = static_cast<uint64_t>(expected_sstable_reads * AVG_PAGES_PER_SSTABLE_READ);
+
+        double index_io_cost = static_cast<double>(estimated_index_pages) * params_.random_page_cost;
+        double index_cpu_cost = static_cast<double>(index_tuples) * params_.cpu_index_tuple_cost;
+
+        // Additional CPU cost for k-way merge if range scan
+        // For now, assume simple lookup (no merge overhead)
+        // TODO: Add merge cost for range scans in future
+
+        // Heap fetch cost: same as B-Tree
+        double effective_heap_pages;
+        if (std::abs(correlation) > 0.8)
+        {
+            constexpr double TUPLES_PER_PAGE = 100.0;
+            effective_heap_pages = std::ceil(static_cast<double>(heap_tuples) / TUPLES_PER_PAGE);
+        }
+        else
+        {
+            effective_heap_pages = std::min(static_cast<double>(heap_tuples),
+                                            static_cast<double>(heap_pages));
+        }
+
+        double effective_random_cost = effectiveRandomPageCost(heap_pages);
+        double heap_io_cost = effective_heap_pages * effective_random_cost;
+        double heap_cpu_cost = static_cast<double>(heap_tuples) * params_.cpu_tuple_cost +
+                               static_cast<double>(heap_tuples) * qual_cost;
+
+        cost.run_cost = index_io_cost + index_cpu_cost + heap_io_cost + heap_cpu_cost;
+        cost.total_cost = cost.startup_cost + cost.run_cost;
+        cost.rows = heap_tuples;
+
+        DEBUG_LOG_DB("LSMScan cost: startup=" + std::to_string(cost.startup_cost) +
+                     ", run=" + std::to_string(cost.run_cost) +
+                     ", total=" + std::to_string(cost.total_cost) +
+                     " (index_io=" + std::to_string(index_io_cost) +
+                     ", heap_io=" + std::to_string(heap_io_cost) +
+                     ", bloom_checks=" + std::to_string(bloom_filter_cost) + ")");
+
+        return cost;
+    }
+
     auto CostModel::effectiveRandomPageCost(uint64_t table_pages) const -> double
     {
         if (table_pages == 0)
