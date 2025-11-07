@@ -100,6 +100,9 @@ namespace scratchbird::core
         MACADDR = 88,    // 6-byte MAC address (EUI-48)
         MACADDR8 = 89,   // 8-byte MAC address (EUI-64)
 
+        // Polymorphic types (90-99)
+        VARIANT = 90,    // Tagged union that can hold any type
+
         // Null type (255)
         NULL_TYPE = 255, // SQL NULL
     };
@@ -319,6 +322,53 @@ namespace scratchbird::core
         }
     };
 
+    // Forward declarations
+    class TypedValue;
+    class VectorValue;
+
+    /**
+     * Variant (Tagged Union) Type
+     * Represents a polymorphic value that can hold any type at runtime
+     * The actual type is tracked and can be checked/cast safely
+     * Example: A column that might be INT, TEXT, or FLOAT
+     */
+    struct VariantValue {
+        DataType actual_type;
+        std::shared_ptr<TypedValue> value;
+
+        VariantValue() : actual_type(DataType::NULL_TYPE), value(nullptr) {}
+        VariantValue(DataType type, std::shared_ptr<TypedValue> val)
+            : actual_type(type), value(std::move(val)) {}
+
+        // Comparison operators
+        bool operator==(const VariantValue& other) const;
+        bool operator!=(const VariantValue& other) const {
+            return !(*this == other);
+        }
+    };
+
+    /**
+     * Composite (Record/Struct) Type
+     * Represents a heterogeneous collection of named fields
+     * Example: ROW('Alice', 30, 'alice@example.com')
+     */
+    struct CompositeValue {
+        std::vector<std::string> field_names;
+        std::vector<std::shared_ptr<TypedValue>> field_values;
+
+        CompositeValue() = default;
+        CompositeValue(std::vector<std::string> names,
+                      std::vector<std::shared_ptr<TypedValue>> values)
+            : field_names(std::move(names))
+            , field_values(std::move(values)) {}
+
+        // Comparison operators
+        bool operator==(const CompositeValue& other) const;
+        bool operator!=(const CompositeValue& other) const {
+            return !(*this == other);
+        }
+    };
+
     /**
      * Runtime value representation
      * Supports all database types with proper type safety
@@ -359,7 +409,10 @@ namespace scratchbird::core
                          InetAddr,        // INET
                          Cidr,            // CIDR
                          MacAddr,         // MACADDR
-                         MacAddr8         // MACADDR8
+                         MacAddr8,        // MACADDR8
+                         CompositeValue,  // COMPOSITE
+                         std::shared_ptr<VectorValue>,  // VECTOR
+                         VariantValue     // VARIANT
                          >;
 
         TypedValue() : type_(DataType::NULL_TYPE), data_(std::monostate{}) {}
@@ -419,6 +472,16 @@ namespace scratchbird::core
         static TypedValue makeCidr(const Cidr &v);
         static TypedValue makeMacAddr(const MacAddr &v);
         static TypedValue makeMacAddr8(const MacAddr8 &v);
+        static TypedValue makeComposite(const CompositeValue &v);
+        static TypedValue makeComposite(std::vector<std::string> field_names,
+                                       std::vector<TypedValue> field_values);
+        static TypedValue makeVector(const VectorValue &v);
+        static TypedValue makeVector(std::shared_ptr<VectorValue> v);
+        static TypedValue makeVector(const std::vector<float> &values);
+        static TypedValue makeVector(const std::vector<double> &values);
+        static TypedValue makeVariant(const VariantValue &v);
+        static TypedValue makeVariant(const TypedValue &value);
+        static TypedValue makeVariant(DataType actual_type, const TypedValue &value);
 
         // Type checking
         DataType type() const
@@ -470,6 +533,33 @@ namespace scratchbird::core
         Cidr getCidr() const;
         MacAddr getMacAddr() const;
         MacAddr8 getMacAddr8() const;
+        const CompositeValue& getComposite() const;
+        std::shared_ptr<VectorValue> getVector() const;
+        const VariantValue& getVariant() const;
+
+        // COMPOSITE field access methods
+        TypedValue getField(const std::string& field_name) const;
+        bool hasField(const std::string& field_name) const;
+        size_t getFieldCount() const;
+        const std::vector<std::string>& getFieldNames() const;
+
+        // VECTOR element access methods
+        TypedValue getVectorElement(size_t index) const;
+        TypedValue getVectorSlice(size_t start, size_t end) const;
+        size_t getVectorDimensions() const;
+
+        // VECTOR distance operators
+        TypedValue vectorDistance(const TypedValue& other, DistanceMetric metric) const;
+        TypedValue vectorEuclideanDistance(const TypedValue& other) const;
+        TypedValue vectorManhattanDistance(const TypedValue& other) const;
+        TypedValue vectorCosineSimilarity(const TypedValue& other) const;
+        TypedValue vectorDotProduct(const TypedValue& other) const;
+
+        // VARIANT type operations
+        DataType getVariantActualType() const;
+        TypedValue unwrapVariant() const;
+        bool variantIs(DataType expected_type) const;
+        TypedValue variantCast(DataType target_type) const;
 
         // Generic string conversion (for display)
         std::string toString() const;

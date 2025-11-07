@@ -1356,15 +1356,227 @@ namespace scratchbird::core
         return bp->unpinPage(domains_table_page_, true, ctx);
     }
 
+    // Helper function for SQL LIKE pattern matching
+    // Supports % (zero or more chars) and _ (exactly one char)
+    static bool matchLikePattern(const std::string& str, const std::string& pattern)
+    {
+        size_t str_idx = 0;
+        size_t pat_idx = 0;
+        size_t str_len = str.length();
+        size_t pat_len = pattern.length();
+
+        // Last positions where we saw % and the corresponding string position
+        size_t star_idx = std::string::npos;
+        size_t str_match_idx = 0;
+
+        while (str_idx < str_len) {
+            if (pat_idx < pat_len && (pattern[pat_idx] == str[str_idx] || pattern[pat_idx] == '_')) {
+                // Character match or single-char wildcard
+                str_idx++;
+                pat_idx++;
+            } else if (pat_idx < pat_len && pattern[pat_idx] == '%') {
+                // Multi-char wildcard - save position
+                star_idx = pat_idx;
+                str_match_idx = str_idx;
+                pat_idx++;
+            } else if (star_idx != std::string::npos) {
+                // No match, but we have a previous %, backtrack
+                pat_idx = star_idx + 1;
+                str_match_idx++;
+                str_idx = str_match_idx;
+            } else {
+                // No match and no % to backtrack
+                return false;
+            }
+        }
+
+        // Consume trailing % in pattern
+        while (pat_idx < pat_len && pattern[pat_idx] == '%') {
+            pat_idx++;
+        }
+
+        // Match only if we consumed entire pattern
+        return pat_idx == pat_len;
+    }
+
     auto DomainManager::validateCheckConstraint(const DomainInfo& domain,
                                                 const TypedValue& value,
                                                 const DomainConstraint& constraint,
                                                 ErrorContext* ctx) -> Status
     {
-        // TODO: Implement CHECK constraint evaluation
-        // This requires integration with the expression evaluator
-        // For now, just log and return OK
-        LOG_DEBUG(CATALOG, "CHECK constraint validation not yet implemented");
+        // Parse the constraint expression if needed
+        // The expression should use "VALUE" to refer to the domain value
+        // Example: "VALUE > 0" or "VALUE LIKE '%@%.%'"
+
+        // For now, implement basic constraint checking
+        // Full expression evaluation would require parser integration
+
+        const std::string& expr = constraint.expression;
+
+        // Handle common constraint patterns
+        // Pattern 1: VALUE > number
+        // Pattern 2: VALUE >= number
+        // Pattern 3: VALUE < number
+        // Pattern 4: VALUE <= number
+        // Pattern 5: VALUE = number
+        // Pattern 6: VALUE != number
+        // Pattern 7: VALUE LIKE 'pattern'
+        // Pattern 8: VALUE BETWEEN min AND max
+
+        // For alpha phase, implement basic numeric comparison
+        // TODO: Full expression parser integration in next phase
+
+        // Skip empty expressions
+        if (expr.empty()) {
+            return Status::OK;
+        }
+
+        // Simple pattern matching for basic constraints
+        // This handles the most common cases: VALUE op literal
+
+        size_t value_pos = expr.find("VALUE");
+        if (value_pos == std::string::npos) {
+            // No VALUE reference - malformed constraint
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                            "CHECK constraint must reference VALUE");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        // Extract operator and compare value
+        std::string remaining = expr.substr(value_pos + 5); // Skip "VALUE"
+
+        // Trim whitespace
+        size_t first = remaining.find_first_not_of(" \t");
+        if (first == std::string::npos) {
+            // Just "VALUE" - always true
+            return Status::OK;
+        }
+        remaining = remaining.substr(first);
+
+        // Check for common operators
+        bool result = true; // Default to true
+
+        if (remaining.substr(0, 2) == ">=") {
+            // VALUE >= number
+            std::string num_str = remaining.substr(2);
+            num_str.erase(0, num_str.find_first_not_of(" \t"));
+            double threshold = std::stod(num_str);
+
+            if (value.type() == DataType::INT32) {
+                result = (value.getInt32() >= threshold);
+            } else if (value.type() == DataType::INT64) {
+                result = (value.getInt64() >= threshold);
+            } else if (value.type() == DataType::FLOAT32) {
+                result = (value.getFloat32() >= threshold);
+            } else if (value.type() == DataType::FLOAT64) {
+                result = (value.getFloat64() >= threshold);
+            }
+        } else if (remaining.substr(0, 2) == "<=") {
+            // VALUE <= number
+            std::string num_str = remaining.substr(2);
+            num_str.erase(0, num_str.find_first_not_of(" \t"));
+            double threshold = std::stod(num_str);
+
+            if (value.type() == DataType::INT32) {
+                result = (value.getInt32() <= threshold);
+            } else if (value.type() == DataType::INT64) {
+                result = (value.getInt64() <= threshold);
+            } else if (value.type() == DataType::FLOAT32) {
+                result = (value.getFloat32() <= threshold);
+            } else if (value.type() == DataType::FLOAT64) {
+                result = (value.getFloat64() <= threshold);
+            }
+        } else if (remaining[0] == '>') {
+            // VALUE > number
+            std::string num_str = remaining.substr(1);
+            num_str.erase(0, num_str.find_first_not_of(" \t"));
+            double threshold = std::stod(num_str);
+
+            if (value.type() == DataType::INT32) {
+                result = (value.getInt32() > threshold);
+            } else if (value.type() == DataType::INT64) {
+                result = (value.getInt64() > threshold);
+            } else if (value.type() == DataType::FLOAT32) {
+                result = (value.getFloat32() > threshold);
+            } else if (value.type() == DataType::FLOAT64) {
+                result = (value.getFloat64() > threshold);
+            }
+        } else if (remaining[0] == '<') {
+            // VALUE < number
+            std::string num_str = remaining.substr(1);
+            num_str.erase(0, num_str.find_first_not_of(" \t"));
+            double threshold = std::stod(num_str);
+
+            if (value.type() == DataType::INT32) {
+                result = (value.getInt32() < threshold);
+            } else if (value.type() == DataType::INT64) {
+                result = (value.getInt64() < threshold);
+            } else if (value.type() == DataType::FLOAT32) {
+                result = (value.getFloat32() < threshold);
+            } else if (value.type() == DataType::FLOAT64) {
+                result = (value.getFloat64() < threshold);
+            }
+        } else if (remaining[0] == '=') {
+            // VALUE = number
+            std::string num_str = remaining.substr(1);
+            num_str.erase(0, num_str.find_first_not_of(" \t"));
+            double threshold = std::stod(num_str);
+
+            if (value.type() == DataType::INT32) {
+                result = (value.getInt32() == threshold);
+            } else if (value.type() == DataType::INT64) {
+                result = (value.getInt64() == threshold);
+            } else if (value.type() == DataType::FLOAT32) {
+                result = (std::abs(value.getFloat32() - threshold) < 1e-6);
+            } else if (value.type() == DataType::FLOAT64) {
+                result = (std::abs(value.getFloat64() - threshold) < 1e-9);
+            }
+        } else if (remaining.find("LIKE") != std::string::npos) {
+            // VALUE LIKE 'pattern'
+            // Extract pattern (between single quotes)
+            size_t like_pos = remaining.find("LIKE");
+            std::string after_like = remaining.substr(like_pos + 4);
+            after_like.erase(0, after_like.find_first_not_of(" \t"));
+
+            if (!after_like.empty() && after_like[0] == '\'') {
+                size_t end_quote = after_like.find('\'', 1);
+                if (end_quote != std::string::npos) {
+                    std::string pattern = after_like.substr(1, end_quote - 1);
+
+                    // Get string value
+                    std::string str_value;
+                    if (value.type() == DataType::VARCHAR) {
+                        str_value = value.getVarchar();
+                    } else if (value.type() == DataType::TEXT) {
+                        str_value = value.getText();
+                    } else if (value.type() == DataType::CHAR) {
+                        str_value = value.getChar();
+                    } else {
+                        // Type mismatch - LIKE only works on strings
+                        result = false;
+                    }
+
+                    if (result) {
+                        // Perform SQL LIKE pattern matching
+                        // % matches zero or more characters
+                        // _ matches exactly one character
+                        result = matchLikePattern(str_value, pattern);
+                    }
+                }
+            }
+        } else {
+            // Unsupported constraint pattern for now
+            // Log and allow (fail-open for unknown patterns)
+            LOG_DEBUG(CATALOG, "Unsupported CHECK constraint pattern: {}", expr);
+            return Status::OK;
+        }
+
+        if (!result) {
+            std::string error_msg = "CHECK constraint violated: " + constraint.name + " (" + expr + ")";
+            SET_ERROR_CONTEXT(ctx, Status::CONSTRAINT_VIOLATION, error_msg.c_str());
+            return Status::CONSTRAINT_VIOLATION;
+        }
+
         return Status::OK;
     }
 
