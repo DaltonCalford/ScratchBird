@@ -161,7 +161,7 @@ void test_low_cardinality_best_case()
                                              1024, CompressionType::DICTIONARY, &root_page, &ctx);
     assert(status == Status::OK);
 
-    auto index = ColumnstoreIndex::open(db, index_uuid, root_page, &ctx);
+    auto index = ColumnstoreIndex::open(db, index_uuid, root_page, 1024, &ctx);
     assert(index != nullptr);
 
     // Best case: 1000 values, only 1 unique (0.1% cardinality)
@@ -215,7 +215,7 @@ void test_high_cardinality_rejection()
                                              1024, CompressionType::DICTIONARY, &root_page, &ctx);
     assert(status == Status::OK);
 
-    auto index = ColumnstoreIndex::open(db, index_uuid, root_page, &ctx);
+    auto index = ColumnstoreIndex::open(db, index_uuid, root_page, 1024, &ctx);
     assert(index != nullptr);
 
     // High cardinality: 100 unique values out of 100 total (100% cardinality)
@@ -259,7 +259,7 @@ void test_medium_cardinality()
                                              1024, CompressionType::DICTIONARY, &root_page, &ctx);
     assert(status == Status::OK);
 
-    auto index = ColumnstoreIndex::open(db, index_uuid, root_page, &ctx);
+    auto index = ColumnstoreIndex::open(db, index_uuid, root_page, 1024, &ctx);
     assert(index != nullptr);
 
     // 5 unique values repeated across 100 values (5% cardinality)
@@ -314,7 +314,7 @@ void test_null_handling()
                                              1024, CompressionType::DICTIONARY, &root_page, &ctx);
     assert(status == Status::OK);
 
-    auto index = ColumnstoreIndex::open(db, index_uuid, root_page, &ctx);
+    auto index = ColumnstoreIndex::open(db, index_uuid, root_page, 1024, &ctx);
     assert(index != nullptr);
 
     // Test data: ["Active", NULL, NULL, "Inactive", "Active", NULL]
@@ -367,7 +367,7 @@ void test_empty_input()
                                              1024, CompressionType::DICTIONARY, &root_page, &ctx);
     assert(status == Status::OK);
 
-    auto index = ColumnstoreIndex::open(db, index_uuid, root_page, &ctx);
+    auto index = ColumnstoreIndex::open(db, index_uuid, root_page, 1024, &ctx);
     assert(index != nullptr);
 
     // Empty segment
@@ -413,7 +413,7 @@ void test_single_unique_value()
                                              1024, CompressionType::DICTIONARY, &root_page, &ctx);
     assert(status == Status::OK);
 
-    auto index = ColumnstoreIndex::open(db, index_uuid, root_page, &ctx);
+    auto index = ColumnstoreIndex::open(db, index_uuid, root_page, 1024, &ctx);
     assert(index != nullptr);
 
     // 10000 values, all "PENDING"
@@ -466,7 +466,7 @@ void test_round_trip()
                                              1024, CompressionType::DICTIONARY, &root_page, &ctx);
     assert(status == Status::OK);
 
-    auto index = ColumnstoreIndex::open(db, index_uuid, root_page, &ctx);
+    auto index = ColumnstoreIndex::open(db, index_uuid, root_page, 1024, &ctx);
     assert(index != nullptr);
 
     // Test data with low cardinality

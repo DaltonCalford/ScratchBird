@@ -56,16 +56,22 @@ namespace scratchbird
 
         // Hash Entry - Stores hash, tuple ID, and transaction tracking
         // Firebird MGA: Added xmin/xmax for TIP-based visibility (NOT snapshots)
+        // PHASE 1.5: Upgraded to use GPID + slot for custom tablespace support
         struct HashEntry
         {
             uint64_t he_key_hash; // Full 64-bit hash of the key
-            uint64_t he_tuple_id; // TupleId (page_id << 32 | item_id)
-                                  // Special value: 0 means deleted entry
+            GPID he_gpid;         // Global Page ID (8 bytes) - supports custom tablespaces
+            uint16_t he_slot;     // Slot number within page (2 bytes)
+            uint16_t he_padding;  // Padding to maintain alignment (2 bytes)
             uint64_t he_xmin;     // Transaction that created this entry
             uint64_t he_xmax;     // Transaction that deleted this entry (0 if active)
+
+            // Helper to get TID
+            TID getTID() const { return TID(he_gpid, he_slot); }
+            void setTID(const TID &tid) { he_gpid = tid.gpid; he_slot = tid.slot; }
         } __attribute__((packed));
 
-        static_assert(sizeof(HashEntry) == 32, "HashEntry must be 32 bytes");
+        static_assert(sizeof(HashEntry) == 36, "HashEntry must be 36 bytes (GPID + slot + xmin + xmax)");
 
         // Bucket Page - Stores hash entries
         struct SBHashBucketPage
@@ -76,13 +82,13 @@ namespace scratchbird
             uint32_t hbp_deleted_count;              // Number of deleted entries (4 bytes)
             uint64_t hbp_overflow_page;              // Next overflow page (0 if none) (8 bytes)
             uint8_t hbp_reserved[16];                // Reserved for alignment (16 bytes)
-            HashEntry hbp_entries[(8192 - 96) / 32]; // Hash entries (253 entries with xmin/xmax)
+            HashEntry hbp_entries[(8192 - 96) / 36]; // Hash entries (224 entries with GPID support)
         } __attribute__((packed));
 
-        static_assert(sizeof(SBHashBucketPage) == 8192, "Bucket page must be exactly 8KB");
+        static_assert(sizeof(SBHashBucketPage) <= 8192, "Bucket page must fit in 8KB");
 
-        // Maximum entries per bucket page (reduced from 506 to 253 due to xmin/xmax fields)
-        constexpr uint16_t MAX_ENTRIES_PER_BUCKET = (8192 - 96) / 32;
+        // Maximum entries per bucket page (reduced from 253 to 224 for GPID support)
+        constexpr uint16_t MAX_ENTRIES_PER_BUCKET = (8192 - 96) / 36;
 
         // ===== Hash Index Class =====
 

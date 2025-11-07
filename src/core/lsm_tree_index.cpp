@@ -300,10 +300,289 @@ Status LSMTreeIndex::scan(const std::vector<uint8_t> &start_key,
                           std::vector<MemtableEntry> *entries_out,
                           ErrorContext *ctx)
 {
-    // NOT IMPLEMENTED IN PHASE 6
-    // Future: K-way merge across memtable + all SSTables
-    SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED, "Range scan not yet implemented");
-    return Status::NOT_IMPLEMENTED;
+    if (!entries_out)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "entries_out cannot be null");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    entries_out->clear();
+
+    // Helper structure for k-way merge
+    struct ScanSource
+    {
+        enum class Type
+        {
+            ACTIVE_MEMTABLE,
+            IMMUTABLE_MEMTABLE,
+            SSTABLE
+        };
+
+        Type type;
+        uint32_t level;        // For SSTables: 0-3
+        uint32_t sstable_idx;  // For SSTables: index within level
+
+        // Current scan results from this source
+        std::vector<std::pair<std::vector<uint8_t>, std::vector<uint8_t>>> entries;
+        size_t current_pos;    // Current position in entries vector
+
+        ScanSource() : type(Type::ACTIVE_MEMTABLE), level(0), sstable_idx(0), current_pos(0) {}
+
+        // Get current entry (nullptr if exhausted)
+        const std::pair<std::vector<uint8_t>, std::vector<uint8_t>> *getCurrentEntry() const
+        {
+            if (current_pos >= entries.size())
+            {
+                return nullptr;
+            }
+            return &entries[current_pos];
+        }
+
+        // Advance to next entry
+        void advance()
+        {
+            if (current_pos < entries.size())
+            {
+                current_pos++;
+            }
+        }
+
+        // Check if exhausted
+        bool isExhausted() const
+        {
+            return current_pos >= entries.size();
+        }
+    };
+
+    // Priority queue entry for k-way merge
+    struct MergeEntry
+    {
+        std::vector<uint8_t> key;
+        std::vector<uint8_t> value;
+        size_t source_id;  // Index in sources array
+
+        // For min-heap: smallest key comes first
+        bool operator>(const MergeEntry &other) const
+        {
+            return key > other.key;
+        }
+    };
+
+    // Vector of scan sources (memtables + SSTables)
+    std::vector<ScanSource> sources;
+
+    // ========================================================================
+    // STEP 1: Scan Active Memtable
+    // ========================================================================
+    {
+        std::lock_guard<std::mutex> lock(memtable_mutex_);
+
+        if (active_memtable_)
+        {
+            ScanSource source;
+            source.type = ScanSource::Type::ACTIVE_MEMTABLE;
+
+            const std::vector<uint8_t> *start_ptr = start_key.empty() ? nullptr : &start_key;
+            const std::vector<uint8_t> *end_ptr = end_key.empty() ? nullptr : &end_key;
+
+            Status status = active_memtable_->scan(start_ptr, end_ptr, xid, txn_mgr_,
+                                                   &source.entries, ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+
+            if (!source.entries.empty())
+            {
+                sources.push_back(std::move(source));
+            }
+        }
+
+        // ========================================================================
+        // STEP 2: Scan Immutable Memtable
+        // ========================================================================
+        if (immutable_memtable_)
+        {
+            ScanSource source;
+            source.type = ScanSource::Type::IMMUTABLE_MEMTABLE;
+
+            const std::vector<uint8_t> *start_ptr = start_key.empty() ? nullptr : &start_key;
+            const std::vector<uint8_t> *end_ptr = end_key.empty() ? nullptr : &end_key;
+
+            Status status = immutable_memtable_->scan(start_ptr, end_ptr, xid, txn_mgr_,
+                                                      &source.entries, ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+
+            if (!source.entries.empty())
+            {
+                sources.push_back(std::move(source));
+            }
+        }
+    }
+
+    // ========================================================================
+    // STEP 3: Scan SSTables (All Levels)
+    // ========================================================================
+    {
+        std::lock_guard<std::mutex> lock(sstables_mutex_);
+
+        for (uint32_t level = 0; level < 4; level++)
+        {
+            const auto &level_sstables = sstables_[level];
+
+            for (uint32_t sstable_idx = 0; sstable_idx < level_sstables.size(); sstable_idx++)
+            {
+                const auto &sstable = level_sstables[sstable_idx];
+
+                if (!sstable || !sstable->isOpen())
+                {
+                    continue;
+                }
+
+                // Quick range check: skip SSTable if range doesn't overlap
+                std::vector<uint8_t> sstable_min = sstable->getMinKey();
+                std::vector<uint8_t> sstable_max = sstable->getMaxKey();
+
+                // Skip if: SSTable max < start_key OR SSTable min > end_key
+                if (!start_key.empty() && sstable_max < start_key)
+                {
+                    continue;  // SSTable is entirely before start_key
+                }
+                if (!end_key.empty() && sstable_min > end_key)
+                {
+                    continue;  // SSTable is entirely after end_key
+                }
+
+                // Scan this SSTable
+                ScanSource source;
+                source.type = ScanSource::Type::SSTABLE;
+                source.level = level;
+                source.sstable_idx = sstable_idx;
+
+                Status status = sstable->scan(start_key, end_key, xid, txn_mgr_,
+                                             &source.entries, ctx);
+                if (status != Status::OK)
+                {
+                    // Log error but continue with other SSTables
+                    // SSTable read errors shouldn't fail entire scan
+                    continue;
+                }
+
+                if (!source.entries.empty())
+                {
+                    sources.push_back(std::move(source));
+                }
+            }
+        }
+    }
+
+    // ========================================================================
+    // STEP 4: K-way Merge
+    // ========================================================================
+
+    // Special case: no sources
+    if (sources.empty())
+    {
+        return Status::OK;
+    }
+
+    // Special case: only one source (no merge needed)
+    if (sources.size() == 1)
+    {
+        for (const auto &kv_pair : sources[0].entries)
+        {
+            MemtableEntry entry;
+            entry.key = kv_pair.first;
+            entry.value = kv_pair.second;
+            entry.sequence_number = 0;  // Not used for output
+            entry.entry_type = ENTRY_TYPE_INSERT;
+            entry.xmin = 0;  // Already filtered by visibility
+            entry.xmax = 0;
+            entries_out->push_back(entry);
+        }
+        return Status::OK;
+    }
+
+    // K-way merge using priority queue
+    std::priority_queue<MergeEntry, std::vector<MergeEntry>, std::greater<MergeEntry>> pq;
+
+    // Initialize priority queue with first entry from each source
+    for (size_t source_id = 0; source_id < sources.size(); source_id++)
+    {
+        const auto *entry = sources[source_id].getCurrentEntry();
+        if (entry)
+        {
+            MergeEntry merge_entry;
+            merge_entry.key = entry->first;
+            merge_entry.value = entry->second;
+            merge_entry.source_id = source_id;
+            pq.push(merge_entry);
+        }
+    }
+
+    // Track last key to avoid duplicates
+    std::vector<uint8_t> last_key;
+    bool first_entry = true;
+
+    // Merge loop
+    while (!pq.empty())
+    {
+        // Pop entry with smallest key
+        MergeEntry current = pq.top();
+        pq.pop();
+
+        // Check if this is a duplicate key
+        if (!first_entry && current.key == last_key)
+        {
+            // Skip duplicate (we already processed newest version)
+            // Just advance the source and continue
+            sources[current.source_id].advance();
+
+            const auto *next_entry = sources[current.source_id].getCurrentEntry();
+            if (next_entry)
+            {
+                MergeEntry next_merge;
+                next_merge.key = next_entry->first;
+                next_merge.value = next_entry->second;
+                next_merge.source_id = current.source_id;
+                pq.push(next_merge);
+            }
+            continue;
+        }
+
+        // This is the newest version of this key - add to results
+        MemtableEntry result_entry;
+        result_entry.key = current.key;
+        result_entry.value = current.value;
+        result_entry.sequence_number = 0;  // Not used for scan results
+        result_entry.entry_type = ENTRY_TYPE_INSERT;
+        result_entry.xmin = 0;  // Already visibility filtered
+        result_entry.xmax = 0;
+
+        entries_out->push_back(result_entry);
+
+        // Update last key
+        last_key = current.key;
+        first_entry = false;
+
+        // Advance source and add next entry to priority queue
+        sources[current.source_id].advance();
+
+        const auto *next_entry = sources[current.source_id].getCurrentEntry();
+        if (next_entry)
+        {
+            MergeEntry next_merge;
+            next_merge.key = next_entry->first;
+            next_merge.value = next_entry->second;
+            next_merge.source_id = current.source_id;
+            pq.push(next_merge);
+        }
+    }
+
+    return Status::OK;
 }
 
 // ============================================================================

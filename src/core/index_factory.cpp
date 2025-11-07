@@ -62,8 +62,8 @@ Status IndexFactory::createIndex(
             auto btree = BTree::open(db, index_info.index_id, root_page, ctx);
             if (!btree)
             {
-                SET_ERROR_CONTEXT(ctx, Status::ERROR, "Failed to open newly created B-Tree");
-                return Status::ERROR;
+                SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to open newly created B-Tree");
+                return Status::IO_ERROR;
             }
 
             *index_out = btree.release();  // Transfer ownership to caller
@@ -78,9 +78,9 @@ Status IndexFactory::createIndex(
             // Create directory for LSM-Tree
             if (mkdir(index_path.c_str(), 0755) != 0 && errno != EEXIST)
             {
-                SET_ERROR_CONTEXT(ctx, Status::ERROR,
-                    "Failed to create LSM-Tree directory: " + std::string(strerror(errno)));
-                return Status::ERROR;
+                std::string error_msg = "Failed to create LSM-Tree directory: " + std::string(strerror(errno));
+                SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, error_msg.c_str());
+                return Status::IO_ERROR;
             }
 
             // Create LSM-Tree index
@@ -118,8 +118,8 @@ Status IndexFactory::createIndex(
         case CatalogManager::IndexType::HNSW:
         {
             // Other index types - not yet implemented
-            SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED,
-                "Index type not yet implemented: " + indexTypeToString(index_type));
+            std::string error_msg = "Index type not yet implemented: " + indexTypeToString(index_type);
+            SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED, error_msg.c_str());
             return Status::NOT_IMPLEMENTED;
         }
 
@@ -131,9 +131,11 @@ Status IndexFactory::createIndex(
         }
 
         default:
-            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
-                "Unknown index type: " + std::to_string(static_cast<uint8_t>(index_type)));
+        {
+            std::string error_msg = "Unknown index type: " + std::to_string(static_cast<uint8_t>(index_type));
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, error_msg.c_str());
             return Status::INVALID_ARGUMENT;
+        }
     }
 }
 
@@ -160,8 +162,8 @@ Status IndexFactory::openIndex(
             auto btree = BTree::open(db, index_info.index_id, index_info.root_page, ctx);
             if (!btree)
             {
-                SET_ERROR_CONTEXT(ctx, Status::ERROR, "Failed to open B-Tree index");
-                return Status::ERROR;
+                SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to open B-Tree index");
+                return Status::IO_ERROR;
             }
 
             *index_out = btree.release();  // Transfer ownership to caller
@@ -200,15 +202,17 @@ Status IndexFactory::openIndex(
         case CatalogManager::IndexType::COLUMNSTORE:
         case CatalogManager::IndexType::HNSW:
         {
-            SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED,
-                "Index type not yet implemented: " + indexTypeToString(index_type));
+            std::string error_msg = "Index type not yet implemented: " + indexTypeToString(index_type);
+            SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED, error_msg.c_str());
             return Status::NOT_IMPLEMENTED;
         }
 
         default:
-            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
-                "Unknown index type: " + std::to_string(static_cast<uint8_t>(index_type)));
+        {
+            std::string error_msg = "Unknown index type: " + std::to_string(static_cast<uint8_t>(index_type));
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, error_msg.c_str());
             return Status::INVALID_ARGUMENT;
+        }
     }
 }
 
@@ -280,8 +284,13 @@ std::string IndexFactory::generateIndexPath(
 
         // Format: <db_dir>/indexes/idx_<index_id_hex>
         char index_id_hex[33];  // 32 hex chars + null terminator
+        // Convert UUID bytes to hex string
         snprintf(index_id_hex, sizeof(index_id_hex),
-                 "%016lx%016lx", index_id.high, index_id.low);
+                 "%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x",
+                 index_id.bytes[0], index_id.bytes[1], index_id.bytes[2], index_id.bytes[3],
+                 index_id.bytes[4], index_id.bytes[5], index_id.bytes[6], index_id.bytes[7],
+                 index_id.bytes[8], index_id.bytes[9], index_id.bytes[10], index_id.bytes[11],
+                 index_id.bytes[12], index_id.bytes[13], index_id.bytes[14], index_id.bytes[15]);
 
         return db_dir + "/indexes/idx_" + std::string(index_id_hex);
     }
