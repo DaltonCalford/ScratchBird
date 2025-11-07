@@ -138,7 +138,9 @@ namespace scratchbird
          */
         struct SBHnswNode
         {
-            uint64_t node_tuple_id;    // Heap TID (stable reference)
+            // PHASE 1.5 TASK 1.5.2b: Migrated to GPID format for custom tablespace support
+            GPID node_gpid;            // Heap GPID (8 bytes)
+            uint16_t node_slot;        // Heap slot (2 bytes)
             uint16_t node_flags;       // Node flags (see HnswNodeFlags)
             uint16_t node_layer;       // Highest layer this node appears in
             uint16_t node_num_neighbors; // Number of neighbors
@@ -148,8 +150,12 @@ namespace scratchbird
             uint64_t node_xmin; // Transaction that created this node
             uint64_t node_xmax; // Transaction that deleted this node (0 if active)
 
+            // Helper to get/set TID
+            TID getTID() const { return TID(node_gpid, node_slot); }
+            void setTID(const TID &tid) { node_gpid = tid.gpid; node_slot = tid.slot; }
+
             // Variable-length data follows:
-            // - uint64_t neighbors[node_num_neighbors]  // Neighbor tuple IDs
+            // - uint64_t neighbors[node_num_neighbors]  // Neighbor TIDs (legacy format for internal use)
             // - uint8_t vector_data[node_vector_len]    // Encoded vector
             //
             // Access via:

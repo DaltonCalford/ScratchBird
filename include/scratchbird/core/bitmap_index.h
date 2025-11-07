@@ -265,20 +265,20 @@ namespace scratchbird
             RoaringBitmap(Database *db, uint32_t root_page);
             ~RoaringBitmap();
 
-            // Add a value to the bitmap
-            Status add(uint32_t value, ErrorContext *ctx = nullptr);
+            // Add a value to the bitmap (64-bit for GPID support)
+            Status add(uint64_t value, ErrorContext *ctx = nullptr);
 
             // Remove a value from the bitmap
-            Status remove(uint32_t value, ErrorContext *ctx = nullptr);
+            Status remove(uint64_t value, ErrorContext *ctx = nullptr);
 
             // Check if value exists
-            bool contains(uint32_t value, ErrorContext *ctx = nullptr);
+            bool contains(uint64_t value, ErrorContext *ctx = nullptr);
 
             // Get all values as a sorted vector
-            std::vector<uint32_t> toArray(ErrorContext *ctx = nullptr);
+            std::vector<uint64_t> toArray(ErrorContext *ctx = nullptr);
 
             // Cardinality (number of set bits)
-            uint32_t cardinality() const { return cardinality_; }
+            uint64_t cardinality() const { return cardinality_; }
 
             // Logical operations (static methods)
             static std::unique_ptr<RoaringBitmap> bitwiseAnd(
@@ -293,7 +293,7 @@ namespace scratchbird
 
             static std::unique_ptr<RoaringBitmap> bitwiseNot(
                 const RoaringBitmap &bitmap,
-                uint32_t universe_size,
+                uint64_t universe_size,
                 ErrorContext *ctx = nullptr);
 
         private:
@@ -301,17 +301,17 @@ namespace scratchbird
 
             struct Container
             {
-                uint16_t key;              // High 16 bits
+                uint64_t key;              // High 48 bits (for 64-bit TID support)
                 ContainerType type;
                 uint16_t num_values;
                 uint32_t page_number;
-                std::vector<uint16_t> array_data;  // For ARRAY containers
+                std::vector<uint16_t> array_data;  // For ARRAY containers (low 16 bits)
                 std::vector<uint64_t> bitset_data; // For BITSET containers (1024 uint64_t)
             };
 
-            Status loadContainer(uint16_t key, Container *container_out, ErrorContext *ctx);
+            Status loadContainer(uint64_t key, Container *container_out, ErrorContext *ctx);
             Status saveContainer(const Container &container, ErrorContext *ctx);
-            Container *findOrCreateContainer(uint16_t key, ErrorContext *ctx);
+            Container *findOrCreateContainer(uint64_t key, ErrorContext *ctx);
 
             static void containerAnd(const Container &lhs, const Container &rhs, Container *result);
             static void containerOr(const Container &lhs, const Container &rhs, Container *result);
@@ -320,7 +320,7 @@ namespace scratchbird
             Database *db_;
             BufferPool *buffer_pool_;
             uint32_t root_page_;
-            uint32_t cardinality_;
+            uint64_t cardinality_; // 64-bit for large indexes
 
             std::vector<Container> containers_; // In-memory container cache
         };
@@ -332,7 +332,7 @@ namespace scratchbird
             RoaringBitmapIterator(const RoaringBitmap &bitmap);
 
             bool hasNext() const;
-            uint32_t next();
+            uint64_t next(); // Returns 64-bit value
             void reset();
 
         private:

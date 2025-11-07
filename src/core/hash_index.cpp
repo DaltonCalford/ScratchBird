@@ -320,15 +320,7 @@ namespace scratchbird
         Status HashIndex::insert(const void *key_data, size_t key_len, const TID &tid,
                                  uint64_t xid, ErrorContext *ctx)
         {
-            // PHASE 1.5: Convert TID to legacy format for storage
-            uint64_t legacy_tid = convertTIDtoLegacy(tid);
-            if (legacy_tid == 0)
-            {
-                SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED,
-                                  "Custom tablespace indexes not yet supported in ALPHA");
-                return Status::NOT_IMPLEMENTED;
-            }
-
+            // PHASE 1.5: Now supports custom tablespaces via TID (GPID + slot)
             if (!key_data || key_len == 0)
             {
                 SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Invalid insert arguments");
@@ -362,13 +354,14 @@ namespace scratchbird
                 // Check if there's space in this page
                 if (bucket->hbp_entry_count < MAX_ENTRIES_PER_BUCKET)
                 {
-                    // Add entry (storing legacy format)
+                    // Add entry (storing TID with GPID support)
                     // Firebird MGA: Set xmin to creating transaction, xmax to 0 (not deleted)
                     HashEntry &entry = bucket->hbp_entries[bucket->hbp_entry_count];
                     entry.he_key_hash = hash;
-                    entry.he_tuple_id = legacy_tid;
-                    entry.he_xmin = xid;  // Transaction that created this entry
-                    entry.he_xmax = 0;    // Not deleted
+                    entry.setTID(tid);        // Store full TID (GPID + slot)
+                    entry.he_padding = 0;     // Clear padding
+                    entry.he_xmin = xid;      // Transaction that created this entry
+                    entry.he_xmax = 0;        // Not deleted
                     bucket->hbp_entry_count++;
 
                     buffer_pool_->unpinPage(current_page, true, ctx);
@@ -573,7 +566,7 @@ namespace scratchbird
             for (uint16_t i = 0; i < old_bucket->hbp_entry_count; i++)
             {
                 const HashEntry &entry = old_bucket->hbp_entries[i];
-                if (entry.he_tuple_id != 0) // Not deleted
+                if (entry.getTID() != INVALID_TID) // Not deleted
                 {
                     if (entry.he_key_hash & bit_mask)
                     {
@@ -711,7 +704,7 @@ namespace scratchbird
                     const HashEntry &entry = bucket->hbp_entries[i];
 
                     // Check if hash matches and entry is not deleted
-                    if (entry.he_key_hash == hash && entry.he_tuple_id != 0)
+                    if (entry.he_key_hash == hash && entry.getTID() != INVALID_TID)
                     {
                         // Firebird MGA: Check visibility using TIP-based visibility (NOT snapshots)
                         // If current_xid is 0, return all entries (used by VACUUM)
@@ -738,9 +731,8 @@ namespace scratchbird
 
                         if (visible)
                         {
-                            // Convert stored uint64_t to TID struct
-                            TID tid = convertLegacyTID(entry.he_tuple_id);
-                            results.push_back(tid);
+                            // Get TID from entry (GPID + slot)
+                            results.push_back(entry.getTID());
                         }
                     }
                 }
@@ -759,14 +751,7 @@ namespace scratchbird
                                  uint64_t xid, ErrorContext *ctx)
         {
             // PHASE 1.5: Convert TID to legacy format for comparison
-            uint64_t legacy_tid = convertTIDtoLegacy(tid);
-            if (legacy_tid == 0)
-            {
-                SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED,
-                                  "Custom tablespace indexes not yet supported in ALPHA");
-                return Status::NOT_IMPLEMENTED;
-            }
-
+            // PHASE 1.5: Now supports custom tablespaces via TID (GPID + slot)
             if (!key_data || key_len == 0)
             {
                 SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Invalid remove arguments");
@@ -803,7 +788,7 @@ namespace scratchbird
                 {
                     HashEntry &entry = bucket->hbp_entries[i];
 
-                    if (entry.he_key_hash == hash && entry.he_tuple_id == legacy_tid)
+                    if (entry.he_key_hash == hash && entry.getTID() == tid)
                     {
                         // Firebird MGA: Soft delete - set xmax instead of physical removal
                         // This allows transactions to still see the entry until their snapshot
@@ -925,7 +910,7 @@ namespace scratchbird
                             const HashEntry &entry = bucket->hbp_entries[read_idx];
 
                             // Keep non-deleted entries
-                            if (entry.he_tuple_id != 0)
+                            if (entry.getTID() != INVALID_TID)
                             {
                                 if (write_idx != read_idx)
                                 {
@@ -1037,17 +1022,9 @@ namespace scratchbird
                 return Status::OK;
             }
 
-            // PHASE 1.5: Convert TID structs to legacy format for lookup
-            // On-disk format still stores uint64_t, so we build a set of legacy TIDs
-            std::set<uint64_t> dead_set;
-            for (const TID &tid : dead_tids)
-            {
-                uint64_t legacy = convertTIDtoLegacy(tid);
-                if (legacy != 0)  // Skip custom tablespace TIDs (not supported in ALPHA)
-                {
-                    dead_set.insert(legacy);
-                }
-            }
+            // PHASE 1.5: Build set of dead TIDs for fast lookup
+            // Now supports custom tablespaces via TID (GPID + slot)
+            std::set<TID> dead_set(dead_tids.begin(), dead_tids.end());
 
             if (!buffer_pool_)
             {
@@ -1154,17 +1131,17 @@ namespace scratchbird
                     {
                         HashEntry &entry = bucket->hbp_entries[i];
 
-                        // Skip already deleted entries (he_tuple_id == 0)
-                        if (entry.he_tuple_id == 0)
+                        // Skip already deleted entries (INVALID_TID)
+                        if (entry.getTID() == INVALID_TID)
                         {
                             continue;
                         }
 
                         // Check if this tuple ID is in the dead set
-                        if (dead_set.find(entry.he_tuple_id) != dead_set.end())
+                        if (dead_set.find(entry.getTID()) != dead_set.end())
                         {
-                            // Mark entry as deleted by setting tuple_id to 0
-                            entry.he_tuple_id = 0;
+                            // Mark entry as deleted by setting to INVALID_TID
+                            entry.setTID(INVALID_TID);
                             entries_removed_this_page++;
                             deleted_count++;
                             page_modified = true;
@@ -1256,8 +1233,8 @@ namespace scratchbird
          * 3. For each bucket:
          *    a. Follow overflow chain (hbp_overflow_page)
          *    b. Scan all entries in bucket page
-         *    c. For each entry with he_tuple_id != 0:
-         *       - Extract GPID from legacy TID
+         *    c. For each non-deleted entry (getTID() != INVALID_TID):
+         *       - Extract GPID from entry
          *       - Check if GPID is in tid_mapping
          *       - If found, update with new GPID
          *    d. Mark page as dirty if any TIDs updated
@@ -1390,35 +1367,22 @@ namespace scratchbird
                     {
                         HashEntry &entry = bucket->hbp_entries[i];
 
-                        // Skip deleted entries (he_tuple_id == 0)
-                        if (entry.he_tuple_id == 0)
+                        // Skip deleted entries (invalid TID)
+                        if (entry.getTID() == INVALID_TID)
                         {
                             continue;
                         }
 
-                        // Extract GPID from legacy TID format
-                        uint64_t legacy_tid = entry.he_tuple_id;
-                        uint32_t page_id = static_cast<uint32_t>(legacy_tid >> 32);
-                        uint16_t item_id = static_cast<uint16_t>((legacy_tid >> 16) & 0xFFFF);
-                        GPID old_gpid = makeGPID(PRIMARY_TABLESPACE_ID, static_cast<uint64_t>(page_id));
+                        // Extract GPID from entry
+                        GPID old_gpid = entry.he_gpid;
 
                         // Check if this GPID was migrated
                         auto it = tid_mapping.find(old_gpid);
                         if (it != tid_mapping.end())
                         {
-                            // Found! Update TID with new GPID
+                            // Found! Update GPID (keep same slot)
                             GPID new_gpid = it->second;
-
-                            // Extract new page number from new GPID
-                            uint64_t new_page_number = getPageNumber(TID(new_gpid, 0));
-                            uint32_t new_page_id = static_cast<uint32_t>(new_page_number);
-
-                            // Construct new legacy TID with updated page_id
-                            uint64_t new_legacy_tid = (static_cast<uint64_t>(new_page_id) << 32) |
-                                                     (static_cast<uint64_t>(item_id) << 16);
-
-                            // Update the TID in-place
-                            entry.he_tuple_id = new_legacy_tid;
+                            entry.he_gpid = new_gpid;
                             tids_updated_this_page++;
                             page_modified = true;
                         }

@@ -173,7 +173,7 @@ namespace scratchbird
             uint8_t index_type_byte = 0xFF;  // 0xFF = default (BTREE)
             if (node->hasIndexType())
             {
-                std::string index_type_str = string_pool_.getString(node->indexType());
+                std::string index_type_str = std::string(string_pool_.get(node->indexType()));
                 auto index_type_opt = core::parseIndexType(index_type_str);
                 if (index_type_opt.has_value())
                 {

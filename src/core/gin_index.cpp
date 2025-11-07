@@ -312,7 +312,8 @@ namespace scratchbird
 
             // Add entry to tail page
             GinPendingEntry &entry = tail->gpp_entries[tail->gpp_entry_count];
-            entry.tid = tuple_id;
+            entry.setTID(convertLegacyTID(tuple_id)); // Convert legacy TID to GPID format
+            entry.padding = 0; // Clear padding
             entry.xmin = ConnectionContext::getCurrentTransactionId(); // Record inserting transaction
             // MEDIUM-4 FIX: Use sizeof(entry.key_data) instead of magic number 54 for maintainability
             entry.key_len = std::min(static_cast<uint16_t>(key.size()), static_cast<uint16_t>(sizeof(entry.key_data)));
@@ -419,8 +420,8 @@ namespace scratchbird
                             std::vector<uint8_t> entry_key(entry.key_data, entry.key_data + entry.key_len);
                             if (entry_key == key)
                             {
-                                // PHASE 1.5: Convert legacy tid to TID struct
-                                results.push_back(convertLegacyTID(entry.tid));
+                                // Get TID from entry (now uses GPID format)
+                                results.push_back(entry.getTID());
                             }
                         }
                     }
@@ -482,7 +483,8 @@ namespace scratchbird
                 for (uint16_t i = 0; i < pending->gpp_entry_count; i++)
                 {
                     PendingEntryWithKey entry;
-                    entry.tid = pending->gpp_entries[i].tid;
+                    // Convert GPID format to legacy uint64_t for internal processing
+                    entry.tid = convertTIDtoLegacy(pending->gpp_entries[i].getTID());
                     entry.key.assign(pending->gpp_entries[i].key_data,
                                      pending->gpp_entries[i].key_data + pending->gpp_entries[i].key_len);
                     all_entries.push_back(entry);
@@ -688,7 +690,8 @@ namespace scratchbird
                 // Uncompressed posting list - use existing logic
                 for (uint16_t i = 0; i < tid_count; i++)
                 {
-                    tids_out->push_back(list_page->gpl_data.gpl_entries[i].tid);
+                    // Convert GPID format to legacy uint64_t
+                    tids_out->push_back(convertTIDtoLegacy(list_page->gpl_data.gpl_entries[i].getTID()));
                 }
             }
 
@@ -801,7 +804,8 @@ namespace scratchbird
                 // Read uncompressed TIDs
                 for (uint16_t i = 0; i < current_count; i++)
                 {
-                    tids.push_back(list_page->gpl_data.gpl_entries[i].tid);
+                    // Convert GPID format to legacy uint64_t
+                    tids.push_back(convertTIDtoLegacy(list_page->gpl_data.gpl_entries[i].getTID()));
                 }
             }
 
@@ -861,7 +865,8 @@ namespace scratchbird
 
                 for (size_t i = 0; i < tids.size(); i++)
                 {
-                    list_page->gpl_data.gpl_entries[i].tid = tids[i];
+                    // Convert legacy uint64_t to GPID format
+                    list_page->gpl_data.gpl_entries[i].setTID(convertLegacyTID(tids[i]));
                 }
             }
 
@@ -919,7 +924,8 @@ namespace scratchbird
                 // Read uncompressed TIDs
                 for (uint16_t i = 0; i < tid_count; i++)
                 {
-                    tids.push_back(list_page->gpl_data.gpl_entries[i].tid);
+                    // Convert GPID format to legacy uint64_t for internal processing
+                    tids.push_back(convertTIDtoLegacy(list_page->gpl_data.gpl_entries[i].getTID()));
                 }
             }
 
@@ -953,10 +959,10 @@ namespace scratchbird
             leaf->gpt_next_leaf = 0;
             leaf->gpt_entry_count = tid_count;
 
-            // Copy TIDs to leaf
+            // Copy TIDs to leaf (convert legacy uint64_t to GPID format)
             for (uint16_t i = 0; i < tid_count; i++)
             {
-                leaf->gpt_tids[i] = tids[i];
+                leaf->gpt_tids[i].setTID(convertLegacyTID(tids[i]));
             }
 
             buffer_pool_->unpinPage(leaf_page, true, ctx);
@@ -1014,7 +1020,9 @@ namespace scratchbird
                 while (left <= right)
                 {
                     int32_t mid = (left + right) / 2;
-                    if (tid < internal->gpt_entries[mid].separator_tid)
+                    // Convert GPID separator to legacy for comparison
+                    uint64_t separator = convertTIDtoLegacy(internal->gpt_entries[mid].getSeparatorTID());
+                    if (tid < separator)
                     {
                         right = mid - 1;
                         child_idx = mid;
@@ -1109,9 +1117,10 @@ namespace scratchbird
                 root->gpt_is_leaf = 0;
                 root->gpt_entry_count = 2;
 
-                root->gpt_entries[0].separator_tid = separator_tid;
+                // Convert legacy TID to GPID format for separator
+                root->gpt_entries[0].setSeparatorTID(convertLegacyTID(separator_tid));
                 root->gpt_entries[0].child_page = leaf_page;
-                root->gpt_entries[1].separator_tid = UINT64_MAX;
+                root->gpt_entries[1].setSeparatorTID(convertLegacyTID(UINT64_MAX));
                 root->gpt_entries[1].child_page = new_sibling;
 
                 buffer_pool_->unpinPage(new_root, true, ctx);
@@ -1145,10 +1154,13 @@ namespace scratchbird
 
             auto *leaf = reinterpret_cast<SBGinPostingTreeLeaf *>(leaf_data);
 
+            // Convert legacy TID to GPID for comparison/storage
+            TID tid_struct = convertLegacyTID(tid);
+
             // Check for duplicate
             for (uint16_t i = 0; i < leaf->gpt_entry_count; i++)
             {
-                if (leaf->gpt_tids[i] == tid)
+                if (leaf->gpt_tids[i].getTID() == tid_struct)
                 {
                     buffer_pool_->unpinPage(leaf_page, false, ctx);
                     return Status::OK; // Already exists
@@ -1164,8 +1176,11 @@ namespace scratchbird
 
             // Find insertion position (maintain sorted order)
             uint16_t insert_pos = 0;
-            while (insert_pos < leaf->gpt_entry_count && leaf->gpt_tids[insert_pos] < tid)
+            while (insert_pos < leaf->gpt_entry_count)
             {
+                uint64_t existing_tid = convertTIDtoLegacy(leaf->gpt_tids[insert_pos].getTID());
+                if (existing_tid >= tid)
+                    break;
                 insert_pos++;
             }
 
@@ -1174,10 +1189,10 @@ namespace scratchbird
             {
                 std::memmove(&leaf->gpt_tids[insert_pos + 1],
                              &leaf->gpt_tids[insert_pos],
-                             (leaf->gpt_entry_count - insert_pos) * sizeof(uint64_t));
+                             (leaf->gpt_entry_count - insert_pos) * sizeof(GinPostingEntry));
             }
 
-            leaf->gpt_tids[insert_pos] = tid;
+            leaf->gpt_tids[insert_pos].setTID(tid_struct);
             leaf->gpt_entry_count++;
 
             buffer_pool_->unpinPage(leaf_page, true, ctx);
@@ -1231,7 +1246,7 @@ namespace scratchbird
             uint16_t move_count = leaf->gpt_entry_count - split_point;
 
             std::memcpy(sibling->gpt_tids, &leaf->gpt_tids[split_point],
-                        move_count * sizeof(uint64_t));
+                        move_count * sizeof(GinPostingEntry));
             sibling->gpt_entry_count = move_count;
 
             // Update original leaf
@@ -1241,8 +1256,8 @@ namespace scratchbird
             sibling->gpt_next_leaf = leaf->gpt_next_leaf;
             leaf->gpt_next_leaf = new_sibling;
 
-            // Separator is the first key of the new sibling
-            *separator_tid_out = sibling->gpt_tids[0];
+            // Separator is the first key of the new sibling (convert GPID to legacy)
+            *separator_tid_out = convertTIDtoLegacy(sibling->gpt_tids[0].getTID());
             *new_sibling_out = new_sibling;
 
             buffer_pool_->unpinPage(leaf_page, true, ctx);
@@ -1278,12 +1293,15 @@ namespace scratchbird
             while (left <= right)
             {
                 int32_t mid = (left + right) / 2;
-                if (leaf->gpt_tids[mid] == tid)
+                // Convert GPID to legacy for comparison
+                uint64_t mid_tid = convertTIDtoLegacy(leaf->gpt_tids[mid].getTID());
+
+                if (mid_tid == tid)
                 {
                     found = true;
                     break;
                 }
-                else if (leaf->gpt_tids[mid] < tid)
+                else if (mid_tid < tid)
                 {
                     left = mid + 1;
                 }
@@ -1340,10 +1358,10 @@ namespace scratchbird
 
                 auto *leaf = reinterpret_cast<SBGinPostingTreeLeaf *>(leaf_data);
 
-                // Add all TIDs from this leaf
+                // Add all TIDs from this leaf (convert GPID to legacy)
                 for (uint16_t i = 0; i < leaf->gpt_entry_count; i++)
                 {
-                    tids_out->push_back(leaf->gpt_tids[i]);
+                    tids_out->push_back(convertTIDtoLegacy(leaf->gpt_tids[i].getTID()));
                 }
 
                 uint64_t next_leaf = leaf->gpt_next_leaf;
@@ -1382,9 +1400,12 @@ namespace scratchbird
 
             // Find insertion position
             uint16_t insert_pos = 0;
-            while (insert_pos < internal->gpt_entry_count &&
-                   internal->gpt_entries[insert_pos].separator_tid < separator_tid)
+            while (insert_pos < internal->gpt_entry_count)
             {
+                // Convert GPID separator to legacy for comparison
+                uint64_t current_sep = convertTIDtoLegacy(internal->gpt_entries[insert_pos].getSeparatorTID());
+                if (current_sep >= separator_tid)
+                    break;
                 insert_pos++;
             }
 
@@ -1396,7 +1417,8 @@ namespace scratchbird
                              (internal->gpt_entry_count - insert_pos) * sizeof(GinPostingTreeInternalEntry));
             }
 
-            internal->gpt_entries[insert_pos].separator_tid = separator_tid;
+            // Convert legacy TID to GPID format for separator
+            internal->gpt_entries[insert_pos].setSeparatorTID(convertLegacyTID(separator_tid));
             internal->gpt_entries[insert_pos].child_page = child_page;
             internal->gpt_entry_count++;
 
@@ -1457,8 +1479,8 @@ namespace scratchbird
             // Update original internal node
             internal->gpt_entry_count = split_point;
 
-            // Separator is the first key of the new sibling
-            *separator_tid_out = sibling->gpt_entries[0].separator_tid;
+            // Separator is the first key of the new sibling (convert GPID to legacy)
+            *separator_tid_out = convertTIDtoLegacy(sibling->gpt_entries[0].getSeparatorTID());
             *new_sibling_out = new_sibling;
 
             buffer_pool_->unpinPage(internal_page, true, ctx);
@@ -3674,22 +3696,25 @@ namespace scratchbird
                 bool page_modified = false;
 
                 // Scan entries in this page
-                // We mark entries as deleted by setting tid = 0
+                // We mark entries as deleted by setting tid = INVALID_TID
                 for (uint16_t i = 0; i < entry_count && i < MAX_PENDING_ENTRIES_PER_PAGE; i++)
                 {
                     GinPendingEntry &entry = pending_page->gpp_entries[i];
 
+                    // Convert GPID to legacy format for comparison
+                    uint64_t entry_tid = convertTIDtoLegacy(entry.getTID());
+
                     // Check if already deleted (tid == 0)
-                    if (entry.tid == 0)
+                    if (entry_tid == 0)
                     {
                         continue;
                     }
 
                     // Check if this TID is in the dead set
-                    if (dead_set.find(entry.tid) != dead_set.end())
+                    if (dead_set.find(entry_tid) != dead_set.end())
                     {
-                        // Mark as deleted
-                        entry.tid = 0;
+                        // Mark as deleted by setting to INVALID_TID
+                        entry.setTID(INVALID_TID);
                         pending_entries_removed++;
                         page_modified = true;
                     }
@@ -3850,19 +3875,22 @@ namespace scratchbird
                 {
                     GinPendingEntry &entry = pending_page->gpp_entries[i];
 
+                    // Convert GPID to legacy for lookup
+                    uint64_t old_tid = convertTIDtoLegacy(entry.getTID());
+
                     // Skip deleted entries (tid == 0)
-                    if (entry.tid == 0)
+                    if (old_tid == 0)
                     {
                         continue;
                     }
 
                     // Look up in mapping
-                    auto it = tid_mapping.find(entry.tid);
+                    auto it = tid_mapping.find(old_tid);
                     if (it != tid_mapping.end())
                     {
                         // Found mapping - update TID
                         uint64_t new_tid = it->second;
-                        entry.tid = new_tid;
+                        entry.setTID(convertLegacyTID(new_tid));
 
                         total_tids_updated++;
                         page_modified = true;
@@ -4036,13 +4064,14 @@ namespace scratchbird
 
                             for (uint16_t i = 0; i < tid_count && i < MAX_POSTING_TREE_LEAF_TIDS; i++)
                             {
-                                uint64_t old_tid = leaf->gpt_tids[i];
+                                // Convert GPID to legacy for lookup
+                                uint64_t old_tid = convertTIDtoLegacy(leaf->gpt_tids[i].getTID());
 
                                 auto it = tid_mapping.find(old_tid);
                                 if (it != tid_mapping.end())
                                 {
                                     uint64_t new_tid = it->second;
-                                    leaf->gpt_tids[i] = new_tid;
+                                    leaf->gpt_tids[i].setTID(convertLegacyTID(new_tid));
 
                                     total_tids_updated++;
                                     tree_page_modified = true;
@@ -4101,13 +4130,14 @@ namespace scratchbird
 
                     for (uint16_t i = 0; i < entry_count && i < MAX_POSTING_ENTRIES_PER_PAGE; i++)
                     {
-                        uint64_t old_tid = posting_page->gpl_data.gpl_entries[i].tid;
+                        // Convert GPID to legacy for lookup
+                        uint64_t old_tid = convertTIDtoLegacy(posting_page->gpl_data.gpl_entries[i].getTID());
 
                         auto it = tid_mapping.find(old_tid);
                         if (it != tid_mapping.end())
                         {
                             uint64_t new_tid = it->second;
-                            posting_page->gpl_data.gpl_entries[i].tid = new_tid;
+                            posting_page->gpl_data.gpl_entries[i].setTID(convertLegacyTID(new_tid));
 
                             total_tids_updated++;
                             page_modified = true;

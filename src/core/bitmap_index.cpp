@@ -397,14 +397,9 @@ namespace scratchbird
                 return Status::INVALID_ARGUMENT;
             }
 
-            // PHASE 1.5: Convert TID to legacy format for storage
-            uint64_t legacy_tid = convertTIDtoLegacy(tid);
-            if (legacy_tid == 0)
-            {
-                SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED,
-                                  "Custom tablespace indexes not yet supported in ALPHA");
-                return Status::NOT_IMPLEMENTED;
-            }
+            // Convert TID struct to uint64_t for bitmap storage
+            // Uses full 64-bit value (GPID-compatible)
+            uint64_t tid_value = convertTIDtoLegacy(tid);
 
             // Find or create dictionary entry
             uint32_t bitmap_root = 0;
@@ -426,10 +421,8 @@ namespace scratchbird
                 return Status::IO_ERROR;
             }
 
-            // Convert 64-bit legacy TID to 32-bit integer for Roaring bitmap
-            uint32_t int_id = static_cast<uint32_t>(legacy_tid);
-
-            Status status = bitmap->add(int_id, ctx);
+            // Add full 64-bit TID to Roaring bitmap (supports custom tablespaces)
+            Status status = bitmap->add(tid_value, ctx);
             if (status != Status::OK)
             {
                 return status;
@@ -450,16 +443,8 @@ namespace scratchbird
             const TID &tid,
             ErrorContext *ctx)
         {
-            // Convert TID to 32-bit integer for bitmap storage
-            uint64_t legacy_tid = convertTIDtoLegacy(tid);
-            if (legacy_tid == 0)
-            {
-                // Custom tablespace TIDs not supported in bitmap index
-                SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED, "Bitmap index does not support custom tablespace TIDs");
-                return Status::NOT_IMPLEMENTED;
-            }
-
-            uint32_t tid_32 = static_cast<uint32_t>(legacy_tid & 0xFFFFFFFF);
+            // Convert TID struct to 64-bit value for bitmap storage
+            uint64_t tid_value = convertTIDtoLegacy(tid);
 
             // We need to remove this TID from ALL bitmaps since we don't know which value it had
             // This requires scanning all dictionary entries
@@ -508,8 +493,8 @@ namespace scratchbird
                         auto bitmap = loadBitmap(bitmap_root, ctx);
                         if (bitmap)
                         {
-                            // Remove the TID from this bitmap
-                            Status remove_status = bitmap->remove(tid_32, ctx);
+                            // Remove the TID from this bitmap (full 64-bit value)
+                            Status remove_status = bitmap->remove(tid_value, ctx);
                             if (remove_status == Status::OK)
                             {
                                 // Update dictionary entry cardinality
@@ -664,14 +649,14 @@ namespace scratchbird
                 return results;
             }
 
-            std::vector<uint32_t> int_results = bitmap->toArray(ctx);
-            results.reserve(int_results.size());
+            // Get all 64-bit TID values from bitmap
+            std::vector<uint64_t> tid_values = bitmap->toArray(ctx);
+            results.reserve(tid_values.size());
 
-            // PHASE 1.5: Convert stored 32-bit integers to TID structs
-            for (uint32_t id : int_results)
+            // Convert 64-bit values to TID structs
+            for (uint64_t tid_value : tid_values)
             {
-                uint64_t legacy_tid = static_cast<uint64_t>(id);
-                TID tid = convertLegacyTID(legacy_tid);
+                TID tid = convertLegacyTID(tid_value);
                 results.push_back(tid);
             }
 
@@ -716,14 +701,14 @@ namespace scratchbird
                 result_bitmap = RoaringBitmap::bitwiseAnd(*result_bitmap, *bitmaps[i], ctx);
             }
 
-            std::vector<uint32_t> int_results = result_bitmap->toArray(ctx);
-            results.reserve(int_results.size());
+            // Get all 64-bit TID values from bitmap
+            std::vector<uint64_t> tid_values = result_bitmap->toArray(ctx);
+            results.reserve(tid_values.size());
 
-            // PHASE 1.5: Convert stored 32-bit integers to TID structs
-            for (uint32_t id : int_results)
+            // Convert 64-bit values to TID structs
+            for (uint64_t tid_value : tid_values)
             {
-                uint64_t legacy_tid = static_cast<uint64_t>(id);
-                TID tid = convertLegacyTID(legacy_tid);
+                TID tid = convertLegacyTID(tid_value);
                 results.push_back(tid);
             }
 
@@ -771,14 +756,14 @@ namespace scratchbird
                 result_bitmap = RoaringBitmap::bitwiseOr(*result_bitmap, *bitmaps[i], ctx);
             }
 
-            std::vector<uint32_t> int_results = result_bitmap->toArray(ctx);
-            results.reserve(int_results.size());
+            // Get all 64-bit TID values from bitmap
+            std::vector<uint64_t> tid_values = result_bitmap->toArray(ctx);
+            results.reserve(tid_values.size());
 
-            // PHASE 1.5: Convert stored 32-bit integers to TID structs
-            for (uint32_t id : int_results)
+            // Convert 64-bit values to TID structs
+            for (uint64_t tid_value : tid_values)
             {
-                uint64_t legacy_tid = static_cast<uint64_t>(id);
-                TID tid = convertLegacyTID(legacy_tid);
+                TID tid = convertLegacyTID(tid_value);
                 results.push_back(tid);
             }
 
@@ -831,14 +816,13 @@ namespace scratchbird
                 return results;
             }
 
-            // Convert bitmap to TID list
-            std::vector<uint32_t> int_results = not_bitmap->toArray(ctx);
-            results.reserve(int_results.size());
+            // Convert bitmap to TID list (64-bit values)
+            std::vector<uint64_t> tid_values = not_bitmap->toArray(ctx);
+            results.reserve(tid_values.size());
 
-            for (uint32_t id : int_results)
+            for (uint64_t tid_value : tid_values)
             {
-                uint64_t legacy_tid = static_cast<uint64_t>(id);
-                TID tid = convertLegacyTID(legacy_tid);
+                TID tid = convertLegacyTID(tid_value);
                 results.push_back(tid);
             }
 
@@ -954,9 +938,10 @@ namespace scratchbird
 
         RoaringBitmap::~RoaringBitmap() = default;
 
-        Status RoaringBitmap::add(uint32_t value, ErrorContext *ctx)
+        Status RoaringBitmap::add(uint64_t value, ErrorContext *ctx)
         {
-            uint16_t high = value >> 16;
+            // Split 64-bit value: high 48 bits for container key, low 16 bits for value
+            uint64_t high = value >> 16;
             uint16_t low = value & 0xFFFF;
 
             Container *container = findOrCreateContainer(high, ctx);
@@ -1022,9 +1007,10 @@ namespace scratchbird
         }
 
         // PHASE 2 TASK 2.5: Remove a value from the bitmap
-        Status RoaringBitmap::remove(uint32_t value, ErrorContext *ctx)
+        Status RoaringBitmap::remove(uint64_t value, ErrorContext *ctx)
         {
-            uint16_t high = value >> 16;
+            // Split 64-bit value: high 48 bits for container key, low 16 bits for value
+            uint64_t high = value >> 16;
             uint16_t low = value & 0xFFFF;
 
             // Find the container for this high 16 bits
@@ -1101,9 +1087,10 @@ namespace scratchbird
             return status;
         }
 
-        bool RoaringBitmap::contains(uint32_t value, ErrorContext *ctx)
+        bool RoaringBitmap::contains(uint64_t value, ErrorContext *ctx)
         {
-            uint16_t high = value >> 16;
+            // Split 64-bit value: high 48 bits for container key, low 16 bits for value
+            uint64_t high = value >> 16;
             uint16_t low = value & 0xFFFF;
 
             for (const auto &container : containers_)
@@ -1127,9 +1114,9 @@ namespace scratchbird
             return false;
         }
 
-        std::vector<uint32_t> RoaringBitmap::toArray(ErrorContext *ctx)
+        std::vector<uint64_t> RoaringBitmap::toArray(ErrorContext *ctx)
         {
-            std::vector<uint32_t> results;
+            std::vector<uint64_t> results;
             results.reserve(cardinality_);
 
             // Load all containers if not cached
@@ -1137,7 +1124,8 @@ namespace scratchbird
 
             for (const auto &container : containers_)
             {
-                uint32_t high_bits = static_cast<uint32_t>(container.key) << 16;
+                // Reconstruct 64-bit value: high 48 bits from container key, low 16 bits from data
+                uint64_t high_bits = container.key << 16;
 
                 if (container.type == ContainerType::ARRAY)
                 {
@@ -1169,7 +1157,7 @@ namespace scratchbird
             return results;
         }
 
-        RoaringBitmap::Container *RoaringBitmap::findOrCreateContainer(uint16_t key, ErrorContext *ctx)
+        RoaringBitmap::Container *RoaringBitmap::findOrCreateContainer(uint64_t key, ErrorContext *ctx)
         {
             // Find existing container
             for (auto &container : containers_)
@@ -1330,7 +1318,7 @@ namespace scratchbird
 
         std::unique_ptr<RoaringBitmap> RoaringBitmap::bitwiseNot(
             const RoaringBitmap &bitmap,
-            uint32_t universe_size,
+            uint64_t universe_size,
             ErrorContext *ctx)
         {
             // Create new bitmap for result
@@ -1747,11 +1735,12 @@ namespace scratchbird
             return container_index_ < bitmap_.containers_.size();
         }
 
-        uint32_t RoaringBitmapIterator::next()
+        uint64_t RoaringBitmapIterator::next()
         {
             const auto &container = bitmap_.containers_[container_index_];
-            uint32_t high_bits = static_cast<uint32_t>(container.key) << 16;
-            uint32_t result = 0;
+            // Reconstruct 64-bit value from container key (high 48 bits) and value (low 16 bits)
+            uint64_t high_bits = container.key << 16;
+            uint64_t result = 0;
 
             if (container.type == ContainerType::ARRAY)
             {

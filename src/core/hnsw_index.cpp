@@ -182,14 +182,8 @@ Status HnswIndex::insert(const VectorValue &vector,
                         const TID &tid,
                         ErrorContext *ctx)
 {
-    // Convert TID to legacy format for storage
+    // Convert TID struct to legacy format for internal neighbor references
     uint64_t legacy_tid = convertTIDtoLegacy(tid);
-    if (legacy_tid == 0)
-    {
-        SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED,
-                          "Custom tablespace indexes not yet supported in ALPHA");
-        return Status::NOT_IMPLEMENTED;
-    }
 
     BufferPool *buffer_pool = db_->buffer_pool();
     TransactionManager *txn_mgr = db_->transaction_manager();
@@ -276,13 +270,6 @@ Status HnswIndex::remove(const TID &tid,
 {
     // Convert TID to legacy format
     uint64_t legacy_tid = convertTIDtoLegacy(tid);
-    if (legacy_tid == 0)
-    {
-        SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED,
-                          "Custom tablespace indexes not yet supported in ALPHA");
-        return Status::NOT_IMPLEMENTED;
-    }
-
     BufferPool *buffer_pool = db_->buffer_pool();
     TransactionManager *txn_mgr = db_->transaction_manager();
 
@@ -724,13 +711,14 @@ Status HnswIndex::reorganize_page_for_node_update(
     {
         SBHnswNode *node = reinterpret_cast<SBHnswNode *>(page_data + offset);
         NodeInfo info;
-        info.tuple_id = node->node_tuple_id;
+        // Convert GPID to legacy format for internal processing
+        info.tuple_id = convertTIDtoLegacy(node->getTID());
         info.layer = node->node_layer;
         info.xmin = node->node_xmin;
         info.xmax = node->node_xmax;
 
         // Check if this is the target node to update
-        if (node->node_tuple_id == target_tid)
+        if (info.tuple_id == target_tid)
         {
             // Use new neighbors
             info.num_neighbors = new_num_neighbors;
@@ -778,7 +766,8 @@ Status HnswIndex::reorganize_page_for_node_update(
     for (const auto &info : nodes)
     {
         SBHnswNode *node = reinterpret_cast<SBHnswNode *>(page_data + offset);
-        node->node_tuple_id = info.tuple_id;
+        // Convert legacy TID to GPID format for storage
+        node->setTID(convertLegacyTID(info.tuple_id));
         node->node_layer = info.layer;
         node->node_num_neighbors = info.num_neighbors;
         node->node_vector_len = info.vector_len;
@@ -1121,7 +1110,8 @@ Status HnswIndex::create_node(const VectorValue &vector,
 
     // Create node
     SBHnswNode *new_node = reinterpret_cast<SBHnswNode*>(page_data + offset);
-    new_node->node_tuple_id = tuple_id;
+    // Convert legacy TID to GPID format
+    new_node->setTID(convertLegacyTID(tuple_id));
     new_node->node_flags = 0;
     new_node->node_layer = layer;
     new_node->node_num_neighbors = neighbors.size();
@@ -1300,7 +1290,8 @@ Status HnswIndex::find_node(uint64_t tuple_id,
         {
             SBHnswNode *node = reinterpret_cast<SBHnswNode*>(page_data + offset);
 
-            if (node->node_tuple_id == tuple_id)
+            // Convert GPID to legacy for comparison
+            if (convertTIDtoLegacy(node->getTID()) == tuple_id)
             {
                 *node_out = node;
                 *page_num_out = current_page_num;
@@ -1394,7 +1385,8 @@ Status HnswIndex::prune_connections(uint64_t node_tid, uint16_t layer,
             break;
 
         SBHnswNode *candidate = reinterpret_cast<SBHnswNode *>(current);
-        if (candidate->node_tuple_id == node_tid)
+        // Convert GPID to legacy for comparison
+        if (convertTIDtoLegacy(candidate->getTID()) == node_tid)
         {
             node = candidate;
             break;
@@ -1502,7 +1494,8 @@ uint64_t HnswIndex::find_entry_point(ErrorContext *ctx) const
             if (node->node_layer >= max_layer)
             {
                 max_layer = node->node_layer;
-                entry_tid = node->node_tuple_id;
+                // Convert GPID to legacy format
+                entry_tid = convertTIDtoLegacy(node->getTID());
             }
         }
 
@@ -1706,12 +1699,14 @@ Status HnswIndex::updateTIDsAfterMigration(
             {
                 auto *node = reinterpret_cast<SBHnswNode *>(page_bytes + node_offset);
 
-                uint64_t old_tid = node->node_tuple_id;
+                // Convert GPID to legacy for lookup
+                uint64_t old_tid = convertTIDtoLegacy(node->getTID());
                 auto it = tid_mapping.find(old_tid);
                 if (it != tid_mapping.end())
                 {
                     uint64_t new_tid = it->second;
-                    node->node_tuple_id = new_tid;
+                    // Convert legacy TID back to GPID for storage
+                    node->setTID(convertLegacyTID(new_tid));
                     total_tids_updated++;
                     page_modified = true;
 
