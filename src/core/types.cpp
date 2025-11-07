@@ -3,6 +3,7 @@
 #include "scratchbird/core/tsvector.h"
 #include "scratchbird/core/tsquery.h"
 #include "scratchbird/core/range.h"
+#include "scratchbird/core/vector.h"
 #include <cstring>
 #include <cmath>
 #include <sstream>
@@ -15,6 +16,59 @@ namespace scratchbird::core
 {
     // Thread-local timezone manager for formatting
     static thread_local TimezoneManager g_tz_manager;
+
+    // ===== VariantValue Implementation =====
+
+    bool VariantValue::operator==(const VariantValue& other) const
+    {
+        if (actual_type != other.actual_type) {
+            return false;
+        }
+
+        if (!value || !other.value) {
+            // If either is null pointer
+            return value == other.value;
+        }
+
+        // Deep comparison of TypedValue
+        auto cmp = value->equals(*other.value);
+        return cmp.has_value() && cmp.value();
+    }
+
+    // ===== CompositeValue Implementation =====
+
+    bool CompositeValue::operator==(const CompositeValue& other) const
+    {
+        if (field_names.size() != other.field_names.size()) {
+            return false;
+        }
+
+        // Compare field names
+        for (size_t i = 0; i < field_names.size(); ++i) {
+            if (field_names[i] != other.field_names[i]) {
+                return false;
+            }
+        }
+
+        // Compare field values
+        for (size_t i = 0; i < field_values.size(); ++i) {
+            if (!field_values[i] || !other.field_values[i]) {
+                // If either is null pointer
+                if (field_values[i] != other.field_values[i]) {
+                    return false;
+                }
+                continue;
+            }
+
+            // Deep comparison of TypedValue
+            auto cmp = field_values[i]->equals(*other.field_values[i]);
+            if (!cmp.has_value() || !cmp.value()) {
+                return false;
+            }
+        }
+
+        return true;
+    }
 
     // ===== TypedValue Implementation =====
 
@@ -266,6 +320,68 @@ namespace scratchbird::core
     TypedValue TypedValue::makeMacAddr8(const MacAddr8 &v)
     {
         return TypedValue(DataType::MACADDR8, v);
+    }
+
+    TypedValue TypedValue::makeComposite(const CompositeValue &v)
+    {
+        return TypedValue(DataType::COMPOSITE, v);
+    }
+
+    TypedValue TypedValue::makeComposite(std::vector<std::string> field_names,
+                                        std::vector<TypedValue> field_values)
+    {
+        if (field_names.size() != field_values.size()) {
+            throw std::invalid_argument("Field names and values count mismatch");
+        }
+
+        // Convert TypedValue vector to shared_ptr vector
+        std::vector<std::shared_ptr<TypedValue>> shared_values;
+        shared_values.reserve(field_values.size());
+        for (auto& val : field_values) {
+            shared_values.push_back(std::make_shared<TypedValue>(std::move(val)));
+        }
+
+        CompositeValue composite(std::move(field_names), std::move(shared_values));
+        return TypedValue(DataType::COMPOSITE, std::move(composite));
+    }
+
+    TypedValue TypedValue::makeVector(const VectorValue &v)
+    {
+        return TypedValue(DataType::VECTOR, std::make_shared<VectorValue>(v));
+    }
+
+    TypedValue TypedValue::makeVector(std::shared_ptr<VectorValue> v)
+    {
+        return TypedValue(DataType::VECTOR, v);
+    }
+
+    TypedValue TypedValue::makeVector(const std::vector<float> &values)
+    {
+        return TypedValue(DataType::VECTOR, std::make_shared<VectorValue>(values));
+    }
+
+    TypedValue TypedValue::makeVector(const std::vector<double> &values)
+    {
+        return TypedValue(DataType::VECTOR, std::make_shared<VectorValue>(values));
+    }
+
+    TypedValue TypedValue::makeVariant(const VariantValue &v)
+    {
+        return TypedValue(DataType::VARIANT, v);
+    }
+
+    TypedValue TypedValue::makeVariant(const TypedValue &value)
+    {
+        // Wrap the value in a VariantValue with its actual type
+        VariantValue variant(value.type(), std::make_shared<TypedValue>(value));
+        return TypedValue(DataType::VARIANT, std::move(variant));
+    }
+
+    TypedValue TypedValue::makeVariant(DataType actual_type, const TypedValue &value)
+    {
+        // Wrap the value with an explicit type tag
+        VariantValue variant(actual_type, std::make_shared<TypedValue>(value));
+        return TypedValue(DataType::VARIANT, std::move(variant));
     }
 
     // Type extraction
@@ -543,6 +659,229 @@ namespace scratchbird::core
         return std::get<MacAddr8>(data_);
     }
 
+    const CompositeValue& TypedValue::getComposite() const
+    {
+        if (type_ != DataType::COMPOSITE)
+            throw std::runtime_error("Type mismatch: not COMPOSITE");
+        return std::get<CompositeValue>(data_);
+    }
+
+    TypedValue TypedValue::getField(const std::string& field_name) const
+    {
+        if (type_ != DataType::COMPOSITE)
+            throw std::runtime_error("Type mismatch: not COMPOSITE");
+
+        const auto& composite = std::get<CompositeValue>(data_);
+
+        // Find field by name
+        for (size_t i = 0; i < composite.field_names.size(); ++i) {
+            if (composite.field_names[i] == field_name) {
+                return *composite.field_values[i];
+            }
+        }
+
+        throw std::runtime_error("Field not found: " + field_name);
+    }
+
+    bool TypedValue::hasField(const std::string& field_name) const
+    {
+        if (type_ != DataType::COMPOSITE)
+            return false;
+
+        const auto& composite = std::get<CompositeValue>(data_);
+
+        for (const auto& name : composite.field_names) {
+            if (name == field_name) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    size_t TypedValue::getFieldCount() const
+    {
+        if (type_ != DataType::COMPOSITE)
+            throw std::runtime_error("Type mismatch: not COMPOSITE");
+
+        const auto& composite = std::get<CompositeValue>(data_);
+        return composite.field_names.size();
+    }
+
+    const std::vector<std::string>& TypedValue::getFieldNames() const
+    {
+        if (type_ != DataType::COMPOSITE)
+            throw std::runtime_error("Type mismatch: not COMPOSITE");
+
+        const auto& composite = std::get<CompositeValue>(data_);
+        return composite.field_names;
+    }
+
+    std::shared_ptr<VectorValue> TypedValue::getVector() const
+    {
+        if (type_ != DataType::VECTOR)
+            throw std::runtime_error("Type mismatch: not VECTOR");
+        return std::get<std::shared_ptr<VectorValue>>(data_);
+    }
+
+    TypedValue TypedValue::getVectorElement(size_t index) const
+    {
+        if (type_ != DataType::VECTOR)
+            throw std::runtime_error("Type mismatch: not VECTOR");
+
+        auto vec = std::get<std::shared_ptr<VectorValue>>(data_);
+        if (!vec)
+            throw std::runtime_error("Vector is null");
+
+        if (index >= vec->getDimensions())
+            throw std::out_of_range("Vector index out of range");
+
+        // Get element as float64
+        auto elem = vec->getAsFloat64(index);
+        if (!elem.has_value())
+            throw std::runtime_error("Failed to access vector element");
+
+        return TypedValue::makeFloat64(*elem);
+    }
+
+    TypedValue TypedValue::getVectorSlice(size_t start, size_t end) const
+    {
+        if (type_ != DataType::VECTOR)
+            throw std::runtime_error("Type mismatch: not VECTOR");
+
+        auto vec = std::get<std::shared_ptr<VectorValue>>(data_);
+        if (!vec)
+            throw std::runtime_error("Vector is null");
+
+        size_t dims = vec->getDimensions();
+        if (start >= dims || end > dims || start >= end)
+            throw std::out_of_range("Invalid slice range");
+
+        // Extract slice
+        std::vector<double> slice_data;
+        slice_data.reserve(end - start);
+
+        for (size_t i = start; i < end; ++i) {
+            auto elem = vec->getAsFloat64(i);
+            if (!elem.has_value())
+                throw std::runtime_error("Failed to access vector element");
+            slice_data.push_back(*elem);
+        }
+
+        return TypedValue::makeVector(slice_data);
+    }
+
+    size_t TypedValue::getVectorDimensions() const
+    {
+        if (type_ != DataType::VECTOR)
+            throw std::runtime_error("Type mismatch: not VECTOR");
+
+        auto vec = std::get<std::shared_ptr<VectorValue>>(data_);
+        if (!vec)
+            return 0;
+
+        return vec->getDimensions();
+    }
+
+    TypedValue TypedValue::vectorDistance(const TypedValue& other, DistanceMetric metric) const
+    {
+        if (type_ != DataType::VECTOR || other.type_ != DataType::VECTOR)
+            throw std::runtime_error("Both values must be VECTOR type");
+
+        auto vec1 = std::get<std::shared_ptr<VectorValue>>(data_);
+        auto vec2 = std::get<std::shared_ptr<VectorValue>>(other.data_);
+
+        if (!vec1 || !vec2)
+            throw std::runtime_error("Vector is null");
+
+        auto distance = vec1->distance(*vec2, metric);
+        if (!distance.has_value())
+            throw std::runtime_error("Distance calculation failed (dimension mismatch?)");
+
+        return TypedValue::makeFloat64(*distance);
+    }
+
+    TypedValue TypedValue::vectorEuclideanDistance(const TypedValue& other) const
+    {
+        return vectorDistance(other, DistanceMetric::EUCLIDEAN);
+    }
+
+    TypedValue TypedValue::vectorManhattanDistance(const TypedValue& other) const
+    {
+        return vectorDistance(other, DistanceMetric::MANHATTAN);
+    }
+
+    TypedValue TypedValue::vectorCosineSimilarity(const TypedValue& other) const
+    {
+        return vectorDistance(other, DistanceMetric::COSINE);
+    }
+
+    TypedValue TypedValue::vectorDotProduct(const TypedValue& other) const
+    {
+        return vectorDistance(other, DistanceMetric::DOT_PRODUCT);
+    }
+
+    const VariantValue& TypedValue::getVariant() const
+    {
+        if (type_ != DataType::VARIANT)
+            throw std::runtime_error("Type mismatch: not VARIANT");
+        return std::get<VariantValue>(data_);
+    }
+
+    DataType TypedValue::getVariantActualType() const
+    {
+        if (type_ != DataType::VARIANT)
+            throw std::runtime_error("Type mismatch: not VARIANT");
+
+        const auto& variant = std::get<VariantValue>(data_);
+        return variant.actual_type;
+    }
+
+    TypedValue TypedValue::unwrapVariant() const
+    {
+        if (type_ != DataType::VARIANT)
+            throw std::runtime_error("Type mismatch: not VARIANT");
+
+        const auto& variant = std::get<VariantValue>(data_);
+        if (!variant.value)
+            throw std::runtime_error("VARIANT contains null value");
+
+        return *variant.value;
+    }
+
+    bool TypedValue::variantIs(DataType expected_type) const
+    {
+        if (type_ != DataType::VARIANT)
+            return false;
+
+        const auto& variant = std::get<VariantValue>(data_);
+        return variant.actual_type == expected_type;
+    }
+
+    TypedValue TypedValue::variantCast(DataType target_type) const
+    {
+        if (type_ != DataType::VARIANT)
+            throw std::runtime_error("Type mismatch: not VARIANT");
+
+        const auto& variant = std::get<VariantValue>(data_);
+
+        // Direct type match - just unwrap
+        if (variant.actual_type == target_type) {
+            return unwrapVariant();
+        }
+
+        // Need to convert the wrapped value to target type
+        if (!variant.value)
+            throw std::runtime_error("VARIANT contains null value");
+
+        // Try to convert using convertTo
+        auto converted = variant.value->convertTo(target_type);
+        if (!converted.has_value())
+            throw std::runtime_error("Cannot cast VARIANT to target type");
+
+        return *converted;
+    }
+
     std::string TypedValue::toString() const
     {
         if (isNull())
@@ -673,6 +1012,37 @@ namespace scratchbird::core
                 return getMacAddr().toString();
             case DataType::MACADDR8:
                 return getMacAddr8().toString();
+            case DataType::COMPOSITE:
+            {
+                const auto& composite = getComposite();
+                std::string result = "ROW(";
+                for (size_t i = 0; i < composite.field_names.size(); ++i) {
+                    if (i > 0) result += ", ";
+                    result += composite.field_names[i] + ": ";
+                    if (composite.field_values[i]) {
+                        result += composite.field_values[i]->toString();
+                    } else {
+                        result += "NULL";
+                    }
+                }
+                result += ")";
+                return result;
+            }
+            case DataType::VECTOR:
+            {
+                auto vec = getVector();
+                if (!vec) return "NULL";
+                return vec->toString();
+            }
+            case DataType::VARIANT:
+            {
+                const auto& variant = getVariant();
+                std::string type_name = TypeSystem::getTypeName(variant.actual_type);
+                if (!variant.value) {
+                    return "VARIANT[" + type_name + "](NULL)";
+                }
+                return "VARIANT[" + type_name + "](" + variant.value->toString() + ")";
+            }
             default:
                 return "<unknown>";
         }
@@ -888,6 +1258,8 @@ namespace scratchbird::core
                 return "ARRAY";
             case DataType::COMPOSITE:
                 return "COMPOSITE";
+            case DataType::VARIANT:
+                return "VARIANT";
             case DataType::TSVECTOR:
                 return "TSVECTOR";
             case DataType::TSQUERY:
