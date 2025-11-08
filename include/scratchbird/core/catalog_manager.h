@@ -190,15 +190,16 @@ namespace scratchbird::core
         struct SchemaInfo
         {
             ID schema_id;
+            ID parent_schema_id;                // Parent schema UUID (zero UUID for root)
             std::string schema_name;
-            std::string owner;
+            ID owner_id;                        // Owner UUID reference (NOT name)
             uint16_t default_tablespace_id = 0; // Default tablespace for new tables
             uint16_t permissions = 0;           // Bitmask of schema permissions
             uint16_t default_charset = 0;       // Default character set (0 = inherit from database)
             uint16_t reserved = 0;
-            uint32_t default_collation_id = 0; // Default collation ID (0 = inherit from database)
-            uint32_t acl_oid = 0;              // TOAST reference for ACL (access control list)
-            uint32_t search_path_oid = 0;      // TOAST reference for search path
+            uint32_t default_collation_id = 0;  // Default collation ID (0 = inherit from database)
+            uint32_t acl_oid = 0;               // TOAST reference for ACL (IMPLEMENTED)
+            // search_path_oid removed - session-only concept
             uint64_t created_time = 0;
             uint64_t last_modified_time = 0;
         };
@@ -239,6 +240,69 @@ namespace scratchbird::core
             uint64_t migration_xid = 0;             // XID when migration started
             uint16_t migration_target_ts = 0;       // Target tablespace ID
             uint8_t migration_phase = 0;            // MigrationPhase enum value
+        };
+
+        // TRUNCATE TABLE job tracking (ALPHA Phase 1 - DDL Modifications)
+        struct TruncateJob
+        {
+            uint64_t job_id = 0;                    // Unique job identifier
+            ID table_id;                            // Table being truncated
+            std::string table_name;                 // Table name (for display)
+            uint64_t snapshot_xid = 0;              // Transaction ID when truncate started
+            std::atomic<uint64_t> rows_processed{0}; // Total rows examined
+            std::atomic<uint64_t> rows_deleted{0};   // Rows marked for deletion
+            std::atomic<bool> completed{false};      // Job finished flag
+            std::atomic<bool> error{false};          // Error occurred flag
+            std::string error_message;               // Error details if error=true
+            uint64_t start_time = 0;                 // Start timestamp (epoch seconds)
+            std::atomic<uint64_t> end_time{0};       // End timestamp (epoch seconds)
+
+            // Progress helper
+            double getProgress() const {
+                if (rows_processed == 0) return 0.0;
+                return 100.0 * static_cast<double>(rows_deleted.load()) /
+                              static_cast<double>(rows_processed.load());
+            }
+        };
+
+        // Sequence information structure (ALPHA Phase 1 - Sequences)
+        struct SequenceInfo {
+            ID sequence_id;
+            ID schema_id;
+            std::string name;
+            int64_t current_value;
+            int64_t increment_by;
+            int64_t min_value;
+            int64_t max_value;
+            int64_t start_value;
+            int64_t cache_size;
+            bool cycle;
+            uint64_t created_time;
+            uint64_t last_modified_time;
+        };
+
+        // In-memory sequence state for atomic operations
+        struct SequenceState {
+            ID sequence_id;
+            std::string name;  // Sequence name (for cleanup in drop)
+            std::atomic<int64_t> current_value;
+            int64_t increment_by;
+            int64_t min_value;
+            int64_t max_value;
+            bool cycle;
+            std::mutex config_mutex;  // Protect ALTER SEQUENCE changes
+        };
+
+        // View information (ALPHA Phase 1 - Views)
+        struct ViewInfo {
+            ID view_id;
+            ID schema_id;
+            std::string name;
+            std::string definition;  // SELECT query text
+            bool check_option;
+            std::vector<std::string> column_names;  // Optional explicit columns
+            uint64_t created_time;
+            uint64_t last_modified_time;
         };
 
         // Column information
@@ -355,6 +419,9 @@ namespace scratchbird::core
         auto listTables(const ID &schema_id, std::vector<TableInfo> &tables,
                         ErrorContext *ctx = nullptr) -> Status;
 
+        // DDL Modifications (ALPHA Phase 1)
+        auto dropTable(const ID &table_id, bool cascade, ErrorContext *ctx = nullptr) -> Status;
+
         // Column operations
         auto getColumns(const ID &table_id, std::vector<ColumnInfo> &columns,
                         ErrorContext *ctx = nullptr) -> Status;
@@ -408,6 +475,80 @@ namespace scratchbird::core
          * @return Status::OK on success
          */
         Status closeAllIndexes(ErrorContext *ctx = nullptr);
+
+        // DDL Modifications (ALPHA Phase 1)
+        auto dropIndex(const ID &index_id, ErrorContext *ctx = nullptr) -> Status;
+
+        // ALTER TABLE operations (ALPHA Phase 1)
+        auto addColumn(const ID &table_id, const ColumnInfo &column_info,
+                       ErrorContext *ctx = nullptr) -> Status;
+        auto dropColumn(const ID &table_id, const std::string &column_name, bool if_exists,
+                        bool cascade, ErrorContext *ctx = nullptr) -> Status;
+        auto renameColumn(const ID &table_id, const std::string &old_name,
+                          const std::string &new_name, ErrorContext *ctx = nullptr) -> Status;
+        auto alterColumnType(const ID &table_id, const std::string &column_name,
+                             DataType new_type, uint32_t new_precision, uint32_t new_scale,
+                             ErrorContext *ctx = nullptr) -> Status;
+
+        // TRUNCATE TABLE operations (ALPHA Phase 1 - final DDL operation)
+        // Async truncate: Starts background job, returns immediately with job ID
+        auto truncateTableAsync(const ID &table_id, const std::string &table_name,
+                                uint64_t snapshot_xid, ErrorContext *ctx = nullptr) -> uint64_t;
+
+        // Sync truncate: Blocks until truncation complete
+        auto truncateTableSync(const ID &table_id, const std::string &table_name,
+                               uint64_t snapshot_xid, ErrorContext *ctx = nullptr) -> Status;
+
+        // Get truncate job status
+        auto getTruncateJobStatus(uint64_t job_id) -> std::shared_ptr<TruncateJob>;
+
+        // Wait for truncate job to complete (with optional timeout in milliseconds)
+        auto waitForTruncate(uint64_t job_id, uint32_t timeout_ms = 0) -> Status;
+
+        // List all truncate jobs (for debugging/monitoring)
+        auto listTruncateJobs(std::vector<std::shared_ptr<TruncateJob>> &jobs_out) -> void;
+
+        // Sequence operations (ALPHA Phase 1 - Sequences)
+        auto createSequence(const ID& schema_id, const std::string& name,
+                            int64_t increment_by, int64_t min_value, int64_t max_value,
+                            int64_t start_value, int64_t cache_size, bool cycle,
+                            ErrorContext* ctx = nullptr) -> Status;
+
+        auto alterSequence(const ID& sequence_id, const std::optional<int64_t>& increment_by,
+                           const std::optional<int64_t>& min_value, const std::optional<int64_t>& max_value,
+                           const std::optional<int64_t>& restart, const std::optional<int64_t>& cache_size,
+                           const std::optional<bool>& cycle, ErrorContext* ctx = nullptr) -> Status;
+
+        auto dropSequence(const ID& sequence_id, bool cascade, ErrorContext* ctx = nullptr) -> Status;
+
+        auto getSequence(const ID& schema_id, const std::string& name,
+                         SequenceInfo& info_out, ErrorContext* ctx = nullptr) -> Status;
+
+        auto sequenceNextVal(const ID& sequence_id, int64_t& value_out,
+                             ErrorContext* ctx = nullptr) -> Status;
+
+        auto sequenceSetVal(const ID& sequence_id, int64_t value, bool is_called,
+                            ErrorContext* ctx = nullptr) -> Status;
+
+        auto getSequenceIdByName(const std::string& name, ID& id_out,
+                                 ErrorContext* ctx = nullptr) -> Status;
+
+        // View operations (ALPHA Phase 1 - Views)
+        auto createView(const ID& schema_id, const std::string& name,
+                        const std::string& definition, bool or_replace, bool check_option,
+                        const std::vector<std::string>& column_names,
+                        ErrorContext* ctx = nullptr) -> Status;
+
+        auto dropView(const ID& view_id, bool cascade,
+                      ErrorContext* ctx = nullptr) -> Status;
+
+        auto getView(const ID& schema_id, const std::string& name,
+                     ViewInfo& info_out, ErrorContext* ctx = nullptr) -> Status;
+
+        auto getViewIdByName(const std::string& name, ID& id_out,
+                             ErrorContext* ctx = nullptr) -> Status;
+
+        auto isView(const std::string& name) -> bool;
 
         // Timezone operations (pg_timezone system table)
         struct TimezoneInfo
@@ -1001,6 +1142,22 @@ namespace scratchbird::core
         Database *db_;
         mutable std::mutex mutex_;
 
+        // TRUNCATE TABLE async job tracking (ALPHA Phase 1 - DDL Modifications)
+        std::unordered_map<uint64_t, std::shared_ptr<TruncateJob>> truncate_jobs_;
+        std::mutex truncate_jobs_mutex_;
+        std::atomic<uint64_t> next_truncate_job_id_{1};
+
+        // Sequence cache (ALPHA Phase 1 - Sequences)
+        std::unordered_map<ID, std::shared_ptr<SequenceState>> sequence_cache_;
+        std::mutex sequence_cache_mutex_;
+        std::unordered_map<std::string, ID> sequence_name_to_id_;  // name -> sequence_id lookup
+        std::mutex sequence_name_mutex_;  // Protect name map
+
+        // View cache (ALPHA Phase 1 - Views)
+        std::unordered_map<ID, ViewInfo> view_cache_;
+        std::unordered_map<std::string, ID> view_name_to_id_;
+        std::mutex view_cache_mutex_;
+
         // Internal helper methods (assume mutex_ is already held by caller)
         auto createSchemaInternal(const std::string &schema_name, const std::string &owner,
                                   ID &schema_id, ErrorContext *ctx = nullptr) -> Status;
@@ -1300,7 +1457,10 @@ namespace scratchbird::core
                                 ErrorContext *ctx) -> Status;
         auto readColumnRecords(const ID &table_id, ErrorContext *ctx) -> Status;
         auto writeIndexRecord(const IndexInfo &index, ErrorContext *ctx) -> Status;
+        auto deleteIndexRecord(const ID &index_id, ErrorContext *ctx) -> Status;
         auto readIndexRecords(ErrorContext *ctx) -> Status;
+        auto updateTableColumnCount(const ID &table_id, uint32_t new_count, ErrorContext *ctx)
+            -> Status;
         auto writeTablespaceRecord(const TablespaceInfo &tablespace, ErrorContext *ctx) -> Status;
         auto readTablespaceRecords(ErrorContext *ctx) -> Status;
 

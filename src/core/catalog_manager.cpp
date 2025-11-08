@@ -52,19 +52,20 @@ namespace scratchbird::core
     struct SchemaRecord
     {
         ID schema_id;
+        ID parent_schema_id;            // Parent schema UUID (zero UUID for root schemas)
         char schema_name[512];          // SQL standard: 128 characters (512 bytes = 128 chars × 4 bytes/char max UTF-8)
-        char owner[512];                // SQL standard: 128 characters (512 bytes = 128 chars × 4 bytes/char max UTF-8)
+        ID owner_id;                    // Owner UUID reference (NOT name - allows rename without breaking dependencies)
         uint16_t default_tablespace_id; // Default tablespace for new tables
         uint16_t permissions;           // Bitmask of schema permissions
         uint16_t default_charset;       // CharacterSet enum (0 = inherit from database)
         uint16_t reserved;
-        uint32_t default_collation_id; // Collation ID (0 = inherit from database)
-        uint32_t acl_oid;              // TOAST reference for ACL (access control list)
-        uint32_t search_path_oid;      // TOAST reference for search path
+        uint32_t default_collation_id;  // Collation ID (0 = inherit from database)
+        uint32_t acl_oid;               // TOAST reference for ACL (access control list) - IMPLEMENTED
+        // search_path_oid removed - search path is session-only, not stored per-schema
         uint64_t created_time;
         uint64_t last_modified_time;
-        uint32_t is_valid; // 1 if valid, 0 if deleted
-        uint32_t padding;  // Alignment
+        uint32_t is_valid;              // 1 if valid, 0 if deleted
+        uint32_t padding;               // Alignment
     };
 
     // Table types
@@ -1926,6 +1927,112 @@ namespace scratchbird::core
         // Mark page as dirty if we found and updated the record
         bp->unpinPage(tables_table_page_, found, ctx);
 
+        return found ? Status::OK : Status::NOT_FOUND;
+    }
+
+    auto CatalogManager::deleteIndexRecord(const ID &index_id, ErrorContext *ctx) -> Status
+    {
+        // Mark the index record as invalid (logical delete) by setting is_valid = 0
+        // Similar to deleteTableRecord but for indexes
+
+        BufferPool *bp = db_->buffer_pool();
+        void *page_data;
+        Status status = bp->pinPage(indexes_table_page_, &page_data, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        HeapPage heap_page(static_cast<uint8_t *>(page_data), db_->page_size());
+
+        // Scan through all records to find the matching index_id
+        uint16_t item_count = heap_page.getItemCount();
+        bool found = false;
+
+        // Access page data directly as mutable (we own it via pinPage)
+        auto *mutable_page_data = static_cast<uint8_t *>(page_data);
+
+        for (uint16_t i = 0; i < item_count; ++i)
+        {
+            // Get tuple location using const API for bounds checking
+            const uint8_t *tuple_data;
+            uint32_t tuple_size;
+
+            if (heap_page.getTuple(i, &tuple_data, &tuple_size, ctx) == Status::OK)
+            {
+                if (tuple_size >= sizeof(TupleHeader) + sizeof(IndexRecord))
+                {
+                    // Calculate mutable pointer to same location
+                    const ptrdiff_t offset = tuple_data - static_cast<const uint8_t *>(page_data);
+                    uint8_t *mutable_tuple_data = mutable_page_data + offset;
+
+                    // Access the record as mutable
+                    auto *record =
+                        reinterpret_cast<IndexRecord *>(mutable_tuple_data + sizeof(TupleHeader));
+
+                    if (record->index_id == index_id && record->is_valid == 1)
+                    {
+                        // Found the record - mark it as invalid
+                        record->is_valid = 0;
+                        found = true;
+                        break;
+                    }
+                }
+            }
+        }
+
+        // Mark page as dirty if we found and updated the record
+        bp->unpinPage(indexes_table_page_, found, ctx);
+
+        return found ? Status::OK : Status::NOT_FOUND;
+    }
+
+    auto CatalogManager::updateTableColumnCount(const ID &table_id, uint32_t new_count,
+                                                 ErrorContext *ctx) -> Status
+    {
+        // Update TableRecord.column_count (used by ALTER TABLE ADD/DROP COLUMN)
+        // MGA-compliant: Updates column_count in-place
+
+        BufferPool *bp = db_->buffer_pool();
+        void *page_data;
+        Status status = bp->pinPage(tables_table_page_, &page_data, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        HeapPage heap_page(static_cast<uint8_t *>(page_data), db_->page_size());
+        auto *mutable_page_data = static_cast<uint8_t *>(page_data);
+        bool found = false;
+
+        for (uint16_t i = 0; i < heap_page.getItemCount(); ++i)
+        {
+            const uint8_t *tuple_data;
+            uint32_t tuple_size;
+
+            if (heap_page.getTuple(i, &tuple_data, &tuple_size, ctx) == Status::OK)
+            {
+                if (tuple_size >= sizeof(TupleHeader) + sizeof(TableRecord))
+                {
+                    const ptrdiff_t offset =
+                        tuple_data - static_cast<const uint8_t *>(page_data);
+                    uint8_t *mutable_tuple_data = mutable_page_data + offset;
+                    auto *record = reinterpret_cast<TableRecord *>(mutable_tuple_data +
+                                                                    sizeof(TupleHeader));
+
+                    if (record->table_id == table_id && record->is_valid == 1)
+                    {
+                        record->column_count = new_count;
+                        record->last_modified_time =
+                            std::chrono::system_clock::now().time_since_epoch().count();
+                        found = true;
+                        break;
+                    }
+                }
+            }
+        }
+
+        bp->unpinPage(tables_table_page_, found, ctx);
         return found ? Status::OK : Status::NOT_FOUND;
     }
 
@@ -6084,4 +6191,1279 @@ Status CatalogManager::closeAllIndexes(ErrorContext *ctx)
     return overall_status;
 }
 
+
+// ========================================
+// DDL MODIFICATIONS (ALPHA Phase 1)
+// ========================================
+
+Status CatalogManager::dropTable(const ID &table_id, bool cascade, ErrorContext *ctx)
+{
+    // DROP TABLE implementation (ALPHA Phase 1 - DDL Modifications)
+    // Implements soft delete with MGA compliance
+
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    // 1. Check if table exists in cache
+    auto table_it = table_cache_.find(table_id);
+    if (table_it == table_cache_.end())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Table not found");
+        return Status::NOT_FOUND;
+    }
+
+    const TableInfo &table_info = table_it->second;
+
+    // 2. Check for dependent indexes
+    std::vector<IndexInfo> indexes;
+    Status status = listIndexesForTable(table_id, indexes, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    if (!indexes.empty() && !cascade)
+    {
+        // RESTRICT: fail if dependent indexes exist
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                         "Table has dependent indexes - use CASCADE to drop them");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    // 3. DROP dependent indexes if CASCADE
+    if (cascade && !indexes.empty())
+    {
+        for (const auto &index : indexes)
+        {
+            status = dropIndex(index.index_id, ctx);
+            if (status != Status::OK)
+            {
+                // Failed to drop index - abort
+                return status;
+            }
+        }
+    }
+
+    // 4. Soft delete the table record (mark is_valid = 0)
+    status = deleteTableRecord(table_id, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    // 5. Remove from cache
+    table_cache_.erase(table_it);
+
+    return Status::OK;
+}
+
+Status CatalogManager::dropIndex(const ID &index_id, ErrorContext *ctx)
+{
+    // DROP INDEX implementation (ALPHA Phase 1 - DDL Modifications)
+    // Implements soft delete with MGA compliance
+
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    // 1. Check if index exists in cache
+    auto index_it = index_cache_.find(index_id);
+    if (index_it == index_cache_.end())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Index not found");
+        return Status::NOT_FOUND;
+    }
+
+    // 2. Soft delete the index record (mark is_valid = 0)
+    Status status = deleteIndexRecord(index_id, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    // 3. Remove from cache
+    // Note: Any cached index objects will be released when the cache entry is removed
+    index_cache_.erase(index_it);
+
+    return Status::OK;
+}
+
+// ============================================================================
+// ALTER TABLE Operations (ALPHA Phase 1 - DDL Modifications)
+// ============================================================================
+
+Status CatalogManager::addColumn(const ID &table_id, const ColumnInfo &column_info,
+                                  ErrorContext *ctx)
+{
+    // ADD COLUMN implementation (ALPHA Phase 1)
+    // Adds a new column to an existing table with MGA compliance
+
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    // 1. Check if table exists in cache
+    auto table_it = table_cache_.find(table_id);
+    if (table_it == table_cache_.end())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Table not found");
+        return Status::NOT_FOUND;
+    }
+
+    TableInfo &table_info = table_cache_[table_id];
+
+    // 2. Read existing columns from disk to check for duplicates and find max ordinal
+    BufferPool *bp = db_->buffer_pool();
+    void *page_data;
+    Status status = bp->pinPage(columns_table_page_, &page_data, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    HeapPage heap_page(static_cast<uint8_t *>(page_data), db_->page_size());
+    uint16_t next_ordinal = 0;
+    uint32_t existing_column_count = 0;
+    bool name_exists = false;
+
+    for (uint16_t i = 0; i < heap_page.getItemCount(); ++i)
+    {
+        const uint8_t *tuple_data;
+        uint32_t tuple_size;
+
+        if (heap_page.getTuple(i, &tuple_data, &tuple_size, ctx) == Status::OK)
+        {
+            if (tuple_size >= sizeof(TupleHeader) + sizeof(ColumnRecord))
+            {
+                const auto *record = reinterpret_cast<const ColumnRecord *>(
+                    tuple_data + sizeof(TupleHeader));
+
+                if (record->table_id == table_id && record->is_valid == 1)
+                {
+                    existing_column_count++;
+                    if (record->ordinal >= next_ordinal)
+                    {
+                        next_ordinal = record->ordinal + 1;
+                    }
+                    if (std::strcmp(record->column_name, column_info.column_name.c_str()) == 0)
+                    {
+                        name_exists = true;
+                    }
+                }
+            }
+        }
+    }
+
+    bp->unpinPage(columns_table_page_, false, ctx);
+
+    if (name_exists)
+    {
+        std::string err = "Column already exists: " + column_info.column_name;
+        SET_ERROR_CONTEXT(ctx, Status::FILE_EXISTS, err.c_str());
+        return Status::FILE_EXISTS;
+    }
+
+    // 3. Create new ColumnInfo with generated UUID
+    ColumnInfo new_column = column_info;
+    new_column.column_id = ID(); // Generate new UUID
+    new_column.ordinal = next_ordinal;
+
+    // 4. Write ColumnRecord to disk
+    status = bp->pinPage(columns_table_page_, &page_data, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    HeapPage heap_page2(static_cast<uint8_t *>(page_data), db_->page_size());
+
+    // Create ColumnRecord
+    ColumnRecord record = {};
+    record.table_id = table_id;
+    record.column_id = new_column.column_id;
+    std::strncpy(record.column_name, new_column.column_name.c_str(),
+                 sizeof(record.column_name) - 1);
+    record.ordinal = new_column.ordinal;
+    record.data_type = static_cast<uint16_t>(new_column.data_type);
+    record.type_precision = new_column.type_precision;
+    record.type_scale = new_column.type_scale;
+    record.max_length = new_column.max_length;
+    record.nullable = new_column.nullable ? 1 : 0;
+    record.has_default = new_column.has_default ? 1 : 0;
+    record.is_primary_key = new_column.is_primary_key ? 1 : 0;
+    record.is_unique = new_column.is_unique ? 1 : 0;
+    record.is_foreign_key = new_column.is_foreign_key ? 1 : 0;
+    record.is_generated = new_column.is_generated ? 1 : 0;
+    record.storage_type = static_cast<uint8_t>(new_column.storage_type);
+    record.with_timezone = new_column.with_timezone ? 1 : 0;
+    record.charset = new_column.charset;
+    record.timezone_hint = new_column.timezone_hint;
+    record.collation_id = new_column.collation_id;
+    if (new_column.has_default)
+    {
+        std::strncpy(record.default_value, new_column.default_value.c_str(),
+                     sizeof(record.default_value) - 1);
+    }
+    record.default_value_oid = new_column.default_value_oid;
+    record.check_expr_oid = new_column.check_expr_oid;
+    record.created_time = std::chrono::system_clock::now().time_since_epoch().count();
+    record.is_valid = 1;
+
+    // Insert tuple into heap page
+    const uint8_t *tuple_data = reinterpret_cast<const uint8_t *>(&record);
+    uint32_t tuple_size = sizeof(ColumnRecord);
+    uint16_t item_id_out;
+
+    status = heap_page2.insertTuple(tuple_data, tuple_size, 0 /* xmin */, &item_id_out, ctx);
+    bp->unpinPage(columns_table_page_, status == Status::OK, ctx);
+
+    if (status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, status, "Failed to write column record");
+        return status;
+    }
+
+    // 5. Update TableRecord.column_count
+    status = updateTableColumnCount(table_id, existing_column_count + 1, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    return Status::OK;
+}
+
+Status CatalogManager::dropColumn(const ID &table_id, const std::string &column_name,
+                                   bool if_exists, bool cascade, ErrorContext *ctx)
+{
+    // DROP COLUMN implementation (ALPHA Phase 1)
+    // Soft deletes column with MGA compliance and CASCADE support
+
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    // 1. Check if table exists in cache
+    auto table_it = table_cache_.find(table_id);
+    if (table_it == table_cache_.end())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Table not found");
+        return Status::NOT_FOUND;
+    }
+
+    // 2. Scan columns to find the target and count valid columns
+    BufferPool *bp = db_->buffer_pool();
+    void *page_data;
+    Status status = bp->pinPage(columns_table_page_, &page_data, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    HeapPage heap_page(static_cast<uint8_t *>(page_data), db_->page_size());
+    ID column_id;
+    bool found = false;
+    size_t valid_column_count = 0;
+
+    for (uint16_t i = 0; i < heap_page.getItemCount(); ++i)
+    {
+        const uint8_t *tuple_data;
+        uint32_t tuple_size;
+
+        if (heap_page.getTuple(i, &tuple_data, &tuple_size, ctx) == Status::OK)
+        {
+            if (tuple_size >= sizeof(TupleHeader) + sizeof(ColumnRecord))
+            {
+                const auto *record = reinterpret_cast<const ColumnRecord *>(
+                    tuple_data + sizeof(TupleHeader));
+
+                if (record->table_id == table_id && record->is_valid == 1)
+                {
+                    valid_column_count++;
+                    if (std::strcmp(record->column_name, column_name.c_str()) == 0)
+                    {
+                        column_id = record->column_id;
+                        found = true;
+                    }
+                }
+            }
+        }
+    }
+
+    bp->unpinPage(columns_table_page_, false, ctx);
+
+    if (!found)
+    {
+        if (if_exists)
+        {
+            return Status::OK; // Graceful handling
+        }
+        std::string err = "Column not found: " + column_name;
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, err.c_str());
+        return Status::NOT_FOUND;
+    }
+
+    // 3. Check if this is the last column
+    if (valid_column_count <= 1)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                         "Cannot drop last column in table");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    // 4. Check for dependent indexes
+    std::vector<IndexInfo> dependent_indexes;
+    std::vector<IndexInfo> all_indexes;
+    status = listIndexesForTable(table_id, all_indexes, ctx);
+    if (status == Status::OK)
+    {
+        for (const auto &index : all_indexes)
+        {
+            // Check if this column is used in the index
+            for (const auto &index_col_id : index.column_ids)
+            {
+                if (index_col_id == column_id)
+                {
+                    dependent_indexes.push_back(index);
+                    break;
+                }
+            }
+        }
+    }
+
+    if (!dependent_indexes.empty() && !cascade)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                         "Column has dependent indexes - use CASCADE to drop them");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    // 5. DROP dependent indexes if CASCADE
+    if (cascade && !dependent_indexes.empty())
+    {
+        for (const auto &index : dependent_indexes)
+        {
+            status = dropIndex(index.index_id, ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+        }
+    }
+
+    // 6. Soft delete the column record (mark is_valid = 0)
+    status = bp->pinPage(columns_table_page_, &page_data, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    HeapPage heap_page2(static_cast<uint8_t *>(page_data), db_->page_size());
+    auto *mutable_page_data = static_cast<uint8_t *>(page_data);
+    bool updated = false;
+
+    for (uint16_t i = 0; i < heap_page2.getItemCount(); ++i)
+    {
+        const uint8_t *tuple_data;
+        uint32_t tuple_size;
+
+        if (heap_page2.getTuple(i, &tuple_data, &tuple_size, ctx) == Status::OK)
+        {
+            if (tuple_size >= sizeof(TupleHeader) + sizeof(ColumnRecord))
+            {
+                const ptrdiff_t offset =
+                    tuple_data - static_cast<const uint8_t *>(page_data);
+                uint8_t *mutable_tuple_data = mutable_page_data + offset;
+                auto *record = reinterpret_cast<ColumnRecord *>(mutable_tuple_data +
+                                                                 sizeof(TupleHeader));
+
+                if (record->table_id == table_id && record->column_id == column_id &&
+                    record->is_valid == 1)
+                {
+                    record->is_valid = 0; // Soft delete
+                    updated = true;
+                    break;
+                }
+            }
+        }
+    }
+
+    bp->unpinPage(columns_table_page_, updated, ctx);
+
+    if (!updated)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Column record not found on disk");
+        return Status::NOT_FOUND;
+    }
+
+    // 7. Update TableRecord.column_count
+    status = updateTableColumnCount(table_id, valid_column_count - 1, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    return Status::OK;
+}
+
+Status CatalogManager::renameColumn(const ID &table_id, const std::string &old_name,
+                                     const std::string &new_name, ErrorContext *ctx)
+{
+    // RENAME COLUMN implementation (ALPHA Phase 1)
+    // Updates column name in-place with MGA compliance
+
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    // 1. Check if table exists in cache
+    auto table_it = table_cache_.find(table_id);
+    if (table_it == table_cache_.end())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Table not found");
+        return Status::NOT_FOUND;
+    }
+
+    // 2. Validate new name (basic check - non-empty)
+    if (new_name.empty() || new_name.length() > 127)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Invalid column name");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    // 3. Scan columns to find old name and check new name doesn't exist
+    BufferPool *bp = db_->buffer_pool();
+    void *page_data;
+    Status status = bp->pinPage(columns_table_page_, &page_data, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    HeapPage heap_page(static_cast<uint8_t *>(page_data), db_->page_size());
+    ID column_id;
+    bool found_old = false;
+    bool new_name_exists = false;
+
+    for (uint16_t i = 0; i < heap_page.getItemCount(); ++i)
+    {
+        const uint8_t *tuple_data;
+        uint32_t tuple_size;
+
+        if (heap_page.getTuple(i, &tuple_data, &tuple_size, ctx) == Status::OK)
+        {
+            if (tuple_size >= sizeof(TupleHeader) + sizeof(ColumnRecord))
+            {
+                const auto *record = reinterpret_cast<const ColumnRecord *>(
+                    tuple_data + sizeof(TupleHeader));
+
+                if (record->table_id == table_id && record->is_valid == 1)
+                {
+                    if (std::strcmp(record->column_name, old_name.c_str()) == 0)
+                    {
+                        column_id = record->column_id;
+                        found_old = true;
+                    }
+                    if (std::strcmp(record->column_name, new_name.c_str()) == 0)
+                    {
+                        new_name_exists = true;
+                    }
+                }
+            }
+        }
+    }
+
+    bp->unpinPage(columns_table_page_, false, ctx);
+
+    if (!found_old)
+    {
+        std::string err = "Column not found: " + old_name;
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, err.c_str());
+        return Status::NOT_FOUND;
+    }
+
+    if (new_name_exists)
+    {
+        std::string err = "Column already exists: " + new_name;
+        SET_ERROR_CONTEXT(ctx, Status::FILE_EXISTS, err.c_str());
+        return Status::FILE_EXISTS;
+    }
+
+    // 4. Update ColumnRecord on disk
+    status = bp->pinPage(columns_table_page_, &page_data, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    HeapPage heap_page2(static_cast<uint8_t *>(page_data), db_->page_size());
+    auto *mutable_page_data = static_cast<uint8_t *>(page_data);
+    bool updated = false;
+
+    for (uint16_t i = 0; i < heap_page2.getItemCount(); ++i)
+    {
+        const uint8_t *tuple_data;
+        uint32_t tuple_size;
+
+        if (heap_page2.getTuple(i, &tuple_data, &tuple_size, ctx) == Status::OK)
+        {
+            if (tuple_size >= sizeof(TupleHeader) + sizeof(ColumnRecord))
+            {
+                const ptrdiff_t offset =
+                    tuple_data - static_cast<const uint8_t *>(page_data);
+                uint8_t *mutable_tuple_data = mutable_page_data + offset;
+                auto *record = reinterpret_cast<ColumnRecord *>(mutable_tuple_data +
+                                                                 sizeof(TupleHeader));
+
+                if (record->table_id == table_id && record->column_id == column_id &&
+                    record->is_valid == 1)
+                {
+                    // Update column name in-place
+                    std::memset(record->column_name, 0, sizeof(record->column_name));
+                    std::strncpy(record->column_name, new_name.c_str(),
+                                 sizeof(record->column_name) - 1);
+                    updated = true;
+                    break;
+                }
+            }
+        }
+    }
+
+    bp->unpinPage(columns_table_page_, updated, ctx);
+
+    if (!updated)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Column record not found on disk");
+        return Status::NOT_FOUND;
+    }
+
+    return Status::OK;
+}
+
+Status CatalogManager::alterColumnType(const ID &table_id, const std::string &column_name,
+                                        DataType new_type, uint32_t new_precision,
+                                        uint32_t new_scale, ErrorContext *ctx)
+{
+    // ALTER COLUMN TYPE implementation (ALPHA Phase 1)
+    // Phase 1: Only allows compatible type changes (no data conversion)
+
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    // 1. Check if table exists in cache
+    auto table_it = table_cache_.find(table_id);
+    if (table_it == table_cache_.end())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Table not found");
+        return Status::NOT_FOUND;
+    }
+
+    // 2. Scan columns to find the target column
+    BufferPool *bp = db_->buffer_pool();
+    void *page_data;
+    Status status = bp->pinPage(columns_table_page_, &page_data, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    HeapPage heap_page(static_cast<uint8_t *>(page_data), db_->page_size());
+    ID column_id;
+    DataType old_type = DataType::UNKNOWN;
+    uint32_t old_precision = 0;
+    bool found = false;
+
+    for (uint16_t i = 0; i < heap_page.getItemCount(); ++i)
+    {
+        const uint8_t *tuple_data;
+        uint32_t tuple_size;
+
+        if (heap_page.getTuple(i, &tuple_data, &tuple_size, ctx) == Status::OK)
+        {
+            if (tuple_size >= sizeof(TupleHeader) + sizeof(ColumnRecord))
+            {
+                const auto *record = reinterpret_cast<const ColumnRecord *>(
+                    tuple_data + sizeof(TupleHeader));
+
+                if (record->table_id == table_id && record->is_valid == 1 &&
+                    std::strcmp(record->column_name, column_name.c_str()) == 0)
+                {
+                    column_id = record->column_id;
+                    old_type = static_cast<DataType>(record->data_type);
+                    old_precision = record->type_precision;
+                    found = true;
+                    break;
+                }
+            }
+        }
+    }
+
+    bp->unpinPage(columns_table_page_, false, ctx);
+
+    if (!found)
+    {
+        std::string err = "Column not found: " + column_name;
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, err.c_str());
+        return Status::NOT_FOUND;
+    }
+
+    // 3. Check type compatibility (Phase 1: Compatible changes only)
+    bool compatible = false;
+
+    // Same type - allow if widening
+    if (old_type == new_type)
+    {
+        if (new_precision >= old_precision || new_precision == 0)
+        {
+            compatible = true;
+        }
+    }
+    // Integer widening: INT8→INT16→INT32→INT64→INT128
+    else if (old_type == DataType::INT8 &&
+             (new_type == DataType::INT16 || new_type == DataType::INT32 ||
+              new_type == DataType::INT64 || new_type == DataType::INT128))
+    {
+        compatible = true;
+    }
+    else if (old_type == DataType::INT16 &&
+             (new_type == DataType::INT32 || new_type == DataType::INT64 ||
+              new_type == DataType::INT128))
+    {
+        compatible = true;
+    }
+    else if (old_type == DataType::INT32 &&
+             (new_type == DataType::INT64 || new_type == DataType::INT128))
+    {
+        compatible = true;
+    }
+    else if (old_type == DataType::INT64 && new_type == DataType::INT128)
+    {
+        compatible = true;
+    }
+    // Float widening: FLOAT32→FLOAT64
+    else if (old_type == DataType::FLOAT32 && new_type == DataType::FLOAT64)
+    {
+        compatible = true;
+    }
+
+    if (!compatible)
+    {
+        SET_ERROR_CONTEXT(
+            ctx, Status::INVALID_ARGUMENT,
+            "Incompatible type change - Phase 1 only supports widening conversions");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    // 4. Update ColumnRecord on disk
+    status = bp->pinPage(columns_table_page_, &page_data, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    HeapPage heap_page2(static_cast<uint8_t *>(page_data), db_->page_size());
+    auto *mutable_page_data = static_cast<uint8_t *>(page_data);
+    bool updated = false;
+
+    for (uint16_t i = 0; i < heap_page2.getItemCount(); ++i)
+    {
+        const uint8_t *tuple_data;
+        uint32_t tuple_size;
+
+        if (heap_page2.getTuple(i, &tuple_data, &tuple_size, ctx) == Status::OK)
+        {
+            if (tuple_size >= sizeof(TupleHeader) + sizeof(ColumnRecord))
+            {
+                const ptrdiff_t offset =
+                    tuple_data - static_cast<const uint8_t *>(page_data);
+                uint8_t *mutable_tuple_data = mutable_page_data + offset;
+                auto *record = reinterpret_cast<ColumnRecord *>(mutable_tuple_data +
+                                                                 sizeof(TupleHeader));
+
+                if (record->table_id == table_id && record->column_id == column_id &&
+                    record->is_valid == 1)
+                {
+                    // Update type information
+                    record->data_type = static_cast<uint16_t>(new_type);
+                    record->type_precision = new_precision;
+                    record->type_scale = new_scale;
+                    updated = true;
+                    break;
+                }
+            }
+        }
+    }
+
+    bp->unpinPage(columns_table_page_, updated, ctx);
+
+    if (!updated)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Column record not found on disk");
+        return Status::NOT_FOUND;
+    }
+
+    return Status::OK;
+}
+
+// ============================================================================
+// TRUNCATE TABLE ASYNC Implementation (ALPHA Phase 1 - DDL Modifications)
+// ============================================================================
+
+auto CatalogManager::truncateTableAsync(const ID &table_id, const std::string &table_name,
+                                         uint64_t snapshot_xid, ErrorContext *ctx) -> uint64_t
+{
+    // Create job
+    auto job = std::make_shared<TruncateJob>();
+    job->job_id = next_truncate_job_id_.fetch_add(1);
+    job->table_id = table_id;
+    job->table_name = table_name;
+    job->snapshot_xid = snapshot_xid;
+    job->start_time = std::time(nullptr);
+
+    // Register job
+    {
+        std::lock_guard<std::mutex> lock(truncate_jobs_mutex_);
+        truncate_jobs_[job->job_id] = job;
+    }
+
+    // Spawn background thread for MGA-compliant asynchronous truncation
+    std::thread([this, job]() {
+        try {
+            ErrorContext ctx;
+
+            // Use HeapScanIterator to iterate through all tuples in the table
+            auto scan = db_->storage_engine()->createScan(job->table_id, &ctx);
+            if (!scan)
+            {
+                job->error = true;
+                job->error_message = "Failed to create heap scan iterator";
+                job->completed = true;
+                return;
+            }
+
+            // Track pages we've modified so we can mark them dirty
+            std::vector<std::pair<uint32_t, void*>> modified_pages;
+
+            // Scan all tuples and mark visible ones as deleted
+            Tuple tuple;
+            while (!scan->isDone())
+            {
+                Status status = scan->next(&tuple, &ctx);
+                if (status != Status::OK)
+                {
+                    // End of scan or error
+                    break;
+                }
+
+                job->rows_processed++;
+
+                // Get tuple header to check visibility
+                const auto *hdr = reinterpret_cast<const TupleHeader *>(tuple.data);
+
+                // MGA-compliant visibility check:
+                // Only delete tuples that were committed BEFORE truncate started
+                // Check: xmin <= snapshot_xid AND xmax == 0 (not already deleted)
+                if (hdr->xmin <= job->snapshot_xid && hdr->xmax == 0)
+                {
+                    // This tuple is visible at snapshot_xid, mark it for deletion
+                    // Get the page containing this tuple
+                    uint32_t page_id = getPageNumber(tuple.tid.gpid);
+                    uint16_t slot = tuple.tid.slot;
+
+                    // Pin the page to modify it
+                    void *page_buffer = nullptr;
+                    status = db_->buffer_pool()->pinPage(page_id, &page_buffer, &ctx);
+                    if (status == Status::OK && page_buffer != nullptr)
+                    {
+                        // Use HeapPage to perform soft delete (sets xmax)
+                        // Note: Passing nullptr for ToastManager - TOAST cleanup will happen during garbage collection
+                        HeapPage heap_page(static_cast<uint8_t*>(page_buffer),
+                                          db_->page_size(),
+                                          nullptr,  // ToastManager - let GC handle TOAST cleanup
+                                          db_,
+                                          job->table_id);
+
+                        // Soft delete: sets xmax and marks tuple as deleted
+                        status = heap_page.deleteTuple(slot, job->snapshot_xid, &ctx);
+                        if (status == Status::OK)
+                        {
+                            job->rows_deleted++;
+
+                            // Mark page as dirty
+                            db_->buffer_pool()->markDirty(page_id, &ctx);
+                        }
+
+                        // Unpin the page
+                        db_->buffer_pool()->unpinPage(page_id, true, &ctx);
+                    }
+                }
+
+                // Yield CPU periodically to avoid hogging resources
+                if (job->rows_processed % 1000 == 0)
+                {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                }
+            }
+
+            // Job completed successfully
+            job->completed = true;
+            job->end_time = std::time(nullptr);
+
+        } catch (const std::exception &e) {
+            job->error = true;
+            job->error_message = e.what();
+            job->completed = true;
+        }
+    }).detach();
+
+    return job->job_id;
+}
+
+auto CatalogManager::truncateTableSync(const ID &table_id, const std::string &table_name,
+                                        uint64_t snapshot_xid, ErrorContext *ctx) -> Status
+{
+    // Start async job
+    auto job_id = truncateTableAsync(table_id, table_name, snapshot_xid, ctx);
+
+    // Wait for completion (no timeout)
+    return waitForTruncate(job_id, 0);
+}
+
+auto CatalogManager::getTruncateJobStatus(uint64_t job_id) -> std::shared_ptr<TruncateJob>
+{
+    std::lock_guard<std::mutex> lock(truncate_jobs_mutex_);
+    auto it = truncate_jobs_.find(job_id);
+    if (it != truncate_jobs_.end())
+    {
+        return it->second;
+    }
+    return nullptr;
+}
+
+auto CatalogManager::waitForTruncate(uint64_t job_id, uint32_t timeout_ms) -> Status
+{
+    auto job = getTruncateJobStatus(job_id);
+    if (!job)
+    {
+        return Status::NOT_FOUND;
+    }
+
+    auto start = std::chrono::steady_clock::now();
+
+    while (!job->completed.load())
+    {
+        // Check timeout
+        if (timeout_ms > 0)
+        {
+            auto elapsed = std::chrono::steady_clock::now() - start;
+            if (elapsed > std::chrono::milliseconds(timeout_ms))
+            {
+                // Timeout - return IO_ERROR as generic error status
+                return Status::IO_ERROR;
+            }
+        }
+
+        // Wait a bit
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+
+    // Check if error occurred
+    if (job->error.load())
+    {
+        return Status::IO_ERROR;
+    }
+
+    return Status::OK;
+}
+
+auto CatalogManager::listTruncateJobs(std::vector<std::shared_ptr<TruncateJob>> &jobs_out) -> void
+{
+    std::lock_guard<std::mutex> lock(truncate_jobs_mutex_);
+    for (const auto &[job_id, job] : truncate_jobs_)
+    {
+        jobs_out.push_back(job);
+    }
+}
+
+// ========================================================================
+// Sequence Operations (ALPHA Phase 1 - Sequences)
+// ========================================================================
+
+auto CatalogManager::createSequence(const ID& schema_id, const std::string& name,
+                                     int64_t increment_by, int64_t min_value, int64_t max_value,
+                                     int64_t start_value, int64_t cache_size, bool cycle,
+                                     ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(sequence_cache_mutex_);
+
+    LOG_INFO(CATALOG, "Creating sequence '%s' with increment=%ld, min=%ld, max=%ld, start=%ld",
+             name.c_str(), increment_by, min_value, max_value, start_value);
+
+    // Validate parameters
+    if (increment_by == 0) {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Sequence increment cannot be zero");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    if (min_value >= max_value) {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                          "Sequence minimum value must be less than maximum value");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    if (start_value < min_value || start_value > max_value) {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                          "Sequence start value must be between min and max values");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    // Generate sequence ID
+    ID sequence_id = generateUuidV7();
+
+    // Create in-memory sequence state
+    auto state = std::make_shared<SequenceState>();
+    state->sequence_id = sequence_id;
+    state->name = name;  // Store name for cleanup
+    state->current_value.store(start_value);
+    state->increment_by = increment_by;
+    state->min_value = min_value;
+    state->max_value = max_value;
+    state->cycle = cycle;
+
+    // Add to cache
+    sequence_cache_[sequence_id] = state;
+
+    // Add name-to-ID mapping
+    {
+        std::lock_guard<std::mutex> name_lock(sequence_name_mutex_);
+        sequence_name_to_id_[name] = sequence_id;
+    }
+
+    LOG_INFO(CATALOG, "Created sequence '%s' with ID %s", name.c_str(), "<sequence_id>");
+
+    return Status::OK;
+}
+
+auto CatalogManager::alterSequence(const ID& sequence_id, const std::optional<int64_t>& increment_by,
+                                    const std::optional<int64_t>& min_value, const std::optional<int64_t>& max_value,
+                                    const std::optional<int64_t>& restart, const std::optional<int64_t>& cache_size,
+                                    const std::optional<bool>& cycle, ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(sequence_cache_mutex_);
+
+    // Find sequence
+    auto it = sequence_cache_.find(sequence_id);
+    if (it == sequence_cache_.end()) {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Sequence not found");
+        return Status::NOT_FOUND;
+    }
+
+    auto state = it->second;
+
+    // Lock config mutex for thread-safe parameter updates
+    std::lock_guard<std::mutex> config_lock(state->config_mutex);
+
+    LOG_INFO(CATALOG, "Altering sequence %s", "<sequence_id>");
+
+    // Update parameters if provided
+    if (increment_by.has_value()) {
+        if (*increment_by == 0) {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Sequence increment cannot be zero");
+            return Status::INVALID_ARGUMENT;
+        }
+        state->increment_by = *increment_by;
+        LOG_DEBUG(CATALOG, "  Updated increment_by to %ld", *increment_by);
+    }
+
+    if (min_value.has_value()) {
+        state->min_value = *min_value;
+        LOG_DEBUG(CATALOG, "  Updated min_value to %ld", *min_value);
+    }
+
+    if (max_value.has_value()) {
+        state->max_value = *max_value;
+        LOG_DEBUG(CATALOG, "  Updated max_value to %ld", *max_value);
+    }
+
+    if (cycle.has_value()) {
+        state->cycle = *cycle;
+        LOG_DEBUG(CATALOG, "  Updated cycle to %s", *cycle ? "true" : "false");
+    }
+
+    // Validate min < max after updates
+    if (state->min_value >= state->max_value) {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                          "Sequence minimum value must be less than maximum value");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    // Handle RESTART
+    if (restart.has_value()) {
+        if (*restart < state->min_value || *restart > state->max_value) {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                              "Restart value must be between min and max values");
+            return Status::INVALID_ARGUMENT;
+        }
+        state->current_value.store(*restart);
+        LOG_INFO(CATALOG, "  Restarted sequence at %ld", *restart);
+    }
+
+    return Status::OK;
+}
+
+auto CatalogManager::dropSequence(const ID& sequence_id, bool cascade, ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> cache_lock(sequence_cache_mutex_);
+
+    LOG_INFO(CATALOG, "Dropping sequence %s (cascade=%s)", "<sequence_id>", cascade ? "true" : "false");
+
+    // Find sequence
+    auto it = sequence_cache_.find(sequence_id);
+    if (it == sequence_cache_.end()) {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Sequence not found");
+        return Status::NOT_FOUND;
+    }
+
+    // Get name before removing
+    std::string seq_name = it->second->name;
+
+    // Remove from cache
+    sequence_cache_.erase(it);
+
+    // Remove from name map
+    {
+        std::lock_guard<std::mutex> name_lock(sequence_name_mutex_);
+        sequence_name_to_id_.erase(seq_name);
+    }
+
+    LOG_INFO(CATALOG, "Dropped sequence '%s' successfully", seq_name.c_str());
+
+    return Status::OK;
+}
+
+auto CatalogManager::getSequence(const ID& schema_id, const std::string& name,
+                                  SequenceInfo& info_out, ErrorContext* ctx) -> Status
+{
+    // For now, stub - sequences are only in memory
+    SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED, "getSequence not yet implemented");
+    return Status::NOT_IMPLEMENTED;
+}
+
+auto CatalogManager::sequenceNextVal(const ID& sequence_id, int64_t& value_out,
+                                      ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(sequence_cache_mutex_);
+
+    // Find sequence
+    auto it = sequence_cache_.find(sequence_id);
+    if (it == sequence_cache_.end()) {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Sequence not found");
+        return Status::NOT_FOUND;
+    }
+
+    auto state = it->second;
+
+    // Lock config mutex to ensure consistent reads of increment/min/max
+    std::lock_guard<std::mutex> config_lock(state->config_mutex);
+
+    // Atomically increment and get new value
+    int64_t new_value = state->current_value.fetch_add(state->increment_by) + state->increment_by;
+
+    // Check if we exceeded max_value
+    if (state->increment_by > 0) {
+        if (new_value > state->max_value) {
+            if (state->cycle) {
+                // Wrap to min_value
+                new_value = state->min_value;
+                state->current_value.store(new_value);
+                LOG_DEBUG(CATALOG, "Sequence wrapped to min_value=%ld", new_value);
+            } else {
+                SET_ERROR_CONTEXT(ctx, Status::OUT_OF_RANGE,
+                                  "Sequence has reached its maximum value");
+                return Status::OUT_OF_RANGE;
+            }
+        }
+    } else {
+        // Negative increment - check min_value
+        if (new_value < state->min_value) {
+            if (state->cycle) {
+                // Wrap to max_value
+                new_value = state->max_value;
+                state->current_value.store(new_value);
+                LOG_DEBUG(CATALOG, "Sequence wrapped to max_value=%ld", new_value);
+            } else {
+                SET_ERROR_CONTEXT(ctx, Status::OUT_OF_RANGE,
+                                  "Sequence has reached its minimum value");
+                return Status::OUT_OF_RANGE;
+            }
+        }
+    }
+
+    value_out = new_value;
+
+    LOG_DEBUG(CATALOG, "NEXTVAL returned %ld", new_value);
+
+    return Status::OK;
+}
+
+auto CatalogManager::sequenceSetVal(const ID& sequence_id, int64_t value, bool is_called,
+                                     ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(sequence_cache_mutex_);
+
+    // Find sequence
+    auto it = sequence_cache_.find(sequence_id);
+    if (it == sequence_cache_.end()) {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Sequence not found");
+        return Status::NOT_FOUND;
+    }
+
+    auto state = it->second;
+
+    // Lock config mutex
+    std::lock_guard<std::mutex> config_lock(state->config_mutex);
+
+    // Validate value is within range
+    if (value < state->min_value || value > state->max_value) {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                          "Value must be between min and max values");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    // Set value
+    // If is_called=true, next NEXTVAL will increment from this value
+    // If is_called=false, next NEXTVAL will return this value (so set to value - increment)
+    if (is_called) {
+        state->current_value.store(value);
+    } else {
+        state->current_value.store(value - state->increment_by);
+    }
+
+    LOG_INFO(CATALOG, "SETVAL set sequence to %ld (is_called=%s)",
+             value, is_called ? "true" : "false");
+
+    return Status::OK;
+}
+
+auto CatalogManager::getSequenceIdByName(const std::string& name, ID& id_out, ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(sequence_name_mutex_);
+
+    auto it = sequence_name_to_id_.find(name);
+    if (it == sequence_name_to_id_.end()) {
+        std::string msg = "Sequence not found: " + name;
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, msg.c_str());
+        return Status::NOT_FOUND;
+    }
+
+    id_out = it->second;
+    return Status::OK;
+}
+
+// ============================================================================
+// View Operations (ALPHA Phase 1 - Views)
+// ============================================================================
+
+auto CatalogManager::createView(const ID& schema_id, const std::string& name,
+                                  const std::string& definition, bool or_replace,
+                                  bool check_option,
+                                  const std::vector<std::string>& column_names,
+                                  ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(view_cache_mutex_);
+
+    // Check if view exists
+    auto it = view_name_to_id_.find(name);
+    if (it != view_name_to_id_.end())
+    {
+        if (!or_replace)
+        {
+            std::string msg = "View already exists: " + name;
+            SET_ERROR_CONTEXT(ctx, Status::CONSTRAINT_VIOLATION, msg.c_str());
+            return Status::CONSTRAINT_VIOLATION;
+        }
+
+        // Update existing view (OR REPLACE)
+        ViewInfo& view = view_cache_[it->second];
+        view.definition = definition;
+        view.check_option = check_option;
+        view.column_names = column_names;
+        view.last_modified_time = std::chrono::system_clock::now().time_since_epoch().count();
+
+        LOG_INFO(CATALOG, "Replaced view '%s'", name.c_str());
+        return Status::OK;
+    }
+
+    // Create new view
+    ViewInfo view;
+    view.view_id = generateUuidV7();
+    view.schema_id = schema_id;
+    view.name = name;
+    view.definition = definition;
+    view.check_option = check_option;
+    view.column_names = column_names;
+    view.created_time = std::chrono::system_clock::now().time_since_epoch().count();
+    view.last_modified_time = view.created_time;
+
+    view_cache_[view.view_id] = view;
+    view_name_to_id_[name] = view.view_id;
+
+    LOG_INFO(CATALOG, "Created view '%s'", name.c_str());
+    return Status::OK;
+}
+
+auto CatalogManager::dropView(const ID& view_id, bool cascade, ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(view_cache_mutex_);
+
+    auto it = view_cache_.find(view_id);
+    if (it == view_cache_.end())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "View not found");
+        return Status::NOT_FOUND;
+    }
+
+    std::string view_name = it->second.name;
+
+    // TODO: Check for dependent views if CASCADE is false
+    // For ALPHA Phase 1, we skip dependency checking
+
+    view_cache_.erase(it);
+    view_name_to_id_.erase(view_name);
+
+    LOG_INFO(CATALOG, "Dropped view '%s'", view_name.c_str());
+    return Status::OK;
+}
+
+auto CatalogManager::getView(const ID& schema_id, const std::string& name,
+                               ViewInfo& info_out, ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(view_cache_mutex_);
+
+    auto it = view_name_to_id_.find(name);
+    if (it == view_name_to_id_.end())
+    {
+        std::string msg = "View not found: " + name;
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, msg.c_str());
+        return Status::NOT_FOUND;
+    }
+
+    info_out = view_cache_[it->second];
+    return Status::OK;
+}
+
+auto CatalogManager::getViewIdByName(const std::string& name, ID& id_out,
+                                       ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(view_cache_mutex_);
+
+    auto it = view_name_to_id_.find(name);
+    if (it == view_name_to_id_.end())
+    {
+        std::string msg = "View not found: " + name;
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, msg.c_str());
+        return Status::NOT_FOUND;
+    }
+
+    id_out = it->second;
+    return Status::OK;
+}
+
+auto CatalogManager::isView(const std::string& name) -> bool
+{
+    std::lock_guard<std::mutex> lock(view_cache_mutex_);
+    return view_name_to_id_.find(name) != view_name_to_id_.end();
+}
+
 } // namespace scratchbird::core
+
