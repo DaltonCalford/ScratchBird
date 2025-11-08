@@ -726,16 +726,93 @@ namespace scratchbird::core
             return status;
         }
 
-        // Create default schemas
-        ID schema_id;
-        status = createSchemaInternal("[sys]", "[root]", schema_id, ctx);
-        if (status != Status::OK)
-        {
-            return status;
-        }
+        // Create default schema hierarchy (18 schemas)
+        // Schema tree structure:
+        // root (top-level)
+        // ├── sys (system catalogs)
+        // │   ├── sec (security)
+        // │   │   ├── srv (servers)
+        // │   │   ├── users (security users - NOT home directories)
+        // │   │   ├── roles (security roles)
+        // │   │   └── groups (AD/LDAP groups)
+        // │   ├── mon (monitoring)
+        // │   └── agents (background agents)
+        // ├── app (application data)
+        // ├── users (user home directories - DIFFERENT from sys.sec.users)
+        // ├── remote (remote/federated objects)
+        // ├── emulation (database emulation layer)
+        // │   ├── mysql (MySQL compatibility)
+        // │   ├── postgres (PostgreSQL compatibility)
+        // │   ├── mssql (SQL Server compatibility)
+        // │   └── firebird (Firebird compatibility)
+        // └── public (default user schema)
 
-        DEBUG_LOG_DB("System catalog initialized with schemas page="
-                     << schemas_table_page_ << ", tables page=" << tables_table_page_
+        ID root_id, sys_id, sec_id, srv_id, users_sec_id, roles_id, groups_id;
+        ID mon_id, agents_id, app_id, users_home_id, remote_id, emulation_id;
+        ID mysql_id, postgres_id, mssql_id, firebird_id, public_id;
+
+        // Level 0: root
+        status = createSchemaInternal("root", "system", root_id, ID(), ctx);
+        if (status != Status::OK) return status;
+
+        // Level 1: Top-level schemas under root
+        status = createSchemaInternal("sys", "system", sys_id, root_id, ctx);
+        if (status != Status::OK) return status;
+
+        status = createSchemaInternal("app", "system", app_id, root_id, ctx);
+        if (status != Status::OK) return status;
+
+        status = createSchemaInternal("users", "system", users_home_id, root_id, ctx);
+        if (status != Status::OK) return status;
+
+        status = createSchemaInternal("remote", "system", remote_id, root_id, ctx);
+        if (status != Status::OK) return status;
+
+        status = createSchemaInternal("emulation", "system", emulation_id, root_id, ctx);
+        if (status != Status::OK) return status;
+
+        status = createSchemaInternal("public", "system", public_id, root_id, ctx);
+        if (status != Status::OK) return status;
+
+        // Level 2: sys.* schemas
+        status = createSchemaInternal("sec", "system", sec_id, sys_id, ctx);
+        if (status != Status::OK) return status;
+
+        status = createSchemaInternal("mon", "system", mon_id, sys_id, ctx);
+        if (status != Status::OK) return status;
+
+        status = createSchemaInternal("agents", "system", agents_id, sys_id, ctx);
+        if (status != Status::OK) return status;
+
+        // Level 3: sys.sec.* schemas (security)
+        status = createSchemaInternal("srv", "system", srv_id, sec_id, ctx);
+        if (status != Status::OK) return status;
+
+        status = createSchemaInternal("sec_users", "system", users_sec_id, sec_id, ctx);
+        if (status != Status::OK) return status;
+
+        status = createSchemaInternal("roles", "system", roles_id, sec_id, ctx);
+        if (status != Status::OK) return status;
+
+        status = createSchemaInternal("groups", "system", groups_id, sec_id, ctx);
+        if (status != Status::OK) return status;
+
+        // Level 2: emulation.* schemas
+        status = createSchemaInternal("mysql", "system", mysql_id, emulation_id, ctx);
+        if (status != Status::OK) return status;
+
+        status = createSchemaInternal("postgres", "system", postgres_id, emulation_id, ctx);
+        if (status != Status::OK) return status;
+
+        status = createSchemaInternal("mssql", "system", mssql_id, emulation_id, ctx);
+        if (status != Status::OK) return status;
+
+        status = createSchemaInternal("firebird", "system", firebird_id, emulation_id, ctx);
+        if (status != Status::OK) return status;
+
+        DEBUG_LOG_DB("System catalog initialized with 18 schemas in hierarchy");
+        DEBUG_LOG_DB("  schemas page=" << schemas_table_page_
+                     << ", tables page=" << tables_table_page_
                      << ", columns page=" << columns_table_page_);
 
         return Status::OK;
@@ -803,6 +880,7 @@ namespace scratchbird::core
     // Internal version without lock (assumes caller holds mutex_)
     auto CatalogManager::createSchemaInternal(const std::string &schema_name,
                                               const std::string &owner, ID &schema_id,
+                                              const ID &parent_schema_id,
                                               ErrorContext *ctx) -> Status
     {
         // Check if schema already exists
@@ -819,7 +897,7 @@ namespace scratchbird::core
         // Create new schema
         SchemaInfo schema;
         schema.schema_id = generateUuidV7();
-        schema.parent_schema_id = ID();    // TODO: Accept parent_schema_id parameter
+        schema.parent_schema_id = parent_schema_id;  // Schema hierarchy support
         schema.schema_name = schema_name;
         // TODO: Implement resolveOwnerUUID() to convert owner name to UUID
         // For now, use zero UUID as placeholder (will be fixed in Phase 2 with Users table)
@@ -862,7 +940,7 @@ namespace scratchbird::core
                                       ID &schema_id, ErrorContext *ctx) -> Status
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        return createSchemaInternal(schema_name, owner, schema_id, ctx);
+        return createSchemaInternal(schema_name, owner, schema_id, ID(), ctx);
     }
 
     auto CatalogManager::getSchema(const ID &schema_id, SchemaInfo &info, ErrorContext *ctx)

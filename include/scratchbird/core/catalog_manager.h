@@ -1234,7 +1234,8 @@ namespace scratchbird::core
 
         // Internal helper methods (assume mutex_ is already held by caller)
         auto createSchemaInternal(const std::string &schema_name, const std::string &owner,
-                                  ID &schema_id, ErrorContext *ctx = nullptr) -> Status;
+                                  ID &schema_id, const ID &parent_schema_id = ID(),
+                                  ErrorContext *ctx = nullptr) -> Status;
 
         // Index TID update helper (Phase 4 Task 4.1.5)
         // Updates all index entries for a table to reference new GPIDs after table migration
