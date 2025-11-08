@@ -31,6 +31,8 @@ namespace scratchbird::core
         PageHeader header;
         uint32_t schema_count;
         uint32_t table_count;
+
+        // Core catalog tables (existing)
         uint32_t schemas_page;        // Page containing schemas table
         uint32_t tables_page;         // Page containing tables table
         uint32_t columns_page;        // Page containing columns table
@@ -45,7 +47,34 @@ namespace scratchbird::core
         uint32_t timezones_page;      // Page containing timezones table
         uint32_t charsets_page;       // Page containing character sets table (pg_charset)
         uint32_t collation_defs_page; // Page containing collation definitions table (pg_collation)
-        uint8_t reserved[4024];       // Padding for 16KB page (adjusted for new fields)
+
+        // Phase 1.4-1.5: Dependencies and Comments (Catalog Corrections)
+        uint32_t dependencies_page;   // Page containing dependencies table
+        uint32_t comments_page;       // Page containing comments table
+
+        // Phase 2: Security tables (Catalog Corrections)
+        uint32_t users_page;          // Page containing users table
+        uint32_t roles_page;          // Page containing roles table
+        uint32_t groups_page;         // Page containing groups table (AD/LDAP)
+        uint32_t role_members_page;   // Page containing role memberships table
+
+        // Phase 3: Stored code tables (Catalog Corrections)
+        uint32_t procedures_page;     // Page containing procedures/functions table
+        uint32_t proc_params_page;    // Page containing procedure parameters table
+        uint32_t domains_page;        // Page containing domains table
+        uint32_t udr_page;            // Page containing UDR (User-Defined Resources) table
+        uint32_t packages_page;       // Page containing packages table (Firebird)
+
+        // Phase 4: Emulation tables (Catalog Corrections)
+        uint32_t emulation_types_page;    // Page containing emulation types table
+        uint32_t emulation_servers_page;  // Page containing emulation servers table
+        uint32_t emulated_dbs_page;       // Page containing emulated databases table
+
+        // Phase 5: Future expansion
+        uint32_t tablespaces_page;    // Page containing tablespaces table
+        uint32_t extensions_page;     // Page containing extensions table
+
+        uint8_t reserved[3904];       // Padding for 16KB page (144 bytes used for new table pointers, was 4024)
     };
 
     // Schema record on disk
