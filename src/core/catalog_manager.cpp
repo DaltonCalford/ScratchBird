@@ -403,6 +403,67 @@ namespace scratchbird::core
         uint32_t padding;
     };
 
+    // User record on disk (Phase 2 - Security Tables)
+    struct UserRecord
+    {
+        ID user_id;
+        char username[512];         // User login name
+        uint32_t password_hash_oid; // TOAST reference - hashed password (bcrypt, argon2, etc.)
+        uint32_t user_metadata_oid; // TOAST reference - JSON metadata (preferences, settings)
+        ID default_schema_id;       // UUID reference to default schema
+        uint8_t is_active;          // 1 if active, 0 if disabled
+        uint8_t is_superuser;       // 1 if superuser, 0 if normal user
+        uint8_t reserved[6];        // Alignment
+        uint64_t created_time;
+        uint64_t last_login_time;
+        uint32_t is_valid;
+        uint32_t padding;
+    };
+
+    // Role record on disk (Phase 2 - Security Tables)
+    struct RoleRecord
+    {
+        ID role_id;
+        char role_name[512];        // Role name
+        ID owner_id;                // Owner UUID reference
+        uint32_t role_metadata_oid; // TOAST reference - JSON metadata (permissions, settings)
+        uint8_t is_active;          // 1 if active, 0 if disabled
+        uint8_t reserved[7];        // Alignment
+        uint64_t created_time;
+        uint64_t last_modified_time;
+        uint32_t is_valid;
+        uint32_t padding;
+    };
+
+    // Group record on disk (Phase 2 - Security Tables)
+    struct GroupRecord
+    {
+        ID group_id;
+        char group_name[512];       // Group name
+        char external_id[512];      // AD/LDAP group ID (empty if local)
+        uint8_t group_type;         // LOCAL, AD, LDAP
+        uint8_t reserved[7];        // Alignment
+        uint32_t group_metadata_oid; // TOAST reference - JSON metadata
+        uint64_t created_time;
+        uint64_t last_modified_time;
+        uint32_t is_valid;
+        uint32_t padding;
+    };
+
+    // Role membership record on disk (Phase 2 - Security Tables)
+    struct RoleMembershipRecord
+    {
+        ID membership_id;
+        ID user_id;                 // User who is member
+        ID role_id;                 // Role they belong to
+        ID granted_by;              // User who granted this membership
+        uint8_t with_admin_option;  // 1 if user can grant this role to others
+        uint8_t reserved[7];        // Alignment
+        uint64_t granted_time;
+        uint32_t is_valid;
+        uint32_t padding;
+    };
+
     // Collation record on disk - see updated CollationRecord structure below at line ~194
 
 #pragma pack(pop)
