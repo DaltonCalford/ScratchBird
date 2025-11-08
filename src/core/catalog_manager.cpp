@@ -84,7 +84,8 @@ namespace scratchbird::core
     {
         ID table_id;
         ID schema_id;
-        char table_name[512]; // SQL standard: 128 characters (512 bytes = 128 chars × 4 bytes/char max UTF-8)
+        char table_name[512];          // SQL standard: 128 characters (512 bytes = 128 chars × 4 bytes/char max UTF-8)
+        ID owner_id;                   // Owner UUID reference (NOT name - allows rename without breaking dependencies)
         uint32_t root_page;
         uint32_t column_count;
         uint64_t row_count;
@@ -94,11 +95,11 @@ namespace scratchbird::core
         uint16_t default_charset;      // CharacterSet enum (0 = inherit from schema)
         uint16_t reserved1;            // Reserved for future use
         uint32_t default_collation_id; // Collation ID (0 = inherit from schema)
-        uint32_t storage_params_oid;   // TOAST reference for storage parameters
+        uint32_t storage_params_oid;   // TOAST reference for storage parameters - IMPLEMENTED
         uint64_t created_time;
         uint64_t last_modified_time;
         uint32_t is_valid;
-        uint32_t padding; // Alignment
+        uint32_t padding;              // Alignment
     };
 
     // Column record on disk
@@ -891,6 +892,7 @@ namespace scratchbird::core
         table.table_id = generateUuidV7();
         table.schema_id = schema_id;
         table.table_name = table_name;
+        table.owner_id = ID();              // TODO: Get owner from current user (Phase 2 - needs Users table)
         table.root_page = root_page;
         table.column_count = columns.size();
         table.row_count = 0;
@@ -1849,6 +1851,8 @@ namespace scratchbird::core
         // Phase 3: Safe UTF-8 copy (already validated to fit)
         std::memcpy(record.table_name, table.table_name.c_str(), table.table_name.size());
         record.table_name[table.table_name.size()] = '\0';
+
+        record.owner_id = table.owner_id;      // UUID-based owner reference
         record.root_page = table.root_page;
         record.column_count = table.column_count;
         record.row_count = table.row_count;
@@ -2040,6 +2044,7 @@ namespace scratchbird::core
             info.table_id = record.table_id;
             info.schema_id = record.schema_id;
             info.table_name = record.table_name;
+            info.owner_id = record.owner_id;   // UUID-based owner reference
             info.root_page = record.root_page;
             info.column_count = record.column_count;
             info.row_count = record.row_count;

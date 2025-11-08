@@ -108,6 +108,14 @@ namespace scratchbird
             Statement *parseCreateTablespace();      // Phase 2 Task 2.1
             Statement *parseAlterTablespace();       // Phase 2 Task 2.2
             Statement *parseAlterTable();            // Phase 4 Task 4.1.1
+            Statement *parseDropTable();             // ALPHA Phase 1 - DDL Modifications
+            Statement *parseDropIndex();             // ALPHA Phase 1 - DDL Modifications
+            Statement *parseTruncateTable();         // ALPHA Phase 1 - DDL Modifications (TRUNCATE TABLE ASYNC)
+            Statement *parseCreateSequence();        // ALPHA Phase 1 - Sequences
+            Statement *parseAlterSequence();         // ALPHA Phase 1 - Sequences
+            Statement *parseDropSequence();          // ALPHA Phase 1 - Sequences
+            Statement *parseCreateView();            // ALPHA Phase 1 - Views
+            Statement *parseDropView();              // ALPHA Phase 1 - Views
             Statement *parseDropTablespace();        // Phase 2 Task 2.1
             Statement *parseAttachTablespace();      // Phase 6 Task 6.1
             Statement *parseDetachTablespace();      // Phase 6 Task 6.2

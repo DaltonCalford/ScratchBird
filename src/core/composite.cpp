@@ -4,9 +4,9 @@
 
 namespace scratchbird::core
 {
-    // ===== CompositeValue Implementation =====
+    // ===== CompositeRecord Implementation =====
 
-    CompositeValue::CompositeValue(const std::string& type_name, const std::vector<CompositeField>& fields)
+    CompositeRecord::CompositeRecord(const std::string& type_name, const std::vector<CompositeField>& fields)
         : type_name_(type_name), fields_(fields) {
 
         // Build field index map
@@ -37,13 +37,13 @@ namespace scratchbird::core
                     values_.emplace_back(false);
                     break;
                 case CompositeFieldType::COMPOSITE:
-                    values_.emplace_back(std::shared_ptr<CompositeValue>(nullptr));
+                    values_.emplace_back(std::shared_ptr<CompositeRecord>(nullptr));
                     break;
             }
         }
     }
 
-    auto CompositeValue::getField(const std::string& field_name) const -> std::optional<CompositeFieldValue> {
+    auto CompositeRecord::getField(const std::string& field_name) const -> std::optional<CompositeFieldValue> {
         auto it = field_indices_.find(field_name);
         if (it == field_indices_.end()) {
             return std::nullopt;
@@ -51,7 +51,7 @@ namespace scratchbird::core
         return values_[it->second];
     }
 
-    auto CompositeValue::setField(const std::string& field_name, const CompositeFieldValue& value) -> bool {
+    auto CompositeRecord::setField(const std::string& field_name, const CompositeFieldValue& value) -> bool {
         auto it = field_indices_.find(field_name);
         if (it == field_indices_.end()) {
             return false;
@@ -82,7 +82,7 @@ namespace scratchbird::core
                 type_matches = std::holds_alternative<bool>(value);
                 break;
             case CompositeFieldType::COMPOSITE:
-                type_matches = std::holds_alternative<std::shared_ptr<CompositeValue>>(value);
+                type_matches = std::holds_alternative<std::shared_ptr<CompositeRecord>>(value);
                 break;
         }
 
@@ -94,14 +94,14 @@ namespace scratchbird::core
         return true;
     }
 
-    auto CompositeValue::getFieldByIndex(size_t index) const -> std::optional<CompositeFieldValue> {
+    auto CompositeRecord::getFieldByIndex(size_t index) const -> std::optional<CompositeFieldValue> {
         if (index >= values_.size()) {
             return std::nullopt;
         }
         return values_[index];
     }
 
-    auto CompositeValue::setFieldByIndex(size_t index, const CompositeFieldValue& value) -> bool {
+    auto CompositeRecord::setFieldByIndex(size_t index, const CompositeFieldValue& value) -> bool {
         if (index >= values_.size()) {
             return false;
         }
@@ -109,11 +109,11 @@ namespace scratchbird::core
         return true;
     }
 
-    bool CompositeValue::hasField(const std::string& field_name) const {
+    bool CompositeRecord::hasField(const std::string& field_name) const {
         return field_indices_.find(field_name) != field_indices_.end();
     }
 
-    auto CompositeValue::getFieldIndex(const std::string& field_name) const -> std::optional<size_t> {
+    auto CompositeRecord::getFieldIndex(const std::string& field_name) const -> std::optional<size_t> {
         auto it = field_indices_.find(field_name);
         if (it == field_indices_.end()) {
             return std::nullopt;
@@ -121,7 +121,7 @@ namespace scratchbird::core
         return it->second;
     }
 
-    std::string CompositeValue::toString() const {
+    std::string CompositeRecord::toString() const {
         std::ostringstream oss;
         oss << type_name_ << "{";
 
@@ -135,7 +135,7 @@ namespace scratchbird::core
                     oss << "\"" << arg << "\"";
                 } else if constexpr (std::is_same_v<T, bool>) {
                     oss << (arg ? "true" : "false");
-                } else if constexpr (std::is_same_v<T, std::shared_ptr<CompositeValue>>) {
+                } else if constexpr (std::is_same_v<T, std::shared_ptr<CompositeRecord>>) {
                     if (arg) {
                         oss << arg->toString();
                     } else {
@@ -154,11 +154,11 @@ namespace scratchbird::core
     // ===== Composite Implementation =====
 
     auto Composite::create(const std::string& type_name, const std::vector<CompositeField>& fields)
-        -> CompositeValue {
-        return CompositeValue(type_name, fields);
+        -> CompositeRecord {
+        return CompositeRecord(type_name, fields);
     }
 
-    auto Composite::encode(const CompositeValue& value) -> std::vector<uint8_t> {
+    auto Composite::encode(const CompositeRecord& value) -> std::vector<uint8_t> {
         std::vector<uint8_t> buffer;
 
         // Type name (length + string)
@@ -206,7 +206,7 @@ namespace scratchbird::core
         return buffer;
     }
 
-    auto Composite::decode(const std::vector<uint8_t>& binary) -> std::optional<CompositeValue> {
+    auto Composite::decode(const std::vector<uint8_t>& binary) -> std::optional<CompositeRecord> {
         if (binary.size() < 8) return std::nullopt;
 
         size_t pos = 0;
@@ -252,7 +252,7 @@ namespace scratchbird::core
         }
 
         // Create composite
-        CompositeValue result(type_name, fields);
+        CompositeRecord result(type_name, fields);
 
         // Decode field values
         for (size_t i = 0; i < field_count; ++i) {
@@ -267,9 +267,9 @@ namespace scratchbird::core
     auto Composite::fromMap(const std::string& type_name,
                            const std::vector<CompositeField>& fields,
                            const std::unordered_map<std::string, CompositeFieldValue>& values)
-        -> std::optional<CompositeValue> {
+        -> std::optional<CompositeRecord> {
 
-        CompositeValue result(type_name, fields);
+        CompositeRecord result(type_name, fields);
 
         for (const auto& [name, value] : values) {
             if (!result.setField(name, value)) {
@@ -280,7 +280,7 @@ namespace scratchbird::core
         return result;
     }
 
-    bool Composite::equals(const CompositeValue& a, const CompositeValue& b) {
+    bool Composite::equals(const CompositeRecord& a, const CompositeRecord& b) {
         if (a.getTypeName() != b.getTypeName()) return false;
         if (a.getFieldCount() != b.getFieldCount()) return false;
 
@@ -357,7 +357,7 @@ namespace scratchbird::core
                 break;
             }
             case CompositeFieldType::COMPOSITE: {
-                auto nested = std::get<std::shared_ptr<CompositeValue>>(value);
+                auto nested = std::get<std::shared_ptr<CompositeRecord>>(value);
                 if (nested) {
                     auto nested_binary = encode(*nested);
                     buffer.insert(buffer.end(), nested_binary.begin(), nested_binary.end());
@@ -429,7 +429,7 @@ namespace scratchbird::core
             }
             case CompositeFieldType::COMPOSITE: {
                 // Decode nested composite (simplified)
-                return std::shared_ptr<CompositeValue>(nullptr);
+                return std::shared_ptr<CompositeRecord>(nullptr);
             }
         }
 

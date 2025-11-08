@@ -12,7 +12,7 @@ namespace scratchbird
     {
 
         // Token types for SQL lexer
-        enum class TokenType : uint8_t
+        enum class TokenType : uint16_t
         {
             // Special tokens
             END_OF_FILE = 0,
@@ -147,6 +147,7 @@ namespace scratchbird
             KW_FIRST,
             KW_LAST,
             KW_AND,
+            KW_OR,        // Logical OR / OR keyword (for CREATE OR REPLACE)
 
             // Numeric types
             KW_INT,
@@ -295,12 +296,34 @@ namespace scratchbird
             KW_UNLIMITED,
             KW_PREALLOC,
             KW_FORCE,
+            KW_CASCADE,      // ALPHA Phase 1 - DDL Modifications
+            KW_RESTRICT,     // ALPHA Phase 1 - DDL Modifications
             KW_DROP,
+            KW_TRUNCATE,  // ALPHA Phase 1 - TRUNCATE TABLE
+            KW_ASYNC,     // ALPHA Phase 1 - TRUNCATE TABLE ASYNC
+            KW_SYNC,      // ALPHA Phase 1 - TRUNCATE TABLE SYNC
+            KW_SEQUENCE,  // ALPHA Phase 1 - Sequences
+            KW_INCREMENT, // ALPHA Phase 1 - Sequences
+            KW_MINVALUE,  // ALPHA Phase 1 - Sequences
+            KW_MAXVALUE,  // ALPHA Phase 1 - Sequences
+            KW_NO,        // ALPHA Phase 1 - Sequences (NO MINVALUE, NO MAXVALUE, NO CYCLE)
+            KW_CACHE,     // ALPHA Phase 1 - Sequences
+            KW_CYCLE,     // ALPHA Phase 1 - Sequences
+            KW_RESTART,   // ALPHA Phase 1 - Sequences
+            KW_NEXTVAL,   // ALPHA Phase 1 - Sequences (function)
+            KW_CURRVAL,   // ALPHA Phase 1 - Sequences (function)
+            KW_SETVAL,    // ALPHA Phase 1 - Sequences (function)
+            KW_VIEW,      // ALPHA Phase 1 - Views
+            KW_REPLACE,   // ALPHA Phase 1 - Views (CREATE OR REPLACE)
+            KW_CHECK,     // ALPHA Phase 1 - Views (WITH CHECK OPTION)
+            KW_OPTION,    // ALPHA Phase 1 - Views (WITH CHECK OPTION)
             KW_ON,
             KW_OFF,
             KW_ALTER,  // Phase 2 Task 2.2
             KW_RENAME, // Phase 2 Task 2.2
             KW_TO,     // Phase 2 Task 2.2
+            KW_ADD,    // ALPHA Phase 1 - ALTER TABLE ADD COLUMN
+            KW_TYPE,   // ALPHA Phase 1 - ALTER TABLE ALTER COLUMN TYPE
             KW_ONLINE, // Phase 4 Task 4.1.1 - ALTER TABLE ... SET TABLESPACE ... ONLINE
             KW_ATTACH, // Phase 6 Task 6.1 - ATTACH TABLESPACE
             KW_DETACH, // Phase 6 Task 6.2 - DETACH TABLESPACE

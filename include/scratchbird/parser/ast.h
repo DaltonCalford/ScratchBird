@@ -31,6 +31,15 @@ namespace scratchbird
             // Statements
             CREATE_TABLE,
             CREATE_INDEX,              // Phase 2 Task 2.3
+            DROP_TABLE,                // ALPHA Phase 1 - DDL Modifications
+            DROP_INDEX,                // ALPHA Phase 1 - DDL Modifications
+            TRUNCATE_TABLE,            // ALPHA Phase 1 - DDL Modifications (TRUNCATE TABLE)
+            ALTER_TABLE,               // ALPHA Phase 1 - DDL Modifications (ADD/DROP/ALTER COLUMN)
+            CREATE_SEQUENCE,           // ALPHA Phase 1 - Sequences
+            ALTER_SEQUENCE,            // ALPHA Phase 1 - Sequences
+            DROP_SEQUENCE,             // ALPHA Phase 1 - Sequences
+            CREATE_VIEW,               // ALPHA Phase 1 - Views
+            DROP_VIEW,                 // ALPHA Phase 1 - Views
             CREATE_TRIGGER,            // Phase 2 Wave 2 - Agent C: Basic Triggers
             DROP_TRIGGER,              // Phase 2 Wave 2 - Agent C: Basic Triggers
             CREATE_FUNCTION,           // Phase 2 Task 10.2 - Stored Procedures
@@ -79,6 +88,7 @@ namespace scratchbird
             NULLIF,          // Phase 1 Task 8: NULLIF expression
             CASE,            // Phase 1 Task 8: CASE expression
             SUBQUERY,        // Phase 2 Wave 2 - Agent B: Subquery expression
+            SEQUENCE_FUNCTION, // ALPHA Phase 1 - Sequences (NEXTVAL, CURRVAL, SETVAL)
 
             // Types
             TYPE_NAME,
@@ -427,6 +437,41 @@ namespace scratchbird
         private:
             StringPool::StringId name_;
             std::vector<Expression *> args_;
+        };
+
+        // Sequence function types (ALPHA Phase 1 - Sequences)
+        enum class SequenceFunctionType : uint8_t
+        {
+            NEXTVAL,
+            CURRVAL,
+            SETVAL
+        };
+
+        // Sequence function expression (ALPHA Phase 1 - Sequences)
+        class SequenceFunctionExpr : public Expression
+        {
+        public:
+            SequenceFunctionExpr(const SourceSpan& span, SequenceFunctionType func_type,
+                                 Expression* sequence_name, Expression* value = nullptr,
+                                 Expression* is_called = nullptr)
+                : Expression(ASTKind::SEQUENCE_FUNCTION, span),
+                  func_type_(func_type), sequence_name_(sequence_name),
+                  value_(value), is_called_(is_called)
+            {
+            }
+
+            SequenceFunctionType functionType() const { return func_type_; }
+            Expression* sequenceName() const { return sequence_name_; }
+            Expression* value() const { return value_; }  // For SETVAL
+            Expression* isCalled() const { return is_called_; }  // For SETVAL
+
+            void accept(ASTVisitor* visitor) override;
+
+        private:
+            SequenceFunctionType func_type_;
+            Expression* sequence_name_;
+            Expression* value_;       // For SETVAL(seq, value)
+            Expression* is_called_;   // For SETVAL(seq, value, is_called)
         };
 
         // Aggregate function types (Phase 1 Task 4.1, Phase 2 Task 12)
@@ -1065,6 +1110,430 @@ namespace scratchbird
             bool is_unique_;
             StringPool::StringId tablespace_;
             StringPool::StringId index_type_;  // LSM Integration: Index type (e.g., "LSM", "BTREE")
+        };
+
+        // DROP TABLE statement (ALPHA Phase 1 - DDL Modifications)
+        class DropTableStmt : public Statement
+        {
+        public:
+            enum class DropBehavior : uint8_t
+            {
+                RESTRICT,  // Fail if dependencies exist (default)
+                CASCADE    // Drop dependent objects recursively
+            };
+
+            DropTableStmt(const SourceSpan &span, StringPool::StringId table_name,
+                         bool if_exists = false, DropBehavior behavior = DropBehavior::RESTRICT)
+                : Statement(ASTKind::DROP_TABLE, span), table_name_(table_name),
+                  if_exists_(if_exists), drop_behavior_(behavior)
+            {
+            }
+
+            StringPool::StringId tableName() const
+            {
+                return table_name_;
+            }
+            bool ifExists() const
+            {
+                return if_exists_;
+            }
+            DropBehavior dropBehavior() const
+            {
+                return drop_behavior_;
+            }
+
+            void accept(ASTVisitor *visitor) override;
+
+        private:
+            StringPool::StringId table_name_;
+            bool if_exists_;           // IF EXISTS clause
+            DropBehavior drop_behavior_; // CASCADE or RESTRICT
+        };
+
+        // DROP INDEX statement (ALPHA Phase 1 - DDL Modifications)
+        class DropIndexStmt : public Statement
+        {
+        public:
+            DropIndexStmt(const SourceSpan &span, StringPool::StringId index_name,
+                         bool if_exists = false)
+                : Statement(ASTKind::DROP_INDEX, span), index_name_(index_name),
+                  if_exists_(if_exists)
+            {
+            }
+
+            StringPool::StringId indexName() const
+            {
+                return index_name_;
+            }
+            bool ifExists() const
+            {
+                return if_exists_;
+            }
+
+            void accept(ASTVisitor *visitor) override;
+
+        private:
+            StringPool::StringId index_name_;
+            bool if_exists_;  // IF EXISTS clause
+        };
+
+        // TRUNCATE TABLE statement (ALPHA Phase 1 - DDL Modifications - final operation)
+        class TruncateTableStmt : public Statement
+        {
+        public:
+            enum class TruncateMode : uint8_t
+            {
+                ASYNC = 0,  // Background job (default, non-blocking)
+                SYNC = 1    // Block until complete
+            };
+
+            TruncateTableStmt(const SourceSpan &span, StringPool::StringId table_name,
+                             TruncateMode mode = TruncateMode::ASYNC)
+                : Statement(ASTKind::TRUNCATE_TABLE, span), table_name_(table_name), mode_(mode)
+            {
+            }
+
+            StringPool::StringId tableName() const
+            {
+                return table_name_;
+            }
+
+            TruncateMode mode() const
+            {
+                return mode_;
+            }
+
+            void accept(ASTVisitor *visitor) override;
+
+        private:
+            StringPool::StringId table_name_;
+            TruncateMode mode_;
+        };
+
+        // ALTER TABLE statement (ALPHA Phase 1 - DDL Modifications)
+        class AlterTableStmt : public Statement
+        {
+        public:
+            enum class AlterAction : uint8_t
+            {
+                ADD_COLUMN,
+                DROP_COLUMN,
+                ALTER_COLUMN_TYPE,
+                ALTER_COLUMN_SET_DEFAULT,
+                ALTER_COLUMN_DROP_DEFAULT,
+                RENAME_COLUMN,
+                ADD_CONSTRAINT,
+                DROP_CONSTRAINT
+            };
+
+            enum class DropBehavior : uint8_t
+            {
+                RESTRICT,  // Fail if dependencies exist (default)
+                CASCADE    // Drop dependent objects recursively
+            };
+
+            AlterTableStmt(const SourceSpan &span, StringPool::StringId table_name,
+                          AlterAction action)
+                : Statement(ASTKind::ALTER_TABLE, span), table_name_(table_name),
+                  action_(action), column_def_(nullptr), new_type_(nullptr),
+                  default_expr_(nullptr),
+                  old_column_name_(0), new_column_name_(0), constraint_name_(0),
+                  if_exists_(false), drop_behavior_(DropBehavior::RESTRICT)
+            {
+            }
+
+            StringPool::StringId tableName() const
+            {
+                return table_name_;
+            }
+            AlterAction action() const
+            {
+                return action_;
+            }
+
+            // ADD COLUMN accessors
+            void setColumnDef(ColumnDef *col_def)
+            {
+                column_def_ = col_def;
+            }
+            ColumnDef *columnDef() const
+            {
+                return column_def_;
+            }
+
+            // DROP COLUMN accessors
+            void setDropColumnName(StringPool::StringId col_name, bool if_exists,
+                                  DropBehavior behavior)
+            {
+                old_column_name_ = col_name;
+                if_exists_ = if_exists;
+                drop_behavior_ = behavior;
+            }
+            StringPool::StringId dropColumnName() const
+            {
+                return old_column_name_;
+            }
+
+            // ALTER COLUMN TYPE accessors
+            void setAlterColumnType(StringPool::StringId col_name, TypeName *new_type)
+            {
+                old_column_name_ = col_name;
+                new_type_ = new_type;
+            }
+            TypeName *newType() const
+            {
+                return new_type_;
+            }
+
+            // ALTER COLUMN SET/DROP DEFAULT accessors
+            void setAlterColumnDefault(StringPool::StringId col_name, Expression *default_expr)
+            {
+                old_column_name_ = col_name;
+                default_expr_ = default_expr;
+            }
+            Expression *defaultExpr() const
+            {
+                return default_expr_;
+            }
+
+            // RENAME COLUMN accessors
+            void setRenameColumn(StringPool::StringId old_name, StringPool::StringId new_name)
+            {
+                old_column_name_ = old_name;
+                new_column_name_ = new_name;
+            }
+            StringPool::StringId oldColumnName() const
+            {
+                return old_column_name_;
+            }
+            StringPool::StringId newColumnName() const
+            {
+                return new_column_name_;
+            }
+
+            // ADD/DROP CONSTRAINT accessors (TODO: implement when TableConstraint is defined)
+            void setConstraintName(StringPool::StringId constraint_name)
+            {
+                constraint_name_ = constraint_name;
+            }
+            StringPool::StringId constraintName() const
+            {
+                return constraint_name_;
+            }
+
+            bool ifExists() const
+            {
+                return if_exists_;
+            }
+            DropBehavior dropBehavior() const
+            {
+                return drop_behavior_;
+            }
+
+            void accept(ASTVisitor *visitor) override;
+
+        private:
+            StringPool::StringId table_name_;
+            AlterAction action_;
+
+            // ADD COLUMN data
+            ColumnDef *column_def_;
+
+            // ALTER COLUMN TYPE data
+            TypeName *new_type_;
+
+            // ALTER COLUMN DEFAULT data
+            Expression *default_expr_;
+
+            // Column names
+            StringPool::StringId old_column_name_;
+            StringPool::StringId new_column_name_;
+            StringPool::StringId constraint_name_;
+
+            // DROP modifiers
+            bool if_exists_;
+            DropBehavior drop_behavior_;
+        };
+
+        // CREATE SEQUENCE statement (ALPHA Phase 1 - Sequences)
+        class CreateSequenceStmt : public Statement
+        {
+        public:
+            CreateSequenceStmt(const SourceSpan& span, StringPool::StringId name)
+                : Statement(ASTKind::CREATE_SEQUENCE, span), name_(name),
+                  increment_by_(nullptr), min_value_(nullptr), max_value_(nullptr),
+                  start_with_(nullptr), cache_(nullptr),
+                  cycle_(false), no_min_value_(false), no_max_value_(false)
+            {
+            }
+
+            StringPool::StringId name() const { return name_; }
+
+            // Optional parameters (nullptr if not specified)
+            void setIncrementBy(Expression* expr) { increment_by_ = expr; }
+            void setMinValue(Expression* expr) { min_value_ = expr; }
+            void setMaxValue(Expression* expr) { max_value_ = expr; }
+            void setStartWith(Expression* expr) { start_with_ = expr; }
+            void setCache(Expression* expr) { cache_ = expr; }
+            void setCycle(bool cycle) { cycle_ = cycle; }
+            void setNoMinValue(bool no_min) { no_min_value_ = no_min; }
+            void setNoMaxValue(bool no_max) { no_max_value_ = no_max; }
+
+            Expression* incrementBy() const { return increment_by_; }
+            Expression* minValue() const { return min_value_; }
+            Expression* maxValue() const { return max_value_; }
+            Expression* startWith() const { return start_with_; }
+            Expression* cache() const { return cache_; }
+            bool cycle() const { return cycle_; }
+            bool noMinValue() const { return no_min_value_; }
+            bool noMaxValue() const { return no_max_value_; }
+
+            void accept(ASTVisitor* visitor) override;
+
+        private:
+            StringPool::StringId name_;
+            Expression* increment_by_;
+            Expression* min_value_;
+            Expression* max_value_;
+            Expression* start_with_;
+            Expression* cache_;
+            bool cycle_;
+            bool no_min_value_;
+            bool no_max_value_;
+        };
+
+        // ALTER SEQUENCE statement (ALPHA Phase 1 - Sequences)
+        class AlterSequenceStmt : public Statement
+        {
+        public:
+            AlterSequenceStmt(const SourceSpan& span, StringPool::StringId name)
+                : Statement(ASTKind::ALTER_SEQUENCE, span), name_(name),
+                  increment_by_(nullptr), min_value_(nullptr), max_value_(nullptr),
+                  restart_(nullptr), cache_(nullptr),
+                  has_cycle_(false), cycle_(false),
+                  no_min_value_(false), no_max_value_(false)
+            {
+            }
+
+            StringPool::StringId name() const { return name_; }
+
+            // Same setters as CreateSequenceStmt
+            void setIncrementBy(Expression* expr) { increment_by_ = expr; }
+            void setMinValue(Expression* expr) { min_value_ = expr; }
+            void setMaxValue(Expression* expr) { max_value_ = expr; }
+            void setRestart(Expression* expr) { restart_ = expr; }
+            void setCache(Expression* expr) { cache_ = expr; }
+            void setCycle(bool cycle) { cycle_ = cycle; has_cycle_ = true; }
+            void setNoMinValue(bool no_min) { no_min_value_ = no_min; }
+            void setNoMaxValue(bool no_max) { no_max_value_ = no_max; }
+
+            Expression* incrementBy() const { return increment_by_; }
+            Expression* minValue() const { return min_value_; }
+            Expression* maxValue() const { return max_value_; }
+            Expression* restart() const { return restart_; }
+            Expression* cache() const { return cache_; }
+            bool hasCycle() const { return has_cycle_; }
+            bool cycle() const { return cycle_; }
+            bool noMinValue() const { return no_min_value_; }
+            bool noMaxValue() const { return no_max_value_; }
+
+            void accept(ASTVisitor* visitor) override;
+
+        private:
+            StringPool::StringId name_;
+            Expression* increment_by_;
+            Expression* min_value_;
+            Expression* max_value_;
+            Expression* restart_;
+            Expression* cache_;
+            bool has_cycle_;
+            bool cycle_;
+            bool no_min_value_;
+            bool no_max_value_;
+        };
+
+        // DROP SEQUENCE statement (ALPHA Phase 1 - Sequences)
+        class DropSequenceStmt : public Statement
+        {
+        public:
+            DropSequenceStmt(const SourceSpan& span, StringPool::StringId name,
+                             bool if_exists, bool cascade)
+                : Statement(ASTKind::DROP_SEQUENCE, span),
+                  name_(name), if_exists_(if_exists), cascade_(cascade)
+            {
+            }
+
+            StringPool::StringId name() const { return name_; }
+            bool ifExists() const { return if_exists_; }
+            bool cascade() const { return cascade_; }
+
+            void accept(ASTVisitor* visitor) override;
+
+        private:
+            StringPool::StringId name_;
+            bool if_exists_;
+            bool cascade_;
+        };
+
+        // CREATE VIEW statement (ALPHA Phase 1 - Views)
+        class CreateViewStmt : public Statement
+        {
+        public:
+            CreateViewStmt(const SourceSpan& span, StringPool::StringId name,
+                           SelectStmt* query, bool or_replace = false)
+                : Statement(ASTKind::CREATE_VIEW, span),
+                  name_(name), query_(query), or_replace_(or_replace),
+                  check_option_(false)
+            {
+            }
+
+            StringPool::StringId name() const { return name_; }
+            SelectStmt* query() const { return query_; }
+            bool orReplace() const { return or_replace_; }
+            bool checkOption() const { return check_option_; }
+
+            const std::vector<StringPool::StringId>& columnNames() const
+            {
+                return column_names_;
+            }
+
+            void setCheckOption(bool check) { check_option_ = check; }
+            void setColumnNames(std::vector<StringPool::StringId> names)
+            {
+                column_names_ = std::move(names);
+            }
+
+            void accept(ASTVisitor* visitor) override;
+
+        private:
+            StringPool::StringId name_;
+            SelectStmt* query_;
+            bool or_replace_;
+            bool check_option_;
+            std::vector<StringPool::StringId> column_names_;
+        };
+
+        // DROP VIEW statement (ALPHA Phase 1 - Views)
+        class DropViewStmt : public Statement
+        {
+        public:
+            DropViewStmt(const SourceSpan& span, StringPool::StringId name,
+                         bool if_exists, bool cascade)
+                : Statement(ASTKind::DROP_VIEW, span),
+                  name_(name), if_exists_(if_exists), cascade_(cascade)
+            {
+            }
+
+            StringPool::StringId name() const { return name_; }
+            bool ifExists() const { return if_exists_; }
+            bool cascade() const { return cascade_; }
+
+            void accept(ASTVisitor* visitor) override;
+
+        private:
+            StringPool::StringId name_;
+            bool if_exists_;
+            bool cascade_;
         };
 
         // INSERT statement
@@ -2342,6 +2811,15 @@ namespace scratchbird
             // Statements
             virtual void visit(CreateTableStmt *node) = 0;
             virtual void visit(CreateIndexStmt *node) = 0;             // Phase 2 Task 2.3
+            virtual void visit(DropTableStmt *node) = 0;               // ALPHA Phase 1 - DDL Modifications
+            virtual void visit(DropIndexStmt *node) = 0;               // ALPHA Phase 1 - DDL Modifications
+            virtual void visit(TruncateTableStmt *node) = 0;           // ALPHA Phase 1 - DDL Modifications (TRUNCATE TABLE ASYNC)
+            virtual void visit(AlterTableStmt *node) = 0;              // ALPHA Phase 1 - DDL Modifications
+            virtual void visit(CreateSequenceStmt *node) = 0;          // ALPHA Phase 1 - Sequences
+            virtual void visit(AlterSequenceStmt *node) = 0;           // ALPHA Phase 1 - Sequences
+            virtual void visit(DropSequenceStmt *node) = 0;            // ALPHA Phase 1 - Sequences
+            virtual void visit(CreateViewStmt *node) = 0;              // ALPHA Phase 1 - Views
+            virtual void visit(DropViewStmt *node) = 0;                // ALPHA Phase 1 - Views
             virtual void visit(CreateTablespaceStmt *node) = 0;        // Phase 2 Task 2.1
             virtual void visit(AlterTablespaceStmt *node) = 0;         // Phase 2 Task 2.2
             virtual void visit(AlterTableSetTablespaceStmt *node) = 0; // Phase 4 Task 4.1.1
@@ -2381,6 +2859,7 @@ namespace scratchbird
             virtual void visit(BinaryOpExpr *node) = 0;
             virtual void visit(CastExpr *node) = 0;
             virtual void visit(FunctionCallExpr *node) = 0;
+            virtual void visit(SequenceFunctionExpr *node) = 0;  // ALPHA Phase 1 - Sequences
             virtual void visit(AggregateExpr *node) = 0;  // Phase 1 Task 4.1
             virtual void visit(WindowFuncExpr *node) = 0; // Phase 1 Task 6
             virtual void visit(WindowSpec *node) = 0;     // Phase 1 Task 6

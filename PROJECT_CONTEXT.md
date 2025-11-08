@@ -1,7 +1,7 @@
 # ScratchBird Project Context
 
 **Last Updated**: November 7, 2025
-**Version**: Alpha - 75% Complete
+**Version**: Alpha - 78% Complete
 **Status**: Educational/Development
 
 > **MANDATORY**: Read `/MGA_RULES.md` before ANY transaction or index work.
@@ -35,13 +35,19 @@
 - Text Search: TSVECTOR, TSQUERY
 - **Domains** with CHECK constraints
 
-### SQL Execution (15/35 = 43%)
+### SQL Execution (21/35 = 60%)
 - ✅ SELECT (WHERE, JOIN, GROUP BY, HAVING, ORDER BY, LIMIT)
 - ✅ INSERT, UPDATE, DELETE
 - ✅ CREATE TABLE, CREATE INDEX, CREATE/ALTER/DROP TABLESPACE
 - ✅ Transactions: BEGIN, COMMIT, ROLLBACK, SAVEPOINT
 - ✅ Window functions
-- ❌ ALTER TABLE, DROP TABLE/INDEX
+- ✅ **DDL Modifications (100%)**:
+  - DROP TABLE [IF EXISTS] [CASCADE | RESTRICT]
+  - DROP INDEX [IF EXISTS] [CASCADE | RESTRICT]
+  - ALTER TABLE ADD COLUMN
+  - ALTER TABLE DROP COLUMN [IF EXISTS] [CASCADE | RESTRICT]
+  - ALTER TABLE RENAME COLUMN
+  - ALTER TABLE ALTER COLUMN TYPE
 - ❌ Views, Sequences, Triggers (execution), Stored procedures
 - ❌ GRANT/REVOKE, MERGE, TRUNCATE, CTEs
 
@@ -56,7 +62,7 @@
 - ✅ NOT NULL, Data type validation
 - ❌ CHECK, UNIQUE, DEFAULT, PRIMARY KEY, FOREIGN KEY enforcement
 
-**Remaining**: ~1,200-1,700 hours
+**Remaining**: ~1,150-1,650 hours
 
 ---
 

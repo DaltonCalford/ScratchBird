@@ -296,6 +296,364 @@ namespace scratchbird
             }
         }
 
+        void BytecodeGenerator::visit(parser::DropTableStmt *node)
+        {
+            // Generate DROP TABLE bytecode (ALPHA Phase 1 - DDL Modifications)
+            current_result_->writeOpcode(Opcode::DROP_TABLE);
+
+            // Write table name
+            writeStringId(node->tableName());
+
+            // Write flags (1 byte: bit 0 = IF EXISTS, bit 1 = CASCADE)
+            uint8_t flags = 0;
+            if (node->ifExists())
+            {
+                flags |= 0x01;
+            }
+            if (node->dropBehavior() == parser::DropTableStmt::DropBehavior::CASCADE)
+            {
+                flags |= 0x02;
+            }
+            current_result_->writeByte(flags);
+        }
+
+        void BytecodeGenerator::visit(parser::DropIndexStmt *node)
+        {
+            // Generate DROP INDEX bytecode (ALPHA Phase 1 - DDL Modifications)
+            current_result_->writeOpcode(Opcode::DROP_INDEX);
+
+            // Write index name
+            writeStringId(node->indexName());
+
+            // Write IF EXISTS flag (1 byte: 0 = no, 1 = yes)
+            current_result_->writeByte(node->ifExists() ? 1 : 0);
+        }
+
+        void BytecodeGenerator::visit(parser::TruncateTableStmt *node)
+        {
+            // Generate TRUNCATE TABLE bytecode (ALPHA Phase 1 - DDL Modifications)
+            current_result_->writeOpcode(Opcode::TRUNCATE_TABLE);
+
+            // Write table name
+            writeStringId(node->tableName());
+
+            // Write mode (0=ASYNC, 1=SYNC)
+            current_result_->writeByte(static_cast<uint8_t>(node->mode()));
+        }
+
+        void BytecodeGenerator::visit(parser::CreateSequenceStmt *node)
+        {
+            // Generate CREATE SEQUENCE bytecode (ALPHA Phase 1 - Sequences)
+            current_result_->writeOpcode(Opcode::CREATE_SEQUENCE);
+
+            // Write sequence name
+            writeStringId(node->name());
+
+            // Write optional parameters (use sentinel value 0x00 for "not specified")
+            // Each parameter: 1 byte flag (0=not set, 1=set) + value if set
+
+            // INCREMENT BY
+            if (node->incrementBy())
+            {
+                current_result_->writeByte(0x01);
+                node->incrementBy()->accept(this);  // Generate expression bytecode
+            }
+            else
+            {
+                current_result_->writeByte(0x00);
+            }
+
+            // MINVALUE / NO MINVALUE
+            if (node->noMinValue())
+            {
+                current_result_->writeByte(0x02);  // NO MINVALUE flag
+            }
+            else if (node->minValue())
+            {
+                current_result_->writeByte(0x01);
+                node->minValue()->accept(this);
+            }
+            else
+            {
+                current_result_->writeByte(0x00);
+            }
+
+            // MAXVALUE / NO MAXVALUE
+            if (node->noMaxValue())
+            {
+                current_result_->writeByte(0x02);  // NO MAXVALUE flag
+            }
+            else if (node->maxValue())
+            {
+                current_result_->writeByte(0x01);
+                node->maxValue()->accept(this);
+            }
+            else
+            {
+                current_result_->writeByte(0x00);
+            }
+
+            // START WITH
+            if (node->startWith())
+            {
+                current_result_->writeByte(0x01);
+                node->startWith()->accept(this);
+            }
+            else
+            {
+                current_result_->writeByte(0x00);
+            }
+
+            // CACHE
+            if (node->cache())
+            {
+                current_result_->writeByte(0x01);
+                node->cache()->accept(this);
+            }
+            else
+            {
+                current_result_->writeByte(0x00);
+            }
+
+            // CYCLE / NO CYCLE
+            current_result_->writeByte(node->cycle() ? 0x01 : 0x00);
+        }
+
+        void BytecodeGenerator::visit(parser::AlterSequenceStmt *node)
+        {
+            // Generate ALTER SEQUENCE bytecode (ALPHA Phase 1 - Sequences)
+            current_result_->writeOpcode(Opcode::ALTER_SEQUENCE);
+
+            // Write sequence name
+            writeStringId(node->name());
+
+            // Write optional parameters (same format as CREATE SEQUENCE)
+
+            // INCREMENT BY
+            if (node->incrementBy())
+            {
+                current_result_->writeByte(0x01);
+                node->incrementBy()->accept(this);
+            }
+            else
+            {
+                current_result_->writeByte(0x00);
+            }
+
+            // MINVALUE / NO MINVALUE
+            if (node->noMinValue())
+            {
+                current_result_->writeByte(0x02);
+            }
+            else if (node->minValue())
+            {
+                current_result_->writeByte(0x01);
+                node->minValue()->accept(this);
+            }
+            else
+            {
+                current_result_->writeByte(0x00);
+            }
+
+            // MAXVALUE / NO MAXVALUE
+            if (node->noMaxValue())
+            {
+                current_result_->writeByte(0x02);
+            }
+            else if (node->maxValue())
+            {
+                current_result_->writeByte(0x01);
+                node->maxValue()->accept(this);
+            }
+            else
+            {
+                current_result_->writeByte(0x00);
+            }
+
+            // RESTART [WITH value]
+            if (node->restart())
+            {
+                current_result_->writeByte(0x01);
+                node->restart()->accept(this);
+            }
+            else
+            {
+                current_result_->writeByte(0x00);
+            }
+
+            // CACHE
+            if (node->cache())
+            {
+                current_result_->writeByte(0x01);
+                node->cache()->accept(this);
+            }
+            else
+            {
+                current_result_->writeByte(0x00);
+            }
+
+            // CYCLE / NO CYCLE (3-state: 0=not set, 1=CYCLE, 2=NO CYCLE)
+            if (node->hasCycle())
+            {
+                current_result_->writeByte(node->cycle() ? 0x01 : 0x02);
+            }
+            else
+            {
+                current_result_->writeByte(0x00);
+            }
+        }
+
+        void BytecodeGenerator::visit(parser::DropSequenceStmt *node)
+        {
+            // Generate DROP SEQUENCE bytecode (ALPHA Phase 1 - Sequences)
+            current_result_->writeOpcode(Opcode::DROP_SEQUENCE);
+
+            // Write sequence name
+            writeStringId(node->name());
+
+            // Write flags (IF EXISTS, CASCADE)
+            uint8_t flags = 0;
+            if (node->ifExists())
+                flags |= 0x01;
+            if (node->cascade())
+                flags |= 0x02;
+            current_result_->writeByte(flags);
+        }
+
+        void BytecodeGenerator::visit(parser::CreateViewStmt *node)
+        {
+            // Generate CREATE VIEW bytecode (ALPHA Phase 1 - Views)
+            current_result_->writeOpcode(Opcode::CREATE_VIEW);
+
+            // Write view name
+            writeStringId(node->name());
+
+            // Write flags: [or_replace, check_option, has_column_names]
+            uint8_t flags = 0;
+            if (node->orReplace())
+                flags |= 0x01;
+            if (node->checkOption())
+                flags |= 0x02;
+            if (!node->columnNames().empty())
+                flags |= 0x04;
+            current_result_->writeByte(flags);
+
+            // Write column names if present
+            if (!node->columnNames().empty())
+            {
+                current_result_->writeByte(static_cast<uint8_t>(node->columnNames().size()));
+                for (auto col_name : node->columnNames())
+                {
+                    writeStringId(col_name);
+                }
+            }
+
+            // Write SELECT query definition as placeholder string
+            // For ALPHA Phase 1, we store a simple placeholder
+            // Future: Store actual query text or serialized AST
+            current_result_->writeString("<view_definition>");
+        }
+
+        void BytecodeGenerator::visit(parser::DropViewStmt *node)
+        {
+            // Generate DROP VIEW bytecode (ALPHA Phase 1 - Views)
+            current_result_->writeOpcode(Opcode::DROP_VIEW);
+
+            // Write view name
+            writeStringId(node->name());
+
+            // Write flags (IF EXISTS, CASCADE)
+            uint8_t flags = 0;
+            if (node->ifExists())
+                flags |= 0x01;
+            if (node->cascade())
+                flags |= 0x02;
+            current_result_->writeByte(flags);
+        }
+
+        void BytecodeGenerator::visit(parser::AlterTableStmt *node)
+        {
+            // Generate ALTER TABLE bytecode (ALPHA Phase 1 - DDL Modifications)
+            current_result_->writeOpcode(Opcode::ALTER_TABLE);
+
+            // Write table name
+            writeStringId(node->tableName());
+
+            // Write action type (1 byte)
+            current_result_->writeByte(static_cast<uint8_t>(node->action()));
+
+            // Write action-specific parameters
+            switch (node->action())
+            {
+                case parser::AlterTableStmt::AlterAction::ADD_COLUMN:
+                {
+                    auto *col_def = node->columnDef();
+                    if (col_def)
+                    {
+                        // Write column name
+                        writeStringId(col_def->name());
+
+                        // Write data type
+                        const auto &type = col_def->type();
+                        current_result_->writeByte(static_cast<uint8_t>(type.type));
+
+                        // Write precision
+                        current_result_->writeInt32(type.precision);
+
+                        // Write scale
+                        current_result_->writeInt32(type.scale);
+
+                        // Write nullable flag
+                        current_result_->writeByte(col_def->nullable() ? 1 : 0);
+                    }
+                    break;
+                }
+
+                case parser::AlterTableStmt::AlterAction::DROP_COLUMN:
+                {
+                    // Write column name
+                    writeStringId(node->dropColumnName());
+
+                    // Write IF EXISTS flag
+                    current_result_->writeByte(node->ifExists() ? 1 : 0);
+
+                    // Write CASCADE flag
+                    current_result_->writeByte(node->dropBehavior() == parser::AlterTableStmt::DropBehavior::CASCADE ? 1 : 0);
+                    break;
+                }
+
+                case parser::AlterTableStmt::AlterAction::RENAME_COLUMN:
+                {
+                    // Write old column name
+                    writeStringId(node->oldColumnName());
+
+                    // Write new column name
+                    writeStringId(node->newColumnName());
+                    break;
+                }
+
+                case parser::AlterTableStmt::AlterAction::ALTER_COLUMN_TYPE:
+                {
+                    // Write column name
+                    writeStringId(node->oldColumnName());
+
+                    // Write new data type
+                    auto *new_type = node->newType();
+                    if (new_type)
+                    {
+                        current_result_->writeByte(static_cast<uint8_t>(new_type->type));
+                        current_result_->writeInt32(new_type->precision);
+                        current_result_->writeInt32(new_type->scale);
+                    }
+                    break;
+                }
+
+                default:
+                    // Other actions not implemented yet
+                    break;
+            }
+        }
+
         void BytecodeGenerator::visit(parser::DropTablespaceStmt *node)
         {
             // Generate DROP TABLESPACE bytecode (Phase 2 Task 2.1)
@@ -2642,6 +3000,60 @@ namespace scratchbird
             // Emit subquery end marker
             current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
             current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_SUBQUERY_END));
+        }
+
+        void BytecodeGenerator::visit(parser::SequenceFunctionExpr *node)
+        {
+            // Generate bytecode for sequence functions (ALPHA Phase 1 - Sequences)
+
+            // Emit opcode based on function type
+            switch (node->functionType())
+            {
+                case parser::SequenceFunctionType::NEXTVAL:
+                    current_result_->writeOpcode(Opcode::SEQUENCE_NEXTVAL);
+                    break;
+                case parser::SequenceFunctionType::CURRVAL:
+                    current_result_->writeOpcode(Opcode::SEQUENCE_CURRVAL);
+                    break;
+                case parser::SequenceFunctionType::SETVAL:
+                    current_result_->writeOpcode(Opcode::SEQUENCE_SETVAL);
+                    break;
+            }
+
+            // Generate sequence name expression
+            if (node->sequenceName())
+            {
+                node->sequenceName()->accept(this);
+            }
+            else
+            {
+                current_result_->addError("Sequence function missing sequence name");
+            }
+
+            // For SETVAL, also generate value and optional is_called flag
+            if (node->functionType() == parser::SequenceFunctionType::SETVAL)
+            {
+                if (node->value())
+                {
+                    node->value()->accept(this);
+                }
+                else
+                {
+                    current_result_->addError("SETVAL missing value argument");
+                }
+
+                // is_called parameter (optional, defaults to true)
+                if (node->isCalled())
+                {
+                    node->isCalled()->accept(this);
+                }
+                else
+                {
+                    // Default: true (mark as called) - use INT64 literal
+                    current_result_->writeOpcode(Opcode::LITERAL_INT64);
+                    current_result_->writeInt64(1);  // true = 1
+                }
+            }
         }
 
         // ===== Disassembler Implementation =====

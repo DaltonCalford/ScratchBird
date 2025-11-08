@@ -12,6 +12,7 @@
 #include "scratchbird/parser/token.h"
 #include <memory>
 #include <vector>
+#include <unordered_set>
 
 namespace scratchbird::optimizer
 {
@@ -605,6 +606,10 @@ namespace scratchbird::optimizer
         CostModel cost_model_;
         StatisticsManager *stats_manager_;
         SelectivityEstimator selectivity_estimator_;
+
+        // ALPHA Phase 1: View expansion cycle detection
+        // Track currently expanding views to detect cycles
+        mutable std::unordered_set<std::string> expanding_views_;
     };
 
 } // namespace scratchbird::optimizer

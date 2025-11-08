@@ -19,6 +19,18 @@ namespace scratchbird
             // Statements
             CREATE_TABLE = 0x10,              // Create table
             CREATE_INDEX = 0x1B,              // Create index (Phase 2 Task 2.3)
+            DROP_TABLE = 0x1F,                // Drop table (ALPHA Phase 1 - DDL Modifications)
+            DROP_INDEX = 0x20,                // Drop index (ALPHA Phase 1 - DDL Modifications)
+            ALTER_TABLE = 0x21,               // Alter table (ALPHA Phase 1 - DDL Modifications)
+            TRUNCATE_TABLE = 0x22,            // Truncate table (ALPHA Phase 1 - DDL Modifications - final)
+            CREATE_SEQUENCE = 0x23,           // Create sequence (ALPHA Phase 1 - Sequences)
+            ALTER_SEQUENCE = 0x24,            // Alter sequence (ALPHA Phase 1 - Sequences)
+            DROP_SEQUENCE = 0x25,             // Drop sequence (ALPHA Phase 1 - Sequences)
+            SEQUENCE_NEXTVAL = 0x26,          // NEXTVAL('sequence_name') - Get next value
+            SEQUENCE_CURRVAL = 0x27,          // CURRVAL('sequence_name') - Get current value
+            SEQUENCE_SETVAL = 0x28,           // SETVAL('sequence_name', value, is_called) - Set value
+            CREATE_VIEW = 0x29,               // Create view (ALPHA Phase 1 - Views)
+            DROP_VIEW = 0x2A,                 // Drop view (ALPHA Phase 1 - Views)
             INSERT = 0x11,                    // Insert row
             SELECT = 0x12,                    // Select query
             UPDATE = 0xC3,                    // Update rows (Phase 1 Task 2.1)

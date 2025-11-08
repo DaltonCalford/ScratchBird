@@ -17,6 +17,9 @@ namespace scratchbird::core
     class TSVector;
     class TSQuery;
 
+    // Forward declaration for vector distance metrics
+    enum class DistanceMetric;
+
     /**
      * Unified Data Type System
      *

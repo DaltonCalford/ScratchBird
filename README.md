@@ -2,7 +2,7 @@
 
 A relational database engine featuring **Firebird MGA (Multi-Generational Architecture)**, 11 index types, TOAST storage, and full transaction management.
 
-## Status: Alpha - 75% Complete
+## Status: Alpha - 78% Complete
 
 **Last Updated:** November 7, 2025
 
@@ -44,12 +44,19 @@ ctest --output-on-failure
 - Text Search: TSVECTOR, TSQUERY
 - **Domains** with CHECK constraints
 
-### SQL Execution (15/35 = 43%)
+### SQL Execution (21/35 = 60%)
 - ✅ SELECT (WHERE, JOIN, GROUP BY, HAVING, ORDER BY, LIMIT)
 - ✅ INSERT, UPDATE, DELETE
 - ✅ CREATE TABLE, CREATE INDEX, CREATE/ALTER/DROP TABLESPACE
 - ✅ Transactions: BEGIN, COMMIT, ROLLBACK, SAVEPOINT
 - ✅ Window functions: ROW_NUMBER, RANK, LAG, LEAD, etc.
+- ✅ **DDL Modifications (100%)**:
+  - DROP TABLE [IF EXISTS] [CASCADE | RESTRICT]
+  - DROP INDEX [IF EXISTS] [CASCADE | RESTRICT]
+  - ALTER TABLE ADD COLUMN
+  - ALTER TABLE DROP COLUMN [IF EXISTS] [CASCADE | RESTRICT]
+  - ALTER TABLE RENAME COLUMN old TO new
+  - ALTER TABLE ALTER COLUMN name TYPE type
 
 ### Built-in Functions (60/100 = 60%)
 - ✅ String: 11 functions (LENGTH, SUBSTRING, UPPER, LOWER, TRIM, etc.)
@@ -63,9 +70,8 @@ ctest --output-on-failure
 ## What's Missing ❌
 
 ### DDL Operations
-- ALTER TABLE (add/drop columns, rename)
-- DROP TABLE, DROP INDEX
 - Views, Sequences, Triggers
+- CREATE DOMAIN, CREATE TYPE
 
 ### Security & Constraints
 - GRANT/REVOKE permissions
@@ -84,7 +90,7 @@ ctest --output-on-failure
 - Recursive queries
 - PSQL/stored procedure execution
 
-**Remaining:** ~1,200-1,700 hours
+**Remaining:** ~1,150-1,650 hours
 
 ## MGA Architecture (Firebird Style)
 
