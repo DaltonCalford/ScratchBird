@@ -388,6 +388,76 @@ namespace scratchbird::core
             std::vector<uint8_t> predicate_data;   // Serialized WHERE predicate
         };
 
+        // Object types for dependencies and comments (Phase 1.4-1.5 - Catalog Corrections)
+        enum class ObjectType : uint8_t
+        {
+            SCHEMA = 0,
+            TABLE = 1,
+            COLUMN = 2,
+            INDEX = 3,
+            VIEW = 4,
+            SEQUENCE = 5,
+            CONSTRAINT = 6,
+            TRIGGER = 7,
+            PROCEDURE = 8,      // Includes selectable procedures (SUSPEND)
+            FUNCTION = 9,       // Same table as procedures
+            DOMAIN = 10,
+            COMPOSITE_TYPE = 11,
+            ROLE = 12,
+            USER = 13,
+            GROUP = 14,
+            TABLESPACE = 15,
+            DATABASE = 16,
+            EMULATION_TYPE = 17,
+            EMULATION_SERVER = 18,
+            EMULATED_DATABASE = 19,
+            COLLATION = 20,
+            CHARSET = 21,
+            PACKAGE = 22,       // Firebird packages
+            UDR = 23,           // User-Defined Resources
+            COMMENT = 24,
+            DEPENDENCY = 25,
+            PERMISSION = 26,
+            STATISTIC = 27,
+            TIMEZONE = 28,
+            EXTENSION = 29,
+            FOREIGN_SERVER = 30,
+            FOREIGN_TABLE = 31
+        };
+
+        // Dependency types (Phase 1.4 - Catalog Corrections)
+        enum class DependencyType : uint8_t
+        {
+            NORMAL = 0,     // User-created dependency (views, procedures, FKs)
+            AUTO = 1,       // System-created (auto-generated indexes, sequences)
+            INTERNAL = 2,   // System-critical (cannot be dropped)
+            PIN = 3         // User-defined INTERNAL (only admin can unpin)
+        };
+
+        // Dependency information (Phase 1.4 - Catalog Corrections)
+        struct DependencyInfo
+        {
+            ID dependency_id;
+            ID dependent_object_id;     // Object that depends ON something
+            ObjectType dependent_type;  // Type of dependent object
+            ID referenced_object_id;    // Object being depended upon
+            ObjectType referenced_type; // Type of referenced object
+            DependencyType dependency_type;
+            uint64_t created_time = 0;
+        };
+
+        // Comment information (Phase 1.5 - Catalog Corrections)
+        struct CommentInfo
+        {
+            ID comment_id;
+            ID object_id;              // Object being commented
+            ObjectType object_type;    // Type of object
+            ID owner_id;               // Owner UUID reference
+            std::string comment_text;  // Comment text (stored in TOAST on disk)
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+        };
+
         CatalogManager(Database *db);
         ~CatalogManager();
 
