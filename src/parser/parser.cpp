@@ -129,6 +129,14 @@ namespace scratchbird
                     {
                         stmt = parseCreateIndex();
                     }
+                    else if (check(TokenType::KW_SEQUENCE))
+                    {
+                        stmt = parseCreateSequence();
+                    }
+                    else if (check(TokenType::KW_VIEW) || check(TokenType::KW_OR))
+                    {
+                        stmt = parseCreateView();
+                    }
                     // Trigger support will be added by Agent C
                     // else if (check(TokenType::KW_TRIGGER))
                     // {
@@ -136,7 +144,7 @@ namespace scratchbird
                     // }
                     else
                     {
-                        error("Expected TABLE, INDEX, UNIQUE INDEX, or TABLESPACE after CREATE");
+                        error("Expected TABLE, INDEX, UNIQUE INDEX, SEQUENCE, VIEW, or TABLESPACE after CREATE");
                         synchronize();
                     }
                 }
@@ -199,17 +207,37 @@ namespace scratchbird
                     {
                         stmt = parseAlterTable(); // Phase 4 Task 4.1.1
                     }
+                    else if (check(TokenType::KW_SEQUENCE))
+                    {
+                        stmt = parseAlterSequence();
+                    }
                     else
                     {
-                        error("Expected TABLESPACE or TABLE after ALTER");
+                        error("Expected TABLESPACE, TABLE, or SEQUENCE after ALTER");
                         synchronize();
                     }
                 }
                 else if (match(TokenType::KW_DROP))
                 {
-                    if (check(TokenType::KW_TABLESPACE))
+                    if (check(TokenType::KW_TABLE))
+                    {
+                        stmt = parseDropTable();
+                    }
+                    else if (check(TokenType::KW_INDEX))
+                    {
+                        stmt = parseDropIndex();
+                    }
+                    else if (check(TokenType::KW_TABLESPACE))
                     {
                         stmt = parseDropTablespace();
+                    }
+                    else if (check(TokenType::KW_SEQUENCE))
+                    {
+                        stmt = parseDropSequence();
+                    }
+                    else if (check(TokenType::KW_VIEW))
+                    {
+                        stmt = parseDropView();
                     }
                     // Trigger support will be added by Agent C
                     // else if (check(TokenType::KW_TRIGGER))
@@ -218,9 +246,13 @@ namespace scratchbird
                     // }
                     else
                     {
-                        error("Expected TABLESPACE after DROP");
+                        error("Expected TABLE, INDEX, SEQUENCE, VIEW, or TABLESPACE after DROP");
                         synchronize();
                     }
+                }
+                else if (match(TokenType::KW_TRUNCATE))
+                {
+                    stmt = parseTruncateTable();
                 }
                 else if (match(TokenType::KW_ATTACH))
                 {
@@ -2627,6 +2659,560 @@ namespace scratchbird
                                                       max_size_mb, prealloc_pages);
         }
 
+        Statement *Parser::parseDropTable()
+        {
+            // DROP TABLE [IF EXISTS] name [CASCADE | RESTRICT]
+            auto start_loc = previous().location;
+
+            if (!consume(TokenType::KW_TABLE, "Expected TABLE after DROP"))
+            {
+                synchronize();
+                return nullptr;
+            }
+
+            // Parse optional IF EXISTS clause
+            bool if_exists = false;
+            if (match(TokenType::KW_IF))
+            {
+                if (!consume(TokenType::KW_EXISTS, "Expected EXISTS after IF"))
+                {
+                    synchronize();
+                    return nullptr;
+                }
+                if_exists = true;
+            }
+
+            if (!check(TokenType::IDENTIFIER))
+            {
+                error("Expected table name after DROP TABLE");
+                synchronize();
+                return nullptr;
+            }
+
+            StringPool::StringId table_name = current().value.string_id;
+            advance();
+
+            // Parse optional CASCADE or RESTRICT clause
+            DropTableStmt::DropBehavior behavior = DropTableStmt::DropBehavior::RESTRICT;
+            if (match(TokenType::KW_CASCADE))
+            {
+                behavior = DropTableStmt::DropBehavior::CASCADE;
+            }
+            else if (match(TokenType::KW_RESTRICT))
+            {
+                behavior = DropTableStmt::DropBehavior::RESTRICT;
+            }
+
+            auto span = makeSpan(start_loc);
+            return arena_.make<DropTableStmt>(span, table_name, if_exists, behavior);
+        }
+
+        Statement *Parser::parseDropIndex()
+        {
+            // DROP INDEX [IF EXISTS] name
+            auto start_loc = previous().location;
+
+            if (!consume(TokenType::KW_INDEX, "Expected INDEX after DROP"))
+            {
+                synchronize();
+                return nullptr;
+            }
+
+            // Parse optional IF EXISTS clause
+            bool if_exists = false;
+            if (match(TokenType::KW_IF))
+            {
+                if (!consume(TokenType::KW_EXISTS, "Expected EXISTS after IF"))
+                {
+                    synchronize();
+                    return nullptr;
+                }
+                if_exists = true;
+            }
+
+            if (!check(TokenType::IDENTIFIER))
+            {
+                error("Expected index name after DROP INDEX");
+                synchronize();
+                return nullptr;
+            }
+
+            StringPool::StringId index_name = current().value.string_id;
+            advance();
+
+            auto span = makeSpan(start_loc);
+            return arena_.make<DropIndexStmt>(span, index_name, if_exists);
+        }
+
+        Statement *Parser::parseTruncateTable()
+        {
+            // TRUNCATE [TABLE] table_name [ASYNC|SYNC]
+            auto start_loc = previous().location;
+
+            // Optional TABLE keyword
+            if (match(TokenType::KW_TABLE))
+            {
+                advance();
+            }
+
+            // Get table name
+            if (!check(TokenType::IDENTIFIER))
+            {
+                error("Expected table name after TRUNCATE TABLE");
+                synchronize();
+                return nullptr;
+            }
+
+            auto table_name = current().value.string_id;
+            advance();
+
+            // Check for ASYNC/SYNC mode (default is ASYNC)
+            auto mode = TruncateTableStmt::TruncateMode::ASYNC;
+
+            if (match(TokenType::KW_SYNC))
+            {
+                mode = TruncateTableStmt::TruncateMode::SYNC;
+            }
+            else if (match(TokenType::KW_ASYNC))
+            {
+                mode = TruncateTableStmt::TruncateMode::ASYNC;
+            }
+
+            // Create AST node
+            auto *stmt = arena_.make<TruncateTableStmt>(makeSpan(start_loc), table_name, mode);
+
+            // Consume semicolon if present
+            match(TokenType::SEMICOLON);
+
+            return stmt;
+        }
+
+        Statement *Parser::parseCreateSequence()
+        {
+            // CREATE SEQUENCE name
+            //   [INCREMENT BY increment]
+            //   [MINVALUE minvalue | NO MINVALUE]
+            //   [MAXVALUE maxvalue | NO MAXVALUE]
+            //   [START WITH start]
+            //   [CACHE cache]
+            //   [CYCLE | NO CYCLE]
+            auto start_loc = previous().location;
+
+            if (!consume(TokenType::KW_SEQUENCE, "Expected SEQUENCE after CREATE"))
+            {
+                synchronize();
+                return nullptr;
+            }
+
+            // Get sequence name
+            if (!check(TokenType::IDENTIFIER))
+            {
+                error("Expected sequence name after CREATE SEQUENCE");
+                synchronize();
+                return nullptr;
+            }
+
+            auto seq_name = current().value.string_id;
+            advance();
+
+            // Create AST node
+            auto *stmt = arena_.make<CreateSequenceStmt>(makeSpan(start_loc), seq_name);
+
+            // Parse optional parameters
+            while (!check(TokenType::SEMICOLON) && !isAtEnd())
+            {
+                if (match(TokenType::KW_INCREMENT))
+                {
+                    if (!consume(TokenType::KW_BY, "Expected BY after INCREMENT"))
+                    {
+                        synchronize();
+                        return nullptr;
+                    }
+                    stmt->setIncrementBy(parseExpression());
+                }
+                else if (match(TokenType::KW_MINVALUE))
+                {
+                    stmt->setMinValue(parseExpression());
+                }
+                else if (match(TokenType::KW_NO))
+                {
+                    if (match(TokenType::KW_MINVALUE))
+                    {
+                        stmt->setNoMinValue(true);
+                    }
+                    else if (match(TokenType::KW_MAXVALUE))
+                    {
+                        stmt->setNoMaxValue(true);
+                    }
+                    else if (match(TokenType::KW_CYCLE))
+                    {
+                        stmt->setCycle(false);
+                    }
+                    else
+                    {
+                        error("Expected MINVALUE, MAXVALUE, or CYCLE after NO");
+                        synchronize();
+                        return nullptr;
+                    }
+                }
+                else if (match(TokenType::KW_MAXVALUE))
+                {
+                    stmt->setMaxValue(parseExpression());
+                }
+                else if (match(TokenType::KW_START))
+                {
+                    if (!consume(TokenType::KW_WITH, "Expected WITH after START"))
+                    {
+                        synchronize();
+                        return nullptr;
+                    }
+                    stmt->setStartWith(parseExpression());
+                }
+                else if (match(TokenType::KW_CACHE))
+                {
+                    stmt->setCache(parseExpression());
+                }
+                else if (match(TokenType::KW_CYCLE))
+                {
+                    stmt->setCycle(true);
+                }
+                else
+                {
+                    break;  // End of sequence options
+                }
+            }
+
+            // Consume semicolon if present
+            match(TokenType::SEMICOLON);
+
+            return stmt;
+        }
+
+        Statement *Parser::parseAlterSequence()
+        {
+            // ALTER SEQUENCE name
+            //   [INCREMENT BY increment]
+            //   [MINVALUE minvalue | NO MINVALUE]
+            //   [MAXVALUE maxvalue | NO MAXVALUE]
+            //   [RESTART [WITH restart]]
+            //   [CACHE cache]
+            //   [CYCLE | NO CYCLE]
+            auto start_loc = previous().location;
+
+            if (!consume(TokenType::KW_SEQUENCE, "Expected SEQUENCE after ALTER"))
+            {
+                synchronize();
+                return nullptr;
+            }
+
+            // Get sequence name
+            if (!check(TokenType::IDENTIFIER))
+            {
+                error("Expected sequence name after ALTER SEQUENCE");
+                synchronize();
+                return nullptr;
+            }
+
+            auto seq_name = current().value.string_id;
+            advance();
+
+            // Create AST node
+            auto *stmt = arena_.make<AlterSequenceStmt>(makeSpan(start_loc), seq_name);
+
+            // Parse optional parameters
+            while (!check(TokenType::SEMICOLON) && !isAtEnd())
+            {
+                if (match(TokenType::KW_INCREMENT))
+                {
+                    if (!consume(TokenType::KW_BY, "Expected BY after INCREMENT"))
+                    {
+                        synchronize();
+                        return nullptr;
+                    }
+                    stmt->setIncrementBy(parseExpression());
+                }
+                else if (match(TokenType::KW_MINVALUE))
+                {
+                    stmt->setMinValue(parseExpression());
+                }
+                else if (match(TokenType::KW_NO))
+                {
+                    if (match(TokenType::KW_MINVALUE))
+                    {
+                        stmt->setNoMinValue(true);
+                    }
+                    else if (match(TokenType::KW_MAXVALUE))
+                    {
+                        stmt->setNoMaxValue(true);
+                    }
+                    else if (match(TokenType::KW_CYCLE))
+                    {
+                        stmt->setCycle(false);
+                    }
+                    else
+                    {
+                        error("Expected MINVALUE, MAXVALUE, or CYCLE after NO");
+                        synchronize();
+                        return nullptr;
+                    }
+                }
+                else if (match(TokenType::KW_MAXVALUE))
+                {
+                    stmt->setMaxValue(parseExpression());
+                }
+                else if (match(TokenType::KW_RESTART))
+                {
+                    if (match(TokenType::KW_WITH))
+                    {
+                        stmt->setRestart(parseExpression());
+                    }
+                    else
+                    {
+                        // RESTART without WITH - restart from start_value
+                        stmt->setRestart(nullptr);
+                    }
+                }
+                else if (match(TokenType::KW_CACHE))
+                {
+                    stmt->setCache(parseExpression());
+                }
+                else if (match(TokenType::KW_CYCLE))
+                {
+                    stmt->setCycle(true);
+                }
+                else
+                {
+                    break;  // End of sequence options
+                }
+            }
+
+            // Consume semicolon if present
+            match(TokenType::SEMICOLON);
+
+            return stmt;
+        }
+
+        Statement *Parser::parseDropSequence()
+        {
+            // DROP SEQUENCE [IF EXISTS] name [CASCADE | RESTRICT]
+            auto start_loc = previous().location;
+
+            if (!consume(TokenType::KW_SEQUENCE, "Expected SEQUENCE after DROP"))
+            {
+                synchronize();
+                return nullptr;
+            }
+
+            // Check for IF EXISTS
+            bool if_exists = false;
+            if (match(TokenType::KW_IF))
+            {
+                if (!consume(TokenType::KW_EXISTS, "Expected EXISTS after IF"))
+                {
+                    synchronize();
+                    return nullptr;
+                }
+                if_exists = true;
+            }
+
+            // Get sequence name
+            if (!check(TokenType::IDENTIFIER))
+            {
+                error("Expected sequence name after DROP SEQUENCE");
+                synchronize();
+                return nullptr;
+            }
+
+            auto seq_name = current().value.string_id;
+            advance();
+
+            // Check for CASCADE/RESTRICT
+            bool cascade = false;
+            if (match(TokenType::KW_CASCADE))
+            {
+                cascade = true;
+            }
+            else if (match(TokenType::KW_RESTRICT))
+            {
+                cascade = false;
+            }
+
+            // Create AST node
+            auto *stmt = arena_.make<DropSequenceStmt>(makeSpan(start_loc), seq_name, if_exists, cascade);
+
+            // Consume semicolon if present
+            match(TokenType::SEMICOLON);
+
+            return stmt;
+        }
+
+        Statement *Parser::parseCreateView()
+        {
+            // CREATE [OR REPLACE] VIEW name [(column_list)] AS SELECT ...
+            // [WITH CHECK OPTION]
+            auto start_loc = previous().location;
+            bool or_replace = false;
+
+            // Check for OR REPLACE
+            if (match(TokenType::KW_OR))
+            {
+                if (!consume(TokenType::KW_REPLACE, "Expected REPLACE after OR"))
+                {
+                    synchronize();
+                    return nullptr;
+                }
+                or_replace = true;
+            }
+
+            // VIEW keyword
+            if (!consume(TokenType::KW_VIEW, "Expected VIEW"))
+            {
+                synchronize();
+                return nullptr;
+            }
+
+            // Get view name
+            if (!check(TokenType::IDENTIFIER))
+            {
+                error("Expected view name after CREATE VIEW");
+                synchronize();
+                return nullptr;
+            }
+
+            auto view_name = current().value.string_id;
+            advance();
+
+            // Optional column list: (col1, col2, ...)
+            std::vector<StringPool::StringId> column_names;
+            if (match(TokenType::LEFT_PAREN))
+            {
+                do
+                {
+                    if (!check(TokenType::IDENTIFIER))
+                    {
+                        error("Expected column name");
+                        synchronize();
+                        return nullptr;
+                    }
+                    column_names.push_back(current().value.string_id);
+                    advance();
+                } while (match(TokenType::COMMA));
+
+                if (!consume(TokenType::RIGHT_PAREN, "Expected ')' after column list"))
+                {
+                    synchronize();
+                    return nullptr;
+                }
+            }
+
+            // AS keyword
+            if (!consume(TokenType::KW_AS, "Expected AS before SELECT"))
+            {
+                synchronize();
+                return nullptr;
+            }
+
+            // SELECT keyword (must be consumed before calling parseSelect)
+            if (!consume(TokenType::KW_SELECT, "Expected SELECT after AS"))
+            {
+                synchronize();
+                return nullptr;
+            }
+
+            // Parse SELECT statement
+            auto *query = parseSelect();
+            if (!query)
+            {
+                return nullptr;
+            }
+
+            // Create AST node
+            auto *stmt = arena_.make<CreateViewStmt>(
+                makeSpan(start_loc), view_name,
+                static_cast<SelectStmt*>(query), or_replace);
+
+            if (!column_names.empty())
+            {
+                stmt->setColumnNames(std::move(column_names));
+            }
+
+            // Optional WITH CHECK OPTION
+            if (match(TokenType::KW_WITH))
+            {
+                if (!consume(TokenType::KW_CHECK, "Expected CHECK after WITH"))
+                {
+                    synchronize();
+                    return nullptr;
+                }
+                if (!consume(TokenType::KW_OPTION, "Expected OPTION after CHECK"))
+                {
+                    synchronize();
+                    return nullptr;
+                }
+                stmt->setCheckOption(true);
+            }
+
+            // Consume semicolon if present
+            match(TokenType::SEMICOLON);
+
+            return stmt;
+        }
+
+        Statement *Parser::parseDropView()
+        {
+            // DROP VIEW [IF EXISTS] name [CASCADE | RESTRICT]
+            auto start_loc = previous().location;
+
+            if (!consume(TokenType::KW_VIEW, "Expected VIEW after DROP"))
+            {
+                synchronize();
+                return nullptr;
+            }
+
+            // Check for IF EXISTS
+            bool if_exists = false;
+            if (match(TokenType::KW_IF))
+            {
+                if (!consume(TokenType::KW_EXISTS, "Expected EXISTS after IF"))
+                {
+                    synchronize();
+                    return nullptr;
+                }
+                if_exists = true;
+            }
+
+            // Get view name
+            if (!check(TokenType::IDENTIFIER))
+            {
+                error("Expected view name after DROP VIEW");
+                synchronize();
+                return nullptr;
+            }
+
+            auto view_name = current().value.string_id;
+            advance();
+
+            // Check for CASCADE/RESTRICT
+            bool cascade = false;
+            if (match(TokenType::KW_CASCADE))
+            {
+                cascade = true;
+            }
+            else if (match(TokenType::KW_RESTRICT))
+            {
+                cascade = false;
+            }
+
+            // Create AST node
+            auto *stmt = arena_.make<DropViewStmt>(
+                makeSpan(start_loc), view_name, if_exists, cascade);
+
+            // Consume semicolon if present
+            match(TokenType::SEMICOLON);
+
+            return stmt;
+        }
+
         Statement *Parser::parseDropTablespace()
         {
             // DROP TABLESPACE name [FORCE]
@@ -2866,7 +3452,7 @@ namespace scratchbird
 
         Statement *Parser::parseAlterTable()
         {
-            // ALTER TABLE name SET TABLESPACE tablespace_name [ONLINE]
+            // ALTER TABLE name {ADD COLUMN | DROP COLUMN | RENAME COLUMN | ALTER COLUMN | SET TABLESPACE}
             auto start_loc = previous().location;
 
             if (!consume(TokenType::KW_TABLE, "Expected TABLE after ALTER"))
@@ -2885,43 +3471,190 @@ namespace scratchbird
             StringPool::StringId table_name = current().value.string_id;
             advance();
 
-            // Expect SET
-            if (!consume(TokenType::KW_SET, "Expected SET after table name"))
+            // Check for SET TABLESPACE (existing functionality)
+            if (match(TokenType::KW_SET))
             {
-                synchronize();
-                return nullptr;
+                if (!consume(TokenType::KW_TABLESPACE, "Expected TABLESPACE after SET"))
+                {
+                    synchronize();
+                    return nullptr;
+                }
+
+                if (!check(TokenType::IDENTIFIER))
+                {
+                    error("Expected tablespace name after TABLESPACE");
+                    synchronize();
+                    return nullptr;
+                }
+
+                StringPool::StringId tablespace_name = current().value.string_id;
+                advance();
+
+                bool online = false;
+                if (match(TokenType::KW_ONLINE))
+                {
+                    online = true;
+                }
+
+                auto *stmt = arena_.make<AlterTableSetTablespaceStmt>(makeSpan(start_loc), table_name,
+                                                                       tablespace_name, online);
+                return stmt;
             }
 
-            // Expect TABLESPACE
-            if (!consume(TokenType::KW_TABLESPACE, "Expected TABLESPACE after SET"))
+            // ADD COLUMN
+            if (match(TokenType::KW_ADD))
             {
-                synchronize();
-                return nullptr;
+                if (!consume(TokenType::KW_COLUMN, "Expected COLUMN after ADD"))
+                {
+                    synchronize();
+                    return nullptr;
+                }
+
+                // Parse column definition (reuse existing parseColumnDef)
+                auto *col_def = parseColumnDef();
+                if (!col_def)
+                {
+                    return nullptr;
+                }
+
+                auto *stmt = arena_.make<AlterTableStmt>(makeSpan(start_loc), table_name,
+                                                         AlterTableStmt::AlterAction::ADD_COLUMN);
+                stmt->setColumnDef(col_def);
+                return stmt;
             }
 
-            // Get tablespace name
-            if (!check(TokenType::IDENTIFIER))
+            // DROP COLUMN
+            if (match(TokenType::KW_DROP))
             {
-                error("Expected tablespace name after TABLESPACE");
-                synchronize();
-                return nullptr;
+                if (!consume(TokenType::KW_COLUMN, "Expected COLUMN after DROP"))
+                {
+                    synchronize();
+                    return nullptr;
+                }
+
+                bool if_exists = false;
+                if (match(TokenType::KW_IF))
+                {
+                    if (!consume(TokenType::KW_EXISTS, "Expected EXISTS after IF"))
+                    {
+                        synchronize();
+                        return nullptr;
+                    }
+                    if_exists = true;
+                }
+
+                if (!check(TokenType::IDENTIFIER))
+                {
+                    error("Expected column name after DROP COLUMN");
+                    synchronize();
+                    return nullptr;
+                }
+
+                StringPool::StringId col_name = current().value.string_id;
+                advance();
+
+                // Check for CASCADE/RESTRICT
+                AlterTableStmt::DropBehavior behavior = AlterTableStmt::DropBehavior::RESTRICT;
+                if (match(TokenType::KW_CASCADE))
+                {
+                    behavior = AlterTableStmt::DropBehavior::CASCADE;
+                }
+                else if (match(TokenType::KW_RESTRICT))
+                {
+                    behavior = AlterTableStmt::DropBehavior::RESTRICT;
+                }
+
+                auto *stmt = arena_.make<AlterTableStmt>(makeSpan(start_loc), table_name,
+                                                         AlterTableStmt::AlterAction::DROP_COLUMN);
+                stmt->setDropColumnName(col_name, if_exists, behavior);
+                return stmt;
             }
 
-            StringPool::StringId tablespace_name = current().value.string_id;
-            advance();
-
-            // Check for optional ONLINE clause
-            bool online = false;
-            if (match(TokenType::KW_ONLINE))
+            // RENAME COLUMN
+            if (match(TokenType::KW_RENAME))
             {
-                online = true;
+                if (!consume(TokenType::KW_COLUMN, "Expected COLUMN after RENAME"))
+                {
+                    synchronize();
+                    return nullptr;
+                }
+
+                if (!check(TokenType::IDENTIFIER))
+                {
+                    error("Expected old column name after RENAME COLUMN");
+                    synchronize();
+                    return nullptr;
+                }
+
+                StringPool::StringId old_name = current().value.string_id;
+                advance();
+
+                if (!consume(TokenType::KW_TO, "Expected TO after old column name"))
+                {
+                    synchronize();
+                    return nullptr;
+                }
+
+                if (!check(TokenType::IDENTIFIER))
+                {
+                    error("Expected new column name after TO");
+                    synchronize();
+                    return nullptr;
+                }
+
+                StringPool::StringId new_name = current().value.string_id;
+                advance();
+
+                auto *stmt = arena_.make<AlterTableStmt>(makeSpan(start_loc), table_name,
+                                                         AlterTableStmt::AlterAction::RENAME_COLUMN);
+                stmt->setRenameColumn(old_name, new_name);
+                return stmt;
             }
 
-            // Create ALTER TABLE SET TABLESPACE statement
-            auto *stmt = arena_.make<AlterTableSetTablespaceStmt>(makeSpan(start_loc), table_name,
-                                                                   tablespace_name, online);
+            // ALTER COLUMN
+            if (match(TokenType::KW_ALTER))
+            {
+                if (!consume(TokenType::KW_COLUMN, "Expected COLUMN after ALTER"))
+                {
+                    synchronize();
+                    return nullptr;
+                }
 
-            return stmt;
+                if (!check(TokenType::IDENTIFIER))
+                {
+                    error("Expected column name after ALTER COLUMN");
+                    synchronize();
+                    return nullptr;
+                }
+
+                StringPool::StringId col_name = current().value.string_id;
+                advance();
+
+                if (!consume(TokenType::KW_TYPE, "Expected TYPE after column name"))
+                {
+                    synchronize();
+                    return nullptr;
+                }
+
+                // Parse new type
+                auto type_name = parseTypeName();
+                if (type_name.type == DataType::UNKNOWN)
+                {
+                    return nullptr;
+                }
+
+                // Create TypeName node in arena
+                auto *type_node = arena_.make<TypeName>(type_name);
+
+                auto *stmt = arena_.make<AlterTableStmt>(makeSpan(start_loc), table_name,
+                                                         AlterTableStmt::AlterAction::ALTER_COLUMN_TYPE);
+                stmt->setAlterColumnType(col_name, type_node);
+                return stmt;
+            }
+
+            error("Expected ADD, DROP, RENAME, ALTER, or SET after table name");
+            synchronize();
+            return nullptr;
         }
 
         Expression *Parser::parseExpression()
@@ -3550,6 +4283,65 @@ namespace scratchbird
                     // Searched CASE
                     return arena_.make<CaseExpr>(span, when_clauses, else_result);
                 }
+            }
+
+            // Sequence functions: NEXTVAL, CURRVAL, SETVAL (ALPHA Phase 1 - Sequences)
+            if (match(TokenType::KW_NEXTVAL) || match(TokenType::KW_CURRVAL) || match(TokenType::KW_SETVAL))
+            {
+                TokenType func_type = previous().type;
+                SequenceFunctionType seq_func;
+
+                switch (func_type)
+                {
+                case TokenType::KW_NEXTVAL:
+                    seq_func = SequenceFunctionType::NEXTVAL;
+                    break;
+                case TokenType::KW_CURRVAL:
+                    seq_func = SequenceFunctionType::CURRVAL;
+                    break;
+                case TokenType::KW_SETVAL:
+                    seq_func = SequenceFunctionType::SETVAL;
+                    break;
+                default:
+                    error("Unknown sequence function");
+                    return nullptr;
+                }
+
+                if (!consume(TokenType::LEFT_PAREN, "Expected '(' after sequence function"))
+                    return nullptr;
+
+                // First argument: sequence name (as string literal)
+                auto *seq_name = parseExpression();
+                if (!seq_name)
+                    return nullptr;
+
+                Expression* value = nullptr;
+                Expression* is_called = nullptr;
+
+                // SETVAL has additional arguments
+                if (seq_func == SequenceFunctionType::SETVAL)
+                {
+                    if (!consume(TokenType::COMMA, "Expected ',' after sequence name in SETVAL"))
+                        return nullptr;
+
+                    value = parseExpression();
+                    if (!value)
+                        return nullptr;
+
+                    // Optional third argument (is_called)
+                    if (match(TokenType::COMMA))
+                    {
+                        is_called = parseExpression();
+                        if (!is_called)
+                            return nullptr;
+                    }
+                }
+
+                if (!consume(TokenType::RIGHT_PAREN, "Expected ')' after sequence function"))
+                    return nullptr;
+
+                auto span = makeSpan(start_loc, previous().location);
+                return arena_.make<SequenceFunctionExpr>(span, seq_func, seq_name, value, is_called);
             }
 
             // ARRAY literal: ARRAY[elem1, elem2, ...] (Phase 2 Task 12)
