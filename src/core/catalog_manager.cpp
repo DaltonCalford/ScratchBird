@@ -343,6 +343,37 @@ namespace scratchbird::core
         uint32_t padding;
     };
 
+    // Dependency record on disk (Phase 1.4 - Catalog Corrections)
+    struct DependencyRecord
+    {
+        ID dependency_id;           // Unique dependency record ID
+        ID dependent_object_id;     // Object that depends ON something
+        uint8_t dependent_type;     // VIEW, TRIGGER, FK, PROCEDURE, etc.
+        uint8_t reserved1[7];       // Alignment
+        ID referenced_object_id;    // Object being depended upon
+        uint8_t referenced_type;    // TABLE, VIEW, SEQUENCE, etc.
+        uint8_t dependency_type;    // NORMAL, AUTO, INTERNAL, PIN
+        uint8_t reserved2[6];       // Alignment
+        uint64_t created_time;
+        uint32_t is_valid;
+        uint32_t padding;
+    };
+
+    // Comment record on disk (Phase 1.5 - Catalog Corrections)
+    struct CommentRecord
+    {
+        ID comment_id;
+        ID object_id;               // Object being commented
+        uint8_t object_type;        // TABLE, COLUMN, VIEW, etc.
+        uint8_t reserved[7];        // Alignment
+        ID owner_id;                // Owner UUID reference
+        uint32_t comment_text_oid;  // TOAST reference - unlimited size comment text
+        uint64_t created_time;
+        uint64_t last_modified_time;
+        uint32_t is_valid;
+        uint32_t padding;
+    };
+
     // Collation record on disk - see updated CollationRecord structure below at line ~194
 
 #pragma pack(pop)
