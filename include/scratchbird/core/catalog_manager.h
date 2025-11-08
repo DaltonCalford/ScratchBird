@@ -221,16 +221,17 @@ namespace scratchbird::core
             ID table_id;
             ID schema_id;
             std::string table_name;
-            uint32_t root_page = 0; // Root page of table data
+            ID owner_id;                       // Owner UUID reference (NOT name)
+            uint32_t root_page = 0;            // Root page of table data
             uint32_t column_count = 0;
-            uint64_t row_count = 0; // Estimated row count
+            uint64_t row_count = 0;            // Estimated row count
             TableType table_type = TableType::HEAP;
             bool has_toast = false;
             ID toast_table_id;                 // PHASE 5 TASK 5.1.3.1: UUID of TOAST table (zero if none)
             uint16_t tablespace_id = 0;        // Tablespace ID (0 = default)
             uint16_t default_charset = 0;      // Default character set (0 = inherit from schema)
             uint32_t default_collation_id = 0; // Default collation ID (0 = inherit from schema)
-            uint32_t storage_params_oid = 0;   // TOAST reference for storage parameters
+            uint32_t storage_params_oid = 0;   // TOAST reference for storage parameters - IMPLEMENTED
             uint64_t created_time = 0;
             uint64_t last_modified_time = 0;
 

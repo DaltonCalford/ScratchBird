@@ -183,6 +183,69 @@ namespace scratchbird
             (void)node; // Suppress unused parameter warning
         }
 
+        void SemanticAnalyzer::visit(DropTableStmt *node)
+        {
+            // ALPHA Phase 1: DROP TABLE semantic analysis
+            // Minimal validation - full validation happens at execution
+            (void)node;
+        }
+
+        void SemanticAnalyzer::visit(DropIndexStmt *node)
+        {
+            // ALPHA Phase 1: DROP INDEX semantic analysis
+            // Minimal validation - full validation happens at execution
+            (void)node;
+        }
+
+        void SemanticAnalyzer::visit(TruncateTableStmt *node)
+        {
+            // ALPHA Phase 1: TRUNCATE TABLE semantic analysis
+            // Minimal validation - full validation happens at execution
+            (void)node;
+        }
+
+        void SemanticAnalyzer::visit(AlterTableStmt *node)
+        {
+            // ALPHA Phase 1: ALTER TABLE semantic analysis
+            // Minimal validation - full validation happens at execution
+            (void)node;
+        }
+
+        void SemanticAnalyzer::visit(CreateSequenceStmt *node)
+        {
+            // ALPHA Phase 1: CREATE SEQUENCE semantic analysis
+            // Minimal validation - full validation happens at execution
+            (void)node;
+        }
+
+        void SemanticAnalyzer::visit(AlterSequenceStmt *node)
+        {
+            // ALPHA Phase 1: ALTER SEQUENCE semantic analysis
+            // Minimal validation - full validation happens at execution
+            (void)node;
+        }
+
+        void SemanticAnalyzer::visit(DropSequenceStmt *node)
+        {
+            // ALPHA Phase 1: DROP SEQUENCE semantic analysis
+            // Minimal validation - full validation happens at execution
+            (void)node;
+        }
+
+        void SemanticAnalyzer::visit(CreateViewStmt *node)
+        {
+            // ALPHA Phase 1: CREATE VIEW semantic analysis
+            // Minimal validation - full validation happens at execution
+            (void)node;
+        }
+
+        void SemanticAnalyzer::visit(DropViewStmt *node)
+        {
+            // ALPHA Phase 1: DROP VIEW semantic analysis
+            // Minimal validation - full validation happens at execution
+            (void)node;
+        }
+
         void SemanticAnalyzer::visit(DropTablespaceStmt *node)
         {
             // Phase 2 Task 2.1: DROP TABLESPACE semantic analysis
@@ -1025,6 +1088,15 @@ namespace scratchbird
             }
 
             setExpressionType(node, ExpressionType(TypeName(result_type), false));
+        }
+
+        void SemanticAnalyzer::visit(SequenceFunctionExpr *node)
+        {
+            // ALPHA Phase 1: Sequence function semantic analysis
+            // Validate sequence name and arguments
+
+            // All sequence functions return INT64
+            setExpressionType(node, ExpressionType(TypeName(DataType::INT64), false));
         }
 
         void SemanticAnalyzer::visit(WindowFuncExpr *node)

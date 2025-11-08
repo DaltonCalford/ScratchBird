@@ -71,6 +71,15 @@ namespace scratchbird
             // ASTVisitor interface
             void visit(CreateTableStmt *node) override;
             void visit(CreateIndexStmt *node) override;             // Phase 2 Task 2.3
+            void visit(DropTableStmt *node) override;               // ALPHA Phase 1 - DDL Modifications
+            void visit(DropIndexStmt *node) override;               // ALPHA Phase 1 - DDL Modifications
+            void visit(TruncateTableStmt *node) override;           // ALPHA Phase 1 - DDL Modifications (TRUNCATE TABLE ASYNC)
+            void visit(AlterTableStmt *node) override;              // ALPHA Phase 1 - DDL Modifications
+            void visit(CreateSequenceStmt *node) override;          // ALPHA Phase 1 - Sequences
+            void visit(AlterSequenceStmt *node) override;           // ALPHA Phase 1 - Sequences
+            void visit(DropSequenceStmt *node) override;            // ALPHA Phase 1 - Sequences
+            void visit(CreateViewStmt *node) override;              // ALPHA Phase 1 - Views
+            void visit(DropViewStmt *node) override;                // ALPHA Phase 1 - Views
             void visit(CreateTablespaceStmt *node) override;        // Phase 2 Task 2.1
             void visit(AlterTablespaceStmt *node) override;         // Phase 2 Task 2.2
             void visit(AlterTableSetTablespaceStmt *node) override; // Phase 4 Task 4.1.1
@@ -106,6 +115,7 @@ namespace scratchbird
             void visit(BinaryOpExpr *node) override;
             void visit(CastExpr *node) override;
             void visit(FunctionCallExpr *node) override;
+            void visit(SequenceFunctionExpr *node) override;  // ALPHA Phase 1 - Sequences
             void visit(AggregateExpr *node) override;  // Phase 1 Task 4.1
             void visit(WindowFuncExpr *node) override; // Phase 1 Task 6
             void visit(WindowSpec *node) override;     // Phase 1 Task 6

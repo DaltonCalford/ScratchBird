@@ -103,6 +103,51 @@ namespace scratchbird
             visitor->visit(this);
         }
 
+        void DropTableStmt::accept(ASTVisitor *visitor)
+        {
+            visitor->visit(this);
+        }
+
+        void DropIndexStmt::accept(ASTVisitor *visitor)
+        {
+            visitor->visit(this);
+        }
+
+        void TruncateTableStmt::accept(ASTVisitor *visitor)
+        {
+            visitor->visit(this);
+        }
+
+        void AlterTableStmt::accept(ASTVisitor *visitor)
+        {
+            visitor->visit(this);
+        }
+
+        void CreateSequenceStmt::accept(ASTVisitor *visitor)
+        {
+            visitor->visit(this);
+        }
+
+        void AlterSequenceStmt::accept(ASTVisitor *visitor)
+        {
+            visitor->visit(this);
+        }
+
+        void DropSequenceStmt::accept(ASTVisitor *visitor)
+        {
+            visitor->visit(this);
+        }
+
+        void CreateViewStmt::accept(ASTVisitor *visitor)
+        {
+            visitor->visit(this);
+        }
+
+        void DropViewStmt::accept(ASTVisitor *visitor)
+        {
+            visitor->visit(this);
+        }
+
         void CreateTablespaceStmt::accept(ASTVisitor *visitor)
         {
             visitor->visit(this);
@@ -831,6 +876,11 @@ namespace scratchbird
         }
 
         void FunctionCallExpr::accept(ASTVisitor *visitor)
+        {
+            visitor->visit(this);
+        }
+
+        void SequenceFunctionExpr::accept(ASTVisitor *visitor)
         {
             visitor->visit(this);
         }

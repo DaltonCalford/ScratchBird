@@ -24,7 +24,7 @@ namespace scratchbird::core
     };
 
     // Forward declaration
-    class CompositeValue;
+    class CompositeRecord;
 
     /**
      * CompositeFieldValue - Value of a field (variant)
@@ -36,7 +36,7 @@ namespace scratchbird::core
         double,
         std::string,
         bool,
-        std::shared_ptr<CompositeValue>
+        std::shared_ptr<CompositeRecord>
     >;
 
     /**
@@ -54,12 +54,13 @@ namespace scratchbird::core
     };
 
     /**
-     * CompositeValue - Runtime representation of a composite/record
+     * CompositeRecord - Runtime representation of a composite/record
+     * Note: Different from the simple CompositeValue struct in types.h
      */
-    class CompositeValue {
+    class CompositeRecord {
     public:
         // Constructor
-        CompositeValue(const std::string& type_name, const std::vector<CompositeField>& fields);
+        CompositeRecord(const std::string& type_name, const std::vector<CompositeField>& fields);
 
         // Type queries
         auto getTypeName() const -> const std::string& { return type_name_; }
@@ -100,20 +101,20 @@ namespace scratchbird::core
     public:
         // Create composite from field definitions
         static auto create(const std::string& type_name, const std::vector<CompositeField>& fields)
-            -> CompositeValue;
+            -> CompositeRecord;
 
         // Binary encoding/decoding
-        static auto encode(const CompositeValue& value) -> std::vector<uint8_t>;
-        static auto decode(const std::vector<uint8_t>& binary) -> std::optional<CompositeValue>;
+        static auto encode(const CompositeRecord& value) -> std::vector<uint8_t>;
+        static auto decode(const std::vector<uint8_t>& binary) -> std::optional<CompositeRecord>;
 
         // Create from map
         static auto fromMap(const std::string& type_name,
                            const std::vector<CompositeField>& fields,
                            const std::unordered_map<std::string, CompositeFieldValue>& values)
-            -> std::optional<CompositeValue>;
+            -> std::optional<CompositeRecord>;
 
         // Compare composites
-        static bool equals(const CompositeValue& a, const CompositeValue& b);
+        static bool equals(const CompositeRecord& a, const CompositeRecord& b);
 
     private:
         // Encoding helpers

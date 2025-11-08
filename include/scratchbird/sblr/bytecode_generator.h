@@ -114,6 +114,15 @@ namespace scratchbird
             void visit(parser::CreateTablespaceStmt *node) override;        // Phase 2 Task 2.1
             void visit(parser::AlterTablespaceStmt *node) override;         // Phase 2 Task 2.2
             void visit(parser::AlterTableSetTablespaceStmt *node) override; // Phase 4 Task 4.1.6
+            void visit(parser::DropTableStmt *node) override;               // ALPHA Phase 1 - DDL Modifications
+            void visit(parser::DropIndexStmt *node) override;               // ALPHA Phase 1 - DDL Modifications
+            void visit(parser::TruncateTableStmt *node) override;            // ALPHA Phase 1 - DDL Modifications (TRUNCATE TABLE ASYNC)
+            void visit(parser::AlterTableStmt *node) override;              // ALPHA Phase 1 - DDL Modifications
+            void visit(parser::CreateSequenceStmt *node) override;           // ALPHA Phase 1 - Sequences
+            void visit(parser::AlterSequenceStmt *node) override;            // ALPHA Phase 1 - Sequences
+            void visit(parser::DropSequenceStmt *node) override;             // ALPHA Phase 1 - Sequences
+            void visit(parser::CreateViewStmt *node) override;               // ALPHA Phase 1 - Views
+            void visit(parser::DropViewStmt *node) override;                 // ALPHA Phase 1 - Views
             void visit(parser::DropTablespaceStmt *node) override;          // Phase 2 Task 2.1
             void visit(parser::AttachTablespaceStmt *node) override;        // Phase 6 Task 6.1
             void visit(parser::DetachTablespaceStmt *node) override;        // Phase 6 Task 6.2
@@ -158,6 +167,7 @@ namespace scratchbird
             void visit(parser::CaseExpr *node) override;        // Phase 1 Task 8
             void visit(parser::ArrayLiteral *node) override;    // Phase 2 Task 12
             void visit(parser::SubqueryExpr *node) override;    // Phase 2 Wave 2 - Agent B
+            void visit(parser::SequenceFunctionExpr *node) override; // ALPHA Phase 1 - Sequences
             void visit(parser::ColumnDef *node) override;
 
         private:

@@ -192,6 +192,9 @@ namespace scratchbird
             const std::vector<Value> *current_row_values_ = nullptr;
             const std::vector<core::CatalogManager::ColumnInfo> *current_row_columns_ = nullptr;
 
+            // Session state for CURRVAL (ALPHA Phase 1 - Sequences)
+            std::unordered_map<core::ID, int64_t> session_sequence_currval_;
+
             // Task 17 MGA Phase 2.2: Index maintenance statistics
             IndexMaintenanceStats index_stats_;
 
@@ -252,6 +255,10 @@ namespace scratchbird
             void executeCreateTablespace();        // Phase 2 Task 2.1
             void executeAlterTablespace();         // Phase 2 Task 2.2
             void executeAlterTableSetTablespace(); // Phase 4 Task 4.1.6
+            void executeDropTable();               // ALPHA Phase 1 - DDL Modifications
+            void executeDropIndex();               // ALPHA Phase 1 - DDL Modifications
+            void executeAlterTable();              // ALPHA Phase 1 - DDL Modifications
+            void executeTruncateTable();           // ALPHA Phase 1 - DDL Modifications (TRUNCATE TABLE ASYNC)
             void executeDropTablespace();          // Phase 2 Task 2.1
             void executeAttachTablespace();        // Phase 6 Task 6.1
             void executeDetachTablespace();        // Phase 6 Task 6.2
@@ -270,6 +277,18 @@ namespace scratchbird
             // Trigger execution (Wave 2)
             void executeCreateTrigger();    // CREATE TRIGGER
             void executeDropTrigger();      // DROP TRIGGER
+
+            // Sequence execution (ALPHA Phase 1 - Sequences)
+            void executeCreateSequence();
+            void executeAlterSequence();
+            void executeDropSequence();
+            int64_t executeSequenceNextVal();  // Returns value
+            int64_t executeSequenceCurrVal();  // Returns value
+            int64_t executeSequenceSetVal();   // Returns value
+
+            // View execution (ALPHA Phase 1 - Views)
+            void executeCreateView();
+            void executeDropView();
 
             // Monitoring/system table execution
             void executeMonitoringQuery(const std::string &table_name);

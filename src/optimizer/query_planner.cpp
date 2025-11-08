@@ -4,6 +4,8 @@
 #include "scratchbird/core/debug.h"
 #include "scratchbird/core/catalog_manager.h"
 #include "scratchbird/core/expression_serializer.h"
+#include "scratchbird/parser/parser.h"
+#include "scratchbird/parser/lexer.h"
 #include <algorithm>
 #include <unordered_map>
 #include <cmath>  // LSM Integration: for std::ceil, std::log2
@@ -61,6 +63,87 @@ namespace scratchbird::optimizer
                              cte_it->second->totalCost(),
                              cte_it->second->rows());
             return cte_scan;
+        }
+
+        // ALPHA Phase 1: Check if this is a view reference
+        // Views need to be expanded before planning
+        if (db_->catalog_manager()->isView(table_name))
+        {
+            DEBUG_LOG_DB("Table is a view: " + table_name + ", expanding definition");
+
+            // Cycle detection: Check if we're already expanding this view
+            if (expanding_views_.find(table_name) != expanding_views_.end())
+            {
+                DEBUG_LOG_DB("Recursive view detected: " + table_name);
+                SET_ERROR_CONTEXT(ctx, core::Status::INVALID_ARGUMENT,
+                                  ("Recursive view reference detected: " + table_name).c_str());
+                return nullptr;
+            }
+
+            // Add to expansion tracking
+            expanding_views_.insert(table_name);
+
+            // Get default PUBLIC schema
+            core::CatalogManager::SchemaInfo schema_info;
+            core::Status status = db_->catalog_manager()->getSchema("PUBLIC", schema_info, ctx);
+            if (status != core::Status::OK)
+            {
+                expanding_views_.erase(table_name);
+                DEBUG_LOG_DB("Failed to get PUBLIC schema");
+                return nullptr;
+            }
+
+            // Get view definition from catalog
+            core::CatalogManager::ViewInfo view_info;
+            status = db_->catalog_manager()->getView(schema_info.schema_id, table_name, view_info, ctx);
+            if (status != core::Status::OK)
+            {
+                expanding_views_.erase(table_name);
+                DEBUG_LOG_DB("Failed to get view info for: " + table_name);
+                return nullptr;
+            }
+
+            // Parse view definition into AST
+            parser::Lexer view_lexer(view_info.definition);
+            parser::ASTArena temp_arena;
+            parser::Parser view_parser(view_lexer, temp_arena);
+
+            auto view_parse_result = view_parser.parseStatement();
+            if (!view_parse_result.success())
+            {
+                expanding_views_.erase(table_name);
+                DEBUG_LOG_DB("Failed to parse view definition for: " + table_name);
+                SET_ERROR_CONTEXT(ctx, core::Status::INVALID_ARGUMENT,
+                                  "Failed to parse view definition");
+                return nullptr;
+            }
+
+            // View definition must be a SELECT statement
+            auto view_select = dynamic_cast<parser::SelectStmt*>(view_parse_result.statement());
+            if (!view_select)
+            {
+                expanding_views_.erase(table_name);
+                DEBUG_LOG_DB("View definition is not a SELECT statement: " + table_name);
+                SET_ERROR_CONTEXT(ctx, core::Status::INVALID_ARGUMENT,
+                                  "View definition must be a SELECT statement");
+                return nullptr;
+            }
+
+            // Recursively plan the view query
+            // The expanding_views_ set prevents infinite recursion
+            auto view_plan = planQuery(view_select, view_lexer.stringPool(), ctx);
+
+            // Remove from expansion tracking (successful or not)
+            expanding_views_.erase(table_name);
+
+            if (!view_plan)
+            {
+                DEBUG_LOG_DB("Failed to plan view query for: " + table_name);
+                return nullptr;
+            }
+
+            DEBUG_LOG_DB("View expansion complete for: " + table_name);
+            return view_plan;
         }
 
         // Phase 1: Get table ID from catalog

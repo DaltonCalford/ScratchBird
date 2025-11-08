@@ -92,6 +92,7 @@ namespace scratchbird
             {"FIRST", TokenType::KW_FIRST},
             {"LAST", TokenType::KW_LAST},
             {"AND", TokenType::KW_AND},
+            {"OR", TokenType::KW_OR},
 
             // Numeric types
             {"INT", TokenType::KW_INT},
@@ -240,12 +241,35 @@ namespace scratchbird
             {"UNLIMITED", TokenType::KW_UNLIMITED},
             {"PREALLOC", TokenType::KW_PREALLOC},
             {"FORCE", TokenType::KW_FORCE},
+            {"CASCADE", TokenType::KW_CASCADE},    // ALPHA Phase 1 - DDL Modifications
+            {"RESTRICT", TokenType::KW_RESTRICT},  // ALPHA Phase 1 - DDL Modifications
             {"DROP", TokenType::KW_DROP},
+            {"TRUNCATE", TokenType::KW_TRUNCATE},  // ALPHA Phase 1 - TRUNCATE TABLE
+            {"ASYNC", TokenType::KW_ASYNC},        // ALPHA Phase 1 - TRUNCATE TABLE ASYNC
+            {"SYNC", TokenType::KW_SYNC},          // ALPHA Phase 1 - TRUNCATE TABLE SYNC
+            {"SEQUENCE", TokenType::KW_SEQUENCE},  // ALPHA Phase 1 - Sequences
+            {"INCREMENT", TokenType::KW_INCREMENT},// ALPHA Phase 1 - Sequences
+            {"MINVALUE", TokenType::KW_MINVALUE},  // ALPHA Phase 1 - Sequences
+            {"MAXVALUE", TokenType::KW_MAXVALUE},  // ALPHA Phase 1 - Sequences
+            {"NO", TokenType::KW_NO},              // ALPHA Phase 1 - Sequences (NO MINVALUE/MAXVALUE/CYCLE)
+            {"START", TokenType::KW_START},        // ALPHA Phase 1 - Sequences
+            {"CACHE", TokenType::KW_CACHE},        // ALPHA Phase 1 - Sequences
+            {"CYCLE", TokenType::KW_CYCLE},        // ALPHA Phase 1 - Sequences
+            {"RESTART", TokenType::KW_RESTART},    // ALPHA Phase 1 - Sequences
+            {"NEXTVAL", TokenType::KW_NEXTVAL},    // ALPHA Phase 1 - Sequences
+            {"CURRVAL", TokenType::KW_CURRVAL},    // ALPHA Phase 1 - Sequences
+            {"SETVAL", TokenType::KW_SETVAL},      // ALPHA Phase 1 - Sequences
+            {"VIEW", TokenType::KW_VIEW},          // ALPHA Phase 1 - Views
+            {"REPLACE", TokenType::KW_REPLACE},    // ALPHA Phase 1 - Views (CREATE OR REPLACE)
+            {"CHECK", TokenType::KW_CHECK},        // ALPHA Phase 1 - Views (WITH CHECK OPTION)
+            {"OPTION", TokenType::KW_OPTION},      // ALPHA Phase 1 - Views (WITH CHECK OPTION)
             {"ON", TokenType::KW_ON},
             {"OFF", TokenType::KW_OFF},
             {"ALTER", TokenType::KW_ALTER},   // Phase 2 Task 2.2
             {"RENAME", TokenType::KW_RENAME}, // Phase 2 Task 2.2
             {"TO", TokenType::KW_TO},         // Phase 2 Task 2.2
+            {"ADD", TokenType::KW_ADD},       // ALPHA Phase 1 - ALTER TABLE ADD COLUMN
+            {"TYPE", TokenType::KW_TYPE},     // ALPHA Phase 1 - ALTER TABLE ALTER COLUMN TYPE
             {"ONLINE", TokenType::KW_ONLINE}, // Phase 4 Task 4.1.1
             {"ATTACH", TokenType::KW_ATTACH}, // Phase 6 Task 6.1
             {"DETACH", TokenType::KW_DETACH}, // Phase 6 Task 6.2

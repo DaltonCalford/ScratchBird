@@ -383,6 +383,51 @@ namespace scratchbird
                         result = ExecutionResult();
                         break;
 
+                    case Opcode::DROP_TABLE:
+                        executeDropTable();
+                        result = ExecutionResult();
+                        break;
+
+                    case Opcode::DROP_INDEX:
+                        executeDropIndex();
+                        result = ExecutionResult();
+                        break;
+
+                    case Opcode::ALTER_TABLE:
+                        executeAlterTable();
+                        result = ExecutionResult();
+                        break;
+
+                    case Opcode::TRUNCATE_TABLE:
+                        executeTruncateTable();
+                        result = ExecutionResult();
+                        break;
+
+                    case Opcode::CREATE_SEQUENCE:
+                        executeCreateSequence();
+                        result = ExecutionResult();
+                        break;
+
+                    case Opcode::ALTER_SEQUENCE:
+                        executeAlterSequence();
+                        result = ExecutionResult();
+                        break;
+
+                    case Opcode::DROP_SEQUENCE:
+                        executeDropSequence();
+                        result = ExecutionResult();
+                        break;
+
+                    case Opcode::CREATE_VIEW:
+                        executeCreateView();
+                        result = ExecutionResult();
+                        break;
+
+                    case Opcode::DROP_VIEW:
+                        executeDropView();
+                        result = ExecutionResult();
+                        break;
+
                     case Opcode::DROP_TABLESPACE:
                         executeDropTablespace();
                         result = ExecutionResult();
@@ -2269,6 +2314,656 @@ namespace scratchbird
                     return;
                 }
             }
+        }
+
+        void Executor::executeDropTable()
+        {
+            // DROP TABLE [IF EXISTS] name [CASCADE | RESTRICT]
+
+            // Read table name (string)
+            std::string table_name = readString();
+
+            // Read flags byte
+            uint8_t flags = bytecode_[pc_++];
+            bool if_exists = (flags & 0x01) != 0;
+            bool cascade = (flags & 0x02) != 0;
+
+            // Get current schema (default to 'PUBLIC')
+            core::CatalogManager::SchemaInfo schema_info;
+            auto status = db_->catalog_manager()->getSchema("PUBLIC", schema_info, nullptr);
+            if (status != Status::OK)
+            {
+                throw std::runtime_error("Failed to get schema PUBLIC");
+            }
+
+            // Check if table exists
+            core::CatalogManager::TableInfo table_info;
+            status = db_->catalog_manager()->getTable(schema_info.schema_id, table_name.c_str(), table_info, nullptr);
+            if (status != Status::OK)
+            {
+                if (if_exists)
+                {
+                    // IF EXISTS specified, silently succeed
+                    return;
+                }
+                else
+                {
+                    throw std::runtime_error("Table does not exist: " + table_name);
+                }
+            }
+
+            // Drop the table using catalog manager
+            ErrorContext ctx;
+            status = db_->catalog_manager()->dropTable(table_info.table_id, cascade, &ctx);
+            if (status != Status::OK)
+            {
+                throw std::runtime_error("Failed to drop table: " + ctx.message);
+            }
+        }
+
+        void Executor::executeDropIndex()
+        {
+            // DROP INDEX [IF EXISTS] name
+
+            // Read index name (string)
+            std::string index_name = readString();
+
+            // Read IF EXISTS flag
+            uint8_t if_exists = bytecode_[pc_++];
+
+            // Note: CatalogManager requires table_id + index_name or index_id
+            // For DROP INDEX by name only, we need to search through all tables
+            // This is a known limitation - for now we search all schemas
+
+            // Try to find the index by searching all schemas and tables
+            ErrorContext ctx;
+            core::CatalogManager::SchemaInfo schema_info;
+            auto status = db_->catalog_manager()->getSchema("PUBLIC", schema_info, nullptr);
+            if (status != Status::OK)
+            {
+                if (if_exists)
+                {
+                    // IF EXISTS specified and schema doesn't exist
+                    return;
+                }
+                throw std::runtime_error("Failed to get schema PUBLIC");
+            }
+
+            // Get all tables in schema
+            std::vector<core::CatalogManager::TableInfo> tables;
+            status = db_->catalog_manager()->listTables(schema_info.schema_id, tables, nullptr);
+            if (status != Status::OK)
+            {
+                throw std::runtime_error("Failed to list tables");
+            }
+
+            // Search all tables for the index
+            bool found = false;
+            core::ID found_index_id;
+            for (const auto &table : tables)
+            {
+                // Try to get the index from this table
+                core::CatalogManager::IndexInfo index_info;
+                status = db_->catalog_manager()->getIndex(table.table_id, index_name, index_info, nullptr);
+                if (status == Status::OK)
+                {
+                    // Found it!
+                    found = true;
+                    found_index_id = index_info.index_id;
+                    break;
+                }
+            }
+
+            if (!found)
+            {
+                if (if_exists)
+                {
+                    // IF EXISTS specified, silently succeed
+                    return;
+                }
+                throw std::runtime_error("Index does not exist: " + index_name);
+            }
+
+            // Drop the index using catalog manager
+            status = db_->catalog_manager()->dropIndex(found_index_id, &ctx);
+            if (status != Status::OK)
+            {
+                throw std::runtime_error("Failed to drop index: " + ctx.message);
+            }
+        }
+
+        void Executor::executeAlterTable()
+        {
+            // ALTER TABLE implementation (ALPHA Phase 1 - DDL Modifications)
+            // Supports: ADD COLUMN, DROP COLUMN, RENAME COLUMN, ALTER COLUMN TYPE
+
+            // Read table name (string)
+            std::string table_name = readString();
+
+            // Read action type
+            uint8_t action = bytecode_[pc_++];
+
+            // Get table from catalog
+            core::ErrorContext ctx;
+            core::CatalogManager::SchemaInfo schema_info;
+            auto status = db_->catalog_manager()->getSchema("PUBLIC", schema_info, nullptr);
+            if (status != Status::OK)
+            {
+                throw std::runtime_error("Failed to get schema PUBLIC");
+            }
+
+            core::CatalogManager::TableInfo table_info;
+            status = db_->catalog_manager()->getTable(schema_info.schema_id, table_name,
+                                                       table_info, &ctx);
+            if (status != Status::OK)
+            {
+                throw std::runtime_error("Table not found: " + table_name);
+            }
+
+            // Dispatch based on action
+            switch (action)
+            {
+                case 0: // ADD_COLUMN
+                {
+                    std::string col_name = readString();
+                    uint16_t data_type = readInt16();
+                    uint32_t precision = readInt32();
+                    uint32_t scale = readInt32();
+                    bool nullable = readByte() != 0;
+
+                    core::CatalogManager::ColumnInfo col_info;
+                    col_info.column_name = col_name;
+                    col_info.data_type = data_type;
+                    col_info.type_precision = precision;
+                    col_info.type_scale = scale;
+                    col_info.nullable = nullable;
+
+                    status = db_->catalog_manager()->addColumn(table_info.table_id, col_info, &ctx);
+                    if (status != Status::OK)
+                    {
+                        throw std::runtime_error("Failed to add column: " + ctx.message);
+                    }
+                    break;
+                }
+
+                case 1: // DROP_COLUMN
+                {
+                    std::string col_name = readString();
+                    bool if_exists = readByte() != 0;
+                    bool cascade = readByte() != 0;
+
+                    status = db_->catalog_manager()->dropColumn(table_info.table_id, col_name,
+                                                                 if_exists, cascade, &ctx);
+
+                    if (status != Status::OK && !(status == Status::NOT_FOUND && if_exists))
+                    {
+                        throw std::runtime_error("Failed to drop column: " + ctx.message);
+                    }
+                    break;
+                }
+
+                case 5: // RENAME_COLUMN
+                {
+                    std::string old_name = readString();
+                    std::string new_name = readString();
+
+                    status = db_->catalog_manager()->renameColumn(table_info.table_id, old_name,
+                                                                   new_name, &ctx);
+
+                    if (status != Status::OK)
+                    {
+                        throw std::runtime_error("Failed to rename column: " + ctx.message);
+                    }
+                    break;
+                }
+
+                case 2: // ALTER_COLUMN_TYPE
+                {
+                    std::string col_name = readString();
+                    uint16_t new_type = readInt16();
+                    uint32_t new_precision = readInt32();
+                    uint32_t new_scale = readInt32();
+
+                    status = db_->catalog_manager()->alterColumnType(
+                        table_info.table_id, col_name, static_cast<core::DataType>(new_type),
+                        new_precision, new_scale, &ctx);
+
+                    if (status != Status::OK)
+                    {
+                        throw std::runtime_error("Failed to alter column type: " + ctx.message);
+                    }
+                    break;
+                }
+
+                default:
+                    throw std::runtime_error(
+                        "ALTER TABLE action not implemented: " + std::to_string(action));
+            }
+        }
+
+        void Executor::executeTruncateTable()
+        {
+            // TRUNCATE TABLE implementation (ALPHA Phase 1 - DDL Modifications)
+            // Supports ASYNC (default) and SYNC modes
+
+            // Read table name from bytecode
+            std::string table_name = readString();
+
+            // Read mode (0=ASYNC, 1=SYNC)
+            uint8_t mode_byte = bytecode_[pc_++];
+            bool is_sync = (mode_byte == 1);
+
+            // Get default schema (PUBLIC)
+            core::CatalogManager::SchemaInfo schema_info;
+            ErrorContext ctx;
+            auto status = db_->catalog_manager()->getSchema("PUBLIC", schema_info, &ctx);
+            if (status != Status::OK)
+            {
+                throw std::runtime_error("Schema not found: PUBLIC");
+            }
+
+            // Get table info
+            core::CatalogManager::TableInfo table_info;
+            status = db_->catalog_manager()->getTable(schema_info.schema_id, table_name, table_info, &ctx);
+            if (status != Status::OK)
+            {
+                throw std::runtime_error("Table not found: " + table_name);
+            }
+
+            // Get current transaction ID (for now, use 1 as default)
+            uint64_t xid = 1;
+
+            if (is_sync)
+            {
+                // Synchronous mode - blocks until complete
+                status = db_->catalog_manager()->truncateTableSync(table_info.table_id, table_name, xid, &ctx);
+                if (status != Status::OK)
+                {
+                    throw std::runtime_error("TRUNCATE TABLE SYNC failed");
+                }
+                std::cout << "TRUNCATE TABLE completed" << std::endl;
+            }
+            else
+            {
+                // Asynchronous mode - returns job ID
+                uint64_t job_id = db_->catalog_manager()->truncateTableAsync(table_info.table_id, table_name, xid, &ctx);
+                std::cout << "TRUNCATE TABLE job started (ID: " << job_id << ")" << std::endl;
+            }
+        }
+
+        // ========================================================================
+        // Sequence Operations (ALPHA Phase 1 - Sequences)
+        // ========================================================================
+
+        void Executor::executeCreateSequence()
+        {
+            // Read sequence name
+            std::string sequence_name = readString();
+
+            // Read optional parameters (flags byte indicates which are present)
+            uint8_t flags = readByte();
+            bool has_increment = (flags & 0x01) != 0;
+            bool has_minvalue = (flags & 0x02) != 0;
+            bool has_maxvalue = (flags & 0x04) != 0;
+            bool has_start = (flags & 0x08) != 0;
+            bool has_cache = (flags & 0x10) != 0;
+            bool has_cycle = (flags & 0x20) != 0;
+
+            // Apply defaults
+            int64_t increment_by = 1;
+            int64_t min_value = 1;
+            int64_t max_value = INT64_MAX;
+            int64_t start_value = min_value;
+            int64_t cache_size = 1;
+            bool cycle = false;
+
+            // Read provided values
+            if (has_increment) increment_by = readInt64();
+            if (has_minvalue) min_value = readInt64();
+            if (has_maxvalue) max_value = readInt64();
+            if (has_start) start_value = readInt64();
+            else start_value = min_value;  // Default start is min_value
+            if (has_cache) cache_size = readInt64();
+            if (has_cycle) cycle = (readByte() != 0);
+
+            // Get default schema (PUBLIC)
+            core::CatalogManager::SchemaInfo schema_info;
+            ErrorContext ctx;
+            auto status = db_->catalog_manager()->getSchema("PUBLIC", schema_info, &ctx);
+            if (status != Status::OK)
+            {
+                throw std::runtime_error("Schema not found: PUBLIC");
+            }
+
+            // Create sequence
+            status = db_->catalog_manager()->createSequence(
+                schema_info.schema_id, sequence_name,
+                increment_by, min_value, max_value, start_value, cache_size, cycle, &ctx);
+
+            if (status != Status::OK)
+            {
+                std::string err_msg = "Failed to create sequence '" + sequence_name + "'";
+                if (!ctx.message.empty())
+                {
+                    err_msg += ": " + ctx.message;
+                }
+                error(err_msg);
+            }
+        }
+
+        void Executor::executeAlterSequence()
+        {
+            // Read sequence name
+            std::string sequence_name = readString();
+
+            // Read optional parameters (flags byte indicates which are present)
+            uint8_t flags = readByte();
+            bool has_increment = (flags & 0x01) != 0;
+            bool has_minvalue = (flags & 0x02) != 0;
+            bool has_maxvalue = (flags & 0x04) != 0;
+            bool has_restart = (flags & 0x08) != 0;
+            bool has_cache = (flags & 0x10) != 0;
+            bool has_cycle = (flags & 0x20) != 0;
+
+            std::optional<int64_t> increment_by;
+            std::optional<int64_t> min_value;
+            std::optional<int64_t> max_value;
+            std::optional<int64_t> restart;
+            std::optional<int64_t> cache_size;
+            std::optional<bool> cycle;
+
+            // Read provided values
+            if (has_increment) increment_by = readInt64();
+            if (has_minvalue) min_value = readInt64();
+            if (has_maxvalue) max_value = readInt64();
+            if (has_restart) restart = readInt64();
+            if (has_cache) cache_size = readInt64();
+            if (has_cycle) cycle = (readByte() != 0);
+
+            // Look up sequence ID by name
+            core::ID sequence_id;
+            core::ErrorContext ctx;
+            auto status = db_->catalog_manager()->getSequenceIdByName(sequence_name, sequence_id, &ctx);
+
+            if (status != core::Status::OK)
+            {
+                std::string err_msg = "Sequence not found: '" + sequence_name + "'";
+                if (!ctx.message.empty())
+                {
+                    err_msg += ": " + ctx.message;
+                }
+                error(err_msg);
+            }
+
+            // Call alterSequence on the catalog manager
+            status = db_->catalog_manager()->alterSequence(sequence_id, increment_by, min_value,
+                                                           max_value, restart, cache_size, cycle, &ctx);
+
+            if (status != core::Status::OK)
+            {
+                std::string err_msg = "Failed to alter sequence '" + sequence_name + "'";
+                if (!ctx.message.empty())
+                {
+                    err_msg += ": " + ctx.message;
+                }
+                error(err_msg);
+            }
+        }
+
+        void Executor::executeDropSequence()
+        {
+            // Read sequence name
+            std::string sequence_name = readString();
+
+            // Read flags
+            uint8_t flags = readByte();
+            bool cascade = (flags & 0x01) != 0;
+
+            // Look up sequence ID by name
+            core::ID sequence_id;
+            core::ErrorContext ctx;
+            auto status = db_->catalog_manager()->getSequenceIdByName(sequence_name, sequence_id, &ctx);
+
+            if (status != core::Status::OK)
+            {
+                std::string err_msg = "Sequence not found: '" + sequence_name + "'";
+                if (!ctx.message.empty())
+                {
+                    err_msg += ": " + ctx.message;
+                }
+                error(err_msg);
+            }
+
+            // Call dropSequence on the catalog manager
+            status = db_->catalog_manager()->dropSequence(sequence_id, cascade, &ctx);
+
+            if (status != core::Status::OK)
+            {
+                std::string err_msg = "Failed to drop sequence '" + sequence_name + "'";
+                if (!ctx.message.empty())
+                {
+                    err_msg += ": " + ctx.message;
+                }
+                error(err_msg);
+            }
+        }
+
+        void Executor::executeCreateView()
+        {
+            // Read view name
+            std::string view_name = readString();
+
+            // Read flags
+            uint8_t flags = readByte();
+            bool or_replace = (flags & 0x01) != 0;
+            bool check_option = (flags & 0x02) != 0;
+            bool has_column_names = (flags & 0x04) != 0;
+
+            // Read column names if present
+            std::vector<std::string> column_names;
+            if (has_column_names)
+            {
+                uint8_t count = readByte();
+                for (uint8_t i = 0; i < count; i++)
+                {
+                    column_names.push_back(readString());
+                }
+            }
+
+            // Read query definition
+            std::string definition = readString();
+
+            // Get default schema (PUBLIC)
+            core::ErrorContext ctx;
+            core::CatalogManager::SchemaInfo schema_info;
+            auto status = db_->catalog_manager()->getSchema("PUBLIC", schema_info, &ctx);
+            if (status != core::Status::OK)
+            {
+                error("Schema not found: PUBLIC");
+            }
+
+            // Create view
+            status = db_->catalog_manager()->createView(
+                schema_info.schema_id, view_name, definition,
+                or_replace, check_option, column_names, &ctx);
+
+            if (status != core::Status::OK)
+            {
+                std::string err_msg = "Failed to create view '" + view_name + "'";
+                if (!ctx.message.empty())
+                {
+                    err_msg += ": " + ctx.message;
+                }
+                error(err_msg);
+            }
+
+            std::cout << "CREATE VIEW" << std::endl;
+        }
+
+        void Executor::executeDropView()
+        {
+            // Read view name
+            std::string view_name = readString();
+
+            // Read flags
+            uint8_t flags = readByte();
+            bool if_exists = (flags & 0x01) != 0;
+            bool cascade = (flags & 0x02) != 0;
+
+            // Look up view ID
+            core::ID view_id;
+            core::ErrorContext ctx;
+            auto status = db_->catalog_manager()->getViewIdByName(view_name, view_id, &ctx);
+
+            if (status == core::Status::NOT_FOUND)
+            {
+                if (if_exists)
+                {
+                    std::cout << "NOTICE: view \"" << view_name << "\" does not exist, skipping" << std::endl;
+                    return;
+                }
+                error("View not found: " + view_name);
+            }
+
+            // Drop view
+            status = db_->catalog_manager()->dropView(view_id, cascade, &ctx);
+            if (status != core::Status::OK)
+            {
+                std::string err_msg = "Failed to drop view '" + view_name + "'";
+                if (!ctx.message.empty())
+                {
+                    err_msg += ": " + ctx.message;
+                }
+                error(err_msg);
+            }
+
+            std::cout << "DROP VIEW" << std::endl;
+        }
+
+        int64_t Executor::executeSequenceNextVal()
+        {
+            // Read sequence name
+            std::string sequence_name = readString();
+
+            // Look up sequence ID by name
+            core::ID sequence_id;
+            core::ErrorContext ctx;
+            auto status = db_->catalog_manager()->getSequenceIdByName(sequence_name, sequence_id, &ctx);
+
+            if (status != core::Status::OK)
+            {
+                std::string err_msg = "Sequence not found: '" + sequence_name + "'";
+                if (!ctx.message.empty())
+                {
+                    err_msg += ": " + ctx.message;
+                }
+                error(err_msg);
+            }
+
+            // Call sequenceNextVal to get the next value
+            int64_t value = 0;
+            status = db_->catalog_manager()->sequenceNextVal(sequence_id, value, &ctx);
+
+            if (status != core::Status::OK)
+            {
+                std::string err_msg = "Failed to get next value for sequence '" + sequence_name + "'";
+                if (!ctx.message.empty())
+                {
+                    err_msg += ": " + ctx.message;
+                }
+                error(err_msg);
+            }
+
+            // Store the value in session state for CURRVAL
+            session_sequence_currval_[sequence_id] = value;
+
+            // Push INT64 value onto stack
+            push(core::TypedValue::makeInt64(value));
+
+            return value;
+        }
+
+        int64_t Executor::executeSequenceCurrVal()
+        {
+            // Read sequence name
+            std::string sequence_name = readString();
+
+            // Look up sequence ID by name
+            core::ID sequence_id;
+            core::ErrorContext ctx;
+            auto status = db_->catalog_manager()->getSequenceIdByName(sequence_name, sequence_id, &ctx);
+
+            if (status != core::Status::OK)
+            {
+                std::string err_msg = "Sequence not found: '" + sequence_name + "'";
+                if (!ctx.message.empty())
+                {
+                    err_msg += ": " + ctx.message;
+                }
+                error(err_msg);
+            }
+
+            // Check if this sequence has been called in this session
+            auto it = session_sequence_currval_.find(sequence_id);
+            if (it == session_sequence_currval_.end())
+            {
+                error("CURRVAL of sequence '" + sequence_name + "' is not yet defined in this session");
+            }
+
+            int64_t value = it->second;
+
+            // Push INT64 value onto stack
+            push(core::TypedValue::makeInt64(value));
+
+            return value;
+        }
+
+        int64_t Executor::executeSequenceSetVal()
+        {
+            // Read sequence name
+            std::string sequence_name = readString();
+
+            // Read value
+            int64_t value = readInt64();
+
+            // Read is_called flag
+            bool is_called = (readByte() != 0);
+
+            // Look up sequence ID by name
+            core::ID sequence_id;
+            core::ErrorContext ctx;
+            auto status = db_->catalog_manager()->getSequenceIdByName(sequence_name, sequence_id, &ctx);
+
+            if (status != core::Status::OK)
+            {
+                std::string err_msg = "Sequence not found: '" + sequence_name + "'";
+                if (!ctx.message.empty())
+                {
+                    err_msg += ": " + ctx.message;
+                }
+                error(err_msg);
+            }
+
+            // Call sequenceSetVal to set the value
+            status = db_->catalog_manager()->sequenceSetVal(sequence_id, value, is_called, &ctx);
+
+            if (status != core::Status::OK)
+            {
+                std::string err_msg = "Failed to set value for sequence '" + sequence_name + "'";
+                if (!ctx.message.empty())
+                {
+                    err_msg += ": " + ctx.message;
+                }
+                error(err_msg);
+            }
+
+            // Store the value in session state for CURRVAL
+            session_sequence_currval_[sequence_id] = value;
+
+            // Push INT64 value onto stack (SETVAL returns the value set)
+            push(core::TypedValue::makeInt64(value));
+
+            return value;
         }
 
         void Executor::executeDropTablespace()
