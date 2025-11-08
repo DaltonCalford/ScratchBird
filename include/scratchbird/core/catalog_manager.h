@@ -458,6 +458,63 @@ namespace scratchbird::core
             uint64_t last_modified_time = 0;
         };
 
+        // Group types (Phase 2 - Security Tables)
+        enum class GroupType : uint8_t
+        {
+            LOCAL = 0,   // Local database group
+            AD = 1,      // Active Directory group
+            LDAP = 2     // LDAP group
+        };
+
+        // User information (Phase 2 - Security Tables)
+        struct UserInfo
+        {
+            ID user_id;
+            std::string username;
+            std::string password_hash;  // Stored in TOAST on disk
+            std::string user_metadata;  // JSON metadata (stored in TOAST on disk)
+            ID default_schema_id;
+            bool is_active = true;
+            bool is_superuser = false;
+            uint64_t created_time = 0;
+            uint64_t last_login_time = 0;
+        };
+
+        // Role information (Phase 2 - Security Tables)
+        struct RoleInfo
+        {
+            ID role_id;
+            std::string role_name;
+            ID owner_id;
+            std::string role_metadata;  // JSON metadata (stored in TOAST on disk)
+            bool is_active = true;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+        };
+
+        // Group information (Phase 2 - Security Tables)
+        struct GroupInfo
+        {
+            ID group_id;
+            std::string group_name;
+            std::string external_id;    // AD/LDAP group ID (empty if local)
+            GroupType group_type = GroupType::LOCAL;
+            std::string group_metadata;  // JSON metadata (stored in TOAST on disk)
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+        };
+
+        // Role membership information (Phase 2 - Security Tables)
+        struct RoleMembershipInfo
+        {
+            ID membership_id;
+            ID user_id;              // User who is member
+            ID role_id;              // Role they belong to
+            ID granted_by;           // User who granted this membership
+            bool with_admin_option = false;  // Can user grant this role to others
+            uint64_t granted_time = 0;
+        };
+
         CatalogManager(Database *db);
         ~CatalogManager();
 
