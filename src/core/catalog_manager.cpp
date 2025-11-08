@@ -150,16 +150,17 @@ namespace scratchbird::core
     {
         ID index_id;
         ID table_id;
-        char index_name[512]; // SQL standard: 128 characters (512 bytes = 128 chars × 4 bytes/char max UTF-8)
+        char index_name[512];      // SQL standard: 128 characters (512 bytes = 128 chars × 4 bytes/char max UTF-8)
+        ID owner_id;               // Owner UUID reference (NOT name)
         uint32_t root_page;
-        uint8_t index_type; // IndexType enum
+        uint8_t index_type;        // IndexType enum
         uint8_t is_unique;
         uint16_t column_count;
         ID column_ids[16];         // Max 16 columns per index
-        uint32_t index_params_oid; // TOAST reference for index parameters (HNSW config, etc.)
+        uint32_t index_params_oid; // TOAST reference for index parameters (HNSW config, etc.) - IMPLEMENTED
         uint64_t created_time;
         uint32_t is_valid;
-        uint32_t padding; // Alignment
+        uint32_t padding;          // Alignment
     };
 
     // Timezone record on disk
@@ -241,6 +242,7 @@ namespace scratchbird::core
         ID constraint_id;
         ID table_id;
         char constraint_name[512];  // SQL standard: 128 characters (512 bytes = 128 chars × 4 bytes/char max UTF-8)
+        ID owner_id;                // Owner UUID reference
         uint8_t constraint_type;    // ConstraintType enum
         uint8_t is_deferrable;      // Can be deferred to end of transaction
         uint8_t initially_deferred; // Initially deferred or immediate
@@ -250,7 +252,7 @@ namespace scratchbird::core
         ID referenced_table_id; // For foreign keys
         uint16_t referenced_column_count;
         ID referenced_column_ids[16]; // Referenced columns for FK
-        uint32_t check_expr_oid;      // TOAST reference for check expression
+        uint32_t check_expr_oid;      // TOAST reference for check expression - IMPLEMENTED
         uint64_t created_time;
         uint32_t is_valid;
         uint32_t padding;
@@ -262,6 +264,7 @@ namespace scratchbird::core
         ID sequence_id;
         ID schema_id;
         char sequence_name[512]; // SQL standard: 128 characters (512 bytes = 128 chars × 4 bytes/char max UTF-8)
+        ID owner_id;             // Owner UUID reference
         int64_t current_value;
         int64_t increment_by;
         int64_t min_value;
@@ -280,7 +283,8 @@ namespace scratchbird::core
         ID view_id;
         ID schema_id;
         char view_name[512];     // SQL standard: 128 characters (512 bytes = 128 chars × 4 bytes/char max UTF-8)
-        uint32_t definition_oid; // TOAST reference for view definition SQL
+        ID owner_id;             // Owner UUID reference
+        uint32_t definition_oid; // TOAST reference for view definition SQL - IMPLEMENTED
         uint8_t is_materialized; // 1 if materialized view
         uint8_t reserved[3];
         uint64_t created_time;
@@ -1108,6 +1112,7 @@ namespace scratchbird::core
         index.index_id = generateUuidV7();
         index.table_id = table_id;
         index.index_name = index_name;
+        index.owner_id = ID(); // TODO: Get owner from current user (Phase 2)
         index.root_page = root_page;
         index.tablespace_id = tablespace_id; // Phase 2 Task 2.3: Use specified tablespace
         index.index_type = index_type;
@@ -1229,6 +1234,7 @@ namespace scratchbird::core
         index.index_id = generateUuidV7();
         index.table_id = table_id;
         index.index_name = index_name;
+        index.owner_id = ID(); // TODO: Get owner from current user (Phase 2)
         index.root_page = root_page;
         index.tablespace_id = tablespace_id;
         index.index_type = index_type;
@@ -2187,6 +2193,7 @@ namespace scratchbird::core
         // Phase 3: Safe UTF-8 copy (already validated to fit)
         std::memcpy(record.index_name, index.index_name.c_str(), index.index_name.size());
         record.index_name[index.index_name.size()] = '\0';
+        record.owner_id = index.owner_id;
         record.root_page = index.root_page;
         record.index_type = static_cast<uint8_t>(index.index_type);
         record.is_unique = static_cast<uint8_t>(index.is_unique);
@@ -2212,6 +2219,7 @@ namespace scratchbird::core
             info.index_id = record.index_id;
             info.table_id = record.table_id;
             info.index_name = record.index_name;
+            info.owner_id = record.owner_id;
             info.root_page = record.root_page;
             info.index_type = static_cast<IndexType>(record.index_type);
             info.is_unique = record.is_unique;
@@ -7388,6 +7396,7 @@ auto CatalogManager::createView(const ID& schema_id, const std::string& name,
     view.view_id = generateUuidV7();
     view.schema_id = schema_id;
     view.name = name;
+    view.owner_id = ID(); // TODO: Get owner from current user (Phase 2)
     view.definition = definition;
     view.check_option = check_option;
     view.column_names = column_names;

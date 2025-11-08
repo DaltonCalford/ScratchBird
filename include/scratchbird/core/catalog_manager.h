@@ -271,6 +271,7 @@ namespace scratchbird::core
             ID sequence_id;
             ID schema_id;
             std::string name;
+            ID owner_id;
             int64_t current_value;
             int64_t increment_by;
             int64_t min_value;
@@ -299,6 +300,7 @@ namespace scratchbird::core
             ID view_id;
             ID schema_id;
             std::string name;
+            ID owner_id;
             std::string definition;  // SELECT query text
             bool check_option;
             std::vector<std::string> column_names;  // Optional explicit columns
@@ -358,12 +360,13 @@ namespace scratchbird::core
             ID index_id;
             ID table_id;
             std::string index_name;
+            ID owner_id;                   // Owner UUID reference (NOT name)
             uint32_t root_page = 0;
             uint16_t tablespace_id = 0;    // Tablespace ID (0 = primary file, 1-65535 = custom)
             IndexType index_type = IndexType::BTREE;
             bool is_unique = false;
             std::vector<ID> column_ids;
-            uint32_t index_params_oid = 0; // TOAST reference for index parameters
+            uint32_t index_params_oid = 0; // TOAST reference for index parameters - IMPLEMENTED
             uint64_t created_time = 0;
             uint32_t collation_id = 101; // Default: utf8_general_ci (binary comparison)
                                          // TODO(Issue #50): Full integration of collation-aware
