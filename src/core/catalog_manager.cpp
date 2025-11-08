@@ -464,6 +464,93 @@ namespace scratchbird::core
         uint32_t padding;
     };
 
+    // Procedure record on disk (Phase 3 - Stored Code Tables)
+    // NOTE: Functions and Procedures stored in same table
+    struct ProcedureRecord
+    {
+        ID procedure_id;
+        ID schema_id;
+        char procedure_name[512];
+        ID owner_id;                // Owner UUID reference
+        uint8_t procedure_type;     // PROCEDURE vs FUNCTION
+        uint8_t is_selectable;      // 1 if has SUSPEND (Firebird selectable procedures)
+        uint8_t language;           // PSQL, SQL, UDR, etc.
+        uint8_t reserved[5];        // Alignment
+        uint32_t parameter_count;
+        uint32_t return_type_oid;   // TOAST reference for return type definition
+        uint32_t body_oid;          // TOAST reference - procedure/function body
+        uint64_t created_time;
+        uint64_t last_modified_time;
+        uint32_t is_valid;
+        uint32_t padding;
+    };
+
+    // Procedure parameter record on disk (Phase 3 - Stored Code Tables)
+    struct ProcedureParameterRecord
+    {
+        ID parameter_id;
+        ID procedure_id;            // Parent procedure/function
+        char parameter_name[512];
+        uint16_t parameter_position; // Position in parameter list (1-based)
+        uint8_t parameter_mode;     // IN, OUT, INOUT
+        uint8_t reserved[5];        // Alignment
+        uint32_t data_type_oid;     // TOAST reference for data type definition
+        uint32_t default_value_oid; // TOAST reference for default value expression
+        uint32_t is_valid;
+        uint32_t padding;
+    };
+
+    // Domain record on disk (Phase 3 - Stored Code Tables)
+    struct DomainRecord
+    {
+        ID domain_id;
+        ID schema_id;
+        char domain_name[512];
+        ID owner_id;                // Owner UUID reference
+        uint32_t base_type_oid;     // TOAST reference for base data type
+        uint32_t check_expr_oid;    // TOAST reference for CHECK constraint expression
+        uint8_t not_null;           // 1 if NOT NULL constraint
+        uint8_t reserved[7];        // Alignment
+        uint64_t created_time;
+        uint64_t last_modified_time;
+        uint32_t is_valid;
+        uint32_t padding;
+    };
+
+    // UDR (User-Defined Resource) record on disk (Phase 3 - Stored Code Tables)
+    struct UDRRecord
+    {
+        ID udr_id;
+        ID schema_id;
+        char udr_name[512];
+        ID owner_id;                // Owner UUID reference
+        char library_path[1024];    // Path to shared library
+        char entry_point[512];      // Function entry point name
+        uint8_t udr_type;           // FUNCTION, PROCEDURE, TRIGGER
+        uint8_t reserved[7];        // Alignment
+        uint32_t signature_oid;     // TOAST reference for signature definition
+        uint64_t created_time;
+        uint64_t last_modified_time;
+        uint32_t is_valid;
+        uint32_t padding;
+    };
+
+    // Package record on disk (Phase 3 - Stored Code Tables)
+    // Firebird-style packages
+    struct PackageRecord
+    {
+        ID package_id;
+        ID schema_id;
+        char package_name[512];
+        ID owner_id;                // Owner UUID reference
+        uint32_t package_header_oid; // TOAST reference for package header
+        uint32_t package_body_oid;   // TOAST reference for package body
+        uint64_t created_time;
+        uint64_t last_modified_time;
+        uint32_t is_valid;
+        uint32_t padding;
+    };
+
     // Collation record on disk - see updated CollationRecord structure below at line ~194
 
 #pragma pack(pop)

@@ -515,6 +515,105 @@ namespace scratchbird::core
             uint64_t granted_time = 0;
         };
 
+        // Procedure types (Phase 3 - Stored Code Tables)
+        enum class ProcedureType : uint8_t
+        {
+            PROCEDURE = 0,  // Stored procedure
+            FUNCTION = 1    // Function (returns value)
+        };
+
+        // Procedure languages (Phase 3 - Stored Code Tables)
+        enum class ProcedureLanguage : uint8_t
+        {
+            PSQL = 0,       // Firebird PSQL
+            SQL = 1,        // Standard SQL
+            UDR = 2,        // User-Defined Resource (external)
+            PLPGSQL = 3     // PostgreSQL PL/pgSQL (for emulation)
+        };
+
+        // NOTE: ParameterMode enum already defined at line ~1307
+
+        // UDR types (Phase 3 - Stored Code Tables)
+        enum class UDRType : uint8_t
+        {
+            FUNCTION = 0,
+            PROCEDURE = 1,
+            TRIGGER = 2
+        };
+
+        // Stored procedure catalog information (Phase 3 - Stored Code Tables)
+        // NOTE: Different from runtime ProcedureInfo used for execution
+        struct StoredProcedureInfo
+        {
+            ID procedure_id;
+            ID schema_id;
+            std::string procedure_name;
+            ID owner_id;
+            ProcedureType procedure_type = ProcedureType::PROCEDURE;
+            bool is_selectable = false;  // Firebird selectable procedures (SUSPEND)
+            ProcedureLanguage language = ProcedureLanguage::PSQL;
+            uint32_t parameter_count = 0;
+            std::string return_type;     // Stored in TOAST on disk
+            std::string body;            // Stored in TOAST on disk
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+        };
+
+        // Procedure parameter information (Phase 3 - Stored Code Tables)
+        // NOTE: Uses ParameterMode enum defined later at line ~1307
+        struct ProcedureParameterInfo
+        {
+            ID parameter_id;
+            ID procedure_id;
+            std::string parameter_name;
+            uint16_t parameter_position = 0;  // 1-based position
+            uint8_t parameter_mode = 0;  // ParameterMode: IN=0, OUT=1, INOUT=2
+            std::string data_type;       // Stored in TOAST on disk
+            std::string default_value;   // Stored in TOAST on disk
+        };
+
+        // Domain information (Phase 3 - Stored Code Tables)
+        struct DomainInfo
+        {
+            ID domain_id;
+            ID schema_id;
+            std::string domain_name;
+            ID owner_id;
+            std::string base_type;       // Stored in TOAST on disk
+            std::string check_expr;      // Stored in TOAST on disk
+            bool not_null = false;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+        };
+
+        // UDR information (Phase 3 - Stored Code Tables)
+        struct UDRInfo
+        {
+            ID udr_id;
+            ID schema_id;
+            std::string udr_name;
+            ID owner_id;
+            std::string library_path;
+            std::string entry_point;
+            UDRType udr_type = UDRType::FUNCTION;
+            std::string signature;       // Stored in TOAST on disk
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+        };
+
+        // Package information (Phase 3 - Stored Code Tables)
+        struct PackageInfo
+        {
+            ID package_id;
+            ID schema_id;
+            std::string package_name;
+            ID owner_id;
+            std::string package_header;  // Stored in TOAST on disk
+            std::string package_body;    // Stored in TOAST on disk
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+        };
+
         CatalogManager(Database *db);
         ~CatalogManager();
 
