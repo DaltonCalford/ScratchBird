@@ -754,12 +754,15 @@ namespace scratchbird::core
         // Create new schema
         SchemaInfo schema;
         schema.schema_id = generateUuidV7();
+        schema.parent_schema_id = ID();    // TODO: Accept parent_schema_id parameter
         schema.schema_name = schema_name;
-        schema.owner = owner;
-        schema.default_tablespace_id = 0; // Default tablespace
-        schema.permissions = 0x0FFF;      // Default permissions (read, write, create)
-        schema.acl_oid = 0;               // No ACL initially
-        schema.search_path_oid = 0;       // No custom search path
+        // TODO: Implement resolveOwnerUUID() to convert owner name to UUID
+        // For now, use zero UUID as placeholder (will be fixed in Phase 2 with Users table)
+        schema.owner_id = ID();            // Zero UUID = system/bootstrap owner
+        schema.default_tablespace_id = 0;  // Default tablespace
+        schema.permissions = 0x0FFF;       // Default permissions (read, write, create)
+        schema.acl_oid = 0;                // No ACL initially
+        // search_path_oid removed - session-only concept
         schema.created_time = std::chrono::duration_cast<std::chrono::microseconds>(
                                   std::chrono::system_clock::now().time_since_epoch())
                                   .count();
@@ -1773,34 +1776,25 @@ namespace scratchbird::core
             return validation;
         }
 
-        // Phase 3: Validate owner name UTF-8 storage capacity
-        validation = UTF8Utils::validateStorageCapacity(
-            schema.owner,
-            CatalogConstants::MAX_IDENTIFIER_CHARS,
-            CatalogConstants::MAX_IDENTIFIER_STORAGE,
-            ctx
-        );
-        if (validation != Status::OK) {
-            return validation;
-        }
+        // Owner validation removed - now using UUID reference instead of name
 
         SchemaRecord record;
         memset(&record, 0, sizeof(SchemaRecord)); // Initialize all fields to zero
         record.schema_id = schema.schema_id;
+        record.parent_schema_id = schema.parent_schema_id;
 
         // Phase 3: Safe UTF-8 copy (already validated to fit)
         std::memcpy(record.schema_name, schema.schema_name.c_str(), schema.schema_name.size());
         record.schema_name[schema.schema_name.size()] = '\0';
 
-        // Phase 3: Safe UTF-8 copy (already validated to fit)
-        std::memcpy(record.owner, schema.owner.c_str(), schema.owner.size());
-        record.owner[schema.owner.size()] = '\0';
+        // UUID-based owner reference (not name)
+        record.owner_id = schema.owner_id;
         record.default_tablespace_id = schema.default_tablespace_id;
         record.permissions = schema.permissions;
         record.default_charset = schema.default_charset;
         record.default_collation_id = schema.default_collation_id;
         record.acl_oid = schema.acl_oid;
-        record.search_path_oid = schema.search_path_oid;
+        // search_path_oid removed - session-only concept
         record.created_time = schema.created_time;
         record.last_modified_time = schema.last_modified_time;
         record.is_valid = 1;
@@ -1815,17 +1809,17 @@ namespace scratchbird::core
             // Phase 4: Safety check - ensure null-termination at max position
             // This is defensive programming in case of corrupted catalog data
             const_cast<char&>(record.schema_name[511]) = '\0';
-            const_cast<char&>(record.owner[511]) = '\0';
 
             info.schema_id = record.schema_id;
+            info.parent_schema_id = record.parent_schema_id;
             info.schema_name = record.schema_name;
-            info.owner = record.owner;
+            info.owner_id = record.owner_id;  // UUID-based owner reference
             info.default_tablespace_id = record.default_tablespace_id;
             info.permissions = record.permissions;
             info.default_charset = record.default_charset;
             info.default_collation_id = record.default_collation_id;
             info.acl_oid = record.acl_oid;
-            info.search_path_oid = record.search_path_oid;
+            // search_path_oid removed - session-only concept
             info.created_time = record.created_time;
             info.last_modified_time = record.last_modified_time;
         };
