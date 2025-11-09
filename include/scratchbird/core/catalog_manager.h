@@ -614,6 +614,44 @@ namespace scratchbird::core
             uint64_t last_modified_time = 0;
         };
 
+        // Emulation type information (Phase 4 - Emulation Tables)
+        struct EmulationTypeInfo
+        {
+            ID emulation_type_id;
+            std::string emulation_name;  // "mysql", "postgres", "mssql", "firebird"
+            uint8_t version_major = 0;
+            uint8_t version_minor = 0;
+            std::string mapping_rules;   // JSON mapping rules (stored in TOAST on disk)
+            uint64_t created_time = 0;
+        };
+
+        // Emulation server information (Phase 4 - Emulation Tables)
+        struct EmulationServerInfo
+        {
+            ID server_id;
+            std::string server_name;
+            ID emulation_type_id;        // References EmulationTypeInfo
+            ID owner_id;
+            std::string server_config;   // JSON configuration (stored in TOAST on disk)
+            bool is_active = true;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+        };
+
+        // Emulated database information (Phase 4 - Emulation Tables)
+        struct EmulatedDatabaseInfo
+        {
+            ID emulated_db_id;
+            std::string database_name;
+            ID server_id;                // References EmulationServerInfo
+            ID schema_id;                // Schema containing emulation views
+            ID owner_id;
+            std::string db_metadata;     // JSON metadata (stored in TOAST on disk)
+            bool is_active = true;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+        };
+
         CatalogManager(Database *db);
         ~CatalogManager();
 
