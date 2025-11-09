@@ -1431,6 +1431,11 @@ namespace scratchbird::core
                                   ID &schema_id, const ID &parent_schema_id = ID(),
                                   ErrorContext *ctx = nullptr) -> Status;
 
+        // Helper to resolve owner name to UUID (Phase 5.1 - Owner UUID References)
+        // For ALPHA: Returns system UUID for "system" and zero UUID for others
+        // TODO Phase 6: Implement full user lookup from Users table
+        auto resolveOwnerUUID(const std::string &owner_name) -> ID;
+
         // Index TID update helper (Phase 4 Task 4.1.5)
         // Updates all index entries for a table to reference new GPIDs after table migration
         // tid_mapping: Map of old GPID -> new GPID for heap pages
