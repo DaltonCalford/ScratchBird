@@ -551,6 +551,53 @@ namespace scratchbird::core
         uint32_t padding;
     };
 
+    // Emulation type record on disk (Phase 4 - Emulation Tables)
+    struct EmulationTypeRecord
+    {
+        ID emulation_type_id;
+        char emulation_name[64];    // "mysql", "postgres", "mssql", "firebird"
+        uint8_t version_major;
+        uint8_t version_minor;
+        uint16_t reserved;
+        uint32_t mapping_rules_oid; // TOAST reference - JSON mapping rules
+        uint64_t created_time;
+        uint32_t is_valid;
+        uint32_t padding;
+    };
+
+    // Emulation server record on disk (Phase 4 - Emulation Tables)
+    struct EmulationServerRecord
+    {
+        ID server_id;
+        char server_name[512];
+        ID emulation_type_id;       // References EmulationTypeRecord
+        ID owner_id;                // Owner UUID reference
+        uint32_t server_config_oid; // TOAST reference - JSON server configuration
+        uint8_t is_active;          // 1 if server is active
+        uint8_t reserved[7];        // Alignment
+        uint64_t created_time;
+        uint64_t last_modified_time;
+        uint32_t is_valid;
+        uint32_t padding;
+    };
+
+    // Emulated database record on disk (Phase 4 - Emulation Tables)
+    struct EmulatedDatabaseRecord
+    {
+        ID emulated_db_id;
+        char database_name[512];
+        ID server_id;               // References EmulationServerRecord
+        ID schema_id;               // Schema containing emulation views
+        ID owner_id;                // Owner UUID reference
+        uint32_t db_metadata_oid;   // TOAST reference - JSON database metadata
+        uint8_t is_active;          // 1 if database emulation is active
+        uint8_t reserved[7];        // Alignment
+        uint64_t created_time;
+        uint64_t last_modified_time;
+        uint32_t is_valid;
+        uint32_t padding;
+    };
+
     // Collation record on disk - see updated CollationRecord structure below at line ~194
 
 #pragma pack(pop)
