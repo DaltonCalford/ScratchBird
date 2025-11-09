@@ -1094,9 +1094,7 @@ namespace scratchbird::core
         schema.schema_id = generateUuidV7();
         schema.parent_schema_id = parent_schema_id;  // Schema hierarchy support
         schema.schema_name = schema_name;
-        // TODO: Implement resolveOwnerUUID() to convert owner name to UUID
-        // For now, use zero UUID as placeholder (will be fixed in Phase 2 with Users table)
-        schema.owner_id = ID();            // Zero UUID = system/bootstrap owner
+        schema.owner_id = resolveOwnerUUID(owner);  // Resolve owner name to UUID
         schema.default_tablespace_id = 0;  // Default tablespace
         schema.permissions = 0x0FFF;       // Default permissions (read, write, create)
         schema.acl_oid = 0;                // No ACL initially
@@ -1136,6 +1134,41 @@ namespace scratchbird::core
     {
         std::lock_guard<std::mutex> lock(mutex_);
         return createSchemaInternal(schema_name, owner, schema_id, ID(), ctx);
+    }
+
+    // Helper to resolve owner name to UUID (Phase 5.1 - Owner UUID References)
+    // For ALPHA: Returns well-known system UUID for "system", zero UUID for others
+    // TODO Phase 6: Implement full user lookup from Users table when user management is complete
+    auto CatalogManager::resolveOwnerUUID(const std::string &owner_name) -> ID
+    {
+        // Well-known system UUID (fixed UUID for bootstrap/system objects)
+        // Uses UUIDv7 format with timestamp = 0 and random bits = "system" hash
+        // This ensures system objects have a consistent, recognizable owner ID
+        static const ID SYSTEM_UUID = []() {
+            ID uuid;
+            // Create deterministic UUID for "system" owner
+            // Format: 00000000-0000-7000-8000-737973746d00
+            // (737973746d = hex for "system" truncated)
+            uint8_t bytes[16] = {
+                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x70, 0x00,  // Version 7
+                0x80, 0x00, 0x73, 0x79, 0x73, 0x74, 0x6d, 0x00   // Variant + "system"
+            };
+            std::memcpy(&uuid, bytes, 16);
+            return uuid;
+        }();
+
+        if (owner_name == "system" || owner_name.empty())
+        {
+            return SYSTEM_UUID;
+        }
+
+        // For other owners, return zero UUID for now
+        // Phase 6 TODO: Look up user in Users table and return their user_id
+        // This will require:
+        // 1. Query Users table by username
+        // 2. Return user_id if found
+        // 3. Return error if user doesn't exist (or create default user)
+        return ID();  // Zero UUID placeholder for non-system users
     }
 
     auto CatalogManager::getSchema(const ID &schema_id, SchemaInfo &info, ErrorContext *ctx)
@@ -1229,7 +1262,7 @@ namespace scratchbird::core
         table.table_id = generateUuidV7();
         table.schema_id = schema_id;
         table.table_name = table_name;
-        table.owner_id = ID();              // TODO: Get owner from current user (Phase 2 - needs Users table)
+        table.owner_id = resolveOwnerUUID("system");  // Phase 6 TODO: Get from session context
         table.root_page = root_page;
         table.column_count = columns.size();
         table.row_count = 0;
@@ -1445,7 +1478,7 @@ namespace scratchbird::core
         index.index_id = generateUuidV7();
         index.table_id = table_id;
         index.index_name = index_name;
-        index.owner_id = ID(); // TODO: Get owner from current user (Phase 2)
+        index.owner_id = resolveOwnerUUID("system");  // Phase 6 TODO: Get from session context
         index.root_page = root_page;
         index.tablespace_id = tablespace_id; // Phase 2 Task 2.3: Use specified tablespace
         index.index_type = index_type;
@@ -1567,7 +1600,7 @@ namespace scratchbird::core
         index.index_id = generateUuidV7();
         index.table_id = table_id;
         index.index_name = index_name;
-        index.owner_id = ID(); // TODO: Get owner from current user (Phase 2)
+        index.owner_id = resolveOwnerUUID("system");  // Phase 6 TODO: Get from session context
         index.root_page = root_page;
         index.tablespace_id = tablespace_id;
         index.index_type = index_type;
@@ -7729,7 +7762,7 @@ auto CatalogManager::createView(const ID& schema_id, const std::string& name,
     view.view_id = generateUuidV7();
     view.schema_id = schema_id;
     view.name = name;
-    view.owner_id = ID(); // TODO: Get owner from current user (Phase 2)
+    view.owner_id = resolveOwnerUUID("system");  // Phase 6 TODO: Get from session context
     view.definition = definition;
     view.check_option = check_option;
     view.column_names = column_names;
