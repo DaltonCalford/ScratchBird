@@ -1786,6 +1786,16 @@ namespace scratchbird::core
         auto writeColumnRecords(const ID &table_id, const std::vector<ColumnInfo> &columns,
                                 ErrorContext *ctx) -> Status;
         auto readColumnRecords(const ID &table_id, ErrorContext *ctx) -> Status;
+
+        // Phase 6.2: Dependency persistence methods
+        auto writeDependencyRecord(const DependencyInfo &dependency, ErrorContext *ctx) -> Status;
+        auto deleteDependencyRecord(const ID &dependency_id, ErrorContext *ctx) -> Status;
+        auto readDependencyRecords(ErrorContext *ctx) -> Status;
+
+        // Phase 6.3: Comment persistence methods
+        auto writeCommentRecord(const CommentInfo &comment, ErrorContext *ctx) -> Status;
+        auto deleteCommentRecord(const ID &object_id, ErrorContext *ctx) -> Status;
+        auto readCommentRecords(ErrorContext *ctx) -> Status;
         auto writeIndexRecord(const IndexInfo &index, ErrorContext *ctx) -> Status;
         auto deleteIndexRecord(const ID &index_id, ErrorContext *ctx) -> Status;
         auto readIndexRecords(ErrorContext *ctx) -> Status;

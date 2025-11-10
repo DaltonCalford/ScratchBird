@@ -1168,8 +1168,39 @@ namespace scratchbird::core
             return status;
         }
 
+        // Phase 6.2: Load dependencies
+        status = readDependencyRecords(ctx);
+        if (status != Status::OK)
+        {
+            LOG_WARNING(CATALOG, "Failed to load dependencies: %d (continuing)", static_cast<int>(status));
+            // Don't fail catalog load if dependencies fail - they're not critical for basic operation
+        }
+        else
+        {
+            // Rebuild object_to_dependencies_ lookup map from cache
+            for (const auto &[dep_id, dep_info] : dependency_cache_)
+            {
+                object_to_dependencies_.insert({dep_info.dependent_object_id, dep_id});
+                object_to_dependencies_.insert({dep_info.referenced_object_id, dep_id});
+            }
+            DEBUG_LOG_DB("Loaded " << dependency_cache_.size() << " dependencies");
+        }
+
+        // Phase 6.2: Load comments
+        status = readCommentRecords(ctx);
+        if (status != Status::OK)
+        {
+            LOG_WARNING(CATALOG, "Failed to load comments: %d (continuing)", static_cast<int>(status));
+            // Don't fail catalog load if comments fail - they're not critical
+        }
+        else
+        {
+            DEBUG_LOG_DB("Loaded " << comment_cache_.size() << " comments");
+        }
+
         DEBUG_LOG_DB("Catalog loaded: " << schema_count_ << " schemas, " << table_count_
-                                        << " tables");
+                                        << " tables, " << dependency_cache_.size() << " dependencies, "
+                                        << comment_cache_.size() << " comments");
 
         return Status::OK;
     }
@@ -8008,8 +8039,29 @@ auto CatalogManager::createDependency(const ID& dependent_object_id, ObjectType 
     object_to_dependencies_.insert({dependent_object_id, dependency_id});
     object_to_dependencies_.insert({referenced_object_id, dependency_id});
 
-    // TODO Phase 6: Write to disk (DependencyRecord)
-    // For now, dependencies are in-memory only
+    // Phase 6.2: Write to disk
+    Status status = writeDependencyRecord(dep_info, ctx);
+    if (status != Status::OK) {
+        // Rollback cache changes on write failure
+        dependency_cache_.erase(dependency_id);
+        auto range1 = object_to_dependencies_.equal_range(dependent_object_id);
+        for (auto it = range1.first; it != range1.second; ) {
+            if (it->second == dependency_id) {
+                it = object_to_dependencies_.erase(it);
+            } else {
+                ++it;
+            }
+        }
+        auto range2 = object_to_dependencies_.equal_range(referenced_object_id);
+        for (auto it = range2.first; it != range2.second; ) {
+            if (it->second == dependency_id) {
+                it = object_to_dependencies_.erase(it);
+            } else {
+                ++it;
+            }
+        }
+        return status;
+    }
 
     LOG_INFO(CATALOG, "Created dependency: %s (%d) -> %s (%d) [type=%d]",
              dependent_object_id.toString().c_str(), static_cast<int>(dependent_type),
@@ -8054,7 +8106,14 @@ auto CatalogManager::deleteDependency(const ID& dependency_id, ErrorContext* ctx
     // Remove from cache
     dependency_cache_.erase(it);
 
-    // TODO Phase 6: Delete from disk
+    // Phase 6.2: Delete from disk
+    Status status = deleteDependencyRecord(dependency_id, ctx);
+    if (status != Status::OK) {
+        LOG_ERROR(CATALOG, "Failed to delete dependency record from disk: %s",
+                  dependency_id.toString().c_str());
+        // Note: Cache already updated, disk delete failed - this is inconsistent
+        // In production, would need transaction rollback here
+    }
 
     LOG_INFO(CATALOG, "Deleted dependency: %s", dependency_id.toString().c_str());
 
@@ -8139,7 +8198,13 @@ auto CatalogManager::setComment(const ID& object_id, ObjectType object_type,
     // Store in cache (keyed by object_id)
     comment_cache_[object_id] = comment;
 
-    // TODO Phase 6: Write to disk (CommentRecord with TOAST for comment_text)
+    // Phase 6.2: Write to disk (without TOAST for now - Phase 6.3)
+    Status status = writeCommentRecord(comment, ctx);
+    if (status != Status::OK) {
+        // Rollback cache changes on write failure
+        comment_cache_.erase(object_id);
+        return status;
+    }
 
     LOG_INFO(CATALOG, "Set comment for object %s: %.50s%s",
              object_id.toString().c_str(),
@@ -8178,11 +8243,115 @@ auto CatalogManager::deleteComment(const ID& object_id, ErrorContext* ctx) -> St
 
     comment_cache_.erase(it);
 
-    // TODO Phase 6: Delete from disk
+    // Phase 6.2: Delete from disk
+    Status status = deleteCommentRecord(object_id, ctx);
+    if (status != Status::OK) {
+        LOG_ERROR(CATALOG, "Failed to delete comment record from disk: %s",
+                  object_id.toString().c_str());
+        // Note: Cache already updated, disk delete failed - this is inconsistent
+    }
 
     LOG_INFO(CATALOG, "Deleted comment for object %s", object_id.toString().c_str());
 
     return Status::OK;
+}
+
+// ========================================================================
+// Dependency Persistence (Phase 6.2)
+// ========================================================================
+
+auto CatalogManager::writeDependencyRecord(const DependencyInfo &dependency, ErrorContext *ctx) -> Status
+{
+    DependencyRecord record;
+    memset(&record, 0, sizeof(DependencyRecord));
+
+    record.dependency_id = dependency.dependency_id;
+    record.dependent_object_id = dependency.dependent_object_id;
+    record.dependent_type = static_cast<uint8_t>(dependency.dependent_type);
+    record.referenced_object_id = dependency.referenced_object_id;
+    record.referenced_type = static_cast<uint8_t>(dependency.referenced_type);
+    record.dependency_type = static_cast<uint8_t>(dependency.dependency_type);
+    record.created_time = dependency.created_time;
+    record.is_valid = 1;
+
+    return writeRecordToHeapPage(dependencies_table_page_, record, ctx);
+}
+
+auto CatalogManager::deleteDependencyRecord(const ID &dependency_id, ErrorContext *ctx) -> Status
+{
+    auto matcher = [&dependency_id](const DependencyRecord &record) {
+        return record.dependency_id == dependency_id;
+    };
+    return deleteRecordFromHeapPage<DependencyRecord>(dependencies_table_page_, matcher, ctx);
+}
+
+auto CatalogManager::readDependencyRecords(ErrorContext *ctx) -> Status
+{
+    auto converter = [](const DependencyRecord &record, DependencyInfo &info) {
+        info.dependency_id = record.dependency_id;
+        info.dependent_object_id = record.dependent_object_id;
+        info.dependent_type = static_cast<ObjectType>(record.dependent_type);
+        info.referenced_object_id = record.referenced_object_id;
+        info.referenced_type = static_cast<ObjectType>(record.referenced_type);
+        info.dependency_type = static_cast<DependencyType>(record.dependency_type);
+        info.created_time = record.created_time;
+    };
+
+    auto key_extractor = [](const DependencyInfo &info) { return info.dependency_id; };
+
+    return readRecordsFromHeapPage<DependencyRecord, DependencyInfo, ID>(
+        dependencies_table_page_, dependency_cache_, converter, key_extractor, ctx);
+}
+
+// ========================================================================
+// Comment Persistence (Phase 6.3)
+// ========================================================================
+
+auto CatalogManager::writeCommentRecord(const CommentInfo &comment, ErrorContext *ctx) -> Status
+{
+    CommentRecord record;
+    memset(&record, 0, sizeof(CommentRecord));
+
+    record.comment_id = comment.comment_id;
+    record.object_id = comment.object_id;
+    record.object_type = static_cast<uint8_t>(comment.object_type);
+    record.owner_id = comment.owner_id;
+    // TODO Phase 6.3: Write comment_text to TOAST and store OID
+    // For now, comment_text_oid = 0 (text is in-memory only)
+    record.comment_text_oid = 0;
+    record.created_time = comment.created_time;
+    record.last_modified_time = comment.last_modified_time;
+    record.is_valid = 1;
+
+    return writeRecordToHeapPage(comments_table_page_, record, ctx);
+}
+
+auto CatalogManager::deleteCommentRecord(const ID &object_id, ErrorContext *ctx) -> Status
+{
+    auto matcher = [&object_id](const CommentRecord &record) {
+        return record.object_id == object_id;
+    };
+    return deleteRecordFromHeapPage<CommentRecord>(comments_table_page_, matcher, ctx);
+}
+
+auto CatalogManager::readCommentRecords(ErrorContext *ctx) -> Status
+{
+    auto converter = [](const CommentRecord &record, CommentInfo &info) {
+        info.comment_id = record.comment_id;
+        info.object_id = record.object_id;
+        info.object_type = static_cast<ObjectType>(record.object_type);
+        info.owner_id = record.owner_id;
+        // TODO Phase 6.3: Read comment_text from TOAST using comment_text_oid
+        // For now, comment_text remains empty (will be populated from cache if exists)
+        info.comment_text = "";
+        info.created_time = record.created_time;
+        info.last_modified_time = record.last_modified_time;
+    };
+
+    auto key_extractor = [](const CommentInfo &info) { return info.object_id; };
+
+    return readRecordsFromHeapPage<CommentRecord, CommentInfo, ID>(
+        comments_table_page_, comment_cache_, converter, key_extractor, ctx);
 }
 
 } // namespace scratchbird::core
