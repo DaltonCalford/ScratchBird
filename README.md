@@ -1,10 +1,10 @@
 # ScratchBird Database Engine
 
-A relational database engine featuring **Firebird MGA (Multi-Generational Architecture)**, 11 index types, TOAST storage, and full transaction management.
+A relational database engine featuring **Firebird MGA (Multi-Generational Architecture)**, 11 index types, 36-table catalog system, TOAST storage, and full transaction management.
 
-## Status: Alpha - 78% Complete
+## Status: Alpha - 80% Complete (Catalog System Ready)
 
-**Last Updated:** November 7, 2025
+**Last Updated:** November 9, 2025
 
 ## Quick Start
 
@@ -25,6 +25,17 @@ ctest --output-on-failure
 - **TOAST** - Large object storage with MGA compliance
 - **Transactions** - 4 isolation levels, MVCC, deadlock detection
 - **Tablespaces** - Multi-file support with GPID addressing
+
+### Catalog System (36 tables = 100% structures, 50% CRUD) ✅
+- **18 Schema Hierarchy** - root → sys/app/users/remote/emulation/public
+- **Core Tables (10/10)** - Schemas, Tables, Columns, Indexes, Sequences, Views, Constraints, Triggers, Timezones, Collations
+- **Dependencies & Comments (2/2)** - Full CRUD with disk persistence
+- **Security (4/4 structures)** - Users, Roles, Groups, RoleMemberships
+- **Stored Code (5/5 structures)** - Procedures, Parameters, Domains, UDR, Packages
+- **Emulation (3/3 structures)** - Types, Servers, Databases (mysql/postgres/mssql/firebird)
+- **Infrastructure (4/4)** - Tablespaces, Charsets, Statistics, Permissions
+- **UUID System** - UUIDv7 (RFC 9562) for all object identifiers
+- **32 Object Types** - Complete catalog taxonomy
 
 ### Indexes (11/11 = 100%) 🎉
 - B-Tree, Hash, R-Tree, GIN, Bitmap
@@ -69,12 +80,20 @@ ctest --output-on-failure
 
 ## What's Missing ❌
 
-### DDL Operations
-- Views, Sequences, Triggers
-- CREATE DOMAIN, CREATE TYPE
+### Catalog CRUD Operations (18 tables pending)
+- Security table operations (Users, Roles, Groups, RoleMemberships)
+- Stored code operations (ProcedureParameters, Domains, UDR, Packages)
+- Emulation table operations (EmulationTypes, EmulationServers, EmulatedDatabases)
+- Infrastructure operations (Constraints, Statistics, Permissions)
+
+### DDL Execution
+- Views execution (structure exists, execution pending)
+- Sequences execution (structure exists, execution pending)
+- Triggers execution (structure exists, execution pending)
+- CREATE DOMAIN execution
 
 ### Security & Constraints
-- GRANT/REVOKE permissions
+- GRANT/REVOKE permissions (catalog ready, enforcement pending)
 - FOREIGN KEY enforcement
 - UNIQUE constraint enforcement
 - DEFAULT value enforcement
@@ -90,7 +109,7 @@ ctest --output-on-failure
 - Recursive queries
 - PSQL/stored procedure execution
 
-**Remaining:** ~1,150-1,650 hours
+**Remaining:** ~900-1,400 hours (reduced from catalog completion)
 
 ## MGA Architecture (Firebird Style)
 
@@ -177,11 +196,16 @@ ctest -V
 
 ## Documentation
 
-- **MGA_RULES.md** - Firebird MGA architecture (mandatory reading)
-- **PROJECT_CONTEXT.md** - Project overview and status
+### Essential Reading
+- **[MGA_RULES.md](MGA_RULES.md)** - Firebird MGA architecture (mandatory reading)
+- **[PROJECT_CONTEXT.md](PROJECT_CONTEXT.md)** - Project overview and status
+- **[docs/IMPLEMENTATION_AUDIT.md](docs/IMPLEMENTATION_AUDIT.md)** - AI-optimized implementation reference (function signatures, exact locations)
+
+### Additional Documentation
 - **docs/planning/** - Implementation roadmaps
 - **docs/specifications/** - Technical specifications
 - **docs/status/** - Completion reports
+  - [CATALOG_CORRECTIONS_COMPLETE_2025-11-09.md](docs/status/CATALOG_CORRECTIONS_COMPLETE_2025-11-09.md) - Catalog system completion report
 
 ## License
 

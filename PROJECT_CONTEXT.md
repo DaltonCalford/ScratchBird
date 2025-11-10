@@ -1,10 +1,11 @@
 # ScratchBird Project Context
 
-**Last Updated**: November 7, 2025
-**Version**: Alpha - 78% Complete
+**Last Updated**: November 9, 2025
+**Version**: Alpha - 80% Complete (Catalog Corrections Complete)
 **Status**: Educational/Development
 
 > **MANDATORY**: Read `/MGA_RULES.md` before ANY transaction or index work.
+> **IMPLEMENTATION REFERENCE**: See `/docs/IMPLEMENTATION_AUDIT.md` for complete code locations and function signatures.
 
 ---
 
@@ -16,6 +17,17 @@
 - **TOAST** - Large object storage with MGA compliance
 - **Transactions** - 4 isolation levels, MVCC, deadlock detection
 - **Tablespaces** - Multi-file support with GPID addressing
+
+### Catalog System (36 tables = 100% structures, 50% CRUD) ✅
+- **18 Schema Hierarchy** - root → sys/app/users/remote/emulation/public
+- **Core Tables (10/10)** - Schemas, Tables, Columns, Indexes, Sequences, Views, Constraints, Triggers, Timezones, Collations
+- **Dependencies & Comments (2/2)** - Full persistence with disk storage
+- **Security (4/4 structures)** - Users, Roles, Groups, RoleMemberships (CRUD pending)
+- **Stored Code (5/5 structures)** - Procedures, Parameters, Domains, UDR, Packages
+- **Emulation (3/3 structures)** - Types, Servers, Databases (mysql/postgres/mssql/firebird)
+- **Infrastructure (4/4)** - Tablespaces, Charsets, Statistics, Permissions
+- **UUID System** - UUIDv7 (RFC 9562), system UUID: `00000000-0000-7000-8000-737973746d00`
+- **Object Types** - 32 catalog object types defined
 
 ### Indexes (11/11 = 100%) 🎉
 - B-Tree, Hash, R-Tree, GIN, Bitmap
@@ -204,7 +216,9 @@ src/sblr/expression_evaluator.cpp   - Expression evaluation
 ```
 /MGA_RULES.md                                            - **MANDATORY** MGA architecture rules
 /PROJECT_CONTEXT.md                                      - This file
+/docs/IMPLEMENTATION_AUDIT.md                            - **AI-OPTIMIZED** Complete implementation reference
 /docs/planning/ALPHA_PHASE1_COMPLETE_IMPLEMENTATION_PLAN.md  - Active work plan
+/docs/status/CATALOG_CORRECTIONS_COMPLETE_2025-11-09.md - Catalog system completion report
 ```
 
 ---
@@ -217,6 +231,13 @@ src/sblr/expression_evaluator.cpp   - Expression evaluation
 1. Read `/MGA_RULES.md` at session start
 2. Re-read `/MGA_RULES.md` after context compaction
 3. Read `/MGA_RULES.md` BEFORE any transaction or index work
+4. **NEW**: Read `/docs/IMPLEMENTATION_AUDIT.md` for function signatures and exact implementation locations
+
+**IMPLEMENTATION REFERENCE**:
+- `/docs/IMPLEMENTATION_AUDIT.md` contains ALL function signatures, struct layouts, and exact file:line locations
+- Use this to find existing implementations without searching
+- Context-optimized format (no prose, just facts)
+- Updated: November 9, 2025
 
 **DO**:
 - ✅ Use Firebird MGA model (TIP-based visibility)
@@ -224,6 +245,7 @@ src/sblr/expression_evaluator.cpp   - Expression evaluation
 - ✅ In-place updates with back versions
 - ✅ Follow error handling patterns (Status enum, ErrorContext)
 - ✅ Use RAII for all resources
+- ✅ Check `/docs/IMPLEMENTATION_AUDIT.md` for existing function signatures before implementing
 
 **DON'T**:
 - ❌ Use PostgreSQL MVCC patterns (snapshots, `isSnapshotVisible()`)
@@ -231,6 +253,7 @@ src/sblr/expression_evaluator.cpp   - Expression evaluation
 - ❌ Use forward-versioning (old → new pointers)
 - ❌ Update index TIDs unless indexed column changes
 - ❌ Skip reading `/MGA_RULES.md` before transaction work
+- ❌ Guess function signatures when `/docs/IMPLEMENTATION_AUDIT.md` has them
 
 **CRITICAL**: Violating `/MGA_RULES.md` means the code is architecturally WRONG and must be rewritten.
 
@@ -298,22 +321,32 @@ ctest -V
 ## Status Summary
 
 **Version**: Alpha (Engine Phase 1)
-**Completion**: 75%
+**Completion**: 80% (Catalog Corrections Complete)
 **MGA Compliance**: 100% ✅
+**Catalog System**: 36/36 tables (100% structures, 50% CRUD) ✅
 **Active Plan**: `/docs/planning/ALPHA_PHASE1_COMPLETE_IMPLEMENTATION_PLAN.md`
+**Implementation Audit**: `/docs/IMPLEMENTATION_AUDIT.md` (AI-optimized reference)
 **Timeline**: 5-7 months to completion (with 3 developers)
 
+**Recently Completed** (Nov 9, 2025):
+- ✅ 36 catalog table structures defined
+- ✅ 18-schema hierarchy implemented
+- ✅ UUID-based object references (UUIDv7)
+- ✅ Dependencies system with persistence
+- ✅ Comments system with persistence
+- ✅ Fresh database bootstrap for all 36 tables
+
 **Top Priorities**:
-1. Implement all 40 missing mathematical functions (SIN, COS, SQRT, etc.)
-2. Add DDL modification operations (ALTER/DROP TABLE)
-3. Implement security system (GRANT/REVOKE)
+1. Complete catalog CRUD operations (security, stored code, emulation tables)
+2. Implement all 40 missing mathematical functions (SIN, COS, SQRT, etc.)
+3. Implement security system (GRANT/REVOKE) using new catalog tables
 4. Complete constraint enforcement (CHECK, FOREIGN KEY, DEFAULT, UNIQUE)
 5. Complete PSQL bytecode execution (procedures, triggers, cursors)
-6. Add views, sequences, CTEs
+6. Add CTEs and recursive queries
 
 **After Phase 1**: Parser separation → embeddable library + standalone SQL application
 
 ---
 
-**Last Updated**: November 7, 2025
-**Status**: Phase 1 ALPHA - 75% Complete
+**Last Updated**: November 9, 2025
+**Status**: Phase 1 ALPHA - 80% Complete (Catalog System Ready)
