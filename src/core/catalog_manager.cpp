@@ -914,6 +914,108 @@ namespace scratchbird::core
             return status;
         }
 
+        // Phase 6.1: Allocate and initialize new system tables (14 tables)
+
+        // Dependencies table (Phase 1.4)
+        status = pm->allocatePage(dependencies_table_page_, ctx);
+        if (status != Status::OK) return status;
+        heap->header.page_id = dependencies_table_page_;
+        status = db_->write_page(dependencies_table_page_, page_buffer.get(), ctx);
+        if (status != Status::OK) return status;
+
+        // Comments table (Phase 1.5)
+        status = pm->allocatePage(comments_table_page_, ctx);
+        if (status != Status::OK) return status;
+        heap->header.page_id = comments_table_page_;
+        status = db_->write_page(comments_table_page_, page_buffer.get(), ctx);
+        if (status != Status::OK) return status;
+
+        // Users table (Phase 2)
+        status = pm->allocatePage(users_table_page_, ctx);
+        if (status != Status::OK) return status;
+        heap->header.page_id = users_table_page_;
+        status = db_->write_page(users_table_page_, page_buffer.get(), ctx);
+        if (status != Status::OK) return status;
+
+        // Roles table (Phase 2)
+        status = pm->allocatePage(roles_table_page_, ctx);
+        if (status != Status::OK) return status;
+        heap->header.page_id = roles_table_page_;
+        status = db_->write_page(roles_table_page_, page_buffer.get(), ctx);
+        if (status != Status::OK) return status;
+
+        // Groups table (Phase 2)
+        status = pm->allocatePage(groups_table_page_, ctx);
+        if (status != Status::OK) return status;
+        heap->header.page_id = groups_table_page_;
+        status = db_->write_page(groups_table_page_, page_buffer.get(), ctx);
+        if (status != Status::OK) return status;
+
+        // Role Memberships table (Phase 2)
+        status = pm->allocatePage(role_memberships_table_page_, ctx);
+        if (status != Status::OK) return status;
+        heap->header.page_id = role_memberships_table_page_;
+        status = db_->write_page(role_memberships_table_page_, page_buffer.get(), ctx);
+        if (status != Status::OK) return status;
+
+        // Procedures table (Phase 3)
+        status = pm->allocatePage(procedures_table_page_, ctx);
+        if (status != Status::OK) return status;
+        heap->header.page_id = procedures_table_page_;
+        status = db_->write_page(procedures_table_page_, page_buffer.get(), ctx);
+        if (status != Status::OK) return status;
+
+        // Procedure Parameters table (Phase 3)
+        status = pm->allocatePage(procedure_params_table_page_, ctx);
+        if (status != Status::OK) return status;
+        heap->header.page_id = procedure_params_table_page_;
+        status = db_->write_page(procedure_params_table_page_, page_buffer.get(), ctx);
+        if (status != Status::OK) return status;
+
+        // Domains table (Phase 3)
+        status = pm->allocatePage(domains_table_page_, ctx);
+        if (status != Status::OK) return status;
+        heap->header.page_id = domains_table_page_;
+        status = db_->write_page(domains_table_page_, page_buffer.get(), ctx);
+        if (status != Status::OK) return status;
+
+        // UDR table (Phase 3)
+        status = pm->allocatePage(udr_table_page_, ctx);
+        if (status != Status::OK) return status;
+        heap->header.page_id = udr_table_page_;
+        status = db_->write_page(udr_table_page_, page_buffer.get(), ctx);
+        if (status != Status::OK) return status;
+
+        // Packages table (Phase 3)
+        status = pm->allocatePage(packages_table_page_, ctx);
+        if (status != Status::OK) return status;
+        heap->header.page_id = packages_table_page_;
+        status = db_->write_page(packages_table_page_, page_buffer.get(), ctx);
+        if (status != Status::OK) return status;
+
+        // Emulation Types table (Phase 4)
+        status = pm->allocatePage(emulation_types_table_page_, ctx);
+        if (status != Status::OK) return status;
+        heap->header.page_id = emulation_types_table_page_;
+        status = db_->write_page(emulation_types_table_page_, page_buffer.get(), ctx);
+        if (status != Status::OK) return status;
+
+        // Emulation Servers table (Phase 4)
+        status = pm->allocatePage(emulation_servers_table_page_, ctx);
+        if (status != Status::OK) return status;
+        heap->header.page_id = emulation_servers_table_page_;
+        status = db_->write_page(emulation_servers_table_page_, page_buffer.get(), ctx);
+        if (status != Status::OK) return status;
+
+        // Emulated Databases table (Phase 4)
+        status = pm->allocatePage(emulated_dbs_table_page_, ctx);
+        if (status != Status::OK) return status;
+        heap->header.page_id = emulated_dbs_table_page_;
+        status = db_->write_page(emulated_dbs_table_page_, page_buffer.get(), ctx);
+        if (status != Status::OK) return status;
+
+        DEBUG_LOG_DB("Allocated and initialized 14 new system tables (Phase 6.1)");
+
         // Update root page with table locations
         status = writeCatalogRoot(ctx);
         if (status != Status::OK)
@@ -1762,6 +1864,7 @@ namespace scratchbird::core
         root->schema_count = schema_count_;
         root->table_count = table_count_;
 
+        // Core catalog tables
         root->schemas_page = schemas_table_page_;
         root->tables_page = tables_table_page_;
         root->columns_page = columns_table_page_;
@@ -1776,6 +1879,22 @@ namespace scratchbird::core
         root->timezones_page = timezones_table_page_;
         root->charsets_page = charsets_table_page_;
         root->collation_defs_page = collation_defs_table_page_;
+
+        // Phase 6.1: New system tables
+        root->dependencies_page = dependencies_table_page_;
+        root->comments_page = comments_table_page_;
+        root->users_page = users_table_page_;
+        root->roles_page = roles_table_page_;
+        root->groups_page = groups_table_page_;
+        root->role_members_page = role_memberships_table_page_;
+        root->procedures_page = procedures_table_page_;
+        root->proc_params_page = procedure_params_table_page_;
+        root->domains_page = domains_table_page_;
+        root->udr_page = udr_table_page_;
+        root->packages_page = packages_table_page_;
+        root->emulation_types_page = emulation_types_table_page_;
+        root->emulation_servers_page = emulation_servers_table_page_;
+        root->emulated_dbs_page = emulated_dbs_table_page_;
 
         return bp->unpinPage(CATALOG_ROOT_PAGE, true, ctx);
     }
@@ -1816,6 +1935,8 @@ namespace scratchbird::core
 
         schema_count_ = root->schema_count;
         table_count_ = root->table_count;
+
+        // Core catalog tables
         schemas_table_page_ = root->schemas_page;
         tables_table_page_ = root->tables_page;
         columns_table_page_ = root->columns_page;
@@ -1830,6 +1951,22 @@ namespace scratchbird::core
         timezones_table_page_ = root->timezones_page;
         charsets_table_page_ = root->charsets_page;
         collation_defs_table_page_ = root->collation_defs_page;
+
+        // Phase 6.1: New system tables
+        dependencies_table_page_ = root->dependencies_page;
+        comments_table_page_ = root->comments_page;
+        users_table_page_ = root->users_page;
+        roles_table_page_ = root->roles_page;
+        groups_table_page_ = root->groups_page;
+        role_memberships_table_page_ = root->role_members_page;
+        procedures_table_page_ = root->procedures_page;
+        procedure_params_table_page_ = root->proc_params_page;
+        domains_table_page_ = root->domains_page;
+        udr_table_page_ = root->udr_page;
+        packages_table_page_ = root->packages_page;
+        emulation_types_table_page_ = root->emulation_types_page;
+        emulation_servers_table_page_ = root->emulation_servers_page;
+        emulated_dbs_table_page_ = root->emulated_dbs_page;
 
         return bp->unpinPage(CATALOG_ROOT_PAGE, false, ctx);
     }
