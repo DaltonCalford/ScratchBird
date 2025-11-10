@@ -1577,6 +1577,22 @@ namespace scratchbird::core
         uint32_t tablespaces_table_page_ = TABLESPACES_TABLE_PAGE;           // pg_tablespace
         uint32_t tablespace_files_table_page_ = TABLESPACE_FILES_TABLE_PAGE; // pg_tablespace_files
 
+        // Phase 6.1: New system table pages (14 new tables)
+        uint32_t dependencies_table_page_ = 0;      // Dependencies tracking (Phase 1.4)
+        uint32_t comments_table_page_ = 0;          // Object comments (Phase 1.5)
+        uint32_t users_table_page_ = 0;             // Users (Phase 2)
+        uint32_t roles_table_page_ = 0;             // Roles (Phase 2)
+        uint32_t groups_table_page_ = 0;            // Groups (Phase 2)
+        uint32_t role_memberships_table_page_ = 0;  // Role memberships (Phase 2)
+        uint32_t procedures_table_page_ = 0;        // Stored procedures/functions (Phase 3)
+        uint32_t procedure_params_table_page_ = 0;  // Procedure parameters (Phase 3)
+        uint32_t domains_table_page_ = 0;           // User-defined domains (Phase 3)
+        uint32_t udr_table_page_ = 0;               // UDR - external functions (Phase 3)
+        uint32_t packages_table_page_ = 0;          // Firebird packages (Phase 3)
+        uint32_t emulation_types_table_page_ = 0;   // Emulation types (Phase 4)
+        uint32_t emulation_servers_table_page_ = 0; // Emulation servers (Phase 4)
+        uint32_t emulated_dbs_table_page_ = 0;      // Emulated databases (Phase 4)
+
         // Internal methods
         auto writeCatalogRoot(ErrorContext *ctx) -> Status;
         auto readCatalogRoot(ErrorContext *ctx) -> Status;
