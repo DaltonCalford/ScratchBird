@@ -7839,5 +7839,214 @@ auto CatalogManager::isView(const std::string& name) -> bool
     return view_name_to_id_.find(name) != view_name_to_id_.end();
 }
 
+// ========================================================================
+// Dependency Operations (Phase 5.2 - Dependencies Table)
+// ========================================================================
+
+auto CatalogManager::createDependency(const ID& dependent_object_id, ObjectType dependent_type,
+                                     const ID& referenced_object_id, ObjectType referenced_type,
+                                     DependencyType dep_type, ID& dependency_id,
+                                     ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(dependency_cache_mutex_);
+
+    // Generate new dependency ID
+    dependency_id = generateUuidV7();
+
+    // Create dependency info
+    DependencyInfo dep_info;
+    dep_info.dependency_id = dependency_id;
+    dep_info.dependent_object_id = dependent_object_id;
+    dep_info.dependent_type = dependent_type;
+    dep_info.referenced_object_id = referenced_object_id;
+    dep_info.referenced_type = referenced_type;
+    dep_info.dependency_type = dep_type;
+    dep_info.created_time = std::chrono::duration_cast<std::chrono::microseconds>(
+                                std::chrono::system_clock::now().time_since_epoch()).count();
+
+    // Add to cache
+    dependency_cache_[dependency_id] = dep_info;
+
+    // Add to object lookup (for finding all dependencies of an object)
+    object_to_dependencies_.insert({dependent_object_id, dependency_id});
+    object_to_dependencies_.insert({referenced_object_id, dependency_id});
+
+    // TODO Phase 6: Write to disk (DependencyRecord)
+    // For now, dependencies are in-memory only
+
+    LOG_INFO(CATALOG, "Created dependency: %s (%d) -> %s (%d) [type=%d]",
+             dependent_object_id.toString().c_str(), static_cast<int>(dependent_type),
+             referenced_object_id.toString().c_str(), static_cast<int>(referenced_type),
+             static_cast<int>(dep_type));
+
+    return Status::OK;
+}
+
+auto CatalogManager::deleteDependency(const ID& dependency_id, ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(dependency_cache_mutex_);
+
+    auto it = dependency_cache_.find(dependency_id);
+    if (it == dependency_cache_.end()) {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                         ("Dependency not found: " + dependency_id.toString()).c_str());
+        return Status::INVALID_ARGUMENT;
+    }
+
+    const auto& dep_info = it->second;
+
+    // Remove from object lookup
+    auto range = object_to_dependencies_.equal_range(dep_info.dependent_object_id);
+    for (auto iter = range.first; iter != range.second; ) {
+        if (iter->second == dependency_id) {
+            iter = object_to_dependencies_.erase(iter);
+        } else {
+            ++iter;
+        }
+    }
+
+    range = object_to_dependencies_.equal_range(dep_info.referenced_object_id);
+    for (auto iter = range.first; iter != range.second; ) {
+        if (iter->second == dependency_id) {
+            iter = object_to_dependencies_.erase(iter);
+        } else {
+            ++iter;
+        }
+    }
+
+    // Remove from cache
+    dependency_cache_.erase(it);
+
+    // TODO Phase 6: Delete from disk
+
+    LOG_INFO(CATALOG, "Deleted dependency: %s", dependency_id.toString().c_str());
+
+    return Status::OK;
+}
+
+auto CatalogManager::getDependenciesFor(const ID& object_id,
+                                       std::vector<DependencyInfo>& dependencies_out,
+                                       ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(dependency_cache_mutex_);
+
+    dependencies_out.clear();
+
+    // Find all dependencies where this object is the dependent
+    for (const auto& [dep_id, dep_info] : dependency_cache_) {
+        if (dep_info.dependent_object_id == object_id) {
+            dependencies_out.push_back(dep_info);
+        }
+    }
+
+    return Status::OK;
+}
+
+auto CatalogManager::getDependents(const ID& object_id,
+                                  std::vector<DependencyInfo>& dependents_out,
+                                  ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(dependency_cache_mutex_);
+
+    dependents_out.clear();
+
+    // Find all dependencies where this object is referenced
+    for (const auto& [dep_id, dep_info] : dependency_cache_) {
+        if (dep_info.referenced_object_id == object_id) {
+            dependents_out.push_back(dep_info);
+        }
+    }
+
+    return Status::OK;
+}
+
+auto CatalogManager::hasDependents(const ID& object_id, bool& has_dependents,
+                                  ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(dependency_cache_mutex_);
+
+    has_dependents = false;
+
+    // Check if any dependency references this object
+    for (const auto& [dep_id, dep_info] : dependency_cache_) {
+        if (dep_info.referenced_object_id == object_id) {
+            has_dependents = true;
+            break;
+        }
+    }
+
+    return Status::OK;
+}
+
+// ========================================================================
+// Comment Operations (Phase 5.2 - Comments Table)
+// ========================================================================
+
+auto CatalogManager::setComment(const ID& object_id, ObjectType object_type,
+                                const std::string& comment_text,
+                                ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(comment_cache_mutex_);
+
+    // Create or update comment
+    CommentInfo comment;
+    comment.comment_id = generateUuidV7();  // Generate new ID each time
+    comment.object_id = object_id;
+    comment.object_type = object_type;
+    comment.owner_id = resolveOwnerUUID("system");  // Phase 6 TODO: Get from session
+    comment.comment_text = comment_text;
+    comment.created_time = std::chrono::duration_cast<std::chrono::microseconds>(
+                               std::chrono::system_clock::now().time_since_epoch()).count();
+    comment.last_modified_time = comment.created_time;
+
+    // Store in cache (keyed by object_id)
+    comment_cache_[object_id] = comment;
+
+    // TODO Phase 6: Write to disk (CommentRecord with TOAST for comment_text)
+
+    LOG_INFO(CATALOG, "Set comment for object %s: %.50s%s",
+             object_id.toString().c_str(),
+             comment_text.c_str(),
+             comment_text.length() > 50 ? "..." : "");
+
+    return Status::OK;
+}
+
+auto CatalogManager::getComment(const ID& object_id, std::string& comment_out,
+                                ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(comment_cache_mutex_);
+
+    auto it = comment_cache_.find(object_id);
+    if (it == comment_cache_.end()) {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                         ("No comment found for object: " + object_id.toString()).c_str());
+        return Status::INVALID_ARGUMENT;
+    }
+
+    comment_out = it->second.comment_text;
+    return Status::OK;
+}
+
+auto CatalogManager::deleteComment(const ID& object_id, ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(comment_cache_mutex_);
+
+    auto it = comment_cache_.find(object_id);
+    if (it == comment_cache_.end()) {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                         ("No comment found for object: " + object_id.toString()).c_str());
+        return Status::INVALID_ARGUMENT;
+    }
+
+    comment_cache_.erase(it);
+
+    // TODO Phase 6: Delete from disk
+
+    LOG_INFO(CATALOG, "Deleted comment for object %s", object_id.toString().c_str());
+
+    return Status::OK;
+}
+
 } // namespace scratchbird::core
 

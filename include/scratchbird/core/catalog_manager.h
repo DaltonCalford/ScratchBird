@@ -818,6 +818,37 @@ namespace scratchbird::core
 
         auto isView(const std::string& name) -> bool;
 
+        // Dependency operations (Phase 5.2 - Dependencies table)
+        auto createDependency(const ID& dependent_object_id, ObjectType dependent_type,
+                             const ID& referenced_object_id, ObjectType referenced_type,
+                             DependencyType dep_type, ID& dependency_id,
+                             ErrorContext* ctx = nullptr) -> Status;
+
+        auto deleteDependency(const ID& dependency_id,
+                             ErrorContext* ctx = nullptr) -> Status;
+
+        auto getDependenciesFor(const ID& object_id,
+                               std::vector<DependencyInfo>& dependencies_out,
+                               ErrorContext* ctx = nullptr) -> Status;
+
+        auto getDependents(const ID& object_id,
+                          std::vector<DependencyInfo>& dependents_out,
+                          ErrorContext* ctx = nullptr) -> Status;
+
+        auto hasDependents(const ID& object_id, bool& has_dependents,
+                          ErrorContext* ctx = nullptr) -> Status;
+
+        // Comment operations (Phase 5.2 - Comments table)
+        auto setComment(const ID& object_id, ObjectType object_type,
+                       const std::string& comment_text,
+                       ErrorContext* ctx = nullptr) -> Status;
+
+        auto getComment(const ID& object_id, std::string& comment_out,
+                       ErrorContext* ctx = nullptr) -> Status;
+
+        auto deleteComment(const ID& object_id,
+                          ErrorContext* ctx = nullptr) -> Status;
+
         // Timezone operations (pg_timezone system table)
         struct TimezoneInfo
         {
@@ -1425,6 +1456,15 @@ namespace scratchbird::core
         std::unordered_map<ID, ViewInfo> view_cache_;
         std::unordered_map<std::string, ID> view_name_to_id_;
         std::mutex view_cache_mutex_;
+
+        // Dependency cache (Phase 5.2 - Dependencies table)
+        std::unordered_map<ID, DependencyInfo> dependency_cache_;
+        std::unordered_multimap<ID, ID> object_to_dependencies_;  // object_id -> dependency_ids
+        std::mutex dependency_cache_mutex_;
+
+        // Comment cache (Phase 5.2 - Comments table)
+        std::unordered_map<ID, CommentInfo> comment_cache_;  // object_id -> CommentInfo
+        std::mutex comment_cache_mutex_;
 
         // Internal helper methods (assume mutex_ is already held by caller)
         auto createSchemaInternal(const std::string &schema_name, const std::string &owner,
