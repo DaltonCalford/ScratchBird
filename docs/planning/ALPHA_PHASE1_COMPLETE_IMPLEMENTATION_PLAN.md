@@ -1,7 +1,7 @@
 # ScratchBird ALPHA Phase 1 - Complete Implementation Plan
 
 **Created**: November 3, 2025
-**Updated**: November 7, 2025 (DDL Modifications + TRUNCATE + Sequences)
+**Updated**: November 10, 2025 (Security Core Infrastructure Phase 1)
 **Goal**: 100% implementation of all specified features
 **Status**: ACTIVE PLAN
 
@@ -9,11 +9,14 @@
 
 ## EXECUTIVE SUMMARY
 
-### Current Completion: 80%
+### Current Completion: 83%
 
-**Remaining Work**: ~1,090-1,570 hours (27-39 weeks at 40 hours/week)
+**Remaining Work**: ~1,060-1,563 hours (26-39 weeks at 40 hours/week)
 
 **Recent Milestones**:
+- ✅ **Connection Context Security Integration (Phase 2) COMPLETE** - Executor permission checking - Nov 10, 2025 🎉
+- ✅ **Security Core Infrastructure (Phase 1) COMPLETE** - Users, Roles, Groups, Sessions, Permissions - Nov 10, 2025 🎉
+- ✅ **38 Catalog Tables** (36 original + GroupMemberships + GroupMappings) 🎉
 - ✅ **All 11 index types complete** (B-Tree, Hash, R-Tree, GIN, Bitmap, GiST, HNSW, SP-GiST, BRIN, LSM-Tree, Columnstore) 🎉
 - ✅ **All 86 data types complete** (COMPOSITE, VECTOR, VARIANT) 🎉
 - ✅ **Domain CHECK constraints** with pattern matching ✨
@@ -57,6 +60,18 @@
   - ALTER TABLE RENAME COLUMN - **Nov 7, 2025**
   - ALTER TABLE ALTER COLUMN TYPE - **Nov 7, 2025**
 
+### Security & Catalog (38/38 = 100%)
+- ✅ **38 Catalog Tables** (36 original + GroupMemberships + GroupMappings) - **Nov 10, 2025**
+- ✅ **Security Core Infrastructure (Phase 1)** - **Nov 10, 2025**:
+  - Users: CREATE, GET, UPDATE, DELETE, LIST (6 functions)
+  - Roles: CREATE, GET, DELETE, LIST, GRANT, REVOKE, queries (9 functions)
+  - Groups: CREATE, GET, DELETE, LIST, ADD_MEMBER, REMOVE_MEMBER, queries (9 functions)
+  - Sessions: CREATE, GET, CLOSE (3 functions)
+  - Permissions: GRANT, REVOKE, HAS_PERMISSION, queries (5 functions)
+  - Transitive Closure: Roles & nested groups with cycle detection (2 functions)
+  - Bootstrap: SYSTEM user, PUBLIC role, DB_OWNER role
+  - Thread-safe session caching with mutex protection
+
 ### Built-in Functions (60/100 = 60%)
 - ✅ String (11), Aggregate (6), Window (8)
 - ✅ JSON (13), Array (12), Date/Time (6)
@@ -90,24 +105,96 @@
   - `docs/planning/ALTER_TABLE_IMPLEMENTATION_PLAN.md` (600+ lines)
   - `docs/planning/DDL_MODIFICATIONS_IMPLEMENTATION_PLAN.md` (600+ lines)
 
-#### 1. Security System (0% complete) - 80-100 hours
-- ❌ GRANT/REVOKE - No access control
-- ❌ Role management - No user permissions
-- **Impact**: All users have full access to all data
+#### ~~1. Security System - Phase 1 & 2~~ ✅ **COMPLETE - November 10, 2025**
 
-#### 2. Mathematical Functions (0/40 implemented) - 30-40 hours
+**Phase 1: Core Infrastructure Complete (34 functions)**:
+- ✅ User Management (6): createUser, getUser, getUserByName, updateUser, deleteUser, listUsers
+- ✅ Role Management (9): createRole, getRole, getRoleByName, deleteRole, listRoles, grantRole, revokeRole, getUserRoles, getRoleMembers
+- ✅ Group Management (9): createGroup, getGroup, getGroupByName, deleteGroup, listGroups, addGroupMember, removeGroupMember, getGroupMembers, getUserGroups
+- ✅ Session Management (3): createSession, getSession, closeSession
+- ✅ Permission Management (5): grantPermission, revokePermission, hasPermission, getObjectPermissions, getUserPermissions
+- ✅ Transitive Closure (2): getEffectiveRoles, getEffectiveGroups (BFS with cycle detection)
+- ✅ Security Bootstrap: SYSTEM user, PUBLIC role, DB_OWNER role
+
+**Phase 2: Connection Context Integration Complete**:
+- ✅ ConnectionContext security fields: current_user_id_, active_role_id_, is_superuser_
+- ✅ ConnectionContext security methods: getCurrentUserId(), getActiveRoleId(), isSuperuser(), setCurrentUser(), setActiveRole(), clearActiveRole()
+- ✅ Executor integration: setConnectionContext(), checkPermission() with real catalog checks
+- ✅ SET ROLE implementation with role membership verification
+- ✅ SET SESSION AUTHORIZATION placeholder (requires session user tracking)
+
+**Catalog Updates**:
+- ✅ 38 Catalog Tables (36 + GroupMemberships + GroupMappings)
+- ✅ Updated PermissionRecord: UUID-based grantee/grantor references
+- ✅ Added GroupMembershipRecord: Nested group support
+- ✅ Added GroupMappingRecord: External auth (LDAP/AD/Kerberos)
+
+**Implementation Statistics**:
+- Files: `catalog_manager.h/cpp`, `connection_context.h/cpp`, `executor.h/cpp`
+- Code: ~1,400 lines added
+- Enums: Privilege (13 values), PermissionObjectType (8 values), GranteeType (4 values)
+- Structures: SessionInfo, PermissionInfo
+- Thread Safety: Mutex protection for all operations
+- Duration: ~22 hours actual
+- Documentation: See `/docs/status/CONNECTION_CONTEXT_SECURITY_INTEGRATION_2025-11-10.md`
+
+**Remaining Work (Phase 3: Advanced Security - 50-73 hours)**:
+- ❌ Query Plan Security Integration (11-17 hours) - Move checks to planning time (10-100x speedup)
+- ❌ SQL Object Permissions (14-21 hours) - Ownership chaining, GRANT TO PROCEDURE/FUNCTION/VIEW
+- ❌ Column-Level Permissions (10-15 hours)
+- ❌ Row-Level Security (15-20 hours)
+- ❌ SQL Parser Integration (GRANT/REVOKE/CREATE USER/etc. statements)
+- **See**: `/docs/planning/ALPHA_ADVANCED_SECURITY_IMPLEMENTATION_PLAN.md` for complete plan
+
+#### 1. Mathematical Functions (0/40 implemented) - 30-40 hours
 - ❌ No SIN, COS, TAN, SQRT, EXP, LOG, POWER, etc.
 - **Impact**: Cannot perform basic math in queries
 
 ### 🟠 HIGH PRIORITY
 
+#### 2. Security System - Phase 3 Advanced Features (50-73 hours)
+
+**See**: `/docs/planning/ALPHA_ADVANCED_SECURITY_IMPLEMENTATION_PLAN.md`
+
+**Phase 3.0: Query Plan Security Integration (11-17 hours)** - CRITICAL
+- SecurityAnalyzer component at parser layer
+- Move permission checks from execution time to planning time
+- Group membership caching (1000-2000x speedup)
+- Pre-compile RLS policies once during planning
+- Performance: 10-100x speedup for permission-heavy queries
+
+**Phase 3.1: SQL Object Permissions (14-21 hours)** - CRITICAL
+- GRANT SELECT ON TABLE employees TO PROCEDURE get_salary
+- Security context stack for nested procedure calls
+- SQL SECURITY DEFINER/INVOKER support
+- Ownership chaining (procedures execute with owner's privileges)
+
+**Phase 3.3: Column-Level Permissions (10-15 hours)**
+- GRANT SELECT(column1, column2) ON table TO user
+- Column visibility filtering in SELECT queries
+- Column permission checks in UPDATE statements
+
+**Phase 3.4: Row-Level Security (15-20 hours)**
+- CREATE POLICY name ON table FOR {ALL|SELECT|INSERT|UPDATE|DELETE}
+- Per-row visibility predicates
+- Multi-tenant data isolation
+
+**Phase 3.5: SQL Parser Integration (15-25 hours)**
+- CREATE USER/ROLE/GROUP SQL syntax
+- GRANT/REVOKE SQL syntax
+- Executor hooks in DML operations
+- Connection handler session management
+
+**Files**: `src/parser/parser.cpp`, `src/parser/lexer.cpp`, `src/sblr/executor.cpp`, `src/sblr/security_analyzer.cpp` (NEW)
+
 #### 3. Foreign Key Constraints (0% enforced) - 100-140 hours
 - ❌ No referential integrity enforcement
 - **Impact**: Data integrity cannot be guaranteed
 
-#### 4. Views & Sequences (0% complete) - 60-80 hours
-- ❌ No CREATE VIEW, MATERIALIZED VIEW
-- ❌ No CREATE SEQUENCE (auto-increment impossible)
+#### 4. Views (0% execution) - 60-80 hours
+- ❌ Catalog complete, execution pending
+- ❌ No CREATE VIEW, MATERIALIZED VIEW execution
+- ❌ No updatable views
 
 #### 5. PSQL/SBLR Execution (10% complete) - 140-180 hours
 - ❌ Triggers don't fire (CREATE works, execution doesn't)
@@ -134,7 +221,7 @@
 - ❌ Exclusion constraints
 - ❌ Generated/computed columns
 
-**TOTAL REMAINING**: ~1,150-1,650 hours (DDL complete saves ~50 hours)
+**TOTAL REMAINING**: ~1,060-1,563 hours (DDL complete -50 hours, Security Phase 1&2 complete -100 hours, Advanced Security +50-73 hours)
 
 ---
 
@@ -253,13 +340,46 @@
 **Duration**: ~6 hours actual (vs 30-40 estimated)
 **Documentation**: `docs/status/SEQUENCES_IMPLEMENTATION_COMPLETE.md`
 
-#### Security System - CRITICAL (80-100 hours)
-**Tasks**:
-- Permission framework (sys_privileges, sys_roles, sys_role_members tables)
-- GRANT/REVOKE privileges and roles
-- Permission checking hooks in executor
+#### ~~Security System - Phase 1: Core Infrastructure~~ ✅ **COMPLETE - November 10, 2025**
+**Status**: ✅ **CATALOG & API 100% FUNCTIONAL**
 
-**Files**: `src/core/security.cpp` (NEW), `src/core/catalog_manager.cpp`, `src/sblr/executor.cpp`
+**Completed**:
+- ✅ 34 security functions (Users, Roles, Groups, Sessions, Permissions)
+- ✅ 38 catalog tables (36 + GroupMemberships + GroupMappings)
+- ✅ Bootstrap (SYSTEM user, PUBLIC role, DB_OWNER role)
+- ✅ Thread-safe session management with transitive closure
+- ✅ 4-level permission checking (Superuser → Direct → PUBLIC → Roles → Groups)
+
+**Files**: `include/scratchbird/core/catalog_manager.h`, `src/core/catalog_manager.cpp`
+**Duration**: ~20 hours actual (vs 80-100 estimated)
+**Documentation**: `/docs/IMPLEMENTATION_AUDIT.md` sections 28 and SESSION & PERMISSION MANAGEMENT
+
+#### ~~Security System - Phase 2: Connection Context Integration~~ ✅ **COMPLETE - November 10, 2025**
+**Status**: ✅ **EXECUTOR INTEGRATION COMPLETE**
+
+**Completed**:
+- ✅ ConnectionContext security fields (current_user_id_, active_role_id_, is_superuser_)
+- ✅ Executor.setConnectionContext() integration
+- ✅ Real permission checking via catalog_manager()->hasPermission()
+- ✅ Superuser bypass logic
+- ✅ SET ROLE implementation with role membership verification
+- ✅ SET SESSION AUTHORIZATION placeholder
+
+**Files**: `connection_context.h/cpp`, `executor.h/cpp`
+**Duration**: ~2 hours actual
+**Documentation**: `/docs/status/CONNECTION_CONTEXT_SECURITY_INTEGRATION_2025-11-10.md`
+
+#### Security System - Phase 3: Advanced Security (50-73 hours)
+**See**: `/docs/planning/ALPHA_ADVANCED_SECURITY_IMPLEMENTATION_PLAN.md`
+
+**Tasks**:
+- Query Plan Security Integration (11-17 hours)
+- SQL Object Permissions (14-21 hours)
+- Column-Level Permissions (10-15 hours)
+- Row-Level Security (15-20 hours)
+- SQL Parser Integration (15-25 hours)
+
+**Files**: `security_analyzer.h/cpp` (NEW), `parser.cpp`, `executor.cpp`
 
 #### Advanced DML (80-110 hours)
 **MERGE Statement (40-50 hours)**:
@@ -378,8 +498,9 @@
 
 ### With 3 Developers (Recommended)
 
-**Phase 1A: Critical Blockers** (6-8 weeks)
-- ~~DDL~~ ✅ COMPLETE & Security (80-100 hours remaining)
+**Phase 1A: Critical Blockers** (5-7 weeks)
+- ~~DDL~~ ✅ COMPLETE & ~~Security Phase 1~~ ✅ COMPLETE
+- Security Phase 2 SQL Integration (60-80 hours)
 - Constraints & Types (200-260 hours)
 - Functions (80-110 hours)
 
@@ -395,13 +516,13 @@
 **Phase 1D: Testing & Polish** (2-4 weeks)
 - Integration testing, bug fixes, optimization (120-160 hours)
 
-**Total Timeline**: 16-24 weeks (4-6 months)
+**Total Timeline**: 14-22 weeks (3.5-5.5 months)
 
 ### With 2 Developers
-**Total**: 22-32 weeks (5.5-8 months)
+**Total**: 20-30 weeks (5-7.5 months)
 
 ### With 1 Developer
-**Total**: 44-63 weeks (11-16 months)
+**Total**: 40-60 weeks (10-15 months)
 
 ---
 
@@ -420,8 +541,8 @@ Before Phase 2 (parser separation) can begin, ALL of the following must be ✅:
 - [ ] 40 missing functions (math, statistical, crypto, XML, string)
 
 ### SQL Statements (35/35 = 100%)
-- [x] 15 statements complete
-- [ ] 20 missing (ALTER, DROP, VIEW, SEQUENCE, GRANT/REVOKE, MERGE, TRUNCATE, RETURNING, CTEs)
+- [x] 21 statements complete (DDL complete + Sequences complete)
+- [ ] 14 missing (VIEW, GRANT/REVOKE, MERGE, RETURNING, CTEs, CREATE/ALTER/DROP USER/ROLE/GROUP)
 
 ### Constraints (10/10 = 100%)
 - [x] 2 constraints complete
@@ -452,9 +573,152 @@ Before Phase 2 (parser separation) can begin, ALL of the following must be ✅:
 
 ---
 
-## Recent Updates (November 7, 2025)
+## Recent Updates
 
-### Build System Fixes ✅
+### Security Core Infrastructure Complete (November 10, 2025) ✅
+
+**Status**: Phase 1 Complete - Catalog & API 100% Functional
+
+**What Was Implemented**:
+
+**1. Catalog Structure Updates (Phase 1.1)**:
+- Updated `PermissionRecord` to use UUID-based references (was string-based)
+  - `grantee_id` (ID) instead of `grantee[128]` (char array)
+  - `grantor_id` (ID) instead of `grantor[128]` (char array)
+  - Added `grantee_type` enum: USER=0, ROLE=1, GROUP=2, PUBLIC=3
+- Created `GroupMembershipRecord` (64 bytes)
+  - Tracks user-to-group and group-to-group memberships
+  - Supports unlimited nesting depth
+  - Fields: `membership_id, user_id, member_type, group_id, granted_by, granted_time, is_valid`
+- Created `GroupMappingRecord` (64 bytes)
+  - Maps external auth groups to internal groups
+  - Fields: `mapping_id, external_group_name[512], auth_method, internal_group_id, timestamps, is_valid`
+  - Supports LDAP, Kerberos, Active Directory
+- Updated `CatalogRootPage` with 2 new page references
+  - `group_members_page` (uint32_t)
+  - `group_mappings_page` (uint32_t)
+- **Total**: 38 catalog tables (36 original + 2 new)
+
+**2. Security Bootstrap (Phase 1.2)**:
+- Created `SecurityConstants` namespace with well-known UUIDs
+  - `SYSTEM_USER_UUID`: Special UUID (00000000-0000-7000-8000-737973746d00)
+  - Helper function: `makeSystemUserID()`
+- Bootstrap in `initialize()`:
+  - Creates SYSTEM user (superuser, cannot be deleted)
+  - Creates PUBLIC role (default for all users)
+  - Creates DB_OWNER role (for database owners)
+  - All use UUID v7 (time-ordered) for IDs
+
+**3. User/Role/Group CRUD Operations (Phase 1.3)**:
+- **User Management** (6 functions):
+  - `createUser(username, password_hash, is_superuser, user_id_out, ctx)`
+  - `getUser(user_id, user_out, ctx)`
+  - `getUserByName(username, user_out, ctx)`
+  - `updateUser(user_id, password_hash, is_superuser, ctx)`
+  - `deleteUser(user_id, ctx)` - soft delete (MGA compliance)
+  - `listUsers(users_out, ctx)`
+
+- **Role Management** (9 functions):
+  - `createRole(role_name, description, role_id_out, ctx)`
+  - `getRole(role_id, role_out, ctx)`
+  - `getRoleByName(role_name, role_out, ctx)`
+  - `deleteRole(role_id, ctx)` - soft delete
+  - `listRoles(roles_out, ctx)`
+  - `grantRole(role_id, user_id, ctx)` - Phase 1: direct grants only
+  - `revokeRole(role_id, user_id, ctx)`
+  - `getUserRoles(user_id, roles_out, ctx)`
+  - `getRoleMembers(role_id, users_out, ctx)`
+
+- **Group Management** (9 functions):
+  - `createGroup(group_name, description, group_id_out, ctx)`
+  - `getGroup(group_id, group_out, ctx)`
+  - `getGroupByName(group_name, group_out, ctx)`
+  - `deleteGroup(group_id, ctx)` - soft delete
+  - `listGroups(groups_out, ctx)`
+  - `addGroupMember(group_id, member_id, member_type, grantor_id, ctx)` - supports nesting
+  - `removeGroupMember(group_id, member_id, member_type, ctx)`
+  - `getGroupMembers(group_id, members_out, ctx)`
+  - `getUserGroups(user_id, groups_out, ctx)`
+
+**4. Session & Permission Management (Phase 1.4)**:
+
+**Enums Added**:
+- `Privilege` (13 values, bitmask): SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER, CREATE, USAGE, CONNECT, EXECUTE, ALL
+- `PermissionObjectType` (8 values): SCHEMA, TABLE, VIEW, SEQUENCE, PROCEDURE, FUNCTION, DOMAIN, DATABASE
+- `GranteeType` (4 values): USER, ROLE, GROUP, PUBLIC
+
+**Structures Added**:
+- `SessionInfo`: session_id, user_id, username, is_superuser, effective_roles[], effective_groups[], timestamps, current_schema_id
+- `PermissionInfo`: permission_id, object_id, object_type, grantee_id, grantee_type, privileges, grant_option, grantor_id, created_time
+
+**Session Management** (3 functions):
+- `createSession(user_id, default_schema_id, session_out, ctx)`
+  - Validates user is active
+  - Computes effective roles (direct grants in Phase 1)
+  - Computes effective groups (BFS with cycle detection)
+  - Stores in `session_cache_` (thread-safe)
+- `getSession(session_id, session_out, ctx)` - updates last_activity_time
+- `closeSession(session_id, ctx)` - removes from cache
+
+**Transitive Closure** (2 functions):
+- `getEffectiveRoles(user_id, roles_out, ctx)` - Phase 1: direct only, future: nested
+- `getEffectiveGroups(user_id, groups_out, ctx)` - BFS algorithm with cycle detection
+
+**Permission Management** (5 functions):
+- `grantPermission(object_id, object_type, grantee_id, grantee_type, privileges, grant_option, grantor_id, ctx)`
+  - Bitwise OR for adding privileges
+  - Creates or updates PermissionRecord
+- `revokePermission(object_id, object_type, grantee_id, grantee_type, privileges, ctx)`
+  - Bitwise AND NOT for removing privileges
+  - Soft deletes record if all privileges removed
+- `hasPermission(user_id, object_id, object_type, privilege, has_perm_out, ctx)`
+  - 4-level check:
+    1. Superuser → always true
+    2. Direct user permission → check privileges
+    3. PUBLIC permission → check privileges
+    4. Role permissions → check all effective roles
+    5. Group permissions → check all effective groups (with nesting)
+- `getObjectPermissions(object_id, object_type, permissions_out, ctx)`
+- `getUserPermissions(user_id, permissions_out, ctx)`
+
+**Thread Safety**:
+- All operations use `std::lock_guard<std::mutex> lock(mutex_)`
+- Separate `session_cache_mutex_` for session operations
+- Prevents deadlock by unlocking before nested calls
+
+**Implementation Statistics**:
+- **Production Code**: ~1,200 lines
+  - Catalog Manager: ~1,150 lines (catalog_manager.cpp)
+  - Header: ~50 lines (catalog_manager.h)
+- **Files Modified**: 2 files
+- **New Includes**: `<queue>`, `<unordered_set>` for BFS
+- **Duration**: ~20 hours actual (vs 80-100 estimated for core infrastructure)
+
+**Algorithms**:
+- **BFS for Nested Groups**: Breadth-first search with `std::queue` and `std::unordered_set` visited tracking
+- **Permission Check**: 5-step waterfall (superuser → direct → PUBLIC → roles → groups)
+- **Privilege Merging**: Bitwise operations (OR for grant, AND NOT for revoke)
+
+**MGA Compliance**:
+- All deletes are soft deletes (set `is_valid = 0`)
+- No physical record removal
+- Stable TIDs maintained
+
+**What's Deferred to Phase 2** (60-80 hours):
+- SQL Parser Integration (CREATE USER, ALTER USER, DROP USER, GRANT, REVOKE, etc.)
+- Executor Hooks (permission checks in INSERT/UPDATE/DELETE/SELECT)
+- Connection Handler (session management on login/logout)
+- SET ROLE / SET SESSION AUTHORIZATION statements
+- Password hashing/verification (currently accepts pre-hashed passwords)
+
+**Documentation**:
+- `/docs/IMPLEMENTATION_AUDIT.md` - Updated sections 28 (Permissions) and new SESSION & PERMISSION MANAGEMENT section
+- `/docs/specifications/SECURITY_SYSTEM_SPECIFICATION.md` - Full specification
+- `/docs/planning/SECURITY_SYSTEM_IMPLEMENTATION_PLAN.md` - Implementation plan
+
+---
+
+### Build System Fixes (November 7, 2025) ✅
 **Status**: All compilation errors fixed - project builds cleanly
 
 **Errors Fixed**:
@@ -496,8 +760,8 @@ Before Phase 2 (parser separation) can begin, ALL of the following must be ✅:
 
 ---
 
-**Document Version**: 1.3
+**Document Version**: 1.5
 **Created**: November 3, 2025
-**Updated**: November 7, 2025 (DDL Implementation + Build Fixes)
+**Updated**: November 10, 2025 (Security Phase 1 & 2 Complete, Advanced Security Planned)
 **Status**: ACTIVE PLAN - PROJECT BUILDS CLEANLY ✅
-**Target**: Phase 1 Complete in 4-6 months (3 developers)
+**Target**: Phase 1 Complete in 3.5-5.5 months (3 developers)

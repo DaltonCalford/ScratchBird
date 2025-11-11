@@ -3,6 +3,7 @@
 #include "scratchbird/core/status.h"
 #include "scratchbird/core/transaction_manager.h"
 #include "scratchbird/core/error_context.h"
+#include "scratchbird/core/uuidv7.h"
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -13,6 +14,7 @@ namespace scratchbird::core
     // Forward declarations
     class Database;
     class TransactionManager;
+    class CatalogManager;
 
     // Isolation levels supported by ScratchBird
     enum class IsolationLevel : uint8_t
@@ -43,6 +45,9 @@ namespace scratchbird::core
     class ConnectionContext
     {
     public:
+        // Type alias for UUID-based IDs
+        using ID = UuidV7Bytes;
+
         ConnectionContext(Database *db, uint32_t proc_id);
         ~ConnectionContext();
 
@@ -105,6 +110,16 @@ namespace scratchbird::core
             return xact_start_time_;
         }
 
+        // Security context queries (Phase 2 - Security System)
+        const ID& getCurrentUserId() const { return current_user_id_; }
+        const ID& getActiveRoleId() const { return active_role_id_; }
+        bool isSuperuser() const { return is_superuser_; }
+
+        // Security context setters (called during authentication and SET ROLE)
+        void setCurrentUser(const ID& user_id, bool is_superuser);
+        void setActiveRole(const ID& role_id);
+        void clearActiveRole();
+
         // FIREBIRD MGA: Transaction visibility uses current XID, not snapshots
         // For SNAPSHOT isolation, we simply use the XID at transaction start
         // For READ_COMMITTED, we use the XID at statement start
@@ -165,6 +180,11 @@ namespace scratchbird::core
         uint32_t proc_id_;                          // Process ID from ProcArray
         uint64_t current_xid_;                      // Current transaction XID (NEVER 0)
         std::chrono::microseconds xact_start_time_; // Transaction start time
+
+        // Security context (Phase 2 - Security System)
+        ID current_user_id_;    // Authenticated user UUID
+        ID active_role_id_;     // Active role UUID (from SET ROLE), zero if none
+        bool is_superuser_;     // Cached superuser flag for performance
 
         // Transaction settings
         IsolationLevel isolation_level_; // Current isolation level

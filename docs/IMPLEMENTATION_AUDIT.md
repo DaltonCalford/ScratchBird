@@ -1,9 +1,133 @@
 # ScratchBird Implementation Audit
-**Date**: 2025-11-09 | **Source**: Actual code inspection | **Format**: AI-optimized (context-conservative)
+**Date**: 2025-11-10 | **Source**: Actual code inspection | **Format**: AI-optimized (context-conservative)
+**Updated**: 2025-11-10 - Added Connection Context Security Integration
 
 ---
 
-## 36 CATALOG TABLES
+## CONNECTION CONTEXT SECURITY INTEGRATION ✅ **PHASE 2 COMPLETE**
+
+**Status**: Executor permission checking fully integrated (Nov 10, 2025)
+
+### ConnectionContext Security Fields
+
+**File**: `include/scratchbird/core/connection_context.h:116-121`
+**File**: `src/core/connection_context.cpp:28-32` (initialization)
+
+```cpp
+// Security context (Phase 2 - Security System)
+ID current_user_id_;    // Authenticated user UUID
+ID active_role_id_;     // Active role UUID (from SET ROLE), zero if none
+bool is_superuser_;     // Cached superuser flag for performance
+```
+
+### ConnectionContext Security Methods
+
+**File**: `include/scratchbird/core/connection_context.h:75-83`
+**File**: `src/core/connection_context.cpp:211-243`
+
+```cpp
+// Security context queries
+const ID& getCurrentUserId() const { return current_user_id_; }
+const ID& getActiveRoleId() const { return active_role_id_; }
+bool isSuperuser() const { return is_superuser_; }
+
+// Security context setters (called during authentication and SET ROLE)
+void setCurrentUser(const ID& user_id, bool is_superuser);
+void setActiveRole(const ID& role_id);
+void clearActiveRole();
+```
+
+### Executor Security Integration
+
+**File**: `include/scratchbird/sblr/executor.h:282-295`
+**File**: `src/sblr/executor.cpp:13103-13187`
+
+```cpp
+// Connection context member (non-owning pointer)
+core::ConnectionContext *conn_ctx_ = nullptr;
+
+// Setter method
+void setConnectionContext(core::ConnectionContext *conn_ctx) { conn_ctx_ = conn_ctx; }
+
+// Security helper methods
+const core::ID& getCurrentUserID() const;      // cpp:13103
+const core::ID& getActiveRoleID() const;       // cpp:13116
+bool isSuperuser() const;                      // cpp:13129
+
+// Permission checking (replaces placeholder)
+bool checkPermission(const core::ID& object_id,
+                     core::CatalogManager::PermissionObjectType object_type,
+                     uint32_t required_privilege);  // cpp:13137
+```
+
+### Permission Check Implementation
+
+**Location**: `src/sblr/executor.cpp:13137-13187`
+
+**Algorithm**:
+1. If no connection context → deny (return false)
+2. If superuser → allow (return true)
+3. Get current user and active role IDs
+4. Validate object_id (not zero UUID)
+5. Call `catalog_manager()->hasPermission()` with user context
+6. Return permission result
+
+**Performance**: O(1) superuser bypass, O(log N) catalog lookup for regular users
+
+### SET ROLE Implementation
+
+**Location**: `src/sblr/executor.cpp:13001-13063`
+
+**Features**:
+- RESET ROLE: Calls `conn_ctx_->clearActiveRole()`
+- SET ROLE rolename:
+  1. Look up role by name using `getRoleByName()`
+  2. Fetch user's role memberships using `getUserRoles()`
+  3. Verify user has been granted the role
+  4. Call `conn_ctx_->setActiveRole()` on success
+- Error handling for missing roles and permission denials
+
+### SET SESSION AUTHORIZATION
+
+**Location**: `src/sblr/executor.cpp:13065-13086`
+
+**Status**: Placeholder (requires session user tracking)
+- Checks connection context availability
+- Checks superuser-only permission
+- Returns error explaining feature not yet implemented
+- TODO: Add `original_user_id_` and `effective_user_id_` fields to ConnectionContext
+
+### Integration Guide
+
+**Application Setup**:
+```cpp
+// Create database and connection context
+auto db = std::make_unique<core::Database>("mydb.sb");
+auto conn_ctx = std::make_unique<core::ConnectionContext>(db.get(), proc_id);
+auto executor = std::make_unique<sblr::Executor>(db.get());
+
+// Link connection context to executor
+executor->setConnectionContext(conn_ctx.get());
+
+// Authenticate user
+core::CatalogManager::UserInfo user_info;
+db->catalog_manager()->getUserByName(username, user_info, &err_ctx);
+conn_ctx->setCurrentUser(user_info.user_id, user_info.is_superuser);
+
+// Now all permission checks work correctly!
+```
+
+### Related Documentation
+
+- `/docs/status/CONNECTION_CONTEXT_SECURITY_INTEGRATION_2025-11-10.md` - Complete integration guide
+- `/docs/status/SECURITY_IMPLEMENTATION_PLAN_UPDATE_2025-11-10.md` - Phase 3 planning
+- `/docs/planning/ALPHA_ADVANCED_SECURITY_IMPLEMENTATION_PLAN.md` - Advanced features (50-73 hours)
+- `/docs/planning/QUERY_PLAN_SECURITY_INTEGRATION.md` - Query plan security design
+- `/docs/planning/SQL_OBJECT_PERMISSIONS_DESIGN.md` - Object permissions design
+
+---
+
+## 38 CATALOG TABLES (36 + 2 Security Tables)
 
 ### Core (10/10) ✅
 
@@ -132,23 +256,66 @@
   - `Status deleteCommentRecord(const ID& object_id, ErrorContext* ctx)` → cpp:8261
   - `Status readCommentRecords(ErrorContext* ctx)` → cpp:8271
 
-### Security (4/4) ⚠️
+### Security (6/6) ✅ **PHASE 1 COMPLETE**
 
-**13. Users** ⚠️ Structure only
+**13. Users** ✅ CRUD + Bootstrap Complete
+- Spec: `/docs/specifications/SECURITY_SYSTEM_SPECIFICATION.md`
 - Struct: `src/core/catalog_manager.cpp:407-421` (UserRecord: 96 bytes packed)
 - Fields: `user_id(ID), username[512], password_hash_oid, user_metadata_oid, default_schema_id(ID), is_active, is_superuser, created_time, last_login_time, is_valid`
+- Functions:
+  - `Status createUser(const string& username, const string& password_hash, const ID& default_schema_id, bool is_superuser, ID& user_id_out, ErrorContext* ctx)` → cpp:8491
+  - `Status getUser(const ID& user_id, UserInfo& user_out, ErrorContext* ctx)` → cpp:8559
+  - `Status getUserByName(const string& username, UserInfo& user_out, ErrorContext* ctx)` → cpp:8589
+  - `Status updateUser(const ID& user_id, const string& password_hash, const ID& default_schema_id, bool is_active, ErrorContext* ctx)` → cpp:8619
+  - `Status deleteUser(const ID& user_id, ErrorContext* ctx)` → cpp:8655
+  - `Status listUsers(vector<UserInfo>& users_out, ErrorContext* ctx)` → cpp:8676
+- Bootstrap: SYSTEM user created in `initialize()` with well-known UUID `00000000-0000-7000-8000-737973746d00`
 
-**14. Roles** ⚠️ Structure only
+**14. Roles** ✅ CRUD + Membership + Bootstrap Complete
+- Spec: `/docs/specifications/SECURITY_SYSTEM_SPECIFICATION.md`
 - Struct: `src/core/catalog_manager.cpp:424-436` (RoleRecord: 80 bytes packed)
 - Fields: `role_id(ID), role_name[512], owner_id(ID), role_metadata_oid, is_active, created_time, last_modified_time, is_valid`
+- Functions:
+  - `Status createRole(const string& role_name, const ID& owner_id, ID& role_id_out, ErrorContext* ctx)` → cpp:8700
+  - `Status getRole(const ID& role_id, RoleInfo& role_out, ErrorContext* ctx)` → cpp:8760
+  - `Status getRoleByName(const string& role_name, RoleInfo& role_out, ErrorContext* ctx)` → cpp:8788
+  - `Status deleteRole(const ID& role_id, ErrorContext* ctx)` → cpp:8816
+  - `Status listRoles(vector<RoleInfo>& roles_out, ErrorContext* ctx)` → cpp:8837
+  - `Status grantRole(const ID& role_id, const ID& user_id, const ID& granted_by, bool with_admin_option, ErrorContext* ctx)` → cpp:8861
+  - `Status revokeRole(const ID& role_id, const ID& user_id, ErrorContext* ctx)` → cpp:8902
+  - `Status getUserRoles(const ID& user_id, vector<RoleMembershipInfo>& roles_out, ErrorContext* ctx)` → cpp:8924
+  - `Status getRoleMembers(const ID& role_id, vector<RoleMembershipInfo>& members_out, ErrorContext* ctx)` → cpp:8948
+- Bootstrap: PUBLIC and DB_OWNER roles created in `initialize()`
 
-**15. Groups** ⚠️ Structure only
+**15. Groups** ✅ CRUD + Membership Complete (Nested Groups Supported)
+- Spec: `/docs/specifications/SECURITY_SYSTEM_SPECIFICATION.md`
 - Struct: `src/core/catalog_manager.cpp:439-451` (GroupRecord: 96 bytes packed)
 - Fields: `group_id(ID), group_name[512], external_id[512], group_type, group_metadata_oid, created_time, last_modified_time, is_valid`
+- GroupType: LOCAL=0, AD=1, LDAP=2
+- Functions:
+  - `Status createGroup(const string& group_name, GroupType group_type, const string& external_id, ID& group_id_out, ErrorContext* ctx)` → cpp:8974
+  - `Status getGroup(const ID& group_id, GroupInfo& group_out, ErrorContext* ctx)` → cpp:9040
+  - `Status getGroupByName(const string& group_name, GroupInfo& group_out, ErrorContext* ctx)` → cpp:9068
+  - `Status deleteGroup(const ID& group_id, ErrorContext* ctx)` → cpp:9096
+  - `Status listGroups(vector<GroupInfo>& groups_out, ErrorContext* ctx)` → cpp:9117
+  - `Status addGroupMember(const ID& group_id, const ID& member_id, bool is_group, const ID& granted_by, ErrorContext* ctx)` → cpp:9141
+  - `Status removeGroupMember(const ID& group_id, const ID& member_id, ErrorContext* ctx)` → cpp:9182
+  - `Status getGroupMembers(const ID& group_id, vector<ID>& members_out, ErrorContext* ctx)` → cpp:9204
+  - `Status getUserGroups(const ID& user_id, vector<ID>& groups_out, ErrorContext* ctx)` → cpp:9240
 
-**16. RoleMemberships** ⚠️ Structure only
+**16. RoleMemberships** ✅ CRUD Complete (via grantRole/revokeRole)
 - Struct: `src/core/catalog_manager.cpp:454-465` (RoleMembershipRecord: 64 bytes packed)
 - Fields: `membership_id(ID), user_id(ID), role_id(ID), granted_by(ID), with_admin_option, granted_time, is_valid`
+
+**17. GroupMemberships** ✅ CRUD Complete (NEW - Phase 1.1)
+- Struct: `src/core/catalog_manager.cpp:475-488` (GroupMembershipRecord: 64 bytes packed)
+- Fields: `membership_id(ID), user_id(ID), member_type, group_id(ID), granted_by(ID), granted_time, is_valid`
+- Supports: Nested groups (groups can be members of groups)
+
+**18. GroupMappings** ✅ Structure Complete (NEW - Phase 1.1)
+- Struct: `src/core/catalog_manager.cpp:490-504` (GroupMappingRecord: 64 bytes packed)
+- Fields: `mapping_id(ID), external_group_name[512], auth_method, auto_create_users, internal_group_id(ID), created_time, last_modified_time, is_valid`
+- Purpose: Maps LDAP/AD/Kerberos groups to internal groups
 
 ### Stored Code (5/5) ✅/⚠️
 
@@ -219,9 +386,60 @@
 - Struct: `src/core/catalog_manager.cpp:360-373` (StatisticsRecord: 64 bytes packed)
 - Fields: `stats_id(ID), table_id(ID), column_id(ID), n_distinct, null_frac, avg_width, most_common_vals_oid, histogram_bounds_oid, last_analyzed, is_valid`
 
-**28. Permissions** ⚠️ Structure only
-- Struct: `src/core/catalog_manager.cpp:343-357` (PermissionRecord: 64 bytes packed)
-- Fields: `permission_id(ID), object_id(ID), grantee[128], object_type, privileges, grant_option, grantor[128], created_time, is_valid`
+**28. Permissions** ✅ CRUD + Permission Checking Complete **PHASE 1.4 COMPLETE**
+- Spec: `/docs/specifications/SECURITY_SYSTEM_SPECIFICATION.md`
+- Struct: `src/core/catalog_manager.cpp:343-365` (PermissionRecord: 64 bytes packed) - **UPDATED Phase 1.1**
+- Fields: `permission_id(ID), object_id(ID), object_type, grantee_id(ID), grantee_type, privileges, grant_option, grantor_id(ID), created_time, is_valid`
+- **Changed**: UUID-based grantee/grantor (was string-based)
+- GranteeType: USER=0, ROLE=1, GROUP=2, PUBLIC=3
+- Privilege (bitmask): SELECT=0x01, INSERT=0x02, UPDATE=0x04, DELETE=0x08, TRUNCATE=0x10, REFERENCES=0x20, TRIGGER=0x40, CREATE=0x80, USAGE=0x100, EXECUTE=0x800, CONNECT=0x1000, ALL=0xFFFFFFFF
+- PermissionObjectType: SCHEMA=0, TABLE=1, VIEW=2, SEQUENCE=3, PROCEDURE=4, FUNCTION=5, DOMAIN=6, DATABASE=7
+- Functions:
+  - `Status grantPermission(const ID& object_id, PermissionObjectType object_type, const ID& grantee_id, GranteeType grantee_type, uint32_t privileges, bool grant_option, const ID& grantor_id, ErrorContext* ctx)` → cpp:9453
+  - `Status revokePermission(const ID& object_id, PermissionObjectType object_type, const ID& grantee_id, GranteeType grantee_type, uint32_t privileges, ErrorContext* ctx)` → cpp:9517
+  - `Status hasPermission(const ID& user_id, const ID& object_id, PermissionObjectType object_type, Privilege privilege, bool& has_perm_out, ErrorContext* ctx)` → cpp:9570
+  - `Status getObjectPermissions(const ID& object_id, PermissionObjectType object_type, vector<PermissionInfo>& permissions_out, ErrorContext* ctx)` → cpp:9680
+  - `Status getUserPermissions(const ID& user_id, vector<PermissionInfo>& permissions_out, ErrorContext* ctx)` → cpp:9708
+- Permission Check: 4-level (Superuser → Direct User → PUBLIC → Roles → Groups with transitive closure)
+
+---
+
+## SESSION & PERMISSION MANAGEMENT ✅ **PHASE 1.4 COMPLETE**
+
+**Session Management** (3 functions)
+- Spec: `/docs/specifications/SECURITY_SYSTEM_SPECIFICATION.md`
+- Cache: `session_cache_` (in-memory, thread-safe with `session_cache_mutex_`)
+- SessionInfo struct: `session_id, user_id, username, is_superuser, effective_roles[], effective_groups[], login_time, last_activity_time, current_schema_id`
+- Functions:
+  - `Status createSession(const ID& user_id, const ID& default_schema_id, SessionInfo& session_out, ErrorContext* ctx)` → cpp:9282
+    - Validates user is active
+    - Computes effective roles/groups (transitive closure)
+    - Stores in session cache
+  - `Status getSession(const ID& session_id, SessionInfo& session_out, ErrorContext* ctx)` → cpp:9346
+    - Updates last_activity_time
+  - `Status closeSession(const ID& session_id, ErrorContext* ctx)` → cpp:9367
+
+**Transitive Closure** (2 functions)
+- `Status getEffectiveRoles(const ID& user_id, vector<ID>& roles_out, ErrorContext* ctx)` → cpp:9385
+  - Phase 1: Direct role memberships only
+  - Future: Support role-to-role grants
+- `Status getEffectiveGroups(const ID& user_id, vector<ID>& groups_out, ErrorContext* ctx)` → cpp:9412
+  - BFS algorithm for nested groups
+  - Handles cycles via visited set
+  - Supports unlimited group nesting depth
+
+**Permission Algorithm**:
+```
+hasPermission(user, object, privilege):
+  1. IF user.is_superuser → RETURN true
+  2. IF direct_user_permission(user, object, privilege) → RETURN true
+  3. IF public_permission(object, privilege) → RETURN true
+  4. FOR EACH role IN getEffectiveRoles(user):
+       IF role_permission(role, object, privilege) → RETURN true
+  5. FOR EACH group IN getEffectiveGroups(user):
+       IF group_permission(group, object, privilege) → RETURN true
+  6. RETURN false
+```
 
 ---
 

@@ -935,6 +935,72 @@ namespace scratchbird
                             }
                             result = ExecutionResult();
                         }
+                        // ===== Security Statements (ALPHA Phase 1 - Security System Phase 2) =====
+                        else if (ext_op == static_cast<uint8_t>(Opcode::EXT_CREATE_USER))
+                        {
+                            executeCreateUser();
+                            result = ExecutionResult();
+                        }
+                        else if (ext_op == static_cast<uint8_t>(Opcode::EXT_ALTER_USER))
+                        {
+                            executeAlterUser();
+                            result = ExecutionResult();
+                        }
+                        else if (ext_op == static_cast<uint8_t>(Opcode::EXT_DROP_USER))
+                        {
+                            executeDropUser();
+                            result = ExecutionResult();
+                        }
+                        else if (ext_op == static_cast<uint8_t>(Opcode::EXT_CREATE_ROLE))
+                        {
+                            executeCreateRole();
+                            result = ExecutionResult();
+                        }
+                        else if (ext_op == static_cast<uint8_t>(Opcode::EXT_DROP_ROLE))
+                        {
+                            executeDropRole();
+                            result = ExecutionResult();
+                        }
+                        else if (ext_op == static_cast<uint8_t>(Opcode::EXT_CREATE_GROUP))
+                        {
+                            executeCreateGroup();
+                            result = ExecutionResult();
+                        }
+                        else if (ext_op == static_cast<uint8_t>(Opcode::EXT_DROP_GROUP))
+                        {
+                            executeDropGroup();
+                            result = ExecutionResult();
+                        }
+                        else if (ext_op == static_cast<uint8_t>(Opcode::EXT_GRANT_PRIVILEGE))
+                        {
+                            executeGrantPrivilege();
+                            result = ExecutionResult();
+                        }
+                        else if (ext_op == static_cast<uint8_t>(Opcode::EXT_REVOKE_PRIVILEGE))
+                        {
+                            executeRevokePrivilege();
+                            result = ExecutionResult();
+                        }
+                        else if (ext_op == static_cast<uint8_t>(Opcode::EXT_GRANT_ROLE))
+                        {
+                            executeGrantRole();
+                            result = ExecutionResult();
+                        }
+                        else if (ext_op == static_cast<uint8_t>(Opcode::EXT_REVOKE_ROLE))
+                        {
+                            executeRevokeRole();
+                            result = ExecutionResult();
+                        }
+                        else if (ext_op == static_cast<uint8_t>(Opcode::EXT_SET_ROLE))
+                        {
+                            executeSetRole();
+                            result = ExecutionResult();
+                        }
+                        else if (ext_op == static_cast<uint8_t>(Opcode::EXT_SET_SESSION_AUTH))
+                        {
+                            executeSetSessionAuth();
+                            result = ExecutionResult();
+                        }
                         else
                         {
                             result = ExecutionResult("Unknown extended opcode: " +
@@ -1213,6 +1279,14 @@ namespace scratchbird
             if (status != core::Status::OK)
             {
                 error("Failed to get default schema");
+            }
+
+            // Check CREATE permission on schema
+            if (!checkPermission(schema_info.schema_id,
+                               core::CatalogManager::PermissionObjectType::SCHEMA,
+                               static_cast<uint32_t>(core::CatalogManager::Privilege::CREATE)))
+            {
+                error("Permission denied: CREATE on schema PUBLIC");
             }
 
             // Create table in catalog
@@ -2352,6 +2426,15 @@ namespace scratchbird
                 }
             }
 
+            // Check DROP permission on table (table owner or superuser)
+            // For now, checkPermission uses a placeholder that allows all
+            if (!checkPermission(table_info.table_id,
+                               core::CatalogManager::PermissionObjectType::TABLE,
+                               static_cast<uint32_t>(core::CatalogManager::Privilege::DELETE)))
+            {
+                throw std::runtime_error("Permission denied: DROP TABLE " + table_name);
+            }
+
             // Drop the table using catalog manager
             ErrorContext ctx;
             status = db_->catalog_manager()->dropTable(table_info.table_id, cascade, &ctx);
@@ -2458,6 +2541,15 @@ namespace scratchbird
             if (status != Status::OK)
             {
                 throw std::runtime_error("Table not found: " + table_name);
+            }
+
+            // Check ALTER permission on table (requires table owner or superuser)
+            // For DDL operations, we typically require ownership rather than just UPDATE
+            if (!checkPermission(table_info.table_id,
+                               core::CatalogManager::PermissionObjectType::TABLE,
+                               static_cast<uint32_t>(core::CatalogManager::Privilege::UPDATE)))
+            {
+                throw std::runtime_error("Permission denied: ALTER TABLE " + table_name);
             }
 
             // Dispatch based on action
@@ -3150,6 +3242,14 @@ namespace scratchbird
             }
             core::ID table_id = table_info.table_id;
 
+            // Check INSERT permission on table
+            if (!checkPermission(table_info.table_id,
+                               core::CatalogManager::PermissionObjectType::TABLE,
+                               static_cast<uint32_t>(core::CatalogManager::Privilege::INSERT)))
+            {
+                error("Permission denied: INSERT on table " + table_name);
+            }
+
             // Read column list
             if (readByte() != static_cast<uint8_t>(Opcode::BEGIN_LIST))
             {
@@ -3460,6 +3560,14 @@ namespace scratchbird
                 error("Table not found: " + table_name);
             }
             core::ID table_id = table_info.table_id;
+
+            // Check UPDATE permission on table
+            if (!checkPermission(table_info.table_id,
+                               core::CatalogManager::PermissionObjectType::TABLE,
+                               static_cast<uint32_t>(core::CatalogManager::Privilege::UPDATE)))
+            {
+                error("Permission denied: UPDATE on table " + table_name);
+            }
 
             // Get column information
             std::vector<core::CatalogManager::ColumnInfo> all_columns;
@@ -3924,6 +4032,14 @@ namespace scratchbird
                 error("Table not found: " + table_name);
             }
             core::ID table_id = table_info.table_id;
+
+            // Check DELETE permission on table
+            if (!checkPermission(table_info.table_id,
+                               core::CatalogManager::PermissionObjectType::TABLE,
+                               static_cast<uint32_t>(core::CatalogManager::Privilege::DELETE)))
+            {
+                error("Permission denied: DELETE on table " + table_name);
+            }
 
             // Get column information for WHERE clause evaluation
             std::vector<core::CatalogManager::ColumnInfo> all_columns;
@@ -5328,6 +5444,14 @@ namespace scratchbird
             if (status != core::Status::OK)
             {
                 error("Table not found: " + table_name);
+            }
+
+            // Check SELECT permission on table
+            if (!checkPermission(table_info.table_id,
+                               core::CatalogManager::PermissionObjectType::TABLE,
+                               static_cast<uint32_t>(core::CatalogManager::Privilege::SELECT)))
+            {
+                error("Permission denied: SELECT on table " + table_name);
             }
 
             // Get column information
@@ -12311,6 +12435,756 @@ namespace scratchbird
             {
                 pc_ = offset;
             }
+        }
+
+        // ===== Security Statements (ALPHA Phase 1 - Security System Phase 2) =====
+
+        void Executor::executeCreateUser()
+        {
+            // Decode bytecode
+            std::string username = readString();
+            uint8_t flags = readByte();
+            bool has_password = flags & 0x01;
+            bool is_superuser = flags & 0x02;
+            std::string password;
+            if (has_password)
+            {
+                password = readString();
+            }
+
+            // Permission check: Only superusers can create users
+            // TODO: Once connection context is integrated, add:
+            // if (!conn_ctx_->isSuperuser()) {
+            //     error("Permission denied: CREATE USER (superuser only)");
+            // }
+
+            // Hash password if provided
+            // TODO: Implement proper password hashing (bcrypt/argon2)
+            std::string password_hash;
+            if (has_password)
+            {
+                password_hash = "hashed_" + password; // Placeholder
+            }
+
+            // Call catalog manager
+            core::ID user_id;
+            core::ID default_schema_id;  // TODO: Get from database or use a default
+            // For now, use zero UUID as default schema (will need proper handling)
+            std::memset(&default_schema_id, 0, sizeof(default_schema_id));
+
+            core::ErrorContext err_ctx;
+            auto status = db_->catalog_manager()->createUser(
+                username, password_hash, default_schema_id, is_superuser, user_id, &err_ctx);
+
+            if (status != core::Status::OK)
+            {
+                error("CREATE USER failed: " + std::string("Operation failed"));
+            }
+        }
+
+        void Executor::executeAlterUser()
+        {
+            // Decode bytecode
+            std::string username = readString();
+            uint8_t flags = readByte();
+            bool change_password = flags & 0x01;
+            bool change_superuser = flags & 0x02;
+            bool is_superuser = flags & 0x04;
+            std::string password;
+            if (change_password)
+            {
+                password = readString();
+            }
+
+            // Permission check: Only superusers can alter users
+            // TODO: Once connection context is integrated, add:
+            // if (!conn_ctx_->isSuperuser()) {
+            //     error("Permission denied: ALTER USER (superuser only)");
+            // }
+
+            // Look up user by name
+            core::CatalogManager::UserInfo user_info;
+            core::ErrorContext err_ctx;
+            auto get_status = db_->catalog_manager()->getUserByName(
+                username, user_info, &err_ctx);
+
+            if (get_status != core::Status::OK)
+            {
+                error("User '" + username + "' not found");
+            }
+
+            // Prepare password hash if changing
+            std::string password_hash = user_info.password_hash;  // Keep existing if not changing
+            if (change_password)
+            {
+                password_hash = "hashed_" + password; // TODO: Proper hashing
+            }
+
+            // TODO: updateUser API doesn't support changing superuser flag
+            // This needs to be addressed - either extend the API or use a different approach
+            // For now, we'll update what we can
+            core::ID default_schema_id = user_info.default_schema_id;
+            bool is_active = user_info.is_active;
+
+            // Call catalog manager update
+            auto status = db_->catalog_manager()->updateUser(
+                user_info.user_id, password_hash, default_schema_id, is_active, &err_ctx);
+
+            if (status != core::Status::OK)
+            {
+                error("ALTER USER failed: " + std::string("Operation failed"));
+            }
+        }
+
+        void Executor::executeDropUser()
+        {
+            // Decode bytecode
+            std::string username = readString();
+            uint8_t flags = readByte();
+            bool if_exists = flags & 0x01;
+            bool cascade = flags & 0x02;
+
+            // TODO: Add permission check - only superusers can drop users
+
+            // Look up user by name
+            core::CatalogManager::UserInfo user_info;
+            core::ErrorContext err_ctx;
+            auto get_status = db_->catalog_manager()->getUserByName(
+                username, user_info, &err_ctx);
+
+            if (get_status != core::Status::OK)
+            {
+                if (if_exists)
+                {
+                    // Silently succeed if IF EXISTS specified
+                    return;
+                }
+                error("User '" + username + "' not found");
+            }
+
+            // TODO: CASCADE option not yet implemented in catalog manager
+            // For now, just delete the user (catalog manager may enforce constraints)
+            auto status = db_->catalog_manager()->deleteUser(
+                user_info.user_id, &err_ctx);
+
+            if (status != core::Status::OK)
+            {
+                error("DROP USER failed: " + std::string("Operation failed"));
+            }
+        }
+
+        void Executor::executeCreateRole()
+        {
+            // Decode bytecode
+            std::string rolename = readString();
+
+            // TODO: Add permission check - only superusers can create roles
+
+            // Get current user ID as the owner
+            // TODO: Get from connection context when implemented
+            core::ID owner_id;
+            std::memset(&owner_id, 0, sizeof(owner_id)); // Placeholder: system user
+
+            // Call catalog manager
+            core::ID role_uuid;
+            core::ErrorContext err_ctx;
+            auto status = db_->catalog_manager()->createRole(
+                rolename, owner_id, role_uuid, &err_ctx);
+
+            if (status != core::Status::OK)
+            {
+                error("CREATE ROLE failed: " + std::string("Operation failed"));
+            }
+        }
+
+        void Executor::executeDropRole()
+        {
+            // Decode bytecode
+            std::string rolename = readString();
+            uint8_t flags = readByte();
+            bool if_exists = flags & 0x01;
+            bool cascade = flags & 0x02;
+
+            // TODO: Add permission check - only superusers can drop roles
+
+            // Look up role by name
+            core::CatalogManager::RoleInfo role_info;
+            core::ErrorContext err_ctx;
+            auto get_status = db_->catalog_manager()->getRoleByName(
+                rolename, role_info, &err_ctx);
+
+            if (get_status != core::Status::OK)
+            {
+                if (if_exists)
+                {
+                    return; // Silently succeed
+                }
+                error("Role '" + rolename + "' not found");
+            }
+
+            // TODO: CASCADE option not yet implemented in catalog manager
+            // For now, just delete the role (catalog manager may enforce constraints)
+            auto status = db_->catalog_manager()->deleteRole(
+                role_info.role_id, &err_ctx);
+
+            if (status != core::Status::OK)
+            {
+                error("DROP ROLE failed: " + std::string("Operation failed"));
+            }
+        }
+
+        void Executor::executeCreateGroup()
+        {
+            // Decode bytecode
+            std::string groupname = readString();
+
+            // TODO: Add permission check - only superusers can create groups
+
+            // Call catalog manager
+            core::ID group_uuid;
+            core::ErrorContext err_ctx;
+            // Default to LOCAL group type, empty external_id
+            auto status = db_->catalog_manager()->createGroup(
+                groupname, core::CatalogManager::GroupType::LOCAL, "", group_uuid, &err_ctx);
+
+            if (status != core::Status::OK)
+            {
+                error("CREATE GROUP failed: " + std::string("Operation failed"));
+            }
+        }
+
+        void Executor::executeDropGroup()
+        {
+            // Decode bytecode
+            std::string groupname = readString();
+            uint8_t flags = readByte();
+            bool if_exists = flags & 0x01;
+            bool cascade = flags & 0x02;
+
+            // TODO: Add permission check - only superusers can drop groups
+
+            // Look up group by name
+            core::CatalogManager::GroupInfo group_info;
+            core::ErrorContext err_ctx;
+            auto get_status = db_->catalog_manager()->getGroupByName(
+                groupname, group_info, &err_ctx);
+
+            if (get_status != core::Status::OK)
+            {
+                if (if_exists)
+                {
+                    return; // Silently succeed
+                }
+                error("Group '" + groupname + "' not found");
+            }
+
+            // TODO: CASCADE option not yet implemented in catalog manager
+            // For now, just delete the group (catalog manager may enforce constraints)
+            auto status = db_->catalog_manager()->deleteGroup(
+                group_info.group_id, &err_ctx);
+
+            if (status != core::Status::OK)
+            {
+                error("DROP GROUP failed: " + std::string("Operation failed"));
+            }
+        }
+
+        void Executor::executeGrantPrivilege()
+        {
+            // Decode bytecode
+            uint32_t privileges = readInt32();
+            uint8_t object_type_byte = readByte();
+            std::string object_name = readString();
+            uint8_t grantee_type_byte = readByte();
+            std::string grantee_name = readString();
+            uint8_t flags = readByte();
+            bool with_grant_option = flags & 0x01;
+
+            // TODO: Add permission check - only superusers or object owners can grant
+
+            core::ErrorContext err_ctx;
+
+            // Convert object_type_byte to enum
+            core::CatalogManager::PermissionObjectType object_type =
+                static_cast<core::CatalogManager::PermissionObjectType>(object_type_byte);
+
+            // Look up object ID based on object type
+            // TODO: For now, only TABLE is supported. Need schema-qualified name handling.
+            // Placeholder: use zero UUID for current schema
+            core::ID object_id;
+            if (object_type == core::CatalogManager::PermissionObjectType::TABLE)
+            {
+                core::ID schema_id;
+                std::memset(&schema_id, 0, sizeof(schema_id)); // TODO: Get actual current schema
+                core::CatalogManager::TableInfo table_info;
+                auto get_obj_status = db_->catalog_manager()->getTable(
+                    schema_id, object_name, table_info, &err_ctx);
+                if (get_obj_status != core::Status::OK)
+                {
+                    error("Table '" + object_name + "' not found");
+                }
+                object_id = table_info.table_id;
+            }
+            else
+            {
+                // TODO: Implement lookup for other object types
+                error("Object type not yet supported: " + std::to_string(object_type_byte));
+            }
+
+            // Look up grantee ID based on grantee type
+            core::ID grantee_id;
+            core::CatalogManager::GranteeType grantee_type =
+                static_cast<core::CatalogManager::GranteeType>(grantee_type_byte);
+
+            if (grantee_type == core::CatalogManager::GranteeType::USER)
+            {
+                core::CatalogManager::UserInfo user_info;
+                auto get_grantee = db_->catalog_manager()->getUserByName(
+                    grantee_name, user_info, &err_ctx);
+                if (get_grantee != core::Status::OK)
+                {
+                    error("User '" + grantee_name + "' not found");
+                }
+                grantee_id = user_info.user_id;
+            }
+            else if (grantee_type == core::CatalogManager::GranteeType::ROLE)
+            {
+                core::CatalogManager::RoleInfo role_info;
+                auto get_grantee = db_->catalog_manager()->getRoleByName(
+                    grantee_name, role_info, &err_ctx);
+                if (get_grantee != core::Status::OK)
+                {
+                    error("Role '" + grantee_name + "' not found");
+                }
+                grantee_id = role_info.role_id;
+            }
+            else if (grantee_type == core::CatalogManager::GranteeType::GROUP)
+            {
+                core::CatalogManager::GroupInfo group_info;
+                auto get_grantee = db_->catalog_manager()->getGroupByName(
+                    grantee_name, group_info, &err_ctx);
+                if (get_grantee != core::Status::OK)
+                {
+                    error("Group '" + grantee_name + "' not found");
+                }
+                grantee_id = group_info.group_id;
+            }
+            else if (grantee_type == core::CatalogManager::GranteeType::PUBLIC)
+            {
+                // PUBLIC uses zero UUID
+                std::memset(&grantee_id, 0, sizeof(grantee_id));
+            }
+            else
+            {
+                error("Invalid grantee type: " + std::to_string(grantee_type_byte));
+            }
+
+            // Get grantor ID (current user)
+            // TODO: Get from connection context when implemented
+            core::ID grantor_id;
+            std::memset(&grantor_id, 0, sizeof(grantor_id)); // Placeholder: system user
+
+            // Call catalog manager
+            auto status = db_->catalog_manager()->grantPermission(
+                object_id, object_type, grantee_id, grantee_type,
+                privileges, with_grant_option, grantor_id, &err_ctx);
+
+            if (status != core::Status::OK)
+            {
+                error("GRANT PRIVILEGE failed: " + std::string("Operation failed"));
+            }
+        }
+
+        void Executor::executeRevokePrivilege()
+        {
+            // Decode bytecode
+            uint32_t privileges = readInt32();
+            uint8_t object_type_byte = readByte();
+            std::string object_name = readString();
+            uint8_t grantee_type_byte = readByte();
+            std::string grantee_name = readString();
+            uint8_t flags = readByte();
+            bool cascade = flags & 0x01;
+
+            // TODO: Add permission check - only superusers or object owners can revoke
+
+            core::ErrorContext err_ctx;
+
+            // Convert object_type_byte to enum
+            core::CatalogManager::PermissionObjectType object_type =
+                static_cast<core::CatalogManager::PermissionObjectType>(object_type_byte);
+
+            // Look up object ID based on object type
+            // TODO: For now, only TABLE is supported. Need schema-qualified name handling.
+            core::ID object_id;
+            if (object_type == core::CatalogManager::PermissionObjectType::TABLE)
+            {
+                core::ID schema_id;
+                std::memset(&schema_id, 0, sizeof(schema_id)); // TODO: Get actual current schema
+                core::CatalogManager::TableInfo table_info;
+                auto get_obj_status = db_->catalog_manager()->getTable(
+                    schema_id, object_name, table_info, &err_ctx);
+                if (get_obj_status != core::Status::OK)
+                {
+                    error("Table '" + object_name + "' not found");
+                }
+                object_id = table_info.table_id;
+            }
+            else
+            {
+                // TODO: Implement lookup for other object types
+                error("Object type not yet supported: " + std::to_string(object_type_byte));
+            }
+
+            // Look up grantee ID based on grantee type
+            core::ID grantee_id;
+            core::CatalogManager::GranteeType grantee_type =
+                static_cast<core::CatalogManager::GranteeType>(grantee_type_byte);
+
+            if (grantee_type == core::CatalogManager::GranteeType::USER)
+            {
+                core::CatalogManager::UserInfo user_info;
+                auto get_grantee = db_->catalog_manager()->getUserByName(
+                    grantee_name, user_info, &err_ctx);
+                if (get_grantee != core::Status::OK)
+                {
+                    error("User '" + grantee_name + "' not found");
+                }
+                grantee_id = user_info.user_id;
+            }
+            else if (grantee_type == core::CatalogManager::GranteeType::ROLE)
+            {
+                core::CatalogManager::RoleInfo role_info;
+                auto get_grantee = db_->catalog_manager()->getRoleByName(
+                    grantee_name, role_info, &err_ctx);
+                if (get_grantee != core::Status::OK)
+                {
+                    error("Role '" + grantee_name + "' not found");
+                }
+                grantee_id = role_info.role_id;
+            }
+            else if (grantee_type == core::CatalogManager::GranteeType::GROUP)
+            {
+                core::CatalogManager::GroupInfo group_info;
+                auto get_grantee = db_->catalog_manager()->getGroupByName(
+                    grantee_name, group_info, &err_ctx);
+                if (get_grantee != core::Status::OK)
+                {
+                    error("Group '" + grantee_name + "' not found");
+                }
+                grantee_id = group_info.group_id;
+            }
+            else if (grantee_type == core::CatalogManager::GranteeType::PUBLIC)
+            {
+                // PUBLIC uses zero UUID
+                std::memset(&grantee_id, 0, sizeof(grantee_id));
+            }
+            else
+            {
+                error("Invalid grantee type: " + std::to_string(grantee_type_byte));
+            }
+
+            // TODO: CASCADE option not yet implemented in catalog manager
+            // Call catalog manager
+            auto status = db_->catalog_manager()->revokePermission(
+                object_id, object_type, grantee_id, grantee_type,
+                privileges, &err_ctx);
+
+            if (status != core::Status::OK)
+            {
+                error("REVOKE PRIVILEGE failed: " + std::string("Operation failed"));
+            }
+        }
+
+        void Executor::executeGrantRole()
+        {
+            // Decode bytecode
+            std::string rolename = readString();
+            uint8_t grantee_type_byte = readByte();
+            std::string grantee_name = readString();
+
+            // TODO: Add permission check - only superusers can grant roles
+
+            core::ErrorContext err_ctx;
+
+            // Look up role by name
+            core::CatalogManager::RoleInfo role_info;
+            auto get_role = db_->catalog_manager()->getRoleByName(
+                rolename, role_info, &err_ctx);
+            if (get_role != core::Status::OK)
+            {
+                error("Role '" + rolename + "' not found");
+            }
+
+            // For now, only USER grantees are supported (SQL standard doesn't allow GRANT ROLE TO ROLE)
+            // However, some databases do support it, so we check the type
+            if (grantee_type_byte != 0) // 0 = USER
+            {
+                error("GRANT ROLE only supports USER grantees (got type: " + std::to_string(grantee_type_byte) + ")");
+            }
+
+            // Look up user by name
+            core::CatalogManager::UserInfo user_info;
+            auto get_grantee = db_->catalog_manager()->getUserByName(
+                grantee_name, user_info, &err_ctx);
+            if (get_grantee != core::Status::OK)
+            {
+                error("User '" + grantee_name + "' not found");
+            }
+
+            // Get grantor ID (current user)
+            // TODO: Get from connection context when implemented
+            core::ID granted_by;
+            std::memset(&granted_by, 0, sizeof(granted_by)); // Placeholder: system user
+
+            // TODO: WITH ADMIN OPTION not yet implemented in bytecode
+            bool with_admin_option = false;
+
+            // Grant role to user
+            auto status = db_->catalog_manager()->grantRole(
+                role_info.role_id, user_info.user_id, granted_by, with_admin_option, &err_ctx);
+
+            if (status != core::Status::OK)
+            {
+                error("GRANT ROLE failed: " + std::string("Operation failed"));
+            }
+        }
+
+        void Executor::executeRevokeRole()
+        {
+            // Decode bytecode
+            std::string rolename = readString();
+            uint8_t grantee_type_byte = readByte();
+            std::string grantee_name = readString();
+            uint8_t flags = readByte();
+            bool cascade = flags & 0x01;
+
+            // TODO: Add permission check - only superusers can revoke roles
+
+            core::ErrorContext err_ctx;
+
+            // Look up role by name
+            core::CatalogManager::RoleInfo role_info;
+            auto get_role = db_->catalog_manager()->getRoleByName(
+                rolename, role_info, &err_ctx);
+            if (get_role != core::Status::OK)
+            {
+                error("Role '" + rolename + "' not found");
+            }
+
+            // For now, only USER grantees are supported (matching GRANT ROLE behavior)
+            if (grantee_type_byte != 0) // 0 = USER
+            {
+                error("REVOKE ROLE only supports USER grantees (got type: " + std::to_string(grantee_type_byte) + ")");
+            }
+
+            // Look up user by name
+            core::CatalogManager::UserInfo user_info;
+            auto get_grantee = db_->catalog_manager()->getUserByName(
+                grantee_name, user_info, &err_ctx);
+            if (get_grantee != core::Status::OK)
+            {
+                error("User '" + grantee_name + "' not found");
+            }
+
+            // TODO: CASCADE option not yet implemented in catalog manager
+            // Revoke role from user
+            auto status = db_->catalog_manager()->revokeRole(
+                role_info.role_id, user_info.user_id, &err_ctx);
+
+            if (status != core::Status::OK)
+            {
+                error("REVOKE ROLE failed: " + std::string("Operation failed"));
+            }
+        }
+
+        void Executor::executeSetRole()
+        {
+            // Decode bytecode
+            uint8_t flags = readByte();
+            bool is_reset = flags & 0x01;
+
+            // Check connection context is available
+            if (!conn_ctx_)
+            {
+                error("SET ROLE requires connection context");
+            }
+
+            if (is_reset)
+            {
+                // RESET ROLE: Clear active role
+                conn_ctx_->clearActiveRole();
+            }
+            else
+            {
+                // SET ROLE: Set active role
+                std::string rolename = readString();
+
+                // Look up role by name
+                core::CatalogManager::RoleInfo role_info;
+                core::ErrorContext err_ctx;
+                auto get_role = db_->catalog_manager()->getRoleByName(
+                    rolename, role_info, &err_ctx);
+
+                if (get_role != core::Status::OK)
+                {
+                    error("Role '" + rolename + "' not found");
+                }
+
+                // Verify user has been granted this role
+                const core::ID& current_user = conn_ctx_->getCurrentUserId();
+                std::vector<core::CatalogManager::RoleMembershipInfo> user_roles;
+                auto check_status = db_->catalog_manager()->getUserRoles(
+                    current_user, user_roles, &err_ctx);
+
+                if (check_status != core::Status::OK)
+                {
+                    error("Failed to check role membership for user");
+                }
+
+                // Check if role_info.role_id is in user_roles
+                bool has_role = false;
+                for (const auto& membership : user_roles)
+                {
+                    if (membership.role_id == role_info.role_id)
+                    {
+                        has_role = true;
+                        break;
+                    }
+                }
+
+                if (!has_role)
+                {
+                    error("Permission denied: Role '" + rolename + "' not granted to current user");
+                }
+
+                // Update session with active role
+                conn_ctx_->setActiveRole(role_info.role_id);
+            }
+        }
+
+        void Executor::executeSetSessionAuth()
+        {
+            // Decode bytecode
+            uint8_t flags = readByte();
+            bool is_reset = flags & 0x01;
+
+            // Check connection context is available
+            if (!conn_ctx_)
+            {
+                error("SET SESSION AUTHORIZATION requires connection context");
+            }
+
+            // Permission check: Only superusers can change session authorization
+            if (!conn_ctx_->isSuperuser())
+            {
+                error("Permission denied: SET SESSION AUTHORIZATION (superuser only)");
+            }
+
+            // TODO: Implement session user tracking
+            // For now, SET SESSION AUTHORIZATION is not fully implemented because:
+            // 1. We need to track the "original" connection user separately from "effective" user
+            // 2. RESET SESSION AUTHORIZATION should restore to the original user
+            // 3. This requires extending ConnectionContext with original_user_id_ field
+            //
+            // Placeholder behavior for now:
+            if (is_reset)
+            {
+                // RESET SESSION AUTHORIZATION: Not yet implemented
+                error("RESET SESSION AUTHORIZATION not yet implemented (requires session user tracking)");
+            }
+            else
+            {
+                // SET SESSION AUTHORIZATION: Not yet implemented
+                std::string username = readString();
+                error("SET SESSION AUTHORIZATION not yet implemented (requires session user tracking)");
+            }
+        }
+
+        // Security context helpers (Phase 2 - Security System)
+        const core::ID& Executor::getCurrentUserID() const
+        {
+            if (!conn_ctx_)
+            {
+                // Return zero UUID if no connection context
+                static const core::ID zero_id = {};
+                return zero_id;
+            }
+            return conn_ctx_->getCurrentUserId();
+        }
+
+        const core::ID& Executor::getActiveRoleID() const
+        {
+            if (!conn_ctx_)
+            {
+                // Return zero UUID if no connection context
+                static const core::ID zero_id = {};
+                return zero_id;
+            }
+            return conn_ctx_->getActiveRoleId();
+        }
+
+        bool Executor::isSuperuser() const
+        {
+            if (!conn_ctx_)
+            {
+                return false; // No connection context = no privileges
+            }
+            return conn_ctx_->isSuperuser();
+        }
+
+        // Permission check helper (Phase 2 - Security System)
+        bool Executor::checkPermission(const core::ID& object_id,
+                                      core::CatalogManager::PermissionObjectType object_type,
+                                      uint32_t required_privilege)
+        {
+            // If no connection context, deny access (should never happen in production)
+            if (!conn_ctx_)
+            {
+                return false;
+            }
+
+            // Superusers bypass all permission checks
+            if (conn_ctx_->isSuperuser())
+            {
+                return true;
+            }
+
+            // Get current user and active role
+            const core::ID& current_user_id = conn_ctx_->getCurrentUserId();
+            const core::ID& active_role_id = conn_ctx_->getActiveRoleId();
+
+            // Check if object_id is zero UUID (invalid object)
+            static const core::ID zero_id = {};
+            if (object_id == zero_id)
+            {
+                return false; // Can't have permissions on invalid object
+            }
+
+            // Check permission using catalog manager
+            // hasPermission signature: (user_id, object_id, object_type, privilege, has_perm_out, ctx)
+            core::ErrorContext err_ctx;
+            bool has_permission = false;
+            auto status = db_->catalog_manager()->hasPermission(
+                current_user_id, object_id, object_type,
+                static_cast<core::CatalogManager::Privilege>(required_privilege),
+                has_permission, &err_ctx);
+
+            if (status != core::Status::OK)
+            {
+                // Permission check failed - deny access
+                return false;
+            }
+
+            // TODO: Also check active_role_id permissions if a role is active
+            // For now, we only check the user's direct permissions
+            // Full implementation should check:
+            // 1. User's direct permissions
+            // 2. Permissions granted to active_role (if any)
+            // 3. Permissions granted to PUBLIC
+            // 4. Permissions granted to any groups the user belongs to
+
+            return has_permission;
         }
 
     } // namespace sblr

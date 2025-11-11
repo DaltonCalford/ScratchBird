@@ -16,6 +16,12 @@
 
 namespace scratchbird
 {
+    // Forward declarations
+    namespace core
+    {
+        class ConnectionContext;
+    }
+
     namespace sblr
     {
 
@@ -161,6 +167,13 @@ namespace scratchbird
             // Execute bytecode
             ExecutionResult execute(const std::vector<uint8_t> &bytecode);
 
+            // Set connection context for security and transaction state (Phase 2 - Security System)
+            // Must be called before executing any security-related operations (CREATE USER, GRANT, etc.)
+            void setConnectionContext(core::ConnectionContext *conn_ctx)
+            {
+                conn_ctx_ = conn_ctx;
+            }
+
             // Task 17 MGA Phase 2.2: Access index maintenance statistics
             const IndexMaintenanceStats& getIndexStats() const { return index_stats_; }
             void resetIndexStats() { index_stats_.reset(); }
@@ -169,6 +182,10 @@ namespace scratchbird
             core::Database *db_;
             core::CharsetManager charset_manager_;
             core::TimezoneManager timezone_manager_;
+
+            // Connection context for security and transaction state (Phase 2 - Security System)
+            // NOTE: This is a non-owning pointer that must be set before executing security-related operations
+            core::ConnectionContext *conn_ctx_ = nullptr;
 
             // Execution state
             // Note: bytecode_ is a raw pointer that must remain valid during execute()
@@ -509,6 +526,33 @@ namespace scratchbird
             void executeJump();              // Unconditional jump
             void executeJumpIfTrue();        // Jump if stack top is true
             void executeJumpIfFalse();       // Jump if stack top is false
+
+            // Security Statements (ALPHA Phase 1 - Security System Phase 2)
+            void executeCreateUser();        // Execute CREATE USER
+            void executeAlterUser();         // Execute ALTER USER
+            void executeDropUser();          // Execute DROP USER
+            void executeCreateRole();        // Execute CREATE ROLE
+            void executeDropRole();          // Execute DROP ROLE
+            void executeCreateGroup();       // Execute CREATE GROUP
+            void executeDropGroup();         // Execute DROP GROUP
+            void executeGrantPrivilege();    // Execute GRANT privilege
+            void executeRevokePrivilege();   // Execute REVOKE privilege
+            void executeGrantRole();         // Execute GRANT role
+            void executeRevokeRole();        // Execute REVOKE role
+            void executeSetRole();           // Execute SET ROLE / RESET ROLE
+            void executeSetSessionAuth();    // Execute SET/RESET SESSION AUTHORIZATION
+
+            // Security context helpers (Phase 2 - Security System)
+            // These wrap ConnectionContext methods for convenience
+            const core::ID& getCurrentUserID() const;
+            const core::ID& getActiveRoleID() const;
+            bool isSuperuser() const;
+
+            // Permission check helper (Phase 2 - Security System)
+            // Returns true if the current user has the specified privilege on the object
+            bool checkPermission(const core::ID& object_id,
+                               core::CatalogManager::PermissionObjectType object_type,
+                               uint32_t required_privilege);
 
         public:
             // Forward declaration

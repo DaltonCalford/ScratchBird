@@ -17,6 +17,9 @@ namespace scratchbird::core
           current_xid_(0) // Will be set by initialize()
           ,
           xact_start_time_(std::chrono::microseconds(0)),
+          current_user_id_(), // Zero UUID - will be set during authentication
+          active_role_id_(),  // Zero UUID - no role active initially
+          is_superuser_(false), // Will be set during authentication
           isolation_level_(IsolationLevel::SNAPSHOT) // Default to SNAPSHOT
           ,
           is_read_only_(false), wait_for_locks_(true) // Default: wait for locks
@@ -28,6 +31,10 @@ namespace scratchbird::core
     {
         assert(db != nullptr && "Database must not be null");
         assert(txn_manager_ != nullptr && "TransactionManager must not be null");
+
+        // Initialize UUIDs to zero (no user authenticated yet)
+        std::memset(&current_user_id_, 0, sizeof(current_user_id_));
+        std::memset(&active_role_id_, 0, sizeof(active_role_id_));
     }
 
     ConnectionContext::~ConnectionContext()
@@ -49,6 +56,8 @@ namespace scratchbird::core
     ConnectionContext::ConnectionContext(ConnectionContext &&other) noexcept
         : db_(other.db_), txn_manager_(other.txn_manager_), proc_id_(other.proc_id_),
           current_xid_(other.current_xid_), xact_start_time_(other.xact_start_time_),
+          current_user_id_(other.current_user_id_), active_role_id_(other.active_role_id_),
+          is_superuser_(other.is_superuser_),
           isolation_level_(other.isolation_level_), is_read_only_(other.is_read_only_),
           wait_for_locks_(other.wait_for_locks_),
           lock_timeout_seconds_(other.lock_timeout_seconds_),
@@ -62,6 +71,9 @@ namespace scratchbird::core
         other.txn_manager_ = nullptr;
         other.current_xid_ = 0;
         other.statement_xid_ = 0;
+        std::memset(&other.current_user_id_, 0, sizeof(other.current_user_id_));
+        std::memset(&other.active_role_id_, 0, sizeof(other.active_role_id_));
+        other.is_superuser_ = false;
     }
 
     ConnectionContext &ConnectionContext::operator=(ConnectionContext &&other) noexcept
@@ -81,6 +93,9 @@ namespace scratchbird::core
             proc_id_ = other.proc_id_;
             current_xid_ = other.current_xid_;
             xact_start_time_ = other.xact_start_time_;
+            current_user_id_ = other.current_user_id_;
+            active_role_id_ = other.active_role_id_;
+            is_superuser_ = other.is_superuser_;
             isolation_level_ = other.isolation_level_;
             is_read_only_ = other.is_read_only_;
             wait_for_locks_ = other.wait_for_locks_;
@@ -96,6 +111,9 @@ namespace scratchbird::core
             other.txn_manager_ = nullptr;
             other.current_xid_ = 0;
             other.statement_xid_ = 0;
+            std::memset(&other.current_user_id_, 0, sizeof(other.current_user_id_));
+            std::memset(&other.active_role_id_, 0, sizeof(other.active_role_id_));
+            other.is_superuser_ = false;
         }
         return *this;
     }
@@ -839,6 +857,38 @@ namespace scratchbird::core
                       page_id, item_id, savepoint_stack_.back().name.c_str(),
                       savepoint_stack_.back().level);
         }
+    }
+
+    // ============================================================================
+    // Security Context Management (Phase 2 - Security System)
+    // ============================================================================
+
+    void ConnectionContext::setCurrentUser(const ID& user_id, bool is_superuser)
+    {
+        current_user_id_ = user_id;
+        is_superuser_ = is_superuser;
+
+        // Clear active role when user changes (switching users resets session state)
+        std::memset(&active_role_id_, 0, sizeof(active_role_id_));
+
+        LOG_DEBUG(TRANSACTION, "Set current user: proc_id=%u, user_id=%s, is_superuser=%d",
+                  proc_id_, user_id.toString().c_str(), is_superuser);
+    }
+
+    void ConnectionContext::setActiveRole(const ID& role_id)
+    {
+        active_role_id_ = role_id;
+
+        LOG_DEBUG(TRANSACTION, "Set active role: proc_id=%u, role_id=%s",
+                  proc_id_, role_id.toString().c_str());
+    }
+
+    void ConnectionContext::clearActiveRole()
+    {
+        LOG_DEBUG(TRANSACTION, "Clearing active role: proc_id=%u, previous_role=%s",
+                  proc_id_, active_role_id_.toString().c_str());
+
+        std::memset(&active_role_id_, 0, sizeof(active_role_id_));
     }
 
 } // namespace scratchbird::core
