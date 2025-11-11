@@ -1,7 +1,7 @@
 # ScratchBird Project Context
 
-**Last Updated**: November 9, 2025
-**Version**: Alpha - 80% Complete (Catalog Corrections Complete)
+**Last Updated**: November 10, 2025
+**Version**: Alpha - 83% Complete (Security Phase 2 Complete)
 **Status**: Educational/Development
 
 > **MANDATORY**: Read `/MGA_RULES.md` before ANY transaction or index work.
@@ -18,11 +18,11 @@
 - **Transactions** - 4 isolation levels, MVCC, deadlock detection
 - **Tablespaces** - Multi-file support with GPID addressing
 
-### Catalog System (36 tables = 100% structures, 50% CRUD) ✅
+### Catalog System (38 tables = 100% structures, 55% CRUD) ✅
 - **18 Schema Hierarchy** - root → sys/app/users/remote/emulation/public
 - **Core Tables (10/10)** - Schemas, Tables, Columns, Indexes, Sequences, Views, Constraints, Triggers, Timezones, Collations
 - **Dependencies & Comments (2/2)** - Full persistence with disk storage
-- **Security (4/4 structures)** - Users, Roles, Groups, RoleMemberships (CRUD pending)
+- **Security (6/6 CRUD complete)** - Users, Roles, Groups, RoleMemberships, GroupMemberships, GroupMappings ✅
 - **Stored Code (5/5 structures)** - Procedures, Parameters, Domains, UDR, Packages
 - **Emulation (3/3 structures)** - Types, Servers, Databases (mysql/postgres/mssql/firebird)
 - **Infrastructure (4/4)** - Tablespaces, Charsets, Statistics, Permissions
@@ -47,12 +47,17 @@
 - Text Search: TSVECTOR, TSQUERY
 - **Domains** with CHECK constraints
 
-### SQL Execution (21/35 = 60%)
+### SQL Execution (23/35 = 66%)
 - ✅ SELECT (WHERE, JOIN, GROUP BY, HAVING, ORDER BY, LIMIT)
 - ✅ INSERT, UPDATE, DELETE
 - ✅ CREATE TABLE, CREATE INDEX, CREATE/ALTER/DROP TABLESPACE
 - ✅ Transactions: BEGIN, COMMIT, ROLLBACK, SAVEPOINT
 - ✅ Window functions
+- ✅ **Security (Phase 1 & 2 Complete)**:
+  - Connection context with user/role tracking
+  - Permission checking (checkPermission via catalog)
+  - SET ROLE / RESET ROLE
+  - SET SESSION AUTHORIZATION (placeholder)
 - ✅ **DDL Modifications (100%)**:
   - DROP TABLE [IF EXISTS] [CASCADE | RESTRICT]
   - DROP INDEX [IF EXISTS] [CASCADE | RESTRICT]
@@ -61,7 +66,7 @@
   - ALTER TABLE RENAME COLUMN
   - ALTER TABLE ALTER COLUMN TYPE
 - ❌ Views, Sequences, Triggers (execution), Stored procedures
-- ❌ GRANT/REVOKE, MERGE, TRUNCATE, CTEs
+- ❌ Advanced security (query plan, column/row permissions, SQL syntax)
 
 ### Built-in Functions (60/100 = 60%)
 - ✅ String (11), Aggregate (6), Window (8)
@@ -74,7 +79,7 @@
 - ✅ NOT NULL, Data type validation
 - ❌ CHECK, UNIQUE, DEFAULT, PRIMARY KEY, FOREIGN KEY enforcement
 
-**Remaining**: ~1,150-1,650 hours
+**Remaining**: ~1,060-1,563 hours
 
 ---
 
@@ -321,25 +326,29 @@ ctest -V
 ## Status Summary
 
 **Version**: Alpha (Engine Phase 1)
-**Completion**: 80% (Catalog Corrections Complete)
+**Completion**: 83% (Security Phase 2 Complete)
 **MGA Compliance**: 100% ✅
-**Catalog System**: 36/36 tables (100% structures, 50% CRUD) ✅
+**Catalog System**: 38/38 tables (100% structures, 55% CRUD) ✅
 **Active Plan**: `/docs/planning/ALPHA_PHASE1_COMPLETE_IMPLEMENTATION_PLAN.md`
 **Implementation Audit**: `/docs/IMPLEMENTATION_AUDIT.md` (AI-optimized reference)
 **Timeline**: 5-7 months to completion (with 3 developers)
 
-**Recently Completed** (Nov 9, 2025):
-- ✅ 36 catalog table structures defined
-- ✅ 18-schema hierarchy implemented
-- ✅ UUID-based object references (UUIDv7)
-- ✅ Dependencies system with persistence
-- ✅ Comments system with persistence
-- ✅ Fresh database bootstrap for all 36 tables
+**Recently Completed** (Nov 10, 2025):
+- ✅ Connection context security integration (Phase 2)
+- ✅ Executor permission checking with catalog integration
+- ✅ SET ROLE / RESET ROLE implementation
+- ✅ Security catalog CRUD (Users, Roles, Groups, Memberships)
+- ✅ Session management with transitive closure
+- ✅ Permission checking (4-level: superuser → user → PUBLIC → roles → groups)
 
 **Top Priorities**:
-1. Complete catalog CRUD operations (security, stored code, emulation tables)
-2. Implement all 40 missing mathematical functions (SIN, COS, SQRT, etc.)
-3. Implement security system (GRANT/REVOKE) using new catalog tables
+1. **Security Phase 3** - Advanced security (50-73 hours):
+   - Query plan security integration (10-100x speedup)
+   - SQL object permissions (ownership chaining)
+   - Column-level and row-level security
+   - SQL parser integration (GRANT/REVOKE/CREATE USER)
+2. Complete catalog CRUD operations (stored code, emulation tables)
+3. Implement all 40 missing mathematical functions (SIN, COS, SQRT, etc.)
 4. Complete constraint enforcement (CHECK, FOREIGN KEY, DEFAULT, UNIQUE)
 5. Complete PSQL bytecode execution (procedures, triggers, cursors)
 6. Add CTEs and recursive queries
@@ -348,5 +357,5 @@ ctest -V
 
 ---
 
-**Last Updated**: November 9, 2025
-**Status**: Phase 1 ALPHA - 80% Complete (Catalog System Ready)
+**Last Updated**: November 10, 2025
+**Status**: Phase 1 ALPHA - 83% Complete (Security Phase 2 Complete)

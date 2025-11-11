@@ -2,9 +2,9 @@
 
 A relational database engine featuring **Firebird MGA (Multi-Generational Architecture)**, 11 index types, 36-table catalog system, TOAST storage, and full transaction management.
 
-## Status: Alpha - 80% Complete (Catalog System Ready)
+## Status: Alpha - 83% Complete (Security Phase 2 Complete)
 
-**Last Updated:** November 9, 2025
+**Last Updated:** November 10, 2025
 
 ## Quick Start
 
@@ -26,11 +26,11 @@ ctest --output-on-failure
 - **Transactions** - 4 isolation levels, MVCC, deadlock detection
 - **Tablespaces** - Multi-file support with GPID addressing
 
-### Catalog System (36 tables = 100% structures, 50% CRUD) ✅
+### Catalog System (38 tables = 100% structures, 55% CRUD) ✅
 - **18 Schema Hierarchy** - root → sys/app/users/remote/emulation/public
 - **Core Tables (10/10)** - Schemas, Tables, Columns, Indexes, Sequences, Views, Constraints, Triggers, Timezones, Collations
 - **Dependencies & Comments (2/2)** - Full CRUD with disk persistence
-- **Security (4/4 structures)** - Users, Roles, Groups, RoleMemberships
+- **Security (6/6 CRUD complete)** - Users, Roles, Groups, RoleMemberships, GroupMemberships, GroupMappings ✅
 - **Stored Code (5/5 structures)** - Procedures, Parameters, Domains, UDR, Packages
 - **Emulation (3/3 structures)** - Types, Servers, Databases (mysql/postgres/mssql/firebird)
 - **Infrastructure (4/4)** - Tablespaces, Charsets, Statistics, Permissions
@@ -55,12 +55,16 @@ ctest --output-on-failure
 - Text Search: TSVECTOR, TSQUERY
 - **Domains** with CHECK constraints
 
-### SQL Execution (21/35 = 60%)
+### SQL Execution (23/35 = 66%)
 - ✅ SELECT (WHERE, JOIN, GROUP BY, HAVING, ORDER BY, LIMIT)
 - ✅ INSERT, UPDATE, DELETE
 - ✅ CREATE TABLE, CREATE INDEX, CREATE/ALTER/DROP TABLESPACE
 - ✅ Transactions: BEGIN, COMMIT, ROLLBACK, SAVEPOINT
 - ✅ Window functions: ROW_NUMBER, RANK, LAG, LEAD, etc.
+- ✅ **Security (Phase 1 & 2 Complete)**:
+  - Connection context with user/role tracking
+  - Permission checking (checkPermission via catalog)
+  - SET ROLE / RESET ROLE
 - ✅ **DDL Modifications (100%)**:
   - DROP TABLE [IF EXISTS] [CASCADE | RESTRICT]
   - DROP INDEX [IF EXISTS] [CASCADE | RESTRICT]
@@ -80,11 +84,10 @@ ctest --output-on-failure
 
 ## What's Missing ❌
 
-### Catalog CRUD Operations (18 tables pending)
-- Security table operations (Users, Roles, Groups, RoleMemberships)
+### Catalog CRUD Operations (12 tables pending)
 - Stored code operations (ProcedureParameters, Domains, UDR, Packages)
 - Emulation table operations (EmulationTypes, EmulationServers, EmulatedDatabases)
-- Infrastructure operations (Constraints, Statistics, Permissions)
+- Infrastructure operations (Constraints, Statistics)
 
 ### DDL Execution
 - Views execution (structure exists, execution pending)
@@ -92,8 +95,14 @@ ctest --output-on-failure
 - Triggers execution (structure exists, execution pending)
 - CREATE DOMAIN execution
 
-### Security & Constraints
-- GRANT/REVOKE permissions (catalog ready, enforcement pending)
+### Advanced Security Features (Phase 3)
+- Query plan security integration (10-100x speedup)
+- SQL object permissions (GRANT TO PROCEDURE/FUNCTION/VIEW)
+- Column-level permissions
+- Row-level security (RLS)
+- SQL parser integration (GRANT/REVOKE/CREATE USER statements)
+
+### Constraint Enforcement
 - FOREIGN KEY enforcement
 - UNIQUE constraint enforcement
 - DEFAULT value enforcement
@@ -109,7 +118,7 @@ ctest --output-on-failure
 - Recursive queries
 - PSQL/stored procedure execution
 
-**Remaining:** ~900-1,400 hours (reduced from catalog completion)
+**Remaining:** ~1,060-1,563 hours (includes advanced security features)
 
 ## MGA Architecture (Firebird Style)
 
