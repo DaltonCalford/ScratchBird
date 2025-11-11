@@ -7,6 +7,8 @@
 #include "scratchbird/core/timezone.h"
 #include "scratchbird/core/page_manager.h"
 #include "scratchbird/core/connection_context.h"
+#include "scratchbird/core/password_hash.h"
+#include "scratchbird/core/permission_cache.h"  // Security Phase 3.2.3: Global cache
 #include "scratchbird/core/sweep_manager.h"
 #include "scratchbird/core/garbage_collector.h"
 #include "scratchbird/core/proc_array.h"
@@ -999,6 +1001,21 @@ namespace scratchbird
                         else if (ext_op == static_cast<uint8_t>(Opcode::EXT_SET_SESSION_AUTH))
                         {
                             executeSetSessionAuth();
+                            result = ExecutionResult();
+                        }
+                        else if (ext_op == static_cast<uint8_t>(Opcode::EXT_CREATE_POLICY))
+                        {
+                            executeCreatePolicy();
+                            result = ExecutionResult();
+                        }
+                        else if (ext_op == static_cast<uint8_t>(Opcode::EXT_DROP_POLICY))
+                        {
+                            executeDropPolicy();
+                            result = ExecutionResult();
+                        }
+                        else if (ext_op == static_cast<uint8_t>(Opcode::EXT_ALTER_TABLE_RLS))
+                        {
+                            executeAlterTableRLS();
                             result = ExecutionResult();
                         }
                         else
@@ -3243,12 +3260,29 @@ namespace scratchbird
             core::ID table_id = table_info.table_id;
 
             // Check INSERT permission on table
-            if (!checkPermission(table_info.table_id,
+            bool has_table_insert = checkPermission(table_info.table_id,
                                core::CatalogManager::PermissionObjectType::TABLE,
-                               static_cast<uint32_t>(core::CatalogManager::Privilege::INSERT)))
+                               static_cast<uint32_t>(core::CatalogManager::Privilege::INSERT));
+
+            // Security Phase 3.3.5: Get accessible columns for INSERT if no table-level permission
+            std::vector<std::string> accessible_insert_columns;
+            if (!has_table_insert)
             {
-                error("Permission denied: INSERT on table " + table_name);
+                // Check column-level INSERT permissions
+                core::ErrorContext err_ctx;
+                const auto& user_id = getCurrentUserID();
+                status = db_->catalog_manager()->getAccessibleColumns(
+                    user_id, table_info.table_id,
+                    core::CatalogManager::Privilege::INSERT,
+                    accessible_insert_columns, &err_ctx);
+
+                if (status != core::Status::OK || accessible_insert_columns.empty())
+                {
+                    // No table-level and no column-level INSERT permissions
+                    error("Permission denied: INSERT on table " + table_name);
+                }
             }
+            // If has_table_insert is true, accessible_insert_columns remains empty = all columns insertable
 
             // Read column list
             if (readByte() != static_cast<uint8_t>(Opcode::BEGIN_LIST))
@@ -3265,7 +3299,17 @@ namespace scratchbird
                 {
                     error("Expected COLUMN_REF in column list");
                 }
-                col_names.push_back(readString());
+                std::string col_name = readString();
+
+                // Security Phase 3.3.5: Check INSERT permission on this column
+                if (!accessible_insert_columns.empty() &&
+                    std::find(accessible_insert_columns.begin(), accessible_insert_columns.end(), col_name)
+                        == accessible_insert_columns.end())
+                {
+                    error("Permission denied: INSERT on column " + col_name + " of table " + table_name);
+                }
+
+                col_names.push_back(col_name);
             }
 
             if (readByte() != static_cast<uint8_t>(Opcode::END_LIST))
@@ -3562,12 +3606,29 @@ namespace scratchbird
             core::ID table_id = table_info.table_id;
 
             // Check UPDATE permission on table
-            if (!checkPermission(table_info.table_id,
+            bool has_table_update = checkPermission(table_info.table_id,
                                core::CatalogManager::PermissionObjectType::TABLE,
-                               static_cast<uint32_t>(core::CatalogManager::Privilege::UPDATE)))
+                               static_cast<uint32_t>(core::CatalogManager::Privilege::UPDATE));
+
+            // Security Phase 3.3.5: Get accessible columns for UPDATE if no table-level permission
+            std::vector<std::string> accessible_update_columns;
+            if (!has_table_update)
             {
-                error("Permission denied: UPDATE on table " + table_name);
+                // Check column-level UPDATE permissions
+                core::ErrorContext err_ctx;
+                const auto& user_id = getCurrentUserID();
+                status = db_->catalog_manager()->getAccessibleColumns(
+                    user_id, table_info.table_id,
+                    core::CatalogManager::Privilege::UPDATE,
+                    accessible_update_columns, &err_ctx);
+
+                if (status != core::Status::OK || accessible_update_columns.empty())
+                {
+                    // No table-level and no column-level UPDATE permissions
+                    error("Permission denied: UPDATE on table " + table_name);
+                }
             }
+            // If has_table_update is true, accessible_update_columns remains empty = all columns updatable
 
             // Get column information
             std::vector<core::CatalogManager::ColumnInfo> all_columns;
@@ -3617,6 +3678,14 @@ namespace scratchbird
                 if (it == all_columns.end())
                 {
                     error("Column not found in UPDATE: " + col_name);
+                }
+
+                // Security Phase 3.3.5: Check UPDATE permission on this column
+                if (!accessible_update_columns.empty() &&
+                    std::find(accessible_update_columns.begin(), accessible_update_columns.end(), col_name)
+                        == accessible_update_columns.end())
+                {
+                    error("Permission denied: UPDATE on column " + col_name + " of table " + table_name);
                 }
 
                 size_t col_idx = std::distance(all_columns.begin(), it);
@@ -5447,12 +5516,30 @@ namespace scratchbird
             }
 
             // Check SELECT permission on table
-            if (!checkPermission(table_info.table_id,
+            bool has_table_select = checkPermission(table_info.table_id,
                                core::CatalogManager::PermissionObjectType::TABLE,
-                               static_cast<uint32_t>(core::CatalogManager::Privilege::SELECT)))
+                               static_cast<uint32_t>(core::CatalogManager::Privilege::SELECT));
+
+            // Security Phase 3.3.5: Get accessible columns if no table-level permission
+            std::vector<std::string> accessible_columns;
+            if (!has_table_select)
             {
-                error("Permission denied: SELECT on table " + table_name);
+                // Check column-level permissions
+                core::ErrorContext err_ctx;
+                const auto& user_id = getCurrentUserID();
+                status = db_->catalog_manager()->getAccessibleColumns(
+                    user_id, table_info.table_id,
+                    core::CatalogManager::Privilege::SELECT,
+                    accessible_columns, &err_ctx);
+
+                if (status != core::Status::OK || accessible_columns.empty())
+                {
+                    // No table-level and no column-level permissions
+                    error("Permission denied: SELECT on table " + table_name);
+                }
+                // If accessible_columns is non-empty, user has some column permissions
             }
+            // If has_table_select is true, accessible_columns remains empty = all columns accessible
 
             // Get column information
             std::vector<core::CatalogManager::ColumnInfo> all_columns;
@@ -5467,16 +5554,31 @@ namespace scratchbird
 
             if (is_select_star)
             {
-                // SELECT * - add all columns
+                // SELECT * - add all accessible columns
+                // Security Phase 3.3.5: Filter by column-level permissions
                 for (const auto &col : all_columns)
                 {
-                    current_result_set_->addColumn(col.column_name,
-                                                   static_cast<core::DataType>(col.data_type));
+                    // If accessible_columns is empty, user has table-level SELECT (all columns accessible)
+                    // If non-empty, check if this column is in the accessible list
+                    if (accessible_columns.empty() ||
+                        std::find(accessible_columns.begin(), accessible_columns.end(), col.column_name)
+                            != accessible_columns.end())
+                    {
+                        current_result_set_->addColumn(col.column_name,
+                                                       static_cast<core::DataType>(col.data_type));
+                    }
+                }
+
+                // Security Phase 3.3.5: If no columns were accessible, error
+                if (current_result_set_->columnCount() == 0)
+                {
+                    error("Permission denied: No accessible columns in table " + table_name);
                 }
             }
             else
             {
                 // Add selected columns
+                // Security Phase 3.3.5: Check permission for each requested column
                 for (const auto &[col_name, alias] : select_items)
                 {
                     // Find column in table
@@ -5487,6 +5589,14 @@ namespace scratchbird
                     if (it == all_columns.end())
                     {
                         error("Column not found: " + col_name);
+                    }
+
+                    // Security Phase 3.3.5: Check if user has access to this column
+                    if (!accessible_columns.empty() &&
+                        std::find(accessible_columns.begin(), accessible_columns.end(), col_name)
+                            == accessible_columns.end())
+                    {
+                        error("Permission denied: SELECT on column " + col_name + " of table " + table_name);
                     }
 
                     current_result_set_->addColumn(alias,
@@ -12453,17 +12563,23 @@ namespace scratchbird
             }
 
             // Permission check: Only superusers can create users
-            // TODO: Once connection context is integrated, add:
-            // if (!conn_ctx_->isSuperuser()) {
-            //     error("Permission denied: CREATE USER (superuser only)");
-            // }
+            if (conn_ctx_ && !conn_ctx_->isSuperuser())
+            {
+                error("Permission denied: CREATE USER (superuser only)");
+            }
 
-            // Hash password if provided
-            // TODO: Implement proper password hashing (bcrypt/argon2)
+            // Hash password if provided (Security Phase 3.0)
             std::string password_hash;
             if (has_password)
             {
-                password_hash = "hashed_" + password; // Placeholder
+                try
+                {
+                    password_hash = core::PasswordHash::hashPassword(password);
+                }
+                catch (const std::exception& e)
+                {
+                    error("Password hashing failed: " + std::string(e.what()));
+                }
             }
 
             // Call catalog manager
@@ -12497,10 +12613,10 @@ namespace scratchbird
             }
 
             // Permission check: Only superusers can alter users
-            // TODO: Once connection context is integrated, add:
-            // if (!conn_ctx_->isSuperuser()) {
-            //     error("Permission denied: ALTER USER (superuser only)");
-            // }
+            if (conn_ctx_ && !conn_ctx_->isSuperuser())
+            {
+                error("Permission denied: ALTER USER (superuser only)");
+            }
 
             // Look up user by name
             core::CatalogManager::UserInfo user_info;
@@ -12513,22 +12629,29 @@ namespace scratchbird
                 error("User '" + username + "' not found");
             }
 
-            // Prepare password hash if changing
+            // Prepare password hash if changing (Security Phase 3.0)
             std::string password_hash = user_info.password_hash;  // Keep existing if not changing
             if (change_password)
             {
-                password_hash = "hashed_" + password; // TODO: Proper hashing
+                try
+                {
+                    password_hash = core::PasswordHash::hashPassword(password);
+                }
+                catch (const std::exception& e)
+                {
+                    error("Password hashing failed: " + std::string(e.what()));
+                }
             }
 
-            // TODO: updateUser API doesn't support changing superuser flag
-            // This needs to be addressed - either extend the API or use a different approach
-            // For now, we'll update what we can
+            // Prepare updated fields (Security Phase 3.0)
             core::ID default_schema_id = user_info.default_schema_id;
             bool is_active = user_info.is_active;
+            bool is_superuser_updated = change_superuser ? is_superuser : user_info.is_superuser;
 
             // Call catalog manager update
             auto status = db_->catalog_manager()->updateUser(
-                user_info.user_id, password_hash, default_schema_id, is_active, &err_ctx);
+                user_info.user_id, password_hash, default_schema_id, is_active,
+                is_superuser_updated, &err_ctx);
 
             if (status != core::Status::OK)
             {
@@ -12562,15 +12685,18 @@ namespace scratchbird
                 error("User '" + username + "' not found");
             }
 
-            // TODO: CASCADE option not yet implemented in catalog manager
-            // For now, just delete the user (catalog manager may enforce constraints)
+            // Security Phase 3.0: CASCADE support
             auto status = db_->catalog_manager()->deleteUser(
-                user_info.user_id, &err_ctx);
+                user_info.user_id, cascade, &err_ctx);
 
             if (status != core::Status::OK)
             {
                 error("DROP USER failed: " + std::string("Operation failed"));
             }
+
+            // Security Phase 3.2.3: Invalidate all cache entries for this user
+            // User no longer exists, so all cached permissions are now invalid
+            db_->permission_cache()->invalidateUser(user_info.user_id);
         }
 
         void Executor::executeCreateRole()
@@ -12622,15 +12748,18 @@ namespace scratchbird
                 error("Role '" + rolename + "' not found");
             }
 
-            // TODO: CASCADE option not yet implemented in catalog manager
-            // For now, just delete the role (catalog manager may enforce constraints)
+            // Security Phase 3.0: CASCADE support
             auto status = db_->catalog_manager()->deleteRole(
-                role_info.role_id, &err_ctx);
+                role_info.role_id, cascade, &err_ctx);
 
             if (status != core::Status::OK)
             {
                 error("DROP ROLE failed: " + std::string("Operation failed"));
             }
+
+            // Security Phase 3.2.3: Invalidate entire cache for role drops
+            // Role memberships affect many users, so safer to invalidate everything
+            db_->permission_cache()->invalidateAll();
         }
 
         void Executor::executeCreateGroup()
@@ -12678,15 +12807,18 @@ namespace scratchbird
                 error("Group '" + groupname + "' not found");
             }
 
-            // TODO: CASCADE option not yet implemented in catalog manager
-            // For now, just delete the group (catalog manager may enforce constraints)
+            // Security Phase 3.0: CASCADE support
             auto status = db_->catalog_manager()->deleteGroup(
-                group_info.group_id, &err_ctx);
+                group_info.group_id, cascade, &err_ctx);
 
             if (status != core::Status::OK)
             {
                 error("DROP GROUP failed: " + std::string("Operation failed"));
             }
+
+            // Security Phase 3.2.3: Invalidate entire cache for group drops
+            // Group memberships affect many users, so safer to invalidate everything
+            db_->permission_cache()->invalidateAll();
         }
 
         void Executor::executeGrantPrivilege()
@@ -12699,6 +12831,19 @@ namespace scratchbird
             std::string grantee_name = readString();
             uint8_t flags = readByte();
             bool with_grant_option = flags & 0x01;
+            bool has_column_list = flags & 0x02;  // Security Phase 3.3.4
+
+            // Security Phase 3.3.4: Decode column list if present
+            std::vector<std::string> column_names;
+            if (has_column_list)
+            {
+                uint32_t column_count = readInt32();
+                column_names.reserve(column_count);
+                for (uint32_t i = 0; i < column_count; ++i)
+                {
+                    column_names.push_back(readString());
+                }
+            }
 
             // TODO: Add permission check - only superusers or object owners can grant
 
@@ -12784,15 +12929,40 @@ namespace scratchbird
             core::ID grantor_id;
             std::memset(&grantor_id, 0, sizeof(grantor_id)); // Placeholder: system user
 
-            // Call catalog manager
-            auto status = db_->catalog_manager()->grantPermission(
-                object_id, object_type, grantee_id, grantee_type,
-                privileges, with_grant_option, grantor_id, &err_ctx);
-
-            if (status != core::Status::OK)
+            // Security Phase 3.3.4: Branch based on column-level vs table-level
+            core::Status status;
+            if (has_column_list && !column_names.empty())
             {
-                error("GRANT PRIVILEGE failed: " + std::string("Operation failed"));
+                // Column-level permissions - grant for each column
+                for (const auto& column_name : column_names)
+                {
+                    status = db_->catalog_manager()->grantColumnPermission(
+                        object_id, column_name, grantee_id, grantee_type,
+                        privileges, with_grant_option, grantor_id, &err_ctx);
+
+                    if (status != core::Status::OK)
+                    {
+                        error("GRANT PRIVILEGE on column '" + column_name + "' failed");
+                    }
+                }
             }
+            else
+            {
+                // Table-level permission
+                status = db_->catalog_manager()->grantPermission(
+                    object_id, object_type, grantee_id, grantee_type,
+                    privileges, with_grant_option, grantor_id, &err_ctx);
+
+                if (status != core::Status::OK)
+                {
+                    error("GRANT PRIVILEGE failed: " + std::string("Operation failed"));
+                }
+            }
+
+            // Security Phase 3.2.3: Invalidate permission cache for affected user and object
+            // This ensures subsequent permission checks will fetch fresh data from catalog
+            db_->permission_cache()->invalidateUser(grantee_id);
+            db_->permission_cache()->invalidateObject(object_id);
         }
 
         void Executor::executeRevokePrivilege()
@@ -12805,6 +12975,19 @@ namespace scratchbird
             std::string grantee_name = readString();
             uint8_t flags = readByte();
             bool cascade = flags & 0x01;
+            bool has_column_list = flags & 0x02;  // Security Phase 3.3.4
+
+            // Security Phase 3.3.4: Decode column list if present
+            std::vector<std::string> column_names;
+            if (has_column_list)
+            {
+                uint32_t column_count = readInt32();
+                column_names.reserve(column_count);
+                for (uint32_t i = 0; i < column_count; ++i)
+                {
+                    column_names.push_back(readString());
+                }
+            }
 
             // TODO: Add permission check - only superusers or object owners can revoke
 
@@ -12884,16 +13067,41 @@ namespace scratchbird
                 error("Invalid grantee type: " + std::to_string(grantee_type_byte));
             }
 
-            // TODO: CASCADE option not yet implemented in catalog manager
-            // Call catalog manager
-            auto status = db_->catalog_manager()->revokePermission(
-                object_id, object_type, grantee_id, grantee_type,
-                privileges, &err_ctx);
-
-            if (status != core::Status::OK)
+            // Security Phase 3.3.4: Branch based on column-level vs table-level
+            core::Status status;
+            if (has_column_list && !column_names.empty())
             {
-                error("REVOKE PRIVILEGE failed: " + std::string("Operation failed"));
+                // Column-level permissions - revoke for each column
+                for (const auto& column_name : column_names)
+                {
+                    status = db_->catalog_manager()->revokeColumnPermission(
+                        object_id, column_name, grantee_id, grantee_type,
+                        privileges, &err_ctx);
+
+                    if (status != core::Status::OK)
+                    {
+                        error("REVOKE PRIVILEGE on column '" + column_name + "' failed");
+                    }
+                }
             }
+            else
+            {
+                // Table-level permission
+                // TODO: CASCADE option not yet implemented in catalog manager
+                status = db_->catalog_manager()->revokePermission(
+                    object_id, object_type, grantee_id, grantee_type,
+                    privileges, &err_ctx);
+
+                if (status != core::Status::OK)
+                {
+                    error("REVOKE PRIVILEGE failed: " + std::string("Operation failed"));
+                }
+            }
+
+            // Security Phase 3.2.3: Invalidate permission cache for affected user and object
+            // This ensures subsequent permission checks will fetch fresh data from catalog
+            db_->permission_cache()->invalidateUser(grantee_id);
+            db_->permission_cache()->invalidateObject(object_id);
         }
 
         void Executor::executeGrantRole()
@@ -13101,6 +13309,216 @@ namespace scratchbird
             }
         }
 
+        // Security Phase 3.4.4 - Row-Level Security Policy Execution
+        void Executor::executeCreatePolicy()
+        {
+            // Decode bytecode
+            std::string policy_name = readString();
+            std::string table_name = readString();
+            uint8_t policy_command = readByte();
+
+            // Read role count and roles
+            uint32_t role_count = readInt32();
+            std::vector<std::string> roles;
+            roles.reserve(role_count);
+            for (uint32_t i = 0; i < role_count; i++)
+            {
+                roles.push_back(readString());
+            }
+
+            uint8_t flags = readByte();
+            bool has_using_expr = flags & 0x01;
+            bool has_with_check_expr = flags & 0x02;
+
+            // TODO: Expression evaluation - for now we'll store empty expressions
+            // In a full implementation, we would:
+            // 1. Read expression bytecode
+            // 2. Evaluate expression to get SQL string representation
+            // 3. Store in catalog
+            std::string using_expr;
+            std::string with_check_expr;
+
+            if (has_using_expr)
+            {
+                // TODO: Read and evaluate expression bytecode
+                // For now, skip the expression bytecode
+                error("Expression evaluation for USING clause not yet implemented");
+            }
+
+            if (has_with_check_expr)
+            {
+                // TODO: Read and evaluate expression bytecode
+                error("Expression evaluation for WITH CHECK clause not yet implemented");
+            }
+
+            // Permission check: Only superusers or table owners can create policies
+            if (conn_ctx_ && !conn_ctx_->isSuperuser())
+            {
+                // TODO: Check if user is table owner
+                error("Permission denied: CREATE POLICY (superuser or table owner only)");
+            }
+
+            // Look up schema and table
+            core::CatalogManager::SchemaInfo schema_info;
+            auto schema_status = db_->catalog_manager()->getSchema("PUBLIC", schema_info, nullptr);
+            if (schema_status != core::Status::OK)
+            {
+                error("Failed to get schema PUBLIC");
+            }
+
+            core::CatalogManager::TableInfo table_info;
+            core::ErrorContext err_ctx;
+            auto get_status = db_->catalog_manager()->getTable(
+                schema_info.schema_id, table_name, table_info, &err_ctx);
+
+            if (get_status != core::Status::OK)
+            {
+                error("Table '" + table_name + "' not found");
+            }
+
+            // Convert policy command to PolicyType
+            core::CatalogManager::PolicyType policy_type;
+            switch (policy_command)
+            {
+            case 0: policy_type = core::CatalogManager::PolicyType::ALL; break;
+            case 1: policy_type = core::CatalogManager::PolicyType::SELECT; break;
+            case 2: policy_type = core::CatalogManager::PolicyType::INSERT; break;
+            case 3: policy_type = core::CatalogManager::PolicyType::UPDATE; break;
+            case 4: policy_type = core::CatalogManager::PolicyType::DELETE; break;
+            default: error("Invalid policy command: " + std::to_string(policy_command));
+            }
+
+            // Create policy
+            core::ID policy_id;
+            auto status = db_->catalog_manager()->createPolicy(
+                table_info.table_id, policy_name, policy_type, roles,
+                using_expr, with_check_expr, policy_id, &err_ctx);
+
+            if (status != core::Status::OK)
+            {
+                error("CREATE POLICY failed: Operation failed");
+            }
+        }
+
+        void Executor::executeDropPolicy()
+        {
+            // Decode bytecode
+            std::string policy_name = readString();
+            std::string table_name = readString();
+            uint8_t flags = readByte();
+            bool if_exists = flags & 0x01;
+            bool cascade = flags & 0x02;
+
+            // Permission check: Only superusers or table owners can drop policies
+            if (conn_ctx_ && !conn_ctx_->isSuperuser())
+            {
+                // TODO: Check if user is table owner
+                error("Permission denied: DROP POLICY (superuser or table owner only)");
+            }
+
+            // Look up schema and table
+            core::CatalogManager::SchemaInfo schema_info;
+            auto schema_status = db_->catalog_manager()->getSchema("PUBLIC", schema_info, nullptr);
+            if (schema_status != core::Status::OK)
+            {
+                error("Failed to get schema PUBLIC");
+            }
+
+            core::CatalogManager::TableInfo table_info;
+            core::ErrorContext err_ctx;
+            auto get_status = db_->catalog_manager()->getTable(
+                schema_info.schema_id, table_name, table_info, &err_ctx);
+
+            if (get_status != core::Status::OK)
+            {
+                if (if_exists)
+                {
+                    return; // Silently succeed if IF EXISTS specified
+                }
+                error("Table '" + table_name + "' not found");
+            }
+
+            // Drop policy
+            auto status = db_->catalog_manager()->dropPolicy(
+                table_info.table_id, policy_name, &err_ctx);
+
+            if (status != core::Status::OK)
+            {
+                if (if_exists && status == core::Status::NOT_FOUND)
+                {
+                    return; // Silently succeed if IF EXISTS specified
+                }
+                error("DROP POLICY failed: Operation failed");
+            }
+        }
+
+        void Executor::executeAlterTableRLS()
+        {
+            // Decode bytecode
+            std::string table_name = readString();
+            uint8_t action = readByte();
+
+            // Permission check: Only superusers or table owners can alter RLS
+            if (conn_ctx_ && !conn_ctx_->isSuperuser())
+            {
+                // TODO: Check if user is table owner
+                error("Permission denied: ALTER TABLE ROW LEVEL SECURITY (superuser or table owner only)");
+            }
+
+            // Look up schema and table
+            core::CatalogManager::SchemaInfo schema_info;
+            auto schema_status = db_->catalog_manager()->getSchema("PUBLIC", schema_info, nullptr);
+            if (schema_status != core::Status::OK)
+            {
+                error("Failed to get schema PUBLIC");
+            }
+
+            core::CatalogManager::TableInfo table_info;
+            core::ErrorContext err_ctx;
+            auto get_status = db_->catalog_manager()->getTable(
+                schema_info.schema_id, table_name, table_info, &err_ctx);
+
+            if (get_status != core::Status::OK)
+            {
+                error("Table '" + table_name + "' not found");
+            }
+
+            // Determine RLS settings based on action
+            bool enabled = false;
+            bool forced = false;
+
+            switch (action)
+            {
+            case 0: // ENABLE
+                enabled = true;
+                forced = table_info.rls_forced; // Keep existing forced setting
+                break;
+            case 1: // DISABLE
+                enabled = false;
+                forced = false; // Disabling also clears forced
+                break;
+            case 2: // FORCE
+                enabled = true; // Force implies enable
+                forced = true;
+                break;
+            case 3: // NO_FORCE
+                enabled = table_info.rls_enabled; // Keep existing enabled setting
+                forced = false;
+                break;
+            default:
+                error("Invalid RLS action: " + std::to_string(action));
+            }
+
+            // Update table RLS settings
+            auto status = db_->catalog_manager()->setTableRLS(
+                table_info.table_id, enabled, forced, &err_ctx);
+
+            if (status != core::Status::OK)
+            {
+                error("ALTER TABLE ROW LEVEL SECURITY failed: Operation failed");
+            }
+        }
+
         // Security context helpers (Phase 2 - Security System)
         const core::ID& Executor::getCurrentUserID() const
         {
@@ -13144,15 +13562,14 @@ namespace scratchbird
                 return false;
             }
 
-            // Superusers bypass all permission checks
+            // Superusers bypass all permission checks (zero overhead!)
             if (conn_ctx_->isSuperuser())
             {
                 return true;
             }
 
-            // Get current user and active role
+            // Get current user ID
             const core::ID& current_user_id = conn_ctx_->getCurrentUserId();
-            const core::ID& active_role_id = conn_ctx_->getActiveRoleId();
 
             // Check if object_id is zero UUID (invalid object)
             static const core::ID zero_id = {};
@@ -13161,8 +13578,22 @@ namespace scratchbird
                 return false; // Can't have permissions on invalid object
             }
 
-            // Check permission using catalog manager
-            // hasPermission signature: (user_id, object_id, object_type, privilege, has_perm_out, ctx)
+            // Security Phase 3.2.3: Check global permission cache first
+            core::PermissionCache::CacheKey cache_key{
+                current_user_id,
+                object_id,
+                object_type,
+                static_cast<core::CatalogManager::Privilege>(required_privilege)
+            };
+
+            auto cached_result = db_->permission_cache()->lookup(cache_key);
+            if (cached_result.has_value())
+            {
+                // Cache hit! Return cached result
+                return cached_result.value();
+            }
+
+            // Cache miss - query catalog manager
             core::ErrorContext err_ctx;
             bool has_permission = false;
             auto status = db_->catalog_manager()->hasPermission(
@@ -13176,13 +13607,8 @@ namespace scratchbird
                 return false;
             }
 
-            // TODO: Also check active_role_id permissions if a role is active
-            // For now, we only check the user's direct permissions
-            // Full implementation should check:
-            // 1. User's direct permissions
-            // 2. Permissions granted to active_role (if any)
-            // 3. Permissions granted to PUBLIC
-            // 4. Permissions granted to any groups the user belongs to
+            // Cache result in global cache (persists across statements!)
+            db_->permission_cache()->insert(cache_key, has_permission);
 
             return has_permission;
         }

@@ -1412,5 +1412,319 @@ namespace scratchbird
             out_ << "RAISE";
         }
 
+        // ===== Security Statement Visitors (ALPHA Phase 1 - Security System Phase 2) =====
+
+        void ASTPrinter::visit(CreateUserStmt *node)
+        {
+            printIndent();
+            out_ << "CREATE USER " << pool_.get(node->username());
+            if (node->hasPassword())
+            {
+                out_ << " WITH PASSWORD '***'";
+            }
+            if (node->isSuperuser())
+            {
+                out_ << " SUPERUSER";
+            }
+            out_ << "\n";
+        }
+
+        void ASTPrinter::visit(AlterUserStmt *node)
+        {
+            printIndent();
+            out_ << "ALTER USER " << pool_.get(node->username());
+            if (node->changePassword())
+            {
+                out_ << " WITH PASSWORD '***'";
+            }
+            if (node->changeSuperuser())
+            {
+                out_ << (node->isSuperuser() ? " SUPERUSER" : " NOSUPERUSER");
+            }
+            out_ << "\n";
+        }
+
+        void ASTPrinter::visit(DropUserStmt *node)
+        {
+            printIndent();
+            out_ << "DROP USER ";
+            if (node->ifExists())
+            {
+                out_ << "IF EXISTS ";
+            }
+            out_ << pool_.get(node->username());
+            if (node->dropBehavior() == DropUserStmt::DropBehavior::CASCADE)
+            {
+                out_ << " CASCADE";
+            }
+            out_ << "\n";
+        }
+
+        void ASTPrinter::visit(CreateRoleStmt *node)
+        {
+            printIndent();
+            out_ << "CREATE ROLE " << pool_.get(node->rolename()) << "\n";
+        }
+
+        void ASTPrinter::visit(DropRoleStmt *node)
+        {
+            printIndent();
+            out_ << "DROP ROLE ";
+            if (node->ifExists())
+            {
+                out_ << "IF EXISTS ";
+            }
+            out_ << pool_.get(node->rolename());
+            if (node->dropBehavior() == DropRoleStmt::DropBehavior::CASCADE)
+            {
+                out_ << " CASCADE";
+            }
+            out_ << "\n";
+        }
+
+        void ASTPrinter::visit(CreateGroupStmt *node)
+        {
+            printIndent();
+            out_ << "CREATE GROUP " << pool_.get(node->groupname()) << "\n";
+        }
+
+        void ASTPrinter::visit(DropGroupStmt *node)
+        {
+            printIndent();
+            out_ << "DROP GROUP ";
+            if (node->ifExists())
+            {
+                out_ << "IF EXISTS ";
+            }
+            out_ << pool_.get(node->groupname());
+            if (node->dropBehavior() == DropGroupStmt::DropBehavior::CASCADE)
+            {
+                out_ << " CASCADE";
+            }
+            out_ << "\n";
+        }
+
+        void ASTPrinter::visit(GrantPrivilegeStmt *node)
+        {
+            printIndent();
+            out_ << "GRANT [privileges] ON ";
+            // Print object type
+            switch (node->objectType())
+            {
+            case GrantPrivilegeStmt::ObjectType::TABLE:
+                out_ << "TABLE";
+                break;
+            case GrantPrivilegeStmt::ObjectType::VIEW:
+                out_ << "VIEW";
+                break;
+            case GrantPrivilegeStmt::ObjectType::SEQUENCE:
+                out_ << "SEQUENCE";
+                break;
+            case GrantPrivilegeStmt::ObjectType::FUNCTION:
+                out_ << "FUNCTION";
+                break;
+            case GrantPrivilegeStmt::ObjectType::PROCEDURE:
+                out_ << "PROCEDURE";
+                break;
+            case GrantPrivilegeStmt::ObjectType::SCHEMA:
+                out_ << "SCHEMA";
+                break;
+            case GrantPrivilegeStmt::ObjectType::DATABASE:
+                out_ << "DATABASE";
+                break;
+            case GrantPrivilegeStmt::ObjectType::DOMAIN:
+                out_ << "DOMAIN";
+                break;
+            }
+            out_ << " " << pool_.get(node->objectName()) << " TO ";
+            if (node->granteeType() == GrantPrivilegeStmt::GranteeType::PUBLIC)
+            {
+                out_ << "PUBLIC";
+            }
+            else
+            {
+                out_ << pool_.get(node->granteeName());
+            }
+            if (node->withGrantOption())
+            {
+                out_ << " WITH GRANT OPTION";
+            }
+            out_ << "\n";
+        }
+
+        void ASTPrinter::visit(RevokePrivilegeStmt *node)
+        {
+            printIndent();
+            out_ << "REVOKE [privileges] ON ";
+            switch (node->objectType())
+            {
+            case RevokePrivilegeStmt::ObjectType::TABLE:
+                out_ << "TABLE";
+                break;
+            case RevokePrivilegeStmt::ObjectType::VIEW:
+                out_ << "VIEW";
+                break;
+            case RevokePrivilegeStmt::ObjectType::SEQUENCE:
+                out_ << "SEQUENCE";
+                break;
+            case RevokePrivilegeStmt::ObjectType::FUNCTION:
+                out_ << "FUNCTION";
+                break;
+            case RevokePrivilegeStmt::ObjectType::PROCEDURE:
+                out_ << "PROCEDURE";
+                break;
+            case RevokePrivilegeStmt::ObjectType::SCHEMA:
+                out_ << "SCHEMA";
+                break;
+            case RevokePrivilegeStmt::ObjectType::DATABASE:
+                out_ << "DATABASE";
+                break;
+            case RevokePrivilegeStmt::ObjectType::DOMAIN:
+                out_ << "DOMAIN";
+                break;
+            }
+            out_ << " " << pool_.get(node->objectName()) << " FROM ";
+            if (node->granteeType() == RevokePrivilegeStmt::GranteeType::PUBLIC)
+            {
+                out_ << "PUBLIC";
+            }
+            else
+            {
+                out_ << pool_.get(node->granteeName());
+            }
+            if (node->revokeBehavior() == RevokePrivilegeStmt::RevokeBehavior::CASCADE)
+            {
+                out_ << " CASCADE";
+            }
+            out_ << "\n";
+        }
+
+        void ASTPrinter::visit(GrantRoleStmt *node)
+        {
+            printIndent();
+            out_ << "GRANT " << pool_.get(node->rolename())
+                 << " TO " << pool_.get(node->granteeName()) << "\n";
+        }
+
+        void ASTPrinter::visit(RevokeRoleStmt *node)
+        {
+            printIndent();
+            out_ << "REVOKE " << pool_.get(node->rolename())
+                 << " FROM " << pool_.get(node->granteeName());
+            if (node->revokeBehavior() == RevokeRoleStmt::RevokeBehavior::CASCADE)
+            {
+                out_ << " CASCADE";
+            }
+            out_ << "\n";
+        }
+
+        void ASTPrinter::visit(SetRoleStmt *node)
+        {
+            printIndent();
+            if (node->isReset())
+            {
+                out_ << "RESET ROLE\n";
+            }
+            else
+            {
+                out_ << "SET ROLE " << pool_.get(node->rolename()) << "\n";
+            }
+        }
+
+        void ASTPrinter::visit(SetSessionAuthStmt *node)
+        {
+            printIndent();
+            if (node->isReset())
+            {
+                out_ << "RESET SESSION AUTHORIZATION\n";
+            }
+            else
+            {
+                out_ << "SET SESSION AUTHORIZATION " << pool_.get(node->username()) << "\n";
+            }
+        }
+
+        // Accept methods for security statements
+        void CreateUserStmt::accept(ASTVisitor *visitor)
+        {
+            visitor->visit(this);
+        }
+
+        void AlterUserStmt::accept(ASTVisitor *visitor)
+        {
+            visitor->visit(this);
+        }
+
+        void DropUserStmt::accept(ASTVisitor *visitor)
+        {
+            visitor->visit(this);
+        }
+
+        void CreateRoleStmt::accept(ASTVisitor *visitor)
+        {
+            visitor->visit(this);
+        }
+
+        void DropRoleStmt::accept(ASTVisitor *visitor)
+        {
+            visitor->visit(this);
+        }
+
+        void CreateGroupStmt::accept(ASTVisitor *visitor)
+        {
+            visitor->visit(this);
+        }
+
+        void DropGroupStmt::accept(ASTVisitor *visitor)
+        {
+            visitor->visit(this);
+        }
+
+        void GrantPrivilegeStmt::accept(ASTVisitor *visitor)
+        {
+            visitor->visit(this);
+        }
+
+        void RevokePrivilegeStmt::accept(ASTVisitor *visitor)
+        {
+            visitor->visit(this);
+        }
+
+        void GrantRoleStmt::accept(ASTVisitor *visitor)
+        {
+            visitor->visit(this);
+        }
+
+        void RevokeRoleStmt::accept(ASTVisitor *visitor)
+        {
+            visitor->visit(this);
+        }
+
+        void SetRoleStmt::accept(ASTVisitor *visitor)
+        {
+            visitor->visit(this);
+        }
+
+        void SetSessionAuthStmt::accept(ASTVisitor *visitor)
+        {
+            visitor->visit(this);
+        }
+
+        // Security Phase 3.4: Policy statements
+        void CreatePolicyStmt::accept(ASTVisitor *visitor)
+        {
+            visitor->visit(this);
+        }
+
+        void DropPolicyStmt::accept(ASTVisitor *visitor)
+        {
+            visitor->visit(this);
+        }
+
+        void AlterTableRLSStmt::accept(ASTVisitor *visitor)
+        {
+            visitor->visit(this);
+        }
+
     } // namespace parser
 } // namespace scratchbird

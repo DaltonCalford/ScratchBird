@@ -457,6 +457,37 @@ namespace scratchbird
             EXT_RANGE_LOWER_INF = 0xC7,    // LOWER_INF(range) - check if lower bound is infinite
             EXT_RANGE_UPPER_INF = 0xC8,    // UPPER_INF(range) - check if upper bound is infinite
             EXT_RANGE_MERGE = 0xC9,        // RANGE_MERGE(r1, r2) - smallest range containing both
+
+            // Security System (ALPHA Phase 1 - Security System Phase 2) - 0xCA-0xD6 range
+            // User management opcodes
+            EXT_CREATE_USER = 0xCA,        // CREATE USER username [WITH PASSWORD 'xxx'] [SUPERUSER]
+            EXT_ALTER_USER = 0xCB,         // ALTER USER username [WITH PASSWORD 'xxx'] [SUPERUSER]
+            EXT_DROP_USER = 0xCC,          // DROP USER username [IF EXISTS] [CASCADE | RESTRICT]
+
+            // Role management opcodes
+            EXT_CREATE_ROLE = 0xCD,        // CREATE ROLE rolename
+            EXT_DROP_ROLE = 0xCE,          // DROP ROLE rolename [IF EXISTS] [CASCADE | RESTRICT]
+
+            // Group management opcodes
+            EXT_CREATE_GROUP = 0xCF,       // CREATE GROUP groupname
+            EXT_DROP_GROUP = 0xD0,         // DROP GROUP groupname [IF EXISTS] [CASCADE | RESTRICT]
+
+            // Privilege management opcodes
+            EXT_GRANT_PRIVILEGE = 0xD1,    // GRANT privilege ON object TO grantee [WITH GRANT OPTION]
+            EXT_REVOKE_PRIVILEGE = 0xD2,   // REVOKE privilege ON object FROM grantee [CASCADE | RESTRICT]
+
+            // Role grant/revoke opcodes
+            EXT_GRANT_ROLE = 0xD3,         // GRANT role TO user/role
+            EXT_REVOKE_ROLE = 0xD4,        // REVOKE role FROM user/role [CASCADE | RESTRICT]
+
+            // Session management opcodes
+            EXT_SET_ROLE = 0xD5,           // SET ROLE rolename / RESET ROLE
+            EXT_SET_SESSION_AUTH = 0xD6,   // SET SESSION AUTHORIZATION username / RESET SESSION AUTHORIZATION
+
+            // Row-Level Security opcodes (Security Phase 3.4)
+            EXT_CREATE_POLICY = 0xD7,      // CREATE POLICY policy_name ON table_name
+            EXT_DROP_POLICY = 0xD8,        // DROP POLICY [IF EXISTS] policy_name ON table_name
+            EXT_ALTER_TABLE_RLS = 0xD9,    // ALTER TABLE table_name {ENABLE|DISABLE|FORCE|NO FORCE} ROW LEVEL SECURITY
         };
 
         // SBLR Version

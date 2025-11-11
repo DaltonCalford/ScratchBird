@@ -62,6 +62,24 @@ namespace scratchbird
             ROLLBACK,          // Phase 2 Task 2.6
             SWEEP,             // Phase 3 Task 3.3
 
+            // Security statements (ALPHA Phase 1 - Security System Phase 2)
+            CREATE_USER,       // CREATE USER username [WITH PASSWORD 'xxx'] [SUPERUSER]
+            ALTER_USER,        // ALTER USER username [WITH PASSWORD 'xxx'] [SUPERUSER]
+            DROP_USER,         // DROP USER username [IF EXISTS] [CASCADE | RESTRICT]
+            CREATE_ROLE,       // CREATE ROLE rolename
+            DROP_ROLE,         // DROP ROLE rolename [IF EXISTS] [CASCADE | RESTRICT]
+            CREATE_GROUP,      // CREATE GROUP groupname
+            DROP_GROUP,        // DROP GROUP groupname [IF EXISTS] [CASCADE | RESTRICT]
+            GRANT_PRIVILEGE,   // GRANT privilege ON object TO grantee [WITH GRANT OPTION]
+            REVOKE_PRIVILEGE,  // REVOKE privilege ON object FROM grantee [CASCADE | RESTRICT]
+            GRANT_ROLE,        // GRANT role TO user/role
+            REVOKE_ROLE,       // REVOKE role FROM user/role [CASCADE | RESTRICT]
+            SET_ROLE,          // SET ROLE rolename / RESET ROLE
+            SET_SESSION_AUTH,  // SET SESSION AUTHORIZATION username / RESET SESSION AUTHORIZATION
+            CREATE_POLICY,     // Security Phase 3.4: CREATE POLICY policy_name ON table_name
+            DROP_POLICY,       // Security Phase 3.4: DROP POLICY policy_name ON table_name
+            ALTER_TABLE_RLS,   // Security Phase 3.4: ALTER TABLE ... ENABLE/DISABLE ROW LEVEL SECURITY
+
             // Procedural language statements (Phase 2 Task 10.2)
             BLOCK,             // BEGIN...END block
             VAR_DECLARATION,   // Variable declaration
@@ -1764,6 +1782,12 @@ namespace scratchbird
                 return where_clause_;
             }
 
+            // Phase 3.4.7: RLS predicate injection
+            void setWhereClause(Expression *where_clause)
+            {
+                where_clause_ = where_clause;
+            }
+
             // WITH clause accessor (Phase 2 Wave 2)
             WithClause *withClause() const
             {
@@ -2801,6 +2825,597 @@ namespace scratchbird
             BlockStmt* body_;
         };
 
+        // ===== Security Statements (ALPHA Phase 1 - Security System Phase 2) =====
+
+        // CREATE USER username [WITH PASSWORD 'password'] [SUPERUSER | NOSUPERUSER]
+        class CreateUserStmt : public Statement
+        {
+        public:
+            CreateUserStmt(const SourceSpan& span,
+                          StringPool::StringId username,
+                          StringPool::StringId password,  // 0 if no password
+                          bool has_password,
+                          bool is_superuser)
+                : Statement(ASTKind::CREATE_USER, span),
+                  username_(username),
+                  password_(password),
+                  has_password_(has_password),
+                  is_superuser_(is_superuser)
+            {
+            }
+
+            StringPool::StringId username() const { return username_; }
+            StringPool::StringId password() const { return password_; }
+            bool hasPassword() const { return has_password_; }
+            bool isSuperuser() const { return is_superuser_; }
+
+            void accept(ASTVisitor* visitor) override;
+
+        private:
+            StringPool::StringId username_;
+            StringPool::StringId password_;
+            bool has_password_;
+            bool is_superuser_;
+        };
+
+        // ALTER USER username [WITH PASSWORD 'password'] [SUPERUSER | NOSUPERUSER]
+        class AlterUserStmt : public Statement
+        {
+        public:
+            AlterUserStmt(const SourceSpan& span,
+                         StringPool::StringId username,
+                         StringPool::StringId password,  // 0 if not changing
+                         bool change_password,
+                         bool is_superuser,
+                         bool change_superuser)
+                : Statement(ASTKind::ALTER_USER, span),
+                  username_(username),
+                  password_(password),
+                  change_password_(change_password),
+                  is_superuser_(is_superuser),
+                  change_superuser_(change_superuser)
+            {
+            }
+
+            StringPool::StringId username() const { return username_; }
+            StringPool::StringId password() const { return password_; }
+            bool changePassword() const { return change_password_; }
+            bool isSuperuser() const { return is_superuser_; }
+            bool changeSuperuser() const { return change_superuser_; }
+
+            void accept(ASTVisitor* visitor) override;
+
+        private:
+            StringPool::StringId username_;
+            StringPool::StringId password_;
+            bool change_password_;
+            bool is_superuser_;
+            bool change_superuser_;
+        };
+
+        // DROP USER username [IF EXISTS] [CASCADE | RESTRICT]
+        class DropUserStmt : public Statement
+        {
+        public:
+            enum class DropBehavior : uint8_t
+            {
+                RESTRICT,  // Fail if user owns objects
+                CASCADE    // Drop user and transfer/drop owned objects
+            };
+
+            DropUserStmt(const SourceSpan& span,
+                        StringPool::StringId username,
+                        bool if_exists,
+                        DropBehavior behavior)
+                : Statement(ASTKind::DROP_USER, span),
+                  username_(username),
+                  if_exists_(if_exists),
+                  drop_behavior_(behavior)
+            {
+            }
+
+            StringPool::StringId username() const { return username_; }
+            bool ifExists() const { return if_exists_; }
+            DropBehavior dropBehavior() const { return drop_behavior_; }
+
+            void accept(ASTVisitor* visitor) override;
+
+        private:
+            StringPool::StringId username_;
+            bool if_exists_;
+            DropBehavior drop_behavior_;
+        };
+
+        // CREATE ROLE rolename
+        class CreateRoleStmt : public Statement
+        {
+        public:
+            CreateRoleStmt(const SourceSpan& span,
+                          StringPool::StringId rolename)
+                : Statement(ASTKind::CREATE_ROLE, span),
+                  rolename_(rolename)
+            {
+            }
+
+            StringPool::StringId rolename() const { return rolename_; }
+
+            void accept(ASTVisitor* visitor) override;
+
+        private:
+            StringPool::StringId rolename_;
+        };
+
+        // DROP ROLE rolename [IF EXISTS] [CASCADE | RESTRICT]
+        class DropRoleStmt : public Statement
+        {
+        public:
+            enum class DropBehavior : uint8_t
+            {
+                RESTRICT,
+                CASCADE
+            };
+
+            DropRoleStmt(const SourceSpan& span,
+                        StringPool::StringId rolename,
+                        bool if_exists,
+                        DropBehavior behavior)
+                : Statement(ASTKind::DROP_ROLE, span),
+                  rolename_(rolename),
+                  if_exists_(if_exists),
+                  drop_behavior_(behavior)
+            {
+            }
+
+            StringPool::StringId rolename() const { return rolename_; }
+            bool ifExists() const { return if_exists_; }
+            DropBehavior dropBehavior() const { return drop_behavior_; }
+
+            void accept(ASTVisitor* visitor) override;
+
+        private:
+            StringPool::StringId rolename_;
+            bool if_exists_;
+            DropBehavior drop_behavior_;
+        };
+
+        // CREATE GROUP groupname
+        class CreateGroupStmt : public Statement
+        {
+        public:
+            CreateGroupStmt(const SourceSpan& span,
+                           StringPool::StringId groupname)
+                : Statement(ASTKind::CREATE_GROUP, span),
+                  groupname_(groupname)
+            {
+            }
+
+            StringPool::StringId groupname() const { return groupname_; }
+
+            void accept(ASTVisitor* visitor) override;
+
+        private:
+            StringPool::StringId groupname_;
+        };
+
+        // DROP GROUP groupname [IF EXISTS] [CASCADE | RESTRICT]
+        class DropGroupStmt : public Statement
+        {
+        public:
+            enum class DropBehavior : uint8_t
+            {
+                RESTRICT,
+                CASCADE
+            };
+
+            DropGroupStmt(const SourceSpan& span,
+                         StringPool::StringId groupname,
+                         bool if_exists,
+                         DropBehavior behavior)
+                : Statement(ASTKind::DROP_GROUP, span),
+                  groupname_(groupname),
+                  if_exists_(if_exists),
+                  drop_behavior_(behavior)
+            {
+            }
+
+            StringPool::StringId groupname() const { return groupname_; }
+            bool ifExists() const { return if_exists_; }
+            DropBehavior dropBehavior() const { return drop_behavior_; }
+
+            void accept(ASTVisitor* visitor) override;
+
+        private:
+            StringPool::StringId groupname_;
+            bool if_exists_;
+            DropBehavior drop_behavior_;
+        };
+
+        // GRANT privilege ON object TO grantee [WITH GRANT OPTION]
+        class GrantPrivilegeStmt : public Statement
+        {
+        public:
+            enum class PrivilegeType : uint32_t
+            {
+                SELECT    = 0x00000001,
+                INSERT    = 0x00000002,
+                UPDATE    = 0x00000004,
+                DELETE    = 0x00000008,
+                TRUNCATE  = 0x00000010,
+                REFERENCES= 0x00000020,
+                TRIGGER   = 0x00000040,
+                CREATE    = 0x00000080,
+                USAGE     = 0x00000100,
+                EXECUTE   = 0x00000800,
+                CONNECT   = 0x00001000,
+                ALL       = 0xFFFFFFFF
+            };
+
+            enum class ObjectType : uint8_t
+            {
+                TABLE,
+                VIEW,
+                SEQUENCE,
+                FUNCTION,
+                PROCEDURE,
+                SCHEMA,
+                DATABASE,
+                DOMAIN
+            };
+
+            enum class GranteeType : uint8_t
+            {
+                USER,
+                ROLE,
+                GROUP,
+                PUBLIC
+            };
+
+            GrantPrivilegeStmt(const SourceSpan& span,
+                             uint32_t privileges,
+                             ObjectType object_type,
+                             StringPool::StringId object_name,
+                             GranteeType grantee_type,
+                             StringPool::StringId grantee_name,  // 0 for PUBLIC
+                             bool with_grant_option,
+                             std::vector<StringPool::StringId> column_names = {})  // Security Phase 3.3.3
+                : Statement(ASTKind::GRANT_PRIVILEGE, span),
+                  privileges_(privileges),
+                  object_type_(object_type),
+                  object_name_(object_name),
+                  grantee_type_(grantee_type),
+                  grantee_name_(grantee_name),
+                  with_grant_option_(with_grant_option),
+                  column_names_(std::move(column_names))  // Security Phase 3.3.3
+            {
+            }
+
+            uint32_t privileges() const { return privileges_; }
+            ObjectType objectType() const { return object_type_; }
+            StringPool::StringId objectName() const { return object_name_; }
+            GranteeType granteeType() const { return grantee_type_; }
+            StringPool::StringId granteeName() const { return grantee_name_; }
+            bool withGrantOption() const { return with_grant_option_; }
+
+            // Security Phase 3.3.3: Column-level permissions
+            const std::vector<StringPool::StringId>& columnNames() const { return column_names_; }
+            bool hasColumnList() const { return !column_names_.empty(); }
+
+            void accept(ASTVisitor* visitor) override;
+
+        private:
+            uint32_t privileges_;
+            ObjectType object_type_;
+            StringPool::StringId object_name_;
+            GranteeType grantee_type_;
+            StringPool::StringId grantee_name_;
+            bool with_grant_option_;
+            std::vector<StringPool::StringId> column_names_;  // Security Phase 3.3.3: Column-level permissions
+        };
+
+        // REVOKE privilege ON object FROM grantee [CASCADE | RESTRICT]
+        class RevokePrivilegeStmt : public Statement
+        {
+        public:
+            using PrivilegeType = GrantPrivilegeStmt::PrivilegeType;
+            using ObjectType = GrantPrivilegeStmt::ObjectType;
+            using GranteeType = GrantPrivilegeStmt::GranteeType;
+
+            enum class RevokeBehavior : uint8_t
+            {
+                RESTRICT,
+                CASCADE
+            };
+
+            RevokePrivilegeStmt(const SourceSpan& span,
+                              uint32_t privileges,
+                              ObjectType object_type,
+                              StringPool::StringId object_name,
+                              GranteeType grantee_type,
+                              StringPool::StringId grantee_name,
+                              RevokeBehavior behavior,
+                              std::vector<StringPool::StringId> column_names = {})  // Security Phase 3.3.3
+                : Statement(ASTKind::REVOKE_PRIVILEGE, span),
+                  privileges_(privileges),
+                  object_type_(object_type),
+                  object_name_(object_name),
+                  grantee_type_(grantee_type),
+                  grantee_name_(grantee_name),
+                  revoke_behavior_(behavior),
+                  column_names_(std::move(column_names))  // Security Phase 3.3.3
+            {
+            }
+
+            uint32_t privileges() const { return privileges_; }
+            ObjectType objectType() const { return object_type_; }
+            StringPool::StringId objectName() const { return object_name_; }
+            GranteeType granteeType() const { return grantee_type_; }
+            StringPool::StringId granteeName() const { return grantee_name_; }
+            RevokeBehavior revokeBehavior() const { return revoke_behavior_; }
+
+            // Security Phase 3.3.3: Column-level permissions
+            const std::vector<StringPool::StringId>& columnNames() const { return column_names_; }
+            bool hasColumnList() const { return !column_names_.empty(); }
+
+            void accept(ASTVisitor* visitor) override;
+
+        private:
+            uint32_t privileges_;
+            ObjectType object_type_;
+            StringPool::StringId object_name_;
+            GranteeType grantee_type_;
+            StringPool::StringId grantee_name_;
+            RevokeBehavior revoke_behavior_;
+            std::vector<StringPool::StringId> column_names_;  // Security Phase 3.3.3: Column-level permissions
+        };
+
+        // GRANT role TO user/role
+        class GrantRoleStmt : public Statement
+        {
+        public:
+            enum class GranteeType : uint8_t
+            {
+                USER,
+                ROLE
+            };
+
+            GrantRoleStmt(const SourceSpan& span,
+                         StringPool::StringId rolename,
+                         GranteeType grantee_type,
+                         StringPool::StringId grantee_name)
+                : Statement(ASTKind::GRANT_ROLE, span),
+                  rolename_(rolename),
+                  grantee_type_(grantee_type),
+                  grantee_name_(grantee_name)
+            {
+            }
+
+            StringPool::StringId rolename() const { return rolename_; }
+            GranteeType granteeType() const { return grantee_type_; }
+            StringPool::StringId granteeName() const { return grantee_name_; }
+
+            void accept(ASTVisitor* visitor) override;
+
+        private:
+            StringPool::StringId rolename_;
+            GranteeType grantee_type_;
+            StringPool::StringId grantee_name_;
+        };
+
+        // REVOKE role FROM user/role [CASCADE | RESTRICT]
+        class RevokeRoleStmt : public Statement
+        {
+        public:
+            using GranteeType = GrantRoleStmt::GranteeType;
+
+            enum class RevokeBehavior : uint8_t
+            {
+                RESTRICT,
+                CASCADE
+            };
+
+            RevokeRoleStmt(const SourceSpan& span,
+                          StringPool::StringId rolename,
+                          GranteeType grantee_type,
+                          StringPool::StringId grantee_name,
+                          RevokeBehavior behavior)
+                : Statement(ASTKind::REVOKE_ROLE, span),
+                  rolename_(rolename),
+                  grantee_type_(grantee_type),
+                  grantee_name_(grantee_name),
+                  revoke_behavior_(behavior)
+            {
+            }
+
+            StringPool::StringId rolename() const { return rolename_; }
+            GranteeType granteeType() const { return grantee_type_; }
+            StringPool::StringId granteeName() const { return grantee_name_; }
+            RevokeBehavior revokeBehavior() const { return revoke_behavior_; }
+
+            void accept(ASTVisitor* visitor) override;
+
+        private:
+            StringPool::StringId rolename_;
+            GranteeType grantee_type_;
+            StringPool::StringId grantee_name_;
+            RevokeBehavior revoke_behavior_;
+        };
+
+        // SET ROLE rolename / RESET ROLE
+        class SetRoleStmt : public Statement
+        {
+        public:
+            SetRoleStmt(const SourceSpan& span,
+                       StringPool::StringId rolename,  // 0 for RESET
+                       bool is_reset)
+                : Statement(ASTKind::SET_ROLE, span),
+                  rolename_(rolename),
+                  is_reset_(is_reset)
+            {
+            }
+
+            StringPool::StringId rolename() const { return rolename_; }
+            bool isReset() const { return is_reset_; }
+
+            void accept(ASTVisitor* visitor) override;
+
+        private:
+            StringPool::StringId rolename_;
+            bool is_reset_;
+        };
+
+        // SET SESSION AUTHORIZATION username / RESET SESSION AUTHORIZATION
+        class SetSessionAuthStmt : public Statement
+        {
+        public:
+            SetSessionAuthStmt(const SourceSpan& span,
+                              StringPool::StringId username,  // 0 for RESET
+                              bool is_reset)
+                : Statement(ASTKind::SET_SESSION_AUTH, span),
+                  username_(username),
+                  is_reset_(is_reset)
+            {
+            }
+
+            StringPool::StringId username() const { return username_; }
+            bool isReset() const { return is_reset_; }
+
+            void accept(ASTVisitor* visitor) override;
+
+        private:
+            StringPool::StringId username_;
+            bool is_reset_;
+        };
+
+        // Security Phase 3.4: CREATE POLICY
+        // CREATE POLICY policy_name ON table_name
+        //   [FOR { ALL | SELECT | INSERT | UPDATE | DELETE }]
+        //   [TO { role_name [, ...] | PUBLIC }]
+        //   [USING ( expression )]
+        //   [WITH CHECK ( expression )]
+        class CreatePolicyStmt : public Statement
+        {
+        public:
+            enum class PolicyCommand : uint8_t
+            {
+                ALL = 0,
+                SELECT = 1,
+                INSERT = 2,
+                UPDATE = 3,
+                DELETE_CMD = 4  // DELETE is a keyword
+            };
+
+            CreatePolicyStmt(const SourceSpan& span,
+                           StringPool::StringId policy_name,
+                           StringPool::StringId table_name,
+                           PolicyCommand command,
+                           std::vector<StringPool::StringId> roles,  // Empty = applies to all
+                           Expression* using_expr,      // Can be nullptr
+                           Expression* with_check_expr) // Can be nullptr
+                : Statement(ASTKind::CREATE_POLICY, span),
+                  policy_name_(policy_name),
+                  table_name_(table_name),
+                  command_(command),
+                  roles_(std::move(roles)),
+                  using_expr_(using_expr),
+                  with_check_expr_(with_check_expr)
+            {
+            }
+
+            StringPool::StringId policyName() const { return policy_name_; }
+            StringPool::StringId tableName() const { return table_name_; }
+            PolicyCommand command() const { return command_; }
+            const std::vector<StringPool::StringId>& roles() const { return roles_; }
+            Expression* usingExpr() const { return using_expr_; }
+            Expression* withCheckExpr() const { return with_check_expr_; }
+
+            bool appliesToAllRoles() const { return roles_.empty(); }
+            bool hasUsingExpr() const { return using_expr_ != nullptr; }
+            bool hasWithCheckExpr() const { return with_check_expr_ != nullptr; }
+
+            void accept(ASTVisitor* visitor) override;
+
+        private:
+            StringPool::StringId policy_name_;
+            StringPool::StringId table_name_;
+            PolicyCommand command_;
+            std::vector<StringPool::StringId> roles_;
+            Expression* using_expr_;
+            Expression* with_check_expr_;
+        };
+
+        // Security Phase 3.4: DROP POLICY
+        // DROP POLICY [IF EXISTS] policy_name ON table_name [CASCADE | RESTRICT]
+        class DropPolicyStmt : public Statement
+        {
+        public:
+            enum class DropBehavior : uint8_t
+            {
+                RESTRICT,
+                CASCADE
+            };
+
+            DropPolicyStmt(const SourceSpan& span,
+                          StringPool::StringId policy_name,
+                          StringPool::StringId table_name,
+                          bool if_exists,
+                          DropBehavior drop_behavior)
+                : Statement(ASTKind::DROP_POLICY, span),
+                  policy_name_(policy_name),
+                  table_name_(table_name),
+                  if_exists_(if_exists),
+                  drop_behavior_(drop_behavior)
+            {
+            }
+
+            StringPool::StringId policyName() const { return policy_name_; }
+            StringPool::StringId tableName() const { return table_name_; }
+            bool ifExists() const { return if_exists_; }
+            DropBehavior dropBehavior() const { return drop_behavior_; }
+
+            void accept(ASTVisitor* visitor) override;
+
+        private:
+            StringPool::StringId policy_name_;
+            StringPool::StringId table_name_;
+            bool if_exists_;
+            DropBehavior drop_behavior_;
+        };
+
+        // Security Phase 3.4: ALTER TABLE ... ROW LEVEL SECURITY
+        // ALTER TABLE table_name ENABLE ROW LEVEL SECURITY
+        // ALTER TABLE table_name DISABLE ROW LEVEL SECURITY
+        // ALTER TABLE table_name FORCE ROW LEVEL SECURITY
+        // ALTER TABLE table_name NO FORCE ROW LEVEL SECURITY
+        class AlterTableRLSStmt : public Statement
+        {
+        public:
+            enum class RLSAction : uint8_t
+            {
+                ENABLE,      // ENABLE ROW LEVEL SECURITY
+                DISABLE,     // DISABLE ROW LEVEL SECURITY
+                FORCE,       // FORCE ROW LEVEL SECURITY
+                NO_FORCE     // NO FORCE ROW LEVEL SECURITY
+            };
+
+            AlterTableRLSStmt(const SourceSpan& span,
+                             StringPool::StringId table_name,
+                             RLSAction action)
+                : Statement(ASTKind::ALTER_TABLE_RLS, span),
+                  table_name_(table_name),
+                  action_(action)
+            {
+            }
+
+            StringPool::StringId tableName() const { return table_name_; }
+            RLSAction action() const { return action_; }
+
+            void accept(ASTVisitor* visitor) override;
+
+        private:
+            StringPool::StringId table_name_;
+            RLSAction action_;
+        };
+
         // ===== Visitor Pattern =====
 
         class ASTVisitor
@@ -2852,6 +3467,24 @@ namespace scratchbird
             virtual void visit(ExitStmt *node) = 0;
             virtual void visit(ReturnStmt *node) = 0;
             virtual void visit(RaiseStmt *node) = 0;
+
+            // Security statements (ALPHA Phase 1 - Security System Phase 2)
+            virtual void visit(CreateUserStmt *node) = 0;
+            virtual void visit(AlterUserStmt *node) = 0;
+            virtual void visit(DropUserStmt *node) = 0;
+            virtual void visit(CreateRoleStmt *node) = 0;
+            virtual void visit(DropRoleStmt *node) = 0;
+            virtual void visit(CreateGroupStmt *node) = 0;
+            virtual void visit(DropGroupStmt *node) = 0;
+            virtual void visit(GrantPrivilegeStmt *node) = 0;
+            virtual void visit(RevokePrivilegeStmt *node) = 0;
+            virtual void visit(GrantRoleStmt *node) = 0;
+            virtual void visit(RevokeRoleStmt *node) = 0;
+            virtual void visit(SetRoleStmt *node) = 0;
+            virtual void visit(SetSessionAuthStmt *node) = 0;
+            virtual void visit(CreatePolicyStmt *node) = 0;     // Security Phase 3.4
+            virtual void visit(DropPolicyStmt *node) = 0;       // Security Phase 3.4
+            virtual void visit(AlterTableRLSStmt *node) = 0;    // Security Phase 3.4
 
             // Expressions
             virtual void visit(LiteralExpr *node) = 0;
@@ -2932,6 +3565,21 @@ namespace scratchbird
             void visit(ExitStmt *node) override;
             void visit(ReturnStmt *node) override;
             void visit(RaiseStmt *node) override;
+
+            // Security statements (ALPHA Phase 1 - Security System Phase 2)
+            void visit(CreateUserStmt *node) override;
+            void visit(AlterUserStmt *node) override;
+            void visit(DropUserStmt *node) override;
+            void visit(CreateRoleStmt *node) override;
+            void visit(DropRoleStmt *node) override;
+            void visit(CreateGroupStmt *node) override;
+            void visit(DropGroupStmt *node) override;
+            void visit(GrantPrivilegeStmt *node) override;
+            void visit(RevokePrivilegeStmt *node) override;
+            void visit(GrantRoleStmt *node) override;
+            void visit(RevokeRoleStmt *node) override;
+            void visit(SetRoleStmt *node) override;
+            void visit(SetSessionAuthStmt *node) override;
 
         private:
             std::ostream &out_;

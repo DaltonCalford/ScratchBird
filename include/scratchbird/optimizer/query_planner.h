@@ -55,7 +55,8 @@ namespace scratchbird::optimizer
             : db_(db),
               cost_model_(cost_model),
               stats_manager_(stats_manager),
-              selectivity_estimator_(stats_manager)
+              selectivity_estimator_(stats_manager),
+              conn_ctx_(nullptr)
         {
         }
 
@@ -63,22 +64,26 @@ namespace scratchbird::optimizer
          * planQuery - Generate execution plan for SELECT statement
          *
          * Planning algorithm:
-         *   1. Generate sequential scan path
-         *   2. Generate index scan paths (one per applicable index)
-         *   3. Estimate costs for all paths
-         *   4. Select cheapest path
-         *   5. Convert to PlanNode
+         *   1. Check SELECT permission on table (Phase 3.2)
+         *   2. Generate sequential scan path
+         *   3. Generate index scan paths (one per applicable index)
+         *   4. Estimate costs for all paths
+         *   5. Select cheapest path
+         *   6. Convert to PlanNode
          *
          * @param select_stmt SELECT statement AST
          * @param string_pool String pool for resolving StringIds
          * @param ctx Error context
+         * @param conn_ctx Connection context (for permission checks, Phase 3.2)
          * @return Execution plan (PlanNode tree) or nullptr on error
          *
          * Phase 1, Task 1.3.3
+         * Security Phase 3.2: Permission checks moved from executor to planner
          */
         auto planQuery(const parser::SelectStmt *select_stmt,
                        const parser::StringPool &string_pool,
-                       core::ErrorContext *ctx = nullptr)
+                       core::ErrorContext *ctx = nullptr,
+                       core::ConnectionContext *conn_ctx = nullptr)
             -> std::shared_ptr<PlanNode>;
 
         /**
@@ -602,10 +607,63 @@ namespace scratchbird::optimizer
             -> bool;
 
     private:
+        /**
+         * Security Phase 3.2: Permission checking at plan time
+         *
+         * Check if user has required permission on table
+         * Superusers bypass all permission checks
+         * Results are cached for the duration of query planning
+         *
+         * @param table_id Table ID
+         * @param privilege Required privilege (SELECT, INSERT, UPDATE, DELETE)
+         * @param ctx Error context
+         * @return true if user has permission, false otherwise
+         */
+        auto checkTablePermission(const core::ID& table_id,
+                                 core::CatalogManager::Privilege privilege,
+                                 core::ErrorContext* ctx) -> bool;
+
+        /**
+         * Security Phase 3.4.5: Row-Level Security policy enforcement
+         *
+         * Check if RLS is enabled on table and apply policies.
+         * If RLS is enabled:
+         * - Load applicable policies for current user
+         * - Return true if policies need to be applied
+         * - Superusers with forced RLS bypass policies
+         *
+         * @param table_info Table information
+         * @param policies_out Output: applicable policies
+         * @param ctx Error context
+         * @return true if RLS policies should be enforced, false otherwise
+         */
+        auto checkAndLoadRLSPolicies(const core::CatalogManager::TableInfo& table_info,
+                                    std::vector<core::CatalogManager::PolicyInfo>& policies_out,
+                                    core::ErrorContext* ctx) -> bool;
+
+        /**
+         * Security Phase 3.4.7: Parse expression string into AST
+         *
+         * Parses a SQL expression string (from RLS policies) into an Expression AST node.
+         * Used for runtime evaluation of policy predicates.
+         *
+         * @param expr_str Expression string to parse
+         * @param arena AST arena for memory allocation
+         * @param string_pool String pool for identifier interning
+         * @param ctx Error context
+         * @return Parsed Expression or nullptr on parse error
+         */
+        auto parseExpressionString(const std::string& expr_str,
+                                  parser::ASTArena& arena,
+                                  parser::StringPool& string_pool,
+                                  core::ErrorContext* ctx) -> parser::Expression*;
+
         core::Database *db_;
         CostModel cost_model_;
         StatisticsManager *stats_manager_;
         SelectivityEstimator selectivity_estimator_;
+        core::ConnectionContext *conn_ctx_;  // Security Phase 3.2: User context for permission checks
+        // Security Phase 3.2.3: Local cache removed - now using global cache in db_->permission_cache()
 
         // ALPHA Phase 1: View expansion cycle detection
         // Track currently expanding views to detect cycles

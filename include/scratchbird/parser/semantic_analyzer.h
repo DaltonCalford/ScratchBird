@@ -127,6 +127,24 @@ namespace scratchbird
             void visit(SubqueryExpr *node) override;   // Phase 2 Wave 2 - Agent B
             void visit(ColumnDef *node) override;
 
+            // Security statements (ALPHA Phase 1 - Security System Phase 2)
+            void visit(CreateUserStmt *node) override;
+            void visit(AlterUserStmt *node) override;
+            void visit(DropUserStmt *node) override;
+            void visit(CreateRoleStmt *node) override;
+            void visit(DropRoleStmt *node) override;
+            void visit(CreateGroupStmt *node) override;
+            void visit(DropGroupStmt *node) override;
+            void visit(GrantPrivilegeStmt *node) override;
+            void visit(RevokePrivilegeStmt *node) override;
+            void visit(GrantRoleStmt *node) override;
+            void visit(RevokeRoleStmt *node) override;
+            void visit(SetRoleStmt *node) override;
+            void visit(SetSessionAuthStmt *node) override;
+            void visit(CreatePolicyStmt *node) override;     // Security Phase 3.4
+            void visit(DropPolicyStmt *node) override;       // Security Phase 3.4
+            void visit(AlterTableRLSStmt *node) override;    // Security Phase 3.4
+
             // Get expression type after analysis
             const ExpressionType *getExpressionType(Expression *expr) const;
 

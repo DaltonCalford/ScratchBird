@@ -240,6 +240,8 @@ namespace scratchbird
             {"MAXSIZE", TokenType::KW_MAXSIZE},
             {"UNLIMITED", TokenType::KW_UNLIMITED},
             {"PREALLOC", TokenType::KW_PREALLOC},
+            {"ENABLE", TokenType::KW_ENABLE},      // Security Phase 3.4: ENABLE ROW LEVEL SECURITY
+            {"DISABLE", TokenType::KW_DISABLE},    // Security Phase 3.4: DISABLE ROW LEVEL SECURITY
             {"FORCE", TokenType::KW_FORCE},
             {"CASCADE", TokenType::KW_CASCADE},    // ALPHA Phase 1 - DDL Modifications
             {"RESTRICT", TokenType::KW_RESTRICT},  // ALPHA Phase 1 - DDL Modifications
@@ -309,6 +311,32 @@ namespace scratchbird
             {"EXCEPTION", TokenType::KW_EXCEPTION},
             {"TRY", TokenType::KW_TRY},
             {"EXCEPT", TokenType::KW_EXCEPT},
+
+            // Security keywords (ALPHA Phase 1 - Security System Phase 2)
+            {"USER", TokenType::KW_USER},
+            {"ROLE", TokenType::KW_ROLE},
+            // "GROUP" already defined (line 53)
+            {"GRANT", TokenType::KW_GRANT},
+            {"REVOKE", TokenType::KW_REVOKE},
+            {"PRIVILEGES", TokenType::KW_PRIVILEGES},
+            {"PASSWORD", TokenType::KW_PASSWORD},
+            {"SUPERUSER", TokenType::KW_SUPERUSER},
+            {"NOSUPERUSER", TokenType::KW_NOSUPERUSER},
+            {"SESSION", TokenType::KW_SESSION},
+            {"AUTHORIZATION", TokenType::KW_AUTHORIZATION},
+            {"RESET", TokenType::KW_RESET},
+            {"PUBLIC", TokenType::KW_PUBLIC},
+            {"USAGE", TokenType::KW_USAGE},
+            {"CONNECT", TokenType::KW_CONNECT},
+            {"REFERENCES", TokenType::KW_REFERENCES},
+            // Security Phase 3.4: Row-level security
+            {"POLICY", TokenType::KW_POLICY},
+            {"SECURITY", TokenType::KW_SECURITY},
+            // "ENABLE" already defined above
+            // "DISABLE" already defined above
+            // "FORCE" already defined above
+            // "LEVEL" already defined above
+            // "ROW" already defined above
         };
 
         // Case-insensitive string comparison

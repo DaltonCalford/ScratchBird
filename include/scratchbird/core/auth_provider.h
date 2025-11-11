@@ -1,0 +1,285 @@
+#pragma once
+
+#include "scratchbird/core/types.h"
+#include <string>
+#include <vector>
+#include <memory>
+
+namespace scratchbird {
+namespace core {
+
+/**
+ * External Authentication Provider Interface
+ *
+ * Security Phase 3.1 - Infrastructure for Beta (non-local connectivity)
+ *
+ * This interface defines the contract for external authentication providers
+ * (LDAP, Active Directory, OAuth2, SAML, etc.) to be implemented in Beta
+ * when network connectivity is available.
+ *
+ * For Alpha: Only LocalAuthProvider (password-based) is implemented.
+ */
+
+// Authentication result status
+enum class AuthResult {
+    SUCCESS = 0,           // Authentication successful
+    INVALID_CREDENTIALS,   // Username/password incorrect
+    USER_DISABLED,         // User account is disabled
+    USER_LOCKED,           // User account is locked (too many failures)
+    USER_EXPIRED,          // User account has expired
+    NETWORK_ERROR,         // Network/connection error (Beta feature)
+    PROVIDER_ERROR,        // Provider-specific error
+    NOT_IMPLEMENTED        // Feature not yet implemented
+};
+
+// Authentication provider type
+enum class AuthProviderType {
+    LOCAL = 0,             // Local password-based (implemented in Alpha)
+    LDAP,                  // LDAP authentication (Beta)
+    ACTIVE_DIRECTORY,      // Active Directory (Beta)
+    OAUTH2,                // OAuth2 (Beta)
+    SAML,                  // SAML SSO (Beta)
+    KERBEROS,              // Kerberos (Beta)
+    EXTERNAL_SCRIPT        // External authentication script (Beta)
+};
+
+// User information returned by authentication provider
+struct AuthUserInfo {
+    std::string username;
+    std::string display_name;
+    std::string email;
+    std::vector<std::string> external_groups;  // Groups from external provider
+    std::string external_id;                    // Provider-specific user ID
+    bool is_disabled;
+    bool is_locked;
+};
+
+/**
+ * Abstract base class for authentication providers
+ *
+ * All authentication providers must implement this interface.
+ * The catalog manager delegates authentication to the appropriate provider
+ * based on user configuration.
+ */
+class AuthProvider {
+public:
+    virtual ~AuthProvider() = default;
+
+    /**
+     * Authenticate a user with username and password
+     *
+     * @param username Username to authenticate
+     * @param password Password (plaintext - provider handles hashing)
+     * @param user_info_out [out] User information if successful
+     * @param error_msg_out [out] Error message if authentication fails
+     * @return AuthResult status code
+     *
+     * Thread-safe: Must be safe to call from multiple threads
+     */
+    virtual AuthResult authenticate(
+        const std::string& username,
+        const std::string& password,
+        AuthUserInfo& user_info_out,
+        std::string& error_msg_out) = 0;
+
+    /**
+     * Verify if a user exists (without password)
+     *
+     * @param username Username to check
+     * @param user_info_out [out] User information if exists
+     * @return true if user exists, false otherwise
+     *
+     * Used for user enumeration and management operations.
+     */
+    virtual bool userExists(
+        const std::string& username,
+        AuthUserInfo& user_info_out) = 0;
+
+    /**
+     * Get external groups for a user
+     *
+     * @param username Username
+     * @param groups_out [out] List of group names
+     * @return true if successful, false on error
+     *
+     * Used to synchronize external groups with internal groups.
+     * Only applicable to external providers (LDAP, AD, etc.)
+     */
+    virtual bool getUserGroups(
+        const std::string& username,
+        std::vector<std::string>& groups_out) = 0;
+
+    /**
+     * Get provider type
+     */
+    virtual AuthProviderType getType() const = 0;
+
+    /**
+     * Get provider name (for logging/debugging)
+     */
+    virtual std::string getName() const = 0;
+
+    /**
+     * Test connection to authentication provider
+     *
+     * @param error_msg_out [out] Error message if test fails
+     * @return true if connection successful, false otherwise
+     *
+     * Used for health checks and diagnostics.
+     * For local provider, always returns true.
+     */
+    virtual bool testConnection(std::string& error_msg_out) = 0;
+};
+
+/**
+ * Local (password-based) authentication provider
+ *
+ * Implemented in Alpha. Uses BCrypt password hashing.
+ * Authenticates against local user database.
+ */
+class LocalAuthProvider : public AuthProvider {
+public:
+    explicit LocalAuthProvider(class CatalogManager* catalog);
+    ~LocalAuthProvider() override;
+
+    AuthResult authenticate(
+        const std::string& username,
+        const std::string& password,
+        AuthUserInfo& user_info_out,
+        std::string& error_msg_out) override;
+
+    bool userExists(
+        const std::string& username,
+        AuthUserInfo& user_info_out) override;
+
+    bool getUserGroups(
+        const std::string& username,
+        std::vector<std::string>& groups_out) override;
+
+    AuthProviderType getType() const override { return AuthProviderType::LOCAL; }
+    std::string getName() const override { return "Local"; }
+
+    bool testConnection(std::string& error_msg_out) override {
+        return true; // Always connected (local)
+    }
+
+private:
+    class CatalogManager* catalog_;
+};
+
+/**
+ * LDAP Authentication Provider (Beta - Infrastructure only)
+ *
+ * Not implemented in Alpha. Requires network connectivity.
+ * Implementation deferred to Beta release.
+ */
+class LDAPAuthProvider : public AuthProvider {
+public:
+    struct Config {
+        std::string server_uri;       // ldap://hostname:port or ldaps://
+        std::string bind_dn;          // Admin bind DN
+        std::string bind_password;    // Admin bind password
+        std::string user_base_dn;     // Base DN for users
+        std::string group_base_dn;    // Base DN for groups
+        std::string user_filter;      // LDAP filter for users
+        std::string group_filter;     // LDAP filter for groups
+        bool use_tls;                 // Use TLS/SSL
+        bool verify_cert;             // Verify server certificate
+        int timeout_seconds;          // Connection timeout
+    };
+
+    explicit LDAPAuthProvider(const Config& config);
+    ~LDAPAuthProvider() override;
+
+    AuthResult authenticate(
+        const std::string& username,
+        const std::string& password,
+        AuthUserInfo& user_info_out,
+        std::string& error_msg_out) override;
+
+    bool userExists(
+        const std::string& username,
+        AuthUserInfo& user_info_out) override;
+
+    bool getUserGroups(
+        const std::string& username,
+        std::vector<std::string>& groups_out) override;
+
+    AuthProviderType getType() const override { return AuthProviderType::LDAP; }
+    std::string getName() const override { return "LDAP"; }
+    bool testConnection(std::string& error_msg_out) override;
+
+private:
+    Config config_;
+    // Actual LDAP connection object will be added in Beta
+};
+
+/**
+ * Active Directory Authentication Provider (Beta - Infrastructure only)
+ */
+class ActiveDirectoryAuthProvider : public AuthProvider {
+public:
+    struct Config {
+        std::string domain;           // AD domain
+        std::string domain_controller; // DC hostname
+        std::string bind_user;        // Service account username
+        std::string bind_password;    // Service account password
+        bool use_kerberos;            // Use Kerberos authentication
+        bool use_ssl;                 // Use SSL/TLS
+        int timeout_seconds;
+    };
+
+    explicit ActiveDirectoryAuthProvider(const Config& config);
+    ~ActiveDirectoryAuthProvider() override;
+
+    AuthResult authenticate(
+        const std::string& username,
+        const std::string& password,
+        AuthUserInfo& user_info_out,
+        std::string& error_msg_out) override;
+
+    bool userExists(
+        const std::string& username,
+        AuthUserInfo& user_info_out) override;
+
+    bool getUserGroups(
+        const std::string& username,
+        std::vector<std::string>& groups_out) override;
+
+    AuthProviderType getType() const override { return AuthProviderType::ACTIVE_DIRECTORY; }
+    std::string getName() const override { return "Active Directory"; }
+    bool testConnection(std::string& error_msg_out) override;
+
+private:
+    Config config_;
+    // Actual AD connection object will be added in Beta
+};
+
+/**
+ * Authentication Provider Factory
+ *
+ * Creates appropriate authentication provider based on configuration.
+ */
+class AuthProviderFactory {
+public:
+    /**
+     * Create authentication provider
+     *
+     * @param type Provider type
+     * @param config_json JSON configuration string (provider-specific)
+     * @param catalog Catalog manager (for local auth)
+     * @return Unique pointer to auth provider, or nullptr on error
+     */
+    static std::unique_ptr<AuthProvider> create(
+        AuthProviderType type,
+        const std::string& config_json,
+        CatalogManager* catalog);
+
+    /**
+     * Get default provider (local auth)
+     */
+    static std::unique_ptr<AuthProvider> createDefault(CatalogManager* catalog);
+};
+
+} // namespace core
+} // namespace scratchbird

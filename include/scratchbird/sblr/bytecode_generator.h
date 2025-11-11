@@ -170,6 +170,24 @@ namespace scratchbird
             void visit(parser::SequenceFunctionExpr *node) override; // ALPHA Phase 1 - Sequences
             void visit(parser::ColumnDef *node) override;
 
+            // Security statements (ALPHA Phase 1 - Security System Phase 2)
+            void visit(parser::CreateUserStmt *node) override;
+            void visit(parser::AlterUserStmt *node) override;
+            void visit(parser::DropUserStmt *node) override;
+            void visit(parser::CreateRoleStmt *node) override;
+            void visit(parser::DropRoleStmt *node) override;
+            void visit(parser::CreateGroupStmt *node) override;
+            void visit(parser::DropGroupStmt *node) override;
+            void visit(parser::GrantPrivilegeStmt *node) override;
+            void visit(parser::RevokePrivilegeStmt *node) override;
+            void visit(parser::GrantRoleStmt *node) override;
+            void visit(parser::RevokeRoleStmt *node) override;
+            void visit(parser::SetRoleStmt *node) override;
+            void visit(parser::SetSessionAuthStmt *node) override;
+            void visit(parser::CreatePolicyStmt *node) override;  // Security Phase 3.4.4
+            void visit(parser::DropPolicyStmt *node) override;    // Security Phase 3.4.4
+            void visit(parser::AlterTableRLSStmt *node) override; // Security Phase 3.4.4
+
         private:
             const parser::StringPool &string_pool_;
             BytecodeResult *current_result_;

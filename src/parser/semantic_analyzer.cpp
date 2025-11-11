@@ -1849,6 +1849,159 @@ namespace scratchbird
             }
         }
 
+        // ===== Security Statement Visitors (ALPHA Phase 1 - Security System Phase 2) =====
+        // Stubs - semantic analysis for security statements is minimal (name validation only)
+
+        void SemanticAnalyzer::visit(CreateUserStmt *node)
+        {
+            // Minimal validation - username should be valid identifier
+            // Password validation happens at execution time
+            (void)node;  // Suppress unused parameter warning
+        }
+
+        void SemanticAnalyzer::visit(AlterUserStmt *node)
+        {
+            (void)node;
+        }
+
+        void SemanticAnalyzer::visit(DropUserStmt *node)
+        {
+            (void)node;
+        }
+
+        void SemanticAnalyzer::visit(CreateRoleStmt *node)
+        {
+            (void)node;
+        }
+
+        void SemanticAnalyzer::visit(DropRoleStmt *node)
+        {
+            (void)node;
+        }
+
+        void SemanticAnalyzer::visit(CreateGroupStmt *node)
+        {
+            (void)node;
+        }
+
+        void SemanticAnalyzer::visit(DropGroupStmt *node)
+        {
+            (void)node;
+        }
+
+        void SemanticAnalyzer::visit(GrantPrivilegeStmt *node)
+        {
+            // Security Phase 3.3.3: Validate column-level permissions
+            if (node->hasColumnList())
+            {
+                // Column lists are only valid for TABLE object type
+                if (node->objectType() != GrantPrivilegeStmt::ObjectType::TABLE)
+                {
+                    current_result_->addError(SemanticError(
+                        node->span().start,
+                        "Column-level permissions can only be granted on TABLEs"));
+                    return;
+                }
+
+                // Only SELECT, UPDATE, INSERT, and REFERENCES are valid for column-level grants
+                uint32_t valid_col_privs =
+                    static_cast<uint32_t>(GrantPrivilegeStmt::PrivilegeType::SELECT) |
+                    static_cast<uint32_t>(GrantPrivilegeStmt::PrivilegeType::UPDATE) |
+                    static_cast<uint32_t>(GrantPrivilegeStmt::PrivilegeType::INSERT) |
+                    static_cast<uint32_t>(GrantPrivilegeStmt::PrivilegeType::REFERENCES);
+
+                if ((node->privileges() & ~valid_col_privs) != 0)
+                {
+                    current_result_->addError(SemanticError(
+                        node->span().start,
+                        "Only SELECT, UPDATE, INSERT, and REFERENCES privileges can be granted on columns"));
+                    return;
+                }
+
+                // Note: We cannot validate that columns exist here because we don't have
+                // access to the catalog during semantic analysis. This will be validated
+                // at execution time by the executor.
+            }
+        }
+
+        void SemanticAnalyzer::visit(RevokePrivilegeStmt *node)
+        {
+            // Security Phase 3.3.3: Validate column-level permissions
+            if (node->hasColumnList())
+            {
+                // Column lists are only valid for TABLE object type
+                if (node->objectType() != RevokePrivilegeStmt::ObjectType::TABLE)
+                {
+                    current_result_->addError(SemanticError(
+                        node->span().start,
+                        "Column-level permissions can only be revoked on TABLEs"));
+                    return;
+                }
+
+                // Only SELECT, UPDATE, INSERT, and REFERENCES are valid for column-level revokes
+                uint32_t valid_col_privs =
+                    static_cast<uint32_t>(RevokePrivilegeStmt::PrivilegeType::SELECT) |
+                    static_cast<uint32_t>(RevokePrivilegeStmt::PrivilegeType::UPDATE) |
+                    static_cast<uint32_t>(RevokePrivilegeStmt::PrivilegeType::INSERT) |
+                    static_cast<uint32_t>(RevokePrivilegeStmt::PrivilegeType::REFERENCES);
+
+                if ((node->privileges() & ~valid_col_privs) != 0)
+                {
+                    current_result_->addError(SemanticError(
+                        node->span().start,
+                        "Only SELECT, UPDATE, INSERT, and REFERENCES privileges can be revoked on columns"));
+                    return;
+                }
+
+                // Note: Column existence validation happens at execution time.
+            }
+        }
+
+        void SemanticAnalyzer::visit(GrantRoleStmt *node)
+        {
+            (void)node;
+        }
+
+        void SemanticAnalyzer::visit(RevokeRoleStmt *node)
+        {
+            (void)node;
+        }
+
+        void SemanticAnalyzer::visit(SetRoleStmt *node)
+        {
+            (void)node;
+        }
+
+        void SemanticAnalyzer::visit(SetSessionAuthStmt *node)
+        {
+            (void)node;
+        }
+
+        // Security Phase 3.4: Row-level security policy statements
+        void SemanticAnalyzer::visit(CreatePolicyStmt *node)
+        {
+            // TODO Phase 3.4.3: Add full semantic validation
+            // - Validate table exists
+            // - Validate role names exist
+            // - Validate USING and WITH CHECK expressions
+            (void)node;
+        }
+
+        void SemanticAnalyzer::visit(DropPolicyStmt *node)
+        {
+            // TODO Phase 3.4.3: Add semantic validation
+            // - Validate table exists
+            // - Validate policy exists (if not IF EXISTS)
+            (void)node;
+        }
+
+        void SemanticAnalyzer::visit(AlterTableRLSStmt *node)
+        {
+            // TODO Phase 3.4.3: Add semantic validation
+            // - Validate table exists
+            (void)node;
+        }
+
         // Convenience function
         std::unique_ptr<SemanticResult> analyzeAST(Statement *stmt, const StringPool &pool)
         {
