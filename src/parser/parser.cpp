@@ -137,6 +137,23 @@ namespace scratchbird
                     {
                         stmt = parseCreateView();
                     }
+                    // Security statements (ALPHA Phase 1 - Security System Phase 2)
+                    else if (check(TokenType::KW_USER))
+                    {
+                        stmt = parseCreateUser();
+                    }
+                    else if (check(TokenType::KW_ROLE))
+                    {
+                        stmt = parseCreateRole();
+                    }
+                    else if (check(TokenType::KW_GROUP))
+                    {
+                        stmt = parseCreateGroup();
+                    }
+                    else if (check(TokenType::KW_POLICY))  // Security Phase 3.4
+                    {
+                        stmt = parseCreatePolicy();
+                    }
                     // Trigger support will be added by Agent C
                     // else if (check(TokenType::KW_TRIGGER))
                     // {
@@ -144,7 +161,7 @@ namespace scratchbird
                     // }
                     else
                     {
-                        error("Expected TABLE, INDEX, UNIQUE INDEX, SEQUENCE, VIEW, or TABLESPACE after CREATE");
+                        error("Expected TABLE, INDEX, UNIQUE INDEX, SEQUENCE, VIEW, USER, ROLE, GROUP, POLICY, or TABLESPACE after CREATE");
                         synchronize();
                     }
                 }
@@ -211,9 +228,14 @@ namespace scratchbird
                     {
                         stmt = parseAlterSequence();
                     }
+                    // Security statements (ALPHA Phase 1 - Security System Phase 2)
+                    else if (check(TokenType::KW_USER))
+                    {
+                        stmt = parseAlterUser();
+                    }
                     else
                     {
-                        error("Expected TABLESPACE, TABLE, or SEQUENCE after ALTER");
+                        error("Expected TABLESPACE, TABLE, SEQUENCE, or USER after ALTER");
                         synchronize();
                     }
                 }
@@ -239,6 +261,23 @@ namespace scratchbird
                     {
                         stmt = parseDropView();
                     }
+                    // Security statements (ALPHA Phase 1 - Security System Phase 2)
+                    else if (check(TokenType::KW_USER))
+                    {
+                        stmt = parseDropUser();
+                    }
+                    else if (check(TokenType::KW_ROLE))
+                    {
+                        stmt = parseDropRole();
+                    }
+                    else if (check(TokenType::KW_GROUP))
+                    {
+                        stmt = parseDropGroup();
+                    }
+                    else if (check(TokenType::KW_POLICY))  // Security Phase 3.4
+                    {
+                        stmt = parseDropPolicy();
+                    }
                     // Trigger support will be added by Agent C
                     // else if (check(TokenType::KW_TRIGGER))
                     // {
@@ -246,7 +285,7 @@ namespace scratchbird
                     // }
                     else
                     {
-                        error("Expected TABLE, INDEX, SEQUENCE, VIEW, or TABLESPACE after DROP");
+                        error("Expected TABLE, INDEX, SEQUENCE, VIEW, USER, ROLE, GROUP, POLICY, or TABLESPACE after DROP");
                         synchronize();
                     }
                 }
@@ -275,6 +314,46 @@ namespace scratchbird
                     else
                     {
                         error("Expected TABLESPACE after DETACH");
+                        synchronize();
+                    }
+                }
+                // Security statements (ALPHA Phase 1 - Security System Phase 2)
+                else if (match(TokenType::KW_GRANT))
+                {
+                    stmt = parseGrant();
+                }
+                else if (match(TokenType::KW_REVOKE))
+                {
+                    stmt = parseRevoke();
+                }
+                else if (match(TokenType::KW_SET))
+                {
+                    if (check(TokenType::KW_ROLE))
+                    {
+                        stmt = parseSetRole();
+                    }
+                    else if (check(TokenType::KW_SESSION))
+                    {
+                        stmt = parseSetSessionAuth();
+                    }
+                    else
+                    {
+                        stmt = parseSetTransaction();  // Existing SET TRANSACTION handling
+                    }
+                }
+                else if (match(TokenType::KW_RESET))
+                {
+                    if (check(TokenType::KW_ROLE))
+                    {
+                        stmt = parseSetRole();  // Will handle RESET internally
+                    }
+                    else if (check(TokenType::KW_SESSION))
+                    {
+                        stmt = parseSetSessionAuth();  // Will handle RESET internally
+                    }
+                    else
+                    {
+                        error("Expected ROLE or SESSION after RESET");
                         synchronize();
                     }
                 }
@@ -3471,6 +3550,13 @@ namespace scratchbird
             StringPool::StringId table_name = current().value.string_id;
             advance();
 
+            // Security Phase 3.4: Check for ROW LEVEL SECURITY operations
+            if (check(TokenType::KW_ENABLE) || check(TokenType::KW_DISABLE) ||
+                check(TokenType::KW_FORCE) || check(TokenType::KW_NO))
+            {
+                return parseAlterTableRLS(start_loc, table_name);
+            }
+
             // Check for SET TABLESPACE (existing functionality)
             if (match(TokenType::KW_SET))
             {
@@ -4787,6 +4873,1218 @@ namespace scratchbird
                 error("Expected PRECEDING or FOLLOWING after offset expression");
                 return FrameBoundary(FrameBoundaryType::CURRENT_ROW);
             }
+        }
+
+        // ===== Security Statement Parsers (ALPHA Phase 1 - Security System Phase 2) =====
+
+        Statement *Parser::parseCreateUser()
+        {
+            // CREATE USER username [WITH PASSWORD 'password'] [SUPERUSER | NOSUPERUSER]
+            auto start_loc = previous().location;
+
+            if (!consume(TokenType::KW_USER, "Expected USER after CREATE"))
+            {
+                synchronize();
+                return nullptr;
+            }
+
+            // Username
+            if (!check(TokenType::IDENTIFIER))
+            {
+                error("Expected username after CREATE USER");
+                synchronize();
+                return nullptr;
+            }
+
+            StringPool::StringId username = current().value.string_id;
+            advance();
+
+            // Optional: WITH PASSWORD 'password'
+            bool has_password = false;
+            StringPool::StringId password = 0;
+            if (match(TokenType::KW_WITH))
+            {
+                if (!consume(TokenType::KW_PASSWORD, "Expected PASSWORD after WITH"))
+                {
+                    synchronize();
+                    return nullptr;
+                }
+
+                if (!check(TokenType::STRING_LITERAL))
+                {
+                    error("Expected password string after PASSWORD");
+                    synchronize();
+                    return nullptr;
+                }
+
+                password = current().value.string_id;
+                has_password = true;
+                advance();
+            }
+
+            // Optional: SUPERUSER | NOSUPERUSER (default false)
+            bool is_superuser = false;
+            if (match(TokenType::KW_SUPERUSER))
+            {
+                is_superuser = true;
+            }
+            else if (match(TokenType::KW_NOSUPERUSER))
+            {
+                is_superuser = false;
+            }
+
+            auto span = makeSpan(start_loc);
+            return arena_.make<CreateUserStmt>(span, username, password, has_password, is_superuser);
+        }
+
+        Statement *Parser::parseAlterUser()
+        {
+            // ALTER USER username [WITH PASSWORD 'password'] [SUPERUSER | NOSUPERUSER]
+            auto start_loc = previous().location;
+
+            if (!consume(TokenType::KW_USER, "Expected USER after ALTER"))
+            {
+                synchronize();
+                return nullptr;
+            }
+
+            // Username
+            if (!check(TokenType::IDENTIFIER))
+            {
+                error("Expected username after ALTER USER");
+                synchronize();
+                return nullptr;
+            }
+
+            StringPool::StringId username = current().value.string_id;
+            advance();
+
+            // Optional: WITH PASSWORD 'password'
+            bool change_password = false;
+            StringPool::StringId password = 0;
+            if (match(TokenType::KW_WITH))
+            {
+                if (!consume(TokenType::KW_PASSWORD, "Expected PASSWORD after WITH"))
+                {
+                    synchronize();
+                    return nullptr;
+                }
+
+                if (!check(TokenType::STRING_LITERAL))
+                {
+                    error("Expected password string after PASSWORD");
+                    synchronize();
+                    return nullptr;
+                }
+
+                password = current().value.string_id;
+                change_password = true;
+                advance();
+            }
+
+            // Optional: SUPERUSER | NOSUPERUSER
+            bool change_superuser = false;
+            bool is_superuser = false;
+            if (match(TokenType::KW_SUPERUSER))
+            {
+                is_superuser = true;
+                change_superuser = true;
+            }
+            else if (match(TokenType::KW_NOSUPERUSER))
+            {
+                is_superuser = false;
+                change_superuser = true;
+            }
+
+            auto span = makeSpan(start_loc);
+            return arena_.make<AlterUserStmt>(span, username, password, change_password,
+                                            is_superuser, change_superuser);
+        }
+
+        Statement *Parser::parseDropUser()
+        {
+            // DROP USER [IF EXISTS] username [CASCADE | RESTRICT]
+            auto start_loc = previous().location;
+
+            if (!consume(TokenType::KW_USER, "Expected USER after DROP"))
+            {
+                synchronize();
+                return nullptr;
+            }
+
+            // Parse optional IF EXISTS clause
+            bool if_exists = false;
+            if (match(TokenType::KW_IF))
+            {
+                if (!consume(TokenType::KW_EXISTS, "Expected EXISTS after IF"))
+                {
+                    synchronize();
+                    return nullptr;
+                }
+                if_exists = true;
+            }
+
+            // Username
+            if (!check(TokenType::IDENTIFIER))
+            {
+                error("Expected username after DROP USER");
+                synchronize();
+                return nullptr;
+            }
+
+            StringPool::StringId username = current().value.string_id;
+            advance();
+
+            // Parse optional CASCADE or RESTRICT clause
+            DropUserStmt::DropBehavior behavior = DropUserStmt::DropBehavior::RESTRICT;
+            if (match(TokenType::KW_CASCADE))
+            {
+                behavior = DropUserStmt::DropBehavior::CASCADE;
+            }
+            else if (match(TokenType::KW_RESTRICT))
+            {
+                behavior = DropUserStmt::DropBehavior::RESTRICT;
+            }
+
+            auto span = makeSpan(start_loc);
+            return arena_.make<DropUserStmt>(span, username, if_exists, behavior);
+        }
+
+        Statement *Parser::parseCreateRole()
+        {
+            // CREATE ROLE rolename
+            auto start_loc = previous().location;
+
+            if (!consume(TokenType::KW_ROLE, "Expected ROLE after CREATE"))
+            {
+                synchronize();
+                return nullptr;
+            }
+
+            // Rolename
+            if (!check(TokenType::IDENTIFIER))
+            {
+                error("Expected rolename after CREATE ROLE");
+                synchronize();
+                return nullptr;
+            }
+
+            StringPool::StringId rolename = current().value.string_id;
+            advance();
+
+            auto span = makeSpan(start_loc);
+            return arena_.make<CreateRoleStmt>(span, rolename);
+        }
+
+        Statement *Parser::parseDropRole()
+        {
+            // DROP ROLE [IF EXISTS] rolename [CASCADE | RESTRICT]
+            auto start_loc = previous().location;
+
+            if (!consume(TokenType::KW_ROLE, "Expected ROLE after DROP"))
+            {
+                synchronize();
+                return nullptr;
+            }
+
+            // Parse optional IF EXISTS clause
+            bool if_exists = false;
+            if (match(TokenType::KW_IF))
+            {
+                if (!consume(TokenType::KW_EXISTS, "Expected EXISTS after IF"))
+                {
+                    synchronize();
+                    return nullptr;
+                }
+                if_exists = true;
+            }
+
+            // Rolename
+            if (!check(TokenType::IDENTIFIER))
+            {
+                error("Expected rolename after DROP ROLE");
+                synchronize();
+                return nullptr;
+            }
+
+            StringPool::StringId rolename = current().value.string_id;
+            advance();
+
+            // Parse optional CASCADE or RESTRICT clause
+            DropRoleStmt::DropBehavior behavior = DropRoleStmt::DropBehavior::RESTRICT;
+            if (match(TokenType::KW_CASCADE))
+            {
+                behavior = DropRoleStmt::DropBehavior::CASCADE;
+            }
+            else if (match(TokenType::KW_RESTRICT))
+            {
+                behavior = DropRoleStmt::DropBehavior::RESTRICT;
+            }
+
+            auto span = makeSpan(start_loc);
+            return arena_.make<DropRoleStmt>(span, rolename, if_exists, behavior);
+        }
+
+        Statement *Parser::parseCreateGroup()
+        {
+            // CREATE GROUP groupname
+            auto start_loc = previous().location;
+
+            if (!consume(TokenType::KW_GROUP, "Expected GROUP after CREATE"))
+            {
+                synchronize();
+                return nullptr;
+            }
+
+            // Groupname
+            if (!check(TokenType::IDENTIFIER))
+            {
+                error("Expected groupname after CREATE GROUP");
+                synchronize();
+                return nullptr;
+            }
+
+            StringPool::StringId groupname = current().value.string_id;
+            advance();
+
+            auto span = makeSpan(start_loc);
+            return arena_.make<CreateGroupStmt>(span, groupname);
+        }
+
+        Statement *Parser::parseDropGroup()
+        {
+            // DROP GROUP [IF EXISTS] groupname [CASCADE | RESTRICT]
+            auto start_loc = previous().location;
+
+            if (!consume(TokenType::KW_GROUP, "Expected GROUP after DROP"))
+            {
+                synchronize();
+                return nullptr;
+            }
+
+            // Parse optional IF EXISTS clause
+            bool if_exists = false;
+            if (match(TokenType::KW_IF))
+            {
+                if (!consume(TokenType::KW_EXISTS, "Expected EXISTS after IF"))
+                {
+                    synchronize();
+                    return nullptr;
+                }
+                if_exists = true;
+            }
+
+            // Groupname
+            if (!check(TokenType::IDENTIFIER))
+            {
+                error("Expected groupname after DROP GROUP");
+                synchronize();
+                return nullptr;
+            }
+
+            StringPool::StringId groupname = current().value.string_id;
+            advance();
+
+            // Parse optional CASCADE or RESTRICT clause
+            DropGroupStmt::DropBehavior behavior = DropGroupStmt::DropBehavior::RESTRICT;
+            if (match(TokenType::KW_CASCADE))
+            {
+                behavior = DropGroupStmt::DropBehavior::CASCADE;
+            }
+            else if (match(TokenType::KW_RESTRICT))
+            {
+                behavior = DropGroupStmt::DropBehavior::RESTRICT;
+            }
+
+            auto span = makeSpan(start_loc);
+            return arena_.make<DropGroupStmt>(span, groupname, if_exists, behavior);
+        }
+
+        Statement *Parser::parseGrant()
+        {
+            // GRANT privilege_list ON object_type object_name TO grantee [WITH GRANT OPTION]
+            // GRANT rolename TO username/rolename
+            auto start_loc = previous().location;
+
+            // Parse privilege list: SELECT, INSERT, UPDATE, DELETE, ALL, etc.
+            uint32_t privileges = 0;
+            bool is_role_grant = false;
+            StringPool::StringId role_for_grant = 0;
+
+            // Check if first token is an identifier (could be role name)
+            if (check(TokenType::IDENTIFIER))
+            {
+                role_for_grant = current().value.string_id;
+                advance();
+
+                if (check(TokenType::KW_TO))
+                {
+                    // This is GRANT role TO grantee
+                    is_role_grant = true;
+                    advance(); // consume TO
+
+                    if (!check(TokenType::IDENTIFIER))
+                    {
+                        error("Expected username or rolename after TO");
+                        synchronize();
+                        return nullptr;
+                    }
+
+                    StringPool::StringId grantee_name = current().value.string_id;
+                    advance();
+
+                    auto span = makeSpan(start_loc);
+                    return arena_.make<GrantRoleStmt>(span, role_for_grant,
+                                                     GrantRoleStmt::GranteeType::USER,
+                                                     grantee_name);
+                }
+                else
+                {
+                    error("Expected TO after role name in GRANT statement");
+                    synchronize();
+                    return nullptr;
+                }
+            }
+
+            // Security Phase 3.3.3: Column-level permissions support
+            std::vector<StringPool::StringId> column_names;
+
+            // Parse privilege keywords
+            do
+            {
+                if (match(TokenType::KW_SELECT))
+                {
+                    privileges |= static_cast<uint32_t>(GrantPrivilegeStmt::PrivilegeType::SELECT);
+                }
+                else if (match(TokenType::KW_INSERT))
+                {
+                    privileges |= static_cast<uint32_t>(GrantPrivilegeStmt::PrivilegeType::INSERT);
+                }
+                else if (match(TokenType::KW_UPDATE))
+                {
+                    privileges |= static_cast<uint32_t>(GrantPrivilegeStmt::PrivilegeType::UPDATE);
+                }
+                else if (match(TokenType::KW_DELETE))
+                {
+                    privileges |= static_cast<uint32_t>(GrantPrivilegeStmt::PrivilegeType::DELETE);
+                }
+                else if (match(TokenType::KW_TRUNCATE))
+                {
+                    privileges |= static_cast<uint32_t>(GrantPrivilegeStmt::PrivilegeType::TRUNCATE);
+                }
+                else if (match(TokenType::KW_REFERENCES))
+                {
+                    privileges |= static_cast<uint32_t>(GrantPrivilegeStmt::PrivilegeType::REFERENCES);
+                }
+                else if (match(TokenType::KW_TRIGGER))
+                {
+                    privileges |= static_cast<uint32_t>(GrantPrivilegeStmt::PrivilegeType::TRIGGER);
+                }
+                else if (match(TokenType::KW_CREATE))
+                {
+                    privileges |= static_cast<uint32_t>(GrantPrivilegeStmt::PrivilegeType::CREATE);
+                }
+                else if (match(TokenType::KW_USAGE))
+                {
+                    privileges |= static_cast<uint32_t>(GrantPrivilegeStmt::PrivilegeType::USAGE);
+                }
+                else if (match(TokenType::KW_EXECUTE))
+                {
+                    privileges |= static_cast<uint32_t>(GrantPrivilegeStmt::PrivilegeType::EXECUTE);
+                }
+                else if (match(TokenType::KW_CONNECT))
+                {
+                    privileges |= static_cast<uint32_t>(GrantPrivilegeStmt::PrivilegeType::CONNECT);
+                }
+                else if (match(TokenType::KW_ALL))
+                {
+                    privileges = static_cast<uint32_t>(GrantPrivilegeStmt::PrivilegeType::ALL);
+                    break; // ALL encompasses everything
+                }
+                else
+                {
+                    error("Expected privilege keyword (SELECT, INSERT, UPDATE, DELETE, etc.)");
+                    synchronize();
+                    return nullptr;
+                }
+
+                // Security Phase 3.3.3: Parse optional column list (col1, col2, ...)
+                if (check(TokenType::LEFT_PAREN))
+                {
+                    advance(); // consume '('
+
+                    // Parse column names
+                    do
+                    {
+                        if (!check(TokenType::IDENTIFIER))
+                        {
+                            error("Expected column name in column list");
+                            synchronize();
+                            return nullptr;
+                        }
+                        column_names.push_back(current().value.string_id);
+                        advance();
+                    } while (match(TokenType::COMMA));
+
+                    if (!consume(TokenType::RIGHT_PAREN, "Expected ')' after column list"))
+                    {
+                        synchronize();
+                        return nullptr;
+                    }
+                }
+            } while (match(TokenType::COMMA));
+
+            // ON object_type object_name
+            if (!consume(TokenType::KW_ON, "Expected ON after privilege list"))
+            {
+                synchronize();
+                return nullptr;
+            }
+
+            // Parse object type
+            GrantPrivilegeStmt::ObjectType object_type;
+            if (match(TokenType::KW_TABLE))
+            {
+                object_type = GrantPrivilegeStmt::ObjectType::TABLE;
+            }
+            else if (match(TokenType::KW_VIEW))
+            {
+                object_type = GrantPrivilegeStmt::ObjectType::VIEW;
+            }
+            else if (match(TokenType::KW_SEQUENCE))
+            {
+                object_type = GrantPrivilegeStmt::ObjectType::SEQUENCE;
+            }
+            else if (match(TokenType::KW_FUNCTION))
+            {
+                object_type = GrantPrivilegeStmt::ObjectType::FUNCTION;
+            }
+            else if (match(TokenType::KW_PROCEDURE))
+            {
+                object_type = GrantPrivilegeStmt::ObjectType::PROCEDURE;
+            }
+            else if (match(TokenType::KW_DATABASE))
+            {
+                object_type = GrantPrivilegeStmt::ObjectType::DATABASE;
+            }
+            else
+            {
+                error("Expected object type (TABLE, VIEW, SEQUENCE, etc.)");
+                synchronize();
+                return nullptr;
+            }
+
+            // Object name
+            if (!check(TokenType::IDENTIFIER))
+            {
+                error("Expected object name");
+                synchronize();
+                return nullptr;
+            }
+            StringPool::StringId object_name = current().value.string_id;
+            advance();
+
+            // TO grantee
+            if (!consume(TokenType::KW_TO, "Expected TO after object name"))
+            {
+                synchronize();
+                return nullptr;
+            }
+
+            // Parse grantee (USER/ROLE/GROUP username or PUBLIC)
+            GrantPrivilegeStmt::GranteeType grantee_type;
+            StringPool::StringId grantee_name = 0;
+
+            if (match(TokenType::KW_PUBLIC))
+            {
+                grantee_type = GrantPrivilegeStmt::GranteeType::PUBLIC;
+                grantee_name = 0; // PUBLIC has no name
+            }
+            else if (match(TokenType::KW_USER))
+            {
+                grantee_type = GrantPrivilegeStmt::GranteeType::USER;
+                if (!check(TokenType::IDENTIFIER))
+                {
+                    error("Expected username after USER");
+                    synchronize();
+                    return nullptr;
+                }
+                grantee_name = current().value.string_id;
+                advance();
+            }
+            else if (match(TokenType::KW_ROLE))
+            {
+                grantee_type = GrantPrivilegeStmt::GranteeType::ROLE;
+                if (!check(TokenType::IDENTIFIER))
+                {
+                    error("Expected rolename after ROLE");
+                    synchronize();
+                    return nullptr;
+                }
+                grantee_name = current().value.string_id;
+                advance();
+            }
+            else if (match(TokenType::KW_GROUP))
+            {
+                grantee_type = GrantPrivilegeStmt::GranteeType::GROUP;
+                if (!check(TokenType::IDENTIFIER))
+                {
+                    error("Expected groupname after GROUP");
+                    synchronize();
+                    return nullptr;
+                }
+                grantee_name = current().value.string_id;
+                advance();
+            }
+            else if (check(TokenType::IDENTIFIER))
+            {
+                // Default to USER if type not specified
+                grantee_type = GrantPrivilegeStmt::GranteeType::USER;
+                grantee_name = current().value.string_id;
+                advance();
+            }
+            else
+            {
+                error("Expected grantee (username, rolename, groupname, or PUBLIC)");
+                synchronize();
+                return nullptr;
+            }
+
+            // Optional: WITH GRANT OPTION
+            bool with_grant_option = false;
+            if (match(TokenType::KW_WITH))
+            {
+                if (!consume(TokenType::KW_GRANT, "Expected GRANT after WITH"))
+                {
+                    synchronize();
+                    return nullptr;
+                }
+                // OPTION keyword is not in our token list, skip it for now
+                // This would need to be added to support full syntax
+            }
+
+            auto span = makeSpan(start_loc);
+            return arena_.make<GrantPrivilegeStmt>(span, privileges, object_type, object_name,
+                                                  grantee_type, grantee_name, with_grant_option,
+                                                  std::move(column_names));  // Security Phase 3.3.3
+        }
+
+        Statement *Parser::parseRevoke()
+        {
+            // REVOKE privilege_list ON object_type object_name FROM grantee [CASCADE | RESTRICT]
+            // REVOKE rolename FROM username/rolename [CASCADE | RESTRICT]
+            auto start_loc = previous().location;
+
+            // Check if first token is an identifier (could be role name)
+            if (check(TokenType::IDENTIFIER))
+            {
+                StringPool::StringId name = current().value.string_id;
+                advance();
+
+                if (check(TokenType::KW_FROM))
+                {
+                    // This is REVOKE role FROM grantee
+                    advance(); // consume FROM
+
+                    if (!check(TokenType::IDENTIFIER))
+                    {
+                        error("Expected username or rolename after FROM");
+                        synchronize();
+                        return nullptr;
+                    }
+
+                    StringPool::StringId grantee_name = current().value.string_id;
+                    advance();
+
+                    // Parse optional CASCADE or RESTRICT
+                    RevokeRoleStmt::RevokeBehavior behavior = RevokeRoleStmt::RevokeBehavior::RESTRICT;
+                    if (match(TokenType::KW_CASCADE))
+                    {
+                        behavior = RevokeRoleStmt::RevokeBehavior::CASCADE;
+                    }
+                    else if (match(TokenType::KW_RESTRICT))
+                    {
+                        behavior = RevokeRoleStmt::RevokeBehavior::RESTRICT;
+                    }
+
+                    auto span = makeSpan(start_loc);
+                    return arena_.make<RevokeRoleStmt>(span, name,
+                                                      RevokeRoleStmt::GranteeType::USER,
+                                                      grantee_name, behavior);
+                }
+                else
+                {
+                    error("Expected FROM after role name in REVOKE statement");
+                    synchronize();
+                    return nullptr;
+                }
+            }
+
+            // Security Phase 3.3.3: Column-level permissions support
+            std::vector<StringPool::StringId> column_names;
+
+            // Parse privilege list (same as GRANT)
+            uint32_t privileges = 0;
+            do
+            {
+                if (match(TokenType::KW_SELECT))
+                {
+                    privileges |= static_cast<uint32_t>(RevokePrivilegeStmt::PrivilegeType::SELECT);
+                }
+                else if (match(TokenType::KW_INSERT))
+                {
+                    privileges |= static_cast<uint32_t>(RevokePrivilegeStmt::PrivilegeType::INSERT);
+                }
+                else if (match(TokenType::KW_UPDATE))
+                {
+                    privileges |= static_cast<uint32_t>(RevokePrivilegeStmt::PrivilegeType::UPDATE);
+                }
+                else if (match(TokenType::KW_DELETE))
+                {
+                    privileges |= static_cast<uint32_t>(RevokePrivilegeStmt::PrivilegeType::DELETE);
+                }
+                else if (match(TokenType::KW_TRUNCATE))
+                {
+                    privileges |= static_cast<uint32_t>(RevokePrivilegeStmt::PrivilegeType::TRUNCATE);
+                }
+                else if (match(TokenType::KW_REFERENCES))
+                {
+                    privileges |= static_cast<uint32_t>(RevokePrivilegeStmt::PrivilegeType::REFERENCES);
+                }
+                else if (match(TokenType::KW_TRIGGER))
+                {
+                    privileges |= static_cast<uint32_t>(RevokePrivilegeStmt::PrivilegeType::TRIGGER);
+                }
+                else if (match(TokenType::KW_CREATE))
+                {
+                    privileges |= static_cast<uint32_t>(RevokePrivilegeStmt::PrivilegeType::CREATE);
+                }
+                else if (match(TokenType::KW_USAGE))
+                {
+                    privileges |= static_cast<uint32_t>(RevokePrivilegeStmt::PrivilegeType::USAGE);
+                }
+                else if (match(TokenType::KW_EXECUTE))
+                {
+                    privileges |= static_cast<uint32_t>(RevokePrivilegeStmt::PrivilegeType::EXECUTE);
+                }
+                else if (match(TokenType::KW_CONNECT))
+                {
+                    privileges |= static_cast<uint32_t>(RevokePrivilegeStmt::PrivilegeType::CONNECT);
+                }
+                else if (match(TokenType::KW_ALL))
+                {
+                    privileges = static_cast<uint32_t>(RevokePrivilegeStmt::PrivilegeType::ALL);
+                    break;
+                }
+                else
+                {
+                    error("Expected privilege keyword");
+                    synchronize();
+                    return nullptr;
+                }
+
+                // Security Phase 3.3.3: Parse optional column list (col1, col2, ...)
+                if (check(TokenType::LEFT_PAREN))
+                {
+                    advance(); // consume '('
+
+                    // Parse column names
+                    do
+                    {
+                        if (!check(TokenType::IDENTIFIER))
+                        {
+                            error("Expected column name in column list");
+                            synchronize();
+                            return nullptr;
+                        }
+                        column_names.push_back(current().value.string_id);
+                        advance();
+                    } while (match(TokenType::COMMA));
+
+                    if (!consume(TokenType::RIGHT_PAREN, "Expected ')' after column list"))
+                    {
+                        synchronize();
+                        return nullptr;
+                    }
+                }
+            } while (match(TokenType::COMMA));
+
+            // ON object_type object_name
+            if (!consume(TokenType::KW_ON, "Expected ON after privilege list"))
+            {
+                synchronize();
+                return nullptr;
+            }
+
+            // Parse object type
+            RevokePrivilegeStmt::ObjectType object_type;
+            if (match(TokenType::KW_TABLE))
+            {
+                object_type = RevokePrivilegeStmt::ObjectType::TABLE;
+            }
+            else if (match(TokenType::KW_VIEW))
+            {
+                object_type = RevokePrivilegeStmt::ObjectType::VIEW;
+            }
+            else if (match(TokenType::KW_SEQUENCE))
+            {
+                object_type = RevokePrivilegeStmt::ObjectType::SEQUENCE;
+            }
+            else if (match(TokenType::KW_FUNCTION))
+            {
+                object_type = RevokePrivilegeStmt::ObjectType::FUNCTION;
+            }
+            else if (match(TokenType::KW_PROCEDURE))
+            {
+                object_type = RevokePrivilegeStmt::ObjectType::PROCEDURE;
+            }
+            else if (match(TokenType::KW_DATABASE))
+            {
+                object_type = RevokePrivilegeStmt::ObjectType::DATABASE;
+            }
+            else
+            {
+                error("Expected object type (TABLE, VIEW, SEQUENCE, etc.)");
+                synchronize();
+                return nullptr;
+            }
+
+            // Object name
+            if (!check(TokenType::IDENTIFIER))
+            {
+                error("Expected object name");
+                synchronize();
+                return nullptr;
+            }
+            StringPool::StringId object_name = current().value.string_id;
+            advance();
+
+            // FROM grantee
+            if (!consume(TokenType::KW_FROM, "Expected FROM after object name"))
+            {
+                synchronize();
+                return nullptr;
+            }
+
+            // Parse grantee
+            RevokePrivilegeStmt::GranteeType grantee_type;
+            StringPool::StringId grantee_name = 0;
+
+            if (match(TokenType::KW_PUBLIC))
+            {
+                grantee_type = RevokePrivilegeStmt::GranteeType::PUBLIC;
+                grantee_name = 0;
+            }
+            else if (match(TokenType::KW_USER))
+            {
+                grantee_type = RevokePrivilegeStmt::GranteeType::USER;
+                if (!check(TokenType::IDENTIFIER))
+                {
+                    error("Expected username after USER");
+                    synchronize();
+                    return nullptr;
+                }
+                grantee_name = current().value.string_id;
+                advance();
+            }
+            else if (match(TokenType::KW_ROLE))
+            {
+                grantee_type = RevokePrivilegeStmt::GranteeType::ROLE;
+                if (!check(TokenType::IDENTIFIER))
+                {
+                    error("Expected rolename after ROLE");
+                    synchronize();
+                    return nullptr;
+                }
+                grantee_name = current().value.string_id;
+                advance();
+            }
+            else if (match(TokenType::KW_GROUP))
+            {
+                grantee_type = RevokePrivilegeStmt::GranteeType::GROUP;
+                if (!check(TokenType::IDENTIFIER))
+                {
+                    error("Expected groupname after GROUP");
+                    synchronize();
+                    return nullptr;
+                }
+                grantee_name = current().value.string_id;
+                advance();
+            }
+            else if (check(TokenType::IDENTIFIER))
+            {
+                grantee_type = RevokePrivilegeStmt::GranteeType::USER;
+                grantee_name = current().value.string_id;
+                advance();
+            }
+            else
+            {
+                error("Expected grantee (username, rolename, groupname, or PUBLIC)");
+                synchronize();
+                return nullptr;
+            }
+
+            // Parse optional CASCADE or RESTRICT
+            RevokePrivilegeStmt::RevokeBehavior behavior = RevokePrivilegeStmt::RevokeBehavior::RESTRICT;
+            if (match(TokenType::KW_CASCADE))
+            {
+                behavior = RevokePrivilegeStmt::RevokeBehavior::CASCADE;
+            }
+            else if (match(TokenType::KW_RESTRICT))
+            {
+                behavior = RevokePrivilegeStmt::RevokeBehavior::RESTRICT;
+            }
+
+            auto span = makeSpan(start_loc);
+            return arena_.make<RevokePrivilegeStmt>(span, privileges, object_type, object_name,
+                                                   grantee_type, grantee_name, behavior,
+                                                   std::move(column_names));  // Security Phase 3.3.3
+        }
+
+        Statement *Parser::parseSetRole()
+        {
+            // SET ROLE rolename / RESET ROLE
+            auto start_loc = previous().location;
+            bool is_reset = (previous().type == TokenType::KW_RESET);
+
+            if (!consume(TokenType::KW_ROLE, "Expected ROLE"))
+            {
+                synchronize();
+                return nullptr;
+            }
+
+            StringPool::StringId rolename = 0;
+            if (!is_reset)
+            {
+                // SET ROLE requires a rolename
+                if (!check(TokenType::IDENTIFIER))
+                {
+                    error("Expected rolename after SET ROLE");
+                    synchronize();
+                    return nullptr;
+                }
+                rolename = current().value.string_id;
+                advance();
+            }
+
+            auto span = makeSpan(start_loc);
+            return arena_.make<SetRoleStmt>(span, rolename, is_reset);
+        }
+
+        Statement *Parser::parseSetSessionAuth()
+        {
+            // SET SESSION AUTHORIZATION username / RESET SESSION AUTHORIZATION
+            auto start_loc = previous().location;
+            bool is_reset = (previous().type == TokenType::KW_RESET);
+
+            if (!consume(TokenType::KW_SESSION, "Expected SESSION"))
+            {
+                synchronize();
+                return nullptr;
+            }
+
+            if (!consume(TokenType::KW_AUTHORIZATION, "Expected AUTHORIZATION after SESSION"))
+            {
+                synchronize();
+                return nullptr;
+            }
+
+            StringPool::StringId username = 0;
+            if (!is_reset)
+            {
+                // SET SESSION AUTHORIZATION requires a username
+                if (!check(TokenType::IDENTIFIER))
+                {
+                    error("Expected username after SET SESSION AUTHORIZATION");
+                    synchronize();
+                    return nullptr;
+                }
+                username = current().value.string_id;
+                advance();
+            }
+
+            auto span = makeSpan(start_loc);
+            return arena_.make<SetSessionAuthStmt>(span, username, is_reset);
+        }
+
+        // Security Phase 3.4: Row-Level Security statements
+
+        Statement *Parser::parseCreatePolicy()
+        {
+            // CREATE POLICY policy_name ON table_name
+            //   [FOR {ALL | SELECT | INSERT | UPDATE | DELETE}]
+            //   [TO {role_name [, ...] | PUBLIC}]
+            //   [USING (expression)]
+            //   [WITH CHECK (expression)]
+            auto start_loc = previous().location;
+
+            if (!consume(TokenType::KW_POLICY, "Expected POLICY after CREATE"))
+            {
+                synchronize();
+                return nullptr;
+            }
+
+            // Policy name
+            if (!check(TokenType::IDENTIFIER))
+            {
+                error("Expected policy name");
+                synchronize();
+                return nullptr;
+            }
+            StringPool::StringId policy_name = current().value.string_id;
+            advance();
+
+            // ON table_name
+            if (!consume(TokenType::KW_ON, "Expected ON after policy name"))
+            {
+                synchronize();
+                return nullptr;
+            }
+
+            if (!check(TokenType::IDENTIFIER))
+            {
+                error("Expected table name after ON");
+                synchronize();
+                return nullptr;
+            }
+            StringPool::StringId table_name = current().value.string_id;
+            advance();
+
+            // Optional FOR clause
+            CreatePolicyStmt::PolicyCommand command = CreatePolicyStmt::PolicyCommand::ALL;
+            if (match(TokenType::KW_FOR))
+            {
+                if (match(TokenType::KW_ALL))
+                {
+                    command = CreatePolicyStmt::PolicyCommand::ALL;
+                }
+                else if (match(TokenType::KW_SELECT))
+                {
+                    command = CreatePolicyStmt::PolicyCommand::SELECT;
+                }
+                else if (match(TokenType::KW_INSERT))
+                {
+                    command = CreatePolicyStmt::PolicyCommand::INSERT;
+                }
+                else if (match(TokenType::KW_UPDATE))
+                {
+                    command = CreatePolicyStmt::PolicyCommand::UPDATE;
+                }
+                else if (match(TokenType::KW_DELETE))
+                {
+                    command = CreatePolicyStmt::PolicyCommand::DELETE_CMD;
+                }
+                else
+                {
+                    error("Expected ALL, SELECT, INSERT, UPDATE, or DELETE after FOR");
+                    synchronize();
+                    return nullptr;
+                }
+            }
+
+            // Optional TO clause (roles)
+            std::vector<StringPool::StringId> roles;
+            if (match(TokenType::KW_TO))
+            {
+                if (match(TokenType::KW_PUBLIC))
+                {
+                    // Empty roles list = PUBLIC = all roles
+                    roles.clear();
+                }
+                else
+                {
+                    // Parse comma-separated role list
+                    do
+                    {
+                        if (!check(TokenType::IDENTIFIER))
+                        {
+                            error("Expected role name after TO");
+                            synchronize();
+                            return nullptr;
+                        }
+                        roles.push_back(current().value.string_id);
+                        advance();
+                    } while (match(TokenType::COMMA));
+                }
+            }
+
+            // Optional USING clause
+            Expression *using_expr = nullptr;
+            if (match(TokenType::KW_USING))
+            {
+                if (!consume(TokenType::LEFT_PAREN, "Expected '(' after USING"))
+                {
+                    synchronize();
+                    return nullptr;
+                }
+                using_expr = parseExpression();
+                if (!using_expr)
+                {
+                    return nullptr;
+                }
+                if (!consume(TokenType::RIGHT_PAREN, "Expected ')' after USING expression"))
+                {
+                    synchronize();
+                    return nullptr;
+                }
+            }
+
+            // Optional WITH CHECK clause
+            Expression *with_check_expr = nullptr;
+            if (match(TokenType::KW_WITH))
+            {
+                if (!consume(TokenType::KW_CHECK, "Expected CHECK after WITH"))
+                {
+                    synchronize();
+                    return nullptr;
+                }
+                if (!consume(TokenType::LEFT_PAREN, "Expected '(' after WITH CHECK"))
+                {
+                    synchronize();
+                    return nullptr;
+                }
+                with_check_expr = parseExpression();
+                if (!with_check_expr)
+                {
+                    return nullptr;
+                }
+                if (!consume(TokenType::RIGHT_PAREN, "Expected ')' after WITH CHECK expression"))
+                {
+                    synchronize();
+                    return nullptr;
+                }
+            }
+
+            auto span = makeSpan(start_loc);
+            return arena_.make<CreatePolicyStmt>(span, policy_name, table_name, command,
+                                                std::move(roles), using_expr, with_check_expr);
+        }
+
+        Statement *Parser::parseDropPolicy()
+        {
+            // DROP POLICY [IF EXISTS] policy_name ON table_name [CASCADE | RESTRICT]
+            auto start_loc = previous().location;
+
+            if (!consume(TokenType::KW_POLICY, "Expected POLICY after DROP"))
+            {
+                synchronize();
+                return nullptr;
+            }
+
+            // Optional IF EXISTS
+            bool if_exists = false;
+            if (match(TokenType::KW_IF))
+            {
+                if (!consume(TokenType::KW_EXISTS, "Expected EXISTS after IF"))
+                {
+                    synchronize();
+                    return nullptr;
+                }
+                if_exists = true;
+            }
+
+            // Policy name
+            if (!check(TokenType::IDENTIFIER))
+            {
+                error("Expected policy name");
+                synchronize();
+                return nullptr;
+            }
+            StringPool::StringId policy_name = current().value.string_id;
+            advance();
+
+            // ON table_name
+            if (!consume(TokenType::KW_ON, "Expected ON after policy name"))
+            {
+                synchronize();
+                return nullptr;
+            }
+
+            if (!check(TokenType::IDENTIFIER))
+            {
+                error("Expected table name after ON");
+                synchronize();
+                return nullptr;
+            }
+            StringPool::StringId table_name = current().value.string_id;
+            advance();
+
+            // Optional CASCADE or RESTRICT
+            DropPolicyStmt::DropBehavior drop_behavior = DropPolicyStmt::DropBehavior::RESTRICT;
+            if (match(TokenType::KW_CASCADE))
+            {
+                drop_behavior = DropPolicyStmt::DropBehavior::CASCADE;
+            }
+            else if (match(TokenType::KW_RESTRICT))
+            {
+                drop_behavior = DropPolicyStmt::DropBehavior::RESTRICT;
+            }
+
+            auto span = makeSpan(start_loc);
+            return arena_.make<DropPolicyStmt>(span, policy_name, table_name, if_exists, drop_behavior);
+        }
+
+        Statement *Parser::parseAlterTableRLS(const SourceLocation& start_loc, StringPool::StringId table_name)
+        {
+            // ALTER TABLE table_name {ENABLE | DISABLE | FORCE | NO FORCE} ROW LEVEL SECURITY
+            // Called from parseAlterTable after table name is consumed
+            // Current token is ENABLE, DISABLE, FORCE, or NO
+
+            AlterTableRLSStmt::RLSAction action;
+
+            if (match(TokenType::KW_ENABLE))
+            {
+                // ENABLE ROW LEVEL SECURITY
+                action = AlterTableRLSStmt::RLSAction::ENABLE;
+            }
+            else if (match(TokenType::KW_DISABLE))
+            {
+                // DISABLE ROW LEVEL SECURITY
+                action = AlterTableRLSStmt::RLSAction::DISABLE;
+            }
+            else if (match(TokenType::KW_FORCE))
+            {
+                // FORCE ROW LEVEL SECURITY
+                action = AlterTableRLSStmt::RLSAction::FORCE;
+            }
+            else if (match(TokenType::KW_NO))
+            {
+                // NO FORCE ROW LEVEL SECURITY
+                if (!consume(TokenType::KW_FORCE, "Expected FORCE after NO"))
+                {
+                    synchronize();
+                    return nullptr;
+                }
+                action = AlterTableRLSStmt::RLSAction::NO_FORCE;
+            }
+            else
+            {
+                error("Expected ENABLE, DISABLE, FORCE, or NO in ALTER TABLE RLS");
+                synchronize();
+                return nullptr;
+            }
+
+            // Expect ROW LEVEL SECURITY
+            if (!consume(TokenType::KW_ROW, "Expected ROW after action"))
+            {
+                synchronize();
+                return nullptr;
+            }
+
+            if (!consume(TokenType::KW_LEVEL, "Expected LEVEL after ROW"))
+            {
+                synchronize();
+                return nullptr;
+            }
+
+            if (!consume(TokenType::KW_SECURITY, "Expected SECURITY after LEVEL"))
+            {
+                synchronize();
+                return nullptr;
+            }
+
+            auto span = makeSpan(start_loc);
+            return arena_.make<AlterTableRLSStmt>(span, table_name, action);
         }
 
         // Convenience function

@@ -541,6 +541,9 @@ namespace scratchbird
             void executeRevokeRole();        // Execute REVOKE role
             void executeSetRole();           // Execute SET ROLE / RESET ROLE
             void executeSetSessionAuth();    // Execute SET/RESET SESSION AUTHORIZATION
+            void executeCreatePolicy();      // Execute CREATE POLICY (Security Phase 3.4.4)
+            void executeDropPolicy();        // Execute DROP POLICY (Security Phase 3.4.4)
+            void executeAlterTableRLS();     // Execute ALTER TABLE ... ROW LEVEL SECURITY (Security Phase 3.4.4)
 
             // Security context helpers (Phase 2 - Security System)
             // These wrap ConnectionContext methods for convenience

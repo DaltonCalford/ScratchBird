@@ -617,3 +617,24 @@ set_tests_properties(LSMTreeStress PROPERTIES
     LABELS "stress;lsm;performance;phase7"
     TIMEOUT 300
 )
+
+# ============================================================================
+# Security System Phase 2 Integration Test
+# ============================================================================
+
+add_executable(test_security_phase2
+    integration/test_security_phase2.cpp
+)
+target_link_libraries(test_security_phase2
+    scratchbird_core
+    scratchbird_parser
+    scratchbird_sblr
+    scratchbird_optimizer
+    gtest
+    gtest_main
+)
+add_test(NAME SecurityPhase2 COMMAND test_security_phase2)
+set_tests_properties(SecurityPhase2 PROPERTIES
+    LABELS "integration;security;phase2;alpha"
+    TIMEOUT 120
+)

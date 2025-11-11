@@ -3,6 +3,8 @@
 #include "scratchbird/optimizer/predicate_matcher.h"
 #include "scratchbird/core/debug.h"
 #include "scratchbird/core/catalog_manager.h"
+#include "scratchbird/core/connection_context.h"  // Security Phase 3.2: Permission checks
+#include "scratchbird/core/permission_cache.h"   // Security Phase 3.2.3: Global cache
 #include "scratchbird/core/expression_serializer.h"
 #include "scratchbird/parser/parser.h"
 #include "scratchbird/parser/lexer.h"
@@ -15,9 +17,14 @@ namespace scratchbird::optimizer
 
     auto QueryPlanner::planQuery(const parser::SelectStmt *select_stmt,
                                   const parser::StringPool &string_pool,
-                                  core::ErrorContext *ctx)
+                                  core::ErrorContext *ctx,
+                                  core::ConnectionContext *conn_ctx)
         -> std::shared_ptr<PlanNode>
     {
+        // Security Phase 3.2: Set connection context for permission checks
+        conn_ctx_ = conn_ctx;
+        // Security Phase 3.2.3: No need to clear local cache - using global cache now
+
         // Phase 2 Wave 2: Process WITH clause (CTEs) if present
         std::unordered_map<std::string, std::shared_ptr<PlanNode>> cte_plans;
         if (select_stmt->withClause())
@@ -29,7 +36,7 @@ namespace scratchbird::optimizer
                 DEBUG_LOG_DB("Planning CTE: " + cte_name);
 
                 // Recursively plan the CTE query
-                auto cte_plan = planQuery(cte.query, string_pool, ctx);
+                auto cte_plan = planQuery(cte.query, string_pool, ctx, conn_ctx);
                 if (!cte_plan)
                 {
                     DEBUG_LOG_DB("Failed to plan CTE: " + cte_name);
@@ -131,7 +138,7 @@ namespace scratchbird::optimizer
 
             // Recursively plan the view query
             // The expanding_views_ set prevents infinite recursion
-            auto view_plan = planQuery(view_select, view_lexer.stringPool(), ctx);
+            auto view_plan = planQuery(view_select, view_lexer.stringPool(), ctx, conn_ctx);
 
             // Remove from expansion tracking (successful or not)
             expanding_views_.erase(table_name);
@@ -168,6 +175,108 @@ namespace scratchbird::optimizer
         core::ID table_id = table_info.table_id;
 
         DEBUG_LOG_DB("Table ID: " + table_id.toString());
+
+        // Security Phase 3.2: Check SELECT permission at plan time (10-100x speedup!)
+        // Permission check happens ONCE per table instead of per row
+        if (!checkTablePermission(table_id, core::CatalogManager::Privilege::SELECT, ctx))
+        {
+            DEBUG_LOG_DB("Permission denied for SELECT on table: " + table_name);
+            SET_ERROR_CONTEXT(ctx, core::Status::PERMISSION_DENIED,
+                             ("Permission denied for table: " + table_name).c_str());
+            return nullptr;  // Early rejection - no I/O wasted!
+        }
+
+        DEBUG_LOG_DB("Permission granted for SELECT on table: " + table_name);
+
+        // Security Phase 3.4.5: Check and load RLS policies
+        std::vector<core::CatalogManager::PolicyInfo> policies;
+        bool rls_enforced = checkAndLoadRLSPolicies(table_info, policies, ctx);
+
+        if (rls_enforced)
+        {
+            // If RLS is enforced but no policies exist, deny all access
+            if (policies.empty())
+            {
+                DEBUG_LOG_DB("RLS enabled but no applicable policies - denying access");
+                SET_ERROR_CONTEXT(ctx, core::Status::PERMISSION_DENIED,
+                                 ("Row-Level Security enabled on table: " + table_name + " but no applicable policies").c_str());
+                return nullptr;
+            }
+
+            // Phase 3.4.7: Apply policy predicates to WHERE clause
+            DEBUG_LOG_DB("Injecting RLS policy predicates into WHERE clause");
+
+            // Create temporary arena and string pool for parsing policy expressions
+            parser::ASTArena policy_arena;
+            parser::StringPool policy_string_pool;
+
+            // Combine all USING expressions with OR
+            parser::Expression* combined_policy_expr = nullptr;
+
+            for (const auto& policy : policies)
+            {
+                if (!policy.using_expr.empty())
+                {
+                    DEBUG_LOG_DB("Policy: " + policy.policy_name + " USING: " + policy.using_expr);
+
+                    // Parse policy expression
+                    parser::Expression* policy_expr = parseExpressionString(
+                        policy.using_expr, policy_arena, policy_string_pool, ctx);
+
+                    if (!policy_expr)
+                    {
+                        DEBUG_LOG_DB("Failed to parse policy expression: " + policy.using_expr);
+                        SET_ERROR_CONTEXT(ctx, core::Status::INVALID_ARGUMENT,
+                                        ("Invalid RLS policy expression in policy: " + policy.policy_name).c_str());
+                        return nullptr;
+                    }
+
+                    // Combine with previous policies using OR
+                    if (combined_policy_expr == nullptr)
+                    {
+                        combined_policy_expr = policy_expr;
+                    }
+                    else
+                    {
+                        // Create (policy1) OR (policy2)
+                        combined_policy_expr = policy_arena.make<parser::BinaryOpExpr>(
+                            parser::SourceSpan{},
+                            parser::BinaryOp::OR,
+                            combined_policy_expr,
+                            policy_expr);
+                    }
+                }
+            }
+
+            // If we have policy predicates, inject them into WHERE clause
+            if (combined_policy_expr != nullptr)
+            {
+                // Need to create a mutable copy of the SelectStmt with modified WHERE clause
+                // We'll modify the select_stmt in place by setting its WHERE clause
+                parser::SelectStmt* mutable_select = const_cast<parser::SelectStmt*>(select_stmt);
+
+                parser::Expression* original_where = mutable_select->whereClause();
+
+                if (original_where != nullptr)
+                {
+                    // Combine: (original_where) AND (combined_policies)
+                    parser::Expression* new_where = policy_arena.make<parser::BinaryOpExpr>(
+                        parser::SourceSpan{},
+                        parser::BinaryOp::AND,
+                        original_where,
+                        combined_policy_expr);
+
+                    mutable_select->setWhereClause(new_where);
+                    DEBUG_LOG_DB("Injected RLS policies into existing WHERE clause");
+                }
+                else
+                {
+                    // No existing WHERE clause, just use policy expression
+                    mutable_select->setWhereClause(combined_policy_expr);
+                    DEBUG_LOG_DB("Injected RLS policies as new WHERE clause");
+                }
+            }
+        }
 
         // Phase 2: Generate all feasible paths
         std::vector<std::shared_ptr<Path>> paths;
@@ -1854,6 +1963,161 @@ namespace scratchbird::optimizer
         }
 
         return applicable;
+    }
+
+    // ============================================================================
+    // Security Phase 3.2: Permission Checking at Plan Time
+    // ============================================================================
+
+    auto QueryPlanner::checkTablePermission(const core::ID& table_id,
+                                           core::CatalogManager::Privilege privilege,
+                                           core::ErrorContext* ctx) -> bool
+    {
+        // If no connection context, allow access (backward compatibility)
+        if (!conn_ctx_)
+        {
+            return true;
+        }
+
+        // Superusers bypass all permission checks (zero overhead!)
+        if (conn_ctx_->isSuperuser())
+        {
+            return true;
+        }
+
+        // Security Phase 3.2.3: Check global permission cache first
+        core::PermissionCache::CacheKey cache_key{
+            conn_ctx_->getCurrentUserId(),
+            table_id,
+            core::CatalogManager::PermissionObjectType::TABLE,
+            privilege
+        };
+
+        auto cached_result = db_->permission_cache()->lookup(cache_key);
+        if (cached_result.has_value())
+        {
+            DEBUG_LOG_DB("Global permission cache HIT for table " + table_id.toString() +
+                        ", privilege=" + std::to_string(static_cast<int>(privilege)) +
+                        ", result=" + (cached_result.value() ? "GRANTED" : "DENIED"));
+            return cached_result.value();
+        }
+
+        // Cache miss - query catalog manager
+        DEBUG_LOG_DB("Global permission cache MISS for table " + table_id.toString());
+
+        bool has_perm = false;
+        core::Status status = db_->catalog_manager()->hasPermission(
+            conn_ctx_->getCurrentUserId(),
+            table_id,
+            core::CatalogManager::PermissionObjectType::TABLE,
+            privilege,
+            has_perm,
+            ctx);
+
+        if (status != core::Status::OK)
+        {
+            DEBUG_LOG_DB("Permission check failed with error");
+            return false;
+        }
+
+        // Cache result in global cache (persists across queries!)
+        db_->permission_cache()->insert(cache_key, has_perm);
+
+        DEBUG_LOG_DB("Permission check result for table " + table_id.toString() +
+                    ": " + (has_perm ? "GRANTED" : "DENIED") + " (cached globally)");
+
+        return has_perm;
+    }
+
+    // Security Phase 3.4.5: Row-Level Security policy enforcement
+    auto QueryPlanner::checkAndLoadRLSPolicies(const core::CatalogManager::TableInfo& table_info,
+                                              std::vector<core::CatalogManager::PolicyInfo>& policies_out,
+                                              core::ErrorContext* ctx) -> bool
+    {
+        // If no connection context, RLS is not enforced
+        if (!conn_ctx_)
+        {
+            return false;
+        }
+
+        // Check if RLS is enabled on this table
+        if (!table_info.rls_enabled)
+        {
+            DEBUG_LOG_DB("RLS not enabled on table " + table_info.table_id.toString());
+            return false;
+        }
+
+        DEBUG_LOG_DB("RLS enabled on table " + table_info.table_id.toString());
+
+        // Check if RLS is forced
+        // If forced, even superusers must obey policies
+        // If not forced, superusers bypass RLS
+        if (!table_info.rls_forced && conn_ctx_->isSuperuser())
+        {
+            DEBUG_LOG_DB("Superuser bypassing RLS (not forced)");
+            return false;
+        }
+
+        // Load applicable policies for current user
+        core::Status status = db_->catalog_manager()->getPoliciesForUser(
+            table_info.table_id,
+            conn_ctx_->getCurrentUserId(),
+            core::CatalogManager::PolicyType::SELECT,  // For SELECT queries
+            policies_out,
+            ctx);
+
+        if (status != core::Status::OK)
+        {
+            DEBUG_LOG_DB("Failed to load RLS policies");
+            SET_ERROR_CONTEXT(ctx, status, "Failed to load RLS policies");
+            return false;
+        }
+
+        DEBUG_LOG_DB("Loaded " + std::to_string(policies_out.size()) + " RLS policies");
+
+        // If there are no applicable policies, deny all access
+        // This is the "fail-safe" behavior: RLS enabled with no policies = deny all
+        if (policies_out.empty())
+        {
+            DEBUG_LOG_DB("No applicable RLS policies - denying all access");
+            return true;  // Return true to indicate RLS should be enforced (which will deny all)
+        }
+
+        // Policies need to be applied
+        return true;
+    }
+
+    // Security Phase 3.4.7: Parse expression string into AST
+    auto QueryPlanner::parseExpressionString(const std::string& expr_str,
+                                            parser::ASTArena& arena,
+                                            parser::StringPool& string_pool,
+                                            core::ErrorContext* ctx)
+        -> parser::Expression*
+    {
+        DEBUG_LOG_DB("Parsing RLS expression: " + expr_str);
+
+        // Create lexer for expression string
+        parser::Lexer lexer(expr_str);
+
+        // Create parser
+        parser::Parser parser(lexer, arena);
+
+        // Parse expression
+        parser::Expression* expr = parser.parseExpression();
+
+        if (parser.hasErrors() || expr == nullptr)
+        {
+            DEBUG_LOG_DB("Failed to parse expression: " + expr_str);
+            if (ctx)
+            {
+                std::string error_msg = "Failed to parse RLS expression: " + expr_str;
+                SET_ERROR_CONTEXT(ctx, core::Status::INVALID_ARGUMENT, error_msg.c_str());
+            }
+            return nullptr;
+        }
+
+        DEBUG_LOG_DB("Successfully parsed RLS expression");
+        return expr;
     }
 
 } // namespace scratchbird::optimizer

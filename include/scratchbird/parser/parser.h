@@ -70,6 +70,9 @@ namespace scratchbird
                 return lexer_.stringPool();
             }
 
+            // Security Phase 3.4.7: Public expression parser for RLS policy expressions
+            Expression *parseExpression();
+
         private:
             Lexer &lexer_;
             ASTArena &arena_;
@@ -133,6 +136,22 @@ namespace scratchbird
             Statement *parseCreateTrigger();         // Phase 2 Wave 2 Agent C
             Statement *parseDropTrigger();           // Phase 2 Wave 2 Agent C
 
+            // Security statement parsers (ALPHA Phase 1 - Security System Phase 2)
+            Statement *parseCreateUser();
+            Statement *parseAlterUser();
+            Statement *parseDropUser();
+            Statement *parseCreateRole();
+            Statement *parseDropRole();
+            Statement *parseCreateGroup();
+            Statement *parseDropGroup();
+            Statement *parseGrant();                 // GRANT privilege or role
+            Statement *parseRevoke();                // REVOKE privilege or role
+            Statement *parseSetRole();               // SET ROLE or RESET ROLE
+            Statement *parseSetSessionAuth();        // SET SESSION AUTHORIZATION or RESET
+            Statement *parseCreatePolicy();          // Security Phase 3.4: CREATE POLICY
+            Statement *parseDropPolicy();            // Security Phase 3.4: DROP POLICY
+            Statement *parseAlterTableRLS(const SourceLocation& start_loc, StringPool::StringId table_name);  // Security Phase 3.4
+
             // PSQL - Stored Procedures and Functions (Phase 2 Task 10.2)
             Statement *parseCreateFunction();
             Statement *parseCreateProcedure();
@@ -172,8 +191,7 @@ namespace scratchbird
             void parseFrameClause(WindowSpec *spec);
             FrameBoundary parseFrameBoundary();
 
-            // Expression parsers
-            Expression *parseExpression();
+            // Expression parsers (parseExpression now public for RLS Phase 3.4.7)
             Expression *parseComparison();
             Expression *parseTerm();
             Expression *parseFactor();

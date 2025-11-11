@@ -295,6 +295,8 @@ namespace scratchbird
             KW_MAXSIZE,
             KW_UNLIMITED,
             KW_PREALLOC,
+            KW_ENABLE,       // Security Phase 3.4: ENABLE ROW LEVEL SECURITY
+            KW_DISABLE,      // Security Phase 3.4: DISABLE ROW LEVEL SECURITY
             KW_FORCE,
             KW_CASCADE,      // ALPHA Phase 1 - DDL Modifications
             KW_RESTRICT,     // ALPHA Phase 1 - DDL Modifications
@@ -363,6 +365,32 @@ namespace scratchbird
             KW_EXCEPTION,
             KW_TRY,
             KW_EXCEPT,
+
+            // Security keywords (ALPHA Phase 1 - Security System Phase 2)
+            KW_USER,          // CREATE USER, ALTER USER, DROP USER
+            KW_ROLE,          // CREATE ROLE, DROP ROLE, SET ROLE, GRANT ROLE
+            // KW_GROUP already defined (line 108)
+            KW_GRANT,         // GRANT privilege/role
+            KW_REVOKE,        // REVOKE privilege/role
+            KW_PRIVILEGES,    // GRANT SELECT, INSERT, ... PRIVILEGES ON
+            KW_PASSWORD,      // CREATE USER ... WITH PASSWORD
+            KW_SUPERUSER,     // CREATE USER ... SUPERUSER
+            KW_NOSUPERUSER,   // CREATE USER ... NOSUPERUSER
+            KW_SESSION,       // SET SESSION AUTHORIZATION, RESET SESSION AUTHORIZATION
+            KW_AUTHORIZATION, // SET SESSION AUTHORIZATION
+            KW_RESET,         // RESET ROLE, RESET SESSION AUTHORIZATION
+            KW_PUBLIC,        // GRANT ... TO PUBLIC
+            KW_USAGE,         // GRANT USAGE ON SCHEMA
+            KW_CONNECT,       // GRANT CONNECT ON DATABASE
+            KW_REFERENCES,    // GRANT REFERENCES ON TABLE
+            KW_POLICY,        // Security Phase 3.4: CREATE/DROP POLICY
+            // KW_ENABLE already defined (line 298)
+            // KW_DISABLE already defined (line 299)
+            // KW_FORCE already defined (line 300)
+            KW_SECURITY,      // Security Phase 3.4: ROW LEVEL SECURITY
+            // KW_LEVEL already defined (line 274)
+            // KW_ROW already defined (line 137)
+            // KW_RESTRICT already defined (line 300)
         };
 
         // Location in source file

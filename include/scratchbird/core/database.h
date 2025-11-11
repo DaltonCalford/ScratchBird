@@ -45,6 +45,7 @@ namespace scratchbird
         class LongTransactionMonitor;
         class DomainManager;
         class TIDResolver; // Sprint 4 Task 5.4.2
+        class PermissionCache; // Security Phase 3.2.3
 
     } // namespace core
 
@@ -269,6 +270,16 @@ namespace scratchbird
                 return query_planner_.get();
             }
 
+            // Get permission cache (Security Phase 3.2.3)
+            PermissionCache *permission_cache()
+            {
+                return permission_cache_.get();
+            }
+            const PermissionCache *permission_cache() const
+            {
+                return permission_cache_.get();
+            }
+
             // Get transaction manager
             TransactionManager *transaction_manager()
             {
@@ -481,7 +492,10 @@ namespace scratchbird
             std::unique_ptr<optimizer::StatisticsManager> statistics_manager_; // Statistics manager (owned)
             std::unique_ptr<optimizer::QueryPlanner> query_planner_;          // Query planner (owned)
             std::unique_ptr<optimizer::CostModel> cost_model_;                // Cost model (owned)
-            std::unique_ptr<DomainManager> domain_manager_;    // Domain manager (owned)
+            std::unique_ptr<DomainManager> domain_manager_;                   // Domain manager (owned)
+
+            // Security components (Phase 3.2.3)
+            std::unique_ptr<PermissionCache> permission_cache_; // Permission cache (owned)
 
             // === Tablespace File Descriptors (Phase 1, Task 1.3.4) ===
             std::unordered_map<uint16_t, int> tablespace_fds_; // Map: tablespace_id -> file descriptor

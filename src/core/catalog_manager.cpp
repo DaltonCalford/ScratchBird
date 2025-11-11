@@ -18,6 +18,8 @@
 #include <fcntl.h>   // Phase 6: For open(), O_RDWR
 #include <unistd.h>  // Phase 6: For pread(), close()
 #include "scratchbird/core/utf8_utils.h"  // Phase 3: SQL Identifier UTF-8 Fix
+#include <queue>  // Phase 1.4: BFS for group transitive closure
+#include <unordered_set>  // Phase 1.4: Visited set for group transitive closure
 
 namespace scratchbird::core
 {
@@ -57,6 +59,8 @@ namespace scratchbird::core
         uint32_t roles_page;          // Page containing roles table
         uint32_t groups_page;         // Page containing groups table (AD/LDAP)
         uint32_t role_members_page;   // Page containing role memberships table
+        uint32_t group_members_page;  // Page containing group memberships table (Phase 1.1)
+        uint32_t group_mappings_page; // Page containing group mappings table (Phase 1.1)
 
         // Phase 3: Stored code tables (Catalog Corrections)
         uint32_t procedures_page;     // Page containing procedures/functions table
@@ -74,7 +78,7 @@ namespace scratchbird::core
         uint32_t tablespaces_page;    // Page containing tablespaces table
         uint32_t extensions_page;     // Page containing extensions table
 
-        uint8_t reserved[3904];       // Padding for 16KB page (144 bytes used for new table pointers, was 4024)
+        uint8_t reserved[3896];       // Padding for 16KB page (152 bytes used for table pointers: 144 + 8 for group_members + group_mappings, was 4024)
     };
 
     // Schema record on disk
@@ -120,6 +124,8 @@ namespace scratchbird::core
         uint64_t row_count;
         uint8_t table_type;            // TableType enum
         uint8_t has_toast;             // 1 if table has TOAST
+        uint8_t rls_enabled;           // Security Phase 3.4: Row-level security enabled
+        uint8_t rls_forced;            // Security Phase 3.4: Force RLS for table owners
         uint16_t tablespace_id;        // Tablespace ID (0 = default)
         uint16_t default_charset;      // CharacterSet enum (0 = inherit from schema)
         uint16_t reserved1;            // Reserved for future use
@@ -340,20 +346,61 @@ namespace scratchbird::core
     };
 
     // Permission record on disk
+    // Phase 1.1: Security System - Updated for UUID-based references
     struct PermissionRecord
     {
         ID permission_id;
-        ID object_id;        // ID of schema, table, etc.
-        char grantee[128];   // User/role granted the permission
-        uint8_t object_type; // 0=SCHEMA, 1=TABLE, 2=VIEW, 3=SEQUENCE
-        uint8_t reserved[3];
-        uint32_t privileges;  // Bitmask of privileges
+        ID object_id;         // ID of schema, table, etc.
+        uint8_t object_type;  // ObjectType enum (0=SCHEMA, 1=TABLE, 2=VIEW, 3=SEQUENCE, etc.)
+
+        // Grantee (who receives privileges)
+        ID grantee_id;        // User, Role, or Group UUID
+        uint8_t grantee_type; // USER=0, ROLE=1, GROUP=2, PUBLIC=3
+
+        // Privileges
+        uint32_t privileges;  // Bitmask of Privilege enum
         uint8_t grant_option; // 1 if WITH GRANT OPTION
-        uint8_t reserved2[3];
-        char grantor[128]; // User who granted the permission
+
+        // Grantor (who granted privileges)
+        ID grantor_id;        // User UUID of grantor
+
+        uint8_t reserved[6];
         uint64_t created_time;
         uint32_t is_valid;
         uint32_t padding;
+    };
+
+    // Security Phase 3.3: Column-level permissions record (catalog table #39)
+    struct ColumnPermissionRecord
+    {
+        ID permission_id;     // UUIDv7
+        ID table_id;          // References pg_tables
+        char column_name[128]; // Column being protected (fixed-size for record alignment)
+        ID grantee_id;        // User, Role, Group, or PUBLIC UUID
+        uint8_t grantee_type; // USER=1, ROLE=2, GROUP=3, PUBLIC=4
+        uint32_t privileges;  // Bitmask: SELECT=1, UPDATE=2, INSERT=4, REFERENCES=8
+        uint8_t grant_option; // 1 if WITH GRANT OPTION
+        ID grantor_id;        // User who granted this
+        uint64_t created_time;
+        uint32_t is_valid;    // MGA: soft delete flag
+        uint32_t padding;     // Alignment
+    };
+
+    // Security Phase 3.4: Row-level security policy record (catalog table #40)
+    struct PolicyRecord
+    {
+        ID policy_id;           // UUIDv7
+        ID table_id;            // References pg_tables
+        char policy_name[64];   // Policy name (unique per table)
+        uint8_t policy_type;    // ALL=0, SELECT=1, INSERT=2, UPDATE=3, DELETE=4
+        uint32_t roles_oid;     // TOAST reference for roles array (0 = all roles)
+        uint32_t using_expr_oid; // TOAST reference for USING expression (required)
+        uint32_t with_check_expr_oid; // TOAST reference for WITH CHECK expression (optional, 0 = none)
+        uint8_t is_enabled;     // Policy enabled flag
+        uint64_t created_time;
+        uint64_t modified_time;
+        uint32_t is_valid;      // MGA: soft delete flag
+        uint8_t padding[3];     // Alignment to 8-byte boundary
     };
 
     // Statistics record on disk
@@ -460,6 +507,37 @@ namespace scratchbird::core
         uint8_t with_admin_option;  // 1 if user can grant this role to others
         uint8_t reserved[7];        // Alignment
         uint64_t granted_time;
+        uint32_t is_valid;
+        uint32_t padding;
+    };
+
+    // Group membership record on disk (Phase 1.1 - Security System)
+    // Tracks user/group membership in groups (for nesting)
+    struct GroupMembershipRecord
+    {
+        ID membership_id;           // UUID v7
+        ID user_id;                 // User or Group UUID (for nesting)
+        uint8_t member_type;        // USER=0, GROUP=1
+        uint8_t reserved1[7];       // Alignment
+        ID group_id;                // Parent group UUID
+        ID granted_by;              // User who added member
+        uint64_t granted_time;
+        uint32_t is_valid;
+        uint32_t padding;
+    };
+
+    // Group mapping record on disk (Phase 1.1 - Security System)
+    // Maps external authentication groups (LDAP/AD/Kerberos) to internal groups
+    struct GroupMappingRecord
+    {
+        ID mapping_id;              // UUID v7
+        char external_group_name[512]; // LDAP DN, Kerberos principal, AD SID
+        uint8_t auth_method;        // LDAP=1, KERBEROS=2, AD=3
+        uint8_t auto_create_users;  // 1 = auto-create users on first login
+        uint8_t reserved[6];        // Alignment
+        ID internal_group_id;       // Maps to GroupRecord UUID
+        uint64_t created_time;
+        uint64_t last_modified_time;
         uint32_t is_valid;
         uint32_t padding;
     };
@@ -849,6 +927,19 @@ namespace scratchbird::core
             return status;
         }
 
+        // Security Phase 3.3: Allocate and initialize column permissions page (table #39)
+        status = pm->allocatePage(column_permissions_table_page_, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+        heap->header.page_id = column_permissions_table_page_;
+        status = db_->write_page(column_permissions_table_page_, page_buffer.get(), ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
         // Allocate and initialize statistics page
         status = pm->allocatePage(statistics_table_page_, ctx);
         if (status != Status::OK)
@@ -956,6 +1047,20 @@ namespace scratchbird::core
         if (status != Status::OK) return status;
         heap->header.page_id = role_memberships_table_page_;
         status = db_->write_page(role_memberships_table_page_, page_buffer.get(), ctx);
+        if (status != Status::OK) return status;
+
+        // Group Memberships table (Phase 1.1 - Security System)
+        status = pm->allocatePage(group_memberships_table_page_, ctx);
+        if (status != Status::OK) return status;
+        heap->header.page_id = group_memberships_table_page_;
+        status = db_->write_page(group_memberships_table_page_, page_buffer.get(), ctx);
+        if (status != Status::OK) return status;
+
+        // Group Mappings table (Phase 1.1 - Security System)
+        status = pm->allocatePage(group_mappings_table_page_, ctx);
+        if (status != Status::OK) return status;
+        heap->header.page_id = group_mappings_table_page_;
+        status = db_->write_page(group_mappings_table_page_, page_buffer.get(), ctx);
         if (status != Status::OK) return status;
 
         // Procedures table (Phase 3)
@@ -1111,6 +1216,75 @@ namespace scratchbird::core
         DEBUG_LOG_DB("  schemas page=" << schemas_table_page_
                      << ", tables page=" << tables_table_page_
                      << ", columns page=" << columns_table_page_);
+
+        // ========================================================================
+        // Phase 1.2: Security System Bootstrap
+        // ========================================================================
+        DEBUG_LOG_DB("Bootstrapping security system (SYSTEM user, PUBLIC role, DB_OWNER role)");
+
+        // 1. Create SYSTEM user (superuser, owner of all system objects)
+        UserRecord system_user;
+        memset(&system_user, 0, sizeof(UserRecord));
+        system_user.user_id = SecurityConstants::makeSystemUserID();
+        strncpy(system_user.username, "SYSTEM", sizeof(system_user.username) - 1);
+        system_user.password_hash_oid = 0;  // No password (cannot login directly)
+        system_user.user_metadata_oid = 0;  // No metadata
+        system_user.default_schema_id = public_id;  // Default to public schema
+        system_user.is_active = 1;
+        system_user.is_superuser = 1;  // Superuser flag
+        system_user.created_time = std::chrono::system_clock::now().time_since_epoch().count();
+        system_user.last_login_time = 0;  // Never logged in
+        system_user.is_valid = 1;
+
+        status = writeRecordToHeapPage(users_table_page_, system_user, ctx);
+        if (status != Status::OK)
+        {
+            DEBUG_LOG_DB("Failed to create SYSTEM user: " << static_cast<int>(status));
+            return status;
+        }
+        DEBUG_LOG_DB("Created SYSTEM user with UUID: 00000000-0000-7000-8000-737973746d00");
+
+        // 2. Create PUBLIC role (all users are implicit members)
+        RoleRecord public_role;
+        memset(&public_role, 0, sizeof(RoleRecord));
+        public_role.role_id = generateUuidV7();  // Generate UUID v7
+        strncpy(public_role.role_name, "PUBLIC", sizeof(public_role.role_name) - 1);
+        public_role.owner_id = system_user.user_id;  // Owned by SYSTEM
+        public_role.role_metadata_oid = 0;
+        public_role.is_active = 1;
+        public_role.created_time = std::chrono::system_clock::now().time_since_epoch().count();
+        public_role.last_modified_time = public_role.created_time;
+        public_role.is_valid = 1;
+
+        status = writeRecordToHeapPage(roles_table_page_, public_role, ctx);
+        if (status != Status::OK)
+        {
+            DEBUG_LOG_DB("Failed to create PUBLIC role: " << static_cast<int>(status));
+            return status;
+        }
+        DEBUG_LOG_DB("Created PUBLIC role");
+
+        // 3. Create DB_OWNER role (database owner privileges)
+        RoleRecord db_owner_role;
+        memset(&db_owner_role, 0, sizeof(RoleRecord));
+        db_owner_role.role_id = generateUuidV7();  // Generate UUID v7
+        strncpy(db_owner_role.role_name, "DB_OWNER", sizeof(db_owner_role.role_name) - 1);
+        db_owner_role.owner_id = system_user.user_id;  // Owned by SYSTEM
+        db_owner_role.role_metadata_oid = 0;
+        db_owner_role.is_active = 1;
+        db_owner_role.created_time = std::chrono::system_clock::now().time_since_epoch().count();
+        db_owner_role.last_modified_time = db_owner_role.created_time;
+        db_owner_role.is_valid = 1;
+
+        status = writeRecordToHeapPage(roles_table_page_, db_owner_role, ctx);
+        if (status != Status::OK)
+        {
+            DEBUG_LOG_DB("Failed to create DB_OWNER role: " << static_cast<int>(status));
+            return status;
+        }
+        DEBUG_LOG_DB("Created DB_OWNER role");
+
+        DEBUG_LOG_DB("Security system bootstrap complete");
 
         return Status::OK;
     }
@@ -1302,6 +1476,66 @@ namespace scratchbird::core
         // 2. Return user_id if found
         // 3. Return error if user doesn't exist (or create default user)
         return ID();  // Zero UUID placeholder for non-system users
+    }
+
+    // ============================================================================
+    // TOAST Helper Methods (Phase 3.4.6 - RLS Expression Storage)
+    // ============================================================================
+
+    auto CatalogManager::storeStringInToast(const std::string& str, uint64_t xmin,
+                                           uint32_t& oid_out, ErrorContext* ctx) -> Status
+    {
+        // If string is empty, store 0 OID
+        if (str.empty())
+        {
+            oid_out = 0;
+            return Status::OK;
+        }
+
+        // For now, we'll use a simple approach: store the string as a uint32_t "OID"
+        // which is actually a hash of the string content. This allows us to implement
+        // expression storage/loading without requiring a full TOAST table for catalog data.
+        //
+        // In a production system, this would:
+        // 1. Create a TOAST manager for the catalog table
+        // 2. Call toastValue() to store the string in TOAST chunks
+        // 3. Return the actual TOAST value_id as the OID
+        //
+        // For Phase 3.4.6, we'll use std::hash as a simple unique identifier.
+        // The actual string will be stored in-memory in the PolicyInfo cache.
+
+        std::hash<std::string> hasher;
+        oid_out = static_cast<uint32_t>(hasher(str) & 0xFFFFFFFF);
+
+        return Status::OK;
+    }
+
+    auto CatalogManager::loadStringFromToast(uint32_t oid, uint64_t xmin,
+                                            std::string& str_out, ErrorContext* ctx) -> Status
+    {
+        // If OID is 0, return empty string
+        if (oid == 0)
+        {
+            str_out.clear();
+            return Status::OK;
+        }
+
+        // For Phase 3.4.6, we're using in-memory storage, so the actual string
+        // is already in the PolicyInfo cache. This method is here for API completeness.
+        //
+        // In a production system with full TOAST integration, this would:
+        // 1. Create a ToastPointer from the OID
+        // 2. Call detoastValue() to read TOAST chunks
+        // 3. Reconstruct the original string
+        //
+        // For now, this is a no-op since strings are cached in-memory.
+        // The real storage happens in the cache, not on disk.
+
+        // We cannot reconstruct the string from just the hash OID
+        // The caller must use the in-memory cached value
+        SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED,
+                         "TOAST string loading not fully implemented (Phase 3.4.6 uses in-memory cache)");
+        return Status::NOT_IMPLEMENTED;
     }
 
     auto CatalogManager::getSchema(const ID &schema_id, SchemaInfo &info, ErrorContext *ctx)
@@ -1918,6 +2152,8 @@ namespace scratchbird::core
         root->roles_page = roles_table_page_;
         root->groups_page = groups_table_page_;
         root->role_members_page = role_memberships_table_page_;
+        root->group_members_page = group_memberships_table_page_;    // Phase 1.1
+        root->group_mappings_page = group_mappings_table_page_;      // Phase 1.1
         root->procedures_page = procedures_table_page_;
         root->proc_params_page = procedure_params_table_page_;
         root->domains_page = domains_table_page_;
@@ -1990,6 +2226,8 @@ namespace scratchbird::core
         roles_table_page_ = root->roles_page;
         groups_table_page_ = root->groups_page;
         role_memberships_table_page_ = root->role_members_page;
+        group_memberships_table_page_ = root->group_members_page;    // Phase 1.1
+        group_mappings_table_page_ = root->group_mappings_page;      // Phase 1.1
         procedures_table_page_ = root->procedures_page;
         procedure_params_table_page_ = root->proc_params_page;
         domains_table_page_ = root->domains_page;
@@ -2398,6 +2636,8 @@ namespace scratchbird::core
         record.row_count = table.row_count;
         record.table_type = static_cast<uint8_t>(table.table_type);
         record.has_toast = table.has_toast ? 1 : 0;
+        record.rls_enabled = table.rls_enabled ? 1 : 0;  // Security Phase 3.4
+        record.rls_forced = table.rls_forced ? 1 : 0;    // Security Phase 3.4
         record.tablespace_id = table.tablespace_id;
         record.default_charset = table.default_charset;
         record.default_collation_id = table.default_collation_id;
@@ -2590,6 +2830,8 @@ namespace scratchbird::core
             info.row_count = record.row_count;
             info.table_type = static_cast<TableType>(record.table_type);
             info.has_toast = record.has_toast != 0;
+            info.rls_enabled = record.rls_enabled != 0;  // Security Phase 3.4
+            info.rls_forced = record.rls_forced != 0;    // Security Phase 3.4
             info.tablespace_id = record.tablespace_id;
             info.default_charset = record.default_charset;
             info.default_collation_id = record.default_collation_id;
@@ -8352,6 +8594,2022 @@ auto CatalogManager::readCommentRecords(ErrorContext *ctx) -> Status
 
     return readRecordsFromHeapPage<CommentRecord, CommentInfo, ID>(
         comments_table_page_, comment_cache_, converter, key_extractor, ctx);
+}
+
+// ============================================================================
+// Security Operations (Phase 1.3 - Users, Roles, Groups)
+// ============================================================================
+
+// User operations
+
+auto CatalogManager::createUser(const std::string& username, const std::string& password_hash,
+                                const ID& default_schema_id, bool is_superuser,
+                                ID& user_id_out, ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    // Validate username length
+    Status status = UTF8Utils::validateStorageCapacity(username,
+        CatalogConstants::MAX_IDENTIFIER_CHARS,
+        CatalogConstants::MAX_IDENTIFIER_BYTES);
+    if (status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, status, "Username too long or invalid UTF-8");
+        return status;
+    }
+
+    // Check if username already exists
+    UserInfo existing_user;
+    // Note: getUserByName also locks mutex, so we temporarily unlock here
+    mutex_.unlock();
+    status = getUserByName(username, existing_user, ctx);
+    mutex_.lock();
+
+    if (status == Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::FILE_EXISTS, "User already exists");
+        return Status::FILE_EXISTS;
+    }
+
+    // Generate new user ID
+    user_id_out = generateUuidV7();
+
+    // Create user record
+    UserRecord user_rec;
+    memset(&user_rec, 0, sizeof(UserRecord));
+    user_rec.user_id = user_id_out;
+
+    // Truncate username to fit in fixed buffer
+    std::string truncated_username = UTF8Utils::truncateToBytes(username,
+        sizeof(user_rec.username));
+    strncpy(user_rec.username, truncated_username.c_str(),
+            sizeof(user_rec.username) - 1);
+
+    // TODO Phase 1.4: Store password_hash in TOAST if > inline size
+    // For now, we'll leave password_hash_oid = 0
+    user_rec.password_hash_oid = 0;
+    user_rec.user_metadata_oid = 0;
+    user_rec.default_schema_id = default_schema_id;
+    user_rec.is_active = 1;
+    user_rec.is_superuser = is_superuser ? 1 : 0;
+    user_rec.created_time = std::chrono::system_clock::now().time_since_epoch().count();
+    user_rec.last_login_time = 0;
+    user_rec.is_valid = 1;
+
+    // Write to disk
+    status = writeRecordToHeapPage(users_table_page_, user_rec, ctx);
+    if (status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, status, "Failed to write user record");
+        return status;
+    }
+
+    DEBUG_LOG_DB("Created user: " << username << " (ID: " << user_id_out.toString() << ")");
+    return Status::OK;
+}
+
+auto CatalogManager::getUser(const ID& user_id, UserInfo& user_out,
+                             ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    auto predicate = [&user_id](const UserRecord& rec) {
+        return rec.is_valid && rec.user_id == user_id;
+    };
+
+    auto result = findRecordInHeapPage<UserRecord>(users_table_page_, predicate, ctx);
+    if (result.status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, result.status, "User not found");
+        return result.status;
+    }
+
+    // Convert to UserInfo
+    user_out.user_id = result.record.user_id;
+    user_out.username = std::string(result.record.username);
+    user_out.password_hash = "";  // TODO Phase 1.4: Read from TOAST
+    user_out.user_metadata = "";  // TODO Phase 1.4: Read from TOAST
+    user_out.default_schema_id = result.record.default_schema_id;
+    user_out.is_active = result.record.is_active != 0;
+    user_out.is_superuser = result.record.is_superuser != 0;
+    user_out.created_time = result.record.created_time;
+    user_out.last_login_time = result.record.last_login_time;
+
+    return Status::OK;
+}
+
+auto CatalogManager::getUserByName(const std::string& username, UserInfo& user_out,
+                                   ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    auto predicate = [&username](const UserRecord& rec) {
+        return rec.is_valid && (std::string(rec.username) == username);
+    };
+
+    auto result = findRecordInHeapPage<UserRecord>(users_table_page_, predicate, ctx);
+    if (result.status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, result.status, "User not found");
+        return result.status;
+    }
+
+    // Convert to UserInfo
+    user_out.user_id = result.record.user_id;
+    user_out.username = std::string(result.record.username);
+    user_out.password_hash = "";  // TODO Phase 1.4: Read from TOAST
+    user_out.user_metadata = "";  // TODO Phase 1.4: Read from TOAST
+    user_out.default_schema_id = result.record.default_schema_id;
+    user_out.is_active = result.record.is_active != 0;
+    user_out.is_superuser = result.record.is_superuser != 0;
+    user_out.created_time = result.record.created_time;
+    user_out.last_login_time = result.record.last_login_time;
+
+    return Status::OK;
+}
+
+auto CatalogManager::updateUser(const ID& user_id, const std::string& password_hash,
+                                const ID& default_schema_id, bool is_active, bool is_superuser,
+                                ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    // Find the user record
+    auto predicate = [&user_id](const UserRecord& rec) {
+        return rec.is_valid && rec.user_id == user_id;
+    };
+
+    auto result = findRecordInHeapPage<UserRecord>(users_table_page_, predicate, ctx);
+    if (result.status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, result.status, "User not found");
+        return result.status;
+    }
+
+    // Update fields (Security Phase 3.0)
+    UserRecord updated_rec = result.record;
+    // TODO Phase 1.4: Update password_hash in TOAST
+    updated_rec.default_schema_id = default_schema_id;
+    updated_rec.is_active = is_active ? 1 : 0;
+    updated_rec.is_superuser = is_superuser ? 1 : 0;
+
+    // Write updated record
+    Status status = updateRecordInHeapPage(users_table_page_, result.slot_index,
+                                          updated_rec, ctx);
+    if (status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, status, "Failed to update user record");
+        return status;
+    }
+
+    return Status::OK;
+}
+
+auto CatalogManager::deleteUser(const ID& user_id, bool cascade, ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    // Security Phase 3.0: CASCADE implementation
+    if (cascade)
+    {
+        // CASCADE: Delete all dependent objects
+        // 1. Revoke all role memberships
+        std::vector<RoleMembershipInfo> role_memberships;
+        Status status = getUserRoles(user_id, role_memberships, ctx);
+        if (status == Status::OK)
+        {
+            for (const auto& membership : role_memberships)
+            {
+                revokeRole(membership.role_id, user_id, ctx);
+                // Continue even if revoke fails
+            }
+        }
+
+        // 2. Revoke all group memberships
+        std::vector<ID> groups;
+        status = getUserGroups(user_id, groups, ctx);
+        if (status == Status::OK)
+        {
+            for (const auto& group_id : groups)
+            {
+                removeGroupMember(group_id, user_id, ctx);
+                // Continue even if removal fails
+            }
+        }
+
+        // 3. Delete all permissions granted to this user
+        std::vector<PermissionInfo> permissions;
+        status = getUserPermissions(user_id, permissions, ctx);
+        if (status == Status::OK)
+        {
+            for (const auto& perm : permissions)
+            {
+                revokePermission(perm.object_id, perm.object_type, user_id,
+                               GranteeType::USER, perm.privileges, ctx);
+                // Continue even if revoke fails
+            }
+        }
+    }
+    else
+    {
+        // RESTRICT (default): Check for dependencies
+        // Check if user has any role memberships
+        std::vector<RoleMembershipInfo> role_memberships;
+        Status status = getUserRoles(user_id, role_memberships, ctx);
+        if (status == Status::OK && !role_memberships.empty())
+        {
+            SET_ERROR_CONTEXT(ctx, Status::CONSTRAINT_VIOLATION,
+                            "User has role memberships (use CASCADE to drop)");
+            return Status::CONSTRAINT_VIOLATION;
+        }
+
+        // Check if user has any group memberships
+        std::vector<ID> groups;
+        status = getUserGroups(user_id, groups, ctx);
+        if (status == Status::OK && !groups.empty())
+        {
+            SET_ERROR_CONTEXT(ctx, Status::CONSTRAINT_VIOLATION,
+                            "User has group memberships (use CASCADE to drop)");
+            return Status::CONSTRAINT_VIOLATION;
+        }
+
+        // Check if user has any permissions
+        std::vector<PermissionInfo> permissions;
+        status = getUserPermissions(user_id, permissions, ctx);
+        if (status == Status::OK && !permissions.empty())
+        {
+            SET_ERROR_CONTEXT(ctx, Status::CONSTRAINT_VIOLATION,
+                            "User has permissions (use CASCADE to drop)");
+            return Status::CONSTRAINT_VIOLATION;
+        }
+    }
+
+    // Mark user as deleted (Firebird MGA style)
+    auto predicate = [&user_id](const UserRecord& rec) {
+        return rec.is_valid && rec.user_id == user_id;
+    };
+
+    Status status = deleteRecordFromHeapPage<UserRecord>(users_table_page_,
+                                                          predicate, ctx);
+    if (status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, status, "Failed to delete user");
+        return status;
+    }
+
+    DEBUG_LOG_DB("Deleted user (ID: " << user_id.toString() << ")");
+    return Status::OK;
+}
+
+auto CatalogManager::listUsers(std::vector<UserInfo>& users_out,
+                               ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    users_out.clear();
+
+    auto filter = [](const UserRecord& rec) { return rec.is_valid; };
+    auto converter = [](const UserRecord& rec, UserInfo& info) {
+        info.user_id = rec.user_id;
+        info.username = std::string(rec.username);
+        info.password_hash = "";  // TODO: Read from TOAST
+        info.user_metadata = "";  // TODO: Read from TOAST
+        info.default_schema_id = rec.default_schema_id;
+        info.is_active = rec.is_active != 0;
+        info.is_superuser = rec.is_superuser != 0;
+        info.created_time = rec.created_time;
+        info.last_login_time = rec.last_login_time;
+    };
+
+    return readRecordsToVector<UserRecord, UserInfo>(users_table_page_, users_out,
+                                                     filter, converter, ctx);
+}
+
+// Role operations
+
+auto CatalogManager::createRole(const std::string& role_name, const ID& owner_id,
+                                ID& role_id_out, ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    // Validate role name length
+    Status status = UTF8Utils::validateStorageCapacity(role_name,
+        CatalogConstants::MAX_IDENTIFIER_CHARS,
+        CatalogConstants::MAX_IDENTIFIER_BYTES);
+    if (status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, status, "Role name too long or invalid UTF-8");
+        return status;
+    }
+
+    // Check if role already exists
+    RoleInfo existing_role;
+    mutex_.unlock();
+    status = getRoleByName(role_name, existing_role, ctx);
+    mutex_.lock();
+
+    if (status == Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::FILE_EXISTS, "Role already exists");
+        return Status::FILE_EXISTS;
+    }
+
+    // Generate new role ID
+    role_id_out = generateUuidV7();
+
+    // Create role record
+    RoleRecord role_rec;
+    memset(&role_rec, 0, sizeof(RoleRecord));
+    role_rec.role_id = role_id_out;
+
+    // Truncate role name to fit in fixed buffer
+    std::string truncated_name = UTF8Utils::truncateToBytes(role_name,
+        sizeof(role_rec.role_name));
+    strncpy(role_rec.role_name, truncated_name.c_str(),
+            sizeof(role_rec.role_name) - 1);
+
+    role_rec.owner_id = owner_id;
+    role_rec.role_metadata_oid = 0;  // TODO Phase 1.4: TOAST integration
+    role_rec.is_active = 1;
+    role_rec.created_time = std::chrono::system_clock::now().time_since_epoch().count();
+    role_rec.last_modified_time = role_rec.created_time;
+    role_rec.is_valid = 1;
+
+    // Write to disk
+    status = writeRecordToHeapPage(roles_table_page_, role_rec, ctx);
+    if (status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, status, "Failed to write role record");
+        return status;
+    }
+
+    DEBUG_LOG_DB("Created role: " << role_name << " (ID: " << role_id_out.toString() << ")");
+    return Status::OK;
+}
+
+auto CatalogManager::getRole(const ID& role_id, RoleInfo& role_out,
+                             ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    auto predicate = [&role_id](const RoleRecord& rec) {
+        return rec.is_valid && rec.role_id == role_id;
+    };
+
+    auto result = findRecordInHeapPage<RoleRecord>(roles_table_page_, predicate, ctx);
+    if (result.status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, result.status, "Role not found");
+        return result.status;
+    }
+
+    // Convert to RoleInfo
+    role_out.role_id = result.record.role_id;
+    role_out.role_name = std::string(result.record.role_name);
+    role_out.owner_id = result.record.owner_id;
+    role_out.role_metadata = "";  // TODO Phase 1.4: Read from TOAST
+    role_out.is_active = result.record.is_active != 0;
+    role_out.created_time = result.record.created_time;
+    role_out.last_modified_time = result.record.last_modified_time;
+
+    return Status::OK;
+}
+
+auto CatalogManager::getRoleByName(const std::string& role_name, RoleInfo& role_out,
+                                   ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    auto predicate = [&role_name](const RoleRecord& rec) {
+        return rec.is_valid && (std::string(rec.role_name) == role_name);
+    };
+
+    auto result = findRecordInHeapPage<RoleRecord>(roles_table_page_, predicate, ctx);
+    if (result.status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, result.status, "Role not found");
+        return result.status;
+    }
+
+    // Convert to RoleInfo
+    role_out.role_id = result.record.role_id;
+    role_out.role_name = std::string(result.record.role_name);
+    role_out.owner_id = result.record.owner_id;
+    role_out.role_metadata = "";  // TODO Phase 1.4: Read from TOAST
+    role_out.is_active = result.record.is_active != 0;
+    role_out.created_time = result.record.created_time;
+    role_out.last_modified_time = result.record.last_modified_time;
+
+    return Status::OK;
+}
+
+auto CatalogManager::deleteRole(const ID& role_id, bool cascade, ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    // Security Phase 3.0: CASCADE implementation
+    if (cascade)
+    {
+        // CASCADE: Delete all dependent objects
+        // 1. Revoke role from all members
+        std::vector<RoleMembershipInfo> members;
+        Status status = getRoleMembers(role_id, members, ctx);
+        if (status == Status::OK)
+        {
+            for (const auto& membership : members)
+            {
+                revokeRole(role_id, membership.user_id, ctx);
+                // Continue even if revoke fails
+            }
+        }
+
+        // 2. Delete all permissions granted to this role
+        std::vector<PermissionInfo> permissions;
+        status = getUserPermissions(role_id, permissions, ctx);  // Works for roles too
+        if (status == Status::OK)
+        {
+            for (const auto& perm : permissions)
+            {
+                revokePermission(perm.object_id, perm.object_type, role_id,
+                               GranteeType::ROLE, perm.privileges, ctx);
+                // Continue even if revoke fails
+            }
+        }
+    }
+    else
+    {
+        // RESTRICT (default): Check for dependencies
+        // Check if role has any members
+        std::vector<RoleMembershipInfo> members;
+        Status status = getRoleMembers(role_id, members, ctx);
+        if (status == Status::OK && !members.empty())
+        {
+            SET_ERROR_CONTEXT(ctx, Status::CONSTRAINT_VIOLATION,
+                            "Role has members (use CASCADE to drop)");
+            return Status::CONSTRAINT_VIOLATION;
+        }
+
+        // Check if role has any permissions
+        std::vector<PermissionInfo> permissions;
+        status = getUserPermissions(role_id, permissions, ctx);
+        if (status == Status::OK && !permissions.empty())
+        {
+            SET_ERROR_CONTEXT(ctx, Status::CONSTRAINT_VIOLATION,
+                            "Role has permissions (use CASCADE to drop)");
+            return Status::CONSTRAINT_VIOLATION;
+        }
+    }
+
+    // Mark role as deleted (Firebird MGA style)
+    auto predicate = [&role_id](const RoleRecord& rec) {
+        return rec.is_valid && rec.role_id == role_id;
+    };
+
+    Status status = deleteRecordFromHeapPage<RoleRecord>(roles_table_page_,
+                                                          predicate, ctx);
+    if (status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, status, "Failed to delete role");
+        return status;
+    }
+
+    DEBUG_LOG_DB("Deleted role (ID: " << role_id.toString() << ")");
+    return Status::OK;
+}
+
+auto CatalogManager::listRoles(std::vector<RoleInfo>& roles_out,
+                               ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    roles_out.clear();
+
+    auto filter = [](const RoleRecord& rec) { return rec.is_valid; };
+    auto converter = [](const RoleRecord& rec, RoleInfo& info) {
+        info.role_id = rec.role_id;
+        info.role_name = std::string(rec.role_name);
+        info.owner_id = rec.owner_id;
+        info.role_metadata = "";  // TODO: Read from TOAST
+        info.is_active = rec.is_active != 0;
+        info.created_time = rec.created_time;
+        info.last_modified_time = rec.last_modified_time;
+    };
+
+    return readRecordsToVector<RoleRecord, RoleInfo>(roles_table_page_, roles_out,
+                                                     filter, converter, ctx);
+}
+
+// Role membership operations
+
+auto CatalogManager::grantRole(const ID& role_id, const ID& user_id, const ID& granted_by,
+                               bool with_admin_option, ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    // Check if membership already exists
+    auto predicate = [&role_id, &user_id](const RoleMembershipRecord& rec) {
+        return rec.is_valid && rec.role_id == role_id && rec.user_id == user_id;
+    };
+
+    auto result = findRecordInHeapPage<RoleMembershipRecord>(
+        role_memberships_table_page_, predicate, ctx);
+    if (result.status == Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::FILE_EXISTS, "Role membership already exists");
+        return Status::FILE_EXISTS;
+    }
+
+    // Create membership record
+    RoleMembershipRecord membership_rec;
+    memset(&membership_rec, 0, sizeof(RoleMembershipRecord));
+    membership_rec.membership_id = generateUuidV7();
+    membership_rec.user_id = user_id;
+    membership_rec.role_id = role_id;
+    membership_rec.granted_by = granted_by;
+    membership_rec.with_admin_option = with_admin_option ? 1 : 0;
+    membership_rec.granted_time = std::chrono::system_clock::now().time_since_epoch().count();
+    membership_rec.is_valid = 1;
+
+    // Write to disk
+    Status status = writeRecordToHeapPage(role_memberships_table_page_, membership_rec, ctx);
+    if (status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, status, "Failed to write role membership record");
+        return status;
+    }
+
+    DEBUG_LOG_DB("Granted role " << role_id.toString() << " to user " << user_id.toString());
+    return Status::OK;
+}
+
+auto CatalogManager::revokeRole(const ID& role_id, const ID& user_id,
+                                ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    // Find and delete membership
+    auto predicate = [&role_id, &user_id](const RoleMembershipRecord& rec) {
+        return rec.is_valid && rec.role_id == role_id && rec.user_id == user_id;
+    };
+
+    Status status = deleteRecordFromHeapPage<RoleMembershipRecord>(
+        role_memberships_table_page_, predicate, ctx);
+    if (status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, status, "Failed to revoke role membership");
+        return status;
+    }
+
+    DEBUG_LOG_DB("Revoked role " << role_id.toString() << " from user " << user_id.toString());
+    return Status::OK;
+}
+
+auto CatalogManager::getUserRoles(const ID& user_id, std::vector<RoleMembershipInfo>& roles_out,
+                                  ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    roles_out.clear();
+
+    auto filter = [&user_id](const RoleMembershipRecord& rec) {
+        return rec.is_valid && rec.user_id == user_id;
+    };
+
+    auto converter = [](const RoleMembershipRecord& rec, RoleMembershipInfo& info) {
+        info.membership_id = rec.membership_id;
+        info.user_id = rec.user_id;
+        info.role_id = rec.role_id;
+        info.granted_by = rec.granted_by;
+        info.with_admin_option = rec.with_admin_option != 0;
+        info.granted_time = rec.granted_time;
+    };
+
+    return readRecordsToVector<RoleMembershipRecord, RoleMembershipInfo>(
+        role_memberships_table_page_, roles_out, filter, converter, ctx);
+}
+
+auto CatalogManager::getRoleMembers(const ID& role_id, std::vector<RoleMembershipInfo>& members_out,
+                                    ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    members_out.clear();
+
+    auto filter = [&role_id](const RoleMembershipRecord& rec) {
+        return rec.is_valid && rec.role_id == role_id;
+    };
+
+    auto converter = [](const RoleMembershipRecord& rec, RoleMembershipInfo& info) {
+        info.membership_id = rec.membership_id;
+        info.user_id = rec.user_id;
+        info.role_id = rec.role_id;
+        info.granted_by = rec.granted_by;
+        info.with_admin_option = rec.with_admin_option != 0;
+        info.granted_time = rec.granted_time;
+    };
+
+    return readRecordsToVector<RoleMembershipRecord, RoleMembershipInfo>(
+        role_memberships_table_page_, members_out, filter, converter, ctx);
+}
+
+// Group operations
+
+auto CatalogManager::createGroup(const std::string& group_name, GroupType group_type,
+                                 const std::string& external_id, ID& group_id_out,
+                                 ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    // Validate group name length
+    Status status = UTF8Utils::validateStorageCapacity(group_name,
+        CatalogConstants::MAX_IDENTIFIER_CHARS,
+        CatalogConstants::MAX_IDENTIFIER_BYTES);
+    if (status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, status, "Group name too long or invalid UTF-8");
+        return status;
+    }
+
+    // Check if group already exists
+    GroupInfo existing_group;
+    mutex_.unlock();
+    status = getGroupByName(group_name, existing_group, ctx);
+    mutex_.lock();
+
+    if (status == Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::FILE_EXISTS, "Group already exists");
+        return Status::FILE_EXISTS;
+    }
+
+    // Generate new group ID
+    group_id_out = generateUuidV7();
+
+    // Create group record
+    GroupRecord group_rec;
+    memset(&group_rec, 0, sizeof(GroupRecord));
+    group_rec.group_id = group_id_out;
+
+    // Truncate group name to fit in fixed buffer
+    std::string truncated_name = UTF8Utils::truncateToBytes(group_name,
+        sizeof(group_rec.group_name));
+    strncpy(group_rec.group_name, truncated_name.c_str(),
+            sizeof(group_rec.group_name) - 1);
+
+    // Truncate external_id to fit in fixed buffer
+    std::string truncated_ext_id = UTF8Utils::truncateToBytes(external_id,
+        sizeof(group_rec.external_id));
+    strncpy(group_rec.external_id, truncated_ext_id.c_str(),
+            sizeof(group_rec.external_id) - 1);
+
+    group_rec.group_type = static_cast<uint8_t>(group_type);
+    group_rec.group_metadata_oid = 0;  // TODO Phase 1.4: TOAST integration
+    group_rec.created_time = std::chrono::system_clock::now().time_since_epoch().count();
+    group_rec.last_modified_time = group_rec.created_time;
+    group_rec.is_valid = 1;
+
+    // Write to disk
+    status = writeRecordToHeapPage(groups_table_page_, group_rec, ctx);
+    if (status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, status, "Failed to write group record");
+        return status;
+    }
+
+    DEBUG_LOG_DB("Created group: " << group_name << " (ID: " << group_id_out.toString() << ")");
+    return Status::OK;
+}
+
+auto CatalogManager::getGroup(const ID& group_id, GroupInfo& group_out,
+                              ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    auto predicate = [&group_id](const GroupRecord& rec) {
+        return rec.is_valid && rec.group_id == group_id;
+    };
+
+    auto result = findRecordInHeapPage<GroupRecord>(groups_table_page_, predicate, ctx);
+    if (result.status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, result.status, "Group not found");
+        return result.status;
+    }
+
+    // Convert to GroupInfo
+    group_out.group_id = result.record.group_id;
+    group_out.group_name = std::string(result.record.group_name);
+    group_out.external_id = std::string(result.record.external_id);
+    group_out.group_type = static_cast<GroupType>(result.record.group_type);
+    group_out.group_metadata = "";  // TODO Phase 1.4: Read from TOAST
+    group_out.created_time = result.record.created_time;
+    group_out.last_modified_time = result.record.last_modified_time;
+
+    return Status::OK;
+}
+
+auto CatalogManager::getGroupByName(const std::string& group_name, GroupInfo& group_out,
+                                    ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    auto predicate = [&group_name](const GroupRecord& rec) {
+        return rec.is_valid && (std::string(rec.group_name) == group_name);
+    };
+
+    auto result = findRecordInHeapPage<GroupRecord>(groups_table_page_, predicate, ctx);
+    if (result.status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, result.status, "Group not found");
+        return result.status;
+    }
+
+    // Convert to GroupInfo
+    group_out.group_id = result.record.group_id;
+    group_out.group_name = std::string(result.record.group_name);
+    group_out.external_id = std::string(result.record.external_id);
+    group_out.group_type = static_cast<GroupType>(result.record.group_type);
+    group_out.group_metadata = "";  // TODO Phase 1.4: Read from TOAST
+    group_out.created_time = result.record.created_time;
+    group_out.last_modified_time = result.record.last_modified_time;
+
+    return Status::OK;
+}
+
+auto CatalogManager::deleteGroup(const ID& group_id, bool cascade, ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    // Security Phase 3.0: CASCADE implementation
+    if (cascade)
+    {
+        // CASCADE: Delete all dependent objects
+        // 1. Remove all members from group
+        std::vector<ID> members;
+        Status status = getGroupMembers(group_id, members, ctx);
+        if (status == Status::OK)
+        {
+            for (const auto& member_id : members)
+            {
+                removeGroupMember(group_id, member_id, ctx);
+                // Continue even if removal fails
+            }
+        }
+
+        // 2. Delete all permissions granted to this group
+        std::vector<PermissionInfo> permissions;
+        status = getUserPermissions(group_id, permissions, ctx);  // Works for groups too
+        if (status == Status::OK)
+        {
+            for (const auto& perm : permissions)
+            {
+                revokePermission(perm.object_id, perm.object_type, group_id,
+                               GranteeType::GROUP, perm.privileges, ctx);
+                // Continue even if revoke fails
+            }
+        }
+
+        // 3. Delete all group mappings
+        // TODO: Add group mapping cleanup when implemented
+    }
+    else
+    {
+        // RESTRICT (default): Check for dependencies
+        // Check if group has any members
+        std::vector<ID> members;
+        Status status = getGroupMembers(group_id, members, ctx);
+        if (status == Status::OK && !members.empty())
+        {
+            SET_ERROR_CONTEXT(ctx, Status::CONSTRAINT_VIOLATION,
+                            "Group has members (use CASCADE to drop)");
+            return Status::CONSTRAINT_VIOLATION;
+        }
+
+        // Check if group has any permissions
+        std::vector<PermissionInfo> permissions;
+        status = getUserPermissions(group_id, permissions, ctx);
+        if (status == Status::OK && !permissions.empty())
+        {
+            SET_ERROR_CONTEXT(ctx, Status::CONSTRAINT_VIOLATION,
+                            "Group has permissions (use CASCADE to drop)");
+            return Status::CONSTRAINT_VIOLATION;
+        }
+    }
+
+    // Mark group as deleted (Firebird MGA style)
+    auto predicate = [&group_id](const GroupRecord& rec) {
+        return rec.is_valid && rec.group_id == group_id;
+    };
+
+    Status status = deleteRecordFromHeapPage<GroupRecord>(groups_table_page_,
+                                                           predicate, ctx);
+    if (status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, status, "Failed to delete group");
+        return status;
+    }
+
+    DEBUG_LOG_DB("Deleted group (ID: " << group_id.toString() << ")");
+    return Status::OK;
+}
+
+auto CatalogManager::listGroups(std::vector<GroupInfo>& groups_out,
+                                ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    groups_out.clear();
+
+    auto filter = [](const GroupRecord& rec) { return rec.is_valid; };
+    auto converter = [](const GroupRecord& rec, GroupInfo& info) {
+        info.group_id = rec.group_id;
+        info.group_name = std::string(rec.group_name);
+        info.external_id = std::string(rec.external_id);
+        info.group_type = static_cast<GroupType>(rec.group_type);
+        info.group_metadata = "";  // TODO: Read from TOAST
+        info.created_time = rec.created_time;
+        info.last_modified_time = rec.last_modified_time;
+    };
+
+    return readRecordsToVector<GroupRecord, GroupInfo>(groups_table_page_, groups_out,
+                                                        filter, converter, ctx);
+}
+
+// Group membership operations (supports nested groups)
+
+auto CatalogManager::addGroupMember(const ID& group_id, const ID& member_id, bool is_group,
+                                    const ID& granted_by, ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    // Check if membership already exists
+    auto predicate = [&group_id, &member_id](const GroupMembershipRecord& rec) {
+        return rec.is_valid && rec.group_id == group_id && rec.user_id == member_id;
+    };
+
+    auto result = findRecordInHeapPage<GroupMembershipRecord>(
+        group_memberships_table_page_, predicate, ctx);
+    if (result.status == Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::FILE_EXISTS, "Group membership already exists");
+        return Status::FILE_EXISTS;
+    }
+
+    // Create membership record
+    GroupMembershipRecord membership_rec;
+    memset(&membership_rec, 0, sizeof(GroupMembershipRecord));
+    membership_rec.membership_id = generateUuidV7();
+    membership_rec.user_id = member_id;  // Can be user or group
+    membership_rec.member_type = is_group ? 1 : 0;  // GROUP=1, USER=0
+    membership_rec.group_id = group_id;
+    membership_rec.granted_by = granted_by;
+    membership_rec.granted_time = std::chrono::system_clock::now().time_since_epoch().count();
+    membership_rec.is_valid = 1;
+
+    // Write to disk
+    Status status = writeRecordToHeapPage(group_memberships_table_page_, membership_rec, ctx);
+    if (status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, status, "Failed to write group membership record");
+        return status;
+    }
+
+    DEBUG_LOG_DB("Added member " << member_id.toString() << " to group " << group_id.toString());
+    return Status::OK;
+}
+
+auto CatalogManager::removeGroupMember(const ID& group_id, const ID& member_id,
+                                       ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    // Find and delete membership
+    auto predicate = [&group_id, &member_id](const GroupMembershipRecord& rec) {
+        return rec.is_valid && rec.group_id == group_id && rec.user_id == member_id;
+    };
+
+    Status status = deleteRecordFromHeapPage<GroupMembershipRecord>(
+        group_memberships_table_page_, predicate, ctx);
+    if (status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, status, "Failed to remove group member");
+        return status;
+    }
+
+    DEBUG_LOG_DB("Removed member " << member_id.toString() << " from group " << group_id.toString());
+    return Status::OK;
+}
+
+auto CatalogManager::getGroupMembers(const ID& group_id, std::vector<ID>& members_out,
+                                     ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    members_out.clear();
+
+    BufferPool *bp = db_->buffer_pool();
+    void *page_buffer;
+    Status status = bp->pinPage(group_memberships_table_page_, &page_buffer, ctx);
+    if (status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, status, "Failed to pin group memberships page");
+        return status;
+    }
+
+    auto *heap = reinterpret_cast<CatalogHeapPage *>(page_buffer);
+    uint32_t offset = sizeof(CatalogHeapPage);
+
+    for (uint32_t i = 0; i < heap->record_count; i++)
+    {
+        auto *record = reinterpret_cast<GroupMembershipRecord *>(
+            reinterpret_cast<uint8_t *>(page_buffer) + offset);
+
+        if (record->is_valid && record->group_id == group_id)
+        {
+            members_out.push_back(record->user_id);
+        }
+
+        offset += sizeof(GroupMembershipRecord);
+    }
+
+    bp->unpinPage(group_memberships_table_page_, false, ctx);
+    return Status::OK;
+}
+
+auto CatalogManager::getUserGroups(const ID& user_id, std::vector<ID>& groups_out,
+                                   ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    groups_out.clear();
+
+    BufferPool *bp = db_->buffer_pool();
+    void *page_buffer;
+    Status status = bp->pinPage(group_memberships_table_page_, &page_buffer, ctx);
+    if (status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, status, "Failed to pin group memberships page");
+        return status;
+    }
+
+    auto *heap = reinterpret_cast<CatalogHeapPage *>(page_buffer);
+    uint32_t offset = sizeof(CatalogHeapPage);
+
+    for (uint32_t i = 0; i < heap->record_count; i++)
+    {
+        auto *record = reinterpret_cast<GroupMembershipRecord *>(
+            reinterpret_cast<uint8_t *>(page_buffer) + offset);
+
+        if (record->is_valid && record->user_id == user_id && record->member_type == 0)
+        {
+            groups_out.push_back(record->group_id);
+        }
+
+        offset += sizeof(GroupMembershipRecord);
+    }
+
+    bp->unpinPage(group_memberships_table_page_, false, ctx);
+    return Status::OK;
+}
+
+// ============================================================================
+// Session & Permission Operations (Phase 1.4 - Security System)
+// ============================================================================
+
+// Session management
+
+auto CatalogManager::createSession(const ID& user_id, const ID& default_schema_id,
+                                   SessionInfo& session_out, ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(session_cache_mutex_);
+
+    // Get user info
+    UserInfo user;
+    mutex_.lock();
+    Status status = getUser(user_id, user, ctx);
+    mutex_.unlock();
+
+    if (status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, status, "User not found");
+        return status;
+    }
+
+    if (!user.is_active)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::PERMISSION_DENIED, "User account is disabled");
+        return Status::PERMISSION_DENIED;
+    }
+
+    // Generate session ID
+    session_out.session_id = generateUuidV7();
+    session_out.user_id = user_id;
+    session_out.username = user.username;
+    session_out.is_superuser = user.is_superuser;
+    session_out.current_schema_id = default_schema_id;
+    session_out.login_time = std::chrono::system_clock::now().time_since_epoch().count();
+    session_out.last_activity_time = session_out.login_time;
+
+    // Compute effective roles (transitive closure)
+    mutex_.lock();
+    status = getEffectiveRoles(user_id, session_out.effective_roles, ctx);
+    mutex_.unlock();
+
+    if (status != Status::OK && status != Status::NOT_FOUND)
+    {
+        // NOT_FOUND is OK (user has no roles)
+        SET_ERROR_CONTEXT(ctx, status, "Failed to compute effective roles");
+        return status;
+    }
+
+    // Compute effective groups (transitive closure)
+    mutex_.lock();
+    status = getEffectiveGroups(user_id, session_out.effective_groups, ctx);
+    mutex_.unlock();
+
+    if (status != Status::OK && status != Status::NOT_FOUND)
+    {
+        // NOT_FOUND is OK (user has no groups)
+        SET_ERROR_CONTEXT(ctx, status, "Failed to compute effective groups");
+        return status;
+    }
+
+    // Store in cache
+    session_cache_[session_out.session_id] = session_out;
+
+    DEBUG_LOG_DB("Created session for user " << user.username
+                 << " (session ID: " << session_out.session_id.toString() << ")");
+    return Status::OK;
+}
+
+auto CatalogManager::getSession(const ID& session_id, SessionInfo& session_out,
+                                ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(session_cache_mutex_);
+
+    auto it = session_cache_.find(session_id);
+    if (it == session_cache_.end())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Session not found");
+        return Status::NOT_FOUND;
+    }
+
+    session_out = it->second;
+
+    // Update last activity time
+    session_out.last_activity_time = std::chrono::system_clock::now().time_since_epoch().count();
+    it->second.last_activity_time = session_out.last_activity_time;
+
+    return Status::OK;
+}
+
+auto CatalogManager::closeSession(const ID& session_id, ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(session_cache_mutex_);
+
+    auto it = session_cache_.find(session_id);
+    if (it == session_cache_.end())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Session not found");
+        return Status::NOT_FOUND;
+    }
+
+    DEBUG_LOG_DB("Closed session " << session_id.toString());
+    session_cache_.erase(it);
+    return Status::OK;
+}
+
+// Compute transitive closure of roles
+
+auto CatalogManager::getEffectiveRoles(const ID& user_id, std::vector<ID>& roles_out,
+                                       ErrorContext* ctx) -> Status
+{
+    // Security Phase 3.0: Implement transitive role-to-role grants (roles granted to roles)
+    roles_out.clear();
+
+    // Use BFS to find all roles (including transitive grants)
+    std::unordered_set<ID> visited;
+    std::queue<ID> to_process;
+    to_process.push(user_id);
+    visited.insert(user_id);
+
+    while (!to_process.empty())
+    {
+        ID current_id = to_process.front();
+        to_process.pop();
+
+        // Get direct role memberships for current entity
+        std::vector<RoleMembershipInfo> memberships;
+        Status status = getUserRoles(current_id, memberships, ctx);
+        if (status != Status::OK && status != Status::NOT_FOUND)
+        {
+            return status;
+        }
+
+        // Process each role
+        for (const auto& membership : memberships)
+        {
+            if (visited.find(membership.role_id) == visited.end())
+            {
+                visited.insert(membership.role_id);
+                roles_out.push_back(membership.role_id);
+                to_process.push(membership.role_id);  // Process roles granted to this role
+            }
+        }
+    }
+
+    return Status::OK;
+}
+
+// Compute transitive closure of groups
+
+auto CatalogManager::getEffectiveGroups(const ID& user_id, std::vector<ID>& groups_out,
+                                        ErrorContext* ctx) -> Status
+{
+    groups_out.clear();
+
+    // Use BFS to find all groups (including nested)
+    std::unordered_set<ID> visited;
+    std::queue<ID> to_process;
+    to_process.push(user_id);
+    visited.insert(user_id);
+
+    while (!to_process.empty())
+    {
+        ID current_id = to_process.front();
+        to_process.pop();
+
+        // Get groups for current entity
+        std::vector<ID> direct_groups;
+        Status status = getUserGroups(current_id, direct_groups, ctx);
+        if (status != Status::OK && status != Status::NOT_FOUND)
+        {
+            return status;
+        }
+
+        // Process each group
+        for (const auto& group_id : direct_groups)
+        {
+            if (visited.find(group_id) == visited.end())
+            {
+                visited.insert(group_id);
+                groups_out.push_back(group_id);
+                to_process.push(group_id);  // Process nested groups
+            }
+        }
+    }
+
+    return Status::OK;
+}
+
+// Permission operations
+
+auto CatalogManager::grantPermission(const ID& object_id, PermissionObjectType object_type,
+                                     const ID& grantee_id, GranteeType grantee_type,
+                                     uint32_t privileges, bool grant_option,
+                                     const ID& grantor_id, ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    // Check if permission already exists - if so, merge privileges
+    auto predicate = [&](const PermissionRecord& rec) {
+        return rec.is_valid &&
+               rec.object_id == object_id &&
+               rec.grantee_id == grantee_id &&
+               rec.grantee_type == static_cast<uint8_t>(grantee_type);
+    };
+
+    auto result = findRecordInHeapPage<PermissionRecord>(permissions_table_page_, predicate, ctx);
+
+    if (result.status == Status::OK)
+    {
+        // Update existing permission - merge privileges
+        PermissionRecord updated_rec = result.record;
+        updated_rec.privileges |= privileges;  // OR the privileges together
+        if (grant_option) {
+            updated_rec.grant_option = 1;
+        }
+
+        Status status = updateRecordInHeapPage(permissions_table_page_, result.slot_index,
+                                              updated_rec, ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, status, "Failed to update permission record");
+            return status;
+        }
+
+        DEBUG_LOG_DB("Updated permission on object " << object_id.toString());
+        return Status::OK;
+    }
+
+    // Create new permission record
+    PermissionRecord perm_rec;
+    memset(&perm_rec, 0, sizeof(PermissionRecord));
+    perm_rec.permission_id = generateUuidV7();
+    perm_rec.object_id = object_id;
+    perm_rec.object_type = static_cast<uint8_t>(object_type);
+    perm_rec.grantee_id = grantee_id;
+    perm_rec.grantee_type = static_cast<uint8_t>(grantee_type);
+    perm_rec.privileges = privileges;
+    perm_rec.grant_option = grant_option ? 1 : 0;
+    perm_rec.grantor_id = grantor_id;
+    perm_rec.created_time = std::chrono::system_clock::now().time_since_epoch().count();
+    perm_rec.is_valid = 1;
+
+    // Write to disk
+    Status status = writeRecordToHeapPage(permissions_table_page_, perm_rec, ctx);
+    if (status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, status, "Failed to write permission record");
+        return status;
+    }
+
+    DEBUG_LOG_DB("Granted permission on object " << object_id.toString());
+    return Status::OK;
+}
+
+auto CatalogManager::revokePermission(const ID& object_id, PermissionObjectType object_type,
+                                      const ID& grantee_id, GranteeType grantee_type,
+                                      uint32_t privileges, ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    // Find permission record
+    auto predicate = [&](const PermissionRecord& rec) {
+        return rec.is_valid &&
+               rec.object_id == object_id &&
+               rec.grantee_id == grantee_id &&
+               rec.grantee_type == static_cast<uint8_t>(grantee_type);
+    };
+
+    auto result = findRecordInHeapPage<PermissionRecord>(permissions_table_page_, predicate, ctx);
+    if (result.status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, result.status, "Permission not found");
+        return result.status;
+    }
+
+    // Remove specified privileges
+    PermissionRecord updated_rec = result.record;
+    updated_rec.privileges &= ~privileges;  // Clear the specified bits
+
+    // If no privileges remain, delete the record
+    if (updated_rec.privileges == 0)
+    {
+        Status status = deleteRecordFromHeapPage<PermissionRecord>(
+            permissions_table_page_, predicate, ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, status, "Failed to delete permission record");
+            return status;
+        }
+
+        DEBUG_LOG_DB("Revoked all permissions on object " << object_id.toString());
+        return Status::OK;
+    }
+
+    // Update with reduced privileges
+    Status status = updateRecordInHeapPage(permissions_table_page_, result.slot_index,
+                                          updated_rec, ctx);
+    if (status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, status, "Failed to update permission record");
+        return status;
+    }
+
+    DEBUG_LOG_DB("Revoked permission on object " << object_id.toString());
+    return Status::OK;
+}
+
+auto CatalogManager::hasPermission(const ID& user_id, const ID& object_id,
+                                   PermissionObjectType object_type, Privilege privilege,
+                                   bool& has_perm_out, ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    has_perm_out = false;
+
+    // Get user info - superusers have all permissions
+    UserInfo user;
+    Status status = getUser(user_id, user, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    if (user.is_superuser)
+    {
+        has_perm_out = true;
+        return Status::OK;
+    }
+
+    uint32_t privilege_mask = static_cast<uint32_t>(privilege);
+
+    // Check direct user permissions
+    auto check_permission = [&](const PermissionRecord& rec) {
+        return rec.is_valid &&
+               rec.object_id == object_id &&
+               (rec.privileges & privilege_mask) != 0;
+    };
+
+    // 1. Check direct user permissions
+    auto predicate_user = [&](const PermissionRecord& rec) {
+        return check_permission(rec) &&
+               rec.grantee_id == user_id &&
+               rec.grantee_type == static_cast<uint8_t>(GranteeType::USER);
+    };
+
+    auto result = findRecordInHeapPage<PermissionRecord>(permissions_table_page_,
+                                                          predicate_user, ctx);
+    if (result.status == Status::OK)
+    {
+        has_perm_out = true;
+        return Status::OK;
+    }
+
+    // 2. Check PUBLIC permissions
+    auto predicate_public = [&](const PermissionRecord& rec) {
+        return check_permission(rec) &&
+               rec.grantee_type == static_cast<uint8_t>(GranteeType::PUBLIC);
+    };
+
+    result = findRecordInHeapPage<PermissionRecord>(permissions_table_page_,
+                                                     predicate_public, ctx);
+    if (result.status == Status::OK)
+    {
+        has_perm_out = true;
+        return Status::OK;
+    }
+
+    // 3. Check role permissions
+    std::vector<ID> effective_roles;
+    status = getEffectiveRoles(user_id, effective_roles, ctx);
+    if (status == Status::OK)
+    {
+        for (const auto& role_id : effective_roles)
+        {
+            auto predicate_role = [&](const PermissionRecord& rec) {
+                return check_permission(rec) &&
+                       rec.grantee_id == role_id &&
+                       rec.grantee_type == static_cast<uint8_t>(GranteeType::ROLE);
+            };
+
+            result = findRecordInHeapPage<PermissionRecord>(permissions_table_page_,
+                                                            predicate_role, ctx);
+            if (result.status == Status::OK)
+            {
+                has_perm_out = true;
+                return Status::OK;
+            }
+        }
+    }
+
+    // 4. Check group permissions
+    std::vector<ID> effective_groups;
+    status = getEffectiveGroups(user_id, effective_groups, ctx);
+    if (status == Status::OK)
+    {
+        for (const auto& group_id : effective_groups)
+        {
+            auto predicate_group = [&](const PermissionRecord& rec) {
+                return check_permission(rec) &&
+                       rec.grantee_id == group_id &&
+                       rec.grantee_type == static_cast<uint8_t>(GranteeType::GROUP);
+            };
+
+            result = findRecordInHeapPage<PermissionRecord>(permissions_table_page_,
+                                                            predicate_group, ctx);
+            if (result.status == Status::OK)
+            {
+                has_perm_out = true;
+                return Status::OK;
+            }
+        }
+    }
+
+    // No permission found
+    return Status::OK;
+}
+
+auto CatalogManager::getObjectPermissions(const ID& object_id, PermissionObjectType object_type,
+                                          std::vector<PermissionInfo>& permissions_out,
+                                          ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    permissions_out.clear();
+
+    auto filter = [&object_id](const PermissionRecord& rec) {
+        return rec.is_valid && rec.object_id == object_id;
+    };
+
+    auto converter = [](const PermissionRecord& rec, PermissionInfo& info) {
+        info.permission_id = rec.permission_id;
+        info.object_id = rec.object_id;
+        info.object_type = static_cast<PermissionObjectType>(rec.object_type);
+        info.grantee_id = rec.grantee_id;
+        info.grantee_type = static_cast<GranteeType>(rec.grantee_type);
+        info.privileges = rec.privileges;
+        info.grant_option = rec.grant_option != 0;
+        info.grantor_id = rec.grantor_id;
+        info.created_time = rec.created_time;
+    };
+
+    return readRecordsToVector<PermissionRecord, PermissionInfo>(
+        permissions_table_page_, permissions_out, filter, converter, ctx);
+}
+
+auto CatalogManager::getUserPermissions(const ID& user_id, std::vector<PermissionInfo>& permissions_out,
+                                        ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    permissions_out.clear();
+
+    auto filter = [&user_id](const PermissionRecord& rec) {
+        return rec.is_valid &&
+               rec.grantee_id == user_id &&
+               rec.grantee_type == static_cast<uint8_t>(GranteeType::USER);
+    };
+
+    auto converter = [](const PermissionRecord& rec, PermissionInfo& info) {
+        info.permission_id = rec.permission_id;
+        info.object_id = rec.object_id;
+        info.object_type = static_cast<PermissionObjectType>(rec.object_type);
+        info.grantee_id = rec.grantee_id;
+        info.grantee_type = static_cast<GranteeType>(rec.grantee_type);
+        info.privileges = rec.privileges;
+        info.grant_option = rec.grant_option != 0;
+        info.grantor_id = rec.grantor_id;
+        info.created_time = rec.created_time;
+    };
+
+    return readRecordsToVector<PermissionRecord, PermissionInfo>(
+        permissions_table_page_, permissions_out, filter, converter, ctx);
+}
+
+// ============================================================================
+// Security Phase 3.3: Column-Level Permission Operations
+// ============================================================================
+
+auto CatalogManager::grantColumnPermission(const ID& table_id, const std::string& column_name,
+                                          const ID& grantee_id, GranteeType grantee_type,
+                                          uint32_t privileges, bool grant_option,
+                                          const ID& grantor_id, ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    // Check if permission already exists for this column - if so, merge privileges
+    auto predicate = [&](const ColumnPermissionRecord& rec) {
+        return rec.is_valid &&
+               rec.table_id == table_id &&
+               std::strcmp(rec.column_name, column_name.c_str()) == 0 &&
+               rec.grantee_id == grantee_id &&
+               rec.grantee_type == static_cast<uint8_t>(grantee_type);
+    };
+
+    auto result = findRecordInHeapPage<ColumnPermissionRecord>(column_permissions_table_page_, predicate, ctx);
+
+    if (result.status == Status::OK)
+    {
+        // Update existing permission - merge privileges
+        ColumnPermissionRecord updated_rec = result.record;
+        updated_rec.privileges |= privileges;  // OR the privileges together
+        if (grant_option) {
+            updated_rec.grant_option = 1;
+        }
+
+        Status status = updateRecordInHeapPage(column_permissions_table_page_, result.slot_index,
+                                              updated_rec, ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, status, "Failed to update column permission record");
+            return status;
+        }
+
+        DEBUG_LOG_DB("Updated column permission on table " << table_id.toString()
+                    << ", column: " << column_name);
+        return Status::OK;
+    }
+
+    // Create new column permission record
+    ColumnPermissionRecord col_perm_rec;
+    memset(&col_perm_rec, 0, sizeof(ColumnPermissionRecord));
+    col_perm_rec.permission_id = generateUuidV7();
+    col_perm_rec.table_id = table_id;
+    strncpy(col_perm_rec.column_name, column_name.c_str(), 127);
+    col_perm_rec.column_name[127] = '\0';  // Ensure null termination
+    col_perm_rec.grantee_id = grantee_id;
+    col_perm_rec.grantee_type = static_cast<uint8_t>(grantee_type);
+    col_perm_rec.privileges = privileges;
+    col_perm_rec.grant_option = grant_option ? 1 : 0;
+    col_perm_rec.grantor_id = grantor_id;
+    col_perm_rec.created_time = std::chrono::system_clock::now().time_since_epoch().count();
+    col_perm_rec.is_valid = 1;
+
+    // Write to disk
+    Status status = writeRecordToHeapPage(column_permissions_table_page_, col_perm_rec, ctx);
+    if (status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, status, "Failed to write column permission record");
+        return status;
+    }
+
+    DEBUG_LOG_DB("Granted column permission on table " << table_id.toString()
+                << ", column: " << column_name);
+    return Status::OK;
+}
+
+auto CatalogManager::revokeColumnPermission(const ID& table_id, const std::string& column_name,
+                                           const ID& grantee_id, GranteeType grantee_type,
+                                           uint32_t privileges, ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    // Find column permission record
+    auto predicate = [&](const ColumnPermissionRecord& rec) {
+        return rec.is_valid &&
+               rec.table_id == table_id &&
+               std::strcmp(rec.column_name, column_name.c_str()) == 0 &&
+               rec.grantee_id == grantee_id &&
+               rec.grantee_type == static_cast<uint8_t>(grantee_type);
+    };
+
+    auto result = findRecordInHeapPage<ColumnPermissionRecord>(column_permissions_table_page_, predicate, ctx);
+    if (result.status != Status::OK)
+    {
+        // Permission not found - not an error, just return OK
+        return Status::OK;
+    }
+
+    // Remove specified privileges (AND with inverse)
+    ColumnPermissionRecord updated_rec = result.record;
+    updated_rec.privileges &= ~privileges;  // Clear the specified privilege bits
+
+    // If no privileges remain, mark as deleted (MGA soft delete)
+    if (updated_rec.privileges == 0)
+    {
+        updated_rec.is_valid = 0;
+    }
+
+    Status status = updateRecordInHeapPage(column_permissions_table_page_, result.slot_index,
+                                          updated_rec, ctx);
+    if (status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, status, "Failed to revoke column permission");
+        return status;
+    }
+
+    DEBUG_LOG_DB("Revoked column permission on table " << table_id.toString()
+                << ", column: " << column_name);
+    return Status::OK;
+}
+
+auto CatalogManager::hasColumnPermission(const ID& user_id, const ID& table_id,
+                                        const std::string& column_name, Privilege privilege,
+                                        bool& has_perm_out, ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    has_perm_out = false;
+
+    // IMPORTANT: Check table-level permission first
+    // If user has table-level privilege, they have access to all columns
+    bool has_table_perm = false;
+    Status status = hasPermission(user_id, table_id, PermissionObjectType::TABLE,
+                                 privilege, has_table_perm, ctx);
+    if (status != Status::OK) {
+        return status;
+    }
+
+    if (has_table_perm) {
+        has_perm_out = true;
+        return Status::OK;
+    }
+
+    // Check column-level permission
+    uint32_t required_priv = static_cast<uint32_t>(privilege);
+
+    // Check user's direct column permissions
+    auto user_predicate = [&](const ColumnPermissionRecord& rec) {
+        return rec.is_valid &&
+               rec.table_id == table_id &&
+               std::strcmp(rec.column_name, column_name.c_str()) == 0 &&
+               rec.grantee_id == user_id &&
+               rec.grantee_type == static_cast<uint8_t>(GranteeType::USER) &&
+               (rec.privileges & required_priv) != 0;
+    };
+
+    auto result = findRecordInHeapPage<ColumnPermissionRecord>(
+        column_permissions_table_page_, user_predicate, ctx);
+
+    if (result.status == Status::OK) {
+        has_perm_out = true;
+        return Status::OK;
+    }
+
+    // TODO: Check role memberships and group memberships (Phase 3.3.3)
+    // For now, only checking direct user permissions
+
+    return Status::OK;
+}
+
+auto CatalogManager::getAccessibleColumns(const ID& user_id, const ID& table_id,
+                                         Privilege privilege, std::vector<std::string>& columns_out,
+                                         ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    columns_out.clear();
+
+    // Check if user has table-level permission
+    bool has_table_perm = false;
+    Status status = hasPermission(user_id, table_id, PermissionObjectType::TABLE,
+                                 privilege, has_table_perm, ctx);
+    if (status != Status::OK) {
+        return status;
+    }
+
+    // If user has table-level permission, return empty vector
+    // Empty vector signals "all columns accessible" to avoid loading all column names
+    if (has_table_perm) {
+        return Status::OK;
+    }
+
+    // Collect columns with specific privileges
+    uint32_t required_priv = static_cast<uint32_t>(privilege);
+
+    auto filter = [&](const ColumnPermissionRecord& rec) {
+        return rec.is_valid &&
+               rec.table_id == table_id &&
+               rec.grantee_id == user_id &&
+               rec.grantee_type == static_cast<uint8_t>(GranteeType::USER) &&
+               (rec.privileges & required_priv) != 0;
+    };
+
+    auto converter = [](const ColumnPermissionRecord& rec, std::string& col_name) {
+        col_name = std::string(rec.column_name);
+    };
+
+    return readRecordsToVector<ColumnPermissionRecord, std::string>(
+        column_permissions_table_page_, columns_out, filter, converter, ctx);
+}
+
+auto CatalogManager::getColumnPermissions(const ID& table_id,
+                                         std::vector<ColumnPermissionInfo>& perms_out,
+                                         ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    perms_out.clear();
+
+    auto filter = [&](const ColumnPermissionRecord& rec) {
+        return rec.is_valid && rec.table_id == table_id;
+    };
+
+    auto converter = [](const ColumnPermissionRecord& rec, ColumnPermissionInfo& info) {
+        info.permission_id = rec.permission_id;
+        info.table_id = rec.table_id;
+        info.column_name = std::string(rec.column_name);
+        info.grantee_id = rec.grantee_id;
+        info.grantee_type = static_cast<GranteeType>(rec.grantee_type);
+        info.privileges = rec.privileges;
+        info.grant_option = rec.grant_option != 0;
+        info.grantor_id = rec.grantor_id;
+        info.created_time = rec.created_time;
+    };
+
+    return readRecordsToVector<ColumnPermissionRecord, ColumnPermissionInfo>(
+        column_permissions_table_page_, perms_out, filter, converter, ctx);
+}
+
+// ============================================================================
+// Security Phase 3.4: Row-Level Security Policy Operations
+// ============================================================================
+
+auto CatalogManager::createPolicy(const ID& table_id, const std::string& policy_name,
+                                 PolicyType type, const std::vector<std::string>& roles,
+                                 const std::string& using_expr, const std::string& with_check_expr,
+                                 ID& policy_id_out, ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    // Check if policy with this name already exists on this table
+    auto predicate = [&](const PolicyRecord& rec) {
+        return rec.is_valid &&
+               rec.table_id == table_id &&
+               std::strcmp(rec.policy_name, policy_name.c_str()) == 0;
+    };
+
+    auto result = findRecordInHeapPage<PolicyRecord>(policies_table_page_, predicate, ctx);
+    if (result.status == Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::FILE_EXISTS,
+                         ("Policy '" + policy_name + "' already exists on table").c_str());
+        return Status::FILE_EXISTS;
+    }
+
+    // Create new policy record
+    PolicyRecord policy_rec;
+    memset(&policy_rec, 0, sizeof(PolicyRecord));
+    policy_rec.policy_id = generateUuidV7();
+    policy_rec.table_id = table_id;
+    strncpy(policy_rec.policy_name, policy_name.c_str(), 63);
+    policy_rec.policy_name[63] = '\0';  // Ensure null termination
+    policy_rec.policy_type = static_cast<uint8_t>(type);
+    policy_rec.is_enabled = 1;
+    policy_rec.created_time = std::chrono::system_clock::now().time_since_epoch().count();
+    policy_rec.modified_time = policy_rec.created_time;
+    policy_rec.is_valid = 1;
+
+    // Store roles array in TOAST if non-empty
+    if (!roles.empty())
+    {
+        // Serialize roles as comma-separated string
+        std::string roles_str;
+        for (size_t i = 0; i < roles.size(); ++i)
+        {
+            if (i > 0) roles_str += ",";
+            roles_str += roles[i];
+        }
+        // For now, store OID as 0 - full TOAST integration in future
+        // TODO: Store roles_str in TOAST and save OID
+        policy_rec.roles_oid = 0;
+    }
+    else
+    {
+        policy_rec.roles_oid = 0;  // Empty = all roles
+    }
+
+    // Store expressions in TOAST (Phase 3.4.6)
+    uint64_t xmin = 1;  // TODO: Get from transaction context in future
+
+    // Store USING expression
+    Status toast_status = storeStringInToast(using_expr, xmin, policy_rec.using_expr_oid, ctx);
+    if (toast_status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, toast_status, "Failed to store USING expression");
+        return toast_status;
+    }
+
+    // Store WITH CHECK expression
+    toast_status = storeStringInToast(with_check_expr, xmin, policy_rec.with_check_expr_oid, ctx);
+    if (toast_status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, toast_status, "Failed to store WITH CHECK expression");
+        return toast_status;
+    }
+
+    // Write to disk
+    Status status = writeRecordToHeapPage(policies_table_page_, policy_rec, ctx);
+    if (status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, status, "Failed to write policy record");
+        return status;
+    }
+
+    // Cache policy in memory with expressions (Phase 3.4.6)
+    {
+        std::lock_guard<std::mutex> cache_lock(policy_cache_mutex_);
+
+        PolicyInfo policy_info;
+        policy_info.policy_id = policy_rec.policy_id;
+        policy_info.table_id = policy_rec.table_id;
+        policy_info.policy_name = policy_name;
+        policy_info.policy_type = type;
+        policy_info.roles = roles;
+        policy_info.using_expr = using_expr;        // Store actual expression string
+        policy_info.with_check_expr = with_check_expr;  // Store actual expression string
+        policy_info.is_enabled = true;
+        policy_info.created_time = policy_rec.created_time;
+        policy_info.modified_time = policy_rec.modified_time;
+
+        policy_cache_[policy_info.policy_id] = policy_info;
+    }
+
+    policy_id_out = policy_rec.policy_id;
+    DEBUG_LOG_DB("Created policy '" << policy_name << "' on table " << table_id.toString());
+    return Status::OK;
+}
+
+auto CatalogManager::dropPolicy(const ID& table_id, const std::string& policy_name,
+                               ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    // Find policy record
+    auto predicate = [&](const PolicyRecord& rec) {
+        return rec.is_valid &&
+               rec.table_id == table_id &&
+               std::strcmp(rec.policy_name, policy_name.c_str()) == 0;
+    };
+
+    auto result = findRecordInHeapPage<PolicyRecord>(policies_table_page_, predicate, ctx);
+    if (result.status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND,
+                         ("Policy '" + policy_name + "' not found on table").c_str());
+        return Status::NOT_FOUND;
+    }
+
+    // Mark as invalid (soft delete - MGA pattern)
+    PolicyRecord updated_rec = result.record;
+    updated_rec.is_valid = 0;
+
+    Status status = updateRecordInHeapPage(policies_table_page_, result.slot_index,
+                                          updated_rec, ctx);
+    if (status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, status, "Failed to delete policy record");
+        return status;
+    }
+
+    // Remove from cache (Phase 3.4.6)
+    {
+        std::lock_guard<std::mutex> cache_lock(policy_cache_mutex_);
+        policy_cache_.erase(result.record.policy_id);
+    }
+
+    DEBUG_LOG_DB("Dropped policy '" << policy_name << "' from table " << table_id.toString());
+    return Status::OK;
+}
+
+auto CatalogManager::getPolicy(const ID& table_id, const std::string& policy_name,
+                              PolicyInfo& policy_out, ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    // Find policy record on disk
+    auto predicate = [&](const PolicyRecord& rec) {
+        return rec.is_valid &&
+               rec.table_id == table_id &&
+               std::strcmp(rec.policy_name, policy_name.c_str()) == 0;
+    };
+
+    auto result = findRecordInHeapPage<PolicyRecord>(policies_table_page_, predicate, ctx);
+    if (result.status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND,
+                         ("Policy '" + policy_name + "' not found").c_str());
+        return Status::NOT_FOUND;
+    }
+
+    // Check cache for full policy info with expressions (Phase 3.4.6)
+    {
+        std::lock_guard<std::mutex> cache_lock(policy_cache_mutex_);
+        auto cache_it = policy_cache_.find(result.record.policy_id);
+        if (cache_it != policy_cache_.end())
+        {
+            // Return cached policy with expressions
+            policy_out = cache_it->second;
+            return Status::OK;
+        }
+    }
+
+    // Policy not in cache (shouldn't happen with Phase 3.4.6, but handle gracefully)
+    // Convert record to PolicyInfo without expressions
+    policy_out.policy_id = result.record.policy_id;
+    policy_out.table_id = result.record.table_id;
+    policy_out.policy_name = std::string(result.record.policy_name);
+    policy_out.policy_type = static_cast<PolicyType>(result.record.policy_type);
+    policy_out.is_enabled = result.record.is_enabled != 0;
+    policy_out.created_time = result.record.created_time;
+    policy_out.modified_time = result.record.modified_time;
+
+    // No expressions available (pre-Phase 3.4.6 policy or cache miss)
+    policy_out.roles.clear();
+    policy_out.using_expr = "";
+    policy_out.with_check_expr = "";
+
+    return Status::OK;
+}
+
+auto CatalogManager::getTablePolicies(const ID& table_id, PolicyType type,
+                                     std::vector<PolicyInfo>& policies_out,
+                                     ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    policies_out.clear();
+
+    auto filter = [&](const PolicyRecord& rec) {
+        if (!rec.is_valid || rec.table_id != table_id)
+            return false;
+
+        // If type is ALL, return all policies
+        // Otherwise, match specific type or ALL type policies
+        if (type == PolicyType::ALL)
+            return true;
+
+        return rec.policy_type == static_cast<uint8_t>(type) ||
+               rec.policy_type == static_cast<uint8_t>(PolicyType::ALL);
+    };
+
+    auto converter = [this](const PolicyRecord& rec, PolicyInfo& info) {
+        info.policy_id = rec.policy_id;
+        info.table_id = rec.table_id;
+        info.policy_name = std::string(rec.policy_name);
+        info.policy_type = static_cast<PolicyType>(rec.policy_type);
+        info.is_enabled = rec.is_valid != 0;
+        info.created_time = rec.created_time;
+        info.modified_time = rec.modified_time;
+
+        // Try to load from cache with expressions (Phase 3.4.6)
+        {
+            std::lock_guard<std::mutex> cache_lock(policy_cache_mutex_);
+            auto cache_it = policy_cache_.find(rec.policy_id);
+            if (cache_it != policy_cache_.end())
+            {
+                // Use cached policy with expressions
+                info.roles = cache_it->second.roles;
+                info.using_expr = cache_it->second.using_expr;
+                info.with_check_expr = cache_it->second.with_check_expr;
+                return;
+            }
+        }
+
+        // Cache miss - no expressions available
+        info.roles.clear();
+        info.using_expr = "";
+        info.with_check_expr = "";
+    };
+
+    return readRecordsToVector<PolicyRecord, PolicyInfo>(
+        policies_table_page_, policies_out, filter, converter, ctx);
+}
+
+auto CatalogManager::getPoliciesForUser(const ID& table_id, const ID& user_id,
+                                       PolicyType type, std::vector<PolicyInfo>& policies_out,
+                                       ErrorContext* ctx) -> Status
+{
+    // First get all policies for the table
+    Status status = getTablePolicies(table_id, type, policies_out, ctx);
+    if (status != Status::OK)
+        return status;
+
+    // TODO: Filter by user roles when TOAST integration is complete
+    // For now, return all policies (empty roles = applies to all users)
+    // Future: Check if user's roles intersect with policy roles
+
+    return Status::OK;
+}
+
+auto CatalogManager::setTableRLS(const ID& table_id, bool enabled, bool forced,
+                                ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    // Find table record
+    auto predicate = [&](const TableRecord& rec) {
+        return rec.is_valid && rec.table_id == table_id;
+    };
+
+    auto result = findRecordInHeapPage<TableRecord>(tables_table_page_, predicate, ctx);
+    if (result.status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Table not found");
+        return Status::NOT_FOUND;
+    }
+
+    // Update RLS flags
+    TableRecord updated_rec = result.record;
+    updated_rec.rls_enabled = enabled ? 1 : 0;
+    updated_rec.rls_forced = forced ? 1 : 0;
+
+    Status status = updateRecordInHeapPage(tables_table_page_, result.slot_index,
+                                          updated_rec, ctx);
+    if (status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, status, "Failed to update table RLS settings");
+        return status;
+    }
+
+    DEBUG_LOG_DB("Set RLS on table " << table_id.toString()
+                << " - enabled: " << enabled << ", forced: " << forced);
+    return Status::OK;
+}
+
+auto CatalogManager::getTableRLS(const ID& table_id, bool& enabled_out, bool& forced_out,
+                                ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    // Find table record
+    auto predicate = [&](const TableRecord& rec) {
+        return rec.is_valid && rec.table_id == table_id;
+    };
+
+    auto result = findRecordInHeapPage<TableRecord>(tables_table_page_, predicate, ctx);
+    if (result.status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Table not found");
+        return Status::NOT_FOUND;
+    }
+
+    enabled_out = result.record.rls_enabled != 0;
+    forced_out = result.record.rls_forced != 0;
+
+    return Status::OK;
 }
 
 } // namespace scratchbird::core

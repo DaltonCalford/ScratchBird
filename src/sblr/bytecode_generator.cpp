@@ -2116,6 +2116,416 @@ namespace scratchbird
             }
         }
 
+        // ===== Security Statements (ALPHA Phase 1 - Security System Phase 2) =====
+
+        void BytecodeGenerator::visit(parser::CreateUserStmt *node)
+        {
+            // Emit extended opcode marker + CREATE_USER opcode
+            current_result_->writeOpcode(Opcode::EXTENDED_OPCODE);
+            current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_CREATE_USER));
+
+            // Write username (StringPool ID)
+            writeStringId(node->username());
+
+            // Write flags byte: bit 0 = has_password, bit 1 = is_superuser
+            uint8_t flags = 0;
+            if (node->hasPassword())
+            {
+                flags |= 0x01;
+            }
+            if (node->isSuperuser())
+            {
+                flags |= 0x02;
+            }
+            current_result_->writeByte(flags);
+
+            // Write password if present (StringPool ID)
+            if (node->hasPassword())
+            {
+                writeStringId(node->password());
+            }
+        }
+
+        void BytecodeGenerator::visit(parser::AlterUserStmt *node)
+        {
+            // Emit extended opcode marker + ALTER_USER opcode
+            current_result_->writeOpcode(Opcode::EXTENDED_OPCODE);
+            current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_ALTER_USER));
+
+            // Write username (StringPool ID)
+            writeStringId(node->username());
+
+            // Write flags byte: bit 0 = change_password, bit 1 = change_superuser, bit 2 = is_superuser
+            uint8_t flags = 0;
+            if (node->changePassword())
+            {
+                flags |= 0x01;
+            }
+            if (node->changeSuperuser())
+            {
+                flags |= 0x02;
+            }
+            if (node->isSuperuser())
+            {
+                flags |= 0x04;
+            }
+            current_result_->writeByte(flags);
+
+            // Write password if changing (StringPool ID)
+            if (node->changePassword())
+            {
+                writeStringId(node->password());
+            }
+        }
+
+        void BytecodeGenerator::visit(parser::DropUserStmt *node)
+        {
+            // Emit extended opcode marker + DROP_USER opcode
+            current_result_->writeOpcode(Opcode::EXTENDED_OPCODE);
+            current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_DROP_USER));
+
+            // Write username (StringPool ID)
+            writeStringId(node->username());
+
+            // Write flags byte: bit 0 = if_exists, bit 1 = cascade (vs restrict)
+            uint8_t flags = 0;
+            if (node->ifExists())
+            {
+                flags |= 0x01;
+            }
+            if (node->dropBehavior() == parser::DropUserStmt::DropBehavior::CASCADE)
+            {
+                flags |= 0x02;
+            }
+            current_result_->writeByte(flags);
+        }
+
+        void BytecodeGenerator::visit(parser::CreateRoleStmt *node)
+        {
+            // Emit extended opcode marker + CREATE_ROLE opcode
+            current_result_->writeOpcode(Opcode::EXTENDED_OPCODE);
+            current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_CREATE_ROLE));
+
+            // Write rolename (StringPool ID)
+            writeStringId(node->rolename());
+        }
+
+        void BytecodeGenerator::visit(parser::DropRoleStmt *node)
+        {
+            // Emit extended opcode marker + DROP_ROLE opcode
+            current_result_->writeOpcode(Opcode::EXTENDED_OPCODE);
+            current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_DROP_ROLE));
+
+            // Write rolename (StringPool ID)
+            writeStringId(node->rolename());
+
+            // Write flags byte: bit 0 = if_exists, bit 1 = cascade (vs restrict)
+            uint8_t flags = 0;
+            if (node->ifExists())
+            {
+                flags |= 0x01;
+            }
+            if (node->dropBehavior() == parser::DropRoleStmt::DropBehavior::CASCADE)
+            {
+                flags |= 0x02;
+            }
+            current_result_->writeByte(flags);
+        }
+
+        void BytecodeGenerator::visit(parser::CreateGroupStmt *node)
+        {
+            // Emit extended opcode marker + CREATE_GROUP opcode
+            current_result_->writeOpcode(Opcode::EXTENDED_OPCODE);
+            current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_CREATE_GROUP));
+
+            // Write groupname (StringPool ID)
+            writeStringId(node->groupname());
+        }
+
+        void BytecodeGenerator::visit(parser::DropGroupStmt *node)
+        {
+            // Emit extended opcode marker + DROP_GROUP opcode
+            current_result_->writeOpcode(Opcode::EXTENDED_OPCODE);
+            current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_DROP_GROUP));
+
+            // Write groupname (StringPool ID)
+            writeStringId(node->groupname());
+
+            // Write flags byte: bit 0 = if_exists, bit 1 = cascade (vs restrict)
+            uint8_t flags = 0;
+            if (node->ifExists())
+            {
+                flags |= 0x01;
+            }
+            if (node->dropBehavior() == parser::DropGroupStmt::DropBehavior::CASCADE)
+            {
+                flags |= 0x02;
+            }
+            current_result_->writeByte(flags);
+        }
+
+        void BytecodeGenerator::visit(parser::GrantPrivilegeStmt *node)
+        {
+            // Emit extended opcode marker + GRANT_PRIVILEGE opcode
+            current_result_->writeOpcode(Opcode::EXTENDED_OPCODE);
+            current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_GRANT_PRIVILEGE));
+
+            // Write privilege bitmask (uint32_t)
+            current_result_->writeInt32(node->privileges());
+
+            // Write object type (uint8_t enum value)
+            current_result_->writeByte(static_cast<uint8_t>(node->objectType()));
+
+            // Write object name (StringPool ID)
+            writeStringId(node->objectName());
+
+            // Write grantee type (uint8_t enum value)
+            current_result_->writeByte(static_cast<uint8_t>(node->granteeType()));
+
+            // Write grantee name (StringPool ID, 0 if PUBLIC)
+            writeStringId(node->granteeName());
+
+            // Write flags byte: bit 0 = with_grant_option, bit 1 = has_column_list
+            uint8_t flags = 0;
+            if (node->withGrantOption())
+            {
+                flags |= 0x01;
+            }
+            if (node->hasColumnList())  // Security Phase 3.3.4
+            {
+                flags |= 0x02;
+            }
+            current_result_->writeByte(flags);
+
+            // Security Phase 3.3.4: Write column list if present
+            if (node->hasColumnList())
+            {
+                // Write column count (uint32_t)
+                current_result_->writeInt32(static_cast<uint32_t>(node->columnNames().size()));
+
+                // Write each column name (StringPool ID)
+                for (auto col_id : node->columnNames())
+                {
+                    writeStringId(col_id);
+                }
+            }
+        }
+
+        void BytecodeGenerator::visit(parser::RevokePrivilegeStmt *node)
+        {
+            // Emit extended opcode marker + REVOKE_PRIVILEGE opcode
+            current_result_->writeOpcode(Opcode::EXTENDED_OPCODE);
+            current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_REVOKE_PRIVILEGE));
+
+            // Write privilege bitmask (uint32_t)
+            current_result_->writeInt32(node->privileges());
+
+            // Write object type (uint8_t enum value)
+            current_result_->writeByte(static_cast<uint8_t>(node->objectType()));
+
+            // Write object name (StringPool ID)
+            writeStringId(node->objectName());
+
+            // Write grantee type (uint8_t enum value)
+            current_result_->writeByte(static_cast<uint8_t>(node->granteeType()));
+
+            // Write grantee name (StringPool ID, 0 if PUBLIC)
+            writeStringId(node->granteeName());
+
+            // Write flags byte: bit 0 = cascade (vs restrict), bit 1 = has_column_list
+            uint8_t flags = 0;
+            if (node->revokeBehavior() == parser::RevokePrivilegeStmt::RevokeBehavior::CASCADE)
+            {
+                flags |= 0x01;
+            }
+            if (node->hasColumnList())  // Security Phase 3.3.4
+            {
+                flags |= 0x02;
+            }
+            current_result_->writeByte(flags);
+
+            // Security Phase 3.3.4: Write column list if present
+            if (node->hasColumnList())
+            {
+                // Write column count (uint32_t)
+                current_result_->writeInt32(static_cast<uint32_t>(node->columnNames().size()));
+
+                // Write each column name (StringPool ID)
+                for (auto col_id : node->columnNames())
+                {
+                    writeStringId(col_id);
+                }
+            }
+        }
+
+        void BytecodeGenerator::visit(parser::GrantRoleStmt *node)
+        {
+            // Emit extended opcode marker + GRANT_ROLE opcode
+            current_result_->writeOpcode(Opcode::EXTENDED_OPCODE);
+            current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_GRANT_ROLE));
+
+            // Write role name (StringPool ID)
+            writeStringId(node->rolename());
+
+            // Write grantee type (uint8_t enum value)
+            current_result_->writeByte(static_cast<uint8_t>(node->granteeType()));
+
+            // Write grantee name (StringPool ID)
+            writeStringId(node->granteeName());
+        }
+
+        void BytecodeGenerator::visit(parser::RevokeRoleStmt *node)
+        {
+            // Emit extended opcode marker + REVOKE_ROLE opcode
+            current_result_->writeOpcode(Opcode::EXTENDED_OPCODE);
+            current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_REVOKE_ROLE));
+
+            // Write role name (StringPool ID)
+            writeStringId(node->rolename());
+
+            // Write grantee type (uint8_t enum value)
+            current_result_->writeByte(static_cast<uint8_t>(node->granteeType()));
+
+            // Write grantee name (StringPool ID)
+            writeStringId(node->granteeName());
+
+            // Write flags byte: bit 0 = cascade (vs restrict)
+            uint8_t flags = 0;
+            if (node->revokeBehavior() == parser::RevokeRoleStmt::RevokeBehavior::CASCADE)
+            {
+                flags |= 0x01;
+            }
+            current_result_->writeByte(flags);
+        }
+
+        void BytecodeGenerator::visit(parser::SetRoleStmt *node)
+        {
+            // Emit extended opcode marker + SET_ROLE opcode
+            current_result_->writeOpcode(Opcode::EXTENDED_OPCODE);
+            current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_SET_ROLE));
+
+            // Write flags byte: bit 0 = is_reset (RESET ROLE vs SET ROLE)
+            uint8_t flags = 0;
+            if (node->isReset())
+            {
+                flags |= 0x01;
+            }
+            current_result_->writeByte(flags);
+
+            // Write role name if not reset (StringPool ID, 0 if reset)
+            if (!node->isReset())
+            {
+                writeStringId(node->rolename());
+            }
+        }
+
+        void BytecodeGenerator::visit(parser::SetSessionAuthStmt *node)
+        {
+            // Emit extended opcode marker + SET_SESSION_AUTH opcode
+            current_result_->writeOpcode(Opcode::EXTENDED_OPCODE);
+            current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_SET_SESSION_AUTH));
+
+            // Write flags byte: bit 0 = is_reset (RESET SESSION AUTHORIZATION vs SET)
+            uint8_t flags = 0;
+            if (node->isReset())
+            {
+                flags |= 0x01;
+            }
+            current_result_->writeByte(flags);
+
+            // Write username if not reset (StringPool ID, 0 if reset)
+            if (!node->isReset())
+            {
+                writeStringId(node->username());
+            }
+        }
+
+        // Security Phase 3.4.4 - Row-Level Security Policy Statements
+        void BytecodeGenerator::visit(parser::CreatePolicyStmt *node)
+        {
+            // Emit extended opcode marker + CREATE_POLICY opcode
+            current_result_->writeOpcode(Opcode::EXTENDED_OPCODE);
+            current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_CREATE_POLICY));
+
+            // Write policy name (StringPool ID)
+            writeStringId(node->policyName());
+
+            // Write table name (StringPool ID)
+            writeStringId(node->tableName());
+
+            // Write policy command (uint8_t enum value)
+            current_result_->writeByte(static_cast<uint8_t>(node->command()));
+
+            // Write role count and roles
+            current_result_->writeInt32(static_cast<uint32_t>(node->roles().size()));
+            for (auto role_id : node->roles())
+            {
+                writeStringId(role_id);
+            }
+
+            // Write flags byte: bit 0 = has_using_expr, bit 1 = has_with_check_expr
+            uint8_t flags = 0;
+            if (node->hasUsingExpr())
+            {
+                flags |= 0x01;
+            }
+            if (node->hasWithCheckExpr())
+            {
+                flags |= 0x02;
+            }
+            current_result_->writeByte(flags);
+
+            // Write USING expression if present
+            if (node->hasUsingExpr())
+            {
+                generateExpression(node->usingExpr());
+            }
+
+            // Write WITH CHECK expression if present
+            if (node->hasWithCheckExpr())
+            {
+                generateExpression(node->withCheckExpr());
+            }
+        }
+
+        void BytecodeGenerator::visit(parser::DropPolicyStmt *node)
+        {
+            // Emit extended opcode marker + DROP_POLICY opcode
+            current_result_->writeOpcode(Opcode::EXTENDED_OPCODE);
+            current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_DROP_POLICY));
+
+            // Write policy name (StringPool ID)
+            writeStringId(node->policyName());
+
+            // Write table name (StringPool ID)
+            writeStringId(node->tableName());
+
+            // Write flags byte: bit 0 = if_exists, bit 1 = cascade (vs restrict)
+            uint8_t flags = 0;
+            if (node->ifExists())
+            {
+                flags |= 0x01;
+            }
+            if (node->dropBehavior() == parser::DropPolicyStmt::DropBehavior::CASCADE)
+            {
+                flags |= 0x02;
+            }
+            current_result_->writeByte(flags);
+        }
+
+        void BytecodeGenerator::visit(parser::AlterTableRLSStmt *node)
+        {
+            // Emit extended opcode marker + ALTER_TABLE_RLS opcode
+            current_result_->writeOpcode(Opcode::EXTENDED_OPCODE);
+            current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_ALTER_TABLE_RLS));
+
+            // Write table name (StringPool ID)
+            writeStringId(node->tableName());
+
+            // Write RLS action (uint8_t enum value)
+            current_result_->writeByte(static_cast<uint8_t>(node->action()));
+        }
+
         // ===== Query Planner Integration (Phase 1, Task 1.3) =====
 
         BytecodeResult BytecodeGenerator::generateFromPlan(

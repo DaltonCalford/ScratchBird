@@ -39,6 +39,33 @@ namespace scratchbird::core
     }
 
     /**
+     * SecurityConstants - Well-known security object UUIDs
+     *
+     * Phase 1.2: Security System Bootstrap
+     * These constants define well-known UUIDs for core security objects
+     */
+    namespace SecurityConstants
+    {
+        // SYSTEM user UUID (well-known, contains "system" in ASCII at end)
+        // 00000000-0000-7000-8000-737973746d00
+        // Last 6 bytes: 73 79 73 74 6d 00 = "system\0" in ASCII
+        constexpr uint8_t SYSTEM_USER_UUID[16] = {
+            0x00, 0x00, 0x00, 0x00,  // time_low
+            0x00, 0x00,              // time_mid
+            0x70, 0x00,              // time_hi_and_version (version 7)
+            0x80, 0x00,              // clock_seq
+            0x73, 0x79, 0x73, 0x74, 0x6d, 0x00  // node: "system\0"
+        };
+
+        // Helper function to create SYSTEM user ID
+        inline ID makeSystemUserID() {
+            ID id;
+            std::memcpy(id.bytes.data(), SYSTEM_USER_UUID, 16);
+            return id;
+        }
+    }
+
+    /**
      * MigrationPhase - Phases of ONLINE table migration
      *
      * Sprint 4 Task 5.4.1: Migration State Management
@@ -241,6 +268,10 @@ namespace scratchbird::core
             uint64_t migration_xid = 0;             // XID when migration started
             uint16_t migration_target_ts = 0;       // Target tablespace ID
             uint8_t migration_phase = 0;            // MigrationPhase enum value
+
+            // Security Phase 3.4: Row-level security settings
+            bool rls_enabled = false;               // Row-level security enabled
+            bool rls_forced = false;                // Force RLS for table owners
         };
 
         // TRUNCATE TABLE job tracking (ALPHA Phase 1 - DDL Modifications)
@@ -513,6 +544,123 @@ namespace scratchbird::core
             ID granted_by;           // User who granted this membership
             bool with_admin_option = false;  // Can user grant this role to others
             uint64_t granted_time = 0;
+        };
+
+        // Privilege types (Phase 1.4 - Security System)
+        enum class Privilege : uint32_t
+        {
+            // Object privileges (bitmask)
+            SELECT    = 0x00000001,  // Read data
+            INSERT    = 0x00000002,  // Insert data
+            UPDATE    = 0x00000004,  // Update data
+            DELETE    = 0x00000008,  // Delete data
+            TRUNCATE  = 0x00000010,  // Truncate table
+            REFERENCES = 0x00000020, // Create foreign keys
+            TRIGGER   = 0x00000040,  // Create triggers
+
+            // Schema privileges
+            CREATE    = 0x00000080,  // Create objects in schema
+            USAGE     = 0x00000100,  // Use schema
+
+            // Sequence privileges
+            SEQUENCE_USAGE = 0x00000200,  // Use sequence
+            SEQUENCE_UPDATE = 0x00000400, // Alter sequence
+
+            // Administrative privileges
+            EXECUTE   = 0x00000800,  // Execute procedure/function
+            CONNECT   = 0x00001000,  // Connect to database
+            TEMPORARY = 0x00002000,  // Create temp tables
+
+            // Special privileges
+            ALL       = 0xFFFFFFFF   // All privileges
+        };
+
+        // Object types for permissions (Phase 1.4 - Security System)
+        enum class PermissionObjectType : uint8_t
+        {
+            SCHEMA = 0,
+            TABLE = 1,
+            VIEW = 2,
+            SEQUENCE = 3,
+            PROCEDURE = 4,
+            FUNCTION = 5,
+            DOMAIN = 6,
+            DATABASE = 7
+        };
+
+        // Grantee types for permissions (Phase 1.4 - Security System)
+        enum class GranteeType : uint8_t
+        {
+            USER = 0,
+            ROLE = 1,
+            GROUP = 2,
+            PUBLIC = 3  // Special: all users
+        };
+
+        // Permission information (Phase 1.4 - Security System)
+        struct PermissionInfo
+        {
+            ID permission_id;
+            ID object_id;                    // Object being granted permission on
+            PermissionObjectType object_type;
+            ID grantee_id;                   // Who receives the permission
+            GranteeType grantee_type;
+            uint32_t privileges;             // Bitmask of Privilege enum
+            bool grant_option = false;       // Can grantee grant to others
+            ID grantor_id;                   // Who granted the permission
+            uint64_t created_time = 0;
+        };
+
+        // Security Phase 3.3: Column-level permission information
+        struct ColumnPermissionInfo
+        {
+            ID permission_id;
+            ID table_id;                     // Table containing the column
+            std::string column_name;         // Column being protected
+            ID grantee_id;                   // Who receives the permission
+            GranteeType grantee_type;
+            uint32_t privileges;             // Bitmask of Privilege enum
+            bool grant_option = false;       // Can grantee grant to others
+            ID grantor_id;                   // Who granted the permission
+            uint64_t created_time = 0;
+        };
+
+        // Security Phase 3.4: Row-level security policy information
+        enum class PolicyType : uint8_t
+        {
+            ALL = 0,      // Apply to all operations
+            SELECT = 1,   // Apply to SELECT operations
+            INSERT = 2,   // Apply to INSERT operations
+            UPDATE = 3,   // Apply to UPDATE operations
+            DELETE = 4    // Apply to DELETE operations
+        };
+
+        struct PolicyInfo
+        {
+            ID policy_id;
+            ID table_id;                     // Table this policy applies to
+            std::string policy_name;         // Policy name (unique per table)
+            PolicyType policy_type;          // Which operations this policy affects
+            std::vector<std::string> roles;  // Roles this policy applies to (empty = all)
+            std::string using_expr;          // USING clause expression (for visibility)
+            std::string with_check_expr;     // WITH CHECK clause expression (for modifications)
+            bool is_enabled = true;          // Policy can be temporarily disabled
+            uint64_t created_time = 0;
+            uint64_t modified_time = 0;
+        };
+
+        // Session information (Phase 1.4 - Security System)
+        struct SessionInfo
+        {
+            ID session_id;                   // Unique session ID
+            ID user_id;                      // Logged-in user
+            std::string username;
+            bool is_superuser = false;
+            std::vector<ID> effective_roles; // All roles (direct + transitive)
+            std::vector<ID> effective_groups; // All groups (direct + transitive)
+            uint64_t login_time = 0;
+            uint64_t last_activity_time = 0;
+            ID current_schema_id;            // Current schema context
         };
 
         // Procedure types (Phase 3 - Stored Code Tables)
@@ -848,6 +996,177 @@ namespace scratchbird::core
 
         auto deleteComment(const ID& object_id,
                           ErrorContext* ctx = nullptr) -> Status;
+
+        // ========================================================================
+        // Security Operations (Phase 1.3 - Users, Roles, Groups)
+        // ========================================================================
+
+        // User operations
+        auto createUser(const std::string& username, const std::string& password_hash,
+                       const ID& default_schema_id, bool is_superuser,
+                       ID& user_id_out, ErrorContext* ctx = nullptr) -> Status;
+
+        auto getUser(const ID& user_id, UserInfo& user_out,
+                    ErrorContext* ctx = nullptr) -> Status;
+
+        auto getUserByName(const std::string& username, UserInfo& user_out,
+                          ErrorContext* ctx = nullptr) -> Status;
+
+        auto updateUser(const ID& user_id, const std::string& password_hash,
+                       const ID& default_schema_id, bool is_active, bool is_superuser,
+                       ErrorContext* ctx = nullptr) -> Status;
+
+        auto deleteUser(const ID& user_id, bool cascade = false, ErrorContext* ctx = nullptr) -> Status;
+
+        auto listUsers(std::vector<UserInfo>& users_out,
+                      ErrorContext* ctx = nullptr) -> Status;
+
+        // Role operations
+        auto createRole(const std::string& role_name, const ID& owner_id,
+                       ID& role_id_out, ErrorContext* ctx = nullptr) -> Status;
+
+        auto getRole(const ID& role_id, RoleInfo& role_out,
+                    ErrorContext* ctx = nullptr) -> Status;
+
+        auto getRoleByName(const std::string& role_name, RoleInfo& role_out,
+                          ErrorContext* ctx = nullptr) -> Status;
+
+        auto deleteRole(const ID& role_id, bool cascade = false, ErrorContext* ctx = nullptr) -> Status;
+
+        auto listRoles(std::vector<RoleInfo>& roles_out,
+                      ErrorContext* ctx = nullptr) -> Status;
+
+        // Role membership operations
+        auto grantRole(const ID& role_id, const ID& user_id, const ID& granted_by,
+                      bool with_admin_option, ErrorContext* ctx = nullptr) -> Status;
+
+        auto revokeRole(const ID& role_id, const ID& user_id,
+                       ErrorContext* ctx = nullptr) -> Status;
+
+        auto getUserRoles(const ID& user_id, std::vector<RoleMembershipInfo>& roles_out,
+                         ErrorContext* ctx = nullptr) -> Status;
+
+        auto getRoleMembers(const ID& role_id, std::vector<RoleMembershipInfo>& members_out,
+                           ErrorContext* ctx = nullptr) -> Status;
+
+        // Group operations
+        auto createGroup(const std::string& group_name, GroupType group_type,
+                        const std::string& external_id, ID& group_id_out,
+                        ErrorContext* ctx = nullptr) -> Status;
+
+        auto getGroup(const ID& group_id, GroupInfo& group_out,
+                     ErrorContext* ctx = nullptr) -> Status;
+
+        auto getGroupByName(const std::string& group_name, GroupInfo& group_out,
+                           ErrorContext* ctx = nullptr) -> Status;
+
+        auto deleteGroup(const ID& group_id, bool cascade = false, ErrorContext* ctx = nullptr) -> Status;
+
+        auto listGroups(std::vector<GroupInfo>& groups_out,
+                       ErrorContext* ctx = nullptr) -> Status;
+
+        // Group membership operations (supports nested groups)
+        auto addGroupMember(const ID& group_id, const ID& member_id, bool is_group,
+                           const ID& granted_by, ErrorContext* ctx = nullptr) -> Status;
+
+        auto removeGroupMember(const ID& group_id, const ID& member_id,
+                              ErrorContext* ctx = nullptr) -> Status;
+
+        auto getGroupMembers(const ID& group_id, std::vector<ID>& members_out,
+                            ErrorContext* ctx = nullptr) -> Status;
+
+        auto getUserGroups(const ID& user_id, std::vector<ID>& groups_out,
+                          ErrorContext* ctx = nullptr) -> Status;
+
+        // ========================================================================
+        // Session & Permission Operations (Phase 1.4 - Security System)
+        // ========================================================================
+
+        // Session management
+        auto createSession(const ID& user_id, const ID& default_schema_id,
+                          SessionInfo& session_out, ErrorContext* ctx = nullptr) -> Status;
+
+        auto getSession(const ID& session_id, SessionInfo& session_out,
+                       ErrorContext* ctx = nullptr) -> Status;
+
+        auto closeSession(const ID& session_id, ErrorContext* ctx = nullptr) -> Status;
+
+        // Compute transitive closure of roles (including roles granted to roles)
+        auto getEffectiveRoles(const ID& user_id, std::vector<ID>& roles_out,
+                              ErrorContext* ctx = nullptr) -> Status;
+
+        // Compute transitive closure of groups (including nested groups)
+        auto getEffectiveGroups(const ID& user_id, std::vector<ID>& groups_out,
+                               ErrorContext* ctx = nullptr) -> Status;
+
+        // Permission operations
+        auto grantPermission(const ID& object_id, PermissionObjectType object_type,
+                            const ID& grantee_id, GranteeType grantee_type,
+                            uint32_t privileges, bool grant_option,
+                            const ID& grantor_id, ErrorContext* ctx = nullptr) -> Status;
+
+        auto revokePermission(const ID& object_id, PermissionObjectType object_type,
+                             const ID& grantee_id, GranteeType grantee_type,
+                             uint32_t privileges, ErrorContext* ctx = nullptr) -> Status;
+
+        auto hasPermission(const ID& user_id, const ID& object_id,
+                          PermissionObjectType object_type, Privilege privilege,
+                          bool& has_perm_out, ErrorContext* ctx = nullptr) -> Status;
+
+        auto getObjectPermissions(const ID& object_id, PermissionObjectType object_type,
+                                 std::vector<PermissionInfo>& permissions_out,
+                                 ErrorContext* ctx = nullptr) -> Status;
+
+        auto getUserPermissions(const ID& user_id, std::vector<PermissionInfo>& permissions_out,
+                               ErrorContext* ctx = nullptr) -> Status;
+
+        // Security Phase 3.3: Column-level permission operations
+        auto grantColumnPermission(const ID& table_id, const std::string& column_name,
+                                  const ID& grantee_id, GranteeType grantee_type,
+                                  uint32_t privileges, bool grant_option,
+                                  const ID& grantor_id, ErrorContext* ctx = nullptr) -> Status;
+
+        auto revokeColumnPermission(const ID& table_id, const std::string& column_name,
+                                   const ID& grantee_id, GranteeType grantee_type,
+                                   uint32_t privileges, ErrorContext* ctx = nullptr) -> Status;
+
+        auto hasColumnPermission(const ID& user_id, const ID& table_id,
+                                const std::string& column_name, Privilege privilege,
+                                bool& has_perm_out, ErrorContext* ctx = nullptr) -> Status;
+
+        auto getAccessibleColumns(const ID& user_id, const ID& table_id,
+                                 Privilege privilege, std::vector<std::string>& columns_out,
+                                 ErrorContext* ctx = nullptr) -> Status;
+
+        auto getColumnPermissions(const ID& table_id,
+                                 std::vector<ColumnPermissionInfo>& perms_out,
+                                 ErrorContext* ctx = nullptr) -> Status;
+
+        // Security Phase 3.4: Row-level security policy operations
+        auto createPolicy(const ID& table_id, const std::string& policy_name,
+                         PolicyType type, const std::vector<std::string>& roles,
+                         const std::string& using_expr, const std::string& with_check_expr,
+                         ID& policy_id_out, ErrorContext* ctx = nullptr) -> Status;
+
+        auto dropPolicy(const ID& table_id, const std::string& policy_name,
+                       ErrorContext* ctx = nullptr) -> Status;
+
+        auto getPolicy(const ID& table_id, const std::string& policy_name,
+                      PolicyInfo& policy_out, ErrorContext* ctx = nullptr) -> Status;
+
+        auto getTablePolicies(const ID& table_id, PolicyType type,
+                             std::vector<PolicyInfo>& policies_out,
+                             ErrorContext* ctx = nullptr) -> Status;
+
+        auto getPoliciesForUser(const ID& table_id, const ID& user_id,
+                               PolicyType type, std::vector<PolicyInfo>& policies_out,
+                               ErrorContext* ctx = nullptr) -> Status;
+
+        auto setTableRLS(const ID& table_id, bool enabled, bool forced,
+                        ErrorContext* ctx = nullptr) -> Status;
+
+        auto getTableRLS(const ID& table_id, bool& enabled_out, bool& forced_out,
+                        ErrorContext* ctx = nullptr) -> Status;
 
         // Timezone operations (pg_timezone system table)
         struct TimezoneInfo
@@ -1466,6 +1785,14 @@ namespace scratchbird::core
         std::unordered_map<ID, CommentInfo> comment_cache_;  // object_id -> CommentInfo
         std::mutex comment_cache_mutex_;
 
+        // Session cache (Phase 1.4 - Security System)
+        std::unordered_map<ID, SessionInfo> session_cache_;  // session_id -> SessionInfo
+        std::mutex session_cache_mutex_;
+
+        // Policy cache (Phase 3.4.6 - RLS Expression Storage)
+        std::unordered_map<ID, PolicyInfo> policy_cache_;  // policy_id -> PolicyInfo
+        std::mutex policy_cache_mutex_;
+
         // Internal helper methods (assume mutex_ is already held by caller)
         auto createSchemaInternal(const std::string &schema_name, const std::string &owner,
                                   ID &schema_id, const ID &parent_schema_id = ID(),
@@ -1475,6 +1802,15 @@ namespace scratchbird::core
         // For ALPHA: Returns system UUID for "system" and zero UUID for others
         // TODO Phase 6: Implement full user lookup from Users table
         auto resolveOwnerUUID(const std::string &owner_name) -> ID;
+
+        // TOAST helpers for storing/loading strings (Phase 3.4.6 - RLS Expression Storage)
+        // Store a string in TOAST and return its OID
+        auto storeStringInToast(const std::string& str, uint64_t xmin,
+                               uint32_t& oid_out, ErrorContext* ctx = nullptr) -> Status;
+
+        // Load a string from TOAST using its OID
+        auto loadStringFromToast(uint32_t oid, uint64_t xmin,
+                                std::string& str_out, ErrorContext* ctx = nullptr) -> Status;
 
         // Index TID update helper (Phase 4 Task 4.1.5)
         // Updates all index entries for a table to reference new GPIDs after table migration
@@ -1569,6 +1905,8 @@ namespace scratchbird::core
         uint32_t views_table_page_ = 0;          // Will be allocated during init
         uint32_t triggers_table_page_ = 0;       // Will be allocated during init
         uint32_t permissions_table_page_ = 0;    // Will be allocated during init
+        uint32_t column_permissions_table_page_ = 0; // Security Phase 3.3: Column-level permissions
+        uint32_t policies_table_page_ = 0;       // Security Phase 3.4: Row-level security policies
         uint32_t statistics_table_page_ = 0;     // Will be allocated during init
         uint32_t collations_table_page_ = 0;     // Will be allocated during init
         uint32_t timezones_table_page_ = 0;      // Will be allocated during init
@@ -1577,13 +1915,15 @@ namespace scratchbird::core
         uint32_t tablespaces_table_page_ = TABLESPACES_TABLE_PAGE;           // pg_tablespace
         uint32_t tablespace_files_table_page_ = TABLESPACE_FILES_TABLE_PAGE; // pg_tablespace_files
 
-        // Phase 6.1: New system table pages (14 new tables)
+        // Phase 6.1: New system table pages (16 new tables - added group_memberships and group_mappings)
         uint32_t dependencies_table_page_ = 0;      // Dependencies tracking (Phase 1.4)
         uint32_t comments_table_page_ = 0;          // Object comments (Phase 1.5)
         uint32_t users_table_page_ = 0;             // Users (Phase 2)
         uint32_t roles_table_page_ = 0;             // Roles (Phase 2)
         uint32_t groups_table_page_ = 0;            // Groups (Phase 2)
         uint32_t role_memberships_table_page_ = 0;  // Role memberships (Phase 2)
+        uint32_t group_memberships_table_page_ = 0; // Group memberships (Phase 1.1 - Security System)
+        uint32_t group_mappings_table_page_ = 0;    // Group mappings (Phase 1.1 - Security System)
         uint32_t procedures_table_page_ = 0;        // Stored procedures/functions (Phase 3)
         uint32_t procedure_params_table_page_ = 0;  // Procedure parameters (Phase 3)
         uint32_t domains_table_page_ = 0;           // User-defined domains (Phase 3)

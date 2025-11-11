@@ -41,6 +41,25 @@ if(PROJ_FOUND)
     target_link_libraries(scratchbird_core PUBLIC ${PROJ_LIBRARIES})
 endif()
 
+# Link with libcrypt for password hashing (Security Phase 3.0)
+find_library(CRYPT_LIBRARY crypt)
+if(CRYPT_LIBRARY)
+    target_link_libraries(scratchbird_core PUBLIC ${CRYPT_LIBRARY})
+    message(STATUS "libcrypt found: Password hashing enabled")
+else()
+    message(WARNING "libcrypt not found: Password hashing will use fallback (insecure)")
+endif()
+
+# Link with OpenSSL for secure random number generation (Security Phase 3.0)
+find_package(OpenSSL)
+if(OPENSSL_FOUND)
+    target_include_directories(scratchbird_core PUBLIC ${OPENSSL_INCLUDE_DIR})
+    target_link_libraries(scratchbird_core PUBLIC OpenSSL::Crypto)
+    message(STATUS "OpenSSL found: Using secure random for password salts")
+else()
+    message(WARNING "OpenSSL not found: Using std::random_device for salts")
+endif()
+
 set_target_properties(scratchbird_core PROPERTIES
     CXX_STANDARD 17
     CXX_STANDARD_REQUIRED YES

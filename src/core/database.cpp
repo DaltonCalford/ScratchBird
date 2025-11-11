@@ -15,6 +15,7 @@
 #include "scratchbird/core/domain_manager.h"
 #include "scratchbird/core/proc_array.h"
 #include "scratchbird/core/connection_context.h"
+#include "scratchbird/core/permission_cache.h" // Security Phase 3.2.3
 #include "scratchbird/core/system_uuids.h"
 #include "scratchbird/core/debug.h"
 #include "scratchbird/core/logger.h"
@@ -874,6 +875,20 @@ namespace scratchbird::core
         {
             close();
             SET_ERROR_CONTEXT(ctx, Status::OOM, "Failed to allocate QueryPlanner");
+            return Status::OOM;
+        }
+
+        // Initialize permission cache (Security Phase 3.2.3)
+        try
+        {
+            permission_cache_ = std::make_unique<PermissionCache>(
+                1000,                           // max_entries
+                std::chrono::seconds(60));      // TTL
+        }
+        catch (const std::bad_alloc &)
+        {
+            close();
+            SET_ERROR_CONTEXT(ctx, Status::OOM, "Failed to allocate PermissionCache");
             return Status::OOM;
         }
 
