@@ -680,3 +680,21 @@ set_tests_properties(SecurityPhase3_5_RLS_DML PROPERTIES
     LABELS "integration;security;phase3;rls;dml;enforcement"
     TIMEOUT 120
 )
+
+# Mathematical Functions Tests (ALPHA Phase A - Critical Priority)
+add_executable(test_mathematical_functions
+    integration/test_mathematical_functions.cpp
+)
+target_link_libraries(test_mathematical_functions
+    scratchbird_core
+    scratchbird_parser
+    scratchbird_sblr
+    scratchbird_optimizer
+    gtest
+    gtest_main
+)
+add_test(NAME MathematicalFunctions COMMAND test_mathematical_functions)
+set_tests_properties(MathematicalFunctions PROPERTIES
+    LABELS "integration;functions;math;trigonometry;algebra;logarithm"
+    TIMEOUT 60
+)

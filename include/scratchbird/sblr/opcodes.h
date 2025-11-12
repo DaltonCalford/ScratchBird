@@ -488,6 +488,40 @@ namespace scratchbird
             EXT_CREATE_POLICY = 0xD7,      // CREATE POLICY policy_name ON table_name
             EXT_DROP_POLICY = 0xD8,        // DROP POLICY [IF EXISTS] policy_name ON table_name
             EXT_ALTER_TABLE_RLS = 0xD9,    // ALTER TABLE table_name {ENABLE|DISABLE|FORCE|NO FORCE} ROW LEVEL SECURITY
+
+            // Mathematical Functions (ALPHA Phase A - Critical Priority) - 0xDA-0xFF range
+            // Trigonometric functions (0xDA-0xE2)
+            EXT_FUNC_SIN = 0xDA,           // SIN(x) - sine in radians
+            EXT_FUNC_COS = 0xDB,           // COS(x) - cosine in radians
+            EXT_FUNC_TAN = 0xDC,           // TAN(x) - tangent in radians
+            EXT_FUNC_ASIN = 0xDD,          // ASIN(x) - arc sine, returns radians
+            EXT_FUNC_ACOS = 0xDE,          // ACOS(x) - arc cosine, returns radians
+            EXT_FUNC_ATAN = 0xDF,          // ATAN(x) - arc tangent, returns radians
+            EXT_FUNC_ATAN2 = 0xE0,         // ATAN2(y, x) - arc tangent of y/x, returns radians
+
+            // Angle conversion functions (0xE1-0xE3)
+            EXT_FUNC_DEGREES = 0xE1,       // DEGREES(radians) - convert radians to degrees
+            EXT_FUNC_RADIANS = 0xE2,       // RADIANS(degrees) - convert degrees to radians
+            EXT_FUNC_PI = 0xE3,            // PI() - returns π (3.14159265358979323846)
+
+            // Algebraic functions (0xE4-0xEE)
+            EXT_FUNC_ABS = 0xE4,           // ABS(x) - absolute value
+            EXT_FUNC_SIGN = 0xE5,          // SIGN(x) - sign of number (-1, 0, or 1)
+            EXT_FUNC_ROUND = 0xE6,         // ROUND(x [, precision]) - round to nearest integer or decimal places
+            EXT_FUNC_CEIL = 0xE7,          // CEIL(x) / CEILING(x) - round up to nearest integer
+            EXT_FUNC_FLOOR = 0xE8,         // FLOOR(x) - round down to nearest integer
+            EXT_FUNC_TRUNC = 0xE9,         // TRUNC(x [, precision]) - truncate toward zero
+            EXT_FUNC_MOD = 0xEA,           // MOD(x, y) - modulo (remainder of x/y)
+            EXT_FUNC_SQRT = 0xEB,          // SQRT(x) - square root
+            EXT_FUNC_CBRT = 0xEC,          // CBRT(x) - cube root
+            EXT_FUNC_POWER = 0xED,         // POWER(x, y) / POW(x, y) - x raised to power y
+            EXT_FUNC_EXP = 0xEE,           // EXP(x) - e raised to power x
+
+            // Logarithmic functions (0xEF-0xF2)
+            EXT_FUNC_LN = 0xEF,            // LN(x) - natural logarithm (base e)
+            EXT_FUNC_LOG = 0xF0,           // LOG(x) / LOG(base, x) - logarithm (base 10 or specified base)
+            EXT_FUNC_LOG10 = 0xF1,         // LOG10(x) - base-10 logarithm
+            EXT_FUNC_LOG2 = 0xF2,          // LOG2(x) - base-2 logarithm
         };
 
         // SBLR Version

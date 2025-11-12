@@ -2074,6 +2074,286 @@ namespace scratchbird
                 current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_REVERSE));
                 return;
             }
+            // Mathematical Functions (ALPHA Phase A - Critical Priority)
+            // Trigonometric functions
+            else if (func_name == "SIN")
+            {
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_FUNC_SIN));
+                current_result_->writeByte(static_cast<uint8_t>(node->args().size()));
+                return;
+            }
+            else if (func_name == "COS")
+            {
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_FUNC_COS));
+                current_result_->writeByte(static_cast<uint8_t>(node->args().size()));
+                return;
+            }
+            else if (func_name == "TAN")
+            {
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_FUNC_TAN));
+                current_result_->writeByte(static_cast<uint8_t>(node->args().size()));
+                return;
+            }
+            else if (func_name == "ASIN")
+            {
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_FUNC_ASIN));
+                current_result_->writeByte(static_cast<uint8_t>(node->args().size()));
+                return;
+            }
+            else if (func_name == "ACOS")
+            {
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_FUNC_ACOS));
+                current_result_->writeByte(static_cast<uint8_t>(node->args().size()));
+                return;
+            }
+            else if (func_name == "ATAN")
+            {
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_FUNC_ATAN));
+                current_result_->writeByte(static_cast<uint8_t>(node->args().size()));
+                return;
+            }
+            else if (func_name == "ATAN2")
+            {
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_FUNC_ATAN2));
+                current_result_->writeByte(static_cast<uint8_t>(node->args().size()));
+                return;
+            }
+            // Angle conversion
+            else if (func_name == "DEGREES")
+            {
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_FUNC_DEGREES));
+                current_result_->writeByte(static_cast<uint8_t>(node->args().size()));
+                return;
+            }
+            else if (func_name == "RADIANS")
+            {
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_FUNC_RADIANS));
+                current_result_->writeByte(static_cast<uint8_t>(node->args().size()));
+                return;
+            }
+            else if (func_name == "PI")
+            {
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_FUNC_PI));
+                current_result_->writeByte(static_cast<uint8_t>(node->args().size()));
+                return;
+            }
+            // Algebraic functions
+            else if (func_name == "ABS")
+            {
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_FUNC_ABS));
+                current_result_->writeByte(static_cast<uint8_t>(node->args().size()));
+                return;
+            }
+            else if (func_name == "SIGN")
+            {
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_FUNC_SIGN));
+                current_result_->writeByte(static_cast<uint8_t>(node->args().size()));
+                return;
+            }
+            else if (func_name == "ROUND")
+            {
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_FUNC_ROUND));
+                current_result_->writeByte(static_cast<uint8_t>(node->args().size()));
+                return;
+            }
+            else if (func_name == "CEIL" || func_name == "CEILING")
+            {
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_FUNC_CEIL));
+                current_result_->writeByte(static_cast<uint8_t>(node->args().size()));
+                return;
+            }
+            else if (func_name == "FLOOR")
+            {
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_FUNC_FLOOR));
+                current_result_->writeByte(static_cast<uint8_t>(node->args().size()));
+                return;
+            }
+            else if (func_name == "TRUNC" || func_name == "TRUNCATE")
+            {
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_FUNC_TRUNC));
+                current_result_->writeByte(static_cast<uint8_t>(node->args().size()));
+                return;
+            }
+            else if (func_name == "MOD")
+            {
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_FUNC_MOD));
+                current_result_->writeByte(static_cast<uint8_t>(node->args().size()));
+                return;
+            }
+            else if (func_name == "SQRT")
+            {
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_FUNC_SQRT));
+                current_result_->writeByte(static_cast<uint8_t>(node->args().size()));
+                return;
+            }
+            else if (func_name == "CBRT")
+            {
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_FUNC_CBRT));
+                current_result_->writeByte(static_cast<uint8_t>(node->args().size()));
+                return;
+            }
+            else if (func_name == "POWER" || func_name == "POW")
+            {
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_FUNC_POWER));
+                current_result_->writeByte(static_cast<uint8_t>(node->args().size()));
+                return;
+            }
+            else if (func_name == "EXP")
+            {
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_FUNC_EXP));
+                current_result_->writeByte(static_cast<uint8_t>(node->args().size()));
+                return;
+            }
+            // Logarithmic functions
+            else if (func_name == "LN")
+            {
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_FUNC_LN));
+                current_result_->writeByte(static_cast<uint8_t>(node->args().size()));
+                return;
+            }
+            else if (func_name == "LOG")
+            {
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_FUNC_LOG));
+                current_result_->writeByte(static_cast<uint8_t>(node->args().size()));
+                return;
+            }
+            else if (func_name == "LOG10")
+            {
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_FUNC_LOG10));
+                current_result_->writeByte(static_cast<uint8_t>(node->args().size()));
+                return;
+            }
+            else if (func_name == "LOG2")
+            {
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_FUNC_LOG2));
+                current_result_->writeByte(static_cast<uint8_t>(node->args().size()));
+                return;
+            }
             else
             {
                 current_result_->addError("Unknown function: " + std::string(func_name));
