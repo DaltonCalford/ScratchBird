@@ -10831,6 +10831,588 @@ namespace scratchbird
                             push(Value::makeFloat64(rank));
                         }
                     }
+                    // ===== Mathematical Functions (ALPHA Phase A - Critical Priority) =====
+                    // Trigonometric functions
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_FUNC_SIN))
+                    {
+                        uint8_t arg_count = readByte();
+                        if (arg_count != 1)
+                        {
+                            error("SIN expects 1 argument, got " + std::to_string(arg_count));
+                        }
+
+                        Value arg = pop();
+                        if (arg.isNull())
+                        {
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            double x = arg.toDouble();
+                            push(Value::makeFloat64(std::sin(x)));
+                        }
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_FUNC_COS))
+                    {
+                        uint8_t arg_count = readByte();
+                        if (arg_count != 1)
+                        {
+                            error("COS expects 1 argument, got " + std::to_string(arg_count));
+                        }
+
+                        Value arg = pop();
+                        if (arg.isNull())
+                        {
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            double x = arg.toDouble();
+                            push(Value::makeFloat64(std::cos(x)));
+                        }
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_FUNC_TAN))
+                    {
+                        uint8_t arg_count = readByte();
+                        if (arg_count != 1)
+                        {
+                            error("TAN expects 1 argument, got " + std::to_string(arg_count));
+                        }
+
+                        Value arg = pop();
+                        if (arg.isNull())
+                        {
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            double x = arg.toDouble();
+                            push(Value::makeFloat64(std::tan(x)));
+                        }
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_FUNC_ASIN))
+                    {
+                        uint8_t arg_count = readByte();
+                        if (arg_count != 1)
+                        {
+                            error("ASIN expects 1 argument, got " + std::to_string(arg_count));
+                        }
+
+                        Value arg = pop();
+                        if (arg.isNull())
+                        {
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            double x = arg.toDouble();
+                            if (x < -1.0 || x > 1.0)
+                            {
+                                error("ASIN argument must be in range [-1, 1]");
+                            }
+                            push(Value::makeFloat64(std::asin(x)));
+                        }
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_FUNC_ACOS))
+                    {
+                        uint8_t arg_count = readByte();
+                        if (arg_count != 1)
+                        {
+                            error("ACOS expects 1 argument, got " + std::to_string(arg_count));
+                        }
+
+                        Value arg = pop();
+                        if (arg.isNull())
+                        {
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            double x = arg.toDouble();
+                            if (x < -1.0 || x > 1.0)
+                            {
+                                error("ACOS argument must be in range [-1, 1]");
+                            }
+                            push(Value::makeFloat64(std::acos(x)));
+                        }
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_FUNC_ATAN))
+                    {
+                        uint8_t arg_count = readByte();
+                        if (arg_count != 1)
+                        {
+                            error("ATAN expects 1 argument, got " + std::to_string(arg_count));
+                        }
+
+                        Value arg = pop();
+                        if (arg.isNull())
+                        {
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            double x = arg.toDouble();
+                            push(Value::makeFloat64(std::atan(x)));
+                        }
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_FUNC_ATAN2))
+                    {
+                        uint8_t arg_count = readByte();
+                        if (arg_count != 2)
+                        {
+                            error("ATAN2 expects 2 arguments, got " + std::to_string(arg_count));
+                        }
+
+                        // Pop in reverse order (x, then y)
+                        Value x = pop();
+                        Value y = pop();
+
+                        if (y.isNull() || x.isNull())
+                        {
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            push(Value::makeFloat64(std::atan2(y.toDouble(), x.toDouble())));
+                        }
+                    }
+                    // Angle conversion functions
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_FUNC_DEGREES))
+                    {
+                        uint8_t arg_count = readByte();
+                        if (arg_count != 1)
+                        {
+                            error("DEGREES expects 1 argument, got " + std::to_string(arg_count));
+                        }
+
+                        Value arg = pop();
+                        if (arg.isNull())
+                        {
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            double radians = arg.toDouble();
+                            push(Value::makeFloat64(radians * 180.0 / M_PI));
+                        }
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_FUNC_RADIANS))
+                    {
+                        uint8_t arg_count = readByte();
+                        if (arg_count != 1)
+                        {
+                            error("RADIANS expects 1 argument, got " + std::to_string(arg_count));
+                        }
+
+                        Value arg = pop();
+                        if (arg.isNull())
+                        {
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            double degrees = arg.toDouble();
+                            push(Value::makeFloat64(degrees * M_PI / 180.0));
+                        }
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_FUNC_PI))
+                    {
+                        uint8_t arg_count = readByte();
+                        if (arg_count != 0)
+                        {
+                            error("PI expects 0 arguments, got " + std::to_string(arg_count));
+                        }
+
+                        push(Value::makeFloat64(M_PI));
+                    }
+                    // Algebraic functions
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_FUNC_ABS))
+                    {
+                        uint8_t arg_count = readByte();
+                        if (arg_count != 1)
+                        {
+                            error("ABS expects 1 argument, got " + std::to_string(arg_count));
+                        }
+
+                        Value arg = pop();
+                        if (arg.isNull())
+                        {
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            // Handle different numeric types
+                            if (arg.type() == core::DataType::INT64)
+                            {
+                                int64_t val = arg.toInt64();
+                                push(Value::makeInt64(val < 0 ? -val : val));
+                            }
+                            else if (arg.type() == core::DataType::INT32)
+                            {
+                                int32_t val = arg.toInt64();
+                                push(Value::makeInt32(val < 0 ? -val : val));
+                            }
+                            else
+                            {
+                                double val = arg.toDouble();
+                                push(Value::makeFloat64(std::abs(val)));
+                            }
+                        }
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_FUNC_SIGN))
+                    {
+                        uint8_t arg_count = readByte();
+                        if (arg_count != 1)
+                        {
+                            error("SIGN expects 1 argument, got " + std::to_string(arg_count));
+                        }
+
+                        Value arg = pop();
+                        if (arg.isNull())
+                        {
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            double val = arg.toDouble();
+                            int32_t sign = (val > 0.0) ? 1 : ((val < 0.0) ? -1 : 0);
+                            push(Value::makeInt32(sign));
+                        }
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_FUNC_ROUND))
+                    {
+                        uint8_t arg_count = readByte();
+                        if (arg_count < 1 || arg_count > 2)
+                        {
+                            error("ROUND expects 1 or 2 arguments, got " + std::to_string(arg_count));
+                        }
+
+                        int32_t precision = 0;
+                        if (arg_count == 2)
+                        {
+                            Value prec_val = pop();
+                            if (!prec_val.isNull())
+                            {
+                                precision = prec_val.toInt64();
+                            }
+                        }
+
+                        Value arg = pop();
+                        if (arg.isNull())
+                        {
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            double val = arg.toDouble();
+                            double multiplier = std::pow(10.0, precision);
+                            push(Value::makeFloat64(std::round(val * multiplier) / multiplier));
+                        }
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_FUNC_CEIL))
+                    {
+                        uint8_t arg_count = readByte();
+                        if (arg_count != 1)
+                        {
+                            error("CEIL expects 1 argument, got " + std::to_string(arg_count));
+                        }
+
+                        Value arg = pop();
+                        if (arg.isNull())
+                        {
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            double val = arg.toDouble();
+                            push(Value::makeFloat64(std::ceil(val)));
+                        }
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_FUNC_FLOOR))
+                    {
+                        uint8_t arg_count = readByte();
+                        if (arg_count != 1)
+                        {
+                            error("FLOOR expects 1 argument, got " + std::to_string(arg_count));
+                        }
+
+                        Value arg = pop();
+                        if (arg.isNull())
+                        {
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            double val = arg.toDouble();
+                            push(Value::makeFloat64(std::floor(val)));
+                        }
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_FUNC_TRUNC))
+                    {
+                        uint8_t arg_count = readByte();
+                        if (arg_count < 1 || arg_count > 2)
+                        {
+                            error("TRUNC expects 1 or 2 arguments, got " + std::to_string(arg_count));
+                        }
+
+                        int32_t precision = 0;
+                        if (arg_count == 2)
+                        {
+                            Value prec_val = pop();
+                            if (!prec_val.isNull())
+                            {
+                                precision = prec_val.toInt64();
+                            }
+                        }
+
+                        Value arg = pop();
+                        if (arg.isNull())
+                        {
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            double val = arg.toDouble();
+                            double multiplier = std::pow(10.0, precision);
+                            push(Value::makeFloat64(std::trunc(val * multiplier) / multiplier));
+                        }
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_FUNC_MOD))
+                    {
+                        uint8_t arg_count = readByte();
+                        if (arg_count != 2)
+                        {
+                            error("MOD expects 2 arguments, got " + std::to_string(arg_count));
+                        }
+
+                        // Pop in reverse order (divisor, dividend)
+                        Value divisor = pop();
+                        Value dividend = pop();
+
+                        if (dividend.isNull() || divisor.isNull())
+                        {
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            double y = divisor.toDouble();
+                            if (y == 0.0)
+                            {
+                                error("Division by zero in MOD");
+                            }
+                            double x = dividend.toDouble();
+                            push(Value::makeFloat64(std::fmod(x, y)));
+                        }
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_FUNC_SQRT))
+                    {
+                        uint8_t arg_count = readByte();
+                        if (arg_count != 1)
+                        {
+                            error("SQRT expects 1 argument, got " + std::to_string(arg_count));
+                        }
+
+                        Value arg = pop();
+                        if (arg.isNull())
+                        {
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            double x = arg.toDouble();
+                            if (x < 0.0)
+                            {
+                                error("SQRT argument must be non-negative");
+                            }
+                            push(Value::makeFloat64(std::sqrt(x)));
+                        }
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_FUNC_CBRT))
+                    {
+                        uint8_t arg_count = readByte();
+                        if (arg_count != 1)
+                        {
+                            error("CBRT expects 1 argument, got " + std::to_string(arg_count));
+                        }
+
+                        Value arg = pop();
+                        if (arg.isNull())
+                        {
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            double x = arg.toDouble();
+                            push(Value::makeFloat64(std::cbrt(x)));
+                        }
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_FUNC_POWER))
+                    {
+                        uint8_t arg_count = readByte();
+                        if (arg_count != 2)
+                        {
+                            error("POWER expects 2 arguments, got " + std::to_string(arg_count));
+                        }
+
+                        // Pop in reverse order (exponent, base)
+                        Value exponent = pop();
+                        Value base = pop();
+
+                        if (base.isNull() || exponent.isNull())
+                        {
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            double x = base.toDouble();
+                            double y = exponent.toDouble();
+                            push(Value::makeFloat64(std::pow(x, y)));
+                        }
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_FUNC_EXP))
+                    {
+                        uint8_t arg_count = readByte();
+                        if (arg_count != 1)
+                        {
+                            error("EXP expects 1 argument, got " + std::to_string(arg_count));
+                        }
+
+                        Value arg = pop();
+                        if (arg.isNull())
+                        {
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            double x = arg.toDouble();
+                            push(Value::makeFloat64(std::exp(x)));
+                        }
+                    }
+                    // Logarithmic functions
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_FUNC_LN))
+                    {
+                        uint8_t arg_count = readByte();
+                        if (arg_count != 1)
+                        {
+                            error("LN expects 1 argument, got " + std::to_string(arg_count));
+                        }
+
+                        Value arg = pop();
+                        if (arg.isNull())
+                        {
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            double x = arg.toDouble();
+                            if (x <= 0.0)
+                            {
+                                error("LN argument must be positive");
+                            }
+                            push(Value::makeFloat64(std::log(x)));
+                        }
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_FUNC_LOG))
+                    {
+                        uint8_t arg_count = readByte();
+                        if (arg_count < 1 || arg_count > 2)
+                        {
+                            error("LOG expects 1 or 2 arguments, got " + std::to_string(arg_count));
+                        }
+
+                        if (arg_count == 1)
+                        {
+                            // LOG(x) - base 10 logarithm
+                            Value arg = pop();
+                            if (arg.isNull())
+                            {
+                                push(Value::makeNull());
+                            }
+                            else
+                            {
+                                double x = arg.toDouble();
+                                if (x <= 0.0)
+                                {
+                                    error("LOG argument must be positive");
+                                }
+                                push(Value::makeFloat64(std::log10(x)));
+                            }
+                        }
+                        else
+                        {
+                            // LOG(base, x) - logarithm with specified base
+                            Value x_val = pop();
+                            Value base_val = pop();
+
+                            if (base_val.isNull() || x_val.isNull())
+                            {
+                                push(Value::makeNull());
+                            }
+                            else
+                            {
+                                double base = base_val.toDouble();
+                                double x = x_val.toDouble();
+
+                                if (base <= 0.0 || base == 1.0)
+                                {
+                                    error("LOG base must be positive and not equal to 1");
+                                }
+                                if (x <= 0.0)
+                                {
+                                    error("LOG argument must be positive");
+                                }
+
+                                // Change of base formula: log_b(x) = ln(x) / ln(b)
+                                push(Value::makeFloat64(std::log(x) / std::log(base)));
+                            }
+                        }
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_FUNC_LOG10))
+                    {
+                        uint8_t arg_count = readByte();
+                        if (arg_count != 1)
+                        {
+                            error("LOG10 expects 1 argument, got " + std::to_string(arg_count));
+                        }
+
+                        Value arg = pop();
+                        if (arg.isNull())
+                        {
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            double x = arg.toDouble();
+                            if (x <= 0.0)
+                            {
+                                error("LOG10 argument must be positive");
+                            }
+                            push(Value::makeFloat64(std::log10(x)));
+                        }
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_FUNC_LOG2))
+                    {
+                        uint8_t arg_count = readByte();
+                        if (arg_count != 1)
+                        {
+                            error("LOG2 expects 1 argument, got " + std::to_string(arg_count));
+                        }
+
+                        Value arg = pop();
+                        if (arg.isNull())
+                        {
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            double x = arg.toDouble();
+                            if (x <= 0.0)
+                            {
+                                error("LOG2 argument must be positive");
+                            }
+                            push(Value::makeFloat64(std::log2(x)));
+                        }
+                    }
                     else
                     {
                         error("Unknown extended opcode: " + std::to_string(ext_op));
