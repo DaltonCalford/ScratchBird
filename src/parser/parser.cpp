@@ -1062,6 +1062,31 @@ namespace scratchbird
             TypeName return_type = parseTypeName();
             TypeName *return_type_ptr = arena_.make<TypeName>(return_type);
 
+            // Parse SQL SECURITY clause (Phase 3.1 - optional)
+            CreateFunctionStmt::SqlSecurity sql_security = CreateFunctionStmt::SqlSecurity::INVOKER;
+            if (check(TokenType::KW_SQL))
+            {
+                advance(); // SQL
+                if (!consume(TokenType::KW_SECURITY, "Expected SECURITY after SQL"))
+                    return nullptr;
+
+                if (check(TokenType::KW_DEFINER))
+                {
+                    sql_security = CreateFunctionStmt::SqlSecurity::DEFINER;
+                    advance();
+                }
+                else if (check(TokenType::KW_INVOKER))
+                {
+                    sql_security = CreateFunctionStmt::SqlSecurity::INVOKER;
+                    advance();
+                }
+                else
+                {
+                    error("Expected DEFINER or INVOKER after SQL SECURITY");
+                    return nullptr;
+                }
+            }
+
             // Parse AS (IS keyword not yet in lexer)
             if (!check(TokenType::KW_AS))
             {
@@ -1076,8 +1101,8 @@ namespace scratchbird
                 return nullptr;
 
             auto span = SourceSpan(start_loc, previous().location);
-            // Constructor: (span, name, params, return_type, or_replace, body)
-            return arena_.make<CreateFunctionStmt>(span, func_name, params, return_type_ptr, or_replace, body);
+            // Constructor: (span, name, params, return_type, or_replace, body, sql_security)
+            return arena_.make<CreateFunctionStmt>(span, func_name, params, return_type_ptr, or_replace, body, sql_security);
         }
 
         Statement *Parser::parseCreateProcedure()
@@ -1113,6 +1138,31 @@ namespace scratchbird
             if (!consume(TokenType::RIGHT_PAREN, "Expected ')' after parameters"))
                 return nullptr;
 
+            // Parse SQL SECURITY clause (Phase 3.1 - optional)
+            CreateProcedureStmt::SqlSecurity sql_security = CreateProcedureStmt::SqlSecurity::INVOKER;
+            if (check(TokenType::KW_SQL))
+            {
+                advance(); // SQL
+                if (!consume(TokenType::KW_SECURITY, "Expected SECURITY after SQL"))
+                    return nullptr;
+
+                if (check(TokenType::KW_DEFINER))
+                {
+                    sql_security = CreateProcedureStmt::SqlSecurity::DEFINER;
+                    advance();
+                }
+                else if (check(TokenType::KW_INVOKER))
+                {
+                    sql_security = CreateProcedureStmt::SqlSecurity::INVOKER;
+                    advance();
+                }
+                else
+                {
+                    error("Expected DEFINER or INVOKER after SQL SECURITY");
+                    return nullptr;
+                }
+            }
+
             // Parse AS (IS keyword not yet in lexer)
             if (!check(TokenType::KW_AS))
             {
@@ -1127,8 +1177,8 @@ namespace scratchbird
                 return nullptr;
 
             auto span = SourceSpan(start_loc, previous().location);
-            // Constructor: (span, name, params, or_replace, body)
-            return arena_.make<CreateProcedureStmt>(span, proc_name, params, or_replace, body);
+            // Constructor: (span, name, params, or_replace, body, sql_security)
+            return arena_.make<CreateProcedureStmt>(span, proc_name, params, or_replace, body, sql_security);
         }
 
         std::vector<Parameter*> Parser::parseParameterList()

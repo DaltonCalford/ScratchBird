@@ -238,15 +238,29 @@ TEST_F(SecurityPhase3_4_RLS_Test, GetTablePolicies)
     db->catalog_manager()->createPolicy(table_id, "policy3",
         CatalogManager::PolicyType::UPDATE, {}, "", "", policy_id, &ctx);
 
-    // Get all policies for table
-    std::vector<CatalogManager::PolicyInfo> policies;
-    auto status = db->catalog_manager()->getTablePolicies(table_id, policies, &ctx);
+    // Get all policies for table (need to query each type separately)
+    std::vector<CatalogManager::PolicyInfo> all_policies;
+    std::vector<CatalogManager::PolicyInfo> select_policies;
+    std::vector<CatalogManager::PolicyInfo> insert_policies;
+    std::vector<CatalogManager::PolicyInfo> update_policies;
+
+    auto status = db->catalog_manager()->getTablePolicies(table_id, CatalogManager::PolicyType::SELECT, select_policies, &ctx);
     EXPECT_EQ(status, Status::OK);
-    EXPECT_EQ(policies.size(), 3) << "Should have 3 policies";
+    status = db->catalog_manager()->getTablePolicies(table_id, CatalogManager::PolicyType::INSERT, insert_policies, &ctx);
+    EXPECT_EQ(status, Status::OK);
+    status = db->catalog_manager()->getTablePolicies(table_id, CatalogManager::PolicyType::UPDATE, update_policies, &ctx);
+    EXPECT_EQ(status, Status::OK);
+
+    // Combine all policies
+    all_policies.insert(all_policies.end(), select_policies.begin(), select_policies.end());
+    all_policies.insert(all_policies.end(), insert_policies.begin(), insert_policies.end());
+    all_policies.insert(all_policies.end(), update_policies.begin(), update_policies.end());
+
+    EXPECT_EQ(all_policies.size(), 3) << "Should have 3 policies total";
 
     // Verify policy names
     std::set<std::string> names;
-    for (const auto& policy : policies)
+    for (const auto& policy : all_policies)
     {
         names.insert(policy.policy_name);
     }
@@ -488,9 +502,21 @@ TEST_F(SecurityPhase3_4_RLS_Test, PolicyTypeFiltering)
     db->catalog_manager()->createPolicy(table_id, "all_policy",
         CatalogManager::PolicyType::ALL, {}, "", "", policy_id, &ctx);
 
-    // Get all policies
+    // Get all policies (need to query each type)
     std::vector<CatalogManager::PolicyInfo> all_policies;
-    db->catalog_manager()->getTablePolicies(table_id, all_policies, &ctx);
+    std::vector<CatalogManager::PolicyInfo> temp_policies;
+
+    db->catalog_manager()->getTablePolicies(table_id, CatalogManager::PolicyType::SELECT, temp_policies, &ctx);
+    all_policies.insert(all_policies.end(), temp_policies.begin(), temp_policies.end());
+    temp_policies.clear();
+
+    db->catalog_manager()->getTablePolicies(table_id, CatalogManager::PolicyType::INSERT, temp_policies, &ctx);
+    all_policies.insert(all_policies.end(), temp_policies.begin(), temp_policies.end());
+    temp_policies.clear();
+
+    db->catalog_manager()->getTablePolicies(table_id, CatalogManager::PolicyType::ALL, temp_policies, &ctx);
+    all_policies.insert(all_policies.end(), temp_policies.begin(), temp_policies.end());
+
     EXPECT_EQ(all_policies.size(), 3);
 
     // Count by type
@@ -528,9 +554,9 @@ TEST_F(SecurityPhase3_4_RLS_Test, MultiplePoliciesPerTable)
         EXPECT_EQ(status, Status::OK) << "Failed to create " << policy_name;
     }
 
-    // Verify all 5 policies exist
+    // Verify all 5 policies exist (all SELECT type)
     std::vector<CatalogManager::PolicyInfo> policies;
-    db->catalog_manager()->getTablePolicies(table_id, policies, &ctx);
+    db->catalog_manager()->getTablePolicies(table_id, CatalogManager::PolicyType::SELECT, policies, &ctx);
     EXPECT_EQ(policies.size(), 5);
 }
 
@@ -595,7 +621,7 @@ TEST_F(SecurityPhase3_4_RLS_Test, RuntimeFiltering)
 
     // Enable RLS on table
     ErrorContext ctx;
-    auto status = db->catalog_manager()->enableRLS(table_id, &ctx);
+    auto status = db->catalog_manager()->setTableRLS(table_id, true, false, &ctx);
     ASSERT_EQ(status, Status::OK) << "Failed to enable RLS: " << ctx.message;
 
     // Create a simple policy: price < 100
@@ -629,7 +655,7 @@ TEST_F(SecurityPhase3_4_RLS_Test, RuntimeFiltering)
 
     // Verify RLS is enabled
     CatalogManager::TableInfo table_info;
-    status = db->catalog_manager()->getTableInfo(table_id, table_info, &ctx);
+    status = db->catalog_manager()->getTable(table_id, table_info, &ctx);
     ASSERT_EQ(status, Status::OK);
     EXPECT_TRUE(table_info.rls_enabled);
 
@@ -640,6 +666,60 @@ TEST_F(SecurityPhase3_4_RLS_Test, RuntimeFiltering)
     EXPECT_EQ(policy_info.using_expr, using_expr);
 
     std::cout << "Note: Full runtime filtering test requires executor integration (pending)" << std::endl;
+}
+
+// Test 19: TOAST Persistence
+TEST_F(SecurityPhase3_4_RLS_Test, ToastPersistence)
+{
+    // Create test table
+    ID table_id = createTestTable("products");
+
+    // Enable RLS on table
+    ErrorContext ctx;
+    auto status = db->catalog_manager()->setTableRLS(table_id, true, false, &ctx);
+    ASSERT_EQ(status, Status::OK);
+
+    // Create a policy with large expression to ensure TOAST is used
+    std::string using_expr = "price < 100 AND category IN ('electronics', 'books', 'clothing') AND stock > 0";
+    std::string with_check_expr = "price >= 0 AND category IS NOT NULL AND description IS NOT NULL";
+    std::vector<std::string> roles = {"users", "readonly"};
+
+    ID policy_id;
+    status = db->catalog_manager()->createPolicy(
+        table_id,
+        "complex_policy",
+        CatalogManager::PolicyType::ALL,
+        roles,
+        using_expr,
+        with_check_expr,
+        policy_id,
+        &ctx);
+
+    ASSERT_EQ(status, Status::OK);
+
+    // Clear the in-memory cache to force loading from TOAST
+    // Note: This is a test-only operation - in production the cache would persist
+    db->catalog_manager()->clearPolicyCache();  // We'll need to add this method
+
+    // Retrieve policy - should load from TOAST
+    CatalogManager::PolicyInfo policy_info;
+    status = db->catalog_manager()->getPolicy(table_id, "complex_policy", policy_info, &ctx);
+    ASSERT_EQ(status, Status::OK);
+
+    // Verify expressions were correctly persisted and loaded
+    EXPECT_EQ(policy_info.using_expr, using_expr);
+    EXPECT_EQ(policy_info.with_check_expr, with_check_expr);
+    EXPECT_EQ(policy_info.policy_name, "complex_policy");
+
+    // Drop the policy - should cleanup TOAST data
+    status = db->catalog_manager()->dropPolicy(table_id, "complex_policy", &ctx);
+    ASSERT_EQ(status, Status::OK);
+
+    // Verify policy is gone
+    status = db->catalog_manager()->getPolicy(table_id, "complex_policy", policy_info, &ctx);
+    EXPECT_EQ(status, Status::NOT_FOUND);
+
+    std::cout << "TOAST persistence test completed successfully" << std::endl;
 }
 
 // Main function to run tests

@@ -557,6 +557,32 @@ namespace scratchbird
                                core::CatalogManager::PermissionObjectType object_type,
                                uint32_t required_privilege);
 
+            // Row-Level Security helpers (Phase 3.5 - RLS DML Enforcement)
+
+            // Check if current user/role should be subject to RLS policies
+            // Returns false if user is superuser or table owner (bypass RLS)
+            bool shouldEnforceRLS(const core::ID& table_id);
+
+            // Check if a row passes RLS policies for the given operation
+            // Returns true if all applicable policies pass, false otherwise
+            bool checkRLSPolicies(const core::ID& table_id,
+                                const std::vector<Value>& row_values,
+                                const std::vector<core::CatalogManager::ColumnInfo>& columns,
+                                core::CatalogManager::PolicyType policy_type,
+                                bool is_with_check);
+
+            // Check if a specific policy applies to the current user
+            bool policyAppliesToUser(const core::CatalogManager::PolicyInfo& policy);
+
+            // Convert hex string to bytecode (for deserializing policy expressions)
+            std::vector<uint8_t> hexToBytes(const std::string& hex_str);
+
+            // Evaluate a policy expression bytecode with row context
+            // Returns the boolean result of the expression
+            bool evaluatePolicyExpression(const std::vector<uint8_t>& expr_bytecode,
+                                        const std::vector<Value>& row_values,
+                                        const std::vector<core::CatalogManager::ColumnInfo>& columns);
+
         public:
             // Forward declaration
             class TriggerContext;

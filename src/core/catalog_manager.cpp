@@ -20,6 +20,7 @@
 #include "scratchbird/core/utf8_utils.h"  // Phase 3: SQL Identifier UTF-8 Fix
 #include <queue>  // Phase 1.4: BFS for group transitive closure
 #include <unordered_set>  // Phase 1.4: Visited set for group transitive closure
+#include "scratchbird/core/connection_context.h"  // Phase 3.1: Object permissions grantor tracking
 
 namespace scratchbird::core
 {
@@ -403,6 +404,22 @@ namespace scratchbird::core
         uint8_t padding[3];     // Alignment to 8-byte boundary
     };
 
+    // Object Permission record on disk (Phase 3.1 - SQL Object Permissions)
+    struct ObjectPermissionRecord
+    {
+        ID permission_id;       // UUIDv7 - unique permission identifier
+        ID object_id;           // Object UUID (procedure/function/view/table)
+        uint8_t object_type;    // 1=PROCEDURE, 2=FUNCTION, 3=VIEW, 4=TABLE, 5=SEQUENCE
+        ID grantee_id;          // User/Role/Group UUID
+        uint8_t grantee_type;   // 1=USER, 2=ROLE, 3=GROUP
+        uint32_t permissions;   // Bitmask: EXECUTE=1, SELECT=2, INSERT=4, UPDATE=8, DELETE=16, etc.
+        uint8_t grant_option;   // WITH GRANT OPTION flag (0=no, 1=yes)
+        ID grantor_id;          // Who granted this permission (user UUID)
+        uint64_t created_time;  // When granted
+        uint8_t is_valid;       // MGA: soft delete flag
+        uint8_t padding[6];     // Padding to 8-byte boundary
+    };
+
     // Statistics record on disk
     struct StatisticsRecord
     {
@@ -553,7 +570,8 @@ namespace scratchbird::core
         uint8_t procedure_type;     // PROCEDURE vs FUNCTION
         uint8_t is_selectable;      // 1 if has SUSPEND (Firebird selectable procedures)
         uint8_t language;           // PSQL, SQL, UDR, etc.
-        uint8_t reserved[5];        // Alignment
+        uint8_t sql_security;       // Phase 3.1: 0=DEFINER, 1=INVOKER (default)
+        uint8_t reserved[4];        // Alignment
         uint32_t parameter_count;
         uint32_t return_type_oid;   // TOAST reference for return type definition
         uint32_t body_oid;          // TOAST reference - procedure/function body
@@ -1286,6 +1304,40 @@ namespace scratchbird::core
 
         DEBUG_LOG_DB("Security system bootstrap complete");
 
+        // ========================================================================
+        // Phase 3.4.8: Initialize TOAST table for Policy Expressions
+        // ========================================================================
+        DEBUG_LOG_DB("Initializing TOAST storage for RLS policy expressions");
+
+        // Generate a deterministic UUID for the policy TOAST table
+        // Use a well-known UUID so it's consistent across database instances
+        // Format: 00000000-0000-7000-8000-746f617374706f ("toastpo" in ASCII)
+        constexpr uint8_t POLICY_TOAST_UUID[16] = {
+            0x00, 0x00, 0x00, 0x00,  // time_low
+            0x00, 0x00,              // time_mid
+            0x70, 0x00,              // time_hi_and_version (version 7)
+            0x80, 0x00,              // clock_seq
+            0x74, 0x6f, 0x61, 0x73, 0x74, 0x70  // node: "toastp" in ASCII
+        };
+        std::memcpy(policy_toast_table_id_.bytes.data(), POLICY_TOAST_UUID, 16);
+
+        // Create ToastManager for policy expressions
+        policy_toast_manager_ = std::make_unique<ToastManager>(db_, policy_toast_table_id_);
+
+        // Initialize the TOAST table (creates pg_toast_<table_id> catalog table)
+        status = policy_toast_manager_->initialize(ctx);
+        if (status != Status::OK)
+        {
+            DEBUG_LOG_DB("Failed to initialize policy TOAST manager: " << static_cast<int>(status));
+            // Non-fatal - expressions will fall back to in-memory cache only
+            // Clear the manager so we don't try to use it
+            policy_toast_manager_.reset();
+        }
+        else
+        {
+            DEBUG_LOG_DB("Policy TOAST storage initialized successfully");
+        }
+
         return Status::OK;
     }
 
@@ -1492,20 +1544,42 @@ namespace scratchbird::core
             return Status::OK;
         }
 
-        // For now, we'll use a simple approach: store the string as a uint32_t "OID"
-        // which is actually a hash of the string content. This allows us to implement
-        // expression storage/loading without requiring a full TOAST table for catalog data.
-        //
-        // In a production system, this would:
-        // 1. Create a TOAST manager for the catalog table
-        // 2. Call toastValue() to store the string in TOAST chunks
-        // 3. Return the actual TOAST value_id as the OID
-        //
-        // For Phase 3.4.6, we'll use std::hash as a simple unique identifier.
-        // The actual string will be stored in-memory in the PolicyInfo cache.
+        // Phase 3.4.8: Use actual TOAST storage if available
+        if (policy_toast_manager_)
+        {
+            // Convert string to byte vector
+            std::vector<uint8_t> data(str.begin(), str.end());
 
+            // Create TOAST pointer
+            ToastPointer pointer;
+            memset(&pointer, 0, sizeof(ToastPointer));
+
+            // Store in TOAST using EXTENDED strategy (out-of-line storage)
+            Status status = policy_toast_manager_->toastValue(
+                data.data(), data.size(),
+                ToastStrategy::EXTENDED,
+                xmin,
+                &pointer,
+                ctx);
+
+            if (status != Status::OK)
+            {
+                DEBUG_LOG_DB("Failed to TOAST policy expression: " << static_cast<int>(status));
+                SET_ERROR_CONTEXT(ctx, status, "Failed to store expression in TOAST");
+                return status;
+            }
+
+            // Return the TOAST value_id as the OID
+            oid_out = pointer.va_valueid;
+            DEBUG_LOG_DB("Stored policy expression in TOAST with value_id=" << oid_out);
+            return Status::OK;
+        }
+
+        // Fallback: If TOAST manager not available, use hash-based OID
+        // This maintains backward compatibility and allows degraded operation
         std::hash<std::string> hasher;
         oid_out = static_cast<uint32_t>(hasher(str) & 0xFFFFFFFF);
+        DEBUG_LOG_DB("TOAST manager unavailable, using hash-based OID: " << oid_out);
 
         return Status::OK;
     }
@@ -1520,21 +1594,39 @@ namespace scratchbird::core
             return Status::OK;
         }
 
-        // For Phase 3.4.6, we're using in-memory storage, so the actual string
-        // is already in the PolicyInfo cache. This method is here for API completeness.
-        //
-        // In a production system with full TOAST integration, this would:
-        // 1. Create a ToastPointer from the OID
-        // 2. Call detoastValue() to read TOAST chunks
-        // 3. Reconstruct the original string
-        //
-        // For now, this is a no-op since strings are cached in-memory.
-        // The real storage happens in the cache, not on disk.
+        // Phase 3.4.8: Use actual TOAST storage if available
+        if (policy_toast_manager_)
+        {
+            // Create a ToastPointer with the value_id (OID)
+            ToastPointer pointer;
+            memset(&pointer, 0, sizeof(ToastPointer));
+            pointer.va_header = 0x01;  // TOAST magic byte
+            pointer.va_valueid = oid;
+            pointer.va_toastrelid = static_cast<uint32_t>(
+                *reinterpret_cast<const uint32_t*>(policy_toast_table_id_.bytes.data()));
 
-        // We cannot reconstruct the string from just the hash OID
+            // Read from TOAST
+            std::vector<uint8_t> data;
+            Status status = policy_toast_manager_->detoastValue(&pointer, &data, xmin, ctx);
+
+            if (status != Status::OK)
+            {
+                DEBUG_LOG_DB("Failed to detoast policy expression: " << static_cast<int>(status));
+                SET_ERROR_CONTEXT(ctx, status, "Failed to load expression from TOAST");
+                return status;
+            }
+
+            // Convert byte vector back to string
+            str_out.assign(data.begin(), data.end());
+            DEBUG_LOG_DB("Loaded policy expression from TOAST, size=" << str_out.size());
+            return Status::OK;
+        }
+
+        // Fallback: Cannot load from hash-based OID
         // The caller must use the in-memory cached value
+        DEBUG_LOG_DB("TOAST manager unavailable, cannot load from OID: " << oid);
         SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED,
-                         "TOAST string loading not fully implemented (Phase 3.4.6 uses in-memory cache)");
+                         "TOAST manager not available - using in-memory cache");
         return Status::NOT_IMPLEMENTED;
     }
 
@@ -10412,6 +10504,33 @@ auto CatalogManager::dropPolicy(const ID& table_id, const std::string& policy_na
         return Status::NOT_FOUND;
     }
 
+    // Phase 3.4.8: Delete TOAST data for expressions before soft-deleting the policy
+    uint64_t xmax = 1;  // TODO: Get from transaction context
+
+    // Delete USING expression from TOAST if it exists
+    if (result.record.using_expr_oid != 0 && policy_toast_manager_)
+    {
+        Status toast_status = policy_toast_manager_->deleteToastValue(
+            result.record.using_expr_oid, xmax, ctx);
+        if (toast_status != Status::OK)
+        {
+            DEBUG_LOG_DB("Warning: Failed to delete USING expression TOAST data for policy: " << policy_name);
+            // Non-fatal - continue with policy deletion
+        }
+    }
+
+    // Delete WITH CHECK expression from TOAST if it exists
+    if (result.record.with_check_expr_oid != 0 && policy_toast_manager_)
+    {
+        Status toast_status = policy_toast_manager_->deleteToastValue(
+            result.record.with_check_expr_oid, xmax, ctx);
+        if (toast_status != Status::OK)
+        {
+            DEBUG_LOG_DB("Warning: Failed to delete WITH CHECK expression TOAST data for policy: " << policy_name);
+            // Non-fatal - continue with policy deletion
+        }
+    }
+
     // Mark as invalid (soft delete - MGA pattern)
     PolicyRecord updated_rec = result.record;
     updated_rec.is_valid = 0;
@@ -10466,8 +10585,8 @@ auto CatalogManager::getPolicy(const ID& table_id, const std::string& policy_nam
         }
     }
 
-    // Policy not in cache (shouldn't happen with Phase 3.4.6, but handle gracefully)
-    // Convert record to PolicyInfo without expressions
+    // Policy not in cache - load from TOAST (Phase 3.4.8)
+    // Convert record to PolicyInfo
     policy_out.policy_id = result.record.policy_id;
     policy_out.table_id = result.record.table_id;
     policy_out.policy_name = std::string(result.record.policy_name);
@@ -10476,10 +10595,37 @@ auto CatalogManager::getPolicy(const ID& table_id, const std::string& policy_nam
     policy_out.created_time = result.record.created_time;
     policy_out.modified_time = result.record.modified_time;
 
-    // No expressions available (pre-Phase 3.4.6 policy or cache miss)
+    // Load expressions from TOAST if available (Phase 3.4.8)
+    uint64_t xmin = 1;  // TODO: Get from transaction context
+
+    // Load USING expression
+    Status load_status = loadStringFromToast(result.record.using_expr_oid, xmin,
+                                            policy_out.using_expr, ctx);
+    if (load_status != Status::OK && load_status != Status::NOT_IMPLEMENTED)
+    {
+        DEBUG_LOG_DB("Failed to load USING expression from TOAST for policy: " << policy_name);
+        // Non-fatal - continue with empty expression
+        policy_out.using_expr = "";
+    }
+
+    // Load WITH CHECK expression
+    load_status = loadStringFromToast(result.record.with_check_expr_oid, xmin,
+                                     policy_out.with_check_expr, ctx);
+    if (load_status != Status::OK && load_status != Status::NOT_IMPLEMENTED)
+    {
+        DEBUG_LOG_DB("Failed to load WITH CHECK expression from TOAST for policy: " << policy_name);
+        // Non-fatal - continue with empty expression
+        policy_out.with_check_expr = "";
+    }
+
+    // Roles list (TODO: Load from TOAST when roles_oid is implemented)
     policy_out.roles.clear();
-    policy_out.using_expr = "";
-    policy_out.with_check_expr = "";
+
+    // Cache the loaded policy for future access
+    {
+        std::lock_guard<std::mutex> cache_lock(policy_cache_mutex_);
+        policy_cache_[policy_out.policy_id] = policy_out;
+    }
 
     return Status::OK;
 }
@@ -10554,6 +10700,14 @@ auto CatalogManager::getPoliciesForUser(const ID& table_id, const ID& user_id,
     return Status::OK;
 }
 
+// Test helper: Clear policy cache to force TOAST loading (Phase 3.4.8)
+void CatalogManager::clearPolicyCache()
+{
+    std::lock_guard<std::mutex> lock(policy_cache_mutex_);
+    policy_cache_.clear();
+    DEBUG_LOG_DB("Policy cache cleared (test helper)");
+}
+
 auto CatalogManager::setTableRLS(const ID& table_id, bool enabled, bool forced,
                                 ErrorContext* ctx) -> Status
 {
@@ -10610,6 +10764,267 @@ auto CatalogManager::getTableRLS(const ID& table_id, bool& enabled_out, bool& fo
     forced_out = result.record.rls_forced != 0;
 
     return Status::OK;
+}
+
+// ============================================================================
+// Security Phase 3.1: SQL Object Permissions
+// ============================================================================
+
+auto CatalogManager::grantObjectPermission(const ID& object_id, ObjectType object_type,
+                                          const ID& grantee_id, GranteeType grantee_type,
+                                          uint32_t permissions, bool grant_option,
+                                          ID& permission_id_out, ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    // Check if permission already exists for this object+grantee combination
+    auto predicate = [&](const ObjectPermissionRecord& rec) {
+        return rec.is_valid &&
+               rec.object_id == object_id &&
+               rec.grantee_id == grantee_id;
+    };
+
+    auto result = findRecordInHeapPage<ObjectPermissionRecord>(object_permissions_table_page_, predicate, ctx);
+    if (result.status == Status::OK)
+    {
+        // Permission exists - update it (OR the permissions together)
+        ObjectPermissionRecord updated_rec = result.record;
+        updated_rec.permissions |= permissions;  // Add new permissions
+        updated_rec.grant_option = grant_option ? 1 : 0;
+        updated_rec.created_time = std::chrono::system_clock::now().time_since_epoch().count();
+
+        Status status = updateRecordInHeapPage(object_permissions_table_page_, result.slot_index,
+                                              updated_rec, ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, status, "Failed to update object permission");
+            return status;
+        }
+
+        permission_id_out = updated_rec.permission_id;
+
+        // Update cache
+        {
+            std::lock_guard<std::mutex> cache_lock(object_permissions_cache_mutex_);
+            auto& perms = object_permissions_cache_[object_id];
+            for (auto& perm : perms)
+            {
+                if (perm.grantee_id == grantee_id)
+                {
+                    perm.permissions = updated_rec.permissions;
+                    perm.grant_option = grant_option;
+                    perm.created_time = updated_rec.created_time;
+                    break;
+                }
+            }
+        }
+
+        DEBUG_LOG_DB("Updated object permission for object " << object_id.toString());
+        return Status::OK;
+    }
+
+    // Create new permission record
+    ObjectPermissionRecord perm_rec;
+    memset(&perm_rec, 0, sizeof(ObjectPermissionRecord));
+    perm_rec.permission_id = generateUuidV7();
+    perm_rec.object_id = object_id;
+    perm_rec.object_type = static_cast<uint8_t>(object_type);
+    perm_rec.grantee_id = grantee_id;
+    perm_rec.grantee_type = static_cast<uint8_t>(grantee_type);
+    perm_rec.permissions = permissions;
+    perm_rec.grant_option = grant_option ? 1 : 0;
+
+    // Get grantor from connection context
+    ConnectionContext* conn_ctx = ConnectionContext::getCurrent();
+    if (conn_ctx)
+    {
+        perm_rec.grantor_id = conn_ctx->getCurrentUserId();
+    }
+    else
+    {
+        perm_rec.grantor_id = SecurityConstants::makeSystemUserID();
+    }
+
+    perm_rec.created_time = std::chrono::system_clock::now().time_since_epoch().count();
+    perm_rec.is_valid = 1;
+
+    // Write to disk
+    Status status = writeRecordToHeapPage(object_permissions_table_page_, perm_rec, ctx);
+    if (status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, status, "Failed to write object permission record");
+        return status;
+    }
+
+    // Cache permission
+    {
+        std::lock_guard<std::mutex> cache_lock(object_permissions_cache_mutex_);
+
+        ObjectPermissionInfo perm_info;
+        perm_info.permission_id = perm_rec.permission_id;
+        perm_info.object_id = object_id;
+        perm_info.object_type = object_type;
+        perm_info.grantee_id = grantee_id;
+        perm_info.grantee_type = grantee_type;
+        perm_info.permissions = permissions;
+        perm_info.grant_option = grant_option;
+        perm_info.grantor_id = perm_rec.grantor_id;
+        perm_info.created_time = perm_rec.created_time;
+
+        object_permissions_cache_[object_id].push_back(perm_info);
+    }
+
+    permission_id_out = perm_rec.permission_id;
+    DEBUG_LOG_DB("Granted object permission on object " << object_id.toString());
+    return Status::OK;
+}
+
+auto CatalogManager::revokeObjectPermission(const ID& object_id, const ID& grantee_id,
+                                           ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    // Find permission record
+    auto predicate = [&](const ObjectPermissionRecord& rec) {
+        return rec.is_valid &&
+               rec.object_id == object_id &&
+               rec.grantee_id == grantee_id;
+    };
+
+    auto result = findRecordInHeapPage<ObjectPermissionRecord>(object_permissions_table_page_, predicate, ctx);
+    if (result.status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Object permission not found");
+        return Status::NOT_FOUND;
+    }
+
+    // Mark as invalid (soft delete - MGA pattern)
+    ObjectPermissionRecord updated_rec = result.record;
+    updated_rec.is_valid = 0;
+
+    Status status = updateRecordInHeapPage(object_permissions_table_page_, result.slot_index,
+                                          updated_rec, ctx);
+    if (status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, status, "Failed to revoke object permission");
+        return status;
+    }
+
+    // Remove from cache
+    {
+        std::lock_guard<std::mutex> cache_lock(object_permissions_cache_mutex_);
+        auto& perms = object_permissions_cache_[object_id];
+        perms.erase(
+            std::remove_if(perms.begin(), perms.end(),
+                          [&](const ObjectPermissionInfo& p) { return p.grantee_id == grantee_id; }),
+            perms.end());
+    }
+
+    DEBUG_LOG_DB("Revoked object permission on object " << object_id.toString());
+    return Status::OK;
+}
+
+auto CatalogManager::hasObjectPermission(const ID& object_id, const ID& user_id,
+                                        uint32_t required_permissions,
+                                        ErrorContext* ctx) -> bool
+{
+    // Check cache first
+    {
+        std::lock_guard<std::mutex> cache_lock(object_permissions_cache_mutex_);
+        auto it = object_permissions_cache_.find(object_id);
+        if (it != object_permissions_cache_.end())
+        {
+            for (const auto& perm : it->second)
+            {
+                // Direct user permission
+                if (perm.grantee_type == GranteeType::USER && perm.grantee_id == user_id)
+                {
+                    if ((perm.permissions & required_permissions) == required_permissions)
+                    {
+                        return true;
+                    }
+                }
+                // TODO: Check role/group memberships (Phase 3.1 enhancement)
+            }
+            return false;  // Cache hit, no permission found
+        }
+    }
+
+    // Cache miss - load from disk
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    auto predicate = [&](const ObjectPermissionRecord& rec) {
+        return rec.is_valid && rec.object_id == object_id;
+    };
+
+    std::vector<ObjectPermissionInfo> perms;
+    auto converter = [](const ObjectPermissionRecord& rec, ObjectPermissionInfo& info) {
+        info.permission_id = rec.permission_id;
+        info.object_id = rec.object_id;
+        info.object_type = static_cast<ObjectType>(rec.object_type);
+        info.grantee_id = rec.grantee_id;
+        info.grantee_type = static_cast<GranteeType>(rec.grantee_type);
+        info.permissions = rec.permissions;
+        info.grant_option = rec.grant_option != 0;
+        info.grantor_id = rec.grantor_id;
+        info.created_time = rec.created_time;
+    };
+
+    auto filter = predicate;
+    Status status = readRecordsToVector<ObjectPermissionRecord, ObjectPermissionInfo>(
+        object_permissions_table_page_, perms, filter, converter, ctx);
+
+    if (status == Status::OK && !perms.empty())
+    {
+        // Populate cache
+        {
+            std::lock_guard<std::mutex> cache_lock(object_permissions_cache_mutex_);
+            object_permissions_cache_[object_id] = perms;
+        }
+
+        // Check permissions
+        for (const auto& perm : perms)
+        {
+            if (perm.grantee_type == GranteeType::USER && perm.grantee_id == user_id)
+            {
+                if ((perm.permissions & required_permissions) == required_permissions)
+                {
+                    return true;
+                }
+            }
+            // TODO: Check role/group memberships
+        }
+    }
+
+    return false;
+}
+
+auto CatalogManager::getObjectPermissions(const ID& object_id,
+                                         std::vector<ObjectPermissionInfo>& perms_out,
+                                         ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    perms_out.clear();
+
+    auto filter = [&](const ObjectPermissionRecord& rec) {
+        return rec.is_valid && rec.object_id == object_id;
+    };
+
+    auto converter = [](const ObjectPermissionRecord& rec, ObjectPermissionInfo& info) {
+        info.permission_id = rec.permission_id;
+        info.object_id = rec.object_id;
+        info.object_type = static_cast<ObjectType>(rec.object_type);
+        info.grantee_id = rec.grantee_id;
+        info.grantee_type = static_cast<GranteeType>(rec.grantee_type);
+        info.permissions = rec.permissions;
+        info.grant_option = rec.grant_option != 0;
+        info.grantor_id = rec.grantor_id;
+        info.created_time = rec.created_time;
+    };
+
+    return readRecordsToVector<ObjectPermissionRecord, ObjectPermissionInfo>(
+        object_permissions_table_page_, perms_out, filter, converter, ctx);
 }
 
 } // namespace scratchbird::core

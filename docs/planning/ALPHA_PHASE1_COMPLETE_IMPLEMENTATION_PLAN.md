@@ -1,7 +1,7 @@
 # ScratchBird ALPHA Phase 1 - Complete Implementation Plan
 
 **Created**: November 3, 2025
-**Updated**: November 11, 2025 (Row-Level Security Phase 3.4 - Runtime Expression Evaluation COMPLETE)
+**Updated**: November 12, 2025 (Security Phase 3.5 - RLS DML Enforcement & Ownership Chaining COMPLETE)
 **Goal**: 100% implementation of all specified features
 **Status**: ACTIVE PLAN
 
@@ -9,13 +9,14 @@
 
 ## EXECUTIVE SUMMARY
 
-### Current Completion: 86%
+### Current Completion: 89%
 
-**Remaining Work**: ~1,024-1,525 hours (26-38 weeks at 40 hours/week)
+**Remaining Work**: ~1,000-1,480 hours (25-37 weeks at 40 hours/week)
 
 **Recent Milestones**:
+- ✅ **Security Phase 3.5 COMPLETE** - RLS DML enforcement (INSERT/UPDATE/DELETE), SQL Object Permissions, Ownership Chaining - Nov 12, 2025 🎉
 - ✅ **Row-Level Security Phase 3.4.7 COMPLETE** - Runtime expression evaluation via WHERE clause injection - Nov 11, 2025 🎉
-- ✅ **Row-Level Security Framework (Phase 3.4) 100% COMPLETE for SELECT** - Full DDL, catalog, planner integration - Nov 11, 2025 🎉
+- ✅ **Row-Level Security Framework (Phase 3.4) 100% COMPLETE** - Full DDL, catalog, planner integration - Nov 11, 2025 🎉
 - ✅ **Connection Context Security Integration (Phase 2) COMPLETE** - Executor permission checking - Nov 10, 2025 🎉
 - ✅ **Security Core Infrastructure (Phase 1) COMPLETE** - Users, Roles, Groups, Sessions, Permissions - Nov 10, 2025 🎉
 - ✅ **38 Catalog Tables** (36 original + GroupMemberships + GroupMappings) 🎉

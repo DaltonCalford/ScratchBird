@@ -1,5 +1,5 @@
 #include "scratchbird/core/permission_cache.h"
-#include "scratchbird/core/logging.h"
+#include "scratchbird/core/logger.h"
 #include <algorithm>
 
 namespace scratchbird::core
@@ -56,13 +56,13 @@ namespace scratchbird::core
         stats_.invalidation_count = 0;
         stats_.ttl_expiration_count = 0;
 
-        LOG_INFO(SECURITY, "Permission cache initialized: max_entries=%zu, ttl=%llds",
+        LOG_INFO(GENERAL, "Permission cache initialized: max_entries=%zu, ttl=%llds",
                  max_entries_, ttl_.count());
     }
 
     PermissionCache::~PermissionCache()
     {
-        LOG_INFO(SECURITY, "Permission cache destroyed: entries=%zu, hit_rate=%.2f%%",
+        LOG_INFO(GENERAL, "Permission cache destroyed: entries=%zu, hit_rate=%.2f%%",
                  stats_.current_entries, stats_.getHitRate());
     }
 
@@ -158,7 +158,7 @@ namespace scratchbird::core
             ++stats_.eviction_count;
             --stats_.current_entries;
 
-            LOG_DEBUG(SECURITY, "Permission cache LRU eviction: cache_size=%zu", cache_.size());
+            LOG_DEBUG(GENERAL, "Permission cache LRU eviction: cache_size=%zu", cache_.size());
         }
 
         // Insert new entry
@@ -167,7 +167,7 @@ namespace scratchbird::core
         lru_list_.push_front(key);
         ++stats_.current_entries;
 
-        LOG_DEBUG(SECURITY, "Permission cache insert: has_perm=%d, cache_size=%zu",
+        LOG_DEBUG(GENERAL, "Permission cache insert: has_perm=%d, cache_size=%zu",
                   has_permission, cache_.size());
     }
 
@@ -194,7 +194,7 @@ namespace scratchbird::core
         stats_.current_entries = cache_.size();
         stats_.invalidation_count += removed_count;
 
-        LOG_INFO(SECURITY, "Permission cache invalidated for user: removed=%zu entries", removed_count);
+        LOG_INFO(GENERAL, "Permission cache invalidated for user: removed=%zu entries", removed_count);
     }
 
     void PermissionCache::invalidateObject(const ID &object_id)
@@ -220,7 +220,7 @@ namespace scratchbird::core
         stats_.current_entries = cache_.size();
         stats_.invalidation_count += removed_count;
 
-        LOG_INFO(SECURITY, "Permission cache invalidated for object: removed=%zu entries", removed_count);
+        LOG_INFO(GENERAL, "Permission cache invalidated for object: removed=%zu entries", removed_count);
     }
 
     void PermissionCache::invalidateAll()
@@ -234,7 +234,7 @@ namespace scratchbird::core
         stats_.current_entries = 0;
         stats_.invalidation_count += removed_count;
 
-        LOG_INFO(SECURITY, "Permission cache completely invalidated: removed=%zu entries", removed_count);
+        LOG_INFO(GENERAL, "Permission cache completely invalidated: removed=%zu entries", removed_count);
     }
 
     PermissionCache::Statistics PermissionCache::getStatistics() const
@@ -255,7 +255,7 @@ namespace scratchbird::core
         stats_.invalidation_count = 0;
         stats_.ttl_expiration_count = 0;
 
-        LOG_INFO(SECURITY, "Permission cache statistics reset");
+        LOG_INFO(GENERAL, "Permission cache statistics reset");
     }
 
     // ============================================================================

@@ -21,6 +21,7 @@ namespace scratchbird::core
     // Forward declarations
     class PageManager;
     class TIDResolver;
+    class ToastManager;
 
     using ID = UuidV7Bytes;
 
@@ -649,6 +650,28 @@ namespace scratchbird::core
             uint64_t modified_time = 0;
         };
 
+        // Object permission bitmask constants (Phase 3.1 - SQL Object Permissions)
+        // Note: ObjectType and GranteeType enums already defined above (lines 424 and 593)
+        static constexpr uint32_t PERM_EXECUTE = 0x0001;  // Execute procedure/function
+        static constexpr uint32_t PERM_SELECT  = 0x0002;  // Select from view/table
+        static constexpr uint32_t PERM_INSERT  = 0x0004;  // Insert into table
+        static constexpr uint32_t PERM_UPDATE  = 0x0008;  // Update table
+        static constexpr uint32_t PERM_DELETE  = 0x0010;  // Delete from table
+        static constexpr uint32_t PERM_USAGE   = 0x0020;  // Use sequence
+
+        struct ObjectPermissionInfo
+        {
+            ID permission_id;
+            ID object_id;                    // Object this permission applies to
+            ObjectType object_type;          // Type of object
+            ID grantee_id;                   // Who receives the permission
+            GranteeType grantee_type;        // Type of grantee
+            uint32_t permissions;            // Bitmask of permissions
+            bool grant_option = false;       // WITH GRANT OPTION
+            ID grantor_id;                   // Who granted the permission
+            uint64_t created_time = 0;
+        };
+
         // Session information (Phase 1.4 - Security System)
         struct SessionInfo
         {
@@ -1165,8 +1188,29 @@ namespace scratchbird::core
         auto setTableRLS(const ID& table_id, bool enabled, bool forced,
                         ErrorContext* ctx = nullptr) -> Status;
 
+        // Test helper: Clear policy cache to force TOAST loading (Phase 3.4.8)
+        void clearPolicyCache();
+
+
         auto getTableRLS(const ID& table_id, bool& enabled_out, bool& forced_out,
                         ErrorContext* ctx = nullptr) -> Status;
+
+        // Object permission operations (Phase 3.1 - SQL Object Permissions)
+        auto grantObjectPermission(const ID& object_id, ObjectType object_type,
+                                  const ID& grantee_id, GranteeType grantee_type,
+                                  uint32_t permissions, bool grant_option,
+                                  ID& permission_id_out, ErrorContext* ctx = nullptr) -> Status;
+
+        auto revokeObjectPermission(const ID& object_id, const ID& grantee_id,
+                                   ErrorContext* ctx = nullptr) -> Status;
+
+        auto hasObjectPermission(const ID& object_id, const ID& user_id,
+                                uint32_t required_permissions,
+                                ErrorContext* ctx = nullptr) -> bool;
+
+        auto getObjectPermissions(const ID& object_id,
+                                 std::vector<ObjectPermissionInfo>& perms_out,
+                                 ErrorContext* ctx = nullptr) -> Status;
 
         // Timezone operations (pg_timezone system table)
         struct TimezoneInfo
@@ -1709,14 +1753,21 @@ namespace scratchbird::core
         // Function information
         struct FunctionInfo
         {
+            enum class SqlSecurity : uint8_t {
+                DEFINER = 0,  // Execute with owner's privileges
+                INVOKER = 1   // Execute with caller's privileges (default)
+            };
+
             ID function_id;                        // UUID v7
             std::string name;
+            ID owner_id;                           // Phase 3.1: Owner user UUID
             std::vector<ParameterInfo> parameters;
             DataType return_type = DataType::INT32;
             uint32_t return_type_precision = 0;
             uint32_t return_type_scale = 0;
             bool or_replace = false;
             bool deterministic = false;
+            SqlSecurity sql_security = SqlSecurity::INVOKER;  // Phase 3.1
             std::vector<uint8_t> bytecode;  // Compiled SBLR bytecode
             std::string source_text;        // Original PSQL source
             uint64_t created_time = 0;
@@ -1726,10 +1777,17 @@ namespace scratchbird::core
         // Procedure information
         struct ProcedureInfo
         {
+            enum class SqlSecurity : uint8_t {
+                DEFINER = 0,  // Execute with owner's privileges
+                INVOKER = 1   // Execute with caller's privileges (default)
+            };
+
             ID procedure_id;                       // UUID v7
             std::string name;
+            ID owner_id;                           // Phase 3.1: Owner user UUID
             std::vector<ParameterInfo> parameters;
             bool or_replace = false;
+            SqlSecurity sql_security = SqlSecurity::INVOKER;  // Phase 3.1
             std::vector<uint8_t> bytecode;  // Compiled SBLR bytecode
             std::string source_text;        // Original PSQL source
             uint64_t created_time = 0;
@@ -1792,6 +1850,14 @@ namespace scratchbird::core
         // Policy cache (Phase 3.4.6 - RLS Expression Storage)
         std::unordered_map<ID, PolicyInfo> policy_cache_;  // policy_id -> PolicyInfo
         std::mutex policy_cache_mutex_;
+
+        // TOAST table ID for policy expressions (Phase 3.4.8 - TOAST Persistence)
+        ID policy_toast_table_id_;  // UUID for pg_toast_policy table
+        std::unique_ptr<ToastManager> policy_toast_manager_;  // TOAST manager for policy expressions
+
+        // Object permissions cache (Phase 3.1 - SQL Object Permissions)
+        std::unordered_map<ID, std::vector<ObjectPermissionInfo>> object_permissions_cache_;  // object_id -> permissions
+        std::mutex object_permissions_cache_mutex_;
 
         // Internal helper methods (assume mutex_ is already held by caller)
         auto createSchemaInternal(const std::string &schema_name, const std::string &owner,
@@ -1907,6 +1973,7 @@ namespace scratchbird::core
         uint32_t permissions_table_page_ = 0;    // Will be allocated during init
         uint32_t column_permissions_table_page_ = 0; // Security Phase 3.3: Column-level permissions
         uint32_t policies_table_page_ = 0;       // Security Phase 3.4: Row-level security policies
+        uint32_t object_permissions_table_page_ = 0; // Security Phase 3.1: SQL object permissions
         uint32_t statistics_table_page_ = 0;     // Will be allocated during init
         uint32_t collations_table_page_ = 0;     // Will be allocated during init
         uint32_t timezones_table_page_ = 0;      // Will be allocated during init

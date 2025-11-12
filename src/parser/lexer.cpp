@@ -331,7 +331,10 @@ namespace scratchbird
             {"REFERENCES", TokenType::KW_REFERENCES},
             // Security Phase 3.4: Row-level security
             {"POLICY", TokenType::KW_POLICY},
+            {"SQL", TokenType::KW_SQL},               // Security Phase 3.1: SQL SECURITY DEFINER/INVOKER
             {"SECURITY", TokenType::KW_SECURITY},
+            {"DEFINER", TokenType::KW_DEFINER},       // Security Phase 3.1: SQL SECURITY DEFINER
+            {"INVOKER", TokenType::KW_INVOKER},       // Security Phase 3.1: SQL SECURITY INVOKER
             // "ENABLE" already defined above
             // "DISABLE" already defined above
             // "FORCE" already defined above

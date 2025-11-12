@@ -2763,18 +2763,25 @@ namespace scratchbird
         class CreateFunctionStmt : public Statement
         {
         public:
+            enum class SqlSecurity : uint8_t {
+                DEFINER = 0,  // Execute with owner's privileges
+                INVOKER = 1   // Execute with caller's privileges (default)
+            };
+
             CreateFunctionStmt(const SourceSpan& span,
                               StringPool::StringId name,
                               std::vector<Parameter*> parameters,
                               TypeName* return_type,
                               bool or_replace,
-                              BlockStmt* body)
+                              BlockStmt* body,
+                              SqlSecurity sql_security = SqlSecurity::INVOKER)
                 : Statement(ASTKind::CREATE_FUNCTION, span),
                   name_(name),
                   parameters_(std::move(parameters)),
                   return_type_(return_type),
                   or_replace_(or_replace),
-                  body_(body)
+                  body_(body),
+                  sql_security_(sql_security)
             {
             }
 
@@ -2783,6 +2790,7 @@ namespace scratchbird
             TypeName* returnType() const { return return_type_; }
             bool orReplace() const { return or_replace_; }
             BlockStmt* body() const { return body_; }
+            SqlSecurity sqlSecurity() const { return sql_security_; }
 
             void accept(ASTVisitor* visitor) override;
 
@@ -2792,22 +2800,30 @@ namespace scratchbird
             TypeName* return_type_;
             bool or_replace_;
             BlockStmt* body_;
+            SqlSecurity sql_security_;  // Phase 3.1: SQL SECURITY DEFINER/INVOKER
         };
 
         // CREATE PROCEDURE statement
         class CreateProcedureStmt : public Statement
         {
         public:
+            enum class SqlSecurity : uint8_t {
+                DEFINER = 0,  // Execute with owner's privileges
+                INVOKER = 1   // Execute with caller's privileges (default)
+            };
+
             CreateProcedureStmt(const SourceSpan& span,
                                StringPool::StringId name,
                                std::vector<Parameter*> parameters,
                                bool or_replace,
-                               BlockStmt* body)
+                               BlockStmt* body,
+                               SqlSecurity sql_security = SqlSecurity::INVOKER)
                 : Statement(ASTKind::CREATE_PROCEDURE, span),
                   name_(name),
                   parameters_(std::move(parameters)),
                   or_replace_(or_replace),
-                  body_(body)
+                  body_(body),
+                  sql_security_(sql_security)
             {
             }
 
@@ -2815,6 +2831,7 @@ namespace scratchbird
             const std::vector<Parameter*>& parameters() const { return parameters_; }
             bool orReplace() const { return or_replace_; }
             BlockStmt* body() const { return body_; }
+            SqlSecurity sqlSecurity() const { return sql_security_; }
 
             void accept(ASTVisitor* visitor) override;
 
@@ -2823,6 +2840,7 @@ namespace scratchbird
             std::vector<Parameter*> parameters_;
             bool or_replace_;
             BlockStmt* body_;
+            SqlSecurity sql_security_;  // Phase 3.1: SQL SECURITY DEFINER/INVOKER
         };
 
         // ===== Security Statements (ALPHA Phase 1 - Security System Phase 2) =====
