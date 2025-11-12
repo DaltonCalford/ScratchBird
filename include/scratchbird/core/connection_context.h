@@ -115,10 +115,41 @@ namespace scratchbird::core
         const ID& getActiveRoleId() const { return active_role_id_; }
         bool isSuperuser() const { return is_superuser_; }
 
+        // Security context types (Phase 3.1 - SQL Object Permissions)
+        enum class SecurityMode : uint8_t
+        {
+            INVOKER = 0,  // Execute with caller's privileges (default)
+            DEFINER = 1   // Execute with owner's privileges
+        };
+
+        struct SecurityContext
+        {
+            ID effective_user_id;      // Who is executing
+            ID effective_role_id;      // Active role
+            bool is_superuser;         // Superuser flag
+            SecurityMode mode;         // DEFINER or INVOKER
+            ID object_id;              // Current procedure/function/view ID
+        };
+
         // Security context setters (called during authentication and SET ROLE)
         void setCurrentUser(const ID& user_id, bool is_superuser);
         void setActiveRole(const ID& role_id);
         void clearActiveRole();
+
+        // Security context stack methods (Phase 3.1 - SQL Object Permissions)
+        // Push new security context (entering procedure/function/view)
+        void pushSecurityContext(const ID& user_id, const ID& role_id,
+                                bool is_superuser_flag, SecurityMode mode,
+                                const ID& object_id);
+
+        // Pop security context (exiting procedure/function/view)
+        void popSecurityContext();
+
+        // Get current effective security context
+        SecurityContext getCurrentSecurityContext() const;
+
+        // Check if we're in a DEFINER context
+        bool isDefinerContext() const;
 
         // FIREBIRD MGA: Transaction visibility uses current XID, not snapshots
         // For SNAPSHOT isolation, we simply use the XID at transaction start
@@ -185,6 +216,10 @@ namespace scratchbird::core
         ID current_user_id_;    // Authenticated user UUID
         ID active_role_id_;     // Active role UUID (from SET ROLE), zero if none
         bool is_superuser_;     // Cached superuser flag for performance
+
+        // Security context stack (Phase 3.1 - SQL Object Permissions)
+        // SecurityMode and SecurityContext types defined in public section above
+        std::vector<SecurityContext> security_stack_;
 
         // Transaction settings
         IsolationLevel isolation_level_; // Current isolation level

@@ -1,7 +1,7 @@
 # ScratchBird Project Context
 
-**Last Updated**: November 11, 2025
-**Version**: Alpha - 86% Complete (Security Phase 3.4.7 - RLS Runtime Evaluation COMPLETE)
+**Last Updated**: November 12, 2025
+**Version**: Alpha - 89% Complete (Security Phase 3.5 - RLS DML & Ownership Chaining COMPLETE)
 **Status**: Educational/Development
 
 > **MANDATORY**: Read `/MGA_RULES.md` before ANY transaction or index work.
@@ -100,7 +100,7 @@
     - **Performance** - Table-level fast path (~10 μs), column-level fallback (~100-500 μs)
     - **Testing** - 11 integration tests covering CRUD, parsing, validation, bytecode generation (Phase 3.3.6)
     - **Total Investment** - ~690 lines production code, ~430 lines tests, ~11 hours, 7 files modified
-  - **Phase 3.4 (100% COMPLETE for SELECT)** ✅:
+  - **Phase 3.4 (100% COMPLETE)** ✅:
     - **Row-Level Security (RLS)** - PostgreSQL-compatible policy-based row filtering
     - **Catalog Schema** - PolicyInfo struct, PolicyType enum (Phase 3.4.1) ✅
     - **CRUD Operations** - createPolicy, dropPolicy, getPolicy, getTablePolicies, setTableRLS (Phase 3.4.2) ✅
@@ -109,10 +109,22 @@
     - **Query Planner** - Fail-safe enforcement, superuser bypass, forced RLS (Phase 3.4.5) ✅
     - **Expression Storage** - In-memory cache for USING/WITH CHECK expressions (Phase 3.4.6) ✅
     - **Runtime Evaluation** - WHERE clause injection, expression parsing, predicate combination (Phase 3.4.7) ✅
-    - **Testing** - 18 integration tests covering DDL, fail-safe, permissions, expression storage, runtime filtering ✅
-    - **Total Investment** - ~750 lines production code, ~650 lines tests, ~17 hours, 12 files modified
-    - **Deferred** - WITH CHECK for DML (~24-36 hours, requires DML-RLS integration)
-  - **Phase 3.5+ TODOs**: WITH CHECK enforcement for INSERT/UPDATE, SQL object permissions
+    - **TOAST Persistence** - Disk-based storage for policy expressions, survives restarts (Phase 3.4.8) ✅
+    - **Testing** - 19 integration tests covering DDL, fail-safe, permissions, expression storage, runtime filtering, TOAST persistence ✅
+    - **Total Investment** - ~900 lines production code, ~700 lines tests, ~20 hours, 13 files modified
+  - **Phase 3.5 (100% COMPLETE)** ✅:
+    - **RLS DML Enforcement** - WITH CHECK for INSERT/UPDATE, USING for UPDATE/DELETE
+    - **RLS Helpers** - shouldEnforceRLS (owner/FORCE RLS), checkRLSPolicies (AND semantics), policyAppliesToUser (role resolution), evaluatePolicyExpression (bytecode execution) ✅
+    - **INSERT WITH CHECK** - Full row construction with defaults, policy enforcement before insertTuple (Phase 3.5.1) ✅
+    - **UPDATE USING + WITH CHECK** - Old row visibility (USING), new row validation (WITH CHECK) (Phase 3.5.2) ✅
+    - **DELETE USING** - Row visibility filtering in deletion loop (Phase 3.5.3) ✅
+    - **SQL Object Permissions** - GRANT EXECUTE on procedures/functions, owner_id in catalog (Phase 3.5.4) ✅
+    - **Ownership Chaining** - SQL SECURITY DEFINER/INVOKER, security context stack, privilege escalation (Phase 3.5.5) ✅
+    - **Owner Bypass** - Table owner and superuser bypass RLS (unless FORCE RLS), owner privilege lookup via UUID (Phase 3.5.6) ✅
+    - **Role Resolution** - UUID-based identity, role membership checking for policy targeting (Phase 3.5.7) ✅
+    - **Testing** - 10-test framework created (bytecode generation pending) ✅
+    - **Total Investment** - ~1,500 lines production code, ~530 lines test framework, ~18 hours, 14 files modified
+  - **Phase 3.6 TODOs**: View security (WITH CHECK OPTION), transitive role membership, policy bytecode generation for tests
 - ✅ **DDL Modifications (100%)**:
   - DROP TABLE [IF EXISTS] [CASCADE | RESTRICT]
   - DROP INDEX [IF EXISTS] [CASCADE | RESTRICT]

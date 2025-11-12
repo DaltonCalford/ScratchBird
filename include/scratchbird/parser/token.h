@@ -387,7 +387,10 @@ namespace scratchbird
             // KW_ENABLE already defined (line 298)
             // KW_DISABLE already defined (line 299)
             // KW_FORCE already defined (line 300)
+            KW_SQL,           // Security Phase 3.1: SQL SECURITY DEFINER/INVOKER
             KW_SECURITY,      // Security Phase 3.4: ROW LEVEL SECURITY
+            KW_DEFINER,       // Security Phase 3.1: SQL SECURITY DEFINER
+            KW_INVOKER,       // Security Phase 3.1: SQL SECURITY INVOKER
             // KW_LEVEL already defined (line 274)
             // KW_ROW already defined (line 137)
             // KW_RESTRICT already defined (line 300)

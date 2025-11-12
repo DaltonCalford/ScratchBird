@@ -891,4 +891,71 @@ namespace scratchbird::core
         std::memset(&active_role_id_, 0, sizeof(active_role_id_));
     }
 
+    // ============================================================================
+    // Security Context Stack (Phase 3.1 - SQL Object Permissions)
+    // ============================================================================
+
+    void ConnectionContext::pushSecurityContext(const ID& user_id, const ID& role_id,
+                                               bool is_superuser_flag, SecurityMode mode,
+                                               const ID& object_id)
+    {
+        SecurityContext ctx;
+        ctx.effective_user_id = user_id;
+        ctx.effective_role_id = role_id;
+        ctx.is_superuser = is_superuser_flag;
+        ctx.mode = mode;
+        ctx.object_id = object_id;
+
+        security_stack_.push_back(ctx);
+
+        LOG_DEBUG(TRANSACTION, "Pushed security context: proc_id=%u, depth=%zu, mode=%s, user=%s",
+                  proc_id_, security_stack_.size(),
+                  mode == SecurityMode::DEFINER ? "DEFINER" : "INVOKER",
+                  user_id.toString().c_str());
+    }
+
+    void ConnectionContext::popSecurityContext()
+    {
+        if (!security_stack_.empty())
+        {
+            security_stack_.pop_back();
+
+            LOG_DEBUG(TRANSACTION, "Popped security context: proc_id=%u, depth=%zu",
+                      proc_id_, security_stack_.size());
+        }
+        else
+        {
+            LOG_WARNING(TRANSACTION, "Attempted to pop empty security context stack: proc_id=%u",
+                       proc_id_);
+        }
+    }
+
+    ConnectionContext::SecurityContext ConnectionContext::getCurrentSecurityContext() const
+    {
+        if (!security_stack_.empty())
+        {
+            // Return the top of the stack (most recent context)
+            return security_stack_.back();
+        }
+
+        // No stacked context - return base connection context
+        SecurityContext ctx;
+        ctx.effective_user_id = current_user_id_;
+        ctx.effective_role_id = active_role_id_;
+        ctx.is_superuser = is_superuser_;
+        ctx.mode = SecurityMode::INVOKER;  // Base context is always INVOKER
+        std::memset(&ctx.object_id, 0, sizeof(ctx.object_id));  // No object
+
+        return ctx;
+    }
+
+    bool ConnectionContext::isDefinerContext() const
+    {
+        if (!security_stack_.empty())
+        {
+            return security_stack_.back().mode == SecurityMode::DEFINER;
+        }
+        return false;  // Base context is always INVOKER
+    }
+
 } // namespace scratchbird::core

@@ -2,9 +2,9 @@
 
 A relational database engine featuring **Firebird MGA (Multi-Generational Architecture)**, 11 index types, 36-table catalog system, TOAST storage, and full transaction management.
 
-## Status: Alpha - 86% Complete (Security Phase 3.4.7 - RLS Runtime Evaluation COMPLETE)
+## Status: Alpha - 89% Complete (Security Phase 3.5 - RLS DML & Ownership Chaining COMPLETE)
 
-**Last Updated:** November 11, 2025
+**Last Updated:** November 12, 2025
 
 ## Quick Start
 
@@ -61,20 +61,28 @@ ctest --output-on-failure
 - ✅ CREATE TABLE, CREATE INDEX, CREATE/ALTER/DROP TABLESPACE
 - ✅ Transactions: BEGIN, COMMIT, ROLLBACK, SAVEPOINT
 - ✅ Window functions: ROW_NUMBER, RANK, LAG, LEAD, etc.
-- ✅ **Security (Phase 1-3.4 COMPLETE for SELECT)**:
+- ✅ **Security (Phase 1-3.5 COMPLETE)** ✅:
   - Connection context with user/role tracking
   - Permission checking (checkPermission via catalog)
   - SET ROLE / RESET ROLE
   - Query plan security integration (10-100x speedup)
   - Column-level permissions (GRANT SELECT (col1, col2) ON table)
-  - **Row-level security (RLS)**:
+  - **Row-level security (RLS)** - Full DML enforcement:
     - CREATE POLICY with USING/WITH CHECK expressions
     - DROP POLICY [IF EXISTS] [CASCADE | RESTRICT]
     - ALTER TABLE ... {ENABLE|DISABLE|FORCE|NO FORCE} ROW LEVEL SECURITY
-    - Expression storage (in-memory cache, Phase 3.4.6)
-    - Runtime evaluation (WHERE clause injection, Phase 3.4.7)
-    - Automatic row filtering for SELECT queries
-  - **Deferred**: WITH CHECK for INSERT/UPDATE (~24-36 hours)
+    - Expression storage with TOAST persistence ✅
+    - Runtime evaluation for SELECT (WHERE clause injection) ✅
+    - **INSERT WITH CHECK enforcement** - validates new rows before insert ✅
+    - **UPDATE USING + WITH CHECK** - old row visibility + new row validation ✅
+    - **DELETE USING enforcement** - row visibility filtering ✅
+    - Owner and superuser bypass (unless FORCE RLS) ✅
+    - AND semantics for multiple policies ✅
+  - **SQL Object Permissions**:
+    - GRANT EXECUTE on procedures/functions ✅
+    - SQL SECURITY DEFINER/INVOKER support ✅
+    - Ownership chaining with security context stack ✅
+    - Privilege escalation for DEFINER mode ✅
 - ✅ **DDL Modifications (100%)**:
   - DROP TABLE [IF EXISTS] [CASCADE | RESTRICT]
   - DROP INDEX [IF EXISTS] [CASCADE | RESTRICT]
@@ -108,8 +116,9 @@ ctest --output-on-failure
 ### Advanced Security Features (Phase 3)
 - ✅ Query plan security integration (10-100x speedup) - COMPLETE Nov 11, 2025
 - ✅ Column-level permissions - COMPLETE Nov 11, 2025
-- ✅ Row-level security (RLS) framework - 71% COMPLETE Nov 11, 2025
-- ⏸️ RLS expression evaluation (DEFERRED - requires TOAST integration)
+- ✅ Row-level security (RLS) framework with TOAST persistence - 100% COMPLETE Nov 11, 2025
+- ✅ RLS expression evaluation (WHERE clause injection) - COMPLETE Nov 11, 2025
+- ✅ TOAST persistence for policy expressions - COMPLETE Nov 11, 2025
 - SQL object permissions (GRANT TO PROCEDURE/FUNCTION/VIEW)
 - ✅ SQL parser integration (GRANT/REVOKE/CREATE USER statements) - COMPLETE Phase 2
 

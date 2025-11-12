@@ -1,7 +1,7 @@
 #include "scratchbird/core/auth_provider.h"
 #include "scratchbird/core/catalog_manager.h"
 #include "scratchbird/core/password_hash.h"
-#include "scratchbird/core/logging.h"
+#include "scratchbird/core/logger.h"
 
 namespace scratchbird {
 namespace core {
@@ -48,12 +48,12 @@ AuthResult LocalAuthProvider::authenticate(
             bool password_valid = PasswordHash::verifyPassword(password, db_user.password_hash);
             if (!password_valid) {
                 error_msg_out = "Invalid password";
-                LOG_WARN(SECURITY, "Failed login attempt for user: %s", username.c_str());
+                LOG_WARNING(GENERAL, "Failed login attempt for user: %s", username.c_str());
                 return AuthResult::INVALID_CREDENTIALS;
             }
         } catch (const std::exception& e) {
             error_msg_out = std::string("Password verification error: ") + e.what();
-            LOG_ERROR(SECURITY, "Password verification error for user %s: %s",
+            LOG_ERROR(GENERAL, "Password verification error for user %s: %s",
                      username.c_str(), e.what());
             return AuthResult::PROVIDER_ERROR;
         }
@@ -72,7 +72,7 @@ AuthResult LocalAuthProvider::authenticate(
     user_info_out.is_disabled = !db_user.is_active;
     user_info_out.is_locked = false;
 
-    LOG_INFO(SECURITY, "Successful authentication for user: %s", username.c_str());
+    LOG_INFO(GENERAL, "Successful authentication for user: %s", username.c_str());
     return AuthResult::SUCCESS;
 }
 
@@ -141,8 +141,8 @@ bool LocalAuthProvider::getUserGroups(
 LDAPAuthProvider::LDAPAuthProvider(const Config& config)
     : config_(config)
 {
-    LOG_INFO(SECURITY, "LDAP authentication provider created (stub - Beta feature)");
-    LOG_WARN(SECURITY, "LDAP authentication is not implemented in Alpha. "
+    LOG_INFO(GENERAL, "LDAP authentication provider created (stub - Beta feature)");
+    LOG_WARNING(GENERAL, "LDAP authentication is not implemented in Alpha. "
                        "All authentication attempts will fail.");
 }
 
@@ -155,7 +155,7 @@ AuthResult LDAPAuthProvider::authenticate(
     std::string& error_msg_out)
 {
     error_msg_out = "LDAP authentication not implemented (Beta feature)";
-    LOG_WARN(SECURITY, "LDAP authentication attempted but not implemented: %s", username.c_str());
+    LOG_WARNING(GENERAL, "LDAP authentication attempted but not implemented: %s", username.c_str());
     return AuthResult::NOT_IMPLEMENTED;
 }
 
@@ -163,7 +163,7 @@ bool LDAPAuthProvider::userExists(
     const std::string& username,
     AuthUserInfo& user_info_out)
 {
-    LOG_WARN(SECURITY, "LDAP userExists() not implemented (Beta feature)");
+    LOG_WARNING(GENERAL, "LDAP userExists() not implemented (Beta feature)");
     return false;
 }
 
@@ -171,7 +171,7 @@ bool LDAPAuthProvider::getUserGroups(
     const std::string& username,
     std::vector<std::string>& groups_out)
 {
-    LOG_WARN(SECURITY, "LDAP getUserGroups() not implemented (Beta feature)");
+    LOG_WARNING(GENERAL, "LDAP getUserGroups() not implemented (Beta feature)");
     return false;
 }
 
@@ -188,8 +188,8 @@ bool LDAPAuthProvider::testConnection(std::string& error_msg_out)
 ActiveDirectoryAuthProvider::ActiveDirectoryAuthProvider(const Config& config)
     : config_(config)
 {
-    LOG_INFO(SECURITY, "Active Directory authentication provider created (stub - Beta feature)");
-    LOG_WARN(SECURITY, "AD authentication is not implemented in Alpha. "
+    LOG_INFO(GENERAL, "Active Directory authentication provider created (stub - Beta feature)");
+    LOG_WARNING(GENERAL, "AD authentication is not implemented in Alpha. "
                        "All authentication attempts will fail.");
 }
 
@@ -202,7 +202,7 @@ AuthResult ActiveDirectoryAuthProvider::authenticate(
     std::string& error_msg_out)
 {
     error_msg_out = "Active Directory authentication not implemented (Beta feature)";
-    LOG_WARN(SECURITY, "AD authentication attempted but not implemented: %s", username.c_str());
+    LOG_WARNING(GENERAL, "AD authentication attempted but not implemented: %s", username.c_str());
     return AuthResult::NOT_IMPLEMENTED;
 }
 
@@ -210,7 +210,7 @@ bool ActiveDirectoryAuthProvider::userExists(
     const std::string& username,
     AuthUserInfo& user_info_out)
 {
-    LOG_WARN(SECURITY, "AD userExists() not implemented (Beta feature)");
+    LOG_WARNING(GENERAL, "AD userExists() not implemented (Beta feature)");
     return false;
 }
 
@@ -218,7 +218,7 @@ bool ActiveDirectoryAuthProvider::getUserGroups(
     const std::string& username,
     std::vector<std::string>& groups_out)
 {
-    LOG_WARN(SECURITY, "AD getUserGroups() not implemented (Beta feature)");
+    LOG_WARNING(GENERAL, "AD getUserGroups() not implemented (Beta feature)");
     return false;
 }
 
@@ -240,19 +240,19 @@ std::unique_ptr<AuthProvider> AuthProviderFactory::create(
     switch (type) {
         case AuthProviderType::LOCAL:
             if (catalog == nullptr) {
-                LOG_ERROR(SECURITY, "Cannot create LocalAuthProvider: catalog is null");
+                LOG_ERROR(GENERAL, "Cannot create LocalAuthProvider: catalog is null");
                 return nullptr;
             }
             return std::make_unique<LocalAuthProvider>(catalog);
 
         case AuthProviderType::LDAP:
-            LOG_WARN(SECURITY, "LDAP auth provider requested but not implemented (Beta feature)");
+            LOG_WARNING(GENERAL, "LDAP auth provider requested but not implemented (Beta feature)");
             // Parse config_json and create LDAPAuthProvider::Config
             // For now, return stub with default config
             return std::make_unique<LDAPAuthProvider>(LDAPAuthProvider::Config{});
 
         case AuthProviderType::ACTIVE_DIRECTORY:
-            LOG_WARN(SECURITY, "AD auth provider requested but not implemented (Beta feature)");
+            LOG_WARNING(GENERAL, "AD auth provider requested but not implemented (Beta feature)");
             // Parse config_json and create ActiveDirectoryAuthProvider::Config
             // For now, return stub with default config
             return std::make_unique<ActiveDirectoryAuthProvider>(
@@ -262,11 +262,11 @@ std::unique_ptr<AuthProvider> AuthProviderFactory::create(
         case AuthProviderType::SAML:
         case AuthProviderType::KERBEROS:
         case AuthProviderType::EXTERNAL_SCRIPT:
-            LOG_ERROR(SECURITY, "Auth provider type %d not implemented", static_cast<int>(type));
+            LOG_ERROR(GENERAL, "Auth provider type %d not implemented", static_cast<int>(type));
             return nullptr;
 
         default:
-            LOG_ERROR(SECURITY, "Unknown auth provider type: %d", static_cast<int>(type));
+            LOG_ERROR(GENERAL, "Unknown auth provider type: %d", static_cast<int>(type));
             return nullptr;
     }
 }

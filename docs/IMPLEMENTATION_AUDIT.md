@@ -1,6 +1,6 @@
 # ScratchBird Implementation Audit
-**Date**: 2025-11-11 | **Source**: Actual code inspection | **Format**: AI-optimized (context-conservative)
-**Updated**: 2025-11-11 - Added Row-Level Security (RLS) Framework Implementation
+**Date**: 2025-11-12 | **Source**: Actual code inspection | **Format**: AI-optimized (context-conservative)
+**Updated**: 2025-11-12 - Added Phase 3.5 (RLS DML Enforcement + SQL Object Permissions + Ownership Chaining)
 
 ---
 
@@ -1101,3 +1101,236 @@ struct TID {
 
 **Legend**: ✅ Complete | ⚠️ Partial | ❌ Not Started
 **h:NNN** = catalog_manager.h:line | **cpp:NNN** = catalog_manager.cpp:line
+
+---
+
+## ROW-LEVEL SECURITY (RLS) DML ENFORCEMENT ✅ **PHASE 3.5 COMPLETE** (Nov 12, 2025)
+
+### RLS Helper Methods
+
+**File**: `src/sblr/executor.cpp:13844-14105`
+**File**: `include/scratchbird/sblr/executor.h:560-584`
+
+```cpp
+// Determine if RLS should be enforced for current user/table
+bool shouldEnforceRLS(const core::ID& table_id);  // cpp:13844-13888
+
+// Check if row passes all active RLS policies (AND semantics)
+bool checkRLSPolicies(const core::ID& table_id,
+                     const std::vector<Value>& row_values,
+                     const std::vector<core::CatalogManager::ColumnInfo>& columns,
+                     core::CatalogManager::PolicyType policy_type,
+                     bool is_with_check);  // cpp:13890-13969
+
+// Check if policy applies to current user/role
+bool policyAppliesToUser(const core::CatalogManager::PolicyInfo& policy);  // cpp:13971-14027
+
+// Deserialize hex-encoded policy bytecode
+std::vector<uint8_t> hexToBytes(const std::string& hex_str);  // cpp:14029-14062
+
+// Execute policy expression bytecode with row context
+bool evaluatePolicyExpression(const std::vector<uint8_t>& expr_bytecode,
+                             const std::vector<Value>& row_values,
+                             const std::vector<core::CatalogManager::ColumnInfo>& columns);  // cpp:14064-14105
+```
+
+### shouldEnforceRLS Implementation
+
+**Location**: `src/sblr/executor.cpp:13844-13888`
+
+**Algorithm**:
+1. Check if connection context exists (deny if missing - conservative)
+2. Get table info to check RLS settings and owner
+3. Return false if RLS not enabled on table
+4. Return true if FORCE RLS is set (even owners/superusers must obey)
+5. Return false if current user is superuser (bypass unless FORCE RLS)
+6. Return false if current user is table owner (bypass unless FORCE RLS)
+7. Return true for non-owner, non-superuser with RLS enabled
+
+**Performance**: O(1) table lookup, conservative security (deny on error)
+
+### checkRLSPolicies Implementation
+
+**Location**: `src/sblr/executor.cpp:13890-13969`
+
+**Algorithm**:
+1. Check if RLS should be enforced (bypass if not)
+2. Fetch policies for table filtered by PolicyType (INSERT/UPDATE/DELETE/SELECT)
+3. Filter to enabled policies only
+4. Return true if no policies (RLS enabled but no restrictions)
+5. For each policy: check if applies to user, evaluate expression
+6. AND semantics: return false if ANY policy fails
+7. Return true if all policies pass
+
+**Performance**: O(p × e) where p = policy count, e = expression complexity
+
+### policyAppliesToUser Implementation
+
+**Location**: `src/sblr/executor.cpp:13971-14027`
+
+**Algorithm**:
+1. Return true if policy.roles is empty (applies to everyone)
+2. Resolve current user UUID to username via getUser()
+3. Check if username in policy.roles list
+4. If active role exists, resolve role UUID to name via getRole()
+5. Check if role name in policy.roles list
+6. Return false if no match found
+
+**Note**: PolicyInfo.roles currently stores role NAMES (should migrate to UUIDs for O(1) lookup)
+**TODO**: Transitive role membership (groups)
+
+### evaluatePolicyExpression Implementation
+
+**Location**: `src/sblr/executor.cpp:14064-14105`
+
+**Algorithm**:
+1. Save executor state (pc_, bytecode_, bytecode_size_)
+2. Set up row context (current_row_values_, current_row_columns_)
+3. Execute policy bytecode expression
+4. Pop result from stack, convert to boolean
+5. Restore executor state (exception-safe)
+6. Return policy result
+
+**Exception Safety**: try-catch with state restoration in catch block
+**Security**: Conservative - deny on any error
+
+### DML Integration Points
+
+**INSERT WITH CHECK**: `src/sblr/executor.cpp:3513-3544`
+```cpp
+// Before insertTuple call
+// 1. Construct full row_values with defaults for unspecified columns
+// 2. Call checkRLSPolicies(table_id, row_values, columns, PolicyType::INSERT, true)
+// 3. Error if policy fails: "Row-level security policy violation: INSERT WITH CHECK constraint failed"
+```
+
+**UPDATE USING + WITH CHECK**: `src/sblr/executor.cpp:3893-3945`
+```cpp
+// USING check (line 3893): After WHERE clause, before update
+// 1. Call checkRLSPolicies(table_id, row_values, columns, PolicyType::UPDATE, false)
+// 2. Continue to next row if fails (silent skip - row invisible)
+
+// WITH CHECK (line 3938): After assignments, before serialization
+// 1. Call checkRLSPolicies(table_id, row_values, columns, PolicyType::UPDATE, true)
+// 2. Error if policy fails: "Row-level security policy violation: UPDATE WITH CHECK constraint failed"
+```
+
+**DELETE USING**: `src/sblr/executor.cpp:4262-4270`
+```cpp
+// In row processing loop, before deletion
+// 1. Call checkRLSPolicies(table_id, row_values, columns, PolicyType::DELETE, false)
+// 2. Continue to next row if fails (silent skip - row invisible)
+```
+
+---
+
+## SQL OBJECT PERMISSIONS & OWNERSHIP CHAINING ✅ **PHASE 3.5 COMPLETE** (Nov 12, 2025)
+
+### Catalog Structure Enhancements
+
+**FunctionInfo.owner_id**: `include/scratchbird/core/catalog_manager.h:1763`
+```cpp
+ID owner_id;  // Phase 3.1: Owner user UUID
+```
+
+**ProcedureInfo.owner_id**: `include/scratchbird/core/catalog_manager.h:1787`
+```cpp
+ID owner_id;  // Phase 3.1: Owner user UUID
+```
+
+**TableInfo** (already had): `include/scratchbird/core/catalog_manager.h:252,275`
+```cpp
+ID owner_id;         // Owner UUID reference (NOT name)
+bool rls_forced;     // Force RLS for table owners (line 275)
+```
+
+### Security Context Stack
+
+**File**: `include/scratchbird/core/connection_context.h:118-136`
+**File**: `src/core/connection_context.cpp:894-960`
+
+```cpp
+// Security context for ownership chaining (Phase 3.1)
+enum class SecurityMode : uint8_t {
+    INVOKER = 0,  // Execute with caller's privileges (default)
+    DEFINER = 1   // Execute with owner's privileges
+};
+
+struct SecurityContext {
+    ID effective_user_id;      // Who is executing
+    ID effective_role_id;      // Active role
+    bool is_superuser;         // Superuser flag
+    SecurityMode mode;         // DEFINER or INVOKER
+    ID object_id;              // Current procedure/function/view ID
+};
+
+// Security context stack management
+void pushSecurityContext(const ID& user_id, const ID& role_id,
+                        bool is_superuser_flag, SecurityMode mode,
+                        const ID& object_id);  // cpp:894
+void popSecurityContext();                     // cpp:921
+SecurityContext getCurrentSecurityContext();   // cpp:936
+bool isDefinerContext();                       // cpp:951
+```
+
+### executeFunction Ownership Chaining
+
+**Location**: `src/sblr/executor.cpp:12077-12189`
+
+**Algorithm**:
+1. Lookup function metadata from catalog via getFunction()
+2. Check EXECUTE permission (PERM_EXECUTE = 0x0001)
+3. If SQL SECURITY DEFINER:
+   - Get owner's UserInfo to check superuser status
+   - Push SecurityContext with owner's privileges (owner_id, owner_is_superuser)
+4. If SQL SECURITY INVOKER:
+   - Push SecurityContext with caller's privileges
+5. Execute function body (parameter binding, executeBlock)
+6. Pop SecurityContext (exception-safe with flag tracking)
+
+**Exception Safety**: security_context_pushed flag ensures cleanup
+
+### executeProcedure Ownership Chaining
+
+**Location**: `src/sblr/executor.cpp:12210-12320`
+
+**Algorithm**: Identical to executeFunction (see above)
+
+**Difference**: Procedures don't return values (return_requested_ = false)
+
+### SQL SECURITY Parser Support
+
+**Keywords**: `include/scratchbird/parser/token.h:390-393`
+```cpp
+KW_SQL, KW_SECURITY, KW_DEFINER, KW_INVOKER
+```
+
+**Lexer**: `src/parser/lexer.cpp:334-337`
+
+**Parser**: `src/parser/parser.cpp:1065-1105` (functions), `1141-1181` (procedures)
+```cpp
+// CREATE FUNCTION/PROCEDURE foo() SQL SECURITY {DEFINER|INVOKER} AS ...
+if (check(TokenType::KW_SQL)) {
+    advance(); // SQL
+    consume(TokenType::KW_SECURITY, "Expected SECURITY after SQL");
+    if (check(TokenType::KW_DEFINER))
+        sql_security = SqlSecurity::DEFINER;
+    else if (check(TokenType::KW_INVOKER))
+        sql_security = SqlSecurity::INVOKER;
+}
+```
+
+**AST**: `include/scratchbird/parser/ast.h:2766-2843`
+```cpp
+// CreateFunctionStmt and CreateProcedureStmt
+enum class SqlSecurity : uint8_t {
+    DEFINER = 0,  // Execute with owner's privileges
+    INVOKER = 1   // Execute with caller's privileges (default)
+};
+```
+
+---
+
+**Updated**: 2025-11-12 - Added Phase 3.5 (RLS DML Enforcement + Ownership Chaining)
+**Total Functions**: 136+ (131 catalog + 5 RLS helpers)
+**LOC**: executor.cpp (+1500 lines), catalog_manager.h (+2 owner_id fields)

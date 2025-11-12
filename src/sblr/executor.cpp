@@ -3510,6 +3510,39 @@ namespace scratchbird
                 }
             }
 
+            // Security Phase 3.5: Row-Level Security WITH CHECK enforcement for INSERT
+            // Build row values for RLS check (before actual insert)
+            std::vector<Value> rls_row_values(all_columns.size());
+            for (size_t i = 0; i < values.size(); i++)
+            {
+                rls_row_values[col_indices[i]] = values[i];
+            }
+            // Fill in default/NULL for columns not specified in INSERT
+            for (size_t i = 0; i < all_columns.size(); i++)
+            {
+                bool found = false;
+                for (size_t j = 0; j < col_indices.size(); j++)
+                {
+                    if (col_indices[j] == i)
+                    {
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found)
+                {
+                    rls_row_values[i] = Value(); // NULL
+                }
+            }
+
+            // Check RLS policies with WITH CHECK
+            if (!checkRLSPolicies(table_id, rls_row_values, all_columns,
+                                 core::CatalogManager::PolicyType::INSERT,
+                                 true /* is_with_check */))
+            {
+                error("Row-level security policy violation: INSERT WITH CHECK constraint failed");
+            }
+
             // Insert tuple via storage engine
             uint32_t page_id;
             uint16_t item_id;
@@ -3857,6 +3890,16 @@ namespace scratchbird
                     continue;
                 }
 
+                // Security Phase 3.5: Row-Level Security USING enforcement for UPDATE
+                // Check if user can see/modify this row (old row values)
+                if (!checkRLSPolicies(table_id, row_values, all_columns,
+                                     core::CatalogManager::PolicyType::UPDATE,
+                                     false /* is_using, not with_check */))
+                {
+                    // Row not visible to user - skip update
+                    continue;
+                }
+
                 // Wave 2: Save old row values for triggers
                 std::vector<Value> old_row_values = row_values;
 
@@ -3890,6 +3933,15 @@ namespace scratchbird
                         pc_ = saved_pc;
                         throw;
                     }
+                }
+
+                // Security Phase 3.5: Row-Level Security WITH CHECK enforcement for UPDATE
+                // Check if new row values pass policies (after assignments)
+                if (!checkRLSPolicies(table_id, row_values, all_columns,
+                                     core::CatalogManager::PolicyType::UPDATE,
+                                     true /* is_with_check */))
+                {
+                    error("Row-level security policy violation: UPDATE WITH CHECK constraint failed");
                 }
 
                 // Serialize updated tuple data (same format as INSERT)
@@ -4223,6 +4275,16 @@ namespace scratchbird
 
                 if (!should_delete)
                 {
+                    continue;
+                }
+
+                // Security Phase 3.5: Row-Level Security USING enforcement for DELETE
+                // Check if user can see/delete this row
+                if (!checkRLSPolicies(table_id, row_values, all_columns,
+                                     core::CatalogManager::PolicyType::DELETE,
+                                     false /* is_using, not with_check */))
+                {
+                    // Row not visible to user - skip deletion
                     continue;
                 }
 
@@ -12012,6 +12074,66 @@ namespace scratchbird
             // Read parameter count
             uint8_t param_count = readByte();
 
+            // Security Phase 3.1: Lookup function and check permissions
+            core::CatalogManager::FunctionInfo function_info;
+            core::ErrorContext err_ctx;
+            auto status = db_->catalog_manager()->getFunction(function_name, function_info, &err_ctx);
+            if (status != core::Status::OK)
+            {
+                error("Function not found: " + function_name);
+            }
+
+            // Check EXECUTE permission
+            auto ctx = core::ConnectionContext::getCurrent();
+            if (ctx && !ctx->isSuperuser())
+            {
+                if (!db_->catalog_manager()->hasObjectPermission(
+                    function_info.function_id,
+                    ctx->getCurrentUserId(),
+                    0x0001, // PERM_EXECUTE
+                    &err_ctx))
+                {
+                    error("Permission denied: EXECUTE on function " + function_name);
+                }
+            }
+
+            // Security Phase 3.1: Push security context based on SQL SECURITY mode
+            bool security_context_pushed = false;
+            if (ctx)
+            {
+                if (function_info.sql_security == core::CatalogManager::FunctionInfo::SqlSecurity::DEFINER)
+                {
+                    // Execute with owner's privileges
+                    bool owner_is_superuser = false;
+                    core::CatalogManager::UserInfo owner_info;
+                    if (db_->catalog_manager()->getUser(function_info.owner_id, owner_info, &err_ctx) == core::Status::OK)
+                    {
+                        owner_is_superuser = owner_info.is_superuser;
+                    }
+
+                    ctx->pushSecurityContext(
+                        function_info.owner_id,
+                        core::ID(),  // No role for DEFINER mode
+                        owner_is_superuser,
+                        core::ConnectionContext::SecurityMode::DEFINER,
+                        function_info.function_id
+                    );
+                    security_context_pushed = true;
+                }
+                else
+                {
+                    // INVOKER: Execute with caller's privileges
+                    ctx->pushSecurityContext(
+                        ctx->getCurrentUserId(),
+                        ctx->getActiveRoleId(),
+                        ctx->isSuperuser(),
+                        core::ConnectionContext::SecurityMode::INVOKER,
+                        function_info.function_id
+                    );
+                    security_context_pushed = true;
+                }
+            }
+
             // Initialize variable stack if not already done
             if (!variable_stack_)
             {
@@ -12059,6 +12181,12 @@ namespace scratchbird
             // Pop function frame
             variable_stack_->popFrame();
 
+            // Security Phase 3.1: Pop security context
+            if (security_context_pushed && ctx)
+            {
+                ctx->popSecurityContext();
+            }
+
             // Push return value onto stack
             if (return_requested_)
             {
@@ -12078,6 +12206,66 @@ namespace scratchbird
 
             // Read parameter count
             uint8_t param_count = readByte();
+
+            // Security Phase 3.1: Lookup procedure and check permissions
+            core::CatalogManager::ProcedureInfo procedure_info;
+            core::ErrorContext err_ctx;
+            auto status = db_->catalog_manager()->getProcedure(procedure_name, procedure_info, &err_ctx);
+            if (status != core::Status::OK)
+            {
+                error("Procedure not found: " + procedure_name);
+            }
+
+            // Check EXECUTE permission
+            auto ctx = core::ConnectionContext::getCurrent();
+            if (ctx && !ctx->isSuperuser())
+            {
+                if (!db_->catalog_manager()->hasObjectPermission(
+                    procedure_info.procedure_id,
+                    ctx->getCurrentUserId(),
+                    0x0001, // PERM_EXECUTE
+                    &err_ctx))
+                {
+                    error("Permission denied: EXECUTE on procedure " + procedure_name);
+                }
+            }
+
+            // Security Phase 3.1: Push security context based on SQL SECURITY mode
+            bool security_context_pushed = false;
+            if (ctx)
+            {
+                if (procedure_info.sql_security == core::CatalogManager::ProcedureInfo::SqlSecurity::DEFINER)
+                {
+                    // Execute with owner's privileges
+                    bool owner_is_superuser = false;
+                    core::CatalogManager::UserInfo owner_info;
+                    if (db_->catalog_manager()->getUser(procedure_info.owner_id, owner_info, &err_ctx) == core::Status::OK)
+                    {
+                        owner_is_superuser = owner_info.is_superuser;
+                    }
+
+                    ctx->pushSecurityContext(
+                        procedure_info.owner_id,
+                        core::ID(),  // No role for DEFINER mode
+                        owner_is_superuser,
+                        core::ConnectionContext::SecurityMode::DEFINER,
+                        procedure_info.procedure_id
+                    );
+                    security_context_pushed = true;
+                }
+                else
+                {
+                    // INVOKER: Execute with caller's privileges
+                    ctx->pushSecurityContext(
+                        ctx->getCurrentUserId(),
+                        ctx->getActiveRoleId(),
+                        ctx->isSuperuser(),
+                        core::ConnectionContext::SecurityMode::INVOKER,
+                        procedure_info.procedure_id
+                    );
+                    security_context_pushed = true;
+                }
+            }
 
             // Initialize variable stack if not already done
             if (!variable_stack_)
@@ -12120,6 +12308,12 @@ namespace scratchbird
 
             // Pop procedure frame
             variable_stack_->popFrame();
+
+            // Security Phase 3.1: Pop security context
+            if (security_context_pushed && ctx)
+            {
+                ctx->popSecurityContext();
+            }
 
             // Procedures don't return values
             return_requested_ = false;
@@ -13330,25 +13524,57 @@ namespace scratchbird
             bool has_using_expr = flags & 0x01;
             bool has_with_check_expr = flags & 0x02;
 
-            // TODO: Expression evaluation - for now we'll store empty expressions
-            // In a full implementation, we would:
-            // 1. Read expression bytecode
-            // 2. Evaluate expression to get SQL string representation
-            // 3. Store in catalog
+            // Phase 3.5: Read expression bytecode and serialize to string for TOAST storage
+            // The expressions are stored as SBLR bytecode, which will be evaluated at DML time
+            // For now, we serialize the bytecode to a string format for catalog storage
             std::string using_expr;
             std::string with_check_expr;
 
             if (has_using_expr)
             {
-                // TODO: Read and evaluate expression bytecode
-                // For now, skip the expression bytecode
-                error("Expression evaluation for USING clause not yet implemented");
+                // Read expression bytecode - the expression is already in SBLR format
+                // We need to serialize this bytecode for storage in the catalog
+                size_t expr_start = pc_;
+
+                // Evaluate the expression structure to find its end
+                // This will skip over the expression bytecode
+                evaluateExpression();
+
+                size_t expr_end = pc_;
+                size_t expr_length = expr_end - expr_start;
+
+                // Serialize bytecode as hex string for catalog storage
+                // Format: "0xXXXXXX..." representing the SBLR bytecode
+                using_expr.reserve(2 + expr_length * 2);
+                using_expr = "0x";
+                for (size_t i = expr_start; i < expr_end; i++)
+                {
+                    char buf[3];
+                    snprintf(buf, sizeof(buf), "%02x", bytecode_[i]);
+                    using_expr += buf;
+                }
             }
 
             if (has_with_check_expr)
             {
-                // TODO: Read and evaluate expression bytecode
-                error("Expression evaluation for WITH CHECK clause not yet implemented");
+                // Read WITH CHECK expression bytecode
+                size_t expr_start = pc_;
+
+                // Evaluate the expression structure to find its end
+                evaluateExpression();
+
+                size_t expr_end = pc_;
+                size_t expr_length = expr_end - expr_start;
+
+                // Serialize bytecode as hex string for catalog storage
+                with_check_expr.reserve(2 + expr_length * 2);
+                with_check_expr = "0x";
+                for (size_t i = expr_start; i < expr_end; i++)
+                {
+                    char buf[3];
+                    snprintf(buf, sizeof(buf), "%02x", bytecode_[i]);
+                    with_check_expr += buf;
+                }
             }
 
             // Permission check: Only superusers or table owners can create policies
@@ -13611,6 +13837,302 @@ namespace scratchbird
             db_->permission_cache()->insert(cache_key, has_permission);
 
             return has_permission;
+        }
+
+        // ===== Row-Level Security Helpers (Phase 3.5 - RLS DML Enforcement) =====
+
+        bool Executor::shouldEnforceRLS(const core::ID& table_id)
+        {
+            // No connection context - enforce RLS (conservative)
+            if (!conn_ctx_)
+            {
+                return true;
+            }
+
+            // Get table info to check RLS settings and owner
+            core::CatalogManager::TableInfo table_info;
+            core::ErrorContext err_ctx;
+            auto status = db_->catalog_manager()->getTable(table_id, table_info, &err_ctx);
+            if (status != core::Status::OK)
+            {
+                // Can't get table info - enforce RLS (conservative)
+                return true;
+            }
+
+            // Check if RLS is enabled on the table
+            if (!table_info.rls_enabled)
+            {
+                return false; // RLS not enabled for this table
+            }
+
+            // Check if FORCE RLS is set
+            if (table_info.rls_forced)
+            {
+                return true; // FORCE RLS - even owners and superusers must obey
+            }
+
+            // Superusers bypass RLS (unless FORCE RLS is set, checked above)
+            if (conn_ctx_->isSuperuser())
+            {
+                return false;
+            }
+
+            // Table owners bypass RLS (unless FORCE RLS is set, checked above)
+            if (conn_ctx_->getCurrentUserId() == table_info.owner_id)
+            {
+                return false;
+            }
+
+            // Non-owner, non-superuser, RLS enabled - enforce RLS
+            return true;
+        }
+
+        bool Executor::checkRLSPolicies(const core::ID& table_id,
+                                       const std::vector<Value>& row_values,
+                                       const std::vector<core::CatalogManager::ColumnInfo>& columns,
+                                       core::CatalogManager::PolicyType policy_type,
+                                       bool is_with_check)
+        {
+            // Check if RLS should be enforced for this user
+            if (!shouldEnforceRLS(table_id))
+            {
+                return true; // Bypass RLS
+            }
+
+            // Get active policies for this table and operation type
+            std::vector<core::CatalogManager::PolicyInfo> all_policies;
+            core::ErrorContext err_ctx;
+            auto status = db_->catalog_manager()->getTablePolicies(
+                table_id, policy_type, all_policies, &err_ctx);
+
+            if (status != core::Status::OK)
+            {
+                // Error getting policies - deny access (conservative)
+                return false;
+            }
+
+            // Filter to only enabled policies
+            std::vector<core::CatalogManager::PolicyInfo> policies;
+            for (const auto& p : all_policies)
+            {
+                if (p.is_enabled)
+                {
+                    policies.push_back(p);
+                }
+            }
+
+            // No policies = allow (RLS enabled but no restrictions)
+            if (policies.empty())
+            {
+                return true;
+            }
+
+            // Check each policy (AND semantics - all must pass)
+            for (const auto& policy : policies)
+            {
+                // Check if policy applies to current user/role
+                if (!policyAppliesToUser(policy))
+                {
+                    continue; // Skip policies that don't apply
+                }
+
+                // Get the appropriate expression (USING or WITH CHECK)
+                const std::string& expr_hex = is_with_check ? policy.with_check_expr
+                                                             : policy.using_expr;
+
+                // Skip if expression is empty
+                if (expr_hex.empty())
+                {
+                    // No expression means policy always passes
+                    continue;
+                }
+
+                // Deserialize expression from hex
+                std::vector<uint8_t> expr_bytecode = hexToBytes(expr_hex);
+                if (expr_bytecode.empty())
+                {
+                    // Failed to deserialize - deny access (conservative)
+                    return false;
+                }
+
+                // Evaluate expression with row context
+                bool result = evaluatePolicyExpression(expr_bytecode, row_values, columns);
+                if (!result)
+                {
+                    // Policy violation - deny access
+                    return false;
+                }
+            }
+
+            // All applicable policies passed
+            return true;
+        }
+
+        bool Executor::policyAppliesToUser(const core::CatalogManager::PolicyInfo& policy)
+        {
+            // If policy has no role restrictions, it applies to everyone
+            if (policy.roles.empty())
+            {
+                return true;
+            }
+
+            // Check if current user or active role is in the policy's role list
+            if (!conn_ctx_)
+            {
+                return false; // No context - conservative denial
+            }
+
+            const core::ID& current_user_id = conn_ctx_->getCurrentUserId();
+            const core::ID& active_role_id = conn_ctx_->getActiveRoleId();
+
+            // NOTE: policy.roles currently stores role NAMES (not UUIDs)
+            // This should be changed to store UUIDs in the future
+            // For now, we resolve the names to check membership
+
+            core::ErrorContext err_ctx;
+
+            // Check if current user is in the policy's role list
+            core::CatalogManager::UserInfo user_info;
+            if (db_->catalog_manager()->getUser(current_user_id, user_info, &err_ctx) == core::Status::OK)
+            {
+                for (const auto& role_name : policy.roles)
+                {
+                    if (user_info.username == role_name)
+                    {
+                        return true; // User directly listed in policy
+                    }
+                }
+            }
+
+            // Check if active role is in the policy's role list
+            core::ID zero_id{};  // Zero-initialized UUID
+            if (active_role_id != zero_id)
+            {
+                core::CatalogManager::RoleInfo role_info;
+                if (db_->catalog_manager()->getRole(active_role_id, role_info, &err_ctx) == core::Status::OK)
+                {
+                    for (const auto& role_name : policy.roles)
+                    {
+                        if (role_info.role_name == role_name)
+                        {
+                            return true; // Active role listed in policy
+                        }
+                    }
+                }
+            }
+
+            // TODO: Check transitive role membership (roles inherited from groups)
+            // For now, only check direct user and active role
+
+            return false; // User/role not in policy's role list
+        }
+
+        std::vector<uint8_t> Executor::hexToBytes(const std::string& hex_str)
+        {
+            std::vector<uint8_t> bytes;
+
+            // Check for "0x" prefix
+            size_t start_pos = 0;
+            if (hex_str.size() >= 2 && hex_str[0] == '0' && hex_str[1] == 'x')
+            {
+                start_pos = 2;
+            }
+
+            // Hex string must have even number of characters
+            size_t hex_len = hex_str.size() - start_pos;
+            if (hex_len % 2 != 0)
+            {
+                return {}; // Invalid hex string
+            }
+
+            bytes.reserve(hex_len / 2);
+
+            for (size_t i = start_pos; i < hex_str.size(); i += 2)
+            {
+                char high = hex_str[i];
+                char low = hex_str[i + 1];
+
+                // Convert hex characters to nibbles
+                auto hex_to_nibble = [](char c) -> int {
+                    if (c >= '0' && c <= '9') return c - '0';
+                    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+                    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+                    return -1; // Invalid hex digit
+                };
+
+                int high_nibble = hex_to_nibble(high);
+                int low_nibble = hex_to_nibble(low);
+
+                if (high_nibble < 0 || low_nibble < 0)
+                {
+                    return {}; // Invalid hex digit
+                }
+
+                bytes.push_back(static_cast<uint8_t>((high_nibble << 4) | low_nibble));
+            }
+
+            return bytes;
+        }
+
+        bool Executor::evaluatePolicyExpression(const std::vector<uint8_t>& expr_bytecode,
+                                               const std::vector<Value>& row_values,
+                                               const std::vector<core::CatalogManager::ColumnInfo>& columns)
+        {
+            // Save current execution state
+            size_t saved_pc = pc_;
+            const uint8_t* saved_bytecode = bytecode_;
+            size_t saved_bytecode_size = bytecode_size_;
+
+            // Set up new execution context with expression bytecode
+            bytecode_ = expr_bytecode.data();
+            bytecode_size_ = expr_bytecode.size();
+            pc_ = 0;
+
+            // Set up row context so column references resolve to row_values
+            current_row_values_ = &row_values;
+            current_row_columns_ = &columns;
+
+            try
+            {
+                // Evaluate the expression
+                evaluateExpression();
+
+                // Get result from stack
+                if (stack_.empty())
+                {
+                    // No result - expression invalid
+                    // Restore state
+                    bytecode_ = saved_bytecode;
+                    bytecode_size_ = saved_bytecode_size;
+                    pc_ = saved_pc;
+                    current_row_values_ = nullptr;
+                    current_row_columns_ = nullptr;
+                    return false;
+                }
+
+                Value result = stack_.top();
+                stack_.pop();
+
+                // Restore execution state
+                bytecode_ = saved_bytecode;
+                bytecode_size_ = saved_bytecode_size;
+                pc_ = saved_pc;
+                current_row_values_ = nullptr;
+                current_row_columns_ = nullptr;
+
+                // Convert result to boolean using Value API
+                return result.toBoolean();
+            }
+            catch (...)
+            {
+                // Expression evaluation failed - restore state and deny access
+                bytecode_ = saved_bytecode;
+                bytecode_size_ = saved_bytecode_size;
+                pc_ = saved_pc;
+                current_row_values_ = nullptr;
+                current_row_columns_ = nullptr;
+                return false;
+            }
         }
 
     } // namespace sblr

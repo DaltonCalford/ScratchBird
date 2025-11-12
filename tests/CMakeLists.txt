@@ -638,3 +638,45 @@ set_tests_properties(SecurityPhase2 PROPERTIES
     LABELS "integration;security;phase2;alpha"
     TIMEOUT 120
 )
+
+# ============================================================================
+# Security System Phase 3.4 Integration Test (RLS DDL)
+# ============================================================================
+
+add_executable(test_security_phase3_4_rls
+    integration/test_security_phase3_4_rls.cpp
+)
+target_link_libraries(test_security_phase3_4_rls
+    scratchbird_core
+    scratchbird_parser
+    scratchbird_sblr
+    scratchbird_optimizer
+    gtest
+    gtest_main
+)
+add_test(NAME SecurityPhase3_4_RLS COMMAND test_security_phase3_4_rls)
+set_tests_properties(SecurityPhase3_4_RLS PROPERTIES
+    LABELS "integration;security;phase3;rls;ddl"
+    TIMEOUT 120
+)
+
+# ============================================================================
+# Security System Phase 3.5 Integration Test (RLS DML Enforcement)
+# ============================================================================
+
+add_executable(test_security_phase3_5_rls_dml
+    integration/test_security_phase3_5_rls_dml.cpp
+)
+target_link_libraries(test_security_phase3_5_rls_dml
+    scratchbird_core
+    scratchbird_parser
+    scratchbird_sblr
+    scratchbird_optimizer
+    gtest
+    gtest_main
+)
+add_test(NAME SecurityPhase3_5_RLS_DML COMMAND test_security_phase3_5_rls_dml)
+set_tests_properties(SecurityPhase3_5_RLS_DML PROPERTIES
+    LABELS "integration;security;phase3;rls;dml;enforcement"
+    TIMEOUT 120
+)
