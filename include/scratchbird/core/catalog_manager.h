@@ -362,7 +362,8 @@ namespace scratchbird::core
             uint16_t charset = 0;           // Character set (0 = inherit from table)
             uint16_t timezone_hint = 0;     // Timezone ID for display (0 = use connection default)
             uint32_t collation_id = 0;      // Collation ID (0 = inherit from table)
-            std::string default_value;      // Serialized default
+            std::string default_value;      // Serialized default (simple literals)
+            std::string default_expr;       // DEFAULT expression (hex bytecode, ALPHA Phase A)
             uint32_t default_value_oid = 0; // TOAST reference for large defaults
             std::string check_expr;         // CHECK constraint expression (hex bytecode)
             uint32_t check_expr_oid = 0;    // TOAST reference for check expressions
