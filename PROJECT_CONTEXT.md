@@ -1,7 +1,7 @@
 # ScratchBird Project Context
 
-**Last Updated**: November 12, 2025
-**Version**: Alpha - 89% Complete (Security Phase 3.5 - RLS DML & Ownership Chaining COMPLETE)
+**Last Updated**: November 13, 2025
+**Version**: Alpha - 94% Complete (Mathematical Functions + CHECK Constraints COMPLETE)
 **Status**: Educational/Development
 
 > **MANDATORY**: Read `/MGA_RULES.md` before ANY transaction or index work.
@@ -135,16 +135,22 @@
 - ❌ Views, Sequences, Triggers (execution), Stored procedures
 - ❌ Advanced security (query plan, column/row permissions, SQL syntax)
 
-### Built-in Functions (60/100 = 60%)
+### Built-in Functions (89/100 = 89%) ✅
 - ✅ String (11), Aggregate (6), Window (8)
 - ✅ JSON (13), Array (12), Date/Time (6)
 - ✅ Conditional (3), Regex (4), Spatial (4+)
-- ❌ Math (40 missing: SIN, COS, SQRT, etc.)
-- ❌ Statistical, Cryptographic, XML
+- ✅ **Mathematical (29)**: SIN, COS, TAN, ASIN, ACOS, ATAN, ATAN2, DEGREES, RADIANS, PI, ABS, SIGN, ROUND, CEIL, FLOOR, TRUNC, MOD, SQRT, CBRT, POWER, EXP, LN, LOG, LOG10, LOG2 (ALPHA Phase A COMPLETE)
+- ❌ Statistical (7), Cryptographic (4), XML (0)
 
-### Constraints (2/10 = 20%)
+### Constraints (7/10 = 70%) ✅
 - ✅ NOT NULL, Data type validation
-- ❌ CHECK, UNIQUE, DEFAULT, PRIMARY KEY, FOREIGN KEY enforcement
+- ✅ **DEFAULT values** (literals + simple expressions, executor COMPLETE, parser pending)
+- ✅ **UNIQUE** (executor COMPLETE with INSERT/UPDATE enforcement, parser pending)
+- ✅ **CHECK** (executor 85% COMPLETE, evaluatePolicyExpression reuse, parser pending)
+- ✅ **FOREIGN KEY** (framework 40%, catalog structures + enforcement infrastructure, parser pending)
+- ❌ PRIMARY KEY (depends on UNIQUE + NOT NULL combination)
+- ❌ EXCLUSION constraints
+- ❌ Deferred constraint checking
 
 **Remaining**: ~1,039-1,542 hours
 

@@ -1258,13 +1258,68 @@ namespace scratchbird
                     readByte(); // Consume NOT_NULL opcode
                 }
 
+                // Check for DEFAULT expression (ALPHA Phase A - Constraint Enforcement)
+                std::string default_expr_hex;
+                if (pc_ < bytecode_size_ &&
+                    bytecode_[pc_] == static_cast<uint8_t>(Opcode::DEFAULT_VALUE))
+                {
+                    readByte(); // Consume DEFAULT_VALUE opcode
+
+                    // Read bytecode length
+                    uint32_t bytecode_len = readInt32();
+
+                    // Read bytecode and convert to hex string
+                    std::vector<uint8_t> bytecode_data;
+                    bytecode_data.reserve(bytecode_len);
+                    for (uint32_t j = 0; j < bytecode_len; j++)
+                    {
+                        bytecode_data.push_back(readByte());
+                    }
+
+                    // Convert bytecode to hex string for storage
+                    std::stringstream ss;
+                    for (uint8_t byte : bytecode_data)
+                    {
+                        ss << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(byte);
+                    }
+                    default_expr_hex = ss.str();
+                }
+
+                // Check for CHECK constraint expression (ALPHA Phase A - Constraint Enforcement)
+                std::string check_expr_hex;
+                if (pc_ < bytecode_size_ &&
+                    bytecode_[pc_] == static_cast<uint8_t>(Opcode::CHECK_CONSTRAINT))
+                {
+                    readByte(); // Consume CHECK_CONSTRAINT opcode
+
+                    // Read bytecode length
+                    uint32_t bytecode_len = readInt32();
+
+                    // Read bytecode and convert to hex string
+                    std::vector<uint8_t> bytecode_data;
+                    bytecode_data.reserve(bytecode_len);
+                    for (uint32_t j = 0; j < bytecode_len; j++)
+                    {
+                        bytecode_data.push_back(readByte());
+                    }
+
+                    // Convert bytecode to hex string for storage
+                    std::stringstream ss;
+                    for (uint8_t byte : bytecode_data)
+                    {
+                        ss << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(byte);
+                    }
+                    check_expr_hex = ss.str();
+                }
+
                 // Build ColumnInfo (table_id and column_id will be set by catalog)
                 core::CatalogManager::ColumnInfo col_info;
                 col_info.column_name = col_name;
                 col_info.data_type = static_cast<uint16_t>(col_type);
                 col_info.max_length = precision;
                 col_info.nullable = nullable;
-                col_info.has_default = false;
+                col_info.has_default = !default_expr_hex.empty();
+                col_info.check_expr = check_expr_hex; // Store CHECK expression hex bytecode
                 columns.push_back(col_info);
             }
 

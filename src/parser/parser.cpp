@@ -633,22 +633,65 @@ namespace scratchbird
                 return nullptr;
             }
 
+            // Parse column constraints (can appear in any order)
             bool nullable = true;
-            if (match(TokenType::KW_NOT))
+            Expression *default_value = nullptr;
+            Expression *check_expr = nullptr;
+
+            // Loop through potential constraints
+            while (true)
             {
-                if (!consume(TokenType::KW_NULL, "Expected NULL after NOT"))
+                if (match(TokenType::KW_NOT))
                 {
-                    return nullptr;
+                    if (!consume(TokenType::KW_NULL, "Expected NULL after NOT"))
+                    {
+                        return nullptr;
+                    }
+                    nullable = false;
                 }
-                nullable = false;
-            }
-            else if (match(TokenType::KW_NULL))
-            {
-                nullable = true;
+                else if (match(TokenType::KW_NULL))
+                {
+                    nullable = true;
+                }
+                else if (match(TokenType::KW_DEFAULT))
+                {
+                    // Parse DEFAULT expression
+                    default_value = parseExpression();
+                    if (default_value == nullptr)
+                    {
+                        error("Expected expression after DEFAULT");
+                        return nullptr;
+                    }
+                }
+                else if (match(TokenType::KW_CHECK))
+                {
+                    // Parse CHECK constraint: CHECK (expression)
+                    if (!consume(TokenType::LEFT_PAREN, "Expected '(' after CHECK"))
+                    {
+                        return nullptr;
+                    }
+
+                    check_expr = parseExpression();
+                    if (check_expr == nullptr)
+                    {
+                        error("Expected expression in CHECK constraint");
+                        return nullptr;
+                    }
+
+                    if (!consume(TokenType::RIGHT_PAREN, "Expected ')' after CHECK expression"))
+                    {
+                        return nullptr;
+                    }
+                }
+                else
+                {
+                    // No more constraints
+                    break;
+                }
             }
 
             auto span = makeSpan(start_loc);
-            return arena_.make<ColumnDef>(span, col_name, type, nullable);
+            return arena_.make<ColumnDef>(span, col_name, type, nullable, 0, 0, default_value, check_expr);
         }
 
         TypeName Parser::parseTypeName()
