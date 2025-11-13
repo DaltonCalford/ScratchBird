@@ -583,6 +583,53 @@ namespace scratchbird
                                         const std::vector<Value>& row_values,
                                         const std::vector<core::CatalogManager::ColumnInfo>& columns);
 
+            // ALPHA Phase A: Evaluate DEFAULT value expression for a column
+            // For now, supports simple constant defaults (numbers, strings, booleans, NULL)
+            // Future: Support function calls like NOW(), CURRENT_USER, etc.
+            Value evaluateDefaultValue(const core::CatalogManager::ColumnInfo& column);
+
+            // ALPHA Phase A: Evaluate CHECK constraint for a column
+            // Returns true if constraint passes, false if it fails
+            bool evaluateCheckConstraint(const core::CatalogManager::ColumnInfo& column,
+                                        const std::vector<Value>& row_values,
+                                        const std::vector<core::CatalogManager::ColumnInfo>& columns);
+
+            // ALPHA Phase A: Check for UNIQUE constraint violation
+            // Returns true if a duplicate value exists (violation), false if value is unique
+            bool checkUniqueViolation(const core::ID& table_id,
+                                     const core::CatalogManager::ColumnInfo& column,
+                                     const Value& value,
+                                     const std::vector<core::CatalogManager::ColumnInfo>& all_columns);
+
+            // ALPHA Phase A: Check for UNIQUE constraint violation during UPDATE
+            // Similar to checkUniqueViolation, but excludes the row being updated (identified by TID)
+            bool checkUniqueViolationForUpdate(const core::ID& table_id,
+                                              const core::CatalogManager::ColumnInfo& column,
+                                              const Value& value,
+                                              const std::vector<core::CatalogManager::ColumnInfo>& all_columns,
+                                              const core::TID& exclude_tid);
+
+            // ALPHA Phase A: Compare two values for equality (for UNIQUE constraint checking)
+            bool valuesEqual(const Value& a, const Value& b);
+
+            // ALPHA Phase A: Foreign Key constraint enforcement
+            // Check if FK constraint is satisfied on INSERT/UPDATE (child table)
+            bool checkForeignKeyExists(const core::ID& parent_table_id,
+                                      const std::vector<std::string>& parent_columns,
+                                      const std::vector<Value>& fk_values,
+                                      const std::vector<core::CatalogManager::ColumnInfo>& parent_cols);
+
+            // Apply FK referential action on DELETE (parent table)
+            void applyFKActionOnDelete(const core::ID& parent_table_id,
+                                      const std::vector<Value>& deleted_key_values,
+                                      const std::vector<core::CatalogManager::ColumnInfo>& parent_cols);
+
+            // Apply FK referential action on UPDATE (parent table)
+            void applyFKActionOnUpdate(const core::ID& parent_table_id,
+                                      const std::vector<Value>& old_key_values,
+                                      const std::vector<Value>& new_key_values,
+                                      const std::vector<core::CatalogManager::ColumnInfo>& parent_cols);
+
         public:
             // Forward declaration
             class TriggerContext;

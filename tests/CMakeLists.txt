@@ -698,3 +698,21 @@ set_tests_properties(MathematicalFunctions PROPERTIES
     LABELS "integration;functions;math;trigonometry;algebra;logarithm"
     TIMEOUT 60
 )
+
+# CHECK Constraints Tests (ALPHA Phase A - Constraint Enforcement)
+add_executable(test_check_constraints
+    integration/test_check_constraints.cpp
+)
+target_link_libraries(test_check_constraints
+    scratchbird_core
+    scratchbird_parser
+    scratchbird_sblr
+    scratchbird_optimizer
+    gtest
+    gtest_main
+)
+add_test(NAME CheckConstraints COMMAND test_check_constraints)
+set_tests_properties(CheckConstraints PROPERTIES
+    LABELS "integration;constraints;check;enforcement"
+    TIMEOUT 60
+)
