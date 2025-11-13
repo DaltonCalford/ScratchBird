@@ -1319,7 +1319,8 @@ namespace scratchbird
                 col_info.max_length = precision;
                 col_info.nullable = nullable;
                 col_info.has_default = !default_expr_hex.empty();
-                col_info.check_expr = check_expr_hex; // Store CHECK expression hex bytecode
+                col_info.default_expr = default_expr_hex; // Store DEFAULT expression hex bytecode
+                col_info.check_expr = check_expr_hex;     // Store CHECK expression hex bytecode
                 columns.push_back(col_info);
             }
 
@@ -14951,6 +14952,68 @@ namespace scratchbird
         // Future: Support function calls like NOW(), CURRENT_USER, etc.
         Value Executor::evaluateDefaultValue(const core::CatalogManager::ColumnInfo& column)
         {
+            // ALPHA Phase A: Prefer bytecode expression over simple string value
+            if (!column.default_expr.empty())
+            {
+                // Evaluate DEFAULT expression bytecode
+                std::vector<uint8_t> expr_bytecode = hexToBytes(column.default_expr);
+                if (expr_bytecode.empty())
+                {
+                    DEBUG_LOG_DB("Failed to deserialize DEFAULT expression for column "
+                               << column.column_name << " - using NULL");
+                    return Value::makeNull();
+                }
+
+                // Save execution state
+                const uint8_t *saved_bytecode = bytecode_;
+                size_t saved_bytecode_size = bytecode_size_;
+                size_t saved_pc = pc_;
+
+                // Set up bytecode for expression evaluation
+                bytecode_ = expr_bytecode.data();
+                bytecode_size_ = expr_bytecode.size();
+                pc_ = 0;
+
+                try
+                {
+                    // Evaluate the DEFAULT expression
+                    evaluateExpression();
+
+                    // Get result from stack
+                    if (stack_.empty())
+                    {
+                        // No result - expression invalid
+                        bytecode_ = saved_bytecode;
+                        bytecode_size_ = saved_bytecode_size;
+                        pc_ = saved_pc;
+                        DEBUG_LOG_DB("DEFAULT expression for column " << column.column_name
+                                   << " produced no result - using NULL");
+                        return Value::makeNull();
+                    }
+
+                    Value result = stack_.top();
+                    stack_.pop();
+
+                    // Restore execution state
+                    bytecode_ = saved_bytecode;
+                    bytecode_size_ = saved_bytecode_size;
+                    pc_ = saved_pc;
+
+                    return result;
+                }
+                catch (...)
+                {
+                    // Expression evaluation failed - restore state and return NULL
+                    bytecode_ = saved_bytecode;
+                    bytecode_size_ = saved_bytecode_size;
+                    pc_ = saved_pc;
+                    DEBUG_LOG_DB("DEFAULT expression evaluation failed for column "
+                               << column.column_name << " - using NULL");
+                    return Value::makeNull();
+                }
+            }
+
+            // Fallback to simple string parsing (backward compatibility)
             const std::string& default_str = column.default_value;
 
             // Handle NULL
@@ -15010,7 +15073,8 @@ namespace scratchbird
             catch (const std::exception&)
             {
                 // Not a valid number - return NULL as fallback
-                // TODO: Log warning about invalid DEFAULT value
+                DEBUG_LOG_DB("Invalid DEFAULT value for column " << column.column_name
+                           << ": '" << default_str << "' - using NULL");
                 return Value::makeNull();
             }
         }
