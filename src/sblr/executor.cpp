@@ -3517,7 +3517,7 @@ namespace scratchbird
             {
                 rls_row_values[col_indices[i]] = values[i];
             }
-            // Fill in default/NULL for columns not specified in INSERT
+            // ALPHA Phase A: Fill in DEFAULT values or NULL for columns not specified in INSERT
             for (size_t i = 0; i < all_columns.size(); i++)
             {
                 bool found = false;
@@ -3531,7 +3531,18 @@ namespace scratchbird
                 }
                 if (!found)
                 {
-                    rls_row_values[i] = Value(); // NULL
+                    // Check if column has DEFAULT value
+                    if (all_columns[i].has_default && !all_columns[i].default_value.empty())
+                    {
+                        // Try to evaluate DEFAULT value
+                        Value default_val = evaluateDefaultValue(all_columns[i]);
+                        rls_row_values[i] = default_val;
+                    }
+                    else
+                    {
+                        // No DEFAULT - use NULL
+                        rls_row_values[i] = Value(); // NULL
+                    }
                 }
             }
 
@@ -3542,6 +3553,79 @@ namespace scratchbird
             {
                 error("Row-level security policy violation: INSERT WITH CHECK constraint failed");
             }
+
+            // ALPHA Phase A: Enforce CHECK constraints on columns
+            for (size_t i = 0; i < all_columns.size(); i++)
+            {
+                const auto& col = all_columns[i];
+                if (col.check_expr_oid != 0)
+                {
+                    // Column has a CHECK constraint - evaluate it
+                    if (!evaluateCheckConstraint(col, rls_row_values, all_columns))
+                    {
+                        error("CHECK constraint violation on column '" + col.column_name + "'");
+                    }
+                }
+            }
+
+            // ALPHA Phase A: Enforce UNIQUE constraints on columns
+            for (size_t i = 0; i < all_columns.size(); i++)
+            {
+                const auto& col = all_columns[i];
+                if (col.is_unique && !rls_row_values[i].isNull())
+                {
+                    // Column has a UNIQUE constraint and value is not NULL
+                    // Check if value already exists in table
+                    if (checkUniqueViolation(table_id, col, rls_row_values[i], all_columns))
+                    {
+                        error("UNIQUE constraint violation on column '" + col.column_name + "'");
+                    }
+                }
+            }
+
+            // ALPHA Phase A: Enforce FOREIGN KEY constraints on columns
+            // TODO: When FK catalog is fully implemented, uncomment this block
+            /*
+            // Get all FKs for this table
+            std::vector<core::CatalogManager::ForeignKeyInfo> fks;
+            auto fk_status = db_->catalog_manager()->getForeignKeysForTable(table_id, fks, nullptr);
+
+            if (fk_status == core::Status::OK)
+            {
+                for (const auto& fk : fks)
+                {
+                    if (!fk.is_enabled) continue;
+
+                    // Collect FK column values
+                    std::vector<Value> fk_values;
+                    for (const auto& col_name : fk.child_columns)
+                    {
+                        // Find column index
+                        for (size_t i = 0; i < all_columns.size(); i++)
+                        {
+                            if (all_columns[i].column_name == col_name)
+                            {
+                                fk_values.push_back(rls_row_values[i]);
+                                break;
+                            }
+                        }
+                    }
+
+                    // Get parent table columns
+                    std::vector<core::CatalogManager::ColumnInfo> parent_cols;
+                    auto col_status = db_->catalog_manager()->getColumns(fk.parent_table_id, parent_cols, nullptr);
+
+                    if (col_status == core::Status::OK)
+                    {
+                        // Check if FK values exist in parent table
+                        if (!checkForeignKeyExists(fk.parent_table_id, fk.parent_columns, fk_values, parent_cols))
+                        {
+                            error("Foreign key constraint violation on '" + fk.fk_name + "'");
+                        }
+                    }
+                }
+            }
+            */
 
             // Insert tuple via storage engine
             uint32_t page_id;
@@ -3943,6 +4027,96 @@ namespace scratchbird
                 {
                     error("Row-level security policy violation: UPDATE WITH CHECK constraint failed");
                 }
+
+                // ALPHA Phase A: Enforce CHECK constraints on updated columns
+                for (const auto& assign : assignments)
+                {
+                    const auto& col = all_columns[assign.column_index];
+                    if (col.check_expr_oid != 0)
+                    {
+                        // Column has a CHECK constraint - evaluate it
+                        if (!evaluateCheckConstraint(col, row_values, all_columns))
+                        {
+                            error("CHECK constraint violation on column '" + col.column_name + "'");
+                        }
+                    }
+                }
+
+                // ALPHA Phase A: Enforce UNIQUE constraints on updated columns
+                for (const auto& assign : assignments)
+                {
+                    const auto& col = all_columns[assign.column_index];
+                    if (col.is_unique && !row_values[assign.column_index].isNull())
+                    {
+                        // Column has a UNIQUE constraint and new value is not NULL
+                        // Check if the new value already exists in another row
+                        // Note: We need to exclude the current row from the check
+                        if (checkUniqueViolationForUpdate(table_id, col, row_values[assign.column_index],
+                                                         all_columns, tuple.tid))
+                        {
+                            error("UNIQUE constraint violation on column '" + col.column_name + "'");
+                        }
+                    }
+                }
+
+                // ALPHA Phase A: Enforce FOREIGN KEY constraints on updated columns
+                // TODO: When FK catalog is fully implemented, uncomment this block
+                /*
+                // Get all FKs for this table (child FKs)
+                std::vector<core::CatalogManager::ForeignKeyInfo> fks;
+                auto fk_status = db_->catalog_manager()->getForeignKeysForTable(table_id, fks, nullptr);
+
+                if (fk_status == core::Status::OK)
+                {
+                    for (const auto& fk : fks)
+                    {
+                        if (!fk.is_enabled) continue;
+
+                        // Check if any FK column was updated
+                        bool fk_updated = false;
+                        for (const auto& assign : assignments)
+                        {
+                            const auto& col_name = all_columns[assign.column_index].column_name;
+                            if (std::find(fk.child_columns.begin(), fk.child_columns.end(), col_name)
+                                != fk.child_columns.end())
+                            {
+                                fk_updated = true;
+                                break;
+                            }
+                        }
+
+                        if (fk_updated)
+                        {
+                            // Collect FK column values
+                            std::vector<Value> fk_values;
+                            for (const auto& col_name : fk.child_columns)
+                            {
+                                for (size_t i = 0; i < all_columns.size(); i++)
+                                {
+                                    if (all_columns[i].column_name == col_name)
+                                    {
+                                        fk_values.push_back(row_values[i]);
+                                        break;
+                                    }
+                                }
+                            }
+
+                            // Get parent table columns
+                            std::vector<core::CatalogManager::ColumnInfo> parent_cols;
+                            auto col_status = db_->catalog_manager()->getColumns(fk.parent_table_id, parent_cols, nullptr);
+
+                            if (col_status == core::Status::OK)
+                            {
+                                // Check if FK values exist in parent table
+                                if (!checkForeignKeyExists(fk.parent_table_id, fk.parent_columns, fk_values, parent_cols))
+                                {
+                                    error("Foreign key constraint violation on '" + fk.fk_name + "'");
+                                }
+                            }
+                        }
+                    }
+                }
+                */
 
                 // Serialize updated tuple data (same format as INSERT)
                 std::vector<uint8_t> new_tuple_data;
@@ -14715,6 +14889,396 @@ namespace scratchbird
                 current_row_columns_ = nullptr;
                 return false;
             }
+        }
+
+        // ALPHA Phase A: Evaluate DEFAULT value expression for a column
+        // For now, supports simple constant defaults (numbers, strings, booleans, NULL)
+        // Future: Support function calls like NOW(), CURRENT_USER, etc.
+        Value Executor::evaluateDefaultValue(const core::CatalogManager::ColumnInfo& column)
+        {
+            const std::string& default_str = column.default_value;
+
+            // Handle NULL
+            if (default_str == "NULL" || default_str.empty())
+            {
+                return Value::makeNull();
+            }
+
+            // Handle boolean literals
+            if (default_str == "TRUE" || default_str == "true" || default_str == "t")
+            {
+                return Value::makeBoolean(true);
+            }
+            if (default_str == "FALSE" || default_str == "false" || default_str == "f")
+            {
+                return Value::makeBoolean(false);
+            }
+
+            // Handle string literals (enclosed in single quotes)
+            if (default_str.size() >= 2 && default_str.front() == '\'' && default_str.back() == '\'')
+            {
+                std::string str_value = default_str.substr(1, default_str.size() - 2);
+                // Handle escaped quotes
+                size_t pos = 0;
+                while ((pos = str_value.find("''", pos)) != std::string::npos)
+                {
+                    str_value.replace(pos, 2, "'");
+                    pos++;
+                }
+                return Value::makeVarchar(str_value);
+            }
+
+            // Handle numeric literals
+            try
+            {
+                // Check if it's a float (contains '.' or 'e'/'E')
+                if (default_str.find('.') != std::string::npos ||
+                    default_str.find('e') != std::string::npos ||
+                    default_str.find('E') != std::string::npos)
+                {
+                    double d = std::stod(default_str);
+                    return Value::makeFloat64(d);
+                }
+                else
+                {
+                    // Try as int64
+                    int64_t i = std::stoll(default_str);
+
+                    // Check if it fits in int32
+                    if (i >= INT32_MIN && i <= INT32_MAX)
+                    {
+                        return Value::makeInt32(static_cast<int32_t>(i));
+                    }
+                    return Value::makeInt64(i);
+                }
+            }
+            catch (const std::exception&)
+            {
+                // Not a valid number - return NULL as fallback
+                // TODO: Log warning about invalid DEFAULT value
+                return Value::makeNull();
+            }
+        }
+
+        // ALPHA Phase A: Evaluate CHECK constraint for a column
+        // Returns true if constraint passes, false if it fails
+        bool Executor::evaluateCheckConstraint(const core::CatalogManager::ColumnInfo& column,
+                                               const std::vector<Value>& row_values,
+                                               const std::vector<core::CatalogManager::ColumnInfo>& columns)
+        {
+            // No CHECK constraint - check both the direct expression and OID fields
+            if (column.check_expr.empty() && column.check_expr_oid == 0)
+            {
+                return true;
+            }
+
+            // Prefer direct check_expr field (hex bytecode) over TOAST OID
+            std::string expr_hex = column.check_expr;
+
+            // If check_expr is empty but check_expr_oid is set, try to load from TOAST
+            // TODO: Implement TOAST loading when TOAST infrastructure is complete
+            if (expr_hex.empty() && column.check_expr_oid != 0)
+            {
+                DEBUG_LOG_DB("CHECK constraint on column " << column.column_name
+                           << " uses TOAST (check_expr_oid=" << column.check_expr_oid
+                           << ") but TOAST loading not yet implemented - allowing row");
+                return true;
+            }
+
+            // Skip if expression is still empty
+            if (expr_hex.empty())
+            {
+                return true;
+            }
+
+            // Deserialize expression from hex
+            std::vector<uint8_t> expr_bytecode = hexToBytes(expr_hex);
+            if (expr_bytecode.empty())
+            {
+                // Failed to deserialize - deny access (conservative)
+                DEBUG_LOG_DB("Failed to deserialize CHECK constraint expression for column "
+                           << column.column_name << " - denying row");
+                return false;
+            }
+
+            // Evaluate expression with row context using existing RLS infrastructure
+            bool result = evaluatePolicyExpression(expr_bytecode, row_values, columns);
+
+            DEBUG_LOG_DB("CHECK constraint on column " << column.column_name
+                       << " evaluated to " << (result ? "TRUE" : "FALSE"));
+
+            return result;
+        }
+
+        // ALPHA Phase A: Check for UNIQUE constraint violation
+        // Returns true if a duplicate value exists (violation), false if value is unique
+        bool Executor::checkUniqueViolation(const core::ID& table_id,
+                                            const core::CatalogManager::ColumnInfo& column,
+                                            const Value& value,
+                                            const std::vector<core::CatalogManager::ColumnInfo>& all_columns)
+        {
+            // Get column index
+            size_t col_index = 0;
+            for (size_t i = 0; i < all_columns.size(); i++)
+            {
+                if (all_columns[i].column_id == column.column_id)
+                {
+                    col_index = i;
+                    break;
+                }
+            }
+
+            // Scan table to check for existing value
+            auto scan_iter = db_->storage_engine()->createScan(table_id, nullptr);
+            if (!scan_iter)
+            {
+                // Can't create scan - conservative: treat as violation
+                return true;
+            }
+
+            // Scan all tuples
+            core::Tuple tuple;
+            while (scan_iter->next(&tuple, nullptr) == core::Status::OK)
+            {
+                // Deserialize tuple data
+                std::vector<Value> row_values;
+                if (!deserializeTuple(tuple.data, tuple.data_size, all_columns, row_values))
+                {
+                    continue; // Skip malformed tuples
+                }
+
+                // Check if this row has the same value in the UNIQUE column
+                if (col_index < row_values.size() && !row_values[col_index].isNull())
+                {
+                    // Compare values
+                    if (valuesEqual(value, row_values[col_index]))
+                    {
+                        // Found a duplicate!
+                        return true;
+                    }
+                }
+            }
+
+            // No duplicate found
+            return false;
+        }
+
+        // ALPHA Phase A: Check for UNIQUE constraint violation during UPDATE
+        // Similar to checkUniqueViolation, but excludes the row being updated (identified by TID)
+        bool Executor::checkUniqueViolationForUpdate(const core::ID& table_id,
+                                                     const core::CatalogManager::ColumnInfo& column,
+                                                     const Value& value,
+                                                     const std::vector<core::CatalogManager::ColumnInfo>& all_columns,
+                                                     const core::TID& exclude_tid)
+        {
+            // Get column index
+            size_t col_index = 0;
+            for (size_t i = 0; i < all_columns.size(); i++)
+            {
+                if (all_columns[i].column_id == column.column_id)
+                {
+                    col_index = i;
+                    break;
+                }
+            }
+
+            // Scan table to check for existing value
+            auto scan_iter = db_->storage_engine()->createScan(table_id, nullptr);
+            if (!scan_iter)
+            {
+                // Can't create scan - conservative: treat as violation
+                return true;
+            }
+
+            // Scan all tuples
+            core::Tuple tuple;
+            while (scan_iter->next(&tuple, nullptr) == core::Status::OK)
+            {
+                // Skip the row being updated (exclude by TID)
+                if (tuple.tid.gpid == exclude_tid.gpid && tuple.tid.slot == exclude_tid.slot)
+                {
+                    continue;
+                }
+
+                // Deserialize tuple data
+                std::vector<Value> row_values;
+                if (!deserializeTuple(tuple.data, tuple.data_size, all_columns, row_values))
+                {
+                    continue; // Skip malformed tuples
+                }
+
+                // Check if this row has the same value in the UNIQUE column
+                if (col_index < row_values.size() && !row_values[col_index].isNull())
+                {
+                    // Compare values
+                    if (valuesEqual(value, row_values[col_index]))
+                    {
+                        // Found a duplicate!
+                        return true;
+                    }
+                }
+            }
+
+            // No duplicate found
+            return false;
+        }
+
+        // ALPHA Phase A: Compare two values for equality (for UNIQUE constraint checking)
+        bool Executor::valuesEqual(const Value& a, const Value& b)
+        {
+            // If types differ, values are not equal
+            if (a.type() != b.type())
+            {
+                return false;
+            }
+
+            // Handle NULL (NULLs are never equal, even to other NULLs, per SQL standard)
+            if (a.isNull() || b.isNull())
+            {
+                return false;
+            }
+
+            // Compare based on type
+            switch (a.type())
+            {
+                case core::DataType::INT32:
+                    return a.getInt32() == b.getInt32();
+                case core::DataType::INT64:
+                    return a.getInt64() == b.getInt64();
+                case core::DataType::FLOAT64:
+                    return a.getFloat64() == b.getFloat64();
+                case core::DataType::VARCHAR:
+                case core::DataType::TEXT:
+                    return a.getVarchar() == b.getVarchar();
+                case core::DataType::BOOLEAN:
+                    return a.getBoolean() == b.getBoolean();
+                default:
+                    // For other types, conservatively return false
+                    return false;
+            }
+        }
+
+        // ALPHA Phase A: Check if FK constraint is satisfied (referenced value exists)
+        // Returns true if the FK value(s) exist in the parent table, false otherwise
+        bool Executor::checkForeignKeyExists(const core::ID& parent_table_id,
+                                            const std::vector<std::string>& parent_columns,
+                                            const std::vector<Value>& fk_values,
+                                            const std::vector<core::CatalogManager::ColumnInfo>& parent_cols)
+        {
+            // MATCH SIMPLE: If any FK value is NULL, the constraint is automatically satisfied
+            for (const auto& val : fk_values)
+            {
+                if (val.isNull())
+                {
+                    return true; // NULL in FK = no constraint
+                }
+            }
+
+            // Get parent column indices
+            std::vector<size_t> parent_col_indices;
+            for (const auto& col_name : parent_columns)
+            {
+                for (size_t i = 0; i < parent_cols.size(); i++)
+                {
+                    if (parent_cols[i].column_name == col_name)
+                    {
+                        parent_col_indices.push_back(i);
+                        break;
+                    }
+                }
+            }
+
+            // Scan parent table to find matching row
+            auto scan_iter = db_->storage_engine()->createScan(parent_table_id, nullptr);
+            if (!scan_iter)
+            {
+                return false; // Can't scan - fail safely
+            }
+
+            core::Tuple tuple;
+            while (scan_iter->next(&tuple, nullptr) == core::Status::OK)
+            {
+                // Deserialize tuple
+                std::vector<Value> row_values;
+                if (!deserializeTuple(tuple.data, tuple.data_size, parent_cols, row_values))
+                {
+                    continue;
+                }
+
+                // Check if all FK columns match
+                bool all_match = true;
+                for (size_t i = 0; i < fk_values.size() && i < parent_col_indices.size(); i++)
+                {
+                    size_t col_idx = parent_col_indices[i];
+                    if (col_idx >= row_values.size() ||
+                        !valuesEqual(fk_values[i], row_values[col_idx]))
+                    {
+                        all_match = false;
+                        break;
+                    }
+                }
+
+                if (all_match)
+                {
+                    return true; // Found matching row
+                }
+            }
+
+            return false; // No matching row found - FK violation
+        }
+
+        // ALPHA Phase A: Apply FK referential action on DELETE
+        // This is a placeholder - full implementation requires CASCADE/SET NULL support
+        void Executor::applyFKActionOnDelete(const core::ID& parent_table_id,
+                                            const std::vector<Value>& deleted_key_values,
+                                            const std::vector<core::CatalogManager::ColumnInfo>& parent_cols)
+        {
+            // TODO: Full implementation when catalog stores FK definitions
+            // For now, check if any child rows reference this parent row
+            // This implements RESTRICT behavior (error if references exist)
+
+            // Note: This would scan all tables that have FKs to parent_table_id
+            // and check if any rows reference the deleted_key_values
+            // If found: error()
+            // If CASCADE: delete child rows
+            // If SET NULL: set FK columns to NULL
+            // If SET DEFAULT: set FK columns to DEFAULT
+
+            DEBUG_LOG_DB("FK DELETE action placeholder - full implementation pending");
+        }
+
+        // ALPHA Phase A: Apply FK referential action on UPDATE
+        // This is a placeholder - full implementation requires CASCADE/SET NULL support
+        void Executor::applyFKActionOnUpdate(const core::ID& parent_table_id,
+                                            const std::vector<Value>& old_key_values,
+                                            const std::vector<Value>& new_key_values,
+                                            const std::vector<core::CatalogManager::ColumnInfo>& parent_cols)
+        {
+            // TODO: Full implementation when catalog stores FK definitions
+            // For now, check if any child rows reference the old key value
+            // This implements RESTRICT behavior (error if references exist and key changed)
+
+            // Check if key actually changed
+            bool key_changed = false;
+            for (size_t i = 0; i < old_key_values.size() && i < new_key_values.size(); i++)
+            {
+                if (!valuesEqual(old_key_values[i], new_key_values[i]))
+                {
+                    key_changed = true;
+                    break;
+                }
+            }
+
+            if (!key_changed)
+            {
+                return; // Key unchanged - no action needed
+            }
+
+            // Note: This would scan all tables that have FKs to parent_table_id
+            // and check if any rows reference the old_key_values
+            // If found: error() or apply action (CASCADE/SET NULL/SET DEFAULT)
+
+            DEBUG_LOG_DB("FK UPDATE action placeholder - full implementation pending");
         }
 
     } // namespace sblr

@@ -364,6 +364,7 @@ namespace scratchbird::core
             uint32_t collation_id = 0;      // Collation ID (0 = inherit from table)
             std::string default_value;      // Serialized default
             uint32_t default_value_oid = 0; // TOAST reference for large defaults
+            std::string check_expr;         // CHECK constraint expression (hex bytecode)
             uint32_t check_expr_oid = 0;    // TOAST reference for check expressions
             uint64_t created_time = 0;
         };
@@ -488,6 +489,40 @@ namespace scratchbird::core
             std::string comment_text;  // Comment text (stored in TOAST on disk)
             uint64_t created_time = 0;
             uint64_t last_modified_time = 0;
+        };
+
+        // Foreign Key referential actions (ALPHA Phase A - FK Constraints)
+        enum class FKAction : uint8_t
+        {
+            NO_ACTION = 0,  // Default: error if references exist
+            RESTRICT = 1,   // Error immediately if references exist
+            CASCADE = 2,    // Delete/update child rows
+            SET_NULL = 3,   // Set FK columns to NULL
+            SET_DEFAULT = 4 // Set FK columns to DEFAULT
+        };
+
+        // Foreign Key match types (ALPHA Phase A - FK Constraints)
+        enum class FKMatchType : uint8_t
+        {
+            SIMPLE = 0,   // Default: NULL in any column = no match required
+            FULL = 1,     // All columns NULL or all non-NULL
+            PARTIAL = 2   // Not implemented (reserved)
+        };
+
+        // Foreign Key information (ALPHA Phase A - FK Constraints)
+        struct ForeignKeyInfo
+        {
+            ID fk_id;                          // Unique FK constraint ID
+            std::string fk_name;               // Constraint name
+            ID child_table_id;                 // Table with the FK (referencing table)
+            ID parent_table_id;                // Referenced table
+            std::vector<std::string> child_columns;  // FK column names in child table
+            std::vector<std::string> parent_columns; // Referenced column names in parent
+            FKAction on_delete;                // Action on DELETE of parent row
+            FKAction on_update;                // Action on UPDATE of parent key
+            FKMatchType match_type;            // Match type (SIMPLE, FULL, PARTIAL)
+            bool is_enabled = true;            // Can be disabled temporarily
+            uint64_t created_time = 0;
         };
 
         // Group types (Phase 2 - Security Tables)
@@ -1019,6 +1054,45 @@ namespace scratchbird::core
 
         auto deleteComment(const ID& object_id,
                           ErrorContext* ctx = nullptr) -> Status;
+
+        // ========================================================================
+        // Foreign Key Operations (ALPHA Phase A - FK Constraints)
+        // ========================================================================
+
+        // Create a foreign key constraint
+        auto createForeignKey(const std::string& fk_name,
+                             const ID& child_table_id,
+                             const ID& parent_table_id,
+                             const std::vector<std::string>& child_columns,
+                             const std::vector<std::string>& parent_columns,
+                             FKAction on_delete,
+                             FKAction on_update,
+                             FKMatchType match_type,
+                             ID& fk_id_out,
+                             ErrorContext* ctx = nullptr) -> Status;
+
+        // Get foreign keys for a table (as child)
+        auto getForeignKeysForTable(const ID& table_id,
+                                   std::vector<ForeignKeyInfo>& fks_out,
+                                   ErrorContext* ctx = nullptr) -> Status;
+
+        // Get foreign keys that reference a table (as parent)
+        auto getReferencingForeignKeys(const ID& table_id,
+                                      std::vector<ForeignKeyInfo>& fks_out,
+                                      ErrorContext* ctx = nullptr) -> Status;
+
+        // Get a specific foreign key by ID
+        auto getForeignKey(const ID& fk_id,
+                          ForeignKeyInfo& fk_out,
+                          ErrorContext* ctx = nullptr) -> Status;
+
+        // Drop a foreign key constraint
+        auto dropForeignKey(const ID& fk_id,
+                           ErrorContext* ctx = nullptr) -> Status;
+
+        // Enable/disable a foreign key
+        auto setForeignKeyEnabled(const ID& fk_id, bool enabled,
+                                 ErrorContext* ctx = nullptr) -> Status;
 
         // ========================================================================
         // Security Operations (Phase 1.3 - Users, Roles, Groups)
