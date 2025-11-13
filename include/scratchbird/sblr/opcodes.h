@@ -137,8 +137,10 @@ namespace scratchbird
             BEGIN_LIST = 0x80, // Start of list (followed by count)
             END_LIST = 0x81,   // End of list
 
-            // Modifiers
-            NOT_NULL = 0x90, // NOT NULL constraint
+            // Modifiers / Constraints
+            NOT_NULL = 0x90,         // NOT NULL constraint
+            DEFAULT_VALUE = 0x91,    // DEFAULT value expression (ALPHA Phase A)
+            CHECK_CONSTRAINT = 0x92, // CHECK constraint expression (ALPHA Phase A)
 
             // Special
             SELECT_STAR = 0xA0,  // SELECT *

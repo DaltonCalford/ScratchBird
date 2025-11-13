@@ -916,9 +916,12 @@ namespace scratchbird
         public:
             ColumnDef(const SourceSpan &span, StringPool::StringId name, const TypeName &type,
                       bool nullable, StringPool::StringId charset = 0,
-                      StringPool::StringId collation = 0)
+                      StringPool::StringId collation = 0,
+                      Expression *default_value = nullptr,
+                      Expression *check_expr = nullptr)
                 : ASTNode(ASTKind::COLUMN_DEF, span), name_(name), type_(type), nullable_(nullable),
-                  charset_(charset), collation_(collation)
+                  charset_(charset), collation_(collation),
+                  default_value_(default_value), check_expr_(check_expr)
             {
             }
 
@@ -942,6 +945,14 @@ namespace scratchbird
             {
                 return collation_;
             }
+            Expression *default_value() const
+            {
+                return default_value_;
+            }
+            Expression *check_expr() const
+            {
+                return check_expr_;
+            }
 
             void accept(ASTVisitor *visitor) override;
 
@@ -951,6 +962,8 @@ namespace scratchbird
             bool nullable_;
             StringPool::StringId charset_;   // CHARACTER SET clause
             StringPool::StringId collation_; // COLLATE clause
+            Expression *default_value_;      // DEFAULT clause expression
+            Expression *check_expr_;         // CHECK constraint expression
         };
 
         // CREATE TABLE statement
