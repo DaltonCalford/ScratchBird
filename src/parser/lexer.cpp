@@ -272,6 +272,10 @@ namespace scratchbird
             {"TO", TokenType::KW_TO},         // Phase 2 Task 2.2
             {"ADD", TokenType::KW_ADD},       // ALPHA Phase 1 - ALTER TABLE ADD COLUMN
             {"TYPE", TokenType::KW_TYPE},     // ALPHA Phase 1 - ALTER TABLE ALTER COLUMN TYPE
+            {"CONSTRAINT", TokenType::KW_CONSTRAINT}, // ALPHA Phase C - Table constraints
+            {"FOREIGN", TokenType::KW_FOREIGN},       // ALPHA Phase C - Foreign keys
+            {"KEY", TokenType::KW_KEY},               // ALPHA Phase C - Foreign/primary keys
+            {"PRIMARY", TokenType::KW_PRIMARY},       // ALPHA Phase C - Primary keys
             {"ONLINE", TokenType::KW_ONLINE}, // Phase 4 Task 4.1.1
             {"ATTACH", TokenType::KW_ATTACH}, // Phase 6 Task 6.1
             {"DETACH", TokenType::KW_DETACH}, // Phase 6 Task 6.2

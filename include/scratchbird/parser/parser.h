@@ -171,6 +171,7 @@ namespace scratchbird
 
             // CREATE TABLE helpers
             ColumnDef *parseColumnDef();
+            TableConstraint *parseTableConstraint();  // Phase C - Composite FK
             TypeName parseTypeName();
 
             // JOIN helpers (Phase 1 Task 3.1)

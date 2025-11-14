@@ -992,16 +992,79 @@ namespace scratchbird
             StringPool::StringId fk_on_update_;  // ON UPDATE action
         };
 
+        // Table-level constraint (ALPHA Phase C - Composite FK)
+        class TableConstraint : public ASTNode
+        {
+        public:
+            enum class ConstraintType
+            {
+                FOREIGN_KEY,
+                PRIMARY_KEY,  // Reserved for future
+                UNIQUE,       // Reserved for future
+                CHECK         // Reserved for future
+            };
+
+            TableConstraint(const SourceSpan &span, ConstraintType type,
+                           StringPool::StringId name = 0)
+                : ASTNode(ASTKind::COLUMN_DEF, span), type_(type), name_(name)  // Reuse COLUMN_DEF kind for now
+            {
+            }
+
+            ConstraintType constraintType() const { return type_; }
+            StringPool::StringId name() const { return name_; }
+
+            virtual void accept(ASTVisitor *visitor) override {}
+
+        protected:
+            ConstraintType type_;
+            StringPool::StringId name_;  // Optional constraint name
+        };
+
+        // Foreign Key table constraint
+        class ForeignKeyConstraint : public TableConstraint
+        {
+        public:
+            ForeignKeyConstraint(const SourceSpan &span,
+                                std::vector<StringPool::StringId> child_columns,
+                                StringPool::StringId parent_table,
+                                std::vector<StringPool::StringId> parent_columns,
+                                StringPool::StringId on_delete = 0,
+                                StringPool::StringId on_update = 0,
+                                StringPool::StringId name = 0)
+                : TableConstraint(span, ConstraintType::FOREIGN_KEY, name),
+                  child_columns_(std::move(child_columns)),
+                  parent_table_(parent_table),
+                  parent_columns_(std::move(parent_columns)),
+                  on_delete_(on_delete),
+                  on_update_(on_update)
+            {
+            }
+
+            const std::vector<StringPool::StringId> &childColumns() const { return child_columns_; }
+            StringPool::StringId parentTable() const { return parent_table_; }
+            const std::vector<StringPool::StringId> &parentColumns() const { return parent_columns_; }
+            StringPool::StringId onDelete() const { return on_delete_; }
+            StringPool::StringId onUpdate() const { return on_update_; }
+
+        private:
+            std::vector<StringPool::StringId> child_columns_;
+            StringPool::StringId parent_table_;
+            std::vector<StringPool::StringId> parent_columns_;
+            StringPool::StringId on_delete_;
+            StringPool::StringId on_update_;
+        };
+
         // CREATE TABLE statement
         class CreateTableStmt : public Statement
         {
         public:
             CreateTableStmt(const SourceSpan &span, StringPool::StringId table_name,
                             std::vector<ColumnDef *> columns, StringPool::StringId charset = 0,
-                            StringPool::StringId collation = 0, StringPool::StringId tablespace = 0)
+                            StringPool::StringId collation = 0, StringPool::StringId tablespace = 0,
+                            std::vector<TableConstraint *> table_constraints = {})
                 : Statement(ASTKind::CREATE_TABLE, span), table_name_(table_name),
                   columns_(std::move(columns)), charset_(charset), collation_(collation),
-                  tablespace_(tablespace)
+                  tablespace_(tablespace), table_constraints_(std::move(table_constraints))
             {
             }
 
@@ -1025,6 +1088,10 @@ namespace scratchbird
             {
                 return tablespace_;
             }
+            const std::vector<TableConstraint *> &tableConstraints() const  // Phase C - Composite FK
+            {
+                return table_constraints_;
+            }
 
             void accept(ASTVisitor *visitor) override;
 
@@ -1034,6 +1101,7 @@ namespace scratchbird
             StringPool::StringId charset_;    // DEFAULT CHARACTER SET clause
             StringPool::StringId collation_;  // DEFAULT COLLATE clause
             StringPool::StringId tablespace_; // TABLESPACE clause (Phase 2 Task 2.3)
+            std::vector<TableConstraint *> table_constraints_;  // Table-level constraints (Phase C)
         };
 
         // CREATE INDEX statement (Phase 2 Task 2.3 + Task 17)

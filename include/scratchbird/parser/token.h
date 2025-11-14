@@ -326,6 +326,10 @@ namespace scratchbird
             KW_TO,     // Phase 2 Task 2.2
             KW_ADD,    // ALPHA Phase 1 - ALTER TABLE ADD COLUMN
             KW_TYPE,   // ALPHA Phase 1 - ALTER TABLE ALTER COLUMN TYPE
+            KW_CONSTRAINT, // ALPHA Phase C - Table-level constraints
+            KW_FOREIGN,    // ALPHA Phase C - Foreign key constraints
+            KW_KEY,        // ALPHA Phase C - Foreign/primary key
+            KW_PRIMARY,    // ALPHA Phase C - Primary key constraints
             KW_ONLINE, // Phase 4 Task 4.1.1 - ALTER TABLE ... SET TABLESPACE ... ONLINE
             KW_ATTACH, // Phase 6 Task 6.1 - ATTACH TABLESPACE
             KW_DETACH, // Phase 6 Task 6.2 - DETACH TABLESPACE
