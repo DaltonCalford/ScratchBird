@@ -142,6 +142,7 @@ namespace scratchbird
             DEFAULT_VALUE = 0x91,    // DEFAULT value expression (ALPHA Phase A)
             CHECK_CONSTRAINT = 0x92, // CHECK constraint expression (ALPHA Phase A)
             FOREIGN_KEY = 0x93,      // Foreign key constraint (ALPHA Phase A)
+            TABLE_FK = 0x94,         // Table-level foreign key constraint (ALPHA Phase C - Composite FK)
 
             // Special
             SELECT_STAR = 0xA0,  // SELECT *

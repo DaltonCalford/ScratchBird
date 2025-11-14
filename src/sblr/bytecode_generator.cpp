@@ -125,6 +125,63 @@ namespace scratchbird
 
             // Write tablespace name (Phase 2 Task 2.3)
             writeStringId(node->tablespace());
+
+            // ALPHA Phase C: Write table-level constraints
+            const auto &constraints = node->tableConstraints();
+            for (auto *constraint : constraints)
+            {
+                if (!constraint)
+                {
+                    continue;
+                }
+
+                // Currently only ForeignKeyConstraint is implemented
+                auto *fk_constraint = dynamic_cast<parser::ForeignKeyConstraint *>(constraint);
+                if (fk_constraint)
+                {
+                    // Generate TABLE_FK opcode for table-level FK
+                    // Format: TABLE_FK | child_col_count | child_cols... | parent_table | parent_col_count | parent_cols... | on_delete | on_update
+                    current_result_->writeOpcode(Opcode::TABLE_FK);
+
+                    // Write child column count and names
+                    const auto &child_cols = fk_constraint->childColumns();
+                    if (child_cols.size() > UINT8_MAX)
+                    {
+                        current_result_->addError("Too many child columns in FK constraint (max 255)");
+                        continue;
+                    }
+                    current_result_->writeByte(static_cast<uint8_t>(child_cols.size()));
+                    for (auto col_id : child_cols)
+                    {
+                        writeStringId(col_id);
+                    }
+
+                    // Write parent table name
+                    writeStringId(fk_constraint->parentTable());
+
+                    // Write parent column count and names
+                    const auto &parent_cols = fk_constraint->parentColumns();
+                    if (parent_cols.size() > UINT8_MAX)
+                    {
+                        current_result_->addError("Too many parent columns in FK constraint (max 255)");
+                        continue;
+                    }
+                    current_result_->writeByte(static_cast<uint8_t>(parent_cols.size()));
+                    for (auto col_id : parent_cols)
+                    {
+                        writeStringId(col_id);
+                    }
+
+                    // Write ON DELETE action
+                    writeStringId(fk_constraint->onDelete());
+
+                    // Write ON UPDATE action
+                    writeStringId(fk_constraint->onUpdate());
+
+                    // Write constraint name (optional)
+                    writeStringId(fk_constraint->name());
+                }
+            }
         }
 
         void BytecodeGenerator::visit(parser::CreateIndexStmt *node)
