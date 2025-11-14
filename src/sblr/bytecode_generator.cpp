@@ -206,6 +206,32 @@ namespace scratchbird
 
                     // Write constraint name (optional)
                     writeStringId(unique_constraint->name());
+                    continue;
+                }
+
+                // Handle PrimaryKeyConstraint
+                auto *pk_constraint = dynamic_cast<parser::PrimaryKeyConstraint *>(constraint);
+                if (pk_constraint)
+                {
+                    // Generate PRIMARY_KEY opcode for table-level PK
+                    // Format: PRIMARY_KEY | col_count | col_names... | constraint_name
+                    current_result_->writeOpcode(Opcode::PRIMARY_KEY);
+
+                    // Write column count and names
+                    const auto &cols = pk_constraint->columns();
+                    if (cols.size() > UINT8_MAX)
+                    {
+                        current_result_->addError("Too many columns in PRIMARY KEY constraint (max 255)");
+                        continue;
+                    }
+                    current_result_->writeByte(static_cast<uint8_t>(cols.size()));
+                    for (auto col_id : cols)
+                    {
+                        writeStringId(col_id);
+                    }
+
+                    // Write constraint name (optional)
+                    writeStringId(pk_constraint->name());
                 }
             }
         }
@@ -3087,6 +3113,12 @@ namespace scratchbird
             if (node->isUnique())
             {
                 current_result_->writeOpcode(Opcode::UNIQUE_CONSTRAINT);
+            }
+
+            // Write PRIMARY KEY constraint if present
+            if (node->isPrimaryKey())
+            {
+                current_result_->writeOpcode(Opcode::PRIMARY_KEY);
             }
 
             // Write FOREIGN KEY constraint if present (ALPHA Phase A - FK Constraints)

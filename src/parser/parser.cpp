@@ -658,6 +658,7 @@ namespace scratchbird
             // Parse column constraints (can appear in any order)
             bool nullable = true;
             bool is_unique = false;
+            bool is_primary_key = false;
             Expression *default_value = nullptr;
             Expression *check_expr = nullptr;
             StringPool::StringId fk_table = 0;
@@ -689,6 +690,18 @@ namespace scratchbird
                         error("Expected expression after DEFAULT");
                         return nullptr;
                     }
+                }
+                else if (match(TokenType::KW_PRIMARY))
+                {
+                    // Parse PRIMARY KEY constraint
+                    if (!consume(TokenType::KW_KEY, "Expected KEY after PRIMARY"))
+                    {
+                        return nullptr;
+                    }
+                    is_primary_key = true;
+                    // PRIMARY KEY implies NOT NULL and UNIQUE
+                    nullable = false;
+                    is_unique = true;
                 }
                 else if (match(TokenType::KW_UNIQUE))
                 {
@@ -829,7 +842,7 @@ namespace scratchbird
 
             auto span = makeSpan(start_loc);
             return arena_.make<ColumnDef>(span, col_name, type, nullable, 0, 0, default_value, check_expr,
-                                         is_unique, fk_table, fk_columns, fk_on_delete, fk_on_update);
+                                         is_unique, is_primary_key, fk_table, fk_columns, fk_on_delete, fk_on_update);
         }
 
         // ALPHA Phase C: Parse table-level constraint (FOREIGN KEY, PRIMARY KEY, etc.)
@@ -1032,10 +1045,44 @@ namespace scratchbird
                 auto span = makeSpan(start_loc);
                 return arena_.make<UniqueConstraint>(span, std::move(columns), constraint_name);
             }
-            else if (match(TokenType::KW_PRIMARY) || match(TokenType::KW_CHECK))
+            else if (match(TokenType::KW_PRIMARY))
             {
-                // PRIMARY KEY, CHECK constraints - not yet implemented
-                error("PRIMARY KEY and CHECK table constraints not yet implemented");
+                // PRIMARY KEY (col1, col2, ...)
+                if (!consume(TokenType::KW_KEY, "Expected KEY after PRIMARY"))
+                {
+                    return nullptr;
+                }
+
+                if (!consume(TokenType::LEFT_PAREN, "Expected '(' after PRIMARY KEY"))
+                {
+                    return nullptr;
+                }
+
+                // Parse column list
+                std::vector<StringPool::StringId> columns;
+                do
+                {
+                    if (!check(TokenType::IDENTIFIER))
+                    {
+                        error("Expected column name in PRIMARY KEY constraint");
+                        return nullptr;
+                    }
+                    columns.push_back(current().value.string_id);
+                    advance();
+                } while (match(TokenType::COMMA));
+
+                if (!consume(TokenType::RIGHT_PAREN, "Expected ')' after column list"))
+                {
+                    return nullptr;
+                }
+
+                auto span = makeSpan(start_loc);
+                return arena_.make<PrimaryKeyConstraint>(span, std::move(columns), constraint_name);
+            }
+            else if (match(TokenType::KW_CHECK))
+            {
+                // CHECK constraints - not yet implemented
+                error("CHECK table constraints not yet implemented");
                 return nullptr;
             }
             else

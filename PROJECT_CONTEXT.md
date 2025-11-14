@@ -484,11 +484,12 @@ ctest -V
 
 **Top Priorities**:
 1. ✅ **UNIQUE constraint SQL parser integration** - COMPLETE Nov 14, 2025 🎉
-2. PRIMARY KEY constraint (combine UNIQUE + NOT NULL) - **NEXT PRIORITY**
-3. Complete catalog CRUD operations (stored code, emulation tables)
+2. ✅ **PRIMARY KEY constraint parser integration** - COMPLETE Nov 14, 2025 🎉
+3. Complete catalog CRUD operations (stored code, emulation tables) - **NEXT PRIORITY**
 4. Complete PSQL bytecode execution (procedures, triggers, cursors)
 5. Add CTEs and recursive queries
-6. FK Phase D (future): Disk persistence, index-based lookups, ALTER TABLE FK, MATCH FULL
+6. Constraint enhancements: Single PK validation, catalog metadata storage, ALTER TABLE PK/UNIQUE
+7. FK Phase D (future): Disk persistence, index-based lookups, ALTER TABLE FK, MATCH FULL
 
 **After Phase 1**: Parser separation → embeddable library + standalone SQL application
 
