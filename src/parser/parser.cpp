@@ -417,20 +417,42 @@ namespace scratchbird
             }
 
             std::vector<ColumnDef *> columns;
+            std::vector<TableConstraint *> table_constraints;
 
-            // Parse column definitions
+            // Parse column definitions and table constraints
             do
             {
-                auto *col = parseColumnDef();
-                if (col)
+                // Check if this is a table-level constraint (FOREIGN KEY, PRIMARY KEY, etc.)
+                if (check(TokenType::KW_FOREIGN) || check(TokenType::KW_PRIMARY) ||
+                    check(TokenType::KW_UNIQUE) || check(TokenType::KW_CHECK) ||
+                    check(TokenType::KW_CONSTRAINT))
                 {
-                    columns.push_back(col);
+                    auto *constraint = parseTableConstraint();
+                    if (constraint)
+                    {
+                        table_constraints.push_back(constraint);
+                    }
+                    else
+                    {
+                        // Error already reported
+                        synchronize();
+                        return nullptr;
+                    }
                 }
                 else
                 {
-                    // Error already reported
-                    synchronize();
-                    return nullptr;
+                    // Parse column definition
+                    auto *col = parseColumnDef();
+                    if (col)
+                    {
+                        columns.push_back(col);
+                    }
+                    else
+                    {
+                        // Error already reported
+                        synchronize();
+                        return nullptr;
+                    }
                 }
             } while (match(TokenType::COMMA));
 
@@ -456,7 +478,7 @@ namespace scratchbird
             }
 
             auto span = makeSpan(start_loc);
-            return arena_.make<CreateTableStmt>(span, table_name, std::move(columns), 0, 0, tablespace_name);
+            return arena_.make<CreateTableStmt>(span, table_name, std::move(columns), 0, 0, tablespace_name, std::move(table_constraints));
         }
 
         Statement *Parser::parseCreateIndex()
@@ -802,6 +824,190 @@ namespace scratchbird
             auto span = makeSpan(start_loc);
             return arena_.make<ColumnDef>(span, col_name, type, nullable, 0, 0, default_value, check_expr,
                                          fk_table, fk_columns, fk_on_delete, fk_on_update);
+        }
+
+        // ALPHA Phase C: Parse table-level constraint (FOREIGN KEY, PRIMARY KEY, etc.)
+        TableConstraint *Parser::parseTableConstraint()
+        {
+            auto start_loc = current().location;
+            StringPool::StringId constraint_name = 0;
+
+            // Optional CONSTRAINT name
+            if (match(TokenType::KW_CONSTRAINT))
+            {
+                if (check(TokenType::IDENTIFIER))
+                {
+                    constraint_name = current().value.string_id;
+                    advance();
+                }
+            }
+
+            // Parse constraint type
+            if (match(TokenType::KW_FOREIGN))
+            {
+                // FOREIGN KEY (col1, col2, ...) REFERENCES parent(p1, p2, ...) [ON DELETE action] [ON UPDATE action]
+                if (!consume(TokenType::KW_KEY, "Expected KEY after FOREIGN"))
+                {
+                    return nullptr;
+                }
+
+                if (!consume(TokenType::LEFT_PAREN, "Expected '(' after FOREIGN KEY"))
+                {
+                    return nullptr;
+                }
+
+                // Parse child column list
+                std::vector<StringPool::StringId> child_columns;
+                do
+                {
+                    if (!check(TokenType::IDENTIFIER))
+                    {
+                        error("Expected column name in FOREIGN KEY");
+                        return nullptr;
+                    }
+                    child_columns.push_back(current().value.string_id);
+                    advance();
+                } while (match(TokenType::COMMA));
+
+                if (!consume(TokenType::RIGHT_PAREN, "Expected ')' after column list"))
+                {
+                    return nullptr;
+                }
+
+                // REFERENCES
+                if (!consume(TokenType::KW_REFERENCES, "Expected REFERENCES in FOREIGN KEY constraint"))
+                {
+                    return nullptr;
+                }
+
+                if (!check(TokenType::IDENTIFIER))
+                {
+                    error("Expected table name after REFERENCES");
+                    return nullptr;
+                }
+
+                StringPool::StringId parent_table = current().value.string_id;
+                advance();
+
+                // Parse parent column list (required for table-level FK)
+                std::vector<StringPool::StringId> parent_columns;
+                if (match(TokenType::LEFT_PAREN))
+                {
+                    do
+                    {
+                        if (!check(TokenType::IDENTIFIER))
+                        {
+                            error("Expected column name in REFERENCES");
+                            return nullptr;
+                        }
+                        parent_columns.push_back(current().value.string_id);
+                        advance();
+                    } while (match(TokenType::COMMA));
+
+                    if (!consume(TokenType::RIGHT_PAREN, "Expected ')' after column list"))
+                    {
+                        return nullptr;
+                    }
+                }
+                else
+                {
+                    // For table-level FK, column list should be explicit
+                    // Use child column names if not specified (for single-column FK compatibility)
+                    parent_columns = child_columns;
+                }
+
+                // Optional ON DELETE/ON UPDATE actions (reuse logic from column-level FK)
+                StringPool::StringId on_delete = 0;
+                StringPool::StringId on_update = 0;
+
+                while (match(TokenType::KW_ON))
+                {
+                    if (match(TokenType::KW_DELETE))
+                    {
+                        if (check(TokenType::IDENTIFIER))
+                        {
+                            on_delete = current().value.string_id;
+                            advance();
+                            // Handle NO ACTION, SET NULL, SET DEFAULT
+                            if (on_delete == stringPool().intern("NO"))
+                            {
+                                if (check(TokenType::IDENTIFIER) && current().value.string_id == stringPool().intern("ACTION"))
+                                {
+                                    advance();
+                                    on_delete = stringPool().intern("NO ACTION");
+                                }
+                            }
+                            else if (on_delete == stringPool().intern("SET"))
+                            {
+                                if (check(TokenType::IDENTIFIER))
+                                {
+                                    StringPool::StringId action = current().value.string_id;
+                                    if (action == stringPool().intern("NULL"))
+                                    {
+                                        advance();
+                                        on_delete = stringPool().intern("SET NULL");
+                                    }
+                                    else if (action == stringPool().intern("DEFAULT"))
+                                    {
+                                        advance();
+                                        on_delete = stringPool().intern("SET DEFAULT");
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    else if (match(TokenType::KW_UPDATE))
+                    {
+                        if (check(TokenType::IDENTIFIER))
+                        {
+                            on_update = current().value.string_id;
+                            advance();
+                            // Handle NO ACTION, SET NULL, SET DEFAULT
+                            if (on_update == stringPool().intern("NO"))
+                            {
+                                if (check(TokenType::IDENTIFIER) && current().value.string_id == stringPool().intern("ACTION"))
+                                {
+                                    advance();
+                                    on_update = stringPool().intern("NO ACTION");
+                                }
+                            }
+                            else if (on_update == stringPool().intern("SET"))
+                            {
+                                if (check(TokenType::IDENTIFIER))
+                                {
+                                    StringPool::StringId action = current().value.string_id;
+                                    if (action == stringPool().intern("NULL"))
+                                    {
+                                        advance();
+                                        on_update = stringPool().intern("SET NULL");
+                                    }
+                                    else if (action == stringPool().intern("DEFAULT"))
+                                    {
+                                        advance();
+                                        on_update = stringPool().intern("SET DEFAULT");
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                auto span = makeSpan(start_loc);
+                return arena_.make<ForeignKeyConstraint>(span, std::move(child_columns),
+                                                        parent_table, std::move(parent_columns),
+                                                        on_delete, on_update, constraint_name);
+            }
+            else if (match(TokenType::KW_PRIMARY) || match(TokenType::KW_UNIQUE) || match(TokenType::KW_CHECK))
+            {
+                // PRIMARY KEY, UNIQUE, CHECK constraints - not implemented yet
+                error("PRIMARY KEY, UNIQUE, and CHECK table constraints not yet implemented");
+                return nullptr;
+            }
+            else
+            {
+                error("Expected constraint type (FOREIGN, PRIMARY, UNIQUE, CHECK)");
+                return nullptr;
+            }
         }
 
         TypeName Parser::parseTypeName()
