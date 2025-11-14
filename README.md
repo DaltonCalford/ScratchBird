@@ -129,7 +129,7 @@ ctest --output-on-failure
 - SQL object permissions (GRANT TO PROCEDURE/FUNCTION/VIEW)
 - ✅ SQL parser integration (GRANT/REVOKE/CREATE USER statements) - COMPLETE Phase 2
 
-### Constraint Enforcement (85% Complete) ✅
+### Constraint Enforcement (90% Complete) ✅
 - ✅ **CHECK constraints** - Full parser-to-runtime pipeline COMPLETE Nov 13, 2025
 - ✅ **DEFAULT expressions** - Bytecode evaluation COMPLETE Nov 13, 2025
 - ✅ **NOT NULL enforcement** - Runtime validation COMPLETE
@@ -148,8 +148,14 @@ ctest --output-on-failure
   - ⧗ Index-based lookups for performance (future)
   - ⧗ ALTER TABLE ADD/DROP FK (future)
   - ⧗ MATCH FULL/PARTIAL (future)
-- ⧗ UNIQUE constraint enforcement - Executor ready, parser pending
-- ⧗ PRIMARY KEY - Depends on UNIQUE + NOT NULL
+- ✅ **UNIQUE constraint** - Parser integration COMPLETE Nov 14, 2025 🎉:
+  - ✅ Column-level UNIQUE (e.g., `email VARCHAR(255) UNIQUE`)
+  - ✅ Table-level UNIQUE (e.g., `UNIQUE (col1, col2)`)
+  - ✅ Composite UNIQUE constraints (multi-column)
+  - ✅ Bytecode generation (UNIQUE_CONSTRAINT opcode)
+  - ✅ Runtime enforcement (INSERT/UPDATE validation) - Pre-existing
+  - ⧗ ALTER TABLE ADD/DROP UNIQUE (future)
+- ⧗ PRIMARY KEY - Depends on UNIQUE + NOT NULL (next priority)
 
 ### Functions - ALL COMPLETE! 🎉
 - All 123 planned SQL functions fully implemented!

@@ -483,9 +483,9 @@ ctest -V
 4. **Security Phase 2** - Full SQL security system (13 statements, 3,321 lines)
 
 **Top Priorities**:
-1. Complete catalog CRUD operations (stored code, emulation tables)
-2. PRIMARY KEY constraint (combine UNIQUE + NOT NULL)
-3. UNIQUE constraint SQL parser integration
+1. ✅ **UNIQUE constraint SQL parser integration** - COMPLETE Nov 14, 2025 🎉
+2. PRIMARY KEY constraint (combine UNIQUE + NOT NULL) - **NEXT PRIORITY**
+3. Complete catalog CRUD operations (stored code, emulation tables)
 4. Complete PSQL bytecode execution (procedures, triggers, cursors)
 5. Add CTEs and recursive queries
 6. FK Phase D (future): Disk persistence, index-based lookups, ALTER TABLE FK, MATCH FULL

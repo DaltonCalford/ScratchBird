@@ -919,13 +919,14 @@ namespace scratchbird
                       StringPool::StringId collation = 0,
                       Expression *default_value = nullptr,
                       Expression *check_expr = nullptr,
+                      bool is_unique = false,
                       StringPool::StringId fk_table = 0,
                       std::vector<StringPool::StringId> fk_columns = {},
                       StringPool::StringId fk_on_delete = 0,
                       StringPool::StringId fk_on_update = 0)
                 : ASTNode(ASTKind::COLUMN_DEF, span), name_(name), type_(type), nullable_(nullable),
                   charset_(charset), collation_(collation),
-                  default_value_(default_value), check_expr_(check_expr),
+                  default_value_(default_value), check_expr_(check_expr), is_unique_(is_unique),
                   fk_table_(fk_table), fk_columns_(std::move(fk_columns)),
                   fk_on_delete_(fk_on_delete), fk_on_update_(fk_on_update)
             {
@@ -959,6 +960,10 @@ namespace scratchbird
             {
                 return check_expr_;
             }
+            bool isUnique() const
+            {
+                return is_unique_;
+            }
             StringPool::StringId fk_table() const
             {
                 return fk_table_;
@@ -986,6 +991,7 @@ namespace scratchbird
             StringPool::StringId collation_; // COLLATE clause
             Expression *default_value_;      // DEFAULT clause expression
             Expression *check_expr_;         // CHECK constraint expression
+            bool is_unique_;                 // UNIQUE constraint flag
             StringPool::StringId fk_table_;  // REFERENCES table name
             std::vector<StringPool::StringId> fk_columns_;  // REFERENCES column list
             StringPool::StringId fk_on_delete_;  // ON DELETE action
@@ -1052,6 +1058,24 @@ namespace scratchbird
             std::vector<StringPool::StringId> parent_columns_;
             StringPool::StringId on_delete_;
             StringPool::StringId on_update_;
+        };
+
+        // UNIQUE table constraint
+        class UniqueConstraint : public TableConstraint
+        {
+        public:
+            UniqueConstraint(const SourceSpan &span,
+                            std::vector<StringPool::StringId> columns,
+                            StringPool::StringId name = 0)
+                : TableConstraint(span, ConstraintType::UNIQUE, name),
+                  columns_(std::move(columns))
+            {
+            }
+
+            const std::vector<StringPool::StringId> &columns() const { return columns_; }
+
+        private:
+            std::vector<StringPool::StringId> columns_;
         };
 
         // CREATE TABLE statement
