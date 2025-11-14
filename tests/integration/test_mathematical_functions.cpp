@@ -18,13 +18,13 @@ protected:
     void SetUp() override
     {
         // Create test database
-        core::DatabaseOptions options;
-        options.create_if_missing = true;
-        options.error_if_exists = false;
-
         core::ErrorContext ctx;
-        db = core::Database::create("test_math_functions.db", options, &ctx);
-        ASSERT_NE(db, nullptr) << "Failed to create database: " << ctx.message;
+        auto status = core::Database::create("test_math_functions.db", 16384, &ctx);
+        ASSERT_TRUE(status == core::Status::OK) << "Failed to create database: " << ctx.message;
+
+        db = std::make_unique<core::Database>();
+        status = db->open("test_math_functions.db", &ctx);
+        ASSERT_TRUE(status == core::Status::OK) << "Failed to open database: " << ctx.message;
     }
 
     void TearDown() override
@@ -37,15 +37,21 @@ protected:
     // Helper to execute a simple SELECT statement and get the result
     double executeScalar(const std::string& sql)
     {
-        parser::Parser parser(sql);
-        auto ast = parser.parse();
-        EXPECT_TRUE(ast != nullptr) << "Parse failed";
-        if (!ast) return 0.0;
+        parser::Lexer lexer(sql);
+        parser::ASTArena arena;
+        parser::Parser parser(lexer, arena);
+        auto parse_result = parser.parseStatement();
+        EXPECT_TRUE(parse_result.success()) << "Parse failed";
+        if (!parse_result.success()) return 0.0;
 
-        sblr::BytecodeGenerator generator;
-        auto bytecode_result = generator.generate(ast.get());
-        EXPECT_TRUE(bytecode_result.success()) << "Bytecode generation failed: " << bytecode_result.error();
-        if (!bytecode_result.success()) return 0.0;
+        sblr::BytecodeGenerator generator(lexer.stringPool(), db.get());
+        auto bytecode_result = generator.generate(parse_result.statement());
+        if (!bytecode_result.success()) {
+            for (const auto& err : bytecode_result.errors()) {
+                EXPECT_TRUE(false) << "Bytecode generation failed: " << err;
+            }
+            return 0.0;
+        }
 
         sblr::Executor executor(db.get());
         auto exec_result = executor.execute(bytecode_result.bytecode());

@@ -699,6 +699,24 @@ set_tests_properties(MathematicalFunctions PROPERTIES
     TIMEOUT 60
 )
 
+# Bit Manipulation Functions Tests (November 14, 2025)
+add_executable(test_bit_manipulation
+    integration/test_bit_manipulation.cpp
+)
+target_link_libraries(test_bit_manipulation
+    scratchbird_core
+    scratchbird_parser
+    scratchbird_sblr
+    scratchbird_optimizer
+    gtest
+    gtest_main
+)
+add_test(NAME BitManipulation COMMAND test_bit_manipulation)
+set_tests_properties(BitManipulation PROPERTIES
+    LABELS "integration;functions;bit_manipulation;bitwise;bytes"
+    TIMEOUT 60
+)
+
 # CHECK Constraints Tests (ALPHA Phase A - Constraint Enforcement)
 add_executable(test_check_constraints
     integration/test_check_constraints.cpp
