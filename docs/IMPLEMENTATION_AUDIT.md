@@ -1604,6 +1604,92 @@ TABLE_FK = 0x94,            // Table-level composite FK (Nov 14, 2025 Phase C)
 
 ---
 
+## BIT MANIPULATION FUNCTIONS ✅ **COMPLETE** (14 functions, Nov 14, 2025)
+
+**Status**: Full byte/bit access, bitwise operations, shift operations, and utility functions
+
+### Byte Access Functions (4)
+
+**File**: `src/sblr/executor.cpp:11439-11603`
+```cpp
+void Executor::executeGetByte()  { /* Extract byte from string at position */ }
+void Executor::executeSetByte()  { /* Set byte in string at position */ }
+void Executor::executeGetBit()   { /* Extract bit from byte (0-7) */ }
+void Executor::executeSetBit()   { /* Set bit in byte to 0 or 1 */ }
+```
+
+**Opcodes**: `0xDA-0xDD` (opcodes.h:466-469)
+
+### Bitwise Operations (4)
+
+**File**: `src/sblr/executor.cpp:11605-11740`
+```cpp
+void Executor::executeBitAnd()   { /* Bitwise AND of two integers */ }
+void Executor::executeBitOr()    { /* Bitwise OR of two integers */ }
+void Executor::executeBitXor()   { /* Bitwise XOR of two integers */ }
+void Executor::executeBitNot()   { /* Bitwise NOT (complement) */ }
+```
+
+**Opcodes**: `0xDE-0xE1` (opcodes.h:470-473)
+
+### Shift Operations (3)
+
+**File**: `src/sblr/executor.cpp:11742-11863`
+```cpp
+void Executor::executeBitShiftLeft()          { /* Left shift (<<) */ }
+void Executor::executeBitShiftRight()         { /* Arithmetic right shift (>>) */ }
+void Executor::executeBitShiftRightLogical()  { /* Logical right shift (>>>) */ }
+```
+
+**Opcodes**: `0xE2-0xE4` (opcodes.h:474-476)
+
+### Utility Functions (3)
+
+**File**: `src/sblr/executor.cpp:11865-11975`
+```cpp
+void Executor::executeBitCount()   { /* Count set bits (popcount) */ }
+void Executor::executeBitLength()  { /* Length in bits (string length * 8) */ }
+void Executor::executeBitMask()    { /* Generate mask of N ones */ }
+```
+
+**Opcodes**: `0xE5-0xE7` (opcodes.h:477-479)
+
+### Function Registration
+
+**File**: `src/sblr/executor.cpp:835-848` (initBuiltinFunctions)
+```cpp
+builtins_["GET_BYTE"] = BuiltinFunction::GET_BYTE;
+builtins_["SET_BYTE"] = BuiltinFunction::SET_BYTE;
+builtins_["GET_BIT"] = BuiltinFunction::GET_BIT;
+builtins_["SET_BIT"] = BuiltinFunction::SET_BIT;
+builtins_["BIT_AND"] = BuiltinFunction::BIT_AND;
+builtins_["BIT_OR"] = BuiltinFunction::BIT_OR;
+builtins_["BIT_XOR"] = BuiltinFunction::BIT_XOR;
+builtins_["BIT_NOT"] = BuiltinFunction::BIT_NOT;
+builtins_["BIT_SHIFT_LEFT"] = BuiltinFunction::BIT_SHIFT_LEFT;
+builtins_["BIT_SHIFT_RIGHT"] = BuiltinFunction::BIT_SHIFT_RIGHT;
+builtins_["BIT_SHIFT_RIGHT_LOGICAL"] = BuiltinFunction::BIT_SHIFT_RIGHT_LOGICAL;
+builtins_["BIT_COUNT"] = BuiltinFunction::BIT_COUNT;
+builtins_["BIT_LENGTH"] = BuiltinFunction::BIT_LENGTH;
+builtins_["BIT_MASK"] = BuiltinFunction::BIT_MASK;
+```
+
+**Bytecode Generation**: `src/sblr/bytecode_generator.cpp:10837-11023`
+**Bytecode Dispatch**: `src/sblr/executor.cpp:9319-9446` (CALL_BUILTIN opcode handler)
+
+### Test Infrastructure Note
+
+**File**: `tests/integration/test_bit_manipulation.cpp` (345 lines)
+
+Tests verify expression parsing only (not full execution) because:
+- Parser doesn't support scalar SELECT (SELECT without FROM)
+- Executor requires TABLE_REF opcode for all SELECT queries
+- Tests use `Parser::parseExpression()` directly to validate function syntax
+- 18 parsing tests pass, covering all 14 functions plus combined operations
+- Future: Full execution testing when scalar SELECT support is added
+
+---
+
 ## MATHEMATICAL FUNCTIONS ✅ **COMPLETE** (29 functions, Nov 13, 2025)
 
 **Status**: Full trigonometric, logarithmic, rounding, and power functions
@@ -1682,6 +1768,6 @@ builtins_["COS"] = BuiltinFunction::COS;
 
 ---
 
-**Updated**: 2025-11-13 - Added Constraint System + Mathematical Functions
-**Total Functions**: 165+ (131 catalog + 5 RLS + 29 math)
-**LOC**: executor.cpp (+2,376 lines), parser.cpp (+63 lines), bytecode_generator.cpp (+122 lines)
+**Updated**: 2025-11-14 - Added Bit Manipulation Functions + Test Infrastructure
+**Total Functions**: 179+ (131 catalog + 5 RLS + 29 math + 14 bit)
+**LOC**: executor.cpp (+3,013 lines), parser.cpp (+63 lines), bytecode_generator.cpp (+309 lines)

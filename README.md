@@ -91,7 +91,7 @@ ctest --output-on-failure
   - ALTER TABLE RENAME COLUMN old TO new
   - ALTER TABLE ALTER COLUMN name TYPE type
 
-### Built-in Functions (89/100 = 89%) 🎉
+### Built-in Functions (103/114 = 90%) 🎉
 - ✅ String: 11 functions (LENGTH, SUBSTRING, UPPER, LOWER, TRIM, etc.)
 - ✅ Aggregate: 6 (COUNT, SUM, AVG, MIN, MAX, ARRAY_AGG)
 - ✅ Window: 8 functions
@@ -99,6 +99,7 @@ ctest --output-on-failure
 - ✅ Array: 12 functions
 - ✅ Date/Time: 6 functions
 - ✅ **Mathematical: 29 functions** (SIN, COS, TAN, SQRT, POWER, LN, LOG, etc.) 🎉
+- ✅ **Bit Manipulation: 14 functions** (GET_BYTE, SET_BYTE, BIT_AND, BIT_OR, BIT_XOR, etc.) 🎉
 - ✅ Conditional: 3 (COALESCE, NULLIF, CASE)
 
 ## What's Missing ❌
@@ -146,9 +147,9 @@ ctest --output-on-failure
 - ⧗ PRIMARY KEY - Depends on UNIQUE + NOT NULL
 
 ### Functions (11 missing)
-- Statistical functions
-- Cryptographic functions
-- XML functions
+- Statistical functions (7): STDDEV, VARIANCE, CORR, etc.
+- Cryptographic functions (4): MD5, SHA256, etc.
+- XML functions: XMLPARSE, XMLSERIALIZE, etc.
 
 ### Advanced SQL
 - Common Table Expressions (CTEs)
