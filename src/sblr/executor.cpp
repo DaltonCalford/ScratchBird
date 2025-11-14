@@ -15572,21 +15572,159 @@ namespace scratchbird
 
                         case core::CatalogManager::FKAction::SET_NULL:
                         {
-                            // TODO Phase B: Implement SET NULL action
-                            // Requires tuple serialization API which is not yet available
-                            // For now, treat as RESTRICT
-                            error("Foreign key constraint violation: SET NULL action not yet implemented for FK: " +
-                                  fk.fk_name + " (treated as RESTRICT)");
+                            // ALPHA Phase B: SET NULL implementation (for DELETE)
+                            DEBUG_LOG_DB("FK SET NULL (DELETE): setting FK columns to NULL in " +
+                                       std::to_string(matching_tids.size()) + " child rows in table " +
+                                       std::string(child_table.table_name));
+
+                            // Create NULL values for all FK columns
+                            std::vector<Value> null_values(fk_col_indices.size(), Value::makeNull());
+
+                            // For each matching child row, set FK columns to NULL
+                            for (const auto& tid : matching_tids)
+                            {
+                                // Fetch the current child tuple
+                                core::Tuple child_tuple;
+                                auto fetch_status = db_->storage_engine()->getTuple(
+                                    fk.child_table_id, tid, &child_tuple, nullptr);
+
+                                if (fetch_status != core::Status::OK)
+                                {
+                                    DEBUG_LOG_DB("FK SET NULL: failed to fetch child tuple");
+                                    continue;
+                                }
+
+                                // Modify the FK columns to NULL
+                                std::vector<uint8_t> new_tuple_data;
+                                if (!modifyTupleColumns(child_tuple.data, child_tuple.data_size,
+                                                       child_columns, fk_col_indices,
+                                                       null_values, new_tuple_data))
+                                {
+                                    error("FK SET NULL: failed to modify child tuple for FK: " + fk.fk_name);
+                                }
+
+                                // Update the child row using storage engine
+                                uint32_t page_id = static_cast<uint32_t>(core::getPageNumber(tid));
+                                uint16_t item_id = core::getSlot(tid);
+                                uint32_t new_page_id;
+                                uint16_t new_item_id;
+
+                                auto update_status = db_->storage_engine()->updateTuple(
+                                    fk.child_table_id, page_id, item_id,
+                                    new_tuple_data.data(), static_cast<uint32_t>(new_tuple_data.size()),
+                                    &new_page_id, &new_item_id, nullptr);
+
+                                if (update_status != core::Status::OK)
+                                {
+                                    error("FK SET NULL: failed to update child row for FK: " + fk.fk_name);
+                                }
+
+                                DEBUG_LOG_DB("FK SET NULL: updated child row (" +
+                                           std::to_string(page_id) + "," + std::to_string(item_id) + ")");
+                            }
                             break;
                         }
 
                         case core::CatalogManager::FKAction::SET_DEFAULT:
                         {
-                            // TODO Phase B: Implement SET DEFAULT action
-                            // Requires tuple serialization API which is not yet available
-                            // For now, treat as RESTRICT
-                            error("Foreign key constraint violation: SET DEFAULT action not yet implemented for FK: " +
-                                  fk.fk_name + " (treated as RESTRICT)");
+                            // ALPHA Phase B: SET DEFAULT implementation (for DELETE)
+                            DEBUG_LOG_DB("FK SET DEFAULT (DELETE): setting FK columns to DEFAULT in " +
+                                       std::to_string(matching_tids.size()) + " child rows in table " +
+                                       std::string(child_table.table_name));
+
+                            // Get DEFAULT values for FK columns
+                            std::vector<Value> default_values;
+                            for (size_t i = 0; i < fk_col_indices.size(); i++)
+                            {
+                                size_t col_idx = fk_col_indices[i];
+                                const auto& col_info = child_columns[col_idx];
+
+                                // Check if column has a DEFAULT value
+                                if (col_info.default_value.empty())
+                                {
+                                    // No DEFAULT defined - use NULL
+                                    default_values.push_back(Value::makeNull());
+                                }
+                                else
+                                {
+                                    // Parse simple default value (literals only for Phase B)
+                                    // TODO: Evaluate default_expr bytecode for complex defaults
+                                    core::DataType col_type = static_cast<core::DataType>(col_info.data_type);
+                                    Value default_val;
+
+                                    try
+                                    {
+                                        switch (col_type)
+                                        {
+                                            case core::DataType::INT32:
+                                                default_val = Value::makeInt32(std::stoi(col_info.default_value));
+                                                break;
+                                            case core::DataType::INT64:
+                                                default_val = Value::makeInt64(std::stoll(col_info.default_value));
+                                                break;
+                                            case core::DataType::FLOAT64:
+                                                default_val = Value::makeFloat64(std::stod(col_info.default_value));
+                                                break;
+                                            case core::DataType::VARCHAR:
+                                                default_val = Value::makeVarchar(col_info.default_value);
+                                                break;
+                                            default:
+                                                default_val = Value::makeNull();
+                                                break;
+                                        }
+                                    }
+                                    catch (...)
+                                    {
+                                        // Parsing failed - use NULL
+                                        default_val = Value::makeNull();
+                                    }
+
+                                    default_values.push_back(default_val);
+                                }
+                            }
+
+                            // For each matching child row, set FK columns to DEFAULT
+                            for (const auto& tid : matching_tids)
+                            {
+                                // Fetch the current child tuple
+                                core::Tuple child_tuple;
+                                auto fetch_status = db_->storage_engine()->getTuple(
+                                    fk.child_table_id, tid, &child_tuple, nullptr);
+
+                                if (fetch_status != core::Status::OK)
+                                {
+                                    DEBUG_LOG_DB("FK SET DEFAULT: failed to fetch child tuple");
+                                    continue;
+                                }
+
+                                // Modify the FK columns to DEFAULT values
+                                std::vector<uint8_t> new_tuple_data;
+                                if (!modifyTupleColumns(child_tuple.data, child_tuple.data_size,
+                                                       child_columns, fk_col_indices,
+                                                       default_values, new_tuple_data))
+                                {
+                                    error("FK SET DEFAULT: failed to modify child tuple for FK: " + fk.fk_name);
+                                }
+
+                                // Update the child row using storage engine
+                                uint32_t page_id = static_cast<uint32_t>(core::getPageNumber(tid));
+                                uint16_t item_id = core::getSlot(tid);
+                                uint32_t new_page_id;
+                                uint16_t new_item_id;
+
+                                auto update_status = db_->storage_engine()->updateTuple(
+                                    fk.child_table_id, page_id, item_id,
+                                    new_tuple_data.data(), static_cast<uint32_t>(new_tuple_data.size()),
+                                    &new_page_id, &new_item_id, nullptr);
+
+                                if (update_status != core::Status::OK)
+                                {
+                                    error("FK SET DEFAULT: failed to update child row for FK: " + fk.fk_name);
+                                }
+
+                                DEBUG_LOG_DB("FK SET DEFAULT: updated child row (" +
+                                           std::to_string(page_id) + "," + std::to_string(item_id) + ")");
+                            }
                             break;
                         }
                     }
@@ -15725,37 +15863,360 @@ namespace scratchbird
 
                         case core::CatalogManager::FKAction::CASCADE:
                         {
-                            // TODO Phase B: Implement CASCADE UPDATE action
-                            // Requires tuple serialization API which is not yet available
-                            // For now, treat as RESTRICT
-                            DEBUG_LOG_DB("FK CASCADE UPDATE not yet implemented - treating as RESTRICT");
-                            error("Foreign key constraint violation: CASCADE UPDATE action not yet implemented for FK: " +
-                                  fk.fk_name + " (treated as RESTRICT)");
+                            // ALPHA Phase B: CASCADE UPDATE implementation
+                            DEBUG_LOG_DB("FK CASCADE UPDATE: updating " + std::to_string(matching_tids.size()) +
+                                       " child rows in table " + std::string(child_table.table_name));
+
+                            // For each matching child row, update FK columns to new parent key values
+                            for (const auto& tid : matching_tids)
+                            {
+                                // Fetch the current child tuple
+                                core::Tuple child_tuple;
+                                auto fetch_status = db_->storage_engine()->getTuple(
+                                    fk.child_table_id, tid, &child_tuple, nullptr);
+
+                                if (fetch_status != core::Status::OK)
+                                {
+                                    DEBUG_LOG_DB("FK CASCADE UPDATE: failed to fetch child tuple");
+                                    continue;
+                                }
+
+                                // Modify the FK columns with new parent key values
+                                std::vector<uint8_t> new_tuple_data;
+                                if (!modifyTupleColumns(child_tuple.data, child_tuple.data_size,
+                                                       child_columns, fk_col_indices,
+                                                       new_key_values, new_tuple_data))
+                                {
+                                    error("FK CASCADE UPDATE: failed to modify child tuple for FK: " + fk.fk_name);
+                                }
+
+                                // Update the child row using storage engine
+                                uint32_t page_id = static_cast<uint32_t>(core::getPageNumber(tid));
+                                uint16_t item_id = core::getSlot(tid);
+                                uint32_t new_page_id;
+                                uint16_t new_item_id;
+
+                                auto update_status = db_->storage_engine()->updateTuple(
+                                    fk.child_table_id, page_id, item_id,
+                                    new_tuple_data.data(), static_cast<uint32_t>(new_tuple_data.size()),
+                                    &new_page_id, &new_item_id, nullptr);
+
+                                if (update_status != core::Status::OK)
+                                {
+                                    error("FK CASCADE UPDATE: failed to update child row for FK: " + fk.fk_name);
+                                }
+
+                                DEBUG_LOG_DB("FK CASCADE UPDATE: updated child row (" +
+                                           std::to_string(page_id) + "," + std::to_string(item_id) + ")");
+                            }
                             break;
                         }
 
                         case core::CatalogManager::FKAction::SET_NULL:
                         {
-                            // TODO Phase B: Implement SET NULL action
-                            // Requires tuple serialization API which is not yet available
-                            // For now, treat as RESTRICT
-                            error("Foreign key constraint violation: SET NULL action not yet implemented for FK: " +
-                                  fk.fk_name + " (treated as RESTRICT)");
+                            // ALPHA Phase B: SET NULL implementation (for UPDATE)
+                            DEBUG_LOG_DB("FK SET NULL (UPDATE): setting FK columns to NULL in " +
+                                       std::to_string(matching_tids.size()) + " child rows in table " +
+                                       std::string(child_table.table_name));
+
+                            // Create NULL values for all FK columns
+                            std::vector<Value> null_values(fk_col_indices.size(), Value::makeNull());
+
+                            // For each matching child row, set FK columns to NULL
+                            for (const auto& tid : matching_tids)
+                            {
+                                // Fetch the current child tuple
+                                core::Tuple child_tuple;
+                                auto fetch_status = db_->storage_engine()->getTuple(
+                                    fk.child_table_id, tid, &child_tuple, nullptr);
+
+                                if (fetch_status != core::Status::OK)
+                                {
+                                    DEBUG_LOG_DB("FK SET NULL: failed to fetch child tuple");
+                                    continue;
+                                }
+
+                                // Modify the FK columns to NULL
+                                std::vector<uint8_t> new_tuple_data;
+                                if (!modifyTupleColumns(child_tuple.data, child_tuple.data_size,
+                                                       child_columns, fk_col_indices,
+                                                       null_values, new_tuple_data))
+                                {
+                                    error("FK SET NULL: failed to modify child tuple for FK: " + fk.fk_name);
+                                }
+
+                                // Update the child row using storage engine
+                                uint32_t page_id = static_cast<uint32_t>(core::getPageNumber(tid));
+                                uint16_t item_id = core::getSlot(tid);
+                                uint32_t new_page_id;
+                                uint16_t new_item_id;
+
+                                auto update_status = db_->storage_engine()->updateTuple(
+                                    fk.child_table_id, page_id, item_id,
+                                    new_tuple_data.data(), static_cast<uint32_t>(new_tuple_data.size()),
+                                    &new_page_id, &new_item_id, nullptr);
+
+                                if (update_status != core::Status::OK)
+                                {
+                                    error("FK SET NULL: failed to update child row for FK: " + fk.fk_name);
+                                }
+
+                                DEBUG_LOG_DB("FK SET NULL: updated child row (" +
+                                           std::to_string(page_id) + "," + std::to_string(item_id) + ")");
+                            }
                             break;
                         }
 
                         case core::CatalogManager::FKAction::SET_DEFAULT:
                         {
-                            // TODO Phase B: Implement SET DEFAULT action
-                            // Requires tuple serialization API which is not yet available
-                            // For now, treat as RESTRICT
-                            error("Foreign key constraint violation: SET DEFAULT action not yet implemented for FK: " +
-                                  fk.fk_name + " (treated as RESTRICT)");
+                            // ALPHA Phase B: SET DEFAULT implementation (for UPDATE)
+                            DEBUG_LOG_DB("FK SET DEFAULT (UPDATE): setting FK columns to DEFAULT in " +
+                                       std::to_string(matching_tids.size()) + " child rows in table " +
+                                       std::string(child_table.table_name));
+
+                            // Get DEFAULT values for FK columns
+                            std::vector<Value> default_values;
+                            for (size_t i = 0; i < fk_col_indices.size(); i++)
+                            {
+                                size_t col_idx = fk_col_indices[i];
+                                const auto& col_info = child_columns[col_idx];
+
+                                // Check if column has a DEFAULT value
+                                if (col_info.default_value.empty())
+                                {
+                                    // No DEFAULT defined - use NULL
+                                    default_values.push_back(Value::makeNull());
+                                }
+                                else
+                                {
+                                    // Parse simple default value (literals only for Phase B)
+                                    // TODO: Evaluate default_expr bytecode for complex defaults
+                                    core::DataType col_type = static_cast<core::DataType>(col_info.data_type);
+                                    Value default_val;
+
+                                    try
+                                    {
+                                        switch (col_type)
+                                        {
+                                            case core::DataType::INT32:
+                                                default_val = Value::makeInt32(std::stoi(col_info.default_value));
+                                                break;
+                                            case core::DataType::INT64:
+                                                default_val = Value::makeInt64(std::stoll(col_info.default_value));
+                                                break;
+                                            case core::DataType::FLOAT64:
+                                                default_val = Value::makeFloat64(std::stod(col_info.default_value));
+                                                break;
+                                            case core::DataType::VARCHAR:
+                                                default_val = Value::makeVarchar(col_info.default_value);
+                                                break;
+                                            default:
+                                                default_val = Value::makeNull();
+                                                break;
+                                        }
+                                    }
+                                    catch (...)
+                                    {
+                                        // Parsing failed - use NULL
+                                        default_val = Value::makeNull();
+                                    }
+
+                                    default_values.push_back(default_val);
+                                }
+                            }
+
+                            // For each matching child row, set FK columns to DEFAULT
+                            for (const auto& tid : matching_tids)
+                            {
+                                // Fetch the current child tuple
+                                core::Tuple child_tuple;
+                                auto fetch_status = db_->storage_engine()->getTuple(
+                                    fk.child_table_id, tid, &child_tuple, nullptr);
+
+                                if (fetch_status != core::Status::OK)
+                                {
+                                    DEBUG_LOG_DB("FK SET DEFAULT: failed to fetch child tuple");
+                                    continue;
+                                }
+
+                                // Modify the FK columns to DEFAULT values
+                                std::vector<uint8_t> new_tuple_data;
+                                if (!modifyTupleColumns(child_tuple.data, child_tuple.data_size,
+                                                       child_columns, fk_col_indices,
+                                                       default_values, new_tuple_data))
+                                {
+                                    error("FK SET DEFAULT: failed to modify child tuple for FK: " + fk.fk_name);
+                                }
+
+                                // Update the child row using storage engine
+                                uint32_t page_id = static_cast<uint32_t>(core::getPageNumber(tid));
+                                uint16_t item_id = core::getSlot(tid);
+                                uint32_t new_page_id;
+                                uint16_t new_item_id;
+
+                                auto update_status = db_->storage_engine()->updateTuple(
+                                    fk.child_table_id, page_id, item_id,
+                                    new_tuple_data.data(), static_cast<uint32_t>(new_tuple_data.size()),
+                                    &new_page_id, &new_item_id, nullptr);
+
+                                if (update_status != core::Status::OK)
+                                {
+                                    error("FK SET DEFAULT: failed to update child row for FK: " + fk.fk_name);
+                                }
+
+                                DEBUG_LOG_DB("FK SET DEFAULT: updated child row (" +
+                                           std::to_string(page_id) + "," + std::to_string(item_id) + ")");
+                            }
                             break;
                         }
                     }
                 }
             }
+        }
+
+        // ALPHA Phase B: Tuple modification helpers for FK actions
+        // Serialize tuple from column values (all columns)
+        bool Executor::serializeTupleFromValues(const std::vector<Value>& values,
+                                               const std::vector<core::CatalogManager::ColumnInfo>& columns,
+                                               std::vector<uint8_t>& tuple_data_out)
+        {
+            if (values.size() != columns.size())
+            {
+                return false; // Mismatch in value/column count
+            }
+
+            tuple_data_out.clear();
+
+            // Reserve space for TupleHeader
+            size_t header_offset = tuple_data_out.size();
+            tuple_data_out.resize(tuple_data_out.size() + sizeof(core::TupleHeader));
+
+            // Determine if we need a null bitmap
+            bool has_nulls = false;
+            for (const auto& val : values)
+            {
+                if (val.isNull())
+                {
+                    has_nulls = true;
+                    break;
+                }
+            }
+
+            // Add null bitmap if needed (one bit per column)
+            size_t null_bitmap_offset = 0;
+            if (has_nulls)
+            {
+                null_bitmap_offset = tuple_data_out.size();
+                size_t bitmap_bytes = (columns.size() + 7) / 8;
+                tuple_data_out.resize(tuple_data_out.size() + bitmap_bytes);
+                // Initialize bitmap to zero
+                std::fill(tuple_data_out.begin() + null_bitmap_offset,
+                         tuple_data_out.begin() + null_bitmap_offset + bitmap_bytes, 0);
+            }
+
+            // Serialize each column value
+            for (size_t i = 0; i < values.size(); i++)
+            {
+                const auto& value = values[i];
+                const auto& col_info = columns[i];
+
+                if (value.isNull())
+                {
+                    // Set null bit in bitmap
+                    size_t bit_offset = i;
+                    size_t byte_offset = null_bitmap_offset + (bit_offset / 8);
+                    size_t bit_pos = bit_offset % 8;
+                    tuple_data_out[byte_offset] |= (1 << bit_pos);
+                    // Don't write any data for null values
+                    continue;
+                }
+
+                // Serialize value based on column type
+                core::DataType col_type = static_cast<core::DataType>(col_info.data_type);
+
+                switch (col_type)
+                {
+                    case core::DataType::INT32:
+                    {
+                        int32_t val = static_cast<int32_t>(value.toInt64());
+                        size_t offset = tuple_data_out.size();
+                        tuple_data_out.resize(offset + sizeof(int32_t));
+                        std::memcpy(&tuple_data_out[offset], &val, sizeof(int32_t));
+                        break;
+                    }
+                    case core::DataType::INT64:
+                    {
+                        int64_t val = value.toInt64();
+                        size_t offset = tuple_data_out.size();
+                        tuple_data_out.resize(offset + sizeof(int64_t));
+                        std::memcpy(&tuple_data_out[offset], &val, sizeof(int64_t));
+                        break;
+                    }
+                    case core::DataType::FLOAT64:
+                    {
+                        double val = value.toDouble();
+                        size_t offset = tuple_data_out.size();
+                        tuple_data_out.resize(offset + sizeof(double));
+                        std::memcpy(&tuple_data_out[offset], &val, sizeof(double));
+                        break;
+                    }
+                    case core::DataType::VARCHAR:
+                    {
+                        std::string str = value.toString();
+                        // Write length prefix (4 bytes) then data
+                        uint32_t len = static_cast<uint32_t>(str.size());
+                        size_t offset = tuple_data_out.size();
+                        tuple_data_out.resize(offset + sizeof(uint32_t) + len);
+                        std::memcpy(&tuple_data_out[offset], &len, sizeof(uint32_t));
+                        std::memcpy(&tuple_data_out[offset + sizeof(uint32_t)], str.data(), len);
+                        break;
+                    }
+                    default:
+                        return false; // Unsupported type
+                }
+            }
+
+            // Initialize TupleHeader
+            auto* header = reinterpret_cast<core::TupleHeader*>(&tuple_data_out[header_offset]);
+            std::memset(header, 0, sizeof(core::TupleHeader));
+            header->infomask = has_nulls ? core::TupleHeader::HEAP_HAS_NULLS : 0;
+            header->null_bitmap_offset = has_nulls ? static_cast<uint16_t>(null_bitmap_offset) : 0;
+
+            return true;
+        }
+
+        // Modify specific columns in a tuple and reserialize
+        bool Executor::modifyTupleColumns(const uint8_t* original_tuple, uint32_t original_size,
+                                         const std::vector<core::CatalogManager::ColumnInfo>& all_columns,
+                                         const std::vector<size_t>& column_indices,
+                                         const std::vector<Value>& new_values,
+                                         std::vector<uint8_t>& new_tuple_out)
+        {
+            if (column_indices.size() != new_values.size())
+            {
+                return false; // Mismatch in indices/values count
+            }
+
+            // Deserialize original tuple to get all current values
+            std::vector<Value> current_values;
+            if (!deserializeTuple(original_tuple, original_size, all_columns, current_values))
+            {
+                return false; // Failed to deserialize
+            }
+
+            // Replace specified column values with new values
+            for (size_t i = 0; i < column_indices.size(); i++)
+            {
+                size_t col_idx = column_indices[i];
+                if (col_idx >= current_values.size())
+                {
+                    return false; // Invalid column index
+                }
+                current_values[col_idx] = new_values[i];
+            }
+
+            // Reserialize with modified values
+            return serializeTupleFromValues(current_values, all_columns, new_tuple_out);
         }
 
     } // namespace sblr
