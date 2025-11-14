@@ -91,7 +91,7 @@ ctest --output-on-failure
   - ALTER TABLE RENAME COLUMN old TO new
   - ALTER TABLE ALTER COLUMN name TYPE type
 
-### Built-in Functions (103/114 = 90%) 🎉
+### Built-in Functions (107/114 = 94%) 🎉
 - ✅ String: 11 functions (LENGTH, SUBSTRING, UPPER, LOWER, TRIM, etc.)
 - ✅ Aggregate: 6 (COUNT, SUM, AVG, MIN, MAX, ARRAY_AGG)
 - ✅ Window: 8 functions
@@ -100,6 +100,7 @@ ctest --output-on-failure
 - ✅ Date/Time: 6 functions
 - ✅ **Mathematical: 29 functions** (SIN, COS, TAN, SQRT, POWER, LN, LOG, etc.) 🎉
 - ✅ **Bit Manipulation: 14 functions** (GET_BYTE, SET_BYTE, BIT_AND, BIT_OR, BIT_XOR, etc.) 🎉
+- ✅ **Cryptographic: 4 functions** (MD5, SHA1, SHA256, SHA512) 🎉
 - ✅ Conditional: 3 (COALESCE, NULLIF, CASE)
 
 ## What's Missing ❌
@@ -146,10 +147,9 @@ ctest --output-on-failure
 - ⧗ UNIQUE constraint enforcement - Executor ready, parser pending
 - ⧗ PRIMARY KEY - Depends on UNIQUE + NOT NULL
 
-### Functions (11 missing)
-- Statistical functions (7): STDDEV, VARIANCE, CORR, etc.
-- Cryptographic functions (4): MD5, SHA256, etc.
-- XML functions: XMLPARSE, XMLSERIALIZE, etc.
+### Functions (7 missing)
+- ⧗ Statistical functions (7 - infrastructure ready, need aggregate support): STDDEV, STDDEV_POP, VAR_SAMP, VAR_POP, CORR, COVAR_POP, COVAR_SAMP
+- ⧗ XML functions (infrastructure ready): XMLPARSE, XMLSERIALIZE, etc.
 
 ### Advanced SQL
 - Common Table Expressions (CTEs)

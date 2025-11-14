@@ -1,7 +1,7 @@
 # ScratchBird Project Context
 
 **Last Updated**: November 14, 2025
-**Version**: Alpha - 98% Complete (Bit Manipulation Functions + Test Infrastructure Fix)
+**Version**: Alpha - 98% Complete (Cryptographic Functions + Bit Manipulation)
 **Status**: Educational/Development
 
 > **MANDATORY**: Read `/MGA_RULES.md` before ANY transaction or index work.
@@ -135,13 +135,14 @@
 - ❌ Views, Sequences, Triggers (execution), Stored procedures
 - ❌ Advanced security (query plan, column/row permissions, SQL syntax)
 
-### Built-in Functions (103/114 = 90%) ✅
+### Built-in Functions (107/114 = 94%) ✅
 - ✅ String (11), Aggregate (6), Window (8)
 - ✅ JSON (13), Array (12), Date/Time (6)
 - ✅ Conditional (3), Regex (4), Spatial (4+)
 - ✅ **Mathematical (29)**: SIN, COS, TAN, ASIN, ACOS, ATAN, ATAN2, DEGREES, RADIANS, PI, ABS, SIGN, ROUND, CEIL, FLOOR, TRUNC, MOD, SQRT, CBRT, POWER, EXP, LN, LOG, LOG10, LOG2
 - ✅ **Bit Manipulation (14)**: GET_BYTE, SET_BYTE, GET_BIT, SET_BIT, BIT_AND, BIT_OR, BIT_XOR, BIT_NOT, BIT_SHIFT_LEFT, BIT_SHIFT_RIGHT, BIT_SHIFT_RIGHT_LOGICAL, BIT_COUNT, BIT_LENGTH, BIT_MASK (Nov 14, 2025)
-- ❌ Statistical (7), Cryptographic (4), XML (0)
+- ✅ **Cryptographic (4)**: MD5, SHA1, SHA256, SHA512 (Nov 14, 2025)
+- ⧗ Statistical (7 - infrastructure ready, need aggregate support), XML (0)
 
 ### Constraints (8/10 = 80%) ✅
 - ✅ NOT NULL, Data type validation
@@ -422,6 +423,11 @@ ctest -V
 **Timeline**: 5-7 months to completion (with 3 developers)
 
 **Recently Completed** (Nov 14, 2025):
+- ✅ **Cryptographic Functions - 100% COMPLETE** (~128 lines):
+  - 4 hash functions: MD5, SHA1, SHA256, SHA512
+  - OpenSSL integration with proper NULL handling
+  - Hex-encoded output (lowercase)
+  - Full bytecode generation + executor implementation
 - ✅ **Bit Manipulation Functions + Test Infrastructure - 100% COMPLETE** (~600 lines):
   - 14 bit manipulation functions (opcodes, bytecode generation, executor handlers)
   - Byte access: GET_BYTE, SET_BYTE, GET_BIT, SET_BIT
@@ -430,6 +436,11 @@ ctest -V
   - Utilities: BIT_COUNT, BIT_LENGTH, BIT_MASK
   - Test infrastructure fix: Expression parsing-only tests (parser/executor don't support scalar SELECT)
   - 18 parsing tests passing (tests/integration/test_bit_manipulation.cpp)
+- ⧗ **Statistical Functions - INFRASTRUCTURE READY** (~56 lines bytecode):
+  - 6 functions: STDDEV_SAMP, STDDEV_POP, VAR_SAMP, VAR_POP, CORR, COVAR_POP
+  - Opcodes defined (0xF3-0xF8)
+  - Bytecode generation complete
+  - Executor stubs present (need AggregateAccumulator enhancement)
 - ✅ **Foreign Key Phase C - 100% COMPLETE** (~344 lines production code):
   - Table-level FOREIGN KEY syntax parser (TableConstraint, ForeignKeyConstraint AST)
   - Composite FK support (2+ columns) with TABLE_FK opcode (0x94)
@@ -482,4 +493,4 @@ ctest -V
 ---
 
 **Last Updated**: November 14, 2025
-**Status**: Phase 1 ALPHA - 98% Complete (Bit Manipulation Functions + Test Infrastructure Fix COMPLETE)
+**Status**: Phase 1 ALPHA - 98% Complete (Cryptographic Functions + Bit Manipulation COMPLETE)
