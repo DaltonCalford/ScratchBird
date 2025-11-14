@@ -1,7 +1,7 @@
 # ScratchBird ALPHA Phase 1 - Complete Implementation Plan
 
 **Created**: November 3, 2025
-**Updated**: November 14, 2025 (FK Phase C COMPLETE - Composite Foreign Keys)
+**Updated**: November 14, 2025 (Bit Manipulation Functions + Test Infrastructure Fix COMPLETE)
 **Goal**: 100% implementation of all specified features
 **Status**: ACTIVE PLAN
 
@@ -14,10 +14,11 @@
 **Remaining Work**: ~750-1,150 hours (19-29 weeks at 40 hours/week)
 
 **Recent Milestones**:
+- ✅ **Bit Manipulation Functions COMPLETE** - 14 functions + test infrastructure fix - Nov 14, 2025 🎉
 - ✅ **Foreign Key Phase C COMPLETE** - Composite FK support, table-level syntax - Nov 14, 2025 🎉
 - ✅ **Foreign Key Phase B COMPLETE** - CASCADE UPDATE, SET NULL, SET DEFAULT actions - Nov 14, 2025 🎉
 - ✅ **Constraint System COMPLETE** - CHECK, DEFAULT, UNIQUE enforcement (parser to runtime) - Nov 13, 2025 🎉
-- ✅ **Mathematical Functions COMPLETE** - 29 functions (trigonometric, algebraic, logarithmic) - Nov 12, 2025 🎉
+- ✅ **Mathematical Functions COMPLETE** - 29 functions (trigonometric, algebraic, logarithmic) - Nov 13, 2025 🎉
 - ✅ **Security Phase 3.5 COMPLETE** - RLS DML enforcement (INSERT/UPDATE/DELETE WITH CHECK), SQL Object Permissions (GRANT EXECUTE), Ownership Chaining (DEFINER/INVOKER) - Nov 12, 2025 🎉
 - ✅ **Row-Level Security Phase 3.4.7 COMPLETE** - Runtime expression evaluation via WHERE clause injection - Nov 11, 2025 🎉
 - ✅ **Row-Level Security Framework (Phase 3.4) 100% COMPLETE** - Full DDL, catalog, planner integration - Nov 11, 2025 🎉
@@ -265,7 +266,7 @@
 - 14 files modified
 - Zero compilation errors
 
-### Built-in Functions (89/100 = 89%) 🎉
+### Built-in Functions (103/114 = 90%) 🎉
 - ✅ String (11): LENGTH, SUBSTRING, UPPER, LOWER, TRIM, CONCAT, etc.
 - ✅ Aggregate (6): COUNT, SUM, AVG, MIN, MAX, ARRAY_AGG
 - ✅ Window (8): ROW_NUMBER, RANK, DENSE_RANK, LAG, LEAD, etc.
@@ -275,6 +276,7 @@
 - ✅ Conditional (3): COALESCE, NULLIF, CASE
 - ✅ Regex (4): REGEXP_MATCH, REGEXP_REPLACE, etc.
 - ✅ **Mathematical (29)**: SIN, COS, TAN, ASIN, ACOS, ATAN, ATAN2, DEGREES, RADIANS, PI, ABS, SIGN, ROUND, CEIL, FLOOR, TRUNC, MOD, SQRT, CBRT, POWER, EXP, LN, LOG, LOG10, LOG2
+- ✅ **Bit Manipulation (14)**: GET_BYTE, SET_BYTE, GET_BIT, SET_BIT, BIT_AND, BIT_OR, BIT_XOR, BIT_NOT, BIT_SHIFT_LEFT, BIT_SHIFT_RIGHT, BIT_SHIFT_RIGHT_LOGICAL, BIT_COUNT, BIT_LENGTH, BIT_MASK
 - ❌ Statistical (7): STDDEV, VARIANCE, CORR, etc.
 - ❌ Cryptographic (4): MD5, SHA256, etc.
 
@@ -295,52 +297,56 @@
 
 ### 🔴 CRITICAL PRIORITY
 
-#### 1. Mathematical Functions (0/40 implemented) - 30-40 hours ⚠️ **HIGHEST PRIORITY**
-**Status**: Blocking basic query functionality
-**Impact**: Cannot perform basic math operations in queries
+#### 1. Statistical Functions (0/7 implemented) - 25-35 hours ⚠️ **HIGHEST PRIORITY**
+**Status**: Next function category
+**Impact**: Missing advanced aggregate functions
 
 **Missing Functions**:
-- Trigonometric: SIN, COS, TAN, ASIN, ACOS, ATAN, ATAN2, DEGREES, RADIANS, PI
-- Algebraic: ABS, SIGN, ROUND, CEIL, FLOOR, TRUNC, MOD, SQRT, CBRT, POWER
-- Logarithmic: EXP, LN, LOG, LOG10
+- STDDEV, STDDEV_POP, STDDEV_SAMP
+- VARIANCE, VAR_POP, VAR_SAMP
+- CORR
 
 **Files**: `src/sblr/opcodes.h`, `src/sblr/executor.cpp`
 
 **Implementation Plan**:
-1. Add opcodes (OP_SIN, OP_COS, etc.) - 2 hours
-2. Implement executor methods - 15-20 hours
-3. Add to function registry - 3-5 hours
-4. Write tests - 10-15 hours
+1. Add opcodes (EXT_FUNC_STDDEV, etc.) - 2 hours
+2. Implement executor methods - 12-18 hours
+3. Add to function registry - 2-3 hours
+4. Write tests - 9-12 hours
 
-#### 2. Foreign Key Constraints (0% enforced) - 100-140 hours
-**Status**: Critical data integrity feature missing
-**Impact**: No referential integrity enforcement
+#### 2. Foreign Key Disk Persistence (Phase D) - 40-60 hours
+**Status**: Runtime enforcement complete, disk persistence needed
+**Impact**: FKs don't survive database restart
 
 **Tasks**:
-- FK catalog (MATCH FULL/PARTIAL/SIMPLE)
-- INSERT/UPDATE validation
-- DELETE/UPDATE validation on referenced table
-- Referential actions (CASCADE, SET NULL, SET DEFAULT, RESTRICT, NO ACTION)
+- Persist FK metadata to catalog tables
+- Load FKs on database startup
+- Index-based lookups for performance
+- ALTER TABLE ADD/DROP FOREIGN KEY
 
-**Files**: `src/core/foreign_key.cpp` (NEW), `src/core/catalog_manager.cpp`, `src/sblr/executor.cpp`
+**Files**: `src/core/catalog_manager.cpp`, `src/sblr/executor.cpp`
 
 **Implementation Plan**:
-1. Design FK catalog schema - 10-15 hours
-2. Implement FK CRUD operations - 20-30 hours
-3. Add validation hooks to INSERT/UPDATE/DELETE - 30-40 hours
-4. Implement CASCADE/SET NULL/SET DEFAULT - 20-30 hours
-5. Write comprehensive tests - 20-25 hours
+1. Design FK catalog persistence schema - 8-12 hours
+2. Implement save/load operations - 15-20 hours
+3. Add index-based FK validation - 10-15 hours
+4. ALTER TABLE FK operations - 7-13 hours
 
-#### 3. CHECK Constraint Enforcement (25-35 hours)
-**Status**: Catalog exists, runtime validation stubbed
-**Impact**: Cannot enforce domain rules
+#### 3. Cryptographic Functions (0/4 implemented) - 15-20 hours
+**Status**: Next function category after statistical
+**Impact**: Missing security/hashing functions
 
-**Tasks**:
-- Table CHECK constraint validation on INSERT/UPDATE
-- Domain CHECK constraint validation
-- Expression evaluation for CHECK predicates
+**Missing Functions**:
+- MD5, SHA1, SHA256, SHA512
 
-**Files**: `src/core/domain_manager.cpp`, `src/core/constraint.cpp` (NEW), `src/sblr/executor.cpp`
+**Files**: `src/sblr/opcodes.h`, `src/sblr/executor.cpp`
+**Dependencies**: OpenSSL (already linked)
+
+**Implementation Plan**:
+1. Add opcodes - 1-2 hours
+2. Implement executor methods with OpenSSL - 8-10 hours
+3. Add to function registry - 1-2 hours
+4. Write tests - 5-6 hours
 
 ---
 
@@ -629,13 +635,17 @@ Before Phase 2 (parser separation) can begin, ALL of the following must be ✅:
 
 ## DOCUMENT HISTORY
 
-**Version**: 2.0
+**Version**: 2.1
 **Created**: November 3, 2025
-**Updated**: November 12, 2025 (Security Phase 3.5 Complete - Reorganized as tracking document)
-**Status**: ACTIVE PLAN - 89% COMPLETE
+**Updated**: November 14, 2025 (Bit Manipulation Functions + Test Infrastructure Fix COMPLETE)
+**Status**: ACTIVE PLAN - 90% COMPLETE
 **Target**: Phase 1 Complete in 5-8 months (3 developers)
 
 **Major Updates**:
+- Nov 14, 2025: Bit manipulation functions complete (14 functions), test infrastructure fix (expression parsing-only tests)
+- Nov 14, 2025: Foreign Key Phase C complete (composite FK support)
+- Nov 13, 2025: Constraint system complete (CHECK, DEFAULT, UNIQUE)
+- Nov 13, 2025: Mathematical functions complete (29 functions)
 - Nov 12, 2025: Security Phase 3.5 complete (RLS DML + Ownership Chaining), reorganized as tracking document with specification references
 - Nov 11, 2025: Security Phase 3.4.7 complete (RLS runtime evaluation)
 - Nov 10, 2025: Security Phase 1 & 2 complete
