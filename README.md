@@ -155,7 +155,15 @@ ctest --output-on-failure
   - ✅ Bytecode generation (UNIQUE_CONSTRAINT opcode)
   - ✅ Runtime enforcement (INSERT/UPDATE validation) - Pre-existing
   - ⧗ ALTER TABLE ADD/DROP UNIQUE (future)
-- ⧗ PRIMARY KEY - Depends on UNIQUE + NOT NULL (next priority)
+- ✅ **PRIMARY KEY constraint** - Parser integration COMPLETE Nov 14, 2025 🎉:
+  - ✅ Column-level PRIMARY KEY (e.g., `id INT PRIMARY KEY`)
+  - ✅ Table-level PRIMARY KEY (e.g., `PRIMARY KEY (id)` or `PRIMARY KEY (col1, col2)`)
+  - ✅ Composite PRIMARY KEY support (multi-column)
+  - ✅ Automatic NOT NULL + UNIQUE enforcement
+  - ✅ Bytecode generation (PRIMARY_KEY opcode)
+  - ⧗ Single PK per table validation (future)
+  - ⧗ Catalog metadata storage (future)
+  - ⧗ ALTER TABLE ADD/DROP PRIMARY KEY (future)
 
 ### Functions - ALL COMPLETE! 🎉
 - All 123 planned SQL functions fully implemented!
