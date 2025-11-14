@@ -369,7 +369,11 @@ namespace scratchbird
             // Aggregation execution helpers (Phase 1 Task 1.6.3)
             struct AggregateAccumulator
             {
-                enum class AggFunc { COUNT, SUM, AVG, MIN, MAX, ARRAY_AGG };
+                enum class AggFunc {
+                    COUNT, SUM, AVG, MIN, MAX, ARRAY_AGG,
+                    // Statistical functions (Nov 14, 2025)
+                    STDDEV_SAMP, STDDEV_POP, VAR_SAMP, VAR_POP, CORR, COVAR_POP
+                };
 
                 AggFunc func;
                 bool distinct;
@@ -379,10 +383,24 @@ namespace scratchbird
                 std::unordered_set<std::string> distinct_values; // For DISTINCT
                 std::vector<Value> array_elements;  // For ARRAY_AGG
 
+                // Statistical function state (Welford's algorithm for numerical stability)
+                double mean;            // Running mean
+                double m2;              // Sum of squared deviations from mean
+
+                // For correlation/covariance (2-variable statistics)
+                double sum_x;           // Σx
+                double sum_y;           // Σy
+                double sum_xy;          // Σ(xy)
+                double sum_x2;          // Σ(x²)
+                double sum_y2;          // Σ(y²)
+
                 AggregateAccumulator(AggFunc f, bool d)
-                    : func(f), distinct(d), count(0), sum(0.0) {}
+                    : func(f), distinct(d), count(0), sum(0.0),
+                      mean(0.0), m2(0.0),
+                      sum_x(0.0), sum_y(0.0), sum_xy(0.0), sum_x2(0.0), sum_y2(0.0) {}
 
                 void accumulate(const Value& val);
+                void accumulate2(const Value& val1, const Value& val2);  // For CORR, COVAR
                 Value finalize();
             };
 

@@ -2418,8 +2418,7 @@ namespace scratchbird
                 {
                     generateExpression(arg);
                 }
-                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
-                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_STDDEV_SAMP));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::AGG_STDDEV_SAMP));
                 current_result_->writeByte(static_cast<uint8_t>(node->args().size()));
                 return;
             }
@@ -2429,8 +2428,7 @@ namespace scratchbird
                 {
                     generateExpression(arg);
                 }
-                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
-                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_STDDEV_POP));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::AGG_STDDEV_POP));
                 current_result_->writeByte(static_cast<uint8_t>(node->args().size()));
                 return;
             }
@@ -2440,8 +2438,7 @@ namespace scratchbird
                 {
                     generateExpression(arg);
                 }
-                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
-                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_VAR_SAMP));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::AGG_VAR_SAMP));
                 current_result_->writeByte(static_cast<uint8_t>(node->args().size()));
                 return;
             }
@@ -2451,8 +2448,7 @@ namespace scratchbird
                 {
                     generateExpression(arg);
                 }
-                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
-                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_VAR_POP));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::AGG_VAR_POP));
                 current_result_->writeByte(static_cast<uint8_t>(node->args().size()));
                 return;
             }
@@ -2462,8 +2458,7 @@ namespace scratchbird
                 {
                     generateExpression(arg);
                 }
-                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
-                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_CORR));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::AGG_CORR));
                 current_result_->writeByte(static_cast<uint8_t>(node->args().size()));
                 return;
             }
@@ -2473,8 +2468,7 @@ namespace scratchbird
                 {
                     generateExpression(arg);
                 }
-                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
-                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_COVAR_POP));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::AGG_COVAR_POP));
                 current_result_->writeByte(static_cast<uint8_t>(node->args().size()));
                 return;
             }
@@ -2707,8 +2701,7 @@ namespace scratchbird
                 {
                     generateExpression(arg);
                 }
-                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
-                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_STDDEV_SAMP));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::AGG_STDDEV_SAMP));
                 current_result_->writeByte(static_cast<uint8_t>(node->args().size()));
                 return;
             }
@@ -2718,8 +2711,7 @@ namespace scratchbird
                 {
                     generateExpression(arg);
                 }
-                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
-                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_STDDEV_POP));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::AGG_STDDEV_POP));
                 current_result_->writeByte(static_cast<uint8_t>(node->args().size()));
                 return;
             }
@@ -2729,8 +2721,7 @@ namespace scratchbird
                 {
                     generateExpression(arg);
                 }
-                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
-                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_VAR_SAMP));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::AGG_VAR_SAMP));
                 current_result_->writeByte(static_cast<uint8_t>(node->args().size()));
                 return;
             }
@@ -2740,8 +2731,7 @@ namespace scratchbird
                 {
                     generateExpression(arg);
                 }
-                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
-                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_VAR_POP));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::AGG_VAR_POP));
                 current_result_->writeByte(static_cast<uint8_t>(node->args().size()));
                 return;
             }
@@ -2751,8 +2741,7 @@ namespace scratchbird
                 {
                     generateExpression(arg);
                 }
-                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
-                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_CORR));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::AGG_CORR));
                 current_result_->writeByte(static_cast<uint8_t>(node->args().size()));
                 return;
             }
@@ -2762,8 +2751,7 @@ namespace scratchbird
                 {
                     generateExpression(arg);
                 }
-                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
-                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_COVAR_POP));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::AGG_COVAR_POP));
                 current_result_->writeByte(static_cast<uint8_t>(node->args().size()));
                 return;
             }

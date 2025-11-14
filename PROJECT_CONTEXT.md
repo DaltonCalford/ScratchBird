@@ -135,14 +135,15 @@
 - ❌ Views, Sequences, Triggers (execution), Stored procedures
 - ❌ Advanced security (query plan, column/row permissions, SQL syntax)
 
-### Built-in Functions (107/114 = 94%) ✅
+### Built-in Functions (114/114 = 100%) 🎉 ALL COMPLETE!
 - ✅ String (11), Aggregate (6), Window (8)
 - ✅ JSON (13), Array (12), Date/Time (6)
 - ✅ Conditional (3), Regex (4), Spatial (4+)
 - ✅ **Mathematical (29)**: SIN, COS, TAN, ASIN, ACOS, ATAN, ATAN2, DEGREES, RADIANS, PI, ABS, SIGN, ROUND, CEIL, FLOOR, TRUNC, MOD, SQRT, CBRT, POWER, EXP, LN, LOG, LOG10, LOG2
 - ✅ **Bit Manipulation (14)**: GET_BYTE, SET_BYTE, GET_BIT, SET_BIT, BIT_AND, BIT_OR, BIT_XOR, BIT_NOT, BIT_SHIFT_LEFT, BIT_SHIFT_RIGHT, BIT_SHIFT_RIGHT_LOGICAL, BIT_COUNT, BIT_LENGTH, BIT_MASK (Nov 14, 2025)
 - ✅ **Cryptographic (4)**: MD5, SHA1, SHA256, SHA512 (Nov 14, 2025)
-- ⧗ Statistical (7 - infrastructure ready, need aggregate support), XML (0)
+- ✅ **Statistical (7)**: STDDEV/STDDEV_SAMP, STDDEV_POP, VARIANCE/VAR_SAMP, VAR_POP, CORR, COVAR_POP (Nov 14, 2025) 🎉
+- ⧗ XML (0 - low priority, infrastructure ready)
 
 ### Constraints (8/10 = 80%) ✅
 - ✅ NOT NULL, Data type validation

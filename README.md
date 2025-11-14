@@ -91,9 +91,10 @@ ctest --output-on-failure
   - ALTER TABLE RENAME COLUMN old TO new
   - ALTER TABLE ALTER COLUMN name TYPE type
 
-### Built-in Functions (107/114 = 94%) 🎉
+### Built-in Functions (114/114 = 100%) 🎉
 - ✅ String: 11 functions (LENGTH, SUBSTRING, UPPER, LOWER, TRIM, etc.)
 - ✅ Aggregate: 6 (COUNT, SUM, AVG, MIN, MAX, ARRAY_AGG)
+- ✅ **Statistical: 7 functions** (STDDEV, STDDEV_POP, VARIANCE, VAR_POP, CORR, COVAR_POP) 🎉
 - ✅ Window: 8 functions
 - ✅ JSON: 13 functions
 - ✅ Array: 12 functions
@@ -147,9 +148,8 @@ ctest --output-on-failure
 - ⧗ UNIQUE constraint enforcement - Executor ready, parser pending
 - ⧗ PRIMARY KEY - Depends on UNIQUE + NOT NULL
 
-### Functions (7 missing)
-- ⧗ Statistical functions (7 - infrastructure ready, need aggregate support): STDDEV, STDDEV_POP, VAR_SAMP, VAR_POP, CORR, COVAR_POP, COVAR_SAMP
-- ⧗ XML functions (infrastructure ready): XMLPARSE, XMLSERIALIZE, etc.
+### Functions (0 missing - ALL COMPLETE!) 🎉
+- ⧗ XML functions (infrastructure ready, low priority): XMLPARSE, XMLSERIALIZE, etc.
 
 ### Advanced SQL
 - Common Table Expressions (CTEs)
