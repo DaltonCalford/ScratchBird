@@ -421,6 +421,16 @@ ctest -V
 **Timeline**: 5-7 months to completion (with 3 developers)
 
 **Recently Completed** (Nov 14, 2025):
+- ✅ **Foreign Key Phase C - 100% COMPLETE** (~344 lines production code):
+  - Table-level FOREIGN KEY syntax parser (TableConstraint, ForeignKeyConstraint AST)
+  - Composite FK support (2+ columns) with TABLE_FK opcode (0x94)
+  - Bytecode generation for multi-column FKs (child/parent column vectors)
+  - Executor integration (PendingFK updated to use vectors)
+  - Multi-column validation in checkForeignKeyExists (already supported!)
+  - Multi-column CASCADE/SET NULL/SET DEFAULT actions (already supported!)
+  - MATCH SIMPLE semantics (NULL in any column satisfies constraint)
+  - Named constraint support (CONSTRAINT name FOREIGN KEY ...)
+  - Integration test documentation (test_composite_fk.cpp)
 - ✅ **Foreign Key Phase A Enforcement - 100% COMPLETE** (~40 lines activated):
   - INSERT enforcement activated (was commented out)
   - UPDATE enforcement activated (was commented out)
@@ -468,11 +478,11 @@ ctest -V
 3. UNIQUE constraint SQL parser integration
 4. Complete PSQL bytecode execution (procedures, triggers, cursors)
 5. Add CTEs and recursive queries
-6. FK Phase C: Disk persistence, composite FKs, index-based lookups
+6. FK Phase D (future): Disk persistence, index-based lookups, ALTER TABLE FK, MATCH FULL
 
 **After Phase 1**: Parser separation → embeddable library + standalone SQL application
 
 ---
 
 **Last Updated**: November 14, 2025
-**Status**: Phase 1 ALPHA - 97% Complete (FK Phase B - All Referential Actions COMPLETE)
+**Status**: Phase 1 ALPHA - 98% Complete (FK Phase C - Composite Foreign Keys COMPLETE)

@@ -1,6 +1,6 @@
 # ScratchBird Implementation Audit
-**Date**: 2025-11-13 | **Source**: Actual code inspection | **Format**: AI-optimized (context-conservative)
-**Updated**: 2025-11-13 - Added Constraint System (CHECK/DEFAULT/NOT NULL) + Mathematical Functions (29 functions)
+**Date**: 2025-11-14 | **Source**: Actual code inspection | **Format**: AI-optimized (context-conservative)
+**Updated**: 2025-11-14 - Added FOREIGN KEY Constraints (Phase C - Composite FK Support)
 
 ---
 
@@ -1457,13 +1457,149 @@ bool Executor::checkUniqueConstraint(
 **INSERT Check**: `src/sblr/executor.cpp:3632-3650`
 **UPDATE Check**: `src/sblr/executor.cpp:3959-3977`
 
+### FOREIGN KEY Constraints (100% Complete - Phase C)
+
+**Status**: Full composite FK support with table-level syntax, all referential actions, MATCH SIMPLE
+
+**Catalog Storage**: `include/scratchbird/core/catalog_manager.h:493-525`
+```cpp
+struct ForeignKeyInfo {
+    ID fk_id;                                  // UUID
+    std::string fk_name;
+    ID child_table_id, parent_table_id;
+    std::vector<std::string> child_columns;    // Composite FK support
+    std::vector<std::string> parent_columns;
+    FKAction on_delete, on_update;             // CASCADE, SET NULL, SET DEFAULT, RESTRICT, NO_ACTION
+    FKMatchType match_type;                    // SIMPLE, FULL, PARTIAL
+};
+```
+
+**Catalog CRUD**: `src/core/catalog_manager.cpp:11034-11253`
+- `createForeignKey()` (11034-11098): Validates column counts, generates UUIDv7, caches in 3 maps
+- `getForeignKeysForTable()` (11100-11118): Child table FKs, O(1) lookup
+- `getForeignKeysReferencingTable()` (11120-11142): Parent table FKs
+- `getForeignKeyInfo()` (11144-11162): FK by ID
+- `updateForeignKey()` (11164-11196): Modify FK actions
+- `deleteForeignKey()` (11198-11253): Remove FK, CASCADE support
+
+**Parser - Column-Level**: `src/parser/parser.cpp:690-794`
+```cpp
+// ColumnDef - REFERENCES clause (single-column FK)
+// Example: customer_id INTEGER REFERENCES customers(id) ON DELETE CASCADE
+if (match(TokenType::KW_REFERENCES)) {
+    parent_table = consume(TokenType::IDENTIFIER);
+    parent_columns = parseColumnList();  // Optional
+    on_delete = parseOnDeleteAction();   // CASCADE, SET NULL, etc.
+    on_update = parseOnUpdateAction();
+}
+```
+
+**Parser - Table-Level** (Phase C): `src/parser/parser.cpp:830-1011`
+```cpp
+// TableConstraint - FOREIGN KEY clause (composite FK support)
+// Example: FOREIGN KEY (order_id, product_id) REFERENCES order_products(order_id, product_id)
+TableConstraint* Parser::parseTableConstraint() {
+    // Optional: CONSTRAINT name
+    // Parse: FOREIGN KEY (col1, col2, ...) REFERENCES parent(p1, p2, ...)
+    // ON DELETE/UPDATE actions
+}
+```
+
+**AST Classes** (Phase C): `include/scratchbird/parser/ast.h`
+- `TableConstraint` base class (line ~TBD)
+- `ForeignKeyConstraint` (child_columns, parent_table, parent_columns, actions, name)
+
+**Bytecode Generation**:
+- Column-level: `src/sblr/bytecode_generator.cpp:2458-2484` (FOREIGN_KEY opcode 0x93)
+- Table-level: `src/sblr/bytecode_generator.cpp:129-184` (TABLE_FK opcode 0x94)
+
+**Executor - CREATE TABLE**: `src/sblr/executor.cpp:1206-1466`
+```cpp
+// PendingFK struct (lines 1228-1234)
+struct PendingFK {
+    std::vector<std::string> child_columns;  // Phase C: vector for composite FKs
+    std::string parent_table;
+    std::vector<std::string> parent_columns;
+    std::string on_delete_action;
+    std::string on_update_action;
+};
+
+// Column-level FK parsing: lines 1325-1359
+// Table-level FK parsing: lines 1379-1415 (Phase C: TABLE_FK opcode handler)
+// FK creation: lines 1420-1465 (calls createForeignKey with column vectors)
+```
+
+**Enforcement - INSERT**: `src/sblr/executor.cpp:3735-3774`
+```cpp
+// For each FK, extract values from child_columns and validate parent exists
+// MATCH SIMPLE: If any value is NULL, constraint satisfied (line 15419)
+if (!checkForeignKeyExists(fk.parent_table_id, fk.parent_columns, fk_values, parent_cols)) {
+    error("Foreign key constraint violation");
+}
+```
+
+**Enforcement - UPDATE**: `src/sblr/executor.cpp:4208-4262`
+- Validates new FK column values exist in parent table
+- Multi-column support via vector iteration
+
+**Enforcement - DELETE** (Phase B): `src/sblr/executor.cpp:15162-15394`
+```cpp
+void Executor::applyFKActionOnDelete(const core::ID& parent_table_id, const core::TID& deleted_tid, ...)
+{
+    // CASCADE: Delete matching child rows (lines 15233-15335)
+    // SET NULL: Set child FK columns to NULL (lines 15337-15481)
+    // SET DEFAULT: Set child FK columns to DEFAULT values (lines 15483-15623)
+    // RESTRICT/NO_ACTION: Error if children exist (lines 15625-15680)
+}
+```
+
+**Enforcement - UPDATE** (Phase B): `src/sblr/executor.cpp:15682-15906`
+```cpp
+void Executor::applyFKActionOnUpdate(...)
+{
+    // CASCADE UPDATE: Modify child FK columns to new parent values (lines 15711-15801)
+    // SET NULL: Set child FK columns to NULL (lines 15803-15897)
+    // SET DEFAULT: Set child FK columns to DEFAULT (lines 15899-15991)
+}
+```
+
+**Helper - FK Validation**: `src/sblr/executor.cpp:15412-15478`
+```cpp
+bool Executor::checkForeignKeyExists(
+    const core::ID& parent_table_id,
+    const std::vector<std::string>& parent_columns,  // Multi-column support
+    const std::vector<Value>& fk_values,
+    const std::vector<CatalogManager::ColumnInfo>& parent_cols)
+{
+    // MATCH SIMPLE: If ANY value is NULL, return true (line 15419)
+    // O(n) table scan to find matching row (lines 15441-15472)
+    // Checks ALL columns in loop (lines 15459-15468) - composite FK ready!
+}
+```
+
+**Helper - Tuple Serialization** (Phase B): `src/sblr/executor.cpp:15993-16066`
+```cpp
+bool serializeTupleFromValues(const std::vector<Value>& values, ...)
+bool modifyTupleColumns(const uint8_t* original_tuple,
+                       const std::vector<size_t>& column_indices,  // Multi-column
+                       const std::vector<Value>& new_values, ...)   // Multi-column
+```
+
+**Opcodes**:
+- `FOREIGN_KEY = 0x93` - Column-level FK (Phase A)
+- `TABLE_FK = 0x94` - Table-level FK with composite support (Phase C)
+
+**Integration Test**: `tests/integration/test_composite_fk.cpp` (Phase C documentation)
+
 ### Opcodes
 
-**File**: `include/scratchbird/sblr/opcodes.h:142-143`
+**File**: `include/scratchbird/sblr/opcodes.h:142-145`
 ```cpp
 NOT_NULL = 0x90,            // NOT NULL constraint
 DEFAULT_VALUE = 0x91,       // DEFAULT expression (Nov 13, 2025)
 CHECK_CONSTRAINT = 0x92,    // CHECK expression (Nov 13, 2025)
+FOREIGN_KEY = 0x93,         // Column-level FK (Nov 14, 2025 Phase A)
+TABLE_FK = 0x94,            // Table-level composite FK (Nov 14, 2025 Phase C)
 ```
 
 ---
