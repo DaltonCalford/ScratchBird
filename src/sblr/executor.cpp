@@ -12038,6 +12038,80 @@ namespace scratchbird
                         }
                         executeDecode();
                     }
+                    // XML functions (0x45-0x4E)
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_XMLPARSE))
+                    {
+                        uint8_t arg_count = readByte();
+                        if (arg_count != 2)
+                        {
+                            error("XMLPARSE expects 2 arguments, got " + std::to_string(arg_count));
+                        }
+                        executeXMLParse();
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_XMLSERIALIZE))
+                    {
+                        uint8_t arg_count = readByte();
+                        if (arg_count != 3)
+                        {
+                            error("XMLSERIALIZE expects 3 arguments, got " + std::to_string(arg_count));
+                        }
+                        executeXMLSerialize();
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_XMLELEMENT))
+                    {
+                        uint8_t arg_count = readByte();
+                        if (arg_count != 2)
+                        {
+                            error("XMLELEMENT expects 2 arguments, got " + std::to_string(arg_count));
+                        }
+                        executeXMLElement();
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_XMLCONCAT))
+                    {
+                        // Variable arguments - already handled in executeXMLConcat
+                        executeXMLConcat();
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_XMLFOREST))
+                    {
+                        // Variable arguments - already handled in executeXMLForest
+                        executeXMLForest();
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_XMLCOMMENT))
+                    {
+                        uint8_t arg_count = readByte();
+                        if (arg_count != 1)
+                        {
+                            error("XMLCOMMENT expects 1 argument, got " + std::to_string(arg_count));
+                        }
+                        executeXMLComment();
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_XMLROOT))
+                    {
+                        uint8_t arg_count = readByte();
+                        if (arg_count != 3)
+                        {
+                            error("XMLROOT expects 3 arguments, got " + std::to_string(arg_count));
+                        }
+                        executeXMLRoot();
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_XPATH))
+                    {
+                        uint8_t arg_count = readByte();
+                        if (arg_count != 2)
+                        {
+                            error("XPATH expects 2 arguments, got " + std::to_string(arg_count));
+                        }
+                        executeXPath();
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_XMLEXISTS))
+                    {
+                        uint8_t arg_count = readByte();
+                        if (arg_count != 2)
+                        {
+                            error("XMLEXISTS expects 2 arguments, got " + std::to_string(arg_count));
+                        }
+                        executeXMLExists();
+                    }
                     // Bit manipulation - Byte/Bit access (0x06-0x09)
                     else if (ext_op == static_cast<uint8_t>(Opcode::EXT_GET_BYTE))
                     {
@@ -17069,6 +17143,263 @@ namespace scratchbird
             stack_.push(Value::makeVarchar(ss.str()));
         }
 
+        // ========================================================================
+        // XML FUNCTIONS (Nov 14, 2025)
+        // ========================================================================
+
+        void Executor::executeXMLParse()
+        {
+            // XMLPARSE(DOCUMENT|CONTENT, xml_text)
+            // For simplicity, we'll treat DOCUMENT and CONTENT the same
+            // Pop xml_text from stack
+            Value xml_text = stack_.top(); stack_.pop();
+
+            // Pop document_or_content flag (ignored for now)
+            Value mode = stack_.top(); stack_.pop();
+
+            if (xml_text.isNull())
+            {
+                stack_.push(Value::makeNull());
+                return;
+            }
+
+            std::string xml_str = xml_text.toString();
+
+            // Basic XML validation - check if it looks like XML
+            // For a real implementation, you'd use a proper XML parser
+            if (xml_str.empty() || xml_str.find('<') == std::string::npos)
+            {
+                error("Invalid XML: must contain at least one element");
+            }
+
+            // Return the XML as a string (we're using VARCHAR to store XML for now)
+            stack_.push(Value::makeVarchar(xml_str));
+        }
+
+        void Executor::executeXMLSerialize()
+        {
+            // XMLSERIALIZE(CONTENT|DOCUMENT xml AS type)
+            // Pop type (e.g., VARCHAR)
+            Value type = stack_.top(); stack_.pop();
+
+            // Pop XML value
+            Value xml = stack_.top(); stack_.pop();
+
+            // Pop mode (CONTENT or DOCUMENT)
+            Value mode = stack_.top(); stack_.pop();
+
+            if (xml.isNull())
+            {
+                stack_.push(Value::makeNull());
+                return;
+            }
+
+            // Convert XML to string
+            std::string xml_str = xml.toString();
+
+            // Return as VARCHAR
+            stack_.push(Value::makeVarchar(xml_str));
+        }
+
+        void Executor::executeXMLElement()
+        {
+            // XMLELEMENT(NAME element_name [, attributes] [, content])
+            // For simplicity: XMLELEMENT(NAME name, content)
+
+            // Pop content
+            Value content = stack_.top(); stack_.pop();
+
+            // Pop element name
+            Value name = stack_.top(); stack_.pop();
+
+            if (name.isNull())
+            {
+                error("XML element name cannot be NULL");
+            }
+
+            std::string element_name = name.toString();
+            std::string element_content = content.isNull() ? "" : content.toString();
+
+            // Build XML element
+            std::string xml = "<" + element_name + ">" + element_content + "</" + element_name + ">";
+
+            stack_.push(Value::makeVarchar(xml));
+        }
+
+        void Executor::executeXMLConcat()
+        {
+            // XMLCONCAT(xml1, xml2, ...)
+            // Number of arguments is on the stack
+            uint8_t arg_count = readByte();
+
+            std::vector<std::string> xml_parts;
+
+            for (uint8_t i = 0; i < arg_count; i++)
+            {
+                Value xml_val = stack_.top(); stack_.pop();
+                if (!xml_val.isNull())
+                {
+                    xml_parts.push_back(xml_val.toString());
+                }
+            }
+
+            // Concatenate all XML parts
+            std::string result;
+            for (auto it = xml_parts.rbegin(); it != xml_parts.rend(); ++it)
+            {
+                result += *it;
+            }
+
+            stack_.push(Value::makeVarchar(result));
+        }
+
+        void Executor::executeXMLForest()
+        {
+            // XMLFOREST(expr1 AS name1, expr2 AS name2, ...)
+            // Creates: <name1>expr1</name1><name2>expr2</name2>...
+
+            uint8_t arg_count = readByte();
+
+            std::vector<std::pair<std::string, std::string>> elements;
+
+            for (uint8_t i = 0; i < arg_count; i++)
+            {
+                // Pop name
+                Value name = stack_.top(); stack_.pop();
+                // Pop value
+                Value value = stack_.top(); stack_.pop();
+
+                if (!value.isNull() && !name.isNull())
+                {
+                    elements.push_back({name.toString(), value.toString()});
+                }
+            }
+
+            // Build XML forest
+            std::string result;
+            for (auto it = elements.rbegin(); it != elements.rend(); ++it)
+            {
+                result += "<" + it->first + ">" + it->second + "</" + it->first + ">";
+            }
+
+            stack_.push(Value::makeVarchar(result));
+        }
+
+        void Executor::executeXMLComment()
+        {
+            // XMLCOMMENT(text)
+            Value text = stack_.top(); stack_.pop();
+
+            if (text.isNull())
+            {
+                stack_.push(Value::makeNull());
+                return;
+            }
+
+            std::string comment_text = text.toString();
+
+            // Check for invalid comment content (-- is not allowed in XML comments)
+            if (comment_text.find("--") != std::string::npos)
+            {
+                error("XML comment cannot contain '--'");
+            }
+
+            std::string xml = "<!--" + comment_text + "-->";
+            stack_.push(Value::makeVarchar(xml));
+        }
+
+        void Executor::executeXMLRoot()
+        {
+            // XMLROOT(xml, VERSION version [, STANDALONE yes|no])
+            // Simplified: XMLROOT(xml, version, standalone)
+
+            // Pop standalone flag (yes=1, no=0, omitted=-1)
+            Value standalone = stack_.top(); stack_.pop();
+
+            // Pop version
+            Value version = stack_.top(); stack_.pop();
+
+            // Pop XML content
+            Value xml = stack_.top(); stack_.pop();
+
+            if (xml.isNull())
+            {
+                stack_.push(Value::makeNull());
+                return;
+            }
+
+            std::string xml_content = xml.toString();
+            std::string version_str = version.isNull() ? "1.0" : version.toString();
+
+            // Build XML declaration
+            std::string declaration = "<?xml version=\"" + version_str + "\"";
+
+            if (!standalone.isNull())
+            {
+                int standalone_val = static_cast<int>(standalone.toInt64());
+                if (standalone_val == 1)
+                {
+                    declaration += " standalone=\"yes\"";
+                }
+                else if (standalone_val == 0)
+                {
+                    declaration += " standalone=\"no\"";
+                }
+            }
+
+            declaration += "?>";
+
+            std::string result = declaration + xml_content;
+            stack_.push(Value::makeVarchar(result));
+        }
+
+        void Executor::executeXPath()
+        {
+            // XPATH(xpath_expr, xml)
+            // Basic implementation - just extract text content
+
+            Value xml = stack_.top(); stack_.pop();
+            Value xpath_expr = stack_.top(); stack_.pop();
+
+            if (xml.isNull() || xpath_expr.isNull())
+            {
+                stack_.push(Value::makeNull());
+                return;
+            }
+
+            std::string xml_str = xml.toString();
+            std::string xpath = xpath_expr.toString();
+
+            // Very basic XPath implementation - only supports simple element selection
+            // e.g., /root/element
+            // For production, you'd use libxml2 or similar
+
+            // For now, just return the XML as-is
+            // A full XPath implementation would require a proper XML parser
+            error("XPath function not fully implemented - requires XML parser library");
+        }
+
+        void Executor::executeXMLExists()
+        {
+            // XMLEXISTS(xpath_expr, xml) - returns boolean
+
+            Value xml = stack_.top(); stack_.pop();
+            Value xpath_expr = stack_.top(); stack_.pop();
+
+            if (xml.isNull() || xpath_expr.isNull())
+            {
+                stack_.push(Value::makeNull());
+                return;
+            }
+
+            std::string xml_str = xml.toString();
+            std::string xpath = xpath_expr.toString();
+
+            // Basic implementation - check if XML contains the path
+            // For production, use proper XPath evaluation
+            error("XMLEXISTS function not fully implemented - requires XML parser library");
+        }
+
         void Executor::executeEncode()
         {
             // TODO: Implement ENCODE(data, format) - base64, hex, escape
@@ -17079,40 +17410,6 @@ namespace scratchbird
         {
             // TODO: Implement DECODE(text, format)
             error("DECODE not yet implemented");
-        }
-
-        // ========================================================================
-        // XML FUNCTIONS (Nov 14, 2025) - TODO: Implement minimal string-based
-        // ========================================================================
-
-        void Executor::executeXMLParse()
-        {
-            // TODO: Implement XMLPARSE(document_or_content, xml_text)
-            error("XMLPARSE not yet implemented");
-        }
-
-        void Executor::executeXMLSerialize()
-        {
-            // TODO: Implement XMLSERIALIZE(content_or_document xml AS type)
-            error("XMLSERIALIZE not yet implemented");
-        }
-
-        void Executor::executeXMLElement()
-        {
-            // TODO: Implement XMLELEMENT(name, content)
-            error("XMLELEMENT not yet implemented");
-        }
-
-        void Executor::executeXMLConcat()
-        {
-            // TODO: Implement XMLCONCAT(xml, ...)
-            error("XMLCONCAT not yet implemented");
-        }
-
-        void Executor::executeXMLForest()
-        {
-            // TODO: Implement XMLFOREST(expr AS name, ...)
-            error("XMLFOREST not yet implemented");
         }
 
     } // namespace sblr

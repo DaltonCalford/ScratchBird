@@ -581,6 +581,11 @@ namespace scratchbird
             EXT_XMLELEMENT = 0x47,         // XMLELEMENT(name, content)
             EXT_XMLCONCAT = 0x48,          // XMLCONCAT(xml, ...)
             EXT_XMLFOREST = 0x49,          // XMLFOREST(expr AS name, ...)
+            EXT_XMLCOMMENT = 0x4A,         // XMLCOMMENT(text) - create XML comment
+            EXT_XMLROOT = 0x4B,            // XMLROOT(xml, VERSION version [, STANDALONE yes|no])
+            EXT_XPATH = 0x4C,              // XPATH(xpath_expr, xml) - extract nodes using XPath
+            EXT_XMLEXISTS = 0x4D,          // XMLEXISTS(xpath_expr, xml) - check if XPath matches
+            EXT_XMLAGG = 0x4E,             // XMLAGG(xml) - aggregate XML values (aggregate function)
         };
 
         // SBLR Version
