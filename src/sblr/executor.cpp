@@ -36,6 +36,9 @@
 #include <map>
 #include <regex>
 #include <cctype>
+#include <cmath>
+#include <openssl/md5.h>
+#include <openssl/sha.h>
 
 using json = nlohmann::json;
 
@@ -16797,26 +16800,121 @@ namespace scratchbird
 
         void Executor::executeMD5()
         {
-            // TODO: Implement MD5 hash (requires OpenSSL or standalone implementation)
-            error("MD5 not yet implemented");
+            // Pop input string/bytes from stack
+            Value input = stack_.top(); stack_.pop();
+
+            // Handle NULL input
+            if (input.isNull())
+            {
+                stack_.push(Value::makeNull());
+                return;
+            }
+
+            // Convert input to string
+            std::string data = input.toString();
+
+            // Calculate MD5 hash (suppressing OpenSSL 3.0 deprecation for now)
+            unsigned char hash[MD5_DIGEST_LENGTH];
+            #pragma GCC diagnostic push
+            #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+            MD5(reinterpret_cast<const unsigned char*>(data.c_str()), data.length(), hash);
+            #pragma GCC diagnostic pop
+
+            // Convert to hex string
+            std::stringstream ss;
+            for (int i = 0; i < MD5_DIGEST_LENGTH; i++)
+            {
+                ss << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(hash[i]);
+            }
+
+            stack_.push(Value::makeVarchar(ss.str()));
         }
 
         void Executor::executeSHA1()
         {
-            // TODO: Implement SHA1 hash
-            error("SHA1 not yet implemented");
+            // Pop input string/bytes from stack
+            Value input = stack_.top(); stack_.pop();
+
+            // Handle NULL input
+            if (input.isNull())
+            {
+                stack_.push(Value::makeNull());
+                return;
+            }
+
+            // Convert input to string
+            std::string data = input.toString();
+
+            // Calculate SHA1 hash
+            unsigned char hash[SHA_DIGEST_LENGTH];
+            SHA1(reinterpret_cast<const unsigned char*>(data.c_str()), data.length(), hash);
+
+            // Convert to hex string
+            std::stringstream ss;
+            for (int i = 0; i < SHA_DIGEST_LENGTH; i++)
+            {
+                ss << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(hash[i]);
+            }
+
+            stack_.push(Value::makeVarchar(ss.str()));
         }
 
         void Executor::executeSHA256()
         {
-            // TODO: Implement SHA256 hash
-            error("SHA256 not yet implemented");
+            // Pop input string/bytes from stack
+            Value input = stack_.top(); stack_.pop();
+
+            // Handle NULL input
+            if (input.isNull())
+            {
+                stack_.push(Value::makeNull());
+                return;
+            }
+
+            // Convert input to string
+            std::string data = input.toString();
+
+            // Calculate SHA256 hash
+            unsigned char hash[SHA256_DIGEST_LENGTH];
+            SHA256(reinterpret_cast<const unsigned char*>(data.c_str()), data.length(), hash);
+
+            // Convert to hex string
+            std::stringstream ss;
+            for (int i = 0; i < SHA256_DIGEST_LENGTH; i++)
+            {
+                ss << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(hash[i]);
+            }
+
+            stack_.push(Value::makeVarchar(ss.str()));
         }
 
         void Executor::executeSHA512()
         {
-            // TODO: Implement SHA512 hash
-            error("SHA512 not yet implemented");
+            // Pop input string/bytes from stack
+            Value input = stack_.top(); stack_.pop();
+
+            // Handle NULL input
+            if (input.isNull())
+            {
+                stack_.push(Value::makeNull());
+                return;
+            }
+
+            // Convert input to string
+            std::string data = input.toString();
+
+            // Calculate SHA512 hash
+            unsigned char hash[SHA512_DIGEST_LENGTH];
+            SHA512(reinterpret_cast<const unsigned char*>(data.c_str()), data.length(), hash);
+
+            // Convert to hex string
+            std::stringstream ss;
+            for (int i = 0; i < SHA512_DIGEST_LENGTH; i++)
+            {
+                ss << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(hash[i]);
+            }
+
+            stack_.push(Value::makeVarchar(ss.str()));
         }
 
         void Executor::executeEncode()

@@ -2700,6 +2700,118 @@ namespace scratchbird
                 current_result_->writeByte(static_cast<uint8_t>(node->args().size()));
                 return;
             }
+            // Statistical Functions (Nov 14, 2025)
+            else if (func_name == "STDDEV" || func_name == "STDDEV_SAMP")
+            {
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_STDDEV_SAMP));
+                current_result_->writeByte(static_cast<uint8_t>(node->args().size()));
+                return;
+            }
+            else if (func_name == "STDDEV_POP")
+            {
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_STDDEV_POP));
+                current_result_->writeByte(static_cast<uint8_t>(node->args().size()));
+                return;
+            }
+            else if (func_name == "VARIANCE" || func_name == "VAR_SAMP")
+            {
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_VAR_SAMP));
+                current_result_->writeByte(static_cast<uint8_t>(node->args().size()));
+                return;
+            }
+            else if (func_name == "VAR_POP")
+            {
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_VAR_POP));
+                current_result_->writeByte(static_cast<uint8_t>(node->args().size()));
+                return;
+            }
+            else if (func_name == "CORR")
+            {
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_CORR));
+                current_result_->writeByte(static_cast<uint8_t>(node->args().size()));
+                return;
+            }
+            else if (func_name == "COVAR_POP")
+            {
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_COVAR_POP));
+                current_result_->writeByte(static_cast<uint8_t>(node->args().size()));
+                return;
+            }
+            // Cryptographic Functions (Nov 14, 2025)
+            else if (func_name == "MD5")
+            {
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_MD5));
+                current_result_->writeByte(static_cast<uint8_t>(node->args().size()));
+                return;
+            }
+            else if (func_name == "SHA1")
+            {
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_SHA1));
+                current_result_->writeByte(static_cast<uint8_t>(node->args().size()));
+                return;
+            }
+            else if (func_name == "SHA256")
+            {
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_SHA256));
+                current_result_->writeByte(static_cast<uint8_t>(node->args().size()));
+                return;
+            }
+            else if (func_name == "SHA512")
+            {
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_SHA512));
+                current_result_->writeByte(static_cast<uint8_t>(node->args().size()));
+                return;
+            }
             // XML Functions (Nov 14, 2025)
             else if (func_name == "XMLPARSE")
             {
