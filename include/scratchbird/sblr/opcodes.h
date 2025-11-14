@@ -546,34 +546,33 @@ namespace scratchbird
             EXT_DECODE = 0xFE,             // DECODE(text, format) - decode text to binary
 
             // Note: 0xFF is EXTENDED_OPCODE marker (already defined above)
-            // Bit manipulation functions use secondary extended opcode space (0x01xx range)
 
-            // Bit manipulation - Byte/Bit access (secondary extended: 0x0100-0x010F)
-            EXT2_GET_BYTE = 0x0100,        // GET_BYTE(bytes, offset) - extract byte at offset
-            EXT2_SET_BYTE = 0x0101,        // SET_BYTE(bytes, offset, value) - set byte at offset
-            EXT2_GET_BIT = 0x0102,         // GET_BIT(bytes, bit_offset) - get bit at offset
-            EXT2_SET_BIT = 0x0103,         // SET_BIT(bytes, bit_offset, value) - set bit at offset
+            // Bit manipulation - Byte/Bit access (0x06-0x09)
+            EXT_GET_BYTE = 0x06,           // GET_BYTE(bytes, offset) - extract byte at offset
+            EXT_SET_BYTE = 0x07,           // SET_BYTE(bytes, offset, value) - set byte at offset
+            EXT_GET_BIT = 0x08,            // GET_BIT(bytes, bit_offset) - get bit at offset
+            EXT_SET_BIT = 0x09,            // SET_BIT(bytes, bit_offset, value) - set bit at offset
 
-            // Bit manipulation - Bitwise operations (0x0110-0x011F)
-            EXT2_BIT_AND = 0x0110,         // BIT_AND(a, b) / a & b - bitwise AND
-            EXT2_BIT_OR = 0x0111,          // BIT_OR(a, b) / a | b - bitwise OR
-            EXT2_BIT_XOR = 0x0112,         // BIT_XOR(a, b) / a ^ b - bitwise XOR
-            EXT2_BIT_NOT = 0x0113,         // BIT_NOT(a) / ~a - bitwise NOT (complement)
-            EXT2_BIT_SHIFT_LEFT = 0x0114,  // BIT_SHIFT_LEFT(a, n) / a << n - left shift
-            EXT2_BIT_SHIFT_RIGHT = 0x0115, // BIT_SHIFT_RIGHT(a, n) / a >> n - arithmetic right shift
-            EXT2_BIT_SHIFT_RIGHT_LOGICAL = 0x0116, // a >>> n - logical right shift (zero-fill)
+            // Bit manipulation - Bitwise operations (0x15-0x1B)
+            EXT_BIT_AND = 0x15,            // BIT_AND(a, b) / a & b - bitwise AND
+            EXT_BIT_OR = 0x16,             // BIT_OR(a, b) / a | b - bitwise OR
+            EXT_BIT_XOR = 0x17,            // BIT_XOR(a, b) / a ^ b - bitwise XOR
+            EXT_BIT_NOT = 0x18,            // BIT_NOT(a) / ~a - bitwise NOT (complement)
+            EXT_BIT_SHIFT_LEFT = 0x19,     // BIT_SHIFT_LEFT(a, n) / a << n - left shift
+            EXT_BIT_SHIFT_RIGHT = 0x1A,    // BIT_SHIFT_RIGHT(a, n) / a >> n - arithmetic right shift
+            EXT_BIT_SHIFT_RIGHT_LOGICAL = 0x1B, // a >>> n - logical right shift (zero-fill)
 
-            // Bit manipulation - Utility functions (0x0120-0x012F)
-            EXT2_BIT_COUNT = 0x0120,       // BIT_COUNT(a) - count set bits (popcount)
-            EXT2_BIT_LENGTH = 0x0121,      // BIT_LENGTH(bytes) - length in bits
-            EXT2_BIT_MASK = 0x0122,        // BIT_MASK(length) - create mask of N ones
+            // Bit manipulation - Utility functions (0x25-0x27)
+            EXT_BIT_COUNT = 0x25,          // BIT_COUNT(a) - count set bits (popcount)
+            EXT_BIT_LENGTH = 0x26,         // BIT_LENGTH(bytes) - length in bits
+            EXT_BIT_MASK = 0x27,           // BIT_MASK(length) - create mask of N ones
 
-            // XML functions (0x0130-0x013F)
-            EXT2_XMLPARSE = 0x0130,        // XMLPARSE(document_or_content, xml_text)
-            EXT2_XMLSERIALIZE = 0x0131,    // XMLSERIALIZE(content_or_document xml AS type)
-            EXT2_XMLELEMENT = 0x0132,      // XMLELEMENT(name, content)
-            EXT2_XMLCONCAT = 0x0133,       // XMLCONCAT(xml, ...)
-            EXT2_XMLFOREST = 0x0134,       // XMLFOREST(expr AS name, ...)
+            // XML functions (0x45-0x49)
+            EXT_XMLPARSE = 0x45,           // XMLPARSE(document_or_content, xml_text)
+            EXT_XMLSERIALIZE = 0x46,       // XMLSERIALIZE(content_or_document xml AS type)
+            EXT_XMLELEMENT = 0x47,         // XMLELEMENT(name, content)
+            EXT_XMLCONCAT = 0x48,          // XMLCONCAT(xml, ...)
+            EXT_XMLFOREST = 0x49,          // XMLFOREST(expr AS name, ...)
         };
 
         // SBLR Version

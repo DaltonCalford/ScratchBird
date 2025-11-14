@@ -11773,6 +11773,291 @@ namespace scratchbird
                             push(Value::makeFloat64(std::log2(x)));
                         }
                     }
+                    // Statistical functions (0xF3-0xF8)
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_STDDEV_SAMP))
+                    {
+                        uint8_t arg_count = readByte();
+                        if (arg_count != 1)
+                        {
+                            error("STDDEV_SAMP expects 1 argument, got " + std::to_string(arg_count));
+                        }
+                        executeStdDevSamp();
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_STDDEV_POP))
+                    {
+                        uint8_t arg_count = readByte();
+                        if (arg_count != 1)
+                        {
+                            error("STDDEV_POP expects 1 argument, got " + std::to_string(arg_count));
+                        }
+                        executeStdDevPop();
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_VAR_SAMP))
+                    {
+                        uint8_t arg_count = readByte();
+                        if (arg_count != 1)
+                        {
+                            error("VAR_SAMP expects 1 argument, got " + std::to_string(arg_count));
+                        }
+                        executeVarSamp();
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_VAR_POP))
+                    {
+                        uint8_t arg_count = readByte();
+                        if (arg_count != 1)
+                        {
+                            error("VAR_POP expects 1 argument, got " + std::to_string(arg_count));
+                        }
+                        executeVarPop();
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_CORR))
+                    {
+                        uint8_t arg_count = readByte();
+                        if (arg_count != 2)
+                        {
+                            error("CORR expects 2 arguments, got " + std::to_string(arg_count));
+                        }
+                        executeCorr();
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_COVAR_POP))
+                    {
+                        uint8_t arg_count = readByte();
+                        if (arg_count != 2)
+                        {
+                            error("COVAR_POP expects 2 arguments, got " + std::to_string(arg_count));
+                        }
+                        executeCovarPop();
+                    }
+                    // Cryptographic functions (0xF9-0xFE)
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_MD5))
+                    {
+                        uint8_t arg_count = readByte();
+                        if (arg_count != 1)
+                        {
+                            error("MD5 expects 1 argument, got " + std::to_string(arg_count));
+                        }
+                        executeMD5();
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_SHA1))
+                    {
+                        uint8_t arg_count = readByte();
+                        if (arg_count != 1)
+                        {
+                            error("SHA1 expects 1 argument, got " + std::to_string(arg_count));
+                        }
+                        executeSHA1();
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_SHA256))
+                    {
+                        uint8_t arg_count = readByte();
+                        if (arg_count != 1)
+                        {
+                            error("SHA256 expects 1 argument, got " + std::to_string(arg_count));
+                        }
+                        executeSHA256();
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_SHA512))
+                    {
+                        uint8_t arg_count = readByte();
+                        if (arg_count != 1)
+                        {
+                            error("SHA512 expects 1 argument, got " + std::to_string(arg_count));
+                        }
+                        executeSHA512();
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_ENCODE))
+                    {
+                        uint8_t arg_count = readByte();
+                        if (arg_count != 2)
+                        {
+                            error("ENCODE expects 2 arguments, got " + std::to_string(arg_count));
+                        }
+                        executeEncode();
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_DECODE))
+                    {
+                        uint8_t arg_count = readByte();
+                        if (arg_count != 2)
+                        {
+                            error("DECODE expects 2 arguments, got " + std::to_string(arg_count));
+                        }
+                        executeDecode();
+                    }
+                    // Bit manipulation - Byte/Bit access (0x06-0x09)
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_GET_BYTE))
+                    {
+                        uint8_t arg_count = readByte();
+                        if (arg_count != 2)
+                        {
+                            error("GET_BYTE expects 2 arguments, got " + std::to_string(arg_count));
+                        }
+                        executeGetByte();
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_SET_BYTE))
+                    {
+                        uint8_t arg_count = readByte();
+                        if (arg_count != 3)
+                        {
+                            error("SET_BYTE expects 3 arguments, got " + std::to_string(arg_count));
+                        }
+                        executeSetByte();
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_GET_BIT))
+                    {
+                        uint8_t arg_count = readByte();
+                        if (arg_count != 2)
+                        {
+                            error("GET_BIT expects 2 arguments, got " + std::to_string(arg_count));
+                        }
+                        executeGetBit();
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_SET_BIT))
+                    {
+                        uint8_t arg_count = readByte();
+                        if (arg_count != 3)
+                        {
+                            error("SET_BIT expects 3 arguments, got " + std::to_string(arg_count));
+                        }
+                        executeSetBit();
+                    }
+                    // Bit manipulation - Bitwise operations (0x15-0x1B)
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_BIT_AND))
+                    {
+                        uint8_t arg_count = readByte();
+                        if (arg_count != 2)
+                        {
+                            error("BIT_AND expects 2 arguments, got " + std::to_string(arg_count));
+                        }
+                        executeBitAnd();
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_BIT_OR))
+                    {
+                        uint8_t arg_count = readByte();
+                        if (arg_count != 2)
+                        {
+                            error("BIT_OR expects 2 arguments, got " + std::to_string(arg_count));
+                        }
+                        executeBitOr();
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_BIT_XOR))
+                    {
+                        uint8_t arg_count = readByte();
+                        if (arg_count != 2)
+                        {
+                            error("BIT_XOR expects 2 arguments, got " + std::to_string(arg_count));
+                        }
+                        executeBitXor();
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_BIT_NOT))
+                    {
+                        uint8_t arg_count = readByte();
+                        if (arg_count != 1)
+                        {
+                            error("BIT_NOT expects 1 argument, got " + std::to_string(arg_count));
+                        }
+                        executeBitNot();
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_BIT_SHIFT_LEFT))
+                    {
+                        uint8_t arg_count = readByte();
+                        if (arg_count != 2)
+                        {
+                            error("BIT_SHIFT_LEFT expects 2 arguments, got " + std::to_string(arg_count));
+                        }
+                        executeBitShiftLeft();
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_BIT_SHIFT_RIGHT))
+                    {
+                        uint8_t arg_count = readByte();
+                        if (arg_count != 2)
+                        {
+                            error("BIT_SHIFT_RIGHT expects 2 arguments, got " + std::to_string(arg_count));
+                        }
+                        executeBitShiftRight();
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_BIT_SHIFT_RIGHT_LOGICAL))
+                    {
+                        uint8_t arg_count = readByte();
+                        if (arg_count != 2)
+                        {
+                            error("BIT_SHIFT_RIGHT_LOGICAL expects 2 arguments, got " + std::to_string(arg_count));
+                        }
+                        executeBitShiftRightLogical();
+                    }
+                    // Bit manipulation - Utility functions (0x25-0x27)
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_BIT_COUNT))
+                    {
+                        uint8_t arg_count = readByte();
+                        if (arg_count != 1)
+                        {
+                            error("BIT_COUNT expects 1 argument, got " + std::to_string(arg_count));
+                        }
+                        executeBitCount();
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_BIT_LENGTH))
+                    {
+                        uint8_t arg_count = readByte();
+                        if (arg_count != 1)
+                        {
+                            error("BIT_LENGTH expects 1 argument, got " + std::to_string(arg_count));
+                        }
+                        executeBitLength();
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_BIT_MASK))
+                    {
+                        uint8_t arg_count = readByte();
+                        if (arg_count != 1)
+                        {
+                            error("BIT_MASK expects 1 argument, got " + std::to_string(arg_count));
+                        }
+                        executeBitMask();
+                    }
+                    // XML functions (0x45-0x49)
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_XMLPARSE))
+                    {
+                        uint8_t arg_count = readByte();
+                        if (arg_count != 2)
+                        {
+                            error("XMLPARSE expects 2 arguments, got " + std::to_string(arg_count));
+                        }
+                        executeXMLParse();
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_XMLSERIALIZE))
+                    {
+                        uint8_t arg_count = readByte();
+                        if (arg_count != 2)
+                        {
+                            error("XMLSERIALIZE expects 2 arguments, got " + std::to_string(arg_count));
+                        }
+                        executeXMLSerialize();
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_XMLELEMENT))
+                    {
+                        uint8_t arg_count = readByte();
+                        if (arg_count != 2)
+                        {
+                            error("XMLELEMENT expects 2 arguments, got " + std::to_string(arg_count));
+                        }
+                        executeXMLElement();
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_XMLCONCAT))
+                    {
+                        uint8_t arg_count = readByte();
+                        if (arg_count < 2)
+                        {
+                            error("XMLCONCAT expects at least 2 arguments, got " + std::to_string(arg_count));
+                        }
+                        executeXMLConcat();
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_XMLFOREST))
+                    {
+                        uint8_t arg_count = readByte();
+                        if (arg_count < 1)
+                        {
+                            error("XMLFOREST expects at least 1 argument, got " + std::to_string(arg_count));
+                        }
+                        executeXMLForest();
+                    }
                     else
                     {
                         error("Unknown extended opcode: " + std::to_string(ext_op));
@@ -16266,8 +16551,8 @@ namespace scratchbird
             Value offset_val = stack_.top(); stack_.pop();
             Value bytes_val = stack_.top(); stack_.pop();
 
-            int32_t offset = offset_val.asInt32();
-            const std::string& bytes = bytes_val.asString();
+            int32_t offset = static_cast<int32_t>(offset_val.toInt64());
+            std::string bytes = bytes_val.toString();
 
             if (offset < 0 || static_cast<size_t>(offset) >= bytes.size())
             {
@@ -16275,7 +16560,7 @@ namespace scratchbird
             }
 
             uint8_t byte = static_cast<uint8_t>(bytes[offset]);
-            stack_.push(Value::makeInt32(byte));
+            stack_.push(Value::makeInt64(byte));
         }
 
         void Executor::executeSetByte()
@@ -16285,9 +16570,9 @@ namespace scratchbird
             Value offset_val = stack_.top(); stack_.pop();
             Value bytes_val = stack_.top(); stack_.pop();
 
-            int32_t offset = offset_val.asInt32();
-            int32_t byte_value = value_val.asInt32();
-            std::string bytes = bytes_val.asString();
+            int32_t offset = static_cast<int32_t>(offset_val.toInt64());
+            int32_t byte_value = static_cast<int32_t>(value_val.toInt64());
+            std::string bytes = bytes_val.toString();
 
             if (offset < 0 || static_cast<size_t>(offset) >= bytes.size())
             {
@@ -16308,8 +16593,8 @@ namespace scratchbird
             Value bit_offset_val = stack_.top(); stack_.pop();
             Value bytes_val = stack_.top(); stack_.pop();
 
-            int32_t bit_offset = bit_offset_val.asInt32();
-            const std::string& bytes = bytes_val.asString();
+            int32_t bit_offset = static_cast<int32_t>(bit_offset_val.toInt64());
+            std::string bytes = bytes_val.toString();
 
             int32_t byte_offset = bit_offset / 8;
             int32_t bit_pos = bit_offset % 8;
@@ -16321,7 +16606,7 @@ namespace scratchbird
 
             uint8_t byte = static_cast<uint8_t>(bytes[byte_offset]);
             int32_t bit = (byte >> (7 - bit_pos)) & 1;  // MSB first
-            stack_.push(Value::makeInt32(bit));
+            stack_.push(Value::makeInt64(bit));
         }
 
         void Executor::executeSetBit()
@@ -16331,9 +16616,9 @@ namespace scratchbird
             Value bit_offset_val = stack_.top(); stack_.pop();
             Value bytes_val = stack_.top(); stack_.pop();
 
-            int32_t bit_offset = bit_offset_val.asInt32();
-            int32_t bit_value = value_val.asInt32();
-            std::string bytes = bytes_val.asString();
+            int32_t bit_offset = static_cast<int32_t>(bit_offset_val.toInt64());
+            int32_t bit_value = static_cast<int32_t>(value_val.toInt64());
+            std::string bytes = bytes_val.toString();
 
             int32_t byte_offset = bit_offset / 8;
             int32_t bit_pos = bit_offset % 8;
@@ -16366,7 +16651,7 @@ namespace scratchbird
             // BIT_AND(a, b) / a & b
             Value b = stack_.top(); stack_.pop();
             Value a = stack_.top(); stack_.pop();
-            stack_.push(Value::makeInt64(a.asInt64() & b.asInt64()));
+            stack_.push(Value::makeInt64(a.toInt64() & b.toInt64()));
         }
 
         void Executor::executeBitOr()
@@ -16374,7 +16659,7 @@ namespace scratchbird
             // BIT_OR(a, b) / a | b
             Value b = stack_.top(); stack_.pop();
             Value a = stack_.top(); stack_.pop();
-            stack_.push(Value::makeInt64(a.asInt64() | b.asInt64()));
+            stack_.push(Value::makeInt64(a.toInt64() | b.toInt64()));
         }
 
         void Executor::executeBitXor()
@@ -16382,14 +16667,14 @@ namespace scratchbird
             // BIT_XOR(a, b) / a ^ b
             Value b = stack_.top(); stack_.pop();
             Value a = stack_.top(); stack_.pop();
-            stack_.push(Value::makeInt64(a.asInt64() ^ b.asInt64()));
+            stack_.push(Value::makeInt64(a.toInt64() ^ b.toInt64()));
         }
 
         void Executor::executeBitNot()
         {
             // BIT_NOT(a) / ~a
             Value a = stack_.top(); stack_.pop();
-            stack_.push(Value::makeInt64(~a.asInt64()));
+            stack_.push(Value::makeInt64(~a.toInt64()));
         }
 
         void Executor::executeBitShiftLeft()
@@ -16397,7 +16682,7 @@ namespace scratchbird
             // BIT_SHIFT_LEFT(a, n) / a << n
             Value n = stack_.top(); stack_.pop();
             Value a = stack_.top(); stack_.pop();
-            stack_.push(Value::makeInt64(a.asInt64() << n.asInt64()));
+            stack_.push(Value::makeInt64(a.toInt64() << n.toInt64()));
         }
 
         void Executor::executeBitShiftRight()
@@ -16405,7 +16690,7 @@ namespace scratchbird
             // BIT_SHIFT_RIGHT(a, n) / a >> n (arithmetic right shift)
             Value n = stack_.top(); stack_.pop();
             Value a = stack_.top(); stack_.pop();
-            stack_.push(Value::makeInt64(a.asInt64() >> n.asInt64()));
+            stack_.push(Value::makeInt64(a.toInt64() >> n.toInt64()));
         }
 
         void Executor::executeBitShiftRightLogical()
@@ -16413,15 +16698,15 @@ namespace scratchbird
             // BIT_SHIFT_RIGHT_LOGICAL(a, n) / a >>> n (logical right shift, zero-fill)
             Value n = stack_.top(); stack_.pop();
             Value a = stack_.top(); stack_.pop();
-            uint64_t unsigned_a = static_cast<uint64_t>(a.asInt64());
-            stack_.push(Value::makeInt64(static_cast<int64_t>(unsigned_a >> n.asInt64())));
+            uint64_t unsigned_a = static_cast<uint64_t>(a.toInt64());
+            stack_.push(Value::makeInt64(static_cast<int64_t>(unsigned_a >> n.toInt64())));
         }
 
         void Executor::executeBitCount()
         {
             // BIT_COUNT(a) - population count (count set bits)
             Value a = stack_.top(); stack_.pop();
-            uint64_t val = static_cast<uint64_t>(a.asInt64());
+            uint64_t val = static_cast<uint64_t>(a.toInt64());
 
             // Brian Kernighan's algorithm
             int count = 0;
@@ -16438,7 +16723,7 @@ namespace scratchbird
         {
             // BIT_LENGTH(bytes) - length in bits
             Value bytes_val = stack_.top(); stack_.pop();
-            const std::string& bytes = bytes_val.asString();
+            std::string bytes = bytes_val.toString();
             stack_.push(Value::makeInt32(static_cast<int32_t>(bytes.size() * 8)));
         }
 
@@ -16446,7 +16731,7 @@ namespace scratchbird
         {
             // BIT_MASK(length) - create mask of N ones
             Value length_val = stack_.top(); stack_.pop();
-            int32_t length = length_val.asInt32();
+            int32_t length = static_cast<int32_t>(length_val.toInt64());
 
             if (length < 0 || length > 64)
             {
