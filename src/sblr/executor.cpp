@@ -16256,5 +16256,329 @@ namespace scratchbird
             return serializeTupleFromValues(current_values, all_columns, new_tuple_out);
         }
 
+        // ========================================================================
+        // BIT MANIPULATION FUNCTIONS (Nov 14, 2025)
+        // ========================================================================
+
+        void Executor::executeGetByte()
+        {
+            // GET_BYTE(bytes, offset) - extract byte at offset
+            Value offset_val = stack_.top(); stack_.pop();
+            Value bytes_val = stack_.top(); stack_.pop();
+
+            int32_t offset = offset_val.asInt32();
+            const std::string& bytes = bytes_val.asString();
+
+            if (offset < 0 || static_cast<size_t>(offset) >= bytes.size())
+            {
+                error("GET_BYTE: offset out of range");
+            }
+
+            uint8_t byte = static_cast<uint8_t>(bytes[offset]);
+            stack_.push(Value::makeInt32(byte));
+        }
+
+        void Executor::executeSetByte()
+        {
+            // SET_BYTE(bytes, offset, value) - set byte at offset
+            Value value_val = stack_.top(); stack_.pop();
+            Value offset_val = stack_.top(); stack_.pop();
+            Value bytes_val = stack_.top(); stack_.pop();
+
+            int32_t offset = offset_val.asInt32();
+            int32_t byte_value = value_val.asInt32();
+            std::string bytes = bytes_val.asString();
+
+            if (offset < 0 || static_cast<size_t>(offset) >= bytes.size())
+            {
+                error("SET_BYTE: offset out of range");
+            }
+            if (byte_value < 0 || byte_value > 255)
+            {
+                error("SET_BYTE: value must be 0-255");
+            }
+
+            bytes[offset] = static_cast<char>(byte_value);
+            stack_.push(Value::makeVarchar(bytes));
+        }
+
+        void Executor::executeGetBit()
+        {
+            // GET_BIT(bytes, bit_offset) - get bit at bit offset
+            Value bit_offset_val = stack_.top(); stack_.pop();
+            Value bytes_val = stack_.top(); stack_.pop();
+
+            int32_t bit_offset = bit_offset_val.asInt32();
+            const std::string& bytes = bytes_val.asString();
+
+            int32_t byte_offset = bit_offset / 8;
+            int32_t bit_pos = bit_offset % 8;
+
+            if (byte_offset < 0 || static_cast<size_t>(byte_offset) >= bytes.size())
+            {
+                error("GET_BIT: bit offset out of range");
+            }
+
+            uint8_t byte = static_cast<uint8_t>(bytes[byte_offset]);
+            int32_t bit = (byte >> (7 - bit_pos)) & 1;  // MSB first
+            stack_.push(Value::makeInt32(bit));
+        }
+
+        void Executor::executeSetBit()
+        {
+            // SET_BIT(bytes, bit_offset, value) - set bit at bit offset
+            Value value_val = stack_.top(); stack_.pop();
+            Value bit_offset_val = stack_.top(); stack_.pop();
+            Value bytes_val = stack_.top(); stack_.pop();
+
+            int32_t bit_offset = bit_offset_val.asInt32();
+            int32_t bit_value = value_val.asInt32();
+            std::string bytes = bytes_val.asString();
+
+            int32_t byte_offset = bit_offset / 8;
+            int32_t bit_pos = bit_offset % 8;
+
+            if (byte_offset < 0 || static_cast<size_t>(byte_offset) >= bytes.size())
+            {
+                error("SET_BIT: bit offset out of range");
+            }
+            if (bit_value != 0 && bit_value != 1)
+            {
+                error("SET_BIT: bit value must be 0 or 1");
+            }
+
+            uint8_t byte = static_cast<uint8_t>(bytes[byte_offset]);
+            if (bit_value)
+            {
+                byte |= (1 << (7 - bit_pos));  // Set bit (MSB first)
+            }
+            else
+            {
+                byte &= ~(1 << (7 - bit_pos)); // Clear bit
+            }
+            bytes[byte_offset] = static_cast<char>(byte);
+
+            stack_.push(Value::makeVarchar(bytes));
+        }
+
+        void Executor::executeBitAnd()
+        {
+            // BIT_AND(a, b) / a & b
+            Value b = stack_.top(); stack_.pop();
+            Value a = stack_.top(); stack_.pop();
+            stack_.push(Value::makeInt64(a.asInt64() & b.asInt64()));
+        }
+
+        void Executor::executeBitOr()
+        {
+            // BIT_OR(a, b) / a | b
+            Value b = stack_.top(); stack_.pop();
+            Value a = stack_.top(); stack_.pop();
+            stack_.push(Value::makeInt64(a.asInt64() | b.asInt64()));
+        }
+
+        void Executor::executeBitXor()
+        {
+            // BIT_XOR(a, b) / a ^ b
+            Value b = stack_.top(); stack_.pop();
+            Value a = stack_.top(); stack_.pop();
+            stack_.push(Value::makeInt64(a.asInt64() ^ b.asInt64()));
+        }
+
+        void Executor::executeBitNot()
+        {
+            // BIT_NOT(a) / ~a
+            Value a = stack_.top(); stack_.pop();
+            stack_.push(Value::makeInt64(~a.asInt64()));
+        }
+
+        void Executor::executeBitShiftLeft()
+        {
+            // BIT_SHIFT_LEFT(a, n) / a << n
+            Value n = stack_.top(); stack_.pop();
+            Value a = stack_.top(); stack_.pop();
+            stack_.push(Value::makeInt64(a.asInt64() << n.asInt64()));
+        }
+
+        void Executor::executeBitShiftRight()
+        {
+            // BIT_SHIFT_RIGHT(a, n) / a >> n (arithmetic right shift)
+            Value n = stack_.top(); stack_.pop();
+            Value a = stack_.top(); stack_.pop();
+            stack_.push(Value::makeInt64(a.asInt64() >> n.asInt64()));
+        }
+
+        void Executor::executeBitShiftRightLogical()
+        {
+            // BIT_SHIFT_RIGHT_LOGICAL(a, n) / a >>> n (logical right shift, zero-fill)
+            Value n = stack_.top(); stack_.pop();
+            Value a = stack_.top(); stack_.pop();
+            uint64_t unsigned_a = static_cast<uint64_t>(a.asInt64());
+            stack_.push(Value::makeInt64(static_cast<int64_t>(unsigned_a >> n.asInt64())));
+        }
+
+        void Executor::executeBitCount()
+        {
+            // BIT_COUNT(a) - population count (count set bits)
+            Value a = stack_.top(); stack_.pop();
+            uint64_t val = static_cast<uint64_t>(a.asInt64());
+
+            // Brian Kernighan's algorithm
+            int count = 0;
+            while (val)
+            {
+                val &= (val - 1);  // Clear lowest set bit
+                count++;
+            }
+
+            stack_.push(Value::makeInt32(count));
+        }
+
+        void Executor::executeBitLength()
+        {
+            // BIT_LENGTH(bytes) - length in bits
+            Value bytes_val = stack_.top(); stack_.pop();
+            const std::string& bytes = bytes_val.asString();
+            stack_.push(Value::makeInt32(static_cast<int32_t>(bytes.size() * 8)));
+        }
+
+        void Executor::executeBitMask()
+        {
+            // BIT_MASK(length) - create mask of N ones
+            Value length_val = stack_.top(); stack_.pop();
+            int32_t length = length_val.asInt32();
+
+            if (length < 0 || length > 64)
+            {
+                error("BIT_MASK: length must be 0-64");
+            }
+
+            uint64_t mask;
+            if (length == 64)
+            {
+                mask = 0xFFFFFFFFFFFFFFFFULL;
+            }
+            else
+            {
+                mask = (1ULL << length) - 1;
+            }
+
+            stack_.push(Value::makeInt64(static_cast<int64_t>(mask)));
+        }
+
+        // ========================================================================
+        // STATISTICAL FUNCTIONS (Nov 14, 2025) - TODO: Implement as aggregates
+        // ========================================================================
+
+        void Executor::executeStdDevSamp()
+        {
+            // TODO: Implement as aggregate function with Welford's algorithm
+            error("STDDEV_SAMP not yet implemented");
+        }
+
+        void Executor::executeStdDevPop()
+        {
+            // TODO: Implement as aggregate function
+            error("STDDEV_POP not yet implemented");
+        }
+
+        void Executor::executeVarSamp()
+        {
+            // TODO: Implement as aggregate function with Welford's algorithm
+            error("VAR_SAMP not yet implemented");
+        }
+
+        void Executor::executeVarPop()
+        {
+            // TODO: Implement as aggregate function
+            error("VAR_POP not yet implemented");
+        }
+
+        void Executor::executeCorr()
+        {
+            // TODO: Implement as aggregate function
+            error("CORR not yet implemented");
+        }
+
+        void Executor::executeCovarPop()
+        {
+            // TODO: Implement as aggregate function
+            error("COVAR_POP not yet implemented");
+        }
+
+        // ========================================================================
+        // CRYPTOGRAPHIC FUNCTIONS (Nov 14, 2025) - TODO: Implement with OpenSSL
+        // ========================================================================
+
+        void Executor::executeMD5()
+        {
+            // TODO: Implement MD5 hash (requires OpenSSL or standalone implementation)
+            error("MD5 not yet implemented");
+        }
+
+        void Executor::executeSHA1()
+        {
+            // TODO: Implement SHA1 hash
+            error("SHA1 not yet implemented");
+        }
+
+        void Executor::executeSHA256()
+        {
+            // TODO: Implement SHA256 hash
+            error("SHA256 not yet implemented");
+        }
+
+        void Executor::executeSHA512()
+        {
+            // TODO: Implement SHA512 hash
+            error("SHA512 not yet implemented");
+        }
+
+        void Executor::executeEncode()
+        {
+            // TODO: Implement ENCODE(data, format) - base64, hex, escape
+            error("ENCODE not yet implemented");
+        }
+
+        void Executor::executeDecode()
+        {
+            // TODO: Implement DECODE(text, format)
+            error("DECODE not yet implemented");
+        }
+
+        // ========================================================================
+        // XML FUNCTIONS (Nov 14, 2025) - TODO: Implement minimal string-based
+        // ========================================================================
+
+        void Executor::executeXMLParse()
+        {
+            // TODO: Implement XMLPARSE(document_or_content, xml_text)
+            error("XMLPARSE not yet implemented");
+        }
+
+        void Executor::executeXMLSerialize()
+        {
+            // TODO: Implement XMLSERIALIZE(content_or_document xml AS type)
+            error("XMLSERIALIZE not yet implemented");
+        }
+
+        void Executor::executeXMLElement()
+        {
+            // TODO: Implement XMLELEMENT(name, content)
+            error("XMLELEMENT not yet implemented");
+        }
+
+        void Executor::executeXMLConcat()
+        {
+            // TODO: Implement XMLCONCAT(xml, ...)
+            error("XMLCONCAT not yet implemented");
+        }
+
+        void Executor::executeXMLForest()
+        {
+            // TODO: Implement XMLFOREST(expr AS name, ...)
+            error("XMLFOREST not yet implemented");
+        }
+
     } // namespace sblr
 } // namespace scratchbird

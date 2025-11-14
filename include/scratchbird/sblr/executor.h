@@ -643,6 +643,45 @@ namespace scratchbird
                                    const std::vector<Value>& new_values,
                                    std::vector<uint8_t>& new_tuple_out);
 
+            // Bit Manipulation Functions (Nov 14, 2025)
+            void executeGetByte();       // GET_BYTE(bytes, offset)
+            void executeSetByte();       // SET_BYTE(bytes, offset, value)
+            void executeGetBit();        // GET_BIT(bytes, bit_offset)
+            void executeSetBit();        // SET_BIT(bytes, bit_offset, value)
+            void executeBitAnd();        // BIT_AND(a, b) / a & b
+            void executeBitOr();         // BIT_OR(a, b) / a | b
+            void executeBitXor();        // BIT_XOR(a, b) / a ^ b
+            void executeBitNot();        // BIT_NOT(a) / ~a
+            void executeBitShiftLeft();  // a << n
+            void executeBitShiftRight(); // a >> n (arithmetic)
+            void executeBitShiftRightLogical(); // a >>> n (logical)
+            void executeBitCount();      // BIT_COUNT(a) - popcount
+            void executeBitLength();     // BIT_LENGTH(bytes)
+            void executeBitMask();       // BIT_MASK(length)
+
+            // Statistical Functions (Nov 14, 2025)
+            void executeStdDevSamp();    // STDDEV / STDDEV_SAMP(expr)
+            void executeStdDevPop();     // STDDEV_POP(expr)
+            void executeVarSamp();       // VARIANCE / VAR_SAMP(expr)
+            void executeVarPop();        // VAR_POP(expr)
+            void executeCorr();          // CORR(y, x)
+            void executeCovarPop();      // COVAR_POP(y, x)
+
+            // Cryptographic Functions (Nov 14, 2025)
+            void executeMD5();           // MD5(data)
+            void executeSHA1();          // SHA1(data)
+            void executeSHA256();        // SHA256(data)
+            void executeSHA512();        // SHA512(data)
+            void executeEncode();        // ENCODE(data, format)
+            void executeDecode();        // DECODE(text, format)
+
+            // XML Functions (Nov 14, 2025)
+            void executeXMLParse();      // XMLPARSE(document_or_content, xml_text)
+            void executeXMLSerialize();  // XMLSERIALIZE(content_or_document xml AS type)
+            void executeXMLElement();    // XMLELEMENT(name, content)
+            void executeXMLConcat();     // XMLCONCAT(xml, ...)
+            void executeXMLForest();     // XMLFOREST(expr AS name, ...)
+
         public:
             // Forward declaration
             class TriggerContext;
