@@ -135,7 +135,7 @@ namespace scratchbird
                     continue;
                 }
 
-                // Currently only ForeignKeyConstraint is implemented
+                // Handle ForeignKeyConstraint
                 auto *fk_constraint = dynamic_cast<parser::ForeignKeyConstraint *>(constraint);
                 if (fk_constraint)
                 {
@@ -180,6 +180,32 @@ namespace scratchbird
 
                     // Write constraint name (optional)
                     writeStringId(fk_constraint->name());
+                    continue;
+                }
+
+                // Handle UniqueConstraint
+                auto *unique_constraint = dynamic_cast<parser::UniqueConstraint *>(constraint);
+                if (unique_constraint)
+                {
+                    // Generate UNIQUE_CONSTRAINT opcode for table-level UNIQUE
+                    // Format: UNIQUE_CONSTRAINT | col_count | col_names...
+                    current_result_->writeOpcode(Opcode::UNIQUE_CONSTRAINT);
+
+                    // Write column count and names
+                    const auto &cols = unique_constraint->columns();
+                    if (cols.size() > UINT8_MAX)
+                    {
+                        current_result_->addError("Too many columns in UNIQUE constraint (max 255)");
+                        continue;
+                    }
+                    current_result_->writeByte(static_cast<uint8_t>(cols.size()));
+                    for (auto col_id : cols)
+                    {
+                        writeStringId(col_id);
+                    }
+
+                    // Write constraint name (optional)
+                    writeStringId(unique_constraint->name());
                 }
             }
         }
@@ -3055,6 +3081,12 @@ namespace scratchbird
                 {
                     current_result_->writeByte(byte);
                 }
+            }
+
+            // Write UNIQUE constraint if present
+            if (node->isUnique())
+            {
+                current_result_->writeOpcode(Opcode::UNIQUE_CONSTRAINT);
             }
 
             // Write FOREIGN KEY constraint if present (ALPHA Phase A - FK Constraints)
