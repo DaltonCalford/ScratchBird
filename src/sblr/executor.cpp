@@ -1226,7 +1226,7 @@ namespace scratchbird
 
             // Track FK constraints to create after table (ALPHA Phase A - FK Constraints)
             struct PendingFK {
-                std::string child_column;
+                std::vector<std::string> child_columns;  // Changed to vector for composite FK support (Phase C)
                 std::string parent_table;
                 std::vector<std::string> parent_columns;
                 std::string on_delete_action;
@@ -1329,7 +1329,7 @@ namespace scratchbird
                     readByte(); // Consume FOREIGN_KEY opcode
 
                     PendingFK fk;
-                    fk.child_column = col_name;
+                    fk.child_columns.push_back(col_name);  // Single column FK (Phase C: use vector)
 
                     // Read parent table name
                     fk.parent_table = readString();
@@ -1374,6 +1374,44 @@ namespace scratchbird
             if (readByte() != static_cast<uint8_t>(Opcode::END_LIST))
             {
                 error("Expected END_LIST after columns");
+            }
+
+            // Check for table-level FK constraints (ALPHA Phase C - Composite FK Support)
+            while (pc_ < bytecode_size_ &&
+                   bytecode_[pc_] == static_cast<uint8_t>(Opcode::TABLE_FK))
+            {
+                readByte(); // Consume TABLE_FK opcode
+
+                PendingFK fk;
+
+                // Read child column count and names
+                uint8_t child_col_count = readByte();
+                for (uint8_t j = 0; j < child_col_count; j++)
+                {
+                    fk.child_columns.push_back(readString());
+                }
+
+                // Read parent table name
+                fk.parent_table = readString();
+
+                // Read parent column count and names
+                uint8_t parent_col_count = readByte();
+                for (uint8_t j = 0; j < parent_col_count; j++)
+                {
+                    fk.parent_columns.push_back(readString());
+                }
+
+                // Read ON DELETE action
+                fk.on_delete_action = readString();
+
+                // Read ON UPDATE action
+                fk.on_update_action = readString();
+
+                // Read constraint name (optional)
+                std::string constraint_name = readString();
+                (void)constraint_name; // TODO: Use constraint name instead of auto-generated
+
+                pending_fks.push_back(fk);
             }
 
             // Read tablespace name (Phase 2 Task 2.3)
@@ -1440,16 +1478,21 @@ namespace scratchbird
                 core::CatalogManager::FKAction on_delete = parseAction(fk.on_delete_action);
                 core::CatalogManager::FKAction on_update = parseAction(fk.on_update_action);
 
-                // Generate FK name: table_fk_column_ref
-                std::string fk_name = table_name + "_fk_" + fk.child_column + "_ref";
+                // Generate FK name: table_fk_col1_col2_..._ref (Phase C: composite FK support)
+                std::string fk_name = table_name + "_fk";
+                for (const auto& col : fk.child_columns)
+                {
+                    fk_name += "_" + col;
+                }
+                fk_name += "_ref";
 
-                // Create FK constraint
+                // Create FK constraint (Phase C: use child_columns vector)
                 core::ID fk_id;
                 status = db_->catalog_manager()->createForeignKey(
                     fk_name,
                     table_id,
                     parent_table.table_id,
-                    {fk.child_column},
+                    fk.child_columns,
                     fk.parent_columns,
                     on_delete,
                     on_update,
