@@ -3733,9 +3733,7 @@ namespace scratchbird
             }
 
             // ALPHA Phase A: Enforce FOREIGN KEY constraints on columns
-            // TODO: When FK catalog is fully implemented, uncomment this block
-            /*
-            // Get all FKs for this table
+            // Get all FKs for this table (where this table is the child)
             std::vector<core::CatalogManager::ForeignKeyInfo> fks;
             auto fk_status = db_->catalog_manager()->getForeignKeysForTable(table_id, fks, nullptr);
 
@@ -3745,7 +3743,7 @@ namespace scratchbird
                 {
                     if (!fk.is_enabled) continue;
 
-                    // Collect FK column values
+                    // Collect FK column values from the row being inserted
                     std::vector<Value> fk_values;
                     for (const auto& col_name : fk.child_columns)
                     {
@@ -3766,15 +3764,14 @@ namespace scratchbird
 
                     if (col_status == core::Status::OK)
                     {
-                        // Check if FK values exist in parent table
+                        // Check if FK values exist in parent table (MATCH SIMPLE semantics)
                         if (!checkForeignKeyExists(fk.parent_table_id, fk.parent_columns, fk_values, parent_cols))
                         {
-                            error("Foreign key constraint violation on '" + fk.fk_name + "'");
+                            error("Foreign key constraint violation: no matching row in parent table for FK '" + fk.fk_name + "'");
                         }
                     }
                 }
             }
-            */
 
             // Insert tuple via storage engine
             uint32_t page_id;
@@ -4209,9 +4206,7 @@ namespace scratchbird
                 }
 
                 // ALPHA Phase A: Enforce FOREIGN KEY constraints on updated columns
-                // TODO: When FK catalog is fully implemented, uncomment this block
-                /*
-                // Get all FKs for this table (child FKs)
+                // Get all FKs for this table (where this table is the child)
                 std::vector<core::CatalogManager::ForeignKeyInfo> fks;
                 auto fk_status = db_->catalog_manager()->getForeignKeysForTable(table_id, fks, nullptr);
 
@@ -4236,7 +4231,7 @@ namespace scratchbird
 
                         if (fk_updated)
                         {
-                            // Collect FK column values
+                            // Collect new FK column values from the updated row
                             std::vector<Value> fk_values;
                             for (const auto& col_name : fk.child_columns)
                             {
@@ -4256,16 +4251,15 @@ namespace scratchbird
 
                             if (col_status == core::Status::OK)
                             {
-                                // Check if FK values exist in parent table
+                                // Check if new FK values exist in parent table (MATCH SIMPLE semantics)
                                 if (!checkForeignKeyExists(fk.parent_table_id, fk.parent_columns, fk_values, parent_cols))
                                 {
-                                    error("Foreign key constraint violation on '" + fk.fk_name + "'");
+                                    error("Foreign key constraint violation: no matching row in parent table for FK '" + fk.fk_name + "'");
                                 }
                             }
                         }
                     }
                 }
-                */
 
                 // Serialize updated tuple data (same format as INSERT)
                 std::vector<uint8_t> new_tuple_data;
