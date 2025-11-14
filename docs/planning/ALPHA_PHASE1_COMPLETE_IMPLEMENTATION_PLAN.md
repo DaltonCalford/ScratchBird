@@ -14,6 +14,8 @@
 **Remaining Work**: ~750-1,150 hours (19-29 weeks at 40 hours/week)
 
 **Recent Milestones**:
+- ✅ **ALL 123 SQL FUNCTIONS COMPLETE** - Full libxml2 XML/XPath integration (Nov 14, 2025) 🎉🎉🎉
+- ✅ **XML Functions COMPLETE** - 9 functions with libxml2 2.9.14 + XPath 1.0 - Nov 14, 2025 🎉
 - ✅ **Bit Manipulation Functions COMPLETE** - 14 functions + test infrastructure fix - Nov 14, 2025 🎉
 - ✅ **Foreign Key Phase C COMPLETE** - Composite FK support, table-level syntax - Nov 14, 2025 🎉
 - ✅ **Foreign Key Phase B COMPLETE** - CASCADE UPDATE, SET NULL, SET DEFAULT actions - Nov 14, 2025 🎉
@@ -266,7 +268,7 @@
 - 14 files modified
 - Zero compilation errors
 
-### Built-in Functions (103/114 = 90%) 🎉
+### Built-in Functions (123/123 = 100%) 🎉 **ALL COMPLETE!**
 - ✅ String (11): LENGTH, SUBSTRING, UPPER, LOWER, TRIM, CONCAT, etc.
 - ✅ Aggregate (6): COUNT, SUM, AVG, MIN, MAX, ARRAY_AGG
 - ✅ Window (8): ROW_NUMBER, RANK, DENSE_RANK, LAG, LEAD, etc.
@@ -275,10 +277,12 @@
 - ✅ Date/Time (6): NOW, CURRENT_DATE, EXTRACT, DATE_TRUNC, etc.
 - ✅ Conditional (3): COALESCE, NULLIF, CASE
 - ✅ Regex (4): REGEXP_MATCH, REGEXP_REPLACE, etc.
-- ✅ **Mathematical (29)**: SIN, COS, TAN, ASIN, ACOS, ATAN, ATAN2, DEGREES, RADIANS, PI, ABS, SIGN, ROUND, CEIL, FLOOR, TRUNC, MOD, SQRT, CBRT, POWER, EXP, LN, LOG, LOG10, LOG2
-- ✅ **Bit Manipulation (14)**: GET_BYTE, SET_BYTE, GET_BIT, SET_BIT, BIT_AND, BIT_OR, BIT_XOR, BIT_NOT, BIT_SHIFT_LEFT, BIT_SHIFT_RIGHT, BIT_SHIFT_RIGHT_LOGICAL, BIT_COUNT, BIT_LENGTH, BIT_MASK
-- ❌ Statistical (7): STDDEV, VARIANCE, CORR, etc.
-- ❌ Cryptographic (4): MD5, SHA256, etc.
+- ✅ **Mathematical (29)**: SIN, COS, TAN, ASIN, ACOS, ATAN, ATAN2, DEGREES, RADIANS, PI, ABS, SIGN, ROUND, CEIL, FLOOR, TRUNC, MOD, SQRT, CBRT, POWER, EXP, LN, LOG, LOG10, LOG2 (Nov 13, 2025)
+- ✅ **Bit Manipulation (14)**: GET_BYTE, SET_BYTE, GET_BIT, SET_BIT, BIT_AND, BIT_OR, BIT_XOR, BIT_NOT, BIT_SHIFT_LEFT, BIT_SHIFT_RIGHT, BIT_SHIFT_RIGHT_LOGICAL, BIT_COUNT, BIT_LENGTH, BIT_MASK (Nov 14, 2025)
+- ✅ **Statistical (7)**: STDDEV/STDDEV_SAMP, STDDEV_POP, VARIANCE/VAR_SAMP, VAR_POP, CORR, COVAR_POP, COVAR_SAMP (Nov 14, 2025)
+- ✅ **Cryptographic (4)**: MD5, SHA1, SHA256, SHA512 (Nov 14, 2025)
+- ✅ **XML (9)**: XMLPARSE, XMLSERIALIZE, XMLELEMENT, XMLCONCAT, XMLFOREST, XMLCOMMENT, XMLROOT, XPATH, XMLEXISTS (Nov 14, 2025)
+  - Full libxml2 2.9.14 integration with XPath 1.0 support
 
 ### Constraints (7/10 = 70%) 🎉
 - ✅ NOT NULL (parser, executor, enforcement)
@@ -297,29 +301,58 @@
 
 ### 🔴 CRITICAL PRIORITY
 
-#### 1. Statistical Functions (0/7 implemented) - 25-35 hours ⚠️ **HIGHEST PRIORITY**
-**Status**: Next function category
-**Impact**: Missing advanced aggregate functions
+#### 1. UNIQUE Constraint Parser Integration (15-25 hours) ⚠️ **HIGHEST PRIORITY - START HERE**
+**Status**: Executor enforcement complete, parser integration needed
+**Impact**: Cannot declare UNIQUE constraints in CREATE TABLE
+**Completed**: Nov 14, 2025 - Executor enforcement with INSERT/UPDATE validation
 
-**Missing Functions**:
-- STDDEV, STDDEV_POP, STDDEV_SAMP
-- VARIANCE, VAR_POP, VAR_SAMP
-- CORR
-
-**Files**: `src/sblr/opcodes.h`, `src/sblr/executor.cpp`
-
-**Implementation Plan**:
-1. Add opcodes (EXT_FUNC_STDDEV, etc.) - 2 hours
-2. Implement executor methods - 12-18 hours
-3. Add to function registry - 2-3 hours
-4. Write tests - 9-12 hours
-
-#### 2. Foreign Key Disk Persistence (Phase D) - 40-60 hours
-**Status**: Runtime enforcement complete, disk persistence needed
-**Impact**: FKs don't survive database restart
+**Blocks**: PRIMARY KEY implementation (depends on UNIQUE + NOT NULL)
 
 **Tasks**:
-- Persist FK metadata to catalog tables
+- Parse UNIQUE constraints in CREATE TABLE
+- Parse ALTER TABLE ADD CONSTRAINT UNIQUE
+- Wire to existing executor enforcement (already complete)
+- Integration tests
+
+**Files**: `src/parser/parser.cpp`, `src/sblr/bytecode_generator.cpp`
+
+**Implementation Plan**:
+1. Add UNIQUE constraint AST nodes - 2-3 hours
+2. Parse UNIQUE in CREATE TABLE column/table constraints - 4-6 hours
+3. Parse ALTER TABLE ADD CONSTRAINT UNIQUE - 3-4 hours
+4. Bytecode generation for UNIQUE constraints - 3-4 hours
+5. Integration tests - 3-8 hours
+
+#### 2. PRIMARY KEY Implementation (20-30 hours)
+**Status**: Depends on UNIQUE + NOT NULL (both executor-complete)
+**Impact**: No PRIMARY KEY constraint support
+**Blocks**: Foreign key REFERENCES clause (requires PK on parent)
+
+**Tasks**:
+- Parser support for PRIMARY KEY in CREATE TABLE
+- Automatic UNIQUE + NOT NULL combination
+- Single PK per table enforcement
+- ALTER TABLE ADD/DROP PRIMARY KEY
+- Catalog storage for PK metadata
+
+**Files**: `src/parser/parser.cpp`, `src/sblr/bytecode_generator.cpp`, `src/core/catalog_manager.cpp`
+
+**Implementation Plan**:
+1. Add PRIMARY KEY AST nodes - 2-3 hours
+2. Parse PK in CREATE TABLE - 4-6 hours
+3. Automatic UNIQUE + NOT NULL generation - 3-4 hours
+4. Single PK per table validation - 2-3 hours
+5. Catalog integration - 4-6 hours
+6. ALTER TABLE PK operations - 3-5 hours
+7. Integration tests - 2-3 hours
+
+#### 3. Foreign Key Disk Persistence (Phase D) - 40-60 hours
+**Status**: Runtime enforcement 100% complete (Nov 14, 2025), disk persistence needed
+**Impact**: FKs don't survive database restart
+**Completed**: Phases A/B/C - Full runtime enforcement with all referential actions
+
+**Tasks**:
+- Persist FK metadata to catalog tables on disk
 - Load FKs on database startup
 - Index-based lookups for performance
 - ALTER TABLE ADD/DROP FOREIGN KEY
@@ -331,22 +364,6 @@
 2. Implement save/load operations - 15-20 hours
 3. Add index-based FK validation - 10-15 hours
 4. ALTER TABLE FK operations - 7-13 hours
-
-#### 3. Cryptographic Functions (0/4 implemented) - 15-20 hours
-**Status**: Next function category after statistical
-**Impact**: Missing security/hashing functions
-
-**Missing Functions**:
-- MD5, SHA1, SHA256, SHA512
-
-**Files**: `src/sblr/opcodes.h`, `src/sblr/executor.cpp`
-**Dependencies**: OpenSSL (already linked)
-
-**Implementation Plan**:
-1. Add opcodes - 1-2 hours
-2. Implement executor methods with OpenSSL - 8-10 hours
-3. Add to function registry - 1-2 hours
-4. Write tests - 5-6 hours
 
 ---
 
