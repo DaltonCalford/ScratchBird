@@ -35,6 +35,7 @@ if(PkgConfig_FOUND)
     pkg_check_modules(LZ4 liblz4)
     pkg_check_modules(GEOS geos)
     pkg_check_modules(PROJ proj)
+    pkg_check_modules(LIBXML2 libxml-2.0)
 endif()
 
 # If LZ4 not found via pkg-config, try to find it manually
