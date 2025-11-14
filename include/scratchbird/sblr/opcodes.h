@@ -526,6 +526,54 @@ namespace scratchbird
             EXT_FUNC_LOG = 0xF0,           // LOG(x) / LOG(base, x) - logarithm (base 10 or specified base)
             EXT_FUNC_LOG10 = 0xF1,         // LOG10(x) - base-10 logarithm
             EXT_FUNC_LOG2 = 0xF2,          // LOG2(x) - base-2 logarithm
+
+            // Statistical functions (0xF3-0xF8)
+            EXT_STDDEV_SAMP = 0xF3,        // STDDEV / STDDEV_SAMP(expr) - sample standard deviation
+            EXT_STDDEV_POP = 0xF4,         // STDDEV_POP(expr) - population standard deviation
+            EXT_VAR_SAMP = 0xF5,           // VARIANCE / VAR_SAMP(expr) - sample variance
+            EXT_VAR_POP = 0xF6,            // VAR_POP(expr) - population variance
+            EXT_CORR = 0xF7,               // CORR(y, x) - Pearson correlation coefficient
+            EXT_COVAR_POP = 0xF8,          // COVAR_POP(y, x) - population covariance
+
+            // Cryptographic hash functions (0xF9-0xFC)
+            EXT_MD5 = 0xF9,                // MD5(data) - 128-bit hash
+            EXT_SHA1 = 0xFA,               // SHA1(data) - 160-bit hash
+            EXT_SHA256 = 0xFB,             // SHA256(data) - 256-bit hash
+            EXT_SHA512 = 0xFC,             // SHA512(data) - 512-bit hash
+
+            // Encoding functions (0xFD-0xFE)
+            EXT_ENCODE = 0xFD,             // ENCODE(data, format) - encode binary to text
+            EXT_DECODE = 0xFE,             // DECODE(text, format) - decode text to binary
+
+            // Note: 0xFF is EXTENDED_OPCODE marker (already defined above)
+            // Bit manipulation functions use secondary extended opcode space (0x01xx range)
+
+            // Bit manipulation - Byte/Bit access (secondary extended: 0x0100-0x010F)
+            EXT2_GET_BYTE = 0x0100,        // GET_BYTE(bytes, offset) - extract byte at offset
+            EXT2_SET_BYTE = 0x0101,        // SET_BYTE(bytes, offset, value) - set byte at offset
+            EXT2_GET_BIT = 0x0102,         // GET_BIT(bytes, bit_offset) - get bit at offset
+            EXT2_SET_BIT = 0x0103,         // SET_BIT(bytes, bit_offset, value) - set bit at offset
+
+            // Bit manipulation - Bitwise operations (0x0110-0x011F)
+            EXT2_BIT_AND = 0x0110,         // BIT_AND(a, b) / a & b - bitwise AND
+            EXT2_BIT_OR = 0x0111,          // BIT_OR(a, b) / a | b - bitwise OR
+            EXT2_BIT_XOR = 0x0112,         // BIT_XOR(a, b) / a ^ b - bitwise XOR
+            EXT2_BIT_NOT = 0x0113,         // BIT_NOT(a) / ~a - bitwise NOT (complement)
+            EXT2_BIT_SHIFT_LEFT = 0x0114,  // BIT_SHIFT_LEFT(a, n) / a << n - left shift
+            EXT2_BIT_SHIFT_RIGHT = 0x0115, // BIT_SHIFT_RIGHT(a, n) / a >> n - arithmetic right shift
+            EXT2_BIT_SHIFT_RIGHT_LOGICAL = 0x0116, // a >>> n - logical right shift (zero-fill)
+
+            // Bit manipulation - Utility functions (0x0120-0x012F)
+            EXT2_BIT_COUNT = 0x0120,       // BIT_COUNT(a) - count set bits (popcount)
+            EXT2_BIT_LENGTH = 0x0121,      // BIT_LENGTH(bytes) - length in bits
+            EXT2_BIT_MASK = 0x0122,        // BIT_MASK(length) - create mask of N ones
+
+            // XML functions (0x0130-0x013F)
+            EXT2_XMLPARSE = 0x0130,        // XMLPARSE(document_or_content, xml_text)
+            EXT2_XMLSERIALIZE = 0x0131,    // XMLSERIALIZE(content_or_document xml AS type)
+            EXT2_XMLELEMENT = 0x0132,      // XMLELEMENT(name, content)
+            EXT2_XMLCONCAT = 0x0133,       // XMLCONCAT(xml, ...)
+            EXT2_XMLFOREST = 0x0134,       // XMLFOREST(expr AS name, ...)
         };
 
         // SBLR Version
