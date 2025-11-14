@@ -699,6 +699,10 @@ namespace scratchbird
             void executeXMLElement();    // XMLELEMENT(name, content)
             void executeXMLConcat();     // XMLCONCAT(xml, ...)
             void executeXMLForest();     // XMLFOREST(expr AS name, ...)
+            void executeXMLComment();    // XMLCOMMENT(text)
+            void executeXMLRoot();       // XMLROOT(xml, version, standalone)
+            void executeXPath();         // XPATH(xpath_expr, xml)
+            void executeXMLExists();     // XMLEXISTS(xpath_expr, xml)
 
         public:
             // Forward declaration

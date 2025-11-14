@@ -2539,6 +2539,106 @@ namespace scratchbird
                 current_result_->writeByte(static_cast<uint8_t>(node->args().size()));
                 return;
             }
+            // XML Functions (Nov 14, 2025)
+            else if (func_name == "XMLPARSE")
+            {
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_XMLPARSE));
+                current_result_->writeByte(static_cast<uint8_t>(node->args().size()));
+                return;
+            }
+            else if (func_name == "XMLSERIALIZE")
+            {
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_XMLSERIALIZE));
+                current_result_->writeByte(static_cast<uint8_t>(node->args().size()));
+                return;
+            }
+            else if (func_name == "XMLELEMENT")
+            {
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_XMLELEMENT));
+                current_result_->writeByte(static_cast<uint8_t>(node->args().size()));
+                return;
+            }
+            else if (func_name == "XMLCONCAT")
+            {
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_XMLCONCAT));
+                current_result_->writeByte(static_cast<uint8_t>(node->args().size()));
+                return;
+            }
+            else if (func_name == "XMLFOREST")
+            {
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_XMLFOREST));
+                current_result_->writeByte(static_cast<uint8_t>(node->args().size()));
+                return;
+            }
+            else if (func_name == "XMLCOMMENT")
+            {
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_XMLCOMMENT));
+                current_result_->writeByte(static_cast<uint8_t>(node->args().size()));
+                return;
+            }
+            else if (func_name == "XMLROOT")
+            {
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_XMLROOT));
+                current_result_->writeByte(static_cast<uint8_t>(node->args().size()));
+                return;
+            }
+            else if (func_name == "XPATH")
+            {
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_XPATH));
+                current_result_->writeByte(static_cast<uint8_t>(node->args().size()));
+                return;
+            }
+            else if (func_name == "XMLEXISTS")
+            {
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_XMLEXISTS));
+                current_result_->writeByte(static_cast<uint8_t>(node->args().size()));
+                return;
+            }
             // Bit Manipulation Functions (Nov 14, 2025)
             else if (func_name == "GET_BYTE")
             {
