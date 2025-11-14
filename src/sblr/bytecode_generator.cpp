@@ -2411,6 +2411,351 @@ namespace scratchbird
                 current_result_->writeByte(static_cast<uint8_t>(node->args().size()));
                 return;
             }
+            // Statistical Functions (Nov 14, 2025)
+            else if (func_name == "STDDEV" || func_name == "STDDEV_SAMP")
+            {
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_STDDEV_SAMP));
+                current_result_->writeByte(static_cast<uint8_t>(node->args().size()));
+                return;
+            }
+            else if (func_name == "STDDEV_POP")
+            {
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_STDDEV_POP));
+                current_result_->writeByte(static_cast<uint8_t>(node->args().size()));
+                return;
+            }
+            else if (func_name == "VARIANCE" || func_name == "VAR_SAMP")
+            {
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_VAR_SAMP));
+                current_result_->writeByte(static_cast<uint8_t>(node->args().size()));
+                return;
+            }
+            else if (func_name == "VAR_POP")
+            {
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_VAR_POP));
+                current_result_->writeByte(static_cast<uint8_t>(node->args().size()));
+                return;
+            }
+            else if (func_name == "CORR")
+            {
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_CORR));
+                current_result_->writeByte(static_cast<uint8_t>(node->args().size()));
+                return;
+            }
+            else if (func_name == "COVAR_POP")
+            {
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_COVAR_POP));
+                current_result_->writeByte(static_cast<uint8_t>(node->args().size()));
+                return;
+            }
+            // Cryptographic Functions (Nov 14, 2025)
+            else if (func_name == "MD5")
+            {
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_MD5));
+                current_result_->writeByte(static_cast<uint8_t>(node->args().size()));
+                return;
+            }
+            else if (func_name == "SHA1")
+            {
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_SHA1));
+                current_result_->writeByte(static_cast<uint8_t>(node->args().size()));
+                return;
+            }
+            else if (func_name == "SHA256")
+            {
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_SHA256));
+                current_result_->writeByte(static_cast<uint8_t>(node->args().size()));
+                return;
+            }
+            else if (func_name == "SHA512")
+            {
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_SHA512));
+                current_result_->writeByte(static_cast<uint8_t>(node->args().size()));
+                return;
+            }
+            else if (func_name == "ENCODE")
+            {
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_ENCODE));
+                current_result_->writeByte(static_cast<uint8_t>(node->args().size()));
+                return;
+            }
+            else if (func_name == "DECODE")
+            {
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_DECODE));
+                current_result_->writeByte(static_cast<uint8_t>(node->args().size()));
+                return;
+            }
+            // Bit Manipulation Functions (Nov 14, 2025)
+            else if (func_name == "GET_BYTE")
+            {
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_GET_BYTE));
+                current_result_->writeByte(static_cast<uint8_t>(node->args().size()));
+                return;
+            }
+            else if (func_name == "SET_BYTE")
+            {
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_SET_BYTE));
+                current_result_->writeByte(static_cast<uint8_t>(node->args().size()));
+                return;
+            }
+            else if (func_name == "GET_BIT")
+            {
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_GET_BIT));
+                current_result_->writeByte(static_cast<uint8_t>(node->args().size()));
+                return;
+            }
+            else if (func_name == "SET_BIT")
+            {
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_SET_BIT));
+                current_result_->writeByte(static_cast<uint8_t>(node->args().size()));
+                return;
+            }
+            else if (func_name == "BIT_AND")
+            {
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_BIT_AND));
+                current_result_->writeByte(static_cast<uint8_t>(node->args().size()));
+                return;
+            }
+            else if (func_name == "BIT_OR")
+            {
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_BIT_OR));
+                current_result_->writeByte(static_cast<uint8_t>(node->args().size()));
+                return;
+            }
+            else if (func_name == "BIT_XOR")
+            {
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_BIT_XOR));
+                current_result_->writeByte(static_cast<uint8_t>(node->args().size()));
+                return;
+            }
+            else if (func_name == "BIT_NOT")
+            {
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_BIT_NOT));
+                current_result_->writeByte(static_cast<uint8_t>(node->args().size()));
+                return;
+            }
+            else if (func_name == "BIT_SHIFT_LEFT")
+            {
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_BIT_SHIFT_LEFT));
+                current_result_->writeByte(static_cast<uint8_t>(node->args().size()));
+                return;
+            }
+            else if (func_name == "BIT_SHIFT_RIGHT")
+            {
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_BIT_SHIFT_RIGHT));
+                current_result_->writeByte(static_cast<uint8_t>(node->args().size()));
+                return;
+            }
+            else if (func_name == "BIT_SHIFT_RIGHT_LOGICAL")
+            {
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_BIT_SHIFT_RIGHT_LOGICAL));
+                current_result_->writeByte(static_cast<uint8_t>(node->args().size()));
+                return;
+            }
+            else if (func_name == "BIT_COUNT")
+            {
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_BIT_COUNT));
+                current_result_->writeByte(static_cast<uint8_t>(node->args().size()));
+                return;
+            }
+            else if (func_name == "BIT_LENGTH")
+            {
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_BIT_LENGTH));
+                current_result_->writeByte(static_cast<uint8_t>(node->args().size()));
+                return;
+            }
+            else if (func_name == "BIT_MASK")
+            {
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_BIT_MASK));
+                current_result_->writeByte(static_cast<uint8_t>(node->args().size()));
+                return;
+            }
+            // XML Functions (Nov 14, 2025)
+            else if (func_name == "XMLPARSE")
+            {
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_XMLPARSE));
+                current_result_->writeByte(static_cast<uint8_t>(node->args().size()));
+                return;
+            }
+            else if (func_name == "XMLSERIALIZE")
+            {
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_XMLSERIALIZE));
+                current_result_->writeByte(static_cast<uint8_t>(node->args().size()));
+                return;
+            }
+            else if (func_name == "XMLELEMENT")
+            {
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_XMLELEMENT));
+                current_result_->writeByte(static_cast<uint8_t>(node->args().size()));
+                return;
+            }
+            else if (func_name == "XMLCONCAT")
+            {
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_XMLCONCAT));
+                current_result_->writeByte(static_cast<uint8_t>(node->args().size()));
+                return;
+            }
+            else if (func_name == "XMLFOREST")
+            {
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_XMLFOREST));
+                current_result_->writeByte(static_cast<uint8_t>(node->args().size()));
+                return;
+            }
             else
             {
                 current_result_->addError("Unknown function: " + std::string(func_name));
