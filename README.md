@@ -2,9 +2,9 @@
 
 A relational database engine featuring **Firebird MGA (Multi-Generational Architecture)**, 11 index types, 36-table catalog system, TOAST storage, and full transaction management.
 
-## Status: Alpha - 96% Complete (Constraint System + Mathematical Functions COMPLETE)
+## Status: Alpha - 97% Complete (FK Phase B COMPLETE - All Referential Actions)
 
-**Last Updated:** November 13, 2025
+**Last Updated:** November 14, 2025
 
 ## Quick Start
 
@@ -123,12 +123,24 @@ ctest --output-on-failure
 - SQL object permissions (GRANT TO PROCEDURE/FUNCTION/VIEW)
 - ✅ SQL parser integration (GRANT/REVOKE/CREATE USER statements) - COMPLETE Phase 2
 
-### Constraint Enforcement
+### Constraint Enforcement (80% Complete) ✅
 - ✅ **CHECK constraints** - Full parser-to-runtime pipeline COMPLETE Nov 13, 2025
 - ✅ **DEFAULT expressions** - Bytecode evaluation COMPLETE Nov 13, 2025
 - ✅ **NOT NULL enforcement** - Runtime validation COMPLETE
+- ✅ **FOREIGN KEY constraints** - Phase B COMPLETE Nov 14, 2025:
+  - ✅ Catalog CRUD operations (6 methods)
+  - ✅ REFERENCES clause parsing (parser.cpp:690-794)
+  - ✅ Bytecode generation/execution (FOREIGN_KEY opcode)
+  - ✅ INSERT/UPDATE/DELETE enforcement
+  - ✅ NO_ACTION/RESTRICT actions
+  - ✅ CASCADE DELETE action
+  - ✅ **CASCADE UPDATE action** - COMPLETE Nov 14, 2025 🎉
+  - ✅ **SET NULL action** - COMPLETE Nov 14, 2025 🎉
+  - ✅ **SET DEFAULT action** - COMPLETE Nov 14, 2025 🎉
+  - ⧗ Disk persistence (Phase C)
+  - ⧗ Composite FKs (Phase C)
 - ⧗ UNIQUE constraint enforcement - Executor ready, parser pending
-- ⧗ FOREIGN KEY enforcement - Framework exists, enforcement pending
+- ⧗ PRIMARY KEY - Depends on UNIQUE + NOT NULL
 
 ### Functions (11 missing)
 - Statistical functions

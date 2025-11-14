@@ -1,7 +1,7 @@
 # ScratchBird Project Context
 
-**Last Updated**: November 13, 2025
-**Version**: Alpha - 96% Complete (Constraint System + Mathematical Functions COMPLETE)
+**Last Updated**: November 14, 2025
+**Version**: Alpha - 97% Complete (FK Phase B COMPLETE - All Referential Actions)
 **Status**: Educational/Development
 
 > **MANDATORY**: Read `/MGA_RULES.md` before ANY transaction or index work.
@@ -142,17 +142,29 @@
 - ✅ **Mathematical (29)**: SIN, COS, TAN, ASIN, ACOS, ATAN, ATAN2, DEGREES, RADIANS, PI, ABS, SIGN, ROUND, CEIL, FLOOR, TRUNC, MOD, SQRT, CBRT, POWER, EXP, LN, LOG, LOG10, LOG2 (ALPHA Phase A COMPLETE)
 - ❌ Statistical (7), Cryptographic (4), XML (0)
 
-### Constraints (7/10 = 70%) ✅
+### Constraints (8/10 = 80%) ✅
 - ✅ NOT NULL, Data type validation
 - ✅ **DEFAULT values** (literals + simple expressions, executor COMPLETE, parser pending)
 - ✅ **UNIQUE** (executor COMPLETE with INSERT/UPDATE enforcement, parser pending)
-- ✅ **CHECK** (executor 85% COMPLETE, evaluatePolicyExpression reuse, parser pending)
-- ✅ **FOREIGN KEY** (framework 40%, catalog structures + enforcement infrastructure, parser pending)
+- ✅ **CHECK** (executor 100% COMPLETE, parser COMPLETE) 🎉
+- ✅ **FOREIGN KEY** (Phase B 100% COMPLETE - Nov 14, 2025) 🎉:
+  - ✅ Catalog CRUD operations (6 methods: create, get, drop, enable/disable)
+  - ✅ REFERENCES clause parsing (parser.cpp:690-794)
+  - ✅ Bytecode generation (FOREIGN_KEY opcode 0x93)
+  - ✅ INSERT/UPDATE/DELETE enforcement
+  - ✅ NO_ACTION/RESTRICT actions
+  - ✅ CASCADE DELETE action
+  - ✅ **CASCADE UPDATE action** (executor.cpp:15726-15774, 15909-15965)
+  - ✅ **SET NULL action** (executor.cpp:15573-15625, 15820-15872)
+  - ✅ **SET DEFAULT action** (executor.cpp:15627-15727, 15966-16066)
+  - ✅ Tuple modification helpers (serializeTupleFromValues, modifyTupleColumns)
+  - ⧗ Disk persistence (Phase C)
+  - ⧗ Composite FKs (Phase C)
 - ❌ PRIMARY KEY (depends on UNIQUE + NOT NULL combination)
 - ❌ EXCLUSION constraints
 - ❌ Deferred constraint checking
 
-**Remaining**: ~1,039-1,542 hours
+**Remaining**: ~900-1,400 hours
 
 ---
 
@@ -399,14 +411,31 @@ ctest -V
 ## Status Summary
 
 **Version**: Alpha (Engine Phase 1)
-**Completion**: 84% (Security Phase 3.4 Framework Complete)
+**Completion**: 97% (FK Phase B Complete - All Referential Actions)
 **MGA Compliance**: 100% ✅
 **Catalog System**: 39/39 tables (100% structures, 55% CRUD) ✅
 **Active Plan**: `/docs/planning/ALPHA_PHASE1_COMPLETE_IMPLEMENTATION_PLAN.md`
 **Implementation Audit**: `/docs/IMPLEMENTATION_AUDIT.md` (AI-optimized reference)
 **Timeline**: 5-7 months to completion (with 3 developers)
 
-**Recently Completed** (Nov 11, 2025):
+**Recently Completed** (Nov 14, 2025):
+- ✅ **Foreign Key Phase B - 100% COMPLETE** (~540 lines production code):
+  - Tuple serialization/deserialization helpers (serializeTupleFromValues, modifyTupleColumns)
+  - CASCADE UPDATE action for DELETE and UPDATE operations
+  - SET NULL action for DELETE and UPDATE operations
+  - SET DEFAULT action for DELETE and UPDATE operations with literal default parsing
+  - Full integration with storage engine updateTuple() API
+  - MGA-compliant implementation with back-versioning and TID stability
+  - All existing FK tests passing (10/10)
+
+**Previously Completed** (Nov 13, 2025):
+- ✅ **Constraint System COMPLETE** - CHECK, DEFAULT, UNIQUE enforcement (parser to runtime)
+- ✅ **Mathematical Functions COMPLETE** - 29 functions (trigonometric, algebraic, logarithmic)
+
+**Previously Completed** (Nov 12, 2025):
+- ✅ **Security Phase 3.5 COMPLETE** - RLS DML enforcement, SQL Object Permissions, Ownership Chaining
+
+**Previously Completed** (Nov 10-11, 2025):
 - ✅ **Security Phase 3.4 - 71% FRAMEWORK COMPLETE** (~690 lines production, ~600 lines tests):
   - Row-Level Security (RLS) catalog schema and CRUD operations
   - CREATE/DROP POLICY and ALTER TABLE RLS SQL syntax
@@ -428,18 +457,16 @@ ctest -V
 4. **Security Phase 2** - Full SQL security system (13 statements, 3,321 lines)
 
 **Top Priorities**:
-1. **Security Phase 3.5+** - Remaining advanced security (~25-45 hours):
-   - RLS expression evaluation (11-16 hours, TOAST integration required)
-   - SQL object permissions (GRANT TO PROCEDURE/FUNCTION/VIEW)
-2. Complete catalog CRUD operations (stored code, emulation tables)
-3. Implement all 40 missing mathematical functions (SIN, COS, SQRT, etc.)
-4. Complete constraint enforcement (CHECK, FOREIGN KEY, DEFAULT, UNIQUE)
-5. Complete PSQL bytecode execution (procedures, triggers, cursors)
-6. Add CTEs and recursive queries
+1. Complete catalog CRUD operations (stored code, emulation tables)
+2. PRIMARY KEY constraint (combine UNIQUE + NOT NULL)
+3. UNIQUE constraint SQL parser integration
+4. Complete PSQL bytecode execution (procedures, triggers, cursors)
+5. Add CTEs and recursive queries
+6. FK Phase C: Disk persistence, composite FKs, index-based lookups
 
 **After Phase 1**: Parser separation → embeddable library + standalone SQL application
 
 ---
 
-**Last Updated**: November 11, 2025
-**Status**: Phase 1 ALPHA - 84% Complete (Security Phase 3.4 - 71% FRAMEWORK COMPLETE)
+**Last Updated**: November 14, 2025
+**Status**: Phase 1 ALPHA - 97% Complete (FK Phase B - All Referential Actions COMPLETE)

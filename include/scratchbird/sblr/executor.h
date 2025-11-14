@@ -630,6 +630,19 @@ namespace scratchbird
                                       const std::vector<Value>& new_key_values,
                                       const std::vector<core::CatalogManager::ColumnInfo>& parent_cols);
 
+            // Tuple modification helpers for FK actions (Phase B)
+            // Serialize tuple from column values
+            bool serializeTupleFromValues(const std::vector<Value>& values,
+                                         const std::vector<core::CatalogManager::ColumnInfo>& columns,
+                                         std::vector<uint8_t>& tuple_data_out);
+
+            // Modify specific columns in a tuple and reserialize
+            bool modifyTupleColumns(const uint8_t* original_tuple, uint32_t original_size,
+                                   const std::vector<core::CatalogManager::ColumnInfo>& all_columns,
+                                   const std::vector<size_t>& column_indices,
+                                   const std::vector<Value>& new_values,
+                                   std::vector<uint8_t>& new_tuple_out);
+
         public:
             // Forward declaration
             class TriggerContext;
