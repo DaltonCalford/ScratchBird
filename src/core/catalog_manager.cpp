@@ -11027,5 +11027,197 @@ auto CatalogManager::getObjectPermissions(const ID& object_id,
         object_permissions_table_page_, perms_out, filter, converter, ctx);
 }
 
+// ================================================================================================
+// Foreign Key Constraints (ALPHA Phase A - FK Constraints)
+// ================================================================================================
+
+auto CatalogManager::createForeignKey(const std::string& fk_name,
+                                     const ID& child_table_id,
+                                     const ID& parent_table_id,
+                                     const std::vector<std::string>& child_columns,
+                                     const std::vector<std::string>& parent_columns,
+                                     FKAction on_delete,
+                                     FKAction on_update,
+                                     FKMatchType match_type,
+                                     ID& fk_id_out,
+                                     ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(foreign_keys_cache_mutex_);
+
+    // Validate inputs
+    if (fk_name.empty())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Foreign key name cannot be empty");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    if (child_columns.empty() || parent_columns.empty())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Foreign key must have at least one column");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    if (child_columns.size() != parent_columns.size())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Foreign key child and parent column counts must match");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    // Generate FK ID
+    fk_id_out = generateUuidV7();
+
+    // Create FK info
+    ForeignKeyInfo fk_info;
+    fk_info.fk_id = fk_id_out;
+    fk_info.fk_name = fk_name;
+    fk_info.child_table_id = child_table_id;
+    fk_info.parent_table_id = parent_table_id;
+    fk_info.child_columns = child_columns;
+    fk_info.parent_columns = parent_columns;
+    fk_info.on_delete = on_delete;
+    fk_info.on_update = on_update;
+    fk_info.match_type = match_type;
+    fk_info.is_enabled = true;
+    fk_info.created_time = std::chrono::system_clock::now().time_since_epoch().count();
+
+    // Store in cache
+    foreign_keys_cache_[fk_id_out] = fk_info;
+    table_child_fks_.insert({child_table_id, fk_id_out});
+    table_parent_fks_.insert({parent_table_id, fk_id_out});
+
+    // TODO Phase B: Persist to disk (pg_foreign_keys table)
+
+    return Status::OK;
+}
+
+auto CatalogManager::getForeignKeysForTable(const ID& table_id,
+                                           std::vector<ForeignKeyInfo>& fks_out,
+                                           ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(foreign_keys_cache_mutex_);
+
+    fks_out.clear();
+
+    // Find all FKs where this table is the child
+    auto range = table_child_fks_.equal_range(table_id);
+    for (auto it = range.first; it != range.second; ++it)
+    {
+        auto fk_it = foreign_keys_cache_.find(it->second);
+        if (fk_it != foreign_keys_cache_.end())
+        {
+            fks_out.push_back(fk_it->second);
+        }
+    }
+
+    return Status::OK;
+}
+
+auto CatalogManager::getReferencingForeignKeys(const ID& table_id,
+                                              std::vector<ForeignKeyInfo>& fks_out,
+                                              ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(foreign_keys_cache_mutex_);
+
+    fks_out.clear();
+
+    // Find all FKs where this table is the parent (referenced table)
+    auto range = table_parent_fks_.equal_range(table_id);
+    for (auto it = range.first; it != range.second; ++it)
+    {
+        auto fk_it = foreign_keys_cache_.find(it->second);
+        if (fk_it != foreign_keys_cache_.end())
+        {
+            fks_out.push_back(fk_it->second);
+        }
+    }
+
+    return Status::OK;
+}
+
+auto CatalogManager::getForeignKey(const ID& fk_id,
+                                  ForeignKeyInfo& fk_out,
+                                  ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(foreign_keys_cache_mutex_);
+
+    auto it = foreign_keys_cache_.find(fk_id);
+    if (it == foreign_keys_cache_.end())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Foreign key not found");
+        return Status::NOT_FOUND;
+    }
+
+    fk_out = it->second;
+    return Status::OK;
+}
+
+auto CatalogManager::dropForeignKey(const ID& fk_id,
+                                   ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(foreign_keys_cache_mutex_);
+
+    auto it = foreign_keys_cache_.find(fk_id);
+    if (it == foreign_keys_cache_.end())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Foreign key not found");
+        return Status::NOT_FOUND;
+    }
+
+    const ForeignKeyInfo& fk = it->second;
+
+    // Remove from index maps
+    auto child_range = table_child_fks_.equal_range(fk.child_table_id);
+    for (auto child_it = child_range.first; child_it != child_range.second; )
+    {
+        if (child_it->second == fk_id)
+        {
+            child_it = table_child_fks_.erase(child_it);
+        }
+        else
+        {
+            ++child_it;
+        }
+    }
+
+    auto parent_range = table_parent_fks_.equal_range(fk.parent_table_id);
+    for (auto parent_it = parent_range.first; parent_it != parent_range.second; )
+    {
+        if (parent_it->second == fk_id)
+        {
+            parent_it = table_parent_fks_.erase(parent_it);
+        }
+        else
+        {
+            ++parent_it;
+        }
+    }
+
+    // Remove from cache
+    foreign_keys_cache_.erase(it);
+
+    // TODO Phase B: Remove from disk (pg_foreign_keys table)
+
+    return Status::OK;
+}
+
+auto CatalogManager::setForeignKeyEnabled(const ID& fk_id, bool enabled,
+                                         ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(foreign_keys_cache_mutex_);
+
+    auto it = foreign_keys_cache_.find(fk_id);
+    if (it == foreign_keys_cache_.end())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Foreign key not found");
+        return Status::NOT_FOUND;
+    }
+
+    it->second.is_enabled = enabled;
+
+    // TODO Phase B: Update disk (pg_foreign_keys table)
+
+    return Status::OK;
+}
+
 } // namespace scratchbird::core
 

@@ -1,6 +1,6 @@
 # ScratchBird Implementation Audit
-**Date**: 2025-11-12 | **Source**: Actual code inspection | **Format**: AI-optimized (context-conservative)
-**Updated**: 2025-11-12 - Added Phase 3.5 (RLS DML Enforcement + SQL Object Permissions + Ownership Chaining)
+**Date**: 2025-11-13 | **Source**: Actual code inspection | **Format**: AI-optimized (context-conservative)
+**Updated**: 2025-11-13 - Added Constraint System (CHECK/DEFAULT/NOT NULL) + Mathematical Functions (29 functions)
 
 ---
 
@@ -1331,6 +1331,221 @@ enum class SqlSecurity : uint8_t {
 
 ---
 
-**Updated**: 2025-11-12 - Added Phase 3.5 (RLS DML Enforcement + Ownership Chaining)
-**Total Functions**: 136+ (131 catalog + 5 RLS helpers)
-**LOC**: executor.cpp (+1500 lines), catalog_manager.h (+2 owner_id fields)
+## CONSTRAINT ENFORCEMENT SYSTEM ✅ **COMPLETE** (Nov 13, 2025)
+
+**Status**: CHECK, DEFAULT, NOT NULL fully operational; UNIQUE executor ready
+
+### CHECK Constraints (100% Complete)
+
+**Catalog Storage**: `include/scratchbird/core/catalog_manager.h:367-370`
+```cpp
+std::string check_expr;         // CHECK constraint (hex bytecode)
+uint32_t check_expr_oid = 0;    // TOAST reference (future)
+```
+
+**Parser**: `src/parser/parser.cpp:666-685`
+```cpp
+// parseColumnDef() - CHECK clause parsing
+else if (match(TokenType::KW_CHECK)) {
+    consume(TokenType::LEFT_PAREN, "Expected '(' after CHECK");
+    check_expr = parseExpression();  // Full expression support
+    consume(TokenType::RIGHT_PAREN, "Expected ')' after CHECK expression");
+}
+```
+
+**Bytecode Generation**: `src/sblr/bytecode_generator.cpp:2428-2457`
+```cpp
+// visit(ColumnDef*) - Generate CHECK bytecode
+current_result_->writeOpcode(Opcode::CHECK_CONSTRAINT);  // 0x92
+current_result_->writeInt32(bytecode_len);
+for (uint8_t byte : bytecode) { current_result_->writeByte(byte); }
+```
+
+**Runtime Evaluation**: `src/sblr/executor.cpp:15020-15071`
+```cpp
+bool Executor::evaluateCheckConstraint(
+    const CatalogManager::ColumnInfo& column,
+    const std::vector<Value>& row_values,
+    const std::vector<CatalogManager::ColumnInfo>& columns)
+{
+    std::vector<uint8_t> expr_bytecode = hexToBytes(column.check_expr);
+    return evaluatePolicyExpression(expr_bytecode, row_values, columns);
+    // Reuses RLS infrastructure for expression evaluation
+}
+```
+
+**Enforcement Points**:
+- INSERT: `src/sblr/executor.cpp:3593-3620` (after DEFAULT, before tuple insert)
+- UPDATE: `src/sblr/executor.cpp:3920-3947` (after value modification)
+
+### DEFAULT Expressions (100% Complete)
+
+**Catalog Storage**: `include/scratchbird/core/catalog_manager.h:365-366`
+```cpp
+std::string default_expr;       // DEFAULT expression (hex bytecode)
+uint32_t default_value_oid = 0; // TOAST reference (future)
+```
+
+**Parser**: `src/parser/parser.cpp:656-665`
+```cpp
+// parseColumnDef() - DEFAULT clause parsing
+else if (match(TokenType::KW_DEFAULT)) {
+    default_value = parseExpression();  // Arbitrary expressions
+}
+```
+
+**Bytecode Generation**: `src/sblr/bytecode_generator.cpp:2398-2427`
+```cpp
+// visit(ColumnDef*) - Generate DEFAULT bytecode
+current_result_->writeOpcode(Opcode::DEFAULT_VALUE);  // 0x91
+current_result_->writeInt32(bytecode_len);
+for (uint8_t byte : bytecode) { current_result_->writeByte(byte); }
+```
+
+**Runtime Evaluation**: `src/sblr/executor.cpp:14953-15018`
+```cpp
+Value Executor::evaluateDefaultValue(const CatalogManager::ColumnInfo& column)
+{
+    if (!column.default_expr.empty()) {
+        std::vector<uint8_t> expr_bytecode = hexToBytes(column.default_expr);
+
+        // Save execution state
+        const uint8_t *saved_bytecode = bytecode_;
+        size_t saved_pc = pc_;
+
+        // Execute bytecode
+        bytecode_ = expr_bytecode.data();
+        pc_ = 0;
+        evaluateExpression();
+        Value result = stack_.top();
+
+        // Restore state
+        bytecode_ = saved_bytecode;
+        pc_ = saved_pc;
+        return result;
+    }
+    // Fallback to string literal parsing for backward compatibility
+}
+```
+
+**Enforcement**: `src/sblr/executor.cpp:3555-3590` (INSERT - apply before tuple creation)
+
+### NOT NULL Constraints (100% Complete)
+
+**Runtime Check**: `src/sblr/executor.cpp:3621-3630` (INSERT), `3948-3957` (UPDATE)
+```cpp
+if (!column.nullable && values[i].isNull()) {
+    throw std::runtime_error("NULL violation on column: " + std::string(column.name));
+}
+```
+
+### UNIQUE Constraints (Executor Ready, Parser Pending)
+
+**Enforcement**: `src/sblr/executor.cpp:15073-15160`
+```cpp
+bool Executor::checkUniqueConstraint(
+    const std::string& table_name,
+    const CatalogManager::ColumnInfo& column,
+    const Value& new_value,
+    TID exclude_tid)
+{
+    // Current: O(n) table scan
+    // TODO: Use B-Tree index for O(log n) lookup when parser supports UNIQUE
+}
+```
+
+**INSERT Check**: `src/sblr/executor.cpp:3632-3650`
+**UPDATE Check**: `src/sblr/executor.cpp:3959-3977`
+
+### Opcodes
+
+**File**: `include/scratchbird/sblr/opcodes.h:142-143`
+```cpp
+NOT_NULL = 0x90,            // NOT NULL constraint
+DEFAULT_VALUE = 0x91,       // DEFAULT expression (Nov 13, 2025)
+CHECK_CONSTRAINT = 0x92,    // CHECK expression (Nov 13, 2025)
+```
+
+---
+
+## MATHEMATICAL FUNCTIONS ✅ **COMPLETE** (29 functions, Nov 13, 2025)
+
+**Status**: Full trigonometric, logarithmic, rounding, and power functions
+
+### Trigonometric Functions (12)
+
+**File**: `src/sblr/executor.cpp:10562-10893`
+```cpp
+void Executor::executeSin()    { /* radians → sine */ }
+void Executor::executeCos()    { /* radians → cosine */ }
+void Executor::executeTan()    { /* radians → tangent */ }
+void Executor::executeAsin()   { /* arcsin, returns radians */ }
+void Executor::executeAcos()   { /* arccos, returns radians */ }
+void Executor::executeAtan()   { /* arctan, returns radians */ }
+void Executor::executeAtan2()  { /* atan2(y, x), 2 args */ }
+void Executor::executeSinh()   { /* hyperbolic sine */ }
+void Executor::executeCosh()   { /* hyperbolic cosine */ }
+void Executor::executeTanh()   { /* hyperbolic tangent */ }
+void Executor::executeRadians() { /* degrees → radians */ }
+void Executor::executeDegrees() { /* radians → degrees */ }
+```
+
+**Opcode Range**: `0x7A-0x85` (opcodes.h:119-130)
+
+### Logarithmic & Exponential (5)
+
+**File**: `src/sblr/executor.cpp:10895-11048`
+```cpp
+void Executor::executeLn()     { /* natural log */ }
+void Executor::executeLog()    { /* log10 */ }
+void Executor::executeLog2()   { /* log base 2 */ }
+void Executor::executeExp()    { /* e^x */ }
+void Executor::executePower()  { /* x^y, 2 args */ }
+```
+
+**Opcode Range**: `0x86-0x8A` (opcodes.h:131-135)
+
+### Rounding & Truncation (6)
+
+**File**: `src/sblr/executor.cpp:11050-11229`
+```cpp
+void Executor::executeCeil()   { /* ceiling */ }
+void Executor::executeFloor()  { /* floor */ }
+void Executor::executeRound()  { /* round to nearest */ }
+void Executor::executeTrunc()  { /* truncate decimals */ }
+void Executor::executeSign()   { /* -1/0/1 */ }
+void Executor::executeMod()    { /* modulo, 2 args */ }
+```
+
+**Opcode Range**: `0x8B-0x90` (opcodes.h:136-141)
+
+### Root & Absolute (6)
+
+**File**: `src/sblr/executor.cpp:11231-11437`
+```cpp
+void Executor::executeSqrt()   { /* square root */ }
+void Executor::executeCbrt()   { /* cube root */ }
+void Executor::executeAbs()    { /* absolute value */ }
+void Executor::executePi()     { /* π constant */ }
+void Executor::executeRandom() { /* random [0,1) */ }
+void Executor::executeGCD()    { /* greatest common divisor, 2 args */ }
+```
+
+**Opcode Range**: Scattered (0x73-0x79)
+
+### Function Registration
+
+**File**: `src/sblr/executor.cpp:806-834` (initBuiltinFunctions)
+```cpp
+builtins_["SIN"] = BuiltinFunction::SIN;
+builtins_["COS"] = BuiltinFunction::COS;
+// ... 27 more registrations
+```
+
+**Bytecode Dispatch**: `src/sblr/executor.cpp:9200-9318` (CALL_BUILTIN opcode handler)
+
+---
+
+**Updated**: 2025-11-13 - Added Constraint System + Mathematical Functions
+**Total Functions**: 165+ (131 catalog + 5 RLS + 29 math)
+**LOC**: executor.cpp (+2,376 lines), parser.cpp (+63 lines), bytecode_generator.cpp (+122 lines)

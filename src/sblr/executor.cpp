@@ -1224,6 +1224,16 @@ namespace scratchbird
             // Read column definitions
             std::vector<core::CatalogManager::ColumnInfo> columns;
 
+            // Track FK constraints to create after table (ALPHA Phase A - FK Constraints)
+            struct PendingFK {
+                std::string child_column;
+                std::string parent_table;
+                std::vector<std::string> parent_columns;
+                std::string on_delete_action;
+                std::string on_update_action;
+            };
+            std::vector<PendingFK> pending_fks;
+
             for (uint32_t i = 0; i < column_count; i++)
             {
                 // Read COLUMN_DEF opcode
@@ -1312,6 +1322,42 @@ namespace scratchbird
                     check_expr_hex = ss.str();
                 }
 
+                // Check for FOREIGN KEY constraint (ALPHA Phase A - FK Constraints)
+                if (pc_ < bytecode_size_ &&
+                    bytecode_[pc_] == static_cast<uint8_t>(Opcode::FOREIGN_KEY))
+                {
+                    readByte(); // Consume FOREIGN_KEY opcode
+
+                    PendingFK fk;
+                    fk.child_column = col_name;
+
+                    // Read parent table name
+                    fk.parent_table = readString();
+
+                    // Read parent column count
+                    uint8_t parent_col_count = readByte();
+
+                    // Read parent column names
+                    for (uint8_t j = 0; j < parent_col_count; j++)
+                    {
+                        fk.parent_columns.push_back(readString());
+                    }
+
+                    // If no parent columns specified, use same column name as child
+                    if (fk.parent_columns.empty())
+                    {
+                        fk.parent_columns.push_back(col_name);
+                    }
+
+                    // Read ON DELETE action
+                    fk.on_delete_action = readString();
+
+                    // Read ON UPDATE action
+                    fk.on_update_action = readString();
+
+                    pending_fks.push_back(fk);
+                }
+
                 // Build ColumnInfo (table_id and column_id will be set by catalog)
                 core::CatalogManager::ColumnInfo col_info;
                 col_info.column_name = col_name;
@@ -1369,6 +1415,53 @@ namespace scratchbird
             if (status != core::Status::OK)
             {
                 error("Failed to create table");
+            }
+
+            // Create pending FK constraints (ALPHA Phase A - FK Constraints)
+            for (const auto& fk : pending_fks)
+            {
+                // Look up parent table (assume same schema)
+                core::CatalogManager::TableInfo parent_table;
+                status = db_->catalog_manager()->getTable(schema_info.schema_id, fk.parent_table, parent_table, nullptr);
+                if (status != core::Status::OK)
+                {
+                    error("FK parent table not found: " + fk.parent_table);
+                }
+
+                // Convert action strings to FKAction enums
+                auto parseAction = [](const std::string& action_str) -> core::CatalogManager::FKAction {
+                    if (action_str == "CASCADE") return core::CatalogManager::FKAction::CASCADE;
+                    if (action_str == "SET NULL") return core::CatalogManager::FKAction::SET_NULL;
+                    if (action_str == "SET DEFAULT") return core::CatalogManager::FKAction::SET_DEFAULT;
+                    if (action_str == "RESTRICT") return core::CatalogManager::FKAction::RESTRICT;
+                    return core::CatalogManager::FKAction::NO_ACTION; // Default
+                };
+
+                core::CatalogManager::FKAction on_delete = parseAction(fk.on_delete_action);
+                core::CatalogManager::FKAction on_update = parseAction(fk.on_update_action);
+
+                // Generate FK name: table_fk_column_ref
+                std::string fk_name = table_name + "_fk_" + fk.child_column + "_ref";
+
+                // Create FK constraint
+                core::ID fk_id;
+                status = db_->catalog_manager()->createForeignKey(
+                    fk_name,
+                    table_id,
+                    parent_table.table_id,
+                    {fk.child_column},
+                    fk.parent_columns,
+                    on_delete,
+                    on_update,
+                    core::CatalogManager::FKMatchType::SIMPLE,
+                    fk_id,
+                    nullptr
+                );
+
+                if (status != core::Status::OK)
+                {
+                    error("Failed to create foreign key constraint: " + fk_name);
+                }
             }
         }
 
@@ -15347,36 +15440,166 @@ namespace scratchbird
         }
 
         // ALPHA Phase A: Apply FK referential action on DELETE
-        // This is a placeholder - full implementation requires CASCADE/SET NULL support
         void Executor::applyFKActionOnDelete(const core::ID& parent_table_id,
                                             const std::vector<Value>& deleted_key_values,
                                             const std::vector<core::CatalogManager::ColumnInfo>& parent_cols)
         {
-            // TODO: Full implementation when catalog stores FK definitions
-            // For now, check if any child rows reference this parent row
-            // This implements RESTRICT behavior (error if references exist)
+            // Get all FKs that reference this parent table
+            std::vector<core::CatalogManager::ForeignKeyInfo> referencing_fks;
+            db_->catalog_manager()->getReferencingForeignKeys(parent_table_id, referencing_fks);
 
-            // Note: This would scan all tables that have FKs to parent_table_id
-            // and check if any rows reference the deleted_key_values
-            // If found: error()
-            // If CASCADE: delete child rows
-            // If SET NULL: set FK columns to NULL
-            // If SET DEFAULT: set FK columns to DEFAULT
+            if (referencing_fks.empty())
+            {
+                return; // No foreign keys reference this table
+            }
 
-            DEBUG_LOG_DB("FK DELETE action placeholder - full implementation pending");
+            // Process each referencing FK
+            for (const auto& fk : referencing_fks)
+            {
+                if (!fk.is_enabled)
+                {
+                    continue; // Skip disabled FKs
+                }
+
+                // Get child table metadata
+                core::CatalogManager::TableInfo child_table;
+                if (db_->catalog_manager()->getTable(fk.child_table_id, child_table) != core::Status::OK)
+                {
+                    error("Failed to get child table for FK enforcement");
+                }
+
+                std::vector<core::CatalogManager::ColumnInfo> child_columns;
+                if (db_->catalog_manager()->getColumns(fk.child_table_id, child_columns) != core::Status::OK)
+                {
+                    error("Failed to get child columns for FK enforcement");
+                }
+
+                // Build column index map for FK columns
+                std::vector<size_t> fk_col_indices;
+                for (const auto& col_name : fk.child_columns)
+                {
+                    bool found = false;
+                    for (size_t i = 0; i < child_columns.size(); i++)
+                    {
+                        if (child_columns[i].column_name == col_name)
+                        {
+                            fk_col_indices.push_back(i);
+                            found = true;
+                            break;
+                        }
+                    }
+                    if (!found)
+                    {
+                        error("FK child column not found: " + col_name);
+                    }
+                }
+
+                // Scan child table for matching rows
+                std::vector<core::TID> matching_tids;
+                auto scan_iter = db_->storage_engine()->createScan(fk.child_table_id, nullptr);
+                if (!scan_iter)
+                {
+                    error("Failed to create scan for child table");
+                }
+
+                core::Tuple tuple;
+                while (scan_iter->next(&tuple, nullptr) == core::Status::OK)
+                {
+                    std::vector<Value> row_values;
+                    if (!deserializeTuple(tuple.data, tuple.data_size, child_columns, row_values))
+                    {
+                        continue;
+                    }
+
+                    // Check if this row references the deleted parent row
+                    bool matches = true;
+                    for (size_t i = 0; i < fk_col_indices.size(); i++)
+                    {
+                        size_t col_idx = fk_col_indices[i];
+
+                        // MATCH SIMPLE: NULL doesn't count as a reference
+                        if (row_values[col_idx].isNull())
+                        {
+                            matches = false;
+                            break;
+                        }
+
+                        if (!valuesEqual(row_values[col_idx], deleted_key_values[i]))
+                        {
+                            matches = false;
+                            break;
+                        }
+                    }
+
+                    if (matches)
+                    {
+                        matching_tids.push_back(tuple.tid);
+                    }
+                }
+
+                // Apply FK action
+                if (!matching_tids.empty())
+                {
+                    switch (fk.on_delete)
+                    {
+                        case core::CatalogManager::FKAction::RESTRICT:
+                        case core::CatalogManager::FKAction::NO_ACTION:
+                        {
+                            error("Foreign key constraint violation: cannot delete parent row referenced by " +
+                                  std::to_string(matching_tids.size()) + " child rows in table '" +
+                                  std::string(child_table.table_name) + "' (FK: " + fk.fk_name + ")");
+                            break;
+                        }
+
+                        case core::CatalogManager::FKAction::CASCADE:
+                        {
+                            DEBUG_LOG_DB("FK CASCADE DELETE: deleting " + std::to_string(matching_tids.size()) +
+                                       " child rows from table " + std::string(child_table.table_name));
+
+                            uint64_t xmax = db_->storage_engine()->getCurrentXid();
+                            for (const auto& tid : matching_tids)
+                            {
+                                uint32_t page_id = static_cast<uint32_t>(core::getPageNumber(tid));
+                                uint16_t item_id = core::getSlot(tid);
+                                auto status = db_->storage_engine()->deleteTuple(fk.child_table_id, page_id, item_id, nullptr);
+                                if (status != core::Status::OK)
+                                {
+                                    DEBUG_LOG_DB("FK CASCADE DELETE failed for child row");
+                                }
+                            }
+                            break;
+                        }
+
+                        case core::CatalogManager::FKAction::SET_NULL:
+                        {
+                            // TODO Phase B: Implement SET NULL action
+                            // Requires tuple serialization API which is not yet available
+                            // For now, treat as RESTRICT
+                            error("Foreign key constraint violation: SET NULL action not yet implemented for FK: " +
+                                  fk.fk_name + " (treated as RESTRICT)");
+                            break;
+                        }
+
+                        case core::CatalogManager::FKAction::SET_DEFAULT:
+                        {
+                            // TODO Phase B: Implement SET DEFAULT action
+                            // Requires tuple serialization API which is not yet available
+                            // For now, treat as RESTRICT
+                            error("Foreign key constraint violation: SET DEFAULT action not yet implemented for FK: " +
+                                  fk.fk_name + " (treated as RESTRICT)");
+                            break;
+                        }
+                    }
+                }
+            }
         }
 
         // ALPHA Phase A: Apply FK referential action on UPDATE
-        // This is a placeholder - full implementation requires CASCADE/SET NULL support
         void Executor::applyFKActionOnUpdate(const core::ID& parent_table_id,
                                             const std::vector<Value>& old_key_values,
                                             const std::vector<Value>& new_key_values,
                                             const std::vector<core::CatalogManager::ColumnInfo>& parent_cols)
         {
-            // TODO: Full implementation when catalog stores FK definitions
-            // For now, check if any child rows reference the old key value
-            // This implements RESTRICT behavior (error if references exist and key changed)
-
             // Check if key actually changed
             bool key_changed = false;
             for (size_t i = 0; i < old_key_values.size() && i < new_key_values.size(); i++)
@@ -15393,11 +15616,146 @@ namespace scratchbird
                 return; // Key unchanged - no action needed
             }
 
-            // Note: This would scan all tables that have FKs to parent_table_id
-            // and check if any rows reference the old_key_values
-            // If found: error() or apply action (CASCADE/SET NULL/SET DEFAULT)
+            // Get all FKs that reference this parent table
+            std::vector<core::CatalogManager::ForeignKeyInfo> referencing_fks;
+            db_->catalog_manager()->getReferencingForeignKeys(parent_table_id, referencing_fks);
 
-            DEBUG_LOG_DB("FK UPDATE action placeholder - full implementation pending");
+            if (referencing_fks.empty())
+            {
+                return; // No foreign keys reference this table
+            }
+
+            // Process each referencing FK
+            for (const auto& fk : referencing_fks)
+            {
+                if (!fk.is_enabled)
+                {
+                    continue; // Skip disabled FKs
+                }
+
+                // Get child table metadata
+                core::CatalogManager::TableInfo child_table;
+                if (db_->catalog_manager()->getTable(fk.child_table_id, child_table) != core::Status::OK)
+                {
+                    error("Failed to get child table for FK enforcement");
+                }
+
+                std::vector<core::CatalogManager::ColumnInfo> child_columns;
+                if (db_->catalog_manager()->getColumns(fk.child_table_id, child_columns) != core::Status::OK)
+                {
+                    error("Failed to get child columns for FK enforcement");
+                }
+
+                // Build column index map for FK columns
+                std::vector<size_t> fk_col_indices;
+                for (const auto& col_name : fk.child_columns)
+                {
+                    bool found = false;
+                    for (size_t i = 0; i < child_columns.size(); i++)
+                    {
+                        if (child_columns[i].column_name == col_name)
+                        {
+                            fk_col_indices.push_back(i);
+                            found = true;
+                            break;
+                        }
+                    }
+                    if (!found)
+                    {
+                        error("FK child column not found: " + col_name);
+                    }
+                }
+
+                // Scan child table for matching rows
+                std::vector<core::TID> matching_tids;
+                auto scan_iter = db_->storage_engine()->createScan(fk.child_table_id, nullptr);
+                if (!scan_iter)
+                {
+                    error("Failed to create scan for child table");
+                }
+
+                core::Tuple tuple;
+                while (scan_iter->next(&tuple, nullptr) == core::Status::OK)
+                {
+                    std::vector<Value> row_values;
+                    if (!deserializeTuple(tuple.data, tuple.data_size, child_columns, row_values))
+                    {
+                        continue;
+                    }
+
+                    // Check if this row references the OLD parent key
+                    bool matches = true;
+                    for (size_t i = 0; i < fk_col_indices.size(); i++)
+                    {
+                        size_t col_idx = fk_col_indices[i];
+
+                        // MATCH SIMPLE: NULL doesn't count as a reference
+                        if (row_values[col_idx].isNull())
+                        {
+                            matches = false;
+                            break;
+                        }
+
+                        if (!valuesEqual(row_values[col_idx], old_key_values[i]))
+                        {
+                            matches = false;
+                            break;
+                        }
+                    }
+
+                    if (matches)
+                    {
+                        matching_tids.push_back(tuple.tid);
+                    }
+                }
+
+                // Apply FK action
+                if (!matching_tids.empty())
+                {
+                    switch (fk.on_update)
+                    {
+                        case core::CatalogManager::FKAction::RESTRICT:
+                        case core::CatalogManager::FKAction::NO_ACTION:
+                        {
+                            error("Foreign key constraint violation: cannot update parent key referenced by " +
+                                  std::to_string(matching_tids.size()) + " child rows in table '" +
+                                  std::string(child_table.table_name) + "' (FK: " + fk.fk_name + ")");
+                            break;
+                        }
+
+                        case core::CatalogManager::FKAction::CASCADE:
+                        {
+                            // TODO Phase B: Implement CASCADE UPDATE action
+                            // Requires tuple serialization API which is not yet available
+                            // For now, treat as RESTRICT
+                            DEBUG_LOG_DB("FK CASCADE UPDATE not yet implemented - treating as RESTRICT");
+                            error("Foreign key constraint violation: CASCADE UPDATE action not yet implemented for FK: " +
+                                  fk.fk_name + " (treated as RESTRICT)");
+                            break;
+                        }
+
+                        case core::CatalogManager::FKAction::SET_NULL:
+                        {
+                            // TODO Phase B: Implement SET NULL action
+                            // Requires tuple serialization API which is not yet available
+                            // For now, treat as RESTRICT
+                            error("Foreign key constraint violation: SET NULL action not yet implemented for FK: " +
+                                  fk.fk_name + " (treated as RESTRICT)");
+                            break;
+                        }
+
+                        case core::CatalogManager::FKAction::SET_DEFAULT:
+                        {
+                            // TODO Phase B: Implement SET DEFAULT action
+                            // Requires tuple serialization API which is not yet available
+                            // For now, treat as RESTRICT
+                            error("Foreign key constraint violation: SET DEFAULT action not yet implemented for FK: " +
+                                  fk.fk_name + " (treated as RESTRICT)");
+                            break;
+                        }
+                    }
+                }
+            }
         }
 
     } // namespace sblr

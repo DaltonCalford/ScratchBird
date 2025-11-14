@@ -1934,6 +1934,12 @@ namespace scratchbird::core
         std::unordered_map<ID, std::vector<ObjectPermissionInfo>> object_permissions_cache_;  // object_id -> permissions
         std::mutex object_permissions_cache_mutex_;
 
+        // Foreign Key cache (ALPHA Phase A - FK Constraints)
+        std::unordered_map<ID, ForeignKeyInfo> foreign_keys_cache_;  // fk_id -> ForeignKeyInfo
+        std::unordered_multimap<ID, ID> table_child_fks_;  // child_table_id -> fk_ids
+        std::unordered_multimap<ID, ID> table_parent_fks_;  // parent_table_id -> fk_ids
+        std::mutex foreign_keys_cache_mutex_;
+
         // Internal helper methods (assume mutex_ is already held by caller)
         auto createSchemaInternal(const std::string &schema_name, const std::string &owner,
                                   ID &schema_id, const ID &parent_schema_id = ID(),

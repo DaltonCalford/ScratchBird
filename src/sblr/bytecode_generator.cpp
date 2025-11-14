@@ -2454,6 +2454,34 @@ namespace scratchbird
                     current_result_->writeByte(byte);
                 }
             }
+
+            // Write FOREIGN KEY constraint if present (ALPHA Phase A - FK Constraints)
+            if (node->fk_table() != 0)
+            {
+                current_result_->writeOpcode(Opcode::FOREIGN_KEY);
+
+                // Write referenced table name
+                writeStringId(node->fk_table());
+
+                // Write foreign key column count and names
+                const auto &fk_cols = node->fk_columns();
+                if (fk_cols.size() > UINT8_MAX)
+                {
+                    current_result_->addError("Too many foreign key columns (max 255)");
+                    return;
+                }
+                current_result_->writeByte(static_cast<uint8_t>(fk_cols.size()));
+                for (auto col_id : fk_cols)
+                {
+                    writeStringId(col_id);
+                }
+
+                // Write ON DELETE action
+                writeStringId(node->fk_on_delete());
+
+                // Write ON UPDATE action
+                writeStringId(node->fk_on_update());
+            }
         }
 
         // ===== Security Statements (ALPHA Phase 1 - Security System Phase 2) =====
