@@ -918,10 +918,16 @@ namespace scratchbird
                       bool nullable, StringPool::StringId charset = 0,
                       StringPool::StringId collation = 0,
                       Expression *default_value = nullptr,
-                      Expression *check_expr = nullptr)
+                      Expression *check_expr = nullptr,
+                      StringPool::StringId fk_table = 0,
+                      std::vector<StringPool::StringId> fk_columns = {},
+                      StringPool::StringId fk_on_delete = 0,
+                      StringPool::StringId fk_on_update = 0)
                 : ASTNode(ASTKind::COLUMN_DEF, span), name_(name), type_(type), nullable_(nullable),
                   charset_(charset), collation_(collation),
-                  default_value_(default_value), check_expr_(check_expr)
+                  default_value_(default_value), check_expr_(check_expr),
+                  fk_table_(fk_table), fk_columns_(std::move(fk_columns)),
+                  fk_on_delete_(fk_on_delete), fk_on_update_(fk_on_update)
             {
             }
 
@@ -953,6 +959,22 @@ namespace scratchbird
             {
                 return check_expr_;
             }
+            StringPool::StringId fk_table() const
+            {
+                return fk_table_;
+            }
+            const std::vector<StringPool::StringId> &fk_columns() const
+            {
+                return fk_columns_;
+            }
+            StringPool::StringId fk_on_delete() const
+            {
+                return fk_on_delete_;
+            }
+            StringPool::StringId fk_on_update() const
+            {
+                return fk_on_update_;
+            }
 
             void accept(ASTVisitor *visitor) override;
 
@@ -964,6 +986,10 @@ namespace scratchbird
             StringPool::StringId collation_; // COLLATE clause
             Expression *default_value_;      // DEFAULT clause expression
             Expression *check_expr_;         // CHECK constraint expression
+            StringPool::StringId fk_table_;  // REFERENCES table name
+            std::vector<StringPool::StringId> fk_columns_;  // REFERENCES column list
+            StringPool::StringId fk_on_delete_;  // ON DELETE action
+            StringPool::StringId fk_on_update_;  // ON UPDATE action
         };
 
         // CREATE TABLE statement

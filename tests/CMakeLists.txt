@@ -716,3 +716,21 @@ set_tests_properties(CheckConstraints PROPERTIES
     LABELS "integration;constraints;check;enforcement"
     TIMEOUT 60
 )
+
+# Foreign Key Constraints Tests (ALPHA Phase A - FK Constraints)
+add_executable(test_foreign_keys
+    integration/test_foreign_keys.cpp
+)
+target_link_libraries(test_foreign_keys
+    scratchbird_core
+    scratchbird_parser
+    scratchbird_sblr
+    scratchbird_optimizer
+    gtest
+    gtest_main
+)
+add_test(NAME ForeignKeys COMMAND test_foreign_keys)
+set_tests_properties(ForeignKeys PROPERTIES
+    LABELS "integration;constraints;foreign_key;referential_integrity"
+    TIMEOUT 60
+)

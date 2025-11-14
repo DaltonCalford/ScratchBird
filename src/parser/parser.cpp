@@ -637,6 +637,10 @@ namespace scratchbird
             bool nullable = true;
             Expression *default_value = nullptr;
             Expression *check_expr = nullptr;
+            StringPool::StringId fk_table = 0;
+            std::vector<StringPool::StringId> fk_columns;
+            StringPool::StringId fk_on_delete = 0;
+            StringPool::StringId fk_on_update = 0;
 
             // Loop through potential constraints
             while (true)
@@ -683,6 +687,111 @@ namespace scratchbird
                         return nullptr;
                     }
                 }
+                else if (match(TokenType::KW_REFERENCES))
+                {
+                    // Parse REFERENCES clause: REFERENCES table_name [(column_list)] [ON DELETE action] [ON UPDATE action]
+                    if (!check(TokenType::IDENTIFIER))
+                    {
+                        error("Expected table name after REFERENCES");
+                        return nullptr;
+                    }
+
+                    fk_table = current().value.string_id;
+                    advance();
+
+                    // Optional column list
+                    if (match(TokenType::LEFT_PAREN))
+                    {
+                        do
+                        {
+                            if (!check(TokenType::IDENTIFIER))
+                            {
+                                error("Expected column name in REFERENCES");
+                                return nullptr;
+                            }
+                            fk_columns.push_back(current().value.string_id);
+                            advance();
+                        } while (match(TokenType::COMMA));
+
+                        if (!consume(TokenType::RIGHT_PAREN, "Expected ')' after column list"))
+                        {
+                            return nullptr;
+                        }
+                    }
+
+                    // Optional ON DELETE/ON UPDATE actions
+                    while (match(TokenType::KW_ON))
+                    {
+                        if (match(TokenType::KW_DELETE))
+                        {
+                            if (check(TokenType::IDENTIFIER))
+                            {
+                                fk_on_delete = current().value.string_id;
+                                advance();
+                                // Handle CASCADE, RESTRICT, SET NULL, SET DEFAULT, NO ACTION
+                                if (fk_on_delete == stringPool().intern("NO"))
+                                {
+                                    if (check(TokenType::IDENTIFIER) && current().value.string_id == stringPool().intern("ACTION"))
+                                    {
+                                        advance();
+                                        fk_on_delete = stringPool().intern("NO ACTION");
+                                    }
+                                }
+                                else if (fk_on_delete == stringPool().intern("SET"))
+                                {
+                                    if (check(TokenType::IDENTIFIER))
+                                    {
+                                        StringPool::StringId action = current().value.string_id;
+                                        if (action == stringPool().intern("NULL"))
+                                        {
+                                            advance();
+                                            fk_on_delete = stringPool().intern("SET NULL");
+                                        }
+                                        else if (action == stringPool().intern("DEFAULT"))
+                                        {
+                                            advance();
+                                            fk_on_delete = stringPool().intern("SET DEFAULT");
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        else if (match(TokenType::KW_UPDATE))
+                        {
+                            if (check(TokenType::IDENTIFIER))
+                            {
+                                fk_on_update = current().value.string_id;
+                                advance();
+                                // Handle CASCADE, RESTRICT, SET NULL, SET DEFAULT, NO ACTION
+                                if (fk_on_update == stringPool().intern("NO"))
+                                {
+                                    if (check(TokenType::IDENTIFIER) && current().value.string_id == stringPool().intern("ACTION"))
+                                    {
+                                        advance();
+                                        fk_on_update = stringPool().intern("NO ACTION");
+                                    }
+                                }
+                                else if (fk_on_update == stringPool().intern("SET"))
+                                {
+                                    if (check(TokenType::IDENTIFIER))
+                                    {
+                                        StringPool::StringId action = current().value.string_id;
+                                        if (action == stringPool().intern("NULL"))
+                                        {
+                                            advance();
+                                            fk_on_update = stringPool().intern("SET NULL");
+                                        }
+                                        else if (action == stringPool().intern("DEFAULT"))
+                                        {
+                                            advance();
+                                            fk_on_update = stringPool().intern("SET DEFAULT");
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
                 else
                 {
                     // No more constraints
@@ -691,7 +800,8 @@ namespace scratchbird
             }
 
             auto span = makeSpan(start_loc);
-            return arena_.make<ColumnDef>(span, col_name, type, nullable, 0, 0, default_value, check_expr);
+            return arena_.make<ColumnDef>(span, col_name, type, nullable, 0, 0, default_value, check_expr,
+                                         fk_table, fk_columns, fk_on_delete, fk_on_update);
         }
 
         TypeName Parser::parseTypeName()

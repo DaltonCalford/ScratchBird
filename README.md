@@ -2,9 +2,9 @@
 
 A relational database engine featuring **Firebird MGA (Multi-Generational Architecture)**, 11 index types, 36-table catalog system, TOAST storage, and full transaction management.
 
-## Status: Alpha - 89% Complete (Security Phase 3.5 - RLS DML & Ownership Chaining COMPLETE)
+## Status: Alpha - 96% Complete (Constraint System + Mathematical Functions COMPLETE)
 
-**Last Updated:** November 12, 2025
+**Last Updated:** November 13, 2025
 
 ## Quick Start
 
@@ -91,13 +91,14 @@ ctest --output-on-failure
   - ALTER TABLE RENAME COLUMN old TO new
   - ALTER TABLE ALTER COLUMN name TYPE type
 
-### Built-in Functions (60/100 = 60%)
+### Built-in Functions (89/100 = 89%) 🎉
 - ✅ String: 11 functions (LENGTH, SUBSTRING, UPPER, LOWER, TRIM, etc.)
 - ✅ Aggregate: 6 (COUNT, SUM, AVG, MIN, MAX, ARRAY_AGG)
 - ✅ Window: 8 functions
 - ✅ JSON: 13 functions
 - ✅ Array: 12 functions
 - ✅ Date/Time: 6 functions
+- ✅ **Mathematical: 29 functions** (SIN, COS, TAN, SQRT, POWER, LN, LOG, etc.) 🎉
 - ✅ Conditional: 3 (COALESCE, NULLIF, CASE)
 
 ## What's Missing ❌
@@ -123,12 +124,13 @@ ctest --output-on-failure
 - ✅ SQL parser integration (GRANT/REVOKE/CREATE USER statements) - COMPLETE Phase 2
 
 ### Constraint Enforcement
-- FOREIGN KEY enforcement
-- UNIQUE constraint enforcement
-- DEFAULT value enforcement
+- ✅ **CHECK constraints** - Full parser-to-runtime pipeline COMPLETE Nov 13, 2025
+- ✅ **DEFAULT expressions** - Bytecode evaluation COMPLETE Nov 13, 2025
+- ✅ **NOT NULL enforcement** - Runtime validation COMPLETE
+- ⧗ UNIQUE constraint enforcement - Executor ready, parser pending
+- ⧗ FOREIGN KEY enforcement - Framework exists, enforcement pending
 
-### Functions
-- Mathematical functions (40 missing: SIN, COS, SQRT, etc.)
+### Functions (11 missing)
 - Statistical functions
 - Cryptographic functions
 - XML functions
@@ -138,7 +140,7 @@ ctest --output-on-failure
 - Recursive queries
 - PSQL/stored procedure execution
 
-**Remaining:** ~1,039-1,542 hours (includes advanced security features)
+**Remaining:** ~950-1,450 hours (includes advanced features)
 
 ## MGA Architecture (Firebird Style)
 
