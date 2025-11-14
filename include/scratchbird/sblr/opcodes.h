@@ -124,6 +124,14 @@ namespace scratchbird
             AGG_MAX = 0x7D,   // MAX(expr)
             AGG_COUNT = 0x7E, // COUNT(expr) or COUNT(*)
 
+            // Statistical aggregate functions (Nov 14, 2025)
+            AGG_STDDEV_SAMP = 0x7F,  // STDDEV / STDDEV_SAMP(expr) - sample standard deviation
+            AGG_STDDEV_POP = 0x80,   // STDDEV_POP(expr) - population standard deviation
+            AGG_VAR_SAMP = 0x81,     // VARIANCE / VAR_SAMP(expr) - sample variance
+            AGG_VAR_POP = 0x82,      // VAR_POP(expr) - population variance
+            AGG_CORR = 0x83,         // CORR(y, x) - Pearson correlation coefficient
+            AGG_COVAR_POP = 0x84,    // COVAR_POP(y, x) - population covariance
+
             // Temporal functions
             FUNC_DATE_ADD = 0x84,     // DATE_ADD(date, days)
             FUNC_DATE_SUB = 0x85,     // DATE_SUB(date, days)

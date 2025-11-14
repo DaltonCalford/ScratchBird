@@ -4786,7 +4786,52 @@ namespace scratchbird
                     array_elements.push_back(val);
                     count++;
                     break;
+
+                // Statistical functions (Nov 14, 2025)
+                // Use Welford's online algorithm for numerical stability
+                case AggFunc::STDDEV_SAMP:
+                case AggFunc::STDDEV_POP:
+                case AggFunc::VAR_SAMP:
+                case AggFunc::VAR_POP:
+                {
+                    double value = val.toDouble();
+                    count++;
+                    double delta = value - mean;
+                    mean += delta / count;
+                    double delta2 = value - mean;
+                    m2 += delta * delta2;
+                    break;
+                }
+
+                // Note: CORR and COVAR_POP are 2-argument functions
+                // They will use accumulate2() instead of accumulate()
+                case AggFunc::CORR:
+                case AggFunc::COVAR_POP:
+                    // These should not reach here - they use accumulate2()
+                    // If they do, it's a programming error
+                    break;
             }
+        }
+
+        // Accumulate for 2-argument statistical functions (CORR, COVAR_POP)
+        void Executor::AggregateAccumulator::accumulate2(const Value& val_y, const Value& val_x)
+        {
+            // Skip NULLs
+            if (val_y.isNull() || val_x.isNull())
+                return;
+
+            // TODO: Handle DISTINCT for 2-variable functions if needed
+            // For now, DISTINCT doesn't make much sense for CORR/COVAR
+
+            double x = val_x.toDouble();
+            double y = val_y.toDouble();
+
+            count++;
+            sum_x += x;
+            sum_y += y;
+            sum_xy += x * y;
+            sum_x2 += x * x;
+            sum_y2 += y * y;
         }
 
         Value Executor::AggregateAccumulator::finalize()
@@ -4854,6 +4899,61 @@ namespace scratchbird
                         }
                     }
                     return Value::makeJSON(j_array.dump());
+                }
+
+                // Statistical functions (Nov 14, 2025)
+                case AggFunc::VAR_SAMP:
+                    // Sample variance = m2 / (n-1)
+                    // Requires at least 2 values
+                    return count > 1 ? Value::makeFloat64(m2 / (count - 1)) : Value::makeNull();
+
+                case AggFunc::VAR_POP:
+                    // Population variance = m2 / n
+                    return count > 0 ? Value::makeFloat64(m2 / count) : Value::makeNull();
+
+                case AggFunc::STDDEV_SAMP:
+                    // Sample standard deviation = sqrt(variance)
+                    // Requires at least 2 values
+                    return count > 1 ? Value::makeFloat64(std::sqrt(m2 / (count - 1))) : Value::makeNull();
+
+                case AggFunc::STDDEV_POP:
+                    // Population standard deviation = sqrt(variance)
+                    return count > 0 ? Value::makeFloat64(std::sqrt(m2 / count)) : Value::makeNull();
+
+                case AggFunc::CORR:
+                {
+                    // Pearson correlation coefficient
+                    // r = (n*Σxy - Σx*Σy) / sqrt((n*Σx² - (Σx)²) * (n*Σy² - (Σy)²))
+                    if (count < 2)
+                        return Value::makeNull();
+
+                    double numerator = count * sum_xy - sum_x * sum_y;
+                    double denom_x = count * sum_x2 - sum_x * sum_x;
+                    double denom_y = count * sum_y2 - sum_y * sum_y;
+
+                    // Check for zero denominator (no variance)
+                    if (denom_x <= 0 || denom_y <= 0)
+                        return Value::makeNull();
+
+                    double denominator = std::sqrt(denom_x * denom_y);
+                    if (denominator == 0.0)
+                        return Value::makeNull();
+
+                    return Value::makeFloat64(numerator / denominator);
+                }
+
+                case AggFunc::COVAR_POP:
+                {
+                    // Population covariance
+                    // cov(X,Y) = (Σxy)/n - (Σx/n)*(Σy/n)
+                    if (count == 0)
+                        return Value::makeNull();
+
+                    double mean_x = sum_x / count;
+                    double mean_y = sum_y / count;
+                    double covariance = (sum_xy / count) - (mean_x * mean_y);
+
+                    return Value::makeFloat64(covariance);
                 }
             }
 
@@ -4998,6 +5098,24 @@ namespace scratchbird
                         break;
                     case Opcode::ARRAY_AGG:
                         func = AggregateAccumulator::AggFunc::ARRAY_AGG;
+                        break;
+                    case Opcode::AGG_STDDEV_SAMP:
+                        func = AggregateAccumulator::AggFunc::STDDEV_SAMP;
+                        break;
+                    case Opcode::AGG_STDDEV_POP:
+                        func = AggregateAccumulator::AggFunc::STDDEV_POP;
+                        break;
+                    case Opcode::AGG_VAR_SAMP:
+                        func = AggregateAccumulator::AggFunc::VAR_SAMP;
+                        break;
+                    case Opcode::AGG_VAR_POP:
+                        func = AggregateAccumulator::AggFunc::VAR_POP;
+                        break;
+                    case Opcode::AGG_CORR:
+                        func = AggregateAccumulator::AggFunc::CORR;
+                        break;
+                    case Opcode::AGG_COVAR_POP:
+                        func = AggregateAccumulator::AggFunc::COVAR_POP;
                         break;
                     default:
                         error("Unknown aggregate function opcode");
@@ -5209,7 +5327,11 @@ namespace scratchbird
                 {
                     const auto& agg_def = agg_defs[i];
 
-                    // Evaluate aggregate expression
+                    // Check if this is a 2-argument function (CORR, COVAR_POP)
+                    bool is_two_arg = (agg_def.func == AggregateAccumulator::AggFunc::CORR ||
+                                       agg_def.func == AggregateAccumulator::AggFunc::COVAR_POP);
+
+                    // Evaluate aggregate expression(s)
                     size_t saved_pc = pc_;
                     pc_ = agg_def.expr_start_pc;
                     current_row_values_ = &row_values;
@@ -5217,13 +5339,31 @@ namespace scratchbird
 
                     try
                     {
-                        evaluateExpression();
-                        Value agg_val = pop();
-                        current_row_values_ = nullptr;
-                        current_row_columns_ = nullptr;
-                        pc_ = saved_pc;
+                        if (is_two_arg)
+                        {
+                            // For 2-argument functions, expressions are already on bytecode
+                            // We need to evaluate them and get 2 values from the stack
+                            // The bytecode generator wrote both args as expressions
+                            evaluateExpression(); // First arg (y)
+                            Value val1 = pop();
+                            evaluateExpression(); // Second arg (x)
+                            Value val2 = pop();
+                            current_row_values_ = nullptr;
+                            current_row_columns_ = nullptr;
+                            pc_ = saved_pc;
 
-                        group_state[i].accumulate(agg_val);
+                            group_state[i].accumulate2(val1, val2);
+                        }
+                        else
+                        {
+                            evaluateExpression();
+                            Value agg_val = pop();
+                            current_row_values_ = nullptr;
+                            current_row_columns_ = nullptr;
+                            pc_ = saved_pc;
+
+                            group_state[i].accumulate(agg_val);
+                        }
                     }
                     catch (...)
                     {
@@ -5263,6 +5403,12 @@ namespace scratchbird
                         agg_name = "ARRAY_AGG";
                         agg_type = core::DataType::JSON;
                         break;
+                    case AggregateAccumulator::AggFunc::STDDEV_SAMP: agg_name = "STDDEV_SAMP"; break;
+                    case AggregateAccumulator::AggFunc::STDDEV_POP: agg_name = "STDDEV_POP"; break;
+                    case AggregateAccumulator::AggFunc::VAR_SAMP: agg_name = "VAR_SAMP"; break;
+                    case AggregateAccumulator::AggFunc::VAR_POP: agg_name = "VAR_POP"; break;
+                    case AggregateAccumulator::AggFunc::CORR: agg_name = "CORR"; break;
+                    case AggregateAccumulator::AggFunc::COVAR_POP: agg_name = "COVAR_POP"; break;
                 }
                 current_result_set_->addColumn(agg_name, agg_type);
             }
@@ -5320,6 +5466,12 @@ namespace scratchbird
                                 col_info.column_name = "ARRAY_AGG";
                                 col_info.data_type = static_cast<uint16_t>(core::DataType::JSON);
                                 break;
+                            case AggregateAccumulator::AggFunc::STDDEV_SAMP: col_info.column_name = "STDDEV_SAMP"; break;
+                            case AggregateAccumulator::AggFunc::STDDEV_POP: col_info.column_name = "STDDEV_POP"; break;
+                            case AggregateAccumulator::AggFunc::VAR_SAMP: col_info.column_name = "VAR_SAMP"; break;
+                            case AggregateAccumulator::AggFunc::VAR_POP: col_info.column_name = "VAR_POP"; break;
+                            case AggregateAccumulator::AggFunc::CORR: col_info.column_name = "CORR"; break;
+                            case AggregateAccumulator::AggFunc::COVAR_POP: col_info.column_name = "COVAR_POP"; break;
                         }
                         result_columns.push_back(col_info);
                     }
