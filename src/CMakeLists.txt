@@ -106,6 +106,16 @@ target_link_libraries(scratchbird_sblr PUBLIC
     nlohmann_json::nlohmann_json
 )
 
+# Link with libxml2 for XML support (Nov 14, 2025)
+if(LIBXML2_FOUND)
+    target_include_directories(scratchbird_sblr PUBLIC ${LIBXML2_INCLUDE_DIRS})
+    target_link_libraries(scratchbird_sblr PUBLIC ${LIBXML2_LIBRARIES})
+    target_compile_definitions(scratchbird_sblr PUBLIC HAVE_LIBXML2)
+    message(STATUS "libxml2 found: Full XML/XPath support enabled")
+else()
+    message(WARNING "libxml2 not found: XML functions will use basic string-based implementation")
+endif()
+
 set_target_properties(scratchbird_sblr PROPERTIES
     CXX_STANDARD 17
     CXX_STANDARD_REQUIRED YES

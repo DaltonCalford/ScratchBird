@@ -102,10 +102,10 @@ ctest --output-on-failure
 - ✅ **Mathematical: 29 functions** (SIN, COS, TAN, SQRT, POWER, LN, LOG, etc.) 🎉
 - ✅ **Bit Manipulation: 14 functions** (GET_BYTE, SET_BYTE, BIT_AND, BIT_OR, BIT_XOR, etc.) 🎉
 - ✅ **Cryptographic: 4 functions** (MD5, SHA1, SHA256, SHA512) 🎉
-- ✅ **XML: 9 functions** (XMLPARSE, XMLSERIALIZE, XMLELEMENT, XMLCONCAT, XMLFOREST, XMLCOMMENT, XMLROOT, XPATH*, XMLEXISTS*) 🎉
+- ✅ **XML: 9 functions** (XMLPARSE, XMLSERIALIZE, XMLELEMENT, XMLCONCAT, XMLFOREST, XMLCOMMENT, XMLROOT, XPATH, XMLEXISTS) 🎉
 - ✅ Conditional: 3 (COALESCE, NULLIF, CASE)
 
-**Note:** XPATH and XMLEXISTS require full XML parser library for production use. Current implementation provides basic framework.
+**Note:** Full XML/XPath 1.0 support via libxml2 (version 2.9.14). XPATH returns JSON array of node contents. XMLEXISTS returns boolean. Build falls back to basic string implementation if libxml2 not available.
 
 ## What's Missing ❌
 

@@ -40,6 +40,15 @@
 #include <openssl/md5.h>
 #include <openssl/sha.h>
 
+// libxml2 for full XML/XPath support (Nov 14, 2025)
+#ifdef HAVE_LIBXML2
+#include <libxml/parser.h>
+#include <libxml/tree.h>
+#include <libxml/xpath.h>
+#include <libxml/xpathInternals.h>
+#include <libxml/xmlstring.h>
+#endif
+
 using json = nlohmann::json;
 
 namespace scratchbird
@@ -17144,13 +17153,70 @@ namespace scratchbird
         }
 
         // ========================================================================
+        // XML HELPER FUNCTIONS (Nov 14, 2025)
+        // ========================================================================
+
+#ifdef HAVE_LIBXML2
+        // Helper: Convert xmlChar* to std::string
+        static std::string xmlCharToString(const xmlChar* xmlStr)
+        {
+            if (!xmlStr) return "";
+            return std::string(reinterpret_cast<const char*>(xmlStr));
+        }
+
+        // Helper: Convert xmlDocPtr to string representation
+        static std::string xmlDocToString(xmlDocPtr doc)
+        {
+            if (!doc) return "";
+
+            xmlChar* xmlbuff;
+            int buffersize;
+            xmlDocDumpFormatMemory(doc, &xmlbuff, &buffersize, 1);
+
+            std::string result(reinterpret_cast<char*>(xmlbuff), buffersize);
+            xmlFree(xmlbuff);
+
+            return result;
+        }
+
+        // Helper: Get last XML error message
+        static std::string getLastXMLError()
+        {
+            xmlErrorPtr err = xmlGetLastError();
+            if (err) {
+                return std::string(err->message);
+            }
+            return "Unknown XML error";
+        }
+
+        // Helper: Initialize libxml2 (call once)
+        static void initLibXML2()
+        {
+            static bool initialized = false;
+            if (!initialized) {
+                xmlInitParser();
+                initialized = true;
+            }
+        }
+
+        // Helper: Cleanup libxml2 (call at shutdown)
+        static void cleanupLibXML2()
+        {
+            xmlCleanupParser();
+        }
+#endif
+
+        // ========================================================================
         // XML FUNCTIONS (Nov 14, 2025)
         // ========================================================================
 
         void Executor::executeXMLParse()
         {
+#ifdef HAVE_LIBXML2
+            // Initialize libxml2
+            initLibXML2();
+
             // XMLPARSE(DOCUMENT|CONTENT, xml_text)
-            // For simplicity, we'll treat DOCUMENT and CONTENT the same
             // Pop xml_text from stack
             Value xml_text = stack_.top(); stack_.pop();
 
@@ -17165,15 +17231,49 @@ namespace scratchbird
 
             std::string xml_str = xml_text.toString();
 
+            // Parse XML with full validation using libxml2
+            xmlDocPtr doc = xmlReadMemory(
+                xml_str.c_str(),
+                xml_str.length(),
+                nullptr,
+                nullptr,
+                XML_PARSE_NONET | XML_PARSE_NOENT
+            );
+
+            if (!doc)
+            {
+                std::string err_msg = getLastXMLError();
+                xmlResetLastError();
+                error("Invalid XML: " + err_msg);
+            }
+
+            // Convert back to string (validates and normalizes)
+            std::string result = xmlDocToString(doc);
+            xmlFreeDoc(doc);
+
+            stack_.push(Value::makeVarchar(result));
+#else
+            // Fallback: basic string-based implementation without libxml2
+            Value xml_text = stack_.top(); stack_.pop();
+            Value mode = stack_.top(); stack_.pop();
+
+            if (xml_text.isNull())
+            {
+                stack_.push(Value::makeNull());
+                return;
+            }
+
+            std::string xml_str = xml_text.toString();
+
             // Basic XML validation - check if it looks like XML
-            // For a real implementation, you'd use a proper XML parser
             if (xml_str.empty() || xml_str.find('<') == std::string::npos)
             {
                 error("Invalid XML: must contain at least one element");
             }
 
-            // Return the XML as a string (we're using VARCHAR to store XML for now)
+            // Return the XML as a string
             stack_.push(Value::makeVarchar(xml_str));
+#endif
         }
 
         void Executor::executeXMLSerialize()
@@ -17356,8 +17456,6 @@ namespace scratchbird
         void Executor::executeXPath()
         {
             // XPATH(xpath_expr, xml)
-            // Basic implementation - just extract text content
-
             Value xml = stack_.top(); stack_.pop();
             Value xpath_expr = stack_.top(); stack_.pop();
 
@@ -17367,22 +17465,88 @@ namespace scratchbird
                 return;
             }
 
+#ifdef HAVE_LIBXML2
+            initLibXML2();
+
             std::string xml_str = xml.toString();
             std::string xpath = xpath_expr.toString();
 
-            // Very basic XPath implementation - only supports simple element selection
-            // e.g., /root/element
-            // For production, you'd use libxml2 or similar
+            // Parse XML
+            xmlDocPtr doc = xmlReadMemory(
+                xml_str.c_str(),
+                xml_str.length(),
+                nullptr,
+                nullptr,
+                XML_PARSE_NONET | XML_PARSE_NOENT
+            );
 
-            // For now, just return the XML as-is
-            // A full XPath implementation would require a proper XML parser
-            error("XPath function not fully implemented - requires XML parser library");
+            if (!doc)
+            {
+                std::string err_msg = getLastXMLError();
+                xmlResetLastError();
+                error("Invalid XML in XPATH: " + err_msg);
+            }
+
+            // Create XPath context
+            xmlXPathContextPtr xpathCtx = xmlXPathNewContext(doc);
+            if (!xpathCtx)
+            {
+                xmlFreeDoc(doc);
+                error("Failed to create XPath context");
+            }
+
+            // Evaluate XPath expression
+            xmlXPathObjectPtr xpathObj = xmlXPathEvalExpression(
+                reinterpret_cast<const xmlChar*>(xpath.c_str()),
+                xpathCtx
+            );
+
+            if (!xpathObj)
+            {
+                xmlXPathFreeContext(xpathCtx);
+                xmlFreeDoc(doc);
+                error("Invalid XPath expression: " + xpath);
+            }
+
+            // Convert result to SQL array of strings
+            std::vector<std::string> results;
+
+            if (xpathObj->type == XPATH_NODESET && xpathObj->nodesetval)
+            {
+                xmlNodeSetPtr nodeset = xpathObj->nodesetval;
+                for (int i = 0; i < nodeset->nodeNr; i++)
+                {
+                    xmlNodePtr node = nodeset->nodeTab[i];
+                    xmlChar* content = xmlNodeGetContent(node);
+                    if (content)
+                    {
+                        results.push_back(xmlCharToString(content));
+                        xmlFree(content);
+                    }
+                }
+            }
+
+            // Cleanup
+            xmlXPathFreeObject(xpathObj);
+            xmlXPathFreeContext(xpathCtx);
+            xmlFreeDoc(doc);
+
+            // Build JSON array result
+            json j_array = json::array();
+            for (const auto& res : results)
+            {
+                j_array.push_back(res);
+            }
+
+            stack_.push(Value::makeVarchar(j_array.dump()));
+#else
+            error("XPATH requires libxml2 library - not available in this build");
+#endif
         }
 
         void Executor::executeXMLExists()
         {
             // XMLEXISTS(xpath_expr, xml) - returns boolean
-
             Value xml = stack_.top(); stack_.pop();
             Value xpath_expr = stack_.top(); stack_.pop();
 
@@ -17392,12 +17556,67 @@ namespace scratchbird
                 return;
             }
 
+#ifdef HAVE_LIBXML2
+            initLibXML2();
+
             std::string xml_str = xml.toString();
             std::string xpath = xpath_expr.toString();
 
-            // Basic implementation - check if XML contains the path
-            // For production, use proper XPath evaluation
-            error("XMLEXISTS function not fully implemented - requires XML parser library");
+            // Parse XML
+            xmlDocPtr doc = xmlReadMemory(
+                xml_str.c_str(),
+                xml_str.length(),
+                nullptr,
+                nullptr,
+                XML_PARSE_NONET | XML_PARSE_NOENT
+            );
+
+            if (!doc)
+            {
+                std::string err_msg = getLastXMLError();
+                xmlResetLastError();
+                error("Invalid XML in XMLEXISTS: " + err_msg);
+            }
+
+            // Create XPath context
+            xmlXPathContextPtr xpathCtx = xmlXPathNewContext(doc);
+            if (!xpathCtx)
+            {
+                xmlFreeDoc(doc);
+                error("Failed to create XPath context");
+            }
+
+            // Evaluate XPath expression
+            xmlXPathObjectPtr xpathObj = xmlXPathEvalExpression(
+                reinterpret_cast<const xmlChar*>(xpath.c_str()),
+                xpathCtx
+            );
+
+            bool exists = false;
+
+            if (xpathObj)
+            {
+                // Check if any nodes were found
+                if (xpathObj->type == XPATH_NODESET && xpathObj->nodesetval)
+                {
+                    exists = (xpathObj->nodesetval->nodeNr > 0);
+                }
+                else if (xpathObj->type == XPATH_BOOLEAN)
+                {
+                    exists = xpathObj->boolval;
+                }
+
+                xmlXPathFreeObject(xpathObj);
+            }
+
+            // Cleanup
+            xmlXPathFreeContext(xpathCtx);
+            xmlFreeDoc(doc);
+
+            stack_.push(Value::makeBoolean(exists));
+#else
+            error("XMLEXISTS requires libxml2 library - not available in this build");
+#endif
         }
 
         void Executor::executeEncode()
