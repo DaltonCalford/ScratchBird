@@ -147,11 +147,13 @@
 - ✅ **DEFAULT values** (literals + simple expressions, executor COMPLETE, parser pending)
 - ✅ **UNIQUE** (executor COMPLETE with INSERT/UPDATE enforcement, parser pending)
 - ✅ **CHECK** (executor 100% COMPLETE, parser COMPLETE) 🎉
-- ✅ **FOREIGN KEY** (Phase B 100% COMPLETE - Nov 14, 2025) 🎉:
+- ✅ **FOREIGN KEY** (Phase A + B 100% COMPLETE - Nov 14, 2025) 🎉:
   - ✅ Catalog CRUD operations (6 methods: create, get, drop, enable/disable)
   - ✅ REFERENCES clause parsing (parser.cpp:690-794)
   - ✅ Bytecode generation (FOREIGN_KEY opcode 0x93)
-  - ✅ INSERT/UPDATE/DELETE enforcement
+  - ✅ **INSERT enforcement** (executor.cpp:3735-3774) - ACTIVATED Nov 14 🎉
+  - ✅ **UPDATE enforcement** (executor.cpp:4208-4262) - ACTIVATED Nov 14 🎉
+  - ✅ DELETE enforcement (executor.cpp:15486-15639)
   - ✅ NO_ACTION/RESTRICT actions
   - ✅ CASCADE DELETE action
   - ✅ **CASCADE UPDATE action** (executor.cpp:15726-15774, 15909-15965)
@@ -419,6 +421,11 @@ ctest -V
 **Timeline**: 5-7 months to completion (with 3 developers)
 
 **Recently Completed** (Nov 14, 2025):
+- ✅ **Foreign Key Phase A Enforcement - 100% COMPLETE** (~40 lines activated):
+  - INSERT enforcement activated (was commented out)
+  - UPDATE enforcement activated (was commented out)
+  - Complete DML enforcement now operational (INSERT/UPDATE/DELETE)
+  - All FK tests passing (10/10)
 - ✅ **Foreign Key Phase B - 100% COMPLETE** (~540 lines production code):
   - Tuple serialization/deserialization helpers (serializeTupleFromValues, modifyTupleColumns)
   - CASCADE UPDATE action for DELETE and UPDATE operations
@@ -426,7 +433,6 @@ ctest -V
   - SET DEFAULT action for DELETE and UPDATE operations with literal default parsing
   - Full integration with storage engine updateTuple() API
   - MGA-compliant implementation with back-versioning and TID stability
-  - All existing FK tests passing (10/10)
 
 **Previously Completed** (Nov 13, 2025):
 - ✅ **Constraint System COMPLETE** - CHECK, DEFAULT, UNIQUE enforcement (parser to runtime)
