@@ -126,6 +126,11 @@ ctest --output-on-failure
 - ✅ Row-level security (RLS) framework with TOAST persistence - 100% COMPLETE Nov 11, 2025
 - ✅ RLS expression evaluation (WHERE clause injection) - COMPLETE Nov 11, 2025
 - ✅ TOAST persistence for policy expressions - COMPLETE Nov 11, 2025
+- ✅ **Phase 3 Polish** - COMPLETE Nov 14, 2025 🎉:
+  - ✅ PolicyInfo UUID migration (role names → role UUIDs with O(1) hash lookup)
+  - ✅ Transitive role membership (BFS via getEffectiveRoles)
+  - ✅ SQL CREATE POLICY with real SBLR bytecode generation
+  - ✅ IDHash functor for efficient UUID-based unordered containers
 - SQL object permissions (GRANT TO PROCEDURE/FUNCTION/VIEW)
 - ✅ SQL parser integration (GRANT/REVOKE/CREATE USER statements) - COMPLETE Phase 2
 

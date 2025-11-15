@@ -10600,7 +10600,19 @@ auto CatalogManager::createPolicy(const ID& table_id, const std::string& policy_
         policy_info.table_id = policy_rec.table_id;
         policy_info.policy_name = policy_name;
         policy_info.policy_type = type;
-        policy_info.roles = roles;
+
+        // Phase 3 Polish: Convert role names to UUIDs
+        policy_info.role_ids.clear();
+        for (const auto& role_name : roles)
+        {
+            RoleInfo role;
+            if (getRoleByName(role_name, role, ctx) == Status::OK)
+            {
+                policy_info.role_ids.push_back(role.role_id);
+            }
+            // If role doesn't exist, skip it (could warn)
+        }
+
         policy_info.using_expr = using_expr;        // Store actual expression string
         policy_info.with_check_expr = with_check_expr;  // Store actual expression string
         policy_info.is_enabled = true;
@@ -10749,8 +10761,8 @@ auto CatalogManager::getPolicy(const ID& table_id, const std::string& policy_nam
         policy_out.with_check_expr = "";
     }
 
-    // Roles list (TODO: Load from TOAST when roles_oid is implemented)
-    policy_out.roles.clear();
+    // Phase 3 Polish: Roles list as UUIDs (TODO: Load from TOAST when roles_oid is implemented)
+    policy_out.role_ids.clear();
 
     // Cache the loaded policy for future access
     {
@@ -10797,16 +10809,16 @@ auto CatalogManager::getTablePolicies(const ID& table_id, PolicyType type,
             auto cache_it = policy_cache_.find(rec.policy_id);
             if (cache_it != policy_cache_.end())
             {
-                // Use cached policy with expressions
-                info.roles = cache_it->second.roles;
+                // Use cached policy with expressions (Phase 3 Polish: role_ids)
+                info.role_ids = cache_it->second.role_ids;
                 info.using_expr = cache_it->second.using_expr;
                 info.with_check_expr = cache_it->second.with_check_expr;
                 return;
             }
         }
 
-        // Cache miss - no expressions available
-        info.roles.clear();
+        // Cache miss - no expressions available (Phase 3 Polish: role_ids)
+        info.role_ids.clear();
         info.using_expr = "";
         info.with_check_expr = "";
     };

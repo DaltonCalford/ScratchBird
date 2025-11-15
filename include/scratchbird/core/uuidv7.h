@@ -66,3 +66,17 @@ namespace std
         }
     };
 }
+
+namespace scratchbird::core
+{
+    // Hash functor for ID (UuidV7Bytes) for use with unordered containers
+    // Defined after std::hash specialization to avoid forward reference issues
+    struct IDHash
+    {
+        auto operator()(const UuidV7Bytes& uuid) const -> size_t
+        {
+            return std::hash<UuidV7Bytes>{}(uuid);
+        }
+    };
+
+} // namespace scratchbird::core
