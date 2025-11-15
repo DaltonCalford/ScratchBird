@@ -657,10 +657,9 @@ namespace scratchbird
                 }
             }
 
-            // Write SELECT query definition as placeholder string
-            // For ALPHA Phase 1, we store a simple placeholder
-            // Future: Store actual query text or serialized AST
-            current_result_->writeString("<view_definition>");
+            // ALPHA Phase 1 - Views: Write actual SELECT query definition
+            // The parser has extracted and stored the query text from the source
+            current_result_->writeString(node->queryDefinitionText());
         }
 
         void BytecodeGenerator::visit(parser::DropViewStmt *node)

@@ -3689,6 +3689,9 @@ namespace scratchbird
                 return nullptr;
             }
 
+            // ALPHA Phase 1 - Views: Capture start offset of SELECT query
+            auto select_start_offset = previous().location.offset;
+
             // Parse SELECT statement
             auto *query = parseSelect();
             if (!query)
@@ -3696,10 +3699,19 @@ namespace scratchbird
                 return nullptr;
             }
 
+            // ALPHA Phase 1 - Views: Extract SELECT query text from source
+            auto select_end_offset = previous().location.offset + previous().length;
+            std::string query_text(lexer_.input().substr(
+                select_start_offset,
+                select_end_offset - select_start_offset));
+
             // Create AST node
             auto *stmt = arena_.make<CreateViewStmt>(
                 makeSpan(start_loc), view_name,
                 static_cast<SelectStmt*>(query), or_replace);
+
+            // Store the actual SELECT query text
+            stmt->setQueryDefinitionText(std::move(query_text));
 
             if (!column_names.empty())
             {

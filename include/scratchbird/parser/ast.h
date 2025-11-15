@@ -1677,6 +1677,13 @@ namespace scratchbird
                 column_names_ = std::move(names);
             }
 
+            // ALPHA Phase 1 - Views: Store the actual SELECT query text
+            const std::string& queryDefinitionText() const { return query_definition_text_; }
+            void setQueryDefinitionText(std::string text)
+            {
+                query_definition_text_ = std::move(text);
+            }
+
             void accept(ASTVisitor* visitor) override;
 
         private:
@@ -1685,6 +1692,7 @@ namespace scratchbird
             bool or_replace_;
             bool check_option_;
             std::vector<StringPool::StringId> column_names_;
+            std::string query_definition_text_;  // ALPHA Phase 1 - Views: Actual SELECT text
         };
 
         // DROP VIEW statement (ALPHA Phase 1 - Views)
