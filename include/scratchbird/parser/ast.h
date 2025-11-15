@@ -40,6 +40,7 @@ namespace scratchbird
             DROP_SEQUENCE,             // ALPHA Phase 1 - Sequences
             CREATE_VIEW,               // ALPHA Phase 1 - Views
             DROP_VIEW,                 // ALPHA Phase 1 - Views
+            REFRESH_MATERIALIZED_VIEW, // ALPHA Phase 1 - Materialized Views
             CREATE_TRIGGER,            // Phase 2 Wave 2 - Agent C: Basic Triggers
             DROP_TRIGGER,              // Phase 2 Wave 2 - Agent C: Basic Triggers
             CREATE_FUNCTION,           // Phase 2 Task 10.2 - Stored Procedures
@@ -1654,10 +1655,10 @@ namespace scratchbird
         {
         public:
             CreateViewStmt(const SourceSpan& span, StringPool::StringId name,
-                           SelectStmt* query, bool or_replace = false)
+                           SelectStmt* query, bool or_replace = false, bool materialized = false)
                 : Statement(ASTKind::CREATE_VIEW, span),
                   name_(name), query_(query), or_replace_(or_replace),
-                  check_option_(false)
+                  check_option_(false), materialized_(materialized)
             {
             }
 
@@ -1665,6 +1666,7 @@ namespace scratchbird
             SelectStmt* query() const { return query_; }
             bool orReplace() const { return or_replace_; }
             bool checkOption() const { return check_option_; }
+            bool materialized() const { return materialized_; }  // ALPHA Phase 1 - Materialized Views
 
             const std::vector<StringPool::StringId>& columnNames() const
             {
@@ -1691,6 +1693,7 @@ namespace scratchbird
             SelectStmt* query_;
             bool or_replace_;
             bool check_option_;
+            bool materialized_;  // ALPHA Phase 1 - Materialized Views
             std::vector<StringPool::StringId> column_names_;
             std::string query_definition_text_;  // ALPHA Phase 1 - Views: Actual SELECT text
         };
@@ -1716,6 +1719,27 @@ namespace scratchbird
             StringPool::StringId name_;
             bool if_exists_;
             bool cascade_;
+        };
+
+        // REFRESH MATERIALIZED VIEW statement (ALPHA Phase 1 - Materialized Views)
+        class RefreshMaterializedViewStmt : public Statement
+        {
+        public:
+            RefreshMaterializedViewStmt(const SourceSpan& span, StringPool::StringId name,
+                                       bool concurrently = false)
+                : Statement(ASTKind::REFRESH_MATERIALIZED_VIEW, span),
+                  name_(name), concurrently_(concurrently)
+            {
+            }
+
+            StringPool::StringId name() const { return name_; }
+            bool concurrently() const { return concurrently_; }
+
+            void accept(ASTVisitor* visitor) override;
+
+        private:
+            StringPool::StringId name_;
+            bool concurrently_;  // CONCURRENTLY option for non-blocking refresh
         };
 
         // INSERT statement
