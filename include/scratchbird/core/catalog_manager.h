@@ -2080,6 +2080,7 @@ namespace scratchbird::core
         uint32_t emulation_types_table_page_ = 0;   // Emulation types (Phase 4)
         uint32_t emulation_servers_table_page_ = 0; // Emulation servers (Phase 4)
         uint32_t emulated_dbs_table_page_ = 0;      // Emulated databases (Phase 4)
+        uint32_t foreign_keys_table_page_ = 0;      // Foreign keys (Phase D - FK Persistence)
 
         // Internal methods
         auto writeCatalogRoot(ErrorContext *ctx) -> Status;
@@ -2284,6 +2285,10 @@ namespace scratchbird::core
         auto writeCommentRecord(const CommentInfo &comment, ErrorContext *ctx) -> Status;
         auto deleteCommentRecord(const ID &object_id, ErrorContext *ctx) -> Status;
         auto readCommentRecords(ErrorContext *ctx) -> Status;
+
+        // Phase D: Foreign key disk persistence
+        auto readForeignKeyRecords(ErrorContext *ctx) -> Status;
+
         auto writeIndexRecord(const IndexInfo &index, ErrorContext *ctx) -> Status;
         auto deleteIndexRecord(const ID &index_id, ErrorContext *ctx) -> Status;
         auto readIndexRecords(ErrorContext *ctx) -> Status;
