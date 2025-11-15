@@ -678,7 +678,7 @@ namespace scratchbird::core
             ID table_id;                     // Table this policy applies to
             std::string policy_name;         // Policy name (unique per table)
             PolicyType policy_type;          // Which operations this policy affects
-            std::vector<std::string> roles;  // Roles this policy applies to (empty = all)
+            std::vector<ID> role_ids;        // Role UUIDs this policy applies to (empty = all) - Phase 3 Polish
             std::string using_expr;          // USING clause expression (for visibility)
             std::string with_check_expr;     // WITH CHECK clause expression (for modifications)
             bool is_enabled = true;          // Policy can be temporarily disabled

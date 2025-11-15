@@ -34,6 +34,7 @@
 #include <cstring>
 #include <chrono>
 #include <map>
+#include <unordered_set>
 #include <regex>
 #include <cctype>
 #include <cmath>
@@ -15436,7 +15437,7 @@ namespace scratchbird
         bool Executor::policyAppliesToUser(const core::CatalogManager::PolicyInfo& policy)
         {
             // If policy has no role restrictions, it applies to everyone
-            if (policy.roles.empty())
+            if (policy.role_ids.empty())
             {
                 return true;
             }
@@ -15450,44 +15451,36 @@ namespace scratchbird
             const core::ID& current_user_id = conn_ctx_->getCurrentUserId();
             const core::ID& active_role_id = conn_ctx_->getActiveRoleId();
 
-            // NOTE: policy.roles currently stores role NAMES (not UUIDs)
-            // This should be changed to store UUIDs in the future
-            // For now, we resolve the names to check membership
+            // Phase 3 Polish: O(1) UUID membership check with hash set
+            std::unordered_set<core::ID, core::IDHash> policy_role_set(policy.role_ids.begin(), policy.role_ids.end());
 
-            core::ErrorContext err_ctx;
-
-            // Check if current user is in the policy's role list
-            core::CatalogManager::UserInfo user_info;
-            if (db_->catalog_manager()->getUser(current_user_id, user_info, &err_ctx) == core::Status::OK)
+            // Check if current user ID is directly in the policy's role list
+            if (policy_role_set.count(current_user_id) > 0)
             {
-                for (const auto& role_name : policy.roles)
-                {
-                    if (user_info.username == role_name)
-                    {
-                        return true; // User directly listed in policy
-                    }
-                }
+                return true;
             }
 
             // Check if active role is in the policy's role list
             core::ID zero_id{};  // Zero-initialized UUID
-            if (active_role_id != zero_id)
+            if (active_role_id != zero_id && policy_role_set.count(active_role_id) > 0)
             {
-                core::CatalogManager::RoleInfo role_info;
-                if (db_->catalog_manager()->getRole(active_role_id, role_info, &err_ctx) == core::Status::OK)
+                return true;
+            }
+
+            // Phase 3 Polish: Transitive role membership (roles inherited from groups)
+            // Get all effective roles for the current user (including transitive)
+            core::ErrorContext err_ctx;
+            std::vector<core::ID> effective_roles;
+            if (db_->catalog_manager()->getEffectiveRoles(current_user_id, effective_roles, &err_ctx) == core::Status::OK)
+            {
+                for (const auto& role_id : effective_roles)
                 {
-                    for (const auto& role_name : policy.roles)
+                    if (policy_role_set.count(role_id) > 0)
                     {
-                        if (role_info.role_name == role_name)
-                        {
-                            return true; // Active role listed in policy
-                        }
+                        return true; // User has this role transitively
                     }
                 }
             }
-
-            // TODO: Check transitive role membership (roles inherited from groups)
-            // For now, only check direct user and active role
 
             return false; // User/role not in policy's role list
         }
