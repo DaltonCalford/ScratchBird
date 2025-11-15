@@ -78,8 +78,9 @@ namespace scratchbird::core
         // Phase 5: Future expansion
         uint32_t tablespaces_page;    // Page containing tablespaces table
         uint32_t extensions_page;     // Page containing extensions table
+        uint32_t foreign_keys_page;   // Page containing foreign keys table (Phase D - FK Persistence)
 
-        uint8_t reserved[3896];       // Padding for 16KB page (152 bytes used for table pointers: 144 + 8 for group_members + group_mappings, was 4024)
+        uint8_t reserved[3892];       // Padding for 16KB page (156 bytes used: 152 + 4 for foreign_keys_page)
     };
 
     // Schema record on disk
@@ -694,6 +695,25 @@ namespace scratchbird::core
         uint32_t padding;
     };
 
+    // Foreign key constraint record on disk (Phase D - FK Disk Persistence)
+    struct ForeignKeyRecord
+    {
+        ID fk_id;                      // Unique FK constraint ID
+        char fk_name[512];             // Constraint name
+        ID child_table_id;             // Table with the FK (referencing table)
+        ID parent_table_id;            // Referenced table
+        char child_columns[1024];      // Delimited column names (comma-separated)
+        char parent_columns[1024];     // Delimited column names (comma-separated)
+        uint8_t on_delete;             // FKAction enum (NO_ACTION, RESTRICT, CASCADE, SET_NULL, SET_DEFAULT)
+        uint8_t on_update;             // FKAction enum
+        uint8_t match_type;            // FKMatchType enum (SIMPLE, FULL, PARTIAL)
+        uint8_t is_enabled;            // 1 if enabled, 0 if disabled
+        uint8_t reserved[4];           // Alignment
+        uint64_t created_time;
+        uint32_t is_valid;             // 1 if valid, 0 if deleted
+        uint32_t padding;
+    };
+
     // Collation record on disk - see updated CollationRecord structure below at line ~194
 
 #pragma pack(pop)
@@ -1137,7 +1157,14 @@ namespace scratchbird::core
         status = db_->write_page(emulated_dbs_table_page_, page_buffer.get(), ctx);
         if (status != Status::OK) return status;
 
-        DEBUG_LOG_DB("Allocated and initialized 14 new system tables (Phase 6.1)");
+        // Phase D: Foreign keys table (FK Disk Persistence)
+        status = pm->allocatePage(foreign_keys_table_page_, ctx);
+        if (status != Status::OK) return status;
+        heap->header.page_id = foreign_keys_table_page_;
+        status = db_->write_page(foreign_keys_table_page_, page_buffer.get(), ctx);
+        if (status != Status::OK) return status;
+
+        DEBUG_LOG_DB("Allocated and initialized 15 new system tables (Phase 6.1 + FK)");
 
         // Update root page with table locations
         status = writeCatalogRoot(ctx);
@@ -1424,9 +1451,22 @@ namespace scratchbird::core
             DEBUG_LOG_DB("Loaded " << comment_cache_.size() << " comments");
         }
 
+        // Phase D: Load foreign keys
+        status = readForeignKeyRecords(ctx);
+        if (status != Status::OK)
+        {
+            LOG_WARNING(CATALOG, "Failed to load foreign keys: %d (continuing)", static_cast<int>(status));
+            // Don't fail catalog load if FK load fails - they're not critical for basic operation
+        }
+        else
+        {
+            DEBUG_LOG_DB("Loaded " << foreign_keys_cache_.size() << " foreign keys");
+        }
+
         DEBUG_LOG_DB("Catalog loaded: " << schema_count_ << " schemas, " << table_count_
                                         << " tables, " << dependency_cache_.size() << " dependencies, "
-                                        << comment_cache_.size() << " comments");
+                                        << comment_cache_.size() << " comments, "
+                                        << foreign_keys_cache_.size() << " foreign keys");
 
         return Status::OK;
     }
@@ -2254,6 +2294,7 @@ namespace scratchbird::core
         root->emulation_types_page = emulation_types_table_page_;
         root->emulation_servers_page = emulation_servers_table_page_;
         root->emulated_dbs_page = emulated_dbs_table_page_;
+        root->foreign_keys_page = foreign_keys_table_page_;
 
         return bp->unpinPage(CATALOG_ROOT_PAGE, true, ctx);
     }
@@ -2328,6 +2369,7 @@ namespace scratchbird::core
         emulation_types_table_page_ = root->emulation_types_page;
         emulation_servers_table_page_ = root->emulation_servers_page;
         emulated_dbs_table_page_ = root->emulated_dbs_page;
+        foreign_keys_table_page_ = root->foreign_keys_page;
 
         return bp->unpinPage(CATALOG_ROOT_PAGE, false, ctx);
     }
@@ -8689,6 +8731,95 @@ auto CatalogManager::readCommentRecords(ErrorContext *ctx) -> Status
 }
 
 // ============================================================================
+// Foreign Key Disk Persistence (Phase D)
+// ============================================================================
+
+auto CatalogManager::readForeignKeyRecords(ErrorContext *ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(foreign_keys_cache_mutex_);
+
+    if (foreign_keys_table_page_ == 0)
+    {
+        // Foreign keys table not initialized yet (old database format)
+        return Status::OK;
+    }
+
+    BufferPool *bp = db_->buffer_pool();
+    void *page_buffer;
+    Status status = bp->pinPage(foreign_keys_table_page_, &page_buffer, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    auto *heap = reinterpret_cast<CatalogHeapPage *>(page_buffer);
+    uint32_t offset = sizeof(CatalogHeapPage);
+
+    for (uint32_t i = 0; i < heap->record_count; i++)
+    {
+        auto *record = reinterpret_cast<ForeignKeyRecord *>(
+            reinterpret_cast<uint8_t *>(page_buffer) + offset);
+
+        if (record->is_valid)
+        {
+            ForeignKeyInfo fk_info;
+            fk_info.fk_id = record->fk_id;
+            fk_info.fk_name = std::string(record->fk_name);
+            fk_info.child_table_id = record->child_table_id;
+            fk_info.parent_table_id = record->parent_table_id;
+
+            // Deserialize column names from comma-separated strings
+            std::string child_cols_str(record->child_columns);
+            std::string parent_cols_str(record->parent_columns);
+
+            // Parse child columns
+            size_t pos = 0;
+            while (pos < child_cols_str.length())
+            {
+                size_t comma = child_cols_str.find(',', pos);
+                if (comma == std::string::npos)
+                {
+                    fk_info.child_columns.push_back(child_cols_str.substr(pos));
+                    break;
+                }
+                fk_info.child_columns.push_back(child_cols_str.substr(pos, comma - pos));
+                pos = comma + 1;
+            }
+
+            // Parse parent columns
+            pos = 0;
+            while (pos < parent_cols_str.length())
+            {
+                size_t comma = parent_cols_str.find(',', pos);
+                if (comma == std::string::npos)
+                {
+                    fk_info.parent_columns.push_back(parent_cols_str.substr(pos));
+                    break;
+                }
+                fk_info.parent_columns.push_back(parent_cols_str.substr(pos, comma - pos));
+                pos = comma + 1;
+            }
+
+            fk_info.on_delete = static_cast<FKAction>(record->on_delete);
+            fk_info.on_update = static_cast<FKAction>(record->on_update);
+            fk_info.match_type = static_cast<FKMatchType>(record->match_type);
+            fk_info.is_enabled = record->is_enabled != 0;
+            fk_info.created_time = record->created_time;
+
+            // Store in cache
+            foreign_keys_cache_[fk_info.fk_id] = fk_info;
+            table_child_fks_.insert({fk_info.child_table_id, fk_info.fk_id});
+            table_parent_fks_.insert({fk_info.parent_table_id, fk_info.fk_id});
+        }
+
+        offset += sizeof(ForeignKeyRecord);
+    }
+
+    bp->unpinPage(foreign_keys_table_page_, false, ctx);
+    return Status::OK;
+}
+
+// ============================================================================
 // Security Operations (Phase 1.3 - Users, Roles, Groups)
 // ============================================================================
 
@@ -11085,7 +11216,67 @@ auto CatalogManager::createForeignKey(const std::string& fk_name,
     table_child_fks_.insert({child_table_id, fk_id_out});
     table_parent_fks_.insert({parent_table_id, fk_id_out});
 
-    // TODO Phase B: Persist to disk (pg_foreign_keys table)
+    // Phase D: Persist to disk
+    if (foreign_keys_table_page_ != 0)
+    {
+        ForeignKeyRecord fk_rec;
+        memset(&fk_rec, 0, sizeof(ForeignKeyRecord));
+
+        fk_rec.fk_id = fk_id_out;
+        strncpy(fk_rec.fk_name, fk_name.c_str(), sizeof(fk_rec.fk_name) - 1);
+        fk_rec.child_table_id = child_table_id;
+        fk_rec.parent_table_id = parent_table_id;
+
+        // Serialize column vectors to comma-separated strings
+        std::string child_cols_str;
+        for (size_t i = 0; i < child_columns.size(); ++i)
+        {
+            if (i > 0) child_cols_str += ",";
+            child_cols_str += child_columns[i];
+        }
+        strncpy(fk_rec.child_columns, child_cols_str.c_str(), sizeof(fk_rec.child_columns) - 1);
+
+        std::string parent_cols_str;
+        for (size_t i = 0; i < parent_columns.size(); ++i)
+        {
+            if (i > 0) parent_cols_str += ",";
+            parent_cols_str += parent_columns[i];
+        }
+        strncpy(fk_rec.parent_columns, parent_cols_str.c_str(), sizeof(fk_rec.parent_columns) - 1);
+
+        fk_rec.on_delete = static_cast<uint8_t>(on_delete);
+        fk_rec.on_update = static_cast<uint8_t>(on_update);
+        fk_rec.match_type = static_cast<uint8_t>(match_type);
+        fk_rec.is_enabled = 1;
+        fk_rec.created_time = fk_info.created_time;
+        fk_rec.is_valid = 1;
+
+        Status status = writeRecordToHeapPage(foreign_keys_table_page_, fk_rec, ctx);
+        if (status != Status::OK)
+        {
+            // Rollback cache changes
+            foreign_keys_cache_.erase(fk_id_out);
+            auto child_range = table_child_fks_.equal_range(child_table_id);
+            for (auto it = child_range.first; it != child_range.second; )
+            {
+                if (it->second == fk_id_out)
+                    it = table_child_fks_.erase(it);
+                else
+                    ++it;
+            }
+            auto parent_range = table_parent_fks_.equal_range(parent_table_id);
+            for (auto it = parent_range.first; it != parent_range.second; )
+            {
+                if (it->second == fk_id_out)
+                    it = table_parent_fks_.erase(it);
+                else
+                    ++it;
+            }
+
+            SET_ERROR_CONTEXT(ctx, status, "Failed to write foreign key record");
+            return status;
+        }
+    }
 
     return Status::OK;
 }
@@ -11195,7 +11386,27 @@ auto CatalogManager::dropForeignKey(const ID& fk_id,
     // Remove from cache
     foreign_keys_cache_.erase(it);
 
-    // TODO Phase B: Remove from disk (pg_foreign_keys table)
+    // Phase D: Mark as invalid on disk
+    if (foreign_keys_table_page_ != 0)
+    {
+        auto predicate = [&fk_id](const ForeignKeyRecord& rec) {
+            return rec.is_valid && rec.fk_id == fk_id;
+        };
+
+        auto result = findRecordInHeapPage<ForeignKeyRecord>(foreign_keys_table_page_, predicate, ctx);
+        if (result.status == Status::OK)
+        {
+            ForeignKeyRecord updated_rec = result.record;
+            updated_rec.is_valid = 0;
+
+            Status status = updateRecordInHeapPage(foreign_keys_table_page_, predicate, updated_rec, ctx);
+            if (status != Status::OK)
+            {
+                SET_ERROR_CONTEXT(ctx, status, "Failed to mark foreign key as invalid on disk");
+                return status;
+            }
+        }
+    }
 
     return Status::OK;
 }
@@ -11214,7 +11425,27 @@ auto CatalogManager::setForeignKeyEnabled(const ID& fk_id, bool enabled,
 
     it->second.is_enabled = enabled;
 
-    // TODO Phase B: Update disk (pg_foreign_keys table)
+    // Phase D: Update disk
+    if (foreign_keys_table_page_ != 0)
+    {
+        auto predicate = [&fk_id](const ForeignKeyRecord& rec) {
+            return rec.is_valid && rec.fk_id == fk_id;
+        };
+
+        auto result = findRecordInHeapPage<ForeignKeyRecord>(foreign_keys_table_page_, predicate, ctx);
+        if (result.status == Status::OK)
+        {
+            ForeignKeyRecord updated_rec = result.record;
+            updated_rec.is_enabled = enabled ? 1 : 0;
+
+            Status status = updateRecordInHeapPage(foreign_keys_table_page_, predicate, updated_rec, ctx);
+            if (status != Status::OK)
+            {
+                SET_ERROR_CONTEXT(ctx, status, "Failed to update foreign key enabled status on disk");
+                return status;
+            }
+        }
+    }
 
     return Status::OK;
 }

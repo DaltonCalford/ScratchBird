@@ -26,14 +26,14 @@ ctest --output-on-failure
 - **Transactions** - 4 isolation levels, MVCC, deadlock detection
 - **Tablespaces** - Multi-file support with GPID addressing
 
-### Catalog System (39 tables = 100% structures, 55% CRUD) ✅
+### Catalog System (40 tables = 100% structures, 58% CRUD) ✅
 - **18 Schema Hierarchy** - root → sys/app/users/remote/emulation/public
 - **Core Tables (10/10)** - Schemas, Tables, Columns, Indexes, Sequences, Views, Constraints, Triggers, Timezones, Collations
 - **Dependencies & Comments (2/2)** - Full CRUD with disk persistence
 - **Security (8/8 CRUD complete)** - Users, Roles, Groups, RoleMemberships, GroupMemberships, GroupMappings, ColumnPermissions, Policies ✅
 - **Stored Code (5/5 structures)** - Procedures, Parameters, Domains, UDR, Packages
 - **Emulation (3/3 structures)** - Types, Servers, Databases (mysql/postgres/mssql/firebird)
-- **Infrastructure (4/4)** - Tablespaces, Charsets, Statistics, Permissions
+- **Infrastructure (5/5)** - Tablespaces, Charsets, Statistics, Permissions, **Foreign Keys** ✅
 - **UUID System** - UUIDv7 (RFC 9562) for all object identifiers
 - **32 Object Types** - Complete catalog taxonomy
 
@@ -133,7 +133,7 @@ ctest --output-on-failure
 - ✅ **CHECK constraints** - Full parser-to-runtime pipeline COMPLETE Nov 13, 2025
 - ✅ **DEFAULT expressions** - Bytecode evaluation COMPLETE Nov 13, 2025
 - ✅ **NOT NULL enforcement** - Runtime validation COMPLETE
-- ✅ **FOREIGN KEY constraints** - Phase C COMPLETE Nov 14, 2025 🎉:
+- ✅ **FOREIGN KEY constraints** - Phase D COMPLETE Nov 14, 2025 🎉:
   - ✅ Catalog CRUD operations (6 methods)
   - ✅ Column-level REFERENCES clause (single-column FK)
   - ✅ **Table-level FOREIGN KEY syntax (composite FK)** - COMPLETE Nov 14, 2025 🎉
@@ -144,7 +144,7 @@ ctest --output-on-failure
   - ✅ CASCADE DELETE/UPDATE actions (multi-column)
   - ✅ SET NULL/SET DEFAULT actions (multi-column)
   - ✅ MATCH SIMPLE semantics (NULL in any column satisfies constraint)
-  - ⧗ Disk persistence (future)
+  - ✅ **Disk persistence** - COMPLETE Nov 14, 2025 🎉
   - ⧗ Index-based lookups for performance (future)
   - ⧗ ALTER TABLE ADD/DROP FK (future)
   - ⧗ MATCH FULL/PARTIAL (future)
