@@ -6073,29 +6073,76 @@ namespace scratchbird
             }
 
             // Copy the result set from the view execution to the current result set
-            // (We need to copy because view_executor owns the result set)
+            // Apply column projection if specific columns were requested
             current_result_set_ = std::make_unique<ResultSet>();
 
-            // Copy column definitions
-            for (size_t i = 0; i < view_result_set->columnCount(); i++)
+            if (is_select_star)
             {
-                current_result_set_->addColumn(view_result_set->columnName(i),
-                                               view_result_set->columnType(i));
-            }
-
-            // Copy rows
-            for (size_t row_idx = 0; row_idx < view_result_set->rowCount(); row_idx++)
-            {
-                std::vector<Value> row;
-                for (size_t col_idx = 0; col_idx < view_result_set->columnCount(); col_idx++)
+                // SELECT * FROM view - return all columns
+                for (size_t i = 0; i < view_result_set->columnCount(); i++)
                 {
-                    row.push_back(view_result_set->getValue(row_idx, col_idx));
+                    current_result_set_->addColumn(view_result_set->columnName(i),
+                                                   view_result_set->columnType(i));
                 }
-                current_result_set_->addRow(std::move(row));
-            }
 
-            // TODO ALPHA Phase 1: Add column projection for SELECT col1, col2 FROM view
-            // Currently we always return all columns from the view
+                // Copy all rows with all columns
+                for (size_t row_idx = 0; row_idx < view_result_set->rowCount(); row_idx++)
+                {
+                    std::vector<Value> row;
+                    for (size_t col_idx = 0; col_idx < view_result_set->columnCount(); col_idx++)
+                    {
+                        row.push_back(view_result_set->getValue(row_idx, col_idx));
+                    }
+                    current_result_set_->addRow(std::move(row));
+                }
+            }
+            else
+            {
+                // SELECT col1, col2, ... FROM view - project specific columns
+                // Build a mapping of requested column names to view column indices
+                std::vector<size_t> column_indices;
+                std::vector<std::string> column_aliases;
+
+                for (const auto& [col_name, alias] : select_items)
+                {
+                    // Find this column in the view's result set
+                    bool found = false;
+                    for (size_t i = 0; i < view_result_set->columnCount(); i++)
+                    {
+                        if (view_result_set->columnName(i) == col_name)
+                        {
+                            column_indices.push_back(i);
+                            column_aliases.push_back(alias.empty() ? col_name : alias);
+                            found = true;
+                            break;
+                        }
+                    }
+
+                    if (!found)
+                    {
+                        error("Column not found in view " + view_info.name + ": " + col_name);
+                    }
+                }
+
+                // Add projected columns to result set
+                for (size_t i = 0; i < column_indices.size(); i++)
+                {
+                    size_t view_col_idx = column_indices[i];
+                    current_result_set_->addColumn(column_aliases[i],
+                                                   view_result_set->columnType(view_col_idx));
+                }
+
+                // Copy rows with only the projected columns
+                for (size_t row_idx = 0; row_idx < view_result_set->rowCount(); row_idx++)
+                {
+                    std::vector<Value> row;
+                    for (size_t proj_idx : column_indices)
+                    {
+                        row.push_back(view_result_set->getValue(row_idx, proj_idx));
+                    }
+                    current_result_set_->addRow(std::move(row));
+                }
+            }
         }
 
         void Executor::executeSelect()
