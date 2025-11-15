@@ -338,6 +338,11 @@ namespace scratchbird::core
             std::vector<std::string> column_names;  // Optional explicit columns
             uint64_t created_time;
             uint64_t last_modified_time;
+
+            // ALPHA Phase 1 - Materialized Views
+            bool materialized;              // True if this is a materialized view
+            ID materialized_table_id;       // Physical table storing the materialized data (if materialized)
+            uint64_t last_refresh_time;     // Timestamp of last REFRESH (0 if never refreshed)
         };
 
         // Column information
