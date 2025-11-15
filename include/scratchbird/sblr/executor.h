@@ -281,6 +281,9 @@ namespace scratchbird
             void executeDetachTablespace();        // Phase 6 Task 6.2
             void executeInsert();
             void executeSelect();
+            void executeViewQuery(const core::CatalogManager::ViewInfo& view_info,
+                                 const std::vector<std::pair<std::string, std::string>>& select_items,
+                                 bool is_select_star);  // ALPHA Phase 1 - Views
             void executeUpdate();           // Phase 1 Task 1.6.1
             void executeDelete();           // Phase 1 Task 1.6.2
             void executeNestedLoopJoin();   // Phase 1 Task 3.3
