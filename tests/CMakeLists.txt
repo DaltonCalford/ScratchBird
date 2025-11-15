@@ -752,3 +752,36 @@ set_tests_properties(ForeignKeys PROPERTIES
     LABELS "integration;constraints;foreign_key;referential_integrity"
     TIMEOUT 60
 )
+
+# Views Tests (ALPHA Phase 1 - Views Execution)
+add_executable(test_create_view_ast
+    unit/test_create_view_ast.cpp
+)
+target_link_libraries(test_create_view_ast
+    scratchbird_core
+    scratchbird_parser
+    scratchbird_sblr
+    gtest
+    gtest_main
+)
+add_test(NAME CreateViewAST COMMAND test_create_view_ast)
+set_tests_properties(CreateViewAST PROPERTIES
+    LABELS "unit;views;ast;alpha_phase1"
+    TIMEOUT 60
+)
+
+add_executable(test_views_comprehensive
+    unit/test_views_comprehensive.cpp
+)
+target_link_libraries(test_views_comprehensive
+    scratchbird_core
+    scratchbird_parser
+    scratchbird_sblr
+    gtest
+    gtest_main
+)
+add_test(NAME ViewsComprehensive COMMAND test_views_comprehensive)
+set_tests_properties(ViewsComprehensive PROPERTIES
+    LABELS "unit;views;comprehensive;alpha_phase1"
+    TIMEOUT 60
+)
