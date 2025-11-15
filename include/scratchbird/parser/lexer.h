@@ -49,6 +49,12 @@ namespace scratchbird
                 return string_pool_;
             }
 
+            // Get the original input text (ALPHA Phase 1 - Views)
+            std::string_view input() const
+            {
+                return input_;
+            }
+
         private:
             // Lexer state
             enum State
