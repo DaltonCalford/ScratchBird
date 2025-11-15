@@ -1,5 +1,8 @@
 #include "scratchbird/sblr/executor.h"
 #include "scratchbird/parser/ast.h"
+#include "scratchbird/parser/lexer.h"      // ALPHA Phase 1 - Views: For parsing view definitions
+#include "scratchbird/parser/parser.h"     // ALPHA Phase 1 - Views: For parsing view definitions
+#include "scratchbird/sblr/bytecode_generator.h"  // ALPHA Phase 1 - Views: For generating view bytecode
 #include "scratchbird/core/catalog_manager.h"
 #include "scratchbird/core/storage_engine.h"
 #include "scratchbird/core/heap_page.h"
@@ -6017,6 +6020,84 @@ namespace scratchbird
             }
         }
 
+        // ALPHA Phase 1 - Views: Execute a view's underlying SELECT query
+        void Executor::executeViewQuery(const core::CatalogManager::ViewInfo& view_info,
+                                       const std::vector<std::pair<std::string, std::string>>& select_items,
+                                       bool is_select_star)
+        {
+            // Parse the view's SELECT query definition
+            parser::Lexer lexer(view_info.definition);
+            parser::ASTArena arena;
+            parser::Parser parser(lexer, arena);
+
+            auto parse_result = parser.parseStatement();
+            if (!parse_result.success())
+            {
+                error("Failed to parse view definition for view: " + view_info.name);
+            }
+
+            auto* select_stmt = dynamic_cast<parser::SelectStmt*>(parse_result.statement());
+            if (!select_stmt)
+            {
+                error("View definition is not a SELECT statement: " + view_info.name);
+            }
+
+            // Generate bytecode for the view's SELECT query
+            BytecodeGenerator gen(lexer.stringPool(), db_);
+            auto bytecode_result = gen.generate(select_stmt);
+            if (!bytecode_result.success())
+            {
+                std::string error_msg = "Failed to generate bytecode for view: " + view_info.name;
+                if (!bytecode_result.errors().empty())
+                {
+                    error_msg += " - " + bytecode_result.errors()[0];
+                }
+                error(error_msg);
+            }
+
+            // Execute the view's bytecode
+            Executor view_executor(db_);
+            view_executor.setConnectionContext(conn_ctx_);  // Preserve security context
+            auto exec_result = view_executor.execute(bytecode_result.bytecode());
+
+            if (!exec_result.success())
+            {
+                error("Failed to execute view query: " + view_info.name + " - " + exec_result.error());
+            }
+
+            // Get the result set from the view execution
+            auto* view_result_set = exec_result.resultSet();
+            if (!view_result_set)
+            {
+                error("View query did not return a result set: " + view_info.name);
+            }
+
+            // Copy the result set from the view execution to the current result set
+            // (We need to copy because view_executor owns the result set)
+            current_result_set_ = std::make_unique<ResultSet>();
+
+            // Copy column definitions
+            for (size_t i = 0; i < view_result_set->columnCount(); i++)
+            {
+                current_result_set_->addColumn(view_result_set->columnName(i),
+                                               view_result_set->columnType(i));
+            }
+
+            // Copy rows
+            for (size_t row_idx = 0; row_idx < view_result_set->rowCount(); row_idx++)
+            {
+                std::vector<Value> row;
+                for (size_t col_idx = 0; col_idx < view_result_set->columnCount(); col_idx++)
+                {
+                    row.push_back(view_result_set->getValue(row_idx, col_idx));
+                }
+                current_result_set_->addRow(std::move(row));
+            }
+
+            // TODO ALPHA Phase 1: Add column projection for SELECT col1, col2 FROM view
+            // Currently we always return all columns from the view
+        }
+
         void Executor::executeSelect()
         {
             // Read select list
@@ -6099,7 +6180,19 @@ namespace scratchbird
                                                       nullptr);
             if (status != core::Status::OK)
             {
-                error("Table not found: " + table_name);
+                // ALPHA Phase 1 - Views: Check if this is a view instead of a table
+                core::CatalogManager::ViewInfo view_info;
+                core::ErrorContext view_ctx;
+                auto view_status = db_->catalog_manager()->getView(schema_info.schema_id, table_name, view_info, &view_ctx);
+
+                if (view_status == core::Status::OK)
+                {
+                    // This is a view - execute the view's SELECT query
+                    executeViewQuery(view_info, select_items, is_select_star);
+                    return;
+                }
+
+                error("Table or view not found: " + table_name);
             }
 
             // Check SELECT permission on table
