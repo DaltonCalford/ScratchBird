@@ -312,13 +312,16 @@ namespace scratchbird
             KW_CACHE,     // ALPHA Phase 1 - Sequences
             KW_CYCLE,     // ALPHA Phase 1 - Sequences
             KW_RESTART,   // ALPHA Phase 1 - Sequences
-            KW_NEXTVAL,   // ALPHA Phase 1 - Sequences (function)
-            KW_CURRVAL,   // ALPHA Phase 1 - Sequences (function)
-            KW_SETVAL,    // ALPHA Phase 1 - Sequences (function)
-            KW_VIEW,      // ALPHA Phase 1 - Views
-            KW_REPLACE,   // ALPHA Phase 1 - Views (CREATE OR REPLACE)
-            KW_CHECK,     // ALPHA Phase 1 - Views (WITH CHECK OPTION)
-            KW_OPTION,    // ALPHA Phase 1 - Views (WITH CHECK OPTION)
+            KW_NEXTVAL,      // ALPHA Phase 1 - Sequences (function)
+            KW_CURRVAL,      // ALPHA Phase 1 - Sequences (function)
+            KW_SETVAL,       // ALPHA Phase 1 - Sequences (function)
+            KW_VIEW,         // ALPHA Phase 1 - Views
+            KW_REPLACE,      // ALPHA Phase 1 - Views (CREATE OR REPLACE)
+            KW_MATERIALIZED, // ALPHA Phase 1 - Materialized Views
+            KW_REFRESH,      // ALPHA Phase 1 - Materialized Views (REFRESH MATERIALIZED VIEW)
+            KW_CONCURRENTLY, // ALPHA Phase 1 - Materialized Views (REFRESH CONCURRENTLY)
+            KW_CHECK,        // ALPHA Phase 1 - Views (WITH CHECK OPTION)
+            KW_OPTION,       // ALPHA Phase 1 - Views (WITH CHECK OPTION)
             KW_ON,
             KW_OFF,
             KW_ALTER,  // Phase 2 Task 2.2

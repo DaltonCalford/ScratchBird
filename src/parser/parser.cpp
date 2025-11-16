@@ -133,7 +133,7 @@ namespace scratchbird
                     {
                         stmt = parseCreateSequence();
                     }
-                    else if (check(TokenType::KW_VIEW) || check(TokenType::KW_OR))
+                    else if (check(TokenType::KW_VIEW) || check(TokenType::KW_OR) || check(TokenType::KW_MATERIALIZED))
                     {
                         stmt = parseCreateView();
                     }
@@ -3618,10 +3618,11 @@ namespace scratchbird
 
         Statement *Parser::parseCreateView()
         {
-            // CREATE [OR REPLACE] VIEW name [(column_list)] AS SELECT ...
+            // CREATE [OR REPLACE] [MATERIALIZED] VIEW name [(column_list)] AS SELECT ...
             // [WITH CHECK OPTION]
             auto start_loc = previous().location;
             bool or_replace = false;
+            bool materialized = false;
 
             // Check for OR REPLACE
             if (match(TokenType::KW_OR))
@@ -3632,6 +3633,12 @@ namespace scratchbird
                     return nullptr;
                 }
                 or_replace = true;
+            }
+
+            // Check for MATERIALIZED
+            if (match(TokenType::KW_MATERIALIZED))
+            {
+                materialized = true;
             }
 
             // VIEW keyword
@@ -3708,7 +3715,7 @@ namespace scratchbird
             // Create AST node
             auto *stmt = arena_.make<CreateViewStmt>(
                 makeSpan(start_loc), view_name,
-                static_cast<SelectStmt*>(query), or_replace);
+                static_cast<SelectStmt*>(query), or_replace, materialized);
 
             // Store the actual SELECT query text
             stmt->setQueryDefinitionText(std::move(query_text));

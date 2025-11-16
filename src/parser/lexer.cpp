@@ -261,10 +261,13 @@ namespace scratchbird
             {"NEXTVAL", TokenType::KW_NEXTVAL},    // ALPHA Phase 1 - Sequences
             {"CURRVAL", TokenType::KW_CURRVAL},    // ALPHA Phase 1 - Sequences
             {"SETVAL", TokenType::KW_SETVAL},      // ALPHA Phase 1 - Sequences
-            {"VIEW", TokenType::KW_VIEW},          // ALPHA Phase 1 - Views
-            {"REPLACE", TokenType::KW_REPLACE},    // ALPHA Phase 1 - Views (CREATE OR REPLACE)
-            {"CHECK", TokenType::KW_CHECK},        // ALPHA Phase 1 - Views (WITH CHECK OPTION)
-            {"OPTION", TokenType::KW_OPTION},      // ALPHA Phase 1 - Views (WITH CHECK OPTION)
+            {"VIEW", TokenType::KW_VIEW},              // ALPHA Phase 1 - Views
+            {"REPLACE", TokenType::KW_REPLACE},        // ALPHA Phase 1 - Views (CREATE OR REPLACE)
+            {"MATERIALIZED", TokenType::KW_MATERIALIZED}, // ALPHA Phase 1 - Materialized Views
+            {"REFRESH", TokenType::KW_REFRESH},        // ALPHA Phase 1 - Materialized Views
+            {"CONCURRENTLY", TokenType::KW_CONCURRENTLY}, // ALPHA Phase 1 - Materialized Views
+            {"CHECK", TokenType::KW_CHECK},            // ALPHA Phase 1 - Views (WITH CHECK OPTION)
+            {"OPTION", TokenType::KW_OPTION},          // ALPHA Phase 1 - Views (WITH CHECK OPTION)
             {"ON", TokenType::KW_ON},
             {"OFF", TokenType::KW_OFF},
             {"ALTER", TokenType::KW_ALTER},   // Phase 2 Task 2.2
