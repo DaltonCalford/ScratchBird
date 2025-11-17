@@ -8273,7 +8273,7 @@ auto CatalogManager::getSequenceIdByName(const std::string& name, ID& id_out, Er
 
 auto CatalogManager::createView(const ID& schema_id, const std::string& name,
                                   const std::string& definition, bool or_replace,
-                                  bool check_option,
+                                  bool check_option, bool materialized,
                                   const std::vector<std::string>& column_names,
                                   ErrorContext* ctx) -> Status
 {
@@ -8294,10 +8294,11 @@ auto CatalogManager::createView(const ID& schema_id, const std::string& name,
         ViewInfo& view = view_cache_[it->second];
         view.definition = definition;
         view.check_option = check_option;
+        view.materialized = materialized;  // ALPHA Phase 1 - Materialized Views
         view.column_names = column_names;
         view.last_modified_time = std::chrono::system_clock::now().time_since_epoch().count();
 
-        LOG_INFO(CATALOG, "Replaced view '%s'", name.c_str());
+        LOG_INFO(CATALOG, "Replaced %sview '%s'", materialized ? "materialized " : "", name.c_str());
         return Status::OK;
     }
 
@@ -8309,14 +8310,24 @@ auto CatalogManager::createView(const ID& schema_id, const std::string& name,
     view.owner_id = resolveOwnerUUID("system");  // Phase 6 TODO: Get from session context
     view.definition = definition;
     view.check_option = check_option;
+    view.materialized = materialized;  // ALPHA Phase 1 - Materialized Views
     view.column_names = column_names;
     view.created_time = std::chrono::system_clock::now().time_since_epoch().count();
     view.last_modified_time = view.created_time;
 
+    // ALPHA Phase 1 - Materialized Views
+    if (materialized) {
+        view.materialized_table_id = ID{};  // TODO: Create physical table for materialized data
+        view.last_refresh_time = 0;  // Not yet refreshed
+    } else {
+        view.materialized_table_id = ID{};
+        view.last_refresh_time = 0;
+    }
+
     view_cache_[view.view_id] = view;
     view_name_to_id_[name] = view.view_id;
 
-    LOG_INFO(CATALOG, "Created view '%s'", name.c_str());
+    LOG_INFO(CATALOG, "Created %sview '%s'", materialized ? "materialized " : "", name.c_str());
     return Status::OK;
 }
 
@@ -8340,6 +8351,44 @@ auto CatalogManager::dropView(const ID& view_id, bool cascade, ErrorContext* ctx
     view_name_to_id_.erase(view_name);
 
     LOG_INFO(CATALOG, "Dropped view '%s'", view_name.c_str());
+    return Status::OK;
+}
+
+auto CatalogManager::refreshMaterializedView(const ID& view_id, bool concurrently,
+                                               ErrorContext* ctx) -> Status
+{
+    // ALPHA Phase 1 - Materialized Views: REFRESH MATERIALIZED VIEW
+    std::lock_guard<std::mutex> lock(view_cache_mutex_);
+
+    auto it = view_cache_.find(view_id);
+    if (it == view_cache_.end())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "View not found");
+        return Status::NOT_FOUND;
+    }
+
+    ViewInfo& view = it->second;
+
+    // Verify it's a materialized view
+    if (!view.materialized)
+    {
+        std::string msg = "View '" + view.name + "' is not materialized";
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, msg.c_str());
+        return Status::INVALID_ARGUMENT;
+    }
+
+    // TODO: ALPHA Phase 1 - Implement actual refresh logic:
+    // 1. Parse and execute the view's SELECT query
+    // 2. If concurrently=true: create temp table, populate, swap atomically
+    // 3. If concurrently=false: truncate existing table, repopulate
+    // 4. Update last_refresh_time
+
+    // For now, just update the timestamp
+    view.last_refresh_time = std::chrono::system_clock::now().time_since_epoch().count();
+
+    LOG_INFO(CATALOG, "Refreshed materialized view '%s' %s",
+             view.name.c_str(), concurrently ? "(CONCURRENTLY)" : "");
+
     return Status::OK;
 }
 

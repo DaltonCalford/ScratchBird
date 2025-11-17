@@ -148,6 +148,11 @@ namespace scratchbird
             visitor->visit(this);
         }
 
+        void RefreshMaterializedViewStmt::accept(ASTVisitor *visitor)
+        {
+            visitor->visit(this);
+        }
+
         void CreateTablespaceStmt::accept(ASTVisitor *visitor)
         {
             visitor->visit(this);

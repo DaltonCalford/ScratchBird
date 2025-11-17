@@ -123,6 +123,7 @@ namespace scratchbird
             void visit(parser::DropSequenceStmt *node) override;             // ALPHA Phase 1 - Sequences
             void visit(parser::CreateViewStmt *node) override;               // ALPHA Phase 1 - Views
             void visit(parser::DropViewStmt *node) override;                 // ALPHA Phase 1 - Views
+            void visit(parser::RefreshMaterializedViewStmt *node) override;  // ALPHA Phase 1 - Materialized Views
             void visit(parser::DropTablespaceStmt *node) override;          // Phase 2 Task 2.1
             void visit(parser::AttachTablespaceStmt *node) override;        // Phase 6 Task 6.1
             void visit(parser::DetachTablespaceStmt *node) override;        // Phase 6 Task 6.2

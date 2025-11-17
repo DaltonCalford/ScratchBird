@@ -119,6 +119,7 @@ namespace scratchbird
             Statement *parseDropSequence();          // ALPHA Phase 1 - Sequences
             Statement *parseCreateView();            // ALPHA Phase 1 - Views
             Statement *parseDropView();              // ALPHA Phase 1 - Views
+            Statement *parseRefreshMaterializedView(); // ALPHA Phase 1 - Materialized Views
             Statement *parseDropTablespace();        // Phase 2 Task 2.1
             Statement *parseAttachTablespace();      // Phase 6 Task 6.1
             Statement *parseDetachTablespace();      // Phase 6 Task 6.2
