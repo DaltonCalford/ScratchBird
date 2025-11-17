@@ -75,7 +75,7 @@ constexpr uint64_t GPID_PAGE_NUMBER_MASK = 0x0000FFFFFFFFFFFF;
  * Example:
  *   GPID gpid = makeGPID(5, 1000);  // Tablespace 5, page 1000
  */
-inline GPID makeGPID(uint16_t tablespace_id, uint64_t page_number)
+constexpr inline GPID makeGPID(uint16_t tablespace_id, uint64_t page_number)
 {
     // Ensure page_number fits in 48 bits
     page_number &= GPID_PAGE_NUMBER_MASK;
@@ -94,7 +94,7 @@ inline GPID makeGPID(uint16_t tablespace_id, uint64_t page_number)
  *   GPID gpid = 0x00050000000003E8;  // Tablespace 5, page 1000
  *   uint16_t ts_id = getTablespaceID(gpid);  // Returns 5
  */
-inline uint16_t getTablespaceID(GPID gpid)
+constexpr inline uint16_t getTablespaceID(GPID gpid)
 {
     return static_cast<uint16_t>(gpid >> GPID_TABLESPACE_SHIFT);
 }
@@ -109,7 +109,7 @@ inline uint16_t getTablespaceID(GPID gpid)
  *   GPID gpid = 0x00050000000003E8;  // Tablespace 5, page 1000
  *   uint64_t page_num = getPageNumber(gpid);  // Returns 1000
  */
-inline uint64_t getPageNumber(GPID gpid)
+constexpr inline uint64_t getPageNumber(GPID gpid)
 {
     return gpid & GPID_PAGE_NUMBER_MASK;
 }
