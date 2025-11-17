@@ -350,7 +350,7 @@
 - Catalog metadata storage for PK identity
 - ALTER TABLE ADD/DROP PRIMARY KEY
 
-**Commit**: Pending
+**Commit**: ✅ `8f73eaf` - "PRIMARY KEY Parser Integration Complete" (Nov 14, 2025)
 
 #### 3. Foreign Key Disk Persistence (Phase D) - 40-60 hours
 **Status**: Runtime enforcement 100% complete (Nov 14, 2025), disk persistence needed
