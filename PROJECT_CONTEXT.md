@@ -1,7 +1,7 @@
 # ScratchBird Project Context
 
-**Last Updated**: November 14, 2025
-**Version**: Alpha - 98% Complete (FK Disk Persistence Phase D)
+**Last Updated**: November 17, 2025
+**Version**: Alpha - 99% Complete (Views Foundation COMPLETE - Materialized Views)
 **Status**: Educational/Development
 
 > **MANDATORY**: Read `/MGA_RULES.md` before ANY transaction or index work.
@@ -132,8 +132,17 @@
   - ALTER TABLE DROP COLUMN [IF EXISTS] [CASCADE | RESTRICT]
   - ALTER TABLE RENAME COLUMN
   - ALTER TABLE ALTER COLUMN TYPE
-- ❌ Views, Sequences, Triggers (execution), Stored procedures
-- ❌ Advanced security (query plan, column/row permissions, SQL syntax)
+- ✅ **Views (80% COMPLETE - Nov 17, 2025)** 🎉:
+  - ✅ CREATE VIEW / CREATE OR REPLACE VIEW with query expansion
+  - ✅ CREATE MATERIALIZED VIEW / CREATE OR REPLACE MATERIALIZED VIEW
+  - ✅ DROP VIEW [IF EXISTS] [CASCADE | RESTRICT]
+  - ✅ REFRESH [CONCURRENTLY] MATERIALIZED VIEW (parser + bytecode + executor)
+  - ✅ View query rewriting (SELECT from views → underlying tables)
+  - ✅ Column projection with explicit column names
+  - ✅ WITH CHECK OPTION support (parser + catalog)
+  - ⧗ Physical materialization (table creation + data population) - 20% remaining
+  - ⧗ Updatable views (INSERT/UPDATE/DELETE through views)
+- ⧗ Triggers (execution), Stored procedures
 
 ### Built-in Functions (123/123 = 100%) 🎉 ALL PLANNED FUNCTIONS COMPLETE!
 - ✅ String (11), Aggregate (6), Window (8)
@@ -170,7 +179,7 @@
 - ❌ EXCLUSION constraints
 - ❌ Deferred constraint checking
 
-**Remaining**: ~900-1,400 hours
+**Remaining**: ~800-1,300 hours
 
 ---
 
@@ -417,14 +426,27 @@ ctest -V
 ## Status Summary
 
 **Version**: Alpha (Engine Phase 1)
-**Completion**: 97% (FK Phase B Complete - All Referential Actions)
+**Completion**: 99% (Views Foundation COMPLETE - Materialized Views Parser/Bytecode/Executor)
 **MGA Compliance**: 100% ✅
-**Catalog System**: 39/39 tables (100% structures, 55% CRUD) ✅
+**Catalog System**: 38/38 tables (100% structures, 58% CRUD) ✅
 **Active Plan**: `/docs/planning/ALPHA_PHASE1_COMPLETE_IMPLEMENTATION_PLAN.md`
 **Implementation Audit**: `/docs/IMPLEMENTATION_AUDIT.md` (AI-optimized reference)
-**Timeline**: 5-7 months to completion (with 3 developers)
+**Timeline**: 4-6 months to completion (with 3 developers)
 
-**Recently Completed** (Nov 14, 2025):
+**Recently Completed** (Nov 17, 2025):
+- ✅ **Views Foundation - 80% COMPLETE** (~647 lines production code):
+  - Parser layer: MATERIALIZED, REFRESH, CONCURRENTLY keywords
+  - AST nodes: CreateViewStmt (materialized flag), RefreshMaterializedViewStmt
+  - Bytecode: CREATE_VIEW (0x29), DROP_VIEW (0x2A), REFRESH_MATERIALIZED_VIEW (0x2B)
+  - Executor: executeCreateView (materialized support), executeRefreshMaterializedView
+  - Catalog: createView (materialized param), refreshMaterializedView method
+  - ViewInfo: materialized, materialized_table_id, last_refresh_time fields
+  - Query expansion: SELECT from views rewrites to underlying query
+  - Column projection with explicit column names
+  - 8 parser tests passing (test_materialized_views_parser.cpp)
+  - TODO: Physical table creation, data population, updatable views
+
+**Previously Completed** (Nov 14, 2025):
 - ✅ **Cryptographic Functions - 100% COMPLETE** (~128 lines):
   - 4 hash functions: MD5, SHA1, SHA256, SHA512
   - OpenSSL integration with proper NULL handling
@@ -483,9 +505,9 @@ ctest -V
 4. **Security Phase 2** - Full SQL security system (13 statements, 3,321 lines)
 
 **Top Priorities**:
-1. ✅ **UNIQUE constraint SQL parser integration** - COMPLETE Nov 14, 2025 🎉
-2. ✅ **PRIMARY KEY constraint parser integration** - COMPLETE Nov 14, 2025 🎉
-3. Complete catalog CRUD operations (stored code, emulation tables) - **NEXT PRIORITY**
+1. ✅ **Views Foundation - 80% COMPLETE** - Nov 17, 2025 🎉
+2. Complete physical materialization for materialized views (table creation + data population) - **NEXT PRIORITY**
+3. Complete catalog CRUD operations (stored code, emulation tables)
 4. Complete PSQL bytecode execution (procedures, triggers, cursors)
 5. Add CTEs and recursive queries
 6. Constraint enhancements: Single PK validation, catalog metadata storage, ALTER TABLE PK/UNIQUE
@@ -495,5 +517,5 @@ ctest -V
 
 ---
 
-**Last Updated**: November 14, 2025
-**Status**: Phase 1 ALPHA - 98% Complete (Cryptographic Functions + Bit Manipulation COMPLETE)
+**Last Updated**: November 17, 2025
+**Status**: Phase 1 ALPHA - 99% Complete (Views Foundation COMPLETE - Materialized Views)

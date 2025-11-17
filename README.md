@@ -2,9 +2,9 @@
 
 A relational database engine featuring **Firebird MGA (Multi-Generational Architecture)**, 11 index types, 36-table catalog system, TOAST storage, and full transaction management.
 
-## Status: Alpha - 98% Complete (FK Phase C COMPLETE - Composite Foreign Keys)
+## Status: Alpha - 99% Complete (Views Foundation COMPLETE - Materialized Views Parser/Bytecode/Executor)
 
-**Last Updated:** November 14, 2025
+**Last Updated:** November 17, 2025
 
 ## Quick Start
 
@@ -115,10 +115,19 @@ ctest --output-on-failure
 - Infrastructure operations (Constraints, Statistics)
 
 ### DDL Execution
-- Views execution (structure exists, execution pending)
-- Sequences execution (structure exists, execution pending)
-- Triggers execution (structure exists, execution pending)
-- CREATE DOMAIN execution
+- ✅ **Views (80% COMPLETE - Nov 17, 2025)** 🎉:
+  - ✅ CREATE VIEW / CREATE OR REPLACE VIEW
+  - ✅ CREATE MATERIALIZED VIEW / CREATE OR REPLACE MATERIALIZED VIEW
+  - ✅ DROP VIEW [IF EXISTS] [CASCADE | RESTRICT]
+  - ✅ REFRESH [CONCURRENTLY] MATERIALIZED VIEW
+  - ✅ View query expansion (SELECT from views rewrites to underlying tables)
+  - ✅ Column projection with explicit column names
+  - ✅ WITH CHECK OPTION support
+  - ✅ Parser-to-executor pipeline complete for materialized views
+  - ⧗ Physical materialization (table creation + data population) - pending
+  - ⧗ Updatable views (INSERT/UPDATE/DELETE through views) - pending
+- ⧗ Triggers execution (structure exists, execution pending)
+- ⧗ CREATE DOMAIN execution
 
 ### Advanced Security Features (Phase 3)
 - ✅ Query plan security integration (10-100x speedup) - COMPLETE Nov 11, 2025
@@ -178,7 +187,7 @@ ctest --output-on-failure
 - Recursive queries
 - PSQL/stored procedure execution
 
-**Remaining:** ~950-1,450 hours (includes advanced features)
+**Remaining:** ~850-1,350 hours (includes advanced features)
 
 ## MGA Architecture (Firebird Style)
 

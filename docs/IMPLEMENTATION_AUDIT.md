@@ -1771,3 +1771,212 @@ builtins_["COS"] = BuiltinFunction::COS;
 **Updated**: 2025-11-14 - Added Bit Manipulation Functions + Test Infrastructure
 **Total Functions**: 179+ (131 catalog + 5 RLS + 29 math + 14 bit)
 **LOC**: executor.cpp (+3,013 lines), parser.cpp (+63 lines), bytecode_generator.cpp (+309 lines)
+
+---
+
+## VIEWS FOUNDATION ✅ **80% COMPLETE** (Nov 17, 2025)
+
+**Status**: Parser-to-executor pipeline complete for materialized views
+
+### ViewInfo Structure
+
+**File**: `include/scratchbird/core/catalog_manager.h:331-346`
+
+```cpp
+struct ViewInfo {
+    ID view_id;
+    ID schema_id;
+    std::string name;
+    ID owner_id;
+    std::string definition;  // SELECT query text
+    bool check_option;
+    std::vector<std::string> column_names;  // Optional explicit columns
+    uint64_t created_time;
+    uint64_t last_modified_time;
+
+    // ALPHA Phase 1 - Materialized Views
+    bool materialized;              // True if this is a materialized view
+    ID materialized_table_id;       // Physical table storing the materialized data (if materialized)
+    uint64_t last_refresh_time;     // Timestamp of last REFRESH (0 if never refreshed)
+};
+```
+
+### Catalog Manager - Views Operations
+
+**File**: `include/scratchbird/core/catalog_manager.h:1017-1032`
+**File**: `src/core/catalog_manager.cpp:8274-8332` (createView)
+**File**: `src/core/catalog_manager.cpp:8334-8355` (dropView)
+**File**: `src/core/catalog_manager.cpp:8357-8393` (refreshMaterializedView)
+
+```cpp
+// Create view (with materialized support)
+auto createView(const ID& schema_id, const std::string& name,
+                const std::string& definition, bool or_replace, bool check_option,
+                bool materialized, const std::vector<std::string>& column_names,
+                ErrorContext* ctx = nullptr) -> Status;
+
+// Drop view
+auto dropView(const ID& view_id, bool cascade,
+              ErrorContext* ctx = nullptr) -> Status;
+
+// Refresh materialized view (ALPHA Phase 1 - Materialized Views)
+auto refreshMaterializedView(const ID& view_id, bool concurrently,
+                              ErrorContext* ctx = nullptr) -> Status;
+
+// Query views
+auto getView(const ID& schema_id, const std::string& name,
+             ViewInfo& info_out, ErrorContext* ctx = nullptr) -> Status;
+
+auto getViewIdByName(const std::string& name, ID& id_out,
+                     ErrorContext* ctx = nullptr) -> Status;
+
+auto isView(const std::string& name) -> bool;
+```
+
+### Parser - View Statements
+
+**File**: `include/scratchbird/parser/parser.h:120-122`
+**File**: `src/parser/parser.cpp:3619-3718` (parseCreateView)
+**File**: `src/parser/parser.cpp:3720-3800` (parseDropView)
+**File**: `src/parser/parser.cpp:3805-3850` (parseRefreshMaterializedView)
+
+```cpp
+Statement *parseCreateView();            // ALPHA Phase 1 - Views
+Statement *parseDropView();              // ALPHA Phase 1 - Views
+Statement *parseRefreshMaterializedView(); // ALPHA Phase 1 - Materialized Views
+```
+
+### AST Nodes - Views
+
+**File**: `include/scratchbird/parser/ast.h:2855-2882` (CreateViewStmt)
+**File**: `include/scratchbird/parser/ast.h:2884-2906` (DropViewStmt)
+**File**: `include/scratchbird/parser/ast.h:2908-2930` (RefreshMaterializedViewStmt)
+
+```cpp
+// CREATE [MATERIALIZED] VIEW
+class CreateViewStmt : public Statement {
+    StringId name_;
+    SelectStmt* query_;
+    bool or_replace_;
+    bool materialized_;  // ALPHA Phase 1 - Materialized Views
+    std::vector<StringId> column_names_;
+    bool check_option_;
+    std::string query_text_;  // Original SELECT query as text
+};
+
+// DROP VIEW
+class DropViewStmt : public Statement {
+    StringId name_;
+    bool if_exists_;
+    bool cascade_;
+};
+
+// REFRESH [CONCURRENTLY] MATERIALIZED VIEW
+class RefreshMaterializedViewStmt : public Statement {
+    StringId name_;
+    bool concurrently_;
+};
+```
+
+### Bytecode Generation - Views
+
+**File**: `include/scratchbird/sblr/opcodes.h:32-34`
+
+```cpp
+CREATE_VIEW = 0x29,               // Create view (ALPHA Phase 1 - Views)
+DROP_VIEW = 0x2A,                 // Drop view (ALPHA Phase 1 - Views)
+REFRESH_MATERIALIZED_VIEW = 0x2B, // Refresh materialized view (ALPHA Phase 1 - Materialized Views)
+```
+
+**File**: `src/sblr/bytecode_generator.cpp:632-665` (visit CreateViewStmt)
+**File**: `src/sblr/bytecode_generator.cpp:667-682` (visit DropViewStmt)
+**File**: `src/sblr/bytecode_generator.cpp:684-697` (visit RefreshMaterializedViewStmt)
+
+**Bytecode Format - CREATE_VIEW**:
+- Opcode: 0x29
+- View name (string)
+- Flags (uint8_t): 0x01=or_replace, 0x02=check_option, 0x04=has_column_names, 0x08=materialized
+- Column names if present (count + strings)
+- Query definition text (string)
+
+**Bytecode Format - REFRESH_MATERIALIZED_VIEW**:
+- Opcode: 0x2B
+- View name (string)
+- Flags (uint8_t): 0x01=concurrently
+
+### Executor - Views
+
+**File**: `include/scratchbird/sblr/executor.h:310-312`
+**File**: `src/sblr/executor.cpp:3068-3119` (executeCreateView)
+**File**: `src/sblr/executor.cpp:3121-3164` (executeDropView)
+**File**: `src/sblr/executor.cpp:3166-3201` (executeRefreshMaterializedView)
+
+```cpp
+void executeCreateView();
+void executeDropView();
+void executeRefreshMaterializedView();  // ALPHA Phase 1 - Materialized Views
+```
+
+**Executor Logic**:
+- CREATE VIEW: Read flags (including materialized), pass to catalog createView()
+- DROP VIEW: Standard IF EXISTS + CASCADE handling
+- REFRESH MATERIALIZED VIEW: Lookup view, verify materialized, update timestamp
+  - TODO: Parse and execute SELECT query, populate physical table
+  - TODO: Implement CONCURRENTLY option (temp table + atomic swap)
+
+### Lexer Tokens - Views
+
+**File**: `include/scratchbird/parser/token.h:315-322`
+**File**: `src/parser/lexer.cpp:264-270`
+
+```cpp
+KW_VIEW,         // ALPHA Phase 1 - Views
+KW_REPLACE,      // ALPHA Phase 1 - Views (CREATE OR REPLACE)
+KW_MATERIALIZED, // ALPHA Phase 1 - Materialized Views
+KW_REFRESH,      // ALPHA Phase 1 - Materialized Views (REFRESH MATERIALIZED VIEW)
+KW_CONCURRENTLY, // ALPHA Phase 1 - Materialized Views (REFRESH CONCURRENTLY)
+KW_CHECK,        // ALPHA Phase 1 - Views (WITH CHECK OPTION)
+KW_OPTION,       // ALPHA Phase 1 - Views (WITH CHECK OPTION)
+```
+
+### Tests - Views
+
+**File**: `tests/unit/test_materialized_views_parser.cpp` (8 tests)
+
+**Test Coverage**:
+1. CreateMaterializedView - Basic CREATE MATERIALIZED VIEW parsing
+2. CreateOrReplaceMaterializedView - OR REPLACE variant
+3. RegularViewNotMaterialized - Regular views should NOT be materialized
+4. RefreshMaterializedView - REFRESH MATERIALIZED VIEW parsing
+5. RefreshConcurrentlyMaterializedView - REFRESH CONCURRENTLY variant
+6. MaterializedViewNameExtraction - View name captured correctly
+7. RefreshViewNameExtraction - REFRESH view name extraction
+8. MaterializedViewQueryDefinition - Query definition preserved
+
+**Status**: All 8 tests passing
+
+### TODO - Physical Materialization (20% remaining)
+
+**Location**: Executor layer (`src/sblr/executor.cpp`)
+
+**Required Work**:
+1. **CREATE MATERIALIZED VIEW**: 
+   - Generate unique physical table name (e.g., `_mv_<view_id>`)
+   - Parse view SELECT query
+   - Execute query to get result schema and data
+   - Create physical table with matching schema
+   - Insert results into physical table
+   - Store materialized_table_id in ViewInfo
+
+2. **REFRESH MATERIALIZED VIEW**:
+   - Standard refresh: TRUNCATE physical table, re-execute query, re-populate
+   - CONCURRENTLY refresh: Create temp table, populate, DROP old / RENAME temp (atomic swap)
+   - Update last_refresh_time
+
+3. **DROP MATERIALIZED VIEW**:
+   - Drop physical table before dropping view metadata
+
+4. **Updatable Views** (future):
+   - INSERT/UPDATE/DELETE rewriting to base tables
+   - WITH CHECK OPTION enforcement
+
