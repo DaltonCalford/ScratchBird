@@ -69,7 +69,7 @@ namespace scratchbird
 
             // Initialize meta page header
             meta->hip_header.magic = K_MAGIC_SBRD;
-            meta->hip_header.version = DB_VERSION_ALPHA_1_0_1;
+            meta->hip_header.version = static_cast<uint16_t>(DB_VERSION_ALPHA_1_0_1 & 0xFFFF);
             meta->hip_header.page_type = static_cast<uint16_t>(PageType::GIN_INDEX_META);
             meta->hip_header.page_size = db->page_size();
             meta->hip_header.page_id = meta_page;
@@ -229,7 +229,7 @@ namespace scratchbird
                 std::memset(pending, 0, sizeof(SBGinPendingListPage));
 
                 pending->gpp_header.magic = K_MAGIC_SBRD;
-                pending->gpp_header.version = DB_VERSION_ALPHA_1_0_1;
+                pending->gpp_header.version = static_cast<uint16_t>(DB_VERSION_ALPHA_1_0_1 & 0xFFFF);
                 pending->gpp_header.page_type = static_cast<uint16_t>(PageType::GIN_PENDING_LIST);
                 pending->gpp_header.page_size = db_->page_size();
                 pending->gpp_header.page_id = pending_page;
@@ -281,7 +281,7 @@ namespace scratchbird
                 std::memset(new_pending, 0, sizeof(SBGinPendingListPage));
 
                 new_pending->gpp_header.magic = K_MAGIC_SBRD;
-                new_pending->gpp_header.version = DB_VERSION_ALPHA_1_0_1;
+                new_pending->gpp_header.version = static_cast<uint16_t>(DB_VERSION_ALPHA_1_0_1 & 0xFFFF);
                 new_pending->gpp_header.page_type = static_cast<uint16_t>(PageType::GIN_PENDING_LIST);
                 new_pending->gpp_header.page_size = db_->page_size();
                 new_pending->gpp_header.page_id = new_pending_page;
@@ -733,7 +733,7 @@ namespace scratchbird
             std::memset(list_page, 0, sizeof(SBGinPostingListPage));
 
             list_page->gpl_header.magic = K_MAGIC_SBRD;
-            list_page->gpl_header.version = DB_VERSION_ALPHA_1_0_1;
+            list_page->gpl_header.version = static_cast<uint16_t>(DB_VERSION_ALPHA_1_0_1 & 0xFFFF);
             list_page->gpl_header.page_type = static_cast<uint16_t>(PageType::GIN_POSTING_LIST);
             list_page->gpl_header.page_size = db_->page_size();
             list_page->gpl_header.page_id = new_posting_page;
@@ -951,7 +951,7 @@ namespace scratchbird
             std::memset(leaf, 0, sizeof(SBGinPostingTreeLeaf));
 
             leaf->gpt_header.magic = K_MAGIC_SBRD;
-            leaf->gpt_header.version = DB_VERSION_ALPHA_1_0_1;
+            leaf->gpt_header.version = static_cast<uint16_t>(DB_VERSION_ALPHA_1_0_1 & 0xFFFF);
             leaf->gpt_header.page_type = static_cast<uint16_t>(PageType::GIN_POSTING_TREE);
             leaf->gpt_header.page_size = db_->page_size();
             leaf->gpt_header.page_id = leaf_page;
@@ -1110,7 +1110,7 @@ namespace scratchbird
                 std::memset(root, 0, sizeof(SBGinPostingTreeInternal));
 
                 root->gpt_header.magic = K_MAGIC_SBRD;
-                root->gpt_header.version = DB_VERSION_ALPHA_1_0_1;
+                root->gpt_header.version = static_cast<uint16_t>(DB_VERSION_ALPHA_1_0_1 & 0xFFFF);
                 root->gpt_header.page_type = static_cast<uint16_t>(PageType::GIN_POSTING_TREE);
                 root->gpt_header.page_size = db_->page_size();
                 root->gpt_header.page_id = new_root;
@@ -1235,7 +1235,7 @@ namespace scratchbird
             std::memset(sibling, 0, sizeof(SBGinPostingTreeLeaf));
 
             sibling->gpt_header.magic = K_MAGIC_SBRD;
-            sibling->gpt_header.version = DB_VERSION_ALPHA_1_0_1;
+            sibling->gpt_header.version = static_cast<uint16_t>(DB_VERSION_ALPHA_1_0_1 & 0xFFFF);
             sibling->gpt_header.page_type = static_cast<uint16_t>(PageType::GIN_POSTING_TREE);
             sibling->gpt_header.page_size = db_->page_size();
             sibling->gpt_header.page_id = new_sibling;
@@ -1462,7 +1462,7 @@ namespace scratchbird
             std::memset(sibling, 0, sizeof(SBGinPostingTreeInternal));
 
             sibling->gpt_header.magic = K_MAGIC_SBRD;
-            sibling->gpt_header.version = DB_VERSION_ALPHA_1_0_1;
+            sibling->gpt_header.version = static_cast<uint16_t>(DB_VERSION_ALPHA_1_0_1 & 0xFFFF);
             sibling->gpt_header.page_type = static_cast<uint16_t>(PageType::GIN_POSTING_TREE);
             sibling->gpt_header.page_size = db_->page_size();
             sibling->gpt_header.page_id = new_sibling;
@@ -1561,7 +1561,7 @@ namespace scratchbird
                 std::memset(leaf, 0, sizeof(SBGinEntryTreeLeaf));
 
                 leaf->get_header.magic = K_MAGIC_SBRD;
-                leaf->get_header.version = DB_VERSION_ALPHA_1_0_1;
+                leaf->get_header.version = static_cast<uint16_t>(DB_VERSION_ALPHA_1_0_1 & 0xFFFF);
                 leaf->get_header.page_type = static_cast<uint16_t>(PageType::GIN_INDEX_META);
                 leaf->get_header.page_size = db_->page_size();
                 leaf->get_header.page_id = root_page;
@@ -1854,7 +1854,7 @@ namespace scratchbird
             std::memset(sibling, 0, sizeof(SBGinEntryTreeLeaf));
 
             sibling->get_header.magic = K_MAGIC_SBRD;
-            sibling->get_header.version = DB_VERSION_ALPHA_1_0_1;
+            sibling->get_header.version = static_cast<uint16_t>(DB_VERSION_ALPHA_1_0_1 & 0xFFFF);
             sibling->get_header.page_type = static_cast<uint16_t>(PageType::GIN_INDEX_META);
             sibling->get_header.page_size = db_->page_size();
             sibling->get_header.page_id = new_sibling;
@@ -1935,7 +1935,7 @@ namespace scratchbird
             std::memset(root, 0, sizeof(SBGinEntryTreeInternal));
 
             root->get_header.magic = K_MAGIC_SBRD;
-            root->get_header.version = DB_VERSION_ALPHA_1_0_1;
+            root->get_header.version = static_cast<uint16_t>(DB_VERSION_ALPHA_1_0_1 & 0xFFFF);
             root->get_header.page_type = static_cast<uint16_t>(PageType::GIN_INDEX_META);
             root->get_header.page_size = db_->page_size();
             root->get_header.page_id = new_root;

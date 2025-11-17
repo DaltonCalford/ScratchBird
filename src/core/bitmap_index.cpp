@@ -80,7 +80,7 @@ namespace scratchbird
             std::memset(meta, 0, sizeof(SBBitmapIndexMetaPage));
 
             meta->bmp_header.magic = K_MAGIC_SBRD;
-            meta->bmp_header.version = DB_VERSION_ALPHA_1_0_1;
+            meta->bmp_header.version = static_cast<uint16_t>(DB_VERSION_ALPHA_1_0_1 & 0xFFFF);
             meta->bmp_header.page_type = static_cast<uint16_t>(PageType::BITMAP_INDEX_META);
             meta->bmp_header.page_size = db->page_size();
             meta->bmp_header.page_id = meta_page_num;
@@ -242,7 +242,7 @@ namespace scratchbird
                 std::memset(dict_page, 0, sizeof(SBBitmapDictionaryPage));
 
                 dict_page->bmp_dict_header.magic = K_MAGIC_SBRD;
-                dict_page->bmp_dict_header.version = DB_VERSION_ALPHA_1_0_1;
+                dict_page->bmp_dict_header.version = static_cast<uint16_t>(DB_VERSION_ALPHA_1_0_1 & 0xFFFF);
                 dict_page->bmp_dict_header.page_type = static_cast<uint16_t>(PageType::BITMAP_INDEX_DICT);
                 dict_page->bmp_dict_header.page_size = db_->page_size();
                 dict_page->bmp_dict_header.page_id = page_num;
@@ -300,7 +300,7 @@ namespace scratchbird
                 auto *new_dict = reinterpret_cast<SBBitmapDictionaryPage *>(new_page_data);
                 std::memset(new_dict, 0, sizeof(SBBitmapDictionaryPage));
                 new_dict->bmp_dict_header.magic = K_MAGIC_SBRD;
-                new_dict->bmp_dict_header.version = DB_VERSION_ALPHA_1_0_1;
+                new_dict->bmp_dict_header.version = static_cast<uint16_t>(DB_VERSION_ALPHA_1_0_1 & 0xFFFF);
                 new_dict->bmp_dict_header.page_type = static_cast<uint16_t>(PageType::BITMAP_INDEX_DICT);
                 new_dict->bmp_dict_header.page_size = db_->page_size();
                 new_dict->bmp_dict_header.page_id = new_dict_page;
@@ -340,7 +340,7 @@ namespace scratchbird
             auto *root_page = reinterpret_cast<SBRoaringBitmapRootPage *>(bitmap_data);
             std::memset(root_page, 0, sizeof(SBRoaringBitmapRootPage));
             root_page->rbr_header.magic = K_MAGIC_SBRD;
-            root_page->rbr_header.version = DB_VERSION_ALPHA_1_0_1;
+            root_page->rbr_header.version = static_cast<uint16_t>(DB_VERSION_ALPHA_1_0_1 & 0xFFFF);
             root_page->rbr_header.page_type = static_cast<uint16_t>(PageType::BITMAP_ROARING_ROOT);
             root_page->rbr_header.page_size = db_->page_size();
             root_page->rbr_header.page_id = bitmap_root;
