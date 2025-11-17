@@ -80,6 +80,7 @@ namespace scratchbird
             void visit(DropSequenceStmt *node) override;            // ALPHA Phase 1 - Sequences
             void visit(CreateViewStmt *node) override;              // ALPHA Phase 1 - Views
             void visit(DropViewStmt *node) override;                // ALPHA Phase 1 - Views
+            void visit(RefreshMaterializedViewStmt *node) override; // ALPHA Phase 1 - Materialized Views
             void visit(CreateTablespaceStmt *node) override;        // Phase 2 Task 2.1
             void visit(AlterTablespaceStmt *node) override;         // Phase 2 Task 2.2
             void visit(AlterTableSetTablespaceStmt *node) override; // Phase 4 Task 4.1.1

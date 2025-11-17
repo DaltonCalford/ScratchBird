@@ -637,7 +637,7 @@ namespace scratchbird
             // Write view name
             writeStringId(node->name());
 
-            // Write flags: [or_replace, check_option, has_column_names]
+            // Write flags: [or_replace, check_option, has_column_names, materialized]
             uint8_t flags = 0;
             if (node->orReplace())
                 flags |= 0x01;
@@ -645,6 +645,8 @@ namespace scratchbird
                 flags |= 0x02;
             if (!node->columnNames().empty())
                 flags |= 0x04;
+            if (node->materialized())
+                flags |= 0x08;  // Materialized view flag
             current_result_->writeByte(flags);
 
             // Write column names if present
@@ -676,6 +678,21 @@ namespace scratchbird
                 flags |= 0x01;
             if (node->cascade())
                 flags |= 0x02;
+            current_result_->writeByte(flags);
+        }
+
+        void BytecodeGenerator::visit(parser::RefreshMaterializedViewStmt *node)
+        {
+            // Generate REFRESH MATERIALIZED VIEW bytecode (ALPHA Phase 1 - Materialized Views)
+            current_result_->writeOpcode(Opcode::REFRESH_MATERIALIZED_VIEW);
+
+            // Write view name
+            writeStringId(node->name());
+
+            // Write CONCURRENTLY flag
+            uint8_t flags = 0;
+            if (node->concurrently())
+                flags |= 0x01;
             current_result_->writeByte(flags);
         }
 

@@ -309,6 +309,7 @@ namespace scratchbird
             // View execution (ALPHA Phase 1 - Views)
             void executeCreateView();
             void executeDropView();
+            void executeRefreshMaterializedView();  // ALPHA Phase 1 - Materialized Views
 
             // Monitoring/system table execution
             void executeMonitoringQuery(const std::string &table_name);

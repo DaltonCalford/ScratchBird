@@ -1016,11 +1016,14 @@ namespace scratchbird::core
         // View operations (ALPHA Phase 1 - Views)
         auto createView(const ID& schema_id, const std::string& name,
                         const std::string& definition, bool or_replace, bool check_option,
-                        const std::vector<std::string>& column_names,
+                        bool materialized, const std::vector<std::string>& column_names,
                         ErrorContext* ctx = nullptr) -> Status;
 
         auto dropView(const ID& view_id, bool cascade,
                       ErrorContext* ctx = nullptr) -> Status;
+
+        auto refreshMaterializedView(const ID& view_id, bool concurrently,
+                                      ErrorContext* ctx = nullptr) -> Status;  // ALPHA Phase 1 - Materialized Views
 
         auto getView(const ID& schema_id, const std::string& name,
                      ViewInfo& info_out, ErrorContext* ctx = nullptr) -> Status;

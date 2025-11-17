@@ -446,6 +446,11 @@ namespace scratchbird
                         result = ExecutionResult();
                         break;
 
+                    case Opcode::REFRESH_MATERIALIZED_VIEW:  // ALPHA Phase 1 - Materialized Views
+                        executeRefreshMaterializedView();
+                        result = ExecutionResult();
+                        break;
+
                     case Opcode::DROP_TABLESPACE:
                         executeDropTablespace();
                         result = ExecutionResult();
@@ -3075,6 +3080,7 @@ namespace scratchbird
             bool or_replace = (flags & 0x01) != 0;
             bool check_option = (flags & 0x02) != 0;
             bool has_column_names = (flags & 0x04) != 0;
+            bool materialized = (flags & 0x08) != 0;  // ALPHA Phase 1 - Materialized Views
 
             // Read column names if present
             std::vector<std::string> column_names;
@@ -3102,7 +3108,7 @@ namespace scratchbird
             // Create view
             status = db_->catalog_manager()->createView(
                 schema_info.schema_id, view_name, definition,
-                or_replace, check_option, column_names, &ctx);
+                or_replace, check_option, materialized, column_names, &ctx);
 
             if (status != core::Status::OK)
             {
@@ -3114,7 +3120,7 @@ namespace scratchbird
                 error(err_msg);
             }
 
-            std::cout << "CREATE VIEW" << std::endl;
+            std::cout << "CREATE " << (materialized ? "MATERIALIZED " : "") << "VIEW" << std::endl;
         }
 
         void Executor::executeDropView()
@@ -3155,6 +3161,43 @@ namespace scratchbird
             }
 
             std::cout << "DROP VIEW" << std::endl;
+        }
+
+        void Executor::executeRefreshMaterializedView()
+        {
+            // ALPHA Phase 1 - Materialized Views: REFRESH MATERIALIZED VIEW
+
+            // Read view name
+            std::string view_name = readString();
+
+            // Read flags
+            uint8_t flags = readByte();
+            bool concurrently = (flags & 0x01) != 0;
+
+            // Look up view ID and verify it's materialized
+            core::ID view_id;
+            core::ErrorContext ctx;
+            auto status = db_->catalog_manager()->getViewIdByName(view_name, view_id, &ctx);
+
+            if (status == core::Status::NOT_FOUND)
+            {
+                error("Materialized view not found: " + view_name);
+            }
+
+            // Refresh the materialized view
+            status = db_->catalog_manager()->refreshMaterializedView(view_id, concurrently, &ctx);
+
+            if (status != core::Status::OK)
+            {
+                std::string err_msg = "Failed to refresh materialized view '" + view_name + "'";
+                if (!ctx.message.empty())
+                {
+                    err_msg += ": " + ctx.message;
+                }
+                error(err_msg);
+            }
+
+            std::cout << "REFRESH " << (concurrently ? "CONCURRENTLY " : "") << "MATERIALIZED VIEW" << std::endl;
         }
 
         int64_t Executor::executeSequenceNextVal()

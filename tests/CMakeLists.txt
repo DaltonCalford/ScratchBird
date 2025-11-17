@@ -785,3 +785,19 @@ set_tests_properties(ViewsComprehensive PROPERTIES
     LABELS "unit;views;comprehensive;alpha_phase1"
     TIMEOUT 60
 )
+
+add_executable(test_materialized_views_parser
+    unit/test_materialized_views_parser.cpp
+)
+target_link_libraries(test_materialized_views_parser
+    scratchbird_core
+    scratchbird_parser
+    scratchbird_sblr
+    gtest
+    gtest_main
+)
+add_test(NAME MaterializedViewsParser COMMAND test_materialized_views_parser)
+set_tests_properties(MaterializedViewsParser PROPERTIES
+    LABELS "unit;materialized_views;parser;alpha_phase1"
+    TIMEOUT 60
+)

@@ -31,6 +31,7 @@ namespace scratchbird
             SEQUENCE_SETVAL = 0x28,           // SETVAL('sequence_name', value, is_called) - Set value
             CREATE_VIEW = 0x29,               // Create view (ALPHA Phase 1 - Views)
             DROP_VIEW = 0x2A,                 // Drop view (ALPHA Phase 1 - Views)
+            REFRESH_MATERIALIZED_VIEW = 0x2B, // Refresh materialized view (ALPHA Phase 1 - Materialized Views)
             INSERT = 0x11,                    // Insert row
             SELECT = 0x12,                    // Select query
             UPDATE = 0xC3,                    // Update rows (Phase 1 Task 2.1)

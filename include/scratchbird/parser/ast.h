@@ -3641,6 +3641,7 @@ namespace scratchbird
             virtual void visit(DropSequenceStmt *node) = 0;            // ALPHA Phase 1 - Sequences
             virtual void visit(CreateViewStmt *node) = 0;              // ALPHA Phase 1 - Views
             virtual void visit(DropViewStmt *node) = 0;                // ALPHA Phase 1 - Views
+            virtual void visit(RefreshMaterializedViewStmt *node) = 0; // ALPHA Phase 1 - Materialized Views
             virtual void visit(CreateTablespaceStmt *node) = 0;        // Phase 2 Task 2.1
             virtual void visit(AlterTablespaceStmt *node) = 0;         // Phase 2 Task 2.2
             virtual void visit(AlterTableSetTablespaceStmt *node) = 0; // Phase 4 Task 4.1.1

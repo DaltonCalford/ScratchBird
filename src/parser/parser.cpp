@@ -80,6 +80,7 @@ namespace scratchbird
                     case TokenType::KW_SELECT:
                     case TokenType::KW_ANALYZE:  // Phase 1 Task 1.1.2
                     case TokenType::KW_EXPLAIN:  // Phase 1 Task 1.5
+                    case TokenType::KW_REFRESH:  // ALPHA Phase 1 - Materialized Views
                     case TokenType::KW_START:
                     case TokenType::KW_SET:
                     case TokenType::KW_COMMIT:
@@ -193,6 +194,10 @@ namespace scratchbird
                 else if (match(TokenType::KW_EXPLAIN))  // Phase 1 Task 1.5
                 {
                     stmt = parseExplain();
+                }
+                else if (match(TokenType::KW_REFRESH))  // ALPHA Phase 1 - Materialized Views
+                {
+                    stmt = parseRefreshMaterializedView();
                 }
                 else if (match(TokenType::KW_START))
                 {
@@ -3795,6 +3800,53 @@ namespace scratchbird
             // Create AST node
             auto *stmt = arena_.make<DropViewStmt>(
                 makeSpan(start_loc), view_name, if_exists, cascade);
+
+            // Consume semicolon if present
+            match(TokenType::SEMICOLON);
+
+            return stmt;
+        }
+
+        Statement *Parser::parseRefreshMaterializedView()
+        {
+            // REFRESH [CONCURRENTLY] MATERIALIZED VIEW name
+            auto start_loc = previous().location;
+
+            // Check for CONCURRENTLY
+            bool concurrently = false;
+            if (match(TokenType::KW_CONCURRENTLY))
+            {
+                concurrently = true;
+            }
+
+            // MATERIALIZED keyword
+            if (!consume(TokenType::KW_MATERIALIZED, "Expected MATERIALIZED after REFRESH"))
+            {
+                synchronize();
+                return nullptr;
+            }
+
+            // VIEW keyword
+            if (!consume(TokenType::KW_VIEW, "Expected VIEW after MATERIALIZED"))
+            {
+                synchronize();
+                return nullptr;
+            }
+
+            // Get view name
+            if (!check(TokenType::IDENTIFIER))
+            {
+                error("Expected view name after REFRESH MATERIALIZED VIEW");
+                synchronize();
+                return nullptr;
+            }
+
+            auto view_name = current().value.string_id;
+            advance();
+
+            // Create AST node
+            auto *stmt = arena_.make<RefreshMaterializedViewStmt>(
+                makeSpan(start_loc), view_name, concurrently);
 
             // Consume semicolon if present
             match(TokenType::SEMICOLON);

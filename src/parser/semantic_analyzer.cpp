@@ -246,6 +246,13 @@ namespace scratchbird
             (void)node;
         }
 
+        void SemanticAnalyzer::visit(RefreshMaterializedViewStmt *node)
+        {
+            // ALPHA Phase 1: REFRESH MATERIALIZED VIEW semantic analysis
+            // Minimal validation - full validation happens at execution
+            (void)node;
+        }
+
         void SemanticAnalyzer::visit(DropTablespaceStmt *node)
         {
             // Phase 2 Task 2.1: DROP TABLESPACE semantic analysis
