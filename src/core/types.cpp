@@ -4,6 +4,7 @@
 #include "scratchbird/core/tsquery.h"
 #include "scratchbird/core/range.h"
 #include "scratchbird/core/vector.h"
+#include "scratchbird/core/array.h"
 #include <cstring>
 #include <cmath>
 #include <sstream>
@@ -242,6 +243,46 @@ namespace scratchbird::core
     TypedValue TypedValue::makePolygon(const std::vector<std::vector<Point>> &rings)
     {
         return TypedValue(DataType::POLYGON, Polygon(rings));
+    }
+
+    TypedValue TypedValue::makeMultiPoint(const MultiPoint &v)
+    {
+        return TypedValue(DataType::MULTIPOINT, v);
+    }
+
+    TypedValue TypedValue::makeMultiPoint(const std::vector<Point> &points)
+    {
+        return TypedValue(DataType::MULTIPOINT, MultiPoint(points));
+    }
+
+    TypedValue TypedValue::makeMultiLineString(const MultiLineString &v)
+    {
+        return TypedValue(DataType::MULTILINESTRING, v);
+    }
+
+    TypedValue TypedValue::makeMultiLineString(const std::vector<LineString> &linestrings)
+    {
+        return TypedValue(DataType::MULTILINESTRING, MultiLineString(linestrings));
+    }
+
+    TypedValue TypedValue::makeMultiPolygon(const MultiPolygon &v)
+    {
+        return TypedValue(DataType::MULTIPOLYGON, v);
+    }
+
+    TypedValue TypedValue::makeMultiPolygon(const std::vector<Polygon> &polygons)
+    {
+        return TypedValue(DataType::MULTIPOLYGON, MultiPolygon(polygons));
+    }
+
+    TypedValue TypedValue::makeGeometryCollection(const GeometryCollection &v)
+    {
+        return TypedValue(DataType::GEOMETRYCOLLECTION, v);
+    }
+
+    TypedValue TypedValue::makeGeometryCollection(const std::vector<std::shared_ptr<TypedValue>> &geometries)
+    {
+        return TypedValue(DataType::GEOMETRYCOLLECTION, GeometryCollection(geometries));
     }
 
     TypedValue TypedValue::makeTSVector(const TSVector &v)
@@ -575,6 +616,34 @@ namespace scratchbird::core
         return std::get<Polygon>(data_);
     }
 
+    MultiPoint TypedValue::getMultiPoint() const
+    {
+        if (type_ != DataType::MULTIPOINT)
+            throw std::runtime_error("Type mismatch: not MULTIPOINT");
+        return std::get<MultiPoint>(data_);
+    }
+
+    MultiLineString TypedValue::getMultiLineString() const
+    {
+        if (type_ != DataType::MULTILINESTRING)
+            throw std::runtime_error("Type mismatch: not MULTILINESTRING");
+        return std::get<MultiLineString>(data_);
+    }
+
+    MultiPolygon TypedValue::getMultiPolygon() const
+    {
+        if (type_ != DataType::MULTIPOLYGON)
+            throw std::runtime_error("Type mismatch: not MULTIPOLYGON");
+        return std::get<MultiPolygon>(data_);
+    }
+
+    GeometryCollection TypedValue::getGeometryCollection() const
+    {
+        if (type_ != DataType::GEOMETRYCOLLECTION)
+            throw std::runtime_error("Type mismatch: not GEOMETRYCOLLECTION");
+        return std::get<GeometryCollection>(data_);
+    }
+
     std::shared_ptr<TSVector> TypedValue::getTSVector() const
     {
         if (type_ != DataType::TSVECTOR)
@@ -835,6 +904,82 @@ namespace scratchbird::core
 
         const auto& variant = std::get<VariantValue>(data_);
         return variant.actual_type;
+    }
+
+    TypedValue TypedValue::makeArray(const ArrayValue &v)
+    {
+        TypedValue result(DataType::ARRAY);
+        result.data_ = std::make_shared<ArrayValue>(v);
+        return result;
+    }
+
+    TypedValue TypedValue::makeArray(std::shared_ptr<ArrayValue> v)
+    {
+        TypedValue result(DataType::ARRAY);
+        result.data_ = v;
+        return result;
+    }
+
+    std::shared_ptr<ArrayValue> TypedValue::getArray() const
+    {
+        if (type_ != DataType::ARRAY)
+            throw std::runtime_error("Type mismatch: not ARRAY");
+        return std::get<std::shared_ptr<ArrayValue>>(data_);
+    }
+
+    // GeometryCollection methods
+    bool GeometryCollection::isValid() const
+    {
+        for (const auto& geom : geometries) {
+            if (!geom) return false;
+
+            // Each geometry must be a valid spatial type
+            DataType type = geom->type();
+            if (type != DataType::POINT &&
+                type != DataType::LINESTRING &&
+                type != DataType::POLYGON &&
+                type != DataType::MULTIPOINT &&
+                type != DataType::MULTILINESTRING &&
+                type != DataType::MULTIPOLYGON &&
+                type != DataType::GEOMETRYCOLLECTION) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    bool GeometryCollection::operator==(const GeometryCollection& other) const
+    {
+        if (srid != other.srid) return false;
+        if (geometries.size() != other.geometries.size()) return false;
+
+        for (size_t i = 0; i < geometries.size(); ++i) {
+            // Both nullptr
+            if (!geometries[i] && !other.geometries[i]) continue;
+            // One is nullptr, other is not
+            if (!geometries[i] || !other.geometries[i]) return false;
+            // Both exist - compare types first
+            if (geometries[i]->type() != other.geometries[i]->type()) return false;
+
+            // Compare values based on type
+            DataType type = geometries[i]->type();
+            if (type == DataType::POINT) {
+                if (geometries[i]->getPoint() != other.geometries[i]->getPoint()) return false;
+            } else if (type == DataType::LINESTRING) {
+                if (geometries[i]->getLineString() != other.geometries[i]->getLineString()) return false;
+            } else if (type == DataType::POLYGON) {
+                if (geometries[i]->getPolygon() != other.geometries[i]->getPolygon()) return false;
+            } else if (type == DataType::MULTIPOINT) {
+                if (geometries[i]->getMultiPoint() != other.geometries[i]->getMultiPoint()) return false;
+            } else if (type == DataType::MULTILINESTRING) {
+                if (geometries[i]->getMultiLineString() != other.geometries[i]->getMultiLineString()) return false;
+            } else if (type == DataType::MULTIPOLYGON) {
+                if (geometries[i]->getMultiPolygon() != other.geometries[i]->getMultiPolygon()) return false;
+            } else if (type == DataType::GEOMETRYCOLLECTION) {
+                if (geometries[i]->getGeometryCollection() != other.geometries[i]->getGeometryCollection()) return false;
+            }
+        }
+        return true;
     }
 
     TypedValue TypedValue::unwrapVariant() const
