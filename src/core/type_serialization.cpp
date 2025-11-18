@@ -984,6 +984,149 @@ namespace scratchbird::core
                     return TypedValue::makeVector(*vec);
                 }
 
+                // Range types
+                case DataType::INT4RANGE:
+                {
+                    if (size < 1) {
+                        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                          "Insufficient data for INT4RANGE");
+                        return std::nullopt;
+                    }
+                    uint8_t flags = data[0];
+                    size_t offset = 1;
+
+                    if (flags & 0x01) { // empty
+                        return TypedValue::makeInt4Range(Int4Range());
+                    }
+
+                    std::optional<int32_t> lower, upper;
+                    if (flags & 0x02) { // lower_bounded
+                        if (offset + 4 > size) {
+                            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                              "Insufficient data for INT4RANGE lower bound");
+                            return std::nullopt;
+                        }
+                        int32_t val;
+                        std::memcpy(&val, data + offset, 4);
+                        lower = val;
+                        offset += 4;
+                    }
+                    if (flags & 0x04) { // upper_bounded
+                        if (offset + 4 > size) {
+                            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                              "Insufficient data for INT4RANGE upper bound");
+                            return std::nullopt;
+                        }
+                        int32_t val;
+                        std::memcpy(&val, data + offset, 4);
+                        upper = val;
+                        offset += 4;
+                    }
+
+                    BoundType lower_type = (flags & 0x08) ? BoundType::INCLUSIVE : BoundType::EXCLUSIVE;
+                    BoundType upper_type = (flags & 0x10) ? BoundType::INCLUSIVE : BoundType::EXCLUSIVE;
+                    return TypedValue::makeInt4Range(Int4Range(lower, upper, lower_type, upper_type));
+                }
+
+                case DataType::INT8RANGE:
+                case DataType::DATERANGE:
+                case DataType::TSRANGE:
+                case DataType::TSTZRANGE:
+                {
+                    // All these are Range<int64_t> with 8-byte bounds
+                    if (size < 1) {
+                        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                          "Insufficient data for range");
+                        return std::nullopt;
+                    }
+                    uint8_t flags = data[0];
+                    size_t offset = 1;
+
+                    std::optional<int64_t> lower, upper;
+                    if (flags & 0x02) { // lower_bounded
+                        if (offset + 8 > size) {
+                            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                              "Insufficient data for range lower bound");
+                            return std::nullopt;
+                        }
+                        int64_t val;
+                        std::memcpy(&val, data + offset, 8);
+                        lower = val;
+                        offset += 8;
+                    }
+                    if (flags & 0x04) { // upper_bounded
+                        if (offset + 8 > size) {
+                            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                              "Insufficient data for range upper bound");
+                            return std::nullopt;
+                        }
+                        int64_t val;
+                        std::memcpy(&val, data + offset, 8);
+                        upper = val;
+                        offset += 8;
+                    }
+
+                    BoundType lower_type = (flags & 0x08) ? BoundType::INCLUSIVE : BoundType::EXCLUSIVE;
+                    BoundType upper_type = (flags & 0x10) ? BoundType::INCLUSIVE : BoundType::EXCLUSIVE;
+
+                    if (type == DataType::INT8RANGE) {
+                        if (flags & 0x01) return TypedValue::makeInt8Range(Int8Range());
+                        return TypedValue::makeInt8Range(Int8Range(lower, upper, lower_type, upper_type));
+                    } else if (type == DataType::DATERANGE) {
+                        if (flags & 0x01) return TypedValue::makeDateRange(DateRange());
+                        return TypedValue::makeDateRange(DateRange(lower, upper, lower_type, upper_type));
+                    } else if (type == DataType::TSRANGE) {
+                        if (flags & 0x01) return TypedValue::makeTSRange(TSRange());
+                        return TypedValue::makeTSRange(TSRange(lower, upper, lower_type, upper_type));
+                    } else { // TSTZRANGE
+                        if (flags & 0x01) return TypedValue::makeTSTZRange(TSTZRange());
+                        return TypedValue::makeTSTZRange(TSTZRange(lower, upper, lower_type, upper_type));
+                    }
+                }
+
+                case DataType::NUMRANGE:
+                {
+                    if (size < 1) {
+                        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                          "Insufficient data for NUMRANGE");
+                        return std::nullopt;
+                    }
+                    uint8_t flags = data[0];
+                    size_t offset = 1;
+
+                    if (flags & 0x01) { // empty
+                        return TypedValue::makeNumRange(NumRange());
+                    }
+
+                    std::optional<double> lower, upper;
+                    if (flags & 0x02) { // lower_bounded
+                        if (offset + 8 > size) {
+                            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                              "Insufficient data for NUMRANGE lower bound");
+                            return std::nullopt;
+                        }
+                        double val;
+                        std::memcpy(&val, data + offset, 8);
+                        lower = val;
+                        offset += 8;
+                    }
+                    if (flags & 0x04) { // upper_bounded
+                        if (offset + 8 > size) {
+                            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                              "Insufficient data for NUMRANGE upper bound");
+                            return std::nullopt;
+                        }
+                        double val;
+                        std::memcpy(&val, data + offset, 8);
+                        upper = val;
+                        offset += 8;
+                    }
+
+                    BoundType lower_type = (flags & 0x08) ? BoundType::INCLUSIVE : BoundType::EXCLUSIVE;
+                    BoundType upper_type = (flags & 0x10) ? BoundType::INCLUSIVE : BoundType::EXCLUSIVE;
+                    return TypedValue::makeNumRange(NumRange(lower, upper, lower_type, upper_type));
+                }
+
                 default:
                     SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
                                       "Unsupported type for deserialization");
@@ -1116,6 +1259,52 @@ namespace scratchbird::core
                         return static_cast<uint32_t>(encoded.size());
                     }
                     return 0;
+                }
+
+                // Range types - variable size (1 byte flags + bounds)
+                case DataType::INT4RANGE:
+                {
+                    Int4Range range = value.getInt4Range();
+                    uint32_t size = 1; // flags byte
+                    if (range.isLowerBounded()) size += 4;
+                    if (range.isUpperBounded()) size += 4;
+                    return size;
+                }
+
+                case DataType::INT8RANGE:
+                case DataType::DATERANGE:
+                case DataType::TSRANGE:
+                case DataType::TSTZRANGE:
+                {
+                    // All are Range<int64_t> with 8-byte bounds
+                    uint32_t size = 1; // flags byte
+                    if (type == DataType::INT8RANGE) {
+                        Int8Range range = value.getInt8Range();
+                        if (range.isLowerBounded()) size += 8;
+                        if (range.isUpperBounded()) size += 8;
+                    } else if (type == DataType::DATERANGE) {
+                        DateRange range = value.getDateRange();
+                        if (range.isLowerBounded()) size += 8;
+                        if (range.isUpperBounded()) size += 8;
+                    } else if (type == DataType::TSRANGE) {
+                        TSRange range = value.getTSRange();
+                        if (range.isLowerBounded()) size += 8;
+                        if (range.isUpperBounded()) size += 8;
+                    } else { // TSTZRANGE
+                        TSTZRange range = value.getTSTZRange();
+                        if (range.isLowerBounded()) size += 8;
+                        if (range.isUpperBounded()) size += 8;
+                    }
+                    return size;
+                }
+
+                case DataType::NUMRANGE:
+                {
+                    NumRange range = value.getNumRange();
+                    uint32_t size = 1; // flags byte
+                    if (range.isLowerBounded()) size += 8;
+                    if (range.isUpperBounded()) size += 8;
+                    return size;
                 }
 
                 default:
