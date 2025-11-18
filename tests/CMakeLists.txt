@@ -292,6 +292,24 @@ set_tests_properties(NetworkTypes PROPERTIES
 )
 
 # ============================================================================
+# Type Serialization Tests
+# ============================================================================
+
+add_executable(test_type_serialization
+    unit/test_type_serialization.cpp
+)
+target_link_libraries(test_type_serialization
+    scratchbird_core
+    GTest::gtest
+    GTest::gtest_main
+)
+add_test(NAME TypeSerialization COMMAND test_type_serialization)
+set_tests_properties(TypeSerialization PROPERTIES
+    LABELS "unit;serialization;types"
+    TIMEOUT 60
+)
+
+# ============================================================================
 # Columnstore Index Tests - Phase 1: RLE Compression
 # ============================================================================
 

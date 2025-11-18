@@ -1,3 +1,4 @@
+#include "scratchbird/core/type_serialization.h"
 #include "scratchbird/core/types.h"
 #include "scratchbird/spatial/wkb.h"
 #include "scratchbird/core/vector.h"
@@ -35,14 +36,7 @@ namespace scratchbird::core
      * - JSON: 4-byte length + JSON string
      */
 
-    class TypeSerializer
-    {
-    public:
-        /**
-         * Serialize a TypedValue to binary format
-         * Returns the serialized bytes
-         */
-        static auto serialize(const TypedValue &value) -> std::vector<uint8_t>
+    auto TypeSerializer::serialize(const TypedValue &value) -> std::vector<uint8_t>
         {
             std::vector<uint8_t> result;
 
@@ -502,7 +496,7 @@ namespace scratchbird::core
                 case DataType::INET:
                 case DataType::CIDR:
                 {
-                    InetAddr addr = (type == DataType::INET) ? value.getInet() : value.getCidr().toInet();
+                    InetAddr addr = (value.type() == DataType::INET) ? value.getInet() : value.getCidr().toInet();
                     // Format: 1 byte family + 1 byte netmask + address bytes (4 or 16)
                     result.push_back(static_cast<uint8_t>(addr.family()));
                     result.push_back(addr.netmask());
@@ -640,8 +634,8 @@ namespace scratchbird::core
          * Deserialize binary data to a TypedValue
          * Returns nullopt on error
          */
-        static auto deserialize(DataType type, const uint8_t *data, uint32_t size,
-                                ErrorContext *ctx = nullptr) -> std::optional<TypedValue>
+        auto TypeSerializer::deserialize(DataType type, const uint8_t *data, uint32_t size,
+                                ErrorContext *ctx) -> std::optional<TypedValue>
         {
             if (data == nullptr)
             {
@@ -1439,7 +1433,13 @@ namespace scratchbird::core
                         field_values.push_back(std::make_shared<TypedValue>(*field_val));
                     }
 
-                    return TypedValue::makeComposite(field_names, field_values);
+                    // Convert shared_ptr vector to value vector
+                    std::vector<TypedValue> field_values_copy;
+                    for (const auto& fv_ptr : field_values) {
+                        field_values_copy.push_back(*fv_ptr);
+                    }
+
+                    return TypedValue::makeComposite(field_names, field_values_copy);
                 }
 
                 // Variant type (type tag + value)
@@ -1488,7 +1488,7 @@ namespace scratchbird::core
         /**
          * Calculate the serialized size of a value
          */
-        static auto getSerializedSize(const TypedValue &value) -> uint32_t
+        auto TypeSerializer::getSerializedSize(const TypedValue &value) -> uint32_t
         {
             if (value.isNull())
                 return 0;
@@ -1629,15 +1629,15 @@ namespace scratchbird::core
                 {
                     // All are Range<int64_t> with 8-byte bounds
                     uint32_t size = 1; // flags byte
-                    if (type == DataType::INT8RANGE) {
+                    if (value.type() == DataType::INT8RANGE) {
                         Int8Range range = value.getInt8Range();
                         if (range.isLowerBounded()) size += 8;
                         if (range.isUpperBounded()) size += 8;
-                    } else if (type == DataType::DATERANGE) {
+                    } else if (value.type() == DataType::DATERANGE) {
                         DateRange range = value.getDateRange();
                         if (range.isLowerBounded()) size += 8;
                         if (range.isUpperBounded()) size += 8;
-                    } else if (type == DataType::TSRANGE) {
+                    } else if (value.type() == DataType::TSRANGE) {
                         TSRange range = value.getTSRange();
                         if (range.isLowerBounded()) size += 8;
                         if (range.isUpperBounded()) size += 8;
@@ -1662,7 +1662,7 @@ namespace scratchbird::core
                 case DataType::INET:
                 case DataType::CIDR:
                 {
-                    InetAddr addr = (type == DataType::INET) ? value.getInet() : value.getCidr().toInet();
+                    InetAddr addr = (value.type() == DataType::INET) ? value.getInet() : value.getCidr().toInet();
                     // 1 byte family + 1 byte netmask + address bytes (4 or 16)
                     return 2 + addr.size();
                 }
@@ -1739,7 +1739,6 @@ namespace scratchbird::core
                     return 0;
             }
         }
-    };
 
     // Make serialization functions available through TypeSystem
     auto TypeSystem::getSerializedSize(const TypedValue &value) -> uint32_t
