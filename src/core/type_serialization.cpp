@@ -549,6 +549,85 @@ namespace scratchbird::core
                     break;
                 }
 
+                // JSONB and XML (stored as string with length prefix)
+                case DataType::JSONB:
+                {
+                    std::string str = value.getJSON();  // JSONB uses JSON string for now
+                    uint32_t len = static_cast<uint32_t>(str.size());
+                    result.resize(4 + len);
+                    std::memcpy(result.data(), &len, 4);
+                    std::memcpy(result.data() + 4, str.data(), len);
+                    break;
+                }
+
+                case DataType::XML:
+                {
+                    std::string str = value.toString();  // XML as string
+                    uint32_t len = static_cast<uint32_t>(str.size());
+                    result.resize(4 + len);
+                    std::memcpy(result.data(), &len, 4);
+                    std::memcpy(result.data() + 4, str.data(), len);
+                    break;
+                }
+
+                // Composite type (field names + values)
+                case DataType::COMPOSITE:
+                {
+                    const auto& comp = value.getComposite();
+                    // Format: 4 bytes num_fields + for each field: 4 bytes name_len + name + type + serialized_value
+                    uint32_t num_fields = static_cast<uint32_t>(comp.field_names.size());
+                    result.resize(4);
+                    std::memcpy(result.data(), &num_fields, 4);
+
+                    for (size_t i = 0; i < num_fields; ++i) {
+                        // Field name
+                        uint32_t name_len = static_cast<uint32_t>(comp.field_names[i].size());
+                        size_t offset = result.size();
+                        result.resize(offset + 4 + name_len);
+                        std::memcpy(result.data() + offset, &name_len, 4);
+                        std::memcpy(result.data() + offset + 4, comp.field_names[i].data(), name_len);
+
+                        // Field type
+                        offset = result.size();
+                        result.resize(offset + 1);
+                        result[offset] = static_cast<uint8_t>(comp.field_values[i]->type());
+
+                        // Field value (recursive)
+                        auto field_data = serialize(*comp.field_values[i]);
+                        uint32_t field_len = static_cast<uint32_t>(field_data.size());
+                        offset = result.size();
+                        result.resize(offset + 4 + field_len);
+                        std::memcpy(result.data() + offset, &field_len, 4);
+                        std::memcpy(result.data() + offset + 4, field_data.data(), field_len);
+                    }
+                    break;
+                }
+
+                // Variant type (type tag + value)
+                case DataType::VARIANT:
+                {
+                    const auto& var = value.getVariant();
+                    // Format: 1 byte actual_type + 4 bytes value_len + serialized_value
+                    result.resize(1);
+                    result[0] = static_cast<uint8_t>(var.actual_type);
+
+                    if (var.value) {
+                        auto val_data = serialize(*var.value);
+                        uint32_t val_len = static_cast<uint32_t>(val_data.size());
+                        size_t offset = result.size();
+                        result.resize(offset + 4 + val_len);
+                        std::memcpy(result.data() + offset, &val_len, 4);
+                        std::memcpy(result.data() + offset + 4, val_data.data(), val_len);
+                    } else {
+                        // Null value
+                        size_t offset = result.size();
+                        result.resize(offset + 4);
+                        uint32_t zero = 0;
+                        std::memcpy(result.data() + offset, &zero, 4);
+                    }
+                    break;
+                }
+
                 default:
                     // Unsupported type
                     break;
@@ -1257,6 +1336,148 @@ namespace scratchbird::core
                     return TypedValue::makeTSQuery(*tsq);
                 }
 
+                // JSONB and XML (stored as string with length prefix)
+                case DataType::JSONB:
+                {
+                    if (size < 4) {
+                        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                          "Insufficient data for JSONB");
+                        return std::nullopt;
+                    }
+                    uint32_t len;
+                    std::memcpy(&len, data, 4);
+                    if (size < 4 + len) {
+                        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                          "Insufficient data for JSONB string");
+                        return std::nullopt;
+                    }
+                    std::string str(reinterpret_cast<const char*>(data + 4), len);
+                    return TypedValue::makeJSON(str);  // Use JSON for now
+                }
+
+                case DataType::XML:
+                {
+                    if (size < 4) {
+                        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                          "Insufficient data for XML");
+                        return std::nullopt;
+                    }
+                    uint32_t len;
+                    std::memcpy(&len, data, 4);
+                    if (size < 4 + len) {
+                        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                          "Insufficient data for XML string");
+                        return std::nullopt;
+                    }
+                    std::string str(reinterpret_cast<const char*>(data + 4), len);
+                    return TypedValue::makeText(str);  // Use text for now
+                }
+
+                // Composite type (field names + values)
+                case DataType::COMPOSITE:
+                {
+                    if (size < 4) {
+                        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                          "Insufficient data for COMPOSITE");
+                        return std::nullopt;
+                    }
+                    uint32_t num_fields;
+                    std::memcpy(&num_fields, data, 4);
+                    size_t offset = 4;
+
+                    std::vector<std::string> field_names;
+                    std::vector<std::shared_ptr<TypedValue>> field_values;
+
+                    for (uint32_t i = 0; i < num_fields; ++i) {
+                        // Field name
+                        if (offset + 4 > size) {
+                            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                              "Insufficient data for COMPOSITE field name length");
+                            return std::nullopt;
+                        }
+                        uint32_t name_len;
+                        std::memcpy(&name_len, data + offset, 4);
+                        offset += 4;
+
+                        if (offset + name_len > size) {
+                            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                              "Insufficient data for COMPOSITE field name");
+                            return std::nullopt;
+                        }
+                        std::string name(reinterpret_cast<const char*>(data + offset), name_len);
+                        offset += name_len;
+                        field_names.push_back(name);
+
+                        // Field type
+                        if (offset + 1 > size) {
+                            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                              "Insufficient data for COMPOSITE field type");
+                            return std::nullopt;
+                        }
+                        DataType field_type = static_cast<DataType>(data[offset]);
+                        offset += 1;
+
+                        // Field value
+                        if (offset + 4 > size) {
+                            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                              "Insufficient data for COMPOSITE field value length");
+                            return std::nullopt;
+                        }
+                        uint32_t field_len;
+                        std::memcpy(&field_len, data + offset, 4);
+                        offset += 4;
+
+                        if (offset + field_len > size) {
+                            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                              "Insufficient data for COMPOSITE field value");
+                            return std::nullopt;
+                        }
+                        auto field_val = deserialize(field_type, data + offset, field_len, ctx);
+                        if (!field_val) return std::nullopt;
+                        offset += field_len;
+
+                        field_values.push_back(std::make_shared<TypedValue>(*field_val));
+                    }
+
+                    return TypedValue::makeComposite(field_names, field_values);
+                }
+
+                // Variant type (type tag + value)
+                case DataType::VARIANT:
+                {
+                    if (size < 1) {
+                        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                          "Insufficient data for VARIANT");
+                        return std::nullopt;
+                    }
+                    DataType actual_type = static_cast<DataType>(data[0]);
+                    size_t offset = 1;
+
+                    if (offset + 4 > size) {
+                        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                          "Insufficient data for VARIANT value length");
+                        return std::nullopt;
+                    }
+                    uint32_t val_len;
+                    std::memcpy(&val_len, data + offset, 4);
+                    offset += 4;
+
+                    if (val_len == 0) {
+                        // Null value
+                        return TypedValue::makeVariant(actual_type, TypedValue::makeNull());
+                    }
+
+                    if (offset + val_len > size) {
+                        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                          "Insufficient data for VARIANT value");
+                        return std::nullopt;
+                    }
+                    auto val = deserialize(actual_type, data + offset, val_len, ctx);
+                    if (!val) return std::nullopt;
+
+                    return TypedValue::makeVariant(actual_type, *val);
+                }
+
                 default:
                     SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
                                       "Unsupported type for deserialization");
@@ -1471,6 +1692,47 @@ namespace scratchbird::core
                         return static_cast<uint32_t>(bin.size());
                     }
                     return 0;
+                }
+
+                // JSONB and XML
+                case DataType::JSONB:
+                {
+                    std::string str = value.getJSON();
+                    return 4 + static_cast<uint32_t>(str.size());
+                }
+
+                case DataType::XML:
+                {
+                    std::string str = value.toString();
+                    return 4 + static_cast<uint32_t>(str.size());
+                }
+
+                // Composite type - variable size
+                case DataType::COMPOSITE:
+                {
+                    const auto& comp = value.getComposite();
+                    uint32_t total = 4; // num_fields
+                    for (size_t i = 0; i < comp.field_names.size(); ++i) {
+                        total += 4; // name length
+                        total += static_cast<uint32_t>(comp.field_names[i].size());
+                        total += 1; // type byte
+                        total += 4; // value length
+                        auto field_data = serialize(*comp.field_values[i]);
+                        total += static_cast<uint32_t>(field_data.size());
+                    }
+                    return total;
+                }
+
+                // Variant type - variable size
+                case DataType::VARIANT:
+                {
+                    const auto& var = value.getVariant();
+                    uint32_t total = 1 + 4; // type byte + value length
+                    if (var.value) {
+                        auto val_data = serialize(*var.value);
+                        total += static_cast<uint32_t>(val_data.size());
+                    }
+                    return total;
                 }
 
                 default:
