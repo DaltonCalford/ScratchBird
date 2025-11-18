@@ -337,6 +337,35 @@ namespace scratchbird::core
                     break;
                 }
 
+                // Multi-geometry types (OGC Simple Features)
+                case DataType::MULTIPOINT:
+                {
+                    MultiPoint mp = value.getMultiPoint();
+                    result = spatial::WKBSerializer::serializeMultiPoint(mp);
+                    break;
+                }
+
+                case DataType::MULTILINESTRING:
+                {
+                    MultiLineString mls = value.getMultiLineString();
+                    result = spatial::WKBSerializer::serializeMultiLineString(mls);
+                    break;
+                }
+
+                case DataType::MULTIPOLYGON:
+                {
+                    MultiPolygon mpoly = value.getMultiPolygon();
+                    result = spatial::WKBSerializer::serializeMultiPolygon(mpoly);
+                    break;
+                }
+
+                case DataType::GEOMETRYCOLLECTION:
+                {
+                    GeometryCollection gc = value.getGeometryCollection();
+                    result = spatial::WKBSerializer::serializeGeometryCollection(gc);
+                    break;
+                }
+
                 // Vector type (embeddings/ML)
                 case DataType::VECTOR:
                 {
@@ -1111,6 +1140,39 @@ namespace scratchbird::core
                     return TypedValue::makePolygon(*poly);
                 }
 
+                // Multi-geometry types (OGC Simple Features)
+                case DataType::MULTIPOINT:
+                {
+                    std::vector<uint8_t> wkb(data, data + size);
+                    auto mp = spatial::WKBSerializer::deserializeMultiPoint(wkb, ctx);
+                    if (!mp) return std::nullopt;
+                    return TypedValue::makeMultiPoint(*mp);
+                }
+
+                case DataType::MULTILINESTRING:
+                {
+                    std::vector<uint8_t> wkb(data, data + size);
+                    auto mls = spatial::WKBSerializer::deserializeMultiLineString(wkb, ctx);
+                    if (!mls) return std::nullopt;
+                    return TypedValue::makeMultiLineString(*mls);
+                }
+
+                case DataType::MULTIPOLYGON:
+                {
+                    std::vector<uint8_t> wkb(data, data + size);
+                    auto mpoly = spatial::WKBSerializer::deserializeMultiPolygon(wkb, ctx);
+                    if (!mpoly) return std::nullopt;
+                    return TypedValue::makeMultiPolygon(*mpoly);
+                }
+
+                case DataType::GEOMETRYCOLLECTION:
+                {
+                    std::vector<uint8_t> wkb(data, data + size);
+                    auto gc = spatial::WKBSerializer::deserializeGeometryCollection(wkb, ctx);
+                    if (!gc) return std::nullopt;
+                    return TypedValue::makeGeometryCollection(*gc);
+                }
+
                 // Vector type (embeddings/ML)
                 case DataType::VECTOR:
                 {
@@ -1628,6 +1690,35 @@ namespace scratchbird::core
                 {
                     Polygon poly = value.getPolygon();
                     auto wkb = spatial::WKBSerializer::serializePolygon(poly);
+                    return static_cast<uint32_t>(wkb.size());
+                }
+
+                // Multi-geometry types - variable size (WKB format)
+                case DataType::MULTIPOINT:
+                {
+                    MultiPoint mp = value.getMultiPoint();
+                    auto wkb = spatial::WKBSerializer::serializeMultiPoint(mp);
+                    return static_cast<uint32_t>(wkb.size());
+                }
+
+                case DataType::MULTILINESTRING:
+                {
+                    MultiLineString mls = value.getMultiLineString();
+                    auto wkb = spatial::WKBSerializer::serializeMultiLineString(mls);
+                    return static_cast<uint32_t>(wkb.size());
+                }
+
+                case DataType::MULTIPOLYGON:
+                {
+                    MultiPolygon mpoly = value.getMultiPolygon();
+                    auto wkb = spatial::WKBSerializer::serializeMultiPolygon(mpoly);
+                    return static_cast<uint32_t>(wkb.size());
+                }
+
+                case DataType::GEOMETRYCOLLECTION:
+                {
+                    GeometryCollection gc = value.getGeometryCollection();
+                    auto wkb = spatial::WKBSerializer::serializeGeometryCollection(gc);
                     return static_cast<uint32_t>(wkb.size());
                 }
 
