@@ -1,4 +1,7 @@
 #include "scratchbird/core/types.h"
+#include "scratchbird/spatial/wkb.h"
+#include "scratchbird/core/vector.h"
+#include "scratchbird/core/range.h"
 #include <cstring>
 #include <algorithm>
 
@@ -247,6 +250,248 @@ namespace scratchbird::core
                     result.resize(4 + len);
                     std::memcpy(result.data(), &len, 4);
                     std::memcpy(result.data() + 4, v.data(), len);
+                    break;
+                }
+
+                // Unsigned integer types
+                case DataType::UINT8:
+                {
+                    uint8_t v = value.getUInt8();
+                    result.push_back(v);
+                    break;
+                }
+
+                case DataType::UINT16:
+                {
+                    uint16_t v = value.getUInt16();
+                    result.resize(2);
+                    std::memcpy(result.data(), &v, 2);
+                    break;
+                }
+
+                case DataType::UINT32:
+                {
+                    uint32_t v = value.getUInt32();
+                    result.resize(4);
+                    std::memcpy(result.data(), &v, 4);
+                    break;
+                }
+
+                case DataType::UINT64:
+                {
+                    uint64_t v = value.getUInt64();
+                    result.resize(8);
+                    std::memcpy(result.data(), &v, 8);
+                    break;
+                }
+
+                // INT128 type
+                case DataType::INT128:
+                {
+                    int128_t v = value.getInt128();
+                    result.resize(16);
+                    std::memcpy(result.data(), &v, 16);
+                    break;
+                }
+
+                // MONEY type (stored as int64 cents)
+                case DataType::MONEY:
+                {
+                    int64_t v = value.getMoney();
+                    result.resize(8);
+                    std::memcpy(result.data(), &v, 8);
+                    break;
+                }
+
+                // INTERVAL type (months, days, microseconds)
+                case DataType::INTERVAL:
+                {
+                    Interval v = value.getInterval();
+                    result.resize(16); // 4 + 4 + 8 bytes
+                    size_t offset = 0;
+                    std::memcpy(result.data() + offset, &v.months, 4);
+                    offset += 4;
+                    std::memcpy(result.data() + offset, &v.days, 4);
+                    offset += 4;
+                    std::memcpy(result.data() + offset, &v.microseconds, 8);
+                    break;
+                }
+
+                // Spatial types using WKB format
+                case DataType::POINT:
+                {
+                    Point pt = value.getPoint();
+                    result = spatial::WKBSerializer::serializePoint(pt);
+                    break;
+                }
+
+                case DataType::LINESTRING:
+                {
+                    LineString line = value.getLineString();
+                    result = spatial::WKBSerializer::serializeLineString(line);
+                    break;
+                }
+
+                case DataType::POLYGON:
+                {
+                    Polygon poly = value.getPolygon();
+                    result = spatial::WKBSerializer::serializePolygon(poly);
+                    break;
+                }
+
+                // Vector type (embeddings/ML)
+                case DataType::VECTOR:
+                {
+                    auto vec = value.getVector();
+                    if (vec) {
+                        result = Vector::encode(*vec);
+                    }
+                    break;
+                }
+
+                // Range types
+                case DataType::INT4RANGE:
+                {
+                    Int4Range range = value.getInt4Range();
+                    // Flags byte: bit0=empty, bit1=lower_bounded, bit2=upper_bounded, bit3=lower_inc, bit4=upper_inc
+                    uint8_t flags = 0;
+                    if (range.isEmpty()) flags |= 0x01;
+                    if (range.isLowerBounded()) flags |= 0x02;
+                    if (range.isUpperBounded()) flags |= 0x04;
+                    if (range.isLowerInclusive()) flags |= 0x08;
+                    if (range.isUpperInclusive()) flags |= 0x10;
+                    result.push_back(flags);
+
+                    if (range.isLowerBounded()) {
+                        int32_t lower = *range.lower();
+                        result.resize(result.size() + 4);
+                        std::memcpy(result.data() + result.size() - 4, &lower, 4);
+                    }
+                    if (range.isUpperBounded()) {
+                        int32_t upper = *range.upper();
+                        result.resize(result.size() + 4);
+                        std::memcpy(result.data() + result.size() - 4, &upper, 4);
+                    }
+                    break;
+                }
+
+                case DataType::INT8RANGE:
+                {
+                    Int8Range range = value.getInt8Range();
+                    uint8_t flags = 0;
+                    if (range.isEmpty()) flags |= 0x01;
+                    if (range.isLowerBounded()) flags |= 0x02;
+                    if (range.isUpperBounded()) flags |= 0x04;
+                    if (range.isLowerInclusive()) flags |= 0x08;
+                    if (range.isUpperInclusive()) flags |= 0x10;
+                    result.push_back(flags);
+
+                    if (range.isLowerBounded()) {
+                        int64_t lower = *range.lower();
+                        result.resize(result.size() + 8);
+                        std::memcpy(result.data() + result.size() - 8, &lower, 8);
+                    }
+                    if (range.isUpperBounded()) {
+                        int64_t upper = *range.upper();
+                        result.resize(result.size() + 8);
+                        std::memcpy(result.data() + result.size() - 8, &upper, 8);
+                    }
+                    break;
+                }
+
+                case DataType::NUMRANGE:
+                {
+                    NumRange range = value.getNumRange();
+                    uint8_t flags = 0;
+                    if (range.isEmpty()) flags |= 0x01;
+                    if (range.isLowerBounded()) flags |= 0x02;
+                    if (range.isUpperBounded()) flags |= 0x04;
+                    if (range.isLowerInclusive()) flags |= 0x08;
+                    if (range.isUpperInclusive()) flags |= 0x10;
+                    result.push_back(flags);
+
+                    if (range.isLowerBounded()) {
+                        double lower = *range.lower();
+                        result.resize(result.size() + 8);
+                        std::memcpy(result.data() + result.size() - 8, &lower, 8);
+                    }
+                    if (range.isUpperBounded()) {
+                        double upper = *range.upper();
+                        result.resize(result.size() + 8);
+                        std::memcpy(result.data() + result.size() - 8, &upper, 8);
+                    }
+                    break;
+                }
+
+                case DataType::DATERANGE:
+                {
+                    DateRange range = value.getDateRange();
+                    uint8_t flags = 0;
+                    if (range.isEmpty()) flags |= 0x01;
+                    if (range.isLowerBounded()) flags |= 0x02;
+                    if (range.isUpperBounded()) flags |= 0x04;
+                    if (range.isLowerInclusive()) flags |= 0x08;
+                    if (range.isUpperInclusive()) flags |= 0x10;
+                    result.push_back(flags);
+
+                    if (range.isLowerBounded()) {
+                        int64_t lower = *range.lower();
+                        result.resize(result.size() + 8);
+                        std::memcpy(result.data() + result.size() - 8, &lower, 8);
+                    }
+                    if (range.isUpperBounded()) {
+                        int64_t upper = *range.upper();
+                        result.resize(result.size() + 8);
+                        std::memcpy(result.data() + result.size() - 8, &upper, 8);
+                    }
+                    break;
+                }
+
+                case DataType::TSRANGE:
+                {
+                    TSRange range = value.getTSRange();
+                    uint8_t flags = 0;
+                    if (range.isEmpty()) flags |= 0x01;
+                    if (range.isLowerBounded()) flags |= 0x02;
+                    if (range.isUpperBounded()) flags |= 0x04;
+                    if (range.isLowerInclusive()) flags |= 0x08;
+                    if (range.isUpperInclusive()) flags |= 0x10;
+                    result.push_back(flags);
+
+                    if (range.isLowerBounded()) {
+                        int64_t lower = *range.lower();
+                        result.resize(result.size() + 8);
+                        std::memcpy(result.data() + result.size() - 8, &lower, 8);
+                    }
+                    if (range.isUpperBounded()) {
+                        int64_t upper = *range.upper();
+                        result.resize(result.size() + 8);
+                        std::memcpy(result.data() + result.size() - 8, &upper, 8);
+                    }
+                    break;
+                }
+
+                case DataType::TSTZRANGE:
+                {
+                    TSTZRange range = value.getTSTZRange();
+                    uint8_t flags = 0;
+                    if (range.isEmpty()) flags |= 0x01;
+                    if (range.isLowerBounded()) flags |= 0x02;
+                    if (range.isUpperBounded()) flags |= 0x04;
+                    if (range.isLowerInclusive()) flags |= 0x08;
+                    if (range.isUpperInclusive()) flags |= 0x10;
+                    result.push_back(flags);
+
+                    if (range.isLowerBounded()) {
+                        int64_t lower = *range.lower();
+                        result.resize(result.size() + 8);
+                        std::memcpy(result.data() + result.size() - 8, &lower, 8);
+                    }
+                    if (range.isUpperBounded()) {
+                        int64_t upper = *range.upper();
+                        result.resize(result.size() + 8);
+                        std::memcpy(result.data() + result.size() - 8, &upper, 8);
+                    }
                     break;
                 }
 
@@ -601,6 +846,144 @@ namespace scratchbird::core
                     return TypedValue::makeBinary(data + 4, len);
                 }
 
+                // Unsigned integer types
+                case DataType::UINT8:
+                {
+                    if (size < 1)
+                    {
+                        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                          "Insufficient data for UINT8");
+                        return std::nullopt;
+                    }
+                    uint8_t v = data[0];
+                    return TypedValue::makeUInt8(v);
+                }
+
+                case DataType::UINT16:
+                {
+                    if (size < 2)
+                    {
+                        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                          "Insufficient data for UINT16");
+                        return std::nullopt;
+                    }
+                    uint16_t v;
+                    std::memcpy(&v, data, 2);
+                    return TypedValue::makeUInt16(v);
+                }
+
+                case DataType::UINT32:
+                {
+                    if (size < 4)
+                    {
+                        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                          "Insufficient data for UINT32");
+                        return std::nullopt;
+                    }
+                    uint32_t v;
+                    std::memcpy(&v, data, 4);
+                    return TypedValue::makeUInt32(v);
+                }
+
+                case DataType::UINT64:
+                {
+                    if (size < 8)
+                    {
+                        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                          "Insufficient data for UINT64");
+                        return std::nullopt;
+                    }
+                    uint64_t v;
+                    std::memcpy(&v, data, 8);
+                    return TypedValue::makeUInt64(v);
+                }
+
+                // INT128 type
+                case DataType::INT128:
+                {
+                    if (size < 16)
+                    {
+                        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                          "Insufficient data for INT128");
+                        return std::nullopt;
+                    }
+                    int128_t v;
+                    std::memcpy(&v, data, 16);
+                    return TypedValue::makeInt128(v);
+                }
+
+                // MONEY type
+                case DataType::MONEY:
+                {
+                    if (size < 8)
+                    {
+                        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                          "Insufficient data for MONEY");
+                        return std::nullopt;
+                    }
+                    int64_t v;
+                    std::memcpy(&v, data, 8);
+                    return TypedValue::makeMoney(v);
+                }
+
+                // INTERVAL type
+                case DataType::INTERVAL:
+                {
+                    if (size < 16)
+                    {
+                        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                          "Insufficient data for INTERVAL");
+                        return std::nullopt;
+                    }
+                    int32_t months, days;
+                    int64_t microseconds;
+                    size_t offset = 0;
+                    std::memcpy(&months, data + offset, 4);
+                    offset += 4;
+                    std::memcpy(&days, data + offset, 4);
+                    offset += 4;
+                    std::memcpy(&microseconds, data + offset, 8);
+                    return TypedValue::makeInterval(months, days, microseconds);
+                }
+
+                // Spatial types using WKB format
+                case DataType::POINT:
+                {
+                    std::vector<uint8_t> wkb(data, data + size);
+                    auto pt = spatial::WKBSerializer::deserializePoint(wkb, ctx);
+                    if (!pt) return std::nullopt;
+                    return TypedValue::makePoint(*pt);
+                }
+
+                case DataType::LINESTRING:
+                {
+                    std::vector<uint8_t> wkb(data, data + size);
+                    auto line = spatial::WKBSerializer::deserializeLineString(wkb, ctx);
+                    if (!line) return std::nullopt;
+                    return TypedValue::makeLineString(*line);
+                }
+
+                case DataType::POLYGON:
+                {
+                    std::vector<uint8_t> wkb(data, data + size);
+                    auto poly = spatial::WKBSerializer::deserializePolygon(wkb, ctx);
+                    if (!poly) return std::nullopt;
+                    return TypedValue::makePolygon(*poly);
+                }
+
+                // Vector type (embeddings/ML)
+                case DataType::VECTOR:
+                {
+                    std::vector<uint8_t> buffer(data, data + size);
+                    auto vec = Vector::decode(buffer);
+                    if (!vec) {
+                        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                          "Failed to decode VECTOR");
+                        return std::nullopt;
+                    }
+                    return TypedValue::makeVector(*vec);
+                }
+
                 default:
                     SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
                                       "Unsupported type for deserialization");
@@ -619,20 +1002,25 @@ namespace scratchbird::core
             switch (value.type())
             {
                 case DataType::INT8:
+                case DataType::UINT8:
                 case DataType::BOOLEAN:
                     return 1;
 
                 case DataType::INT16:
+                case DataType::UINT16:
                     return 2;
 
                 case DataType::INT32:
+                case DataType::UINT32:
                 case DataType::FLOAT32:
                     return 4;
 
                 case DataType::INT64:
+                case DataType::UINT64:
                 case DataType::FLOAT64:
                 case DataType::DATE:
                 case DataType::TIME:
+                case DataType::MONEY:
                     return 8;
 
                 case DataType::TIMESTAMP:
@@ -652,6 +1040,8 @@ namespace scratchbird::core
                 }
 
                 case DataType::UUID:
+                case DataType::INT128:
+                case DataType::INTERVAL:
                     return 16;
 
                 case DataType::CHAR:
@@ -693,6 +1083,39 @@ namespace scratchbird::core
                 {
                     auto v = value.getBinary();
                     return 4 + static_cast<uint32_t>(v.size());
+                }
+
+                // Spatial types - variable size WKB format
+                case DataType::POINT:
+                {
+                    Point pt = value.getPoint();
+                    auto wkb = spatial::WKBSerializer::serializePoint(pt);
+                    return static_cast<uint32_t>(wkb.size());
+                }
+
+                case DataType::LINESTRING:
+                {
+                    LineString line = value.getLineString();
+                    auto wkb = spatial::WKBSerializer::serializeLineString(line);
+                    return static_cast<uint32_t>(wkb.size());
+                }
+
+                case DataType::POLYGON:
+                {
+                    Polygon poly = value.getPolygon();
+                    auto wkb = spatial::WKBSerializer::serializePolygon(poly);
+                    return static_cast<uint32_t>(wkb.size());
+                }
+
+                // Vector type - variable size
+                case DataType::VECTOR:
+                {
+                    auto vec = value.getVector();
+                    if (vec) {
+                        auto encoded = Vector::encode(*vec);
+                        return static_cast<uint32_t>(encoded.size());
+                    }
+                    return 0;
                 }
 
                 default:
