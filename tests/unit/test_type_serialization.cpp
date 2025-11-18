@@ -828,6 +828,173 @@ TEST(TypeSerializationTest, ARRAY_3D_Serialization)
     }
 }
 
+// ===== Multi-Geometry Tests =====
+
+TEST(TypeSerializationTest, MULTIPOINT_Serialization)
+{
+    // Create MULTIPOINT with 3 points
+    std::vector<Point> points = {
+        {1.0, 2.0},
+        {3.0, 4.0},
+        {5.0, 6.0}
+    };
+    auto value = TypedValue::makeMultiPoint(points);
+
+    // Serialize
+    auto serialized = TypeSerializer::serialize(value);
+    EXPECT_GT(serialized.size(), 0u);
+
+    // Deserialize
+    ErrorContext ctx;
+    auto deserialized = TypeSerializer::deserialize(DataType::MULTIPOINT,
+                                                    serialized.data(),
+                                                    static_cast<uint32_t>(serialized.size()),
+                                                    &ctx);
+    ASSERT_TRUE(deserialized.has_value());
+    EXPECT_EQ(deserialized->type(), DataType::MULTIPOINT);
+
+    // Verify multipoint properties
+    auto mp = deserialized->getMultiPoint();
+    EXPECT_EQ(mp.numGeometries(), 3u);
+    EXPECT_EQ(mp.points.size(), 3u);
+    EXPECT_EQ(mp.points[0].x, 1.0);
+    EXPECT_EQ(mp.points[0].y, 2.0);
+    EXPECT_EQ(mp.points[1].x, 3.0);
+    EXPECT_EQ(mp.points[1].y, 4.0);
+    EXPECT_EQ(mp.points[2].x, 5.0);
+    EXPECT_EQ(mp.points[2].y, 6.0);
+
+    // Verify size
+    uint32_t expected_size = TypeSerializer::getSerializedSize(value);
+    EXPECT_EQ(expected_size, static_cast<uint32_t>(serialized.size()));
+}
+
+TEST(TypeSerializationTest, MULTILINESTRING_Serialization)
+{
+    // Create MULTILINESTRING with 2 linestrings
+    std::vector<LineString> linestrings = {
+        LineString({{0.0, 0.0}, {1.0, 1.0}, {2.0, 2.0}}),
+        LineString({{3.0, 3.0}, {4.0, 4.0}})
+    };
+    auto value = TypedValue::makeMultiLineString(linestrings);
+
+    // Serialize
+    auto serialized = TypeSerializer::serialize(value);
+    EXPECT_GT(serialized.size(), 0u);
+
+    // Deserialize
+    ErrorContext ctx;
+    auto deserialized = TypeSerializer::deserialize(DataType::MULTILINESTRING,
+                                                    serialized.data(),
+                                                    static_cast<uint32_t>(serialized.size()),
+                                                    &ctx);
+    ASSERT_TRUE(deserialized.has_value());
+    EXPECT_EQ(deserialized->type(), DataType::MULTILINESTRING);
+
+    // Verify multilinestring properties
+    auto mls = deserialized->getMultiLineString();
+    EXPECT_EQ(mls.numGeometries(), 2u);
+    EXPECT_EQ(mls.linestrings.size(), 2u);
+    EXPECT_EQ(mls.linestrings[0].points.size(), 3u);
+    EXPECT_EQ(mls.linestrings[1].points.size(), 2u);
+    EXPECT_EQ(mls.linestrings[0].points[0].x, 0.0);
+    EXPECT_EQ(mls.linestrings[0].points[0].y, 0.0);
+    EXPECT_EQ(mls.linestrings[1].points[1].x, 4.0);
+    EXPECT_EQ(mls.linestrings[1].points[1].y, 4.0);
+
+    // Verify size
+    uint32_t expected_size = TypeSerializer::getSerializedSize(value);
+    EXPECT_EQ(expected_size, static_cast<uint32_t>(serialized.size()));
+}
+
+TEST(TypeSerializationTest, MULTIPOLYGON_Serialization)
+{
+    // Create MULTIPOLYGON with 2 polygons
+    std::vector<Polygon> polygons = {
+        Polygon({{0.0, 0.0}, {4.0, 0.0}, {4.0, 4.0}, {0.0, 4.0}, {0.0, 0.0}}),
+        Polygon({{1.0, 1.0}, {2.0, 1.0}, {2.0, 2.0}, {1.0, 2.0}, {1.0, 1.0}})
+    };
+    auto value = TypedValue::makeMultiPolygon(polygons);
+
+    // Serialize
+    auto serialized = TypeSerializer::serialize(value);
+    EXPECT_GT(serialized.size(), 0u);
+
+    // Deserialize
+    ErrorContext ctx;
+    auto deserialized = TypeSerializer::deserialize(DataType::MULTIPOLYGON,
+                                                    serialized.data(),
+                                                    static_cast<uint32_t>(serialized.size()),
+                                                    &ctx);
+    ASSERT_TRUE(deserialized.has_value());
+    EXPECT_EQ(deserialized->type(), DataType::MULTIPOLYGON);
+
+    // Verify multipolygon properties
+    auto mpoly = deserialized->getMultiPolygon();
+    EXPECT_EQ(mpoly.numGeometries(), 2u);
+    EXPECT_EQ(mpoly.polygons.size(), 2u);
+    EXPECT_EQ(mpoly.polygons[0].rings.size(), 1u);  // No holes
+    EXPECT_EQ(mpoly.polygons[0].rings[0].size(), 5u);  // 4 points + closing point
+    EXPECT_EQ(mpoly.polygons[1].rings.size(), 1u);
+    EXPECT_EQ(mpoly.polygons[1].rings[0].size(), 5u);
+
+    // Verify size
+    uint32_t expected_size = TypeSerializer::getSerializedSize(value);
+    EXPECT_EQ(expected_size, static_cast<uint32_t>(serialized.size()));
+}
+
+TEST(TypeSerializationTest, GEOMETRYCOLLECTION_Serialization)
+{
+    // Create GEOMETRYCOLLECTION with mixed geometries
+    std::vector<std::shared_ptr<TypedValue>> geometries;
+    geometries.push_back(std::make_shared<TypedValue>(TypedValue::makePoint(1.0, 2.0)));
+    geometries.push_back(std::make_shared<TypedValue>(
+        TypedValue::makeLineString({{0.0, 0.0}, {1.0, 1.0}})));
+    geometries.push_back(std::make_shared<TypedValue>(
+        TypedValue::makePolygon({{0.0, 0.0}, {1.0, 0.0}, {1.0, 1.0}, {0.0, 1.0}, {0.0, 0.0}})));
+
+    auto value = TypedValue::makeGeometryCollection(geometries);
+
+    // Serialize
+    auto serialized = TypeSerializer::serialize(value);
+    EXPECT_GT(serialized.size(), 0u);
+
+    // Deserialize
+    ErrorContext ctx;
+    auto deserialized = TypeSerializer::deserialize(DataType::GEOMETRYCOLLECTION,
+                                                    serialized.data(),
+                                                    static_cast<uint32_t>(serialized.size()),
+                                                    &ctx);
+    ASSERT_TRUE(deserialized.has_value());
+    EXPECT_EQ(deserialized->type(), DataType::GEOMETRYCOLLECTION);
+
+    // Verify geometry collection properties
+    auto gc = deserialized->getGeometryCollection();
+    EXPECT_EQ(gc.numGeometries(), 3u);
+    EXPECT_EQ(gc.geometries.size(), 3u);
+    EXPECT_EQ(gc.geometries[0]->type(), DataType::POINT);
+    EXPECT_EQ(gc.geometries[1]->type(), DataType::LINESTRING);
+    EXPECT_EQ(gc.geometries[2]->type(), DataType::POLYGON);
+
+    // Verify first geometry (Point)
+    auto pt = gc.geometries[0]->getPoint();
+    EXPECT_EQ(pt.x, 1.0);
+    EXPECT_EQ(pt.y, 2.0);
+
+    // Verify second geometry (LineString)
+    auto ls = gc.geometries[1]->getLineString();
+    EXPECT_EQ(ls.points.size(), 2u);
+
+    // Verify third geometry (Polygon)
+    auto poly = gc.geometries[2]->getPolygon();
+    EXPECT_EQ(poly.rings.size(), 1u);
+    EXPECT_EQ(poly.rings[0].size(), 5u);
+
+    // Verify size
+    uint32_t expected_size = TypeSerializer::getSerializedSize(value);
+    EXPECT_EQ(expected_size, static_cast<uint32_t>(serialized.size()));
+}
+
 // ===== Error Handling Tests =====
 
 TEST(TypeSerializationTest, Deserialize_NullData)

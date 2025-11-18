@@ -50,6 +50,26 @@ namespace scratchbird::spatial
         static auto serializePolygon(const core::Polygon& polygon) -> std::vector<uint8_t>;
 
         /**
+         * Serialize MultiPoint to WKB binary format
+         */
+        static auto serializeMultiPoint(const core::MultiPoint& multipoint) -> std::vector<uint8_t>;
+
+        /**
+         * Serialize MultiLineString to WKB binary format
+         */
+        static auto serializeMultiLineString(const core::MultiLineString& multilinestring) -> std::vector<uint8_t>;
+
+        /**
+         * Serialize MultiPolygon to WKB binary format
+         */
+        static auto serializeMultiPolygon(const core::MultiPolygon& multipolygon) -> std::vector<uint8_t>;
+
+        /**
+         * Serialize GeometryCollection to WKB binary format
+         */
+        static auto serializeGeometryCollection(const core::GeometryCollection& collection) -> std::vector<uint8_t>;
+
+        /**
          * Deserialize Point from WKB binary format
          */
         static auto deserializePoint(const std::vector<uint8_t>& wkb, core::ErrorContext* ctx = nullptr)
@@ -66,6 +86,30 @@ namespace scratchbird::spatial
          */
         static auto deserializePolygon(const std::vector<uint8_t>& wkb, core::ErrorContext* ctx = nullptr)
             -> std::optional<core::Polygon>;
+
+        /**
+         * Deserialize MultiPoint from WKB binary format
+         */
+        static auto deserializeMultiPoint(const std::vector<uint8_t>& wkb, core::ErrorContext* ctx = nullptr)
+            -> std::optional<core::MultiPoint>;
+
+        /**
+         * Deserialize MultiLineString from WKB binary format
+         */
+        static auto deserializeMultiLineString(const std::vector<uint8_t>& wkb, core::ErrorContext* ctx = nullptr)
+            -> std::optional<core::MultiLineString>;
+
+        /**
+         * Deserialize MultiPolygon from WKB binary format
+         */
+        static auto deserializeMultiPolygon(const std::vector<uint8_t>& wkb, core::ErrorContext* ctx = nullptr)
+            -> std::optional<core::MultiPolygon>;
+
+        /**
+         * Deserialize GeometryCollection from WKB binary format
+         */
+        static auto deserializeGeometryCollection(const std::vector<uint8_t>& wkb, core::ErrorContext* ctx = nullptr)
+            -> std::optional<core::GeometryCollection>;
 
         /**
          * Auto-detect type and deserialize WKB
