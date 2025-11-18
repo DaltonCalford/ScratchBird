@@ -8,6 +8,7 @@
 #include "scratchbird/core/network.h"
 #include "scratchbird/core/tsvector.h"
 #include "scratchbird/core/tsquery.h"
+#include "scratchbird/core/array.h"
 #include <cstring>
 
 using namespace scratchbird::core;
@@ -621,6 +622,210 @@ TEST(TypeSerializationTest, VARIANT_Null_Serialization)
 
     const auto& deserialized_var = deserialized->getVariant();
     EXPECT_EQ(deserialized_var.actual_type, DataType::INT32);
+}
+
+// ===== Array Type Tests =====
+
+TEST(TypeSerializationTest, ARRAY_1D_INT32_Serialization)
+{
+    // Create 1D array: [1, 2, 3, 4, 5]
+    std::vector<int32_t> values = {1, 2, 3, 4, 5};
+    std::vector<size_t> dimensions = {5};
+    ArrayValue original_array(values, dimensions);
+    auto value = TypedValue::makeArray(original_array);
+
+    // Serialize
+    auto serialized = TypeSerializer::serialize(value);
+    EXPECT_GT(serialized.size(), 0u);
+
+    // Deserialize
+    ErrorContext ctx;
+    auto deserialized = TypeSerializer::deserialize(DataType::ARRAY,
+                                                    serialized.data(),
+                                                    static_cast<uint32_t>(serialized.size()),
+                                                    &ctx);
+    ASSERT_TRUE(deserialized.has_value());
+    EXPECT_EQ(deserialized->type(), DataType::ARRAY);
+
+    // Verify array properties
+    auto array_ptr = deserialized->getArray();
+    ASSERT_TRUE(array_ptr != nullptr);
+    EXPECT_EQ(array_ptr->getElementType(), ArrayElementType::INT32);
+    EXPECT_EQ(array_ptr->getRank(), 1u);
+    EXPECT_EQ(array_ptr->getTotalElements(), 5u);
+
+    // Verify values
+    auto int32_vec = array_ptr->getInt32Vector();
+    ASSERT_TRUE(int32_vec.has_value());
+    EXPECT_EQ(int32_vec->size(), 5u);
+    EXPECT_EQ((*int32_vec)[0], 1);
+    EXPECT_EQ((*int32_vec)[1], 2);
+    EXPECT_EQ((*int32_vec)[2], 3);
+    EXPECT_EQ((*int32_vec)[3], 4);
+    EXPECT_EQ((*int32_vec)[4], 5);
+
+    // Verify size
+    uint32_t expected_size = TypeSerializer::getSerializedSize(value);
+    EXPECT_EQ(expected_size, static_cast<uint32_t>(serialized.size()));
+}
+
+TEST(TypeSerializationTest, ARRAY_2D_INT32_Serialization)
+{
+    // Create 2D array (3x3 matrix):
+    // [[1, 2, 3],
+    //  [4, 5, 6],
+    //  [7, 8, 9]]
+    std::vector<int32_t> values = {1, 2, 3, 4, 5, 6, 7, 8, 9};
+    std::vector<size_t> dimensions = {3, 3};
+    ArrayValue original_array(values, dimensions);
+    auto value = TypedValue::makeArray(original_array);
+
+    // Serialize
+    auto serialized = TypeSerializer::serialize(value);
+    EXPECT_GT(serialized.size(), 0u);
+
+    // Deserialize
+    ErrorContext ctx;
+    auto deserialized = TypeSerializer::deserialize(DataType::ARRAY,
+                                                    serialized.data(),
+                                                    static_cast<uint32_t>(serialized.size()),
+                                                    &ctx);
+    ASSERT_TRUE(deserialized.has_value());
+
+    // Verify array properties
+    auto array_ptr = deserialized->getArray();
+    ASSERT_TRUE(array_ptr != nullptr);
+    EXPECT_EQ(array_ptr->getElementType(), ArrayElementType::INT32);
+    EXPECT_EQ(array_ptr->getRank(), 2u);
+    EXPECT_EQ(array_ptr->getTotalElements(), 9u);
+
+    auto dims = array_ptr->getDimensions();
+    EXPECT_EQ(dims.size(), 2u);
+    EXPECT_EQ(dims[0], 3u);
+    EXPECT_EQ(dims[1], 3u);
+
+    // Verify values
+    auto int32_vec = array_ptr->getInt32Vector();
+    ASSERT_TRUE(int32_vec.has_value());
+    EXPECT_EQ(int32_vec->size(), 9u);
+    for (int i = 0; i < 9; ++i) {
+        EXPECT_EQ((*int32_vec)[i], i + 1);
+    }
+}
+
+TEST(TypeSerializationTest, ARRAY_FLOAT_Serialization)
+{
+    // Create float array: [1.5, 2.5, 3.5, 4.5]
+    std::vector<float> values = {1.5f, 2.5f, 3.5f, 4.5f};
+    std::vector<size_t> dimensions = {4};
+    ArrayValue original_array(values, dimensions);
+    auto value = TypedValue::makeArray(original_array);
+
+    // Serialize
+    auto serialized = TypeSerializer::serialize(value);
+    EXPECT_GT(serialized.size(), 0u);
+
+    // Deserialize
+    ErrorContext ctx;
+    auto deserialized = TypeSerializer::deserialize(DataType::ARRAY,
+                                                    serialized.data(),
+                                                    static_cast<uint32_t>(serialized.size()),
+                                                    &ctx);
+    ASSERT_TRUE(deserialized.has_value());
+
+    // Verify array properties
+    auto array_ptr = deserialized->getArray();
+    ASSERT_TRUE(array_ptr != nullptr);
+    EXPECT_EQ(array_ptr->getElementType(), ArrayElementType::FLOAT32);
+    EXPECT_EQ(array_ptr->getRank(), 1u);
+    EXPECT_EQ(array_ptr->getTotalElements(), 4u);
+
+    // Verify values
+    auto float_vec = array_ptr->getFloat32Vector();
+    ASSERT_TRUE(float_vec.has_value());
+    EXPECT_EQ(float_vec->size(), 4u);
+    EXPECT_FLOAT_EQ((*float_vec)[0], 1.5f);
+    EXPECT_FLOAT_EQ((*float_vec)[1], 2.5f);
+    EXPECT_FLOAT_EQ((*float_vec)[2], 3.5f);
+    EXPECT_FLOAT_EQ((*float_vec)[3], 4.5f);
+}
+
+TEST(TypeSerializationTest, ARRAY_STRING_Serialization)
+{
+    // Create string array: ["hello", "world", "test"]
+    std::vector<std::string> values = {"hello", "world", "test"};
+    std::vector<size_t> dimensions = {3};
+    ArrayValue original_array(values, dimensions);
+    auto value = TypedValue::makeArray(original_array);
+
+    // Serialize
+    auto serialized = TypeSerializer::serialize(value);
+    EXPECT_GT(serialized.size(), 0u);
+
+    // Deserialize
+    ErrorContext ctx;
+    auto deserialized = TypeSerializer::deserialize(DataType::ARRAY,
+                                                    serialized.data(),
+                                                    static_cast<uint32_t>(serialized.size()),
+                                                    &ctx);
+    ASSERT_TRUE(deserialized.has_value());
+
+    // Verify array properties
+    auto array_ptr = deserialized->getArray();
+    ASSERT_TRUE(array_ptr != nullptr);
+    EXPECT_EQ(array_ptr->getElementType(), ArrayElementType::STRING);
+    EXPECT_EQ(array_ptr->getRank(), 1u);
+    EXPECT_EQ(array_ptr->getTotalElements(), 3u);
+
+    // Verify values
+    auto string_vec = array_ptr->getStringVector();
+    ASSERT_TRUE(string_vec.has_value());
+    EXPECT_EQ(string_vec->size(), 3u);
+    EXPECT_EQ((*string_vec)[0], "hello");
+    EXPECT_EQ((*string_vec)[1], "world");
+    EXPECT_EQ((*string_vec)[2], "test");
+}
+
+TEST(TypeSerializationTest, ARRAY_3D_Serialization)
+{
+    // Create 3D array (2x2x3): 12 elements total
+    std::vector<int64_t> values = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12};
+    std::vector<size_t> dimensions = {2, 2, 3};
+    ArrayValue original_array(values, dimensions);
+    auto value = TypedValue::makeArray(original_array);
+
+    // Serialize
+    auto serialized = TypeSerializer::serialize(value);
+    EXPECT_GT(serialized.size(), 0u);
+
+    // Deserialize
+    ErrorContext ctx;
+    auto deserialized = TypeSerializer::deserialize(DataType::ARRAY,
+                                                    serialized.data(),
+                                                    static_cast<uint32_t>(serialized.size()),
+                                                    &ctx);
+    ASSERT_TRUE(deserialized.has_value());
+
+    // Verify array properties
+    auto array_ptr = deserialized->getArray();
+    ASSERT_TRUE(array_ptr != nullptr);
+    EXPECT_EQ(array_ptr->getElementType(), ArrayElementType::INT64);
+    EXPECT_EQ(array_ptr->getRank(), 3u);
+    EXPECT_EQ(array_ptr->getTotalElements(), 12u);
+
+    auto dims = array_ptr->getDimensions();
+    EXPECT_EQ(dims.size(), 3u);
+    EXPECT_EQ(dims[0], 2u);
+    EXPECT_EQ(dims[1], 2u);
+    EXPECT_EQ(dims[2], 3u);
+
+    // Verify values
+    auto int64_vec = array_ptr->getInt64Vector();
+    ASSERT_TRUE(int64_vec.has_value());
+    EXPECT_EQ(int64_vec->size(), 12u);
+    for (int i = 0; i < 12; ++i) {
+        EXPECT_EQ((*int64_vec)[i], i + 1);
+    }
 }
 
 // ===== Error Handling Tests =====

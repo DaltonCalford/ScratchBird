@@ -4,6 +4,7 @@
 #include "scratchbird/core/tsquery.h"
 #include "scratchbird/core/range.h"
 #include "scratchbird/core/vector.h"
+#include "scratchbird/core/array.h"
 #include <cstring>
 #include <cmath>
 #include <sstream>
@@ -835,6 +836,27 @@ namespace scratchbird::core
 
         const auto& variant = std::get<VariantValue>(data_);
         return variant.actual_type;
+    }
+
+    TypedValue TypedValue::makeArray(const ArrayValue &v)
+    {
+        TypedValue result(DataType::ARRAY);
+        result.data_ = std::make_shared<ArrayValue>(v);
+        return result;
+    }
+
+    TypedValue TypedValue::makeArray(std::shared_ptr<ArrayValue> v)
+    {
+        TypedValue result(DataType::ARRAY);
+        result.data_ = v;
+        return result;
+    }
+
+    std::shared_ptr<ArrayValue> TypedValue::getArray() const
+    {
+        if (type_ != DataType::ARRAY)
+            throw std::runtime_error("Type mismatch: not ARRAY");
+        return std::get<std::shared_ptr<ArrayValue>>(data_);
     }
 
     TypedValue TypedValue::unwrapVariant() const

@@ -17,6 +17,9 @@ namespace scratchbird::core
     class TSVector;
     class TSQuery;
 
+    // Forward declaration for array types
+    class ArrayValue;
+
     // Forward declaration for vector distance metrics
     enum class DistanceMetric;
 
@@ -415,7 +418,8 @@ namespace scratchbird::core
                          MacAddr8,        // MACADDR8
                          CompositeValue,  // COMPOSITE
                          std::shared_ptr<VectorValue>,  // VECTOR
-                         VariantValue     // VARIANT
+                         VariantValue,    // VARIANT
+                         std::shared_ptr<ArrayValue>    // ARRAY
                          >;
 
         TypedValue() : type_(DataType::NULL_TYPE), data_(std::monostate{}) {}
@@ -485,6 +489,8 @@ namespace scratchbird::core
         static TypedValue makeVariant(const VariantValue &v);
         static TypedValue makeVariant(const TypedValue &value);
         static TypedValue makeVariant(DataType actual_type, const TypedValue &value);
+        static TypedValue makeArray(const ArrayValue &v);
+        static TypedValue makeArray(std::shared_ptr<ArrayValue> v);
 
         // Type checking
         DataType type() const
@@ -539,6 +545,7 @@ namespace scratchbird::core
         const CompositeValue& getComposite() const;
         std::shared_ptr<VectorValue> getVector() const;
         const VariantValue& getVariant() const;
+        std::shared_ptr<ArrayValue> getArray() const;
 
         // COMPOSITE field access methods
         TypedValue getField(const std::string& field_name) const;
