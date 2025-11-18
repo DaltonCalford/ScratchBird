@@ -6,6 +6,7 @@
 #include "scratchbird/core/network.h"
 #include "scratchbird/core/tsvector.h"
 #include "scratchbird/core/tsquery.h"
+#include "scratchbird/core/array.h"
 #include <cstring>
 #include <algorithm>
 
@@ -619,6 +620,18 @@ namespace scratchbird::core
                         uint32_t zero = 0;
                         std::memcpy(result.data() + offset, &zero, 4);
                     }
+                    break;
+                }
+
+                // Array type
+                case DataType::ARRAY:
+                {
+                    auto array_ptr = value.getArray();
+                    if (!array_ptr) {
+                        break;  // Return empty for NULL
+                    }
+                    // Use existing Array::encode() method
+                    result = Array::encode(*array_ptr);
                     break;
                 }
 
@@ -1478,6 +1491,23 @@ namespace scratchbird::core
                     return TypedValue::makeVariant(actual_type, *val);
                 }
 
+                // Array type
+                case DataType::ARRAY:
+                {
+                    if (size == 0) {
+                        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Empty array data");
+                        return std::nullopt;
+                    }
+                    std::vector<uint8_t> binary_data(data, data + size);
+                    auto array_opt = Array::decode(binary_data);
+                    if (!array_opt) {
+                        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                         "Failed to decode array data");
+                        return std::nullopt;
+                    }
+                    return TypedValue::makeArray(*array_opt);
+                }
+
                 default:
                     SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
                                       "Unsupported type for deserialization");
@@ -1733,6 +1763,15 @@ namespace scratchbird::core
                         total += static_cast<uint32_t>(val_data.size());
                     }
                     return total;
+                }
+
+                // Array type
+                case DataType::ARRAY:
+                {
+                    auto array_ptr = value.getArray();
+                    if (!array_ptr) return 0;
+                    auto encoded = Array::encode(*array_ptr);
+                    return static_cast<uint32_t>(encoded.size());
                 }
 
                 default:
