@@ -9491,6 +9491,98 @@ namespace scratchbird
                                 {
                                     wkt = spatial::WKTParser::polygonToWKT(geom.getPolygon());
                                 }
+                                else if (geom.type() == core::DataType::MULTIPOINT)
+                                {
+                                    // Generate MULTIPOINT WKT: MULTIPOINT((x1 y1), (x2 y2), ...)
+                                    core::MultiPoint mp = geom.getMultiPoint();
+                                    std::ostringstream oss;
+                                    oss << "MULTIPOINT(";
+                                    for (size_t i = 0; i < mp.points.size(); i++)
+                                    {
+                                        if (i > 0) oss << ", ";
+                                        oss << "(" << mp.points[i].x << " " << mp.points[i].y << ")";
+                                    }
+                                    oss << ")";
+                                    wkt = oss.str();
+                                }
+                                else if (geom.type() == core::DataType::MULTILINESTRING)
+                                {
+                                    // Generate MULTILINESTRING WKT
+                                    core::MultiLineString mls = geom.getMultiLineString();
+                                    std::ostringstream oss;
+                                    oss << "MULTILINESTRING(";
+                                    for (size_t i = 0; i < mls.linestrings.size(); i++)
+                                    {
+                                        if (i > 0) oss << ", ";
+                                        oss << "(";
+                                        const auto& ls = mls.linestrings[i];
+                                        for (size_t j = 0; j < ls.points.size(); j++)
+                                        {
+                                            if (j > 0) oss << ", ";
+                                            oss << ls.points[j].x << " " << ls.points[j].y;
+                                        }
+                                        oss << ")";
+                                    }
+                                    oss << ")";
+                                    wkt = oss.str();
+                                }
+                                else if (geom.type() == core::DataType::MULTIPOLYGON)
+                                {
+                                    // Generate MULTIPOLYGON WKT
+                                    core::MultiPolygon mpoly = geom.getMultiPolygon();
+                                    std::ostringstream oss;
+                                    oss << "MULTIPOLYGON(";
+                                    for (size_t i = 0; i < mpoly.polygons.size(); i++)
+                                    {
+                                        if (i > 0) oss << ", ";
+                                        oss << "(";
+                                        const auto& poly = mpoly.polygons[i];
+                                        for (size_t j = 0; j < poly.rings.size(); j++)
+                                        {
+                                            if (j > 0) oss << ", ";
+                                            oss << "(";
+                                            const auto& ring = poly.rings[j];
+                                            for (size_t k = 0; k < ring.size(); k++)
+                                            {
+                                                if (k > 0) oss << ", ";
+                                                oss << ring[k].x << " " << ring[k].y;
+                                            }
+                                            oss << ")";
+                                        }
+                                        oss << ")";
+                                    }
+                                    oss << ")";
+                                    wkt = oss.str();
+                                }
+                                else if (geom.type() == core::DataType::GEOMETRYCOLLECTION)
+                                {
+                                    // Generate GEOMETRYCOLLECTION WKT
+                                    core::GeometryCollection gc = geom.getGeometryCollection();
+                                    std::ostringstream oss;
+                                    oss << "GEOMETRYCOLLECTION(";
+                                    for (size_t i = 0; i < gc.geometries.size(); i++)
+                                    {
+                                        if (i > 0) oss << ", ";
+
+                                        // Recursively convert each geometry to WKT
+                                        const auto& g = gc.geometries[i];
+                                        if (g->type() == core::DataType::POINT)
+                                        {
+                                            oss << spatial::WKTParser::pointToWKT(g->getPoint());
+                                        }
+                                        else if (g->type() == core::DataType::LINESTRING)
+                                        {
+                                            oss << spatial::WKTParser::lineStringToWKT(g->getLineString());
+                                        }
+                                        else if (g->type() == core::DataType::POLYGON)
+                                        {
+                                            oss << spatial::WKTParser::polygonToWKT(g->getPolygon());
+                                        }
+                                        // TODO: Handle nested multi-geometry types if needed
+                                    }
+                                    oss << ")";
+                                    wkt = oss.str();
+                                }
                                 else
                                 {
                                     push(Value::makeNull());
@@ -9529,6 +9621,22 @@ namespace scratchbird
                                 {
                                     wkb = spatial::WKBSerializer::serializePolygon(geom.getPolygon());
                                 }
+                                else if (geom.type() == core::DataType::MULTIPOINT)
+                                {
+                                    wkb = spatial::WKBSerializer::serializeMultiPoint(geom.getMultiPoint());
+                                }
+                                else if (geom.type() == core::DataType::MULTILINESTRING)
+                                {
+                                    wkb = spatial::WKBSerializer::serializeMultiLineString(geom.getMultiLineString());
+                                }
+                                else if (geom.type() == core::DataType::MULTIPOLYGON)
+                                {
+                                    wkb = spatial::WKBSerializer::serializeMultiPolygon(geom.getMultiPolygon());
+                                }
+                                else if (geom.type() == core::DataType::GEOMETRYCOLLECTION)
+                                {
+                                    wkb = spatial::WKBSerializer::serializeGeometryCollection(geom.getGeometryCollection());
+                                }
                                 else
                                 {
                                     push(Value::makeNull());
@@ -9566,6 +9674,22 @@ namespace scratchbird
                             else if (geom.type() == core::DataType::POLYGON)
                             {
                                 type_name = "POLYGON";
+                            }
+                            else if (geom.type() == core::DataType::MULTIPOINT)
+                            {
+                                type_name = "MULTIPOINT";
+                            }
+                            else if (geom.type() == core::DataType::MULTILINESTRING)
+                            {
+                                type_name = "MULTILINESTRING";
+                            }
+                            else if (geom.type() == core::DataType::MULTIPOLYGON)
+                            {
+                                type_name = "MULTIPOLYGON";
+                            }
+                            else if (geom.type() == core::DataType::GEOMETRYCOLLECTION)
+                            {
+                                type_name = "GEOMETRYCOLLECTION";
                             }
                             else
                             {
@@ -10632,6 +10756,390 @@ namespace scratchbird
                         }
                     }
 #endif // HAVE_GEOS
+                    // ========== Multi-Geometry Constructor Functions (OGC Simple Features) ==========
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_ST_MULTIPOINT))
+                    {
+                        // ST_MultiPoint(point1, point2, ...) - create MULTIPOINT from points
+                        uint8_t arg_count = readByte();
+
+                        if (arg_count < 1)
+                        {
+                            error("ST_MultiPoint expects at least 1 point");
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            // Pop all points from stack (in reverse order)
+                            std::vector<Value> point_values;
+                            for (uint8_t i = 0; i < arg_count; i++)
+                            {
+                                point_values.push_back(pop());
+                            }
+
+                            // Reverse to get correct order
+                            std::reverse(point_values.begin(), point_values.end());
+
+                            // Check for nulls and validate types
+                            bool has_error = false;
+                            std::vector<core::Point> points;
+
+                            for (const auto& pv : point_values)
+                            {
+                                if (pv.isNull() || pv.type() != core::DataType::POINT)
+                                {
+                                    has_error = true;
+                                    break;
+                                }
+                                points.push_back(pv.getPoint());
+                            }
+
+                            if (has_error)
+                            {
+                                push(Value::makeNull());
+                            }
+                            else
+                            {
+                                try {
+                                    core::MultiPoint multipoint(points);
+                                    if (multipoint.isValid())
+                                    {
+                                        push(Value::makeMultiPoint(multipoint));
+                                    }
+                                    else
+                                    {
+                                        push(Value::makeNull());
+                                    }
+                                } catch (...) {
+                                    push(Value::makeNull());
+                                }
+                            }
+                        }
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_ST_MULTILINESTRING))
+                    {
+                        // ST_MultiLineString(linestring1, linestring2, ...) - create MULTILINESTRING
+                        uint8_t arg_count = readByte();
+
+                        if (arg_count < 1)
+                        {
+                            error("ST_MultiLineString expects at least 1 linestring");
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            // Pop all linestrings from stack (in reverse order)
+                            std::vector<Value> ls_values;
+                            for (uint8_t i = 0; i < arg_count; i++)
+                            {
+                                ls_values.push_back(pop());
+                            }
+
+                            // Reverse to get correct order
+                            std::reverse(ls_values.begin(), ls_values.end());
+
+                            // Check for nulls and validate types
+                            bool has_error = false;
+                            std::vector<core::LineString> linestrings;
+
+                            for (const auto& lv : ls_values)
+                            {
+                                if (lv.isNull() || lv.type() != core::DataType::LINESTRING)
+                                {
+                                    has_error = true;
+                                    break;
+                                }
+                                linestrings.push_back(lv.getLineString());
+                            }
+
+                            if (has_error)
+                            {
+                                push(Value::makeNull());
+                            }
+                            else
+                            {
+                                try {
+                                    core::MultiLineString mls(linestrings);
+                                    if (mls.isValid())
+                                    {
+                                        push(Value::makeMultiLineString(mls));
+                                    }
+                                    else
+                                    {
+                                        push(Value::makeNull());
+                                    }
+                                } catch (...) {
+                                    push(Value::makeNull());
+                                }
+                            }
+                        }
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_ST_MULTIPOLYGON))
+                    {
+                        // ST_MultiPolygon(polygon1, polygon2, ...) - create MULTIPOLYGON
+                        uint8_t arg_count = readByte();
+
+                        if (arg_count < 1)
+                        {
+                            error("ST_MultiPolygon expects at least 1 polygon");
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            // Pop all polygons from stack (in reverse order)
+                            std::vector<Value> poly_values;
+                            for (uint8_t i = 0; i < arg_count; i++)
+                            {
+                                poly_values.push_back(pop());
+                            }
+
+                            // Reverse to get correct order
+                            std::reverse(poly_values.begin(), poly_values.end());
+
+                            // Check for nulls and validate types
+                            bool has_error = false;
+                            std::vector<core::Polygon> polygons;
+
+                            for (const auto& pv : poly_values)
+                            {
+                                if (pv.isNull() || pv.type() != core::DataType::POLYGON)
+                                {
+                                    has_error = true;
+                                    break;
+                                }
+                                polygons.push_back(pv.getPolygon());
+                            }
+
+                            if (has_error)
+                            {
+                                push(Value::makeNull());
+                            }
+                            else
+                            {
+                                try {
+                                    core::MultiPolygon mpoly(polygons);
+                                    if (mpoly.isValid())
+                                    {
+                                        push(Value::makeMultiPolygon(mpoly));
+                                    }
+                                    else
+                                    {
+                                        push(Value::makeNull());
+                                    }
+                                } catch (...) {
+                                    push(Value::makeNull());
+                                }
+                            }
+                        }
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_ST_GEOMETRYCOLLECTION) ||
+                             ext_op == static_cast<uint8_t>(Opcode::EXT_ST_COLLECT))
+                    {
+                        // ST_GeometryCollection / ST_Collect - create heterogeneous collection
+                        uint8_t arg_count = readByte();
+
+                        if (arg_count < 1)
+                        {
+                            error("ST_GeometryCollection/ST_Collect expects at least 1 geometry");
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            // Pop all geometries from stack (in reverse order)
+                            std::vector<Value> geom_values;
+                            for (uint8_t i = 0; i < arg_count; i++)
+                            {
+                                geom_values.push_back(pop());
+                            }
+
+                            // Reverse to get correct order
+                            std::reverse(geom_values.begin(), geom_values.end());
+
+                            // Create vector of shared pointers to TypedValue
+                            std::vector<std::shared_ptr<core::TypedValue>> geometries;
+
+                            for (const auto& gv : geom_values)
+                            {
+                                if (gv.isNull())
+                                {
+                                    // Skip nulls in collection
+                                    continue;
+                                }
+
+                                // Check if it's a geometry type
+                                core::DataType dt = gv.type();
+                                if (dt == core::DataType::POINT ||
+                                    dt == core::DataType::LINESTRING ||
+                                    dt == core::DataType::POLYGON ||
+                                    dt == core::DataType::MULTIPOINT ||
+                                    dt == core::DataType::MULTILINESTRING ||
+                                    dt == core::DataType::MULTIPOLYGON ||
+                                    dt == core::DataType::GEOMETRYCOLLECTION)
+                                {
+                                    geometries.push_back(std::make_shared<core::TypedValue>(gv));
+                                }
+                            }
+
+                            if (geometries.empty())
+                            {
+                                push(Value::makeNull());
+                            }
+                            else
+                            {
+                                try {
+                                    core::GeometryCollection gc;
+                                    gc.geometries = geometries;
+
+                                    if (gc.isValid())
+                                    {
+                                        push(Value::makeGeometryCollection(gc));
+                                    }
+                                    else
+                                    {
+                                        push(Value::makeNull());
+                                    }
+                                } catch (...) {
+                                    push(Value::makeNull());
+                                }
+                            }
+                        }
+                    }
+                    // ========== Multi-Geometry Accessor Functions ==========
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_ST_NUMGEOMETRIES))
+                    {
+                        // ST_NumGeometries(multi_geom) - get count of geometries in collection
+                        Value geom_val = pop();
+
+                        if (geom_val.isNull())
+                        {
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            try {
+                                size_t count = 0;
+
+                                switch (geom_val.type())
+                                {
+                                    case core::DataType::MULTIPOINT:
+                                        count = geom_val.getMultiPoint().numGeometries();
+                                        break;
+                                    case core::DataType::MULTILINESTRING:
+                                        count = geom_val.getMultiLineString().numGeometries();
+                                        break;
+                                    case core::DataType::MULTIPOLYGON:
+                                        count = geom_val.getMultiPolygon().numGeometries();
+                                        break;
+                                    case core::DataType::GEOMETRYCOLLECTION:
+                                        count = geom_val.getGeometryCollection().numGeometries();
+                                        break;
+                                    default:
+                                        // For simple geometries, return 1
+                                        count = 1;
+                                        break;
+                                }
+
+                                push(Value::makeInt32(static_cast<int32_t>(count)));
+                            } catch (...) {
+                                push(Value::makeNull());
+                            }
+                        }
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_ST_GEOMETRYN))
+                    {
+                        // ST_GeometryN(multi_geom, n) - get Nth geometry (1-indexed)
+                        Value index_val = pop();
+                        Value geom_val = pop();
+
+                        if (geom_val.isNull() || index_val.isNull())
+                        {
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            try {
+                                int32_t index = index_val.getInt32();
+
+                                // SQL uses 1-based indexing
+                                if (index < 1)
+                                {
+                                    push(Value::makeNull());
+                                }
+                                else
+                                {
+                                    size_t idx = static_cast<size_t>(index - 1);
+
+                                    switch (geom_val.type())
+                                    {
+                                        case core::DataType::MULTIPOINT:
+                                        {
+                                            core::MultiPoint mp = geom_val.getMultiPoint();
+                                            if (idx < mp.points.size())
+                                            {
+                                                push(Value::makePoint(mp.points[idx]));
+                                            }
+                                            else
+                                            {
+                                                push(Value::makeNull());
+                                            }
+                                            break;
+                                        }
+                                        case core::DataType::MULTILINESTRING:
+                                        {
+                                            core::MultiLineString mls = geom_val.getMultiLineString();
+                                            if (idx < mls.linestrings.size())
+                                            {
+                                                push(Value::makeLineString(mls.linestrings[idx]));
+                                            }
+                                            else
+                                            {
+                                                push(Value::makeNull());
+                                            }
+                                            break;
+                                        }
+                                        case core::DataType::MULTIPOLYGON:
+                                        {
+                                            core::MultiPolygon mpoly = geom_val.getMultiPolygon();
+                                            if (idx < mpoly.polygons.size())
+                                            {
+                                                push(Value::makePolygon(mpoly.polygons[idx]));
+                                            }
+                                            else
+                                            {
+                                                push(Value::makeNull());
+                                            }
+                                            break;
+                                        }
+                                        case core::DataType::GEOMETRYCOLLECTION:
+                                        {
+                                            core::GeometryCollection gc = geom_val.getGeometryCollection();
+                                            if (idx < gc.geometries.size())
+                                            {
+                                                push(*gc.geometries[idx]);
+                                            }
+                                            else
+                                            {
+                                                push(Value::makeNull());
+                                            }
+                                            break;
+                                        }
+                                        default:
+                                            // For simple geometries, only index 1 is valid
+                                            if (index == 1)
+                                            {
+                                                push(geom_val);
+                                            }
+                                            else
+                                            {
+                                                push(Value::makeNull());
+                                            }
+                                            break;
+                                    }
+                                }
+                            } catch (...) {
+                                push(Value::makeNull());
+                            }
+                        }
+                    }
                     // ========== Phase 2 Task 13: Text Search and Regex Operators ==========
                     else if (ext_op == static_cast<uint8_t>(Opcode::EXT_REGEX_MATCH))
                     {
