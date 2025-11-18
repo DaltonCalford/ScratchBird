@@ -1896,6 +1896,98 @@ namespace scratchbird
                 current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_ST_DISTANCE_SPHERE));
                 return;
             }
+            // Multi-geometry constructor functions (OGC Simple Features)
+            else if (func_name == "ST_MULTIPOINT")
+            {
+                // ST_MultiPoint(point1, point2, ...) - create MULTIPOINT from points
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_ST_MULTIPOINT));
+                current_result_->writeByte(static_cast<uint8_t>(node->args().size()));
+                return;
+            }
+            else if (func_name == "ST_MULTILINESTRING")
+            {
+                // ST_MultiLineString(linestring1, linestring2, ...) - create MULTILINESTRING
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_ST_MULTILINESTRING));
+                current_result_->writeByte(static_cast<uint8_t>(node->args().size()));
+                return;
+            }
+            else if (func_name == "ST_MULTIPOLYGON")
+            {
+                // ST_MultiPolygon(polygon1, polygon2, ...) - create MULTIPOLYGON
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_ST_MULTIPOLYGON));
+                current_result_->writeByte(static_cast<uint8_t>(node->args().size()));
+                return;
+            }
+            else if (func_name == "ST_GEOMETRYCOLLECTION")
+            {
+                // ST_GeometryCollection(geom1, geom2, ...) - create heterogeneous collection
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_ST_GEOMETRYCOLLECTION));
+                current_result_->writeByte(static_cast<uint8_t>(node->args().size()));
+                return;
+            }
+            else if (func_name == "ST_COLLECT")
+            {
+                // ST_Collect(geom1, geom2, ...) - alias for ST_GeometryCollection
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_ST_COLLECT));
+                current_result_->writeByte(static_cast<uint8_t>(node->args().size()));
+                return;
+            }
+            // Multi-geometry accessor functions
+            else if (func_name == "ST_NUMGEOMETRIES")
+            {
+                // ST_NumGeometries(multi_geom) - get count of geometries in collection
+                if (node->args().size() != 1)
+                {
+                    throw std::runtime_error("ST_NumGeometries expects 1 argument (multi-geometry)");
+                }
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_ST_NUMGEOMETRIES));
+                return;
+            }
+            else if (func_name == "ST_GEOMETRYN")
+            {
+                // ST_GeometryN(multi_geom, n) - get Nth geometry (1-indexed)
+                if (node->args().size() != 2)
+                {
+                    throw std::runtime_error("ST_GeometryN expects 2 arguments (multi-geometry, integer)");
+                }
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_ST_GEOMETRYN));
+                return;
+            }
             // Array functions (Phase 2 Task 12)
             else if (func_name == "ARRAY_TO_STRING" || func_name == "KW_ARRAY_TO_STRING")
             {

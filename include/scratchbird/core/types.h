@@ -6,6 +6,7 @@
 #include <optional>
 #include <vector>
 #include <memory>
+#include <cmath>
 #include "scratchbird/core/status.h"
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/core/range.h"
@@ -16,6 +17,9 @@ namespace scratchbird::core
     // Forward declarations for text search types
     class TSVector;
     class TSQuery;
+
+    // Forward declaration for array types
+    class ArrayValue;
 
     // Forward declaration for vector distance metrics
     enum class DistanceMetric;
@@ -298,6 +302,177 @@ namespace scratchbird::core
     };
 
     /**
+     * MULTIPOINT type - collection of Point geometries
+     * OGC Simple Features compliant
+     */
+    struct MultiPoint {
+        std::vector<Point> points;
+        int32_t srid;
+
+        // Constructors
+        MultiPoint() : srid(0) {}
+        explicit MultiPoint(std::vector<Point> pts)
+            : points(std::move(pts)), srid(0) {}
+        MultiPoint(std::vector<Point> pts, int32_t srid_)
+            : points(std::move(pts)), srid(srid_) {}
+
+        // Validation
+        bool isEmpty() const { return points.empty(); }
+        size_t numGeometries() const { return points.size(); }
+
+        bool isValid() const {
+            // All points must be valid (2D coordinates)
+            for (const auto& pt : points) {
+                if (!std::isfinite(pt.x) || !std::isfinite(pt.y))
+                    return false;
+            }
+            return true;
+        }
+
+        // SRID accessors
+        int32_t getSRID() const { return srid; }
+        void setSRID(int32_t new_srid) { srid = new_srid; }
+        bool hasSRID() const { return srid != 0; }
+
+        // Comparison
+        bool operator==(const MultiPoint& other) const {
+            return points == other.points && srid == other.srid;
+        }
+        bool operator!=(const MultiPoint& other) const {
+            return !(*this == other);
+        }
+    };
+
+    /**
+     * MULTILINESTRING type - collection of LineString geometries
+     * OGC Simple Features compliant
+     */
+    struct MultiLineString {
+        std::vector<LineString> linestrings;
+        int32_t srid;
+
+        // Constructors
+        MultiLineString() : srid(0) {}
+        explicit MultiLineString(std::vector<LineString> lines)
+            : linestrings(std::move(lines)), srid(0) {}
+        MultiLineString(std::vector<LineString> lines, int32_t srid_)
+            : linestrings(std::move(lines)), srid(srid_) {}
+
+        // Validation
+        bool isEmpty() const { return linestrings.empty(); }
+        size_t numGeometries() const { return linestrings.size(); }
+
+        bool isValid() const {
+            for (const auto& line : linestrings) {
+                if (!line.isValid())
+                    return false;
+            }
+            return true;
+        }
+
+        // Closed if all constituent linestrings are closed
+        bool isClosed() const {
+            if (isEmpty()) return false;
+            for (const auto& line : linestrings) {
+                if (line.points.empty() ||
+                    line.points.front() != line.points.back())
+                    return false;
+            }
+            return true;
+        }
+
+        // SRID accessors
+        int32_t getSRID() const { return srid; }
+        void setSRID(int32_t new_srid) { srid = new_srid; }
+        bool hasSRID() const { return srid != 0; }
+
+        bool operator==(const MultiLineString& other) const {
+            return linestrings == other.linestrings && srid == other.srid;
+        }
+        bool operator!=(const MultiLineString& other) const {
+            return !(*this == other);
+        }
+    };
+
+    /**
+     * MULTIPOLYGON type - collection of Polygon geometries
+     * OGC Simple Features compliant
+     */
+    struct MultiPolygon {
+        std::vector<Polygon> polygons;
+        int32_t srid;
+
+        // Constructors
+        MultiPolygon() : srid(0) {}
+        explicit MultiPolygon(std::vector<Polygon> polys)
+            : polygons(std::move(polys)), srid(0) {}
+        MultiPolygon(std::vector<Polygon> polys, int32_t srid_)
+            : polygons(std::move(polys)), srid(srid_) {}
+
+        // Validation
+        bool isEmpty() const { return polygons.empty(); }
+        size_t numGeometries() const { return polygons.size(); }
+
+        bool isValid() const {
+            // Each polygon must be valid
+            for (const auto& poly : polygons) {
+                if (!poly.isValid())
+                    return false;
+            }
+            return true;
+        }
+
+        // SRID accessors
+        int32_t getSRID() const { return srid; }
+        void setSRID(int32_t new_srid) { srid = new_srid; }
+        bool hasSRID() const { return srid != 0; }
+
+        bool operator==(const MultiPolygon& other) const {
+            return polygons == other.polygons && srid == other.srid;
+        }
+        bool operator!=(const MultiPolygon& other) const {
+            return !(*this == other);
+        }
+    };
+
+    // Forward declaration needed for GeometryCollection
+    class TypedValue;
+
+    /**
+     * GEOMETRYCOLLECTION type - heterogeneous collection of any geometry types
+     * OGC Simple Features compliant
+     * Can contain Point, LineString, Polygon, and any Multi* types
+     * Note: Requires TypedValue forward declaration
+     */
+    struct GeometryCollection {
+        std::vector<std::shared_ptr<TypedValue>> geometries;
+        int32_t srid;
+
+        // Constructors
+        GeometryCollection() : srid(0) {}
+        explicit GeometryCollection(std::vector<std::shared_ptr<TypedValue>> geoms)
+            : geometries(std::move(geoms)), srid(0) {}
+        GeometryCollection(std::vector<std::shared_ptr<TypedValue>> geoms, int32_t srid_)
+            : geometries(std::move(geoms)), srid(srid_) {}
+
+        // Validation
+        bool isEmpty() const { return geometries.empty(); }
+        size_t numGeometries() const { return geometries.size(); }
+
+        bool isValid() const;  // Defined in types.cpp
+
+        // SRID accessors
+        int32_t getSRID() const { return srid; }
+        void setSRID(int32_t new_srid) { srid = new_srid; }
+        bool hasSRID() const { return srid != 0; }
+
+        bool operator==(const GeometryCollection& other) const;  // Defined in types.cpp
+        bool operator!=(const GeometryCollection& other) const {
+            return !(*this == other);
+        }
+    };
+
+    /**
      * INTERVAL type - represents time intervals
      *
      * Follows PostgreSQL interval model:
@@ -398,6 +573,10 @@ namespace scratchbird::core
                          Point,          // POINT
                          LineString,     // LINESTRING
                          Polygon,        // POLYGON
+                         MultiPoint,     // MULTIPOINT
+                         MultiLineString, // MULTILINESTRING
+                         MultiPolygon,   // MULTIPOLYGON
+                         GeometryCollection, // GEOMETRYCOLLECTION
                          std::string,    // VARCHAR, TEXT, CHAR, DECIMAL (as string), JSON
                          std::vector<uint8_t>, // BINARY, VARBINARY, BLOB, BYTEA, UUID
                          bool,                  // BOOLEAN
@@ -415,7 +594,8 @@ namespace scratchbird::core
                          MacAddr8,        // MACADDR8
                          CompositeValue,  // COMPOSITE
                          std::shared_ptr<VectorValue>,  // VECTOR
-                         VariantValue     // VARIANT
+                         VariantValue,    // VARIANT
+                         std::shared_ptr<ArrayValue>    // ARRAY
                          >;
 
         TypedValue() : type_(DataType::NULL_TYPE), data_(std::monostate{}) {}
@@ -461,6 +641,14 @@ namespace scratchbird::core
         static TypedValue makePolygon(const Polygon &v);
         static TypedValue makePolygon(const std::vector<Point> &exterior_ring);
         static TypedValue makePolygon(const std::vector<std::vector<Point>> &rings);
+        static TypedValue makeMultiPoint(const MultiPoint &v);
+        static TypedValue makeMultiPoint(const std::vector<Point> &points);
+        static TypedValue makeMultiLineString(const MultiLineString &v);
+        static TypedValue makeMultiLineString(const std::vector<LineString> &linestrings);
+        static TypedValue makeMultiPolygon(const MultiPolygon &v);
+        static TypedValue makeMultiPolygon(const std::vector<Polygon> &polygons);
+        static TypedValue makeGeometryCollection(const GeometryCollection &v);
+        static TypedValue makeGeometryCollection(const std::vector<std::shared_ptr<TypedValue>> &geometries);
         static TypedValue makeTSVector(const TSVector &v);
         static TypedValue makeTSVector(std::shared_ptr<TSVector> v);
         static TypedValue makeTSQuery(const TSQuery &v);
@@ -485,6 +673,8 @@ namespace scratchbird::core
         static TypedValue makeVariant(const VariantValue &v);
         static TypedValue makeVariant(const TypedValue &value);
         static TypedValue makeVariant(DataType actual_type, const TypedValue &value);
+        static TypedValue makeArray(const ArrayValue &v);
+        static TypedValue makeArray(std::shared_ptr<ArrayValue> v);
 
         // Type checking
         DataType type() const
@@ -524,6 +714,10 @@ namespace scratchbird::core
         Point getPoint() const;
         LineString getLineString() const;
         Polygon getPolygon() const;
+        MultiPoint getMultiPoint() const;
+        MultiLineString getMultiLineString() const;
+        MultiPolygon getMultiPolygon() const;
+        GeometryCollection getGeometryCollection() const;
         std::shared_ptr<TSVector> getTSVector() const;
         std::shared_ptr<TSQuery> getTSQuery() const;
         Int4Range getInt4Range() const;
@@ -539,6 +733,7 @@ namespace scratchbird::core
         const CompositeValue& getComposite() const;
         std::shared_ptr<VectorValue> getVector() const;
         const VariantValue& getVariant() const;
+        std::shared_ptr<ArrayValue> getArray() const;
 
         // COMPOSITE field access methods
         TypedValue getField(const std::string& field_name) const;

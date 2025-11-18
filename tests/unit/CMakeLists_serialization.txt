@@ -1,0 +1,17 @@
+cmake_minimum_required(VERSION 3.16)
+
+# Find GoogleTest
+find_package(GTest REQUIRED)
+
+# Create test executable
+add_executable(test_type_serialization test_type_serialization.cpp)
+
+# Link libraries
+target_link_libraries(test_type_serialization
+    scratchbird_core
+    GTest::gtest
+    GTest::gtest_main
+)
+
+# Add test
+add_test(NAME TypeSerialization COMMAND test_type_serialization)
