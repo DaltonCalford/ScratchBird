@@ -2,6 +2,7 @@
 #include "scratchbird/spatial/wkb.h"
 #include "scratchbird/core/vector.h"
 #include "scratchbird/core/range.h"
+#include "scratchbird/core/network.h"
 #include <cstring>
 #include <algorithm>
 
@@ -492,6 +493,38 @@ namespace scratchbird::core
                         result.resize(result.size() + 8);
                         std::memcpy(result.data() + result.size() - 8, &upper, 8);
                     }
+                    break;
+                }
+
+                // Network types
+                case DataType::INET:
+                case DataType::CIDR:
+                {
+                    InetAddr addr = (type == DataType::INET) ? value.getInet() : value.getCidr().toInet();
+                    // Format: 1 byte family + 1 byte netmask + address bytes (4 or 16)
+                    result.push_back(static_cast<uint8_t>(addr.family()));
+                    result.push_back(addr.netmask());
+                    size_t addr_size = addr.size();
+                    result.resize(result.size() + addr_size);
+                    std::memcpy(result.data() + result.size() - addr_size, addr.data(), addr_size);
+                    break;
+                }
+
+                case DataType::MACADDR:
+                {
+                    MacAddr mac = value.getMacAddr();
+                    const auto& bytes = mac.bytes();
+                    result.resize(6);
+                    std::memcpy(result.data(), bytes.data(), 6);
+                    break;
+                }
+
+                case DataType::MACADDR8:
+                {
+                    MacAddr8 mac = value.getMacAddr8();
+                    const auto& bytes = mac.bytes();
+                    result.resize(8);
+                    std::memcpy(result.data(), bytes.data(), 8);
                     break;
                 }
 
@@ -1127,6 +1160,57 @@ namespace scratchbird::core
                     return TypedValue::makeNumRange(NumRange(lower, upper, lower_type, upper_type));
                 }
 
+                // Network types
+                case DataType::INET:
+                case DataType::CIDR:
+                {
+                    // Format: 1 byte family + 1 byte netmask + address bytes (4 or 16)
+                    if (size < 2) {
+                        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                          "Insufficient data for INET/CIDR");
+                        return std::nullopt;
+                    }
+
+                    AddressFamily family = static_cast<AddressFamily>(data[0]);
+                    uint8_t netmask = data[1];
+                    size_t addr_size = (family == AddressFamily::IPv4) ? 4 : 16;
+
+                    if (size < 2 + addr_size) {
+                        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                          "Insufficient data for INET/CIDR address");
+                        return std::nullopt;
+                    }
+
+                    InetAddr addr(family, data + 2, netmask);
+                    if (type == DataType::INET) {
+                        return TypedValue::makeInet(addr);
+                    } else {
+                        return TypedValue::makeCidr(Cidr::fromInet(addr));
+                    }
+                }
+
+                case DataType::MACADDR:
+                {
+                    if (size < 6) {
+                        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                          "Insufficient data for MACADDR");
+                        return std::nullopt;
+                    }
+                    MacAddr mac = MacAddr::fromBytes(data);
+                    return TypedValue::makeMacAddr(mac);
+                }
+
+                case DataType::MACADDR8:
+                {
+                    if (size < 8) {
+                        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                          "Insufficient data for MACADDR8");
+                        return std::nullopt;
+                    }
+                    MacAddr8 mac = MacAddr8::fromBytes(data);
+                    return TypedValue::makeMacAddr8(mac);
+                }
+
                 default:
                     SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
                                       "Unsupported type for deserialization");
@@ -1306,6 +1390,21 @@ namespace scratchbird::core
                     if (range.isUpperBounded()) size += 8;
                     return size;
                 }
+
+                // Network types
+                case DataType::INET:
+                case DataType::CIDR:
+                {
+                    InetAddr addr = (type == DataType::INET) ? value.getInet() : value.getCidr().toInet();
+                    // 1 byte family + 1 byte netmask + address bytes (4 or 16)
+                    return 2 + addr.size();
+                }
+
+                case DataType::MACADDR:
+                    return 6;
+
+                case DataType::MACADDR8:
+                    return 8;
 
                 default:
                     return 0;
