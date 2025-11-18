@@ -3,6 +3,8 @@
 #include "scratchbird/core/vector.h"
 #include "scratchbird/core/range.h"
 #include "scratchbird/core/network.h"
+#include "scratchbird/core/tsvector.h"
+#include "scratchbird/core/tsquery.h"
 #include <cstring>
 #include <algorithm>
 
@@ -525,6 +527,25 @@ namespace scratchbird::core
                     const auto& bytes = mac.bytes();
                     result.resize(8);
                     std::memcpy(result.data(), bytes.data(), 8);
+                    break;
+                }
+
+                // Text search types
+                case DataType::TSVECTOR:
+                {
+                    auto tsv = value.getTSVector();
+                    if (tsv) {
+                        result = tsv->toBinary();
+                    }
+                    break;
+                }
+
+                case DataType::TSQUERY:
+                {
+                    auto tsq = value.getTSQuery();
+                    if (tsq) {
+                        result = tsq->toBinary();
+                    }
                     break;
                 }
 
@@ -1211,6 +1232,31 @@ namespace scratchbird::core
                     return TypedValue::makeMacAddr8(mac);
                 }
 
+                // Text search types
+                case DataType::TSVECTOR:
+                {
+                    std::vector<uint8_t> buffer(data, data + size);
+                    auto tsv = TSVector::fromBinary(buffer);
+                    if (!tsv) {
+                        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                          "Failed to decode TSVECTOR");
+                        return std::nullopt;
+                    }
+                    return TypedValue::makeTSVector(*tsv);
+                }
+
+                case DataType::TSQUERY:
+                {
+                    std::vector<uint8_t> buffer(data, data + size);
+                    auto tsq = TSQuery::fromBinary(buffer);
+                    if (!tsq) {
+                        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                          "Failed to decode TSQUERY");
+                        return std::nullopt;
+                    }
+                    return TypedValue::makeTSQuery(*tsq);
+                }
+
                 default:
                     SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
                                       "Unsupported type for deserialization");
@@ -1405,6 +1451,27 @@ namespace scratchbird::core
 
                 case DataType::MACADDR8:
                     return 8;
+
+                // Text search types - variable size
+                case DataType::TSVECTOR:
+                {
+                    auto tsv = value.getTSVector();
+                    if (tsv) {
+                        auto bin = tsv->toBinary();
+                        return static_cast<uint32_t>(bin.size());
+                    }
+                    return 0;
+                }
+
+                case DataType::TSQUERY:
+                {
+                    auto tsq = value.getTSQuery();
+                    if (tsq) {
+                        auto bin = tsq->toBinary();
+                        return static_cast<uint32_t>(bin.size());
+                    }
+                    return 0;
+                }
 
                 default:
                     return 0;
