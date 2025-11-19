@@ -1188,6 +1188,112 @@ namespace scratchbird::core
                 }
                 return "VARIANT[" + type_name + "](" + variant.value->toString() + ")";
             }
+            case DataType::ARRAY:
+            {
+                // PostgreSQL-style array formatting {1,2,3}
+                auto arr = getArray();
+                if (!arr) return "NULL";
+
+                // Convert ArrayValue JSON format [1,2,3] to PostgreSQL format {1,2,3}
+                std::string json_str = arr->toString();
+                std::string pg_str;
+                for (char c : json_str) {
+                    if (c == '[') pg_str += '{';
+                    else if (c == ']') pg_str += '}';
+                    else pg_str += c;
+                }
+                return pg_str;
+            }
+            case DataType::MULTIPOINT: {
+                auto mp = getMultiPoint();
+                std::ostringstream oss;
+                oss << "MULTIPOINT(";
+                for (size_t i = 0; i < mp.points.size(); ++i) {
+                    if (i > 0) oss << ", ";
+                    oss << "(" << mp.points[i].x << " " << mp.points[i].y << ")";
+                }
+                oss << ")";
+                return oss.str();
+            }
+            case DataType::MULTILINESTRING: {
+                auto mls = getMultiLineString();
+                std::ostringstream oss;
+                oss << "MULTILINESTRING(";
+                for (size_t i = 0; i < mls.linestrings.size(); ++i) {
+                    if (i > 0) oss << ", ";
+                    oss << "(";
+                    for (size_t j = 0; j < mls.linestrings[i].points.size(); ++j) {
+                        if (j > 0) oss << ", ";
+                        oss << mls.linestrings[i].points[j].x << " " << mls.linestrings[i].points[j].y;
+                    }
+                    oss << ")";
+                }
+                oss << ")";
+                return oss.str();
+            }
+            case DataType::MULTIPOLYGON: {
+                auto mpoly = getMultiPolygon();
+                std::ostringstream oss;
+                oss << "MULTIPOLYGON(";
+                for (size_t i = 0; i < mpoly.polygons.size(); ++i) {
+                    if (i > 0) oss << ", ";
+                    oss << "(";
+                    for (size_t r = 0; r < mpoly.polygons[i].rings.size(); ++r) {
+                        if (r > 0) oss << ", ";
+                        oss << "(";
+                        const auto& ring = mpoly.polygons[i].rings[r];
+                        for (size_t j = 0; j < ring.size(); ++j) {
+                            if (j > 0) oss << ", ";
+                            oss << ring[j].x << " " << ring[j].y;
+                        }
+                        oss << ")";
+                    }
+                    oss << ")";
+                }
+                oss << ")";
+                return oss.str();
+            }
+            case DataType::GEOMETRYCOLLECTION: {
+                auto gc = getGeometryCollection();
+                std::ostringstream oss;
+                oss << "GEOMETRYCOLLECTION(";
+                for (size_t i = 0; i < gc.geometries.size(); ++i) {
+                    if (i > 0) oss << ", ";
+
+                    const auto& geom_ptr = gc.geometries[i];
+                    if (!geom_ptr) continue;
+
+                    DataType geom_type = geom_ptr->type();
+                    if (geom_type == DataType::POINT) {
+                        auto pt = geom_ptr->getPoint();
+                        oss << "POINT(" << pt.x << " " << pt.y << ")";
+                    } else if (geom_type == DataType::LINESTRING) {
+                        auto ls = geom_ptr->getLineString();
+                        oss << "LINESTRING(";
+                        for (size_t j = 0; j < ls.points.size(); ++j) {
+                            if (j > 0) oss << ", ";
+                            oss << ls.points[j].x << " " << ls.points[j].y;
+                        }
+                        oss << ")";
+                    } else if (geom_type == DataType::POLYGON) {
+                        auto poly = geom_ptr->getPolygon();
+                        oss << "POLYGON(";
+                        for (size_t r = 0; r < poly.rings.size(); ++r) {
+                            if (r > 0) oss << ", ";
+                            oss << "(";
+                            const auto& ring = poly.rings[r];
+                            for (size_t j = 0; j < ring.size(); ++j) {
+                                if (j > 0) oss << ", ";
+                                oss << ring[j].x << " " << ring[j].y;
+                            }
+                            oss << ")";
+                        }
+                        oss << ")";
+                    }
+                }
+                oss << ")";
+                return oss.str();
+            }
             default:
                 return "<unknown>";
         }
