@@ -711,6 +711,28 @@ namespace scratchbird
             // Extraction function
             void executeExtract();       // EXTRACT(field FROM value)
 
+            // Index Operation Executors (November 19, 2025)
+            // These methods execute index operations from bytecode
+            void executeIndexInsert();   // EXT_INDEX_INSERT - Insert entry into index
+            void executeIndexSearch();   // EXT_INDEX_SEARCH - Search index for key
+            void executeIndexScan();     // EXT_INDEX_SCAN - Range scan index
+            void executeIndexDelete();   // EXT_INDEX_DELETE - Delete from index (MGA logical)
+
+            // Index operation helpers
+            core::Status routeIndexInsert(IndexType type, const core::ID& index_uuid,
+                                        const std::vector<uint8_t>& key,
+                                        const core::TID& tid, uint64_t xmin,
+                                        core::ErrorContext* ctx);
+            core::Status routeIndexSearch(IndexType type, const core::ID& index_uuid,
+                                        const std::vector<uint8_t>& key,
+                                        uint64_t current_xid,
+                                        std::vector<core::TID>* results_out,
+                                        core::ErrorContext* ctx);
+            core::Status routeIndexDelete(IndexType type, const core::ID& index_uuid,
+                                        const std::vector<uint8_t>& key,
+                                        const core::TID& tid, uint64_t xmax,
+                                        core::ErrorContext* ctx);
+
         public:
             // Forward declaration
             class TriggerContext;

@@ -5323,5 +5323,60 @@ namespace scratchbird
             }
         }
 
+        // ============================================================================
+        // INDEX OPERATION BYTECODE GENERATION HELPERS (November 19, 2025)
+        // ============================================================================
+
+        void BytecodeGenerator::writeIndexUUID(const uint8_t* uuid)
+        {
+            // Write 16-byte UUID
+            for (int i = 0; i < 16; i++)
+            {
+                current_result_->writeByte(uuid[i]);
+            }
+        }
+
+        void BytecodeGenerator::writeIndexType(IndexType type)
+        {
+            // Write index type as single byte
+            current_result_->writeByte(static_cast<uint8_t>(type));
+        }
+
+        void BytecodeGenerator::writeKey(const std::vector<uint8_t>& key)
+        {
+            // Write key length as 2 bytes (little-endian)
+            uint16_t key_len = static_cast<uint16_t>(key.size());
+            current_result_->writeByte(key_len & 0xFF);
+            current_result_->writeByte((key_len >> 8) & 0xFF);
+
+            // Write key data
+            for (uint8_t byte : key)
+            {
+                current_result_->writeByte(byte);
+            }
+        }
+
+        void BytecodeGenerator::writeTID(uint64_t gpid, uint16_t slot)
+        {
+            // Write GPID (8 bytes, little-endian)
+            for (int i = 0; i < 8; i++)
+            {
+                current_result_->writeByte((gpid >> (i * 8)) & 0xFF);
+            }
+
+            // Write slot (2 bytes, little-endian)
+            current_result_->writeByte(slot & 0xFF);
+            current_result_->writeByte((slot >> 8) & 0xFF);
+        }
+
+        void BytecodeGenerator::writeXid(uint64_t xid)
+        {
+            // Write transaction ID (8 bytes, little-endian)
+            for (int i = 0; i < 8; i++)
+            {
+                current_result_->writeByte((xid >> (i * 8)) & 0xFF);
+            }
+        }
+
     } // namespace sblr
 } // namespace scratchbird
