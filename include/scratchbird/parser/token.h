@@ -197,6 +197,15 @@ namespace scratchbird
             KW_VECTOR,
             KW_ARRAY,  // Phase 2 Task 12: Array type
 
+            // Spatial types (Type Integration Phase 3)
+            KW_POINT,
+            KW_LINESTRING,
+            KW_POLYGON,
+            KW_MULTIPOINT,
+            KW_MULTILINESTRING,
+            KW_MULTIPOLYGON,
+            KW_GEOMETRYCOLLECTION,
+
             // Range types (Task 15 Phase 4)
             KW_INT4RANGE,
             KW_INT8RANGE,

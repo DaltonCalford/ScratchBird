@@ -5,6 +5,16 @@ CMakeFiles/
 CMakeCache.txt
 cmake-build-*/
 compile_commands.json
+Makefile
+cmake_install.cmake
+CTestTestfile.cmake
+DartConfiguration.tcl
+_deps/
+src/Makefile
+src/cmake_install.cmake
+tests/Makefile
+tests/cmake_install.cmake
+tests/scratchbird_tests[1]_include.cmake
 
 # Object files and compiled artifacts
 *.o
@@ -46,6 +56,17 @@ test_*_db[0-9]*
 /test_wave1_integration
 /test_wildcard_debug
 /test_xml
+
+# Main executable
+/src/scratchbird
+
+# Test executables in tests/ directory
+/tests/test_*
+/tests/*_tests
+/tests/*include.cmake
+!/tests/unit/
+!/tests/integration/
+!/tests/stress/
 
 # Test data directories
 /test_dbs/

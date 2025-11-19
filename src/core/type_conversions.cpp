@@ -1,7 +1,9 @@
 #include "scratchbird/core/types.h"
+#include "scratchbird/core/array.h"
 #include "scratchbird/core/timezone.h"
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 
 namespace scratchbird::core
 {
@@ -31,8 +33,9 @@ namespace scratchbird::core
             return std::nullopt;
         }
 
-        // Numeric to numeric conversions
-        if (TypeSystem::isNumeric(type_) && TypeSystem::isNumeric(target_type))
+        // Numeric to numeric conversions (and BOOLEAN)
+        if (TypeSystem::isNumeric(type_) &&
+            (TypeSystem::isNumeric(target_type) || target_type == DataType::BOOLEAN))
         {
             return convertNumericTo(target_type, ctx);
         }
@@ -80,6 +83,36 @@ namespace scratchbird::core
             return TypedValue::makeJSON(json_str);
         }
 
+        // ARRAY conversions
+        if (type_ == DataType::ARRAY)
+        {
+            if (TypeSystem::isString(target_type))
+            {
+                // ARRAY to VARCHAR - uses PostgreSQL format {1,2,3}
+                return TypedValue::makeVarchar(toString());
+            }
+            else if (target_type == DataType::JSON)
+            {
+                // ARRAY to JSON - uses JSON array format [1,2,3]
+                auto arr = getArray();
+                if (!arr)
+                {
+                    return TypedValue::makeJSON("null");
+                }
+                return TypedValue::makeJSON(arr->toString());
+            }
+        }
+
+        // Multi-geometry to String conversions
+        if (type_ == DataType::MULTIPOINT || type_ == DataType::MULTILINESTRING ||
+            type_ == DataType::MULTIPOLYGON || type_ == DataType::GEOMETRYCOLLECTION)
+        {
+            if (TypeSystem::isString(target_type))
+            {
+                return TypedValue::makeVarchar(toString());
+            }
+        }
+
         SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Unsupported type conversion");
         return std::nullopt;
     }
@@ -87,14 +120,50 @@ namespace scratchbird::core
     auto TypedValue::convertNumericTo(DataType target_type, ErrorContext *ctx) const
         -> std::optional<TypedValue>
     {
-        // Get value as widest type (float64 or int64)
+        // Get value as widest type (float64, int128, int64, uint64, or money as cents)
         bool is_float = type_ == DataType::FLOAT32 || type_ == DataType::FLOAT64;
+        bool is_int128 = type_ == DataType::INT128;
+        bool is_money = type_ == DataType::MONEY;
+        bool is_unsigned = type_ == DataType::UINT8 || type_ == DataType::UINT16 ||
+                          type_ == DataType::UINT32 || type_ == DataType::UINT64;
+
         double float_val = 0.0;
+        int128_t int128_val = 0;
         int64_t int_val = 0;
+        uint64_t uint_val = 0;
 
         if (is_float)
         {
             float_val = type_ == DataType::FLOAT32 ? getFloat32() : getFloat64();
+        }
+        else if (is_int128)
+        {
+            int128_val = getInt128();
+        }
+        else if (is_money)
+        {
+            // MONEY stored as cents - treat as INT64 for conversions
+            int_val = getMoney();
+        }
+        else if (is_unsigned)
+        {
+            switch (type_)
+            {
+                case DataType::UINT8:
+                    uint_val = getUInt8();
+                    break;
+                case DataType::UINT16:
+                    uint_val = getUInt16();
+                    break;
+                case DataType::UINT32:
+                    uint_val = getUInt32();
+                    break;
+                case DataType::UINT64:
+                    uint_val = getUInt64();
+                    break;
+                default:
+                    break;
+            }
         }
         else
         {
@@ -122,54 +191,393 @@ namespace scratchbird::core
         {
             case DataType::INT8:
             {
-                int64_t val = is_float ? static_cast<int64_t>(float_val) : int_val;
+                int64_t val;
+                if (is_float) {
+                    val = static_cast<int64_t>(float_val);
+                } else if (is_int128) {
+                    // INT128 to INT8 - check for overflow
+                    if (int128_val > std::numeric_limits<int8_t>::max() ||
+                        int128_val < std::numeric_limits<int8_t>::min()) {
+                        SET_ERROR_CONTEXT(ctx, Status::OUT_OF_RANGE,
+                                        "INT128 value exceeds INT8 range");
+                        return std::nullopt;
+                    }
+                    val = static_cast<int64_t>(int128_val);
+                } else if (is_unsigned) {
+                    // UINT to INT8 - check for overflow
+                    if (uint_val > static_cast<uint64_t>(std::numeric_limits<int8_t>::max())) {
+                        SET_ERROR_CONTEXT(ctx, Status::OUT_OF_RANGE,
+                                        "UINT value exceeds INT8 range");
+                        return std::nullopt;
+                    }
+                    val = static_cast<int64_t>(uint_val);
+                } else {
+                    val = int_val;
+                }
                 auto result = TypeConverter::int64ToInt8(val, ctx);
                 return result ? std::make_optional(TypedValue::makeInt8(*result)) : std::nullopt;
             }
 
             case DataType::INT16:
             {
-                int64_t val = is_float ? static_cast<int64_t>(float_val) : int_val;
+                int64_t val;
+                if (is_float) {
+                    val = static_cast<int64_t>(float_val);
+                } else if (is_int128) {
+                    // INT128 to INT16 - check for overflow
+                    if (int128_val > std::numeric_limits<int16_t>::max() ||
+                        int128_val < std::numeric_limits<int16_t>::min()) {
+                        SET_ERROR_CONTEXT(ctx, Status::OUT_OF_RANGE,
+                                        "INT128 value exceeds INT16 range");
+                        return std::nullopt;
+                    }
+                    val = static_cast<int64_t>(int128_val);
+                } else if (is_unsigned) {
+                    // UINT to INT16 - check for overflow
+                    if (uint_val > static_cast<uint64_t>(std::numeric_limits<int16_t>::max())) {
+                        SET_ERROR_CONTEXT(ctx, Status::OUT_OF_RANGE,
+                                        "UINT value exceeds INT16 range");
+                        return std::nullopt;
+                    }
+                    val = static_cast<int64_t>(uint_val);
+                } else {
+                    val = int_val;
+                }
                 auto result = TypeConverter::int64ToInt16(val, ctx);
                 return result ? std::make_optional(TypedValue::makeInt16(*result)) : std::nullopt;
             }
 
             case DataType::INT32:
             {
-                int64_t val = is_float ? static_cast<int64_t>(float_val) : int_val;
+                int64_t val;
+                if (is_float) {
+                    val = static_cast<int64_t>(float_val);
+                } else if (is_int128) {
+                    // INT128 to INT32 - check for overflow
+                    if (int128_val > std::numeric_limits<int32_t>::max() ||
+                        int128_val < std::numeric_limits<int32_t>::min()) {
+                        SET_ERROR_CONTEXT(ctx, Status::OUT_OF_RANGE,
+                                        "INT128 value exceeds INT32 range");
+                        return std::nullopt;
+                    }
+                    val = static_cast<int64_t>(int128_val);
+                } else if (is_unsigned) {
+                    // UINT to INT32 - check for overflow
+                    if (uint_val > static_cast<uint64_t>(std::numeric_limits<int32_t>::max())) {
+                        SET_ERROR_CONTEXT(ctx, Status::OUT_OF_RANGE,
+                                        "UINT value exceeds INT32 range");
+                        return std::nullopt;
+                    }
+                    val = static_cast<int64_t>(uint_val);
+                } else {
+                    val = int_val;
+                }
                 auto result = TypeConverter::int64ToInt32(val, ctx);
                 return result ? std::make_optional(TypedValue::makeInt32(*result)) : std::nullopt;
             }
 
             case DataType::INT64:
             {
-                int64_t val = is_float ? static_cast<int64_t>(float_val) : int_val;
-                return TypedValue::makeInt64(val);
+                if (is_float) {
+                    int_val = static_cast<int64_t>(float_val);
+                } else if (is_int128) {
+                    // INT128 to INT64 - check for overflow
+                    if (int128_val > std::numeric_limits<int64_t>::max() ||
+                        int128_val < std::numeric_limits<int64_t>::min()) {
+                        SET_ERROR_CONTEXT(ctx, Status::OUT_OF_RANGE,
+                                        "INT128 value exceeds INT64 range");
+                        return std::nullopt;
+                    }
+                    int_val = static_cast<int64_t>(int128_val);
+                } else if (is_unsigned) {
+                    // UINT64 to INT64 - check for overflow
+                    if (uint_val > static_cast<uint64_t>(std::numeric_limits<int64_t>::max())) {
+                        SET_ERROR_CONTEXT(ctx, Status::OUT_OF_RANGE,
+                                        "UINT64 value exceeds INT64 range");
+                        return std::nullopt;
+                    }
+                    int_val = static_cast<int64_t>(uint_val);
+                }
+                return TypedValue::makeInt64(int_val);
+            }
+
+            case DataType::INT128:
+            {
+                if (is_float) {
+                    return TypedValue::makeInt128(static_cast<int128_t>(float_val));
+                } else if (is_int128) {
+                    return TypedValue::makeInt128(int128_val);
+                } else if (is_unsigned) {
+                    return TypedValue::makeInt128(static_cast<int128_t>(uint_val));
+                } else {
+                    return TypedValue::makeInt128(static_cast<int128_t>(int_val));
+                }
+            }
+
+            case DataType::UINT8:
+            {
+                if (is_float) {
+                    if (float_val < 0 || float_val > std::numeric_limits<uint8_t>::max()) {
+                        SET_ERROR_CONTEXT(ctx, Status::OUT_OF_RANGE,
+                                        "Value out of range for UINT8");
+                        return std::nullopt;
+                    }
+                    return TypedValue::makeUInt8(static_cast<uint8_t>(float_val));
+                } else if (is_int128) {
+                    // INT128 to UINT8 - check for negative and range
+                    if (int128_val < 0) {
+                        SET_ERROR_CONTEXT(ctx, Status::OUT_OF_RANGE,
+                                        "Cannot convert negative INT128 to UINT8");
+                        return std::nullopt;
+                    }
+                    if (int128_val > std::numeric_limits<uint8_t>::max()) {
+                        SET_ERROR_CONTEXT(ctx, Status::OUT_OF_RANGE,
+                                        "INT128 value exceeds UINT8 range");
+                        return std::nullopt;
+                    }
+                    return TypedValue::makeUInt8(static_cast<uint8_t>(int128_val));
+                } else if (is_unsigned) {
+                    if (uint_val > std::numeric_limits<uint8_t>::max()) {
+                        SET_ERROR_CONTEXT(ctx, Status::OUT_OF_RANGE,
+                                        "Value exceeds UINT8 range");
+                        return std::nullopt;
+                    }
+                    return TypedValue::makeUInt8(static_cast<uint8_t>(uint_val));
+                } else {
+                    // INT to UINT8 - check for negative
+                    if (int_val < 0) {
+                        SET_ERROR_CONTEXT(ctx, Status::OUT_OF_RANGE,
+                                        "Cannot convert negative value to UINT8");
+                        return std::nullopt;
+                    }
+                    if (int_val > std::numeric_limits<uint8_t>::max()) {
+                        SET_ERROR_CONTEXT(ctx, Status::OUT_OF_RANGE,
+                                        "Value exceeds UINT8 range");
+                        return std::nullopt;
+                    }
+                    return TypedValue::makeUInt8(static_cast<uint8_t>(int_val));
+                }
+            }
+
+            case DataType::UINT16:
+            {
+                if (is_float) {
+                    if (float_val < 0 || float_val > std::numeric_limits<uint16_t>::max()) {
+                        SET_ERROR_CONTEXT(ctx, Status::OUT_OF_RANGE,
+                                        "Value out of range for UINT16");
+                        return std::nullopt;
+                    }
+                    return TypedValue::makeUInt16(static_cast<uint16_t>(float_val));
+                } else if (is_int128) {
+                    // INT128 to UINT16 - check for negative and range
+                    if (int128_val < 0) {
+                        SET_ERROR_CONTEXT(ctx, Status::OUT_OF_RANGE,
+                                        "Cannot convert negative INT128 to UINT16");
+                        return std::nullopt;
+                    }
+                    if (int128_val > std::numeric_limits<uint16_t>::max()) {
+                        SET_ERROR_CONTEXT(ctx, Status::OUT_OF_RANGE,
+                                        "INT128 value exceeds UINT16 range");
+                        return std::nullopt;
+                    }
+                    return TypedValue::makeUInt16(static_cast<uint16_t>(int128_val));
+                } else if (is_unsigned) {
+                    if (uint_val > std::numeric_limits<uint16_t>::max()) {
+                        SET_ERROR_CONTEXT(ctx, Status::OUT_OF_RANGE,
+                                        "Value exceeds UINT16 range");
+                        return std::nullopt;
+                    }
+                    return TypedValue::makeUInt16(static_cast<uint16_t>(uint_val));
+                } else {
+                    // INT to UINT16 - check for negative
+                    if (int_val < 0) {
+                        SET_ERROR_CONTEXT(ctx, Status::OUT_OF_RANGE,
+                                        "Cannot convert negative value to UINT16");
+                        return std::nullopt;
+                    }
+                    if (int_val > std::numeric_limits<uint16_t>::max()) {
+                        SET_ERROR_CONTEXT(ctx, Status::OUT_OF_RANGE,
+                                        "Value exceeds UINT16 range");
+                        return std::nullopt;
+                    }
+                    return TypedValue::makeUInt16(static_cast<uint16_t>(int_val));
+                }
+            }
+
+            case DataType::UINT32:
+            {
+                if (is_float) {
+                    if (float_val < 0 || float_val > std::numeric_limits<uint32_t>::max()) {
+                        SET_ERROR_CONTEXT(ctx, Status::OUT_OF_RANGE,
+                                        "Value out of range for UINT32");
+                        return std::nullopt;
+                    }
+                    return TypedValue::makeUInt32(static_cast<uint32_t>(float_val));
+                } else if (is_int128) {
+                    // INT128 to UINT32 - check for negative and range
+                    if (int128_val < 0) {
+                        SET_ERROR_CONTEXT(ctx, Status::OUT_OF_RANGE,
+                                        "Cannot convert negative INT128 to UINT32");
+                        return std::nullopt;
+                    }
+                    if (int128_val > std::numeric_limits<uint32_t>::max()) {
+                        SET_ERROR_CONTEXT(ctx, Status::OUT_OF_RANGE,
+                                        "INT128 value exceeds UINT32 range");
+                        return std::nullopt;
+                    }
+                    return TypedValue::makeUInt32(static_cast<uint32_t>(int128_val));
+                } else if (is_unsigned) {
+                    if (uint_val > std::numeric_limits<uint32_t>::max()) {
+                        SET_ERROR_CONTEXT(ctx, Status::OUT_OF_RANGE,
+                                        "Value exceeds UINT32 range");
+                        return std::nullopt;
+                    }
+                    return TypedValue::makeUInt32(static_cast<uint32_t>(uint_val));
+                } else {
+                    // INT to UINT32 - check for negative
+                    if (int_val < 0) {
+                        SET_ERROR_CONTEXT(ctx, Status::OUT_OF_RANGE,
+                                        "Cannot convert negative value to UINT32");
+                        return std::nullopt;
+                    }
+                    if (int_val > static_cast<int64_t>(std::numeric_limits<uint32_t>::max())) {
+                        SET_ERROR_CONTEXT(ctx, Status::OUT_OF_RANGE,
+                                        "Value exceeds UINT32 range");
+                        return std::nullopt;
+                    }
+                    return TypedValue::makeUInt32(static_cast<uint32_t>(int_val));
+                }
+            }
+
+            case DataType::UINT64:
+            {
+                if (is_float) {
+                    if (float_val < 0) {
+                        SET_ERROR_CONTEXT(ctx, Status::OUT_OF_RANGE,
+                                        "Cannot convert negative value to UINT64");
+                        return std::nullopt;
+                    }
+                    return TypedValue::makeUInt64(static_cast<uint64_t>(float_val));
+                } else if (is_int128) {
+                    // INT128 to UINT64 - check for negative
+                    if (int128_val < 0) {
+                        SET_ERROR_CONTEXT(ctx, Status::OUT_OF_RANGE,
+                                        "Cannot convert negative INT128 to UINT64");
+                        return std::nullopt;
+                    }
+                    // Check if INT128 value exceeds UINT64_MAX
+                    if (int128_val > static_cast<int128_t>(std::numeric_limits<uint64_t>::max())) {
+                        SET_ERROR_CONTEXT(ctx, Status::OUT_OF_RANGE,
+                                        "INT128 value exceeds UINT64 range");
+                        return std::nullopt;
+                    }
+                    return TypedValue::makeUInt64(static_cast<uint64_t>(int128_val));
+                } else if (is_unsigned) {
+                    return TypedValue::makeUInt64(uint_val);
+                } else {
+                    // INT to UINT64 - check for negative
+                    if (int_val < 0) {
+                        SET_ERROR_CONTEXT(ctx, Status::OUT_OF_RANGE,
+                                        "Cannot convert negative value to UINT64");
+                        return std::nullopt;
+                    }
+                    return TypedValue::makeUInt64(static_cast<uint64_t>(int_val));
+                }
             }
 
             case DataType::FLOAT32:
             {
-                float val = is_float ? static_cast<float>(float_val) : static_cast<float>(int_val);
+                float val;
+                if (is_float) {
+                    val = static_cast<float>(float_val);
+                } else if (is_int128) {
+                    val = static_cast<float>(int128_val);
+                } else if (is_unsigned) {
+                    val = static_cast<float>(uint_val);
+                } else {
+                    val = static_cast<float>(int_val);
+                }
                 return TypedValue::makeFloat32(val);
             }
 
             case DataType::FLOAT64:
             {
-                double val = is_float ? float_val : static_cast<double>(int_val);
+                double val;
+                if (is_float) {
+                    val = float_val;
+                } else if (is_int128) {
+                    val = static_cast<double>(int128_val);
+                } else if (is_unsigned) {
+                    val = static_cast<double>(uint_val);
+                } else {
+                    val = static_cast<double>(int_val);
+                }
                 return TypedValue::makeFloat64(val);
             }
 
             case DataType::DECIMAL:
             {
-                std::string val = is_float ? TypeConverter::float64ToString(float_val)
-                                           : TypeConverter::int64ToString(int_val);
+                std::string val;
+                if (is_float) {
+                    val = TypeConverter::float64ToString(float_val);
+                } else if (is_int128) {
+                    val = TypeConverter::int128ToString(int128_val);
+                } else if (is_money) {
+                    // MONEY already formatted properly as currency string
+                    val = TypeConverter::moneyToString(int_val);
+                } else if (is_unsigned) {
+                    val = TypeConverter::uint64ToString(uint_val);
+                } else {
+                    val = TypeConverter::int64ToString(int_val);
+                }
                 return TypedValue::makeDecimal(val);
             }
 
             case DataType::BOOLEAN:
             {
-                bool val = is_float ? (float_val != 0.0) : (int_val != 0);
+                bool val;
+                if (is_float) {
+                    val = (float_val != 0.0);
+                } else if (is_int128) {
+                    val = (int128_val != 0);
+                } else if (is_unsigned) {
+                    val = (uint_val != 0);
+                } else {
+                    val = (int_val != 0);
+                }
                 return TypedValue::makeBoolean(val);
+            }
+
+            case DataType::MONEY:
+            {
+                if (is_float) {
+                    // FLOAT to MONEY: multiply by 100 and round to get cents
+                    int64_t cents = static_cast<int64_t>(std::round(float_val * 100.0));
+                    return TypedValue::makeMoney(cents);
+                } else if (is_int128) {
+                    // INT128 to MONEY: check range and treat as cents
+                    if (int128_val > std::numeric_limits<int64_t>::max() ||
+                        int128_val < std::numeric_limits<int64_t>::min()) {
+                        SET_ERROR_CONTEXT(ctx, Status::OUT_OF_RANGE,
+                                        "INT128 value exceeds MONEY range");
+                        return std::nullopt;
+                    }
+                    return TypedValue::makeMoney(static_cast<int64_t>(int128_val));
+                } else if (is_money) {
+                    // MONEY to MONEY: no conversion
+                    return TypedValue::makeMoney(int_val);
+                } else if (is_unsigned) {
+                    // UINT to MONEY: treat as cents
+                    if (uint_val > static_cast<uint64_t>(std::numeric_limits<int64_t>::max())) {
+                        SET_ERROR_CONTEXT(ctx, Status::OUT_OF_RANGE,
+                                        "UINT value exceeds MONEY range");
+                        return std::nullopt;
+                    }
+                    return TypedValue::makeMoney(static_cast<int64_t>(uint_val));
+                } else {
+                    // INT to MONEY: treat as cents
+                    return TypedValue::makeMoney(int_val);
+                }
             }
 
             default:
@@ -244,6 +652,12 @@ namespace scratchbird::core
                 auto result = TypeConverter::stringToTimestamp(str, ctx);
                 return result ? std::make_optional(TypedValue::makeTimestamp(*result))
                               : std::nullopt;
+            }
+
+            case DataType::INTERVAL:
+            {
+                auto result = TypeConverter::stringToInterval(str, ctx);
+                return result ? std::make_optional(TypedValue::makeInterval(*result)) : std::nullopt;
             }
 
             case DataType::UUID:
@@ -602,6 +1016,116 @@ namespace scratchbird::core
         // Format: YYYY-MM-DD HH:MM:SS[.ffffff][+/-HH:MM or timezone name]
         // Result is always stored in GMT
         auto result = g_timezone_manager.parseTimestamp(str, TimezoneManager::TZ_UTC, ctx);
+        return result;
+    }
+
+    auto TypeConverter::stringToInterval(const std::string &str, ErrorContext *ctx)
+        -> std::optional<Interval>
+    {
+        // Parse PostgreSQL-style interval format:
+        // "X years Y mons Z days HH:MM:SS.microseconds"
+        // Examples: "1 year", "2 mons 3 days", "04:05:06", "1 year 2 mons 3 days 04:05:06.123456"
+
+        Interval result;
+        result.months = 0;
+        result.days = 0;
+        result.microseconds = 0;
+
+        if (str.empty()) {
+            return result; // Empty string = zero interval
+        }
+
+        std::istringstream iss(str);
+        std::string token;
+        int64_t value = 0;
+
+        while (iss >> token) {
+            // Try to parse as a number
+            try {
+                char* endptr;
+                value = std::strtoll(token.c_str(), &endptr, 10);
+
+                // If the whole token was a number, read the next token (unit)
+                if (*endptr == '\0') {
+                    std::string unit;
+                    if (!(iss >> unit)) {
+                        // Number without unit - could be part of a time string, put it back
+                        // This handles the time component parsing below
+                        iss.clear();
+                        iss.str(token);
+                        goto parse_time;
+                    }
+
+                    // Parse the unit
+                    if (unit == "year" || unit == "years") {
+                        result.months += value * 12;
+                    } else if (unit == "mon" || unit == "mons" || unit == "month" || unit == "months") {
+                        result.months += value;
+                    } else if (unit == "day" || unit == "days") {
+                        result.days += value;
+                    } else {
+                        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                        ("Invalid interval unit: " + unit).c_str());
+                        return std::nullopt;
+                    }
+                } else {
+                    // Token contains non-numeric characters - likely a time component
+                    parse_time:
+                    // Parse time format: HH:MM:SS or HH:MM:SS.microseconds or -HH:MM:SS
+                    bool negative = false;
+                    std::string time_str = token;
+                    if (time_str[0] == '-') {
+                        negative = true;
+                        time_str = time_str.substr(1);
+                    }
+
+                    // Parse HH:MM:SS[.microseconds]
+                    size_t colon1 = time_str.find(':');
+                    if (colon1 == std::string::npos) {
+                        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                        ("Invalid interval time format: " + token).c_str());
+                        return std::nullopt;
+                    }
+
+                    size_t colon2 = time_str.find(':', colon1 + 1);
+                    if (colon2 == std::string::npos) {
+                        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                        ("Invalid interval time format: " + token).c_str());
+                        return std::nullopt;
+                    }
+
+                    int hours = std::stoi(time_str.substr(0, colon1));
+                    int minutes = std::stoi(time_str.substr(colon1 + 1, colon2 - colon1 - 1));
+
+                    // Parse seconds and optional microseconds
+                    size_t dot = time_str.find('.', colon2);
+                    int seconds;
+                    int microseconds = 0;
+
+                    if (dot != std::string::npos) {
+                        seconds = std::stoi(time_str.substr(colon2 + 1, dot - colon2 - 1));
+                        std::string us_str = time_str.substr(dot + 1);
+                        // Pad or truncate to 6 digits
+                        while (us_str.length() < 6) us_str += '0';
+                        if (us_str.length() > 6) us_str = us_str.substr(0, 6);
+                        microseconds = std::stoi(us_str);
+                    } else {
+                        seconds = std::stoi(time_str.substr(colon2 + 1));
+                    }
+
+                    int64_t total_microseconds = (hours * 3600LL + minutes * 60LL + seconds) * 1000000LL + microseconds;
+                    if (negative) {
+                        total_microseconds = -total_microseconds;
+                    }
+                    result.microseconds += total_microseconds;
+                }
+            } catch (const std::exception& e) {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                ("Invalid interval format: " + std::string(e.what())).c_str());
+                return std::nullopt;
+            }
+        }
+
         return result;
     }
 

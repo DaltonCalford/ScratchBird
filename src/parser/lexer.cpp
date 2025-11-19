@@ -142,6 +142,15 @@ namespace scratchbird
             {"VECTOR", TokenType::KW_VECTOR},
             {"ARRAY", TokenType::KW_ARRAY},  // Phase 2 Task 12
 
+            // Spatial types (Type Integration Phase 3)
+            {"POINT", TokenType::KW_POINT},
+            {"LINESTRING", TokenType::KW_LINESTRING},
+            {"POLYGON", TokenType::KW_POLYGON},
+            {"MULTIPOINT", TokenType::KW_MULTIPOINT},
+            {"MULTILINESTRING", TokenType::KW_MULTILINESTRING},
+            {"MULTIPOLYGON", TokenType::KW_MULTIPOLYGON},
+            {"GEOMETRYCOLLECTION", TokenType::KW_GEOMETRYCOLLECTION},
+
             // Range types (Task 15 Phase 4)
             {"INT4RANGE", TokenType::KW_INT4RANGE},
             {"INT8RANGE", TokenType::KW_INT8RANGE},
