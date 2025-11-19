@@ -34,11 +34,11 @@
 #include "scratchbird/core/gist_index.h"
 #include "scratchbird/core/spgist_index.h"
 #include "scratchbird/core/brin_index.h"
-// #include "scratchbird/core/rtree_index.h" // TODO: Not yet implemented
+#include "scratchbird/core/rtree_index.h"
 #include "scratchbird/core/hnsw_index.h"
 #include "scratchbird/core/bitmap_index.h"
-// #include "scratchbird/core/columnstore_index.h" // TODO: Not yet implemented
-// #include "scratchbird/core/lsm_tree.h" // TODO: Not yet implemented
+#include "scratchbird/core/columnstore_index.h"
+#include "scratchbird/core/lsm_tree.h"
 #include "scratchbird/core/debug.h"
 #include <nlohmann/json.hpp>
 #include <sstream>

@@ -35,11 +35,11 @@ namespace core {
     class GistIndex;
     class SpGistIndex;
     class BrinIndex;
-    // class RTreeIndex; // TODO: Not yet implemented
+    class RTreeIndex;
     class HnswIndex;
     class BitmapIndex;
-    // class ColumnstoreIndex; // TODO: Not yet implemented
-    // class LSMTree; // TODO: Not yet implemented
+    class ColumnstoreIndex;
+    class LSMTree;
     class ID;
 }
 }
