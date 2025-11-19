@@ -250,6 +250,114 @@ TEST_F(TypeConversionTest, UINT_ToBoolean) {
     EXPECT_TRUE(b1->getBoolean());
 }
 
+// ========== INT128 Conversion Tests ==========
+
+// Test INT128 to smaller signed types - valid values
+TEST_F(TypeConversionTest, INT128_ToInt64_Valid) {
+    auto i128 = TypedValue::makeInt128(1000000);
+    auto i64 = i128.convertTo(DataType::INT64, &ctx);
+    ASSERT_TRUE(i64.has_value());
+    EXPECT_EQ(i64->getInt64(), 1000000);
+}
+
+// Test INT128 to INT64 - overflow
+TEST_F(TypeConversionTest, INT128_ToInt64_Overflow) {
+    // Create a large INT128 value beyond INT64_MAX
+    int128_t large = static_cast<int128_t>(std::numeric_limits<int64_t>::max()) + 1;
+    auto i128 = TypedValue::makeInt128(large);
+    auto i64 = i128.convertTo(DataType::INT64, &ctx);
+    EXPECT_FALSE(i64.has_value()); // Should fail
+}
+
+// Test INT128 to INT32 - overflow
+TEST_F(TypeConversionTest, INT128_ToInt32_Overflow) {
+    auto i128 = TypedValue::makeInt128(static_cast<int128_t>(1) << 32);
+    auto i32 = i128.convertTo(DataType::INT32, &ctx);
+    EXPECT_FALSE(i32.has_value()); // Should fail
+}
+
+// Test INT128 to INT8 - valid
+TEST_F(TypeConversionTest, INT128_ToInt8_Valid) {
+    auto i128 = TypedValue::makeInt128(100);
+    auto i8 = i128.convertTo(DataType::INT8, &ctx);
+    ASSERT_TRUE(i8.has_value());
+    EXPECT_EQ(i8->getInt8(), 100);
+}
+
+// Test INT128 to UINT64 - negative value
+TEST_F(TypeConversionTest, INT128_ToUInt64_Negative) {
+    auto i128 = TypedValue::makeInt128(-1000);
+    auto u64 = i128.convertTo(DataType::UINT64, &ctx);
+    EXPECT_FALSE(u64.has_value()); // Should fail
+}
+
+// Test INT128 to UINT64 - positive value
+TEST_F(TypeConversionTest, INT128_ToUInt64_Positive) {
+    auto i128 = TypedValue::makeInt128(1000);
+    auto u64 = i128.convertTo(DataType::UINT64, &ctx);
+    ASSERT_TRUE(u64.has_value());
+    EXPECT_EQ(u64->getUInt64(), 1000u);
+}
+
+// Test INT128 to UINT32 - overflow
+TEST_F(TypeConversionTest, INT128_ToUInt32_Overflow) {
+    auto i128 = TypedValue::makeInt128(static_cast<int128_t>(1) << 33);
+    auto u32 = i128.convertTo(DataType::UINT32, &ctx);
+    EXPECT_FALSE(u32.has_value()); // Should fail
+}
+
+// Test INT64 to INT128 upconversion
+TEST_F(TypeConversionTest, INT64_ToInt128) {
+    auto i64 = TypedValue::makeInt64(-9223372036854775807LL);
+    auto i128 = i64.convertTo(DataType::INT128, &ctx);
+    ASSERT_TRUE(i128.has_value());
+    EXPECT_EQ(i128->getInt128(), static_cast<int128_t>(-9223372036854775807LL));
+}
+
+// Test UINT64 to INT128 upconversion
+TEST_F(TypeConversionTest, UINT64_ToInt128) {
+    auto u64 = TypedValue::makeUInt64(18446744073709551615ULL);
+    auto i128 = u64.convertTo(DataType::INT128, &ctx);
+    ASSERT_TRUE(i128.has_value());
+    EXPECT_EQ(i128->getInt128(), static_cast<int128_t>(18446744073709551615ULL));
+}
+
+// Test INT128 to FLOAT64
+TEST_F(TypeConversionTest, INT128_ToFloat64) {
+    auto i128 = TypedValue::makeInt128(123456789012345LL);
+    auto f64 = i128.convertTo(DataType::FLOAT64, &ctx);
+    ASSERT_TRUE(f64.has_value());
+    EXPECT_DOUBLE_EQ(f64->getFloat64(), 123456789012345.0);
+}
+
+// Test INT128 to DECIMAL
+TEST_F(TypeConversionTest, INT128_ToDecimal) {
+    auto i128 = TypedValue::makeInt128(123456789);
+    auto dec = i128.convertTo(DataType::DECIMAL, &ctx);
+    ASSERT_TRUE(dec.has_value());
+    EXPECT_EQ(dec->getDecimal(), "123456789");
+}
+
+// Test INT128 to VARCHAR via toString
+TEST_F(TypeConversionTest, INT128_ToVarchar) {
+    auto i128 = TypedValue::makeInt128(123456789012345LL);
+    auto str = i128.toString();
+    EXPECT_EQ(str, "123456789012345");
+}
+
+// Test INT128 to BOOLEAN
+TEST_F(TypeConversionTest, INT128_ToBoolean) {
+    auto i128_zero = TypedValue::makeInt128(0);
+    auto b0 = i128_zero.convertTo(DataType::BOOLEAN, &ctx);
+    ASSERT_TRUE(b0.has_value());
+    EXPECT_FALSE(b0->getBoolean());
+
+    auto i128_one = TypedValue::makeInt128(1);
+    auto b1 = i128_one.convertTo(DataType::BOOLEAN, &ctx);
+    ASSERT_TRUE(b1.has_value());
+    EXPECT_TRUE(b1->getBoolean());
+}
+
 int main(int argc, char **argv) {
     ::testing::InitGoogleTest(&argc, argv);
     return RUN_ALL_TESTS();

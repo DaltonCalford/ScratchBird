@@ -119,18 +119,24 @@ namespace scratchbird::core
     auto TypedValue::convertNumericTo(DataType target_type, ErrorContext *ctx) const
         -> std::optional<TypedValue>
     {
-        // Get value as widest type (float64, int64, or uint64)
+        // Get value as widest type (float64, int128, int64, or uint64)
         bool is_float = type_ == DataType::FLOAT32 || type_ == DataType::FLOAT64;
+        bool is_int128 = type_ == DataType::INT128;
         bool is_unsigned = type_ == DataType::UINT8 || type_ == DataType::UINT16 ||
                           type_ == DataType::UINT32 || type_ == DataType::UINT64;
 
         double float_val = 0.0;
+        int128_t int128_val = 0;
         int64_t int_val = 0;
         uint64_t uint_val = 0;
 
         if (is_float)
         {
             float_val = type_ == DataType::FLOAT32 ? getFloat32() : getFloat64();
+        }
+        else if (is_int128)
+        {
+            int128_val = getInt128();
         }
         else if (is_unsigned)
         {
@@ -181,6 +187,15 @@ namespace scratchbird::core
                 int64_t val;
                 if (is_float) {
                     val = static_cast<int64_t>(float_val);
+                } else if (is_int128) {
+                    // INT128 to INT8 - check for overflow
+                    if (int128_val > std::numeric_limits<int8_t>::max() ||
+                        int128_val < std::numeric_limits<int8_t>::min()) {
+                        SET_ERROR_CONTEXT(ctx, Status::OUT_OF_RANGE,
+                                        "INT128 value exceeds INT8 range");
+                        return std::nullopt;
+                    }
+                    val = static_cast<int64_t>(int128_val);
                 } else if (is_unsigned) {
                     // UINT to INT8 - check for overflow
                     if (uint_val > static_cast<uint64_t>(std::numeric_limits<int8_t>::max())) {
@@ -201,6 +216,15 @@ namespace scratchbird::core
                 int64_t val;
                 if (is_float) {
                     val = static_cast<int64_t>(float_val);
+                } else if (is_int128) {
+                    // INT128 to INT16 - check for overflow
+                    if (int128_val > std::numeric_limits<int16_t>::max() ||
+                        int128_val < std::numeric_limits<int16_t>::min()) {
+                        SET_ERROR_CONTEXT(ctx, Status::OUT_OF_RANGE,
+                                        "INT128 value exceeds INT16 range");
+                        return std::nullopt;
+                    }
+                    val = static_cast<int64_t>(int128_val);
                 } else if (is_unsigned) {
                     // UINT to INT16 - check for overflow
                     if (uint_val > static_cast<uint64_t>(std::numeric_limits<int16_t>::max())) {
@@ -221,6 +245,15 @@ namespace scratchbird::core
                 int64_t val;
                 if (is_float) {
                     val = static_cast<int64_t>(float_val);
+                } else if (is_int128) {
+                    // INT128 to INT32 - check for overflow
+                    if (int128_val > std::numeric_limits<int32_t>::max() ||
+                        int128_val < std::numeric_limits<int32_t>::min()) {
+                        SET_ERROR_CONTEXT(ctx, Status::OUT_OF_RANGE,
+                                        "INT128 value exceeds INT32 range");
+                        return std::nullopt;
+                    }
+                    val = static_cast<int64_t>(int128_val);
                 } else if (is_unsigned) {
                     // UINT to INT32 - check for overflow
                     if (uint_val > static_cast<uint64_t>(std::numeric_limits<int32_t>::max())) {
@@ -240,6 +273,15 @@ namespace scratchbird::core
             {
                 if (is_float) {
                     int_val = static_cast<int64_t>(float_val);
+                } else if (is_int128) {
+                    // INT128 to INT64 - check for overflow
+                    if (int128_val > std::numeric_limits<int64_t>::max() ||
+                        int128_val < std::numeric_limits<int64_t>::min()) {
+                        SET_ERROR_CONTEXT(ctx, Status::OUT_OF_RANGE,
+                                        "INT128 value exceeds INT64 range");
+                        return std::nullopt;
+                    }
+                    int_val = static_cast<int64_t>(int128_val);
                 } else if (is_unsigned) {
                     // UINT64 to INT64 - check for overflow
                     if (uint_val > static_cast<uint64_t>(std::numeric_limits<int64_t>::max())) {
@@ -252,6 +294,19 @@ namespace scratchbird::core
                 return TypedValue::makeInt64(int_val);
             }
 
+            case DataType::INT128:
+            {
+                if (is_float) {
+                    return TypedValue::makeInt128(static_cast<int128_t>(float_val));
+                } else if (is_int128) {
+                    return TypedValue::makeInt128(int128_val);
+                } else if (is_unsigned) {
+                    return TypedValue::makeInt128(static_cast<int128_t>(uint_val));
+                } else {
+                    return TypedValue::makeInt128(static_cast<int128_t>(int_val));
+                }
+            }
+
             case DataType::UINT8:
             {
                 if (is_float) {
@@ -261,6 +316,19 @@ namespace scratchbird::core
                         return std::nullopt;
                     }
                     return TypedValue::makeUInt8(static_cast<uint8_t>(float_val));
+                } else if (is_int128) {
+                    // INT128 to UINT8 - check for negative and range
+                    if (int128_val < 0) {
+                        SET_ERROR_CONTEXT(ctx, Status::OUT_OF_RANGE,
+                                        "Cannot convert negative INT128 to UINT8");
+                        return std::nullopt;
+                    }
+                    if (int128_val > std::numeric_limits<uint8_t>::max()) {
+                        SET_ERROR_CONTEXT(ctx, Status::OUT_OF_RANGE,
+                                        "INT128 value exceeds UINT8 range");
+                        return std::nullopt;
+                    }
+                    return TypedValue::makeUInt8(static_cast<uint8_t>(int128_val));
                 } else if (is_unsigned) {
                     if (uint_val > std::numeric_limits<uint8_t>::max()) {
                         SET_ERROR_CONTEXT(ctx, Status::OUT_OF_RANGE,
@@ -293,6 +361,19 @@ namespace scratchbird::core
                         return std::nullopt;
                     }
                     return TypedValue::makeUInt16(static_cast<uint16_t>(float_val));
+                } else if (is_int128) {
+                    // INT128 to UINT16 - check for negative and range
+                    if (int128_val < 0) {
+                        SET_ERROR_CONTEXT(ctx, Status::OUT_OF_RANGE,
+                                        "Cannot convert negative INT128 to UINT16");
+                        return std::nullopt;
+                    }
+                    if (int128_val > std::numeric_limits<uint16_t>::max()) {
+                        SET_ERROR_CONTEXT(ctx, Status::OUT_OF_RANGE,
+                                        "INT128 value exceeds UINT16 range");
+                        return std::nullopt;
+                    }
+                    return TypedValue::makeUInt16(static_cast<uint16_t>(int128_val));
                 } else if (is_unsigned) {
                     if (uint_val > std::numeric_limits<uint16_t>::max()) {
                         SET_ERROR_CONTEXT(ctx, Status::OUT_OF_RANGE,
@@ -325,6 +406,19 @@ namespace scratchbird::core
                         return std::nullopt;
                     }
                     return TypedValue::makeUInt32(static_cast<uint32_t>(float_val));
+                } else if (is_int128) {
+                    // INT128 to UINT32 - check for negative and range
+                    if (int128_val < 0) {
+                        SET_ERROR_CONTEXT(ctx, Status::OUT_OF_RANGE,
+                                        "Cannot convert negative INT128 to UINT32");
+                        return std::nullopt;
+                    }
+                    if (int128_val > std::numeric_limits<uint32_t>::max()) {
+                        SET_ERROR_CONTEXT(ctx, Status::OUT_OF_RANGE,
+                                        "INT128 value exceeds UINT32 range");
+                        return std::nullopt;
+                    }
+                    return TypedValue::makeUInt32(static_cast<uint32_t>(int128_val));
                 } else if (is_unsigned) {
                     if (uint_val > std::numeric_limits<uint32_t>::max()) {
                         SET_ERROR_CONTEXT(ctx, Status::OUT_OF_RANGE,
@@ -357,6 +451,20 @@ namespace scratchbird::core
                         return std::nullopt;
                     }
                     return TypedValue::makeUInt64(static_cast<uint64_t>(float_val));
+                } else if (is_int128) {
+                    // INT128 to UINT64 - check for negative
+                    if (int128_val < 0) {
+                        SET_ERROR_CONTEXT(ctx, Status::OUT_OF_RANGE,
+                                        "Cannot convert negative INT128 to UINT64");
+                        return std::nullopt;
+                    }
+                    // Check if INT128 value exceeds UINT64_MAX
+                    if (int128_val > static_cast<int128_t>(std::numeric_limits<uint64_t>::max())) {
+                        SET_ERROR_CONTEXT(ctx, Status::OUT_OF_RANGE,
+                                        "INT128 value exceeds UINT64 range");
+                        return std::nullopt;
+                    }
+                    return TypedValue::makeUInt64(static_cast<uint64_t>(int128_val));
                 } else if (is_unsigned) {
                     return TypedValue::makeUInt64(uint_val);
                 } else {
@@ -375,6 +483,8 @@ namespace scratchbird::core
                 float val;
                 if (is_float) {
                     val = static_cast<float>(float_val);
+                } else if (is_int128) {
+                    val = static_cast<float>(int128_val);
                 } else if (is_unsigned) {
                     val = static_cast<float>(uint_val);
                 } else {
@@ -388,6 +498,8 @@ namespace scratchbird::core
                 double val;
                 if (is_float) {
                     val = float_val;
+                } else if (is_int128) {
+                    val = static_cast<double>(int128_val);
                 } else if (is_unsigned) {
                     val = static_cast<double>(uint_val);
                 } else {
@@ -401,6 +513,8 @@ namespace scratchbird::core
                 std::string val;
                 if (is_float) {
                     val = TypeConverter::float64ToString(float_val);
+                } else if (is_int128) {
+                    val = TypeConverter::int128ToString(int128_val);
                 } else if (is_unsigned) {
                     val = TypeConverter::uint64ToString(uint_val);
                 } else {
@@ -414,6 +528,8 @@ namespace scratchbird::core
                 bool val;
                 if (is_float) {
                     val = (float_val != 0.0);
+                } else if (is_int128) {
+                    val = (int128_val != 0);
                 } else if (is_unsigned) {
                     val = (uint_val != 0);
                 } else {
