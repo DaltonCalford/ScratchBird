@@ -1173,12 +1173,97 @@ Status GiSTIndex::allocatePage(uint64_t* page_num, ErrorContext* ctx)
 }
 
 // =============================================================================
+// Default Operator Class Implementation
+// =============================================================================
+
+/**
+ * Default GiST operator class for simple binary comparison
+ *
+ * This provides basic functionality for indexes without specific operator classes.
+ * It treats predicates as opaque byte arrays and uses simple byte comparison.
+ */
+class DefaultGiSTOperatorClass : public GiSTOperatorClass
+{
+public:
+    uint32_t getOpClassId() const override { return 0; }  // ID 0 = default
+    std::string getOpClassName() const override { return "default_ops"; }
+
+    bool consistent(const GiSTPredicate& predicate,
+                   const std::vector<uint8_t>& query,
+                   GiSTStrategy strategy) const override
+    {
+        // For default ops, only support EQUALS strategy
+        if (strategy != GiSTStrategy::EQUALS)
+        {
+            return false;
+        }
+
+        // Simple byte-wise comparison
+        return predicate.data == query;
+    }
+
+    GiSTPredicate unionPredicates(
+        const std::vector<GiSTPredicate>& entries) const override
+    {
+        // For default ops, union is just the first predicate (conservative)
+        if (entries.empty())
+        {
+            return GiSTPredicate({}, 0);
+        }
+        return entries[0];
+    }
+
+    double penalty(const GiSTPredicate& base,
+                  const GiSTPredicate& add) const override
+    {
+        // For default ops, penalty is always 0 (no preference)
+        return 0.0;
+    }
+
+    void picksplit(const std::vector<GiSTPredicate>& entries,
+                  std::vector<size_t>& left_indices,
+                  std::vector<size_t>& right_indices) const override
+    {
+        // Simple 50/50 split
+        left_indices.clear();
+        right_indices.clear();
+
+        for (size_t i = 0; i < entries.size(); ++i)
+        {
+            if (i < entries.size() / 2)
+            {
+                left_indices.push_back(i);
+            }
+            else
+            {
+                right_indices.push_back(i);
+            }
+        }
+    }
+
+    bool same(const GiSTPredicate& a,
+             const GiSTPredicate& b) const override
+    {
+        return a.data == b.data;
+    }
+};
+
+// =============================================================================
 // GiSTOperatorClassRegistry Implementation
 // =============================================================================
 
 GiSTOperatorClassRegistry& GiSTOperatorClassRegistry::instance()
 {
     static GiSTOperatorClassRegistry registry;
+
+    // Register default operator class on first access
+    static bool initialized = false;
+    if (!initialized)
+    {
+        registry.registerOperatorClass(std::make_shared<DefaultGiSTOperatorClass>());
+        initialized = true;
+    }
+
     return registry;
 }
 
