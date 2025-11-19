@@ -108,6 +108,7 @@ namespace scratchbird
             CASE,            // Phase 1 Task 8: CASE expression
             SUBQUERY,        // Phase 2 Wave 2 - Agent B: Subquery expression
             SEQUENCE_FUNCTION, // ALPHA Phase 1 - Sequences (NEXTVAL, CURRVAL, SETVAL)
+            EXTRACT,         // EXTRACT(field FROM value) - extract sub-information
 
             // Types
             TYPE_NAME,
@@ -491,6 +492,39 @@ namespace scratchbird
             Expression* sequence_name_;
             Expression* value_;       // For SETVAL(seq, value)
             Expression* is_called_;   // For SETVAL(seq, value, is_called)
+        };
+
+        /**
+         * ExtractExpr - EXTRACT(field FROM value) expression
+         *
+         * Extracts sub-information from complex data types (DATE, TIME, TIMESTAMP,
+         * INTERVAL, UUID, INET, POINT, ARRAY, RANGE, etc.)
+         *
+         * Examples:
+         *   EXTRACT(year FROM date_col)
+         *   EXTRACT(x FROM point_col)
+         *   EXTRACT(version FROM uuid_col)
+         */
+        class ExtractExpr : public Expression
+        {
+        public:
+            ExtractExpr(const SourceSpan& span, uint8_t field_id, const std::string& field_name,
+                        Expression* source)
+                : Expression(ASTKind::EXTRACT, span),
+                  field_id_(field_id), field_name_(field_name), source_(source)
+            {
+            }
+
+            uint8_t fieldId() const { return field_id_; }
+            const std::string& fieldName() const { return field_name_; }
+            Expression* source() const { return source_; }
+
+            void accept(ASTVisitor* visitor) override;
+
+        private:
+            uint8_t field_id_;           // ExtractField enum value
+            std::string field_name_;     // Field name as string (for error messages)
+            Expression* source_;         // Source expression to extract from
         };
 
         // Aggregate function types (Phase 1 Task 4.1, Phase 2 Task 12)
@@ -3700,6 +3734,7 @@ namespace scratchbird
             virtual void visit(CastExpr *node) = 0;
             virtual void visit(FunctionCallExpr *node) = 0;
             virtual void visit(SequenceFunctionExpr *node) = 0;  // ALPHA Phase 1 - Sequences
+            virtual void visit(ExtractExpr *node) = 0;           // EXTRACT(field FROM value)
             virtual void visit(AggregateExpr *node) = 0;  // Phase 1 Task 4.1
             virtual void visit(WindowFuncExpr *node) = 0; // Phase 1 Task 6
             virtual void visit(WindowSpec *node) = 0;     // Phase 1 Task 6

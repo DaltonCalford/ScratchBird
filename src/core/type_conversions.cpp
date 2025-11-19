@@ -617,6 +617,42 @@ namespace scratchbird::core
                 return result ? std::make_optional(TypedValue::makeInt64(*result)) : std::nullopt;
             }
 
+            case DataType::INT128:
+            {
+                auto result = TypeConverter::stringToInt128(str, ctx);
+                return result ? std::make_optional(TypedValue::makeInt128(*result)) : std::nullopt;
+            }
+
+            case DataType::UINT8:
+            {
+                auto result = TypeConverter::stringToUInt8(str, ctx);
+                return result ? std::make_optional(TypedValue::makeUInt8(*result)) : std::nullopt;
+            }
+
+            case DataType::UINT16:
+            {
+                auto result = TypeConverter::stringToUInt16(str, ctx);
+                return result ? std::make_optional(TypedValue::makeUInt16(*result)) : std::nullopt;
+            }
+
+            case DataType::UINT32:
+            {
+                auto result = TypeConverter::stringToUInt32(str, ctx);
+                return result ? std::make_optional(TypedValue::makeUInt32(*result)) : std::nullopt;
+            }
+
+            case DataType::UINT64:
+            {
+                auto result = TypeConverter::stringToUInt64(str, ctx);
+                return result ? std::make_optional(TypedValue::makeUInt64(*result)) : std::nullopt;
+            }
+
+            case DataType::MONEY:
+            {
+                auto result = TypeConverter::stringToMoney(str, ctx);
+                return result ? std::make_optional(TypedValue::makeMoney(*result)) : std::nullopt;
+            }
+
             case DataType::FLOAT32:
             {
                 auto result = TypeConverter::stringToFloat32(str, ctx);

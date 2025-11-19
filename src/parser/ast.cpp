@@ -890,6 +890,11 @@ namespace scratchbird
             visitor->visit(this);
         }
 
+        void ExtractExpr::accept(ASTVisitor *visitor)
+        {
+            visitor->visit(this);
+        }
+
         void AggregateExpr::accept(ASTVisitor *visitor)
         {
             visitor->visit(this);

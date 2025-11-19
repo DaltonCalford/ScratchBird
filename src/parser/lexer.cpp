@@ -129,6 +129,7 @@ namespace scratchbird
             {"TIME", TokenType::KW_TIME},
             {"TIMESTAMP", TokenType::KW_TIMESTAMP},
             {"INTERVAL", TokenType::KW_INTERVAL},
+            {"EXTRACT", TokenType::KW_EXTRACT},
 
             // Boolean
             {"BOOLEAN", TokenType::KW_BOOLEAN},

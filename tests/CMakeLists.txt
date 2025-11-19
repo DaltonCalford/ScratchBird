@@ -323,6 +323,23 @@ set_tests_properties(TypeConversions PROPERTIES
     TIMEOUT 60
 )
 
+# EXTRACT function tests
+add_executable(test_extract
+    unit/test_extract.cpp
+)
+target_link_libraries(test_extract
+    scratchbird_core
+    scratchbird_parser
+    scratchbird_sblr
+    GTest::gtest
+    GTest::gtest_main
+)
+add_test(NAME Extract COMMAND test_extract)
+set_tests_properties(Extract PROPERTIES
+    LABELS "unit;extract;functions"
+    TIMEOUT 60
+)
+
 # ============================================================================
 # Columnstore Index Tests - Phase 1: RLE Compression
 # ============================================================================

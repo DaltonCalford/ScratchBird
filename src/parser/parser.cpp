@@ -1,5 +1,7 @@
 #include "scratchbird/parser/parser.h"
+#include "scratchbird/sblr/opcodes.h"  // For ExtractField enum
 #include <sstream>
+#include <algorithm>  // For std::transform
 
 namespace scratchbird
 {
@@ -105,6 +107,81 @@ namespace scratchbird
         SourceSpan Parser::makeSpan(const SourceLocation &start, const SourceLocation &end) const
         {
             return SourceSpan(start, end);
+        }
+
+        uint8_t Parser::mapExtractFieldName(const std::string &field_name)
+        {
+            // Convert to lowercase for case-insensitive matching
+            std::string lower_name = field_name;
+            std::transform(lower_name.begin(), lower_name.end(), lower_name.begin(), ::tolower);
+
+            // Map field names to ExtractField enum values (from opcodes.h)
+            using EF = scratchbird::sblr::ExtractField;
+
+            // Temporal fields
+            if (lower_name == "year") return static_cast<uint8_t>(EF::YEAR);
+            if (lower_name == "month") return static_cast<uint8_t>(EF::MONTH);
+            if (lower_name == "day") return static_cast<uint8_t>(EF::DAY);
+            if (lower_name == "hour") return static_cast<uint8_t>(EF::HOUR);
+            if (lower_name == "minute") return static_cast<uint8_t>(EF::MINUTE);
+            if (lower_name == "second") return static_cast<uint8_t>(EF::SECOND);
+            if (lower_name == "microsecond") return static_cast<uint8_t>(EF::MICROSECOND);
+            if (lower_name == "millisecond") return static_cast<uint8_t>(EF::MILLISECOND);
+            if (lower_name == "dow" || lower_name == "day_of_week") return static_cast<uint8_t>(EF::DOW);
+            if (lower_name == "doy" || lower_name == "day_of_year") return static_cast<uint8_t>(EF::DOY);
+            if (lower_name == "quarter") return static_cast<uint8_t>(EF::QUARTER);
+            if (lower_name == "week") return static_cast<uint8_t>(EF::WEEK);
+            if (lower_name == "epoch") return static_cast<uint8_t>(EF::EPOCH);
+            if (lower_name == "timezone") return static_cast<uint8_t>(EF::TIMEZONE);
+            if (lower_name == "timezone_hour") return static_cast<uint8_t>(EF::TIMEZONE_HOUR);
+            if (lower_name == "timezone_minute") return static_cast<uint8_t>(EF::TIMEZONE_MINUTE);
+
+            // UUID fields
+            if (lower_name == "version") return static_cast<uint8_t>(EF::VERSION);
+            if (lower_name == "variant") return static_cast<uint8_t>(EF::VARIANT);
+            if (lower_name == "timestamp") return static_cast<uint8_t>(EF::TIMESTAMP);
+            if (lower_name == "node") return static_cast<uint8_t>(EF::NODE);
+            if (lower_name == "clock_seq" || lower_name == "clock_sequence") return static_cast<uint8_t>(EF::CLOCK_SEQ);
+
+            // Network fields
+            if (lower_name == "family") return static_cast<uint8_t>(EF::FAMILY);
+            if (lower_name == "netmask") return static_cast<uint8_t>(EF::NETMASK);
+            if (lower_name == "address") return static_cast<uint8_t>(EF::ADDRESS);
+            if (lower_name == "network") return static_cast<uint8_t>(EF::NETWORK);
+            if (lower_name == "broadcast") return static_cast<uint8_t>(EF::BROADCAST);
+            if (lower_name == "hostmask") return static_cast<uint8_t>(EF::HOSTMASK);
+            if (lower_name == "vendor") return static_cast<uint8_t>(EF::VENDOR);
+
+            // Spatial fields
+            if (lower_name == "x") return static_cast<uint8_t>(EF::X);
+            if (lower_name == "y") return static_cast<uint8_t>(EF::Y);
+            if (lower_name == "srid") return static_cast<uint8_t>(EF::SRID);
+            if (lower_name == "num_points") return static_cast<uint8_t>(EF::NUM_POINTS);
+            if (lower_name == "start_point") return static_cast<uint8_t>(EF::START_POINT);
+            if (lower_name == "end_point") return static_cast<uint8_t>(EF::END_POINT);
+            if (lower_name == "num_rings") return static_cast<uint8_t>(EF::NUM_RINGS);
+            if (lower_name == "exterior_ring") return static_cast<uint8_t>(EF::EXTERIOR_RING);
+            if (lower_name == "num_interior_rings") return static_cast<uint8_t>(EF::NUM_INTERIOR_RINGS);
+            if (lower_name == "num_geometries") return static_cast<uint8_t>(EF::NUM_GEOMETRIES);
+
+            // Array fields
+            if (lower_name == "cardinality") return static_cast<uint8_t>(EF::CARDINALITY);
+            if (lower_name == "ndims") return static_cast<uint8_t>(EF::NDIMS);
+            if (lower_name == "dims") return static_cast<uint8_t>(EF::DIMS);
+            if (lower_name == "lower") return static_cast<uint8_t>(EF::LOWER);
+            if (lower_name == "upper") return static_cast<uint8_t>(EF::UPPER);
+
+            // Range fields
+            if (lower_name == "lower_value") return static_cast<uint8_t>(EF::LOWER_VALUE);
+            if (lower_name == "upper_value") return static_cast<uint8_t>(EF::UPPER_VALUE);
+            if (lower_name == "lower_inc") return static_cast<uint8_t>(EF::LOWER_INC);
+            if (lower_name == "upper_inc") return static_cast<uint8_t>(EF::UPPER_INC);
+            if (lower_name == "lower_inf") return static_cast<uint8_t>(EF::LOWER_INF);
+            if (lower_name == "upper_inf") return static_cast<uint8_t>(EF::UPPER_INF);
+            if (lower_name == "isempty") return static_cast<uint8_t>(EF::ISEMPTY);
+
+            // Unknown field
+            return 0xFF;
         }
 
         ParseResult Parser::parseStatement()
@@ -4642,6 +4719,45 @@ namespace scratchbird
 
                 auto span = makeSpan(start_loc, end_loc);
                 return arena_.make<CastExpr>(span, expr, target_type, is_try_cast);
+            }
+
+            // EXTRACT(field FROM expr)
+            if (match(TokenType::KW_EXTRACT))
+            {
+                if (!consume(TokenType::LEFT_PAREN, "Expected '(' after EXTRACT"))
+                    return nullptr;
+
+                // Parse field name (must be an identifier)
+                if (!check(TokenType::IDENTIFIER))
+                {
+                    error("Expected field name in EXTRACT expression");
+                    return nullptr;
+                }
+
+                std::string field_name = std::string(stringPool().get(current().value.string_id));
+                advance();
+
+                if (!consume(TokenType::KW_FROM, "Expected FROM in EXTRACT expression"))
+                    return nullptr;
+
+                auto *source_expr = parseExpression();
+                if (!source_expr)
+                    return nullptr;
+
+                auto end_loc = current().location;
+                if (!consume(TokenType::RIGHT_PAREN, "Expected ')' after EXTRACT expression"))
+                    return nullptr;
+
+                // Map field name to ExtractField enum value
+                uint8_t field_id = mapExtractFieldName(field_name);
+                if (field_id == 0xFF)
+                {
+                    error(std::string("Unknown EXTRACT field: ") + field_name);
+                    return nullptr;
+                }
+
+                auto span = makeSpan(start_loc, end_loc);
+                return arena_.make<ExtractExpr>(span, field_id, field_name, source_expr);
             }
 
             // Aggregate functions (Phase 1 Task 4.1, Phase 2 Task 12)

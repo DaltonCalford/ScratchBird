@@ -4907,6 +4907,29 @@ namespace scratchbird
             }
         }
 
+        void BytecodeGenerator::visit(parser::ExtractExpr *node)
+        {
+            // Generate bytecode for EXTRACT(field FROM value)
+            // Format: EXTENDED_OPCODE EXT_EXTRACT field_id source_expr
+
+            // Emit extended opcode marker + EXT_EXTRACT
+            current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+            current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_EXTRACT));
+
+            // Emit field ID (uint8_t)
+            current_result_->writeByte(node->fieldId());
+
+            // Generate bytecode for source expression
+            if (node->source())
+            {
+                node->source()->accept(this);
+            }
+            else
+            {
+                current_result_->addError("EXTRACT missing source expression");
+            }
+        }
+
 
         // Phase 2 Wave 2 - Agent C: Trigger bytecode generation
         void BytecodeGenerator::visit(parser::CreateTriggerStmt *node)

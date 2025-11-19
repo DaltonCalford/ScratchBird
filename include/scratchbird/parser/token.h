@@ -254,6 +254,9 @@ namespace scratchbird
             KW_TRY_CAST,
             KW_AS,
 
+            // Extraction
+            KW_EXTRACT,
+
             // Pattern matching
             KW_LIKE,
             KW_ILIKE,
