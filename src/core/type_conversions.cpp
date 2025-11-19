@@ -1,4 +1,5 @@
 #include "scratchbird/core/types.h"
+#include "scratchbird/core/array.h"
 #include "scratchbird/core/timezone.h"
 #include <algorithm>
 #include <cctype>
@@ -78,6 +79,36 @@ namespace scratchbird::core
             if (status != Status::OK)
                 return std::nullopt;
             return TypedValue::makeJSON(json_str);
+        }
+
+        // ARRAY conversions
+        if (type_ == DataType::ARRAY)
+        {
+            if (TypeSystem::isString(target_type))
+            {
+                // ARRAY to VARCHAR - uses PostgreSQL format {1,2,3}
+                return TypedValue::makeVarchar(toString());
+            }
+            else if (target_type == DataType::JSON)
+            {
+                // ARRAY to JSON - uses JSON array format [1,2,3]
+                auto arr = getArray();
+                if (!arr)
+                {
+                    return TypedValue::makeJSON("null");
+                }
+                return TypedValue::makeJSON(arr->toString());
+            }
+        }
+
+        // Multi-geometry to String conversions
+        if (type_ == DataType::MULTIPOINT || type_ == DataType::MULTILINESTRING ||
+            type_ == DataType::MULTIPOLYGON || type_ == DataType::GEOMETRYCOLLECTION)
+        {
+            if (TypeSystem::isString(target_type))
+            {
+                return TypedValue::makeVarchar(toString());
+            }
         }
 
         SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Unsupported type conversion");
