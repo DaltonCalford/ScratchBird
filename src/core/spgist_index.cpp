@@ -1245,12 +1245,99 @@ void SPGiSTIndex::calculateStatsRecursive(uint64_t page_num,
 }
 
 // =============================================================================
+// Default Operator Class Implementation
+// =============================================================================
+
+/**
+ * Default SP-GiST operator class for simple binary comparison
+ *
+ * This provides basic functionality for indexes without specific operator classes.
+ * It treats values as opaque byte arrays and uses simple byte comparison.
+ */
+class DefaultSPGiSTOperatorClass : public SPGiSTOperatorClass
+{
+public:
+    uint32_t getOpClassId() const override { return 0; }  // ID 0 = default
+    std::string getOpClassName() const override { return "default_ops"; }
+
+    Config config() const override
+    {
+        Config cfg;
+        cfg.canReturnData = false;
+        cfg.labelSize = 0;  // Variable size labels
+        cfg.maxInnerNodes = 16;  // Conservative maximum
+        return cfg;
+    }
+
+    SPGiSTTraversal choose(const std::vector<uint8_t>& innerPrefix,
+                          const std::vector<SPGiSTNodeLabel>& nodeLabels,
+                          const std::vector<uint8_t>& query) const override
+    {
+        // Simple routing: use first label if available
+        SPGiSTTraversal result;
+        if (nodeLabels.empty())
+        {
+            result.match_type = SPGiSTMatchType::MATCH_ADD_NODE;
+            result.prefix = query;
+        }
+        else
+        {
+            result.match_type = SPGiSTMatchType::MATCH_NODE;
+            result.node_index = 0;
+        }
+        return result;
+    }
+
+    void pickSplit(const std::vector<std::vector<uint8_t>>& values,
+                  std::vector<uint8_t>& prefix,
+                  std::vector<std::vector<uint8_t>>& labels,
+                  std::vector<size_t>& assignments) const override
+    {
+        // Simple split: create two labels
+        prefix.clear();  // No prefix
+        labels.clear();
+        labels.push_back({0});  // Label 0
+        labels.push_back({1});  // Label 1
+
+        assignments.resize(values.size());
+        for (size_t i = 0; i < values.size(); ++i)
+        {
+            assignments[i] = i % 2;  // Alternate between children
+        }
+    }
+
+    bool innerConsistent(const std::vector<uint8_t>& innerPrefix,
+                        const std::vector<uint8_t>& nodeLabel,
+                        const std::vector<uint8_t>& query) const override
+    {
+        // Always return true for default ops (conservative)
+        return true;
+    }
+
+    bool leafConsistent(const std::vector<uint8_t>& leafValue,
+                       const std::vector<uint8_t>& query) const override
+    {
+        // Simple byte-wise comparison
+        return leafValue == query;
+    }
+};
+
+// =============================================================================
 // SPGiSTOperatorClassRegistry Implementation
 // =============================================================================
 
 SPGiSTOperatorClassRegistry& SPGiSTOperatorClassRegistry::instance()
 {
     static SPGiSTOperatorClassRegistry registry;
+
+    // Register default operator class on first access
+    static bool initialized = false;
+    if (!initialized)
+    {
+        registry.registerOperatorClass(std::make_shared<DefaultSPGiSTOperatorClass>());
+        initialized = true;
+    }
+
     return registry;
 }
 
