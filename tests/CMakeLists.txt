@@ -309,6 +309,20 @@ set_tests_properties(TypeSerialization PROPERTIES
     TIMEOUT 60
 )
 
+add_executable(test_type_conversions
+    unit/test_type_conversions.cpp
+)
+target_link_libraries(test_type_conversions
+    scratchbird_core
+    GTest::gtest
+    GTest::gtest_main
+)
+add_test(NAME TypeConversions COMMAND test_type_conversions)
+set_tests_properties(TypeConversions PROPERTIES
+    LABELS "unit;conversions;types"
+    TIMEOUT 60
+)
+
 # ============================================================================
 # Columnstore Index Tests - Phase 1: RLE Compression
 # ============================================================================
