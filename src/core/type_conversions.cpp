@@ -3,6 +3,7 @@
 #include "scratchbird/core/timezone.h"
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 
 namespace scratchbird::core
 {
@@ -119,9 +120,10 @@ namespace scratchbird::core
     auto TypedValue::convertNumericTo(DataType target_type, ErrorContext *ctx) const
         -> std::optional<TypedValue>
     {
-        // Get value as widest type (float64, int128, int64, or uint64)
+        // Get value as widest type (float64, int128, int64, uint64, or money as cents)
         bool is_float = type_ == DataType::FLOAT32 || type_ == DataType::FLOAT64;
         bool is_int128 = type_ == DataType::INT128;
+        bool is_money = type_ == DataType::MONEY;
         bool is_unsigned = type_ == DataType::UINT8 || type_ == DataType::UINT16 ||
                           type_ == DataType::UINT32 || type_ == DataType::UINT64;
 
@@ -137,6 +139,11 @@ namespace scratchbird::core
         else if (is_int128)
         {
             int128_val = getInt128();
+        }
+        else if (is_money)
+        {
+            // MONEY stored as cents - treat as INT64 for conversions
+            int_val = getMoney();
         }
         else if (is_unsigned)
         {
@@ -515,6 +522,9 @@ namespace scratchbird::core
                     val = TypeConverter::float64ToString(float_val);
                 } else if (is_int128) {
                     val = TypeConverter::int128ToString(int128_val);
+                } else if (is_money) {
+                    // MONEY already formatted properly as currency string
+                    val = TypeConverter::moneyToString(int_val);
                 } else if (is_unsigned) {
                     val = TypeConverter::uint64ToString(uint_val);
                 } else {
@@ -536,6 +546,38 @@ namespace scratchbird::core
                     val = (int_val != 0);
                 }
                 return TypedValue::makeBoolean(val);
+            }
+
+            case DataType::MONEY:
+            {
+                if (is_float) {
+                    // FLOAT to MONEY: multiply by 100 and round to get cents
+                    int64_t cents = static_cast<int64_t>(std::round(float_val * 100.0));
+                    return TypedValue::makeMoney(cents);
+                } else if (is_int128) {
+                    // INT128 to MONEY: check range and treat as cents
+                    if (int128_val > std::numeric_limits<int64_t>::max() ||
+                        int128_val < std::numeric_limits<int64_t>::min()) {
+                        SET_ERROR_CONTEXT(ctx, Status::OUT_OF_RANGE,
+                                        "INT128 value exceeds MONEY range");
+                        return std::nullopt;
+                    }
+                    return TypedValue::makeMoney(static_cast<int64_t>(int128_val));
+                } else if (is_money) {
+                    // MONEY to MONEY: no conversion
+                    return TypedValue::makeMoney(int_val);
+                } else if (is_unsigned) {
+                    // UINT to MONEY: treat as cents
+                    if (uint_val > static_cast<uint64_t>(std::numeric_limits<int64_t>::max())) {
+                        SET_ERROR_CONTEXT(ctx, Status::OUT_OF_RANGE,
+                                        "UINT value exceeds MONEY range");
+                        return std::nullopt;
+                    }
+                    return TypedValue::makeMoney(static_cast<int64_t>(uint_val));
+                } else {
+                    // INT to MONEY: treat as cents
+                    return TypedValue::makeMoney(int_val);
+                }
             }
 
             default:

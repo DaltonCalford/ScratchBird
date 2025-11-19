@@ -358,6 +358,155 @@ TEST_F(TypeConversionTest, INT128_ToBoolean) {
     EXPECT_TRUE(b1->getBoolean());
 }
 
+// ========== MONEY Conversion Tests ==========
+
+// Test INT32 to MONEY - treats as cents
+TEST_F(TypeConversionTest, INT32_ToMoney) {
+    auto i32 = TypedValue::makeInt32(12345); // 123.45 in cents
+    auto money = i32.convertTo(DataType::MONEY, &ctx);
+    ASSERT_TRUE(money.has_value());
+    EXPECT_EQ(money->getMoney(), 12345);
+}
+
+// Test INT64 to MONEY - treats as cents
+TEST_F(TypeConversionTest, INT64_ToMoney) {
+    auto i64 = TypedValue::makeInt64(999999999); // 9999999.99 in cents
+    auto money = i64.convertTo(DataType::MONEY, &ctx);
+    ASSERT_TRUE(money.has_value());
+    EXPECT_EQ(money->getMoney(), 999999999);
+}
+
+// Test negative INT to MONEY
+TEST_F(TypeConversionTest, NegativeInt_ToMoney) {
+    auto i32 = TypedValue::makeInt32(-5000); // -50.00
+    auto money = i32.convertTo(DataType::MONEY, &ctx);
+    ASSERT_TRUE(money.has_value());
+    EXPECT_EQ(money->getMoney(), -5000);
+}
+
+// Test FLOAT64 to MONEY - multiply by 100 and round
+TEST_F(TypeConversionTest, Float64_ToMoney) {
+    auto f64 = TypedValue::makeFloat64(123.456); // Should round to 12346 cents
+    auto money = f64.convertTo(DataType::MONEY, &ctx);
+    ASSERT_TRUE(money.has_value());
+    EXPECT_EQ(money->getMoney(), 12346); // Rounds 123.456 * 100 = 12345.6 -> 12346
+}
+
+// Test FLOAT64 to MONEY - exact conversion
+TEST_F(TypeConversionTest, Float64_ToMoney_Exact) {
+    auto f64 = TypedValue::makeFloat64(99.99);
+    auto money = f64.convertTo(DataType::MONEY, &ctx);
+    ASSERT_TRUE(money.has_value());
+    EXPECT_EQ(money->getMoney(), 9999);
+}
+
+// Test negative FLOAT to MONEY
+TEST_F(TypeConversionTest, NegativeFloat_ToMoney) {
+    auto f64 = TypedValue::makeFloat64(-50.25);
+    auto money = f64.convertTo(DataType::MONEY, &ctx);
+    ASSERT_TRUE(money.has_value());
+    EXPECT_EQ(money->getMoney(), -5025);
+}
+
+// Test MONEY to INT64 - returns cents
+TEST_F(TypeConversionTest, Money_ToInt64) {
+    auto money = TypedValue::makeMoney(12345);
+    auto i64 = money.convertTo(DataType::INT64, &ctx);
+    ASSERT_TRUE(i64.has_value());
+    EXPECT_EQ(i64->getInt64(), 12345);
+}
+
+// Test MONEY to FLOAT64 - returns cents as float
+TEST_F(TypeConversionTest, Money_ToFloat64) {
+    auto money = TypedValue::makeMoney(12345);
+    auto f64 = money.convertTo(DataType::FLOAT64, &ctx);
+    ASSERT_TRUE(f64.has_value());
+    EXPECT_DOUBLE_EQ(f64->getFloat64(), 12345.0);
+}
+
+// Test MONEY to VARCHAR via toString
+TEST_F(TypeConversionTest, Money_ToVarchar) {
+    auto money = TypedValue::makeMoney(12345);
+    auto str = money.toString();
+    // MONEY should format as currency string like "$123.45"
+    EXPECT_EQ(str, "$123.45");
+}
+
+// Test negative MONEY to VARCHAR
+TEST_F(TypeConversionTest, NegativeMoney_ToVarchar) {
+    auto money = TypedValue::makeMoney(-5025);
+    auto str = money.toString();
+    EXPECT_EQ(str, "-$50.25");
+}
+
+// Test MONEY to DECIMAL
+TEST_F(TypeConversionTest, Money_ToDecimal) {
+    auto money = TypedValue::makeMoney(12345);
+    auto dec = money.convertTo(DataType::DECIMAL, &ctx);
+    ASSERT_TRUE(dec.has_value());
+    EXPECT_EQ(dec->getDecimal(), "$123.45");
+}
+
+// Test UINT32 to MONEY - treats as cents
+TEST_F(TypeConversionTest, UINT32_ToMoney) {
+    auto u32 = TypedValue::makeUInt32(50000);
+    auto money = u32.convertTo(DataType::MONEY, &ctx);
+    ASSERT_TRUE(money.has_value());
+    EXPECT_EQ(money->getMoney(), 50000);
+}
+
+// Test UINT64 to MONEY - overflow case
+TEST_F(TypeConversionTest, UINT64_ToMoney_Overflow) {
+    auto u64 = TypedValue::makeUInt64(static_cast<uint64_t>(std::numeric_limits<int64_t>::max()) + 1);
+    auto money = u64.convertTo(DataType::MONEY, &ctx);
+    EXPECT_FALSE(money.has_value()); // Should fail - exceeds INT64_MAX
+}
+
+// Test UINT64 to MONEY - valid case
+TEST_F(TypeConversionTest, UINT64_ToMoney_Valid) {
+    auto u64 = TypedValue::makeUInt64(1000000);
+    auto money = u64.convertTo(DataType::MONEY, &ctx);
+    ASSERT_TRUE(money.has_value());
+    EXPECT_EQ(money->getMoney(), 1000000);
+}
+
+// Test INT128 to MONEY - overflow case (positive)
+TEST_F(TypeConversionTest, INT128_ToMoney_Overflow_Positive) {
+    int128_t large = static_cast<int128_t>(std::numeric_limits<int64_t>::max()) + 1;
+    auto i128 = TypedValue::makeInt128(large);
+    auto money = i128.convertTo(DataType::MONEY, &ctx);
+    EXPECT_FALSE(money.has_value()); // Should fail
+}
+
+// Test INT128 to MONEY - overflow case (negative)
+TEST_F(TypeConversionTest, INT128_ToMoney_Overflow_Negative) {
+    int128_t large = static_cast<int128_t>(std::numeric_limits<int64_t>::min()) - 1;
+    auto i128 = TypedValue::makeInt128(large);
+    auto money = i128.convertTo(DataType::MONEY, &ctx);
+    EXPECT_FALSE(money.has_value()); // Should fail
+}
+
+// Test INT128 to MONEY - valid case
+TEST_F(TypeConversionTest, INT128_ToMoney_Valid) {
+    auto i128 = TypedValue::makeInt128(999999);
+    auto money = i128.convertTo(DataType::MONEY, &ctx);
+    ASSERT_TRUE(money.has_value());
+    EXPECT_EQ(money->getMoney(), 999999);
+}
+
+// Test MONEY to BOOLEAN
+TEST_F(TypeConversionTest, Money_ToBoolean) {
+    auto money_zero = TypedValue::makeMoney(0);
+    auto b0 = money_zero.convertTo(DataType::BOOLEAN, &ctx);
+    ASSERT_TRUE(b0.has_value());
+    EXPECT_FALSE(b0->getBoolean());
+
+    auto money_nonzero = TypedValue::makeMoney(100);
+    auto b1 = money_nonzero.convertTo(DataType::BOOLEAN, &ctx);
+    ASSERT_TRUE(b1.has_value());
+    EXPECT_TRUE(b1->getBoolean());
+}
+
 int main(int argc, char **argv) {
     ::testing::InitGoogleTest(&argc, argv);
     return RUN_ALL_TESTS();
