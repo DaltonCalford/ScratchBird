@@ -397,6 +397,9 @@ namespace scratchbird
             EXT_ST_NUMGEOMETRIES = 0x8D,   // ST_NumGeometries(geom) - get number of geometries in collection
             EXT_ST_DUMP = 0x8E,            // ST_Dump(geom) - dump all geometries from collection
 
+            // Extraction function
+            EXT_EXTRACT = 0x8F,            // EXTRACT(field FROM value) - extract sub-information from complex types
+
             // PSQL - Stored Procedures and Functions (Phase 2 Task 10.2) - 0x90-0xAF range
             // Procedural language opcodes
             EXT_FUNCTION = 0x90,           // Function definition
@@ -589,6 +592,77 @@ namespace scratchbird
             EXT_XPATH = 0x4C,              // XPATH(xpath_expr, xml) - extract nodes using XPath
             EXT_XMLEXISTS = 0x4D,          // XMLEXISTS(xpath_expr, xml) - check if XPath matches
             EXT_XMLAGG = 0x4E,             // XMLAGG(xml) - aggregate XML values (aggregate function)
+        };
+
+        /**
+         * ExtractField - Field identifiers for EXTRACT(field FROM value) function
+         *
+         * Each field corresponds to sub-information that can be extracted from complex data types.
+         * See docs/planning/EXTRACT_FUNCTION_COMPREHENSIVE_PLAN.md for complete specification.
+         */
+        enum class ExtractField : uint8_t
+        {
+            // Temporal fields (0x00-0x1F) - DATE, TIME, TIMESTAMP, INTERVAL
+            YEAR = 0x00,            // Year (all temporal types)
+            MONTH = 0x01,           // Month (1-12)
+            DAY = 0x02,             // Day of month (1-31)
+            HOUR = 0x03,            // Hour (0-23)
+            MINUTE = 0x04,          // Minute (0-59)
+            SECOND = 0x05,          // Second (0-59)
+            MICROSECOND = 0x06,     // Microsecond (0-999999)
+            MILLISECOND = 0x07,     // Millisecond (0-999)
+            DOW = 0x08,             // Day of week (0=Sunday, 6=Saturday)
+            DOY = 0x09,             // Day of year (1-366)
+            QUARTER = 0x0A,         // Quarter (1-4)
+            WEEK = 0x0B,            // ISO week number (1-53)
+            EPOCH = 0x0C,           // Seconds since Unix epoch (int64/double)
+            TIMEZONE = 0x0D,        // Timezone name (varchar) for TIMESTAMPTZ
+            TIMEZONE_HOUR = 0x0E,   // Timezone offset hours
+            TIMEZONE_MINUTE = 0x0F, // Timezone offset minutes
+
+            // UUID fields (0x20-0x2F)
+            VERSION = 0x20,         // UUID version (1-7)
+            VARIANT = 0x21,         // UUID variant (0-2)
+            TIMESTAMP = 0x22,       // UUID timestamp (v1/v7, microseconds since epoch)
+            NODE = 0x23,            // UUID node (v1, MAC address as varchar)
+            CLOCK_SEQ = 0x24,       // UUID clock sequence (v1, int32)
+
+            // Network fields (0x30-0x3F) - INET, CIDR, MACADDR
+            FAMILY = 0x30,          // IP address family (4=IPv4, 6=IPv6)
+            NETMASK = 0x31,         // Network mask bits (0-32 for IPv4, 0-128 for IPv6)
+            ADDRESS = 0x32,         // IP address without netmask (varchar)
+            NETWORK = 0x33,         // Network address (host bits zeroed)
+            BROADCAST = 0x34,       // Broadcast address (host bits set to 1)
+            HOSTMASK = 0x35,        // Host mask (inverse of netmask)
+            VENDOR = 0x36,          // MAC address vendor OUI (first 3 bytes as hex)
+
+            // Spatial fields (0x40-0x4F) - POINT, LINESTRING, POLYGON, etc.
+            X = 0x40,               // POINT x coordinate (longitude)
+            Y = 0x41,               // POINT y coordinate (latitude)
+            SRID = 0x42,            // Spatial reference identifier
+            NUM_POINTS = 0x43,      // LINESTRING point count
+            START_POINT = 0x44,     // LINESTRING start point
+            END_POINT = 0x45,       // LINESTRING end point
+            NUM_RINGS = 0x46,       // POLYGON ring count
+            EXTERIOR_RING = 0x47,   // POLYGON exterior ring (linestring)
+            NUM_INTERIOR_RINGS = 0x48, // POLYGON interior ring count
+            NUM_GEOMETRIES = 0x49,  // Multi-geometry geometry count
+
+            // Array fields (0x50-0x5F)
+            CARDINALITY = 0x50,     // Total number of elements
+            NDIMS = 0x51,           // Number of dimensions (rank)
+            DIMS = 0x52,            // Array of dimension sizes
+            LOWER = 0x53,           // Lower bound of first dimension (always 1)
+            UPPER = 0x54,           // Upper bound of first dimension
+
+            // Range fields (0x60-0x6F) - INT4RANGE, INT8RANGE, DATERANGE, TSRANGE, etc.
+            LOWER_VALUE = 0x60,     // Range lower bound value
+            UPPER_VALUE = 0x61,     // Range upper bound value
+            LOWER_INC = 0x62,       // Lower bound inclusive (bool)
+            UPPER_INC = 0x63,       // Upper bound inclusive (bool)
+            LOWER_INF = 0x64,       // Lower bound infinite/unbounded (bool)
+            UPPER_INF = 0x65,       // Upper bound infinite/unbounded (bool)
+            ISEMPTY = 0x66,         // Range is empty (bool)
         };
 
         // SBLR Version
