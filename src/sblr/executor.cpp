@@ -12993,6 +12993,23 @@ namespace scratchbird
                     {
                         executeExtract();
                     }
+                    // Index operation opcodes (November 19, 2025)
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_INDEX_INSERT))
+                    {
+                        executeIndexInsert();
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_INDEX_SEARCH))
+                    {
+                        executeIndexSearch();
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_INDEX_SCAN))
+                    {
+                        executeIndexScan();
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_INDEX_DELETE))
+                    {
+                        executeIndexDelete();
+                    }
                     else
                     {
                         error("Unknown extended opcode: " + std::to_string(ext_op));
@@ -18645,6 +18662,585 @@ namespace scratchbird
         {
             // TODO: Implement DECODE(text, format)
             error("DECODE not yet implemented");
+        }
+
+        // ============================================================================
+        // INDEX OPERATION EXECUTORS (November 19, 2025)
+        // ============================================================================
+
+        void Executor::executeIndexInsert()
+        {
+            // Read index UUID (16 bytes)
+            core::ID index_uuid;
+            for (int i = 0; i < 16; i++)
+            {
+                if (pc_ >= bytecode_.size())
+                {
+                    error("Incomplete index UUID in EXT_INDEX_INSERT");
+                    return;
+                }
+                index_uuid.bytes[i] = bytecode_[pc_++];
+            }
+
+            // Read index type (1 byte)
+            if (pc_ >= bytecode_.size())
+            {
+                error("Missing index type in EXT_INDEX_INSERT");
+                return;
+            }
+            IndexType index_type = static_cast<IndexType>(bytecode_[pc_++]);
+
+            // Read key length (2 bytes, little-endian)
+            if (pc_ + 1 >= bytecode_.size())
+            {
+                error("Incomplete key length in EXT_INDEX_INSERT");
+                return;
+            }
+            uint16_t key_len = bytecode_[pc_] | (bytecode_[pc_ + 1] << 8);
+            pc_ += 2;
+
+            // Read key data
+            if (pc_ + key_len > bytecode_.size())
+            {
+                error("Incomplete key data in EXT_INDEX_INSERT");
+                return;
+            }
+            std::vector<uint8_t> key(bytecode_.begin() + pc_, bytecode_.begin() + pc_ + key_len);
+            pc_ += key_len;
+
+            // Read TID (10 bytes: GPID 8 + slot 2)
+            if (pc_ + 10 > bytecode_.size())
+            {
+                error("Incomplete TID in EXT_INDEX_INSERT");
+                return;
+            }
+            uint64_t gpid = 0;
+            for (int i = 0; i < 8; i++)
+            {
+                gpid |= (static_cast<uint64_t>(bytecode_[pc_++]) << (i * 8));
+            }
+            uint16_t slot = bytecode_[pc_] | (bytecode_[pc_ + 1] << 8);
+            pc_ += 2;
+            core::TID tid(gpid, slot);
+
+            // Read xmin (8 bytes)
+            if (pc_ + 8 > bytecode_.size())
+            {
+                error("Incomplete xmin in EXT_INDEX_INSERT");
+                return;
+            }
+            uint64_t xmin = 0;
+            for (int i = 0; i < 8; i++)
+            {
+                xmin |= (static_cast<uint64_t>(bytecode_[pc_++]) << (i * 8));
+            }
+
+            // Route to appropriate index implementation
+            core::ErrorContext err_ctx;
+            core::Status status = routeIndexInsert(index_type, index_uuid, key, tid, xmin, &err_ctx);
+
+            if (status != core::Status::OK)
+            {
+                error("Index insert failed: " + std::string(err_ctx.message));
+            }
+        }
+
+        void Executor::executeIndexSearch()
+        {
+            // Read index UUID (16 bytes)
+            core::ID index_uuid;
+            for (int i = 0; i < 16; i++)
+            {
+                if (pc_ >= bytecode_.size())
+                {
+                    error("Incomplete index UUID in EXT_INDEX_SEARCH");
+                    return;
+                }
+                index_uuid.bytes[i] = bytecode_[pc_++];
+            }
+
+            // Read index type (1 byte)
+            if (pc_ >= bytecode_.size())
+            {
+                error("Missing index type in EXT_INDEX_SEARCH");
+                return;
+            }
+            IndexType index_type = static_cast<IndexType>(bytecode_[pc_++]);
+
+            // Read key length (2 bytes)
+            if (pc_ + 1 >= bytecode_.size())
+            {
+                error("Incomplete key length in EXT_INDEX_SEARCH");
+                return;
+            }
+            uint16_t key_len = bytecode_[pc_] | (bytecode_[pc_ + 1] << 8);
+            pc_ += 2;
+
+            // Read key data
+            if (pc_ + key_len > bytecode_.size())
+            {
+                error("Incomplete key data in EXT_INDEX_SEARCH");
+                return;
+            }
+            std::vector<uint8_t> key(bytecode_.begin() + pc_, bytecode_.begin() + pc_ + key_len);
+            pc_ += key_len;
+
+            // Read current_xid (8 bytes)
+            if (pc_ + 8 > bytecode_.size())
+            {
+                error("Incomplete current_xid in EXT_INDEX_SEARCH");
+                return;
+            }
+            uint64_t current_xid = 0;
+            for (int i = 0; i < 8; i++)
+            {
+                current_xid |= (static_cast<uint64_t>(bytecode_[pc_++]) << (i * 8));
+            }
+
+            // Route to appropriate index implementation
+            std::vector<core::TID> results;
+            core::ErrorContext err_ctx;
+            core::Status status = routeIndexSearch(index_type, index_uuid, key, current_xid, &results, &err_ctx);
+
+            if (status != core::Status::OK)
+            {
+                error("Index search failed: " + std::string(err_ctx.message));
+                return;
+            }
+
+            // Push results count onto stack
+            push(Value::makeInt64(static_cast<int64_t>(results.size())));
+
+            // Store results in execution context for subsequent operations
+            // (In a real implementation, you'd store this in the executor state)
+        }
+
+        void Executor::executeIndexScan()
+        {
+            // TODO: Implement range scan execution
+            // Similar pattern to executeIndexSearch but with start/end keys
+            error("EXT_INDEX_SCAN not yet implemented");
+        }
+
+        void Executor::executeIndexDelete()
+        {
+            // Read index UUID (16 bytes)
+            core::ID index_uuid;
+            for (int i = 0; i < 16; i++)
+            {
+                if (pc_ >= bytecode_.size())
+                {
+                    error("Incomplete index UUID in EXT_INDEX_DELETE");
+                    return;
+                }
+                index_uuid.bytes[i] = bytecode_[pc_++];
+            }
+
+            // Read index type (1 byte)
+            if (pc_ >= bytecode_.size())
+            {
+                error("Missing index type in EXT_INDEX_DELETE");
+                return;
+            }
+            IndexType index_type = static_cast<IndexType>(bytecode_[pc_++]);
+
+            // Read key length (2 bytes)
+            if (pc_ + 1 >= bytecode_.size())
+            {
+                error("Incomplete key length in EXT_INDEX_DELETE");
+                return;
+            }
+            uint16_t key_len = bytecode_[pc_] | (bytecode_[pc_ + 1] << 8);
+            pc_ += 2;
+
+            // Read key data
+            if (pc_ + key_len > bytecode_.size())
+            {
+                error("Incomplete key data in EXT_INDEX_DELETE");
+                return;
+            }
+            std::vector<uint8_t> key(bytecode_.begin() + pc_, bytecode_.begin() + pc_ + key_len);
+            pc_ += key_len;
+
+            // Read TID (10 bytes)
+            if (pc_ + 10 > bytecode_.size())
+            {
+                error("Incomplete TID in EXT_INDEX_DELETE");
+                return;
+            }
+            uint64_t gpid = 0;
+            for (int i = 0; i < 8; i++)
+            {
+                gpid |= (static_cast<uint64_t>(bytecode_[pc_++]) << (i * 8));
+            }
+            uint16_t slot = bytecode_[pc_] | (bytecode_[pc_ + 1] << 8);
+            pc_ += 2;
+            core::TID tid(gpid, slot);
+
+            // Read xmax (8 bytes)
+            if (pc_ + 8 > bytecode_.size())
+            {
+                error("Incomplete xmax in EXT_INDEX_DELETE");
+                return;
+            }
+            uint64_t xmax = 0;
+            for (int i = 0; i < 8; i++)
+            {
+                xmax |= (static_cast<uint64_t>(bytecode_[pc_++]) << (i * 8));
+            }
+
+            // Route to appropriate index implementation
+            core::ErrorContext err_ctx;
+            core::Status status = routeIndexDelete(index_type, index_uuid, key, tid, xmax, &err_ctx);
+
+            if (status != core::Status::OK)
+            {
+                error("Index delete failed: " + std::string(err_ctx.message));
+            }
+        }
+
+        // Index routing helpers - route to specific index implementations
+        core::Status Executor::routeIndexInsert(IndexType type, const core::ID& index_uuid,
+                                              const std::vector<uint8_t>& key,
+                                              const core::TID& tid, uint64_t xmin,
+                                              core::ErrorContext* ctx)
+        {
+            // Get index info from catalog
+            auto index_info_opt = db_->catalog_manager()->getIndex(index_uuid, ctx);
+            if (!index_info_opt.has_value())
+            {
+                core::SET_ERROR_CONTEXT(ctx, core::Status::INDEX_NOT_FOUND, "Index not found");
+                return core::Status::INDEX_NOT_FOUND;
+            }
+            auto& index_info = index_info_opt.value();
+
+            // Route to appropriate index type
+            switch (type)
+            {
+                case IndexType::BTREE:
+                {
+                    auto btree = core::BTree::open(db_, index_uuid.bytes, index_info.idx_root_page, ctx);
+                    if (btree)
+                    {
+                        return btree->insert(key, tid, xmin, ctx);
+                    }
+                    return core::Status::INTERNAL_ERROR;
+                }
+
+                case IndexType::HASH:
+                {
+                    auto hash_idx = core::HashIndex::open(db_, index_uuid.bytes, index_info.idx_root_page, ctx);
+                    if (hash_idx)
+                    {
+                        return hash_idx->insert(key, tid, xmin, ctx);
+                    }
+                    return core::Status::INTERNAL_ERROR;
+                }
+
+                case IndexType::RTREE:
+                {
+                    auto rtree = core::RTreeIndex::open(db_, index_uuid.bytes, index_info.idx_root_page, ctx);
+                    if (rtree)
+                    {
+                        return rtree->insert(key, tid, xmin, ctx);
+                    }
+                    return core::Status::INTERNAL_ERROR;
+                }
+
+                case IndexType::GIST:
+                {
+                    auto gist = core::GistIndex::open(db_, index_uuid.bytes, index_info.idx_root_page, ctx);
+                    if (gist)
+                    {
+                        return gist->insert(key, tid, xmin, ctx);
+                    }
+                    return core::Status::INTERNAL_ERROR;
+                }
+
+                case IndexType::SPGIST:
+                {
+                    auto spgist = core::SpGistIndex::open(db_, index_uuid.bytes, index_info.idx_root_page, ctx);
+                    if (spgist)
+                    {
+                        return spgist->insert(key, tid, xmin, ctx);
+                    }
+                    return core::Status::INTERNAL_ERROR;
+                }
+
+                case IndexType::BRIN:
+                {
+                    auto brin = core::BrinIndex::open(db_, index_uuid.bytes, index_info.idx_root_page, ctx);
+                    if (brin)
+                    {
+                        return brin->insert(key, tid, xmin, ctx);
+                    }
+                    return core::Status::INTERNAL_ERROR;
+                }
+
+                case IndexType::BITMAP:
+                {
+                    auto bitmap = core::BitmapIndex::open(db_, index_uuid.bytes, index_info.idx_root_page, ctx);
+                    if (bitmap)
+                    {
+                        return bitmap->insert(key, tid, xmin, ctx);
+                    }
+                    return core::Status::INTERNAL_ERROR;
+                }
+
+                case IndexType::LSM:
+                {
+                    auto lsm = core::LSMTree::open(db_, index_uuid.bytes, index_info.idx_root_page, ctx);
+                    if (lsm)
+                    {
+                        return lsm->put(key, tid, xmin, ctx);  // LSM uses put(), not insert()
+                    }
+                    return core::Status::INTERNAL_ERROR;
+                }
+
+                case IndexType::GIN:
+                case IndexType::HNSW:
+                case IndexType::COLUMNSTORE:
+                    // These require special handling due to different APIs
+                    core::SET_ERROR_CONTEXT(ctx, core::Status::NOT_IMPLEMENTED,
+                                          "Index type not yet supported via bytecode");
+                    return core::Status::NOT_IMPLEMENTED;
+
+                default:
+                    core::SET_ERROR_CONTEXT(ctx, core::Status::INTERNAL_ERROR, "Unknown index type");
+                    return core::Status::INTERNAL_ERROR;
+            }
+        }
+
+        core::Status Executor::routeIndexSearch(IndexType type, const core::ID& index_uuid,
+                                              const std::vector<uint8_t>& key,
+                                              uint64_t current_xid,
+                                              std::vector<core::TID>* results_out,
+                                              core::ErrorContext* ctx)
+        {
+            // Get index info from catalog
+            auto index_info_opt = db_->catalog_manager()->getIndex(index_uuid, ctx);
+            if (!index_info_opt.has_value())
+            {
+                core::SET_ERROR_CONTEXT(ctx, core::Status::INDEX_NOT_FOUND, "Index not found");
+                return core::Status::INDEX_NOT_FOUND;
+            }
+            auto& index_info = index_info_opt.value();
+
+            // Route to appropriate index type
+            switch (type)
+            {
+                case IndexType::BTREE:
+                {
+                    auto btree = core::BTree::open(db_, index_uuid.bytes, index_info.idx_root_page, ctx);
+                    if (btree)
+                    {
+                        return btree->search(key, current_xid, results_out, ctx);
+                    }
+                    return core::Status::INTERNAL_ERROR;
+                }
+
+                case IndexType::HASH:
+                {
+                    auto hash_idx = core::HashIndex::open(db_, index_uuid.bytes, index_info.idx_root_page, ctx);
+                    if (hash_idx)
+                    {
+                        return hash_idx->search(key, current_xid, results_out, ctx);
+                    }
+                    return core::Status::INTERNAL_ERROR;
+                }
+
+                case IndexType::RTREE:
+                {
+                    auto rtree = core::RTreeIndex::open(db_, index_uuid.bytes, index_info.idx_root_page, ctx);
+                    if (rtree)
+                    {
+                        return rtree->search(key, current_xid, results_out, ctx);
+                    }
+                    return core::Status::INTERNAL_ERROR;
+                }
+
+                case IndexType::GIST:
+                {
+                    auto gist = core::GistIndex::open(db_, index_uuid.bytes, index_info.idx_root_page, ctx);
+                    if (gist)
+                    {
+                        return gist->search(key, current_xid, results_out, ctx);
+                    }
+                    return core::Status::INTERNAL_ERROR;
+                }
+
+                case IndexType::SPGIST:
+                {
+                    auto spgist = core::SpGistIndex::open(db_, index_uuid.bytes, index_info.idx_root_page, ctx);
+                    if (spgist)
+                    {
+                        return spgist->search(key, current_xid, results_out, ctx);
+                    }
+                    return core::Status::INTERNAL_ERROR;
+                }
+
+                case IndexType::BRIN:
+                {
+                    auto brin = core::BrinIndex::open(db_, index_uuid.bytes, index_info.idx_root_page, ctx);
+                    if (brin)
+                    {
+                        return brin->search(key, current_xid, results_out, ctx);
+                    }
+                    return core::Status::INTERNAL_ERROR;
+                }
+
+                case IndexType::BITMAP:
+                {
+                    auto bitmap = core::BitmapIndex::open(db_, index_uuid.bytes, index_info.idx_root_page, ctx);
+                    if (bitmap)
+                    {
+                        return bitmap->scan(key, current_xid, results_out, ctx);
+                    }
+                    return core::Status::INTERNAL_ERROR;
+                }
+
+                case IndexType::LSM:
+                {
+                    auto lsm = core::LSMTree::open(db_, index_uuid.bytes, index_info.idx_root_page, ctx);
+                    if (lsm)
+                    {
+                        core::TID result_tid;
+                        core::Status status = lsm->get(key, current_xid, &result_tid, ctx);
+                        if (status == core::Status::OK)
+                        {
+                            results_out->push_back(result_tid);
+                        }
+                        return status;
+                    }
+                    return core::Status::INTERNAL_ERROR;
+                }
+
+                case IndexType::GIN:
+                case IndexType::HNSW:
+                case IndexType::COLUMNSTORE:
+                    // These require special handling
+                    core::SET_ERROR_CONTEXT(ctx, core::Status::NOT_IMPLEMENTED,
+                                          "Index type not yet supported via bytecode");
+                    return core::Status::NOT_IMPLEMENTED;
+
+                default:
+                    core::SET_ERROR_CONTEXT(ctx, core::Status::INTERNAL_ERROR, "Unknown index type");
+                    return core::Status::INTERNAL_ERROR;
+            }
+        }
+
+        core::Status Executor::routeIndexDelete(IndexType type, const core::ID& index_uuid,
+                                              const std::vector<uint8_t>& key,
+                                              const core::TID& tid, uint64_t xmax,
+                                              core::ErrorContext* ctx)
+        {
+            // Get index info from catalog
+            auto index_info_opt = db_->catalog_manager()->getIndex(index_uuid, ctx);
+            if (!index_info_opt.has_value())
+            {
+                core::SET_ERROR_CONTEXT(ctx, core::Status::INDEX_NOT_FOUND, "Index not found");
+                return core::Status::INDEX_NOT_FOUND;
+            }
+            auto& index_info = index_info_opt.value();
+
+            // Route to appropriate index type
+            // Use remove() or markDeleted() depending on what's available
+            switch (type)
+            {
+                case IndexType::BTREE:
+                {
+                    auto btree = core::BTree::open(db_, index_uuid.bytes, index_info.idx_root_page, ctx);
+                    if (btree)
+                    {
+                        // B-Tree has markDeleted() for MGA-compliant soft deletion
+                        return btree->markDeleted(key, tid, xmax, ctx);
+                    }
+                    return core::Status::INTERNAL_ERROR;
+                }
+
+                case IndexType::HASH:
+                {
+                    auto hash_idx = core::HashIndex::open(db_, index_uuid.bytes, index_info.idx_root_page, ctx);
+                    if (hash_idx)
+                    {
+                        return hash_idx->remove(key, tid, xmax, ctx);
+                    }
+                    return core::Status::INTERNAL_ERROR;
+                }
+
+                case IndexType::RTREE:
+                {
+                    auto rtree = core::RTreeIndex::open(db_, index_uuid.bytes, index_info.idx_root_page, ctx);
+                    if (rtree)
+                    {
+                        return rtree->remove(key, tid, xmax, ctx);
+                    }
+                    return core::Status::INTERNAL_ERROR;
+                }
+
+                case IndexType::GIST:
+                {
+                    auto gist = core::GistIndex::open(db_, index_uuid.bytes, index_info.idx_root_page, ctx);
+                    if (gist)
+                    {
+                        return gist->remove(key, tid, xmax, ctx);
+                    }
+                    return core::Status::INTERNAL_ERROR;
+                }
+
+                case IndexType::SPGIST:
+                {
+                    auto spgist = core::SpGistIndex::open(db_, index_uuid.bytes, index_info.idx_root_page, ctx);
+                    if (spgist)
+                    {
+                        return spgist->remove(key, tid, xmax, ctx);
+                    }
+                    return core::Status::INTERNAL_ERROR;
+                }
+
+                case IndexType::BRIN:
+                {
+                    auto brin = core::BrinIndex::open(db_, index_uuid.bytes, index_info.idx_root_page, ctx);
+                    if (brin)
+                    {
+                        // BRIN remove is a no-op (returns OK)
+                        return brin->remove(key, 0, ctx);
+                    }
+                    return core::Status::INTERNAL_ERROR;
+                }
+
+                case IndexType::BITMAP:
+                {
+                    auto bitmap = core::BitmapIndex::open(db_, index_uuid.bytes, index_info.idx_root_page, ctx);
+                    if (bitmap)
+                    {
+                        return bitmap->remove(key, tid, xmax, ctx);
+                    }
+                    return core::Status::INTERNAL_ERROR;
+                }
+
+                case IndexType::LSM:
+                {
+                    auto lsm = core::LSMTree::open(db_, index_uuid.bytes, index_info.idx_root_page, ctx);
+                    if (lsm)
+                    {
+                        return lsm->remove(key, tid, xmax, ctx);
+                    }
+                    return core::Status::INTERNAL_ERROR;
+                }
+
+                case IndexType::GIN:
+                case IndexType::HNSW:
+                case IndexType::COLUMNSTORE:
+                    // These require special handling
+                    core::SET_ERROR_CONTEXT(ctx, core::Status::NOT_IMPLEMENTED,
+                                          "Index type not yet supported via bytecode");
+                    return core::Status::NOT_IMPLEMENTED;
+
+                default:
+                    core::SET_ERROR_CONTEXT(ctx, core::Status::INTERNAL_ERROR, "Unknown index type");
+                    return core::Status::INTERNAL_ERROR;
+            }
         }
 
     } // namespace sblr
