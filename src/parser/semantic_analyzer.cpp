@@ -1106,6 +1106,21 @@ namespace scratchbird
             setExpressionType(node, ExpressionType(TypeName(DataType::INT64), false));
         }
 
+        void SemanticAnalyzer::visit(ExtractExpr *node)
+        {
+            // EXTRACT(field FROM value) semantic analysis
+            // Validate source expression
+            if (node->source())
+            {
+                node->source()->accept(this);
+            }
+
+            // EXTRACT returns INT32 for most fields, INT64 for epoch, FLOAT64 for some INTERVAL epoch
+            // For simplicity, we'll type it as INT64 (can hold all integer results)
+            // TODO: Could be more precise based on field type
+            setExpressionType(node, ExpressionType(TypeName(DataType::INT64), false));
+        }
+
         void SemanticAnalyzer::visit(WindowFuncExpr *node)
         {
             // Phase 1 Task 6: Window function semantic analysis

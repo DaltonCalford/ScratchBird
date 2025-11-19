@@ -8,6 +8,7 @@
 #include "scratchbird/core/heap_page.h"
 #include "scratchbird/core/charset.h"
 #include "scratchbird/core/timezone.h"
+#include "scratchbird/core/array.h"  // For ARRAY extraction
 #include "scratchbird/core/page_manager.h"
 #include "scratchbird/core/connection_context.h"
 #include "scratchbird/core/password_hash.h"
@@ -18466,6 +18467,75 @@ namespace scratchbird
                         return;
                 }
             }
+            else if (source_type == core::DataType::INTERVAL)
+            {
+                core::Interval interval = source.getInterval();
+
+                switch (field)
+                {
+                    case ExtractField::YEAR:
+                        // Years from months (12 months = 1 year)
+                        push(Value::makeInt32(interval.months / 12));
+                        return;
+                    case ExtractField::MONTH:
+                        // Remaining months after extracting full years
+                        push(Value::makeInt32(interval.months % 12));
+                        return;
+                    case ExtractField::DAY:
+                        push(Value::makeInt32(interval.days));
+                        return;
+                    case ExtractField::HOUR:
+                    {
+                        // Hours from microseconds
+                        int64_t hours = interval.microseconds / 3600000000LL;
+                        push(Value::makeInt32(static_cast<int32_t>(hours)));
+                        return;
+                    }
+                    case ExtractField::MINUTE:
+                    {
+                        // Minutes from microseconds (after extracting hours)
+                        int64_t total_minutes = interval.microseconds / 60000000LL;
+                        int32_t minutes = static_cast<int32_t>(total_minutes % 60);
+                        push(Value::makeInt32(minutes));
+                        return;
+                    }
+                    case ExtractField::SECOND:
+                    {
+                        // Seconds from microseconds (after extracting minutes)
+                        int64_t total_seconds = interval.microseconds / 1000000LL;
+                        int32_t seconds = static_cast<int32_t>(total_seconds % 60);
+                        push(Value::makeInt32(seconds));
+                        return;
+                    }
+                    case ExtractField::MICROSECOND:
+                    {
+                        // Microsecond component only (fractional part of second)
+                        int32_t us = static_cast<int32_t>(interval.microseconds % 1000000);
+                        push(Value::makeInt32(us));
+                        return;
+                    }
+                    case ExtractField::MILLISECOND:
+                    {
+                        // Millisecond component only
+                        int32_t ms = static_cast<int32_t>((interval.microseconds % 1000000) / 1000);
+                        push(Value::makeInt32(ms));
+                        return;
+                    }
+                    case ExtractField::EPOCH:
+                    {
+                        // Total interval as seconds (approximate, assumes 30 days/month)
+                        double total_seconds =
+                            (interval.months * 2592000.0) +  // 30 days/month in seconds
+                            (interval.days * 86400.0) +       // days to seconds
+                            (interval.microseconds / 1000000.0); // microseconds to seconds
+                        push(Value::makeFloat64(total_seconds));
+                        return;
+                    }
+                    default:
+                        error("Field '" + std::to_string(field_id) + "' not valid for INTERVAL type");
+                        return;
+                }
+            }
             // ===== UUID TYPE =====
             else if (source_type == core::DataType::UUID)
             {
@@ -18561,7 +18631,7 @@ namespace scratchbird
             }
             else
             {
-                error("EXTRACT not yet supported for type: " + core::TypeSystem::typeToString(source_type));
+                error("EXTRACT not yet supported for this data type");
             }
         }
 
