@@ -5356,6 +5356,30 @@ namespace scratchbird
             }
         }
 
+        void BytecodeGenerator::writeOptionalKey(const std::vector<uint8_t>* key)
+        {
+            // Write optional key (nullptr indicates unbounded, encoded as 0xFFFF)
+            if (key == nullptr)
+            {
+                // Write 0xFFFF to indicate unbounded/null
+                current_result_->writeByte(0xFF);
+                current_result_->writeByte(0xFF);
+            }
+            else
+            {
+                // Write key length as 2 bytes (little-endian)
+                uint16_t key_len = static_cast<uint16_t>(key->size());
+                current_result_->writeByte(key_len & 0xFF);
+                current_result_->writeByte((key_len >> 8) & 0xFF);
+
+                // Write key data
+                for (uint8_t byte : *key)
+                {
+                    current_result_->writeByte(byte);
+                }
+            }
+        }
+
         void BytecodeGenerator::writeTID(uint64_t gpid, uint16_t slot)
         {
             // Write GPID (8 bytes, little-endian)
