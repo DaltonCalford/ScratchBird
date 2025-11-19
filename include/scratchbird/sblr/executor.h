@@ -1,6 +1,7 @@
 #pragma once
 
 #include "scratchbird/sblr/opcodes.h"
+#include "scratchbird/sblr/index_cache.h"
 #include "scratchbird/parser/token.h"
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/catalog_manager.h"
@@ -214,6 +215,10 @@ namespace scratchbird
 
             // Task 17 MGA Phase 2.2: Index maintenance statistics
             IndexMaintenanceStats index_stats_;
+
+            // Index cache for performance (November 19, 2025)
+            // LRU cache of frequently accessed index instances
+            IndexCache index_cache_;
 
             // Execution helpers
             uint8_t readByte();
@@ -711,6 +716,50 @@ namespace scratchbird
             // Extraction function
             void executeExtract();       // EXTRACT(field FROM value)
 
+            // Index Operation Executors (November 19, 2025)
+            // These methods execute index operations from bytecode
+            void executeIndexInsert();   // EXT_INDEX_INSERT - Insert entry into index
+            void executeIndexSearch();   // EXT_INDEX_SEARCH - Search index for key
+            void executeIndexScan();     // EXT_INDEX_SCAN - Range scan index
+            void executeIndexDelete();   // EXT_INDEX_DELETE - Delete from index (MGA logical)
+
+            // Specialized index operations (for indexes with unique APIs)
+            void executeGinInsert();     // EXT_GIN_INSERT - GIN insert with key extractor
+            void executeGinSearch();     // EXT_GIN_SEARCH - GIN search with key extractor
+            void executeHnswInsert();    // EXT_HNSW_INSERT - HNSW insert with vector
+            void executeHnswSearch();    // EXT_HNSW_SEARCH - HNSW k-NN search
+            void executeColumnstoreInsert();  // EXT_COLUMNSTORE_INSERT - Insert column
+            void executeColumnstoreScan();    // EXT_COLUMNSTORE_SCAN - Scan column
+
+            // Index cache helpers (November 19, 2025)
+            // Get index from cache or open it. Returns raw pointer (owned by cache if cached).
+            // If not in cache, opens index and adds to cache.
+            template<typename IndexT>
+            IndexT* getOrOpenIndex(const core::ID& index_uuid, IndexType type,
+                                  uint32_t root_page, core::ErrorContext* ctx);
+
+            // Index operation helpers
+            core::Status routeIndexInsert(IndexType type, const core::ID& index_uuid,
+                                        const std::vector<uint8_t>& key,
+                                        const core::TID& tid, uint64_t xmin,
+                                        core::ErrorContext* ctx);
+            core::Status routeIndexSearch(IndexType type, const core::ID& index_uuid,
+                                        const std::vector<uint8_t>& key,
+                                        uint64_t current_xid,
+                                        std::vector<core::TID>* results_out,
+                                        core::ErrorContext* ctx);
+            core::Status routeIndexDelete(IndexType type, const core::ID& index_uuid,
+                                        const std::vector<uint8_t>& key,
+                                        const core::TID& tid, uint64_t xmax,
+                                        core::ErrorContext* ctx);
+            core::Status routeIndexScan(IndexType type, const core::ID& index_uuid,
+                                        const std::vector<uint8_t>* start_key,
+                                        const std::vector<uint8_t>* end_key,
+                                        bool start_inclusive, bool end_inclusive,
+                                        uint64_t current_xid,
+                                        std::vector<core::TID>* results_out,
+                                        core::ErrorContext* ctx);
+
         public:
             // Forward declaration
             class TriggerContext;
@@ -728,6 +777,36 @@ namespace scratchbird
             // Fire a trigger for the given context
             bool fireTrigger(const TriggerContext& ctx);
         };
+
+        // ============================================================================
+        // Template Implementation: Index Cache Helper
+        // ============================================================================
+
+        template<typename IndexT>
+        IndexT* Executor::getOrOpenIndex(const core::ID& index_uuid, IndexType type,
+                                        uint32_t root_page, core::ErrorContext* ctx)
+        {
+            // Try to get from cache first
+            void* cached_ptr = index_cache_.get(index_uuid, type);
+            if (cached_ptr != nullptr)
+            {
+                // Cache hit - return cached instance
+                return static_cast<IndexT*>(cached_ptr);
+            }
+
+            // Cache miss - open index
+            auto index_ptr = IndexT::open(db_, index_uuid.bytes, root_page, ctx);
+            if (!index_ptr)
+            {
+                return nullptr;
+            }
+
+            // Take ownership and add to cache
+            IndexT* raw_ptr = index_ptr.release();
+            index_cache_.put(index_uuid, type, raw_ptr);
+
+            return raw_ptr;
+        }
 
     } // namespace sblr
 } // namespace scratchbird

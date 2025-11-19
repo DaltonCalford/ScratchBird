@@ -883,7 +883,7 @@ namespace scratchbird::core
                        ErrorContext *ctx)
         -> Status
     {
-        // TODO Phase 3.2: Use xid to set btn_xmax instead of physical removal (markDeleted)
+        // FIXED: Use xid to set btn_xmax for MGA-compliant logical deletion
         // Find the appropriate leaf page for this key
         uint64_t leaf_page_num;
         Status status = find_leaf_page(key, &leaf_page_num, true, ctx);
@@ -989,12 +989,14 @@ namespace scratchbird::core
             return Status::NOT_FOUND;
         }
 
-        // Mark the node as deleted (physical removal is done by vacuum)
+        // MGA-compliant logical deletion: Set btn_xmax to mark entry as deleted
+        // This follows Firebird MGA principles (MGA_RULES.md Rule 6)
+        // Entry remains in index but becomes invisible to transactions with xid >= xmax
         auto *node_to_mark = reinterpret_cast<SBBTreeNode *>(
             reinterpret_cast<uint8_t *>(page_data_ptr) + offsets[node_to_remove]);
-        node_to_mark->btn_flags |= static_cast<uint16_t>(BTreeNodeFlags::DELETED);
+        node_to_mark->btn_xmax = xid;
 
-        // Set HAS_GARBAGE flag to indicate page needs vacuuming
+        // Set HAS_GARBAGE flag to indicate page needs vacuuming for physical cleanup
         page->btr_flags |= static_cast<uint16_t>(BTreeFlags::HAS_GARBAGE);
 
         // Mark page as dirty since we modified it

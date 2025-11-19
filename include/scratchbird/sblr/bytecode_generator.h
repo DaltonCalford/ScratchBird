@@ -253,6 +253,15 @@ namespace scratchbird
             int getCurrentOffset() const;  // Get current bytecode offset
             void emitLabel(int label_id);  // Mark label position
 
+            // Index operation bytecode generation (November 19, 2025)
+            // These methods generate bytecode for direct index operations
+            void writeIndexUUID(const uint8_t* uuid);  // Helper to write 16-byte UUID
+            void writeIndexType(IndexType type);  // Helper to write index type marker
+            void writeKey(const std::vector<uint8_t>& key);  // Helper to write key with length
+            void writeOptionalKey(const std::vector<uint8_t>* key);  // Helper to write optional key (0xFFFF for null)
+            void writeTID(uint64_t gpid, uint16_t slot);  // Helper to write TID (GPID + slot)
+            void writeXid(uint64_t xid);  // Helper to write transaction ID
+
         private:
             // PSQL label tracking
             int next_label_id_ = 0;
