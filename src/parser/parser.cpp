@@ -1302,6 +1302,35 @@ namespace scratchbird
                     consume(TokenType::RIGHT_PAREN, "Expected ')' after VECTOR dimensions");
                 }
             }
+            // Spatial types (Type Integration Phase 3)
+            else if (match(TokenType::KW_POINT))
+            {
+                type = DataType::POINT;
+            }
+            else if (match(TokenType::KW_LINESTRING))
+            {
+                type = DataType::LINESTRING;
+            }
+            else if (match(TokenType::KW_POLYGON))
+            {
+                type = DataType::POLYGON;
+            }
+            else if (match(TokenType::KW_MULTIPOINT))
+            {
+                type = DataType::MULTIPOINT;
+            }
+            else if (match(TokenType::KW_MULTILINESTRING))
+            {
+                type = DataType::MULTILINESTRING;
+            }
+            else if (match(TokenType::KW_MULTIPOLYGON))
+            {
+                type = DataType::MULTIPOLYGON;
+            }
+            else if (match(TokenType::KW_GEOMETRYCOLLECTION))
+            {
+                type = DataType::GEOMETRYCOLLECTION;
+            }
             else
             {
                 error("Expected data type, but got " +
