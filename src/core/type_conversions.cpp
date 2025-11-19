@@ -32,8 +32,9 @@ namespace scratchbird::core
             return std::nullopt;
         }
 
-        // Numeric to numeric conversions
-        if (TypeSystem::isNumeric(type_) && TypeSystem::isNumeric(target_type))
+        // Numeric to numeric conversions (and BOOLEAN)
+        if (TypeSystem::isNumeric(type_) &&
+            (TypeSystem::isNumeric(target_type) || target_type == DataType::BOOLEAN))
         {
             return convertNumericTo(target_type, ctx);
         }
@@ -118,14 +119,38 @@ namespace scratchbird::core
     auto TypedValue::convertNumericTo(DataType target_type, ErrorContext *ctx) const
         -> std::optional<TypedValue>
     {
-        // Get value as widest type (float64 or int64)
+        // Get value as widest type (float64, int64, or uint64)
         bool is_float = type_ == DataType::FLOAT32 || type_ == DataType::FLOAT64;
+        bool is_unsigned = type_ == DataType::UINT8 || type_ == DataType::UINT16 ||
+                          type_ == DataType::UINT32 || type_ == DataType::UINT64;
+
         double float_val = 0.0;
         int64_t int_val = 0;
+        uint64_t uint_val = 0;
 
         if (is_float)
         {
             float_val = type_ == DataType::FLOAT32 ? getFloat32() : getFloat64();
+        }
+        else if (is_unsigned)
+        {
+            switch (type_)
+            {
+                case DataType::UINT8:
+                    uint_val = getUInt8();
+                    break;
+                case DataType::UINT16:
+                    uint_val = getUInt16();
+                    break;
+                case DataType::UINT32:
+                    uint_val = getUInt32();
+                    break;
+                case DataType::UINT64:
+                    uint_val = getUInt64();
+                    break;
+                default:
+                    break;
+            }
         }
         else
         {
@@ -153,53 +178,247 @@ namespace scratchbird::core
         {
             case DataType::INT8:
             {
-                int64_t val = is_float ? static_cast<int64_t>(float_val) : int_val;
+                int64_t val;
+                if (is_float) {
+                    val = static_cast<int64_t>(float_val);
+                } else if (is_unsigned) {
+                    // UINT to INT8 - check for overflow
+                    if (uint_val > static_cast<uint64_t>(std::numeric_limits<int8_t>::max())) {
+                        SET_ERROR_CONTEXT(ctx, Status::OUT_OF_RANGE,
+                                        "UINT value exceeds INT8 range");
+                        return std::nullopt;
+                    }
+                    val = static_cast<int64_t>(uint_val);
+                } else {
+                    val = int_val;
+                }
                 auto result = TypeConverter::int64ToInt8(val, ctx);
                 return result ? std::make_optional(TypedValue::makeInt8(*result)) : std::nullopt;
             }
 
             case DataType::INT16:
             {
-                int64_t val = is_float ? static_cast<int64_t>(float_val) : int_val;
+                int64_t val;
+                if (is_float) {
+                    val = static_cast<int64_t>(float_val);
+                } else if (is_unsigned) {
+                    // UINT to INT16 - check for overflow
+                    if (uint_val > static_cast<uint64_t>(std::numeric_limits<int16_t>::max())) {
+                        SET_ERROR_CONTEXT(ctx, Status::OUT_OF_RANGE,
+                                        "UINT value exceeds INT16 range");
+                        return std::nullopt;
+                    }
+                    val = static_cast<int64_t>(uint_val);
+                } else {
+                    val = int_val;
+                }
                 auto result = TypeConverter::int64ToInt16(val, ctx);
                 return result ? std::make_optional(TypedValue::makeInt16(*result)) : std::nullopt;
             }
 
             case DataType::INT32:
             {
-                int64_t val = is_float ? static_cast<int64_t>(float_val) : int_val;
+                int64_t val;
+                if (is_float) {
+                    val = static_cast<int64_t>(float_val);
+                } else if (is_unsigned) {
+                    // UINT to INT32 - check for overflow
+                    if (uint_val > static_cast<uint64_t>(std::numeric_limits<int32_t>::max())) {
+                        SET_ERROR_CONTEXT(ctx, Status::OUT_OF_RANGE,
+                                        "UINT value exceeds INT32 range");
+                        return std::nullopt;
+                    }
+                    val = static_cast<int64_t>(uint_val);
+                } else {
+                    val = int_val;
+                }
                 auto result = TypeConverter::int64ToInt32(val, ctx);
                 return result ? std::make_optional(TypedValue::makeInt32(*result)) : std::nullopt;
             }
 
             case DataType::INT64:
             {
-                int64_t val = is_float ? static_cast<int64_t>(float_val) : int_val;
-                return TypedValue::makeInt64(val);
+                if (is_float) {
+                    int_val = static_cast<int64_t>(float_val);
+                } else if (is_unsigned) {
+                    // UINT64 to INT64 - check for overflow
+                    if (uint_val > static_cast<uint64_t>(std::numeric_limits<int64_t>::max())) {
+                        SET_ERROR_CONTEXT(ctx, Status::OUT_OF_RANGE,
+                                        "UINT64 value exceeds INT64 range");
+                        return std::nullopt;
+                    }
+                    int_val = static_cast<int64_t>(uint_val);
+                }
+                return TypedValue::makeInt64(int_val);
+            }
+
+            case DataType::UINT8:
+            {
+                if (is_float) {
+                    if (float_val < 0 || float_val > std::numeric_limits<uint8_t>::max()) {
+                        SET_ERROR_CONTEXT(ctx, Status::OUT_OF_RANGE,
+                                        "Value out of range for UINT8");
+                        return std::nullopt;
+                    }
+                    return TypedValue::makeUInt8(static_cast<uint8_t>(float_val));
+                } else if (is_unsigned) {
+                    if (uint_val > std::numeric_limits<uint8_t>::max()) {
+                        SET_ERROR_CONTEXT(ctx, Status::OUT_OF_RANGE,
+                                        "Value exceeds UINT8 range");
+                        return std::nullopt;
+                    }
+                    return TypedValue::makeUInt8(static_cast<uint8_t>(uint_val));
+                } else {
+                    // INT to UINT8 - check for negative
+                    if (int_val < 0) {
+                        SET_ERROR_CONTEXT(ctx, Status::OUT_OF_RANGE,
+                                        "Cannot convert negative value to UINT8");
+                        return std::nullopt;
+                    }
+                    if (int_val > std::numeric_limits<uint8_t>::max()) {
+                        SET_ERROR_CONTEXT(ctx, Status::OUT_OF_RANGE,
+                                        "Value exceeds UINT8 range");
+                        return std::nullopt;
+                    }
+                    return TypedValue::makeUInt8(static_cast<uint8_t>(int_val));
+                }
+            }
+
+            case DataType::UINT16:
+            {
+                if (is_float) {
+                    if (float_val < 0 || float_val > std::numeric_limits<uint16_t>::max()) {
+                        SET_ERROR_CONTEXT(ctx, Status::OUT_OF_RANGE,
+                                        "Value out of range for UINT16");
+                        return std::nullopt;
+                    }
+                    return TypedValue::makeUInt16(static_cast<uint16_t>(float_val));
+                } else if (is_unsigned) {
+                    if (uint_val > std::numeric_limits<uint16_t>::max()) {
+                        SET_ERROR_CONTEXT(ctx, Status::OUT_OF_RANGE,
+                                        "Value exceeds UINT16 range");
+                        return std::nullopt;
+                    }
+                    return TypedValue::makeUInt16(static_cast<uint16_t>(uint_val));
+                } else {
+                    // INT to UINT16 - check for negative
+                    if (int_val < 0) {
+                        SET_ERROR_CONTEXT(ctx, Status::OUT_OF_RANGE,
+                                        "Cannot convert negative value to UINT16");
+                        return std::nullopt;
+                    }
+                    if (int_val > std::numeric_limits<uint16_t>::max()) {
+                        SET_ERROR_CONTEXT(ctx, Status::OUT_OF_RANGE,
+                                        "Value exceeds UINT16 range");
+                        return std::nullopt;
+                    }
+                    return TypedValue::makeUInt16(static_cast<uint16_t>(int_val));
+                }
+            }
+
+            case DataType::UINT32:
+            {
+                if (is_float) {
+                    if (float_val < 0 || float_val > std::numeric_limits<uint32_t>::max()) {
+                        SET_ERROR_CONTEXT(ctx, Status::OUT_OF_RANGE,
+                                        "Value out of range for UINT32");
+                        return std::nullopt;
+                    }
+                    return TypedValue::makeUInt32(static_cast<uint32_t>(float_val));
+                } else if (is_unsigned) {
+                    if (uint_val > std::numeric_limits<uint32_t>::max()) {
+                        SET_ERROR_CONTEXT(ctx, Status::OUT_OF_RANGE,
+                                        "Value exceeds UINT32 range");
+                        return std::nullopt;
+                    }
+                    return TypedValue::makeUInt32(static_cast<uint32_t>(uint_val));
+                } else {
+                    // INT to UINT32 - check for negative
+                    if (int_val < 0) {
+                        SET_ERROR_CONTEXT(ctx, Status::OUT_OF_RANGE,
+                                        "Cannot convert negative value to UINT32");
+                        return std::nullopt;
+                    }
+                    if (int_val > static_cast<int64_t>(std::numeric_limits<uint32_t>::max())) {
+                        SET_ERROR_CONTEXT(ctx, Status::OUT_OF_RANGE,
+                                        "Value exceeds UINT32 range");
+                        return std::nullopt;
+                    }
+                    return TypedValue::makeUInt32(static_cast<uint32_t>(int_val));
+                }
+            }
+
+            case DataType::UINT64:
+            {
+                if (is_float) {
+                    if (float_val < 0) {
+                        SET_ERROR_CONTEXT(ctx, Status::OUT_OF_RANGE,
+                                        "Cannot convert negative value to UINT64");
+                        return std::nullopt;
+                    }
+                    return TypedValue::makeUInt64(static_cast<uint64_t>(float_val));
+                } else if (is_unsigned) {
+                    return TypedValue::makeUInt64(uint_val);
+                } else {
+                    // INT to UINT64 - check for negative
+                    if (int_val < 0) {
+                        SET_ERROR_CONTEXT(ctx, Status::OUT_OF_RANGE,
+                                        "Cannot convert negative value to UINT64");
+                        return std::nullopt;
+                    }
+                    return TypedValue::makeUInt64(static_cast<uint64_t>(int_val));
+                }
             }
 
             case DataType::FLOAT32:
             {
-                float val = is_float ? static_cast<float>(float_val) : static_cast<float>(int_val);
+                float val;
+                if (is_float) {
+                    val = static_cast<float>(float_val);
+                } else if (is_unsigned) {
+                    val = static_cast<float>(uint_val);
+                } else {
+                    val = static_cast<float>(int_val);
+                }
                 return TypedValue::makeFloat32(val);
             }
 
             case DataType::FLOAT64:
             {
-                double val = is_float ? float_val : static_cast<double>(int_val);
+                double val;
+                if (is_float) {
+                    val = float_val;
+                } else if (is_unsigned) {
+                    val = static_cast<double>(uint_val);
+                } else {
+                    val = static_cast<double>(int_val);
+                }
                 return TypedValue::makeFloat64(val);
             }
 
             case DataType::DECIMAL:
             {
-                std::string val = is_float ? TypeConverter::float64ToString(float_val)
-                                           : TypeConverter::int64ToString(int_val);
+                std::string val;
+                if (is_float) {
+                    val = TypeConverter::float64ToString(float_val);
+                } else if (is_unsigned) {
+                    val = TypeConverter::uint64ToString(uint_val);
+                } else {
+                    val = TypeConverter::int64ToString(int_val);
+                }
                 return TypedValue::makeDecimal(val);
             }
 
             case DataType::BOOLEAN:
             {
-                bool val = is_float ? (float_val != 0.0) : (int_val != 0);
+                bool val;
+                if (is_float) {
+                    val = (float_val != 0.0);
+                } else if (is_unsigned) {
+                    val = (uint_val != 0);
+                } else {
+                    val = (int_val != 0);
+                }
                 return TypedValue::makeBoolean(val);
             }
 

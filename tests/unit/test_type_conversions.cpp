@@ -129,6 +129,127 @@ TEST_F(TypeConversionTest, MULTIPOLYGON_ToVarchar) {
     EXPECT_TRUE(str.find("((0 0, 4 0, 4 4, 0 4, 0 0))") != std::string::npos);
 }
 
+// ========== UINT Conversion Tests ==========
+
+// Test UINT8 to larger signed types (should always succeed)
+TEST_F(TypeConversionTest, UINT8_ToInt16) {
+    auto u8 = TypedValue::makeUInt8(200);
+    auto i16 = u8.convertTo(DataType::INT16, &ctx);
+    ASSERT_TRUE(i16.has_value());
+    EXPECT_EQ(i16->getInt16(), 200);
+}
+
+// Test UINT32 to INT32 - overflow case
+TEST_F(TypeConversionTest, UINT32_ToInt32_Overflow) {
+    auto u32 = TypedValue::makeUInt32(3000000000); // > INT32_MAX
+    auto i32 = u32.convertTo(DataType::INT32, &ctx);
+    EXPECT_FALSE(i32.has_value()); // Should fail
+}
+
+// Test UINT64 to INT64 - overflow case
+TEST_F(TypeConversionTest, UINT64_ToInt64_Overflow) {
+    auto u64 = TypedValue::makeUInt64(UINT64_MAX);
+    auto i64 = u64.convertTo(DataType::INT64, &ctx);
+    EXPECT_FALSE(i64.has_value()); // Should fail
+}
+
+// Test UINT64 to INT64 - valid case
+TEST_F(TypeConversionTest, UINT64_ToInt64_Valid) {
+    auto u64 = TypedValue::makeUInt64(1000);
+    auto i64 = u64.convertTo(DataType::INT64, &ctx);
+    ASSERT_TRUE(i64.has_value());
+    EXPECT_EQ(i64->getInt64(), 1000);
+}
+
+// Test INT32 to UINT32 - negative value
+TEST_F(TypeConversionTest, INT32_ToUInt32_Negative) {
+    auto i32 = TypedValue::makeInt32(-100);
+    auto u32 = i32.convertTo(DataType::UINT32, &ctx);
+    EXPECT_FALSE(u32.has_value()); // Should fail
+}
+
+// Test INT32 to UINT32 - positive value
+TEST_F(TypeConversionTest, INT32_ToUInt32_Positive) {
+    auto i32 = TypedValue::makeInt32(1000);
+    auto u32 = i32.convertTo(DataType::UINT32, &ctx);
+    ASSERT_TRUE(u32.has_value());
+    EXPECT_EQ(u32->getUInt32(), 1000u);
+}
+
+// Test UINT8 to UINT64 upconversion
+TEST_F(TypeConversionTest, UINT8_ToUInt64) {
+    auto u8 = TypedValue::makeUInt8(255);
+    auto u64 = u8.convertTo(DataType::UINT64, &ctx);
+    ASSERT_TRUE(u64.has_value());
+    EXPECT_EQ(u64->getUInt64(), 255u);
+}
+
+// Test UINT64 to UINT8 downconversion - overflow
+TEST_F(TypeConversionTest, UINT64_ToUInt8_Overflow) {
+    auto u64 = TypedValue::makeUInt64(1000);
+    auto u8 = u64.convertTo(DataType::UINT8, &ctx);
+    EXPECT_FALSE(u8.has_value()); // Should fail
+}
+
+// Test UINT64 to UINT8 downconversion - valid
+TEST_F(TypeConversionTest, UINT64_ToUInt8_Valid) {
+    auto u64 = TypedValue::makeUInt64(100);
+    auto u8 = u64.convertTo(DataType::UINT8, &ctx);
+    ASSERT_TRUE(u8.has_value());
+    EXPECT_EQ(u8->getUInt8(), 100);
+}
+
+// Test UINT to FLOAT64
+TEST_F(TypeConversionTest, UINT64_ToFloat64) {
+    auto u64 = TypedValue::makeUInt64(1234567890);
+    auto f64 = u64.convertTo(DataType::FLOAT64, &ctx);
+    ASSERT_TRUE(f64.has_value());
+    EXPECT_DOUBLE_EQ(f64->getFloat64(), 1234567890.0);
+}
+
+// Test FLOAT to UINT - negative value
+TEST_F(TypeConversionTest, Float64_ToUInt32_Negative) {
+    auto f64 = TypedValue::makeFloat64(-100.5);
+    auto u32 = f64.convertTo(DataType::UINT32, &ctx);
+    EXPECT_FALSE(u32.has_value()); // Should fail
+}
+
+// Test FLOAT to UINT - positive value
+TEST_F(TypeConversionTest, Float64_ToUInt32_Positive) {
+    auto f64 = TypedValue::makeFloat64(1000.5);
+    auto u32 = f64.convertTo(DataType::UINT32, &ctx);
+    ASSERT_TRUE(u32.has_value());
+    EXPECT_EQ(u32->getUInt32(), 1000u);
+}
+
+// Test UINT to VARCHAR
+TEST_F(TypeConversionTest, UINT64_ToVarchar) {
+    auto u64 = TypedValue::makeUInt64(18446744073709551615ULL); // UINT64_MAX
+    auto str = u64.toString();
+    EXPECT_EQ(str, "18446744073709551615");
+}
+
+// Test UINT to DECIMAL
+TEST_F(TypeConversionTest, UINT32_ToDecimal) {
+    auto u32 = TypedValue::makeUInt32(123456);
+    auto dec = u32.convertTo(DataType::DECIMAL, &ctx);
+    ASSERT_TRUE(dec.has_value());
+    EXPECT_EQ(dec->getDecimal(), "123456");
+}
+
+// Test UINT to BOOLEAN
+TEST_F(TypeConversionTest, UINT_ToBoolean) {
+    auto u0 = TypedValue::makeUInt32(0);
+    auto b0 = u0.convertTo(DataType::BOOLEAN, &ctx);
+    ASSERT_TRUE(b0.has_value());
+    EXPECT_FALSE(b0->getBoolean());
+
+    auto u1 = TypedValue::makeUInt32(1);
+    auto b1 = u1.convertTo(DataType::BOOLEAN, &ctx);
+    ASSERT_TRUE(b1.has_value());
+    EXPECT_TRUE(b1->getBoolean());
+}
+
 int main(int argc, char **argv) {
     ::testing::InitGoogleTest(&argc, argv);
     return RUN_ALL_TESTS();
