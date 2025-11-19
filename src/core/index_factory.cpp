@@ -24,6 +24,107 @@ namespace scratchbird
 namespace core
 {
 
+namespace {
+
+/**
+ * Helper: Get column data type from catalog
+ *
+ * @param db Database instance
+ * @param table_id Table UUID
+ * @param column_id Column UUID
+ * @param data_type_out Output: column data type
+ * @param ctx Error context
+ * @return Status
+ */
+Status getColumnDataType(Database* db,
+                        const ID& table_id,
+                        const ID& column_id,
+                        uint16_t* data_type_out,
+                        ErrorContext* ctx)
+{
+    if (!db || !data_type_out)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Invalid arguments to getColumnDataType");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    // Get all columns for the table
+    std::vector<CatalogManager::ColumnInfo> columns;
+    Status status = db->catalog_manager()->getColumns(table_id, columns, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    // Find the matching column
+    for (const auto& col : columns)
+    {
+        if (col.column_id == column_id)
+        {
+            *data_type_out = col.data_type;
+            return Status::OK;
+        }
+    }
+
+    SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Column not found in catalog");
+    return Status::NOT_FOUND;
+}
+
+/**
+ * Helper: Get vector dimensions from column metadata
+ *
+ * For VECTOR/HNSW indexes, dimensions are stored in type_precision field.
+ *
+ * @param db Database instance
+ * @param table_id Table UUID
+ * @param column_id Column UUID
+ * @param dimensions_out Output: vector dimensions
+ * @param ctx Error context
+ * @return Status
+ */
+Status getVectorDimensions(Database* db,
+                          const ID& table_id,
+                          const ID& column_id,
+                          uint32_t* dimensions_out,
+                          ErrorContext* ctx)
+{
+    if (!db || !dimensions_out)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Invalid arguments to getVectorDimensions");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    // Get all columns for the table
+    std::vector<CatalogManager::ColumnInfo> columns;
+    Status status = db->catalog_manager()->getColumns(table_id, columns, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    // Find the matching column
+    for (const auto& col : columns)
+    {
+        if (col.column_id == column_id)
+        {
+            // For VECTOR type, type_precision contains dimensions
+            if (col.type_precision == 0)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                    "Vector column has no dimensions specified (type_precision = 0)");
+                return Status::INVALID_ARGUMENT;
+            }
+            *dimensions_out = col.type_precision;
+            return Status::OK;
+        }
+    }
+
+    SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Column not found in catalog");
+    return Status::NOT_FOUND;
+}
+
+} // anonymous namespace
+
 Status IndexFactory::createIndex(
     CatalogManager::IndexType index_type,
     Database *db,
@@ -250,29 +351,185 @@ Status IndexFactory::createIndex(
         case CatalogManager::IndexType::HNSW:
         {
             // HNSW requires dimensions which must be determined from vector column type
-            // This information is not available in IndexInfo and requires schema inspection
-            SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED,
-                "HNSW index requires vector dimensions (inspect column schema to determine)");
-            return Status::NOT_IMPLEMENTED;
+            if (index_info.column_ids.empty())
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "HNSW index requires at least one column");
+                return Status::INVALID_ARGUMENT;
+            }
+
+            uint32_t dimensions = 0;
+            Status status = getVectorDimensions(db, index_info.table_id, index_info.column_ids[0], &dimensions, ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+
+            uint32_t root_page = 0;
+            status = HnswIndex::create(
+                db,
+                index_info.index_id,
+                index_info.table_id,
+                index_info.column_ids,
+                dimensions,
+                DistanceMetric::EUCLIDEAN,  // Default distance metric
+                16,    // Default m (max connections)
+                200,   // Default ef_construction
+                100,   // Default ef_search
+                &root_page,
+                ctx);
+
+            if (status != Status::OK)
+            {
+                return status;
+            }
+
+            // Open the created HNSW index
+            auto hnsw = HnswIndex::open(db, index_info.index_id, root_page, ctx);
+            if (!hnsw)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to open newly created HNSW index");
+                return Status::IO_ERROR;
+            }
+
+            *index_out = hnsw.release();
+            return Status::OK;
         }
 
         case CatalogManager::IndexType::BRIN:
         {
             // BRIN requires value_type (DataType enum) from indexed column
-            // This information requires schema inspection to determine the column's data type
-            SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED,
-                "BRIN index requires column data type (inspect column schema to determine)");
-            return Status::NOT_IMPLEMENTED;
+            // Get the data type from the catalog
+            if (index_info.column_ids.empty())
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "BRIN index requires at least one column");
+                return Status::INVALID_ARGUMENT;
+            }
+
+            uint16_t value_type = 0;
+            Status status = getColumnDataType(db, index_info.table_id, index_info.column_ids[0], &value_type, ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+
+            uint32_t root_page = 0;
+            status = BrinIndex::create(
+                db,
+                index_info.index_id,
+                index_info.table_id,
+                index_info.column_ids,
+                static_cast<uint8_t>(value_type),
+                128,  // Default range_size
+                &root_page,
+                ctx);
+
+            if (status != Status::OK)
+            {
+                return status;
+            }
+
+            // Open the created BRIN index
+            auto brin = BrinIndex::open(db, index_info.index_id, root_page, ctx);
+            if (!brin)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to open newly created BRIN index");
+                return Status::IO_ERROR;
+            }
+
+            *index_out = brin.release();
+            return Status::OK;
         }
 
         case CatalogManager::IndexType::GIST:
+        {
+            // GiST index with default operator class
+            if (index_info.column_ids.empty())
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "GiST index requires at least one column");
+                return Status::INVALID_ARGUMENT;
+            }
+
+            // Get default operator class (ID 0)
+            auto& registry = GiSTOperatorClassRegistry::instance();
+            auto opclass = registry.getOperatorClass(0);
+            if (!opclass)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Default GiST operator class not registered");
+                return Status::NOT_FOUND;
+            }
+
+            uint32_t root_page = 0;
+            Status status = GiSTIndex::create(
+                db,
+                index_info.index_id,
+                index_info.table_id,
+                index_info.column_ids,
+                opclass,
+                &root_page,
+                ctx);
+
+            if (status != Status::OK)
+            {
+                return status;
+            }
+
+            // Open the created GiST index
+            auto gist = GiSTIndex::open(db, index_info.index_id, index_info.table_id,
+                                       index_info.column_ids, opclass, root_page, ctx);
+            if (!gist)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to open newly created GiST index");
+                return Status::IO_ERROR;
+            }
+
+            *index_out = gist.release();
+            return Status::OK;
+        }
+
         case CatalogManager::IndexType::SPGIST:
         {
-            // GiST and SP-GiST require operator classes which are not yet fully integrated
-            // For now, return NOT_IMPLEMENTED until operator class registry is ready
-            std::string error_msg = "Index type requires operator class (not yet integrated): " + indexTypeToString(index_type);
-            SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED, error_msg.c_str());
-            return Status::NOT_IMPLEMENTED;
+            // SP-GiST index with default operator class
+            if (index_info.column_ids.empty())
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "SP-GiST index requires at least one column");
+                return Status::INVALID_ARGUMENT;
+            }
+
+            // Get default operator class (ID 0)
+            auto& registry = SPGiSTOperatorClassRegistry::instance();
+            auto opclass = registry.getOperatorClass(0);
+            if (!opclass)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Default SP-GiST operator class not registered");
+                return Status::NOT_FOUND;
+            }
+
+            uint32_t root_page = 0;
+            Status status = SPGiSTIndex::create(
+                db,
+                index_info.index_id,
+                index_info.table_id,
+                index_info.column_ids,
+                opclass,
+                &root_page,
+                ctx);
+
+            if (status != Status::OK)
+            {
+                return status;
+            }
+
+            // Open the created SP-GiST index
+            auto spgist = SPGiSTIndex::open(db, index_info.index_id, index_info.table_id,
+                                           index_info.column_ids, opclass, root_page, ctx);
+            if (!spgist)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to open newly created SP-GiST index");
+                return Status::IO_ERROR;
+            }
+
+            *index_out = spgist.release();
+            return Status::OK;
         }
 
         case CatalogManager::IndexType::FULLTEXT:
@@ -444,12 +701,49 @@ Status IndexFactory::openIndex(
         }
 
         case CatalogManager::IndexType::GIST:
+        {
+            // Open existing GiST index with default operator class
+            auto& registry = GiSTOperatorClassRegistry::instance();
+            auto opclass = registry.getOperatorClass(0);
+            if (!opclass)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Default GiST operator class not registered");
+                return Status::NOT_FOUND;
+            }
+
+            auto gist = GiSTIndex::open(db, index_info.index_id, index_info.table_id,
+                                       index_info.column_ids, opclass, index_info.root_page, ctx);
+            if (!gist)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to open GiST index");
+                return Status::IO_ERROR;
+            }
+
+            *index_out = gist.release();
+            return Status::OK;
+        }
+
         case CatalogManager::IndexType::SPGIST:
         {
-            // GiST and SP-GiST require operator classes which are not yet fully integrated
-            std::string error_msg = "Index type requires operator class (not yet integrated): " + indexTypeToString(index_type);
-            SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED, error_msg.c_str());
-            return Status::NOT_IMPLEMENTED;
+            // Open existing SP-GiST index with default operator class
+            auto& registry = SPGiSTOperatorClassRegistry::instance();
+            auto opclass = registry.getOperatorClass(0);
+            if (!opclass)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Default SP-GiST operator class not registered");
+                return Status::NOT_FOUND;
+            }
+
+            auto spgist = SPGiSTIndex::open(db, index_info.index_id, index_info.table_id,
+                                           index_info.column_ids, opclass, index_info.root_page, ctx);
+            if (!spgist)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to open SP-GiST index");
+                return Status::IO_ERROR;
+            }
+
+            *index_out = spgist.release();
+            return Status::OK;
         }
 
         case CatalogManager::IndexType::FULLTEXT:
