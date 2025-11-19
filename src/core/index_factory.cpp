@@ -13,6 +13,7 @@
 #include "scratchbird/core/spgist_index.h"
 #include "scratchbird/core/bitmap_index.h"
 #include "scratchbird/core/hnsw_index.h"
+#include "scratchbird/core/columnstore.h"
 #include "scratchbird/core/transaction_manager.h"
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -104,29 +105,110 @@ Status IndexFactory::createIndex(
         case CatalogManager::IndexType::HASH:
         {
             // Hash index - page-based storage
-            // TODO: Implement Hash::create() similar to BTree
-            SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED, "Hash index creation not yet implemented");
-            return Status::NOT_IMPLEMENTED;
+            uint32_t meta_page = 0;
+            Status status = HashIndex::create(
+                db,
+                index_info.index_id,
+                &meta_page,
+                ctx);
+
+            if (status != Status::OK)
+            {
+                return status;
+            }
+
+            // Open the created Hash index
+            auto hash = HashIndex::open(db, index_info.index_id, meta_page, ctx);
+            if (!hash)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to open newly created Hash index");
+                return Status::IO_ERROR;
+            }
+
+            *index_out = hash.release();
+            return Status::OK;
         }
 
         case CatalogManager::IndexType::GIN:
-        case CatalogManager::IndexType::GIST:
+        {
+            // GIN index - page-based storage
+            uint32_t meta_page = 0;
+            Status status = GinIndex::create(
+                db,
+                index_info.index_id,
+                &meta_page,
+                ctx);
+
+            if (status != Status::OK)
+            {
+                return status;
+            }
+
+            // Open the created GIN index
+            auto gin = GinIndex::open(db, index_info.index_id, meta_page, ctx);
+            if (!gin)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to open newly created GIN index");
+                return Status::IO_ERROR;
+            }
+
+            *index_out = gin.release();
+            return Status::OK;
+        }
+
+        case CatalogManager::IndexType::BITMAP:
+        {
+            // Bitmap index - page-based storage
+            uint32_t meta_page = 0;
+            Status status = BitmapIndex::create(
+                db,
+                index_info.index_id,
+                &meta_page,
+                ctx);
+
+            if (status != Status::OK)
+            {
+                return status;
+            }
+
+            // Open the created Bitmap index
+            auto bitmap = BitmapIndex::open(db, index_info.index_id, meta_page, ctx);
+            if (!bitmap)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to open newly created Bitmap index");
+                return Status::IO_ERROR;
+            }
+
+            *index_out = bitmap.release();
+            return Status::OK;
+        }
+
+        case CatalogManager::IndexType::HNSW:
         case CatalogManager::IndexType::BRIN:
         case CatalogManager::IndexType::RTREE:
-        case CatalogManager::IndexType::SPGIST:
-        case CatalogManager::IndexType::BITMAP:
-        case CatalogManager::IndexType::HNSW:
+        case CatalogManager::IndexType::COLUMNSTORE:
         {
-            // Other index types - not yet implemented
-            std::string error_msg = "Index type not yet implemented: " + indexTypeToString(index_type);
+            // These indexes require additional configuration parameters not yet stored in IndexInfo
+            // TODO: Extend IndexInfo to store index-specific parameters (dimensions, range_size, max_entries, etc.)
+            std::string error_msg = "Index type requires additional configuration parameters: " + indexTypeToString(index_type);
             SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED, error_msg.c_str());
             return Status::NOT_IMPLEMENTED;
         }
 
-        case CatalogManager::IndexType::COLUMNSTORE:
+        case CatalogManager::IndexType::GIST:
+        case CatalogManager::IndexType::SPGIST:
         {
-            // Columnstore - file-based storage (similar to LSM-Tree)
-            SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED, "Columnstore index creation not yet implemented");
+            // GiST and SP-GiST require operator classes which are not yet fully integrated
+            // For now, return NOT_IMPLEMENTED until operator class registry is ready
+            std::string error_msg = "Index type requires operator class (not yet integrated): " + indexTypeToString(index_type);
+            SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED, error_msg.c_str());
+            return Status::NOT_IMPLEMENTED;
+        }
+
+        case CatalogManager::IndexType::FULLTEXT:
+        {
+            // FULLTEXT is GIN-based but needs special text processing
+            SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED, "FULLTEXT index not yet implemented (planned as GIN-based)");
             return Status::NOT_IMPLEMENTED;
         }
 
@@ -193,17 +275,71 @@ Status IndexFactory::openIndex(
         }
 
         case CatalogManager::IndexType::HASH:
+        {
+            // Open existing Hash index
+            auto hash = HashIndex::open(db, index_info.index_id, index_info.root_page, ctx);
+            if (!hash)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to open Hash index");
+                return Status::IO_ERROR;
+            }
+
+            *index_out = hash.release();
+            return Status::OK;
+        }
+
         case CatalogManager::IndexType::GIN:
-        case CatalogManager::IndexType::GIST:
+        {
+            // Open existing GIN index
+            auto gin = GinIndex::open(db, index_info.index_id, index_info.root_page, ctx);
+            if (!gin)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to open GIN index");
+                return Status::IO_ERROR;
+            }
+
+            *index_out = gin.release();
+            return Status::OK;
+        }
+
+        case CatalogManager::IndexType::BITMAP:
+        {
+            // Open existing Bitmap index
+            auto bitmap = BitmapIndex::open(db, index_info.index_id, index_info.root_page, ctx);
+            if (!bitmap)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to open Bitmap index");
+                return Status::IO_ERROR;
+            }
+
+            *index_out = bitmap.release();
+            return Status::OK;
+        }
+
+        case CatalogManager::IndexType::HNSW:
         case CatalogManager::IndexType::BRIN:
         case CatalogManager::IndexType::RTREE:
-        case CatalogManager::IndexType::SPGIST:
-        case CatalogManager::IndexType::BITMAP:
         case CatalogManager::IndexType::COLUMNSTORE:
-        case CatalogManager::IndexType::HNSW:
         {
-            std::string error_msg = "Index type not yet implemented: " + indexTypeToString(index_type);
+            // These indexes require additional configuration parameters not yet stored in IndexInfo
+            std::string error_msg = "Index type requires additional configuration parameters: " + indexTypeToString(index_type);
             SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED, error_msg.c_str());
+            return Status::NOT_IMPLEMENTED;
+        }
+
+        case CatalogManager::IndexType::GIST:
+        case CatalogManager::IndexType::SPGIST:
+        {
+            // GiST and SP-GiST require operator classes which are not yet fully integrated
+            std::string error_msg = "Index type requires operator class (not yet integrated): " + indexTypeToString(index_type);
+            SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED, error_msg.c_str());
+            return Status::NOT_IMPLEMENTED;
+        }
+
+        case CatalogManager::IndexType::FULLTEXT:
+        {
+            // FULLTEXT is GIN-based but needs special text processing
+            SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED, "FULLTEXT index not yet implemented (planned as GIN-based)");
             return Status::NOT_IMPLEMENTED;
         }
 
@@ -250,17 +386,65 @@ Status IndexFactory::closeIndex(
             return Status::OK;
         }
 
-        case CatalogManager::IndexType::GIN:
-        case CatalogManager::IndexType::GIST:
-        case CatalogManager::IndexType::BRIN:
-        case CatalogManager::IndexType::RTREE:
-        case CatalogManager::IndexType::SPGIST:
-        case CatalogManager::IndexType::BITMAP:
-        case CatalogManager::IndexType::COLUMNSTORE:
         case CatalogManager::IndexType::HNSW:
         {
-            // Other index types - just delete the pointer for now
-            // (Proper cleanup should be implemented when these are supported)
+            auto *hnsw = static_cast<HnswIndex*>(index_ptr);
+            delete hnsw;
+            return Status::OK;
+        }
+
+        case CatalogManager::IndexType::GIN:
+        {
+            auto *gin = static_cast<GinIndex*>(index_ptr);
+            delete gin;
+            return Status::OK;
+        }
+
+        case CatalogManager::IndexType::BRIN:
+        {
+            auto *brin = static_cast<BrinIndex*>(index_ptr);
+            delete brin;
+            return Status::OK;
+        }
+
+        case CatalogManager::IndexType::RTREE:
+        {
+            auto *rtree = static_cast<RTree*>(index_ptr);
+            delete rtree;
+            return Status::OK;
+        }
+
+        case CatalogManager::IndexType::BITMAP:
+        {
+            auto *bitmap = static_cast<BitmapIndex*>(index_ptr);
+            delete bitmap;
+            return Status::OK;
+        }
+
+        case CatalogManager::IndexType::COLUMNSTORE:
+        {
+            auto *columnstore = static_cast<ColumnstoreIndex*>(index_ptr);
+            delete columnstore;
+            return Status::OK;
+        }
+
+        case CatalogManager::IndexType::GIST:
+        {
+            auto *gist = static_cast<GiSTIndex*>(index_ptr);
+            delete gist;
+            return Status::OK;
+        }
+
+        case CatalogManager::IndexType::SPGIST:
+        {
+            auto *spgist = static_cast<SPGiSTIndex*>(index_ptr);
+            delete spgist;
+            return Status::OK;
+        }
+
+        case CatalogManager::IndexType::FULLTEXT:
+        {
+            // FULLTEXT not yet implemented
             return Status::OK;
         }
 
