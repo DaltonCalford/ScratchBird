@@ -14,6 +14,7 @@
 #include "scratchbird/core/bitmap_index.h"
 #include "scratchbird/core/hnsw_index.h"
 #include "scratchbird/core/columnstore.h"
+#include "scratchbird/core/fulltext_index.h"
 #include "scratchbird/core/transaction_manager.h"
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -534,9 +535,38 @@ Status IndexFactory::createIndex(
 
         case CatalogManager::IndexType::FULLTEXT:
         {
-            // FULLTEXT is GIN-based but needs special text processing
-            SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED, "FULLTEXT index not yet implemented (planned as GIN-based)");
-            return Status::NOT_IMPLEMENTED;
+            // FULLTEXT index - GIN-based full-text search with tsvector/tsquery
+            if (index_info.column_ids.empty())
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "FULLTEXT index requires at least one column");
+                return Status::INVALID_ARGUMENT;
+            }
+
+            uint32_t root_page = 0;
+            Status status = FullTextIndex::create(
+                db,
+                index_info.index_id,
+                index_info.table_id,
+                index_info.column_ids,
+                &root_page,
+                ctx);
+
+            if (status != Status::OK)
+            {
+                return status;
+            }
+
+            // Open the created FULLTEXT index
+            auto fulltext = FullTextIndex::open(db, index_info.index_id, index_info.table_id,
+                                               index_info.column_ids, root_page, ctx);
+            if (!fulltext)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to open newly created FULLTEXT index");
+                return Status::IO_ERROR;
+            }
+
+            *index_out = fulltext.release();
+            return Status::OK;
         }
 
         default:
@@ -748,9 +778,17 @@ Status IndexFactory::openIndex(
 
         case CatalogManager::IndexType::FULLTEXT:
         {
-            // FULLTEXT is GIN-based but needs special text processing
-            SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED, "FULLTEXT index not yet implemented (planned as GIN-based)");
-            return Status::NOT_IMPLEMENTED;
+            // Open existing FULLTEXT index
+            auto fulltext = FullTextIndex::open(db, index_info.index_id, index_info.table_id,
+                                               index_info.column_ids, index_info.root_page, ctx);
+            if (!fulltext)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to open FULLTEXT index");
+                return Status::IO_ERROR;
+            }
+
+            *index_out = fulltext.release();
+            return Status::OK;
         }
 
         default:
@@ -854,7 +892,8 @@ Status IndexFactory::closeIndex(
 
         case CatalogManager::IndexType::FULLTEXT:
         {
-            // FULLTEXT not yet implemented
+            auto *fulltext = static_cast<FullTextIndex*>(index_ptr);
+            delete fulltext;
             return Status::OK;
         }
 
