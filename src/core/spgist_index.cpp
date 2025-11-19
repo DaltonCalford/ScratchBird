@@ -59,6 +59,61 @@ SPGiSTIndex::~SPGiSTIndex()
     // Cleanup handled by buffer pool
 }
 
+Status SPGiSTIndex::create(Database* db,
+                            const ID& index_uuid,
+                            const ID& table_uuid,
+                            const std::vector<ID>& column_ids,
+                            std::shared_ptr<SPGiSTOperatorClass> opclass,
+                            uint32_t* root_page_out,
+                            ErrorContext* ctx)
+{
+    if (!db || !opclass || !root_page_out)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Invalid arguments to SPGiSTIndex::create");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    // Create index instance
+    SPGiSTIndex index(db, index_uuid, table_uuid, column_ids, opclass);
+
+    // Initialize (allocates root page)
+    Status status = index.initialize(ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    // Return root page number
+    *root_page_out = static_cast<uint32_t>(index.root_page_);
+
+    return Status::OK;
+}
+
+std::unique_ptr<SPGiSTIndex> SPGiSTIndex::open(Database* db,
+                                                const ID& index_uuid,
+                                                const ID& table_uuid,
+                                                const std::vector<ID>& column_ids,
+                                                std::shared_ptr<SPGiSTOperatorClass> opclass,
+                                                uint32_t root_page,
+                                                ErrorContext* ctx)
+{
+    if (!db || !opclass)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Invalid arguments to SPGiSTIndex::open");
+        return nullptr;
+    }
+
+    // Create index instance
+    auto index = std::make_unique<SPGiSTIndex>(db, index_uuid, table_uuid, column_ids, opclass);
+
+    // Set root page (don't call initialize, index already exists)
+    index->root_page_ = root_page;
+
+    // TODO: Load index metadata from root page to populate entry_count_, etc.
+
+    return index;
+}
+
 Status SPGiSTIndex::initialize(ErrorContext* ctx)
 {
     std::unique_lock lock(mutex_);

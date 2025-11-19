@@ -323,11 +323,55 @@ public:
 class SPGiSTIndex : public IndexGCInterface
 {
 public:
+    /**
+     * Constructor - requires database and index configuration
+     */
     SPGiSTIndex(Database* db,
                 const ID& index_uuid,
                 const ID& table_uuid,
                 const std::vector<ID>& column_ids,
                 std::shared_ptr<SPGiSTOperatorClass> opclass);
+
+    /**
+     * Create a new SP-GiST index
+     * Allocates root page and initializes the index structure
+     *
+     * @param db Database instance
+     * @param index_uuid Index UUID
+     * @param table_uuid Table UUID
+     * @param column_ids Columns being indexed
+     * @param opclass Operator class to use
+     * @param root_page_out Output: root page number
+     * @param ctx Error context
+     * @return Status code
+     */
+    static Status create(Database* db,
+                        const ID& index_uuid,
+                        const ID& table_uuid,
+                        const std::vector<ID>& column_ids,
+                        std::shared_ptr<SPGiSTOperatorClass> opclass,
+                        uint32_t* root_page_out,
+                        ErrorContext* ctx = nullptr);
+
+    /**
+     * Open an existing SP-GiST index
+     *
+     * @param db Database instance
+     * @param index_uuid Index UUID
+     * @param table_uuid Table UUID
+     * @param column_ids Columns being indexed
+     * @param opclass Operator class to use
+     * @param root_page Root page number
+     * @param ctx Error context
+     * @return Unique pointer to opened index, or nullptr on error
+     */
+    static std::unique_ptr<SPGiSTIndex> open(Database* db,
+                                             const ID& index_uuid,
+                                             const ID& table_uuid,
+                                             const std::vector<ID>& column_ids,
+                                             std::shared_ptr<SPGiSTOperatorClass> opclass,
+                                             uint32_t root_page,
+                                             ErrorContext* ctx = nullptr);
 
     ~SPGiSTIndex();
 
