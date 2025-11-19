@@ -12,11 +12,11 @@
 #include "scratchbird/core/gist_index.h"
 #include "scratchbird/core/spgist_index.h"
 #include "scratchbird/core/brin_index.h"
-// #include "scratchbird/core/rtree_index.h" // TODO: Not yet implemented
+#include "scratchbird/core/rtree_index.h"
 #include "scratchbird/core/hnsw_index.h"
 #include "scratchbird/core/bitmap_index.h"
-// #include "scratchbird/core/columnstore_index.h" // TODO: Not yet implemented
-// #include "scratchbird/core/lsm_tree.h" // TODO: Not yet implemented
+#include "scratchbird/core/columnstore_index.h"
+#include "scratchbird/core/lsm_tree.h"
 #include "scratchbird/core/id.h"
 
 #include <cstring>
@@ -296,8 +296,7 @@ namespace sblr {
                 break;
 
             case IndexType::RTREE:
-                // TODO: Implement when rtree_index.h is available
-                // delete static_cast<core::RTreeIndex*>(ptr);
+                delete static_cast<core::RTreeIndex*>(ptr);
                 break;
 
             case IndexType::HNSW:
@@ -309,13 +308,11 @@ namespace sblr {
                 break;
 
             case IndexType::COLUMNSTORE:
-                // TODO: Implement when columnstore_index.h is available
-                // delete static_cast<core::ColumnstoreIndex*>(ptr);
+                delete static_cast<core::ColumnstoreIndex*>(ptr);
                 break;
 
             case IndexType::LSM:
-                // TODO: Implement when lsm_tree.h is available
-                // delete static_cast<core::LSMTree*>(ptr);
+                delete static_cast<core::LSMTree*>(ptr);
                 break;
 
             default:
