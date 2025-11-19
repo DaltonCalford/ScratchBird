@@ -12988,6 +12988,10 @@ namespace scratchbird
                         }
                         executeXMLForest();
                     }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_EXTRACT))
+                    {
+                        executeExtract();
+                    }
                     else
                     {
                         error("Unknown extended opcode: " + std::to_string(ext_op));
@@ -18301,6 +18305,264 @@ namespace scratchbird
 #else
             error("XMLEXISTS requires libxml2 library - not available in this build");
 #endif
+        }
+
+        void Executor::executeExtract()
+        {
+            // EXTRACT(field FROM value) - extract sub-information from complex types
+            // Bytecode format: field_id (uint8_t), then source expression is already evaluated
+
+            // Read field ID from bytecode
+            uint8_t field_id = readByte();
+            ExtractField field = static_cast<ExtractField>(field_id);
+
+            // Source value is on top of stack (already evaluated by bytecode)
+            Value source = pop();
+
+            // Handle NULL source
+            if (source.isNull())
+            {
+                push(Value::makeNull());
+                return;
+            }
+
+            // Dispatch based on source type and field
+            core::DataType source_type = source.type();
+
+            // ===== TEMPORAL TYPES =====
+            if (source_type == core::DataType::DATE)
+            {
+                int64_t days = source.getDate();
+
+                switch (field)
+                {
+                    case ExtractField::YEAR:
+                        push(Value::makeInt32(core::TypeExtractor::extractYear(days)));
+                        return;
+                    case ExtractField::MONTH:
+                        push(Value::makeInt32(core::TypeExtractor::extractMonth(days)));
+                        return;
+                    case ExtractField::DAY:
+                        push(Value::makeInt32(core::TypeExtractor::extractDay(days)));
+                        return;
+                    case ExtractField::DOW:
+                        push(Value::makeInt32(core::TypeExtractor::extractDayOfWeek(days)));
+                        return;
+                    case ExtractField::DOY:
+                        push(Value::makeInt32(core::TypeExtractor::extractDayOfYear(days)));
+                        return;
+                    case ExtractField::QUARTER:
+                    {
+                        int32_t month = core::TypeExtractor::extractMonth(days);
+                        push(Value::makeInt32((month - 1) / 3 + 1));  // Quarter 1-4
+                        return;
+                    }
+                    case ExtractField::EPOCH:
+                    {
+                        // Epoch for DATE: days * seconds_per_day
+                        push(Value::makeInt64(days * 86400));
+                        return;
+                    }
+                    default:
+                        error("Field '" + std::to_string(field_id) + "' not valid for DATE type");
+                        return;
+                }
+            }
+            else if (source_type == core::DataType::TIME)
+            {
+                int64_t microseconds = source.getTime();
+
+                switch (field)
+                {
+                    case ExtractField::HOUR:
+                        push(Value::makeInt32(core::TypeExtractor::extractHour(microseconds)));
+                        return;
+                    case ExtractField::MINUTE:
+                        push(Value::makeInt32(core::TypeExtractor::extractMinute(microseconds)));
+                        return;
+                    case ExtractField::SECOND:
+                        push(Value::makeInt32(core::TypeExtractor::extractSecond(microseconds)));
+                        return;
+                    case ExtractField::MICROSECOND:
+                        push(Value::makeInt32(core::TypeExtractor::extractMicrosecond(microseconds)));
+                        return;
+                    case ExtractField::MILLISECOND:
+                    {
+                        int32_t us = core::TypeExtractor::extractMicrosecond(microseconds);
+                        push(Value::makeInt32(us / 1000));  // Millisecond part only
+                        return;
+                    }
+                    case ExtractField::EPOCH:
+                    {
+                        // Epoch for TIME: microseconds / 1000000 (seconds since midnight)
+                        push(Value::makeInt64(microseconds / 1000000));
+                        return;
+                    }
+                    default:
+                        error("Field '" + std::to_string(field_id) + "' not valid for TIME type");
+                        return;
+                }
+            }
+            else if (source_type == core::DataType::TIMESTAMP)
+            {
+                int64_t microseconds = source.getTimestamp();
+
+                switch (field)
+                {
+                    case ExtractField::YEAR:
+                        push(Value::makeInt32(core::TypeExtractor::extractTimestampYear(microseconds)));
+                        return;
+                    case ExtractField::MONTH:
+                        push(Value::makeInt32(core::TypeExtractor::extractTimestampMonth(microseconds)));
+                        return;
+                    case ExtractField::DAY:
+                        push(Value::makeInt32(core::TypeExtractor::extractTimestampDay(microseconds)));
+                        return;
+                    case ExtractField::HOUR:
+                        push(Value::makeInt32(core::TypeExtractor::extractTimestampHour(microseconds)));
+                        return;
+                    case ExtractField::MINUTE:
+                        push(Value::makeInt32(core::TypeExtractor::extractTimestampMinute(microseconds)));
+                        return;
+                    case ExtractField::SECOND:
+                        push(Value::makeInt32(core::TypeExtractor::extractTimestampSecond(microseconds)));
+                        return;
+                    case ExtractField::MICROSECOND:
+                        push(Value::makeInt32(core::TypeExtractor::extractTimestampMicrosecond(microseconds)));
+                        return;
+                    case ExtractField::MILLISECOND:
+                    {
+                        int32_t us = core::TypeExtractor::extractTimestampMicrosecond(microseconds);
+                        push(Value::makeInt32(us / 1000));
+                        return;
+                    }
+                    case ExtractField::DOW:
+                    {
+                        // Convert microseconds to days
+                        int64_t days = microseconds / 86400000000LL;
+                        push(Value::makeInt32(core::TypeExtractor::extractDayOfWeek(days)));
+                        return;
+                    }
+                    case ExtractField::DOY:
+                    {
+                        int64_t days = microseconds / 86400000000LL;
+                        push(Value::makeInt32(core::TypeExtractor::extractDayOfYear(days)));
+                        return;
+                    }
+                    case ExtractField::QUARTER:
+                    {
+                        int32_t month = core::TypeExtractor::extractTimestampMonth(microseconds);
+                        push(Value::makeInt32((month - 1) / 3 + 1));
+                        return;
+                    }
+                    case ExtractField::EPOCH:
+                    {
+                        // Epoch: seconds since Unix epoch
+                        push(Value::makeInt64(microseconds / 1000000));
+                        return;
+                    }
+                    default:
+                        error("Field '" + std::to_string(field_id) + "' not valid for TIMESTAMP type");
+                        return;
+                }
+            }
+            // ===== UUID TYPE =====
+            else if (source_type == core::DataType::UUID)
+            {
+                std::vector<uint8_t> uuid = source.getUUID();
+
+                switch (field)
+                {
+                    case ExtractField::VERSION:
+                        push(Value::makeInt32(core::TypeExtractor::extractUUIDVersion(uuid)));
+                        return;
+                    case ExtractField::VARIANT:
+                        push(Value::makeInt32(core::TypeExtractor::extractUUIDVariant(uuid)));
+                        return;
+                    case ExtractField::TIMESTAMP:
+                    {
+                        core::ErrorContext ctx;
+                        auto timestamp = core::TypeExtractor::extractUUIDTimestamp(uuid, &ctx);
+                        if (timestamp.has_value())
+                        {
+                            push(Value::makeInt64(*timestamp));
+                        }
+                        else
+                        {
+                            error("UUID timestamp extraction failed: only supported for UUIDv1 and UUIDv7");
+                        }
+                        return;
+                    }
+                    default:
+                        error("Field '" + std::to_string(field_id) + "' not yet implemented for UUID type");
+                        return;
+                }
+            }
+            // ===== ARRAY TYPE =====
+            else if (source_type == core::DataType::ARRAY)
+            {
+                auto array = source.getArray();
+                if (!array)
+                {
+                    push(Value::makeNull());
+                    return;
+                }
+
+                switch (field)
+                {
+                    case ExtractField::CARDINALITY:
+                        push(Value::makeInt32(static_cast<int32_t>(array->getTotalElements())));
+                        return;
+                    case ExtractField::NDIMS:
+                        push(Value::makeInt32(static_cast<int32_t>(array->getRank())));
+                        return;
+                    case ExtractField::LOWER:
+                        // PostgreSQL arrays are 1-indexed by default
+                        push(Value::makeInt32(1));
+                        return;
+                    case ExtractField::UPPER:
+                    {
+                        auto dims = array->getDimensions();
+                        if (!dims.empty())
+                        {
+                            push(Value::makeInt32(static_cast<int32_t>(dims[0])));
+                        }
+                        else
+                        {
+                            push(Value::makeNull());
+                        }
+                        return;
+                    }
+                    default:
+                        error("Field '" + std::to_string(field_id) + "' not yet implemented for ARRAY type");
+                        return;
+                }
+            }
+            // ===== SPATIAL TYPES =====
+            else if (source_type == core::DataType::POINT)
+            {
+                core::Point point = source.getPoint();
+
+                switch (field)
+                {
+                    case ExtractField::X:
+                        push(Value::makeFloat64(point.x));
+                        return;
+                    case ExtractField::Y:
+                        push(Value::makeFloat64(point.y));
+                        return;
+                    case ExtractField::SRID:
+                        push(Value::makeInt32(point.srid));
+                        return;
+                    default:
+                        error("Field '" + std::to_string(field_id) + "' not valid for POINT type");
+                        return;
+                }
+            }
+            else
+            {
+                error("EXTRACT not yet supported for type: " + core::TypeSystem::typeToString(source_type));
+            }
         }
 
         void Executor::executeEncode()
