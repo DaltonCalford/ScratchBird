@@ -561,6 +561,19 @@ namespace scratchbird
 
             // Note: 0xFF is EXTENDED_OPCODE marker (already defined above)
 
+            // Index Operations (0x0A-0x14) - Direct index manipulation operations
+            EXT_INDEX_INSERT = 0x0A,       // Insert entry into index (key, tid, xmin)
+            EXT_INDEX_SEARCH = 0x0B,       // Search index for key (returns matching TIDs)
+            EXT_INDEX_SCAN = 0x0C,         // Range scan index (start_key, end_key, returns TIDs)
+            EXT_INDEX_DELETE = 0x0D,       // Delete entry from index (key, tid, xmax - MGA logical deletion)
+            EXT_INDEX_TYPE = 0x0E,         // Index type marker (btree, hash, gin, etc.)
+            EXT_INDEX_SCAN_START = 0x0F,   // Start index scan (returns scan_id)
+            EXT_INDEX_SCAN_NEXT = 0x10,    // Get next from index scan (scan_id)
+            EXT_INDEX_SCAN_END = 0x11,     // End index scan (scan_id)
+            EXT_INDEX_VACUUM = 0x12,       // Vacuum index (remove dead entries)
+            EXT_INDEX_STATS = 0x13,        // Get index statistics
+            EXT_INDEX_REINDEX = 0x14,      // Rebuild index
+
             // Bit manipulation - Byte/Bit access (0x06-0x09)
             EXT_GET_BYTE = 0x06,           // GET_BYTE(bytes, offset) - extract byte at offset
             EXT_SET_BYTE = 0x07,           // SET_BYTE(bytes, offset, value) - set byte at offset
@@ -592,6 +605,27 @@ namespace scratchbird
             EXT_XPATH = 0x4C,              // XPATH(xpath_expr, xml) - extract nodes using XPath
             EXT_XMLEXISTS = 0x4D,          // XMLEXISTS(xpath_expr, xml) - check if XPath matches
             EXT_XMLAGG = 0x4E,             // XMLAGG(xml) - aggregate XML values (aggregate function)
+        };
+
+        /**
+         * IndexType - Index type identifiers for EXT_INDEX_TYPE opcode
+         *
+         * Used to specify which index implementation to use for index operations.
+         * Each index type has different characteristics and use cases.
+         */
+        enum class IndexType : uint8_t
+        {
+            BTREE = 0x00,          // B-Tree index - General purpose, sorted data
+            HASH = 0x01,           // Hash index - Equality searches only
+            GIN = 0x02,            // GIN index - Multi-value columns (arrays, JSONB, text search)
+            GIST = 0x03,           // GiST index - Extensible, spatial data, custom types
+            SPGIST = 0x04,         // SP-GiST index - Space-partitioned, non-balanced trees
+            BRIN = 0x05,           // BRIN index - Block range index, large tables
+            RTREE = 0x06,          // R-Tree index - Spatial data, bounding boxes
+            HNSW = 0x07,           // HNSW index - Vector similarity search (ANN)
+            BITMAP = 0x08,         // Bitmap index - Low cardinality columns
+            COLUMNSTORE = 0x09,    // Columnstore index - Column-oriented storage
+            LSM = 0x0A,            // LSM-Tree index - Write-optimized, append-heavy workloads
         };
 
         /**
