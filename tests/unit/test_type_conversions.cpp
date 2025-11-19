@@ -507,6 +507,147 @@ TEST_F(TypeConversionTest, Money_ToBoolean) {
     EXPECT_TRUE(b1->getBoolean());
 }
 
+// ========== INTERVAL Conversion Tests ==========
+
+// Test INTERVAL to VARCHAR (toString)
+TEST_F(TypeConversionTest, Interval_ToVarchar) {
+    // 1 year 2 months 3 days 04:05:06
+    Interval interval(14, 3, 4LL * 3600 * 1000000 + 5LL * 60 * 1000000 + 6LL * 1000000);
+    auto interval_val = TypedValue::makeInterval(interval);
+
+    auto varchar_val = interval_val.convertTo(DataType::VARCHAR, &ctx);
+    ASSERT_TRUE(varchar_val.has_value());
+    std::string str = varchar_val->getVarchar();
+    // Should be something like "1 year 2 mons 3 days 04:05:06"
+    EXPECT_TRUE(str.find("year") != std::string::npos);
+    EXPECT_TRUE(str.find("mons") != std::string::npos);
+    EXPECT_TRUE(str.find("days") != std::string::npos);
+    EXPECT_TRUE(str.find("04:05:06") != std::string::npos);
+}
+
+// Test VARCHAR to INTERVAL - simple time
+TEST_F(TypeConversionTest, Varchar_ToInterval_Time) {
+    auto varchar_val = TypedValue::makeVarchar("04:05:06");
+    auto interval_val = varchar_val.convertTo(DataType::INTERVAL, &ctx);
+    ASSERT_TRUE(interval_val.has_value());
+
+    Interval result = interval_val->getInterval();
+    EXPECT_EQ(result.months, 0);
+    EXPECT_EQ(result.days, 0);
+    EXPECT_EQ(result.microseconds, 4LL * 3600 * 1000000 + 5LL * 60 * 1000000 + 6LL * 1000000);
+}
+
+// Test VARCHAR to INTERVAL - days
+TEST_F(TypeConversionTest, Varchar_ToInterval_Days) {
+    auto varchar_val = TypedValue::makeVarchar("5 days");
+    auto interval_val = varchar_val.convertTo(DataType::INTERVAL, &ctx);
+    ASSERT_TRUE(interval_val.has_value());
+
+    Interval result = interval_val->getInterval();
+    EXPECT_EQ(result.months, 0);
+    EXPECT_EQ(result.days, 5);
+    EXPECT_EQ(result.microseconds, 0);
+}
+
+// Test VARCHAR to INTERVAL - months
+TEST_F(TypeConversionTest, Varchar_ToInterval_Months) {
+    auto varchar_val = TypedValue::makeVarchar("3 mons");
+    auto interval_val = varchar_val.convertTo(DataType::INTERVAL, &ctx);
+    ASSERT_TRUE(interval_val.has_value());
+
+    Interval result = interval_val->getInterval();
+    EXPECT_EQ(result.months, 3);
+    EXPECT_EQ(result.days, 0);
+    EXPECT_EQ(result.microseconds, 0);
+}
+
+// Test VARCHAR to INTERVAL - years
+TEST_F(TypeConversionTest, Varchar_ToInterval_Years) {
+    auto varchar_val = TypedValue::makeVarchar("2 years");
+    auto interval_val = varchar_val.convertTo(DataType::INTERVAL, &ctx);
+    ASSERT_TRUE(interval_val.has_value());
+
+    Interval result = interval_val->getInterval();
+    EXPECT_EQ(result.months, 24); // 2 years = 24 months
+    EXPECT_EQ(result.days, 0);
+    EXPECT_EQ(result.microseconds, 0);
+}
+
+// Test VARCHAR to INTERVAL - combined
+TEST_F(TypeConversionTest, Varchar_ToInterval_Combined) {
+    auto varchar_val = TypedValue::makeVarchar("1 year 2 mons 3 days 04:05:06");
+    auto interval_val = varchar_val.convertTo(DataType::INTERVAL, &ctx);
+    ASSERT_TRUE(interval_val.has_value());
+
+    Interval result = interval_val->getInterval();
+    EXPECT_EQ(result.months, 14); // 1 year + 2 months = 14 months
+    EXPECT_EQ(result.days, 3);
+    EXPECT_EQ(result.microseconds, 4LL * 3600 * 1000000 + 5LL * 60 * 1000000 + 6LL * 1000000);
+}
+
+// Test VARCHAR to INTERVAL - with microseconds
+TEST_F(TypeConversionTest, Varchar_ToInterval_Microseconds) {
+    auto varchar_val = TypedValue::makeVarchar("01:02:03.456789");
+    auto interval_val = varchar_val.convertTo(DataType::INTERVAL, &ctx);
+    ASSERT_TRUE(interval_val.has_value());
+
+    Interval result = interval_val->getInterval();
+    EXPECT_EQ(result.months, 0);
+    EXPECT_EQ(result.days, 0);
+    EXPECT_EQ(result.microseconds, 1LL * 3600 * 1000000 + 2LL * 60 * 1000000 + 3LL * 1000000 + 456789);
+}
+
+// Test VARCHAR to INTERVAL - negative time
+TEST_F(TypeConversionTest, Varchar_ToInterval_NegativeTime) {
+    auto varchar_val = TypedValue::makeVarchar("-04:05:06");
+    auto interval_val = varchar_val.convertTo(DataType::INTERVAL, &ctx);
+    ASSERT_TRUE(interval_val.has_value());
+
+    Interval result = interval_val->getInterval();
+    EXPECT_EQ(result.months, 0);
+    EXPECT_EQ(result.days, 0);
+    EXPECT_EQ(result.microseconds, -(4LL * 3600 * 1000000 + 5LL * 60 * 1000000 + 6LL * 1000000));
+}
+
+// Test round-trip conversion
+TEST_F(TypeConversionTest, Interval_RoundTrip) {
+    // Create an interval: 1 year 2 months 3 days 04:05:06.123456
+    Interval original(14, 3, 4LL * 3600 * 1000000 + 5LL * 60 * 1000000 + 6LL * 1000000 + 123456);
+    auto interval_val = TypedValue::makeInterval(original);
+
+    // Convert to VARCHAR
+    auto varchar_val = interval_val.convertTo(DataType::VARCHAR, &ctx);
+    ASSERT_TRUE(varchar_val.has_value());
+
+    // Convert back to INTERVAL
+    auto interval_val2 = varchar_val->convertTo(DataType::INTERVAL, &ctx);
+    ASSERT_TRUE(interval_val2.has_value());
+
+    Interval result = interval_val2->getInterval();
+    EXPECT_EQ(result.months, original.months);
+    EXPECT_EQ(result.days, original.days);
+    EXPECT_EQ(result.microseconds, original.microseconds);
+}
+
+// Test INTERVAL with zero values
+TEST_F(TypeConversionTest, Interval_Zero) {
+    auto varchar_val = TypedValue::makeVarchar("00:00:00");
+    auto interval_val = varchar_val.convertTo(DataType::INTERVAL, &ctx);
+    ASSERT_TRUE(interval_val.has_value());
+
+    Interval result = interval_val->getInterval();
+    EXPECT_EQ(result.months, 0);
+    EXPECT_EQ(result.days, 0);
+    EXPECT_EQ(result.microseconds, 0);
+}
+
+// Test invalid INTERVAL format
+TEST_F(TypeConversionTest, Varchar_ToInterval_Invalid) {
+    auto varchar_val = TypedValue::makeVarchar("invalid interval");
+    auto interval_val = varchar_val.convertTo(DataType::INTERVAL, &ctx);
+    EXPECT_FALSE(interval_val.has_value());
+}
+
 int main(int argc, char **argv) {
     ::testing::InitGoogleTest(&argc, argv);
     return RUN_ALL_TESTS();

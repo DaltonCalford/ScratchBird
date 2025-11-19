@@ -888,6 +888,8 @@ namespace scratchbird::core
             -> std::optional<int64_t>;
         static auto stringToTimestamp(const std::string &str, ErrorContext *ctx = nullptr)
             -> std::optional<int64_t>;
+        static auto stringToInterval(const std::string &str, ErrorContext *ctx = nullptr)
+            -> std::optional<Interval>;
         static auto stringToUUID(const std::string &str, ErrorContext *ctx = nullptr)
             -> std::optional<std::vector<uint8_t>>;
         static auto stringToBinary(const std::string &str, ErrorContext *ctx = nullptr)

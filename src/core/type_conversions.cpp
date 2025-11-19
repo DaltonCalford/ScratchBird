@@ -654,6 +654,12 @@ namespace scratchbird::core
                               : std::nullopt;
             }
 
+            case DataType::INTERVAL:
+            {
+                auto result = TypeConverter::stringToInterval(str, ctx);
+                return result ? std::make_optional(TypedValue::makeInterval(*result)) : std::nullopt;
+            }
+
             case DataType::UUID:
             {
                 auto result = TypeConverter::stringToUUID(str, ctx);
@@ -1010,6 +1016,116 @@ namespace scratchbird::core
         // Format: YYYY-MM-DD HH:MM:SS[.ffffff][+/-HH:MM or timezone name]
         // Result is always stored in GMT
         auto result = g_timezone_manager.parseTimestamp(str, TimezoneManager::TZ_UTC, ctx);
+        return result;
+    }
+
+    auto TypeConverter::stringToInterval(const std::string &str, ErrorContext *ctx)
+        -> std::optional<Interval>
+    {
+        // Parse PostgreSQL-style interval format:
+        // "X years Y mons Z days HH:MM:SS.microseconds"
+        // Examples: "1 year", "2 mons 3 days", "04:05:06", "1 year 2 mons 3 days 04:05:06.123456"
+
+        Interval result;
+        result.months = 0;
+        result.days = 0;
+        result.microseconds = 0;
+
+        if (str.empty()) {
+            return result; // Empty string = zero interval
+        }
+
+        std::istringstream iss(str);
+        std::string token;
+        int64_t value = 0;
+
+        while (iss >> token) {
+            // Try to parse as a number
+            try {
+                char* endptr;
+                value = std::strtoll(token.c_str(), &endptr, 10);
+
+                // If the whole token was a number, read the next token (unit)
+                if (*endptr == '\0') {
+                    std::string unit;
+                    if (!(iss >> unit)) {
+                        // Number without unit - could be part of a time string, put it back
+                        // This handles the time component parsing below
+                        iss.clear();
+                        iss.str(token);
+                        goto parse_time;
+                    }
+
+                    // Parse the unit
+                    if (unit == "year" || unit == "years") {
+                        result.months += value * 12;
+                    } else if (unit == "mon" || unit == "mons" || unit == "month" || unit == "months") {
+                        result.months += value;
+                    } else if (unit == "day" || unit == "days") {
+                        result.days += value;
+                    } else {
+                        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                        ("Invalid interval unit: " + unit).c_str());
+                        return std::nullopt;
+                    }
+                } else {
+                    // Token contains non-numeric characters - likely a time component
+                    parse_time:
+                    // Parse time format: HH:MM:SS or HH:MM:SS.microseconds or -HH:MM:SS
+                    bool negative = false;
+                    std::string time_str = token;
+                    if (time_str[0] == '-') {
+                        negative = true;
+                        time_str = time_str.substr(1);
+                    }
+
+                    // Parse HH:MM:SS[.microseconds]
+                    size_t colon1 = time_str.find(':');
+                    if (colon1 == std::string::npos) {
+                        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                        ("Invalid interval time format: " + token).c_str());
+                        return std::nullopt;
+                    }
+
+                    size_t colon2 = time_str.find(':', colon1 + 1);
+                    if (colon2 == std::string::npos) {
+                        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                        ("Invalid interval time format: " + token).c_str());
+                        return std::nullopt;
+                    }
+
+                    int hours = std::stoi(time_str.substr(0, colon1));
+                    int minutes = std::stoi(time_str.substr(colon1 + 1, colon2 - colon1 - 1));
+
+                    // Parse seconds and optional microseconds
+                    size_t dot = time_str.find('.', colon2);
+                    int seconds;
+                    int microseconds = 0;
+
+                    if (dot != std::string::npos) {
+                        seconds = std::stoi(time_str.substr(colon2 + 1, dot - colon2 - 1));
+                        std::string us_str = time_str.substr(dot + 1);
+                        // Pad or truncate to 6 digits
+                        while (us_str.length() < 6) us_str += '0';
+                        if (us_str.length() > 6) us_str = us_str.substr(0, 6);
+                        microseconds = std::stoi(us_str);
+                    } else {
+                        seconds = std::stoi(time_str.substr(colon2 + 1));
+                    }
+
+                    int64_t total_microseconds = (hours * 3600LL + minutes * 60LL + seconds) * 1000000LL + microseconds;
+                    if (negative) {
+                        total_microseconds = -total_microseconds;
+                    }
+                    result.microseconds += total_microseconds;
+                }
+            } catch (const std::exception& e) {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                ("Invalid interval format: " + std::string(e.what())).c_str());
+                return std::nullopt;
+            }
+        }
+
         return result;
     }
 
