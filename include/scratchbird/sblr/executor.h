@@ -708,6 +708,9 @@ namespace scratchbird
             void executeXPath();         // XPATH(xpath_expr, xml)
             void executeXMLExists();     // XMLEXISTS(xpath_expr, xml)
 
+            // Extraction function
+            void executeExtract();       // EXTRACT(field FROM value)
+
         public:
             // Forward declaration
             class TriggerContext;
