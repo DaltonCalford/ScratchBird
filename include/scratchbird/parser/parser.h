@@ -199,6 +199,9 @@ namespace scratchbird
             Expression *parseFactor();
             Expression *parsePrimary();
 
+            // Helper to map EXTRACT field names to ExtractField enum values
+            uint8_t mapExtractFieldName(const std::string &field_name);
+
             // Helper to get source span
             SourceSpan makeSpan(const SourceLocation &start) const;
             SourceSpan makeSpan(const SourceLocation &start, const SourceLocation &end) const;

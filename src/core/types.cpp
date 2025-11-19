@@ -1839,6 +1839,196 @@ namespace scratchbird::core
         }
     }
 
+    auto TypeConverter::stringToInt128(const std::string &str, ErrorContext *ctx)
+        -> std::optional<int128_t>
+    {
+        try
+        {
+            // Parse string as int128_t
+            // Handle sign
+            size_t pos = 0;
+            bool negative = false;
+            if (!str.empty() && str[0] == '-')
+            {
+                negative = true;
+                pos = 1;
+            }
+            else if (!str.empty() && str[0] == '+')
+            {
+                pos = 1;
+            }
+
+            if (pos >= str.size())
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Invalid INT128 value");
+                return std::nullopt;
+            }
+
+            int128_t result = 0;
+            for (; pos < str.size(); ++pos)
+            {
+                if (!std::isdigit(str[pos]))
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Invalid INT128 value");
+                    return std::nullopt;
+                }
+
+                int digit = str[pos] - '0';
+
+                // Check for overflow before multiplying
+                const int128_t max_div_10 = std::numeric_limits<int128_t>::max() / 10;
+                if (result > max_div_10)
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Value out of range for INT128");
+                    return std::nullopt;
+                }
+
+                result = result * 10 + digit;
+            }
+
+            return negative ? -result : result;
+        }
+        catch (...)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Invalid INT128 value");
+            return std::nullopt;
+        }
+    }
+
+    auto TypeConverter::stringToUInt8(const std::string &str, ErrorContext *ctx)
+        -> std::optional<uint8_t>
+    {
+        try
+        {
+            unsigned long val = std::stoul(str);
+            if (val > 255)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Value out of range for UINT8");
+                return std::nullopt;
+            }
+            return static_cast<uint8_t>(val);
+        }
+        catch (...)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Invalid UINT8 value");
+            return std::nullopt;
+        }
+    }
+
+    auto TypeConverter::stringToUInt16(const std::string &str, ErrorContext *ctx)
+        -> std::optional<uint16_t>
+    {
+        try
+        {
+            unsigned long val = std::stoul(str);
+            if (val > 65535)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Value out of range for UINT16");
+                return std::nullopt;
+            }
+            return static_cast<uint16_t>(val);
+        }
+        catch (...)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Invalid UINT16 value");
+            return std::nullopt;
+        }
+    }
+
+    auto TypeConverter::stringToUInt32(const std::string &str, ErrorContext *ctx)
+        -> std::optional<uint32_t>
+    {
+        try
+        {
+            unsigned long val = std::stoul(str);
+            // On some platforms, unsigned long might be 64-bit
+            if (val > std::numeric_limits<uint32_t>::max())
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Value out of range for UINT32");
+                return std::nullopt;
+            }
+            return static_cast<uint32_t>(val);
+        }
+        catch (...)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Invalid UINT32 value");
+            return std::nullopt;
+        }
+    }
+
+    auto TypeConverter::stringToUInt64(const std::string &str, ErrorContext *ctx)
+        -> std::optional<uint64_t>
+    {
+        try
+        {
+            return std::stoull(str);
+        }
+        catch (...)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Invalid UINT64 value");
+            return std::nullopt;
+        }
+    }
+
+    auto TypeConverter::stringToMoney(const std::string &str, ErrorContext *ctx)
+        -> std::optional<int64_t>
+    {
+        try
+        {
+            // Parse money string - supports formats like:
+            // "$123.45", "123.45", "-$50.25", "-50.25"
+            std::string clean_str = str;
+
+            // Remove whitespace
+            clean_str.erase(std::remove_if(clean_str.begin(), clean_str.end(), ::isspace), clean_str.end());
+
+            if (clean_str.empty())
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Invalid MONEY value");
+                return std::nullopt;
+            }
+
+            // Handle sign
+            bool negative = false;
+            size_t pos = 0;
+            if (clean_str[0] == '-')
+            {
+                negative = true;
+                pos = 1;
+            }
+            else if (clean_str[0] == '+')
+            {
+                pos = 1;
+            }
+
+            // Remove currency symbol if present
+            if (pos < clean_str.size() && clean_str[pos] == '$')
+            {
+                pos++;
+            }
+
+            if (pos >= clean_str.size())
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Invalid MONEY value");
+                return std::nullopt;
+            }
+
+            // Parse the number part
+            std::string num_str = clean_str.substr(pos);
+            double value = std::stod(num_str);
+
+            // Convert to cents (multiply by 100 and round)
+            int64_t cents = static_cast<int64_t>(std::round(value * 100.0));
+
+            return negative ? -cents : cents;
+        }
+        catch (...)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Invalid MONEY value");
+            return std::nullopt;
+        }
+    }
+
     auto TypeConverter::stringToFloat32(const std::string &str, ErrorContext *ctx)
         -> std::optional<float>
     {
@@ -2303,6 +2493,121 @@ namespace scratchbird::core
         if (uuid.size() != 16)
             return -1;
         return (uuid[8] >> 6) & 0x03;
+    }
+
+    auto TypeExtractor::extractUUIDTimestamp(const std::vector<uint8_t> &uuid,
+                                             ErrorContext *ctx) -> std::optional<int64_t>
+    {
+        if (uuid.size() != 16)
+            return std::nullopt;
+
+        int version = extractUUIDVersion(uuid);
+        if (version != 1)
+            return std::nullopt;  // Only UUID v1 has timestamp
+
+        // Extract timestamp from UUID v1 (60-bit timestamp in 100-nanosecond intervals since Oct 15, 1582)
+        uint64_t time_low = (static_cast<uint64_t>(uuid[0]) << 24) |
+                            (static_cast<uint64_t>(uuid[1]) << 16) |
+                            (static_cast<uint64_t>(uuid[2]) << 8) |
+                            static_cast<uint64_t>(uuid[3]);
+        uint64_t time_mid = (static_cast<uint64_t>(uuid[4]) << 8) |
+                            static_cast<uint64_t>(uuid[5]);
+        uint64_t time_hi = (static_cast<uint64_t>(uuid[6] & 0x0F) << 8) |
+                           static_cast<uint64_t>(uuid[7]);
+
+        uint64_t uuid_timestamp = (time_hi << 48) | (time_mid << 32) | time_low;
+
+        // Convert from 100-nanosecond intervals to microseconds
+        // UUID epoch is Oct 15, 1582; Unix epoch is Jan 1, 1970
+        // Difference: 12219292800 seconds = 122192928000000000 * 100ns
+        const uint64_t UUID_TO_UNIX_OFFSET = 122192928000000000ULL;
+        if (uuid_timestamp < UUID_TO_UNIX_OFFSET)
+            return std::nullopt;
+
+        uint64_t unix_100ns = uuid_timestamp - UUID_TO_UNIX_OFFSET;
+        return static_cast<int64_t>(unix_100ns / 10);  // Convert to microseconds
+    }
+
+    auto TypeExtractor::extractDayOfWeek(int64_t days_since_epoch) -> int32_t
+    {
+        // Jan 1, 1970 was a Thursday (4)
+        // Calculate day of week: 0=Sunday, 1=Monday, ..., 6=Saturday
+        int64_t dow = (days_since_epoch + 4) % 7;
+        if (dow < 0)
+            dow += 7;
+        return static_cast<int32_t>(dow);
+    }
+
+    auto TypeExtractor::extractDayOfYear(int64_t days_since_epoch) -> int32_t
+    {
+        // Convert to year/month/day, then calculate day of year
+        int32_t year = extractYear(days_since_epoch);
+        int32_t month = extractMonth(days_since_epoch);
+        int32_t day = extractDay(days_since_epoch);
+
+        // Days in each month
+        static const int days_before_month[13] = {
+            0, 0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334
+        };
+
+        int32_t doy = days_before_month[month] + day;
+
+        // Add 1 for leap year if after February
+        if (month > 2 && ((year % 4 == 0 && year % 100 != 0) || (year % 400 == 0))) {
+            doy++;
+        }
+
+        return doy;
+    }
+
+    auto TypeExtractor::extractTimestampYear(int64_t microseconds_since_epoch) -> int32_t
+    {
+        int64_t days = microseconds_since_epoch / 86400000000LL;
+        return extractYear(days);
+    }
+
+    auto TypeExtractor::extractTimestampMonth(int64_t microseconds_since_epoch) -> int32_t
+    {
+        int64_t days = microseconds_since_epoch / 86400000000LL;
+        return extractMonth(days);
+    }
+
+    auto TypeExtractor::extractTimestampDay(int64_t microseconds_since_epoch) -> int32_t
+    {
+        int64_t days = microseconds_since_epoch / 86400000000LL;
+        return extractDay(days);
+    }
+
+    auto TypeExtractor::extractTimestampHour(int64_t microseconds_since_epoch) -> int32_t
+    {
+        int64_t time_us = microseconds_since_epoch % 86400000000LL;
+        if (time_us < 0)
+            time_us += 86400000000LL;
+        return extractHour(time_us);
+    }
+
+    auto TypeExtractor::extractTimestampMinute(int64_t microseconds_since_epoch) -> int32_t
+    {
+        int64_t time_us = microseconds_since_epoch % 86400000000LL;
+        if (time_us < 0)
+            time_us += 86400000000LL;
+        return extractMinute(time_us);
+    }
+
+    auto TypeExtractor::extractTimestampSecond(int64_t microseconds_since_epoch) -> int32_t
+    {
+        int64_t time_us = microseconds_since_epoch % 86400000000LL;
+        if (time_us < 0)
+            time_us += 86400000000LL;
+        return extractSecond(time_us);
+    }
+
+    auto TypeExtractor::extractTimestampMicrosecond(int64_t microseconds_since_epoch) -> int32_t
+    {
+        int64_t time_us = microseconds_since_epoch % 86400000000LL;
+        if (time_us < 0)
+            time_us += 86400000000LL;
+        return extractMicrosecond(time_us);
     }
 
     // ===== Convenience Conversion Methods =====

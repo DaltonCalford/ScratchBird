@@ -874,6 +874,18 @@ namespace scratchbird::core
             -> std::optional<int32_t>;
         static auto stringToInt64(const std::string &str, ErrorContext *ctx = nullptr)
             -> std::optional<int64_t>;
+        static auto stringToInt128(const std::string &str, ErrorContext *ctx = nullptr)
+            -> std::optional<int128_t>;
+        static auto stringToUInt8(const std::string &str, ErrorContext *ctx = nullptr)
+            -> std::optional<uint8_t>;
+        static auto stringToUInt16(const std::string &str, ErrorContext *ctx = nullptr)
+            -> std::optional<uint16_t>;
+        static auto stringToUInt32(const std::string &str, ErrorContext *ctx = nullptr)
+            -> std::optional<uint32_t>;
+        static auto stringToUInt64(const std::string &str, ErrorContext *ctx = nullptr)
+            -> std::optional<uint64_t>;
+        static auto stringToMoney(const std::string &str, ErrorContext *ctx = nullptr)
+            -> std::optional<int64_t>;
         static auto stringToFloat32(const std::string &str, ErrorContext *ctx = nullptr)
             -> std::optional<float>;
         static auto stringToFloat64(const std::string &str, ErrorContext *ctx = nullptr)

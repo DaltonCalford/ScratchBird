@@ -169,6 +169,7 @@ namespace scratchbird
             void visit(parser::ArrayLiteral *node) override;    // Phase 2 Task 12
             void visit(parser::SubqueryExpr *node) override;    // Phase 2 Wave 2 - Agent B
             void visit(parser::SequenceFunctionExpr *node) override; // ALPHA Phase 1 - Sequences
+            void visit(parser::ExtractExpr *node) override;      // EXTRACT(field FROM value)
             void visit(parser::ColumnDef *node) override;
 
             // Security statements (ALPHA Phase 1 - Security System Phase 2)
