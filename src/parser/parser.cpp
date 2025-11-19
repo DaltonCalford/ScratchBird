@@ -1,5 +1,7 @@
 #include "scratchbird/parser/parser.h"
+#include "scratchbird/sblr/opcodes.h"  // For ExtractField enum
 #include <sstream>
+#include <algorithm>  // For std::transform
 
 namespace scratchbird
 {
@@ -4732,7 +4734,7 @@ namespace scratchbird
                     return nullptr;
                 }
 
-                std::string field_name = string_pool_.getString(current().value.string_id);
+                std::string field_name = std::string(stringPool().get(current().value.string_id));
                 advance();
 
                 if (!consume(TokenType::KW_FROM, "Expected FROM in EXTRACT expression"))
