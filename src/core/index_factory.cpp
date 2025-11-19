@@ -183,15 +183,85 @@ Status IndexFactory::createIndex(
             return Status::OK;
         }
 
-        case CatalogManager::IndexType::HNSW:
-        case CatalogManager::IndexType::BRIN:
         case CatalogManager::IndexType::RTREE:
+        {
+            // R-Tree spatial index - page-based storage
+            // Use default max_entries from index_info or standard value
+            uint32_t max_entries = index_info.rtree_max_entries; // Already has default of 50
+            uint32_t root_page = 0;
+
+            Status status = RTree::create(
+                db,
+                index_info.index_id,
+                index_info.table_id,
+                index_info.column_ids,
+                max_entries,
+                &root_page,
+                ctx);
+
+            if (status != Status::OK)
+            {
+                return status;
+            }
+
+            // Open the created R-Tree index
+            auto rtree = RTree::open(db, index_info.index_id, root_page, max_entries, ctx);
+            if (!rtree)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to open newly created R-Tree index");
+                return Status::IO_ERROR;
+            }
+
+            *index_out = rtree.release();
+            return Status::OK;
+        }
+
         case CatalogManager::IndexType::COLUMNSTORE:
         {
-            // These indexes require additional configuration parameters not yet stored in IndexInfo
-            // TODO: Extend IndexInfo to store index-specific parameters (dimensions, range_size, max_entries, etc.)
-            std::string error_msg = "Index type requires additional configuration parameters: " + indexTypeToString(index_type);
-            SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED, error_msg.c_str());
+            // Columnstore - page-based storage with default segment size and RLE compression
+            uint32_t root_page = 0;
+            Status status = ColumnstoreIndex::create(
+                db,
+                index_info.index_id,
+                index_info.table_id,
+                index_info.column_ids,
+                1024,  // Default segment_size
+                CompressionType::RLE,  // Default compression
+                &root_page,
+                ctx);
+
+            if (status != Status::OK)
+            {
+                return status;
+            }
+
+            // Open the created Columnstore index
+            auto columnstore = ColumnstoreIndex::open(db, index_info.index_id, root_page, 1024, ctx);
+            if (!columnstore)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to open newly created Columnstore index");
+                return Status::IO_ERROR;
+            }
+
+            *index_out = columnstore.release();
+            return Status::OK;
+        }
+
+        case CatalogManager::IndexType::HNSW:
+        {
+            // HNSW requires dimensions which must be determined from vector column type
+            // This information is not available in IndexInfo and requires schema inspection
+            SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED,
+                "HNSW index requires vector dimensions (inspect column schema to determine)");
+            return Status::NOT_IMPLEMENTED;
+        }
+
+        case CatalogManager::IndexType::BRIN:
+        {
+            // BRIN requires value_type (DataType enum) from indexed column
+            // This information requires schema inspection to determine the column's data type
+            SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED,
+                "BRIN index requires column data type (inspect column schema to determine)");
             return Status::NOT_IMPLEMENTED;
         }
 
@@ -316,15 +386,61 @@ Status IndexFactory::openIndex(
             return Status::OK;
         }
 
-        case CatalogManager::IndexType::HNSW:
-        case CatalogManager::IndexType::BRIN:
         case CatalogManager::IndexType::RTREE:
+        {
+            // Open existing R-Tree index with max_entries from IndexInfo
+            uint32_t max_entries = index_info.rtree_max_entries;
+            auto rtree = RTree::open(db, index_info.index_id, index_info.root_page, max_entries, ctx);
+            if (!rtree)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to open R-Tree index");
+                return Status::IO_ERROR;
+            }
+
+            *index_out = rtree.release();
+            return Status::OK;
+        }
+
         case CatalogManager::IndexType::COLUMNSTORE:
         {
-            // These indexes require additional configuration parameters not yet stored in IndexInfo
-            std::string error_msg = "Index type requires additional configuration parameters: " + indexTypeToString(index_type);
-            SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED, error_msg.c_str());
-            return Status::NOT_IMPLEMENTED;
+            // Open existing Columnstore index with default segment size
+            auto columnstore = ColumnstoreIndex::open(db, index_info.index_id, index_info.root_page, 1024, ctx);
+            if (!columnstore)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to open Columnstore index");
+                return Status::IO_ERROR;
+            }
+
+            *index_out = columnstore.release();
+            return Status::OK;
+        }
+
+        case CatalogManager::IndexType::HNSW:
+        {
+            // HNSW open is simple but creation requires dimensions
+            auto hnsw = HnswIndex::open(db, index_info.index_id, index_info.root_page, ctx);
+            if (!hnsw)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to open HNSW index");
+                return Status::IO_ERROR;
+            }
+
+            *index_out = hnsw.release();
+            return Status::OK;
+        }
+
+        case CatalogManager::IndexType::BRIN:
+        {
+            // BRIN open is simple but creation requires value_type
+            auto brin = BrinIndex::open(db, index_info.index_id, index_info.root_page, ctx);
+            if (!brin)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to open BRIN index");
+                return Status::IO_ERROR;
+            }
+
+            *index_out = brin.release();
+            return Status::OK;
         }
 
         case CatalogManager::IndexType::GIST:
