@@ -29,6 +29,16 @@
 #include "scratchbird/core/expression_serializer.h"
 #include "scratchbird/sblr/expression_evaluator.h"
 #include "scratchbird/core/btree.h"
+#include "scratchbird/core/hash_index.h"
+#include "scratchbird/core/gin_index.h"
+#include "scratchbird/core/gist_index.h"
+#include "scratchbird/core/spgist_index.h"
+#include "scratchbird/core/brin_index.h"
+// #include "scratchbird/core/rtree_index.h" // TODO: Not yet implemented
+#include "scratchbird/core/hnsw_index.h"
+#include "scratchbird/core/bitmap_index.h"
+// #include "scratchbird/core/columnstore_index.h" // TODO: Not yet implemented
+// #include "scratchbird/core/lsm_tree.h" // TODO: Not yet implemented
 #include "scratchbird/core/debug.h"
 #include <nlohmann/json.hpp>
 #include <sstream>
@@ -19628,12 +19638,12 @@ namespace scratchbird
             }
             auto& index_info = index_info_opt.value();
 
-            // Route to appropriate index type
+            // Route to appropriate index type (with caching - November 19, 2025)
             switch (type)
             {
                 case IndexType::BTREE:
                 {
-                    auto btree = core::BTree::open(db_, index_uuid.bytes, index_info.idx_root_page, ctx);
+                    auto btree = getOrOpenIndex<core::BTree>(index_uuid, type, index_info.idx_root_page, ctx);
                     if (btree)
                     {
                         return btree->insert(key, tid, xmin, ctx);
@@ -19643,7 +19653,7 @@ namespace scratchbird
 
                 case IndexType::HASH:
                 {
-                    auto hash_idx = core::HashIndex::open(db_, index_uuid.bytes, index_info.idx_root_page, ctx);
+                    auto hash_idx = getOrOpenIndex<core::HashIndex>(index_uuid, type, index_info.idx_root_page, ctx);
                     if (hash_idx)
                     {
                         return hash_idx->insert(key, tid, xmin, ctx);
@@ -19653,7 +19663,7 @@ namespace scratchbird
 
                 case IndexType::RTREE:
                 {
-                    auto rtree = core::RTreeIndex::open(db_, index_uuid.bytes, index_info.idx_root_page, ctx);
+                    auto rtree = getOrOpenIndex<core::RTreeIndex>(index_uuid, type, index_info.idx_root_page, ctx);
                     if (rtree)
                     {
                         return rtree->insert(key, tid, xmin, ctx);
@@ -19663,7 +19673,7 @@ namespace scratchbird
 
                 case IndexType::GIST:
                 {
-                    auto gist = core::GistIndex::open(db_, index_uuid.bytes, index_info.idx_root_page, ctx);
+                    auto gist = getOrOpenIndex<core::GistIndex>(index_uuid, type, index_info.idx_root_page, ctx);
                     if (gist)
                     {
                         return gist->insert(key, tid, xmin, ctx);
@@ -19673,7 +19683,7 @@ namespace scratchbird
 
                 case IndexType::SPGIST:
                 {
-                    auto spgist = core::SpGistIndex::open(db_, index_uuid.bytes, index_info.idx_root_page, ctx);
+                    auto spgist = getOrOpenIndex<core::SpGistIndex>(index_uuid, type, index_info.idx_root_page, ctx);
                     if (spgist)
                     {
                         return spgist->insert(key, tid, xmin, ctx);
@@ -19683,7 +19693,7 @@ namespace scratchbird
 
                 case IndexType::BRIN:
                 {
-                    auto brin = core::BrinIndex::open(db_, index_uuid.bytes, index_info.idx_root_page, ctx);
+                    auto brin = getOrOpenIndex<core::BrinIndex>(index_uuid, type, index_info.idx_root_page, ctx);
                     if (brin)
                     {
                         return brin->insert(key, tid, xmin, ctx);
@@ -19693,7 +19703,7 @@ namespace scratchbird
 
                 case IndexType::BITMAP:
                 {
-                    auto bitmap = core::BitmapIndex::open(db_, index_uuid.bytes, index_info.idx_root_page, ctx);
+                    auto bitmap = getOrOpenIndex<core::BitmapIndex>(index_uuid, type, index_info.idx_root_page, ctx);
                     if (bitmap)
                     {
                         return bitmap->insert(key, tid, xmin, ctx);
@@ -19703,7 +19713,7 @@ namespace scratchbird
 
                 case IndexType::LSM:
                 {
-                    auto lsm = core::LSMTree::open(db_, index_uuid.bytes, index_info.idx_root_page, ctx);
+                    auto lsm = getOrOpenIndex<core::LSMTree>(index_uuid, type, index_info.idx_root_page, ctx);
                     if (lsm)
                     {
                         return lsm->put(key, tid, xmin, ctx);  // LSM uses put(), not insert()
@@ -19745,7 +19755,7 @@ namespace scratchbird
             {
                 case IndexType::BTREE:
                 {
-                    auto btree = core::BTree::open(db_, index_uuid.bytes, index_info.idx_root_page, ctx);
+                    auto btree = getOrOpenIndex<core::BTree>(index_uuid, type, index_info.idx_root_page, ctx);
                     if (btree)
                     {
                         return btree->search(key, current_xid, results_out, ctx);
@@ -19755,7 +19765,7 @@ namespace scratchbird
 
                 case IndexType::HASH:
                 {
-                    auto hash_idx = core::HashIndex::open(db_, index_uuid.bytes, index_info.idx_root_page, ctx);
+                    auto hash_idx = getOrOpenIndex<core::HashIndex>(index_uuid, type, index_info.idx_root_page, ctx);
                     if (hash_idx)
                     {
                         return hash_idx->search(key, current_xid, results_out, ctx);
@@ -19765,7 +19775,7 @@ namespace scratchbird
 
                 case IndexType::RTREE:
                 {
-                    auto rtree = core::RTreeIndex::open(db_, index_uuid.bytes, index_info.idx_root_page, ctx);
+                    auto rtree = getOrOpenIndex<core::RTreeIndex>(index_uuid, type, index_info.idx_root_page, ctx);
                     if (rtree)
                     {
                         return rtree->search(key, current_xid, results_out, ctx);
@@ -19775,7 +19785,7 @@ namespace scratchbird
 
                 case IndexType::GIST:
                 {
-                    auto gist = core::GistIndex::open(db_, index_uuid.bytes, index_info.idx_root_page, ctx);
+                    auto gist = getOrOpenIndex<core::GistIndex>(index_uuid, type, index_info.idx_root_page, ctx);
                     if (gist)
                     {
                         return gist->search(key, current_xid, results_out, ctx);
@@ -19785,7 +19795,7 @@ namespace scratchbird
 
                 case IndexType::SPGIST:
                 {
-                    auto spgist = core::SpGistIndex::open(db_, index_uuid.bytes, index_info.idx_root_page, ctx);
+                    auto spgist = getOrOpenIndex<core::SpGistIndex>(index_uuid, type, index_info.idx_root_page, ctx);
                     if (spgist)
                     {
                         return spgist->search(key, current_xid, results_out, ctx);
@@ -19795,7 +19805,7 @@ namespace scratchbird
 
                 case IndexType::BRIN:
                 {
-                    auto brin = core::BrinIndex::open(db_, index_uuid.bytes, index_info.idx_root_page, ctx);
+                    auto brin = getOrOpenIndex<core::BrinIndex>(index_uuid, type, index_info.idx_root_page, ctx);
                     if (brin)
                     {
                         return brin->search(key, current_xid, results_out, ctx);
@@ -19805,7 +19815,7 @@ namespace scratchbird
 
                 case IndexType::BITMAP:
                 {
-                    auto bitmap = core::BitmapIndex::open(db_, index_uuid.bytes, index_info.idx_root_page, ctx);
+                    auto bitmap = getOrOpenIndex<core::BitmapIndex>(index_uuid, type, index_info.idx_root_page, ctx);
                     if (bitmap)
                     {
                         return bitmap->scan(key, current_xid, results_out, ctx);
@@ -19815,7 +19825,7 @@ namespace scratchbird
 
                 case IndexType::LSM:
                 {
-                    auto lsm = core::LSMTree::open(db_, index_uuid.bytes, index_info.idx_root_page, ctx);
+                    auto lsm = getOrOpenIndex<core::LSMTree>(index_uuid, type, index_info.idx_root_page, ctx);
                     if (lsm)
                     {
                         core::TID result_tid;
@@ -19863,7 +19873,7 @@ namespace scratchbird
             {
                 case IndexType::BTREE:
                 {
-                    auto btree = core::BTree::open(db_, index_uuid.bytes, index_info.idx_root_page, ctx);
+                    auto btree = getOrOpenIndex<core::BTree>(index_uuid, type, index_info.idx_root_page, ctx);
                     if (btree)
                     {
                         // B-Tree has markDeleted() for MGA-compliant soft deletion
@@ -19874,7 +19884,7 @@ namespace scratchbird
 
                 case IndexType::HASH:
                 {
-                    auto hash_idx = core::HashIndex::open(db_, index_uuid.bytes, index_info.idx_root_page, ctx);
+                    auto hash_idx = getOrOpenIndex<core::HashIndex>(index_uuid, type, index_info.idx_root_page, ctx);
                     if (hash_idx)
                     {
                         return hash_idx->remove(key, tid, xmax, ctx);
@@ -19884,7 +19894,7 @@ namespace scratchbird
 
                 case IndexType::RTREE:
                 {
-                    auto rtree = core::RTreeIndex::open(db_, index_uuid.bytes, index_info.idx_root_page, ctx);
+                    auto rtree = getOrOpenIndex<core::RTreeIndex>(index_uuid, type, index_info.idx_root_page, ctx);
                     if (rtree)
                     {
                         return rtree->remove(key, tid, xmax, ctx);
@@ -19894,7 +19904,7 @@ namespace scratchbird
 
                 case IndexType::GIST:
                 {
-                    auto gist = core::GistIndex::open(db_, index_uuid.bytes, index_info.idx_root_page, ctx);
+                    auto gist = getOrOpenIndex<core::GistIndex>(index_uuid, type, index_info.idx_root_page, ctx);
                     if (gist)
                     {
                         return gist->remove(key, tid, xmax, ctx);
@@ -19904,7 +19914,7 @@ namespace scratchbird
 
                 case IndexType::SPGIST:
                 {
-                    auto spgist = core::SpGistIndex::open(db_, index_uuid.bytes, index_info.idx_root_page, ctx);
+                    auto spgist = getOrOpenIndex<core::SpGistIndex>(index_uuid, type, index_info.idx_root_page, ctx);
                     if (spgist)
                     {
                         return spgist->remove(key, tid, xmax, ctx);
@@ -19914,7 +19924,7 @@ namespace scratchbird
 
                 case IndexType::BRIN:
                 {
-                    auto brin = core::BrinIndex::open(db_, index_uuid.bytes, index_info.idx_root_page, ctx);
+                    auto brin = getOrOpenIndex<core::BrinIndex>(index_uuid, type, index_info.idx_root_page, ctx);
                     if (brin)
                     {
                         // BRIN remove is a no-op (returns OK)
@@ -19925,7 +19935,7 @@ namespace scratchbird
 
                 case IndexType::BITMAP:
                 {
-                    auto bitmap = core::BitmapIndex::open(db_, index_uuid.bytes, index_info.idx_root_page, ctx);
+                    auto bitmap = getOrOpenIndex<core::BitmapIndex>(index_uuid, type, index_info.idx_root_page, ctx);
                     if (bitmap)
                     {
                         return bitmap->remove(key, tid, xmax, ctx);
@@ -19935,7 +19945,7 @@ namespace scratchbird
 
                 case IndexType::LSM:
                 {
-                    auto lsm = core::LSMTree::open(db_, index_uuid.bytes, index_info.idx_root_page, ctx);
+                    auto lsm = getOrOpenIndex<core::LSMTree>(index_uuid, type, index_info.idx_root_page, ctx);
                     if (lsm)
                     {
                         return lsm->remove(key, tid, xmax, ctx);
@@ -19980,7 +19990,7 @@ namespace scratchbird
             {
                 case IndexType::BTREE:
                 {
-                    auto btree = core::BTree::open(db_, index_uuid.bytes, index_info.idx_root_page, ctx);
+                    auto btree = getOrOpenIndex<core::BTree>(index_uuid, type, index_info.idx_root_page, ctx);
                     if (btree)
                     {
                         // Use B-Tree rangeScan() to get an iterator
@@ -20010,7 +20020,7 @@ namespace scratchbird
 
                 case IndexType::RTREE:
                 {
-                    auto rtree = core::RTreeIndex::open(db_, index_uuid.bytes, index_info.idx_root_page, ctx);
+                    auto rtree = getOrOpenIndex<core::RTreeIndex>(index_uuid, type, index_info.idx_root_page, ctx);
                     if (rtree)
                     {
                         // R-Tree spatial scan
@@ -20030,7 +20040,7 @@ namespace scratchbird
 
                 case IndexType::GIST:
                 {
-                    auto gist = core::GistIndex::open(db_, index_uuid.bytes, index_info.idx_root_page, ctx);
+                    auto gist = getOrOpenIndex<core::GistIndex>(index_uuid, type, index_info.idx_root_page, ctx);
                     if (gist)
                     {
                         // GiST spatial/generalized scan
@@ -20048,7 +20058,7 @@ namespace scratchbird
 
                 case IndexType::SPGIST:
                 {
-                    auto spgist = core::SpGistIndex::open(db_, index_uuid.bytes, index_info.idx_root_page, ctx);
+                    auto spgist = getOrOpenIndex<core::SpGistIndex>(index_uuid, type, index_info.idx_root_page, ctx);
                     if (spgist)
                     {
                         // SP-GiST scan
@@ -20066,7 +20076,7 @@ namespace scratchbird
 
                 case IndexType::BRIN:
                 {
-                    auto brin = core::BrinIndex::open(db_, index_uuid.bytes, index_info.idx_root_page, ctx);
+                    auto brin = getOrOpenIndex<core::BrinIndex>(index_uuid, type, index_info.idx_root_page, ctx);
                     if (brin)
                     {
                         // BRIN block range scan
@@ -20086,7 +20096,7 @@ namespace scratchbird
 
                 case IndexType::BITMAP:
                 {
-                    auto bitmap = core::BitmapIndex::open(db_, index_uuid.bytes, index_info.idx_root_page, ctx);
+                    auto bitmap = getOrOpenIndex<core::BitmapIndex>(index_uuid, type, index_info.idx_root_page, ctx);
                     if (bitmap)
                     {
                         // Bitmap scan for matching bits
@@ -20104,7 +20114,7 @@ namespace scratchbird
 
                 case IndexType::LSM:
                 {
-                    auto lsm = core::LSMTree::open(db_, index_uuid.bytes, index_info.idx_root_page, ctx);
+                    auto lsm = getOrOpenIndex<core::LSMTree>(index_uuid, type, index_info.idx_root_page, ctx);
                     if (lsm)
                     {
                         // LSM-Tree range scan
