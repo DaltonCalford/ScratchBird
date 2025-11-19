@@ -648,6 +648,156 @@ TEST_F(TypeConversionTest, Varchar_ToInterval_Invalid) {
     EXPECT_FALSE(interval_val.has_value());
 }
 
+// ===== String-to-INT128 Tests =====
+
+TEST_F(TypeConversionTest, Varchar_ToInt128_Valid) {
+    auto varchar_val = TypedValue::makeVarchar("123456789012345678901234567890");
+    auto int128_val = varchar_val.convertTo(DataType::INT128, &ctx);
+    ASSERT_TRUE(int128_val.has_value());
+    // Note: Can't easily test exact value without int128 comparison operators
+    EXPECT_EQ(int128_val->type(), DataType::INT128);
+}
+
+TEST_F(TypeConversionTest, Varchar_ToInt128_Negative) {
+    auto varchar_val = TypedValue::makeVarchar("-999999999999999999");
+    auto int128_val = varchar_val.convertTo(DataType::INT128, &ctx);
+    ASSERT_TRUE(int128_val.has_value());
+    EXPECT_EQ(int128_val->type(), DataType::INT128);
+}
+
+TEST_F(TypeConversionTest, Varchar_ToInt128_Zero) {
+    auto varchar_val = TypedValue::makeVarchar("0");
+    auto int128_val = varchar_val.convertTo(DataType::INT128, &ctx);
+    ASSERT_TRUE(int128_val.has_value());
+    EXPECT_EQ(int128_val->type(), DataType::INT128);
+}
+
+TEST_F(TypeConversionTest, Varchar_ToInt128_Invalid) {
+    auto varchar_val = TypedValue::makeVarchar("not_a_number");
+    auto int128_val = varchar_val.convertTo(DataType::INT128, &ctx);
+    EXPECT_FALSE(int128_val.has_value());
+}
+
+// ===== String-to-UINT Tests =====
+
+TEST_F(TypeConversionTest, Varchar_ToUInt8_Valid) {
+    auto varchar_val = TypedValue::makeVarchar("255");
+    auto uint8_val = varchar_val.convertTo(DataType::UINT8, &ctx);
+    ASSERT_TRUE(uint8_val.has_value());
+    EXPECT_EQ(uint8_val->getUInt8(), 255);
+}
+
+TEST_F(TypeConversionTest, Varchar_ToUInt8_Zero) {
+    auto varchar_val = TypedValue::makeVarchar("0");
+    auto uint8_val = varchar_val.convertTo(DataType::UINT8, &ctx);
+    ASSERT_TRUE(uint8_val.has_value());
+    EXPECT_EQ(uint8_val->getUInt8(), 0);
+}
+
+TEST_F(TypeConversionTest, Varchar_ToUInt8_Overflow) {
+    auto varchar_val = TypedValue::makeVarchar("256");
+    auto uint8_val = varchar_val.convertTo(DataType::UINT8, &ctx);
+    EXPECT_FALSE(uint8_val.has_value());
+}
+
+TEST_F(TypeConversionTest, Varchar_ToUInt16_Valid) {
+    auto varchar_val = TypedValue::makeVarchar("65535");
+    auto uint16_val = varchar_val.convertTo(DataType::UINT16, &ctx);
+    ASSERT_TRUE(uint16_val.has_value());
+    EXPECT_EQ(uint16_val->getUInt16(), 65535);
+}
+
+TEST_F(TypeConversionTest, Varchar_ToUInt16_Overflow) {
+    auto varchar_val = TypedValue::makeVarchar("65536");
+    auto uint16_val = varchar_val.convertTo(DataType::UINT16, &ctx);
+    EXPECT_FALSE(uint16_val.has_value());
+}
+
+TEST_F(TypeConversionTest, Varchar_ToUInt32_Valid) {
+    auto varchar_val = TypedValue::makeVarchar("4294967295");
+    auto uint32_val = varchar_val.convertTo(DataType::UINT32, &ctx);
+    ASSERT_TRUE(uint32_val.has_value());
+    EXPECT_EQ(uint32_val->getUInt32(), 4294967295U);
+}
+
+TEST_F(TypeConversionTest, Varchar_ToUInt32_Small) {
+    auto varchar_val = TypedValue::makeVarchar("12345");
+    auto uint32_val = varchar_val.convertTo(DataType::UINT32, &ctx);
+    ASSERT_TRUE(uint32_val.has_value());
+    EXPECT_EQ(uint32_val->getUInt32(), 12345U);
+}
+
+TEST_F(TypeConversionTest, Varchar_ToUInt64_Valid) {
+    auto varchar_val = TypedValue::makeVarchar("18446744073709551615");
+    auto uint64_val = varchar_val.convertTo(DataType::UINT64, &ctx);
+    ASSERT_TRUE(uint64_val.has_value());
+    EXPECT_EQ(uint64_val->getUInt64(), 18446744073709551615ULL);
+}
+
+TEST_F(TypeConversionTest, Varchar_ToUInt64_Small) {
+    auto varchar_val = TypedValue::makeVarchar("123456");
+    auto uint64_val = varchar_val.convertTo(DataType::UINT64, &ctx);
+    ASSERT_TRUE(uint64_val.has_value());
+    EXPECT_EQ(uint64_val->getUInt64(), 123456ULL);
+}
+
+// ===== String-to-MONEY Tests =====
+
+TEST_F(TypeConversionTest, Varchar_ToMoney_DollarSign) {
+    auto varchar_val = TypedValue::makeVarchar("$123.45");
+    auto money_val = varchar_val.convertTo(DataType::MONEY, &ctx);
+    ASSERT_TRUE(money_val.has_value());
+    EXPECT_EQ(money_val->getMoney(), 12345); // 123.45 * 100 = 12345 cents
+}
+
+TEST_F(TypeConversionTest, Varchar_ToMoney_NoDollarSign) {
+    auto varchar_val = TypedValue::makeVarchar("456.78");
+    auto money_val = varchar_val.convertTo(DataType::MONEY, &ctx);
+    ASSERT_TRUE(money_val.has_value());
+    EXPECT_EQ(money_val->getMoney(), 45678); // 456.78 * 100 = 45678 cents
+}
+
+TEST_F(TypeConversionTest, Varchar_ToMoney_Negative) {
+    auto varchar_val = TypedValue::makeVarchar("-$50.25");
+    auto money_val = varchar_val.convertTo(DataType::MONEY, &ctx);
+    ASSERT_TRUE(money_val.has_value());
+    EXPECT_EQ(money_val->getMoney(), -5025); // -50.25 * 100 = -5025 cents
+}
+
+TEST_F(TypeConversionTest, Varchar_ToMoney_NegativeNoDollar) {
+    auto varchar_val = TypedValue::makeVarchar("-75.99");
+    auto money_val = varchar_val.convertTo(DataType::MONEY, &ctx);
+    ASSERT_TRUE(money_val.has_value());
+    EXPECT_EQ(money_val->getMoney(), -7599);
+}
+
+TEST_F(TypeConversionTest, Varchar_ToMoney_Zero) {
+    auto varchar_val = TypedValue::makeVarchar("$0.00");
+    auto money_val = varchar_val.convertTo(DataType::MONEY, &ctx);
+    ASSERT_TRUE(money_val.has_value());
+    EXPECT_EQ(money_val->getMoney(), 0);
+}
+
+TEST_F(TypeConversionTest, Varchar_ToMoney_Integer) {
+    auto varchar_val = TypedValue::makeVarchar("100");
+    auto money_val = varchar_val.convertTo(DataType::MONEY, &ctx);
+    ASSERT_TRUE(money_val.has_value());
+    EXPECT_EQ(money_val->getMoney(), 10000); // 100.00 * 100 = 10000 cents
+}
+
+TEST_F(TypeConversionTest, Varchar_ToMoney_WithSpaces) {
+    auto varchar_val = TypedValue::makeVarchar("  $  123.45  ");
+    auto money_val = varchar_val.convertTo(DataType::MONEY, &ctx);
+    ASSERT_TRUE(money_val.has_value());
+    EXPECT_EQ(money_val->getMoney(), 12345);
+}
+
+TEST_F(TypeConversionTest, Varchar_ToMoney_Invalid) {
+    auto varchar_val = TypedValue::makeVarchar("not_money");
+    auto money_val = varchar_val.convertTo(DataType::MONEY, &ctx);
+    EXPECT_FALSE(money_val.has_value());
+}
+
 int main(int argc, char **argv) {
     ::testing::InitGoogleTest(&argc, argv);
     return RUN_ALL_TESTS();

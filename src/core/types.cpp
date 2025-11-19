@@ -1839,6 +1839,196 @@ namespace scratchbird::core
         }
     }
 
+    auto TypeConverter::stringToInt128(const std::string &str, ErrorContext *ctx)
+        -> std::optional<int128_t>
+    {
+        try
+        {
+            // Parse string as int128_t
+            // Handle sign
+            size_t pos = 0;
+            bool negative = false;
+            if (!str.empty() && str[0] == '-')
+            {
+                negative = true;
+                pos = 1;
+            }
+            else if (!str.empty() && str[0] == '+')
+            {
+                pos = 1;
+            }
+
+            if (pos >= str.size())
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Invalid INT128 value");
+                return std::nullopt;
+            }
+
+            int128_t result = 0;
+            for (; pos < str.size(); ++pos)
+            {
+                if (!std::isdigit(str[pos]))
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Invalid INT128 value");
+                    return std::nullopt;
+                }
+
+                int digit = str[pos] - '0';
+
+                // Check for overflow before multiplying
+                const int128_t max_div_10 = std::numeric_limits<int128_t>::max() / 10;
+                if (result > max_div_10)
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Value out of range for INT128");
+                    return std::nullopt;
+                }
+
+                result = result * 10 + digit;
+            }
+
+            return negative ? -result : result;
+        }
+        catch (...)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Invalid INT128 value");
+            return std::nullopt;
+        }
+    }
+
+    auto TypeConverter::stringToUInt8(const std::string &str, ErrorContext *ctx)
+        -> std::optional<uint8_t>
+    {
+        try
+        {
+            unsigned long val = std::stoul(str);
+            if (val > 255)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Value out of range for UINT8");
+                return std::nullopt;
+            }
+            return static_cast<uint8_t>(val);
+        }
+        catch (...)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Invalid UINT8 value");
+            return std::nullopt;
+        }
+    }
+
+    auto TypeConverter::stringToUInt16(const std::string &str, ErrorContext *ctx)
+        -> std::optional<uint16_t>
+    {
+        try
+        {
+            unsigned long val = std::stoul(str);
+            if (val > 65535)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Value out of range for UINT16");
+                return std::nullopt;
+            }
+            return static_cast<uint16_t>(val);
+        }
+        catch (...)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Invalid UINT16 value");
+            return std::nullopt;
+        }
+    }
+
+    auto TypeConverter::stringToUInt32(const std::string &str, ErrorContext *ctx)
+        -> std::optional<uint32_t>
+    {
+        try
+        {
+            unsigned long val = std::stoul(str);
+            // On some platforms, unsigned long might be 64-bit
+            if (val > std::numeric_limits<uint32_t>::max())
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Value out of range for UINT32");
+                return std::nullopt;
+            }
+            return static_cast<uint32_t>(val);
+        }
+        catch (...)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Invalid UINT32 value");
+            return std::nullopt;
+        }
+    }
+
+    auto TypeConverter::stringToUInt64(const std::string &str, ErrorContext *ctx)
+        -> std::optional<uint64_t>
+    {
+        try
+        {
+            return std::stoull(str);
+        }
+        catch (...)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Invalid UINT64 value");
+            return std::nullopt;
+        }
+    }
+
+    auto TypeConverter::stringToMoney(const std::string &str, ErrorContext *ctx)
+        -> std::optional<int64_t>
+    {
+        try
+        {
+            // Parse money string - supports formats like:
+            // "$123.45", "123.45", "-$50.25", "-50.25"
+            std::string clean_str = str;
+
+            // Remove whitespace
+            clean_str.erase(std::remove_if(clean_str.begin(), clean_str.end(), ::isspace), clean_str.end());
+
+            if (clean_str.empty())
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Invalid MONEY value");
+                return std::nullopt;
+            }
+
+            // Handle sign
+            bool negative = false;
+            size_t pos = 0;
+            if (clean_str[0] == '-')
+            {
+                negative = true;
+                pos = 1;
+            }
+            else if (clean_str[0] == '+')
+            {
+                pos = 1;
+            }
+
+            // Remove currency symbol if present
+            if (pos < clean_str.size() && clean_str[pos] == '$')
+            {
+                pos++;
+            }
+
+            if (pos >= clean_str.size())
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Invalid MONEY value");
+                return std::nullopt;
+            }
+
+            // Parse the number part
+            std::string num_str = clean_str.substr(pos);
+            double value = std::stod(num_str);
+
+            // Convert to cents (multiply by 100 and round)
+            int64_t cents = static_cast<int64_t>(std::round(value * 100.0));
+
+            return negative ? -cents : cents;
+        }
+        catch (...)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Invalid MONEY value");
+            return std::nullopt;
+        }
+    }
+
     auto TypeConverter::stringToFloat32(const std::string &str, ErrorContext *ctx)
         -> std::optional<float>
     {
