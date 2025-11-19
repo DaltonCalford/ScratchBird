@@ -574,6 +574,14 @@ namespace scratchbird
             EXT_INDEX_STATS = 0x13,        // Get index statistics
             EXT_INDEX_REINDEX = 0x14,      // Rebuild index
 
+            // Specialized Index Operations (0x28-0x2F) - For indexes with unique APIs
+            EXT_GIN_INSERT = 0x28,         // GIN insert (value, tid, xmin, extractor_id)
+            EXT_GIN_SEARCH = 0x29,         // GIN search (query, current_xid, extractor_id)
+            EXT_HNSW_INSERT = 0x2A,        // HNSW insert (vector, tid, xmin)
+            EXT_HNSW_SEARCH = 0x2B,        // HNSW k-NN search (vector, k, current_xid)
+            EXT_COLUMNSTORE_INSERT = 0x2C, // Columnstore insert column
+            EXT_COLUMNSTORE_SCAN = 0x2D,   // Columnstore scan column
+
             // Bit manipulation - Byte/Bit access (0x06-0x09)
             EXT_GET_BYTE = 0x06,           // GET_BYTE(bytes, offset) - extract byte at offset
             EXT_SET_BYTE = 0x07,           // SET_BYTE(bytes, offset, value) - set byte at offset

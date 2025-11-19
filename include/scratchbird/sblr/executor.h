@@ -718,6 +718,14 @@ namespace scratchbird
             void executeIndexScan();     // EXT_INDEX_SCAN - Range scan index
             void executeIndexDelete();   // EXT_INDEX_DELETE - Delete from index (MGA logical)
 
+            // Specialized index operations (for indexes with unique APIs)
+            void executeGinInsert();     // EXT_GIN_INSERT - GIN insert with key extractor
+            void executeGinSearch();     // EXT_GIN_SEARCH - GIN search with key extractor
+            void executeHnswInsert();    // EXT_HNSW_INSERT - HNSW insert with vector
+            void executeHnswSearch();    // EXT_HNSW_SEARCH - HNSW k-NN search
+            void executeColumnstoreInsert();  // EXT_COLUMNSTORE_INSERT - Insert column
+            void executeColumnstoreScan();    // EXT_COLUMNSTORE_SCAN - Scan column
+
             // Index operation helpers
             core::Status routeIndexInsert(IndexType type, const core::ID& index_uuid,
                                         const std::vector<uint8_t>& key,
@@ -731,6 +739,13 @@ namespace scratchbird
             core::Status routeIndexDelete(IndexType type, const core::ID& index_uuid,
                                         const std::vector<uint8_t>& key,
                                         const core::TID& tid, uint64_t xmax,
+                                        core::ErrorContext* ctx);
+            core::Status routeIndexScan(IndexType type, const core::ID& index_uuid,
+                                        const std::vector<uint8_t>* start_key,
+                                        const std::vector<uint8_t>* end_key,
+                                        bool start_inclusive, bool end_inclusive,
+                                        uint64_t current_xid,
+                                        std::vector<core::TID>* results_out,
                                         core::ErrorContext* ctx);
 
         public:

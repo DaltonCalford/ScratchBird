@@ -13010,6 +13010,31 @@ namespace scratchbird
                     {
                         executeIndexDelete();
                     }
+                    // Specialized index operations
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_GIN_INSERT))
+                    {
+                        executeGinInsert();
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_GIN_SEARCH))
+                    {
+                        executeGinSearch();
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_HNSW_INSERT))
+                    {
+                        executeHnswInsert();
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_HNSW_SEARCH))
+                    {
+                        executeHnswSearch();
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_COLUMNSTORE_INSERT))
+                    {
+                        executeColumnstoreInsert();
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_COLUMNSTORE_SCAN))
+                    {
+                        executeColumnstoreScan();
+                    }
                     else
                     {
                         error("Unknown extended opcode: " + std::to_string(ext_op));
@@ -18817,9 +18842,120 @@ namespace scratchbird
 
         void Executor::executeIndexScan()
         {
-            // TODO: Implement range scan execution
-            // Similar pattern to executeIndexSearch but with start/end keys
-            error("EXT_INDEX_SCAN not yet implemented");
+            // Read index UUID (16 bytes)
+            core::ID index_uuid;
+            for (int i = 0; i < 16; i++)
+            {
+                if (pc_ >= bytecode_.size())
+                {
+                    error("Incomplete index UUID in EXT_INDEX_SCAN");
+                    return;
+                }
+                index_uuid.bytes[i] = bytecode_[pc_++];
+            }
+
+            // Read index type (1 byte)
+            if (pc_ >= bytecode_.size())
+            {
+                error("Missing index type in EXT_INDEX_SCAN");
+                return;
+            }
+            IndexType index_type = static_cast<IndexType>(bytecode_[pc_++]);
+
+            // Read start key length (2 bytes, little-endian)
+            if (pc_ + 1 >= bytecode_.size())
+            {
+                error("Incomplete start key length in EXT_INDEX_SCAN");
+                return;
+            }
+            uint16_t start_key_len = bytecode_[pc_++];
+            start_key_len |= (static_cast<uint16_t>(bytecode_[pc_++]) << 8);
+
+            // Read start key (if not unbounded)
+            std::vector<uint8_t> start_key_data;
+            const std::vector<uint8_t>* start_key_ptr = nullptr;
+            if (start_key_len != 0xFFFF)
+            {
+                if (pc_ + start_key_len > bytecode_.size())
+                {
+                    error("Incomplete start key data in EXT_INDEX_SCAN");
+                    return;
+                }
+                start_key_data.resize(start_key_len);
+                for (uint16_t i = 0; i < start_key_len; i++)
+                {
+                    start_key_data[i] = bytecode_[pc_++];
+                }
+                start_key_ptr = &start_key_data;
+            }
+
+            // Read end key length (2 bytes, little-endian)
+            if (pc_ + 1 >= bytecode_.size())
+            {
+                error("Incomplete end key length in EXT_INDEX_SCAN");
+                return;
+            }
+            uint16_t end_key_len = bytecode_[pc_++];
+            end_key_len |= (static_cast<uint16_t>(bytecode_[pc_++]) << 8);
+
+            // Read end key (if not unbounded)
+            std::vector<uint8_t> end_key_data;
+            const std::vector<uint8_t>* end_key_ptr = nullptr;
+            if (end_key_len != 0xFFFF)
+            {
+                if (pc_ + end_key_len > bytecode_.size())
+                {
+                    error("Incomplete end key data in EXT_INDEX_SCAN");
+                    return;
+                }
+                end_key_data.resize(end_key_len);
+                for (uint16_t i = 0; i < end_key_len; i++)
+                {
+                    end_key_data[i] = bytecode_[pc_++];
+                }
+                end_key_ptr = &end_key_data;
+            }
+
+            // Read flags (1 byte)
+            if (pc_ >= bytecode_.size())
+            {
+                error("Missing flags in EXT_INDEX_SCAN");
+                return;
+            }
+            uint8_t flags = bytecode_[pc_++];
+            bool start_inclusive = (flags & 0x01) != 0;
+            bool end_inclusive = (flags & 0x02) != 0;
+
+            // Read current_xid (8 bytes, little-endian)
+            if (pc_ + 7 >= bytecode_.size())
+            {
+                error("Incomplete current_xid in EXT_INDEX_SCAN");
+                return;
+            }
+            uint64_t current_xid = 0;
+            for (int i = 0; i < 8; i++)
+            {
+                current_xid |= (static_cast<uint64_t>(bytecode_[pc_++]) << (i * 8));
+            }
+
+            // Route to appropriate index implementation
+            std::vector<core::TID> results;
+            core::ErrorContext err_ctx;
+            core::Status status = routeIndexScan(index_type, index_uuid, start_key_ptr, end_key_ptr,
+                                                start_inclusive, end_inclusive, current_xid,
+                                                &results, &err_ctx);
+
+            if (status != core::Status::OK)
+            {
+                error("Index scan failed: " + std::string(err_ctx.message));
+                return;
+            }
+
+            // Push results count onto stack
+            push(Value::makeInt64(static_cast<int64_t>(results.size())));
+
+            // Store results in execution context for subsequent operations
+            // (Implementation-dependent: could push array, store in temp table, etc.)
         }
 
         void Executor::executeIndexDelete()
@@ -18897,6 +19033,584 @@ namespace scratchbird
             {
                 error("Index delete failed: " + std::string(err_ctx.message));
             }
+        }
+
+        // ============================================================================
+        // SPECIALIZED INDEX OPERATIONS (November 19, 2025)
+        // Operations for indexes with unique APIs (GIN, HNSW, Columnstore)
+        // ============================================================================
+
+        void Executor::executeGinInsert()
+        {
+            // GIN INSERT Bytecode Format:
+            // - Index UUID (16 bytes)
+            // - Value length (2 bytes)
+            // - Value data (variable)
+            // - TID: GPID (8 bytes) + slot (2 bytes)
+            // - xmin (8 bytes)
+            // - Extractor ID (2 bytes) - identifies the key extraction function
+
+            // Read index UUID (16 bytes)
+            core::ID index_uuid;
+            for (int i = 0; i < 16; i++)
+            {
+                if (pc_ >= bytecode_.size())
+                {
+                    error("Incomplete index UUID in EXT_GIN_INSERT");
+                    return;
+                }
+                index_uuid.bytes[i] = bytecode_[pc_++];
+            }
+
+            // Read value length (2 bytes, little-endian)
+            if (pc_ + 1 >= bytecode_.size())
+            {
+                error("Incomplete value length in EXT_GIN_INSERT");
+                return;
+            }
+            uint16_t value_len = bytecode_[pc_++];
+            value_len |= (static_cast<uint16_t>(bytecode_[pc_++]) << 8);
+
+            // Read value data
+            if (pc_ + value_len > bytecode_.size())
+            {
+                error("Incomplete value data in EXT_GIN_INSERT");
+                return;
+            }
+            std::vector<uint8_t> value(bytecode_.begin() + pc_, bytecode_.begin() + pc_ + value_len);
+            pc_ += value_len;
+
+            // Read TID (10 bytes: GPID 8 + slot 2)
+            if (pc_ + 10 > bytecode_.size())
+            {
+                error("Incomplete TID in EXT_GIN_INSERT");
+                return;
+            }
+            uint64_t gpid = 0;
+            for (int i = 0; i < 8; i++)
+            {
+                gpid |= (static_cast<uint64_t>(bytecode_[pc_++]) << (i * 8));
+            }
+            uint16_t slot = bytecode_[pc_++];
+            slot |= (static_cast<uint16_t>(bytecode_[pc_++]) << 8);
+            core::TID tid(gpid, slot);
+
+            // Read xmin (8 bytes, little-endian)
+            if (pc_ + 7 >= bytecode_.size())
+            {
+                error("Incomplete xmin in EXT_GIN_INSERT");
+                return;
+            }
+            uint64_t xmin = 0;
+            for (int i = 0; i < 8; i++)
+            {
+                xmin |= (static_cast<uint64_t>(bytecode_[pc_++]) << (i * 8));
+            }
+
+            // Read extractor ID (2 bytes)
+            if (pc_ + 1 >= bytecode_.size())
+            {
+                error("Incomplete extractor ID in EXT_GIN_INSERT");
+                return;
+            }
+            uint16_t extractor_id = bytecode_[pc_++];
+            extractor_id |= (static_cast<uint16_t>(bytecode_[pc_++]) << 8);
+
+            // Get the key extractor function from registry
+            // NOTE: This assumes a key extractor registry exists
+            // For now, we'll use a placeholder implementation
+            core::ErrorContext err_ctx;
+            auto index_info_opt = db_->catalog_manager()->getIndex(index_uuid, &err_ctx);
+            if (!index_info_opt.has_value())
+            {
+                error("Index not found: " + std::string(err_ctx.message));
+                return;
+            }
+            auto& index_info = index_info_opt.value();
+
+            auto gin = core::GinIndex::open(db_, index_uuid.bytes, index_info.idx_root_page, &err_ctx);
+            if (!gin)
+            {
+                error("Failed to open GIN index");
+                return;
+            }
+
+            // TODO: Implement key extractor registry and lookup
+            // For now, use the default key extractor
+            core::Status status = gin->insert(value, tid, xmin, nullptr, &err_ctx);
+
+            if (status != core::Status::OK)
+            {
+                error("GIN insert failed: " + std::string(err_ctx.message));
+            }
+        }
+
+        void Executor::executeGinSearch()
+        {
+            // GIN SEARCH Bytecode Format:
+            // - Index UUID (16 bytes)
+            // - Query length (2 bytes)
+            // - Query data (variable)
+            // - current_xid (8 bytes)
+            // - Extractor ID (2 bytes)
+
+            // Read index UUID (16 bytes)
+            core::ID index_uuid;
+            for (int i = 0; i < 16; i++)
+            {
+                if (pc_ >= bytecode_.size())
+                {
+                    error("Incomplete index UUID in EXT_GIN_SEARCH");
+                    return;
+                }
+                index_uuid.bytes[i] = bytecode_[pc_++];
+            }
+
+            // Read query length (2 bytes, little-endian)
+            if (pc_ + 1 >= bytecode_.size())
+            {
+                error("Incomplete query length in EXT_GIN_SEARCH");
+                return;
+            }
+            uint16_t query_len = bytecode_[pc_++];
+            query_len |= (static_cast<uint16_t>(bytecode_[pc_++]) << 8);
+
+            // Read query data
+            if (pc_ + query_len > bytecode_.size())
+            {
+                error("Incomplete query data in EXT_GIN_SEARCH");
+                return;
+            }
+            std::vector<uint8_t> query(bytecode_.begin() + pc_, bytecode_.begin() + pc_ + query_len);
+            pc_ += query_len;
+
+            // Read current_xid (8 bytes, little-endian)
+            if (pc_ + 7 >= bytecode_.size())
+            {
+                error("Incomplete current_xid in EXT_GIN_SEARCH");
+                return;
+            }
+            uint64_t current_xid = 0;
+            for (int i = 0; i < 8; i++)
+            {
+                current_xid |= (static_cast<uint64_t>(bytecode_[pc_++]) << (i * 8));
+            }
+
+            // Read extractor ID (2 bytes)
+            if (pc_ + 1 >= bytecode_.size())
+            {
+                error("Incomplete extractor ID in EXT_GIN_SEARCH");
+                return;
+            }
+            uint16_t extractor_id = bytecode_[pc_++];
+            extractor_id |= (static_cast<uint16_t>(bytecode_[pc_++]) << 8);
+
+            // Open GIN index and perform search
+            core::ErrorContext err_ctx;
+            auto index_info_opt = db_->catalog_manager()->getIndex(index_uuid, &err_ctx);
+            if (!index_info_opt.has_value())
+            {
+                error("Index not found: " + std::string(err_ctx.message));
+                return;
+            }
+            auto& index_info = index_info_opt.value();
+
+            auto gin = core::GinIndex::open(db_, index_uuid.bytes, index_info.idx_root_page, &err_ctx);
+            if (!gin)
+            {
+                error("Failed to open GIN index");
+                return;
+            }
+
+            std::vector<core::TID> results;
+            // TODO: Implement key extractor registry
+            core::Status status = gin->search(query, current_xid, &results, nullptr, &err_ctx);
+
+            if (status != core::Status::OK)
+            {
+                error("GIN search failed: " + std::string(err_ctx.message));
+                return;
+            }
+
+            // Push results count onto stack
+            push(Value::makeInt64(static_cast<int64_t>(results.size())));
+        }
+
+        void Executor::executeHnswInsert()
+        {
+            // HNSW INSERT Bytecode Format:
+            // - Index UUID (16 bytes)
+            // - Vector dimension (2 bytes)
+            // - Vector data (dimension * 4 bytes for float32)
+            // - TID: GPID (8 bytes) + slot (2 bytes)
+            // - xmin (8 bytes)
+
+            // Read index UUID (16 bytes)
+            core::ID index_uuid;
+            for (int i = 0; i < 16; i++)
+            {
+                if (pc_ >= bytecode_.size())
+                {
+                    error("Incomplete index UUID in EXT_HNSW_INSERT");
+                    return;
+                }
+                index_uuid.bytes[i] = bytecode_[pc_++];
+            }
+
+            // Read vector dimension (2 bytes, little-endian)
+            if (pc_ + 1 >= bytecode_.size())
+            {
+                error("Incomplete vector dimension in EXT_HNSW_INSERT");
+                return;
+            }
+            uint16_t dimension = bytecode_[pc_++];
+            dimension |= (static_cast<uint16_t>(bytecode_[pc_++]) << 8);
+
+            // Read vector data (dimension * 4 bytes for float32)
+            uint32_t vector_bytes = dimension * 4;
+            if (pc_ + vector_bytes > bytecode_.size())
+            {
+                error("Incomplete vector data in EXT_HNSW_INSERT");
+                return;
+            }
+            std::vector<float> vector_data(dimension);
+            for (uint16_t i = 0; i < dimension; i++)
+            {
+                uint32_t float_bits = 0;
+                for (int j = 0; j < 4; j++)
+                {
+                    float_bits |= (static_cast<uint32_t>(bytecode_[pc_++]) << (j * 8));
+                }
+                // Reinterpret bits as float
+                std::memcpy(&vector_data[i], &float_bits, sizeof(float));
+            }
+
+            // Read TID (10 bytes: GPID 8 + slot 2)
+            if (pc_ + 10 > bytecode_.size())
+            {
+                error("Incomplete TID in EXT_HNSW_INSERT");
+                return;
+            }
+            uint64_t gpid = 0;
+            for (int i = 0; i < 8; i++)
+            {
+                gpid |= (static_cast<uint64_t>(bytecode_[pc_++]) << (i * 8));
+            }
+            uint16_t slot = bytecode_[pc_++];
+            slot |= (static_cast<uint16_t>(bytecode_[pc_++]) << 8);
+            core::TID tid(gpid, slot);
+
+            // Read xmin (8 bytes, little-endian)
+            if (pc_ + 7 >= bytecode_.size())
+            {
+                error("Incomplete xmin in EXT_HNSW_INSERT");
+                return;
+            }
+            uint64_t xmin = 0;
+            for (int i = 0; i < 8; i++)
+            {
+                xmin |= (static_cast<uint64_t>(bytecode_[pc_++]) << (i * 8));
+            }
+
+            // Create VectorValue and insert into HNSW index
+            core::ErrorContext err_ctx;
+            auto index_info_opt = db_->catalog_manager()->getIndex(index_uuid, &err_ctx);
+            if (!index_info_opt.has_value())
+            {
+                error("Index not found: " + std::string(err_ctx.message));
+                return;
+            }
+            auto& index_info = index_info_opt.value();
+
+            auto hnsw = core::HnswIndex::open(db_, index_uuid.bytes, index_info.idx_root_page, &err_ctx);
+            if (!hnsw)
+            {
+                error("Failed to open HNSW index");
+                return;
+            }
+
+            // Create VectorValue
+            core::VectorValue vec(dimension, core::VectorDataType::FLOAT32, vector_data.data());
+
+            core::Status status = hnsw->insert(vec, tid, xmin, &err_ctx);
+
+            if (status != core::Status::OK)
+            {
+                error("HNSW insert failed: " + std::string(err_ctx.message));
+            }
+        }
+
+        void Executor::executeHnswSearch()
+        {
+            // HNSW SEARCH Bytecode Format:
+            // - Index UUID (16 bytes)
+            // - Vector dimension (2 bytes)
+            // - Vector data (dimension * 4 bytes for float32)
+            // - k (2 bytes) - number of nearest neighbors
+            // - current_xid (8 bytes)
+
+            // Read index UUID (16 bytes)
+            core::ID index_uuid;
+            for (int i = 0; i < 16; i++)
+            {
+                if (pc_ >= bytecode_.size())
+                {
+                    error("Incomplete index UUID in EXT_HNSW_SEARCH");
+                    return;
+                }
+                index_uuid.bytes[i] = bytecode_[pc_++];
+            }
+
+            // Read vector dimension (2 bytes, little-endian)
+            if (pc_ + 1 >= bytecode_.size())
+            {
+                error("Incomplete vector dimension in EXT_HNSW_SEARCH");
+                return;
+            }
+            uint16_t dimension = bytecode_[pc_++];
+            dimension |= (static_cast<uint16_t>(bytecode_[pc_++]) << 8);
+
+            // Read vector data (dimension * 4 bytes for float32)
+            uint32_t vector_bytes = dimension * 4;
+            if (pc_ + vector_bytes > bytecode_.size())
+            {
+                error("Incomplete vector data in EXT_HNSW_SEARCH");
+                return;
+            }
+            std::vector<float> vector_data(dimension);
+            for (uint16_t i = 0; i < dimension; i++)
+            {
+                uint32_t float_bits = 0;
+                for (int j = 0; j < 4; j++)
+                {
+                    float_bits |= (static_cast<uint32_t>(bytecode_[pc_++]) << (j * 8));
+                }
+                std::memcpy(&vector_data[i], &float_bits, sizeof(float));
+            }
+
+            // Read k (2 bytes, little-endian)
+            if (pc_ + 1 >= bytecode_.size())
+            {
+                error("Incomplete k in EXT_HNSW_SEARCH");
+                return;
+            }
+            uint16_t k = bytecode_[pc_++];
+            k |= (static_cast<uint16_t>(bytecode_[pc_++]) << 8);
+
+            // Read current_xid (8 bytes, little-endian)
+            if (pc_ + 7 >= bytecode_.size())
+            {
+                error("Incomplete current_xid in EXT_HNSW_SEARCH");
+                return;
+            }
+            uint64_t current_xid = 0;
+            for (int i = 0; i < 8; i++)
+            {
+                current_xid |= (static_cast<uint64_t>(bytecode_[pc_++]) << (i * 8));
+            }
+
+            // Open HNSW index and perform k-NN search
+            core::ErrorContext err_ctx;
+            auto index_info_opt = db_->catalog_manager()->getIndex(index_uuid, &err_ctx);
+            if (!index_info_opt.has_value())
+            {
+                error("Index not found: " + std::string(err_ctx.message));
+                return;
+            }
+            auto& index_info = index_info_opt.value();
+
+            auto hnsw = core::HnswIndex::open(db_, index_uuid.bytes, index_info.idx_root_page, &err_ctx);
+            if (!hnsw)
+            {
+                error("Failed to open HNSW index");
+                return;
+            }
+
+            // Create VectorValue for query
+            core::VectorValue query_vec(dimension, core::VectorDataType::FLOAT32, vector_data.data());
+
+            std::vector<core::TID> results;
+            core::Status status = hnsw->search(query_vec, k, current_xid, &results, &err_ctx);
+
+            if (status != core::Status::OK)
+            {
+                error("HNSW search failed: " + std::string(err_ctx.message));
+                return;
+            }
+
+            // Push results count onto stack
+            push(Value::makeInt64(static_cast<int64_t>(results.size())));
+        }
+
+        void Executor::executeColumnstoreInsert()
+        {
+            // COLUMNSTORE INSERT Bytecode Format:
+            // - Index UUID (16 bytes)
+            // - Column ID (2 bytes)
+            // - Row count (4 bytes)
+            // - Column data length (4 bytes)
+            // - Column data (variable)
+
+            // Read index UUID (16 bytes)
+            core::ID index_uuid;
+            for (int i = 0; i < 16; i++)
+            {
+                if (pc_ >= bytecode_.size())
+                {
+                    error("Incomplete index UUID in EXT_COLUMNSTORE_INSERT");
+                    return;
+                }
+                index_uuid.bytes[i] = bytecode_[pc_++];
+            }
+
+            // Read column ID (2 bytes, little-endian)
+            if (pc_ + 1 >= bytecode_.size())
+            {
+                error("Incomplete column ID in EXT_COLUMNSTORE_INSERT");
+                return;
+            }
+            uint16_t column_id = bytecode_[pc_++];
+            column_id |= (static_cast<uint16_t>(bytecode_[pc_++]) << 8);
+
+            // Read row count (4 bytes, little-endian)
+            if (pc_ + 3 >= bytecode_.size())
+            {
+                error("Incomplete row count in EXT_COLUMNSTORE_INSERT");
+                return;
+            }
+            uint32_t row_count = 0;
+            for (int i = 0; i < 4; i++)
+            {
+                row_count |= (static_cast<uint32_t>(bytecode_[pc_++]) << (i * 8));
+            }
+
+            // Read data length (4 bytes, little-endian)
+            if (pc_ + 3 >= bytecode_.size())
+            {
+                error("Incomplete data length in EXT_COLUMNSTORE_INSERT");
+                return;
+            }
+            uint32_t data_len = 0;
+            for (int i = 0; i < 4; i++)
+            {
+                data_len |= (static_cast<uint32_t>(bytecode_[pc_++]) << (i * 8));
+            }
+
+            // Read column data
+            if (pc_ + data_len > bytecode_.size())
+            {
+                error("Incomplete column data in EXT_COLUMNSTORE_INSERT");
+                return;
+            }
+            std::vector<uint8_t> column_data(bytecode_.begin() + pc_, bytecode_.begin() + pc_ + data_len);
+            pc_ += data_len;
+
+            // Open columnstore index and insert
+            core::ErrorContext err_ctx;
+            auto index_info_opt = db_->catalog_manager()->getIndex(index_uuid, &err_ctx);
+            if (!index_info_opt.has_value())
+            {
+                error("Index not found: " + std::string(err_ctx.message));
+                return;
+            }
+            auto& index_info = index_info_opt.value();
+
+            auto columnstore = core::ColumnstoreIndex::open(db_, index_uuid.bytes, index_info.idx_root_page, &err_ctx);
+            if (!columnstore)
+            {
+                error("Failed to open Columnstore index");
+                return;
+            }
+
+            core::Status status = columnstore->insertColumn(column_id, row_count, column_data, &err_ctx);
+
+            if (status != core::Status::OK)
+            {
+                error("Columnstore insert failed: " + std::string(err_ctx.message));
+            }
+        }
+
+        void Executor::executeColumnstoreScan()
+        {
+            // COLUMNSTORE SCAN Bytecode Format:
+            // - Index UUID (16 bytes)
+            // - Column ID (2 bytes)
+            // - Start row (4 bytes)
+            // - End row (4 bytes)
+
+            // Read index UUID (16 bytes)
+            core::ID index_uuid;
+            for (int i = 0; i < 16; i++)
+            {
+                if (pc_ >= bytecode_.size())
+                {
+                    error("Incomplete index UUID in EXT_COLUMNSTORE_SCAN");
+                    return;
+                }
+                index_uuid.bytes[i] = bytecode_[pc_++];
+            }
+
+            // Read column ID (2 bytes, little-endian)
+            if (pc_ + 1 >= bytecode_.size())
+            {
+                error("Incomplete column ID in EXT_COLUMNSTORE_SCAN");
+                return;
+            }
+            uint16_t column_id = bytecode_[pc_++];
+            column_id |= (static_cast<uint16_t>(bytecode_[pc_++]) << 8);
+
+            // Read start row (4 bytes, little-endian)
+            if (pc_ + 3 >= bytecode_.size())
+            {
+                error("Incomplete start row in EXT_COLUMNSTORE_SCAN");
+                return;
+            }
+            uint32_t start_row = 0;
+            for (int i = 0; i < 4; i++)
+            {
+                start_row |= (static_cast<uint32_t>(bytecode_[pc_++]) << (i * 8));
+            }
+
+            // Read end row (4 bytes, little-endian)
+            if (pc_ + 3 >= bytecode_.size())
+            {
+                error("Incomplete end row in EXT_COLUMNSTORE_SCAN");
+                return;
+            }
+            uint32_t end_row = 0;
+            for (int i = 0; i < 4; i++)
+            {
+                end_row |= (static_cast<uint32_t>(bytecode_[pc_++]) << (i * 8));
+            }
+
+            // Open columnstore index and scan
+            core::ErrorContext err_ctx;
+            auto index_info_opt = db_->catalog_manager()->getIndex(index_uuid, &err_ctx);
+            if (!index_info_opt.has_value())
+            {
+                error("Index not found: " + std::string(err_ctx.message));
+                return;
+            }
+            auto& index_info = index_info_opt.value();
+
+            auto columnstore = core::ColumnstoreIndex::open(db_, index_uuid.bytes, index_info.idx_root_page, &err_ctx);
+            if (!columnstore)
+            {
+                error("Failed to open Columnstore index");
+                return;
+            }
+
+            std::vector<uint8_t> result_data;
+            core::Status status = columnstore->scanColumn(column_id, start_row, end_row, &result_data, &err_ctx);
+
+            if (status != core::Status::OK)
+            {
+                error("Columnstore scan failed: " + std::string(err_ctx.message));
+                return;
+            }
+
+            // Push result data length onto stack
+            push(Value::makeInt64(static_cast<int64_t>(result_data.size())));
         }
 
         // Index routing helpers - route to specific index implementations
@@ -19228,6 +19942,201 @@ namespace scratchbird
                     }
                     return core::Status::INTERNAL_ERROR;
                 }
+
+                case IndexType::GIN:
+                case IndexType::HNSW:
+                case IndexType::COLUMNSTORE:
+                    // These require special handling
+                    core::SET_ERROR_CONTEXT(ctx, core::Status::NOT_IMPLEMENTED,
+                                          "Index type not yet supported via bytecode");
+                    return core::Status::NOT_IMPLEMENTED;
+
+                default:
+                    core::SET_ERROR_CONTEXT(ctx, core::Status::INTERNAL_ERROR, "Unknown index type");
+                    return core::Status::INTERNAL_ERROR;
+            }
+        }
+
+        core::Status Executor::routeIndexScan(IndexType type, const core::ID& index_uuid,
+                                             const std::vector<uint8_t>* start_key,
+                                             const std::vector<uint8_t>* end_key,
+                                             bool start_inclusive, bool end_inclusive,
+                                             uint64_t current_xid,
+                                             std::vector<core::TID>* results_out,
+                                             core::ErrorContext* ctx)
+        {
+            // Get index info from catalog
+            auto index_info_opt = db_->catalog_manager()->getIndex(index_uuid, ctx);
+            if (!index_info_opt.has_value())
+            {
+                core::SET_ERROR_CONTEXT(ctx, core::Status::INDEX_NOT_FOUND, "Index not found");
+                return core::Status::INDEX_NOT_FOUND;
+            }
+            auto& index_info = index_info_opt.value();
+
+            // Route to appropriate index type
+            // Only indexes that support range scans are routed
+            switch (type)
+            {
+                case IndexType::BTREE:
+                {
+                    auto btree = core::BTree::open(db_, index_uuid.bytes, index_info.idx_root_page, ctx);
+                    if (btree)
+                    {
+                        // Use B-Tree rangeScan() to get an iterator
+                        auto iter = btree->rangeScan(start_key, end_key, current_xid,
+                                                    start_inclusive, end_inclusive, ctx);
+                        if (!iter)
+                        {
+                            core::SET_ERROR_CONTEXT(ctx, core::Status::INTERNAL_ERROR,
+                                                  "Failed to create B-Tree iterator");
+                            return core::Status::INTERNAL_ERROR;
+                        }
+
+                        // Collect results from iterator
+                        results_out->clear();
+                        while (iter->hasNext())
+                        {
+                            auto entry = iter->next();
+                            if (entry.has_value())
+                            {
+                                results_out->push_back(entry.value().tid);
+                            }
+                        }
+                        return core::Status::OK;
+                    }
+                    return core::Status::INTERNAL_ERROR;
+                }
+
+                case IndexType::RTREE:
+                {
+                    auto rtree = core::RTreeIndex::open(db_, index_uuid.bytes, index_info.idx_root_page, ctx);
+                    if (rtree)
+                    {
+                        // R-Tree spatial scan
+                        // For R-Tree, start_key and end_key represent the bounding box
+                        if (!start_key || !end_key)
+                        {
+                            core::SET_ERROR_CONTEXT(ctx, core::Status::INVALID_ARGUMENT,
+                                                  "R-Tree scan requires bounding box (start and end keys)");
+                            return core::Status::INVALID_ARGUMENT;
+                        }
+
+                        // Use search() with bounding box
+                        return rtree->search(*start_key, current_xid, results_out, ctx);
+                    }
+                    return core::Status::INTERNAL_ERROR;
+                }
+
+                case IndexType::GIST:
+                {
+                    auto gist = core::GistIndex::open(db_, index_uuid.bytes, index_info.idx_root_page, ctx);
+                    if (gist)
+                    {
+                        // GiST spatial/generalized scan
+                        if (!start_key)
+                        {
+                            core::SET_ERROR_CONTEXT(ctx, core::Status::INVALID_ARGUMENT,
+                                                  "GiST scan requires search predicate");
+                            return core::Status::INVALID_ARGUMENT;
+                        }
+
+                        return gist->search(*start_key, current_xid, results_out, ctx);
+                    }
+                    return core::Status::INTERNAL_ERROR;
+                }
+
+                case IndexType::SPGIST:
+                {
+                    auto spgist = core::SpGistIndex::open(db_, index_uuid.bytes, index_info.idx_root_page, ctx);
+                    if (spgist)
+                    {
+                        // SP-GiST scan
+                        if (!start_key)
+                        {
+                            core::SET_ERROR_CONTEXT(ctx, core::Status::INVALID_ARGUMENT,
+                                                  "SP-GiST scan requires search predicate");
+                            return core::Status::INVALID_ARGUMENT;
+                        }
+
+                        return spgist->search(*start_key, current_xid, results_out, ctx);
+                    }
+                    return core::Status::INTERNAL_ERROR;
+                }
+
+                case IndexType::BRIN:
+                {
+                    auto brin = core::BrinIndex::open(db_, index_uuid.bytes, index_info.idx_root_page, ctx);
+                    if (brin)
+                    {
+                        // BRIN block range scan
+                        if (!start_key || !end_key)
+                        {
+                            core::SET_ERROR_CONTEXT(ctx, core::Status::INVALID_ARGUMENT,
+                                                  "BRIN scan requires value range");
+                            return core::Status::INVALID_ARGUMENT;
+                        }
+
+                        // BRIN returns block numbers that might contain values in range
+                        // For now, use search() with start_key
+                        return brin->search(*start_key, current_xid, results_out, ctx);
+                    }
+                    return core::Status::INTERNAL_ERROR;
+                }
+
+                case IndexType::BITMAP:
+                {
+                    auto bitmap = core::BitmapIndex::open(db_, index_uuid.bytes, index_info.idx_root_page, ctx);
+                    if (bitmap)
+                    {
+                        // Bitmap scan for matching bits
+                        if (!start_key)
+                        {
+                            core::SET_ERROR_CONTEXT(ctx, core::Status::INVALID_ARGUMENT,
+                                                  "Bitmap scan requires value");
+                            return core::Status::INVALID_ARGUMENT;
+                        }
+
+                        return bitmap->scan(*start_key, current_xid, results_out, ctx);
+                    }
+                    return core::Status::INTERNAL_ERROR;
+                }
+
+                case IndexType::LSM:
+                {
+                    auto lsm = core::LSMTree::open(db_, index_uuid.bytes, index_info.idx_root_page, ctx);
+                    if (lsm)
+                    {
+                        // LSM-Tree range scan
+                        auto iter = lsm->rangeScan(start_key, end_key, current_xid,
+                                                  start_inclusive, end_inclusive, ctx);
+                        if (!iter)
+                        {
+                            core::SET_ERROR_CONTEXT(ctx, core::Status::INTERNAL_ERROR,
+                                                  "Failed to create LSM-Tree iterator");
+                            return core::Status::INTERNAL_ERROR;
+                        }
+
+                        // Collect results from iterator
+                        results_out->clear();
+                        while (iter->hasNext())
+                        {
+                            auto entry = iter->next();
+                            if (entry.has_value())
+                            {
+                                results_out->push_back(entry.value().tid);
+                            }
+                        }
+                        return core::Status::OK;
+                    }
+                    return core::Status::INTERNAL_ERROR;
+                }
+
+                case IndexType::HASH:
+                    // Hash indexes don't support range scans
+                    core::SET_ERROR_CONTEXT(ctx, core::Status::NOT_SUPPORTED,
+                                          "Hash indexes do not support range scans");
+                    return core::Status::NOT_SUPPORTED;
 
                 case IndexType::GIN:
                 case IndexType::HNSW:
