@@ -639,6 +639,20 @@ namespace scratchbird
             // ALPHA Phase A: Compare two values for equality (for UNIQUE constraint checking)
             bool valuesEqual(const Value& a, const Value& b);
 
+            // ALPHA Phase A+: Index-based constraint optimization helpers (Nov 19, 2025)
+            // Find an index that covers the specified columns (for constraint checking)
+            // Returns true if suitable index found, false otherwise
+            bool findIndexForColumns(const core::ID& table_id,
+                                    const std::vector<core::ID>& column_ids,
+                                    core::CatalogManager::IndexInfo& index_out);
+
+            // Search an index for matching values (returns TIDs of matching rows)
+            // Returns Status::OK if search succeeded, error otherwise
+            core::Status searchIndexForValues(const core::CatalogManager::IndexInfo& index_info,
+                                            const std::vector<Value>& values,
+                                            uint64_t current_xid,
+                                            std::vector<core::TID>& tids_out);
+
             // ALPHA Phase A: Foreign Key constraint enforcement
             // Check if FK constraint is satisfied on INSERT/UPDATE (child table)
             bool checkForeignKeyExists(const core::ID& parent_table_id,
