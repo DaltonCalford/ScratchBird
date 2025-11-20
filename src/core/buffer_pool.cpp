@@ -727,15 +727,8 @@ namespace scratchbird::core
             return Status::INVALID_ARGUMENT;
         }
 
-        // For Phase 1, only primary tablespace is supported
-        if (tablespace_id != PRIMARY_TABLESPACE_ID)
-        {
-            SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED,
-                            "Custom tablespaces not yet implemented (Phase 1, Task 1.3)");
-            return Status::NOT_IMPLEMENTED;
-        }
-
-        // PHASE 1, TASK 1.2.4: Use Database::allocate_page_id_global() for GPID allocation
+        // Use Database::allocate_page_id_global() for GPID allocation
+        // Supports both primary (0) and custom (1-65535) tablespaces
         GPID new_gpid;
         Status status = db_->allocate_page_id_global(tablespace_id, &new_gpid, ctx);
         if (status != Status::OK)
