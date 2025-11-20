@@ -15,6 +15,14 @@
 #include <chrono>
 #include <unordered_set>
 
+// SECURITY FIX (LOW-8): Use OpenSSL for cryptographically secure random numbers
+#ifdef __has_include
+#if __has_include(<openssl/rand.h>)
+#include <openssl/rand.h>
+#define HAVE_OPENSSL_RAND 1
+#endif
+#endif
+
 namespace scratchbird::optimizer
 {
     // Hash function for std::vector<uint8_t> (for use in unordered_set)
@@ -347,18 +355,38 @@ namespace scratchbird::optimizer
         }
 
         // Initialize random number generator
-        std::random_device rd;
-
-        // SECURITY FIX (LOW-1): Validate entropy and use better seed
+        // SECURITY FIX (LOW-8): Use OpenSSL RAND_bytes for cryptographically secure seed
         uint64_t seed;
-        if (rd.entropy() == 0.0) {
+#ifdef HAVE_OPENSSL_RAND
+        unsigned char seed_bytes[8];
+        if (RAND_bytes(seed_bytes, sizeof(seed_bytes)) == 1)
+        {
+            // Use OpenSSL's cryptographically secure random for seed
+            std::memcpy(&seed, seed_bytes, sizeof(seed));
+            LOG_DEBUG(OPTIMIZER, "Using OpenSSL RAND_bytes for statistics sampling seed");
+        }
+        else
+        {
+            // OpenSSL failed, fall back to random_device
+            LOG_WARN(OPTIMIZER, "OpenSSL RAND_bytes failed, falling back to random_device");
+            std::random_device rd;
+            seed = (static_cast<uint64_t>(rd()) << 32) | rd();
+        }
+#else
+        // OpenSSL not available, use random_device with entropy check
+        std::random_device rd;
+        if (rd.entropy() == 0.0)
+        {
             // Fallback to time-based seed if random_device has zero entropy
             LOG_WARN(OPTIMIZER, "random_device has zero entropy, using time-based seed for statistics sampling");
             seed = std::chrono::high_resolution_clock::now().time_since_epoch().count();
-        } else {
+        }
+        else
+        {
             // Use random_device for seed
             seed = (static_cast<uint64_t>(rd()) << 32) | rd();
         }
+#endif
 
         std::mt19937 gen(seed);
         std::uniform_real_distribution<double> uniform_real(0.0, 1.0);
