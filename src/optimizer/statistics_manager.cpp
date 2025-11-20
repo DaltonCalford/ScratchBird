@@ -12,6 +12,7 @@
 #include <cmath>
 #include <cstring>
 #include <ctime>
+#include <chrono>
 #include <unordered_set>
 
 namespace scratchbird::optimizer
@@ -347,7 +348,19 @@ namespace scratchbird::optimizer
 
         // Initialize random number generator
         std::random_device rd;
-        std::mt19937 gen(rd());
+
+        // SECURITY FIX (LOW-1): Validate entropy and use better seed
+        uint64_t seed;
+        if (rd.entropy() == 0.0) {
+            // Fallback to time-based seed if random_device has zero entropy
+            LOG_WARN(OPTIMIZER, "random_device has zero entropy, using time-based seed for statistics sampling");
+            seed = std::chrono::high_resolution_clock::now().time_since_epoch().count();
+        } else {
+            // Use random_device for seed
+            seed = (static_cast<uint64_t>(rd()) << 32) | rd();
+        }
+
+        std::mt19937 gen(seed);
         std::uniform_real_distribution<double> uniform_real(0.0, 1.0);
 
         // Phase 1: Fill reservoir with first sample_size rows
