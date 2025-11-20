@@ -42,7 +42,7 @@ Status FullTextIndex::create(Database* db,
     }
 
     // Create underlying GIN index
-    Status status = GinIndex::create(db, index_uuid.bytes, root_page_out, ctx);
+    Status status = GinIndex::create(db, index_uuid, root_page_out, ctx);
     if (status != Status::OK)
     {
         return status;
@@ -66,7 +66,7 @@ std::unique_ptr<FullTextIndex> FullTextIndex::open(Database* db,
     }
 
     // Open underlying GIN index
-    auto gin_index = GinIndex::open(db, index_uuid.bytes, root_page, ctx);
+    auto gin_index = GinIndex::open(db, index_uuid, root_page, ctx);
     if (!gin_index)
     {
         SET_ERROR_CONTEXT(ctx, Status::IO_ERROR,
