@@ -16473,6 +16473,104 @@ namespace scratchbird
             }
         }
 
+        // ALPHA Phase A+: Find an index that covers the specified columns (Nov 19, 2025)
+        // This enables O(log n) constraint checking instead of O(n) table scans
+        bool Executor::findIndexForColumns(const core::ID& table_id,
+                                           const std::vector<core::ID>& column_ids,
+                                           core::CatalogManager::IndexInfo& index_out)
+        {
+            // Get all indexes for the table
+            std::vector<core::CatalogManager::IndexInfo> indexes;
+            auto status = db_->catalog_manager()->listIndexesForTable(table_id, indexes, nullptr);
+            if (status != core::Status::OK)
+            {
+                return false; // No indexes available
+            }
+
+            // Look for an index that exactly matches the columns (in order)
+            for (const auto& index_info : indexes)
+            {
+                // Check if index columns match requested columns
+                if (index_info.column_ids.size() == column_ids.size())
+                {
+                    bool all_match = true;
+                    for (size_t i = 0; i < column_ids.size(); i++)
+                    {
+                        if (index_info.column_ids[i] != column_ids[i])
+                        {
+                            all_match = false;
+                            break;
+                        }
+                    }
+
+                    if (all_match)
+                    {
+                        // Found a matching index
+                        // Prefer B-Tree and Hash indexes for equality searches
+                        if (index_info.index_type == core::CatalogManager::IndexType::BTREE ||
+                            index_info.index_type == core::CatalogManager::IndexType::HASH)
+                        {
+                            index_out = index_info;
+                            return true;
+                        }
+                    }
+                }
+            }
+
+            // No exact match found - check if we can use a prefix of a composite index
+            // For single-column searches, we can use the first column of a composite index
+            if (column_ids.size() == 1)
+            {
+                for (const auto& index_info : indexes)
+                {
+                    if (!index_info.column_ids.empty() &&
+                        index_info.column_ids[0] == column_ids[0])
+                    {
+                        // First column matches - can use this index
+                        if (index_info.index_type == core::CatalogManager::IndexType::BTREE ||
+                            index_info.index_type == core::CatalogManager::IndexType::HASH)
+                        {
+                            index_out = index_info;
+                            return true;
+                        }
+                    }
+                }
+            }
+
+            return false; // No suitable index found
+        }
+
+        // ALPHA Phase A+: Search an index for matching values (Nov 19, 2025)
+        // Returns TIDs of rows that match the specified values
+        core::Status Executor::searchIndexForValues(const core::CatalogManager::IndexInfo& index_info,
+                                                    const std::vector<Value>& values,
+                                                    uint64_t current_xid,
+                                                    std::vector<core::TID>& tids_out)
+        {
+            // Build index key from values
+            std::vector<uint8_t> key_bytes;
+            serializeIndexKey(values, key_bytes);
+
+            // Use the routeIndexSearch helper to search the appropriate index type
+            core::ErrorContext ctx;
+            auto status = routeIndexSearch(
+                index_info.index_type,
+                index_info.index_id,
+                key_bytes,
+                current_xid,
+                &tids_out,
+                &ctx
+            );
+
+            if (status != core::Status::OK)
+            {
+                DEBUG_LOG_DB("Index search failed for index " << index_info.index_name
+                           << ": " << ctx.message);
+            }
+
+            return status;
+        }
+
         // ALPHA Phase A: Evaluate CHECK constraint for a column
         // Returns true if constraint passes, false if it fails
         bool Executor::evaluateCheckConstraint(const core::CatalogManager::ColumnInfo& column,
@@ -16523,13 +16621,52 @@ namespace scratchbird
             return result;
         }
 
-        // ALPHA Phase A: Check for UNIQUE constraint violation
+        // ALPHA Phase A+: Check for UNIQUE constraint violation (optimized with indexes, Nov 19, 2025)
         // Returns true if a duplicate value exists (violation), false if value is unique
         bool Executor::checkUniqueViolation(const core::ID& table_id,
                                             const core::CatalogManager::ColumnInfo& column,
                                             const Value& value,
                                             const std::vector<core::CatalogManager::ColumnInfo>& all_columns)
         {
+            // OPTIMIZATION: Try to use an index for O(log n) lookup instead of O(n) scan
+            core::CatalogManager::IndexInfo index_info;
+            std::vector<core::ID> column_ids = { column.column_id };
+
+            if (findIndexForColumns(table_id, column_ids, index_info))
+            {
+                // Found an index! Use it for fast lookup
+                DEBUG_LOG_DB("UNIQUE constraint check using index '" << index_info.index_name
+                           << "' for column " << column.column_name);
+
+                std::vector<Value> search_values = { value };
+                std::vector<core::TID> matching_tids;
+                uint64_t current_xid = db_->storage_engine()->getCurrentXid();
+
+                auto status = searchIndexForValues(index_info, search_values, current_xid, matching_tids);
+
+                if (status == core::Status::OK)
+                {
+                    // Index search succeeded - check if any rows found
+                    bool has_duplicate = !matching_tids.empty();
+
+                    if (has_duplicate)
+                    {
+                        DEBUG_LOG_DB("UNIQUE violation detected via index: found "
+                                   << matching_tids.size() << " matching row(s)");
+                    }
+
+                    return has_duplicate;
+                }
+                else
+                {
+                    // Index search failed - fall through to sequential scan
+                    DEBUG_LOG_DB("Index search failed, falling back to sequential scan");
+                }
+            }
+
+            // FALLBACK: No suitable index found or index search failed - use sequential scan
+            DEBUG_LOG_DB("UNIQUE constraint check using sequential scan for column " << column.column_name);
+
             // Get column index
             size_t col_index = 0;
             for (size_t i = 0; i < all_columns.size(); i++)
@@ -16576,7 +16713,7 @@ namespace scratchbird
             return false;
         }
 
-        // ALPHA Phase A: Check for UNIQUE constraint violation during UPDATE
+        // ALPHA Phase A+: Check for UNIQUE constraint violation during UPDATE (optimized, Nov 19, 2025)
         // Similar to checkUniqueViolation, but excludes the row being updated (identified by TID)
         bool Executor::checkUniqueViolationForUpdate(const core::ID& table_id,
                                                      const core::CatalogManager::ColumnInfo& column,
@@ -16584,6 +16721,54 @@ namespace scratchbird
                                                      const std::vector<core::CatalogManager::ColumnInfo>& all_columns,
                                                      const core::TID& exclude_tid)
         {
+            // OPTIMIZATION: Try to use an index for O(log n) lookup instead of O(n) scan
+            core::CatalogManager::IndexInfo index_info;
+            std::vector<core::ID> column_ids = { column.column_id };
+
+            if (findIndexForColumns(table_id, column_ids, index_info))
+            {
+                // Found an index! Use it for fast lookup
+                DEBUG_LOG_DB("UNIQUE constraint check (UPDATE) using index '" << index_info.index_name
+                           << "' for column " << column.column_name);
+
+                std::vector<Value> search_values = { value };
+                std::vector<core::TID> matching_tids;
+                uint64_t current_xid = db_->storage_engine()->getCurrentXid();
+
+                auto status = searchIndexForValues(index_info, search_values, current_xid, matching_tids);
+
+                if (status == core::Status::OK)
+                {
+                    // Index search succeeded - check if any rows found (excluding the one being updated)
+                    bool has_duplicate = false;
+                    for (const auto& tid : matching_tids)
+                    {
+                        // Skip the row being updated
+                        if (tid.gpid != exclude_tid.gpid || tid.slot != exclude_tid.slot)
+                        {
+                            has_duplicate = true;
+                            break;
+                        }
+                    }
+
+                    if (has_duplicate)
+                    {
+                        DEBUG_LOG_DB("UNIQUE violation detected via index (UPDATE): found duplicate(s) "
+                                   << "excluding TID " << exclude_tid.value());
+                    }
+
+                    return has_duplicate;
+                }
+                else
+                {
+                    // Index search failed - fall through to sequential scan
+                    DEBUG_LOG_DB("Index search failed, falling back to sequential scan");
+                }
+            }
+
+            // FALLBACK: No suitable index found or index search failed - use sequential scan
+            DEBUG_LOG_DB("UNIQUE constraint check (UPDATE) using sequential scan for column " << column.column_name);
+
             // Get column index
             size_t col_index = 0;
             for (size_t i = 0; i < all_columns.size(); i++)
@@ -16671,7 +16856,7 @@ namespace scratchbird
             }
         }
 
-        // ALPHA Phase A: Check if FK constraint is satisfied (referenced value exists)
+        // ALPHA Phase A+: Check if FK constraint is satisfied (optimized with indexes, Nov 19, 2025)
         // Returns true if the FK value(s) exist in the parent table, false otherwise
         bool Executor::checkForeignKeyExists(const core::ID& parent_table_id,
                                             const std::vector<std::string>& parent_columns,
@@ -16687,7 +16872,8 @@ namespace scratchbird
                 }
             }
 
-            // Get parent column indices
+            // Get parent column IDs (for index lookup) and indices (for fallback scan)
+            std::vector<core::ID> parent_col_ids;
             std::vector<size_t> parent_col_indices;
             for (const auto& col_name : parent_columns)
             {
@@ -16695,11 +16881,52 @@ namespace scratchbird
                 {
                     if (parent_cols[i].column_name == col_name)
                     {
+                        parent_col_ids.push_back(parent_cols[i].column_id);
                         parent_col_indices.push_back(i);
                         break;
                     }
                 }
             }
+
+            // OPTIMIZATION: Try to use an index on the parent table for O(log n) lookup
+            core::CatalogManager::IndexInfo index_info;
+            if (findIndexForColumns(parent_table_id, parent_col_ids, index_info))
+            {
+                // Found an index! Use it for fast lookup
+                DEBUG_LOG_DB("FK constraint check using index '" << index_info.index_name
+                           << "' on parent table");
+
+                std::vector<core::TID> matching_tids;
+                uint64_t current_xid = db_->storage_engine()->getCurrentXid();
+
+                auto status = searchIndexForValues(index_info, fk_values, current_xid, matching_tids);
+
+                if (status == core::Status::OK)
+                {
+                    // Index search succeeded - check if any matching rows found
+                    bool exists = !matching_tids.empty();
+
+                    if (exists)
+                    {
+                        DEBUG_LOG_DB("FK constraint satisfied via index: found "
+                                   << matching_tids.size() << " matching parent row(s)");
+                    }
+                    else
+                    {
+                        DEBUG_LOG_DB("FK violation detected via index: no matching parent row");
+                    }
+
+                    return exists;
+                }
+                else
+                {
+                    // Index search failed - fall through to sequential scan
+                    DEBUG_LOG_DB("Index search failed, falling back to sequential scan");
+                }
+            }
+
+            // FALLBACK: No suitable index found or index search failed - use sequential scan
+            DEBUG_LOG_DB("FK constraint check using sequential scan on parent table");
 
             // Scan parent table to find matching row
             auto scan_iter = db_->storage_engine()->createScan(parent_table_id, nullptr);
@@ -16775,7 +17002,8 @@ namespace scratchbird
                     error("Failed to get child columns for FK enforcement");
                 }
 
-                // Build column index map for FK columns
+                // Build column ID and index maps for FK columns
+                std::vector<core::ID> fk_col_ids;
                 std::vector<size_t> fk_col_indices;
                 for (const auto& col_name : fk.child_columns)
                 {
@@ -16784,6 +17012,7 @@ namespace scratchbird
                     {
                         if (child_columns[i].column_name == col_name)
                         {
+                            fk_col_ids.push_back(child_columns[i].column_id);
                             fk_col_indices.push_back(i);
                             found = true;
                             break;
@@ -16795,46 +17024,76 @@ namespace scratchbird
                     }
                 }
 
-                // Scan child table for matching rows
+                // OPTIMIZATION: Try to use an index on the child table for O(log n) lookup
                 std::vector<core::TID> matching_tids;
-                auto scan_iter = db_->storage_engine()->createScan(fk.child_table_id, nullptr);
-                if (!scan_iter)
+                core::CatalogManager::IndexInfo child_index_info;
+
+                if (findIndexForColumns(fk.child_table_id, fk_col_ids, child_index_info))
                 {
-                    error("Failed to create scan for child table");
+                    // Found an index! Use it for fast lookup of referencing child rows
+                    DEBUG_LOG_DB("FK CASCADE using index '" << child_index_info.index_name
+                               << "' on child table " << child_table.table_name);
+
+                    uint64_t current_xid = db_->storage_engine()->getCurrentXid();
+                    auto status = searchIndexForValues(child_index_info, deleted_key_values, current_xid, matching_tids);
+
+                    if (status != core::Status::OK)
+                    {
+                        // Index search failed - fall through to sequential scan
+                        DEBUG_LOG_DB("Index search failed for CASCADE, falling back to sequential scan");
+                        matching_tids.clear();  // Clear partial results
+                    }
+                    else
+                    {
+                        DEBUG_LOG_DB("FK CASCADE found " << matching_tids.size()
+                                   << " referencing child rows via index");
+                    }
                 }
 
-                core::Tuple tuple;
-                while (scan_iter->next(&tuple, nullptr) == core::Status::OK)
+                // FALLBACK: No suitable index or index search failed - use sequential scan
+                if (matching_tids.empty())
                 {
-                    std::vector<Value> row_values;
-                    if (!deserializeTuple(tuple.data, tuple.data_size, child_columns, row_values))
+                    DEBUG_LOG_DB("FK CASCADE using sequential scan on child table " << child_table.table_name);
+
+                    auto scan_iter = db_->storage_engine()->createScan(fk.child_table_id, nullptr);
+                    if (!scan_iter)
                     {
-                        continue;
+                        error("Failed to create scan for child table");
                     }
 
-                    // Check if this row references the deleted parent row
-                    bool matches = true;
-                    for (size_t i = 0; i < fk_col_indices.size(); i++)
+                    core::Tuple tuple;
+                    while (scan_iter->next(&tuple, nullptr) == core::Status::OK)
                     {
-                        size_t col_idx = fk_col_indices[i];
-
-                        // MATCH SIMPLE: NULL doesn't count as a reference
-                        if (row_values[col_idx].isNull())
+                        std::vector<Value> row_values;
+                        if (!deserializeTuple(tuple.data, tuple.data_size, child_columns, row_values))
                         {
-                            matches = false;
-                            break;
+                            continue;
                         }
 
-                        if (!valuesEqual(row_values[col_idx], deleted_key_values[i]))
+                        // Check if this row references the deleted parent row
+                        bool matches = true;
+                        for (size_t i = 0; i < fk_col_indices.size(); i++)
                         {
-                            matches = false;
-                            break;
-                        }
-                    }
+                            size_t col_idx = fk_col_indices[i];
 
-                    if (matches)
-                    {
-                        matching_tids.push_back(tuple.tid);
+                            // MATCH SIMPLE: NULL doesn't count as a reference
+                            if (row_values[col_idx].isNull())
+                            {
+                                matches = false;
+                                break;
+                            }
+
+                            if (!valuesEqual(row_values[col_idx], deleted_key_values[i]))
+                            {
+                                matches = false;
+                                break;
+                            }
+                        }
+
+                        if (matches)
+                        {
+                            matching_tids.push_back(tuple.tid);
+                        }
                     }
                 }
 
@@ -17085,7 +17344,8 @@ namespace scratchbird
                     error("Failed to get child columns for FK enforcement");
                 }
 
-                // Build column index map for FK columns
+                // Build column ID and index maps for FK columns
+                std::vector<core::ID> fk_col_ids;
                 std::vector<size_t> fk_col_indices;
                 for (const auto& col_name : fk.child_columns)
                 {
@@ -17094,6 +17354,7 @@ namespace scratchbird
                     {
                         if (child_columns[i].column_name == col_name)
                         {
+                            fk_col_ids.push_back(child_columns[i].column_id);
                             fk_col_indices.push_back(i);
                             found = true;
                             break;
@@ -17105,46 +17366,76 @@ namespace scratchbird
                     }
                 }
 
-                // Scan child table for matching rows
+                // OPTIMIZATION: Try to use an index on the child table for O(log n) lookup
                 std::vector<core::TID> matching_tids;
-                auto scan_iter = db_->storage_engine()->createScan(fk.child_table_id, nullptr);
-                if (!scan_iter)
+                core::CatalogManager::IndexInfo child_index_info;
+
+                if (findIndexForColumns(fk.child_table_id, fk_col_ids, child_index_info))
                 {
-                    error("Failed to create scan for child table");
+                    // Found an index! Use it for fast lookup of referencing child rows
+                    DEBUG_LOG_DB("FK CASCADE UPDATE using index '" << child_index_info.index_name
+                               << "' on child table " << child_table.table_name);
+
+                    uint64_t current_xid = db_->storage_engine()->getCurrentXid();
+                    auto status = searchIndexForValues(child_index_info, old_key_values, current_xid, matching_tids);
+
+                    if (status != core::Status::OK)
+                    {
+                        // Index search failed - fall through to sequential scan
+                        DEBUG_LOG_DB("Index search failed for CASCADE UPDATE, falling back to sequential scan");
+                        matching_tids.clear();  // Clear partial results
+                    }
+                    else
+                    {
+                        DEBUG_LOG_DB("FK CASCADE UPDATE found " << matching_tids.size()
+                                   << " referencing child rows via index");
+                    }
                 }
 
-                core::Tuple tuple;
-                while (scan_iter->next(&tuple, nullptr) == core::Status::OK)
+                // FALLBACK: No suitable index or index search failed - use sequential scan
+                if (matching_tids.empty())
                 {
-                    std::vector<Value> row_values;
-                    if (!deserializeTuple(tuple.data, tuple.data_size, child_columns, row_values))
+                    DEBUG_LOG_DB("FK CASCADE UPDATE using sequential scan on child table " << child_table.table_name);
+
+                    auto scan_iter = db_->storage_engine()->createScan(fk.child_table_id, nullptr);
+                    if (!scan_iter)
                     {
-                        continue;
+                        error("Failed to create scan for child table");
                     }
 
-                    // Check if this row references the OLD parent key
-                    bool matches = true;
-                    for (size_t i = 0; i < fk_col_indices.size(); i++)
+                    core::Tuple tuple;
+                    while (scan_iter->next(&tuple, nullptr) == core::Status::OK)
                     {
-                        size_t col_idx = fk_col_indices[i];
-
-                        // MATCH SIMPLE: NULL doesn't count as a reference
-                        if (row_values[col_idx].isNull())
+                        std::vector<Value> row_values;
+                        if (!deserializeTuple(tuple.data, tuple.data_size, child_columns, row_values))
                         {
-                            matches = false;
-                            break;
+                            continue;
                         }
 
-                        if (!valuesEqual(row_values[col_idx], old_key_values[i]))
+                        // Check if this row references the OLD parent key
+                        bool matches = true;
+                        for (size_t i = 0; i < fk_col_indices.size(); i++)
                         {
-                            matches = false;
-                            break;
-                        }
-                    }
+                            size_t col_idx = fk_col_indices[i];
 
-                    if (matches)
-                    {
-                        matching_tids.push_back(tuple.tid);
+                            // MATCH SIMPLE: NULL doesn't count as a reference
+                            if (row_values[col_idx].isNull())
+                            {
+                                matches = false;
+                                break;
+                            }
+
+                            if (!valuesEqual(row_values[col_idx], old_key_values[i]))
+                            {
+                                matches = false;
+                                break;
+                            }
+                        }
+
+                        if (matches)
+                        {
+                            matching_tids.push_back(tuple.tid);
+                        }
                     }
                 }
 
