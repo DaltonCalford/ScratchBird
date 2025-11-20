@@ -1261,7 +1261,7 @@ namespace scratchbird::core
                         BufferPool *bp = db_->buffer_pool();
                         uint8_t *back_buf = nullptr;
                         uint32_t back_pid = static_cast<uint32_t>(back_page_num);
-                        Status pin_stat = bp->pinPage(back_pid, &back_buf, ctx);
+                        Status pin_stat = bp->pinPage(back_pid, reinterpret_cast<void**>(&back_buf), ctx);
                         if (pin_stat != Status::OK)
                         {
                             return pin_stat;
@@ -1273,13 +1273,13 @@ namespace scratchbird::core
                             uint32_t id;
                             ~Unpin()
                             {
-                                p->unpinPage(id, nullptr);
+                                p->unpinPage(id, false);
                             }
                         };
                         Unpin guard{bp, back_pid};
 
                         // Access back version on other page
-                        if (back_offset + sizeof(TupleHeader) > bp->getConfig().page_size)
+                        if (back_offset + sizeof(TupleHeader) > page_size_)
                         {
                             SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT,
                                               "Back version offset out of bounds (error recovery)");
@@ -1303,7 +1303,7 @@ namespace scratchbird::core
                         if (back_vis)
                         {
                             // Found visible version! Copy to buffer
-                            HeapPage back_pg(back_buf, bp->getConfig().page_size);
+                            HeapPage back_pg(back_buf, page_size_);
                             ItemPointer *back_items =
                                 reinterpret_cast<ItemPointer *>(back_buf + sizeof(PageHeader));
                             auto *back_hdr2 = reinterpret_cast<PageHeader *>(back_buf);
@@ -1322,7 +1322,7 @@ namespace scratchbird::core
                                 back_size = sizeof(TupleHeader);
                             }
 
-                            if (back_size > bp->getConfig().page_size)
+                            if (back_size > page_size_)
                             {
                                 SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "Back version size invalid");
                                 return Status::PAGE_CORRUPT;
@@ -1538,7 +1538,7 @@ namespace scratchbird::core
                     // Pin the back version page
                     uint8_t *back_page_buffer = nullptr;
                     uint32_t back_page_id = static_cast<uint32_t>(back_page_num);
-                    Status pin_status = buffer_pool->pinPage(back_page_id, &back_page_buffer, ctx);
+                    Status pin_status = buffer_pool->pinPage(back_page_id, reinterpret_cast<void**>(&back_page_buffer), ctx);
                     if (pin_status != Status::OK)
                     {
                         return pin_status;
@@ -1551,13 +1551,13 @@ namespace scratchbird::core
                         uint32_t pid;
                         ~BackPageUnpinGuard()
                         {
-                            pool->unpinPage(pid, nullptr);
+                            pool->unpinPage(pid, false);
                         }
                     };
                     BackPageUnpinGuard back_guard{buffer_pool, back_page_id};
 
                     // Wrap the back version page with HeapPage for structured access
-                    HeapPage back_page(back_page_buffer, buffer_pool->getConfig().page_size);
+                    HeapPage back_page(back_page_buffer, page_size_);
 
                     // Get the back version tuple data from the other page
                     const uint8_t *back_tuple_data;
@@ -1571,7 +1571,7 @@ namespace scratchbird::core
                     if (back_status != Status::OK)
                     {
                         // Try to access by offset directly for back versions
-                        if (back_offset + sizeof(TupleHeader) > buffer_pool->getConfig().page_size)
+                        if (back_offset + sizeof(TupleHeader) > page_size_)
                         {
                             SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT,
                                               "Back version offset out of bounds");
@@ -1646,7 +1646,7 @@ namespace scratchbird::core
                         }
 
                         // Validate size is reasonable
-                        if (actual_tuple_size == 0 || actual_tuple_size > buffer_pool->getConfig().page_size)
+                        if (actual_tuple_size == 0 || actual_tuple_size > page_size_)
                         {
                             SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT,
                                               "Cross-page back version has invalid size");
@@ -1688,7 +1688,7 @@ namespace scratchbird::core
                             // We can continue traversing on this page
 
                             // Access the next back version by offset
-                            if (next_back_offset + sizeof(TupleHeader) > buffer_pool->getConfig().page_size)
+                            if (next_back_offset + sizeof(TupleHeader) > page_size_)
                             {
                                 SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT,
                                                   "Next back version offset out of bounds");
@@ -1714,6 +1714,9 @@ namespace scratchbird::core
                                 // Found visible version! Copy it to our buffer
                                 // Determine size (same logic as before)
                                 uint32_t next_tuple_size = 0;
+                                // Get back page header and items for size lookup
+                                const PageHeader *back_header = back_page.header();
+                                const ItemPointer *back_items = back_page.getItemArray();
                                 for (uint16_t idx = 0; idx < back_header->item_count; ++idx)
                                 {
                                     if (back_items[idx].offset == next_back_offset &&
@@ -1729,7 +1732,7 @@ namespace scratchbird::core
                                 }
 
                                 // Validate and copy
-                                if (next_tuple_size > buffer_pool->getConfig().page_size)
+                                if (next_tuple_size > page_size_)
                                 {
                                     SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT,
                                                       "Next back version size invalid");
