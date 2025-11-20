@@ -12,6 +12,7 @@
 #include "scratchbird/core/btree.h"
 #include "scratchbird/core/hash_index.h"
 #include "scratchbird/core/lsm_tree.h"  // LSM Integration Phase 4
+#include "scratchbird/core/rtree_index.h"  // R-Tree DML Integration
 #include "scratchbird/core/toast.h"
 #include "scratchbird/core/garbage_collector.h"
 #include "scratchbird/core/logger.h"
@@ -57,11 +58,9 @@ namespace scratchbird::core
 
                 case CatalogManager::IndexType::LSM:
                 {
-                    auto *lsm = static_cast<LSMTreeIndex*>(index_ptr);
-                    // LSM-Tree stores TID as value
-                    std::vector<uint8_t> tid_bytes(sizeof(TID));
-                    std::memcpy(tid_bytes.data(), &tid, sizeof(TID));
-                    return lsm->put(key, tid_bytes, xid, ctx);
+                    auto *lsm = static_cast<LSMTree*>(index_ptr);
+                    // LSM-Tree: put(key, tid, xmin, ctx)
+                    return lsm->put(key, tid, xid, ctx);
                 }
 
                 case CatalogManager::IndexType::HASH:
@@ -70,10 +69,16 @@ namespace scratchbird::core
                     return hash->insert(key.data(), key.size(), tid, xid, ctx);
                 }
 
+                case CatalogManager::IndexType::RTREE:
+                {
+                    auto *rtree = static_cast<RTreeIndex*>(index_ptr);
+                    // R-Tree insert expects: key (serialized bounding box), tid, xmin
+                    return rtree->insert(key, tid, xid, ctx);
+                }
+
                 case CatalogManager::IndexType::GIN:
                 case CatalogManager::IndexType::GIST:
                 case CatalogManager::IndexType::BRIN:
-                case CatalogManager::IndexType::RTREE:
                 case CatalogManager::IndexType::SPGIST:
                 case CatalogManager::IndexType::BITMAP:
                 case CatalogManager::IndexType::COLUMNSTORE:
@@ -115,9 +120,9 @@ namespace scratchbird::core
 
                 case CatalogManager::IndexType::LSM:
                 {
-                    auto *lsm = static_cast<LSMTreeIndex*>(index_ptr);
-                    // LSM-Tree uses remove() which inserts a tombstone
-                    return lsm->remove(key, xid, ctx);
+                    auto *lsm = static_cast<LSMTree*>(index_ptr);
+                    // LSM-Tree: remove(key, tid, xmax, ctx)
+                    return lsm->remove(key, tid, xid, ctx);
                 }
 
                 case CatalogManager::IndexType::HASH:
@@ -126,10 +131,17 @@ namespace scratchbird::core
                     return hash->remove(key.data(), key.size(), tid, xid, ctx);
                 }
 
+                case CatalogManager::IndexType::RTREE:
+                {
+                    auto *rtree = static_cast<RTreeIndex*>(index_ptr);
+                    // R-Tree remove expects: key (serialized bounding box), tid, xmax
+                    // xid here represents xmax (transaction that deleted the entry)
+                    return rtree->remove(key, tid, xid, ctx);
+                }
+
                 case CatalogManager::IndexType::GIN:
                 case CatalogManager::IndexType::GIST:
                 case CatalogManager::IndexType::BRIN:
-                case CatalogManager::IndexType::RTREE:
                 case CatalogManager::IndexType::SPGIST:
                 case CatalogManager::IndexType::BITMAP:
                 case CatalogManager::IndexType::COLUMNSTORE:
