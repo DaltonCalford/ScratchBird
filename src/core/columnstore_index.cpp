@@ -25,7 +25,12 @@ namespace core {
     {
         // Allocate meta page for segment catalog
         auto page_mgr = db->page_manager();
-        uint32_t meta_page = page_mgr->allocatePage();
+        uint32_t meta_page;
+        Status status = page_mgr->allocatePage(meta_page, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
 
         // Initialize empty segment catalog
         // In production: write empty catalog to meta_page
@@ -48,7 +53,7 @@ namespace core {
 
         // Load segment catalog from meta page
         Status status = index->loadSegmentCatalog(ctx);
-        if (!status.ok())
+        if (status != Status::OK)
         {
             // Empty index is OK
             index->column_segments_.clear();
@@ -65,22 +70,27 @@ namespace core {
         {
             if (ctx)
             {
-                ctx->setError("Empty column data");
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Empty column data");
             }
-            return Status::InvalidArgument;
+            return Status::INVALID_ARGUMENT;
         }
 
         // Compress column data using RLE
         std::vector<uint8_t> compressed;
         Status status = compressRLE(column_data, &compressed, ctx);
-        if (!status.ok())
+        if (status != Status::OK)
         {
             return status;
         }
 
         // Allocate page for compressed data
         auto page_mgr = db_->page_manager();
-        uint32_t data_page = page_mgr->allocatePage();
+        uint32_t data_page;
+        status = page_mgr->allocatePage(data_page, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
 
         // In production: write compressed data to page
         // For now, we track the page number in metadata
@@ -146,9 +156,9 @@ namespace core {
         {
             if (ctx)
             {
-                ctx->setError("Invalid row range");
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Invalid row range");
             }
-            return Status::InvalidArgument;
+            return Status::INVALID_ARGUMENT;
         }
 
         // Find segments covering the requested range
@@ -262,7 +272,7 @@ namespace core {
     {
         if (!compressed)
         {
-            return Status::InvalidArgument;
+            return Status::INVALID_ARGUMENT;
         }
 
         compressed->clear();
@@ -309,7 +319,7 @@ namespace core {
     {
         if (!data)
         {
-            return Status::InvalidArgument;
+            return Status::INVALID_ARGUMENT;
         }
 
         data->clear();
