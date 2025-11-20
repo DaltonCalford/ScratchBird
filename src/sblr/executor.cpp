@@ -31,6 +31,7 @@
 #include "scratchbird/core/btree.h"
 #include "scratchbird/core/hash_index.h"
 #include "scratchbird/core/gin_index.h"
+#include "scratchbird/sblr/gin_extractors.h"  // GIN key extractor registry
 #include "scratchbird/core/gist_index.h"
 #include "scratchbird/core/spgist_index.h"
 #include "scratchbird/core/brin_index.h"
@@ -330,6 +331,12 @@ namespace scratchbird
             {
                 throw std::invalid_argument("Database pointer cannot be null");
             }
+
+            // SECURITY ENHANCEMENT (MEDIUM-3): Initialize query limits with defaults
+            query_limits_ = QueryLimits::defaults();
+            query_start_time_ = std::chrono::steady_clock::now();
+            cte_recursion_depth_ = 0;
+            rows_processed_ = 0;
         }
 
         Executor::~Executor() = default;
@@ -351,6 +358,11 @@ namespace scratchbird
             current_table_.clear();
             current_columns_.clear();
             current_result_set_.reset();
+
+            // SECURITY ENHANCEMENT (MEDIUM-3): Reset query limits for new execution
+            query_start_time_ = std::chrono::steady_clock::now();
+            cte_recursion_depth_ = 0;
+            rows_processed_ = 0;
 
             // Statement snapshot management for READ_COMMITTED_READ_CONSISTENCY
             core::ConnectionContext *conn_ctx = core::ConnectionContext::getCurrent();
@@ -933,7 +945,9 @@ namespace scratchbird
                                 }
                                 catch (const geo::PROJException &e)
                                 {
-                                    error(std::string("ST_Transform failed: ") + e.what());
+                                    // SECURITY FIX (HIGH-1): Log detailed error internally, return generic error to client
+                                    LOG_ERROR(EXECUTION, "ST_Transform failed: %s", e.what());
+                                    error("Spatial transformation failed");
                                 }
 #else
                                 error("ST_Transform requires PROJ library (not available)");
@@ -1698,23 +1712,32 @@ namespace scratchbird
 
             // 3. Deserialize expressions and predicate
             parser::StringPool temp_pool;
+            auto expressions_unique = std::vector<std::unique_ptr<parser::Expression>>();
+            auto predicate_unique = std::unique_ptr<parser::Expression>();
+
+            // Create raw pointer vectors for evaluator (will be cleaned up automatically)
             std::vector<parser::Expression *> expressions;
             parser::Expression *predicate = nullptr;
 
             if (index_info.is_expression_index)
             {
-                expressions = core::ExpressionSerializer::deserializeList(
+                expressions_unique = core::ExpressionSerializer::deserializeList(
                     index_info.expression_data.data(),
                     index_info.expression_data.size(),
                     temp_pool);
+                for (auto& expr : expressions_unique)
+                {
+                    expressions.push_back(expr.get());
+                }
             }
 
             if (index_info.is_partial_index)
             {
-                predicate = core::ExpressionSerializer::deserialize(
+                predicate_unique = core::ExpressionSerializer::deserialize(
                     index_info.predicate_data.data(),
                     index_info.predicate_data.size(),
                     temp_pool);
+                predicate = predicate_unique.get();
             }
 
             // 4. Create expression evaluator
@@ -1930,15 +1953,7 @@ namespace scratchbird
             // Task 17 MGA Phase 2.2: Track index maintenance
             index_stats_.indexes_maintained++;
 
-            // Cleanup deserialized expressions
-            for (auto *expr : expressions)
-            {
-                delete expr;
-            }
-            if (predicate)
-            {
-                delete predicate;
-            }
+            // No manual cleanup needed - unique_ptr handles it automatically
         }
 
         // Task 17 Phase 7: Index maintenance helpers
@@ -1964,31 +1979,37 @@ namespace scratchbird
 
             for (const auto &index_info : indexes)
             {
-                // Skip if not expression/filtered index (handled by existing code)
-                if (!index_info.is_expression_index && !index_info.is_partial_index)
-                {
-                    continue;
-                }
+                // CRITICAL FIX (Nov 20, 2025): Maintain ALL indexes, not just expression/partial
+                // Previous bug: Basic indexes were skipped, causing data integrity violations
 
-                // Deserialize expression/predicate
+                // Deserialize expression/predicate (only if needed)
                 parser::StringPool temp_pool;
+                auto expressions_unique = std::vector<std::unique_ptr<parser::Expression>>();
+                auto predicate_unique = std::unique_ptr<parser::Expression>();
+
+                // Create raw pointer vectors for evaluator (will be cleaned up automatically)
                 std::vector<parser::Expression *> expressions;
                 parser::Expression *predicate = nullptr;
 
                 if (index_info.is_expression_index)
                 {
-                    expressions = core::ExpressionSerializer::deserializeList(
+                    expressions_unique = core::ExpressionSerializer::deserializeList(
                         index_info.expression_data.data(),
                         index_info.expression_data.size(),
                         temp_pool);
+                    for (auto& expr : expressions_unique)
+                    {
+                        expressions.push_back(expr.get());
+                    }
                 }
 
                 if (index_info.is_partial_index)
                 {
-                    predicate = core::ExpressionSerializer::deserialize(
+                    predicate_unique = core::ExpressionSerializer::deserialize(
                         index_info.predicate_data.data(),
                         index_info.predicate_data.size(),
                         temp_pool);
+                    predicate = predicate_unique.get();
                 }
 
                 // Create evaluator
@@ -2004,19 +2025,13 @@ namespace scratchbird
                         bool matches = evaluator.evaluatePredicate(predicate, row_values);
                         if (!matches)
                         {
-                            // Row doesn't match filter - skip this index
-                            delete predicate;
-                            for (auto *expr : expressions)
-                                delete expr;
+                            // Row doesn't match filter - skip this index (cleanup automatic)
                             continue;
                         }
                     }
                     catch (...)
                     {
-                        // Error evaluating - skip
-                        delete predicate;
-                        for (auto *expr : expressions)
-                            delete expr;
+                        // Error evaluating - skip (cleanup automatic)
                         continue;
                     }
                 }
@@ -2059,9 +2074,7 @@ namespace scratchbird
 
                 if (skip_index)
                 {
-                    delete predicate;
-                    for (auto *expr : expressions)
-                        delete expr;
+                    // Skip this index (cleanup automatic)
                     continue;
                 }
 
@@ -2085,10 +2098,7 @@ namespace scratchbird
                     index_stats_.indexes_maintained++;
                 }
 
-                // Cleanup
-                delete predicate;
-                for (auto *expr : expressions)
-                    delete expr;
+                // No manual cleanup needed - unique_ptr handles it automatically
             }
         }
 
@@ -2112,29 +2122,36 @@ namespace scratchbird
 
             for (const auto &index_info : indexes)
             {
-                if (!index_info.is_expression_index && !index_info.is_partial_index)
-                {
-                    continue;
-                }
+                // CRITICAL FIX (Nov 20, 2025): Maintain ALL indexes, not just expression/partial
+                // Previous bug: Basic indexes were skipped during UPDATE, causing stale entries
 
                 parser::StringPool temp_pool;
+                auto expressions_unique = std::vector<std::unique_ptr<parser::Expression>>();
+                auto predicate_unique = std::unique_ptr<parser::Expression>();
+
+                // Create raw pointer vectors for evaluator (will be cleaned up automatically)
                 std::vector<parser::Expression *> expressions;
                 parser::Expression *predicate = nullptr;
 
                 if (index_info.is_expression_index)
                 {
-                    expressions = core::ExpressionSerializer::deserializeList(
+                    expressions_unique = core::ExpressionSerializer::deserializeList(
                         index_info.expression_data.data(),
                         index_info.expression_data.size(),
                         temp_pool);
+                    for (auto& expr : expressions_unique)
+                    {
+                        expressions.push_back(expr.get());
+                    }
                 }
 
                 if (index_info.is_partial_index)
                 {
-                    predicate = core::ExpressionSerializer::deserialize(
+                    predicate_unique = core::ExpressionSerializer::deserialize(
                         index_info.predicate_data.data(),
                         index_info.predicate_data.size(),
                         temp_pool);
+                    predicate = predicate_unique.get();
                 }
 
                 // Task 17 MGA Phase 1.4: Pass database and transaction ID for visibility checks
@@ -2242,9 +2259,7 @@ namespace scratchbird
                 auto btree = core::BTree::open(db_, index_info.index_id, index_info.root_page, nullptr);
                 if (!btree)
                 {
-                    delete predicate;
-                    for (auto *expr : expressions)
-                        delete expr;
+                    // Skip this index (cleanup automatic)
                     continue;
                 }
 
@@ -2288,10 +2303,7 @@ namespace scratchbird
                 }
                 // else: neither in index - no change
 
-                // Cleanup
-                delete predicate;
-                for (auto *expr : expressions)
-                    delete expr;
+                // No manual cleanup needed - unique_ptr handles it automatically
             }
         }
 
@@ -2313,29 +2325,36 @@ namespace scratchbird
 
             for (const auto &index_info : indexes)
             {
-                if (!index_info.is_expression_index && !index_info.is_partial_index)
-                {
-                    continue;
-                }
+                // CRITICAL FIX (Nov 20, 2025): Maintain ALL indexes, not just expression/partial
+                // Previous bug: Basic indexes were skipped during DELETE, causing orphaned entries
 
                 parser::StringPool temp_pool;
+                auto expressions_unique = std::vector<std::unique_ptr<parser::Expression>>();
+                auto predicate_unique = std::unique_ptr<parser::Expression>();
+
+                // Create raw pointer vectors for evaluator (will be cleaned up automatically)
                 std::vector<parser::Expression *> expressions;
                 parser::Expression *predicate = nullptr;
 
                 if (index_info.is_expression_index)
                 {
-                    expressions = core::ExpressionSerializer::deserializeList(
+                    expressions_unique = core::ExpressionSerializer::deserializeList(
                         index_info.expression_data.data(),
                         index_info.expression_data.size(),
                         temp_pool);
+                    for (auto& expr : expressions_unique)
+                    {
+                        expressions.push_back(expr.get());
+                    }
                 }
 
                 if (index_info.is_partial_index)
                 {
-                    predicate = core::ExpressionSerializer::deserialize(
+                    predicate_unique = core::ExpressionSerializer::deserialize(
                         index_info.predicate_data.data(),
                         index_info.predicate_data.size(),
                         temp_pool);
+                    predicate = predicate_unique.get();
                 }
 
                 // Task 17 MGA Phase 1.4: Pass database and transaction ID for visibility checks
@@ -2357,10 +2376,7 @@ namespace scratchbird
 
                 if (!in_index)
                 {
-                    // Not in index - nothing to delete
-                    delete predicate;
-                    for (auto *expr : expressions)
-                        delete expr;
+                    // Not in index - nothing to delete (cleanup automatic)
                     continue;
                 }
 
@@ -2399,9 +2415,7 @@ namespace scratchbird
 
                 if (skip_index)
                 {
-                    delete predicate;
-                    for (auto *expr : expressions)
-                        delete expr;
+                    // Skip this index (cleanup automatic)
                     continue;
                 }
 
@@ -2424,10 +2438,7 @@ namespace scratchbird
                     index_stats_.indexes_maintained++;
                 }
 
-                // Cleanup
-                delete predicate;
-                for (auto *expr : expressions)
-                    delete expr;
+                // No manual cleanup needed - unique_ptr handles it automatically
             }
         }
 
@@ -2668,10 +2679,11 @@ namespace scratchbird
             }
 
             // Check DROP permission on table (table owner or superuser)
-            // For now, checkPermission uses a placeholder that allows all
+            // SECURITY ENHANCEMENT (MEDIUM-1): Use VERIFIED mode for DROP TABLE (irreversible operation)
             if (!checkPermission(table_info.table_id,
                                core::CatalogManager::PermissionObjectType::TABLE,
-                               static_cast<uint32_t>(core::CatalogManager::Privilege::DELETE)))
+                               static_cast<uint32_t>(core::CatalogManager::Privilege::DELETE),
+                               core::PermissionCheckMode::VERIFIED))
             {
                 throw std::runtime_error("Permission denied: DROP TABLE " + table_name);
             }
@@ -3177,6 +3189,14 @@ namespace scratchbird
         void Executor::executeRefreshMaterializedView()
         {
             // ALPHA Phase 1 - Materialized Views: REFRESH MATERIALIZED VIEW
+
+            // SECURITY NOTE (MEDIUM-2): RLS enforcement for materialized views
+            // When refreshing a materialized view that queries RLS-protected tables:
+            // 1. RLS policies MUST be enforced during view query execution
+            // 2. Only users with BYPASSRLS privilege can refresh views over RLS tables
+            // 3. Materialized data should respect the refreshing user's permissions
+            // Current implementation delegates to catalog_manager->refreshMaterializedView()
+            // which should enforce RLS through the query planner. Verify this is working correctly.
 
             // Read view name
             std::string view_name = readString();
@@ -4042,6 +4062,9 @@ namespace scratchbird
             // Phase 1 Task 1.6.1: UPDATE executor implementation
             // UPDATE table_name SET assignments WHERE condition
 
+            // SECURITY ENHANCEMENT (MEDIUM-3): Check query limits before expensive UPDATE operation
+            checkQueryLimits();
+
             // Read TABLE_REF opcode
             if (readByte() != static_cast<uint8_t>(Opcode::TABLE_REF))
             {
@@ -4068,10 +4091,12 @@ namespace scratchbird
             }
             core::ID table_id = table_info.table_id;
 
-            // Check UPDATE permission on table
+            // Check UPDATE permission on table (VERIFIED mode - security-critical)
+            // SECURITY ENHANCEMENT (MEDIUM-1): Use VERIFIED mode for UPDATE (data modification operation)
             bool has_table_update = checkPermission(table_info.table_id,
                                core::CatalogManager::PermissionObjectType::TABLE,
-                               static_cast<uint32_t>(core::CatalogManager::Privilege::UPDATE));
+                               static_cast<uint32_t>(core::CatalogManager::Privilege::UPDATE),
+                               core::PermissionCheckMode::VERIFIED);
 
             // Security Phase 3.3.5: Get accessible columns for UPDATE if no table-level permission
             std::vector<std::string> accessible_update_columns;
@@ -4728,6 +4753,9 @@ namespace scratchbird
             // Phase 1 Task 1.6.2: DELETE executor implementation
             // DELETE FROM table_name WHERE condition
 
+            // SECURITY ENHANCEMENT (MEDIUM-3): Check query limits before expensive DELETE operation
+            checkQueryLimits();
+
             // Read TABLE_REF opcode
             if (readByte() != static_cast<uint8_t>(Opcode::TABLE_REF))
             {
@@ -4754,10 +4782,12 @@ namespace scratchbird
             }
             core::ID table_id = table_info.table_id;
 
-            // Check DELETE permission on table
+            // Check DELETE permission on table (VERIFIED mode - security-critical)
+            // SECURITY ENHANCEMENT (MEDIUM-1): Use VERIFIED mode for DELETE (data loss operation)
             if (!checkPermission(table_info.table_id,
                                core::CatalogManager::PermissionObjectType::TABLE,
-                               static_cast<uint32_t>(core::CatalogManager::Privilege::DELETE)))
+                               static_cast<uint32_t>(core::CatalogManager::Privilege::DELETE),
+                               core::PermissionCheckMode::VERIFIED))
             {
                 error("Permission denied: DELETE on table " + table_name);
             }
@@ -6371,6 +6401,9 @@ namespace scratchbird
 
         void Executor::executeSelect()
         {
+            // SECURITY ENHANCEMENT (MEDIUM-3): Check query limits before expensive SELECT operation
+            checkQueryLimits();
+
             // Read select list
             if (readByte() != static_cast<uint8_t>(Opcode::BEGIN_LIST))
             {
@@ -13511,7 +13544,9 @@ namespace scratchbird
             }
             catch (const std::regex_error &e)
             {
-                error("Invalid regular expression: " + pattern + " (" + e.what() + ")");
+                // SECURITY FIX (HIGH-1): Log detailed error internally, return generic error to client
+                LOG_ERROR(EXECUTION, "Invalid regular expression '%s': %s", pattern.c_str(), e.what());
+                error("Invalid regular expression");
                 return false;
             }
         }
@@ -13560,7 +13595,9 @@ namespace scratchbird
             }
             catch (const std::regex_error &e)
             {
-                error("Invalid regular expression: " + pattern + " (" + e.what() + ")");
+                // SECURITY FIX (HIGH-1): Log detailed error internally, return generic error to client
+                LOG_ERROR(EXECUTION, "Invalid regular expression '%s': %s", pattern.c_str(), e.what());
+                error("Invalid regular expression");
             }
             return results;
         }
@@ -13602,7 +13639,9 @@ namespace scratchbird
             }
             catch (const std::regex_error &e)
             {
-                error("Invalid regular expression: " + pattern + " (" + e.what() + ")");
+                // SECURITY FIX (HIGH-1): Log detailed error internally, return generic error to client
+                LOG_ERROR(EXECUTION, "Invalid regular expression '%s': %s", pattern.c_str(), e.what());
+                error("Invalid regular expression");
                 return text;
             }
         }
@@ -13641,7 +13680,9 @@ namespace scratchbird
             }
             catch (const std::regex_error &e)
             {
-                error("Invalid regular expression: " + pattern + " (" + e.what() + ")");
+                // SECURITY FIX (HIGH-1): Log detailed error internally, return generic error to client
+                LOG_ERROR(EXECUTION, "Invalid regular expression '%s': %s", pattern.c_str(), e.what());
+                error("Invalid regular expression");
                 results.push_back(text);
             }
             return results;
@@ -15156,7 +15197,9 @@ namespace scratchbird
                 }
                 catch (const std::exception& e)
                 {
-                    error("Password hashing failed: " + std::string(e.what()));
+                    // SECURITY FIX (HIGH-1): Log detailed error internally, return generic error to client
+                    LOG_ERROR(EXECUTION, "Password hashing failed during CREATE USER: %s", e.what());
+                    error("Password hashing failed");
                 }
             }
 
@@ -15217,7 +15260,9 @@ namespace scratchbird
                 }
                 catch (const std::exception& e)
                 {
-                    error("Password hashing failed: " + std::string(e.what()));
+                    // SECURITY FIX (HIGH-1): Log detailed error internally, return generic error to client
+                    LOG_ERROR(EXECUTION, "Password hashing failed during ALTER USER: %s", e.what());
+                    error("Password hashing failed");
                 }
             }
 
@@ -16221,6 +16266,114 @@ namespace scratchbird
             db_->permission_cache()->insert(cache_key, has_permission);
 
             return has_permission;
+        }
+
+        bool Executor::checkPermission(const core::ID& object_id,
+                                      core::CatalogManager::PermissionObjectType object_type,
+                                      uint32_t required_privilege,
+                                      core::PermissionCheckMode mode)
+        {
+            // SECURITY ENHANCEMENT (MEDIUM-1): Support for verified permission checks
+            // This eliminates the tiny race window between REVOKE and cache invalidation
+
+            // If no connection context, deny access (should never happen in production)
+            if (!conn_ctx_)
+            {
+                return false;
+            }
+
+            // Superusers bypass all permission checks (zero overhead!)
+            if (conn_ctx_->isSuperuser())
+            {
+                return true;
+            }
+
+            // Get current user ID
+            const core::ID& current_user_id = conn_ctx_->getCurrentUserId();
+
+            // Check if object_id is zero UUID (invalid object)
+            static const core::ID zero_id = {};
+            if (object_id == zero_id)
+            {
+                return false; // Can't have permissions on invalid object
+            }
+
+            // Use the new checkPermission method in PermissionCache that supports mode parameter
+            core::PermissionCache::CacheKey cache_key{
+                current_user_id,
+                object_id,
+                object_type,
+                static_cast<core::CatalogManager::Privilege>(required_privilege)
+            };
+
+            core::ErrorContext err_ctx;
+            return db_->permission_cache()->checkPermission(
+                db_->catalog_manager(),
+                cache_key,
+                mode,
+                &err_ctx);
+        }
+
+        // ===== Query Execution Limit Checks (MEDIUM-3 DoS Protection) =====
+
+        void Executor::checkQueryLimits()
+        {
+            // SECURITY ENHANCEMENT (MEDIUM-3): Check all query execution limits
+            checkTimeout();
+            checkCTEDepth();
+        }
+
+        void Executor::checkTimeout()
+        {
+            // Check if query has exceeded time limit
+            auto now = std::chrono::steady_clock::now();
+            auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                now - query_start_time_).count();
+
+            if (elapsed_ms > static_cast<int64_t>(query_limits_.max_execution_time_ms))
+            {
+                LOG_WARNING(EXECUTION, "Query timeout exceeded: %lld ms (limit: %llu ms)",
+                          elapsed_ms, query_limits_.max_execution_time_ms);
+                error("Query execution timeout exceeded");
+            }
+        }
+
+        void Executor::checkCTEDepth()
+        {
+            // Check if CTE recursion depth exceeded
+            if (cte_recursion_depth_ > query_limits_.max_cte_recursion_depth)
+            {
+                LOG_WARNING(EXECUTION, "CTE recursion depth exceeded: %u (limit: %u)",
+                          cte_recursion_depth_, query_limits_.max_cte_recursion_depth);
+                error("Maximum CTE recursion depth exceeded");
+            }
+        }
+
+        void Executor::incrementCTEDepth()
+        {
+            ++cte_recursion_depth_;
+            checkCTEDepth();  // Check immediately after increment
+        }
+
+        void Executor::decrementCTEDepth()
+        {
+            if (cte_recursion_depth_ > 0)
+            {
+                --cte_recursion_depth_;
+            }
+        }
+
+        void Executor::trackRowsProcessed(uint64_t count)
+        {
+            rows_processed_ += count;
+
+            // Check row limits
+            if (rows_processed_ > query_limits_.max_intermediate_rows)
+            {
+                LOG_WARNING(EXECUTION, "Intermediate row limit exceeded: %llu (limit: %llu)",
+                          rows_processed_, query_limits_.max_intermediate_rows);
+                error("Maximum intermediate row count exceeded");
+            }
         }
 
         // ===== Row-Level Security Helpers (Phase 3.5 - RLS DML Enforcement) =====
@@ -18461,7 +18614,9 @@ namespace scratchbird
             {
                 std::string err_msg = getLastXMLError();
                 xmlResetLastError();
-                error("Invalid XML: " + err_msg);
+                // SECURITY FIX (HIGH-1): Log detailed error internally, return generic error to client
+                LOG_ERROR(EXECUTION, "Invalid XML: %s", err_msg.c_str());
+                error("Invalid XML");
             }
 
             // Convert back to string (validates and normalizes)
@@ -19621,9 +19776,16 @@ namespace scratchbird
                 return;
             }
 
-            // TODO: Implement key extractor registry and lookup
-            // For now, use the default key extractor
-            core::Status status = gin->insert(value, tid, xmin, nullptr, &err_ctx);
+            // Get key extractor from registry (November 20, 2025)
+            auto extractor = GinExtractorRegistry::instance().getExtractor(extractor_id);
+            if (!extractor) {
+                error("Invalid GIN extractor ID: " + std::to_string(extractor_id));
+                return;
+            }
+
+            // Note: xmin is not used in GIN insert API - GIN handles transaction tracking internally
+            (void)xmin; // Suppress unused parameter warning
+            core::Status status = gin->insert(value.data(), value.size(), tid, extractor, &err_ctx);
 
             if (status != core::Status::OK)
             {

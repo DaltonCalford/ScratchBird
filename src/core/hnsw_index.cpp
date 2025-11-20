@@ -822,8 +822,14 @@ Status HnswIndex::find_nearest(const VectorValue &query,
     const uint8_t *vector_data = node_data + sizeof(SBHnswNode) +
                                  entry_node->node_num_neighbors * sizeof(uint64_t);
 
-    // TODO: Deserialize vector and compute distance
-    double entry_distance = 0.0; // Placeholder
+    // Deserialize vector and compute distance
+    std::vector<uint8_t> binary_data(vector_data, vector_data + entry_node->node_vector_len);
+    auto decoded_vector = Vector::decode(binary_data);
+    double entry_distance = 0.0;
+    if (decoded_vector.has_value())
+    {
+        entry_distance = compute_distance(query, decoded_vector.value());
+    }
 
     SearchCandidate entry_candidate{entry_point, entry_distance};
     candidates.push(entry_candidate);
@@ -888,8 +894,18 @@ Status HnswIndex::find_nearest(const VectorValue &query,
                 continue;
             }
 
-            // TODO: Compute distance
-            double neighbor_distance = 0.0; // Placeholder
+            // Deserialize neighbor vector and compute distance
+            uint8_t *neighbor_data = reinterpret_cast<uint8_t*>(neighbor_node);
+            const uint8_t *neighbor_vector_data = neighbor_data + sizeof(SBHnswNode) +
+                                                   neighbor_node->node_num_neighbors * sizeof(uint64_t);
+            std::vector<uint8_t> neighbor_binary(neighbor_vector_data,
+                                                  neighbor_vector_data + neighbor_node->node_vector_len);
+            auto neighbor_decoded = Vector::decode(neighbor_binary);
+            double neighbor_distance = 0.0;
+            if (neighbor_decoded.has_value())
+            {
+                neighbor_distance = compute_distance(query, neighbor_decoded.value());
+            }
 
             SearchCandidate neighbor_candidate{neighbor_tid, neighbor_distance};
 

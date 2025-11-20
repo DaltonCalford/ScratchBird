@@ -187,7 +187,7 @@ Status IndexFactory::createIndex(
             }
 
             // Create LSM-Tree index
-            auto *lsm = new LSMTreeIndex(
+            auto *lsm = new LSMTree(
                 index_path,
                 db->transaction_manager(),
                 4  // 4 MB memtable size
@@ -614,7 +614,7 @@ Status IndexFactory::openIndex(
             // Open existing LSM-Tree
             std::string index_path = generateIndexPath(db->path(), index_info.index_id, index_type);
 
-            auto *lsm = new LSMTreeIndex(
+            auto *lsm = new LSMTree(
                 index_path,
                 db->transaction_manager(),
                 4  // 4 MB memtable size
@@ -821,7 +821,7 @@ Status IndexFactory::closeIndex(
 
         case CatalogManager::IndexType::LSM:
         {
-            auto *lsm = static_cast<LSMTreeIndex*>(index_ptr);
+            auto *lsm = static_cast<LSMTree*>(index_ptr);
             Status status = lsm->close(ctx);
             delete lsm;
             return status;

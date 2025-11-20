@@ -1823,6 +1823,10 @@ namespace scratchbird::optimizer
 
         // Deserialize index expressions and predicate
         parser::StringPool temp_pool;
+        auto index_expressions_unique = std::vector<std::unique_ptr<parser::Expression>>();
+        auto index_predicate_unique = std::unique_ptr<parser::Expression>();
+
+        // Create raw pointer vectors for evaluator (will be cleaned up automatically)
         std::vector<parser::Expression *> index_expressions;
         parser::Expression *index_predicate = nullptr;
 
@@ -1831,10 +1835,14 @@ namespace scratchbird::optimizer
         {
             try
             {
-                index_expressions = core::ExpressionSerializer::deserializeList(
+                index_expressions_unique = core::ExpressionSerializer::deserializeList(
                     index_info.expression_data.data(),
                     index_info.expression_data.size(),
                     temp_pool);
+                for (auto& expr : index_expressions_unique)
+                {
+                    index_expressions.push_back(expr.get());
+                }
             }
             catch (...)
             {
@@ -1848,19 +1856,16 @@ namespace scratchbird::optimizer
         {
             try
             {
-                index_predicate = core::ExpressionSerializer::deserialize(
+                index_predicate_unique = core::ExpressionSerializer::deserialize(
                     index_info.predicate_data.data(),
                     index_info.predicate_data.size(),
                     temp_pool);
+                index_predicate = index_predicate_unique.get();
             }
             catch (...)
             {
                 DEBUG_LOG_DB("Failed to deserialize filtered index predicate");
-                // Cleanup expressions
-                for (auto *expr : index_expressions)
-                {
-                    delete expr;
-                }
+                // Cleanup automatic
                 return false;
             }
         }
@@ -1874,12 +1879,7 @@ namespace scratchbird::optimizer
             if (!predicate_satisfied)
             {
                 DEBUG_LOG_DB("Query predicate does not imply filtered index predicate - cannot use index");
-                // Cleanup
-                delete index_predicate;
-                for (auto *expr : index_expressions)
-                {
-                    delete expr;
-                }
+                // Cleanup automatic
                 return false;
             }
 
@@ -1952,15 +1952,7 @@ namespace scratchbird::optimizer
             }
         }
 
-        // Cleanup deserialized expressions and predicate
-        if (index_predicate)
-        {
-            delete index_predicate;
-        }
-        for (auto *expr : index_expressions)
-        {
-            delete expr;
-        }
+        // No manual cleanup needed - unique_ptr handles it automatically
 
         return applicable;
     }

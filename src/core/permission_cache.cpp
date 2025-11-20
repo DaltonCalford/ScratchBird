@@ -171,6 +171,62 @@ namespace scratchbird::core
                   has_permission, cache_.size());
     }
 
+    bool PermissionCache::checkPermission(CatalogManager *catalog,
+                                        const CacheKey &key,
+                                        PermissionCheckMode mode,
+                                        ErrorContext *ctx)
+    {
+        // SECURITY ENHANCEMENT (MEDIUM-1): Support for verified permission checks
+        // This eliminates the tiny race window between REVOKE and cache invalidation
+
+        if (mode == PermissionCheckMode::VERIFIED)
+        {
+            // VERIFIED mode: Always query database for security-critical operations
+            // This ensures we have the absolute latest permission state
+
+            LOG_DEBUG(GENERAL, "Permission check in VERIFIED mode (bypassing cache)");
+
+            // Query database directly
+            bool has_permission = catalog->hasPermission(
+                key.user_id,
+                key.object_id,
+                key.object_type,
+                key.privilege,
+                ctx);
+
+            // Update cache with fresh value
+            // This keeps cache warm for subsequent CACHED mode checks
+            insert(key, has_permission);
+
+            return has_permission;
+        }
+        else
+        {
+            // CACHED mode: Use cache if available (fast path for normal operations)
+
+            // Try cache lookup first
+            std::optional<bool> cached_result = lookup(key);
+            if (cached_result.has_value())
+            {
+                // Cache hit!
+                return cached_result.value();
+            }
+
+            // Cache miss - query database
+            bool has_permission = catalog->hasPermission(
+                key.user_id,
+                key.object_id,
+                key.object_type,
+                key.privilege,
+                ctx);
+
+            // Cache result for future lookups
+            insert(key, has_permission);
+
+            return has_permission;
+        }
+    }
+
     void PermissionCache::invalidateUser(const ID &user_id)
     {
         std::unique_lock<std::shared_mutex> lock(mutex_);
