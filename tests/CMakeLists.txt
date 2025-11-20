@@ -635,6 +635,25 @@ set_tests_properties(LSMTreeSimple PROPERTIES
     TIMEOUT 120
 )
 
+# ============================================================================
+# BRIN Index DML Integration Tests - TASK-DML-5
+# ============================================================================
+
+add_executable(test_brin_dml
+    integration/test_brin_dml.cpp
+)
+target_link_libraries(test_brin_dml
+    scratchbird_core
+    scratchbird_parser
+    scratchbird_sblr
+    scratchbird_optimizer
+)
+add_test(NAME BrinDML COMMAND test_brin_dml)
+set_tests_properties(BrinDML PROPERTIES
+    LABELS "integration;brin;dml;task-dml-5"
+    TIMEOUT 120
+)
+
 # Comprehensive integration test
 add_executable(test_lsm_tree_comprehensive
     integration/test_lsm_tree_comprehensive.cpp
