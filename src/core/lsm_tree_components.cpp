@@ -14,7 +14,7 @@
 
 #include "scratchbird/core/lsm_tree_index.h"
 #include "scratchbird/core/transaction_manager.h"
-#include "scratchbird/core/logging.h"
+#include "scratchbird/core/logger.h"
 #include <fcntl.h>
 #include <unistd.h>
 #include <cstring>
@@ -265,8 +265,8 @@ Status SSTableWriter::addEntry(const std::vector<uint8_t> &key,
 {
     if (fd_ < 0)
     {
-        SET_ERROR_CONTEXT(ctx, Status::INVALID_STATE, "SSTableWriter not open");
-        return Status::INVALID_STATE;
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "SSTableWriter not open");
+        return Status::INVALID_ARGUMENT;
     }
 
     // Update min/max keys
@@ -316,8 +316,8 @@ Status SSTableWriter::finish(ErrorContext *ctx)
 {
     if (fd_ < 0)
     {
-        SET_ERROR_CONTEXT(ctx, Status::INVALID_STATE, "SSTableWriter not open");
-        return Status::INVALID_STATE;
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "SSTableWriter not open");
+        return Status::INVALID_ARGUMENT;
     }
 
     // Write footer: [min_key][max_key][num_entries][index]
@@ -430,8 +430,8 @@ Status SSTableReader::open(ErrorContext *ctx)
     {
         ::close(fd_);
         fd_ = -1;
-        SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTION, "SSTable file too small");
-        return Status::DATA_CORRUPTION;
+        SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "SSTable file too small");
+        return Status::PAGE_CORRUPT;
     }
 
     off_t footer_offset = file_size_ - footer_size;
@@ -510,8 +510,8 @@ Status SSTableReader::get(const std::vector<uint8_t> &key,
 {
     if (fd_ < 0)
     {
-        SET_ERROR_CONTEXT(ctx, Status::INVALID_STATE, "SSTableReader not open");
-        return Status::INVALID_STATE;
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "SSTableReader not open");
+        return Status::INVALID_ARGUMENT;
     }
 
     *found = false;
@@ -623,8 +623,8 @@ Status SSTableReader::scan(const std::vector<uint8_t> &start_key,
 {
     if (fd_ < 0)
     {
-        SET_ERROR_CONTEXT(ctx, Status::INVALID_STATE, "SSTableReader not open");
-        return Status::INVALID_STATE;
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "SSTableReader not open");
+        return Status::INVALID_ARGUMENT;
     }
 
     entries_out->clear();

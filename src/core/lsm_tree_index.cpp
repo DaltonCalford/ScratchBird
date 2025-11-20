@@ -12,7 +12,7 @@
  */
 
 #include "scratchbird/core/lsm_tree_index.h"
-#include "scratchbird/core/logging.h"
+#include "scratchbird/core/logger.h"
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <dirent.h>
@@ -20,6 +20,8 @@
 #include <chrono>
 #include <sstream>
 #include <iomanip>
+#include <queue>
+#include <cstring>
 
 namespace scratchbird
 {
