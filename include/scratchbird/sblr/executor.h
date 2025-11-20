@@ -2,6 +2,7 @@
 
 #include "scratchbird/sblr/opcodes.h"
 #include "scratchbird/sblr/index_cache.h"
+#include "scratchbird/sblr/query_limits.h"
 #include "scratchbird/parser/token.h"
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/catalog_manager.h"
@@ -175,6 +176,10 @@ namespace scratchbird
                 conn_ctx_ = conn_ctx;
             }
 
+            // SECURITY ENHANCEMENT (MEDIUM-3): Query execution limits management
+            void setQueryLimits(const QueryLimits& limits) { query_limits_ = limits; }
+            const QueryLimits& getQueryLimits() const { return query_limits_; }
+
             // Task 17 MGA Phase 2.2: Access index maintenance statistics
             const IndexMaintenanceStats& getIndexStats() const { return index_stats_; }
             void resetIndexStats() { index_stats_.reset(); }
@@ -219,6 +224,12 @@ namespace scratchbird
             // Index cache for performance (November 19, 2025)
             // LRU cache of frequently accessed index instances
             IndexCache index_cache_;
+
+            // SECURITY ENHANCEMENT (MEDIUM-3): Query execution limits for DoS protection
+            QueryLimits query_limits_;
+            std::chrono::steady_clock::time_point query_start_time_;
+            uint32_t cte_recursion_depth_ = 0;
+            uint64_t rows_processed_ = 0;
 
             // Execution helpers
             uint8_t readByte();
@@ -584,6 +595,13 @@ namespace scratchbird
                                core::CatalogManager::PermissionObjectType object_type,
                                uint32_t required_privilege);
 
+            // SECURITY ENHANCEMENT (MEDIUM-1): Permission check with cache mode control
+            // Use VERIFIED mode for security-critical operations (DROP, DELETE, GRANT, REVOKE)
+            bool checkPermission(const core::ID& object_id,
+                               core::CatalogManager::PermissionObjectType object_type,
+                               uint32_t required_privilege,
+                               core::PermissionCheckMode mode);
+
             // Row-Level Security helpers (Phase 3.5 - RLS DML Enforcement)
 
             // Check if current user/role should be subject to RLS policies
@@ -609,6 +627,14 @@ namespace scratchbird
             bool evaluatePolicyExpression(const std::vector<uint8_t>& expr_bytecode,
                                         const std::vector<Value>& row_values,
                                         const std::vector<core::CatalogManager::ColumnInfo>& columns);
+
+            // SECURITY ENHANCEMENT (MEDIUM-3): Query execution limit checks
+            void checkQueryLimits();              // Check all query limits, throw if exceeded
+            void checkTimeout();                  // Check query timeout
+            void checkCTEDepth();                 // Check CTE recursion depth
+            void incrementCTEDepth();             // Increment CTE depth counter
+            void decrementCTEDepth();             // Decrement CTE depth counter
+            void trackRowsProcessed(uint64_t count); // Track rows for limit checking
 
             // ALPHA Phase A: Evaluate DEFAULT value expression for a column
             // For now, supports simple constant defaults (numbers, strings, booleans, NULL)

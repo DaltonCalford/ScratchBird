@@ -116,6 +116,7 @@ namespace scratchbird
         // Forward declarations
         class RoaringBitmap;
         class RoaringBitmapIterator;
+        class BitmapIndexScanner;
 
         // Main Bitmap Index class
         // PHASE 2 TASK 2.5: Implements IndexGCInterface for garbage collection
@@ -183,6 +184,23 @@ namespace scratchbird
             std::vector<TID> findNot(
                 const void *value_data,
                 size_t value_len,
+                uint64_t current_xid,
+                ErrorContext *ctx = nullptr);
+
+            // Scan operation - iterate over TIDs matching value(s)
+            // Firebird MGA: Uses TIP-based visibility filtering (NOT snapshots)
+            // Per MGA_RULES.md Rule 11: Use TransactionId, NOT Snapshot*
+            // Returns iterator for streaming results instead of materializing all TIDs
+            std::unique_ptr<BitmapIndexScanner> scan(
+                const void *value_data,
+                size_t value_len,
+                uint64_t current_xid,
+                ErrorContext *ctx = nullptr);
+
+            // Scan multiple values with OR logic
+            std::unique_ptr<BitmapIndexScanner> scanOr(
+                const std::vector<const void *> &values,
+                const std::vector<size_t> &value_lens,
                 uint64_t current_xid,
                 ErrorContext *ctx = nullptr);
 
@@ -339,6 +357,44 @@ namespace scratchbird
             const RoaringBitmap &bitmap_;
             size_t container_index_;
             size_t value_index_;
+        };
+
+        /**
+         * BitmapIndexScanner - Iterator for bitmap index scans
+         *
+         * Provides streaming access to TIDs matching bitmap query conditions.
+         * Uses TIP-based visibility filtering for Firebird MGA compliance.
+         */
+        class BitmapIndexScanner
+        {
+        public:
+            // Firebird MGA: Uses TransactionId for TIP-based visibility (NOT Snapshot*)
+            BitmapIndexScanner(BitmapIndex *index,
+                              std::unique_ptr<RoaringBitmap> bitmap,
+                              uint64_t current_xid,
+                              Database *db);
+            ~BitmapIndexScanner();
+
+            // Iterator operations
+            bool hasNext();
+            Status next(TID *tid_out, ErrorContext *ctx = nullptr);
+
+            // Get statistics
+            uint64_t getScannedCount() const { return scanned_count_; }
+            uint64_t getReturnedCount() const { return returned_count_; }
+
+        private:
+            BitmapIndex *index_;
+            Database *db_;
+            std::unique_ptr<RoaringBitmap> bitmap_;
+            std::unique_ptr<RoaringBitmapIterator> iterator_;
+
+            // Firebird MGA: Transaction ID for TIP-based visibility filtering
+            uint64_t current_xid_;
+
+            // Statistics
+            uint64_t scanned_count_;    // Total TIDs examined
+            uint64_t returned_count_;   // TIDs returned (after visibility filtering)
         };
 
     } // namespace core

@@ -11,6 +11,17 @@
 namespace scratchbird::core
 {
     /**
+     * Permission check mode for cache behavior
+     *
+     * SECURITY ENHANCEMENT (MEDIUM-1): Verify mode for security-critical operations
+     */
+    enum class PermissionCheckMode
+    {
+        CACHED = 0,    // Use cache if available (default, fast path)
+        VERIFIED = 1   // Always check database (security-critical operations)
+    };
+
+    /**
      * Permission Cache - Phase 3.2.3
      *
      * Global permission cache with LRU eviction and TTL expiration.
@@ -22,6 +33,7 @@ namespace scratchbird::core
      * - Thread-safe with shared_mutex (multiple readers, single writer)
      * - Cache invalidation on GRANT/REVOKE
      * - Performance statistics tracking
+     * - VERIFIED mode for security-critical operations (bypasses cache)
      */
     class PermissionCache
     {
@@ -106,6 +118,33 @@ namespace scratchbird::core
          * Note: If cache is full, least recently used entry is evicted
          */
         void insert(const CacheKey &key, bool has_permission);
+
+        /**
+         * Check permission with optional cache bypass for security-critical operations
+         *
+         * SECURITY ENHANCEMENT (MEDIUM-1): Supports VERIFIED mode for security-critical operations
+         *
+         * @param catalog Catalog manager for database lookup
+         * @param key Cache key
+         * @param mode Permission check mode (CACHED or VERIFIED)
+         * @return Permission result (always fresh in VERIFIED mode)
+         *
+         * Behavior:
+         * - CACHED mode: Use cache if available, query database on miss, cache result
+         * - VERIFIED mode: Always query database, update cache with fresh value
+         *
+         * Use VERIFIED mode for:
+         * - DROP operations (irreversible)
+         * - DELETE operations (data loss)
+         * - GRANT/REVOKE operations (security changes)
+         * - ALTER operations on security-sensitive objects
+         *
+         * Thread-safe: Shared lock for reads, exclusive lock for writes
+         */
+        bool checkPermission(CatalogManager *catalog,
+                           const CacheKey &key,
+                           PermissionCheckMode mode,
+                           ErrorContext *ctx);
 
         /**
          * Invalidate all cache entries for a user
