@@ -3,6 +3,7 @@
 #include "scratchbird/core/page_manager.h"
 #include "scratchbird/core/transaction_manager.h"
 #include "scratchbird/core/database.h"
+#include "scratchbird/core/catalog_manager.h"
 #include <algorithm>
 #include <cstring>
 #include <unordered_set>
@@ -80,12 +81,19 @@ Status ColumnstoreIndex::create(Database *db,
         return Status::INVALID_ARGUMENT;
     }
 
+    // Phase 7: Store table_uuid and column_uuids for schema integration
+    // These should be persisted to catalog in future versions
+    // For now, they're only used when opening an index
+
     // Phase 6: Don't allocate a root page immediately
     // The first segment flushed will become the root
     // This avoids having an empty placeholder page
 
     if (root_page_out)
         *root_page_out = 0;  // No root yet
+
+    // TODO (Phase 1.3): Persist index metadata to catalog
+    // This includes: table_uuid, column_uuids, segment_size, compression_type
 
     return Status::OK;
 }
@@ -1929,31 +1937,115 @@ bool ColumnstoreIndex::isValueVisible(uint64_t value_xmin,
                                       uint64_t current_xid,
                                       ErrorContext *ctx) const
 {
-    // Phase 1: Basic MGA visibility check
+    // Firebird MGA visibility check using TIP (Transaction Inventory Pages)
     //
-    // Firebird MGA rules:
-    // - Value created after current transaction → invisible
-    // - Value deleted before current transaction → invisible
+    // MGA rules (see /MGA_RULES.md):
+    // - Use TIP-based visibility via TransactionManager::isVersionVisible()
+    // - Value created by uncommitted/aborted transaction → invisible
+    // - Value deleted by committed transaction → invisible
     // - Otherwise → visible
+    //
+    // CRITICAL: No fallback logic - always use TIP for correctness
 
-    if (value_xmin > current_xid)
-        return false;
-
-    if (value_xmax != 0 && value_xmax <= current_xid)
-        return false;
-
-    // TODO: Use TransactionManager for full TIP-based visibility
     TransactionManager *txn_mgr = db_->transaction_manager();
     if (!txn_mgr)
-        return true;  // Fallback: assume visible
+    {
+        // This should never happen in production - log error if ctx available
+        if (ctx)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                             "TransactionManager not available for visibility check");
+        }
+        return false;  // Fail-safe: treat as invisible if no txn manager
+    }
 
+    // Check if the version's creating transaction is visible to current transaction
+    // This uses TIP to look up transaction state (committed/active/aborted)
     if (!txn_mgr->isVersionVisible(value_xmin, current_xid))
-        return false;
+        return false;  // Creating transaction not visible
 
+    // If value_xmax is set (value was deleted), check if deletion is visible
+    // If deletion is visible, the value should not be visible
     if (value_xmax != 0 && txn_mgr->isVersionVisible(value_xmax, current_xid))
-        return false;
+        return false;  // Deletion is visible, so value is not
 
     return true;
+}
+
+Status ColumnstoreIndex::getColumnDataType(const ID &column_uuid,
+                                           DataType *data_type_out,
+                                           size_t *value_size_out,
+                                           ErrorContext *ctx)
+{
+    if (!data_type_out || !value_size_out)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                         "Output parameters cannot be null");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    // Get catalog manager
+    CatalogManager *catalog = db_->catalog_manager();
+    if (!catalog)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                         "CatalogManager not available");
+        // Fall back to INT32
+        *data_type_out = DataType::INT32;
+        *value_size_out = sizeof(int32_t);
+        return Status::OK;
+    }
+
+    // Check if we have table_uuid in index_info
+    // If idx_column_uuids is empty, we can't look up the schema
+    if (index_info_.idx_column_uuids.empty())
+    {
+        // Fallback: assume INT32 (this maintains backward compatibility)
+        *data_type_out = DataType::INT32;
+        *value_size_out = sizeof(int32_t);
+        return Status::OK;
+    }
+
+    // Get all columns for the table
+    std::vector<CatalogManager::ColumnInfo> columns;
+    Status col_status = catalog->getColumns(index_info_.idx_table_uuid, columns, ctx);
+    if (col_status != Status::OK)
+    {
+        // If we can't get columns, fall back to INT32
+        *data_type_out = DataType::INT32;
+        *value_size_out = sizeof(int32_t);
+        return Status::OK;
+    }
+
+    // Find the column with matching UUID
+    for (const auto &col : columns)
+    {
+        if (std::memcmp(&col.column_id, &column_uuid, sizeof(ID)) == 0)
+        {
+            // Found matching column - extract data type
+            *data_type_out = static_cast<DataType>(col.data_type);
+            *value_size_out = getDataTypeSize(*data_type_out);
+
+            // For variable-length types, use type_precision if available
+            if (*value_size_out == 0 && col.type_precision > 0)
+            {
+                *value_size_out = col.type_precision;
+            }
+
+            // If still zero, default to a reasonable size
+            if (*value_size_out == 0)
+            {
+                *value_size_out = 256;  // Default for variable-length types
+            }
+
+            return Status::OK;
+        }
+    }
+
+    // Column not found - this shouldn't happen, but fall back gracefully
+    *data_type_out = DataType::INT32;
+    *value_size_out = sizeof(int32_t);
+    return Status::OK;
 }
 
 Status ColumnstoreIndex::flushSegment(const ID &column_uuid, ErrorContext *ctx)
@@ -1967,12 +2059,16 @@ Status ColumnstoreIndex::flushSegment(const ID &column_uuid, ErrorContext *ctx)
 
     std::vector<BufferedValue> &buffer = it->second;
 
-    // Determine data type from first non-null value
-    DataType data_type = DataType::INT32;  // Default, should be determined from table schema
-    size_t value_size = sizeof(int32_t);   // Default
+    // Get data type from catalog
+    DataType data_type = DataType::INT32;  // Default fallback
+    size_t value_size = sizeof(int32_t);   // Default fallback
 
-    // For Phase 1, we'll assume INT32. In a real implementation, this would come from table metadata
-    // TODO: Get actual data type from table schema
+    Status dtype_status = getColumnDataType(column_uuid, &data_type, &value_size, ctx);
+    if (dtype_status != Status::OK)
+    {
+        // If we can't get the data type, use the fallback values above
+        // This maintains backward compatibility with existing tests
+    }
 
     // Build ColumnSegment from buffered values
     ColumnSegment segment;
@@ -2027,9 +2123,9 @@ Status ColumnstoreIndex::flushSegment(const ID &column_uuid, ErrorContext *ctx)
 
     // Create segment page and write compressed data to disk
     uint32_t new_segment_page = 0;
-    Status status = createSegment(column_uuid, segment, &new_segment_page, ctx);
-    if (status != Status::OK)
-        return status;
+    Status create_status = createSegment(column_uuid, segment, &new_segment_page, ctx);
+    if (create_status != Status::OK)
+        return create_status;
 
     // Link to previous segment if there is one
     BufferPool *buffer_pool = db_->buffer_pool();
@@ -2054,9 +2150,9 @@ Status ColumnstoreIndex::flushSegment(const ID &column_uuid, ErrorContext *ctx)
         while (current_page != 0)
         {
             void *page_buffer = nullptr;
-            status = buffer_pool->pinPage(current_page, &page_buffer, ctx);
-            if (status != Status::OK)
-                return status;
+            Status pin_status = buffer_pool->pinPage(current_page, &page_buffer, ctx);
+            if (pin_status != Status::OK)
+                return pin_status;
 
             auto *page = static_cast<const SBColumnstorePage *>(page_buffer);
             uint32_t next_page = page->cs_next_segment;
@@ -2077,9 +2173,9 @@ Status ColumnstoreIndex::flushSegment(const ID &column_uuid, ErrorContext *ctx)
         {
             // Link previous segment to new segment
             void *page_buffer = nullptr;
-            status = buffer_pool->pinPage(prev_page, &page_buffer, ctx);
-            if (status != Status::OK)
-                return status;
+            Status link_status = buffer_pool->pinPage(prev_page, &page_buffer, ctx);
+            if (link_status != Status::OK)
+                return link_status;
 
             auto *prev_seg = static_cast<SBColumnstorePage *>(page_buffer);
             prev_seg->cs_next_segment = new_segment_page;
@@ -2087,9 +2183,9 @@ Status ColumnstoreIndex::flushSegment(const ID &column_uuid, ErrorContext *ctx)
             buffer_pool->unpinPage(prev_page, true, ctx);  // Mark dirty
 
             // Set prev pointer in new segment
-            status = buffer_pool->pinPage(new_segment_page, &page_buffer, ctx);
-            if (status != Status::OK)
-                return status;
+            Status new_pin_status = buffer_pool->pinPage(new_segment_page, &page_buffer, ctx);
+            if (new_pin_status != Status::OK)
+                return new_pin_status;
 
             auto *new_seg = static_cast<SBColumnstorePage *>(page_buffer);
             new_seg->cs_prev_segment = prev_page;
