@@ -424,7 +424,8 @@ namespace scratchbird
             {
                 // PHASE 1.5: Use legacy format for internal operations, convert to TID for output
                 std::vector<uint64_t> legacy_results;
-                status = getPostingListTids(posting_page, &legacy_results, ctx);
+                // FIREBIRD MGA: Pass current_xid for index-level visibility filtering
+                status = getPostingListTids(posting_page, &legacy_results, current_xid, ctx);
                 if (status != Status::OK)
                 {
                     results.clear();
@@ -700,6 +701,7 @@ namespace scratchbird
 
         Status GinIndex::getPostingListTids(uint32_t posting_page,
                                             std::vector<uint64_t> *tids_out,
+                                            uint64_t current_xid,
                                             ErrorContext *ctx)
         {
             // Pin the posting list page
@@ -718,7 +720,7 @@ namespace scratchbird
                 // It's a posting tree
                 uint32_t tree_root = list_page->gpl_data.gpl_tree_root;
                 buffer_pool_->unpinPage(posting_page, false, ctx);
-                return getPostingTreeTids(tree_root, tids_out, ctx);
+                return getPostingTreeTids(tree_root, tids_out, current_xid, ctx);
             }
 
             // It's a posting list - check if compressed
@@ -728,6 +730,7 @@ namespace scratchbird
             if (list_page->gpl_is_compressed != 0)
             {
                 // Compressed posting list - decompress
+                // NOTE: Compressed format doesn't store xmin/xmax, relies on heap visibility
                 uint16_t compressed_bytes = list_page->gpl_compressed_bytes;
                 const uint8_t *compressed_data = list_page->gpl_data.gpl_compressed_data;
 
@@ -753,11 +756,24 @@ namespace scratchbird
             }
             else
             {
-                // Uncompressed posting list - use existing logic
+                // FIREBIRD MGA: Uncompressed posting list - check xmin/xmax visibility
+                // Per MGA_RULES.md Rule 3: Use TIP-based visibility, NOT snapshots
                 for (uint16_t i = 0; i < tid_count; i++)
                 {
-                    // Convert GPID format to legacy uint64_t
-                    tids_out->push_back(convertTIDtoLegacy(list_page->gpl_data.gpl_entries[i].getTID()));
+                    const GinPostingEntry &entry = list_page->gpl_data.gpl_entries[i];
+
+                    // Check if entry is visible to current transaction
+                    // Entry is visible if:
+                    // 1. xmin is committed and < current_xid (inserted before us)
+                    // 2. xmax is 0 (not deleted) OR xmax > current_xid (deleted after us started)
+                    bool is_visible = isTransactionVisible(entry.xmin, current_xid, ctx) &&
+                                      (entry.xmax == 0 || !isTransactionVisible(entry.xmax, current_xid, ctx));
+
+                    if (is_visible)
+                    {
+                        // Convert GPID format to legacy uint64_t
+                        tids_out->push_back(convertTIDtoLegacy(entry.getTID()));
+                    }
                 }
             }
 
@@ -929,10 +945,16 @@ namespace scratchbird
                 list_page->gpl_compressed_bytes = 0;
                 list_page->gpl_entry_count = tids.size();
 
+                // FIREBIRD MGA: Get current transaction ID for xmin
+                uint64_t current_xid = ConnectionContext::getCurrentTransactionId();
+
                 for (size_t i = 0; i < tids.size(); i++)
                 {
                     // Convert legacy uint64_t to GPID format
                     list_page->gpl_data.gpl_entries[i].setTID(convertLegacyTID(tids[i]));
+                    // FIREBIRD MGA: Set xmin (transaction that inserted) and xmax (0 = not deleted)
+                    list_page->gpl_data.gpl_entries[i].xmin = current_xid;
+                    list_page->gpl_data.gpl_entries[i].xmax = 0;
                 }
             }
 
@@ -1258,7 +1280,10 @@ namespace scratchbird
                              (leaf->gpt_entry_count - insert_pos) * sizeof(GinPostingEntry));
             }
 
+            // FIREBIRD MGA: Set TID and transaction markers
             leaf->gpt_tids[insert_pos].setTID(tid_struct);
+            leaf->gpt_tids[insert_pos].xmin = ConnectionContext::getCurrentTransactionId();
+            leaf->gpt_tids[insert_pos].xmax = 0; // Not deleted
             leaf->gpt_entry_count++;
 
             buffer_pool_->unpinPage(leaf_page, true, ctx);
@@ -1383,6 +1408,7 @@ namespace scratchbird
 
         Status GinIndex::getPostingTreeTids(uint32_t tree_root_page,
                                             std::vector<uint64_t> *tids_out,
+                                            uint64_t current_xid,
                                             ErrorContext *ctx)
         {
             // Find the leftmost leaf
@@ -1424,10 +1450,23 @@ namespace scratchbird
 
                 auto *leaf = reinterpret_cast<SBGinPostingTreeLeaf *>(leaf_data);
 
-                // Add all TIDs from this leaf (convert GPID to legacy)
+                // FIREBIRD MGA: Check xmin/xmax visibility for each entry
+                // Per MGA_RULES.md Rule 3: Use TIP-based visibility, NOT snapshots
                 for (uint16_t i = 0; i < leaf->gpt_entry_count; i++)
                 {
-                    tids_out->push_back(convertTIDtoLegacy(leaf->gpt_tids[i].getTID()));
+                    const GinPostingEntry &entry = leaf->gpt_tids[i];
+
+                    // Check if entry is visible to current transaction
+                    // Entry is visible if:
+                    // 1. xmin is committed and < current_xid (inserted before us)
+                    // 2. xmax is 0 (not deleted) OR xmax > current_xid (deleted after us started)
+                    bool is_visible = isTransactionVisible(entry.xmin, current_xid, ctx) &&
+                                      (entry.xmax == 0 || !isTransactionVisible(entry.xmax, current_xid, ctx));
+
+                    if (is_visible)
+                    {
+                        tids_out->push_back(convertTIDtoLegacy(entry.getTID()));
+                    }
                 }
 
                 uint64_t next_leaf = leaf->gpt_next_leaf;
@@ -1589,6 +1628,7 @@ namespace scratchbird
         }
 
         // Remove TID from posting list (simple array)
+        // FIREBIRD MGA: Logical deletion - mark with xmax instead of physical removal
         Status GinIndex::removeFromPostingListArray(uint32_t posting_page, uint64_t tid,
                                                      ErrorContext *ctx)
         {
@@ -1629,13 +1669,14 @@ namespace scratchbird
                 return Status::OK;
             }
 
-            // Remove the entry by shifting remaining entries left
-            for (uint16_t i = found_index; i < posting->gpl_entry_count - 1; i++)
-            {
-                posting->gpl_data.gpl_entries[i] = posting->gpl_data.gpl_entries[i + 1];
-            }
+            // FIREBIRD MGA: Logical deletion - mark with xmax (MGA-compliant)
+            // DO NOT physically remove the entry - this preserves stable TIDs
+            // Per MGA_RULES.md Rule 5: Use back-versioning, not forward-versioning
+            uint64_t current_xid = ConnectionContext::getCurrentTransactionId();
+            posting->gpl_data.gpl_entries[found_index].xmax = current_xid;
 
-            posting->gpl_entry_count--;
+            // Note: entry_count is NOT decremented - entries remain in place
+            // Vacuum will remove entries where xmax < OIT during garbage collection
 
             // Mark page as dirty
             buffer_pool_->unpinPage(posting_page, true, ctx);
@@ -1674,6 +1715,7 @@ namespace scratchbird
         }
 
         // Remove TID from posting tree leaf
+        // FIREBIRD MGA: Logical deletion - mark with xmax instead of physical removal
         Status GinIndex::removeFromPostingTreeLeaf(uint32_t leaf_page, uint64_t tid,
                                                    bool *entry_removed_out,
                                                    ErrorContext *ctx)
@@ -1720,13 +1762,14 @@ namespace scratchbird
                 return Status::OK;
             }
 
-            // Remove the entry by shifting remaining entries left
-            for (uint16_t i = found_index; i < leaf->gpt_entry_count - 1; i++)
-            {
-                leaf->gpt_tids[i] = leaf->gpt_tids[i + 1];
-            }
+            // FIREBIRD MGA: Logical deletion - mark with xmax (MGA-compliant)
+            // DO NOT physically remove the entry - this preserves stable TIDs
+            // Per MGA_RULES.md Rule 5: Use back-versioning, not forward-versioning
+            uint64_t current_xid = ConnectionContext::getCurrentTransactionId();
+            leaf->gpt_tids[found_index].xmax = current_xid;
 
-            leaf->gpt_entry_count--;
+            // Note: entry_count is NOT decremented - entries remain in place
+            // Vacuum will remove entries where xmax < OIT during garbage collection
 
             if (entry_removed_out)
             {
@@ -2247,7 +2290,8 @@ namespace scratchbird
 
                 // Get TIDs for this key
                 std::vector<uint64_t> tids;
-                status = getPostingListTids(posting_page, &tids, ctx);
+                // FIREBIRD MGA: Pass current_xid for index-level visibility filtering
+                status = getPostingListTids(posting_page, &tids, current_xid, ctx);
                 if (status != Status::OK)
                 {
                     // Error retrieving TIDs
@@ -2310,7 +2354,8 @@ namespace scratchbird
 
                 // Get TIDs for this key
                 std::vector<uint64_t> tids;
-                status = getPostingListTids(posting_page, &tids, ctx);
+                // FIREBIRD MGA: Pass current_xid for index-level visibility filtering
+                status = getPostingListTids(posting_page, &tids, current_xid, ctx);
                 if (status != Status::OK)
                 {
                     // Error retrieving TIDs - skip this key
@@ -3357,7 +3402,9 @@ namespace scratchbird
                         }
 
                         std::vector<uint64_t> tids;
-                        status = getPostingListTids(posting_page, &tids, ctx);
+                        // TODO: findAllParallel should accept current_xid parameter for proper MGA visibility
+                        // For now, pass 0 to see all committed transactions
+                        status = getPostingListTids(posting_page, &tids, 0, ctx);
 
                         if (status != Status::OK || tids.empty())
                         {
@@ -3441,7 +3488,9 @@ namespace scratchbird
                         }
 
                         std::vector<uint64_t> tids;
-                        status = getPostingListTids(posting_page, &tids, ctx);
+                        // TODO: findAnyParallel should accept current_xid parameter for proper MGA visibility
+                        // For now, pass 0 to see all committed transactions
+                        status = getPostingListTids(posting_page, &tids, 0, ctx);
 
                         if (status != Status::OK || tids.empty())
                         {
