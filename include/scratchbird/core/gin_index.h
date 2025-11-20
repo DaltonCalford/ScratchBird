@@ -550,6 +550,25 @@ namespace scratchbird
                                        uint32_t *leaf_page_out,
                                        ErrorContext *ctx);
 
+            // === Posting List/Tree Removal Operations ===
+
+            // Helper: Remove TID from posting list or tree
+            Status removeFromPostingList(uint32_t posting_page, uint64_t tid,
+                                         ErrorContext *ctx);
+
+            // Helper: Remove TID from posting list (simple array)
+            Status removeFromPostingListArray(uint32_t posting_page, uint64_t tid,
+                                              ErrorContext *ctx);
+
+            // Helper: Remove TID from posting tree (B-Tree of TIDs)
+            Status removeFromPostingTree(uint32_t tree_root_page, uint64_t tid,
+                                         ErrorContext *ctx);
+
+            // Helper: Remove TID from posting tree leaf
+            Status removeFromPostingTreeLeaf(uint32_t leaf_page, uint64_t tid,
+                                             bool *entry_removed_out,
+                                             ErrorContext *ctx);
+
             // === Entry Tree (Keys B-Tree) Operations ===
 
             // Helper: Search for key in keys B-Tree
