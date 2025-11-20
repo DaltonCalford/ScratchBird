@@ -19776,8 +19776,10 @@ namespace scratchbird
             }
 
             // TODO: Implement key extractor registry and lookup
-            // For now, use the default key extractor
-            core::Status status = gin->insert(value, tid, xmin, nullptr, &err_ctx);
+            // For now, use nullptr for key extractor (will use default extractor if available)
+            // Note: xmin is not used in GIN insert API - GIN handles transaction tracking internally
+            (void)xmin; // Suppress unused parameter warning
+            core::Status status = gin->insert(value.data(), value.size(), tid, nullptr, &err_ctx);
 
             if (status != core::Status::OK)
             {

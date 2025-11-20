@@ -29,11 +29,14 @@
 - **UUID System** - UUIDv7 (RFC 9562), system UUID: `00000000-0000-7000-8000-737973746d00`
 - **Object Types** - 32 catalog object types defined
 
-### Indexes (11/11 = 100%) 🎉
-- B-Tree, Hash, R-Tree, GIN, Bitmap
-- GiST, HNSW, SP-GiST, BRIN
-- Columnstore, LSM-Tree
-- All production-ready with MGA compliance
+### Indexes (11/11 types, 4/11 production-ready, 10/11 MGA-compliant) ⚠️
+- ✅ **Production Ready** (2): B-Tree, Hash
+- ⚠️ **Nearly Ready** (2): GIN, HNSW (need key extractor registry)
+- ⚠️ **Partial Implementation** (5): GiST, SP-GiST, BRIN, Bitmap, LSM-Tree
+- ❌ **Stubbed** (2): R-Tree, Columnstore
+- **MGA Compliance**: 10/11 (91%) - All except R-Tree use TIP-based visibility
+- **DML Integration**: 11/11 (100%) - All indexes maintained during INSERT/UPDATE/DELETE
+- **Bytecode Support**: 11/11 (100%) - 8 via generic path, 3 via specialized path
 
 ### Data Types (86/86 = 100%) 🎉
 - Numeric: INT8-INT128, UINT8-UINT64, DECIMAL, FLOAT, MONEY
