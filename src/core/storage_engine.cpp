@@ -12,11 +12,13 @@
 #include "scratchbird/core/btree.h"
 #include "scratchbird/core/hash_index.h"
 #include "scratchbird/core/lsm_tree.h"  // LSM Integration Phase 4
+#include "scratchbird/core/gin_index.h"  // TASK-DML-1: GIN Index DML Integration
 #include "scratchbird/core/toast.h"
 #include "scratchbird/core/garbage_collector.h"
 #include "scratchbird/core/logger.h"
 #include "scratchbird/core/tid_resolver.h" // Sprint 4 Task 5.4.2
 #include "scratchbird/core/index_key_extractor.h" // Phase 3 Task 3.2: Storage Layer TOAST Integration
+#include "scratchbird/sblr/gin_extractors.h"  // TASK-DML-1: GIN Key Extractors
 #include <cstring>
 #include <new>
 
@@ -71,6 +73,20 @@ namespace scratchbird::core
                 }
 
                 case CatalogManager::IndexType::GIN:
+                {
+                    // TASK-DML-1: GIN Index DML Integration (November 20, 2025)
+                    // GIN indexes extract multiple keys from composite values (arrays, JSONB, etc.)
+                    auto *gin = static_cast<GinIndex*>(index_ptr);
+
+                    // Use default key extractor (treats value as-is for now)
+                    // TODO: Use specialized extractors based on indexed column type
+                    auto key_extractor = sblr::GinExtractorRegistry::defaultExtractor;
+
+                    // The 'key' parameter contains the raw indexed value
+                    // GIN will extract multiple keys from it using the extractor
+                    return gin->insert(key.data(), key.size(), tid, key_extractor, ctx);
+                }
+
                 case CatalogManager::IndexType::GIST:
                 case CatalogManager::IndexType::BRIN:
                 case CatalogManager::IndexType::RTREE:
@@ -127,6 +143,22 @@ namespace scratchbird::core
                 }
 
                 case CatalogManager::IndexType::GIN:
+                {
+                    // TASK-DML-1: GIN Index DML Integration (November 20, 2025)
+                    // GIN indexes extract multiple keys from composite values for deletion
+                    auto *gin = static_cast<GinIndex*>(index_ptr);
+
+                    // Use default key extractor (same as insert)
+                    // TODO: Use specialized extractors based on indexed column type
+                    auto key_extractor = sblr::GinExtractorRegistry::defaultExtractor;
+
+                    // The 'key' parameter contains the raw indexed value
+                    // GIN will extract multiple keys from it using the extractor
+                    // NOTE: GIN remove() currently uses physical deletion (TASK-CRITICAL-1 not yet complete)
+                    // This should be updated to use logical deletion (xmax marking) when TASK-CRITICAL-1 is done
+                    return gin->remove(key.data(), key.size(), tid, key_extractor, xid, ctx);
+                }
+
                 case CatalogManager::IndexType::GIST:
                 case CatalogManager::IndexType::BRIN:
                 case CatalogManager::IndexType::RTREE:
