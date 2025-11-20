@@ -562,6 +562,66 @@ namespace scratchbird
             // Note: 0xFF is EXTENDED_OPCODE marker (already defined above)
 
             // Index Operations (0x0A-0x14) - Direct index manipulation operations
+            //
+            // PARAMETER ENCODING:
+            // -----------------
+            // All index operations use EXTENDED_OPCODE (0xFF) prefix followed by the specific opcode.
+            //
+            // Common parameter patterns:
+            //   - table_id: uint32_t (4 bytes, little-endian)
+            //   - index_id: uint32_t (4 bytes, little-endian)
+            //   - index_type: IndexType enum (1 byte)
+            //   - tid: uint64_t (8 bytes, little-endian) - TID of heap tuple
+            //   - xmin/xmax: uint64_t (8 bytes, little-endian) - Transaction IDs for MGA visibility
+            //   - key: Variable length serialized key (format depends on data type)
+            //     * Format: type_marker (1 byte) + length (4 bytes) + data (N bytes)
+            //
+            // USAGE EXAMPLES:
+            // --------------
+            // 1. EXT_INDEX_INSERT:
+            //    Bytecode: [0xFF] [0x0A] [table_id:4] [index_id:4] [tid:8] [xmin:8] [key_len:4] [key_data:N]
+            //    Example: Insert key "foo" (tid=1000, xmin=42) into index 5 of table 10
+            //      0xFF 0x0A 0x0A 0x00 0x00 0x00  0x05 0x00 0x00 0x00  0xE8 0x03 0x00 0x00 0x00 0x00 0x00 0x00
+            //      0x2A 0x00 0x00 0x00 0x00 0x00 0x00 0x00  0x03 0x00 0x00 0x00  0x66 0x6F 0x6F
+            //
+            // 2. EXT_INDEX_SEARCH:
+            //    Bytecode: [0xFF] [0x0B] [table_id:4] [index_id:4] [current_xid:8] [key_len:4] [key_data:N]
+            //    Returns: Array of TIDs (count:4 + (tid:8)*N)
+            //    Example: Search for key "bar" with xid=100
+            //      0xFF 0x0B 0x0A 0x00 0x00 0x00  0x05 0x00 0x00 0x00  0x64 0x00 0x00 0x00 0x00 0x00 0x00 0x00
+            //      0x03 0x00 0x00 0x00  0x62 0x61 0x72
+            //
+            // 3. EXT_INDEX_SCAN (Range Scan):
+            //    Bytecode: [0xFF] [0x0C] [table_id:4] [index_id:4] [current_xid:8] [start_key_len:4] [start_key:N] [end_key_len:4] [end_key:M]
+            //    Note: Use length=0 for unbounded start/end
+            //    Example: Scan from "a" to "z"
+            //      0xFF 0x0C 0x0A 0x00 0x00 0x00  0x05 0x00 0x00 0x00  0x64 0x00 0x00 0x00 0x00 0x00 0x00 0x00
+            //      0x01 0x00 0x00 0x00  0x61  0x01 0x00 0x00 0x00  0x7A
+            //
+            // 4. EXT_INDEX_UPDATE:
+            //    Bytecode: [0xFF] [0x1C] [table_id:4] [index_id:4] [tid:8] [xmin:8] [old_key_len:4] [old_key:N] [new_key_len:4] [new_key:M]
+            //    Note: Only emitted when indexed column value changes
+            //    Example: Update key from "old" to "new" (tid=1000, xmin=50)
+            //      0xFF 0x1C 0x0A 0x00 0x00 0x00  0x05 0x00 0x00 0x00  0xE8 0x03 0x00 0x00 0x00 0x00 0x00 0x00
+            //      0x32 0x00 0x00 0x00 0x00 0x00 0x00 0x00  0x03 0x00 0x00 0x00  0x6F 0x6C 0x64
+            //      0x03 0x00 0x00 0x00  0x6E 0x65 0x77
+            //
+            // 5. EXT_INDEX_DELETE:
+            //    Bytecode: [0xFF] [0x0D] [table_id:4] [index_id:4] [tid:8] [xmax:8] [key_len:4] [key_data:N]
+            //    Note: Performs MGA logical deletion (sets xmax on index entry)
+            //    Example: Delete key "foo" (tid=1000, xmax=60)
+            //      0xFF 0x0D 0x0A 0x00 0x00 0x00  0x05 0x00 0x00 0x00  0xE8 0x03 0x00 0x00 0x00 0x00 0x00 0x00
+            //      0x3C 0x00 0x00 0x00 0x00 0x00 0x00 0x00  0x03 0x00 0x00 0x00  0x66 0x6F 0x6F
+            //
+            // MGA COMPLIANCE REQUIREMENTS:
+            // ---------------------------
+            // - All index operations MUST use xmin/xmax for visibility tracking (Firebird MGA)
+            // - DELETE operations MUST be logical (set xmax), not physical removal
+            // - INSERT operations MUST set xmin to current transaction ID
+            // - UPDATE operations MUST mark old entry with xmax and insert new entry with xmin
+            // - Visibility checks MUST use TIP-based isVersionVisible(xmin, xmax, current_xid)
+            // - NO PostgreSQL snapshot-based visibility (forbidden per MGA_RULES.md)
+            //
             EXT_INDEX_INSERT = 0x0A,       // Insert entry into index (key, tid, xmin)
             EXT_INDEX_SEARCH = 0x0B,       // Search index for key (returns matching TIDs)
             EXT_INDEX_SCAN = 0x0C,         // Range scan index (start_key, end_key, returns TIDs)
@@ -573,8 +633,55 @@ namespace scratchbird
             EXT_INDEX_VACUUM = 0x12,       // Vacuum index (remove dead entries)
             EXT_INDEX_STATS = 0x13,        // Get index statistics
             EXT_INDEX_REINDEX = 0x14,      // Rebuild index
+            EXT_INDEX_UPDATE = 0x1C,       // Update index entry (old_key, new_key, tid, xmin - combines delete old + insert new)
 
             // Specialized Index Operations (0x28-0x2F) - For indexes with unique APIs
+            //
+            // These opcodes handle indexes that require specialized parameters beyond the generic
+            // index operations above. Each has a custom parameter encoding format.
+            //
+            // 1. EXT_GIN_INSERT:
+            //    Bytecode: [0xFF] [0x28] [table_id:4] [index_id:4] [tid:8] [xmin:8] [extractor_id:2] [value_len:4] [value:N]
+            //    Note: GIN indexes support multi-value columns (arrays, JSONB). extractor_id determines how to extract keys.
+            //    Example: Insert array value [1,2,3] using array extractor (id=1)
+            //      0xFF 0x28 0x0A 0x00 0x00 0x00  0x05 0x00 0x00 0x00  0xE8 0x03 0x00 0x00 0x00 0x00 0x00 0x00
+            //      0x2A 0x00 0x00 0x00 0x00 0x00 0x00 0x00  0x01 0x00  [array_data]
+            //
+            // 2. EXT_GIN_SEARCH:
+            //    Bytecode: [0xFF] [0x29] [table_id:4] [index_id:4] [current_xid:8] [extractor_id:2] [query_len:4] [query:N]
+            //    Returns: Array of TIDs matching the query
+            //    Example: Search for array containing value 2
+            //      0xFF 0x29 0x0A 0x00 0x00 0x00  0x05 0x00 0x00 0x00  0x64 0x00 0x00 0x00 0x00 0x00 0x00 0x00
+            //      0x01 0x00  [query_data]
+            //
+            // 3. EXT_HNSW_INSERT:
+            //    Bytecode: [0xFF] [0x2A] [table_id:4] [index_id:4] [tid:8] [xmin:8] [vector_dim:4] [vector_data:dim*4]
+            //    Note: HNSW is for vector similarity search. vector_data is array of float32 values.
+            //    Example: Insert 3D vector [0.1, 0.2, 0.3]
+            //      0xFF 0x2A 0x0A 0x00 0x00 0x00  0x05 0x00 0x00 0x00  0xE8 0x03 0x00 0x00 0x00 0x00 0x00 0x00
+            //      0x2A 0x00 0x00 0x00 0x00 0x00 0x00 0x00  0x03 0x00 0x00 0x00  [float32 x 3]
+            //
+            // 4. EXT_HNSW_SEARCH:
+            //    Bytecode: [0xFF] [0x2B] [table_id:4] [index_id:4] [current_xid:8] [k:4] [vector_dim:4] [vector_data:dim*4]
+            //    Returns: k nearest neighbors (count:4 + (tid:8 + distance:4)*k)
+            //    Example: Find 10 nearest neighbors to vector [0.5, 0.6, 0.7]
+            //      0xFF 0x2B 0x0A 0x00 0x00 0x00  0x05 0x00 0x00 0x00  0x64 0x00 0x00 0x00 0x00 0x00 0x00 0x00
+            //      0x0A 0x00 0x00 0x00  0x03 0x00 0x00 0x00  [float32 x 3]
+            //
+            // 5. EXT_COLUMNSTORE_INSERT:
+            //    Bytecode: [0xFF] [0x2C] [table_id:4] [index_id:4] [tid:8] [xmin:8] [column_count:2] [column_data:N]
+            //    Note: Columnstore appends data to columnar segments. column_data contains all column values.
+            //    Example: Insert row with 2 columns
+            //      0xFF 0x2C 0x0A 0x00 0x00 0x00  0x05 0x00 0x00 0x00  0xE8 0x03 0x00 0x00 0x00 0x00 0x00 0x00
+            //      0x2A 0x00 0x00 0x00 0x00 0x00 0x00 0x00  0x02 0x00  [column1] [column2]
+            //
+            // 6. EXT_COLUMNSTORE_SCAN:
+            //    Bytecode: [0xFF] [0x2D] [table_id:4] [index_id:4] [current_xid:8] [column_id:2] [predicate_len:4] [predicate:N]
+            //    Returns: Array of TIDs matching the predicate on specified column
+            //    Example: Scan column 1 for values > 100
+            //      0xFF 0x2D 0x0A 0x00 0x00 0x00  0x05 0x00 0x00 0x00  0x64 0x00 0x00 0x00 0x00 0x00 0x00 0x00
+            //      0x01 0x00  [predicate_data]
+            //
             EXT_GIN_INSERT = 0x28,         // GIN insert (value, tid, xmin, extractor_id)
             EXT_GIN_SEARCH = 0x29,         // GIN search (query, current_xid, extractor_id)
             EXT_HNSW_INSERT = 0x2A,        // HNSW insert (vector, tid, xmin)
@@ -620,6 +727,80 @@ namespace scratchbird
          *
          * Used to specify which index implementation to use for index operations.
          * Each index type has different characteristics and use cases.
+         *
+         * SELECTION GUIDE:
+         * ---------------
+         * BTREE (0x00) - General-purpose index for most use cases
+         *   • Use for: Equality and range queries on scalar values
+         *   • Strengths: Balanced tree, O(log N) operations, supports ORDER BY
+         *   • Best for: Primary keys, foreign keys, commonly queried columns
+         *   • Example: CREATE INDEX idx_users_email ON users USING BTREE (email)
+         *
+         * HASH (0x01) - Fast equality-only lookups
+         *   • Use for: Equality searches (WHERE col = value)
+         *   • Strengths: O(1) average lookup time
+         *   • Limitations: No range queries, no ORDER BY support
+         *   • Best for: Unique identifiers, lookup tables
+         *   • Example: CREATE INDEX idx_sessions_token ON sessions USING HASH (token)
+         *
+         * GIN (0x02) - Generalized Inverted Index for multi-value columns
+         *   • Use for: Arrays, JSONB, full-text search, composite types
+         *   • Strengths: Efficiently indexes values within composite types
+         *   • Best for: Array containment (@>), JSONB queries, text search
+         *   • Example: CREATE INDEX idx_tags ON posts USING GIN (tags)
+         *
+         * GIST (0x03) - Generalized Search Tree (extensible)
+         *   • Use for: Spatial data, ranges, custom types with custom operators
+         *   • Strengths: Balanced tree with custom predicates, overlaps, contains
+         *   • Best for: Geometric types, range types, custom similarity
+         *   • Example: CREATE INDEX idx_location ON places USING GIST (location)
+         *
+         * SPGIST (0x04) - Space-Partitioned Generalized Search Tree
+         *   • Use for: Non-balanced partitioning (quadtrees, k-d trees)
+         *   • Strengths: Efficient for clustered data distributions
+         *   • Best for: IP addresses, points with spatial clustering
+         *   • Example: CREATE INDEX idx_ip ON connections USING SPGIST (ip_address)
+         *
+         * BRIN (0x05) - Block Range Index (minimal storage)
+         *   • Use for: Very large tables with natural physical ordering
+         *   • Strengths: Tiny index size, stores min/max per block range
+         *   • Best for: Time-series data, append-only tables, monotonic sequences
+         *   • Example: CREATE INDEX idx_timestamp ON logs USING BRIN (timestamp)
+         *
+         * RTREE (0x06) - R-Tree for spatial indexing
+         *   • Use for: Spatial data with bounding boxes (MBRs)
+         *   • Strengths: Hierarchical bounding boxes, spatial containment
+         *   • Best for: Geographic data, geometric shapes
+         *   • Example: CREATE INDEX idx_geometry ON parcels USING RTREE (boundary)
+         *
+         * HNSW (0x07) - Hierarchical Navigable Small World (vector ANN)
+         *   • Use for: High-dimensional vector similarity search
+         *   • Strengths: Fast approximate nearest neighbor (ANN) search
+         *   • Best for: Embeddings, image similarity, semantic search
+         *   • Example: CREATE INDEX idx_embedding ON documents USING HNSW (embedding)
+         *
+         * BITMAP (0x08) - Bitmap index for low-cardinality columns
+         *   • Use for: Columns with few distinct values (e.g., status, category)
+         *   • Strengths: Efficient AND/OR/NOT operations, minimal storage
+         *   • Best for: Boolean flags, enums, status codes
+         *   • Example: CREATE INDEX idx_status ON orders USING BITMAP (status)
+         *
+         * COLUMNSTORE (0x09) - Column-oriented storage index
+         *   • Use for: Analytical queries on large tables (OLAP workloads)
+         *   • Strengths: Columnar compression, fast aggregations on subsets of columns
+         *   • Best for: Data warehouses, reporting tables, wide tables
+         *   • Example: CREATE INDEX idx_sales ON sales USING COLUMNSTORE (date, product_id, amount)
+         *
+         * LSM (0x0A) - Log-Structured Merge-Tree (write-optimized)
+         *   • Use for: Write-heavy workloads with eventual consistency tolerance
+         *   • Strengths: Fast writes via memtable, deferred merges
+         *   • Best for: Event logs, metrics, sensor data
+         *   • Example: CREATE INDEX idx_events ON events USING LSM (timestamp)
+         *
+         * MGA COMPLIANCE:
+         * --------------
+         * All 11 index types MUST maintain xmin/xmax for MGA visibility tracking.
+         * See MGA_RULES.md for detailed requirements.
          */
         enum class IndexType : uint8_t
         {
