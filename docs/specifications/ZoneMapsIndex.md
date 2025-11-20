@@ -1,10 +1,11 @@
 # Zone Maps (Min-Max Indexes) Specification for ScratchBird
 
-**Version:** 1.0
+**Version:** 1.1
 **Date:** November 20, 2025
 **Status:** Implementation Ready
 **Author:** ScratchBird Architecture Team
 **Target:** ScratchBird Alpha - Phase 2
+**Update:** Page-size agnostic (supports 8K, 16K, 32K, 64K, 128K pages)
 
 ---
 
@@ -15,17 +16,18 @@
 3. [Storage Model Extensions](#storage-model-extensions)
 4. [External Dependencies](#external-dependencies)
 5. [On-Disk Structures](#on-disk-structures)
-6. [MGA Compliance](#mga-compliance)
-7. [Core API](#core-api)
-8. [Statistics Collection](#statistics-collection)
-9. [Predicate Evaluation](#predicate-evaluation)
-10. [DML Integration](#dml-integration)
-11. [Query Planner Integration](#query-planner-integration)
-12. [Bytecode Integration](#bytecode-integration)
-13. [Implementation Steps](#implementation-steps)
-14. [Testing Requirements](#testing-requirements)
-15. [Performance Targets](#performance-targets)
-16. [Future Enhancements](#future-enhancements)
+6. [Page Size Considerations](#page-size-considerations)
+7. [MGA Compliance](#mga-compliance)
+8. [Core API](#core-api)
+9. [Statistics Collection](#statistics-collection)
+10. [Predicate Evaluation](#predicate-evaluation)
+11. [DML Integration](#dml-integration)
+12. [Query Planner Integration](#query-planner-integration)
+13. [Bytecode Integration](#bytecode-integration)
+14. [Implementation Steps](#implementation-steps)
+15. [Testing Requirements](#testing-requirements)
+16. [Performance Targets](#performance-targets)
+17. [Future Enhancements](#future-enhancements)
 
 ---
 
@@ -38,10 +40,11 @@ Zone Maps enable **data skipping** by storing minimum and maximum values for eac
 ### Key Characteristics
 
 - **Type:** Auxiliary metadata structure (not a traditional index)
-- **Granularity:** Per-zone statistics (zone = contiguous heap pages)
-- **Space efficiency:** < 0.1% of table size (typically 32-64 bytes per zone)
+- **Granularity:** Per-zone statistics (zone = extent = 64 contiguous heap pages)
+- **Space efficiency:** < 0.1% of table size (typically 180 bytes per zone per column)
 - **Query acceleration:** 10-100x speedup for selective range queries
 - **Best for:** Sorted or semi-sorted data, time-series, analytical workloads
+- **Page-size aware:** Adapts to database page size (8K/16K/32K/64K/128K)
 
 ### Classic Use Case
 
@@ -101,16 +104,28 @@ struct Extent {
     uint32_t tablespace_id; // Tablespace containing this extent
 };
 
-// Default extent size: 64 pages × 8KB = 512KB
+// Default extent size: 64 pages (size in bytes varies by page size)
 constexpr uint32_t DEFAULT_EXTENT_SIZE_PAGES = 64;
-constexpr uint32_t DEFAULT_EXTENT_SIZE_BYTES = 64 * 8192;  // 512KB
+
+// Helper to calculate extent size in bytes (page-size aware)
+inline uint32_t getExtentSizeBytes(uint32_t page_size) {
+    return DEFAULT_EXTENT_SIZE_PAGES * page_size;
+}
+
+// Examples:
+// 8KB pages: 64 × 8,192 = 524,288 bytes (512 KB)
+// 16KB pages: 64 × 16,384 = 1,048,576 bytes (1 MB)
+// 32KB pages: 64 × 32,768 = 2,097,152 bytes (2 MB)
+// 64KB pages: 64 × 65,536 = 4,194,304 bytes (4 MB)
+// 128KB pages: 64 × 131,072 = 8,388,608 bytes (8 MB)
 ```
 
 **Rationale:**
-- **512KB extents** balance metadata overhead vs. pruning effectiveness
+- **64 pages per extent** (size scales with page size)
 - **Contiguous pages** enable efficient sequential I/O
 - **Aligned boundaries** simplify statistics collection
 - **Extensible** to different sizes per table (configurable)
+- **Page-size agnostic** - works across all ScratchBird configurations
 
 #### Zone = Extent Mapping
 
