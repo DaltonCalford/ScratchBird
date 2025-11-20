@@ -330,6 +330,12 @@ namespace scratchbird
             {
                 throw std::invalid_argument("Database pointer cannot be null");
             }
+
+            // SECURITY ENHANCEMENT (MEDIUM-3): Initialize query limits with defaults
+            query_limits_ = QueryLimits::defaults();
+            query_start_time_ = std::chrono::steady_clock::now();
+            cte_recursion_depth_ = 0;
+            rows_processed_ = 0;
         }
 
         Executor::~Executor() = default;
@@ -351,6 +357,11 @@ namespace scratchbird
             current_table_.clear();
             current_columns_.clear();
             current_result_set_.reset();
+
+            // SECURITY ENHANCEMENT (MEDIUM-3): Reset query limits for new execution
+            query_start_time_ = std::chrono::steady_clock::now();
+            cte_recursion_depth_ = 0;
+            rows_processed_ = 0;
 
             // Statement snapshot management for READ_COMMITTED_READ_CONSISTENCY
             core::ConnectionContext *conn_ctx = core::ConnectionContext::getCurrent();
@@ -933,7 +944,9 @@ namespace scratchbird
                                 }
                                 catch (const geo::PROJException &e)
                                 {
-                                    error(std::string("ST_Transform failed: ") + e.what());
+                                    // SECURITY FIX (HIGH-1): Log detailed error internally, return generic error to client
+                                    LOG_ERROR(EXECUTION, "ST_Transform failed: %s", e.what());
+                                    error("Spatial transformation failed");
                                 }
 #else
                                 error("ST_Transform requires PROJ library (not available)");
@@ -2665,10 +2678,11 @@ namespace scratchbird
             }
 
             // Check DROP permission on table (table owner or superuser)
-            // For now, checkPermission uses a placeholder that allows all
+            // SECURITY ENHANCEMENT (MEDIUM-1): Use VERIFIED mode for DROP TABLE (irreversible operation)
             if (!checkPermission(table_info.table_id,
                                core::CatalogManager::PermissionObjectType::TABLE,
-                               static_cast<uint32_t>(core::CatalogManager::Privilege::DELETE)))
+                               static_cast<uint32_t>(core::CatalogManager::Privilege::DELETE),
+                               core::PermissionCheckMode::VERIFIED))
             {
                 throw std::runtime_error("Permission denied: DROP TABLE " + table_name);
             }
@@ -3174,6 +3188,14 @@ namespace scratchbird
         void Executor::executeRefreshMaterializedView()
         {
             // ALPHA Phase 1 - Materialized Views: REFRESH MATERIALIZED VIEW
+
+            // SECURITY NOTE (MEDIUM-2): RLS enforcement for materialized views
+            // When refreshing a materialized view that queries RLS-protected tables:
+            // 1. RLS policies MUST be enforced during view query execution
+            // 2. Only users with BYPASSRLS privilege can refresh views over RLS tables
+            // 3. Materialized data should respect the refreshing user's permissions
+            // Current implementation delegates to catalog_manager->refreshMaterializedView()
+            // which should enforce RLS through the query planner. Verify this is working correctly.
 
             // Read view name
             std::string view_name = readString();
@@ -4039,6 +4061,9 @@ namespace scratchbird
             // Phase 1 Task 1.6.1: UPDATE executor implementation
             // UPDATE table_name SET assignments WHERE condition
 
+            // SECURITY ENHANCEMENT (MEDIUM-3): Check query limits before expensive UPDATE operation
+            checkQueryLimits();
+
             // Read TABLE_REF opcode
             if (readByte() != static_cast<uint8_t>(Opcode::TABLE_REF))
             {
@@ -4065,10 +4090,12 @@ namespace scratchbird
             }
             core::ID table_id = table_info.table_id;
 
-            // Check UPDATE permission on table
+            // Check UPDATE permission on table (VERIFIED mode - security-critical)
+            // SECURITY ENHANCEMENT (MEDIUM-1): Use VERIFIED mode for UPDATE (data modification operation)
             bool has_table_update = checkPermission(table_info.table_id,
                                core::CatalogManager::PermissionObjectType::TABLE,
-                               static_cast<uint32_t>(core::CatalogManager::Privilege::UPDATE));
+                               static_cast<uint32_t>(core::CatalogManager::Privilege::UPDATE),
+                               core::PermissionCheckMode::VERIFIED);
 
             // Security Phase 3.3.5: Get accessible columns for UPDATE if no table-level permission
             std::vector<std::string> accessible_update_columns;
@@ -4725,6 +4752,9 @@ namespace scratchbird
             // Phase 1 Task 1.6.2: DELETE executor implementation
             // DELETE FROM table_name WHERE condition
 
+            // SECURITY ENHANCEMENT (MEDIUM-3): Check query limits before expensive DELETE operation
+            checkQueryLimits();
+
             // Read TABLE_REF opcode
             if (readByte() != static_cast<uint8_t>(Opcode::TABLE_REF))
             {
@@ -4751,10 +4781,12 @@ namespace scratchbird
             }
             core::ID table_id = table_info.table_id;
 
-            // Check DELETE permission on table
+            // Check DELETE permission on table (VERIFIED mode - security-critical)
+            // SECURITY ENHANCEMENT (MEDIUM-1): Use VERIFIED mode for DELETE (data loss operation)
             if (!checkPermission(table_info.table_id,
                                core::CatalogManager::PermissionObjectType::TABLE,
-                               static_cast<uint32_t>(core::CatalogManager::Privilege::DELETE)))
+                               static_cast<uint32_t>(core::CatalogManager::Privilege::DELETE),
+                               core::PermissionCheckMode::VERIFIED))
             {
                 error("Permission denied: DELETE on table " + table_name);
             }
@@ -6368,6 +6400,9 @@ namespace scratchbird
 
         void Executor::executeSelect()
         {
+            // SECURITY ENHANCEMENT (MEDIUM-3): Check query limits before expensive SELECT operation
+            checkQueryLimits();
+
             // Read select list
             if (readByte() != static_cast<uint8_t>(Opcode::BEGIN_LIST))
             {
@@ -13508,7 +13543,9 @@ namespace scratchbird
             }
             catch (const std::regex_error &e)
             {
-                error("Invalid regular expression: " + pattern + " (" + e.what() + ")");
+                // SECURITY FIX (HIGH-1): Log detailed error internally, return generic error to client
+                LOG_ERROR(EXECUTION, "Invalid regular expression '%s': %s", pattern.c_str(), e.what());
+                error("Invalid regular expression");
                 return false;
             }
         }
@@ -13557,7 +13594,9 @@ namespace scratchbird
             }
             catch (const std::regex_error &e)
             {
-                error("Invalid regular expression: " + pattern + " (" + e.what() + ")");
+                // SECURITY FIX (HIGH-1): Log detailed error internally, return generic error to client
+                LOG_ERROR(EXECUTION, "Invalid regular expression '%s': %s", pattern.c_str(), e.what());
+                error("Invalid regular expression");
             }
             return results;
         }
@@ -13599,7 +13638,9 @@ namespace scratchbird
             }
             catch (const std::regex_error &e)
             {
-                error("Invalid regular expression: " + pattern + " (" + e.what() + ")");
+                // SECURITY FIX (HIGH-1): Log detailed error internally, return generic error to client
+                LOG_ERROR(EXECUTION, "Invalid regular expression '%s': %s", pattern.c_str(), e.what());
+                error("Invalid regular expression");
                 return text;
             }
         }
@@ -13638,7 +13679,9 @@ namespace scratchbird
             }
             catch (const std::regex_error &e)
             {
-                error("Invalid regular expression: " + pattern + " (" + e.what() + ")");
+                // SECURITY FIX (HIGH-1): Log detailed error internally, return generic error to client
+                LOG_ERROR(EXECUTION, "Invalid regular expression '%s': %s", pattern.c_str(), e.what());
+                error("Invalid regular expression");
                 results.push_back(text);
             }
             return results;
@@ -15153,7 +15196,9 @@ namespace scratchbird
                 }
                 catch (const std::exception& e)
                 {
-                    error("Password hashing failed: " + std::string(e.what()));
+                    // SECURITY FIX (HIGH-1): Log detailed error internally, return generic error to client
+                    LOG_ERROR(EXECUTION, "Password hashing failed during CREATE USER: %s", e.what());
+                    error("Password hashing failed");
                 }
             }
 
@@ -15214,7 +15259,9 @@ namespace scratchbird
                 }
                 catch (const std::exception& e)
                 {
-                    error("Password hashing failed: " + std::string(e.what()));
+                    // SECURITY FIX (HIGH-1): Log detailed error internally, return generic error to client
+                    LOG_ERROR(EXECUTION, "Password hashing failed during ALTER USER: %s", e.what());
+                    error("Password hashing failed");
                 }
             }
 
@@ -16218,6 +16265,114 @@ namespace scratchbird
             db_->permission_cache()->insert(cache_key, has_permission);
 
             return has_permission;
+        }
+
+        bool Executor::checkPermission(const core::ID& object_id,
+                                      core::CatalogManager::PermissionObjectType object_type,
+                                      uint32_t required_privilege,
+                                      core::PermissionCheckMode mode)
+        {
+            // SECURITY ENHANCEMENT (MEDIUM-1): Support for verified permission checks
+            // This eliminates the tiny race window between REVOKE and cache invalidation
+
+            // If no connection context, deny access (should never happen in production)
+            if (!conn_ctx_)
+            {
+                return false;
+            }
+
+            // Superusers bypass all permission checks (zero overhead!)
+            if (conn_ctx_->isSuperuser())
+            {
+                return true;
+            }
+
+            // Get current user ID
+            const core::ID& current_user_id = conn_ctx_->getCurrentUserId();
+
+            // Check if object_id is zero UUID (invalid object)
+            static const core::ID zero_id = {};
+            if (object_id == zero_id)
+            {
+                return false; // Can't have permissions on invalid object
+            }
+
+            // Use the new checkPermission method in PermissionCache that supports mode parameter
+            core::PermissionCache::CacheKey cache_key{
+                current_user_id,
+                object_id,
+                object_type,
+                static_cast<core::CatalogManager::Privilege>(required_privilege)
+            };
+
+            core::ErrorContext err_ctx;
+            return db_->permission_cache()->checkPermission(
+                db_->catalog_manager(),
+                cache_key,
+                mode,
+                &err_ctx);
+        }
+
+        // ===== Query Execution Limit Checks (MEDIUM-3 DoS Protection) =====
+
+        void Executor::checkQueryLimits()
+        {
+            // SECURITY ENHANCEMENT (MEDIUM-3): Check all query execution limits
+            checkTimeout();
+            checkCTEDepth();
+        }
+
+        void Executor::checkTimeout()
+        {
+            // Check if query has exceeded time limit
+            auto now = std::chrono::steady_clock::now();
+            auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                now - query_start_time_).count();
+
+            if (elapsed_ms > static_cast<int64_t>(query_limits_.max_execution_time_ms))
+            {
+                LOG_WARNING(EXECUTION, "Query timeout exceeded: %lld ms (limit: %llu ms)",
+                          elapsed_ms, query_limits_.max_execution_time_ms);
+                error("Query execution timeout exceeded");
+            }
+        }
+
+        void Executor::checkCTEDepth()
+        {
+            // Check if CTE recursion depth exceeded
+            if (cte_recursion_depth_ > query_limits_.max_cte_recursion_depth)
+            {
+                LOG_WARNING(EXECUTION, "CTE recursion depth exceeded: %u (limit: %u)",
+                          cte_recursion_depth_, query_limits_.max_cte_recursion_depth);
+                error("Maximum CTE recursion depth exceeded");
+            }
+        }
+
+        void Executor::incrementCTEDepth()
+        {
+            ++cte_recursion_depth_;
+            checkCTEDepth();  // Check immediately after increment
+        }
+
+        void Executor::decrementCTEDepth()
+        {
+            if (cte_recursion_depth_ > 0)
+            {
+                --cte_recursion_depth_;
+            }
+        }
+
+        void Executor::trackRowsProcessed(uint64_t count)
+        {
+            rows_processed_ += count;
+
+            // Check row limits
+            if (rows_processed_ > query_limits_.max_intermediate_rows)
+            {
+                LOG_WARNING(EXECUTION, "Intermediate row limit exceeded: %llu (limit: %llu)",
+                          rows_processed_, query_limits_.max_intermediate_rows);
+                error("Maximum intermediate row count exceeded");
+            }
         }
 
         // ===== Row-Level Security Helpers (Phase 3.5 - RLS DML Enforcement) =====
@@ -18458,7 +18613,9 @@ namespace scratchbird
             {
                 std::string err_msg = getLastXMLError();
                 xmlResetLastError();
-                error("Invalid XML: " + err_msg);
+                // SECURITY FIX (HIGH-1): Log detailed error internally, return generic error to client
+                LOG_ERROR(EXECUTION, "Invalid XML: %s", err_msg.c_str());
+                error("Invalid XML");
             }
 
             // Convert back to string (validates and normalizes)
