@@ -3816,6 +3816,90 @@ namespace scratchbird
                 error("Row-level security policy violation: INSERT WITH CHECK constraint failed");
             }
 
+            // ALPHA Phase A+: Enforce NOT NULL constraints (Nov 19, 2025)
+            for (size_t i = 0; i < all_columns.size(); i++)
+            {
+                const auto& col = all_columns[i];
+                if (!col.nullable && rls_row_values[i].isNull())
+                {
+                    error("NOT NULL constraint violation: NULL value in column '" + col.column_name + "'");
+                }
+            }
+
+            // ALPHA Phase A+: Enforce data type validation (Nov 19, 2025)
+            // Note: Type coercion happens during expression evaluation, but we validate
+            // that the final values match the column types
+            for (size_t i = 0; i < all_columns.size(); i++)
+            {
+                const auto& col = all_columns[i];
+                const auto& val = rls_row_values[i];
+
+                // Skip NULL values (already handled by NOT NULL check above)
+                if (val.isNull())
+                {
+                    continue;
+                }
+
+                // Check type compatibility
+                bool type_compatible = false;
+                switch (col.data_type)
+                {
+                    case core::DataType::INT32:
+                        type_compatible = (val.type() == core::DataType::INT32 ||
+                                         val.type() == core::DataType::INT64);  // Allow implicit INT64->INT32 if in range
+                        break;
+                    case core::DataType::INT64:
+                        type_compatible = (val.type() == core::DataType::INT32 ||
+                                         val.type() == core::DataType::INT64);
+                        break;
+                    case core::DataType::FLOAT64:
+                        type_compatible = (val.type() == core::DataType::FLOAT64 ||
+                                         val.type() == core::DataType::INT32 ||
+                                         val.type() == core::DataType::INT64);  // Allow numeric -> float
+                        break;
+                    case core::DataType::VARCHAR:
+                    case core::DataType::TEXT:
+                        type_compatible = (val.type() == core::DataType::VARCHAR ||
+                                         val.type() == core::DataType::TEXT);
+                        break;
+                    case core::DataType::BOOLEAN:
+                        type_compatible = (val.type() == core::DataType::BOOLEAN);
+                        break;
+                    // Add more types as needed
+                    default:
+                        // For other types, require exact match
+                        type_compatible = (val.type() == col.data_type);
+                        break;
+                }
+
+                if (!type_compatible)
+                {
+                    error("Type mismatch: cannot insert value of type " +
+                          std::to_string(static_cast<int>(val.type())) +
+                          " into column '" + col.column_name + "' of type " +
+                          std::to_string(static_cast<int>(col.data_type)));
+                }
+            }
+
+            // ALPHA Phase A+: Enforce PRIMARY KEY constraints (Nov 19, 2025)
+            for (size_t i = 0; i < all_columns.size(); i++)
+            {
+                const auto& col = all_columns[i];
+                if (col.is_primary_key)
+                {
+                    // PRIMARY KEY = NOT NULL + UNIQUE
+                    if (rls_row_values[i].isNull())
+                    {
+                        error("PRIMARY KEY constraint violation: NULL value in column '" + col.column_name + "'");
+                    }
+                    // Check uniqueness (already handled by UNIQUE check below, but we ensure it's checked)
+                    if (checkUniqueViolation(table_id, col, rls_row_values[i], all_columns))
+                    {
+                        error("PRIMARY KEY constraint violation: duplicate value in column '" + col.column_name + "'");
+                    }
+                }
+            }
+
             // ALPHA Phase A: Enforce CHECK constraints on columns
             for (size_t i = 0; i < all_columns.size(); i++)
             {
@@ -3834,6 +3918,9 @@ namespace scratchbird
             for (size_t i = 0; i < all_columns.size(); i++)
             {
                 const auto& col = all_columns[i];
+                // Skip if already checked as PRIMARY KEY
+                if (col.is_primary_key) continue;
+
                 if (col.is_unique && !rls_row_values[i].isNull())
                 {
                     // Column has a UNIQUE constraint and value is not NULL
@@ -4287,6 +4374,86 @@ namespace scratchbird
                     error("Row-level security policy violation: UPDATE WITH CHECK constraint failed");
                 }
 
+                // ALPHA Phase A+: Enforce NOT NULL constraints on updated columns (Nov 19, 2025)
+                for (const auto& assign : assignments)
+                {
+                    const auto& col = all_columns[assign.column_index];
+                    if (!col.nullable && row_values[assign.column_index].isNull())
+                    {
+                        error("NOT NULL constraint violation: cannot set NULL value in column '" + col.column_name + "'");
+                    }
+                }
+
+                // ALPHA Phase A+: Enforce data type validation on updated columns (Nov 19, 2025)
+                for (const auto& assign : assignments)
+                {
+                    const auto& col = all_columns[assign.column_index];
+                    const auto& val = row_values[assign.column_index];
+
+                    // Skip NULL values (already handled by NOT NULL check above)
+                    if (val.isNull())
+                    {
+                        continue;
+                    }
+
+                    // Check type compatibility
+                    bool type_compatible = false;
+                    switch (col.data_type)
+                    {
+                        case core::DataType::INT32:
+                            type_compatible = (val.type() == core::DataType::INT32 ||
+                                             val.type() == core::DataType::INT64);
+                            break;
+                        case core::DataType::INT64:
+                            type_compatible = (val.type() == core::DataType::INT32 ||
+                                             val.type() == core::DataType::INT64);
+                            break;
+                        case core::DataType::FLOAT64:
+                            type_compatible = (val.type() == core::DataType::FLOAT64 ||
+                                             val.type() == core::DataType::INT32 ||
+                                             val.type() == core::DataType::INT64);
+                            break;
+                        case core::DataType::VARCHAR:
+                        case core::DataType::TEXT:
+                            type_compatible = (val.type() == core::DataType::VARCHAR ||
+                                             val.type() == core::DataType::TEXT);
+                            break;
+                        case core::DataType::BOOLEAN:
+                            type_compatible = (val.type() == core::DataType::BOOLEAN);
+                            break;
+                        default:
+                            type_compatible = (val.type() == col.data_type);
+                            break;
+                    }
+
+                    if (!type_compatible)
+                    {
+                        error("Type mismatch: cannot update column '" + col.column_name +
+                              "' of type " + std::to_string(static_cast<int>(col.data_type)) +
+                              " with value of type " + std::to_string(static_cast<int>(val.type())));
+                    }
+                }
+
+                // ALPHA Phase A+: Enforce PRIMARY KEY constraints on updated columns (Nov 19, 2025)
+                for (const auto& assign : assignments)
+                {
+                    const auto& col = all_columns[assign.column_index];
+                    if (col.is_primary_key)
+                    {
+                        // PRIMARY KEY = NOT NULL + UNIQUE
+                        if (row_values[assign.column_index].isNull())
+                        {
+                            error("PRIMARY KEY constraint violation: cannot set NULL value in PRIMARY KEY column '" + col.column_name + "'");
+                        }
+                        // Check uniqueness
+                        if (checkUniqueViolationForUpdate(table_id, col, row_values[assign.column_index],
+                                                         all_columns, tuple.tid))
+                        {
+                            error("PRIMARY KEY constraint violation: duplicate value in column '" + col.column_name + "'");
+                        }
+                    }
+                }
+
                 // ALPHA Phase A: Enforce CHECK constraints on updated columns
                 for (const auto& assign : assignments)
                 {
@@ -4305,6 +4472,9 @@ namespace scratchbird
                 for (const auto& assign : assignments)
                 {
                     const auto& col = all_columns[assign.column_index];
+                    // Skip if already checked as PRIMARY KEY
+                    if (col.is_primary_key) continue;
+
                     if (col.is_unique && !row_values[assign.column_index].isNull())
                     {
                         // Column has a UNIQUE constraint and new value is not NULL
@@ -16587,16 +16757,31 @@ namespace scratchbird
             std::string expr_hex = column.check_expr;
 
             // If check_expr is empty but check_expr_oid is set, try to load from TOAST
-            // TODO: Implement TOAST loading when TOAST infrastructure is complete
+            // SECURITY FIX (Nov 19, 2025): Reject instead of allowing to prevent bypass
             if (expr_hex.empty() && column.check_expr_oid != 0)
             {
+                // CONSERVATIVE APPROACH: Reject the operation when CHECK expression is in TOAST
+                // but TOAST loading not implemented. This prevents security bypass.
+                // TODO: Implement proper TOAST loading when infrastructure is complete:
+                //   1. Get TOAST manager for catalog table
+                //   2. Construct ToastPointer from check_expr_oid
+                //   3. Call detoastValue() to retrieve expression bytecode
+                //   4. Use retrieved bytecode for evaluation
+                //
+                // For now, fail-safe by rejecting rows with TOASTed CHECK expressions
                 DEBUG_LOG_DB("CHECK constraint on column " << column.column_name
                            << " uses TOAST (check_expr_oid=" << column.check_expr_oid
-                           << ") but TOAST loading not yet implemented - allowing row");
-                return true;
+                           << ") - TOAST loading not yet implemented");
+
+                // Fail-safe: Reject to prevent security bypass
+                // (Large CHECK expressions should not silently bypass enforcement)
+                error("CHECK constraint on column '" + column.column_name +
+                      "' uses TOAST storage which is not yet supported. "
+                      "Please recreate the constraint with a simpler expression.");
+                return false; // Never reached (error() throws), but explicit for clarity
             }
 
-            // Skip if expression is still empty
+            // Skip if expression is still empty (no CHECK constraint at all)
             if (expr_hex.empty())
             {
                 return true;
