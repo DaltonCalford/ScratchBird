@@ -187,12 +187,22 @@ namespace scratchbird::core
             LOG_DEBUG(GENERAL, "Permission check in VERIFIED mode (bypassing cache)");
 
             // Query database directly
-            bool has_permission = catalog->hasPermission(
+            bool has_permission = false;
+            Status status = catalog->hasPermission(
                 key.user_id,
                 key.object_id,
                 key.object_type,
                 key.privilege,
+                has_permission,
                 ctx);
+
+            if (status != Status::OK)
+            {
+                // Database query failed - treat as no permission for security
+                LOG_ERROR(GENERAL, "Permission check failed in VERIFIED mode: status=%d",
+                         static_cast<int>(status));
+                return false;
+            }
 
             // Update cache with fresh value
             // This keeps cache warm for subsequent CACHED mode checks
@@ -213,12 +223,22 @@ namespace scratchbird::core
             }
 
             // Cache miss - query database
-            bool has_permission = catalog->hasPermission(
+            bool has_permission = false;
+            Status status = catalog->hasPermission(
                 key.user_id,
                 key.object_id,
                 key.object_type,
                 key.privilege,
+                has_permission,
                 ctx);
+
+            if (status != Status::OK)
+            {
+                // Database query failed - treat as no permission for security
+                LOG_ERROR(GENERAL, "Permission check failed in CACHED mode: status=%d",
+                         static_cast<int>(status));
+                return false;
+            }
 
             // Cache result for future lookups
             insert(key, has_permission);
