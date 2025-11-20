@@ -320,11 +320,12 @@ struct SBZoneMapMetaPage {
     uint8_t zm_flags;               // Feature flags (1 byte)
     uint8_t zm_reserved2[15];       // Reserved (15 bytes)
 
-    // Padding to 8KB
-    uint8_t zm_padding[8016];       // 8192 - 64 - 48 - 16 - 32 - 16 = 8016
+    // Padding to fill page (flexible array member)
+    uint8_t zm_padding[];           // Flexible - size varies by page_size
 } __attribute__((packed));
 
-static_assert(sizeof(SBZoneMapMetaPage) == 8192, "Meta page must be 8KB");
+// No static_assert - size varies by page size (8KB to 128KB)
+// Fixed header size: 64 + 48 + 16 + 32 + 16 = 176 bytes
 
 // Flag definitions
 constexpr uint8_t ZM_FLAG_TRACK_NULLS = 0x01;
@@ -396,17 +397,19 @@ struct SBZoneMapStatsPage {
     uint16_t zm_num_columns;        // Columns per entry (2 bytes)
 
     // Entries: Each entry = num_columns × ZoneColumnStats
-    // Max entries per page = (8192 - 80) / (num_columns × 180)
-    // For 1 column: (8112 / 180) = 45 zones per page
-    // For 2 columns: (8112 / 360) = 22 zones per page
-    uint8_t zm_stats_data[8112];    // Variable-length stats
+    // Flexible array member - size varies by page size
+    uint8_t zm_stats_data[];        // Variable-length stats (flexible array)
 } __attribute__((packed));
 
-static_assert(sizeof(SBZoneMapStatsPage) == 8192, "Stats page must be 8KB");
+// No static_assert - size varies by page size (8KB to 128KB)
+// Fixed header size: 64 + 8 + 4 + 2 + 2 = 80 bytes
 
-// Calculate max zones per page
-inline uint32_t maxZonesPerPage(uint16_t num_columns) {
-    return 8112 / (num_columns * sizeof(ZoneColumnStats));
+// Calculate max zones per page (page-size aware)
+inline uint32_t maxZonesPerPage(uint32_t page_size, uint16_t num_columns) {
+    constexpr uint32_t STATS_PAGE_HEADER_SIZE = 80;
+    uint32_t available_bytes = page_size - STATS_PAGE_HEADER_SIZE;
+    uint32_t bytes_per_zone = num_columns * sizeof(ZoneColumnStats);  // num_columns × 180
+    return available_bytes / bytes_per_zone;
 }
 
 #pragma pack(pop)
@@ -415,16 +418,226 @@ inline uint32_t maxZonesPerPage(uint16_t num_columns) {
 ### Storage Calculation
 
 ```cpp
-// Example: 1TB table with 512KB zones
+// Example: 1TB table with 8KB pages, 64 pages per extent = 512KB zones
 // Total zones: 1TB / 512KB = 2,097,152 zones
 // Stats per zone (1 column): 180 bytes
 // Total stats: 2,097,152 × 180 = 377 MB (0.037% of table size)
 
-// Example: 10GB table with 512KB zones, 3 columns
-// Total zones: 10GB / 512KB = 20,480 zones
+// Example: 10GB table with 16KB pages, 64 pages per extent = 1MB zones
+// Total zones: 10GB / 1MB = 10,240 zones
 // Stats per zone (3 columns): 540 bytes
-// Total stats: 20,480 × 540 = 11 MB (0.11% of table size)
+// Total stats: 10,240 × 540 = 5.4 MB (0.054% of table size)
+
+// Example: 100GB table with 32KB pages, 64 pages per extent = 2MB zones
+// Total zones: 100GB / 2MB = 51,200 zones
+// Stats per zone (2 columns): 360 bytes
+// Total stats: 51,200 × 360 = 18 MB (0.018% of table size)
 ```
+
+---
+
+## Page Size Considerations
+
+Zone Maps in ScratchBird adapt to the database page size configured at creation time. This section details how different page sizes affect zone map capacity and performance.
+
+### Supported Page Sizes
+
+ScratchBird supports the following page sizes (all powers of 2):
+- 8 KB (8,192 bytes)
+- 16 KB (16,384 bytes)
+- 32 KB (32,768 bytes)
+- 64 KB (65,536 bytes)
+- 128 KB (131,072 bytes)
+
+### Extent Size Scaling
+
+Zone Maps use a **fixed number of pages per extent** (64 pages by default), which means extent size in bytes scales with page size:
+
+| Page Size | Pages/Extent | Extent Size (Bytes) | Extent Size (Human) |
+|-----------|--------------|---------------------|---------------------|
+| 8 KB      | 64           | 524,288             | 512 KB              |
+| 16 KB     | 64           | 1,048,576           | 1 MB                |
+| 32 KB     | 64           | 2,097,152           | 2 MB                |
+| 64 KB     | 64           | 4,194,304           | 4 MB                |
+| 128 KB    | 64           | 8,388,608           | 8 MB                |
+
+**Implication:** Larger page sizes result in larger zones, which means:
+- **Fewer zones** for the same table size
+- **Coarser granularity** for data skipping
+- **Less metadata overhead**
+- **Potentially lower skip rates** (less selective filtering)
+
+### Zones Per Stats Page
+
+The number of zone statistics that fit on a single stats page varies by page size and column count:
+
+**Formula:** `(page_size - 80) / (num_columns × 180)`
+
+#### Single-Column Zone Map
+
+| Page Size | Available Bytes | Zones Per Page |
+|-----------|-----------------|----------------|
+| 8 KB      | 8,112           | 45             |
+| 16 KB     | 16,304          | 90             |
+| 32 KB     | 32,688          | 181            |
+| 64 KB     | 65,456          | 363            |
+| 128 KB    | 130,992         | 727            |
+
+#### Two-Column Zone Map
+
+| Page Size | Available Bytes | Zones Per Page |
+|-----------|-----------------|----------------|
+| 8 KB      | 8,112           | 22             |
+| 16 KB     | 16,304          | 45             |
+| 32 KB     | 32,688          | 90             |
+| 64 KB     | 65,456          | 181            |
+| 128 KB    | 130,992         | 363            |
+
+#### Three-Column Zone Map
+
+| Page Size | Available Bytes | Zones Per Page |
+|-----------|-----------------|----------------|
+| 8 KB      | 8,112           | 15             |
+| 16 KB     | 16,304          | 30             |
+| 32 KB     | 32,688          | 60             |
+| 64 KB     | 65,456          | 121            |
+| 128 KB    | 130,992         | 242            |
+
+### Stats Pages Required
+
+The number of stats pages needed for a zone map depends on table size, page size, extent size, and column count.
+
+**Formula:** `ceiling(num_zones / zones_per_page)`
+
+**Example 1:** 1 TB table, 8KB pages, 1 column
+- Extent size: 512 KB
+- Total zones: 1 TB / 512 KB = 2,097,152
+- Zones per page: 45
+- Stats pages: 2,097,152 / 45 = **46,604 pages** = 363 MB
+
+**Example 2:** 1 TB table, 16KB pages, 1 column
+- Extent size: 1 MB
+- Total zones: 1 TB / 1 MB = 1,048,576
+- Zones per page: 90
+- Stats pages: 1,048,576 / 90 = **11,651 pages** = 181 MB
+
+**Example 3:** 100 GB table, 32KB pages, 2 columns
+- Extent size: 2 MB
+- Total zones: 100 GB / 2 MB = 51,200
+- Zones per page: 90
+- Stats pages: 51,200 / 90 = **569 pages** = 17.8 MB
+
+### Trade-offs by Page Size
+
+#### Small Pages (8KB)
+**Pros:**
+- Fine-grained zones (512 KB) → better skip rates
+- More selective filtering
+- Better for sorted/semi-sorted data
+
+**Cons:**
+- More zones to track → more metadata
+- More stats pages → more I/O to read zone map
+- Higher rebuild cost (more zones)
+
+**Best for:** OLTP workloads, small tables (< 100 GB), highly selective queries
+
+#### Medium Pages (16KB - 32KB)
+**Pros:**
+- Balanced zone size (1-2 MB)
+- Moderate metadata overhead
+- Good skip rates for most workloads
+
+**Cons:**
+- Slightly coarser than 8KB
+
+**Best for:** Mixed OLTP/OLAP workloads, medium tables (100 GB - 1 TB)
+
+#### Large Pages (64KB - 128KB)
+**Pros:**
+- Very coarse zones (4-8 MB) → minimal metadata
+- Fewer stats pages → fast zone map loading
+- Low rebuild cost
+
+**Cons:**
+- Coarse granularity → lower skip rates
+- Less effective for selective queries
+- May scan more unnecessary data
+
+**Best for:** OLAP workloads, large tables (> 1 TB), range scans
+
+### Runtime Calculation Helpers
+
+The `ZoneMapIndex` class provides runtime methods to adapt to the database page size:
+
+```cpp
+class ZoneMapIndex {
+public:
+    // Get current database page size
+    uint32_t getPageSize() const {
+        return db_->getPageSize();
+    }
+
+    // Calculate extent size in bytes
+    uint32_t getExtentSizeBytes() const {
+        return config_.extent_size_pages * getPageSize();
+    }
+
+    // Calculate max zones per stats page
+    uint32_t getMaxZonesPerPage() const {
+        return maxZonesPerPage(getPageSize(), columns_.size());
+    }
+
+    // Calculate number of stats pages needed
+    uint32_t calculateStatsPagesNeeded(uint32_t num_zones) const {
+        uint32_t zones_per_page = getMaxZonesPerPage();
+        return (num_zones + zones_per_page - 1) / zones_per_page;  // Ceiling
+    }
+
+    // Validate configuration at creation time
+    static Status validateConfig(uint32_t page_size, const ZoneMapConfig& config) {
+        // Check page size range
+        if (page_size < 8192 || page_size > 131072) {
+            return Status::INVALID_ARGUMENT;
+        }
+
+        // Check page size is power of 2
+        if ((page_size & (page_size - 1)) != 0) {
+            return Status::INVALID_ARGUMENT;
+        }
+
+        // Check extent size is reasonable
+        uint32_t extent_bytes = config.extent_size_pages * page_size;
+        if (extent_bytes < page_size || extent_bytes > 16 * 1024 * 1024) {
+            return Status::INVALID_ARGUMENT;  // Min 1 page, max 16 MB
+        }
+
+        return Status::OK;
+    }
+};
+```
+
+### Recommendations
+
+**For Time-Series Data (sorted by timestamp):**
+- Use **8KB or 16KB pages** for fine-grained zones
+- Expect 95-99.9% skip rates for selective time range queries
+- Example: Log tables, sensor data, financial ticks
+
+**For Analytical Workloads (large scans):**
+- Use **32KB or 64KB pages** for coarser zones
+- Lower metadata overhead, faster zone map loading
+- Still effective for date partitioning, categorical filters
+
+**For Very Large Tables (> 10 TB):**
+- Consider **64KB or 128KB pages**
+- Minimize zone map metadata size
+- May need to increase `extent_size_pages` beyond 64 for even coarser zones
+
+**General Rule:**
+- Page size should match your workload's I/O patterns
+- Zone maps adapt automatically to your choice
+- No code changes needed when page size changes
 
 ---
 
@@ -614,6 +827,17 @@ public:
     const UuidV7Bytes& getIndexUuid() const { return index_uuid_; }
     uint32_t getMetaPage() const { return meta_page_; }
     const std::vector<uint16_t>& getColumns() const { return columns_; }
+
+    // Page-size aware helpers
+    uint32_t getPageSize() const;
+    uint32_t getExtentSizeBytes() const;
+    uint32_t getMaxZonesPerPage() const;
+    uint32_t calculateStatsPagesNeeded(uint32_t num_zones) const;
+
+    // Configuration validation
+    static Status validateConfig(uint32_t page_size,
+                                const ZoneMapConfig& config,
+                                ErrorContext* ctx = nullptr);
 
 private:
     // Member variables
@@ -1380,9 +1604,18 @@ Status Executor::executeCreateIndex(const uint8_t* bytecode, size_t* offset,
         uint32_t extent_size_kb = decodeUint32(bytecode, offset);
         uint32_t max_string_len = decodeUint32(bytecode, offset);
 
+        // Get page size from database (page-size aware conversion)
+        uint32_t page_size = db_->getPageSize();
+
         ZoneMapConfig config;
-        config.extent_size_pages = (extent_size_kb * 1024) / 8192;
+        config.extent_size_pages = (extent_size_kb * 1024) / page_size;
         config.max_string_len = max_string_len;
+
+        // Validate configuration
+        auto validation_status = ZoneMapIndex::validateConfig(page_size, config, ctx);
+        if (validation_status != Status::OK) {
+            return validation_status;
+        }
 
         // Create zone map
         auto* catalog = db_->getCatalogManager();
@@ -1421,15 +1654,18 @@ Status Executor::executeCreateIndex(const uint8_t* bytecode, size_t* offset,
    - Add catalog storage for extent info
 
 2. **Implement page structures (4-6 hours)**
-   - Define `SBZoneMapMetaPage`
-   - Define `SBZoneMapStatsPage`
+   - Define `SBZoneMapMetaPage` with flexible array member
+   - Define `SBZoneMapStatsPage` with flexible array member
    - Define `ZoneMapValue`, `ZoneColumnStats`
-   - Add static assertions
+   - Implement `maxZonesPerPage()` helper (page-size aware)
+   - NO static assertions for page size (must be flexible)
 
 3. **Implement ZoneMapIndex class skeleton (4-6 hours)**
    - `create()` method (allocate meta page)
    - `open()` method (load meta page)
    - `loadZoneStats()` / `saveZoneStats()` helpers
+   - Page-size aware helper methods: `getPageSize()`, `getExtentSizeBytes()`, etc.
+   - Configuration validation: `validateConfig()` for page size checks
 
 ### Phase 2: Statistics Collection (16-24 hours)
 
@@ -1614,6 +1850,65 @@ TEST(ZoneMapTest, StatisticsCollection) {
     EXPECT_EQ(getInt32(stats[0].max_value), 100);
     EXPECT_EQ(stats[0].row_count, 3);
 }
+
+TEST(ZoneMapTest, PageSizeAdaptation) {
+    // Test zone map works correctly with different page sizes
+    std::vector<uint32_t> page_sizes = {8192, 16384, 32768, 65536, 131072};
+
+    for (uint32_t page_size : page_sizes) {
+        auto db = createTestDatabaseWithPageSize(page_size);
+        auto table = createTestTable(db.get());
+
+        ZoneMapConfig config;
+        config.extent_size_pages = 64;
+
+        // Validate configuration
+        auto status = ZoneMapIndex::validateConfig(page_size, config, nullptr);
+        ASSERT_EQ(status, Status::OK);
+
+        // Create zone map
+        uint32_t meta_page = 0;
+        status = ZoneMapIndex::create(db.get(), table, {0}, config, &meta_page, nullptr);
+        ASSERT_EQ(status, Status::OK);
+
+        auto zm = ZoneMapIndex::open(db.get(), UuidV7Bytes{}, meta_page, nullptr);
+        ASSERT_NE(zm, nullptr);
+
+        // Verify page size awareness
+        EXPECT_EQ(zm->getPageSize(), page_size);
+
+        uint32_t expected_extent_bytes = 64 * page_size;
+        EXPECT_EQ(zm->getExtentSizeBytes(), expected_extent_bytes);
+
+        // Verify zones per page calculation
+        uint32_t zones_per_page = zm->getMaxZonesPerPage();
+        uint32_t expected = (page_size - 80) / (1 * 180);  // 1 column
+        EXPECT_EQ(zones_per_page, expected);
+    }
+}
+
+TEST(ZoneMapTest, InvalidPageSizeRejected) {
+    ZoneMapConfig config;
+    config.extent_size_pages = 64;
+
+    // Too small
+    auto status = ZoneMapIndex::validateConfig(4096, config, nullptr);
+    EXPECT_EQ(status, Status::INVALID_ARGUMENT);
+
+    // Too large
+    status = ZoneMapIndex::validateConfig(256 * 1024, config, nullptr);
+    EXPECT_EQ(status, Status::INVALID_ARGUMENT);
+
+    // Not power of 2
+    status = ZoneMapIndex::validateConfig(10000, config, nullptr);
+    EXPECT_EQ(status, Status::INVALID_ARGUMENT);
+
+    // Valid sizes
+    for (uint32_t ps : {8192, 16384, 32768, 65536, 131072}) {
+        status = ZoneMapIndex::validateConfig(ps, config, nullptr);
+        EXPECT_EQ(status, Status::OK);
+    }
+}
 ```
 
 ### Integration Tests
@@ -1703,6 +1998,54 @@ TEST(ZoneMapScanTest, RebuildAfterUpdates) {
     // Max should have increased
     EXPECT_GT(getInt32(stats_after.max_value), getInt32(stats_before.max_value));
 }
+
+TEST(ZoneMapScanTest, PageSizePerformance) {
+    // Verify zone maps work correctly across different page sizes
+    std::vector<uint32_t> page_sizes = {8192, 16384, 32768, 65536};
+
+    for (uint32_t page_size : page_sizes) {
+        auto db = createTestDatabaseWithPageSize(page_size);
+
+        executeSQL(db.get(), R"(
+            CREATE TABLE events (
+                id INT,
+                timestamp BIGINT
+            )
+        )");
+
+        // Insert 10,000 sorted rows
+        for (int i = 0; i < 10000; i++) {
+            executeSQL(db.get(), "INSERT INTO events VALUES (" +
+                      std::to_string(i) + ", " + std::to_string(i) + ")");
+        }
+
+        // Create zone map
+        executeSQL(db.get(),
+                  "CREATE INDEX idx_ts_zm ON events USING zonemap(timestamp)");
+
+        auto zm = db->getCatalogManager()->getZoneMapIndex("idx_ts_zm");
+
+        // Verify extent size scales with page size
+        uint32_t extent_bytes = zm->getExtentSizeBytes();
+        EXPECT_EQ(extent_bytes, 64 * page_size);
+
+        // Query: timestamp BETWEEN 100 AND 200
+        auto results = executeSQL(db.get(),
+                                 "SELECT * FROM events WHERE timestamp BETWEEN 100 AND 200");
+        EXPECT_EQ(results.size(), 101);
+
+        // Verify skip rate (should work at all page sizes)
+        auto stats = zm->getStatistics();
+        EXPECT_GT(stats.zones_skipped, 0);
+
+        // Log for debugging
+        LOG_INFO(Category::TEST,
+                "Page size: %u KB, Extent size: %u KB, Zones skipped: %lu",
+                page_size / 1024,
+                extent_bytes / 1024,
+                stats.zones_skipped);
+    }
+}
 ```
 
 ---
@@ -1711,22 +2054,55 @@ TEST(ZoneMapScanTest, RebuildAfterUpdates) {
 
 ### Latency
 
-- **Zone map metadata load:** < 1ms (read meta page)
-- **Zone filtering:** < 10ms for 1000 zones
+- **Zone map metadata load:** < 1ms (read meta page, any page size)
+- **Zone filtering:** < 10ms for 1000 zones (8KB pages), < 5ms for same zones (larger pages)
 - **Statistics update (insert):** < 100 microseconds
-- **Zone rebuild:** < 500ms per zone (512KB, ~60 pages)
+- **Zone rebuild times (per zone, varies by page size):**
+  - 8KB pages: 512KB zone, ~64 pages → < 500ms
+  - 16KB pages: 1MB zone, ~64 pages → < 800ms
+  - 32KB pages: 2MB zone, ~64 pages → < 1.5s
+  - 64KB pages: 4MB zone, ~64 pages → < 3s
 
 ### Skip Rate
 
+Performance varies by page size and data distribution:
+
+**8KB pages (fine-grained zones):**
 - **Sorted data:** 95-99.9% skip rate for selective queries
-- **Semi-sorted data:** 50-90% skip rate
-- **Random data:** 10-30% skip rate (limited effectiveness)
+- **Semi-sorted data:** 60-90% skip rate
+- **Random data:** 15-30% skip rate
+
+**16KB-32KB pages (medium zones):**
+- **Sorted data:** 90-99% skip rate
+- **Semi-sorted data:** 50-80% skip rate
+- **Random data:** 10-25% skip rate
+
+**64KB-128KB pages (coarse zones):**
+- **Sorted data:** 85-95% skip rate
+- **Semi-sorted data:** 40-70% skip rate
+- **Random data:** 5-20% skip rate (limited effectiveness)
 
 ### Space Overhead
 
+Zone map metadata size varies by page size (fewer zones with larger pages):
+
+**8KB pages:**
 - **1TB table, 512KB zones:** ~400MB zone map (0.04%)
 - **10GB table, 512KB zones:** ~4MB zone map (0.04%)
-- **Target:** < 0.1% of table size
+
+**16KB pages:**
+- **1TB table, 1MB zones:** ~200MB zone map (0.02%)
+- **10GB table, 1MB zones:** ~2MB zone map (0.02%)
+
+**32KB pages:**
+- **1TB table, 2MB zones:** ~100MB zone map (0.01%)
+- **10GB table, 2MB zones:** ~1MB zone map (0.01%)
+
+**64KB+ pages:**
+- **1TB table, 4MB+ zones:** ~50MB or less (< 0.005%)
+- **10GB table, 4MB+ zones:** ~500KB or less (< 0.005%)
+
+**Target:** < 0.1% of table size (easily achieved at all page sizes)
 
 ### Benchmarks
 
@@ -1746,10 +2122,27 @@ CREATE INDEX idx_ts_zm ON events USING zonemap(ts);
 SELECT COUNT(*) FROM events
 WHERE ts BETWEEN '2024-01-01 00:00:00' AND '2024-01-01 01:00:00';
 
--- Expected:
--- Without zone map: Full scan ~1-2 seconds
--- With zone map: Skip 99.9% of zones, ~10-20ms
+-- Expected performance (varies by page size):
+-- Without zone map: Full scan ~1-2 seconds (all page sizes)
+
+-- 8KB pages (512KB zones, 2048 zones total):
+--   Skip 99.9% of zones (2046 zones), scan 2 zones
+--   ~10-20ms
+
+-- 16KB pages (1MB zones, 1024 zones total):
+--   Skip 99.9% of zones (1022 zones), scan 2 zones
+--   ~8-15ms (fewer zones to check)
+
+-- 32KB pages (2MB zones, 512 zones total):
+--   Skip 99.8% of zones (510 zones), scan 2 zones
+--   ~5-10ms (much fewer zones to check)
+
+-- 64KB pages (4MB zones, 256 zones total):
+--   Skip 99.6% of zones (255 zones), scan 1 zone
+--   ~3-8ms (very few zones to check)
 ```
+
+**Key Insight:** Larger page sizes reduce zone map overhead but may increase false positives. For sorted data, all page sizes deliver excellent performance.
 
 ---
 
@@ -1788,7 +2181,8 @@ WHERE ts BETWEEN '2024-01-01 00:00:00' AND '2024-01-01 01:00:00';
 This specification provides a complete, implementation-ready design for Zone Maps in ScratchBird.
 
 **Key Features:**
-- ✅ Extent-based storage model (512KB zones)
+- ✅ Extent-based storage model (64 pages per extent, scales with page size)
+- ✅ **Page-size agnostic** (supports 8KB, 16KB, 32KB, 64KB, 128KB pages)
 - ✅ MGA-compliant (optimistic statistics, periodic rebuild)
 - ✅ Full query planner integration (cost-based zone filtering)
 - ✅ Multi-column support
@@ -1796,28 +2190,37 @@ This specification provides a complete, implementation-ready design for Zone Map
 - ✅ SQL syntax: CREATE INDEX USING zonemap(column)
 - ✅ Automatic maintenance during INSERT/UPDATE
 - ✅ GC integration for statistics cleanup
+- ✅ Runtime capacity calculations (no hardcoded page sizes)
+- ✅ Flexible array members for page structures
 
 **Implementation Effort:** 82-120 hours (10-15 days)
 
 **Risk Level:** MEDIUM - Requires query planner changes, extent tracking
 
-**Performance:** 10-100x speedup for selective range queries on sorted data
+**Performance:** 10-100x speedup for selective range queries on sorted data (varies by page size)
+
+**Page Size Flexibility:**
+- Fine-grained zones (8KB pages): Best skip rates, higher metadata
+- Coarse zones (64KB+ pages): Lower metadata, fewer zones to check
+- All page sizes: Automatic adaptation, no code changes needed
 
 **Next Steps:**
 1. Review this specification
-2. Implement Phase 1 (storage foundation)
+2. Implement Phase 1 (storage foundation with page-size awareness)
 3. Implement Phase 2 (statistics collection)
 4. Integrate with query planner
-5. Benchmark on TPC-H workloads
+5. Benchmark on TPC-H workloads across different page sizes
 
 ---
 
-**Specification Status:** READY FOR REVIEW
+**Specification Status:** READY FOR IMPLEMENTATION (v1.1)
 **Reviewer:** Please provide feedback on:
-- Extent size choice (512KB default)
+- Extent size choice (64 pages, scales with page size)
 - MGA compliance approach (optimistic statistics)
 - Query planner integration strategy
+- Page-size agnostic design (flexible arrays, runtime calculations)
 - Missing considerations or edge cases
 
 **Author:** ScratchBird Architecture Team
 **Date:** November 20, 2025
+**Version:** 1.1 (Page-size agnostic update)
