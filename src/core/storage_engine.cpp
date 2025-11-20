@@ -12,6 +12,7 @@
 #include "scratchbird/core/btree.h"
 #include "scratchbird/core/hash_index.h"
 #include "scratchbird/core/lsm_tree.h"  // LSM Integration Phase 4
+#include "scratchbird/core/columnstore.h"  // TASK-DML-7: Columnstore DML Integration
 #include "scratchbird/core/toast.h"
 #include "scratchbird/core/garbage_collector.h"
 #include "scratchbird/core/logger.h"
@@ -70,13 +71,22 @@ namespace scratchbird::core
                     return hash->insert(key.data(), key.size(), tid, xid, ctx);
                 }
 
+                case CatalogManager::IndexType::COLUMNSTORE:
+                {
+                    // TASK-DML-7: Columnstore INSERT handled separately
+                    // This function should not be called for columnstore
+                    // See special handling in INSERT/UPDATE paths
+                    SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                        "Columnstore should be handled separately, not via insertIntoIndex");
+                    return Status::INVALID_ARGUMENT;
+                }
+
                 case CatalogManager::IndexType::GIN:
                 case CatalogManager::IndexType::GIST:
                 case CatalogManager::IndexType::BRIN:
                 case CatalogManager::IndexType::RTREE:
                 case CatalogManager::IndexType::SPGIST:
                 case CatalogManager::IndexType::BITMAP:
-                case CatalogManager::IndexType::COLUMNSTORE:
                 case CatalogManager::IndexType::HNSW:
                 {
                     // Other index types not yet implemented
@@ -126,13 +136,20 @@ namespace scratchbird::core
                     return hash->remove(key.data(), key.size(), tid, xid, ctx);
                 }
 
+                case CatalogManager::IndexType::COLUMNSTORE:
+                {
+                    // TASK-DML-7: Columnstore DELETE is a no-op
+                    // Deletion is handled via heap visibility (xmax marking)
+                    // Columnstore scans filter deleted rows using heap TID visibility
+                    return Status::OK;
+                }
+
                 case CatalogManager::IndexType::GIN:
                 case CatalogManager::IndexType::GIST:
                 case CatalogManager::IndexType::BRIN:
                 case CatalogManager::IndexType::RTREE:
                 case CatalogManager::IndexType::SPGIST:
                 case CatalogManager::IndexType::BITMAP:
-                case CatalogManager::IndexType::COLUMNSTORE:
                 case CatalogManager::IndexType::HNSW:
                 {
                     SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED,
@@ -329,6 +346,70 @@ namespace scratchbird::core
                     // Update each index
                     for (const auto &index_info : indexes)
                     {
+                        // Get index type and pointer
+                        CatalogManager::IndexType actual_index_type;
+                        void *index_ptr = catalog_manager_->getIndexPtr(index_info.index_id, &actual_index_type);
+
+                        if (!index_ptr)
+                        {
+                            LOG_WARNING(STORAGE, "Index %s not found in cache, skipping",
+                                        index_info.index_name.c_str());
+                            continue;
+                        }
+
+                        // TASK-DML-7: Special handling for columnstore (append-only columnar storage)
+                        if (actual_index_type == CatalogManager::IndexType::COLUMNSTORE)
+                        {
+                            auto *columnstore = static_cast<ColumnstoreIndex*>(index_ptr);
+
+                            // Insert each indexed column into columnstore
+                            for (const auto &col_id : index_info.column_ids)
+                            {
+                                // Find column index and info
+                                size_t col_idx = 0;
+                                bool found = false;
+                                for (size_t i = 0; i < columns.size(); i++)
+                                {
+                                    if (columns[i].column_id == col_id)
+                                    {
+                                        col_idx = i;
+                                        found = true;
+                                        break;
+                                    }
+                                }
+
+                                if (!found)
+                                {
+                                    LOG_WARNING(STORAGE, "Column not found for columnstore index %s",
+                                                index_info.index_name.c_str());
+                                    continue;
+                                }
+
+                                // Check if column is NULL
+                                bool is_null = (column_offsets[col_idx] == 0 && column_sizes[col_idx] == 0);
+
+                                // Get column value pointer and size
+                                const void *col_value = is_null ? nullptr : (tuple_data + column_offsets[col_idx]);
+                                size_t col_value_len = column_sizes[col_idx];
+
+                                // Insert into columnstore
+                                // TODO: Columnstore currently uses uint64_t for TID, but we have TID struct
+                                // Using gpid for now (loses slot info, but sufficient for single-tablespace)
+                                Status cs_status = columnstore->insert(
+                                    col_id, tid.gpid, col_value, col_value_len, is_null, ctx);
+
+                                if (cs_status != Status::OK)
+                                {
+                                    LOG_ERROR(STORAGE, "Failed to insert into columnstore index %s: %s",
+                                              index_info.index_name.c_str(),
+                                              ctx ? ctx->message.c_str() : "unknown error");
+                                }
+                            }
+
+                            continue; // Columnstore doesn't use key extraction
+                        }
+
+                        // Regular index handling (key-based indexes)
                         // Convert column IDs to column indices
                         std::vector<uint16_t> column_indices;
                         for (const auto &col_id : index_info.column_ids)
@@ -361,27 +442,16 @@ namespace scratchbird::core
                             continue; // Skip this index
                         }
 
-                        // LSM Integration Phase 4: Use index cache instead of opening each time
-                        CatalogManager::IndexType actual_index_type;
-                        void *index_ptr = catalog_manager_->getIndexPtr(index_info.index_id, &actual_index_type);
+                        // Insert into key-based index
+                        Status insert_status = insertIntoIndex(
+                            actual_index_type, index_ptr, key, tid, current_xid, ctx);
 
-                        if (index_ptr)
+                        if (insert_status != Status::OK)
                         {
-                            Status insert_status = insertIntoIndex(
-                                actual_index_type, index_ptr, key, tid, current_xid, ctx);
-
-                            if (insert_status != Status::OK)
-                            {
-                                LOG_ERROR(STORAGE, "Failed to insert into %s index %s: %s",
-                                          indexTypeToString(actual_index_type).c_str(),
-                                          index_info.index_name.c_str(),
-                                          ctx ? ctx->message.c_str() : "unknown error");
-                            }
-                        }
-                        else
-                        {
-                            LOG_WARNING(STORAGE, "Index %s not found in cache, skipping",
-                                        index_info.index_name.c_str());
+                            LOG_ERROR(STORAGE, "Failed to insert into %s index %s: %s",
+                                      indexTypeToString(actual_index_type).c_str(),
+                                      index_info.index_name.c_str(),
+                                      ctx ? ctx->message.c_str() : "unknown error");
                         }
                     }
 
@@ -1361,6 +1431,71 @@ namespace scratchbird::core
                     // Check each index to see if indexed columns changed
                     for (const auto &index_info : indexes)
                     {
+                        // Get index type and pointer
+                        CatalogManager::IndexType actual_index_type;
+                        void *index_ptr = catalog_manager_->getIndexPtr(index_info.index_id, &actual_index_type);
+
+                        if (!index_ptr)
+                        {
+                            LOG_WARNING(STORAGE, "Index %s not found in cache, skipping",
+                                        index_info.index_name.c_str());
+                            continue;
+                        }
+
+                        // TASK-DML-7: Special handling for columnstore UPDATE (append-only)
+                        if (actual_index_type == CatalogManager::IndexType::COLUMNSTORE)
+                        {
+                            auto *columnstore = static_cast<ColumnstoreIndex*>(index_ptr);
+
+                            // Columnstore is append-only: insert new values
+                            // Old values are already marked with xmax in heap (visibility filtering)
+                            for (const auto &col_id : index_info.column_ids)
+                            {
+                                // Find column index and info
+                                size_t col_idx = 0;
+                                bool found = false;
+                                for (size_t i = 0; i < columns.size(); i++)
+                                {
+                                    if (columns[i].column_id == col_id)
+                                    {
+                                        col_idx = i;
+                                        found = true;
+                                        break;
+                                    }
+                                }
+
+                                if (!found)
+                                {
+                                    LOG_WARNING(STORAGE, "Column not found for columnstore index %s",
+                                                index_info.index_name.c_str());
+                                    continue;
+                                }
+
+                                // Check if column is NULL in new tuple
+                                bool is_null = (new_offsets[col_idx] == 0 && new_sizes[col_idx] == 0);
+
+                                // Get new column value pointer and size
+                                const void *col_value = is_null ? nullptr : (new_tuple_data + new_offsets[col_idx]);
+                                size_t col_value_len = new_sizes[col_idx];
+
+                                // Append new value to columnstore (with same TID)
+                                // TODO: Columnstore currently uses uint64_t for TID, but we have TID struct
+                                // Using gpid for now (loses slot info, but sufficient for single-tablespace)
+                                Status cs_status = columnstore->insert(
+                                    col_id, tid.gpid, col_value, col_value_len, is_null, ctx);
+
+                                if (cs_status != Status::OK)
+                                {
+                                    LOG_ERROR(STORAGE, "Failed to update columnstore index %s: %s",
+                                              index_info.index_name.c_str(),
+                                              ctx ? ctx->message.c_str() : "unknown error");
+                                }
+                            }
+
+                            continue; // Columnstore doesn't use key extraction
+                        }
+
+                        // Regular index handling (key-based indexes)
                         // Convert column IDs to column indices
                         std::vector<uint16_t> column_indices;
                         for (const auto &col_id : index_info.column_ids)
@@ -1400,26 +1535,21 @@ namespace scratchbird::core
                             continue;
                         }
 
-                        // LSM Integration Phase 4: Keys changed - update index using cache
-                        CatalogManager::IndexType actual_index_type;
-                        void *index_ptr = catalog_manager_->getIndexPtr(index_info.index_id, &actual_index_type);
+                        // Keys changed - update index
+                        // Remove old key
+                        Status remove_status = removeFromIndex(
+                            actual_index_type, index_ptr, old_key, tid, xmax, ctx);
 
-                        if (index_ptr)
+                        if (remove_status != Status::OK)
                         {
-                            // Remove old key
-                            Status remove_status = removeFromIndex(
-                                actual_index_type, index_ptr, old_key, tid, xmax, ctx);
+                            LOG_WARNING(STORAGE, "Failed to remove old key from %s index %s: %s",
+                                        indexTypeToString(actual_index_type).c_str(),
+                                        index_info.index_name.c_str(),
+                                        ctx ? ctx->message.c_str() : "unknown error");
+                        }
 
-                            if (remove_status != Status::OK)
-                            {
-                                LOG_WARNING(STORAGE, "Failed to remove old key from %s index %s: %s",
-                                            indexTypeToString(actual_index_type).c_str(),
-                                            index_info.index_name.c_str(),
-                                            ctx ? ctx->message.c_str() : "unknown error");
-                            }
-
-                            // Insert new key (same TID!)
-                            Status insert_status = insertIntoIndex(
+                        // Insert new key (same TID!)
+                        Status insert_status = insertIntoIndex(
                                 actual_index_type, index_ptr, new_key, tid, xmax, ctx);
 
                             if (insert_status != Status::OK)
@@ -1429,12 +1559,6 @@ namespace scratchbird::core
                                           index_info.index_name.c_str(),
                                           ctx ? ctx->message.c_str() : "unknown error");
                             }
-                        }
-                        else
-                        {
-                            LOG_WARNING(STORAGE, "Index %s not found in cache, skipping update",
-                                        index_info.index_name.c_str());
-                        }
                     }
 
                     // Clear detoasting cache
