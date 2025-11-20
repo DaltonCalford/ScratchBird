@@ -707,7 +707,8 @@ void LSMTreeIndex::compactionThreadFunc()
                 if (status != Status::OK)
                 {
                     // Log error but continue (compaction failure is not fatal)
-                    // TODO: Add proper logging
+                    LOG_WARNING(STORAGE, "LSM-Tree: Compaction failed with status %d (non-fatal, will retry)",
+                               static_cast<int>(status));
                 }
             }
         }
