@@ -15290,7 +15290,12 @@ namespace scratchbird
             bool if_exists = flags & 0x01;
             bool cascade = flags & 0x02;
 
-            // TODO: Add permission check - only superusers can drop users
+            // Security Check: Only superusers can drop users
+            if (conn_ctx_ && !conn_ctx_->isSuperuser())
+            {
+                error("Permission denied: only superusers can drop users");
+                return;
+            }
 
             // Look up user by name
             core::CatalogManager::UserInfo user_info;
@@ -15327,7 +15332,12 @@ namespace scratchbird
             // Decode bytecode
             std::string rolename = readString();
 
-            // TODO: Add permission check - only superusers can create roles
+            // Security Check: Only superusers can create roles
+            if (conn_ctx_ && !conn_ctx_->isSuperuser())
+            {
+                error("Permission denied: only superusers can create roles");
+                return;
+            }
 
             // Get current user ID as the owner
             // TODO: Get from connection context when implemented
@@ -15354,7 +15364,12 @@ namespace scratchbird
             bool if_exists = flags & 0x01;
             bool cascade = flags & 0x02;
 
-            // TODO: Add permission check - only superusers can drop roles
+            // Security Check: Only superusers can drop roles
+            if (conn_ctx_ && !conn_ctx_->isSuperuser())
+            {
+                error("Permission denied: only superusers can drop roles");
+                return;
+            }
 
             // Look up role by name
             core::CatalogManager::RoleInfo role_info;
@@ -15390,7 +15405,12 @@ namespace scratchbird
             // Decode bytecode
             std::string groupname = readString();
 
-            // TODO: Add permission check - only superusers can create groups
+            // Security Check: Only superusers can create groups
+            if (conn_ctx_ && !conn_ctx_->isSuperuser())
+            {
+                error("Permission denied: only superusers can create groups");
+                return;
+            }
 
             // Call catalog manager
             core::ID group_uuid;
@@ -15413,7 +15433,12 @@ namespace scratchbird
             bool if_exists = flags & 0x01;
             bool cascade = flags & 0x02;
 
-            // TODO: Add permission check - only superusers can drop groups
+            // Security Check: Only superusers can drop groups
+            if (conn_ctx_ && !conn_ctx_->isSuperuser())
+            {
+                error("Permission denied: only superusers can drop groups");
+                return;
+            }
 
             // Look up group by name
             core::CatalogManager::GroupInfo group_info;
@@ -15468,8 +15493,6 @@ namespace scratchbird
                 }
             }
 
-            // TODO: Add permission check - only superusers or object owners can grant
-
             core::ErrorContext err_ctx;
 
             // Convert object_type_byte to enum
@@ -15492,6 +15515,20 @@ namespace scratchbird
                     error("Table '" + object_name + "' not found");
                 }
                 object_id = table_info.table_id;
+
+                // Security Check: Only superusers or object owners can grant
+                if (conn_ctx_ && !conn_ctx_->isSuperuser())
+                {
+                    // Check if current user is the table owner
+                    bool is_owner = (std::memcmp(&conn_ctx_->getCurrentUserId(),
+                                                  &table_info.owner_id,
+                                                  sizeof(core::ID)) == 0);
+                    if (!is_owner)
+                    {
+                        error("Permission denied: only superusers or table owners can grant privileges");
+                        return;
+                    }
+                }
             }
             else
             {
@@ -15612,8 +15649,6 @@ namespace scratchbird
                 }
             }
 
-            // TODO: Add permission check - only superusers or object owners can revoke
-
             core::ErrorContext err_ctx;
 
             // Convert object_type_byte to enum
@@ -15635,6 +15670,20 @@ namespace scratchbird
                     error("Table '" + object_name + "' not found");
                 }
                 object_id = table_info.table_id;
+
+                // Security Check: Only superusers or object owners can revoke
+                if (conn_ctx_ && !conn_ctx_->isSuperuser())
+                {
+                    // Check if current user is the table owner
+                    bool is_owner = (std::memcmp(&conn_ctx_->getCurrentUserId(),
+                                                  &table_info.owner_id,
+                                                  sizeof(core::ID)) == 0);
+                    if (!is_owner)
+                    {
+                        error("Permission denied: only superusers or table owners can revoke privileges");
+                        return;
+                    }
+                }
             }
             else
             {
@@ -15734,7 +15783,12 @@ namespace scratchbird
             uint8_t grantee_type_byte = readByte();
             std::string grantee_name = readString();
 
-            // TODO: Add permission check - only superusers can grant roles
+            // Security Check: Only superusers can grant roles
+            if (conn_ctx_ && !conn_ctx_->isSuperuser())
+            {
+                error("Permission denied: only superusers can grant roles");
+                return;
+            }
 
             core::ErrorContext err_ctx;
 
@@ -15790,7 +15844,12 @@ namespace scratchbird
             uint8_t flags = readByte();
             bool cascade = flags & 0x01;
 
-            // TODO: Add permission check - only superusers can revoke roles
+            // Security Check: Only superusers can revoke roles
+            if (conn_ctx_ && !conn_ctx_->isSuperuser())
+            {
+                error("Permission denied: only superusers can revoke roles");
+                return;
+            }
 
             core::ErrorContext err_ctx;
 
@@ -16006,14 +16065,7 @@ namespace scratchbird
                 }
             }
 
-            // Permission check: Only superusers or table owners can create policies
-            if (conn_ctx_ && !conn_ctx_->isSuperuser())
-            {
-                // TODO: Check if user is table owner
-                error("Permission denied: CREATE POLICY (superuser or table owner only)");
-            }
-
-            // Look up schema and table
+            // Look up schema and table first
             core::CatalogManager::SchemaInfo schema_info;
             auto schema_status = db_->catalog_manager()->getSchema("PUBLIC", schema_info, nullptr);
             if (schema_status != core::Status::OK)
@@ -16029,6 +16081,20 @@ namespace scratchbird
             if (get_status != core::Status::OK)
             {
                 error("Table '" + table_name + "' not found");
+            }
+
+            // Security Check: Only superusers or table owners can create policies
+            if (conn_ctx_ && !conn_ctx_->isSuperuser())
+            {
+                // Check if current user is the table owner
+                bool is_owner = (std::memcmp(&conn_ctx_->getCurrentUserId(),
+                                              &table_info.owner_id,
+                                              sizeof(core::ID)) == 0);
+                if (!is_owner)
+                {
+                    error("Permission denied: only superusers or table owners can create policies");
+                    return;
+                }
             }
 
             // Convert policy command to PolicyType
@@ -16064,14 +16130,7 @@ namespace scratchbird
             bool if_exists = flags & 0x01;
             bool cascade = flags & 0x02;
 
-            // Permission check: Only superusers or table owners can drop policies
-            if (conn_ctx_ && !conn_ctx_->isSuperuser())
-            {
-                // TODO: Check if user is table owner
-                error("Permission denied: DROP POLICY (superuser or table owner only)");
-            }
-
-            // Look up schema and table
+            // Look up schema and table first
             core::CatalogManager::SchemaInfo schema_info;
             auto schema_status = db_->catalog_manager()->getSchema("PUBLIC", schema_info, nullptr);
             if (schema_status != core::Status::OK)
@@ -16091,6 +16150,20 @@ namespace scratchbird
                     return; // Silently succeed if IF EXISTS specified
                 }
                 error("Table '" + table_name + "' not found");
+            }
+
+            // Security Check: Only superusers or table owners can drop policies
+            if (conn_ctx_ && !conn_ctx_->isSuperuser())
+            {
+                // Check if current user is the table owner
+                bool is_owner = (std::memcmp(&conn_ctx_->getCurrentUserId(),
+                                              &table_info.owner_id,
+                                              sizeof(core::ID)) == 0);
+                if (!is_owner)
+                {
+                    error("Permission denied: only superusers or table owners can drop policies");
+                    return;
+                }
             }
 
             // Drop policy
@@ -16113,14 +16186,7 @@ namespace scratchbird
             std::string table_name = readString();
             uint8_t action = readByte();
 
-            // Permission check: Only superusers or table owners can alter RLS
-            if (conn_ctx_ && !conn_ctx_->isSuperuser())
-            {
-                // TODO: Check if user is table owner
-                error("Permission denied: ALTER TABLE ROW LEVEL SECURITY (superuser or table owner only)");
-            }
-
-            // Look up schema and table
+            // Look up schema and table first
             core::CatalogManager::SchemaInfo schema_info;
             auto schema_status = db_->catalog_manager()->getSchema("PUBLIC", schema_info, nullptr);
             if (schema_status != core::Status::OK)
@@ -16136,6 +16202,20 @@ namespace scratchbird
             if (get_status != core::Status::OK)
             {
                 error("Table '" + table_name + "' not found");
+            }
+
+            // Security Check: Only superusers or table owners can alter RLS
+            if (conn_ctx_ && !conn_ctx_->isSuperuser())
+            {
+                // Check if current user is the table owner
+                bool is_owner = (std::memcmp(&conn_ctx_->getCurrentUserId(),
+                                              &table_info.owner_id,
+                                              sizeof(core::ID)) == 0);
+                if (!is_owner)
+                {
+                    error("Permission denied: only superusers or table owners can alter table row level security");
+                    return;
+                }
             }
 
             // Determine RLS settings based on action
@@ -19407,7 +19487,9 @@ namespace scratchbird
 
             if (status != core::Status::OK)
             {
-                error("Index insert failed: " + std::string(err_ctx.message));
+                // SECURITY FIX (LOW-7): Log detailed error internally, return generic error to client
+                LOG_ERROR(EXECUTION, "Index insert failed: %s", err_ctx.message.c_str());
+                error("Index insert failed");
             }
         }
 
@@ -19470,7 +19552,9 @@ namespace scratchbird
 
             if (status != core::Status::OK)
             {
-                error("Index search failed: " + std::string(err_ctx.message));
+                // SECURITY FIX (LOW-7): Log detailed error internally, return generic error to client
+                LOG_ERROR(EXECUTION, "Index search failed: %s", err_ctx.message.c_str());
+                error("Index search failed");
                 return;
             }
 
@@ -19672,7 +19756,9 @@ namespace scratchbird
 
             if (status != core::Status::OK)
             {
-                error("Index delete failed: " + std::string(err_ctx.message));
+                // SECURITY FIX (LOW-7): Log detailed error internally, return generic error to client
+                LOG_ERROR(EXECUTION, "Index delete failed: %s", err_ctx.message.c_str());
+                error("Index delete failed");
             }
         }
 
