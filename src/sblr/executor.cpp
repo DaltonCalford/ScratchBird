@@ -933,7 +933,9 @@ namespace scratchbird
                                 }
                                 catch (const geo::PROJException &e)
                                 {
-                                    error(std::string("ST_Transform failed: ") + e.what());
+                                    // SECURITY FIX (HIGH-1): Log detailed error internally, return generic error to client
+                                    LOG_ERROR(EXECUTION, "ST_Transform failed: %s", e.what());
+                                    error("Spatial transformation failed");
                                 }
 #else
                                 error("ST_Transform requires PROJ library (not available)");
@@ -3174,6 +3176,14 @@ namespace scratchbird
         void Executor::executeRefreshMaterializedView()
         {
             // ALPHA Phase 1 - Materialized Views: REFRESH MATERIALIZED VIEW
+
+            // SECURITY NOTE (MEDIUM-2): RLS enforcement for materialized views
+            // When refreshing a materialized view that queries RLS-protected tables:
+            // 1. RLS policies MUST be enforced during view query execution
+            // 2. Only users with BYPASSRLS privilege can refresh views over RLS tables
+            // 3. Materialized data should respect the refreshing user's permissions
+            // Current implementation delegates to catalog_manager->refreshMaterializedView()
+            // which should enforce RLS through the query planner. Verify this is working correctly.
 
             // Read view name
             std::string view_name = readString();
@@ -13508,7 +13518,9 @@ namespace scratchbird
             }
             catch (const std::regex_error &e)
             {
-                error("Invalid regular expression: " + pattern + " (" + e.what() + ")");
+                // SECURITY FIX (HIGH-1): Log detailed error internally, return generic error to client
+                LOG_ERROR(EXECUTION, "Invalid regular expression '%s': %s", pattern.c_str(), e.what());
+                error("Invalid regular expression");
                 return false;
             }
         }
@@ -13557,7 +13569,9 @@ namespace scratchbird
             }
             catch (const std::regex_error &e)
             {
-                error("Invalid regular expression: " + pattern + " (" + e.what() + ")");
+                // SECURITY FIX (HIGH-1): Log detailed error internally, return generic error to client
+                LOG_ERROR(EXECUTION, "Invalid regular expression '%s': %s", pattern.c_str(), e.what());
+                error("Invalid regular expression");
             }
             return results;
         }
@@ -13599,7 +13613,9 @@ namespace scratchbird
             }
             catch (const std::regex_error &e)
             {
-                error("Invalid regular expression: " + pattern + " (" + e.what() + ")");
+                // SECURITY FIX (HIGH-1): Log detailed error internally, return generic error to client
+                LOG_ERROR(EXECUTION, "Invalid regular expression '%s': %s", pattern.c_str(), e.what());
+                error("Invalid regular expression");
                 return text;
             }
         }
@@ -13638,7 +13654,9 @@ namespace scratchbird
             }
             catch (const std::regex_error &e)
             {
-                error("Invalid regular expression: " + pattern + " (" + e.what() + ")");
+                // SECURITY FIX (HIGH-1): Log detailed error internally, return generic error to client
+                LOG_ERROR(EXECUTION, "Invalid regular expression '%s': %s", pattern.c_str(), e.what());
+                error("Invalid regular expression");
                 results.push_back(text);
             }
             return results;
@@ -15153,7 +15171,9 @@ namespace scratchbird
                 }
                 catch (const std::exception& e)
                 {
-                    error("Password hashing failed: " + std::string(e.what()));
+                    // SECURITY FIX (HIGH-1): Log detailed error internally, return generic error to client
+                    LOG_ERROR(EXECUTION, "Password hashing failed during CREATE USER: %s", e.what());
+                    error("Password hashing failed");
                 }
             }
 
@@ -15214,7 +15234,9 @@ namespace scratchbird
                 }
                 catch (const std::exception& e)
                 {
-                    error("Password hashing failed: " + std::string(e.what()));
+                    // SECURITY FIX (HIGH-1): Log detailed error internally, return generic error to client
+                    LOG_ERROR(EXECUTION, "Password hashing failed during ALTER USER: %s", e.what());
+                    error("Password hashing failed");
                 }
             }
 
@@ -18458,7 +18480,9 @@ namespace scratchbird
             {
                 std::string err_msg = getLastXMLError();
                 xmlResetLastError();
-                error("Invalid XML: " + err_msg);
+                // SECURITY FIX (HIGH-1): Log detailed error internally, return generic error to client
+                LOG_ERROR(EXECUTION, "Invalid XML: %s", err_msg.c_str());
+                error("Invalid XML");
             }
 
             // Convert back to string (validates and normalizes)

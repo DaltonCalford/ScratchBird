@@ -139,11 +139,15 @@ std::string PasswordHash::hashPassword(const std::string& password, int cost)
 
     return result;
 #else
-    // Fallback: Simple hash (NOT SECURE - for compatibility only)
-    // WARNING: This is not a secure implementation!
-    // In production, ensure bcrypt library is available
-    std::string result = "$2a$" + std::to_string(cost) + "$FALLBACK_INSECURE_HASH_" + password;
-    return result.substr(0, 60); // Truncate to standard bcrypt length
+    // SECURITY FIX (CRITICAL-2): Fail safely instead of using insecure fallback
+    // Weak password hashing would expose all passwords if database is compromised
+    throw std::runtime_error(
+        "Password hashing requires bcrypt support (crypt_r). "
+        "Please rebuild with bcrypt support enabled. "
+        "On Debian/Ubuntu: apt install libcrypt-dev. "
+        "On RHEL/CentOS: yum install glibc-devel. "
+        "This is a security requirement and cannot be bypassed."
+    );
 #endif
 }
 
@@ -193,9 +197,12 @@ bool PasswordHash::verifyPassword(const std::string& password, const std::string
 
     return result == 0;
 #else
-    // Fallback: Simple comparison (NOT SECURE)
-    std::string expected = hashPassword(password, getCost(hash));
-    return expected == hash;
+    // SECURITY FIX (CRITICAL-2): Fail safely instead of using insecure fallback
+    throw std::runtime_error(
+        "Password verification requires bcrypt support (crypt_r). "
+        "Please rebuild with bcrypt support enabled. "
+        "This is a security requirement and cannot be bypassed."
+    );
 #endif
 }
 
