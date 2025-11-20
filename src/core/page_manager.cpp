@@ -205,10 +205,10 @@ namespace scratchbird::core
 
         // Eager FSM flush: Flush periodically to avoid data loss on crash
         // Flush every 100 allocations to balance safety and performance
-        static uint32_t alloc_counter = 0;
-        if (++alloc_counter >= 100)
+        // Note: Counter is protected by mutex_ which is already held
+        if (++alloc_counter_ >= 100)
         {
-            alloc_counter = 0;
+            alloc_counter_ = 0;
             Status flush_status = flush(ctx);
             if (flush_status != Status::OK)
             {
@@ -252,10 +252,10 @@ namespace scratchbird::core
 
         // Eager FSM flush: Flush periodically to avoid data loss on crash
         // Flush every 100 frees to balance safety and performance
-        static uint32_t free_counter = 0;
-        if (++free_counter >= 100)
+        // Note: Counter is protected by mutex_ which is already held
+        if (++free_counter_ >= 100)
         {
-            free_counter = 0;
+            free_counter_ = 0;
             Status flush_status = flush(ctx);
             if (flush_status != Status::OK)
             {
