@@ -924,6 +924,58 @@ namespace scratchbird::optimizer
 
             return plan;
         }
+        else if (path->type() == PathType::INDEX_ONLY_SCAN)
+        {
+            // TASK-BYTECODE-4: Index-only scan (covering index)
+            auto index_only_path = std::static_pointer_cast<IndexOnlyScanPath>(path);
+
+            auto plan = std::make_shared<IndexOnlyScanNode>(
+                index_only_path->tableId(),
+                index_only_path->tableName(),
+                index_only_path->indexId(),
+                index_only_path->indexName(),
+                ScanDirection::FORWARD);
+
+            plan->setCost(
+                path->startupCost(),
+                path->totalCost(),
+                path->rows());
+
+            // TODO: Set index condition and filter from WHERE clause
+            plan->setIndexCond("(index condition)");
+            plan->setFilter("(additional filter)");
+
+            return plan;
+        }
+        else if (path->type() == PathType::BITMAP_INDEX_SCAN)
+        {
+            // TASK-BYTECODE-4: Bitmap index scan (multi-index combination)
+            auto bitmap_path = std::static_pointer_cast<BitmapIndexScanPath>(path);
+
+            auto plan = std::make_shared<BitmapIndexScanNode>(
+                bitmap_path->tableId(),
+                bitmap_path->tableName(),
+                bitmap_path->indexIds(),
+                bitmap_path->indexNames(),
+                bitmap_path->bitmapOp());
+
+            plan->setCost(
+                path->startupCost(),
+                path->totalCost(),
+                path->rows());
+
+            // TODO: Set index conditions and filter from WHERE clause
+            // For now, create placeholder conditions for each index
+            std::vector<std::string> index_conds;
+            for (const auto& idx_name : bitmap_path->indexNames())
+            {
+                index_conds.push_back("(" + idx_name + " condition)");
+            }
+            plan->setIndexConds(index_conds);
+            plan->setFilter("(additional filter)");
+
+            return plan;
+        }
         else if (path->type() == PathType::RTREE_SCAN)
         {
             auto rtree_path = std::static_pointer_cast<RTreeScanPath>(path);
@@ -1425,6 +1477,38 @@ namespace scratchbird::optimizer
                 idx_path->indexId(),
                 idx_path->indexName(),
                 ScanDirection::FORWARD);
+            scan_node->setCost(
+                path->startupCost(),
+                path->totalCost(),
+                path->rows());
+            return scan_node;
+        }
+        else if (path->type() == PathType::INDEX_ONLY_SCAN)
+        {
+            // TASK-BYTECODE-4: Index-only scan node
+            auto *idx_only_path = static_cast<IndexOnlyScanPath *>(path.get());
+            auto scan_node = std::make_shared<IndexOnlyScanNode>(
+                idx_only_path->tableId(),
+                idx_only_path->tableName(),
+                idx_only_path->indexId(),
+                idx_only_path->indexName(),
+                ScanDirection::FORWARD);
+            scan_node->setCost(
+                path->startupCost(),
+                path->totalCost(),
+                path->rows());
+            return scan_node;
+        }
+        else if (path->type() == PathType::BITMAP_INDEX_SCAN)
+        {
+            // TASK-BYTECODE-4: Bitmap index scan node
+            auto *bitmap_path = static_cast<BitmapIndexScanPath *>(path.get());
+            auto scan_node = std::make_shared<BitmapIndexScanNode>(
+                bitmap_path->tableId(),
+                bitmap_path->tableName(),
+                bitmap_path->indexIds(),
+                bitmap_path->indexNames(),
+                bitmap_path->bitmapOp());
             scan_node->setCost(
                 path->startupCost(),
                 path->totalCost(),
