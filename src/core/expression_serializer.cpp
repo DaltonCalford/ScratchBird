@@ -473,7 +473,7 @@ namespace scratchbird::core
     // Main Deserialization
     // ========================================================================
 
-    Expression *ExpressionSerializer::deserialize(const uint8_t *data, size_t len,
+    std::unique_ptr<Expression> ExpressionSerializer::deserialize(const uint8_t *data, size_t len,
                                                   StringPool &pool)
     {
         const uint8_t *ptr = data;
@@ -488,7 +488,7 @@ namespace scratchbird::core
         return deserializeNode(ptr, end, pool);
     }
 
-    std::vector<Expression *> ExpressionSerializer::deserializeList(const uint8_t *data, size_t len,
+    std::vector<std::unique_ptr<Expression>> ExpressionSerializer::deserializeList(const uint8_t *data, size_t len,
                                                                      StringPool &pool)
     {
         const uint8_t *ptr = data;
@@ -501,7 +501,7 @@ namespace scratchbird::core
         }
 
         uint32_t count = readU32(ptr, end);
-        std::vector<Expression *> expressions;
+        std::vector<std::unique_ptr<Expression>> expressions;
         expressions.reserve(count);
 
         for (uint32_t i = 0; i < count; i++)
@@ -512,7 +512,7 @@ namespace scratchbird::core
         return expressions;
     }
 
-    Expression *ExpressionSerializer::deserializeNode(const uint8_t *&ptr, const uint8_t *end,
+    std::unique_ptr<Expression> ExpressionSerializer::deserializeNode(const uint8_t *&ptr, const uint8_t *end,
                                                       StringPool &pool)
     {
         uint8_t type_byte = readU8(ptr, end);
@@ -567,7 +567,7 @@ namespace scratchbird::core
     // Type-Specific Deserialization
     // ========================================================================
 
-    Expression *ExpressionSerializer::deserializeLiteral(const uint8_t *&ptr, const uint8_t *end,
+    std::unique_ptr<Expression> ExpressionSerializer::deserializeLiteral(const uint8_t *&ptr, const uint8_t *end,
                                                          StringPool &pool)
     {
         readU8(ptr, end); // flags (unused)
@@ -575,7 +575,7 @@ namespace scratchbird::core
         auto lit_type = static_cast<parser::LiteralExpr::LiteralType>(readU8(ptr, end));
 
         SourceSpan span; // Dummy span for deserialized expressions
-        LiteralExpr *lit_expr = new LiteralExpr(span, lit_type);
+        auto lit_expr = std::make_unique<LiteralExpr>(span, lit_type);
 
         // Read value based on type
         switch (lit_type)
@@ -600,7 +600,7 @@ namespace scratchbird::core
         return lit_expr;
     }
 
-    Expression *ExpressionSerializer::deserializeIdentifier(const uint8_t *&ptr, const uint8_t *end,
+    std::unique_ptr<Expression> ExpressionSerializer::deserializeIdentifier(const uint8_t *&ptr, const uint8_t *end,
                                                             StringPool &pool)
     {
         readU8(ptr, end); // flags
@@ -612,28 +612,28 @@ namespace scratchbird::core
         if (has_table)
         {
             StringPool::StringId table_id = readStringId(ptr, end, pool);
-            return new IdentifierExpr(span, name_id, table_id);
+            return std::make_unique<IdentifierExpr>(span, name_id, table_id);
         }
         else
         {
-            return new IdentifierExpr(span, name_id);
+            return std::make_unique<IdentifierExpr>(span, name_id);
         }
     }
 
-    Expression *ExpressionSerializer::deserializeBinaryOp(const uint8_t *&ptr, const uint8_t *end,
+    std::unique_ptr<Expression> ExpressionSerializer::deserializeBinaryOp(const uint8_t *&ptr, const uint8_t *end,
                                                           StringPool &pool)
     {
         readU8(ptr, end); // flags
 
         auto op = static_cast<BinaryOp>(readU8(ptr, end));
-        Expression *left = deserializeNode(ptr, end, pool);
-        Expression *right = deserializeNode(ptr, end, pool);
+        auto left = deserializeNode(ptr, end, pool);
+        auto right = deserializeNode(ptr, end, pool);
 
         SourceSpan span;
-        return new BinaryOpExpr(span, op, left, right);
+        return std::make_unique<BinaryOpExpr>(span, op, left.release(), right.release());
     }
 
-    Expression *ExpressionSerializer::deserializeFunctionCall(const uint8_t *&ptr,
+    std::unique_ptr<Expression> ExpressionSerializer::deserializeFunctionCall(const uint8_t *&ptr,
                                                               const uint8_t *end, StringPool &pool)
     {
         readU8(ptr, end); // flags
@@ -645,26 +645,26 @@ namespace scratchbird::core
         args.reserve(arg_count);
         for (uint8_t i = 0; i < arg_count; i++)
         {
-            args.push_back(deserializeNode(ptr, end, pool));
+            args.push_back(deserializeNode(ptr, end, pool).release());
         }
 
         SourceSpan span;
-        return new FunctionCallExpr(span, func_name, args);
+        return std::make_unique<FunctionCallExpr>(span, func_name, args);
     }
 
-    Expression *ExpressionSerializer::deserializeCast(const uint8_t *&ptr, const uint8_t *end,
+    std::unique_ptr<Expression> ExpressionSerializer::deserializeCast(const uint8_t *&ptr, const uint8_t *end,
                                                       StringPool &pool)
     {
         readU8(ptr, end); // flags
 
         auto target_type = static_cast<DataType>(readU32(ptr, end));
-        Expression *expr = deserializeNode(ptr, end, pool);
+        auto expr = deserializeNode(ptr, end, pool);
 
         SourceSpan span;
-        return new CastExpr(span, expr, target_type);
+        return std::make_unique<CastExpr>(span, expr.release(), target_type);
     }
 
-    Expression *ExpressionSerializer::deserializeCase(const uint8_t *&ptr, const uint8_t *end,
+    std::unique_ptr<Expression> ExpressionSerializer::deserializeCase(const uint8_t *&ptr, const uint8_t *end,
                                                       StringPool &pool)
     {
         readU8(ptr, end); // flags
@@ -675,31 +675,31 @@ namespace scratchbird::core
 
         for (uint8_t i = 0; i < when_count; i++)
         {
-            Expression *condition = deserializeNode(ptr, end, pool);
-            Expression *result = deserializeNode(ptr, end, pool);
-            whens.push_back({condition, result});
+            auto condition = deserializeNode(ptr, end, pool);
+            auto result = deserializeNode(ptr, end, pool);
+            whens.push_back({condition.release(), result.release()});
         }
 
-        Expression *else_result = deserializeNode(ptr, end, pool);
+        auto else_result = deserializeNode(ptr, end, pool);
 
         SourceSpan span;
-        return new CaseExpr(span, whens, else_result);
+        return std::make_unique<CaseExpr>(span, whens, else_result.release());
     }
 
-    Expression *ExpressionSerializer::deserializeAggregate(const uint8_t *&ptr,
+    std::unique_ptr<Expression> ExpressionSerializer::deserializeAggregate(const uint8_t *&ptr,
                                                            const uint8_t *end, StringPool &pool)
     {
         readU8(ptr, end); // flags
 
         auto func = static_cast<AggregateFunc>(readU8(ptr, end));
         bool distinct = (readU8(ptr, end) != 0);
-        Expression *arg = deserializeNode(ptr, end, pool);
+        auto arg = deserializeNode(ptr, end, pool);
 
         SourceSpan span;
-        return new AggregateExpr(span, func, arg, distinct);
+        return std::make_unique<AggregateExpr>(span, func, arg.release(), distinct);
     }
 
-    Expression *ExpressionSerializer::deserializeWindowFunc(const uint8_t *&ptr,
+    std::unique_ptr<Expression> ExpressionSerializer::deserializeWindowFunc(const uint8_t *&ptr,
                                                             const uint8_t *end, StringPool &pool)
     {
         readU8(ptr, end); // flags
@@ -711,16 +711,16 @@ namespace scratchbird::core
         args.reserve(arg_count);
         for (uint8_t i = 0; i < arg_count; i++)
         {
-            args.push_back(deserializeNode(ptr, end, pool));
+            args.push_back(deserializeNode(ptr, end, pool).release());
         }
 
-        WindowSpec *window_spec = deserializeWindowSpec(ptr, end, pool);
+        auto window_spec = deserializeWindowSpec(ptr, end, pool);
 
         SourceSpan span;
-        return new WindowFuncExpr(span, func, args, window_spec);
+        return std::make_unique<WindowFuncExpr>(span, func, args, window_spec.release());
     }
 
-    WindowSpec *ExpressionSerializer::deserializeWindowSpec(const uint8_t *&ptr,
+    std::unique_ptr<WindowSpec> ExpressionSerializer::deserializeWindowSpec(const uint8_t *&ptr,
                                                             const uint8_t *end, StringPool &pool)
     {
         uint8_t has_spec = readU8(ptr, end);
@@ -730,24 +730,24 @@ namespace scratchbird::core
         }
 
         SourceSpan span;
-        WindowSpec *spec = new WindowSpec(span);
+        auto spec = std::make_unique<WindowSpec>(span);
 
         // Read PARTITION BY expressions
         uint8_t partition_count = readU8(ptr, end);
         for (uint8_t i = 0; i < partition_count; i++)
         {
-            Expression *expr = deserializeNode(ptr, end, pool);
-            spec->addPartitionBy(expr);
+            auto expr = deserializeNode(ptr, end, pool);
+            spec->addPartitionBy(expr.release());
         }
 
         // Read ORDER BY expressions
         uint8_t order_count = readU8(ptr, end);
         for (uint8_t i = 0; i < order_count; i++)
         {
-            Expression *expr = deserializeNode(ptr, end, pool);
+            auto expr = deserializeNode(ptr, end, pool);
             bool ascending = (readU8(ptr, end) != 0);
             bool nulls_first = (readU8(ptr, end) != 0);
-            spec->addOrderBy(expr, ascending, nulls_first);
+            spec->addOrderBy(expr.release(), ascending, nulls_first);
         }
 
         // Read frame clause
@@ -768,11 +768,11 @@ namespace scratchbird::core
                                                                  StringPool &pool)
     {
         auto type = static_cast<FrameBoundaryType>(readU8(ptr, end));
-        Expression *offset = deserializeNode(ptr, end, pool);
-        return FrameBoundary(type, offset);
+        auto offset = deserializeNode(ptr, end, pool);
+        return FrameBoundary(type, offset.release());
     }
 
-    Expression *ExpressionSerializer::deserializeJSONFunc(const uint8_t *&ptr, const uint8_t *end,
+    std::unique_ptr<Expression> ExpressionSerializer::deserializeJSONFunc(const uint8_t *&ptr, const uint8_t *end,
                                                           StringPool &pool)
     {
         readU8(ptr, end); // flags
@@ -784,14 +784,14 @@ namespace scratchbird::core
         args.reserve(arg_count);
         for (uint8_t i = 0; i < arg_count; i++)
         {
-            args.push_back(deserializeNode(ptr, end, pool));
+            args.push_back(deserializeNode(ptr, end, pool).release());
         }
 
         SourceSpan span;
-        return new JSONFuncExpr(span, func, args);
+        return std::make_unique<JSONFuncExpr>(span, func, args);
     }
 
-    Expression *ExpressionSerializer::deserializeCoalesce(const uint8_t *&ptr, const uint8_t *end,
+    std::unique_ptr<Expression> ExpressionSerializer::deserializeCoalesce(const uint8_t *&ptr, const uint8_t *end,
                                                           StringPool &pool)
     {
         readU8(ptr, end); // flags
@@ -801,23 +801,23 @@ namespace scratchbird::core
         args.reserve(arg_count);
         for (uint8_t i = 0; i < arg_count; i++)
         {
-            args.push_back(deserializeNode(ptr, end, pool));
+            args.push_back(deserializeNode(ptr, end, pool).release());
         }
 
         SourceSpan span;
-        return new CoalesceExpr(span, args);
+        return std::make_unique<CoalesceExpr>(span, args);
     }
 
-    Expression *ExpressionSerializer::deserializeNullIf(const uint8_t *&ptr, const uint8_t *end,
+    std::unique_ptr<Expression> ExpressionSerializer::deserializeNullIf(const uint8_t *&ptr, const uint8_t *end,
                                                         StringPool &pool)
     {
         readU8(ptr, end); // flags
 
-        Expression *expr1 = deserializeNode(ptr, end, pool);
-        Expression *expr2 = deserializeNode(ptr, end, pool);
+        auto expr1 = deserializeNode(ptr, end, pool);
+        auto expr2 = deserializeNode(ptr, end, pool);
 
         SourceSpan span;
-        return new NullIfExpr(span, expr1, expr2);
+        return std::make_unique<NullIfExpr>(span, expr1.release(), expr2.release());
     }
 
 } // namespace scratchbird::core
