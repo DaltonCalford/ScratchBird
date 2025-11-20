@@ -39,7 +39,7 @@
 #include "scratchbird/core/hnsw_index.h"
 #include "scratchbird/core/bitmap_index.h"
 #include "scratchbird/core/columnstore_index.h"
-#include "scratchbird/core/lsm_tree.h"
+#include "scratchbird/core/lsm_tree_index.h"
 #include "scratchbird/core/debug.h"
 #include <nlohmann/json.hpp>
 #include <sstream>
@@ -20437,10 +20437,17 @@ namespace scratchbird
 
                 case IndexType::LSM:
                 {
-                    auto lsm = getOrOpenIndex<core::LSMTree>(index_uuid, type, index_info.idx_root_page, ctx);
+                    auto lsm = getOrOpenIndex<core::LSMTreeIndex>(index_uuid, type, index_info.idx_root_page, ctx);
                     if (lsm)
                     {
-                        return lsm->put(key, tid, xmin, ctx);  // LSM uses put(), not insert()
+                        // Serialize TID to byte vector (page_num + slot_num)
+                        std::vector<uint8_t> value(sizeof(uint32_t) * 2);
+                        uint32_t page = tid.page_num;
+                        uint32_t slot = tid.slot_num;
+                        std::memcpy(value.data(), &page, sizeof(uint32_t));
+                        std::memcpy(value.data() + sizeof(uint32_t), &slot, sizeof(uint32_t));
+
+                        return lsm->put(key, value, xmin, ctx);  // LSM uses put(), not insert()
                     }
                     return core::Status::INTERNAL_ERROR;
                 }
@@ -20579,13 +20586,19 @@ namespace scratchbird
 
                 case IndexType::LSM:
                 {
-                    auto lsm = getOrOpenIndex<core::LSMTree>(index_uuid, type, index_info.idx_root_page, ctx);
+                    auto lsm = getOrOpenIndex<core::LSMTreeIndex>(index_uuid, type, index_info.idx_root_page, ctx);
                     if (lsm)
                     {
-                        core::TID result_tid;
-                        core::Status status = lsm->get(key, current_xid, &result_tid, ctx);
-                        if (status == core::Status::OK)
+                        std::vector<uint8_t> value;
+                        bool found = false;
+                        core::Status status = lsm->get(key, current_xid, &value, &found, ctx);
+                        if (status == core::Status::OK && found && value.size() >= sizeof(uint32_t) * 2)
                         {
+                            // Deserialize TID from byte vector
+                            uint32_t page, slot;
+                            std::memcpy(&page, value.data(), sizeof(uint32_t));
+                            std::memcpy(&slot, value.data() + sizeof(uint32_t), sizeof(uint32_t));
+                            core::TID result_tid(page, slot);
                             results_out->push_back(result_tid);
                         }
                         return status;
@@ -20710,10 +20723,11 @@ namespace scratchbird
 
                 case IndexType::LSM:
                 {
-                    auto lsm = getOrOpenIndex<core::LSMTree>(index_uuid, type, index_info.idx_root_page, ctx);
+                    auto lsm = getOrOpenIndex<core::LSMTreeIndex>(index_uuid, type, index_info.idx_root_page, ctx);
                     if (lsm)
                     {
-                        return lsm->remove(key, tid, xmax, ctx);
+                        // LSMTreeIndex remove only needs key and transaction ID
+                        return lsm->remove(key, xmax, ctx);
                     }
                     return core::Status::INTERNAL_ERROR;
                 }
@@ -20902,27 +20916,30 @@ namespace scratchbird
 
                 case IndexType::LSM:
                 {
-                    auto lsm = getOrOpenIndex<core::LSMTree>(index_uuid, type, index_info.idx_root_page, ctx);
+                    auto lsm = getOrOpenIndex<core::LSMTreeIndex>(index_uuid, type, index_info.idx_root_page, ctx);
                     if (lsm)
                     {
                         // LSM-Tree range scan
-                        auto iter = lsm->rangeScan(start_key, end_key, current_xid,
-                                                  start_inclusive, end_inclusive, ctx);
-                        if (!iter)
+                        std::vector<core::MemtableEntry> entries;
+                        std::vector<uint8_t> start_key_vec = start_key ? *start_key : std::vector<uint8_t>();
+                        std::vector<uint8_t> end_key_vec = end_key ? *end_key : std::vector<uint8_t>();
+
+                        core::Status status = lsm->scan(start_key_vec, end_key_vec, current_xid, &entries, ctx);
+                        if (status != core::Status::OK)
                         {
-                            core::SET_ERROR_CONTEXT(ctx, core::Status::INTERNAL_ERROR,
-                                                  "Failed to create LSM-Tree iterator");
-                            return core::Status::INTERNAL_ERROR;
+                            return status;
                         }
 
-                        // Collect results from iterator
+                        // Collect results - deserialize TIDs from entry values
                         results_out->clear();
-                        while (iter->hasNext())
+                        for (const auto &entry : entries)
                         {
-                            auto entry = iter->next();
-                            if (entry.has_value())
+                            if (entry.value.size() >= sizeof(uint32_t) * 2)
                             {
-                                results_out->push_back(entry.value().tid);
+                                uint32_t page, slot;
+                                std::memcpy(&page, entry.value.data(), sizeof(uint32_t));
+                                std::memcpy(&slot, entry.value.data() + sizeof(uint32_t), sizeof(uint32_t));
+                                results_out->push_back(core::TID(page, slot));
                             }
                         }
                         return core::Status::OK;
