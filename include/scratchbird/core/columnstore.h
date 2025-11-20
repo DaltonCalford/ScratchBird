@@ -99,7 +99,8 @@ enum class ColumnstoreFlags : uint16_t
     COMPRESSED = 0x0001,    // Segment is compressed
     SORTED = 0x0002,        // Values are sorted
     HAS_NULLS = 0x0004,     // Segment contains NULL values
-    HAS_GARBAGE = 0x0008    // Segment has deleted values
+    HAS_GARBAGE = 0x0008,   // Segment has deleted values
+    CONTINUATION = 0x0010   // This is a continuation page for a multi-page segment
 };
 
 // Compression types

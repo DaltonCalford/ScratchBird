@@ -2007,88 +2007,149 @@ Status ColumnstoreIndex::createSegment(const ID &column_uuid,
         return Status::INVALID_ARGUMENT;
     }
 
-    // Step 2: Check if compressed data fits in a single page
+    // Step 2: Determine if multi-page segment is needed
     const size_t HEADER_SIZE = sizeof(SBColumnstorePage);
     const size_t PAGE_SIZE = 8192;  // Assuming 8KB pages
     const size_t MAX_DATA_SIZE = PAGE_SIZE - HEADER_SIZE;
 
-    if (compressed.size() > MAX_DATA_SIZE)
+    const bool is_multipage = (compressed.size() > MAX_DATA_SIZE);
+    const size_t total_pages = is_multipage
+        ? ((compressed.size() + MAX_DATA_SIZE - 1) / MAX_DATA_SIZE)
+        : 1;
+
+    // Step 3: Allocate pages (first page + continuation pages if needed)
+    std::vector<uint32_t> allocated_pages;
+    allocated_pages.reserve(total_pages);
+
+    for (size_t i = 0; i < total_pages; ++i)
     {
-        // TODO: Support multi-page segments in future
-        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
-                         "Segment too large (multi-page segments not yet supported)");
-        return Status::INVALID_ARGUMENT;
+        uint32_t page_num = 0;
+        status = page_mgr->allocatePage(page_num, ctx);
+        if (status != Status::OK)
+        {
+            // Clean up already allocated pages on failure
+            for (uint32_t cleanup_page : allocated_pages)
+            {
+                page_mgr->freePage(cleanup_page, ctx);
+            }
+            return status;
+        }
+        allocated_pages.push_back(page_num);
     }
 
-    // Step 3: Allocate new page
-    uint32_t new_page = 0;
-    status = page_mgr->allocatePage(new_page, ctx);
-    if (status != Status::OK)
-        return status;
+    uint32_t first_page = allocated_pages[0];
 
-    // Step 4: Pin page and initialize
-    void *page_buffer = nullptr;
-    status = buffer_pool->pinPage(new_page, &page_buffer, ctx);
-    if (status != Status::OK)
-        return status;
+    // Step 4: Write data to pages
+    for (size_t page_idx = 0; page_idx < total_pages; ++page_idx)
+    {
+        uint32_t current_page = allocated_pages[page_idx];
+        bool is_first_page = (page_idx == 0);
+        bool is_continuation = !is_first_page;
 
-    auto *page = static_cast<SBColumnstorePage *>(page_buffer);
-    std::memset(page, 0, sizeof(SBColumnstorePage));
+        // Pin page and initialize
+        void *page_buffer = nullptr;
+        status = buffer_pool->pinPage(current_page, &page_buffer, ctx);
+        if (status != Status::OK)
+        {
+            // Clean up on failure
+            for (uint32_t cleanup_page : allocated_pages)
+            {
+                page_mgr->freePage(cleanup_page, ctx);
+            }
+            return status;
+        }
 
-    // Step 5: Initialize page header
-    page->cs_header.magic = K_MAGIC_SBRD;
-    page->cs_header.version = static_cast<uint16_t>(DB_VERSION_ALPHA_1_0_1);
-    page->cs_header.page_type = static_cast<uint16_t>(PageType::PAGE_TYPE_COLUMNSTORE);
-    page->cs_header.page_size = PAGE_SIZE;
-    page->cs_header.page_id = new_page;
-    page->cs_header.checksum = 0;
-    page->cs_header.lsn = 0;
-    page->cs_header.flags = 0;
-    std::memcpy(page->cs_header.database_uuid, db_->uuid().bytes.data(), 16);
-    page->cs_header.generation = 0;
-    page->cs_header.free_space = MAX_DATA_SIZE - compressed.size();
-    page->cs_header.item_count = 1;  // One segment per page
-    page->cs_header.free_offset = 0;
-    page->cs_header.special_size = 0;
+        auto *page = static_cast<SBColumnstorePage *>(page_buffer);
+        std::memset(page, 0, sizeof(SBColumnstorePage));
 
-    // Step 6: Initialize columnstore metadata
-    page->cs_index_uuid = index_info_.idx_uuid;
-    page->cs_table_uuid = index_info_.idx_table_uuid;
-    page->cs_column_uuid = column_uuid;
+        // Calculate data chunk for this page
+        size_t data_offset = page_idx * MAX_DATA_SIZE;
+        size_t data_chunk_size = std::min(MAX_DATA_SIZE, compressed.size() - data_offset);
 
-    page->cs_flags = static_cast<uint16_t>(ColumnstoreFlags::COMPRESSED);
-    page->cs_row_count = segment.row_count;
-    page->cs_null_count = segment.null_count;
-    page->cs_compression_type = static_cast<uint8_t>(segment.compression);
-    page->cs_data_type = static_cast<uint8_t>(segment.data_type);
-    page->cs_compressed_size = static_cast<uint32_t>(compressed.size());
-    page->cs_uncompressed_size = static_cast<uint32_t>(segment.data.size());
+        // Step 5: Initialize page header (for all pages)
+        page->cs_header.magic = K_MAGIC_SBRD;
+        page->cs_header.version = static_cast<uint16_t>(DB_VERSION_ALPHA_1_0_1);
+        page->cs_header.page_type = static_cast<uint16_t>(PageType::PAGE_TYPE_COLUMNSTORE);
+        page->cs_header.page_size = PAGE_SIZE;
+        page->cs_header.page_id = current_page;
+        page->cs_header.checksum = 0;
+        page->cs_header.lsn = 0;
+        page->cs_header.flags = 0;
+        std::memcpy(page->cs_header.database_uuid, db_->uuid().bytes.data(), 16);
+        page->cs_header.generation = 0;
+        page->cs_header.free_space = MAX_DATA_SIZE - data_chunk_size;
+        page->cs_header.item_count = 1;
+        page->cs_header.free_offset = 0;
+        page->cs_header.special_size = 0;
 
-    // Step 7: Set min/max values (for predicate pushdown)
-    page->cs_min_value = segment.min_value;
-    page->cs_max_value = segment.max_value;
+        // Step 6: Initialize columnstore metadata
+        page->cs_index_uuid = index_info_.idx_uuid;
+        page->cs_table_uuid = index_info_.idx_table_uuid;
+        page->cs_column_uuid = column_uuid;
 
-    // Step 8: Set TID range
-    page->cs_first_tid = segment.first_tid;
-    page->cs_last_tid = segment.last_tid;
+        if (is_first_page)
+        {
+            // First page: full segment metadata
+            page->cs_flags = static_cast<uint16_t>(ColumnstoreFlags::COMPRESSED);
+            page->cs_row_count = segment.row_count;
+            page->cs_null_count = segment.null_count;
+            page->cs_compression_type = static_cast<uint8_t>(segment.compression);
+            page->cs_data_type = static_cast<uint8_t>(segment.data_type);
+            page->cs_compressed_size = static_cast<uint32_t>(compressed.size());
+            page->cs_uncompressed_size = static_cast<uint32_t>(segment.data.size());
 
-    // Step 9: Set MGA fields
-    page->cs_xmin = txn_mgr->getCurrentXid();
-    page->cs_xmax = 0;  // Active
-    page->cs_lsn = 0;
+            // Set min/max values (for predicate pushdown)
+            page->cs_min_value = segment.min_value;
+            page->cs_max_value = segment.max_value;
 
-    // Step 10: Initialize sibling pointers (will be updated by caller if needed)
-    page->cs_prev_segment = 0;
-    page->cs_next_segment = 0;
+            // Set TID range
+            page->cs_first_tid = segment.first_tid;
+            page->cs_last_tid = segment.last_tid;
 
-    // Step 11: Write compressed data to page
-    uint8_t *data_area = reinterpret_cast<uint8_t *>(page) + HEADER_SIZE;
-    std::memcpy(data_area, compressed.data(), compressed.size());
+            // MGA fields
+            page->cs_xmin = txn_mgr->getCurrentXid();
+            page->cs_xmax = 0;  // Active
+            page->cs_lsn = 0;
 
-    // Step 12: Unpin page (mark dirty)
-    buffer_pool->unpinPage(new_page, true, ctx);
+            // Store page count in padding (first 4 bytes)
+            uint32_t page_count = static_cast<uint32_t>(total_pages);
+            std::memcpy(page->cs_padding, &page_count, sizeof(uint32_t));
+        }
+        else
+        {
+            // Continuation page: minimal metadata
+            page->cs_flags = static_cast<uint16_t>(ColumnstoreFlags::CONTINUATION);
+            page->cs_row_count = 0;  // Not applicable for continuation
+            page->cs_null_count = 0;
+            page->cs_compression_type = 0;
+            page->cs_data_type = 0;
+            page->cs_compressed_size = static_cast<uint32_t>(data_chunk_size);
+            page->cs_uncompressed_size = 0;
 
-    *segment_page_out = new_page;
+            page->cs_min_value = 0;
+            page->cs_max_value = 0;
+            page->cs_first_tid = 0;
+            page->cs_last_tid = 0;
+
+            page->cs_xmin = txn_mgr->getCurrentXid();
+            page->cs_xmax = 0;
+            page->cs_lsn = 0;
+        }
+
+        // Set sibling pointers
+        page->cs_prev_segment = (page_idx > 0) ? allocated_pages[page_idx - 1] : 0;
+        page->cs_next_segment = (page_idx < total_pages - 1) ? allocated_pages[page_idx + 1] : 0;
+
+        // Write data chunk to page
+        uint8_t *data_area = reinterpret_cast<uint8_t *>(page) + HEADER_SIZE;
+        std::memcpy(data_area, compressed.data() + data_offset, data_chunk_size);
+
+        // Unpin page (mark dirty)
+        buffer_pool->unpinPage(current_page, true, ctx);
+    }
+
+    // Return first page as segment page
+    *segment_page_out = first_page;
     return Status::OK;
 }
 
@@ -2109,7 +2170,7 @@ Status ColumnstoreIndex::readSegment(uint32_t segment_page,
         return Status::INVALID_ARGUMENT;
     }
 
-    // Pin segment page
+    // Pin first segment page
     void *page_buffer = nullptr;
     Status status = buffer_pool->pinPage(segment_page, &page_buffer, ctx);
     if (status != Status::OK)
@@ -2117,7 +2178,7 @@ Status ColumnstoreIndex::readSegment(uint32_t segment_page,
 
     auto *page = static_cast<const SBColumnstorePage *>(page_buffer);
 
-    // Read metadata
+    // Read metadata from first page
     segment_out->column_uuid = page->cs_column_uuid;
     segment_out->data_type = static_cast<DataType>(page->cs_data_type);
     segment_out->row_count = page->cs_row_count;
@@ -2128,12 +2189,66 @@ Status ColumnstoreIndex::readSegment(uint32_t segment_page,
     segment_out->min_value = page->cs_min_value;
     segment_out->max_value = page->cs_max_value;
 
-    // Read compressed data
-    const uint8_t *compressed_data = reinterpret_cast<const uint8_t *>(page) + sizeof(SBColumnstorePage);
-    std::vector<uint8_t> compressed(compressed_data, compressed_data + page->cs_compressed_size);
+    // Check if this is a multi-page segment (read page count from padding)
+    uint32_t total_pages = 1;
+    std::memcpy(&total_pages, page->cs_padding, sizeof(uint32_t));
 
-    // Unpin page (we have the data we need)
-    buffer_pool->unpinPage(segment_page, false, ctx);
+    // If page count is 0 or unreasonable, assume single page
+    if (total_pages == 0 || total_pages > 1000)
+        total_pages = 1;
+
+    const size_t HEADER_SIZE = sizeof(SBColumnstorePage);
+    const size_t PAGE_SIZE = 8192;
+    const size_t MAX_DATA_SIZE = PAGE_SIZE - HEADER_SIZE;
+
+    std::vector<uint8_t> compressed;
+    compressed.reserve(page->cs_compressed_size);
+
+    // Read compressed data from all pages
+    uint32_t current_page = segment_page;
+    for (uint32_t page_idx = 0; page_idx < total_pages; ++page_idx)
+    {
+        // For pages after the first, pin the next page
+        if (page_idx > 0)
+        {
+            buffer_pool->unpinPage(current_page, false, ctx);
+
+            // Get next page from previous page's cs_next_segment
+            void *prev_page_buffer = nullptr;
+            Status pin_status = buffer_pool->pinPage(current_page, &prev_page_buffer, ctx);
+            if (pin_status != Status::OK)
+                return pin_status;
+
+            auto *prev_page = static_cast<const SBColumnstorePage *>(prev_page_buffer);
+            current_page = static_cast<uint32_t>(prev_page->cs_next_segment);
+            buffer_pool->unpinPage(current_page, false, ctx);
+
+            if (current_page == 0)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::COMPRESSION_ERROR,
+                               "Multi-page segment chain broken");
+                return Status::COMPRESSION_ERROR;
+            }
+
+            // Pin next page
+            pin_status = buffer_pool->pinPage(current_page, &page_buffer, ctx);
+            if (pin_status != Status::OK)
+                return pin_status;
+
+            page = static_cast<const SBColumnstorePage *>(page_buffer);
+        }
+
+        // Read data chunk from this page
+        const uint8_t *chunk_data = reinterpret_cast<const uint8_t *>(page) + HEADER_SIZE;
+        size_t chunk_size = (page_idx == 0)
+            ? std::min(MAX_DATA_SIZE, static_cast<size_t>(page->cs_compressed_size))
+            : page->cs_compressed_size;
+
+        compressed.insert(compressed.end(), chunk_data, chunk_data + chunk_size);
+    }
+
+    // Unpin last page
+    buffer_pool->unpinPage(current_page, false, ctx);
 
     // Decompress based on compression type
     switch (segment_out->compression)
