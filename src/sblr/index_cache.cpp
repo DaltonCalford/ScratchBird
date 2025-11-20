@@ -312,7 +312,7 @@ namespace sblr {
                 break;
 
             case IndexType::LSM:
-                delete static_cast<core::LSMTree*>(ptr);
+                delete static_cast<core::LSMTreeIndex*>(ptr);
                 break;
 
             default:
