@@ -12,6 +12,7 @@
 #include "scratchbird/core/btree.h"
 #include "scratchbird/core/hash_index.h"
 #include "scratchbird/core/lsm_tree.h"  // LSM Integration Phase 4
+#include "scratchbird/core/gist_index.h"  // TASK-DML-3: GiST DML Integration
 #include "scratchbird/core/toast.h"
 #include "scratchbird/core/garbage_collector.h"
 #include "scratchbird/core/logger.h"
@@ -70,8 +71,16 @@ namespace scratchbird::core
                     return hash->insert(key.data(), key.size(), tid, xid, ctx);
                 }
 
-                case CatalogManager::IndexType::GIN:
                 case CatalogManager::IndexType::GIST:
+                {
+                    // TASK-DML-3: GiST DML Integration
+                    auto *gist = static_cast<GiSTIndex*>(index_ptr);
+                    // Create predicate from key data (opclass_id = 0 for default)
+                    GiSTPredicate predicate(key, 0);
+                    return gist->insert(predicate, tid, xid, ctx);
+                }
+
+                case CatalogManager::IndexType::GIN:
                 case CatalogManager::IndexType::BRIN:
                 case CatalogManager::IndexType::RTREE:
                 case CatalogManager::IndexType::SPGIST:
@@ -126,8 +135,16 @@ namespace scratchbird::core
                     return hash->remove(key.data(), key.size(), tid, xid, ctx);
                 }
 
-                case CatalogManager::IndexType::GIN:
                 case CatalogManager::IndexType::GIST:
+                {
+                    // TASK-DML-3: GiST DML Integration
+                    auto *gist = static_cast<GiSTIndex*>(index_ptr);
+                    // Create predicate from key data (opclass_id = 0 for default)
+                    GiSTPredicate predicate(key, 0);
+                    return gist->remove(predicate, tid, xid, ctx);
+                }
+
+                case CatalogManager::IndexType::GIN:
                 case CatalogManager::IndexType::BRIN:
                 case CatalogManager::IndexType::RTREE:
                 case CatalogManager::IndexType::SPGIST:
