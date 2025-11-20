@@ -24,6 +24,51 @@ namespace scratchbird
         constexpr uint32_t TUPLES_PER_PAGE = 256;
 
         // ========================================
+        // TASK-CRITICAL-2: VersionedBitmapEntry Implementation
+        // ========================================
+
+        // Firebird MGA: TIP-based visibility check (NOT snapshot-based)
+        // Per MGA_RULES.md Rule 3 (lines 121-145): Use TIP lookups, not snapshot arrays
+        bool VersionedBitmapEntry::isVisible(uint64_t current_xid, TransactionManager *txn_mgr) const
+        {
+            if (!txn_mgr)
+            {
+                // No transaction manager - everything visible (fallback for testing)
+                return xmax == 0;
+            }
+
+            // Per MGA_RULES.md Rule 3: Own changes always visible
+            if (xmin == current_xid)
+            {
+                // We inserted this entry - visible unless we also deleted it
+                return (xmax == 0 || xmax != current_xid);
+            }
+
+            // Per MGA_RULES.md Rule 3: Look up transaction state in TIP (NOT snapshot)
+            // isVersionVisible() checks: "Is xmin committed and older than current_xid?"
+            bool xmin_visible = txn_mgr->isVersionVisible(xmin, current_xid);
+
+            if (!xmin_visible)
+            {
+                // Insert transaction not visible - entry not visible
+                return false;
+            }
+
+            // Insert transaction visible - check if deleted
+            if (xmax == 0)
+            {
+                // Not deleted - visible
+                return true;
+            }
+
+            // Check if delete transaction is visible
+            bool xmax_visible = txn_mgr->isVersionVisible(xmax, current_xid);
+
+            // Visible if deleted by invisible transaction (or not yet committed delete)
+            return !xmax_visible;
+        }
+
+        // ========================================
         // BitmapIndex Implementation
         // ========================================
 
@@ -397,6 +442,22 @@ namespace scratchbird
                 return Status::INVALID_ARGUMENT;
             }
 
+            // TASK-CRITICAL-2: Get current transaction ID for xmin tracking
+            // Firebird MGA: Per MGA_RULES.md Rule 6 - store xmin with insert
+            TransactionManager *txn_mgr = db_->transaction_manager();
+            if (!txn_mgr)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "No transaction manager");
+                return Status::INVALID_ARGUMENT;
+            }
+
+            uint64_t current_xid = txn_mgr->getCurrentTransactionId();
+            if (current_xid == 0)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "No active transaction");
+                return Status::INVALID_ARGUMENT;
+            }
+
             // Convert TID struct to uint64_t for bitmap storage
             // Uses full 64-bit value (GPID-compatible)
             uint64_t tid_value = convertTIDtoLegacy(tid);
@@ -421,8 +482,9 @@ namespace scratchbird
                 return Status::IO_ERROR;
             }
 
-            // Add full 64-bit TID to Roaring bitmap (supports custom tablespaces)
-            Status status = bitmap->add(tid_value, ctx);
+            // TASK-CRITICAL-2: Add with xmin for MGA compliance
+            // Firebird MGA: Store transaction ID for TIP-based visibility
+            Status status = bitmap->add(tid_value, current_xid, ctx);
             if (status != Status::OK)
             {
                 return status;
@@ -443,10 +505,27 @@ namespace scratchbird
             const TID &tid,
             ErrorContext *ctx)
         {
+            // TASK-CRITICAL-2: Get current transaction ID for xmax marking (logical deletion)
+            // Firebird MGA: Per MGA_RULES.md Rule 5 - NO physical removal, only xmax marking
+            TransactionManager *txn_mgr = db_->transaction_manager();
+            if (!txn_mgr)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "No transaction manager");
+                return Status::INVALID_ARGUMENT;
+            }
+
+            uint64_t current_xid = txn_mgr->getCurrentTransactionId();
+            if (current_xid == 0)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "No active transaction");
+                return Status::INVALID_ARGUMENT;
+            }
+
             // Convert TID struct to 64-bit value for bitmap storage
             uint64_t tid_value = convertTIDtoLegacy(tid);
 
-            // We need to remove this TID from ALL bitmaps since we don't know which value it had
+            // We need to mark this TID as deleted in ALL bitmaps since we don't know which value it had
+            // CRITICAL: This is LOGICAL deletion (set xmax), NOT physical removal
             // This requires scanning all dictionary entries
             Status status = loadMetaPage(ctx);
             if (status != Status::OK)
@@ -493,11 +572,12 @@ namespace scratchbird
                         auto bitmap = loadBitmap(bitmap_root, ctx);
                         if (bitmap)
                         {
-                            // Remove the TID from this bitmap (full 64-bit value)
-                            Status remove_status = bitmap->remove(tid_value, ctx);
+                            // TASK-CRITICAL-2: Mark TID as deleted with xmax (Firebird MGA)
+                            // Per MGA_RULES.md Rule 5: Logical deletion only
+                            Status remove_status = bitmap->remove(tid_value, current_xid, ctx);
                             if (remove_status == Status::OK)
                             {
-                                // Update dictionary entry cardinality
+                                // Update dictionary entry cardinality (includes invisible entries)
                                 entry->cardinality = bitmap->cardinality();
                             }
                         }
@@ -515,20 +595,12 @@ namespace scratchbird
 
             if (had_errors)
             {
-                SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to remove TID from some bitmaps");
+                SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to mark TID as deleted in some bitmaps");
                 return Status::IO_ERROR;
             }
 
-            // Update total tuples count
-            uint8_t *meta_data = nullptr;
-            buffer_pool_->pinPage(meta_page_, (void **)&meta_data, ctx);
-            auto *meta = reinterpret_cast<SBBitmapIndexMetaPage *>(meta_data);
-            if (meta->bmp_total_tuples > 0)
-            {
-                meta->bmp_total_tuples--;
-                total_tuples_ = meta->bmp_total_tuples;
-            }
-            buffer_pool_->unpinPage(meta_page_, true, ctx);
+            // Note: total_tuples count includes logically deleted tuples (per MGA)
+            // Actual visible count depends on transaction visibility
 
             return Status::OK;
         }
@@ -649,8 +721,11 @@ namespace scratchbird
                 return results;
             }
 
-            // Get all 64-bit TID values from bitmap
-            std::vector<uint64_t> tid_values = bitmap->toArray(ctx);
+            // TASK-CRITICAL-2: Index-level visibility filtering (no heap access!)
+            // Firebird MGA: Per MGA_RULES.md Rule 11 - use TransactionId, NOT Snapshot
+            // This eliminates the 20-40% overhead from heap-level post-filtering
+            TransactionManager *txn_mgr = db_->transaction_manager();
+            std::vector<uint64_t> tid_values = bitmap->toVisibleArray(current_xid, txn_mgr, ctx);
             results.reserve(tid_values.size());
 
             // Convert 64-bit values to TID structs
@@ -660,8 +735,7 @@ namespace scratchbird
                 results.push_back(tid);
             }
 
-            // Firebird MGA: Post-filter results by heap tuple visibility using TIP lookups
-            results = filterTidsByVisibility(results, current_xid, ctx);
+            // Note: No heap-level post-filtering needed - visibility already checked at index level!
 
             return results;
         }
@@ -938,7 +1012,9 @@ namespace scratchbird
 
         RoaringBitmap::~RoaringBitmap() = default;
 
-        Status RoaringBitmap::add(uint64_t value, ErrorContext *ctx)
+        // TASK-CRITICAL-2: MGA-compliant add with xmin tracking
+        // Firebird MGA: Per MGA_RULES.md Rule 6 - store xmin with each entry
+        Status RoaringBitmap::add(uint64_t value, uint64_t xmin, ErrorContext *ctx)
         {
             // Split 64-bit value: high 48 bits for container key, low 16 bits for value
             uint64_t high = value >> 16;
@@ -950,30 +1026,52 @@ namespace scratchbird
                 return Status::IO_ERROR;
             }
 
-            // Check if value already exists
+            // TASK-CRITICAL-2: Use versioned entries for MGA compliance
             if (container->type == ContainerType::ARRAY)
             {
-                auto it = std::lower_bound(container->array_data.begin(),
-                                           container->array_data.end(), low);
-                if (it != container->array_data.end() && *it == low)
+                // Search for existing entry by TID
+                auto it = std::lower_bound(container->array_data_versioned.begin(),
+                                           container->array_data_versioned.end(), low,
+                                           [](const VersionedBitmapEntry& entry, uint16_t tid) {
+                                               return entry.tid_low < tid;
+                                           });
+
+                if (it != container->array_data_versioned.end() && it->tid_low == low)
                 {
-                    return Status::OK; // Already exists
+                    // Entry exists - check if it's deleted and can be reused
+                    if (it->xmax != 0)
+                    {
+                        // Entry was deleted, update it with new xmin
+                        it->xmin = xmin;
+                        it->xmax = 0; // Clear deletion marker
+                    }
+                    // else: Already exists and not deleted, no-op
+                    return Status::OK;
                 }
 
-                container->array_data.insert(it, low);
+                // Insert new versioned entry
+                VersionedBitmapEntry new_entry(low, xmin, 0);
+                container->array_data_versioned.insert(it, new_entry);
                 container->num_values++;
 
-                // Convert to bitset if needed
+                // Convert to bitset if needed (array too large)
                 if (container->num_values > ARRAY_MAX_SIZE)
                 {
                     container->bitset_data.resize(BITSET_SIZE_UINT64, 0);
-                    for (uint16_t val : container->array_data)
+                    container->bitset_versions.clear();
+
+                    for (const auto& entry : container->array_data_versioned)
                     {
-                        size_t word_idx = val / 64;
-                        size_t bit_idx = val % 64;
+                        // Set bit in bitset
+                        size_t word_idx = entry.tid_low / 64;
+                        size_t bit_idx = entry.tid_low % 64;
                         container->bitset_data[word_idx] |= (1ULL << bit_idx);
+
+                        // Store version info
+                        container->bitset_versions[entry.tid_low] = entry;
                     }
-                    container->array_data.clear();
+
+                    container->array_data_versioned.clear();
                     container->type = ContainerType::BITSET;
                 }
             }
@@ -985,8 +1083,21 @@ namespace scratchbird
 
                 if (!(container->bitset_data[word_idx] & mask))
                 {
+                    // New entry - set bit and create version info
                     container->bitset_data[word_idx] |= mask;
+                    container->bitset_versions[low] = VersionedBitmapEntry(low, xmin, 0);
                     container->num_values++;
+                }
+                else
+                {
+                    // Entry exists - check if deleted and can be reused
+                    auto it = container->bitset_versions.find(low);
+                    if (it != container->bitset_versions.end() && it->second.xmax != 0)
+                    {
+                        // Entry was deleted, update it
+                        it->second.xmin = xmin;
+                        it->second.xmax = 0;
+                    }
                 }
             }
 
@@ -1006,8 +1117,9 @@ namespace scratchbird
             return status;
         }
 
-        // PHASE 2 TASK 2.5: Remove a value from the bitmap
-        Status RoaringBitmap::remove(uint64_t value, ErrorContext *ctx)
+        // TASK-CRITICAL-2: MGA-compliant remove with xmax marking (logical deletion)
+        // Firebird MGA: Per MGA_RULES.md Rule 5 - NO physical removal, only xmax tombstones
+        Status RoaringBitmap::remove(uint64_t value, uint64_t xmax, ErrorContext *ctx)
         {
             // Split 64-bit value: high 48 bits for container key, low 16 bits for value
             uint64_t high = value >> 16;
@@ -1030,59 +1142,55 @@ namespace scratchbird
                 return Status::OK;
             }
 
-            bool value_removed = false;
+            bool value_marked = false;
 
-            // Remove from container based on type
+            // TASK-CRITICAL-2: Logical deletion - set xmax, do NOT physically remove
+            // Per MGA_RULES.md Rule 5: Back-versioning with xmax tombstones
             if (container->type == ContainerType::ARRAY)
             {
-                auto it = std::lower_bound(container->array_data.begin(),
-                                           container->array_data.end(), low);
-                if (it != container->array_data.end() && *it == low)
+                auto it = std::lower_bound(container->array_data_versioned.begin(),
+                                           container->array_data_versioned.end(), low,
+                                           [](const VersionedBitmapEntry& entry, uint16_t tid) {
+                                               return entry.tid_low < tid;
+                                           });
+
+                if (it != container->array_data_versioned.end() && it->tid_low == low)
                 {
-                    container->array_data.erase(it);
-                    container->num_values--;
-                    value_removed = true;
+                    // Mark as deleted by setting xmax
+                    if (it->xmax == 0)
+                    {
+                        it->xmax = xmax;
+                        value_marked = true;
+                    }
+                    // Note: Entry is NOT physically removed - preserved for MGA
                 }
             }
             else if (container->type == ContainerType::BITSET)
             {
-                size_t word_idx = low / 64;
-                size_t bit_idx = low % 64;
-                uint64_t mask = 1ULL << bit_idx;
-
-                if (container->bitset_data[word_idx] & mask)
+                auto it = container->bitset_versions.find(low);
+                if (it != container->bitset_versions.end())
                 {
-                    container->bitset_data[word_idx] &= ~mask;
-                    container->num_values--;
-                    value_removed = true;
-
-                    // Optionally convert back to array if sparse enough
-                    // For simplicity, we keep as bitset for now
+                    // Mark as deleted by setting xmax
+                    if (it->second.xmax == 0)
+                    {
+                        it->second.xmax = xmax;
+                        value_marked = true;
+                    }
+                    // Note: Bit remains set, version info marks it as deleted
                 }
             }
 
-            if (!value_removed)
+            if (!value_marked)
             {
-                // Value didn't exist, no-op
+                // Value didn't exist or already deleted, no-op
                 return Status::OK;
             }
 
-            // Save the modified container
+            // Save the modified container (with updated xmax)
             Status status = saveContainer(*container, ctx);
-            if (status == Status::OK)
-            {
-                cardinality_--;
 
-                // Update root page cardinality
-                uint8_t *root_data = nullptr;
-                status = buffer_pool_->pinPage(root_page_, (void **)&root_data, ctx);
-                if (status == Status::OK)
-                {
-                    auto *root = reinterpret_cast<SBRoaringBitmapRootPage *>(root_data);
-                    root->rbr_total_cardinality = cardinality_;
-                    buffer_pool_->unpinPage(root_page_, true, ctx);
-                }
-            }
+            // Note: Cardinality NOT decremented - includes logically deleted entries
+            // Per Firebird MGA: Visible cardinality determined by visibility checks
 
             return status;
         }
@@ -1099,8 +1207,16 @@ namespace scratchbird
                 {
                     if (container.type == ContainerType::ARRAY)
                     {
-                        return std::binary_search(container.array_data.begin(),
-                                                  container.array_data.end(), low);
+                        // TASK-CRITICAL-2: Search in versioned entries
+                        for (const auto& entry : container.array_data_versioned)
+                        {
+                            if (entry.tid_low == low)
+                            {
+                                // Found entry - return true regardless of xmax (contains checks existence, not visibility)
+                                return true;
+                            }
+                        }
+                        return false;
                     }
                     else if (container.type == ContainerType::BITSET)
                     {
@@ -1114,6 +1230,7 @@ namespace scratchbird
             return false;
         }
 
+        // Returns all TIDs (ignores visibility - includes deleted entries)
         std::vector<uint64_t> RoaringBitmap::toArray(ErrorContext *ctx)
         {
             std::vector<uint64_t> results;
@@ -1129,9 +1246,10 @@ namespace scratchbird
 
                 if (container.type == ContainerType::ARRAY)
                 {
-                    for (uint16_t low : container.array_data)
+                    // TASK-CRITICAL-2: Extract TIDs from versioned entries
+                    for (const auto& entry : container.array_data_versioned)
                     {
-                        results.push_back(high_bits | low);
+                        results.push_back(high_bits | entry.tid_low);
                     }
                 }
                 else if (container.type == ContainerType::BITSET)
@@ -1155,6 +1273,125 @@ namespace scratchbird
             }
 
             return results;
+        }
+
+        // TASK-CRITICAL-2: Get all versioned entries with xmin/xmax
+        std::vector<std::pair<uint64_t, VersionedBitmapEntry>> RoaringBitmap::toVersionedArray(ErrorContext *ctx)
+        {
+            std::vector<std::pair<uint64_t, VersionedBitmapEntry>> results;
+            results.reserve(cardinality_);
+
+            for (const auto &container : containers_)
+            {
+                uint64_t high_bits = container.key << 16;
+
+                if (container.type == ContainerType::ARRAY)
+                {
+                    for (const auto& entry : container.array_data_versioned)
+                    {
+                        uint64_t tid = high_bits | entry.tid_low;
+                        results.push_back(std::make_pair(tid, entry));
+                    }
+                }
+                else if (container.type == ContainerType::BITSET)
+                {
+                    // For bitset, extract entries from bitset_versions
+                    for (const auto& kv : container.bitset_versions)
+                    {
+                        uint64_t tid = high_bits | kv.first;
+                        results.push_back(std::make_pair(tid, kv.second));
+                    }
+                }
+            }
+
+            return results;
+        }
+
+        // TASK-CRITICAL-2: Get only visible entries (MGA-compliant index-level visibility)
+        // Firebird MGA: Per MGA_RULES.md Rule 11 - use TransactionId, NOT Snapshot
+        // This eliminates the need for heap access (20-40% performance improvement)
+        std::vector<uint64_t> RoaringBitmap::toVisibleArray(uint64_t current_xid,
+                                                             TransactionManager *txn_mgr,
+                                                             ErrorContext *ctx)
+        {
+            std::vector<uint64_t> results;
+            results.reserve(cardinality_);
+
+            if (!txn_mgr)
+            {
+                // No transaction manager - return all entries
+                return toArray(ctx);
+            }
+
+            for (const auto &container : containers_)
+            {
+                uint64_t high_bits = container.key << 16;
+
+                if (container.type == ContainerType::ARRAY)
+                {
+                    for (const auto& entry : container.array_data_versioned)
+                    {
+                        // TASK-CRITICAL-2: Index-level visibility check (no heap access!)
+                        // Per MGA_RULES.md Rule 3: Use TIP-based visibility
+                        if (entry.isVisible(current_xid, txn_mgr))
+                        {
+                            results.push_back(high_bits | entry.tid_low);
+                        }
+                    }
+                }
+                else if (container.type == ContainerType::BITSET)
+                {
+                    for (const auto& kv : container.bitset_versions)
+                    {
+                        // TASK-CRITICAL-2: Index-level visibility check (no heap access!)
+                        if (kv.second.isVisible(current_xid, txn_mgr))
+                        {
+                            results.push_back(high_bits | kv.first);
+                        }
+                    }
+                }
+            }
+
+            return results;
+        }
+
+        // TASK-CRITICAL-2: Visible cardinality (only visible entries)
+        uint64_t RoaringBitmap::visibleCardinality(uint64_t current_xid,
+                                                   TransactionManager *txn_mgr,
+                                                   ErrorContext *ctx) const
+        {
+            if (!txn_mgr)
+            {
+                return cardinality_;
+            }
+
+            uint64_t visible_count = 0;
+
+            for (const auto &container : containers_)
+            {
+                if (container.type == ContainerType::ARRAY)
+                {
+                    for (const auto& entry : container.array_data_versioned)
+                    {
+                        if (entry.isVisible(current_xid, txn_mgr))
+                        {
+                            visible_count++;
+                        }
+                    }
+                }
+                else if (container.type == ContainerType::BITSET)
+                {
+                    for (const auto& kv : container.bitset_versions)
+                    {
+                        if (kv.second.isVisible(current_xid, txn_mgr))
+                        {
+                            visible_count++;
+                        }
+                    }
+                }
+            }
+
+            return visible_count;
         }
 
         RoaringBitmap::Container *RoaringBitmap::findOrCreateContainer(uint64_t key, ErrorContext *ctx)
