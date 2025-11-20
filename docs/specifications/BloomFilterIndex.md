@@ -1,10 +1,11 @@
 # Bloom Filter Index Specification for ScratchBird
 
-**Version:** 1.0
+**Version:** 1.1
 **Date:** November 20, 2025
 **Status:** Implementation Ready
 **Author:** ScratchBird Architecture Team
 **Target:** ScratchBird Alpha - Phase 2
+**Update:** Page-size agnostic (supports 8K, 16K, 32K, 64K, 128K pages)
 
 ---
 
@@ -15,15 +16,16 @@
 3. [Mathematical Foundation](#mathematical-foundation)
 4. [External Dependencies](#external-dependencies)
 5. [On-Disk Structures](#on-disk-structures)
-6. [MGA Compliance](#mga-compliance)
-7. [Core API](#core-api)
-8. [DML Integration](#dml-integration)
-9. [Bytecode Integration](#bytecode-integration)
-10. [Query Planner Integration](#query-planner-integration)
-11. [Implementation Steps](#implementation-steps)
-12. [Testing Requirements](#testing-requirements)
-13. [Performance Targets](#performance-targets)
-14. [Future Enhancements](#future-enhancements)
+6. [Page Size Considerations](#page-size-considerations)
+7. [MGA Compliance](#mga-compliance)
+8. [Core API](#core-api)
+9. [DML Integration](#dml-integration)
+10. [Bytecode Integration](#bytecode-integration)
+11. [Query Planner Integration](#query-planner-integration)
+12. [Implementation Steps](#implementation-steps)
+13. [Testing Requirements](#testing-requirements)
+14. [Performance Targets](#performance-targets)
+15. [Future Enhancements](#future-enhancements)
 
 ---
 
@@ -43,6 +45,7 @@ Bloom filters reduce read I/O by quickly determining if a key **definitely does 
 - **Space efficiency**: 10 bits per key → 1% false positive rate (FPR)
 - **Query time**: O(k) where k = number of hash functions (typically 7-10)
 - **No deletions**: Bloom filters don't support removal (use counting Bloom filter variant if needed)
+- **Page-size aware**: Adapts to database page size (8K/16K/32K/64K/128K)
 
 ### Integration Strategy
 
@@ -236,10 +239,12 @@ Bloom Filter Meta Page
 Bloom Filter Data Pages (bit arrays)
 ├── PageHeader (64 bytes)
 ├── Next page pointer (8 bytes)
-└── Bit array (8120 bytes = 64,960 bits)
+└── Bit array (page_size - 72 bytes)
 ```
 
 ### 1. Bloom Filter Meta Page
+
+**Note:** Meta page structure is page-size independent (uses fixed 192-byte header plus padding).
 
 ```cpp
 #pragma pack(push, 1)
@@ -268,16 +273,20 @@ struct SBBloomFilterMetaPage {
     // Reserved (48 bytes)
     uint8_t bf_reserved[48];        // Future use
 
-    // Total: 64 + 32 + 16 + 32 + 48 = 192 bytes
-    uint8_t bf_padding[8000];       // Pad to 8192 bytes
+    // Total fixed header: 64 + 32 + 16 + 32 + 48 = 192 bytes
+    // Padding: page_size - 192 bytes (filled with zeros)
+    uint8_t bf_padding[];           // Flexible array member - size determined at runtime
 } __attribute__((packed));
 
-static_assert(sizeof(SBBloomFilterMetaPage) == 8192, "Meta page must be 8KB");
+// Note: No static_assert - page size varies
+// Minimum page size (8KB) verified at runtime
 
 #pragma pack(pop)
 ```
 
 ### 2. Bloom Filter Data Page
+
+**Note:** Data page uses flexible array member to adapt to page size.
 
 ```cpp
 #pragma pack(push, 1)
@@ -286,29 +295,133 @@ struct SBBloomFilterDataPage {
     PageHeader bf_header;           // Standard page header (64 bytes)
     uint64_t bf_next_page;          // Next data page (0 if last) (8 bytes)
 
-    // Bit array: 8192 - 72 = 8120 bytes = 64,960 bits
-    uint8_t bf_bits[8120];          // Bit array
+    // Bit array: page_size - 72 bytes (flexible)
+    uint8_t bf_bits[];              // Flexible array member
 } __attribute__((packed));
 
-static_assert(sizeof(SBBloomFilterDataPage) == 8192, "Data page must be 8KB");
-
-// Bits per data page
-constexpr uint32_t BITS_PER_DATA_PAGE = 8120 * 8;  // 64,960 bits
+// No static_assert - size varies by page_size
 
 #pragma pack(pop)
 ```
 
-### Storage Calculation
+### Storage Calculation Helpers
 
 ```cpp
-// For 1 million keys with 10 bits/key:
-// Total bits: 10,000,000
-// Bits per page: 64,960
-// Pages needed: ceil(10,000,000 / 64,960) = 154 pages = 1.23 MB
+class BloomFilter {
+private:
+    Database* db_;
 
-// For 10 million keys:
-// Total bits: 100,000,000
-// Pages needed: 1,540 pages = 12.3 MB
+    // Get database page size
+    uint32_t getPageSize() const {
+        return db_->getPageSize();
+    }
+
+    // Calculate bits per data page (varies by page size)
+    uint32_t getBitsPerPage() const {
+        uint32_t page_size = getPageSize();
+        uint32_t header_size = sizeof(PageHeader) + sizeof(uint64_t);  // 72 bytes
+        uint32_t available_bytes = page_size - header_size;
+        return available_bytes * 8;  // Convert bytes to bits
+    }
+
+    // Calculate number of pages needed for N keys
+    uint32_t calculatePagesNeeded(uint64_t num_keys) const {
+        uint64_t total_bits = num_keys * config_.bits_per_key;
+        uint32_t bits_per_page = getBitsPerPage();
+        return (total_bits + bits_per_page - 1) / bits_per_page;  // Ceiling division
+    }
+};
+```
+
+---
+
+## Page Size Considerations
+
+### Capacity by Page Size
+
+Different page sizes provide different Bloom filter capacities per page:
+
+| Page Size | Header | Bit Array Size | Bits Per Page | Keys @10bits/key |
+|-----------|--------|---------------|---------------|------------------|
+| 8 KB      | 72 B   | 8,120 B       | 64,960 bits   | 6,496 keys      |
+| 16 KB     | 72 B   | 16,312 B      | 130,496 bits  | 13,050 keys     |
+| 32 KB     | 72 B   | 32,696 B      | 261,568 bits  | 26,157 keys     |
+| 64 KB     | 72 B   | 65,464 B      | 523,712 bits  | 52,371 keys     |
+| 128 KB    | 72 B   | 131,000 B     | 1,048,000 bits| 104,800 keys    |
+
+### Storage Examples
+
+**Example 1: 1 million keys, 10 bits/key, 1% FPR**
+
+| Page Size | Total Bits | Bits/Page | Pages Needed | Total Size |
+|-----------|-----------|-----------|--------------|------------|
+| 8 KB      | 10M       | 64,960    | 154 pages    | 1.23 MB    |
+| 16 KB     | 10M       | 130,496   | 77 pages     | 1.23 MB    |
+| 32 KB     | 10M       | 261,568   | 39 pages     | 1.25 MB    |
+| 64 KB     | 10M       | 523,712   | 20 pages     | 1.28 MB    |
+| 128 KB    | 10M       | 1,048,000 | 10 pages     | 1.28 MB    |
+
+**Observation:** Total storage is similar (~1.25 MB), but larger pages = fewer pages to manage.
+
+**Example 2: 100 million keys, 10 bits/key, 1% FPR**
+
+| Page Size | Total Bits | Bits/Page | Pages Needed | Total Size |
+|-----------|-----------|-----------|--------------|------------|
+| 8 KB      | 1B        | 64,960    | 15,399 pages | 123.1 MB   |
+| 16 KB     | 1B        | 130,496   | 7,663 pages  | 122.6 MB   |
+| 32 KB     | 1B        | 261,568   | 3,825 pages  | 122.5 MB   |
+| 64 KB     | 1B        | 523,712   | 1,911 pages  | 122.3 MB   |
+| 128 KB    | 1B        | 1,048,000 | 955 pages    | 122.3 MB   |
+
+### Recommendations by Database Size
+
+**Small databases (< 1 GB):**
+- Use **8 KB or 16 KB pages**
+- More granular I/O control
+- Lower memory overhead for small indexes
+
+**Medium databases (1 GB - 100 GB):**
+- Use **16 KB or 32 KB pages**
+- Balanced I/O efficiency
+- Standard for most workloads
+
+**Large databases (> 100 GB):**
+- Use **32 KB, 64 KB, or 128 KB pages**
+- Fewer pages to manage
+- Better sequential I/O
+- Lower metadata overhead
+
+### Implementation Validation
+
+```cpp
+// Runtime validation in BloomFilter::create()
+Status BloomFilter::create(Database* db,
+                          const BloomFilterConfig& config,
+                          uint64_t estimated_keys,
+                          uint32_t* meta_page_out,
+                          ErrorContext* ctx) {
+    // Validate page size
+    uint32_t page_size = db->getPageSize();
+    if (page_size < 8192 || page_size > 131072) {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                         "Invalid page size: must be 8K-128K");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    // Validate that page_size is power of 2
+    if ((page_size & (page_size - 1)) != 0) {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                         "Page size must be power of 2");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    // Calculate capacity
+    uint32_t bits_per_page = getBitsPerPage();
+    LOG_INFO(Category::INDEX, "Bloom filter: %u bits per page (page_size=%u)",
+            bits_per_page, page_size);
+
+    // ... continue with creation ...
+}
 ```
 
 ---
@@ -431,6 +544,8 @@ struct BloomFilterStatistics {
     uint64_t false_positives;   // Estimated false positives
     double actual_fpr;          // Measured FPR
     double space_efficiency;    // Bytes per key
+    uint32_t page_size;         // Database page size
+    uint32_t bits_per_page;     // Bits per data page
 };
 
 class BloomFilter {
@@ -485,6 +600,10 @@ private:
     bool cache_dirty_;
 
     // Helper methods
+    uint32_t getPageSize() const;
+    uint32_t getBitsPerPage() const;
+    uint32_t calculatePagesNeeded(uint64_t num_keys) const;
+
     std::vector<uint64_t> hashKey(const void* key_data, size_t key_len);
     void setBit(uint64_t bit_index, ErrorContext* ctx);
     bool getBit(uint64_t bit_index, ErrorContext* ctx);
@@ -498,6 +617,48 @@ private:
 
 } // namespace core
 } // namespace scratchbird
+```
+
+### Helper Method Implementations
+
+```cpp
+// Get database page size
+uint32_t BloomFilter::getPageSize() const {
+    return db_->getPageSize();
+}
+
+// Calculate bits per data page (varies by page size)
+uint32_t BloomFilter::getBitsPerPage() const {
+    uint32_t page_size = getPageSize();
+    uint32_t header_size = sizeof(PageHeader) + sizeof(uint64_t);  // 72 bytes
+    uint32_t available_bytes = page_size - header_size;
+    return available_bytes * 8;  // Convert bytes to bits
+}
+
+// Calculate number of pages needed
+uint32_t BloomFilter::calculatePagesNeeded(uint64_t num_keys) const {
+    uint64_t total_bits = num_keys * config_.bits_per_key;
+    uint32_t bits_per_page = getBitsPerPage();
+    return (total_bits + bits_per_page - 1) / bits_per_page;  // Ceiling
+}
+
+// Calculate which page contains a bit
+uint32_t BloomFilter::calculatePageNumber(uint64_t bit_index) {
+    uint32_t bits_per_page = getBitsPerPage();
+    return bit_index / bits_per_page;
+}
+
+// Calculate byte offset within page
+uint32_t BloomFilter::calculateByteOffset(uint64_t bit_index) {
+    uint32_t bits_per_page = getBitsPerPage();
+    uint64_t bit_in_page = bit_index % bits_per_page;
+    return bit_in_page / 8;
+}
+
+// Calculate bit offset within byte
+uint8_t BloomFilter::calculateBitOffset(uint64_t bit_index) {
+    return bit_index % 8;
+}
 ```
 
 ---
@@ -847,21 +1008,23 @@ std::vector<TID> BTree::search(const Key& key, TransactionId current_xid,
    include_directories(${CMAKE_SOURCE_DIR}/third_party/xxhash)
    ```
 
-2. **Implement page structures (2 hours)**
-   - Define `SBBloomFilterMetaPage`
-   - Define `SBBloomFilterDataPage`
-   - Add static assertions
+2. **Implement page structures (3 hours)**
+   - Define `SBBloomFilterMetaPage` with flexible array
+   - Define `SBBloomFilterDataPage` with flexible array
+   - Implement page-size helpers (getPageSize, getBitsPerPage)
+   - Add runtime validation
 
 3. **Implement BloomFilter class (8-12 hours)**
-   - `create()` method (allocate pages)
+   - `create()` method (allocate pages, adapt to page size)
    - `open()` method (load meta page)
    - `insert()` method (hash + set bits)
    - `test()` method (hash + check bits)
-   - Helper methods (hashKey, setBit, getBit)
+   - Helper methods (hashKey, setBit, getBit, calculatePageNumber)
 
 4. **Implement bit manipulation (2 hours)**
    ```cpp
    void BloomFilter::setBit(uint64_t bit_index, ErrorContext* ctx) {
+       uint32_t bits_per_page = getBitsPerPage();
        uint32_t page_num = calculatePageNumber(bit_index);
        uint32_t byte_offset = calculateByteOffset(bit_index);
        uint8_t bit_offset = calculateBitOffset(bit_index);
@@ -871,7 +1034,7 @@ std::vector<TID> BTree::search(const Key& key, TransactionId current_xid,
        auto status = buffer_pool_->pinPage(page_num, &frame, ctx);
        if (status != Status::OK) return;
 
-       // Set bit
+       // Set bit (page-size agnostic)
        auto* data_page = reinterpret_cast<SBBloomFilterDataPage*>(frame->getData());
        data_page->bf_bits[byte_offset] |= (1 << bit_offset);
 
@@ -884,11 +1047,13 @@ std::vector<TID> BTree::search(const Key& key, TransactionId current_xid,
 5. **Implement statistics (2 hours)**
    - Track queries, true negatives, false positives
    - Calculate actual FPR
+   - Include page_size and bits_per_page in statistics
 
 6. **Unit tests (4 hours)**
    - Test insert + test operations
    - Verify FPR matches theoretical value
-   - Test page overflow
+   - **Test with multiple page sizes (8K, 16K, 32K, 64K, 128K)**
+   - Test page overflow for each page size
 
 ### Phase 2: Integration (12-16 hours)
 
@@ -910,6 +1075,7 @@ std::vector<TID> BTree::search(const Key& key, TransactionId current_xid,
    - Test Bloom filter with INSERT/SELECT
    - Test false positive rate
    - Test rebuild after GC
+   - **Test across different page sizes**
 
 ### Phase 3: SQL/Bytecode (8-12 hours)
 
@@ -948,7 +1114,7 @@ std::vector<TID> BTree::search(const Key& key, TransactionId current_xid,
 
 1. **Update INDEX_ARCHITECTURE.md**
 2. **Add usage examples**
-3. **Document performance characteristics**
+3. **Document performance characteristics by page size**
 
 **Total:** 42-64 hours (5-8 days full-time)
 
@@ -961,8 +1127,9 @@ std::vector<TID> BTree::search(const Key& key, TransactionId current_xid,
 **File:** `tests/unit/test_bloom_filter.cpp`
 
 ```cpp
-TEST(BloomFilterTest, InsertAndTest) {
-    auto db = createTestDatabase();
+// Test with 8KB pages
+TEST(BloomFilterTest, InsertAndTest_8KB) {
+    auto db = createTestDatabase(8192);  // 8KB page size
 
     BloomFilterConfig config;
     config.target_fpr = 0.01;
@@ -976,6 +1143,11 @@ TEST(BloomFilterTest, InsertAndTest) {
 
     auto filter = BloomFilter::open(db.get(), meta_page, &ctx);
     ASSERT_NE(filter, nullptr);
+
+    // Verify bits per page
+    auto stats = filter->getStatistics();
+    EXPECT_EQ(stats.page_size, 8192);
+    EXPECT_EQ(stats.bits_per_page, 64960);  // (8192 - 72) * 8
 
     // Insert 1000 keys
     for (int i = 0; i < 1000; i++) {
@@ -1007,9 +1179,9 @@ TEST(BloomFilterTest, InsertAndTest) {
     EXPECT_GT(fpr, 0.005); // Greater than 0.5% FPR (within expected range)
 }
 
-TEST(BloomFilterTest, PageOverflow) {
-    // Test with more keys than fit in one page
-    auto db = createTestDatabase();
+// Test with 32KB pages
+TEST(BloomFilterTest, InsertAndTest_32KB) {
+    auto db = createTestDatabase(32768);  // 32KB page size
 
     BloomFilterConfig config;
     config.bits_per_key = 10;
@@ -1022,15 +1194,62 @@ TEST(BloomFilterTest, PageOverflow) {
 
     auto filter = BloomFilter::open(db.get(), meta_page, &ctx);
 
-    // Insert 100K keys (requires multiple pages)
+    // Verify bits per page
+    auto stats_before = filter->getStatistics();
+    EXPECT_EQ(stats_before.page_size, 32768);
+    EXPECT_EQ(stats_before.bits_per_page, 261568);  // (32768 - 72) * 8
+
+    // Insert 100K keys
     for (int i = 0; i < 100000; i++) {
         std::string key = std::to_string(i);
         status = filter->insert(key.data(), key.size(), &ctx);
         ASSERT_EQ(status, Status::OK);
     }
 
-    auto stats = filter->getStatistics();
-    EXPECT_GT(stats.num_pages, 1);  // Multiple pages used
+    auto stats_after = filter->getStatistics();
+
+    // With 32KB pages, should use fewer pages than 8KB
+    // 100K keys × 10 bits = 1M bits = 125KB
+    // 32KB pages: 261,568 bits/page → ~4 pages
+    EXPECT_LE(stats_after.num_pages, 5);
+}
+
+// Test page overflow across different page sizes
+TEST(BloomFilterTest, PageOverflow_AllSizes) {
+    std::vector<uint32_t> page_sizes = {8192, 16384, 32768, 64768, 131072};
+
+    for (uint32_t page_size : page_sizes) {
+        auto db = createTestDatabase(page_size);
+
+        BloomFilterConfig config;
+        config.bits_per_key = 10;
+        config.num_hashes = 7;
+
+        uint32_t meta_page = 0;
+        ErrorContext ctx;
+        auto status = BloomFilter::create(db.get(), config, 100000, &meta_page, &ctx);
+        ASSERT_EQ(status, Status::OK);
+
+        auto filter = BloomFilter::open(db.get(), meta_page, &ctx);
+
+        // Insert 100K keys
+        for (int i = 0; i < 100000; i++) {
+            std::string key = std::to_string(i);
+            status = filter->insert(key.data(), key.size(), &ctx);
+            ASSERT_EQ(status, Status::OK);
+        }
+
+        auto stats = filter->getStatistics();
+
+        // Verify pages allocated matches calculation
+        uint64_t total_bits = 100000 * 10;
+        uint32_t expected_pages = (total_bits + stats.bits_per_page - 1) / stats.bits_per_page;
+        EXPECT_EQ(stats.num_pages, expected_pages);
+
+        LOG_INFO(Category::TEST,
+                "Page size %u: %u pages, %u bits/page",
+                page_size, stats.num_pages, stats.bits_per_page);
+    }
 }
 ```
 
@@ -1218,25 +1437,13 @@ TEST(BloomFilterSQLTest, AlterIndexAddBloomFilter) {
 - **Acceptable range:** 0.1% - 5%
 - **Measure actual FPR:** Track false positives vs. total queries
 
-### Benchmarks
+### Page Size Impact
 
-```sql
--- Insert 1M rows
-INSERT INTO users SELECT i, 'user' || i || '@example.com'
-FROM generate_series(1, 1000000) AS i;
+**I/O Efficiency:**
+- Larger pages → fewer page reads for large filters
+- Smaller pages → more granular cache control
 
--- Create index with Bloom filter
-CREATE INDEX idx_email ON users(email)
-WITH (bloom_filter = true);
-
--- Benchmark: Point lookup (present key)
-SELECT * FROM users WHERE email = 'user500000@example.com';
--- Target: 0.5-2ms (with Bloom filter: +0.01ms overhead)
-
--- Benchmark: Point lookup (absent key)
-SELECT * FROM users WHERE email = 'nonexistent@example.com';
--- Target: Without Bloom: 1-5ms, With Bloom: 0.01-0.05ms (100x speedup)
-```
+**Recommendation:** Use database's default page size for consistency
 
 ---
 
@@ -1286,11 +1493,13 @@ SELECT * FROM users WHERE email = 'nonexistent@example.com';
 
 ## Conclusion
 
-This specification provides a complete, implementation-ready design for Bloom Filter indexes in ScratchBird.
+This specification provides a complete, implementation-ready design for Bloom Filter indexes in ScratchBird that **supports all page sizes (8K, 16K, 32K, 64K, 128K)**.
 
 **Key Features:**
+- ✅ **Page-size agnostic** - adapts to database page size at runtime
 - ✅ MGA-compliant (conservative approach, no correctness issues)
-- ✅ 8KB page-aligned storage
+- ✅ Flexible array members for dynamic sizing
+- ✅ Runtime capacity calculations
 - ✅ Transparent integration with existing indexes
 - ✅ Full SQL support via CREATE INDEX WITH (bloom_filter = true)
 - ✅ Automatic GC and rebuild
@@ -1304,14 +1513,15 @@ This specification provides a complete, implementation-ready design for Bloom Fi
 **Next Steps:**
 1. Review this specification with team
 2. Begin Phase 1 implementation (core Bloom filter)
-3. Test thoroughly with unit tests
+3. Test thoroughly with unit tests **across all page sizes**
 4. Integrate with B-Tree
 5. Benchmark and tune
 
 ---
 
-**Specification Status:** READY FOR REVIEW
+**Specification Status:** READY FOR REVIEW (v1.1 - Page-size agnostic)
 **Reviewer:** Please provide feedback on:
+- Page-size agnostic design (flexible arrays, runtime calculations)
 - Architecture decisions (auxiliary vs. standalone)
 - MGA compliance approach (conservative, no transaction tracking in filter)
 - SQL syntax (WITH (bloom_filter = true))
@@ -1319,3 +1529,4 @@ This specification provides a complete, implementation-ready design for Bloom Fi
 
 **Author:** ScratchBird Architecture Team
 **Date:** November 20, 2025
+**Version:** 1.1 (Updated for multi-page-size support)
