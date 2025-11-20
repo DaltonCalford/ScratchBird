@@ -19487,7 +19487,9 @@ namespace scratchbird
 
             if (status != core::Status::OK)
             {
-                error("Index insert failed: " + std::string(err_ctx.message));
+                // SECURITY FIX (LOW-7): Log detailed error internally, return generic error to client
+                LOG_ERROR(EXECUTION, "Index insert failed: %s", err_ctx.message.c_str());
+                error("Index insert failed");
             }
         }
 
@@ -19550,7 +19552,9 @@ namespace scratchbird
 
             if (status != core::Status::OK)
             {
-                error("Index search failed: " + std::string(err_ctx.message));
+                // SECURITY FIX (LOW-7): Log detailed error internally, return generic error to client
+                LOG_ERROR(EXECUTION, "Index search failed: %s", err_ctx.message.c_str());
+                error("Index search failed");
                 return;
             }
 
@@ -19752,7 +19756,9 @@ namespace scratchbird
 
             if (status != core::Status::OK)
             {
-                error("Index delete failed: " + std::string(err_ctx.message));
+                // SECURITY FIX (LOW-7): Log detailed error internally, return generic error to client
+                LOG_ERROR(EXECUTION, "Index delete failed: %s", err_ctx.message.c_str());
+                error("Index delete failed");
             }
         }
 
