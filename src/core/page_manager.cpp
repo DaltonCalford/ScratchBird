@@ -768,24 +768,91 @@ namespace scratchbird::core
         uint16_t tablespace_id = getTablespaceID(gpid);
         uint64_t page_number = getPageNumber(gpid);
 
-        // Phase 1: Only tablespace 0 (primary file) supported
-        if (tablespace_id != PRIMARY_TABLESPACE_ID)
+        // Handle primary tablespace (0) separately
+        if (tablespace_id == PRIMARY_TABLESPACE_ID)
         {
-            SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED,
-                            "Custom tablespaces not yet implemented (Phase 1, Task 1.3)");
-            return Status::NOT_IMPLEMENTED;
+            // Validate page_number fits in uint32_t for primary file
+            if (page_number > UINT32_MAX)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                "Page number exceeds uint32_t range for primary file");
+                return Status::INVALID_ARGUMENT;
+            }
+
+            // Free page in primary file using existing logic
+            return freePage(static_cast<uint32_t>(page_number), ctx);
         }
 
-        // Validate page_number fits in uint32_t for primary file
-        if (page_number > UINT32_MAX)
+        // === Custom tablespace freeing ===
+
+        std::lock_guard<std::mutex> lock(tablespace_fsm_mutex_);
+
+        // Find the tablespace FSM
+        auto it = tablespace_fsms_.find(tablespace_id);
+        if (it == tablespace_fsms_.end())
+        {
+            SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND,
+                             ("Tablespace " + std::to_string(tablespace_id) +
+                              " not found (not open)").c_str());
+            return Status::NOT_FOUND;
+        }
+
+        TablespaceFSM &ts_fsm = it->second;
+
+        // Validate page number is within tablespace bounds
+        if (page_number >= ts_fsm.total_pages)
         {
             SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
-                            "Page number exceeds uint32_t range for primary file");
+                             ("Page number " + std::to_string(page_number) +
+                              " exceeds tablespace " + std::to_string(tablespace_id) +
+                              " bounds (total_pages=" + std::to_string(ts_fsm.total_pages) + ")").c_str());
             return Status::INVALID_ARGUMENT;
         }
 
-        // Free page in primary file using existing logic
-        return freePage(static_cast<uint32_t>(page_number), ctx);
+        // Check if page 0 or 1 (reserved for metadata)
+        if (page_number <= 1)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                             "Cannot free reserved pages 0-1 in tablespace");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        // Calculate bitmap position
+        uint32_t page_num = static_cast<uint32_t>(page_number);
+        uint32_t byte_index = page_num / 8;
+        uint32_t bit_index = page_num % 8;
+
+        // Check if page is already free
+        if ((ts_fsm.bitmap[byte_index] & (1 << bit_index)) == 0)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                             ("Page " + std::to_string(page_number) +
+                              " in tablespace " + std::to_string(tablespace_id) +
+                              " is already free").c_str());
+            return Status::INVALID_ARGUMENT;
+        }
+
+        // Mark page as free (clear bit)
+        ts_fsm.bitmap[byte_index] &= ~(1 << bit_index);
+        ts_fsm.free_pages++;
+        ts_fsm.dirty = true;
+
+        LOG_INFO(STORAGE,
+                "Freed page %lu in tablespace %u (free_pages=%u)",
+                static_cast<unsigned long>(page_number),
+                tablespace_id, ts_fsm.free_pages);
+
+        // Eager FSM flush: Flush periodically to avoid data loss on crash
+        // Reuse the free_counter_ from primary FSM for custom tablespaces too
+        if (++free_counter_ >= 100)
+        {
+            free_counter_ = 0;
+            // Note: Flushing custom tablespace FSM would require a new method
+            // For now, just mark as dirty and it will be flushed on close
+            LOG_DEBUG(STORAGE, "Custom tablespace FSM flush deferred (flush on close)");
+        }
+
+        return Status::OK;
     }
 
     bool PageManager::isAllocatedGlobal(GPID gpid) const
@@ -794,21 +861,46 @@ namespace scratchbird::core
         uint16_t tablespace_id = getTablespaceID(gpid);
         uint64_t page_number = getPageNumber(gpid);
 
-        // Phase 1: Only tablespace 0 (primary file) supported
-        if (tablespace_id != PRIMARY_TABLESPACE_ID)
+        // Handle primary tablespace (0) separately
+        if (tablespace_id == PRIMARY_TABLESPACE_ID)
         {
-            // Custom tablespace not yet supported, treat as not allocated
+            // Validate page_number fits in uint32_t for primary file
+            if (page_number > UINT32_MAX)
+            {
+                return false;
+            }
+
+            // Check allocation in primary file using existing logic
+            return isAllocated(static_cast<uint32_t>(page_number));
+        }
+
+        // === Custom tablespace check ===
+
+        std::lock_guard<std::mutex> lock(tablespace_fsm_mutex_);
+
+        // Find the tablespace FSM
+        auto it = tablespace_fsms_.find(tablespace_id);
+        if (it == tablespace_fsms_.end())
+        {
+            // Tablespace not found/open, treat as not allocated
             return false;
         }
 
-        // Validate page_number fits in uint32_t for primary file
-        if (page_number > UINT32_MAX)
+        const TablespaceFSM &ts_fsm = it->second;
+
+        // Check if page number is within bounds
+        if (page_number >= ts_fsm.total_pages)
         {
             return false;
         }
 
-        // Check allocation in primary file using existing logic
-        return isAllocated(static_cast<uint32_t>(page_number));
+        // Check bitmap
+        uint32_t page_num = static_cast<uint32_t>(page_number);
+        uint32_t byte_index = page_num / 8;
+        uint32_t bit_index = page_num % 8;
+
+        // Allocated if bit is set (1)
+        return (ts_fsm.bitmap[byte_index] & (1 << bit_index)) != 0;
     }
 
     // ========================================================================
