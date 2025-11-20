@@ -23,7 +23,12 @@ namespace core {
     {
         // Allocate meta page
         auto page_mgr = db->page_manager();
-        uint32_t meta_page = page_mgr->allocatePage();
+        uint32_t meta_page;
+        Status status = page_mgr->allocatePage(meta_page, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
 
         if (meta_page_out)
         {

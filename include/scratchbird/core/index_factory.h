@@ -31,7 +31,7 @@ namespace core
 // Forward declarations
 class BTree;
 class HashIndex;
-class LSMTreeIndex;
+class LSMTree;
 class GINIndex;
 class GiSTIndex;
 class BRINIndex;

@@ -1964,13 +1964,10 @@ namespace scratchbird
 
             for (const auto &index_info : indexes)
             {
-                // Skip if not expression/filtered index (handled by existing code)
-                if (!index_info.is_expression_index && !index_info.is_partial_index)
-                {
-                    continue;
-                }
+                // CRITICAL FIX (Nov 20, 2025): Maintain ALL indexes, not just expression/partial
+                // Previous bug: Basic indexes were skipped, causing data integrity violations
 
-                // Deserialize expression/predicate
+                // Deserialize expression/predicate (only if needed)
                 parser::StringPool temp_pool;
                 std::vector<parser::Expression *> expressions;
                 parser::Expression *predicate = nullptr;
@@ -2112,10 +2109,8 @@ namespace scratchbird
 
             for (const auto &index_info : indexes)
             {
-                if (!index_info.is_expression_index && !index_info.is_partial_index)
-                {
-                    continue;
-                }
+                // CRITICAL FIX (Nov 20, 2025): Maintain ALL indexes, not just expression/partial
+                // Previous bug: Basic indexes were skipped during UPDATE, causing stale entries
 
                 parser::StringPool temp_pool;
                 std::vector<parser::Expression *> expressions;
@@ -2313,10 +2308,8 @@ namespace scratchbird
 
             for (const auto &index_info : indexes)
             {
-                if (!index_info.is_expression_index && !index_info.is_partial_index)
-                {
-                    continue;
-                }
+                // CRITICAL FIX (Nov 20, 2025): Maintain ALL indexes, not just expression/partial
+                // Previous bug: Basic indexes were skipped during DELETE, causing orphaned entries
 
                 parser::StringPool temp_pool;
                 std::vector<parser::Expression *> expressions;
