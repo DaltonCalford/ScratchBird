@@ -81,19 +81,16 @@ Status ColumnstoreIndex::create(Database *db,
         return Status::INVALID_ARGUMENT;
     }
 
-    // Phase 7: Store table_uuid and column_uuids for schema integration
-    // These should be persisted to catalog in future versions
-    // For now, they're only used when opening an index
+    // Phase 7: Create metadata page (page 0) to store configuration
+    uint32_t metadata_page = 0;
+    Status status = createMetadataPage(db, index_uuid, table_uuid, column_uuids,
+                                      segment_size, compression, &metadata_page, ctx);
+    if (status != Status::OK)
+        return status;
 
-    // Phase 6: Don't allocate a root page immediately
-    // The first segment flushed will become the root
-    // This avoids having an empty placeholder page
-
+    // Metadata page serves as the root page
     if (root_page_out)
-        *root_page_out = 0;  // No root yet
-
-    // TODO (Phase 1.3): Persist index metadata to catalog
-    // This includes: table_uuid, column_uuids, segment_size, compression_type
+        *root_page_out = metadata_page;
 
     return Status::OK;
 }
@@ -107,17 +104,36 @@ std::unique_ptr<ColumnstoreIndex> ColumnstoreIndex::open(Database *db,
     if (!db)
         return nullptr;
 
-    // Phase 6: Temporary - pass segment_size as parameter
-    // TODO: Read metadata from catalog in Phase 7
+    // Phase 7: Read metadata from page 0
     SBColumnstoreIndex index_info;
     std::memcpy(&index_info.idx_uuid, &index_uuid, sizeof(ID));
     index_info.idx_root_page = root_page;
-    index_info.idx_segment_size = segment_size;  // Use passed parameter
-    index_info.idx_compression_type = static_cast<uint8_t>(CompressionType::RLE);
-    index_info.idx_total_segments = 0;
-    index_info.idx_total_rows = 0;
 
-    return std::make_unique<ColumnstoreIndex>(db, index_info);
+    auto index = std::make_unique<ColumnstoreIndex>(db, index_info);
+
+    // Try to read metadata from page 0
+    if (root_page != 0)
+    {
+        Status status = index->readMetadataPage(root_page, ctx);
+        if (status != Status::OK)
+        {
+            // Fall back to parameters if metadata page doesn't exist or can't be read
+            index_info.idx_segment_size = segment_size;
+            index_info.idx_compression_type = static_cast<uint8_t>(CompressionType::RLE);
+            index_info.idx_total_segments = 0;
+            index_info.idx_total_rows = 0;
+        }
+    }
+    else
+    {
+        // No root page yet, use parameters
+        index_info.idx_segment_size = segment_size;
+        index_info.idx_compression_type = static_cast<uint8_t>(CompressionType::RLE);
+        index_info.idx_total_segments = 0;
+        index_info.idx_total_rows = 0;
+    }
+
+    return index;
 }
 
 // ============================================================================
@@ -2451,6 +2467,189 @@ Status ColumnstoreIndex::getColumnDataType(const ID &column_uuid,
     *data_type_out = DataType::INT32;
     *value_size_out = sizeof(int32_t);
     return Status::OK;
+}
+
+Status ColumnstoreIndex::createMetadataPage(Database *db,
+                                            const UuidV7Bytes &index_uuid,
+                                            const UuidV7Bytes &table_uuid,
+                                            const std::vector<UuidV7Bytes> &column_uuids,
+                                            uint32_t segment_size,
+                                            CompressionType compression,
+                                            uint32_t *metadata_page_out,
+                                            ErrorContext *ctx)
+{
+    if (!db)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                         "Database is null");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    if (!metadata_page_out)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                         "Output parameter cannot be null");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    // Step 1: Allocate metadata page
+    PageManager *page_mgr = db->page_manager();
+    if (!page_mgr)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                         "PageManager not available");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    uint32_t metadata_page = 0;
+    Status alloc_status = page_mgr->allocatePage(metadata_page, ctx);
+    if (alloc_status != Status::OK)
+        return alloc_status;
+
+    // Step 2: Pin page for writing
+    BufferPool *buffer_pool = db->buffer_pool();
+    if (!buffer_pool)
+    {
+        page_mgr->freePage(metadata_page, ctx);
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                         "BufferPool not available");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    void *page_buffer = nullptr;
+    Status pin_status = buffer_pool->pinPage(metadata_page, &page_buffer, ctx);
+    if (pin_status != Status::OK)
+    {
+        page_mgr->freePage(metadata_page, ctx);
+        return pin_status;
+    }
+
+    // Step 3: Initialize metadata page
+    auto *meta_page = static_cast<SBColumnstoreMetadataPage *>(page_buffer);
+    std::memset(meta_page, 0, sizeof(SBColumnstoreMetadataPage));
+
+    // Initialize header
+    meta_page->cs_header.magic = K_MAGIC_SBRD;
+    meta_page->cs_header.version = static_cast<uint16_t>(DB_VERSION_ALPHA_1_0_1);
+    meta_page->cs_header.page_type = static_cast<uint16_t>(PageType::PAGE_TYPE_COLUMNSTORE);
+    meta_page->cs_header.page_size = 8192;  // Standard page size
+
+    // Store index and table UUIDs
+    std::memcpy(&meta_page->cs_index_uuid, &index_uuid, sizeof(ID));
+    std::memcpy(&meta_page->cs_table_uuid, &table_uuid, sizeof(ID));
+
+    // Store configuration
+    meta_page->cs_segment_size = segment_size;
+    meta_page->cs_compression_type = static_cast<uint8_t>(compression);
+    meta_page->cs_column_count = static_cast<uint16_t>(column_uuids.size());
+
+    // Initialize segment tracking (empty index)
+    meta_page->cs_first_segment_page = 0;
+    meta_page->cs_total_segments = 0;
+    meta_page->cs_total_rows = 0;
+
+    // Set MGA fields (transaction visibility)
+    TransactionManager *txn_mgr = db->transaction_manager();
+    if (txn_mgr)
+    {
+        meta_page->cs_xmin = txn_mgr->getCurrentXid();
+        meta_page->cs_xmax = 0;  // Not deleted
+    }
+    else
+    {
+        meta_page->cs_xmin = 0;
+        meta_page->cs_xmax = 0;
+    }
+
+    // Step 4: Write column UUIDs array immediately after header
+    // Calculate offset: sizeof(SBColumnstoreMetadataPage) is the space we have
+    // Column UUIDs are written into the data section after the header
+    uint8_t *uuid_data = reinterpret_cast<uint8_t *>(page_buffer) + sizeof(SBColumnstoreMetadataPage);
+    size_t uuid_array_size = column_uuids.size() * sizeof(ID);
+
+    // Verify we have space (sanity check)
+    const size_t PAGE_SIZE = 8192;
+    if (sizeof(SBColumnstoreMetadataPage) + uuid_array_size > PAGE_SIZE)
+    {
+        buffer_pool->unpinPage(metadata_page, false, ctx);
+        page_mgr->freePage(metadata_page, ctx);
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                         "Too many columns for metadata page");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    // Copy column UUIDs
+    for (size_t i = 0; i < column_uuids.size(); ++i)
+    {
+        std::memcpy(uuid_data + (i * sizeof(ID)), &column_uuids[i], sizeof(ID));
+    }
+
+    // Step 5: Mark page dirty and unpin
+    Status unpin_status = buffer_pool->unpinPage(metadata_page, true, ctx);
+    if (unpin_status != Status::OK)
+    {
+        page_mgr->freePage(metadata_page, ctx);
+        return unpin_status;
+    }
+
+    *metadata_page_out = metadata_page;
+    return Status::OK;
+}
+
+Status ColumnstoreIndex::readMetadataPage(uint32_t metadata_page, ErrorContext *ctx)
+{
+    // Step 1: Pin metadata page
+    BufferPool *buffer_pool = db_->buffer_pool();
+    if (!buffer_pool)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                         "BufferPool not available");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    void *page_buffer = nullptr;
+    Status pin_status = buffer_pool->pinPage(metadata_page, &page_buffer, ctx);
+    if (pin_status != Status::OK)
+        return pin_status;
+
+    // Step 2: Read metadata
+    auto *meta_page = static_cast<SBColumnstoreMetadataPage *>(page_buffer);
+
+    // Verify page type
+    if (meta_page->cs_header.page_type != static_cast<uint16_t>(PageType::PAGE_TYPE_COLUMNSTORE))
+    {
+        buffer_pool->unpinPage(metadata_page, false, ctx);
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                         "Invalid page type for columnstore metadata");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    // Step 3: Extract configuration into index_info_
+    index_info_.idx_segment_size = meta_page->cs_segment_size;
+    index_info_.idx_compression_type = meta_page->cs_compression_type;
+
+    // Read column UUIDs
+    uint16_t column_count = meta_page->cs_column_count;
+    index_info_.idx_column_uuids.clear();
+    index_info_.idx_column_uuids.reserve(column_count);
+
+    uint8_t *uuid_data = reinterpret_cast<uint8_t *>(page_buffer) + sizeof(SBColumnstoreMetadataPage);
+    for (uint16_t i = 0; i < column_count; ++i)
+    {
+        ID column_uuid;
+        std::memcpy(&column_uuid, uuid_data + (i * sizeof(ID)), sizeof(ID));
+        index_info_.idx_column_uuids.push_back(column_uuid);
+    }
+
+    // Update root page to point to first segment (if any)
+    if (meta_page->cs_first_segment_page != 0)
+    {
+        index_info_.idx_root_page = meta_page->cs_first_segment_page;
+    }
+
+    // Step 4: Unpin page
+    Status unpin_status = buffer_pool->unpinPage(metadata_page, false, ctx);
+    return unpin_status;
 }
 
 Status ColumnstoreIndex::flushSegment(const ID &column_uuid, ErrorContext *ctx)
