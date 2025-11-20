@@ -20360,6 +20360,18 @@ namespace scratchbird
                 }
 
                 case IndexType::GIN:
+                {
+                    auto gin = getOrOpenIndex<core::GinIndex>(index_uuid, type, index_info.idx_root_page, ctx);
+                    if (gin)
+                    {
+                        // GIN takes value_data and value_len (not a structured key)
+                        const void* value_data = key.data();
+                        size_t value_len = key.size();
+                        return gin->insert(value_data, value_len, tid, xmin, ctx);
+                    }
+                    return core::Status::INTERNAL_ERROR;
+                }
+
                 case IndexType::HNSW:
                 case IndexType::COLUMNSTORE:
                     // These require special handling due to different APIs
@@ -20478,6 +20490,12 @@ namespace scratchbird
                 }
 
                 case IndexType::GIN:
+                    // GIN (Generalized Inverted Index) requires specialized query operators
+                    // Generic key search doesn't apply to inverted indexes
+                    core::SET_ERROR_CONTEXT(ctx, core::Status::NOT_SUPPORTED,
+                                          "GIN requires specialized query operators (e.g., @>, @@)");
+                    return core::Status::NOT_SUPPORTED;
+
                 case IndexType::HNSW:
                 case IndexType::COLUMNSTORE:
                     // These require special handling
@@ -20592,6 +20610,18 @@ namespace scratchbird
                 }
 
                 case IndexType::GIN:
+                {
+                    auto gin = getOrOpenIndex<core::GinIndex>(index_uuid, type, index_info.idx_root_page, ctx);
+                    if (gin)
+                    {
+                        // GIN takes value_data and value_len
+                        const void* value_data = key.data();
+                        size_t value_len = key.size();
+                        return gin->remove(value_data, value_len, tid, xmax, ctx);
+                    }
+                    return core::Status::INTERNAL_ERROR;
+                }
+
                 case IndexType::HNSW:
                 case IndexType::COLUMNSTORE:
                     // These require special handling
@@ -20787,6 +20817,11 @@ namespace scratchbird
                     return core::Status::NOT_SUPPORTED;
 
                 case IndexType::GIN:
+                    // GIN (Generalized Inverted Index) doesn't support range scans
+                    core::SET_ERROR_CONTEXT(ctx, core::Status::NOT_SUPPORTED,
+                                          "GIN indexes do not support range scans");
+                    return core::Status::NOT_SUPPORTED;
+
                 case IndexType::HNSW:
                 case IndexType::COLUMNSTORE:
                     // These require special handling
