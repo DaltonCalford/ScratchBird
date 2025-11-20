@@ -188,23 +188,227 @@ Status ColumnstoreIndex::scan(const ID &column_uuid,
     }
 
     batch_out->count = 0;
+    size_t batch_capacity = std::min(batch_out->tids.size(), batch_out->values.size());
 
-    // Phase 1: Scan from buffered values
-    // TODO: In future phases, also scan from disk segments
+    // Phase 2: Scan from disk segments first, then buffered values
 
+    // Step 1: Scan persisted segments from disk
+    if (index_info_.idx_root_page != 0)
+    {
+        uint32_t current_page = index_info_.idx_root_page;
+
+        while (current_page != 0 && batch_out->count < batch_capacity)
+        {
+            // Read segment from disk
+            ColumnSegment segment;
+            Status read_status = readSegment(current_page, &segment, ctx);
+            if (read_status != Status::OK)
+            {
+                // If we can't read a segment, log and skip it
+                current_page = 0;  // Stop scanning
+                break;
+            }
+
+            // Check if this segment is for the requested column
+            if (std::memcmp(&segment.column_uuid, &column_uuid, sizeof(ID)) != 0)
+            {
+                // Different column, try next segment
+                BufferPool *bp = db_->buffer_pool();
+                if (bp)
+                {
+                    void *page_buffer = nullptr;
+                    if (bp->pinPage(current_page, &page_buffer, ctx) == Status::OK)
+                    {
+                        auto *page = static_cast<const SBColumnstorePage *>(page_buffer);
+                        current_page = page->cs_next_segment;
+                        bp->unpinPage(current_page, false, ctx);
+                    }
+                    else
+                    {
+                        current_page = 0;
+                    }
+                }
+                else
+                {
+                    current_page = 0;
+                }
+                continue;
+            }
+
+            // Apply min/max predicate pushdown if applicable
+            if (predicate && segment.data_type == DataType::INT32)
+            {
+                bool can_skip = false;
+                switch (predicate->op)
+                {
+                case ColumnPredicate::Op::LESS_THAN:
+                    if (segment.min_value >= predicate->value)
+                        can_skip = true;
+                    break;
+                case ColumnPredicate::Op::LESS_EQUAL:
+                    if (segment.min_value > predicate->value)
+                        can_skip = true;
+                    break;
+                case ColumnPredicate::Op::GREATER_THAN:
+                    if (segment.max_value <= predicate->value)
+                        can_skip = true;
+                    break;
+                case ColumnPredicate::Op::GREATER_EQUAL:
+                    if (segment.max_value < predicate->value)
+                        can_skip = true;
+                    break;
+                case ColumnPredicate::Op::EQUAL:
+                    if (predicate->value < segment.min_value || predicate->value > segment.max_value)
+                        can_skip = true;
+                    break;
+                default:
+                    break;
+                }
+
+                if (can_skip)
+                {
+                    // Skip this segment entirely
+                    BufferPool *bp = db_->buffer_pool();
+                    if (bp)
+                    {
+                        void *page_buffer = nullptr;
+                        if (bp->pinPage(current_page, &page_buffer, ctx) == Status::OK)
+                        {
+                            auto *page = static_cast<const SBColumnstorePage *>(page_buffer);
+                            current_page = page->cs_next_segment;
+                            bp->unpinPage(current_page, false, ctx);
+                        }
+                        else
+                        {
+                            current_page = 0;
+                        }
+                    }
+                    else
+                    {
+                        current_page = 0;
+                    }
+                    continue;
+                }
+            }
+
+            // Process segment values
+            size_t value_size = getDataTypeSize(segment.data_type);
+            if (value_size == 0)
+                value_size = 4;  // Default for variable types
+
+            for (uint32_t i = 0; i < segment.row_count && batch_out->count < batch_capacity; ++i)
+            {
+                // Check NULL flag
+                bool is_null = (i < segment.null_bitmap.size() && segment.null_bitmap[i]);
+
+                // Apply predicate
+                if (predicate && segment.data_type == DataType::INT32)
+                {
+                    if (!is_null && (i * value_size + value_size) <= segment.data.size())
+                    {
+                        int32_t val = 0;
+                        std::memcpy(&val, segment.data.data() + (i * value_size), sizeof(int32_t));
+
+                        bool matches = false;
+                        switch (predicate->op)
+                        {
+                        case ColumnPredicate::Op::EQUAL:
+                            matches = (val == static_cast<int32_t>(predicate->value));
+                            break;
+                        case ColumnPredicate::Op::NOT_EQUAL:
+                            matches = (val != static_cast<int32_t>(predicate->value));
+                            break;
+                        case ColumnPredicate::Op::LESS_THAN:
+                            matches = (val < static_cast<int32_t>(predicate->value));
+                            break;
+                        case ColumnPredicate::Op::LESS_EQUAL:
+                            matches = (val <= static_cast<int32_t>(predicate->value));
+                            break;
+                        case ColumnPredicate::Op::GREATER_THAN:
+                            matches = (val > static_cast<int32_t>(predicate->value));
+                            break;
+                        case ColumnPredicate::Op::GREATER_EQUAL:
+                            matches = (val >= static_cast<int32_t>(predicate->value));
+                            break;
+                        case ColumnPredicate::Op::IS_NULL:
+                            matches = is_null;
+                            break;
+                        case ColumnPredicate::Op::IS_NOT_NULL:
+                            matches = !is_null;
+                            break;
+                        }
+
+                        if (!matches)
+                            continue;
+                    }
+                    else if (predicate->op == ColumnPredicate::Op::IS_NULL && is_null)
+                    {
+                        // NULL matches IS_NULL
+                    }
+                    else if (predicate->op == ColumnPredicate::Op::IS_NOT_NULL && !is_null)
+                    {
+                        // Non-NULL matches IS_NOT_NULL
+                    }
+                    else
+                    {
+                        continue;
+                    }
+                }
+
+                // Add to batch (TID is derived from segment range)
+                uint64_t tid = segment.first_tid + i;
+                batch_out->tids.push_back(tid);
+
+                // Copy value data
+                if (is_null || segment.data.empty())
+                {
+                    batch_out->values.push_back(0);
+                }
+                else if ((i * value_size + value_size) <= segment.data.size())
+                {
+                    const uint8_t *value_ptr = segment.data.data() + (i * value_size);
+                    batch_out->values.insert(batch_out->values.end(), value_ptr, value_ptr + value_size);
+                }
+
+                batch_out->null_flags.push_back(is_null);
+                batch_out->count++;
+            }
+
+            // Move to next segment
+            BufferPool *bp = db_->buffer_pool();
+            if (bp)
+            {
+                void *page_buffer = nullptr;
+                if (bp->pinPage(current_page, &page_buffer, ctx) == Status::OK)
+                {
+                    auto *page = static_cast<const SBColumnstorePage *>(page_buffer);
+                    current_page = page->cs_next_segment;
+                    bp->unpinPage(current_page, false, ctx);
+                }
+                else
+                {
+                    current_page = 0;
+                }
+            }
+            else
+            {
+                current_page = 0;
+            }
+        }
+    }
+
+    // Step 2: Scan buffered values (in-memory)
     std::lock_guard<std::mutex> lock(buffer_mutex_);
 
     auto it = column_buffers_.find(column_uuid);
     if (it == column_buffers_.end() || it->second.empty())
     {
-        return Status::OK;  // No buffered values
+        return Status::OK;  // No buffered values, but disk scan completed
     }
 
     const std::vector<BufferedValue> &buffer = it->second;
 
-    // Scan through buffered values
-    // Limit to avoid overflow (use size of vectors as capacity)
-    size_t batch_capacity = std::min(batch_out->tids.size(), batch_out->values.size());
+    // Scan through buffered values (continuing from disk scan)
     for (size_t i = 0; i < buffer.size() && batch_out->count < batch_capacity; ++i)
     {
         const BufferedValue &bv = buffer[i];
@@ -1750,11 +1954,47 @@ Status ColumnstoreIndex::createSegment(const ID &column_uuid,
         break;
 
     case CompressionType::DICTIONARY:
-        // Dictionary encoding requires dictionary to be stored separately
-        // For Phase 6, we'll defer dictionary support to avoid complexity
-        SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED,
-                         "Dictionary compression not yet supported in createSegment");
-        return Status::NOT_IMPLEMENTED;
+    {
+        // Dictionary encoding for string columns
+        Dictionary dict;
+        status = compressDictionary(segment, &compressed, &dict, ctx);
+        if (status != Status::OK)
+        {
+            // If dictionary compression fails, fall back to RLE
+            status = compressRLE(segment, &compressed, ctx);
+            if (status != Status::OK)
+                return status;
+        }
+        else
+        {
+            // Store dictionary size and entries at the beginning of compressed data
+            std::vector<uint8_t> dict_data;
+
+            // Write dictionary size (4 bytes)
+            uint32_t dict_size = static_cast<uint32_t>(dict.size());
+            dict_data.insert(dict_data.end(),
+                           reinterpret_cast<uint8_t*>(&dict_size),
+                           reinterpret_cast<uint8_t*>(&dict_size) + sizeof(uint32_t));
+
+            // Write each dictionary entry: length (2 bytes) + string data
+            for (size_t i = 0; i < dict.size(); ++i)
+            {
+                std::string value;
+                if (!dict.getValue(static_cast<uint32_t>(i), &value))
+                    continue;
+
+                uint16_t len = static_cast<uint16_t>(value.length());
+                dict_data.insert(dict_data.end(),
+                               reinterpret_cast<uint8_t*>(&len),
+                               reinterpret_cast<uint8_t*>(&len) + sizeof(uint16_t));
+                dict_data.insert(dict_data.end(), value.begin(), value.end());
+            }
+
+            // Prepend dictionary to compressed codes
+            compressed.insert(compressed.begin(), dict_data.begin(), dict_data.end());
+        }
+        break;
+    }
 
     case CompressionType::BITPACK:
         status = compressBitpack(segment, &compressed, ctx);
@@ -1911,11 +2151,61 @@ Status ColumnstoreIndex::readSegment(uint32_t segment_page,
         break;
 
     case CompressionType::DICTIONARY:
-        // TODO: Load dictionary from page and decompress
-        // For now, return error
-        SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED,
-                         "Dictionary decompression not yet implemented in readSegment");
-        return Status::NOT_IMPLEMENTED;
+    {
+        // Dictionary decompression for string columns
+        Dictionary dict;
+        const uint8_t *dict_data = compressed.data();
+        size_t dict_offset = 0;
+
+        // Read dictionary size (4 bytes)
+        if (compressed.size() < sizeof(uint32_t))
+        {
+            SET_ERROR_CONTEXT(ctx, Status::COMPRESSION_ERROR,
+                           "Invalid dictionary compressed data");
+            return Status::COMPRESSION_ERROR;
+        }
+
+        uint32_t dict_size = 0;
+        std::memcpy(&dict_size, dict_data + dict_offset, sizeof(uint32_t));
+        dict_offset += sizeof(uint32_t);
+
+        // Read dictionary entries
+        for (uint32_t i = 0; i < dict_size; ++i)
+        {
+            if (dict_offset + sizeof(uint16_t) > compressed.size())
+            {
+                SET_ERROR_CONTEXT(ctx, Status::COMPRESSION_ERROR,
+                               "Truncated dictionary data");
+                return Status::COMPRESSION_ERROR;
+            }
+
+            uint16_t len = 0;
+            std::memcpy(&len, dict_data + dict_offset, sizeof(uint16_t));
+            dict_offset += sizeof(uint16_t);
+
+            if (dict_offset + len > compressed.size())
+            {
+                SET_ERROR_CONTEXT(ctx, Status::COMPRESSION_ERROR,
+                               "Truncated dictionary string");
+                return Status::COMPRESSION_ERROR;
+            }
+
+            std::string value(reinterpret_cast<const char*>(dict_data + dict_offset), len);
+            dict.addValue(value);
+            dict_offset += len;
+        }
+
+        // Extract RLE-compressed codes
+        std::vector<uint8_t> codes_compressed(dict_data + dict_offset,
+                                              dict_data + compressed.size());
+
+        // Decompress using dictionary
+        status = decompressDictionary(codes_compressed, dict, segment_out->data_type,
+                                     segment_out->row_count, segment_out, ctx);
+        if (status != Status::OK)
+            return status;
+        break;
+    }
 
     case CompressionType::BITPACK:
         status = decompressBitpack(compressed, segment_out->data_type,
