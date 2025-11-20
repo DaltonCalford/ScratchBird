@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <vector>
 #include <memory>
+#include <algorithm>
 
 namespace scratchbird
 {
@@ -65,9 +66,79 @@ namespace scratchbird
             uint32_t getMetaPage() const { return meta_page_; }
 
         private:
+            // Bounding box for spatial queries (2D for now)
+            struct BoundingBox
+            {
+                double min_x, min_y;
+                double max_x, max_y;
+
+                BoundingBox() : min_x(0), min_y(0), max_x(0), max_y(0) {}
+
+                BoundingBox(double minx, double miny, double maxx, double maxy)
+                    : min_x(minx), min_y(miny), max_x(maxx), max_y(maxy) {}
+
+                // Calculate area
+                double area() const { return (max_x - min_x) * (max_y - min_y); }
+
+                // Check if boxes overlap
+                bool overlaps(const BoundingBox& other) const {
+                    return !(max_x < other.min_x || min_x > other.max_x ||
+                             max_y < other.min_y || min_y > other.max_y);
+                }
+
+                // Check if this box contains another
+                bool contains(const BoundingBox& other) const {
+                    return min_x <= other.min_x && max_x >= other.max_x &&
+                           min_y <= other.min_y && max_y >= other.max_y;
+                }
+
+                // Compute minimum bounding box that contains both
+                BoundingBox union_box(const BoundingBox& other) const {
+                    return BoundingBox(
+                        std::min(min_x, other.min_x),
+                        std::min(min_y, other.min_y),
+                        std::max(max_x, other.max_x),
+                        std::max(max_y, other.max_y)
+                    );
+                }
+
+                // Calculate area increase if other box is added
+                double area_increase(const BoundingBox& other) const {
+                    BoundingBox combined = union_box(other);
+                    return combined.area() - area();
+                }
+            };
+
+            // Entry in R-Tree (leaf or internal node)
+            struct RTreeEntry
+            {
+                BoundingBox bbox;
+                uint64_t child_page;  // For internal nodes
+                TID tid;              // For leaf nodes
+                uint64_t xmin;        // MGA: transaction that created this entry
+                uint64_t xmax;        // MGA: transaction that deleted this entry (0 if active)
+                bool is_leaf;
+            };
+
             Database *db_;
             UuidV7Bytes index_uuid_;
             uint32_t meta_page_;
+            uint32_t root_page_;
+
+            // R-Tree parameters
+            static constexpr uint32_t MAX_ENTRIES = 50;  // M
+            static constexpr uint32_t MIN_ENTRIES = 20;  // m (40% fill)
+
+            // Helper methods
+            Status deserializeBoundingBox(const std::vector<uint8_t>& key, BoundingBox* bbox, ErrorContext* ctx);
+            std::vector<uint8_t> serializeBoundingBox(const BoundingBox& bbox);
+
+            Status chooseLeaf(const BoundingBox& bbox, uint32_t* leaf_page, ErrorContext* ctx);
+            Status chooseSubtree(uint32_t node_page, const BoundingBox& bbox, uint32_t* child_page, ErrorContext* ctx);
+            Status splitNode(uint32_t page_num, RTreeEntry* new_entry, uint32_t* new_sibling, BoundingBox* separator_bbox, ErrorContext* ctx);
+            Status adjustTree(uint32_t leaf_page, uint32_t* split_page, BoundingBox* split_bbox, ErrorContext* ctx);
+            Status insertEntry(uint32_t page_num, const RTreeEntry& entry, ErrorContext* ctx);
+            Status searchNode(uint32_t page_num, const BoundingBox& query, uint64_t current_xid, std::vector<TID>* results, ErrorContext* ctx);
         };
 
     } // namespace core
