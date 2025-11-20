@@ -266,6 +266,14 @@ namespace scratchbird
                           std::function<std::vector<std::vector<uint8_t>>(const void *, size_t)> key_extractor,
                           ErrorContext *ctx = nullptr);
 
+            // Remove a composite value from the index
+            // Firebird MGA: Logical deletion - marks TID as deleted (sets xmax)
+            // Keys are extracted using the provided key_extractor function
+            Status remove(const void *value_data, size_t value_len, const TID &tid,
+                          std::function<std::vector<std::vector<uint8_t>>(const void *, size_t)> key_extractor,
+                          uint64_t current_xid,
+                          ErrorContext *ctx = nullptr);
+
             // Find all tuple IDs containing a specific key
             // Firebird MGA: Uses TIP-based visibility filtering (NOT snapshots)
             // Per MGA_RULES.md Rule 11: Use TransactionId, NOT Snapshot*
