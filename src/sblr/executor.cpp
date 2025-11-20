@@ -20373,11 +20373,29 @@ namespace scratchbird
                 }
 
                 case IndexType::HNSW:
+                {
+                    auto hnsw = getOrOpenIndex<core::HnswIndex>(index_uuid, type, index_info.idx_root_page, ctx);
+                    if (hnsw)
+                    {
+                        // Decode vector from key bytes
+                        auto vector_opt = core::Vector::decode(key);
+                        if (!vector_opt.has_value())
+                        {
+                            core::SET_ERROR_CONTEXT(ctx, core::Status::INVALID_ARGUMENT,
+                                                  "Failed to decode vector from key");
+                            return core::Status::INVALID_ARGUMENT;
+                        }
+                        // HNSW insert doesn't take xmin parameter - it manages versioning internally
+                        return hnsw->insert(vector_opt.value(), tid, ctx);
+                    }
+                    return core::Status::INTERNAL_ERROR;
+                }
+
                 case IndexType::COLUMNSTORE:
-                    // These require special handling due to different APIs
-                    core::SET_ERROR_CONTEXT(ctx, core::Status::NOT_IMPLEMENTED,
-                                          "Index type not yet supported via bytecode");
-                    return core::Status::NOT_IMPLEMENTED;
+                    // Columnstore requires bulk load operations (not row-level insert/delete)
+                    core::SET_ERROR_CONTEXT(ctx, core::Status::NOT_SUPPORTED,
+                                          "Columnstore requires bulk load operations (use LOAD_COLUMNS opcode)");
+                    return core::Status::NOT_SUPPORTED;
 
                 default:
                     core::SET_ERROR_CONTEXT(ctx, core::Status::INTERNAL_ERROR, "Unknown index type");
@@ -20497,11 +20515,16 @@ namespace scratchbird
                     return core::Status::NOT_SUPPORTED;
 
                 case IndexType::HNSW:
+                    // HNSW uses k-NN search, not exact key search
+                    core::SET_ERROR_CONTEXT(ctx, core::Status::NOT_SUPPORTED,
+                                          "HNSW requires k-NN search operator (<-> with LIMIT)");
+                    return core::Status::NOT_SUPPORTED;
+
                 case IndexType::COLUMNSTORE:
-                    // These require special handling
-                    core::SET_ERROR_CONTEXT(ctx, core::Status::NOT_IMPLEMENTED,
-                                          "Index type not yet supported via bytecode");
-                    return core::Status::NOT_IMPLEMENTED;
+                    // Columnstore uses specialized scan operations
+                    core::SET_ERROR_CONTEXT(ctx, core::Status::NOT_SUPPORTED,
+                                          "Columnstore requires specialized scan operations");
+                    return core::Status::NOT_SUPPORTED;
 
                 default:
                     core::SET_ERROR_CONTEXT(ctx, core::Status::INTERNAL_ERROR, "Unknown index type");
@@ -20623,11 +20646,22 @@ namespace scratchbird
                 }
 
                 case IndexType::HNSW:
+                {
+                    auto hnsw = getOrOpenIndex<core::HnswIndex>(index_uuid, type, index_info.idx_root_page, ctx);
+                    if (hnsw)
+                    {
+                        // HNSW remove() only takes TID (doesn't need key or xmax)
+                        // It manages xmax internally
+                        return hnsw->remove(tid, ctx);
+                    }
+                    return core::Status::INTERNAL_ERROR;
+                }
+
                 case IndexType::COLUMNSTORE:
-                    // These require special handling
-                    core::SET_ERROR_CONTEXT(ctx, core::Status::NOT_IMPLEMENTED,
-                                          "Index type not yet supported via bytecode");
-                    return core::Status::NOT_IMPLEMENTED;
+                    // Columnstore requires bulk operations
+                    core::SET_ERROR_CONTEXT(ctx, core::Status::NOT_SUPPORTED,
+                                          "Columnstore requires bulk load operations");
+                    return core::Status::NOT_SUPPORTED;
 
                 default:
                     core::SET_ERROR_CONTEXT(ctx, core::Status::INTERNAL_ERROR, "Unknown index type");
@@ -20823,11 +20857,16 @@ namespace scratchbird
                     return core::Status::NOT_SUPPORTED;
 
                 case IndexType::HNSW:
+                    // HNSW uses k-NN search, not range scans
+                    core::SET_ERROR_CONTEXT(ctx, core::Status::NOT_SUPPORTED,
+                                          "HNSW indexes do not support range scans (use k-NN search)");
+                    return core::Status::NOT_SUPPORTED;
+
                 case IndexType::COLUMNSTORE:
-                    // These require special handling
-                    core::SET_ERROR_CONTEXT(ctx, core::Status::NOT_IMPLEMENTED,
-                                          "Index type not yet supported via bytecode");
-                    return core::Status::NOT_IMPLEMENTED;
+                    // Columnstore uses specialized scan operations
+                    core::SET_ERROR_CONTEXT(ctx, core::Status::NOT_SUPPORTED,
+                                          "Columnstore uses specialized scan operations");
+                    return core::Status::NOT_SUPPORTED;
 
                 default:
                     core::SET_ERROR_CONTEXT(ctx, core::Status::INTERNAL_ERROR, "Unknown index type");
