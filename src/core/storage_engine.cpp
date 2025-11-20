@@ -12,8 +12,7 @@
 #include "scratchbird/core/btree.h"
 #include "scratchbird/core/hash_index.h"
 #include "scratchbird/core/lsm_tree.h"  // LSM Integration Phase 4
-#include "scratchbird/core/hnsw_index.h" // TASK-DML-2: HNSW DML Integration
-#include "scratchbird/core/vector.h"     // TASK-DML-2: Vector support for HNSW
+#include "scratchbird/core/spgist_index.h"  // TASK-DML-4: SP-GiST Index DML Integration
 #include "scratchbird/core/toast.h"
 #include "scratchbird/core/garbage_collector.h"
 #include "scratchbird/core/logger.h"
@@ -72,31 +71,17 @@ namespace scratchbird::core
                     return hash->insert(key.data(), key.size(), tid, xid, ctx);
                 }
 
-                case CatalogManager::IndexType::HNSW:
+                case CatalogManager::IndexType::SPGIST:
                 {
-                    // TASK-DML-2: HNSW Index DML Integration
-                    // The 'key' parameter contains the encoded vector bytes
-                    auto *hnsw = static_cast<HnswIndex*>(index_ptr);
-
-                    // Decode the vector from the key bytes
-                    std::optional<VectorValue> vector_opt = Vector::decode(key);
-                    if (!vector_opt.has_value())
-                    {
-                        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
-                            "Failed to decode vector for HNSW index");
-                        return Status::INVALID_ARGUMENT;
-                    }
-
-                    // Insert vector into HNSW graph
-                    // Note: HNSW insert() gets xid internally from transaction manager
-                    return hnsw->insert(vector_opt.value(), tid, ctx);
+                    // TASK-DML-4: SP-GiST Index DML Integration
+                    auto *spgist = static_cast<SPGiSTIndex*>(index_ptr);
+                    return spgist->insert(key, tid, xid, ctx);
                 }
 
                 case CatalogManager::IndexType::GIN:
                 case CatalogManager::IndexType::GIST:
                 case CatalogManager::IndexType::BRIN:
                 case CatalogManager::IndexType::RTREE:
-                case CatalogManager::IndexType::SPGIST:
                 case CatalogManager::IndexType::BITMAP:
                 case CatalogManager::IndexType::COLUMNSTORE:
                 {
@@ -147,23 +132,17 @@ namespace scratchbird::core
                     return hash->remove(key.data(), key.size(), tid, xid, ctx);
                 }
 
-                case CatalogManager::IndexType::HNSW:
+                case CatalogManager::IndexType::SPGIST:
                 {
-                    // TASK-DML-2: HNSW Index DML Integration
-                    // HNSW uses logical deletion (xmax marking)
-                    auto *hnsw = static_cast<HnswIndex*>(index_ptr);
-
-                    // Remove marks the node with xmax (soft deletion)
-                    // Actual removal happens during VACUUM via removeDeadEntries()
-                    // Note: xid is handled internally by the remove() method
-                    return hnsw->remove(tid, ctx);
+                    // TASK-DML-4: SP-GiST Index DML Integration
+                    auto *spgist = static_cast<SPGiSTIndex*>(index_ptr);
+                    return spgist->remove(key, tid, xid, ctx);
                 }
 
                 case CatalogManager::IndexType::GIN:
                 case CatalogManager::IndexType::GIST:
                 case CatalogManager::IndexType::BRIN:
                 case CatalogManager::IndexType::RTREE:
-                case CatalogManager::IndexType::SPGIST:
                 case CatalogManager::IndexType::BITMAP:
                 case CatalogManager::IndexType::COLUMNSTORE:
                 {
