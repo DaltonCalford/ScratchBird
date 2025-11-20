@@ -708,6 +708,27 @@ set_tests_properties(GiSTMVCC PROPERTIES
 )
 
 # ============================================================================
+# GiST Index DML Integration Test (TASK-DML-3)
+# ============================================================================
+
+add_executable(test_gist_dml
+    integration/test_gist_dml.cpp
+)
+target_link_libraries(test_gist_dml
+    scratchbird_core
+    scratchbird_parser
+    scratchbird_sblr
+    scratchbird_optimizer
+    gtest
+    gtest_main
+)
+add_test(NAME GiSTDML COMMAND test_gist_dml)
+set_tests_properties(GiSTDML PROPERTIES
+    LABELS "integration;index;gist;dml;task-dml-3"
+    TIMEOUT 120
+)
+
+# ============================================================================
 # SP-GiST Index MVCC Integration Test
 # ============================================================================
 
