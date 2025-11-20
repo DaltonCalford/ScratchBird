@@ -320,6 +320,11 @@ namespace scratchbird::core
         Database *db_;            // Database for TOAST operations
         ID table_id_;             // Table ID for TOAST operations
 
+        // Buffer for storing cross-page back version data
+        // When findVisibleVersion encounters a visible version on another page,
+        // it copies the data here before unpinning, allowing the pointer to remain valid
+        mutable std::vector<uint8_t> cross_page_buffer_;
+
         // Get pointer to item array (starts after PageHeader)
         auto getItemArray() -> ItemPointer *
         {

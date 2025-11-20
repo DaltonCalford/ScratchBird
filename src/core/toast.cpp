@@ -389,19 +389,11 @@ namespace scratchbird::core
                 break;
             }
 
-            // TODO Phase 2 Enhancement: Implement soft delete by updating xmax field
-            // For now, use physical delete as a temporary measure
-            // Soft delete would require:
-            // 1. Read current chunk data
-            // 2. Update xmax field (bytes 8-15) to current xmax parameter
-            // 3. Write back updated chunk
-            // This requires heap tuple update support (HeapPage::updateTupleInPlace)
-            //
-            // Current approach: Physical delete (will be replaced in future enhancement)
+            // MGA-compliant soft delete: Update xmax field only (do not mark item pointer as deleted)
+            // This allows transactions that started before this delete to still see the chunk
             uint32_t page_id = static_cast<uint32_t>(getPageNumber(tuple.tid));
             uint16_t item_id = getSlot(tuple.tid);
-            Status delete_status =
-                storage->deleteTuple(toast_table_id_, page_id, item_id, ctx);
+            Status delete_status = markToastChunkDeleted(page_id, item_id, xmax, ctx);
             if (delete_status != Status::OK)
             {
                 return delete_status;
@@ -439,13 +431,11 @@ namespace scratchbird::core
             uint32_t chunk_id = *reinterpret_cast<const uint32_t *>(tuple.data);
             if (chunk_id == value_id)
             {
-                // TODO Phase 2 Enhancement: Implement soft delete by updating xmax field
-                // For now, use physical delete as a temporary measure
-                // (Same limitation as deleteToastValue() above)
+                // MGA-compliant soft delete: Update xmax field only (do not mark item pointer as deleted)
+                // This allows transactions that started before this delete to still see the chunk
                 uint32_t page_id = static_cast<uint32_t>(getPageNumber(tuple.tid));
                 uint16_t item_id = getSlot(tuple.tid);
-                Status delete_status =
-                    storage->deleteTuple(toast_table_id_, page_id, item_id, ctx);
+                Status delete_status = markToastChunkDeleted(page_id, item_id, xmax, ctx);
                 if (delete_status != Status::OK)
                 {
                     return delete_status;
@@ -923,5 +913,72 @@ namespace scratchbird::core
         return Status::OK;
     }
 
+    auto ToastManager::markToastChunkDeleted(uint32_t page_id, uint16_t item_id, uint64_t xmax,
+                                             ErrorContext *ctx) -> Status
+    {
+        // MGA-compliant soft delete: Update ONLY the xmax field in the tuple header
+        // Do NOT mark the item pointer as deleted - this allows older transactions
+        // that started before this delete to still see the chunk according to MGA rules
+
+        BufferPool *buffer_pool = db_->buffer_pool();
+        if (buffer_pool == nullptr)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Buffer pool not available");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        // Pin the page containing the chunk
+        uint8_t *page_buffer = nullptr;
+        Status status = buffer_pool->pinPage(page_id, &page_buffer, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        // RAII guard to ensure page is unpinned on all exit paths
+        struct PageUnpinGuard
+        {
+            BufferPool *pool;
+            uint32_t pid;
+            ~PageUnpinGuard()
+            {
+                pool->unpinPage(pid, nullptr);
+            }
+        };
+        PageUnpinGuard guard{buffer_pool, page_id};
+
+        // Wrap the page with HeapPage for structured access
+        HeapPage heap_page(page_buffer, buffer_pool->getConfig().page_size);
+
+        // Get the tuple data to access its header
+        const uint8_t *tuple_data;
+        uint32_t tuple_size;
+        status = heap_page.getTuple(item_id, &tuple_data, &tuple_size, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        // Validate tuple has at least a TupleHeader
+        if (tuple_size < sizeof(TupleHeader))
+        {
+            SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "TOAST chunk too small for header");
+            return Status::PAGE_CORRUPT;
+        }
+
+        // Update xmax field directly in the page buffer (bytes 8-15 of TupleHeader)
+        // SAFETY: We have exclusive access via pin, and we're writing to a valid buffer
+        auto *tuple_hdr = const_cast<TupleHeader *>(reinterpret_cast<const TupleHeader *>(tuple_data));
+        tuple_hdr->xmax = xmax;
+
+        // Set hint bit to indicate xmax is set (but NOT the deleted flag on item pointer)
+        tuple_hdr->infomask |= TupleHeader::HEAP_XMAX_COMMITTED;
+
+        // Mark page as dirty so changes are persisted
+        buffer_pool->markDirty(page_id);
+
+        // Page will be automatically unpinned by RAII guard
+        return Status::OK;
+    }
+
 } // namespace scratchbird::core
-// namespace scratchbirde scratchbird
