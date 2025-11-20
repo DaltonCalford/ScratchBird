@@ -13,6 +13,7 @@
 #include <vector>
 #include <cstdint>
 #include <memory>
+#include <unordered_map>
 
 namespace scratchbird
 {
@@ -25,6 +26,28 @@ namespace scratchbird
             BITSET = 1, // Dense: 8KB bitset (>4096 values)
             RUN = 2     // Run-length encoded (future optimization)
         };
+
+        // TASK-CRITICAL-2: MGA-compliant bitmap entry with visibility tracking
+        // Per MGA_RULES.md: Store xmin/xmax with each bitmap entry for TIP-based visibility
+        // Firebird MGA: Enables index-level visibility checks without heap access
+        struct VersionedBitmapEntry
+        {
+            uint16_t tid_low;   // Low 16 bits of TID (high bits from container key)
+            uint64_t xmin;      // Transaction that inserted this entry
+            uint64_t xmax;      // Transaction that deleted this entry (0 = still visible)
+
+            VersionedBitmapEntry() : tid_low(0), xmin(0), xmax(0) {}
+            VersionedBitmapEntry(uint16_t tid, uint64_t min_xid, uint64_t max_xid = 0)
+                : tid_low(tid), xmin(min_xid), xmax(max_xid) {}
+
+            // Firebird MGA visibility check using TIP
+            // Per MGA_RULES.md Rule 3: Use TIP-based visibility, NOT snapshots
+            bool isVisible(uint64_t current_xid, class TransactionManager *txn_mgr) const;
+        };
+
+        // Note: Actual size is 24 bytes due to alignment padding (2 bytes padding after tid_low)
+        static_assert(sizeof(VersionedBitmapEntry) <= 32,
+                      "VersionedBitmapEntry should fit in 32 bytes");
 
         // Bitmap index meta page (8192 bytes)
         struct SBBitmapIndexMetaPage
@@ -283,20 +306,41 @@ namespace scratchbird
             RoaringBitmap(Database *db, uint32_t root_page);
             ~RoaringBitmap();
 
-            // Add a value to the bitmap (64-bit for GPID support)
-            Status add(uint64_t value, ErrorContext *ctx = nullptr);
+            // TASK-CRITICAL-2: MGA-compliant add with xmin tracking
+            // Add a value to the bitmap with insert transaction ID
+            // Firebird MGA: Per MGA_RULES.md Rule 6 - store xmin with each entry
+            Status add(uint64_t value, uint64_t xmin, ErrorContext *ctx = nullptr);
 
-            // Remove a value from the bitmap
-            Status remove(uint64_t value, ErrorContext *ctx = nullptr);
+            // TASK-CRITICAL-2: MGA-compliant remove with xmax marking (logical deletion)
+            // Mark value as deleted by setting xmax (Firebird MGA: NO physical removal)
+            // Per MGA_RULES.md Rule 5: Use back-versioning with xmax tombstones
+            Status remove(uint64_t value, uint64_t xmax, ErrorContext *ctx = nullptr);
 
             // Check if value exists
             bool contains(uint64_t value, ErrorContext *ctx = nullptr);
 
-            // Get all values as a sorted vector
+            // Get all values as a sorted vector (ignores visibility)
             std::vector<uint64_t> toArray(ErrorContext *ctx = nullptr);
 
-            // Cardinality (number of set bits)
+            // TASK-CRITICAL-2: Get all versioned entries for visibility filtering
+            // Returns entries with xmin/xmax for TIP-based visibility checks
+            // Firebird MGA: Per MGA_RULES.md Rule 3 - use TIP for visibility
+            std::vector<std::pair<uint64_t, VersionedBitmapEntry>> toVersionedArray(ErrorContext *ctx = nullptr);
+
+            // TASK-CRITICAL-2: Get visible entries only (MGA-compliant filtering)
+            // Filters entries using TIP-based visibility at index level (no heap access)
+            // Firebird MGA: Per MGA_RULES.md Rule 11 - use TransactionId, NOT Snapshot
+            std::vector<uint64_t> toVisibleArray(uint64_t current_xid,
+                                                  class TransactionManager *txn_mgr,
+                                                  ErrorContext *ctx = nullptr);
+
+            // Cardinality (number of set bits, includes invisible entries)
             uint64_t cardinality() const { return cardinality_; }
+
+            // TASK-CRITICAL-2: Visible cardinality (only entries visible to current_xid)
+            uint64_t visibleCardinality(uint64_t current_xid,
+                                       class TransactionManager *txn_mgr,
+                                       ErrorContext *ctx = nullptr) const;
 
             // Logical operations (static methods)
             static std::unique_ptr<RoaringBitmap> bitwiseAnd(
@@ -323,8 +367,12 @@ namespace scratchbird
                 ContainerType type;
                 uint16_t num_values;
                 uint32_t page_number;
-                std::vector<uint16_t> array_data;  // For ARRAY containers (low 16 bits)
-                std::vector<uint64_t> bitset_data; // For BITSET containers (1024 uint64_t)
+
+                // TASK-CRITICAL-2: Store versioned entries for MGA compliance
+                // Firebird MGA: Each entry has xmin/xmax for TIP-based visibility
+                std::vector<VersionedBitmapEntry> array_data_versioned;  // For ARRAY containers
+                std::vector<uint64_t> bitset_data;                      // For BITSET containers (1024 uint64_t)
+                std::unordered_map<uint16_t, VersionedBitmapEntry> bitset_versions; // Bitset version info
             };
 
             Status loadContainer(uint64_t key, Container *container_out, ErrorContext *ctx);
