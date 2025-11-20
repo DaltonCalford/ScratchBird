@@ -28,7 +28,12 @@ namespace core {
     {
         // Allocate meta page for storing index metadata
         auto page_mgr = db->page_manager();
-        uint32_t meta_page = page_mgr->allocatePage();
+        uint32_t meta_page = 0;
+        Status status = page_mgr->allocatePage(meta_page, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
 
         // The real RTree will be created lazily on first use
         // or we could delegate to RTree::create() here
@@ -57,9 +62,9 @@ namespace core {
                               uint64_t xmin, ErrorContext *ctx)
     {
         // Parse bounding box from serialized key
-        BoundingBox bbox;
+        scratchbird::core::BoundingBox bbox;
         Status status = deserializeBoundingBox(key, &bbox, ctx);
-        if (!status.ok())
+        if (status != Status::OK)
         {
             return status;
         }
@@ -95,9 +100,9 @@ namespace core {
         }
 
         // Parse query bounding box
-        BoundingBox query;
+        scratchbird::core::BoundingBox query;
         Status status = deserializeBoundingBox(query_box, &query, ctx);
-        if (!status.ok())
+        if (status != Status::OK)
         {
             return status;
         }
@@ -125,9 +130,9 @@ namespace core {
                               uint64_t xmax, ErrorContext *ctx)
     {
         // Parse bounding box
-        BoundingBox bbox;
+        scratchbird::core::BoundingBox bbox;
         Status status = deserializeBoundingBox(key, &bbox, ctx);
-        if (!status.ok())
+        if (status != Status::OK)
         {
             return status;
         }
@@ -202,17 +207,14 @@ namespace core {
     // ========================================================================
 
     Status RTreeIndex::deserializeBoundingBox(const std::vector<uint8_t>& key,
-                                              BoundingBox* bbox,
+                                              scratchbird::core::BoundingBox* bbox,
                                               ErrorContext* ctx)
     {
         // Expect 4 doubles: min_x, min_y, max_x, max_y
         if (key.size() != 32) // 4 * sizeof(double)
         {
-            if (ctx)
-            {
-                ctx->setError("Invalid bounding box size");
-            }
-            return Status::InvalidArgument;
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Invalid bounding box size");
+            return Status::INVALID_ARGUMENT;
         }
 
         const double* coords = reinterpret_cast<const double*>(key.data());
@@ -224,17 +226,14 @@ namespace core {
         // Validate
         if (bbox->min_x > bbox->max_x || bbox->min_y > bbox->max_y)
         {
-            if (ctx)
-            {
-                ctx->setError("Invalid bounding box coordinates");
-            }
-            return Status::InvalidArgument;
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Invalid bounding box coordinates");
+            return Status::INVALID_ARGUMENT;
         }
 
         return Status::OK;
     }
 
-    std::vector<uint8_t> RTreeIndex::serializeBoundingBox(const BoundingBox& bbox)
+    std::vector<uint8_t> RTreeIndex::serializeBoundingBox(const scratchbird::core::BoundingBox& bbox)
     {
         std::vector<uint8_t> result(32); // 4 doubles
         double* coords = reinterpret_cast<double*>(result.data());
