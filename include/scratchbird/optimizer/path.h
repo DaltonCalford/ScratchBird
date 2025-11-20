@@ -19,6 +19,8 @@ namespace scratchbird::optimizer
     {
         SEQ_SCAN,          // Sequential table scan
         INDEX_SCAN,        // Index scan with heap fetch
+        INDEX_ONLY_SCAN,   // Index-only scan (covering index, no heap access) - TASK-BYTECODE-4
+        BITMAP_INDEX_SCAN, // Bitmap index scan (combine multiple indexes) - TASK-BYTECODE-4
         RTREE_SCAN,        // R-tree spatial index scan (Phase 2, Task 9.2)
         NESTED_LOOP_JOIN,  // Nested loop join (Phase 1, Task 3.2)
         HASH_JOIN,         // Hash join (Phase 1, Task 3.2)
@@ -974,6 +976,200 @@ namespace scratchbird::optimizer
     private:
         std::shared_ptr<Path> input_path_;
         std::vector<parser::WindowFuncExpr*> window_funcs_;
+    };
+
+    /**
+     * IndexOnlyScanPath - Index-only scan access path (covering index)
+     *
+     * Represents decision to scan index WITHOUT fetching heap tuples.
+     * Only applicable when index contains all columns needed by query.
+     *
+     * Benefits:
+     * - No heap I/O (much faster for selective queries)
+     * - Reduced cache pressure
+     * - Better performance for queries on indexed columns only
+     *
+     * Requirements:
+     * - Index must cover all columns in SELECT + WHERE + ORDER BY
+     * - Visibility information available (via visibility map or TIP)
+     *
+     * Example:
+     *   CREATE INDEX idx_users_id_name ON users(id, name);
+     *   SELECT id, name FROM users WHERE id > 100;
+     *   → IndexOnlyScanPath (no heap access needed!)
+     *
+     * TASK-BYTECODE-4: Query Planner Integration
+     */
+    class IndexOnlyScanPath : public Path
+    {
+    public:
+        /**
+         * Constructor
+         *
+         * @param table_id Table to scan
+         * @param table_name Table name
+         * @param index_id Index to use
+         * @param index_name Index name
+         * @param index_height B-tree height
+         * @param index_pages Index pages to access
+         * @param index_tuples Index tuples to scan
+         * @param qual_cost Cost of WHERE clause evaluation
+         * @param correlation Physical ordering correlation
+         * @param cost Cost estimate
+         */
+        IndexOnlyScanPath(const core::ID &table_id,
+                          const std::string &table_name,
+                          const core::ID &index_id,
+                          const std::string &index_name,
+                          uint64_t index_height,
+                          uint64_t index_pages,
+                          uint64_t index_tuples,
+                          double qual_cost,
+                          double correlation,
+                          const CostEstimate &cost)
+            : Path(PathType::INDEX_ONLY_SCAN, cost),
+              table_id_(table_id),
+              table_name_(table_name),
+              index_id_(index_id),
+              index_name_(index_name),
+              index_height_(index_height),
+              index_pages_(index_pages),
+              index_tuples_(index_tuples),
+              qual_cost_(qual_cost),
+              correlation_(correlation)
+        {
+        }
+
+        // Accessors
+        const core::ID &tableId() const { return table_id_; }
+        const std::string &tableName() const { return table_name_; }
+        const core::ID &indexId() const { return index_id_; }
+        const std::string &indexName() const { return index_name_; }
+        uint64_t indexHeight() const { return index_height_; }
+        uint64_t indexPages() const { return index_pages_; }
+        uint64_t indexTuples() const { return index_tuples_; }
+        double qualCost() const { return qual_cost_; }
+        double correlation() const { return correlation_; }
+
+        auto toString() const -> std::string override
+        {
+            return "IndexOnlyScanPath(index=" + index_name_ +
+                   ", cost=" + std::to_string(cost_.total_cost) +
+                   ", rows=" + std::to_string(cost_.rows) + ")";
+        }
+
+    private:
+        core::ID table_id_;
+        std::string table_name_;
+        core::ID index_id_;
+        std::string index_name_;
+        uint64_t index_height_;
+        uint64_t index_pages_;
+        uint64_t index_tuples_;
+        double qual_cost_;
+        double correlation_;
+    };
+
+    /**
+     * BitmapIndexScanPath - Bitmap index scan access path
+     *
+     * Represents decision to combine multiple indexes using bitmap operations.
+     * Useful for multi-column queries where no single index is perfect.
+     *
+     * How it works:
+     * 1. Scan each applicable index to build a bitmap of matching TIDs
+     * 2. Combine bitmaps using AND/OR operations
+     * 3. Sort TIDs to enable sequential heap access
+     * 4. Fetch heap tuples in physical order (better I/O pattern)
+     *
+     * Example:
+     *   SELECT * FROM users WHERE age > 25 AND city = 'Seattle';
+     *   → BitmapIndexScan combining:
+     *     - idx_users_age (bitmap1)
+     *     - idx_users_city (bitmap2)
+     *     - Result: bitmap1 AND bitmap2
+     *
+     * Benefits vs multiple IndexScans:
+     * - Single heap pass (vs random access per index)
+     * - Combines indexes for better selectivity
+     * - Eliminates duplicate heap fetches
+     *
+     * TASK-BYTECODE-4: Query Planner Integration
+     */
+    class BitmapIndexScanPath : public Path
+    {
+    public:
+        /**
+         * Constructor
+         *
+         * @param table_id Table to scan
+         * @param table_name Table name
+         * @param index_ids Indexes to combine
+         * @param index_names Index names
+         * @param bitmap_op Operation to combine bitmaps (AND/OR)
+         * @param total_index_pages Total index pages across all indexes
+         * @param estimated_heap_pages Estimated heap pages (after bitmap combination)
+         * @param estimated_tuples Estimated matching tuples
+         * @param qual_cost Cost of WHERE clause evaluation
+         * @param cost Cost estimate
+         */
+        BitmapIndexScanPath(const core::ID &table_id,
+                            const std::string &table_name,
+                            const std::vector<core::ID> &index_ids,
+                            const std::vector<std::string> &index_names,
+                            const std::string &bitmap_op,  // "AND" or "OR"
+                            uint64_t total_index_pages,
+                            uint64_t estimated_heap_pages,
+                            uint64_t estimated_tuples,
+                            double qual_cost,
+                            const CostEstimate &cost)
+            : Path(PathType::BITMAP_INDEX_SCAN, cost),
+              table_id_(table_id),
+              table_name_(table_name),
+              index_ids_(index_ids),
+              index_names_(index_names),
+              bitmap_op_(bitmap_op),
+              total_index_pages_(total_index_pages),
+              estimated_heap_pages_(estimated_heap_pages),
+              estimated_tuples_(estimated_tuples),
+              qual_cost_(qual_cost)
+        {
+        }
+
+        // Accessors
+        const core::ID &tableId() const { return table_id_; }
+        const std::string &tableName() const { return table_name_; }
+        const std::vector<core::ID> &indexIds() const { return index_ids_; }
+        const std::vector<std::string> &indexNames() const { return index_names_; }
+        const std::string &bitmapOp() const { return bitmap_op_; }
+        uint64_t totalIndexPages() const { return total_index_pages_; }
+        uint64_t estimatedHeapPages() const { return estimated_heap_pages_; }
+        uint64_t estimatedTuples() const { return estimated_tuples_; }
+        double qualCost() const { return qual_cost_; }
+
+        auto toString() const -> std::string override
+        {
+            std::string idx_list;
+            for (size_t i = 0; i < index_names_.size(); i++)
+            {
+                if (i > 0) idx_list += " " + bitmap_op_ + " ";
+                idx_list += index_names_[i];
+            }
+            return "BitmapIndexScanPath(indexes=[" + idx_list + "]" +
+                   ", cost=" + std::to_string(cost_.total_cost) +
+                   ", rows=" + std::to_string(cost_.rows) + ")";
+        }
+
+    private:
+        core::ID table_id_;
+        std::string table_name_;
+        std::vector<core::ID> index_ids_;
+        std::vector<std::string> index_names_;
+        std::string bitmap_op_;  // "AND" or "OR"
+        uint64_t total_index_pages_;
+        uint64_t estimated_heap_pages_;
+        uint64_t estimated_tuples_;
+        double qual_cost_;
     };
 
 } // namespace scratchbird::optimizer
