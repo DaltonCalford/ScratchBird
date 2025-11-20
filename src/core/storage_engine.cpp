@@ -12,6 +12,7 @@
 #include "scratchbird/core/btree.h"
 #include "scratchbird/core/hash_index.h"
 #include "scratchbird/core/lsm_tree.h"  // LSM Integration Phase 4
+#include "scratchbird/core/spgist_index.h"  // TASK-DML-4: SP-GiST Index DML Integration
 #include "scratchbird/core/toast.h"
 #include "scratchbird/core/garbage_collector.h"
 #include "scratchbird/core/logger.h"
@@ -70,11 +71,17 @@ namespace scratchbird::core
                     return hash->insert(key.data(), key.size(), tid, xid, ctx);
                 }
 
+                case CatalogManager::IndexType::SPGIST:
+                {
+                    // TASK-DML-4: SP-GiST Index DML Integration
+                    auto *spgist = static_cast<SPGiSTIndex*>(index_ptr);
+                    return spgist->insert(key, tid, xid, ctx);
+                }
+
                 case CatalogManager::IndexType::GIN:
                 case CatalogManager::IndexType::GIST:
                 case CatalogManager::IndexType::BRIN:
                 case CatalogManager::IndexType::RTREE:
-                case CatalogManager::IndexType::SPGIST:
                 case CatalogManager::IndexType::BITMAP:
                 case CatalogManager::IndexType::COLUMNSTORE:
                 case CatalogManager::IndexType::HNSW:
@@ -126,11 +133,17 @@ namespace scratchbird::core
                     return hash->remove(key.data(), key.size(), tid, xid, ctx);
                 }
 
+                case CatalogManager::IndexType::SPGIST:
+                {
+                    // TASK-DML-4: SP-GiST Index DML Integration
+                    auto *spgist = static_cast<SPGiSTIndex*>(index_ptr);
+                    return spgist->remove(key, tid, xid, ctx);
+                }
+
                 case CatalogManager::IndexType::GIN:
                 case CatalogManager::IndexType::GIST:
                 case CatalogManager::IndexType::BRIN:
                 case CatalogManager::IndexType::RTREE:
-                case CatalogManager::IndexType::SPGIST:
                 case CatalogManager::IndexType::BITMAP:
                 case CatalogManager::IndexType::COLUMNSTORE:
                 case CatalogManager::IndexType::HNSW:
