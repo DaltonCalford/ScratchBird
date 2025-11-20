@@ -4,6 +4,7 @@
 #include "scratchbird/core/toast.h"
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/buffer_pool.h"
+#include "scratchbird/core/buffer_pool_guard.h"
 #include "scratchbird/core/transaction_manager.h"
 #include "scratchbird/core/logger.h"
 #include "scratchbird/core/config.h"
@@ -772,18 +773,21 @@ namespace scratchbird::core
                 return alloc_status;
             }
 
+            // RAII guard - automatically unpins page on ALL exit paths (including exceptions)
+            BufferPoolGuard guard(buffer_pool, back_version_page_id, &back_page_buffer, ctx);
+
             // Initialize the back version page as a heap page
             HeapPage back_page(static_cast<uint8_t *>(back_page_buffer), page_size_, toast_mgr_, db_, table_id_);
             Status init_status = back_page.initialize(back_version_page_id, ctx);
             if (init_status != Status::OK)
             {
-                buffer_pool->unpinPage(back_version_page_id, false, ctx);
+                // Guard automatically unpins (clean) on return
                 return init_status;
             }
 
             // Insert old tuple as a back version on the new page
             // Create back version tuple (copy of old tuple)
-            // EXCEPTION SAFETY (ERROR-CRITICAL-2 Priority 2): Protect cross-page back version allocation
+            // EXCEPTION SAFETY: BufferPoolGuard now provides automatic cleanup
             std::vector<uint8_t> back_version_tuple;
             try
             {
@@ -791,8 +795,7 @@ namespace scratchbird::core
             }
             catch (const std::bad_alloc &)
             {
-                // Failed to allocate - must unpin the allocated page to prevent leak
-                buffer_pool->unpinPage(back_version_page_id, false, ctx);
+                // Guard automatically unpins on exception
                 SET_ERROR_CONTEXT(ctx, Status::OOM,
                                   "Out of memory allocating cross-page back version tuple");
                 return Status::OOM;
@@ -814,7 +817,7 @@ namespace scratchbird::core
                                                         primary_tuple_hdr->xmin, &back_item_id, ctx);
             if (insert_status != Status::OK)
             {
-                buffer_pool->unpinPage(back_version_page_id, false, ctx);
+                // Guard automatically unpins (clean) on return
                 SET_ERROR_CONTEXT(ctx, insert_status, "Failed to insert back version on new page");
                 return insert_status;
             }
@@ -825,15 +828,16 @@ namespace scratchbird::core
             Status get_status = back_page.getTuple(back_item_id, &back_data_ptr, &back_size, ctx);
             if (get_status != Status::OK)
             {
-                buffer_pool->unpinPage(back_version_page_id, false, ctx);
+                // Guard automatically unpins (clean) on return
                 return get_status;
             }
 
             // Calculate offset from page start
             back_version_offset = static_cast<uint32_t>(back_data_ptr - static_cast<uint8_t *>(back_page_buffer));
 
-            // Unpin the back page (already marked dirty by allocatePage)
-            buffer_pool->unpinPage(back_version_page_id, true, ctx);
+            // Mark page as dirty since we modified it
+            guard.markDirty();
+            // Guard automatically unpins (dirty) on scope exit
         }
 
         // ====================================================================

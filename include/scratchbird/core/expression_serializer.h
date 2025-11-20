@@ -44,14 +44,14 @@ namespace scratchbird::core
          * @param data Binary data
          * @param len Length of data
          * @param pool String pool for allocating string IDs
-         * @return Deserialized expression (caller owns memory)
+         * @return Deserialized expression (automatic memory management)
          */
-        static Expression *deserialize(const uint8_t *data, size_t len, StringPool &pool);
+        static std::unique_ptr<Expression> deserialize(const uint8_t *data, size_t len, StringPool &pool);
 
         /**
          * Deserialize binary data to a list of expressions
          */
-        static std::vector<Expression *> deserializeList(const uint8_t *data, size_t len,
+        static std::vector<std::unique_ptr<Expression>> deserializeList(const uint8_t *data, size_t len,
                                                          StringPool &pool);
 
     private:
@@ -64,7 +64,7 @@ namespace scratchbird::core
         static void writeStringId(std::vector<uint8_t> &buffer, StringPool::StringId id);
 
         // Deserialization helpers
-        static Expression *deserializeNode(const uint8_t *&ptr, const uint8_t *end,
+        static std::unique_ptr<Expression> deserializeNode(const uint8_t *&ptr, const uint8_t *end,
                                            StringPool &pool);
         static uint8_t readU8(const uint8_t *&ptr, const uint8_t *end);
         static uint32_t readU32(const uint8_t *&ptr, const uint8_t *end);
@@ -97,31 +97,31 @@ namespace scratchbird::core
                                            std::vector<uint8_t> &buffer);
 
         // Type-specific deserialization
-        static Expression *deserializeLiteral(const uint8_t *&ptr, const uint8_t *end,
+        static std::unique_ptr<Expression> deserializeLiteral(const uint8_t *&ptr, const uint8_t *end,
                                               StringPool &pool);
-        static Expression *deserializeIdentifier(const uint8_t *&ptr, const uint8_t *end,
+        static std::unique_ptr<Expression> deserializeIdentifier(const uint8_t *&ptr, const uint8_t *end,
                                                  StringPool &pool);
-        static Expression *deserializeBinaryOp(const uint8_t *&ptr, const uint8_t *end,
+        static std::unique_ptr<Expression> deserializeBinaryOp(const uint8_t *&ptr, const uint8_t *end,
                                                StringPool &pool);
-        static Expression *deserializeFunctionCall(const uint8_t *&ptr, const uint8_t *end,
+        static std::unique_ptr<Expression> deserializeFunctionCall(const uint8_t *&ptr, const uint8_t *end,
                                                    StringPool &pool);
-        static Expression *deserializeCast(const uint8_t *&ptr, const uint8_t *end,
+        static std::unique_ptr<Expression> deserializeCast(const uint8_t *&ptr, const uint8_t *end,
                                            StringPool &pool);
-        static Expression *deserializeCase(const uint8_t *&ptr, const uint8_t *end,
+        static std::unique_ptr<Expression> deserializeCase(const uint8_t *&ptr, const uint8_t *end,
                                            StringPool &pool);
-        static Expression *deserializeAggregate(const uint8_t *&ptr, const uint8_t *end,
+        static std::unique_ptr<Expression> deserializeAggregate(const uint8_t *&ptr, const uint8_t *end,
                                                 StringPool &pool);
-        static Expression *deserializeWindowFunc(const uint8_t *&ptr, const uint8_t *end,
+        static std::unique_ptr<Expression> deserializeWindowFunc(const uint8_t *&ptr, const uint8_t *end,
                                                  StringPool &pool);
-        static Expression *deserializeJSONFunc(const uint8_t *&ptr, const uint8_t *end,
+        static std::unique_ptr<Expression> deserializeJSONFunc(const uint8_t *&ptr, const uint8_t *end,
                                                StringPool &pool);
-        static Expression *deserializeCoalesce(const uint8_t *&ptr, const uint8_t *end,
+        static std::unique_ptr<Expression> deserializeCoalesce(const uint8_t *&ptr, const uint8_t *end,
                                                StringPool &pool);
-        static Expression *deserializeNullIf(const uint8_t *&ptr, const uint8_t *end,
+        static std::unique_ptr<Expression> deserializeNullIf(const uint8_t *&ptr, const uint8_t *end,
                                              StringPool &pool);
 
         // Window spec deserialization helpers
-        static WindowSpec *deserializeWindowSpec(const uint8_t *&ptr, const uint8_t *end,
+        static std::unique_ptr<WindowSpec> deserializeWindowSpec(const uint8_t *&ptr, const uint8_t *end,
                                                  StringPool &pool);
         static FrameBoundary deserializeFrameBoundary(const uint8_t *&ptr, const uint8_t *end,
                                                       StringPool &pool);

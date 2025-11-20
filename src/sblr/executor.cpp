@@ -1698,23 +1698,32 @@ namespace scratchbird
 
             // 3. Deserialize expressions and predicate
             parser::StringPool temp_pool;
+            auto expressions_unique = std::vector<std::unique_ptr<parser::Expression>>();
+            auto predicate_unique = std::unique_ptr<parser::Expression>();
+
+            // Create raw pointer vectors for evaluator (will be cleaned up automatically)
             std::vector<parser::Expression *> expressions;
             parser::Expression *predicate = nullptr;
 
             if (index_info.is_expression_index)
             {
-                expressions = core::ExpressionSerializer::deserializeList(
+                expressions_unique = core::ExpressionSerializer::deserializeList(
                     index_info.expression_data.data(),
                     index_info.expression_data.size(),
                     temp_pool);
+                for (auto& expr : expressions_unique)
+                {
+                    expressions.push_back(expr.get());
+                }
             }
 
             if (index_info.is_partial_index)
             {
-                predicate = core::ExpressionSerializer::deserialize(
+                predicate_unique = core::ExpressionSerializer::deserialize(
                     index_info.predicate_data.data(),
                     index_info.predicate_data.size(),
                     temp_pool);
+                predicate = predicate_unique.get();
             }
 
             // 4. Create expression evaluator
@@ -1930,15 +1939,7 @@ namespace scratchbird
             // Task 17 MGA Phase 2.2: Track index maintenance
             index_stats_.indexes_maintained++;
 
-            // Cleanup deserialized expressions
-            for (auto *expr : expressions)
-            {
-                delete expr;
-            }
-            if (predicate)
-            {
-                delete predicate;
-            }
+            // No manual cleanup needed - unique_ptr handles it automatically
         }
 
         // Task 17 Phase 7: Index maintenance helpers
@@ -1969,23 +1970,32 @@ namespace scratchbird
 
                 // Deserialize expression/predicate (only if needed)
                 parser::StringPool temp_pool;
+                auto expressions_unique = std::vector<std::unique_ptr<parser::Expression>>();
+                auto predicate_unique = std::unique_ptr<parser::Expression>();
+
+                // Create raw pointer vectors for evaluator (will be cleaned up automatically)
                 std::vector<parser::Expression *> expressions;
                 parser::Expression *predicate = nullptr;
 
                 if (index_info.is_expression_index)
                 {
-                    expressions = core::ExpressionSerializer::deserializeList(
+                    expressions_unique = core::ExpressionSerializer::deserializeList(
                         index_info.expression_data.data(),
                         index_info.expression_data.size(),
                         temp_pool);
+                    for (auto& expr : expressions_unique)
+                    {
+                        expressions.push_back(expr.get());
+                    }
                 }
 
                 if (index_info.is_partial_index)
                 {
-                    predicate = core::ExpressionSerializer::deserialize(
+                    predicate_unique = core::ExpressionSerializer::deserialize(
                         index_info.predicate_data.data(),
                         index_info.predicate_data.size(),
                         temp_pool);
+                    predicate = predicate_unique.get();
                 }
 
                 // Create evaluator
@@ -2001,19 +2011,13 @@ namespace scratchbird
                         bool matches = evaluator.evaluatePredicate(predicate, row_values);
                         if (!matches)
                         {
-                            // Row doesn't match filter - skip this index
-                            delete predicate;
-                            for (auto *expr : expressions)
-                                delete expr;
+                            // Row doesn't match filter - skip this index (cleanup automatic)
                             continue;
                         }
                     }
                     catch (...)
                     {
-                        // Error evaluating - skip
-                        delete predicate;
-                        for (auto *expr : expressions)
-                            delete expr;
+                        // Error evaluating - skip (cleanup automatic)
                         continue;
                     }
                 }
@@ -2056,9 +2060,7 @@ namespace scratchbird
 
                 if (skip_index)
                 {
-                    delete predicate;
-                    for (auto *expr : expressions)
-                        delete expr;
+                    // Skip this index (cleanup automatic)
                     continue;
                 }
 
@@ -2082,10 +2084,7 @@ namespace scratchbird
                     index_stats_.indexes_maintained++;
                 }
 
-                // Cleanup
-                delete predicate;
-                for (auto *expr : expressions)
-                    delete expr;
+                // No manual cleanup needed - unique_ptr handles it automatically
             }
         }
 
@@ -2113,23 +2112,32 @@ namespace scratchbird
                 // Previous bug: Basic indexes were skipped during UPDATE, causing stale entries
 
                 parser::StringPool temp_pool;
+                auto expressions_unique = std::vector<std::unique_ptr<parser::Expression>>();
+                auto predicate_unique = std::unique_ptr<parser::Expression>();
+
+                // Create raw pointer vectors for evaluator (will be cleaned up automatically)
                 std::vector<parser::Expression *> expressions;
                 parser::Expression *predicate = nullptr;
 
                 if (index_info.is_expression_index)
                 {
-                    expressions = core::ExpressionSerializer::deserializeList(
+                    expressions_unique = core::ExpressionSerializer::deserializeList(
                         index_info.expression_data.data(),
                         index_info.expression_data.size(),
                         temp_pool);
+                    for (auto& expr : expressions_unique)
+                    {
+                        expressions.push_back(expr.get());
+                    }
                 }
 
                 if (index_info.is_partial_index)
                 {
-                    predicate = core::ExpressionSerializer::deserialize(
+                    predicate_unique = core::ExpressionSerializer::deserialize(
                         index_info.predicate_data.data(),
                         index_info.predicate_data.size(),
                         temp_pool);
+                    predicate = predicate_unique.get();
                 }
 
                 // Task 17 MGA Phase 1.4: Pass database and transaction ID for visibility checks
@@ -2237,9 +2245,7 @@ namespace scratchbird
                 auto btree = core::BTree::open(db_, index_info.index_id, index_info.root_page, nullptr);
                 if (!btree)
                 {
-                    delete predicate;
-                    for (auto *expr : expressions)
-                        delete expr;
+                    // Skip this index (cleanup automatic)
                     continue;
                 }
 
@@ -2283,10 +2289,7 @@ namespace scratchbird
                 }
                 // else: neither in index - no change
 
-                // Cleanup
-                delete predicate;
-                for (auto *expr : expressions)
-                    delete expr;
+                // No manual cleanup needed - unique_ptr handles it automatically
             }
         }
 
@@ -2312,23 +2315,32 @@ namespace scratchbird
                 // Previous bug: Basic indexes were skipped during DELETE, causing orphaned entries
 
                 parser::StringPool temp_pool;
+                auto expressions_unique = std::vector<std::unique_ptr<parser::Expression>>();
+                auto predicate_unique = std::unique_ptr<parser::Expression>();
+
+                // Create raw pointer vectors for evaluator (will be cleaned up automatically)
                 std::vector<parser::Expression *> expressions;
                 parser::Expression *predicate = nullptr;
 
                 if (index_info.is_expression_index)
                 {
-                    expressions = core::ExpressionSerializer::deserializeList(
+                    expressions_unique = core::ExpressionSerializer::deserializeList(
                         index_info.expression_data.data(),
                         index_info.expression_data.size(),
                         temp_pool);
+                    for (auto& expr : expressions_unique)
+                    {
+                        expressions.push_back(expr.get());
+                    }
                 }
 
                 if (index_info.is_partial_index)
                 {
-                    predicate = core::ExpressionSerializer::deserialize(
+                    predicate_unique = core::ExpressionSerializer::deserialize(
                         index_info.predicate_data.data(),
                         index_info.predicate_data.size(),
                         temp_pool);
+                    predicate = predicate_unique.get();
                 }
 
                 // Task 17 MGA Phase 1.4: Pass database and transaction ID for visibility checks
@@ -2350,10 +2362,7 @@ namespace scratchbird
 
                 if (!in_index)
                 {
-                    // Not in index - nothing to delete
-                    delete predicate;
-                    for (auto *expr : expressions)
-                        delete expr;
+                    // Not in index - nothing to delete (cleanup automatic)
                     continue;
                 }
 
@@ -2392,9 +2401,7 @@ namespace scratchbird
 
                 if (skip_index)
                 {
-                    delete predicate;
-                    for (auto *expr : expressions)
-                        delete expr;
+                    // Skip this index (cleanup automatic)
                     continue;
                 }
 
@@ -2417,10 +2424,7 @@ namespace scratchbird
                     index_stats_.indexes_maintained++;
                 }
 
-                // Cleanup
-                delete predicate;
-                for (auto *expr : expressions)
-                    delete expr;
+                // No manual cleanup needed - unique_ptr handles it automatically
             }
         }
 
