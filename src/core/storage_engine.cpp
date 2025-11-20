@@ -83,9 +83,17 @@ namespace scratchbird::core
 
                 case CatalogManager::IndexType::GIN:
                 case CatalogManager::IndexType::GIST:
+                {
+                    // TASK-DML-3: GiST DML Integration
+                    auto *gist = static_cast<GiSTIndex*>(index_ptr);
+                    // Create predicate from key data (opclass_id = 0 for default)
+                    GiSTPredicate predicate(key, 0);
+                    return gist->insert(predicate, tid, xid, ctx);
+                }
+
+                case CatalogManager::IndexType::GIN:
                 case CatalogManager::IndexType::BRIN:
                 case CatalogManager::IndexType::RTREE:
-                case CatalogManager::IndexType::SPGIST:
                 case CatalogManager::IndexType::BITMAP:
                 case CatalogManager::IndexType::HNSW:
                 {
@@ -146,9 +154,17 @@ namespace scratchbird::core
 
                 case CatalogManager::IndexType::GIN:
                 case CatalogManager::IndexType::GIST:
+                {
+                    // TASK-DML-3: GiST DML Integration
+                    auto *gist = static_cast<GiSTIndex*>(index_ptr);
+                    // Create predicate from key data (opclass_id = 0 for default)
+                    GiSTPredicate predicate(key, 0);
+                    return gist->remove(predicate, tid, xid, ctx);
+                }
+
+                case CatalogManager::IndexType::GIN:
                 case CatalogManager::IndexType::BRIN:
                 case CatalogManager::IndexType::RTREE:
-                case CatalogManager::IndexType::SPGIST:
                 case CatalogManager::IndexType::BITMAP:
                 case CatalogManager::IndexType::HNSW:
                 {
@@ -163,6 +179,18 @@ namespace scratchbird::core
             }
         }
     } // anonymous namespace
+
+    // TASK-DML-2: Public wrapper for removeFromIndex (for executor)
+    auto StorageEngine::removeFromIndexHelper(
+        CatalogManager::IndexType index_type,
+        void *index_ptr,
+        const std::vector<uint8_t> &key,
+        const TID &tid,
+        uint64_t xid,
+        ErrorContext *ctx) -> Status
+    {
+        return removeFromIndex(index_type, index_ptr, key, tid, xid, ctx);
+    }
 
     auto StorageEngine::insertTuple(const ID &table_id, const uint8_t *tuple_data,
                                     uint32_t tuple_size, uint32_t *page_id_out,

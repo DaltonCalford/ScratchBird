@@ -155,6 +155,16 @@ namespace scratchbird::core
         // Get current transaction ID from TransactionManager
         [[nodiscard]] auto getCurrentXid() const -> uint64_t;
 
+        // TASK-DML-2: Public helper for removing from any index type (for executor)
+        // Note: index_type_value is uint8_t to avoid circular include dependency
+        // It corresponds to CatalogManager::IndexType enum value
+        auto removeFromIndexHelper(uint8_t index_type_value,
+                                    void *index_ptr,
+                                    const std::vector<uint8_t> &key,
+                                    const TID &tid,
+                                    uint64_t xid,
+                                    ErrorContext *ctx) -> Status;
+
     private:
         Database *db_;
         BufferPool *buffer_pool_;
