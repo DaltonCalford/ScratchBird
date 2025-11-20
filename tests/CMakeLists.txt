@@ -668,6 +668,48 @@ set_tests_properties(LSMTreeStress PROPERTIES
 )
 
 # ============================================================================
+# GiST Index MVCC Integration Test
+# ============================================================================
+
+add_executable(test_gist_mvcc
+    integration/test_gist_mvcc.cpp
+)
+target_link_libraries(test_gist_mvcc
+    scratchbird_core
+    scratchbird_parser
+    scratchbird_sblr
+    scratchbird_optimizer
+    gtest
+    gtest_main
+)
+add_test(NAME GiSTMVCC COMMAND test_gist_mvcc)
+set_tests_properties(GiSTMVCC PROPERTIES
+    LABELS "integration;index;gist;mvcc;mga"
+    TIMEOUT 120
+)
+
+# ============================================================================
+# SP-GiST Index MVCC Integration Test
+# ============================================================================
+
+add_executable(test_spgist_mvcc
+    integration/test_spgist_mvcc.cpp
+)
+target_link_libraries(test_spgist_mvcc
+    scratchbird_core
+    scratchbird_parser
+    scratchbird_sblr
+    scratchbird_optimizer
+    gtest
+    gtest_main
+)
+add_test(NAME SPGiSTMVCC COMMAND test_spgist_mvcc)
+set_tests_properties(SPGiSTMVCC PROPERTIES
+    LABELS "integration;index;spgist;mvcc;mga"
+    TIMEOUT 120
+)
+
+# ============================================================================
 # Security System Phase 2 Integration Test
 # ============================================================================
 

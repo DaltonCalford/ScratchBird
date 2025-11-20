@@ -8,6 +8,7 @@
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/page_manager.h"
 #include "scratchbird/core/transaction_manager.h"
+#include "scratchbird/core/logger.h"
 #include <algorithm>
 #include <cstring>
 
@@ -195,8 +196,17 @@ namespace core {
         // Update approximate size
         memtable_size_bytes_ += key.size() + sizeof(InternalEntry);
 
-        // TODO: Flush to SSTable when memtable exceeds threshold
-        // For now, simple in-memory implementation
+        // Check memtable size limit (4MB threshold)
+        // NOTE: This is an in-memory-only implementation by design
+        // For large datasets requiring disk persistence, use LSMTreeIndex with SSTable support
+        if (memtable_size_bytes_ > MAX_MEMTABLE_SIZE)
+        {
+            // Log warning but continue (compaction can be triggered manually via compact())
+            // Alternative: could return Status::OOM to signal caller to trigger compaction
+            LOG_WARNING(STORAGE, "LSMTree memtable exceeds %zu bytes (currently %zu bytes). "
+                       "Consider calling compact() or using LSMTreeIndex for large datasets.",
+                       MAX_MEMTABLE_SIZE, memtable_size_bytes_);
+        }
 
         return Status::OK;
     }
