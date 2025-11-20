@@ -77,16 +77,19 @@ namespace scratchbird
         constexpr uint16_t MAX_PENDING_ENTRIES_PER_PAGE = (8192 - 128) / 72;
 
         // Posting List Entry - Single TID in a posting list
+        // FIREBIRD MGA: Now includes xmin/xmax for logical deletion (MGA compliance)
         struct GinPostingEntry
         {
             GPID gpid;       // Global Page ID (8 bytes) - supports custom tablespaces
             uint16_t slot;   // Slot number within page (2 bytes)
+            uint64_t xmin;   // Transaction ID that inserted this entry (8 bytes) - FIREBIRD MGA
+            uint64_t xmax;   // Transaction ID that deleted this entry, or 0 if not deleted (8 bytes) - FIREBIRD MGA
 
             // Helper methods for TID access
             TID getTID() const { return TID(gpid, slot); }
             void setTID(const TID &tid) { gpid = tid.gpid; slot = tid.slot; }
 
-            // Comparison operators for sorting
+            // Comparison operators for sorting (only by TID, not xmin/xmax)
             bool operator<(const GinPostingEntry &other) const {
                 if (gpid != other.gpid) return gpid < other.gpid;
                 return slot < other.slot;
@@ -96,7 +99,7 @@ namespace scratchbird
             }
         } __attribute__((packed));
 
-        static_assert(sizeof(GinPostingEntry) == 10, "GinPostingEntry must be 10 bytes (GPID + slot)");
+        static_assert(sizeof(GinPostingEntry) == 26, "GinPostingEntry must be 26 bytes (GPID + slot + xmin + xmax)");
 
         // Posting List Page - Stores sorted TIDs for a key (small lists)
         // For large lists, we use a B-Tree of TIDs instead
@@ -111,15 +114,15 @@ namespace scratchbird
             union
             {
                 uint8_t gpl_compressed_data[8192 - 80];       // Compressed TID data
-                GinPostingEntry gpl_entries[(8192 - 80) / 10]; // Uncompressed TIDs (811 entries)
+                GinPostingEntry gpl_entries[(8192 - 80) / 26]; // Uncompressed TIDs (311 entries with xmin/xmax)
                 uint64_t gpl_tree_root;                       // Root page of posting B-Tree
             } gpl_data;
         } __attribute__((packed));
 
         static_assert(sizeof(SBGinPostingListPage) == 8192, "Posting list page must be exactly 8KB");
 
-        // Maximum TIDs per posting list page (reduced from 1014 to 811 for GPID support)
-        constexpr uint16_t MAX_POSTING_ENTRIES_PER_PAGE = (8192 - 80) / 10;
+        // Maximum TIDs per posting list page (reduced from 811 to 311 for MGA xmin/xmax fields)
+        constexpr uint16_t MAX_POSTING_ENTRIES_PER_PAGE = (8192 - 80) / 26;
 
         // ===== Posting Tree Structures =====
         // When a posting list exceeds GIN_POSTING_LIST_THRESHOLD (64 TIDs),
@@ -162,13 +165,13 @@ namespace scratchbird
             uint16_t gpt_is_leaf;                       // 1 for leaf nodes (2 bytes)
             uint64_t gpt_next_leaf;                     // Next leaf page for range scans (8 bytes)
             uint8_t gpt_reserved[12];                   // Reserved for alignment (12 bytes)
-            GinPostingEntry gpt_tids[(8192 - 88) / 10]; // Sorted TID array (810 entries)
+            GinPostingEntry gpt_tids[(8192 - 88) / 26]; // Sorted TID array (311 entries with xmin/xmax)
         } __attribute__((packed));
 
         static_assert(sizeof(SBGinPostingTreeLeaf) <= 8192, "Posting tree leaf must fit in 8KB");
 
-        // Maximum TIDs per posting tree leaf node (reduced from 1013 to 810 for GPID support)
-        constexpr uint16_t MAX_POSTING_TREE_LEAF_TIDS = (8192 - 88) / 10;
+        // Maximum TIDs per posting tree leaf node (reduced from 810 to 311 for MGA xmin/xmax fields)
+        constexpr uint16_t MAX_POSTING_TREE_LEAF_TIDS = (8192 - 88) / 26;
 
         // Entry in the Keys B-Tree
         // The key is the indexed item (e.g., a word, array element)
@@ -514,9 +517,10 @@ namespace scratchbird
             bool searchPostingTree(uint32_t tree_root_page, uint64_t tid,
                                    ErrorContext *ctx);
 
-            // Helper: Get all TIDs from posting tree
+            // Helper: Get all TIDs from posting tree (with MGA visibility filtering)
             Status getPostingTreeTids(uint32_t tree_root_page,
                                       std::vector<uint64_t> *tids_out,
+                                      uint64_t current_xid,
                                       ErrorContext *ctx);
 
             // Helper: Insert into posting tree leaf node (may cause split)
@@ -629,9 +633,10 @@ namespace scratchbird
             static int compareKeys(const std::vector<uint8_t> &key1,
                                    const std::vector<uint8_t> &key2);
 
-            // Helper: Get all TIDs from posting list
+            // Helper: Get all TIDs from posting list (with MGA visibility filtering)
             Status getPostingListTids(uint32_t posting_page,
                                       std::vector<uint64_t> *tids_out,
+                                      uint64_t current_xid,
                                       ErrorContext *ctx);
 
             // Helper: Merge sorted TID lists (for AND operation)

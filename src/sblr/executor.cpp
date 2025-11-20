@@ -2423,19 +2423,46 @@ namespace scratchbird
                 std::vector<uint8_t> key_bytes;
                 serializeIndexKey(key_values, key_bytes);
 
-                auto btree = core::BTree::open(db_, index_info.index_id, index_info.root_page, nullptr);
-                if (btree)
+                // TASK-DML-2 Enhancement: Use storage engine helpers for all index types
+                // Get index pointer from catalog (supports all 11 index types)
+                core::CatalogManager::IndexType actual_index_type;
+                void *index_ptr = db_->catalog_manager()->getIndexPtr(index_info.index_id, &actual_index_type);
+
+                if (index_ptr)
                 {
-                    // Task 17 MGA Phase 3.1: Pass xid for transaction tracking
-                    btree->remove(key_bytes, tid, xid, nullptr);
+                    // Use removeFromIndex helper (handles B-Tree, LSM, Hash, HNSW, etc.)
+                    // Note: Cast IndexType enum to uint8_t to avoid circular include dependency
+                    core::Status remove_status = db_->storage_engine()->removeFromIndexHelper(
+                        static_cast<uint8_t>(actual_index_type), index_ptr, key_bytes, tid, xid, nullptr);
 
-                    // Task 17 MGA Phase 2.1: Debug logging for delete
-                    DEBUG_LOG_INDEX("Index '" + index_info.index_name + "': removed entry for tid=" +
-                                   std::to_string(tid.value()) + " (xid=" + std::to_string(xid) + ")");
+                    if (remove_status == core::Status::OK)
+                    {
+                        // Task 17 MGA Phase 2.1: Debug logging for delete
+                        DEBUG_LOG_INDEX("Index '" + index_info.index_name + "': removed entry for tid=" +
+                                       std::to_string(tid.value()) + " (xid=" + std::to_string(xid) + ")");
 
-                    // Task 17 MGA Phase 2.2: Track statistics
-                    index_stats_.entries_removed++;
-                    index_stats_.indexes_maintained++;
+                        // Task 17 MGA Phase 2.2: Track statistics
+                        index_stats_.entries_removed++;
+                        index_stats_.indexes_maintained++;
+                    }
+                }
+                else
+                {
+                    // Fallback to direct B-Tree access for compatibility
+                    auto btree = core::BTree::open(db_, index_info.index_id, index_info.root_page, nullptr);
+                    if (btree)
+                    {
+                        // Task 17 MGA Phase 3.1: Pass xid for transaction tracking
+                        btree->remove(key_bytes, tid, xid, nullptr);
+
+                        // Task 17 MGA Phase 2.1: Debug logging for delete
+                        DEBUG_LOG_INDEX("Index '" + index_info.index_name + "': removed entry for tid=" +
+                                       std::to_string(tid.value()) + " (xid=" + std::to_string(xid) + ")");
+
+                        // Task 17 MGA Phase 2.2: Track statistics
+                        index_stats_.entries_removed++;
+                        index_stats_.indexes_maintained++;
+                    }
                 }
 
                 // No manual cleanup needed - unique_ptr handles it automatically
