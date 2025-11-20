@@ -12,7 +12,7 @@
 #include "scratchbird/core/btree.h"
 #include "scratchbird/core/hash_index.h"
 #include "scratchbird/core/lsm_tree.h"  // LSM Integration Phase 4
-#include "scratchbird/core/gin_index.h"  // TASK-DML-1: GIN Index DML Integration
+#include "scratchbird/core/brin_index.h" // BRIN DML Integration
 #include "scratchbird/core/toast.h"
 #include "scratchbird/core/garbage_collector.h"
 #include "scratchbird/core/logger.h"
@@ -72,32 +72,21 @@ namespace scratchbird::core
                     return hash->insert(key.data(), key.size(), tid, xid, ctx);
                 }
 
-                case CatalogManager::IndexType::GIN:
-                {
-                    // TASK-DML-1: GIN Index DML Integration (November 20, 2025)
-                    // GIN indexes extract multiple keys from composite values (arrays, JSONB, etc.)
-                    auto *gin = static_cast<GinIndex*>(index_ptr);
-
-                    // Use default key extractor (treats value as-is for now)
-                    // TODO: Use specialized extractors based on indexed column type
-                    auto key_extractor = sblr::GinExtractorRegistry::defaultExtractor;
-
-                    // The 'key' parameter contains the raw indexed value
-                    // GIN will extract multiple keys from it using the extractor
-                    return gin->insert(key.data(), key.size(), tid, key_extractor, ctx);
-                }
-
-                case CatalogManager::IndexType::GIST:
-                {
-                    // TASK-DML-3: GiST DML Integration
-                    auto *gist = static_cast<GiSTIndex*>(index_ptr);
-                    // Create predicate from key data (opclass_id = 0 for default)
-                    GiSTPredicate predicate(key, 0);
-                    return gist->insert(predicate, tid, xid, ctx);
-                }
-
-                case CatalogManager::IndexType::GIN:
                 case CatalogManager::IndexType::BRIN:
+                {
+                    // BRIN stores block range summaries (min/max for ranges of blocks)
+                    auto *brin = static_cast<BrinIndex*>(index_ptr);
+
+                    // Extract block number from TID (BRIN indexes by block, not tuple)
+                    uint32_t block_number = static_cast<uint32_t>(getPageNumber(tid));
+
+                    // Insert/update range summary with the indexed value
+                    // BRIN will update min/max for the range containing this block
+                    return brin->insert(key, block_number, ctx);
+                }
+
+                case CatalogManager::IndexType::GIN:
+                case CatalogManager::IndexType::GIST:
                 case CatalogManager::IndexType::RTREE:
                 case CatalogManager::IndexType::BITMAP:
                 case CatalogManager::IndexType::COLUMNSTORE:
@@ -149,34 +138,22 @@ namespace scratchbird::core
                     return hash->remove(key.data(), key.size(), tid, xid, ctx);
                 }
 
-                case CatalogManager::IndexType::GIN:
-                {
-                    // TASK-DML-1: GIN Index DML Integration (November 20, 2025)
-                    // GIN indexes extract multiple keys from composite values for deletion
-                    auto *gin = static_cast<GinIndex*>(index_ptr);
-
-                    // Use default key extractor (same as insert)
-                    // TODO: Use specialized extractors based on indexed column type
-                    auto key_extractor = sblr::GinExtractorRegistry::defaultExtractor;
-
-                    // The 'key' parameter contains the raw indexed value
-                    // GIN will extract multiple keys from it using the extractor
-                    // NOTE: GIN remove() currently uses physical deletion (TASK-CRITICAL-1 not yet complete)
-                    // This should be updated to use logical deletion (xmax marking) when TASK-CRITICAL-1 is done
-                    return gin->remove(key.data(), key.size(), tid, key_extractor, xid, ctx);
-                }
-
-                case CatalogManager::IndexType::GIST:
-                {
-                    // TASK-DML-3: GiST DML Integration
-                    auto *gist = static_cast<GiSTIndex*>(index_ptr);
-                    // Create predicate from key data (opclass_id = 0 for default)
-                    GiSTPredicate predicate(key, 0);
-                    return gist->remove(predicate, tid, xid, ctx);
-                }
-
-                case CatalogManager::IndexType::GIN:
                 case CatalogManager::IndexType::BRIN:
+                {
+                    // BRIN remove marks range for potential re-summarization
+                    auto *brin = static_cast<BrinIndex*>(index_ptr);
+
+                    // Extract block number from TID
+                    uint32_t block_number = static_cast<uint32_t>(getPageNumber(tid));
+
+                    // Remove value from range summary
+                    // BRIN will mark range for re-calculation if needed
+                    // Full recalculation is deferred to VACUUM
+                    return brin->remove(key, block_number, ctx);
+                }
+
+                case CatalogManager::IndexType::GIN:
+                case CatalogManager::IndexType::GIST:
                 case CatalogManager::IndexType::RTREE:
                 case CatalogManager::IndexType::BITMAP:
                 case CatalogManager::IndexType::COLUMNSTORE:
