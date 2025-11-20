@@ -198,6 +198,11 @@ namespace scratchbird::core
 
         auto decompressData(const uint8_t *src, uint32_t src_size, uint32_t uncompressed_size,
                             std::vector<uint8_t> *dst, ErrorContext *ctx) -> Status;
+
+        // MGA-compliant soft delete: Mark TOAST chunk as deleted by updating xmax only
+        // Does NOT mark item pointer as deleted, allowing older transactions to still see the chunk
+        auto markToastChunkDeleted(uint32_t page_id, uint16_t item_id, uint64_t xmax,
+                                   ErrorContext *ctx) -> Status;
     };
 
     // Inline functions

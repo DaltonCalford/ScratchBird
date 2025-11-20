@@ -202,6 +202,21 @@ namespace scratchbird::core
 
         page_id = free_page;
         DEBUG_LOG_PM("Allocated page " << page_id << ", free pages now: " << free_pages_);
+
+        // Eager FSM flush: Flush periodically to avoid data loss on crash
+        // Flush every 100 allocations to balance safety and performance
+        static uint32_t alloc_counter = 0;
+        if (++alloc_counter >= 100)
+        {
+            alloc_counter = 0;
+            Status flush_status = flush(ctx);
+            if (flush_status != Status::OK)
+            {
+                // Log warning but don't fail the allocation
+                LOG_WARN(STORAGE, "Failed to flush FSM after allocation: " << flush_status);
+            }
+        }
+
         return Status::OK;
     }
 
@@ -234,6 +249,20 @@ namespace scratchbird::core
         setBit(page_id, false);
         free_pages_++;
         dirty_ = true;
+
+        // Eager FSM flush: Flush periodically to avoid data loss on crash
+        // Flush every 100 frees to balance safety and performance
+        static uint32_t free_counter = 0;
+        if (++free_counter >= 100)
+        {
+            free_counter = 0;
+            Status flush_status = flush(ctx);
+            if (flush_status != Status::OK)
+            {
+                // Log warning but don't fail the free operation
+                LOG_WARN(STORAGE, "Failed to flush FSM after free: " << flush_status);
+            }
+        }
 
         return Status::OK;
     }
