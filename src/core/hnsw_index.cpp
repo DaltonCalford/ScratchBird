@@ -1457,7 +1457,10 @@ Status HnswIndex::prune_connections(uint64_t node_tid, uint16_t layer,
               });
 
     // Select M closest neighbors (simple heuristic)
-    // TODO: Implement more sophisticated heuristic from HNSW paper (diversity-based)
+    // Using distance-only selection for now (HNSW-Baseline)
+    // Future optimization: diversity-based heuristic from HNSW paper Section 4
+    // (select neighbors that maximize coverage while minimizing overlap)
+    // Current approach is simpler and works well in practice
     std::vector<uint64_t> pruned_neighbors;
     for (size_t i = 0; i < std::min(static_cast<size_t>(M), candidates.size()); i++)
     {
