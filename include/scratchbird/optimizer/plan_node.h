@@ -26,6 +26,8 @@ namespace scratchbird::optimizer
     {
         SEQ_SCAN,      // Sequential table scan
         INDEX_SCAN,    // Index scan with heap fetch
+        INDEX_ONLY_SCAN,   // Index-only scan (covering index, no heap access) - TASK-BYTECODE-4
+        BITMAP_INDEX_SCAN, // Bitmap index scan (combine multiple indexes) - TASK-BYTECODE-4
         RTREE_SCAN,    // R-tree spatial index scan (Phase 2, Task 9.2)
         CTE_SCAN,      // CTE (Common Table Expression) scan (Phase 2 Wave 2)
         NESTED_LOOP_JOIN,  // Nested loop join (Phase 1, Task 3.2)
@@ -622,6 +624,209 @@ namespace scratchbird::optimizer
         std::string index_name_;
         std::string predicate_type_;
         std::string spatial_cond_;
+        std::string filter_;
+    };
+
+    /**
+     * IndexOnlyScanNode - Index-only scan plan node (covering index)
+     *
+     * Scans index WITHOUT fetching heap tuples. Only applicable when:
+     * - Index contains all columns needed by SELECT + WHERE + ORDER BY
+     * - Visibility information is available (via visibility map or TIP)
+     *
+     * Benefits vs IndexScan:
+     * - No heap I/O (much faster for selective queries)
+     * - Better cache utilization
+     * - Lower latency for indexed column queries
+     *
+     * Example:
+     *   CREATE INDEX idx_users_id_name ON users(id, name);
+     *   SELECT id, name FROM users WHERE id > 100;
+     *   → IndexOnlyScan on idx_users_id_name (cost=0.00..10.00 rows=50)
+     *
+     * TASK-BYTECODE-4: Query Planner Integration
+     */
+    class IndexOnlyScanNode : public PlanNode
+    {
+    public:
+        /**
+         * Constructor
+         *
+         * @param table_id Table to scan
+         * @param table_name Table name (for EXPLAIN)
+         * @param index_id Index to use
+         * @param index_name Index name (for EXPLAIN)
+         * @param direction Scan direction (FORWARD/BACKWARD)
+         */
+        IndexOnlyScanNode(const core::ID &table_id,
+                          const std::string &table_name,
+                          const core::ID &index_id,
+                          const std::string &index_name,
+                          ScanDirection direction = ScanDirection::FORWARD)
+            : PlanNode(PlanNodeType::INDEX_ONLY_SCAN),
+              table_id_(table_id),
+              table_name_(table_name),
+              index_id_(index_id),
+              index_name_(index_name),
+              direction_(direction)
+        {
+        }
+
+        const core::ID &tableId() const { return table_id_; }
+        const std::string &tableName() const { return table_name_; }
+        const core::ID &indexId() const { return index_id_; }
+        const std::string &indexName() const { return index_name_; }
+        ScanDirection direction() const { return direction_; }
+
+        void setIndexCond(const std::string &index_cond) { index_cond_ = index_cond; }
+        const std::string &indexCond() const { return index_cond_; }
+
+        void setFilter(const std::string &filter) { filter_ = filter; }
+        const std::string &filter() const { return filter_; }
+
+        auto toString(int indent = 0) const -> std::string override
+        {
+            std::string result(indent * 2, ' ');
+            result += "IndexOnlyScan on " + table_name_;
+            result += " using " + index_name_;
+            result += " (cost=" + std::to_string(startup_cost_);
+            result += ".." + std::to_string(total_cost_);
+            result += " rows=" + std::to_string(rows_) + ")";
+
+            if (!index_cond_.empty())
+            {
+                result += "\n" + std::string((indent + 1) * 2, ' ');
+                result += "Index Cond: " + index_cond_;
+            }
+            if (!filter_.empty())
+            {
+                result += "\n" + std::string((indent + 1) * 2, ' ');
+                result += "Filter: " + filter_;
+            }
+            return result;
+        }
+
+    private:
+        core::ID table_id_;
+        std::string table_name_;
+        core::ID index_id_;
+        std::string index_name_;
+        ScanDirection direction_;
+        std::string index_cond_;
+        std::string filter_;
+    };
+
+    /**
+     * BitmapIndexScanNode - Bitmap index scan plan node
+     *
+     * Combines multiple indexes using bitmap operations (AND/OR).
+     * Useful for queries where multiple indexes are applicable but
+     * none is perfectly selective.
+     *
+     * Algorithm:
+     * 1. Scan each index to build bitmap of matching TIDs
+     * 2. Combine bitmaps (AND/OR operations)
+     * 3. Sort resulting TIDs by physical location
+     * 4. Fetch heap tuples in sequential order
+     *
+     * Benefits:
+     * - Single heap pass (vs multiple random accesses)
+     * - Combines multiple indexes for better selectivity
+     * - Eliminates duplicate fetches (AND automatically deduplicates)
+     * - Better I/O pattern (sorted TIDs → sequential heap access)
+     *
+     * Example:
+     *   SELECT * FROM users WHERE age > 25 AND city = 'Seattle';
+     *   → BitmapIndexScan combining idx_users_age AND idx_users_city
+     *
+     * TASK-BYTECODE-4: Query Planner Integration
+     */
+    class BitmapIndexScanNode : public PlanNode
+    {
+    public:
+        /**
+         * Constructor
+         *
+         * @param table_id Table to scan
+         * @param table_name Table name (for EXPLAIN)
+         * @param index_ids Indexes to combine
+         * @param index_names Index names (for EXPLAIN)
+         * @param bitmap_op Bitmap operation ("AND" or "OR")
+         */
+        BitmapIndexScanNode(const core::ID &table_id,
+                            const std::string &table_name,
+                            const std::vector<core::ID> &index_ids,
+                            const std::vector<std::string> &index_names,
+                            const std::string &bitmap_op)
+            : PlanNode(PlanNodeType::BITMAP_INDEX_SCAN),
+              table_id_(table_id),
+              table_name_(table_name),
+              index_ids_(index_ids),
+              index_names_(index_names),
+              bitmap_op_(bitmap_op)
+        {
+        }
+
+        const core::ID &tableId() const { return table_id_; }
+        const std::string &tableName() const { return table_name_; }
+        const std::vector<core::ID> &indexIds() const { return index_ids_; }
+        const std::vector<std::string> &indexNames() const { return index_names_; }
+        const std::string &bitmapOp() const { return bitmap_op_; }
+
+        void setIndexConds(const std::vector<std::string> &index_conds) { index_conds_ = index_conds; }
+        const std::vector<std::string> &indexConds() const { return index_conds_; }
+
+        void setFilter(const std::string &filter) { filter_ = filter; }
+        const std::string &filter() const { return filter_; }
+
+        auto toString(int indent = 0) const -> std::string override
+        {
+            std::string result(indent * 2, ' ');
+            result += "BitmapIndexScan on " + table_name_;
+            result += " (cost=" + std::to_string(startup_cost_);
+            result += ".." + std::to_string(total_cost_);
+            result += " rows=" + std::to_string(rows_) + ")";
+
+            result += "\n" + std::string((indent + 1) * 2, ' ');
+            result += "Bitmap Op: " + bitmap_op_;
+
+            result += "\n" + std::string((indent + 1) * 2, ' ');
+            result += "Indexes: [";
+            for (size_t i = 0; i < index_names_.size(); i++)
+            {
+                if (i > 0) result += ", ";
+                result += index_names_[i];
+            }
+            result += "]";
+
+            if (!index_conds_.empty())
+            {
+                result += "\n" + std::string((indent + 1) * 2, ' ');
+                result += "Index Conds: [";
+                for (size_t i = 0; i < index_conds_.size(); i++)
+                {
+                    if (i > 0) result += ", ";
+                    result += index_conds_[i];
+                }
+                result += "]";
+            }
+
+            if (!filter_.empty())
+            {
+                result += "\n" + std::string((indent + 1) * 2, ' ');
+                result += "Filter: " + filter_;
+            }
+
+            return result;
+        }
+
+    private:
+        core::ID table_id_;
+        std::string table_name_;
+        std::vector<core::ID> index_ids_;
+        std::vector<std::string> index_names_;
+        std::string bitmap_op_;  // "AND" or "OR"
+        std::vector<std::string> index_conds_;
         std::string filter_;
     };
 
