@@ -8,6 +8,7 @@
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/core/uuidv7.h"
 #include "scratchbird/core/tid.h"
+#include "scratchbird/core/tid_resolver.h"
 #include <memory>
 #include <vector>
 
