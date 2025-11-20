@@ -1824,14 +1824,14 @@ namespace scratchbird
         {
             if (!iterator_)
             {
-                SET_ERROR_CONTEXT(ctx, Status::ITERATOR_EXHAUSTED, "No bitmap to scan");
-                return Status::ITERATOR_EXHAUSTED;
+                SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "No bitmap to scan");
+                return Status::NOT_FOUND;
             }
 
             if (!iterator_->hasNext())
             {
-                SET_ERROR_CONTEXT(ctx, Status::ITERATOR_EXHAUSTED, "No more entries");
-                return Status::ITERATOR_EXHAUSTED;
+                SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "No more entries");
+                return Status::NOT_FOUND;
             }
 
             // Get next TID from bitmap (in legacy uint64_t format)
@@ -1902,7 +1902,7 @@ namespace scratchbird
                 return std::make_unique<BitmapIndexScanner>(this, nullptr, current_xid, db_);
             }
 
-            LOG_DEBUG(STORAGE, "Bitmap scan: scanning %lu TIDs for value", bitmap->getCardinality());
+            LOG_DEBUG(STORAGE, "Bitmap scan: scanning %lu TIDs for value", bitmap->cardinality());
 
             // Create scanner with the loaded bitmap
             return std::make_unique<BitmapIndexScanner>(this, std::move(bitmap), current_xid, db_);
@@ -1948,7 +1948,7 @@ namespace scratchbird
                 else
                 {
                     // OR this bitmap with the result
-                    result_bitmap = result_bitmap->bitwiseOr(*bitmap);
+                    result_bitmap = RoaringBitmap::bitwiseOr(*result_bitmap, *bitmap, ctx);
                 }
             }
 
@@ -1960,7 +1960,7 @@ namespace scratchbird
             }
 
             LOG_DEBUG(STORAGE, "Bitmap scanOr: scanning %lu TIDs from %zu values",
-                     result_bitmap->getCardinality(), values.size());
+                     result_bitmap->cardinality(), values.size());
 
             // Create scanner with the OR'd bitmap
             return std::make_unique<BitmapIndexScanner>(this, std::move(result_bitmap), current_xid, db_);
