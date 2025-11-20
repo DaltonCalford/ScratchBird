@@ -31,6 +31,7 @@
 #include "scratchbird/core/btree.h"
 #include "scratchbird/core/hash_index.h"
 #include "scratchbird/core/gin_index.h"
+#include "scratchbird/sblr/gin_extractors.h"  // GIN key extractor registry
 #include "scratchbird/core/gist_index.h"
 #include "scratchbird/core/spgist_index.h"
 #include "scratchbird/core/brin_index.h"
@@ -19775,11 +19776,16 @@ namespace scratchbird
                 return;
             }
 
-            // TODO: Implement key extractor registry and lookup
-            // For now, use nullptr for key extractor (will use default extractor if available)
+            // Get key extractor from registry (November 20, 2025)
+            auto extractor = GinExtractorRegistry::instance().getExtractor(extractor_id);
+            if (!extractor) {
+                error("Invalid GIN extractor ID: " + std::to_string(extractor_id));
+                return;
+            }
+
             // Note: xmin is not used in GIN insert API - GIN handles transaction tracking internally
             (void)xmin; // Suppress unused parameter warning
-            core::Status status = gin->insert(value.data(), value.size(), tid, nullptr, &err_ctx);
+            core::Status status = gin->insert(value.data(), value.size(), tid, extractor, &err_ctx);
 
             if (status != core::Status::OK)
             {
