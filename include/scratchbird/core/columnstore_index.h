@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <vector>
 #include <memory>
+#include <map>
 
 namespace scratchbird
 {
@@ -62,9 +63,42 @@ namespace scratchbird
             uint32_t getMetaPage() const { return meta_page_; }
 
         private:
+            // Column segment metadata
+            struct ColumnSegment
+            {
+                uint16_t column_id;
+                uint32_t start_row;
+                uint32_t row_count;
+                uint32_t page_number;      // Where compressed data is stored
+                uint8_t compression_type;  // 0=none, 1=RLE, 2=dict, 3=bitpack
+                int64_t min_value;        // For predicate pushdown
+                int64_t max_value;        // For predicate pushdown
+            };
+
+            // Compression types
+            enum class CompressionType : uint8_t
+            {
+                NONE = 0,
+                RLE = 1,
+                DICTIONARY = 2,
+                BITPACK = 3
+            };
+
             Database *db_;
             UuidV7Bytes index_uuid_;
             uint32_t meta_page_;
+
+            // In-memory segment catalog (loaded from meta page)
+            std::map<uint16_t, std::vector<ColumnSegment>> column_segments_;
+
+            // Helper methods
+            Status compressRLE(const std::vector<uint8_t>& data, std::vector<uint8_t>* compressed, ErrorContext* ctx);
+            Status decompressRLE(const std::vector<uint8_t>& compressed, uint32_t row_count, std::vector<uint8_t>* data, ErrorContext* ctx);
+
+            Status loadSegmentCatalog(ErrorContext* ctx);
+            Status saveSegmentCatalog(ErrorContext* ctx);
+
+            ColumnSegment* findSegment(uint16_t column_id, uint32_t row);
         };
 
     } // namespace core
