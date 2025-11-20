@@ -193,8 +193,7 @@ namespace scratchbird
              * @param ctx Error context
              * @return Status::OK on success, error status otherwise
              *
-             * Note: For Phase 1, only primary tablespace (tablespace 0) is supported.
-             *       Custom tablespaces return Status::NOT_IMPLEMENTED.
+             * Supports both primary (tablespace 0) and custom tablespaces (1-65535).
              */
             Status read_page_global(GPID gpid, void *buffer, ErrorContext *ctx = nullptr) const;
 
@@ -206,8 +205,7 @@ namespace scratchbird
              * @param ctx Error context
              * @return Status::OK on success, error status otherwise
              *
-             * Note: For Phase 1, only primary tablespace (tablespace 0) is supported.
-             *       Custom tablespaces return Status::NOT_IMPLEMENTED.
+             * Supports both primary (tablespace 0) and custom tablespaces (1-65535).
              */
             Status write_page_global(GPID gpid, const void *buffer, ErrorContext *ctx = nullptr);
 
