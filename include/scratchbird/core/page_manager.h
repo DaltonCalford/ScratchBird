@@ -276,6 +276,10 @@ namespace scratchbird::core
         bool dirty_;                  // FSM needs flush
         mutable std::mutex mutex_;    // Thread safety (future)
 
+        // Eager FSM flush counters (protected by mutex_)
+        uint32_t alloc_counter_ = 0;  // Count allocations for periodic FSM flush
+        uint32_t free_counter_ = 0;   // Count frees for periodic FSM flush
+
         // === PHASE 1, TASK 1.3.5: Tablespace-specific FSM ===
         /**
          * TablespaceFSM - In-memory Free Space Map for a tablespace
