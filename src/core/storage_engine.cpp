@@ -12,6 +12,8 @@
 #include "scratchbird/core/btree.h"
 #include "scratchbird/core/hash_index.h"
 #include "scratchbird/core/lsm_tree.h"  // LSM Integration Phase 4
+#include "scratchbird/core/hnsw_index.h" // TASK-DML-2: HNSW DML Integration
+#include "scratchbird/core/vector.h"     // TASK-DML-2: Vector support for HNSW
 #include "scratchbird/core/toast.h"
 #include "scratchbird/core/garbage_collector.h"
 #include "scratchbird/core/logger.h"
@@ -70,6 +72,26 @@ namespace scratchbird::core
                     return hash->insert(key.data(), key.size(), tid, xid, ctx);
                 }
 
+                case CatalogManager::IndexType::HNSW:
+                {
+                    // TASK-DML-2: HNSW Index DML Integration
+                    // The 'key' parameter contains the encoded vector bytes
+                    auto *hnsw = static_cast<HnswIndex*>(index_ptr);
+
+                    // Decode the vector from the key bytes
+                    std::optional<VectorValue> vector_opt = Vector::decode(key);
+                    if (!vector_opt.has_value())
+                    {
+                        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                            "Failed to decode vector for HNSW index");
+                        return Status::INVALID_ARGUMENT;
+                    }
+
+                    // Insert vector into HNSW graph
+                    // Note: HNSW insert() gets xid internally from transaction manager
+                    return hnsw->insert(vector_opt.value(), tid, ctx);
+                }
+
                 case CatalogManager::IndexType::GIN:
                 case CatalogManager::IndexType::GIST:
                 case CatalogManager::IndexType::BRIN:
@@ -77,7 +99,6 @@ namespace scratchbird::core
                 case CatalogManager::IndexType::SPGIST:
                 case CatalogManager::IndexType::BITMAP:
                 case CatalogManager::IndexType::COLUMNSTORE:
-                case CatalogManager::IndexType::HNSW:
                 {
                     // Other index types not yet implemented
                     SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED,
@@ -126,6 +147,18 @@ namespace scratchbird::core
                     return hash->remove(key.data(), key.size(), tid, xid, ctx);
                 }
 
+                case CatalogManager::IndexType::HNSW:
+                {
+                    // TASK-DML-2: HNSW Index DML Integration
+                    // HNSW uses logical deletion (xmax marking)
+                    auto *hnsw = static_cast<HnswIndex*>(index_ptr);
+
+                    // Remove marks the node with xmax (soft deletion)
+                    // Actual removal happens during VACUUM via removeDeadEntries()
+                    // Note: xid is handled internally by the remove() method
+                    return hnsw->remove(tid, ctx);
+                }
+
                 case CatalogManager::IndexType::GIN:
                 case CatalogManager::IndexType::GIST:
                 case CatalogManager::IndexType::BRIN:
@@ -133,7 +166,6 @@ namespace scratchbird::core
                 case CatalogManager::IndexType::SPGIST:
                 case CatalogManager::IndexType::BITMAP:
                 case CatalogManager::IndexType::COLUMNSTORE:
-                case CatalogManager::IndexType::HNSW:
                 {
                     SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED,
                         "Index type not yet implemented for DML operations");
@@ -146,6 +178,18 @@ namespace scratchbird::core
             }
         }
     } // anonymous namespace
+
+    // TASK-DML-2: Public wrapper for removeFromIndex (for executor)
+    auto StorageEngine::removeFromIndexHelper(
+        CatalogManager::IndexType index_type,
+        void *index_ptr,
+        const std::vector<uint8_t> &key,
+        const TID &tid,
+        uint64_t xid,
+        ErrorContext *ctx) -> Status
+    {
+        return removeFromIndex(index_type, index_ptr, key, tid, xid, ctx);
+    }
 
     auto StorageEngine::insertTuple(const ID &table_id, const uint8_t *tuple_data,
                                     uint32_t tuple_size, uint32_t *page_id_out,
