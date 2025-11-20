@@ -68,7 +68,10 @@ namespace core {
     {
         if (column_data.empty() || row_count == 0)
         {
-            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Empty column data");
+            if (ctx)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Empty column data");
+            }
             return Status::INVALID_ARGUMENT;
         }
 
@@ -151,7 +154,10 @@ namespace core {
 
         if (start_row >= end_row)
         {
-            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Invalid row range");
+            if (ctx)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Invalid row range");
+            }
             return Status::INVALID_ARGUMENT;
         }
 

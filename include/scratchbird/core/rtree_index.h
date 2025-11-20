@@ -6,6 +6,7 @@
 #include "scratchbird/core/uuidv7.h"
 #include "scratchbird/core/index_gc_interface.h"
 #include "scratchbird/core/tid.h"
+#include "scratchbird/core/rtree.h"
 #include <cstdint>
 #include <vector>
 #include <memory>
@@ -125,6 +126,9 @@ namespace scratchbird
             uint32_t meta_page_;
             uint32_t root_page_;
 
+            // Delegate to the real RTree implementation
+            std::unique_ptr<RTree> rtree_;
+
             // R-Tree parameters
             static constexpr uint32_t MAX_ENTRIES = 50;  // M
             static constexpr uint32_t MIN_ENTRIES = 20;  // m (40% fill)
@@ -132,13 +136,6 @@ namespace scratchbird
             // Helper methods
             Status deserializeBoundingBox(const std::vector<uint8_t>& key, BoundingBox* bbox, ErrorContext* ctx);
             std::vector<uint8_t> serializeBoundingBox(const BoundingBox& bbox);
-
-            Status chooseLeaf(const BoundingBox& bbox, uint32_t* leaf_page, ErrorContext* ctx);
-            Status chooseSubtree(uint32_t node_page, const BoundingBox& bbox, uint32_t* child_page, ErrorContext* ctx);
-            Status splitNode(uint32_t page_num, RTreeEntry* new_entry, uint32_t* new_sibling, BoundingBox* separator_bbox, ErrorContext* ctx);
-            Status adjustTree(uint32_t leaf_page, uint32_t* split_page, BoundingBox* split_bbox, ErrorContext* ctx);
-            Status insertEntry(uint32_t page_num, const RTreeEntry& entry, ErrorContext* ctx);
-            Status searchNode(uint32_t page_num, const BoundingBox& query, uint64_t current_xid, std::vector<TID>* results, ErrorContext* ctx);
         };
 
     } // namespace core
