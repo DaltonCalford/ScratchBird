@@ -588,6 +588,23 @@ private:
      * Flush buffered values to a segment
      */
     Status flushSegment(const ID &column_uuid, ErrorContext *ctx);
+
+    /**
+     * Get column data type from catalog
+     *
+     * Looks up column metadata from the catalog system to determine
+     * the correct data type for a column UUID.
+     *
+     * @param column_uuid Column UUID to look up
+     * @param data_type_out Output data type
+     * @param value_size_out Output size in bytes for fixed-size types
+     * @param ctx Error context
+     * @return Status::OK on success, error otherwise
+     */
+    Status getColumnDataType(const ID &column_uuid,
+                            DataType *data_type_out,
+                            size_t *value_size_out,
+                            ErrorContext *ctx);
 };
 
 } // namespace scratchbird::core
