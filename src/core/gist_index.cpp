@@ -116,15 +116,18 @@ std::unique_ptr<GiSTIndex> GiSTIndex::open(Database* db,
             SBGiSTPage* page = nullptr;
             if (index->loadPage(current_page, &page, &load_ctx) == Status::OK && page)
             {
-                if (page->gist_is_leaf)
+                if (page->gist_level == 0)  // Level 0 = leaf
                 {
                     break; // Reached leaf
                 }
                 height++;
                 // Follow first child
-                if (page->gist_num_entries > 0)
+                if (page->gist_count > 0)
                 {
-                    current_page = page->gist_child_pages[0];
+                    // Get first entry to access child page
+                    uint8_t* entry_ptr = reinterpret_cast<uint8_t*>(page) + sizeof(SBGiSTPage);
+                    SBGiSTEntry* entry = reinterpret_cast<SBGiSTEntry*>(entry_ptr);
+                    current_page = entry->entry_child_page;
                 }
                 else
                 {
