@@ -3,6 +3,7 @@
 #include "scratchbird/core/page_manager.h"
 #include "scratchbird/core/transaction_manager.h"
 #include "scratchbird/core/database.h"
+#include "scratchbird/core/catalog_manager.h"
 #include <algorithm>
 #include <cstring>
 #include <unordered_set>
@@ -80,12 +81,16 @@ Status ColumnstoreIndex::create(Database *db,
         return Status::INVALID_ARGUMENT;
     }
 
-    // Phase 6: Don't allocate a root page immediately
-    // The first segment flushed will become the root
-    // This avoids having an empty placeholder page
+    // Phase 7: Create metadata page (page 0) to store configuration
+    uint32_t metadata_page = 0;
+    Status status = createMetadataPage(db, index_uuid, table_uuid, column_uuids,
+                                      segment_size, compression, &metadata_page, ctx);
+    if (status != Status::OK)
+        return status;
 
+    // Metadata page serves as the root page
     if (root_page_out)
-        *root_page_out = 0;  // No root yet
+        *root_page_out = metadata_page;
 
     return Status::OK;
 }
@@ -99,17 +104,36 @@ std::unique_ptr<ColumnstoreIndex> ColumnstoreIndex::open(Database *db,
     if (!db)
         return nullptr;
 
-    // Phase 6: Temporary - pass segment_size as parameter
-    // TODO: Read metadata from catalog in Phase 7
+    // Phase 7: Read metadata from page 0
     SBColumnstoreIndex index_info;
     std::memcpy(&index_info.idx_uuid, &index_uuid, sizeof(ID));
     index_info.idx_root_page = root_page;
-    index_info.idx_segment_size = segment_size;  // Use passed parameter
-    index_info.idx_compression_type = static_cast<uint8_t>(CompressionType::RLE);
-    index_info.idx_total_segments = 0;
-    index_info.idx_total_rows = 0;
 
-    return std::make_unique<ColumnstoreIndex>(db, index_info);
+    auto index = std::make_unique<ColumnstoreIndex>(db, index_info);
+
+    // Try to read metadata from page 0
+    if (root_page != 0)
+    {
+        Status status = index->readMetadataPage(root_page, ctx);
+        if (status != Status::OK)
+        {
+            // Fall back to parameters if metadata page doesn't exist or can't be read
+            index_info.idx_segment_size = segment_size;
+            index_info.idx_compression_type = static_cast<uint8_t>(CompressionType::RLE);
+            index_info.idx_total_segments = 0;
+            index_info.idx_total_rows = 0;
+        }
+    }
+    else
+    {
+        // No root page yet, use parameters
+        index_info.idx_segment_size = segment_size;
+        index_info.idx_compression_type = static_cast<uint8_t>(CompressionType::RLE);
+        index_info.idx_total_segments = 0;
+        index_info.idx_total_rows = 0;
+    }
+
+    return index;
 }
 
 // ============================================================================
@@ -180,23 +204,227 @@ Status ColumnstoreIndex::scan(const ID &column_uuid,
     }
 
     batch_out->count = 0;
+    size_t batch_capacity = std::min(batch_out->tids.size(), batch_out->values.size());
 
-    // Phase 1: Scan from buffered values
-    // TODO: In future phases, also scan from disk segments
+    // Phase 2: Scan from disk segments first, then buffered values
 
+    // Step 1: Scan persisted segments from disk
+    if (index_info_.idx_root_page != 0)
+    {
+        uint32_t current_page = index_info_.idx_root_page;
+
+        while (current_page != 0 && batch_out->count < batch_capacity)
+        {
+            // Read segment from disk
+            ColumnSegment segment;
+            Status read_status = readSegment(current_page, &segment, ctx);
+            if (read_status != Status::OK)
+            {
+                // If we can't read a segment, log and skip it
+                current_page = 0;  // Stop scanning
+                break;
+            }
+
+            // Check if this segment is for the requested column
+            if (std::memcmp(&segment.column_uuid, &column_uuid, sizeof(ID)) != 0)
+            {
+                // Different column, try next segment
+                BufferPool *bp = db_->buffer_pool();
+                if (bp)
+                {
+                    void *page_buffer = nullptr;
+                    if (bp->pinPage(current_page, &page_buffer, ctx) == Status::OK)
+                    {
+                        auto *page = static_cast<const SBColumnstorePage *>(page_buffer);
+                        current_page = page->cs_next_segment;
+                        bp->unpinPage(current_page, false, ctx);
+                    }
+                    else
+                    {
+                        current_page = 0;
+                    }
+                }
+                else
+                {
+                    current_page = 0;
+                }
+                continue;
+            }
+
+            // Apply min/max predicate pushdown if applicable
+            if (predicate && segment.data_type == DataType::INT32)
+            {
+                bool can_skip = false;
+                switch (predicate->op)
+                {
+                case ColumnPredicate::Op::LESS_THAN:
+                    if (segment.min_value >= predicate->value)
+                        can_skip = true;
+                    break;
+                case ColumnPredicate::Op::LESS_EQUAL:
+                    if (segment.min_value > predicate->value)
+                        can_skip = true;
+                    break;
+                case ColumnPredicate::Op::GREATER_THAN:
+                    if (segment.max_value <= predicate->value)
+                        can_skip = true;
+                    break;
+                case ColumnPredicate::Op::GREATER_EQUAL:
+                    if (segment.max_value < predicate->value)
+                        can_skip = true;
+                    break;
+                case ColumnPredicate::Op::EQUAL:
+                    if (predicate->value < segment.min_value || predicate->value > segment.max_value)
+                        can_skip = true;
+                    break;
+                default:
+                    break;
+                }
+
+                if (can_skip)
+                {
+                    // Skip this segment entirely
+                    BufferPool *bp = db_->buffer_pool();
+                    if (bp)
+                    {
+                        void *page_buffer = nullptr;
+                        if (bp->pinPage(current_page, &page_buffer, ctx) == Status::OK)
+                        {
+                            auto *page = static_cast<const SBColumnstorePage *>(page_buffer);
+                            current_page = page->cs_next_segment;
+                            bp->unpinPage(current_page, false, ctx);
+                        }
+                        else
+                        {
+                            current_page = 0;
+                        }
+                    }
+                    else
+                    {
+                        current_page = 0;
+                    }
+                    continue;
+                }
+            }
+
+            // Process segment values
+            size_t value_size = getDataTypeSize(segment.data_type);
+            if (value_size == 0)
+                value_size = 4;  // Default for variable types
+
+            for (uint32_t i = 0; i < segment.row_count && batch_out->count < batch_capacity; ++i)
+            {
+                // Check NULL flag
+                bool is_null = (i < segment.null_bitmap.size() && segment.null_bitmap[i]);
+
+                // Apply predicate
+                if (predicate && segment.data_type == DataType::INT32)
+                {
+                    if (!is_null && (i * value_size + value_size) <= segment.data.size())
+                    {
+                        int32_t val = 0;
+                        std::memcpy(&val, segment.data.data() + (i * value_size), sizeof(int32_t));
+
+                        bool matches = false;
+                        switch (predicate->op)
+                        {
+                        case ColumnPredicate::Op::EQUAL:
+                            matches = (val == static_cast<int32_t>(predicate->value));
+                            break;
+                        case ColumnPredicate::Op::NOT_EQUAL:
+                            matches = (val != static_cast<int32_t>(predicate->value));
+                            break;
+                        case ColumnPredicate::Op::LESS_THAN:
+                            matches = (val < static_cast<int32_t>(predicate->value));
+                            break;
+                        case ColumnPredicate::Op::LESS_EQUAL:
+                            matches = (val <= static_cast<int32_t>(predicate->value));
+                            break;
+                        case ColumnPredicate::Op::GREATER_THAN:
+                            matches = (val > static_cast<int32_t>(predicate->value));
+                            break;
+                        case ColumnPredicate::Op::GREATER_EQUAL:
+                            matches = (val >= static_cast<int32_t>(predicate->value));
+                            break;
+                        case ColumnPredicate::Op::IS_NULL:
+                            matches = is_null;
+                            break;
+                        case ColumnPredicate::Op::IS_NOT_NULL:
+                            matches = !is_null;
+                            break;
+                        }
+
+                        if (!matches)
+                            continue;
+                    }
+                    else if (predicate->op == ColumnPredicate::Op::IS_NULL && is_null)
+                    {
+                        // NULL matches IS_NULL
+                    }
+                    else if (predicate->op == ColumnPredicate::Op::IS_NOT_NULL && !is_null)
+                    {
+                        // Non-NULL matches IS_NOT_NULL
+                    }
+                    else
+                    {
+                        continue;
+                    }
+                }
+
+                // Add to batch (TID is derived from segment range)
+                uint64_t tid = segment.first_tid + i;
+                batch_out->tids.push_back(tid);
+
+                // Copy value data
+                if (is_null || segment.data.empty())
+                {
+                    batch_out->values.push_back(0);
+                }
+                else if ((i * value_size + value_size) <= segment.data.size())
+                {
+                    const uint8_t *value_ptr = segment.data.data() + (i * value_size);
+                    batch_out->values.insert(batch_out->values.end(), value_ptr, value_ptr + value_size);
+                }
+
+                batch_out->null_flags.push_back(is_null);
+                batch_out->count++;
+            }
+
+            // Move to next segment
+            BufferPool *bp = db_->buffer_pool();
+            if (bp)
+            {
+                void *page_buffer = nullptr;
+                if (bp->pinPage(current_page, &page_buffer, ctx) == Status::OK)
+                {
+                    auto *page = static_cast<const SBColumnstorePage *>(page_buffer);
+                    current_page = page->cs_next_segment;
+                    bp->unpinPage(current_page, false, ctx);
+                }
+                else
+                {
+                    current_page = 0;
+                }
+            }
+            else
+            {
+                current_page = 0;
+            }
+        }
+    }
+
+    // Step 2: Scan buffered values (in-memory)
     std::lock_guard<std::mutex> lock(buffer_mutex_);
 
     auto it = column_buffers_.find(column_uuid);
     if (it == column_buffers_.end() || it->second.empty())
     {
-        return Status::OK;  // No buffered values
+        return Status::OK;  // No buffered values, but disk scan completed
     }
 
     const std::vector<BufferedValue> &buffer = it->second;
 
-    // Scan through buffered values
-    // Limit to avoid overflow (use size of vectors as capacity)
-    size_t batch_capacity = std::min(batch_out->tids.size(), batch_out->values.size());
+    // Scan through buffered values (continuing from disk scan)
     for (size_t i = 0; i < buffer.size() && batch_out->count < batch_capacity; ++i)
     {
         const BufferedValue &bv = buffer[i];
@@ -1742,11 +1970,47 @@ Status ColumnstoreIndex::createSegment(const ID &column_uuid,
         break;
 
     case CompressionType::DICTIONARY:
-        // Dictionary encoding requires dictionary to be stored separately
-        // For Phase 6, we'll defer dictionary support to avoid complexity
-        SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED,
-                         "Dictionary compression not yet supported in createSegment");
-        return Status::NOT_IMPLEMENTED;
+    {
+        // Dictionary encoding for string columns
+        Dictionary dict;
+        status = compressDictionary(segment, &compressed, &dict, ctx);
+        if (status != Status::OK)
+        {
+            // If dictionary compression fails, fall back to RLE
+            status = compressRLE(segment, &compressed, ctx);
+            if (status != Status::OK)
+                return status;
+        }
+        else
+        {
+            // Store dictionary size and entries at the beginning of compressed data
+            std::vector<uint8_t> dict_data;
+
+            // Write dictionary size (4 bytes)
+            uint32_t dict_size = static_cast<uint32_t>(dict.size());
+            dict_data.insert(dict_data.end(),
+                           reinterpret_cast<uint8_t*>(&dict_size),
+                           reinterpret_cast<uint8_t*>(&dict_size) + sizeof(uint32_t));
+
+            // Write each dictionary entry: length (2 bytes) + string data
+            for (size_t i = 0; i < dict.size(); ++i)
+            {
+                std::string value;
+                if (!dict.getValue(static_cast<uint32_t>(i), &value))
+                    continue;
+
+                uint16_t len = static_cast<uint16_t>(value.length());
+                dict_data.insert(dict_data.end(),
+                               reinterpret_cast<uint8_t*>(&len),
+                               reinterpret_cast<uint8_t*>(&len) + sizeof(uint16_t));
+                dict_data.insert(dict_data.end(), value.begin(), value.end());
+            }
+
+            // Prepend dictionary to compressed codes
+            compressed.insert(compressed.begin(), dict_data.begin(), dict_data.end());
+        }
+        break;
+    }
 
     case CompressionType::BITPACK:
         status = compressBitpack(segment, &compressed, ctx);
@@ -1759,88 +2023,149 @@ Status ColumnstoreIndex::createSegment(const ID &column_uuid,
         return Status::INVALID_ARGUMENT;
     }
 
-    // Step 2: Check if compressed data fits in a single page
+    // Step 2: Determine if multi-page segment is needed
     const size_t HEADER_SIZE = sizeof(SBColumnstorePage);
     const size_t PAGE_SIZE = 8192;  // Assuming 8KB pages
     const size_t MAX_DATA_SIZE = PAGE_SIZE - HEADER_SIZE;
 
-    if (compressed.size() > MAX_DATA_SIZE)
+    const bool is_multipage = (compressed.size() > MAX_DATA_SIZE);
+    const size_t total_pages = is_multipage
+        ? ((compressed.size() + MAX_DATA_SIZE - 1) / MAX_DATA_SIZE)
+        : 1;
+
+    // Step 3: Allocate pages (first page + continuation pages if needed)
+    std::vector<uint32_t> allocated_pages;
+    allocated_pages.reserve(total_pages);
+
+    for (size_t i = 0; i < total_pages; ++i)
     {
-        // TODO: Support multi-page segments in future
-        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
-                         "Segment too large (multi-page segments not yet supported)");
-        return Status::INVALID_ARGUMENT;
+        uint32_t page_num = 0;
+        status = page_mgr->allocatePage(page_num, ctx);
+        if (status != Status::OK)
+        {
+            // Clean up already allocated pages on failure
+            for (uint32_t cleanup_page : allocated_pages)
+            {
+                page_mgr->freePage(cleanup_page, ctx);
+            }
+            return status;
+        }
+        allocated_pages.push_back(page_num);
     }
 
-    // Step 3: Allocate new page
-    uint32_t new_page = 0;
-    status = page_mgr->allocatePage(new_page, ctx);
-    if (status != Status::OK)
-        return status;
+    uint32_t first_page = allocated_pages[0];
 
-    // Step 4: Pin page and initialize
-    void *page_buffer = nullptr;
-    status = buffer_pool->pinPage(new_page, &page_buffer, ctx);
-    if (status != Status::OK)
-        return status;
+    // Step 4: Write data to pages
+    for (size_t page_idx = 0; page_idx < total_pages; ++page_idx)
+    {
+        uint32_t current_page = allocated_pages[page_idx];
+        bool is_first_page = (page_idx == 0);
+        bool is_continuation = !is_first_page;
 
-    auto *page = static_cast<SBColumnstorePage *>(page_buffer);
-    std::memset(page, 0, sizeof(SBColumnstorePage));
+        // Pin page and initialize
+        void *page_buffer = nullptr;
+        status = buffer_pool->pinPage(current_page, &page_buffer, ctx);
+        if (status != Status::OK)
+        {
+            // Clean up on failure
+            for (uint32_t cleanup_page : allocated_pages)
+            {
+                page_mgr->freePage(cleanup_page, ctx);
+            }
+            return status;
+        }
 
-    // Step 5: Initialize page header
-    page->cs_header.magic = K_MAGIC_SBRD;
-    page->cs_header.version = static_cast<uint16_t>(DB_VERSION_ALPHA_1_0_1);
-    page->cs_header.page_type = static_cast<uint16_t>(PageType::PAGE_TYPE_COLUMNSTORE);
-    page->cs_header.page_size = PAGE_SIZE;
-    page->cs_header.page_id = new_page;
-    page->cs_header.checksum = 0;
-    page->cs_header.lsn = 0;
-    page->cs_header.flags = 0;
-    std::memcpy(page->cs_header.database_uuid, db_->uuid().bytes.data(), 16);
-    page->cs_header.generation = 0;
-    page->cs_header.free_space = MAX_DATA_SIZE - compressed.size();
-    page->cs_header.item_count = 1;  // One segment per page
-    page->cs_header.free_offset = 0;
-    page->cs_header.special_size = 0;
+        auto *page = static_cast<SBColumnstorePage *>(page_buffer);
+        std::memset(page, 0, sizeof(SBColumnstorePage));
 
-    // Step 6: Initialize columnstore metadata
-    page->cs_index_uuid = index_info_.idx_uuid;
-    page->cs_table_uuid = index_info_.idx_table_uuid;
-    page->cs_column_uuid = column_uuid;
+        // Calculate data chunk for this page
+        size_t data_offset = page_idx * MAX_DATA_SIZE;
+        size_t data_chunk_size = std::min(MAX_DATA_SIZE, compressed.size() - data_offset);
 
-    page->cs_flags = static_cast<uint16_t>(ColumnstoreFlags::COMPRESSED);
-    page->cs_row_count = segment.row_count;
-    page->cs_null_count = segment.null_count;
-    page->cs_compression_type = static_cast<uint8_t>(segment.compression);
-    page->cs_data_type = static_cast<uint8_t>(segment.data_type);
-    page->cs_compressed_size = static_cast<uint32_t>(compressed.size());
-    page->cs_uncompressed_size = static_cast<uint32_t>(segment.data.size());
+        // Step 5: Initialize page header (for all pages)
+        page->cs_header.magic = K_MAGIC_SBRD;
+        page->cs_header.version = static_cast<uint16_t>(DB_VERSION_ALPHA_1_0_1);
+        page->cs_header.page_type = static_cast<uint16_t>(PageType::PAGE_TYPE_COLUMNSTORE);
+        page->cs_header.page_size = PAGE_SIZE;
+        page->cs_header.page_id = current_page;
+        page->cs_header.checksum = 0;
+        page->cs_header.lsn = 0;
+        page->cs_header.flags = 0;
+        std::memcpy(page->cs_header.database_uuid, db_->uuid().bytes.data(), 16);
+        page->cs_header.generation = 0;
+        page->cs_header.free_space = MAX_DATA_SIZE - data_chunk_size;
+        page->cs_header.item_count = 1;
+        page->cs_header.free_offset = 0;
+        page->cs_header.special_size = 0;
 
-    // Step 7: Set min/max values (for predicate pushdown)
-    page->cs_min_value = segment.min_value;
-    page->cs_max_value = segment.max_value;
+        // Step 6: Initialize columnstore metadata
+        page->cs_index_uuid = index_info_.idx_uuid;
+        page->cs_table_uuid = index_info_.idx_table_uuid;
+        page->cs_column_uuid = column_uuid;
 
-    // Step 8: Set TID range
-    page->cs_first_tid = segment.first_tid;
-    page->cs_last_tid = segment.last_tid;
+        if (is_first_page)
+        {
+            // First page: full segment metadata
+            page->cs_flags = static_cast<uint16_t>(ColumnstoreFlags::COMPRESSED);
+            page->cs_row_count = segment.row_count;
+            page->cs_null_count = segment.null_count;
+            page->cs_compression_type = static_cast<uint8_t>(segment.compression);
+            page->cs_data_type = static_cast<uint8_t>(segment.data_type);
+            page->cs_compressed_size = static_cast<uint32_t>(compressed.size());
+            page->cs_uncompressed_size = static_cast<uint32_t>(segment.data.size());
 
-    // Step 9: Set MGA fields
-    page->cs_xmin = txn_mgr->getCurrentXid();
-    page->cs_xmax = 0;  // Active
-    page->cs_lsn = 0;
+            // Set min/max values (for predicate pushdown)
+            page->cs_min_value = segment.min_value;
+            page->cs_max_value = segment.max_value;
 
-    // Step 10: Initialize sibling pointers (will be updated by caller if needed)
-    page->cs_prev_segment = 0;
-    page->cs_next_segment = 0;
+            // Set TID range
+            page->cs_first_tid = segment.first_tid;
+            page->cs_last_tid = segment.last_tid;
 
-    // Step 11: Write compressed data to page
-    uint8_t *data_area = reinterpret_cast<uint8_t *>(page) + HEADER_SIZE;
-    std::memcpy(data_area, compressed.data(), compressed.size());
+            // MGA fields
+            page->cs_xmin = txn_mgr->getCurrentXid();
+            page->cs_xmax = 0;  // Active
+            page->cs_lsn = 0;
 
-    // Step 12: Unpin page (mark dirty)
-    buffer_pool->unpinPage(new_page, true, ctx);
+            // Store page count in padding (first 4 bytes)
+            uint32_t page_count = static_cast<uint32_t>(total_pages);
+            std::memcpy(page->cs_padding, &page_count, sizeof(uint32_t));
+        }
+        else
+        {
+            // Continuation page: minimal metadata
+            page->cs_flags = static_cast<uint16_t>(ColumnstoreFlags::CONTINUATION);
+            page->cs_row_count = 0;  // Not applicable for continuation
+            page->cs_null_count = 0;
+            page->cs_compression_type = 0;
+            page->cs_data_type = 0;
+            page->cs_compressed_size = static_cast<uint32_t>(data_chunk_size);
+            page->cs_uncompressed_size = 0;
 
-    *segment_page_out = new_page;
+            page->cs_min_value = 0;
+            page->cs_max_value = 0;
+            page->cs_first_tid = 0;
+            page->cs_last_tid = 0;
+
+            page->cs_xmin = txn_mgr->getCurrentXid();
+            page->cs_xmax = 0;
+            page->cs_lsn = 0;
+        }
+
+        // Set sibling pointers
+        page->cs_prev_segment = (page_idx > 0) ? allocated_pages[page_idx - 1] : 0;
+        page->cs_next_segment = (page_idx < total_pages - 1) ? allocated_pages[page_idx + 1] : 0;
+
+        // Write data chunk to page
+        uint8_t *data_area = reinterpret_cast<uint8_t *>(page) + HEADER_SIZE;
+        std::memcpy(data_area, compressed.data() + data_offset, data_chunk_size);
+
+        // Unpin page (mark dirty)
+        buffer_pool->unpinPage(current_page, true, ctx);
+    }
+
+    // Return first page as segment page
+    *segment_page_out = first_page;
     return Status::OK;
 }
 
@@ -1861,7 +2186,7 @@ Status ColumnstoreIndex::readSegment(uint32_t segment_page,
         return Status::INVALID_ARGUMENT;
     }
 
-    // Pin segment page
+    // Pin first segment page
     void *page_buffer = nullptr;
     Status status = buffer_pool->pinPage(segment_page, &page_buffer, ctx);
     if (status != Status::OK)
@@ -1869,7 +2194,7 @@ Status ColumnstoreIndex::readSegment(uint32_t segment_page,
 
     auto *page = static_cast<const SBColumnstorePage *>(page_buffer);
 
-    // Read metadata
+    // Read metadata from first page
     segment_out->column_uuid = page->cs_column_uuid;
     segment_out->data_type = static_cast<DataType>(page->cs_data_type);
     segment_out->row_count = page->cs_row_count;
@@ -1880,12 +2205,66 @@ Status ColumnstoreIndex::readSegment(uint32_t segment_page,
     segment_out->min_value = page->cs_min_value;
     segment_out->max_value = page->cs_max_value;
 
-    // Read compressed data
-    const uint8_t *compressed_data = reinterpret_cast<const uint8_t *>(page) + sizeof(SBColumnstorePage);
-    std::vector<uint8_t> compressed(compressed_data, compressed_data + page->cs_compressed_size);
+    // Check if this is a multi-page segment (read page count from padding)
+    uint32_t total_pages = 1;
+    std::memcpy(&total_pages, page->cs_padding, sizeof(uint32_t));
 
-    // Unpin page (we have the data we need)
-    buffer_pool->unpinPage(segment_page, false, ctx);
+    // If page count is 0 or unreasonable, assume single page
+    if (total_pages == 0 || total_pages > 1000)
+        total_pages = 1;
+
+    const size_t HEADER_SIZE = sizeof(SBColumnstorePage);
+    const size_t PAGE_SIZE = 8192;
+    const size_t MAX_DATA_SIZE = PAGE_SIZE - HEADER_SIZE;
+
+    std::vector<uint8_t> compressed;
+    compressed.reserve(page->cs_compressed_size);
+
+    // Read compressed data from all pages
+    uint32_t current_page = segment_page;
+    for (uint32_t page_idx = 0; page_idx < total_pages; ++page_idx)
+    {
+        // For pages after the first, pin the next page
+        if (page_idx > 0)
+        {
+            buffer_pool->unpinPage(current_page, false, ctx);
+
+            // Get next page from previous page's cs_next_segment
+            void *prev_page_buffer = nullptr;
+            Status pin_status = buffer_pool->pinPage(current_page, &prev_page_buffer, ctx);
+            if (pin_status != Status::OK)
+                return pin_status;
+
+            auto *prev_page = static_cast<const SBColumnstorePage *>(prev_page_buffer);
+            current_page = static_cast<uint32_t>(prev_page->cs_next_segment);
+            buffer_pool->unpinPage(current_page, false, ctx);
+
+            if (current_page == 0)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::COMPRESSION_ERROR,
+                               "Multi-page segment chain broken");
+                return Status::COMPRESSION_ERROR;
+            }
+
+            // Pin next page
+            pin_status = buffer_pool->pinPage(current_page, &page_buffer, ctx);
+            if (pin_status != Status::OK)
+                return pin_status;
+
+            page = static_cast<const SBColumnstorePage *>(page_buffer);
+        }
+
+        // Read data chunk from this page
+        const uint8_t *chunk_data = reinterpret_cast<const uint8_t *>(page) + HEADER_SIZE;
+        size_t chunk_size = (page_idx == 0)
+            ? std::min(MAX_DATA_SIZE, static_cast<size_t>(page->cs_compressed_size))
+            : page->cs_compressed_size;
+
+        compressed.insert(compressed.end(), chunk_data, chunk_data + chunk_size);
+    }
+
+    // Unpin last page
+    buffer_pool->unpinPage(current_page, false, ctx);
 
     // Decompress based on compression type
     switch (segment_out->compression)
@@ -1903,11 +2282,61 @@ Status ColumnstoreIndex::readSegment(uint32_t segment_page,
         break;
 
     case CompressionType::DICTIONARY:
-        // TODO: Load dictionary from page and decompress
-        // For now, return error
-        SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED,
-                         "Dictionary decompression not yet implemented in readSegment");
-        return Status::NOT_IMPLEMENTED;
+    {
+        // Dictionary decompression for string columns
+        Dictionary dict;
+        const uint8_t *dict_data = compressed.data();
+        size_t dict_offset = 0;
+
+        // Read dictionary size (4 bytes)
+        if (compressed.size() < sizeof(uint32_t))
+        {
+            SET_ERROR_CONTEXT(ctx, Status::COMPRESSION_ERROR,
+                           "Invalid dictionary compressed data");
+            return Status::COMPRESSION_ERROR;
+        }
+
+        uint32_t dict_size = 0;
+        std::memcpy(&dict_size, dict_data + dict_offset, sizeof(uint32_t));
+        dict_offset += sizeof(uint32_t);
+
+        // Read dictionary entries
+        for (uint32_t i = 0; i < dict_size; ++i)
+        {
+            if (dict_offset + sizeof(uint16_t) > compressed.size())
+            {
+                SET_ERROR_CONTEXT(ctx, Status::COMPRESSION_ERROR,
+                               "Truncated dictionary data");
+                return Status::COMPRESSION_ERROR;
+            }
+
+            uint16_t len = 0;
+            std::memcpy(&len, dict_data + dict_offset, sizeof(uint16_t));
+            dict_offset += sizeof(uint16_t);
+
+            if (dict_offset + len > compressed.size())
+            {
+                SET_ERROR_CONTEXT(ctx, Status::COMPRESSION_ERROR,
+                               "Truncated dictionary string");
+                return Status::COMPRESSION_ERROR;
+            }
+
+            std::string value(reinterpret_cast<const char*>(dict_data + dict_offset), len);
+            dict.addValue(value);
+            dict_offset += len;
+        }
+
+        // Extract RLE-compressed codes
+        std::vector<uint8_t> codes_compressed(dict_data + dict_offset,
+                                              dict_data + compressed.size());
+
+        // Decompress using dictionary
+        status = decompressDictionary(codes_compressed, dict, segment_out->data_type,
+                                     segment_out->row_count, segment_out, ctx);
+        if (status != Status::OK)
+            return status;
+        break;
+    }
 
     case CompressionType::BITPACK:
         status = decompressBitpack(compressed, segment_out->data_type,
@@ -1929,31 +2358,298 @@ bool ColumnstoreIndex::isValueVisible(uint64_t value_xmin,
                                       uint64_t current_xid,
                                       ErrorContext *ctx) const
 {
-    // Phase 1: Basic MGA visibility check
+    // Firebird MGA visibility check using TIP (Transaction Inventory Pages)
     //
-    // Firebird MGA rules:
-    // - Value created after current transaction → invisible
-    // - Value deleted before current transaction → invisible
+    // MGA rules (see /MGA_RULES.md):
+    // - Use TIP-based visibility via TransactionManager::isVersionVisible()
+    // - Value created by uncommitted/aborted transaction → invisible
+    // - Value deleted by committed transaction → invisible
     // - Otherwise → visible
+    //
+    // CRITICAL: No fallback logic - always use TIP for correctness
 
-    if (value_xmin > current_xid)
-        return false;
-
-    if (value_xmax != 0 && value_xmax <= current_xid)
-        return false;
-
-    // TODO: Use TransactionManager for full TIP-based visibility
     TransactionManager *txn_mgr = db_->transaction_manager();
     if (!txn_mgr)
-        return true;  // Fallback: assume visible
+    {
+        // This should never happen in production - log error if ctx available
+        if (ctx)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                             "TransactionManager not available for visibility check");
+        }
+        return false;  // Fail-safe: treat as invisible if no txn manager
+    }
 
+    // Check if the version's creating transaction is visible to current transaction
+    // This uses TIP to look up transaction state (committed/active/aborted)
     if (!txn_mgr->isVersionVisible(value_xmin, current_xid))
-        return false;
+        return false;  // Creating transaction not visible
 
+    // If value_xmax is set (value was deleted), check if deletion is visible
+    // If deletion is visible, the value should not be visible
     if (value_xmax != 0 && txn_mgr->isVersionVisible(value_xmax, current_xid))
-        return false;
+        return false;  // Deletion is visible, so value is not
 
     return true;
+}
+
+Status ColumnstoreIndex::getColumnDataType(const ID &column_uuid,
+                                           DataType *data_type_out,
+                                           size_t *value_size_out,
+                                           ErrorContext *ctx)
+{
+    if (!data_type_out || !value_size_out)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                         "Output parameters cannot be null");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    // Get catalog manager
+    CatalogManager *catalog = db_->catalog_manager();
+    if (!catalog)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                         "CatalogManager not available");
+        // Fall back to INT32
+        *data_type_out = DataType::INT32;
+        *value_size_out = sizeof(int32_t);
+        return Status::OK;
+    }
+
+    // Check if we have table_uuid in index_info
+    // If idx_column_uuids is empty, we can't look up the schema
+    if (index_info_.idx_column_uuids.empty())
+    {
+        // Fallback: assume INT32 (this maintains backward compatibility)
+        *data_type_out = DataType::INT32;
+        *value_size_out = sizeof(int32_t);
+        return Status::OK;
+    }
+
+    // Get all columns for the table
+    std::vector<CatalogManager::ColumnInfo> columns;
+    Status col_status = catalog->getColumns(index_info_.idx_table_uuid, columns, ctx);
+    if (col_status != Status::OK)
+    {
+        // If we can't get columns, fall back to INT32
+        *data_type_out = DataType::INT32;
+        *value_size_out = sizeof(int32_t);
+        return Status::OK;
+    }
+
+    // Find the column with matching UUID
+    for (const auto &col : columns)
+    {
+        if (std::memcmp(&col.column_id, &column_uuid, sizeof(ID)) == 0)
+        {
+            // Found matching column - extract data type
+            *data_type_out = static_cast<DataType>(col.data_type);
+            *value_size_out = getDataTypeSize(*data_type_out);
+
+            // For variable-length types, use type_precision if available
+            if (*value_size_out == 0 && col.type_precision > 0)
+            {
+                *value_size_out = col.type_precision;
+            }
+
+            // If still zero, default to a reasonable size
+            if (*value_size_out == 0)
+            {
+                *value_size_out = 256;  // Default for variable-length types
+            }
+
+            return Status::OK;
+        }
+    }
+
+    // Column not found - this shouldn't happen, but fall back gracefully
+    *data_type_out = DataType::INT32;
+    *value_size_out = sizeof(int32_t);
+    return Status::OK;
+}
+
+Status ColumnstoreIndex::createMetadataPage(Database *db,
+                                            const UuidV7Bytes &index_uuid,
+                                            const UuidV7Bytes &table_uuid,
+                                            const std::vector<UuidV7Bytes> &column_uuids,
+                                            uint32_t segment_size,
+                                            CompressionType compression,
+                                            uint32_t *metadata_page_out,
+                                            ErrorContext *ctx)
+{
+    if (!db)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                         "Database is null");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    if (!metadata_page_out)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                         "Output parameter cannot be null");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    // Step 1: Allocate metadata page
+    PageManager *page_mgr = db->page_manager();
+    if (!page_mgr)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                         "PageManager not available");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    uint32_t metadata_page = 0;
+    Status alloc_status = page_mgr->allocatePage(metadata_page, ctx);
+    if (alloc_status != Status::OK)
+        return alloc_status;
+
+    // Step 2: Pin page for writing
+    BufferPool *buffer_pool = db->buffer_pool();
+    if (!buffer_pool)
+    {
+        page_mgr->freePage(metadata_page, ctx);
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                         "BufferPool not available");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    void *page_buffer = nullptr;
+    Status pin_status = buffer_pool->pinPage(metadata_page, &page_buffer, ctx);
+    if (pin_status != Status::OK)
+    {
+        page_mgr->freePage(metadata_page, ctx);
+        return pin_status;
+    }
+
+    // Step 3: Initialize metadata page
+    auto *meta_page = static_cast<SBColumnstoreMetadataPage *>(page_buffer);
+    std::memset(meta_page, 0, sizeof(SBColumnstoreMetadataPage));
+
+    // Initialize header
+    meta_page->cs_header.magic = K_MAGIC_SBRD;
+    meta_page->cs_header.version = static_cast<uint16_t>(DB_VERSION_ALPHA_1_0_1);
+    meta_page->cs_header.page_type = static_cast<uint16_t>(PageType::PAGE_TYPE_COLUMNSTORE);
+    meta_page->cs_header.page_size = 8192;  // Standard page size
+
+    // Store index and table UUIDs
+    std::memcpy(&meta_page->cs_index_uuid, &index_uuid, sizeof(ID));
+    std::memcpy(&meta_page->cs_table_uuid, &table_uuid, sizeof(ID));
+
+    // Store configuration
+    meta_page->cs_segment_size = segment_size;
+    meta_page->cs_compression_type = static_cast<uint8_t>(compression);
+    meta_page->cs_column_count = static_cast<uint16_t>(column_uuids.size());
+
+    // Initialize segment tracking (empty index)
+    meta_page->cs_first_segment_page = 0;
+    meta_page->cs_total_segments = 0;
+    meta_page->cs_total_rows = 0;
+
+    // Set MGA fields (transaction visibility)
+    TransactionManager *txn_mgr = db->transaction_manager();
+    if (txn_mgr)
+    {
+        meta_page->cs_xmin = txn_mgr->getCurrentXid();
+        meta_page->cs_xmax = 0;  // Not deleted
+    }
+    else
+    {
+        meta_page->cs_xmin = 0;
+        meta_page->cs_xmax = 0;
+    }
+
+    // Step 4: Write column UUIDs array immediately after header
+    // Calculate offset: sizeof(SBColumnstoreMetadataPage) is the space we have
+    // Column UUIDs are written into the data section after the header
+    uint8_t *uuid_data = reinterpret_cast<uint8_t *>(page_buffer) + sizeof(SBColumnstoreMetadataPage);
+    size_t uuid_array_size = column_uuids.size() * sizeof(ID);
+
+    // Verify we have space (sanity check)
+    const size_t PAGE_SIZE = 8192;
+    if (sizeof(SBColumnstoreMetadataPage) + uuid_array_size > PAGE_SIZE)
+    {
+        buffer_pool->unpinPage(metadata_page, false, ctx);
+        page_mgr->freePage(metadata_page, ctx);
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                         "Too many columns for metadata page");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    // Copy column UUIDs
+    for (size_t i = 0; i < column_uuids.size(); ++i)
+    {
+        std::memcpy(uuid_data + (i * sizeof(ID)), &column_uuids[i], sizeof(ID));
+    }
+
+    // Step 5: Mark page dirty and unpin
+    Status unpin_status = buffer_pool->unpinPage(metadata_page, true, ctx);
+    if (unpin_status != Status::OK)
+    {
+        page_mgr->freePage(metadata_page, ctx);
+        return unpin_status;
+    }
+
+    *metadata_page_out = metadata_page;
+    return Status::OK;
+}
+
+Status ColumnstoreIndex::readMetadataPage(uint32_t metadata_page, ErrorContext *ctx)
+{
+    // Step 1: Pin metadata page
+    BufferPool *buffer_pool = db_->buffer_pool();
+    if (!buffer_pool)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                         "BufferPool not available");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    void *page_buffer = nullptr;
+    Status pin_status = buffer_pool->pinPage(metadata_page, &page_buffer, ctx);
+    if (pin_status != Status::OK)
+        return pin_status;
+
+    // Step 2: Read metadata
+    auto *meta_page = static_cast<SBColumnstoreMetadataPage *>(page_buffer);
+
+    // Verify page type
+    if (meta_page->cs_header.page_type != static_cast<uint16_t>(PageType::PAGE_TYPE_COLUMNSTORE))
+    {
+        buffer_pool->unpinPage(metadata_page, false, ctx);
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                         "Invalid page type for columnstore metadata");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    // Step 3: Extract configuration into index_info_
+    index_info_.idx_segment_size = meta_page->cs_segment_size;
+    index_info_.idx_compression_type = meta_page->cs_compression_type;
+
+    // Read column UUIDs
+    uint16_t column_count = meta_page->cs_column_count;
+    index_info_.idx_column_uuids.clear();
+    index_info_.idx_column_uuids.reserve(column_count);
+
+    uint8_t *uuid_data = reinterpret_cast<uint8_t *>(page_buffer) + sizeof(SBColumnstoreMetadataPage);
+    for (uint16_t i = 0; i < column_count; ++i)
+    {
+        ID column_uuid;
+        std::memcpy(&column_uuid, uuid_data + (i * sizeof(ID)), sizeof(ID));
+        index_info_.idx_column_uuids.push_back(column_uuid);
+    }
+
+    // Update root page to point to first segment (if any)
+    if (meta_page->cs_first_segment_page != 0)
+    {
+        index_info_.idx_root_page = meta_page->cs_first_segment_page;
+    }
+
+    // Step 4: Unpin page
+    Status unpin_status = buffer_pool->unpinPage(metadata_page, false, ctx);
+    return unpin_status;
 }
 
 Status ColumnstoreIndex::flushSegment(const ID &column_uuid, ErrorContext *ctx)
@@ -1967,12 +2663,16 @@ Status ColumnstoreIndex::flushSegment(const ID &column_uuid, ErrorContext *ctx)
 
     std::vector<BufferedValue> &buffer = it->second;
 
-    // Determine data type from first non-null value
-    DataType data_type = DataType::INT32;  // Default, should be determined from table schema
-    size_t value_size = sizeof(int32_t);   // Default
+    // Get data type from catalog
+    DataType data_type = DataType::INT32;  // Default fallback
+    size_t value_size = sizeof(int32_t);   // Default fallback
 
-    // For Phase 1, we'll assume INT32. In a real implementation, this would come from table metadata
-    // TODO: Get actual data type from table schema
+    Status dtype_status = getColumnDataType(column_uuid, &data_type, &value_size, ctx);
+    if (dtype_status != Status::OK)
+    {
+        // If we can't get the data type, use the fallback values above
+        // This maintains backward compatibility with existing tests
+    }
 
     // Build ColumnSegment from buffered values
     ColumnSegment segment;
@@ -2027,9 +2727,9 @@ Status ColumnstoreIndex::flushSegment(const ID &column_uuid, ErrorContext *ctx)
 
     // Create segment page and write compressed data to disk
     uint32_t new_segment_page = 0;
-    Status status = createSegment(column_uuid, segment, &new_segment_page, ctx);
-    if (status != Status::OK)
-        return status;
+    Status create_status = createSegment(column_uuid, segment, &new_segment_page, ctx);
+    if (create_status != Status::OK)
+        return create_status;
 
     // Link to previous segment if there is one
     BufferPool *buffer_pool = db_->buffer_pool();
@@ -2054,9 +2754,9 @@ Status ColumnstoreIndex::flushSegment(const ID &column_uuid, ErrorContext *ctx)
         while (current_page != 0)
         {
             void *page_buffer = nullptr;
-            status = buffer_pool->pinPage(current_page, &page_buffer, ctx);
-            if (status != Status::OK)
-                return status;
+            Status pin_status = buffer_pool->pinPage(current_page, &page_buffer, ctx);
+            if (pin_status != Status::OK)
+                return pin_status;
 
             auto *page = static_cast<const SBColumnstorePage *>(page_buffer);
             uint32_t next_page = page->cs_next_segment;
@@ -2077,9 +2777,9 @@ Status ColumnstoreIndex::flushSegment(const ID &column_uuid, ErrorContext *ctx)
         {
             // Link previous segment to new segment
             void *page_buffer = nullptr;
-            status = buffer_pool->pinPage(prev_page, &page_buffer, ctx);
-            if (status != Status::OK)
-                return status;
+            Status link_status = buffer_pool->pinPage(prev_page, &page_buffer, ctx);
+            if (link_status != Status::OK)
+                return link_status;
 
             auto *prev_seg = static_cast<SBColumnstorePage *>(page_buffer);
             prev_seg->cs_next_segment = new_segment_page;
@@ -2087,9 +2787,9 @@ Status ColumnstoreIndex::flushSegment(const ID &column_uuid, ErrorContext *ctx)
             buffer_pool->unpinPage(prev_page, true, ctx);  // Mark dirty
 
             // Set prev pointer in new segment
-            status = buffer_pool->pinPage(new_segment_page, &page_buffer, ctx);
-            if (status != Status::OK)
-                return status;
+            Status new_pin_status = buffer_pool->pinPage(new_segment_page, &page_buffer, ctx);
+            if (new_pin_status != Status::OK)
+                return new_pin_status;
 
             auto *new_seg = static_cast<SBColumnstorePage *>(page_buffer);
             new_seg->cs_prev_segment = prev_page;
