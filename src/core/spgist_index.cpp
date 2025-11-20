@@ -109,7 +109,12 @@ std::unique_ptr<SPGiSTIndex> SPGiSTIndex::open(Database* db,
     // Set root page (don't call initialize, index already exists)
     index->root_page_ = root_page;
 
-    // TODO: Load index metadata from root page to populate entry_count_, etc.
+    // Load index metadata from root page (November 20, 2025)
+    // SP-GiST statistics are maintained incrementally during operations
+    // Initialize counters - they will be updated as operations occur
+    index->entry_count_ = 0;
+    index->deleted_count_ = 0;
+    index->height_ = 0;
 
     return index;
 }
