@@ -213,7 +213,8 @@ namespace scratchbird::core
             if (flush_status != Status::OK)
             {
                 // Log warning but don't fail the allocation
-                LOG_WARN(STORAGE, "Failed to flush FSM after allocation: " << flush_status);
+                LOG_WARNING(STORAGE, "Failed to flush FSM after allocation: status=%d",
+                           static_cast<int>(flush_status));
             }
         }
 
@@ -260,7 +261,8 @@ namespace scratchbird::core
             if (flush_status != Status::OK)
             {
                 // Log warning but don't fail the free operation
-                LOG_WARN(STORAGE, "Failed to flush FSM after free: " << flush_status);
+                LOG_WARNING(STORAGE, "Failed to flush FSM after free: status=%d",
+                           static_cast<int>(flush_status));
             }
         }
 
