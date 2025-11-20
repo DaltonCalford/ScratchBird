@@ -451,7 +451,7 @@ namespace scratchbird
                 return Status::INVALID_ARGUMENT;
             }
 
-            uint64_t current_xid = txn_mgr->getCurrentTransactionId();
+            uint64_t current_xid = txn_mgr->getCurrentXid();
             if (current_xid == 0)
             {
                 SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "No active transaction");
@@ -514,7 +514,7 @@ namespace scratchbird
                 return Status::INVALID_ARGUMENT;
             }
 
-            uint64_t current_xid = txn_mgr->getCurrentTransactionId();
+            uint64_t current_xid = txn_mgr->getCurrentXid();
             if (current_xid == 0)
             {
                 SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "No active transaction");
@@ -1457,8 +1457,14 @@ namespace scratchbird
 
             if (container.type == ContainerType::ARRAY)
             {
-                std::memcpy(data_area, container.array_data.data(),
-                            container.array_data.size() * sizeof(uint16_t));
+                // Serialize versioned array data (only TID low bits, version info stored separately)
+                std::vector<uint16_t> plain_tids;
+                plain_tids.reserve(container.array_data_versioned.size());
+                for (const auto& entry : container.array_data_versioned)
+                {
+                    plain_tids.push_back(entry.tid_low);
+                }
+                std::memcpy(data_area, plain_tids.data(), plain_tids.size() * sizeof(uint16_t));
             }
             else if (container.type == ContainerType::BITSET)
             {
@@ -1639,18 +1645,18 @@ namespace scratchbird
 
             if (lhs.type == ContainerType::ARRAY && rhs.type == ContainerType::ARRAY)
             {
-                // Array-array intersection
+                // Array-array intersection (versioned entries)
                 size_t i = 0, j = 0;
-                while (i < lhs.array_data.size() && j < rhs.array_data.size())
+                while (i < lhs.array_data_versioned.size() && j < rhs.array_data_versioned.size())
                 {
-                    if (lhs.array_data[i] == rhs.array_data[j])
+                    if (lhs.array_data_versioned[i].tid_low == rhs.array_data_versioned[j].tid_low)
                     {
-                        result->array_data.push_back(lhs.array_data[i]);
+                        result->array_data_versioned.push_back(lhs.array_data_versioned[i]);
                         result->num_values++;
                         i++;
                         j++;
                     }
-                    else if (lhs.array_data[i] < rhs.array_data[j])
+                    else if (lhs.array_data_versioned[i].tid_low < rhs.array_data_versioned[j].tid_low)
                     {
                         i++;
                     }
@@ -1683,11 +1689,11 @@ namespace scratchbird
                 {
                     if (c.type == ContainerType::ARRAY)
                     {
-                        // Convert array to bitset
-                        for (uint16_t val : c.array_data)
+                        // Convert versioned array to bitset
+                        for (const auto& entry : c.array_data_versioned)
                         {
-                            size_t word_idx = val / 64;
-                            size_t bit_idx = val % 64;
+                            size_t word_idx = entry.tid_low / 64;
+                            size_t bit_idx = entry.tid_low % 64;
                             bitset[word_idx] |= (1ULL << bit_idx);
                         }
                     }
@@ -1731,10 +1737,11 @@ namespace scratchbird
                 {
                     if (c.type == ContainerType::ARRAY)
                     {
-                        for (uint16_t val : c.array_data)
+                        // Convert versioned array to bitset
+                        for (const auto& entry : c.array_data_versioned)
                         {
-                            size_t word_idx = val / 64;
-                            size_t bit_idx = val % 64;
+                            size_t word_idx = entry.tid_low / 64;
+                            size_t bit_idx = entry.tid_low % 64;
                             bitset[word_idx] |= (1ULL << bit_idx);
                         }
                     }
@@ -1758,21 +1765,24 @@ namespace scratchbird
             }
             else
             {
-                // Array-array union
+                // Array-array union (versioned entries)
                 result->type = ContainerType::ARRAY;
-                result->array_data = lhs.array_data;
+                result->array_data_versioned = lhs.array_data_versioned;
 
-                for (uint16_t val : rhs.array_data)
+                for (const auto& entry : rhs.array_data_versioned)
                 {
-                    auto it = std::lower_bound(result->array_data.begin(),
-                                               result->array_data.end(), val);
-                    if (it == result->array_data.end() || *it != val)
+                    auto it = std::lower_bound(result->array_data_versioned.begin(),
+                                               result->array_data_versioned.end(), entry.tid_low,
+                                               [](const VersionedBitmapEntry& e, uint16_t tid) {
+                                                   return e.tid_low < tid;
+                                               });
+                    if (it == result->array_data_versioned.end() || it->tid_low != entry.tid_low)
                     {
-                        result->array_data.insert(it, val);
+                        result->array_data_versioned.insert(it, entry);
                     }
                 }
 
-                result->num_values = result->array_data.size();
+                result->num_values = result->array_data_versioned.size();
             }
         }
 
@@ -1787,11 +1797,11 @@ namespace scratchbird
 
             if (container.type == ContainerType::ARRAY)
             {
-                // For ARRAY containers, invert by setting all bits to 1, then clearing array values
-                for (uint16_t val : container.array_data)
+                // For ARRAY containers, invert by setting all bits to 1, then clearing versioned array values
+                for (const auto& entry : container.array_data_versioned)
                 {
-                    size_t word_idx = val / 64;
-                    size_t bit_idx = val % 64;
+                    size_t word_idx = entry.tid_low / 64;
+                    size_t bit_idx = entry.tid_low % 64;
                     result->bitset_data[word_idx] &= ~(1ULL << bit_idx); // Clear bit
                 }
 
@@ -1921,9 +1931,11 @@ namespace scratchbird
                         if (bitmap)
                         {
                             // Remove each dead TID from this bitmap
+                            // Use a high xmax value to mark as deleted (e.g., max uint64_t)
+                            uint64_t xmax = std::numeric_limits<uint64_t>::max();
                             for (uint32_t tid_32 : dead_set_32bit)
                             {
-                                Status remove_status = bitmap->remove(tid_32, ctx);
+                                Status remove_status = bitmap->remove(static_cast<uint64_t>(tid_32), xmax, ctx);
                                 if (remove_status == Status::OK)
                                 {
                                     total_entries_removed++;
@@ -1983,10 +1995,10 @@ namespace scratchbird
 
             if (container.type == ContainerType::ARRAY)
             {
-                result = high_bits | container.array_data[value_index_];
+                result = high_bits | container.array_data_versioned[value_index_].tid_low;
                 value_index_++;
 
-                if (value_index_ >= container.array_data.size())
+                if (value_index_ >= container.array_data_versioned.size())
                 {
                     container_index_++;
                     value_index_ = 0;

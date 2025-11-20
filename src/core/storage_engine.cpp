@@ -13,6 +13,7 @@
 #include "scratchbird/core/hash_index.h"
 #include "scratchbird/core/lsm_tree.h"  // LSM Integration Phase 4
 #include "scratchbird/core/rtree_index.h"  // R-Tree DML Integration
+#include "scratchbird/core/bitmap_index.h"  // TASK-DML-8: Bitmap Index DML Integration
 #include "scratchbird/core/toast.h"
 #include "scratchbird/core/garbage_collector.h"
 #include "scratchbird/core/logger.h"
@@ -77,24 +78,22 @@ namespace scratchbird::core
                     return rtree->insert(key, tid, xid, ctx);
                 }
 
-                case CatalogManager::IndexType::GIN:
-                case CatalogManager::IndexType::GIST:
+                case CatalogManager::IndexType::BITMAP:
                 {
-                    // BRIN stores block range summaries (min/max for ranges of blocks)
-                    auto *brin = static_cast<BrinIndex*>(index_ptr);
+                    // TASK-DML-8: Bitmap Index DML Integration
+                    // Bitmap indexes store value → bitmap mapping for low-cardinality columns
+                    // Insert tuple into bitmap for this value
+                    auto *bitmap = static_cast<BitmapIndex*>(index_ptr);
 
-                    // Extract block number from TID (BRIN indexes by block, not tuple)
-                    uint32_t block_number = static_cast<uint32_t>(getPageNumber(tid));
-
-                    // Insert/update range summary with the indexed value
-                    // BRIN will update min/max for the range containing this block
-                    return brin->insert(key, block_number, ctx);
+                    // Bitmap insert expects: value_data, value_len, tid, ctx
+                    // The 'key' vector contains the serialized indexed value
+                    return bitmap->insert(key.data(), key.size(), tid, ctx);
                 }
 
                 case CatalogManager::IndexType::GIN:
+                case CatalogManager::IndexType::GIST:
                 case CatalogManager::IndexType::BRIN:
                 case CatalogManager::IndexType::SPGIST:
-                case CatalogManager::IndexType::BITMAP:
                 case CatalogManager::IndexType::HNSW:
                 {
                     // Other index types not yet implemented
@@ -152,25 +151,24 @@ namespace scratchbird::core
                     return rtree->remove(key, tid, xid, ctx);
                 }
 
-                case CatalogManager::IndexType::GIN:
-                case CatalogManager::IndexType::GIST:
+                case CatalogManager::IndexType::BITMAP:
                 {
-                    // BRIN remove marks range for potential re-summarization
-                    auto *brin = static_cast<BrinIndex*>(index_ptr);
+                    // TASK-DML-8: Bitmap Index DML Integration
+                    // Bitmap remove marks tuple as deleted in ALL bitmaps (value-independent)
+                    // Per Firebird MGA: Logical deletion with xmax marking, NO physical removal
+                    auto *bitmap = static_cast<BitmapIndex*>(index_ptr);
 
-                    // Extract block number from TID
-                    uint32_t block_number = static_cast<uint32_t>(getPageNumber(tid));
-
-                    // Remove value from range summary
-                    // BRIN will mark range for re-calculation if needed
-                    // Full recalculation is deferred to VACUUM
-                    return brin->remove(key, block_number, ctx);
+                    // Bitmap remove expects: tid, ctx
+                    // Note: The 'key' parameter is not used for bitmap remove because
+                    // bitmap->remove() scans all dictionary entries and marks the TID
+                    // as deleted (sets xmax) in whichever bitmap contains it
+                    return bitmap->remove(tid, ctx);
                 }
 
                 case CatalogManager::IndexType::GIN:
+                case CatalogManager::IndexType::GIST:
                 case CatalogManager::IndexType::BRIN:
                 case CatalogManager::IndexType::SPGIST:
-                case CatalogManager::IndexType::BITMAP:
                 case CatalogManager::IndexType::HNSW:
                 {
                     SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED,
