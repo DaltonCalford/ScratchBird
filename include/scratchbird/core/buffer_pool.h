@@ -23,8 +23,9 @@ namespace scratchbird::core
     /**
      * Buffer Pool - Manages in-memory page cache
      *
-     * Implements a fixed-size buffer pool with LRU eviction.
-     * Single-threaded for Alpha (mutex for future multi-threading).
+     * Implements a fixed-size buffer pool with Clock Sweep eviction algorithm.
+     * Clock Sweep provides better eviction decisions than pure LRU with O(1) complexity.
+     * Thread-safe with mutex protection (despite comment saying single-threaded for Alpha).
      */
     class BufferPool
     {
