@@ -1,7 +1,7 @@
 #pragma once
 
 #include "scratchbird/core/buffer_pool.h"
-#include "scratchbird/core/error.h"
+#include "scratchbird/core/error_context.h"
 #include <stdexcept>
 
 namespace scratchbird::core

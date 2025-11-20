@@ -31,35 +31,62 @@ AuthResult LocalAuthProvider::authenticate(
     ErrorContext ctx;
     Status status = catalog_->getUserByName(username, db_user, &ctx);
 
-    if (status != Status::OK) {
-        error_msg_out = "User not found: " + username;
+    // SECURITY FIX (CRITICAL-1): Always verify password hash even if user doesn't exist
+    // This prevents timing attacks and user enumeration
+    std::string actual_hash;
+    bool user_exists = (status == Status::OK);
+
+    if (user_exists) {
+        actual_hash = db_user.password_hash;
+    } else {
+        // Use dummy hash for timing resistance (same format as bcrypt)
+        // This ensures password verification takes same time whether user exists or not
+        actual_hash = "$2a$10$DUMMY.HASH.FOR.TIMING.RESISTANCE.ONLY............................";
+    }
+
+    // Always verify password (even with dummy hash if user doesn't exist)
+    bool password_valid = false;
+    try {
+        if (!actual_hash.empty()) {
+            password_valid = PasswordHash::verifyPassword(password, actual_hash);
+        }
+    } catch (const std::exception& e) {
+        // Log detailed error internally for administrators
+        LOG_ERROR(GENERAL, "Password verification error for authentication attempt '%s': %s",
+                 username.c_str(), e.what());
+        // Return generic error to client (don't reveal internal details)
+        error_msg_out = "Authentication failed";
+        return AuthResult::PROVIDER_ERROR;
+    }
+
+    // Check authentication result
+    if (!user_exists || !password_valid) {
+        // Log detailed error internally (for administrators)
+        if (!user_exists) {
+            LOG_WARNING(GENERAL, "Login attempt for non-existent user: %s", username.c_str());
+        } else {
+            LOG_WARNING(GENERAL, "Invalid password for user: %s", username.c_str());
+        }
+
+        // SECURITY FIX (CRITICAL-1): Return GENERIC error message for both cases
+        // This prevents user enumeration attacks
+        error_msg_out = "Invalid username or password";
         return AuthResult::INVALID_CREDENTIALS;
     }
 
     // Check if user is active
     if (!db_user.is_active) {
-        error_msg_out = "User account is disabled";
+        LOG_WARNING(GENERAL, "Login attempt for disabled user: %s", username.c_str());
+        // Return generic error (don't reveal user status)
+        error_msg_out = "Invalid username or password";
         return AuthResult::USER_DISABLED;
     }
 
-    // Verify password (Phase 3.0 - BCrypt)
-    if (!db_user.password_hash.empty()) {
-        try {
-            bool password_valid = PasswordHash::verifyPassword(password, db_user.password_hash);
-            if (!password_valid) {
-                error_msg_out = "Invalid password";
-                LOG_WARNING(GENERAL, "Failed login attempt for user: %s", username.c_str());
-                return AuthResult::INVALID_CREDENTIALS;
-            }
-        } catch (const std::exception& e) {
-            error_msg_out = std::string("Password verification error: ") + e.what();
-            LOG_ERROR(GENERAL, "Password verification error for user %s: %s",
-                     username.c_str(), e.what());
-            return AuthResult::PROVIDER_ERROR;
-        }
-    } else if (!password.empty()) {
-        // Password hash is empty but user provided password
-        error_msg_out = "User has no password set";
+    // Check if user has password hash set
+    if (db_user.password_hash.empty()) {
+        LOG_WARNING(GENERAL, "Login attempt for user with no password: %s", username.c_str());
+        // Return generic error (don't reveal password status)
+        error_msg_out = "Invalid username or password";
         return AuthResult::INVALID_CREDENTIALS;
     }
 
