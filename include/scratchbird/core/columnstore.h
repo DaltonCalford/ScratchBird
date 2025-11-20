@@ -116,6 +116,42 @@ enum class CompressionType : uint8_t
 #pragma pack(push, 1)
 
 /**
+ * Columnstore metadata page - page 0 of a columnstore index
+ * Stores index configuration for durable persistence
+ */
+struct SBColumnstoreMetadataPage
+{
+    // Standard page header
+    PageHeader cs_header;
+
+    // Index identification
+    ID cs_index_uuid;  // Index UUID v7
+    ID cs_table_uuid;  // Table this index belongs to
+
+    // Columnstore configuration
+    uint32_t cs_segment_size;      // Target segment size in rows
+    uint8_t cs_compression_type;   // Default compression type
+    uint8_t cs_reserved1;
+    uint16_t cs_column_count;      // Number of columns in this index
+
+    // Root page pointer
+    uint32_t cs_first_segment_page; // First segment page (0 if none yet)
+
+    // Statistics
+    uint64_t cs_total_segments;
+    uint64_t cs_total_rows;
+
+    // MGA compliance
+    uint64_t cs_xmin; // Metadata creation transaction
+    uint64_t cs_xmax; // Metadata deletion transaction (0 if active)
+
+    uint8_t cs_padding[64]; // Reserved for future use
+
+    // Column UUIDs follow immediately after header
+    // Array of ID structs (16 bytes each)
+};
+
+/**
  * Columnstore segment page structure
  *
  * Stores a column segment with compressed values.
@@ -606,6 +642,25 @@ private:
                             DataType *data_type_out,
                             size_t *value_size_out,
                             ErrorContext *ctx);
+
+    /**
+     * Create metadata page (page 0) for columnstore index
+     * Stores configuration for durable persistence
+     */
+    static Status createMetadataPage(Database *db,
+                                     const UuidV7Bytes &index_uuid,
+                                     const UuidV7Bytes &table_uuid,
+                                     const std::vector<UuidV7Bytes> &column_uuids,
+                                     uint32_t segment_size,
+                                     CompressionType compression,
+                                     uint32_t *metadata_page_out,
+                                     ErrorContext *ctx);
+
+    /**
+     * Read metadata from page 0
+     * Populates index_info_ with stored configuration
+     */
+    Status readMetadataPage(uint32_t metadata_page, ErrorContext *ctx);
 };
 
 } // namespace scratchbird::core
