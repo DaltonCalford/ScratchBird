@@ -116,6 +116,7 @@ namespace scratchbird
         // Forward declarations
         class RoaringBitmap;
         class RoaringBitmapIterator;
+        class BitmapIndexScanner;
 
         // Main Bitmap Index class
         // PHASE 2 TASK 2.5: Implements IndexGCInterface for garbage collection
@@ -190,7 +191,6 @@ namespace scratchbird
             // Firebird MGA: Uses TIP-based visibility filtering (NOT snapshots)
             // Per MGA_RULES.md Rule 11: Use TransactionId, NOT Snapshot*
             // Returns iterator for streaming results instead of materializing all TIDs
-            class BitmapIndexScanner;
             std::unique_ptr<BitmapIndexScanner> scan(
                 const void *value_data,
                 size_t value_len,
