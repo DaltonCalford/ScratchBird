@@ -10,6 +10,8 @@
 #include <vector>
 #include <memory>
 #include <optional>
+#include <map>
+#include <mutex>
 
 namespace scratchbird
 {
@@ -95,9 +97,28 @@ namespace scratchbird
             uint32_t getMetaPage() const { return meta_page_; }
 
         private:
+            // Internal entry with tombstone marker
+            struct InternalEntry
+            {
+                TID tid;
+                uint64_t xmin;
+                uint64_t xmax; // 0 = not deleted
+                bool is_tombstone; // Marks logical deletion
+            };
+
             Database *db_;
             UuidV7Bytes index_uuid_;
             uint32_t meta_page_;
+
+            // Memtable: in-memory sorted map (write buffer)
+            // Maps key -> list of entries (to support multiple versions)
+            std::map<std::vector<uint8_t>, std::vector<InternalEntry>> memtable_;
+            mutable std::mutex memtable_mutex_;
+            size_t memtable_size_bytes_; // Approximate size
+            static constexpr size_t MAX_MEMTABLE_SIZE = 4 * 1024 * 1024; // 4MB
+
+            // Helper: Compare keys
+            static int compareKeys(const std::vector<uint8_t>& a, const std::vector<uint8_t>& b);
         };
 
     } // namespace core
