@@ -496,20 +496,20 @@ Status RTree::remove(const BoundingBox& bbox,
         return Status::NOT_FOUND;
     }
 
-    // Remove the entry and condense the tree
-    leaf->removeEntry(entry_index);
+    // Logical deletion per Firebird MGA (NOT physical removal)
+    // Per MGA_RULES.md Rule 5: Use xmax marking, NOT physical deletion
+    RTreeEntry& entry_to_delete = leaf->getEntry(entry_index);
+    entry_to_delete.xmax = current_xid;
+    entry_to_delete.is_deleted = true;
 
-    // Update statistics
-    if (index_info_.idx_entry_count > 0)
-    {
-        index_info_.idx_entry_count--;
-    }
+    // Update deleted count statistics
+    index_info_.idx_deleted_count++;
 
     // Save the modified leaf
     Status save_status = saveNode(leaf);
     if (save_status != Status::OK)
     {
-        LOG_ERROR(BTREE, "Failed to save leaf node after deletion");
+        LOG_ERROR(BTREE, "Failed to save leaf node after logical deletion");
         if (ctx)
         {
             SET_ERROR_CONTEXT(ctx, save_status, "Failed to save modified leaf node");
@@ -517,96 +517,14 @@ Status RTree::remove(const BoundingBox& bbox,
         return save_status;
     }
 
-    // CondenseTree: Handle underflow and propagate changes
-    // Work backwards through the path from leaf to root
-    std::vector<RTreeEntry> orphaned_entries;
-
-    for (int level = path.size() - 1; level >= 0; --level)
-    {
-        RTreeNode* node = path[level].node.get();
-
-        // Check for underflow
-        if (!node->hasMinimumEntries() && !node->isRoot())
-        {
-            // Node underflows - eliminate it and collect its entries for reinsertion
-            LOG_DEBUG(BTREE, "Node at level %d underflows, collecting entries for reinsertion", level);
-
-            for (size_t i = 0; i < node->getEntryCount(); ++i)
-            {
-                orphaned_entries.push_back(node->getEntry(i));
-            }
-
-            // Remove this node from its parent
-            if (level > 0)
-            {
-                RTreeNode* parent = path[level - 1].node.get();
-                size_t parent_entry_idx = path[level].entry_index;
-                parent->removeEntry(parent_entry_idx);
-
-                // Save parent
-                Status parent_save = saveNode(parent);
-                if (parent_save != Status::OK)
-                {
-                    LOG_ERROR(BTREE, "Failed to save parent after removing underflowed child");
-                }
-            }
-        }
-        else if (level > 0)
-        {
-            // Node doesn't underflow - adjust MBR in parent
-            RTreeNode* parent = path[level - 1].node.get();
-            size_t parent_entry_idx = path[level].entry_index;
-
-            // Update parent's entry with new MBR
-            RTreeEntry& parent_entry = parent->getEntry(parent_entry_idx);
-            parent_entry.bbox = node->calculateMBR();
-
-            // Save parent
-            Status parent_save = saveNode(parent);
-            if (parent_save != Status::OK)
-            {
-                LOG_ERROR(BTREE, "Failed to save parent after MBR adjustment");
-            }
-        }
-    }
-
-    // If root has only one child and is not a leaf, make the child the new root
-    if (root_->getEntryCount() == 1 && !root_->isLeaf())
-    {
-        const RTreeEntry& only_child = root_->getEntry(0);
-        std::unique_ptr<RTreeNode> new_root = loadNode(only_child.child_page);
-
-        if (new_root)
-        {
-            index_info_.idx_root_page = only_child.child_page;
-            index_info_.idx_height--;
-            root_ = std::move(new_root);
-
-            LOG_INFO(BTREE, "Root shrank, new height: %u", index_info_.idx_height);
-        }
-    }
-    else if (root_->getEntryCount() == 0)
-    {
-        // Tree is now empty
-        index_info_.idx_height = 1;
-        LOG_INFO(BTREE, "Tree is now empty after deletion");
-    }
-
-    // Reinsert orphaned entries
-    for (const auto& orphan : orphaned_entries)
-    {
-        LOG_DEBUG(BTREE, "Reinserting orphaned entry");
-        Status reinsert_status = insert(orphan.bbox, orphan.row_id, current_xid, ctx);
-        if (reinsert_status != Status::OK)
-        {
-            LOG_ERROR(BTREE, "Failed to reinsert orphaned entry");
-        }
-    }
+    // Note: With logical deletion, we don't condense the tree immediately.
+    // The entry remains in the leaf with xmax set, invisible to other transactions.
+    // Tree condensation and physical removal will occur during garbage collection
+    // via removeDeadEntries() when the entry's xmax is older than OIT.
 
     updateStatistics();
 
-    LOG_DEBUG(BTREE, "Entry removed successfully, %zu orphaned entries reinserted",
-              orphaned_entries.size());
+    LOG_DEBUG(BTREE, "Entry logically deleted successfully (marked with xmax=%lu)", current_xid);
     return Status::OK;
 }
 
@@ -679,11 +597,22 @@ Status RTree::removeDeadEntries(const std::vector<TID>& dead_tids,
         }
     }
 
+    // Get OIT (Oldest Interesting Transaction) from TransactionManager
+    // Per MGA_RULES.md Rule 10: Only physically remove entries with xmax < OIT
+    TransactionManager* txn_mgr = db_->transaction_manager();
+    uint64_t oit = txn_mgr->getOldestXid();
+
+    LOG_DEBUG(BTREE, "Garbage collection: OIT=%lu, checking %zu dead TIDs", oit, dead_tids.size());
+
     // Create a set of TIDs for fast lookup
     std::set<TID> dead_tid_set(dead_tids.begin(), dead_tids.end());
 
-    // Traverse tree and remove entries matching dead TIDs
-    // For now, simplified implementation that only handles root
+    // Traverse tree and physically remove entries that are:
+    // 1. In the dead_tids list (heap confirmed dead)
+    // 2. Have xmax < OIT (no transaction can see them)
+    //
+    // Note: Simplified implementation handles root only
+    // Full implementation would traverse entire tree
     std::vector<size_t> to_remove;
 
     for (size_t i = 0; i < root_->getEntryCount(); ++i)
@@ -691,11 +620,24 @@ Status RTree::removeDeadEntries(const std::vector<TID>& dead_tids,
         const RTreeEntry& entry = root_->getEntry(i);
         if (root_->isLeaf() && dead_tid_set.find(entry.row_id) != dead_tid_set.end())
         {
-            to_remove.push_back(i);
+            // Entry is in dead list, check if it's safe to physically remove
+            if (entry.xmax != 0 && entry.xmax < oit)
+            {
+                // Safe to physically remove - xmax is older than OIT
+                to_remove.push_back(i);
+                LOG_DEBUG(BTREE, "Marking entry %zu for removal (xmax=%lu < OIT=%lu)",
+                         i, entry.xmax, oit);
+            }
+            else
+            {
+                // Entry is dead but still visible to some transaction
+                LOG_DEBUG(BTREE, "Skipping entry %zu (xmax=%lu >= OIT=%lu)",
+                         i, entry.xmax, oit);
+            }
         }
     }
 
-    // Remove in reverse order to maintain indices
+    // Physical removal in reverse order to maintain indices
     for (auto it = to_remove.rbegin(); it != to_remove.rend(); ++it)
     {
         root_->removeEntry(*it);
@@ -962,19 +904,27 @@ bool RTree::forceReinsert(RTreeNode* node, const RTreeEntry& new_entry, uint64_t
 void RTree::condenseTree(RTreeNode* leaf, size_t entry_index, uint64_t current_xid)
 {
     // NOTE: This method is kept for API compatibility but is not used
-    // The full condenseTree algorithm is implemented directly in remove()
-    // to avoid complexity of passing node paths between methods.
+    // With Firebird MGA, remove() uses logical deletion (xmax marking)
+    // instead of physical removal and tree condensation.
     //
-    // The remove() method implements:
+    // The remove() method now:
     // 1. FindLeaf - locate the entry to delete
-    // 2. Remove entry from leaf
-    // 3. Condense tree - handle underflow, collect orphans
-    // 4. Adjust MBRs up to root
-    // 5. Shrink root if needed
-    // 6. Reinsert orphaned entries
+    // 2. Mark entry with xmax (logical deletion)
+    // 3. Save modified node
+    //
+    // Tree condensation and physical removal occur later during
+    // garbage collection via removeDeadEntries() when xmax < OIT.
 
-    LOG_WARNING(BTREE, "condenseTree stub called - use remove() instead for full deletion");
-    leaf->removeEntry(entry_index);
+    LOG_WARNING(BTREE, "condenseTree stub called - use remove() for logical deletion");
+
+    // For compatibility, mark entry as deleted instead of physical removal
+    if (entry_index < leaf->getEntryCount())
+    {
+        RTreeEntry& entry = leaf->getEntry(entry_index);
+        entry.xmax = current_xid;
+        entry.is_deleted = true;
+        saveNode(leaf);
+    }
 }
 
 // ============================================================================
@@ -1015,7 +965,11 @@ std::unique_ptr<RTreeNode> RTree::loadNode(uint64_t page_number)
         entry.bbox.max_y = disk_entry->entry_max_y;
         entry.xmin = disk_entry->entry_xmin;
         entry.xmax = disk_entry->entry_xmax;
-        entry.is_deleted = (disk_entry->entry_xmax != 0);
+
+        // Don't set is_deleted based on xmax alone (MGA violation)
+        // Visibility is determined dynamically by isEntryVisible() using TIP
+        // The is_deleted flag is only used as a hint, not authoritative
+        entry.is_deleted = false;
 
         if (is_leaf)
         {
@@ -1130,17 +1084,32 @@ Status RTree::allocatePage(RTreeNode* node)
 
 bool RTree::isEntryVisible(const RTreeEntry& entry, uint64_t current_xid) const
 {
-    // NOTE: For Firebird MGA architecture, visibility filtering is best done at the
-    // heap level when fetching tuples via HeapPage::findVisibleVersion().
-    // The R-tree index returns candidate TIDs, and the heap layer handles MVCC
-    // visibility when fetching tuples via HeapPage::findVisibleVersion().
+    // Firebird MGA: Use TIP-based visibility checking (NOT snapshots)
     //
-    // The snapshot parameter is accepted for future optimization possibilities.
-    // For now, we only filter based on the deleted flag.
-    (void)current_xid; // Acknowledge snapshot for API completeness
+    // Per MGA_RULES.md Rule 3:
+    // - Own changes always visible (xmin == current_xid)
+    // - Committed transactions older than reader are visible
+    // - Active or aborted transactions are not visible
+    //
+    // This checks:
+    // 1. xmin is committed and < current_xid, OR xmin == current_xid
+    // 2. xmax is 0 (not deleted), OR xmax is not committed, OR xmax > current_xid
 
-    // Simple visibility check: entry is visible if not deleted
-    return !entry.is_deleted;
+    TransactionManager* txn_mgr = db_->transaction_manager();
+
+    // Check if xmin is visible (entry created)
+    if (!txn_mgr->isVersionVisible(entry.xmin, current_xid))
+    {
+        return false; // Entry not yet visible
+    }
+
+    // Check if xmax is visible (entry deleted)
+    if (entry.xmax != 0 && txn_mgr->isVersionVisible(entry.xmax, current_xid))
+    {
+        return false; // Entry is deleted
+    }
+
+    return true; // Entry is visible
 }
 
 void RTree::updateStatistics()
