@@ -18,6 +18,7 @@
 #include "scratchbird/core/logger.h"
 #include "scratchbird/core/tid_resolver.h" // Sprint 4 Task 5.4.2
 #include "scratchbird/core/index_key_extractor.h" // Phase 3 Task 3.2: Storage Layer TOAST Integration
+#include "scratchbird/sblr/gin_extractors.h"  // TASK-DML-1: GIN Key Extractors
 #include <cstring>
 #include <new>
 
