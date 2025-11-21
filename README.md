@@ -1,10 +1,118 @@
-# ScratchBird Database Engine
+# ScratchBird Universal Database Engine
 
-A relational database engine featuring **Firebird MGA (Multi-Generational Architecture)**, 11 index types, 36-table catalog system, TOAST storage, and full transaction management.
+**A universal multi-model database platform** featuring Firebird MGA (Multi-Generational Architecture), capable of replacing 9+ specialized databases in a single deployment with full protocol compatibility and unified ACID transactions.
 
-## Status: Alpha - 99% Complete (Views Foundation COMPLETE - Materialized Views Parser/Bytecode/Executor)
+## Vision: The Universal Data Platform
 
-**Last Updated:** November 17, 2025
+ScratchBird aims to be a **universal database engine** that can emulate PostgreSQL, MySQL, MSSQL, FirebirdSQL, Neo4j, MongoDB, Redis, Cassandra, Elasticsearch, and more—all in one platform with native client compatibility and unified transaction semantics.
+
+**See [OFFICIAL_ROADMAP.md](OFFICIAL_ROADMAP.md) for complete project scope and development phases.**
+
+## Current Status
+
+**Phase:** Alpha 1 - Engine Functionality (Local Operations)
+**Progress:** ~87% of Alpha 1 complete (~11% of total project)
+**Started:** June 2025 (5 months of evening/weekend development)
+**Project Type:** Educational/Research (no time constraints)
+
+### What's Working ✅
+
+#### Core Engine (100%)
+- **MGA Architecture** - Firebird-style Multi-Generational Architecture with TIP-based visibility
+- **Buffer Pool & Pages** - LRU caching, heap pages with back-versioning
+- **TOAST** - Large object storage with MGA compliance
+- **Transactions** - 4 isolation levels, deadlock detection, O(1) state lookups
+- **Tablespaces** - Multi-file support with GPID addressing
+
+#### Indexes (11/11 = 100%) 🎉
+**Production-ready with MGA compliance:**
+- B-Tree, Hash, R-Tree, GIN, Bitmap
+- GiST, HNSW (vector), SP-GiST, BRIN
+- LSM-Tree, Columnstore
+
+#### Data Types (86/86 = 100%) 🎉
+- Numeric, String, Temporal, Binary, Spatial
+- JSON/JSONB, XML, UUID, ARRAY, RANGE, VECTOR
+- Network types (INET, CIDR, MACADDR)
+- Text search types (TSVECTOR, TSQUERY)
+
+#### Built-in Functions (123/123 = 100%) 🎉
+- String (11), Aggregate (6), Window (8)
+- JSON (13), Array (12), Date/Time (6)
+- Mathematical (29), Bit Manipulation (14)
+- Cryptographic (4), Statistical (7), XML (9)
+- Spatial (40+), Regex (4), Conditional (3)
+
+#### Security System (100%) 🎉
+- User/role/group management with transitive membership
+- Table-level, column-level, and row-level permissions
+- Row-Level Security (RLS) with policy-based filtering
+- SQL SECURITY DEFINER/INVOKER
+- Password hashing (BCrypt)
+- Permission cache with LRU eviction
+
+#### Catalog System (40 tables)
+- 18-level schema hierarchy
+- UUIDv7 identifiers (RFC 9562)
+- 32 object types
+- Full CRUD for security tables (8/8)
+- Core tables (10/10 structures defined)
+
+### What's Being Built 🚧
+
+**Current Work (Alpha 1 - 13% remaining):**
+- ❌ PSQL/stored procedure execution
+- ❌ Trigger firing mechanism
+- ❌ Common Table Expressions (CTEs)
+- ❌ MERGE statement, RETURNING clause
+- ❌ GENERATED/IDENTITY columns
+- ❌ SQL engine internal commands (SHOW, DESCRIBE, EXPLAIN)
+- ❌ Command-line tools (sb_isql, sb_verify, sb_backup, sb_security)
+- ⧗ Views (80% - materialized view physical implementation pending)
+
+**After Alpha 1 (~89% of project remaining):**
+
+See **[OFFICIAL_ROADMAP.md](OFFICIAL_ROADMAP.md)** for comprehensive details:
+
+- **Alpha 2:** Parser separation + 5 SQL dialects (ScratchBird, PostgreSQL, MySQL, MSSQL, FirebirdSQL)
+- **Alpha 3:** Network listeners + 4 wire protocols
+- **Beta 1-3:** Distributed clustering + encryption + advanced indexes
+- **Beta 4:** 9 NoSQL models (Graph, Vector, Document, Key-Value, Time-Series, Column-Family, Search, Stream, Object/Blob)
+- **RC1:** 12 native language drivers (ODBC, JDBC, C++, C, C#, Rust, Pascal, Python, Go, Node.js, Ruby, PHP)
+- **Gold:** Production release
+
+## Project Scope Highlights
+
+### Multi-Dialect SQL Support (Alpha 2-3)
+- **5 SQL dialects:** ScratchBird, PostgreSQL, MySQL, MSSQL, FirebirdSQL
+- **Native wire protocol compatibility** for existing clients
+- **Pluggable parser architecture** - separate parsers target single SBLR bytecode engine
+
+### Multi-Model NoSQL Support (Beta 4)
+**9 NoSQL models, each with dedicated query dialects:**
+1. **Graph Database** - Cypher (Neo4j), Gremlin (TinkerPop), ScratchBird native
+2. **Vector Database** - Similarity search, k-NN, ANN queries
+3. **Document Store** - MongoDB-compatible JSON operations
+4. **Key-Value Store** - Redis-compatible atomic operations
+5. **Time-Series Database** - Temporal queries, retention policies
+6. **Column-Family Store** - Cassandra-compatible CQL
+7. **Full-Text Search** - Elasticsearch-compatible DSL
+8. **Stream Processing** - Continuous queries, event time semantics
+9. **Object/Blob Store** - S3-compatible API
+
+### Distributed Systems (Beta 1-3)
+- Horizontal scaling with automatic sharding
+- Heterogeneous clusters (ScratchBird + PostgreSQL + MySQL + MSSQL + Firebird)
+- Distributed transactions (2PC, XA)
+- Query federation across database types
+- Encryption (field-level, database-level, key management)
+
+### Integration Ecosystem (Beta 4)
+- Kafka event streaming (CDC, ingestion)
+- Message queues (RabbitMQ, Redis Pub/Sub)
+- AI/automation agent APIs (REST, GraphQL)
+- Object storage (S3-compatible)
+- Observability (Prometheus, Grafana, OpenTelemetry)
 
 ## Quick Start
 
@@ -17,199 +125,44 @@ cmake .. && make -j$(nproc)
 ctest --output-on-failure
 ```
 
-## What's Working ✅
-
-### Core Engine (100%)
-- **MGA (Multi-Generational Architecture)** - TIP-based visibility, O(1) transaction state lookups
-- **Buffer Pool & Pages** - LRU caching, heap pages with back-versioning
-- **TOAST** - Large object storage with MGA compliance
-- **Transactions** - 4 isolation levels, MVCC, deadlock detection
-- **Tablespaces** - Multi-file support with GPID addressing
-
-### Catalog System (40 tables = 100% structures, 58% CRUD) ✅
-- **18 Schema Hierarchy** - root → sys/app/users/remote/emulation/public
-- **Core Tables (10/10)** - Schemas, Tables, Columns, Indexes, Sequences, Views, Constraints, Triggers, Timezones, Collations
-- **Dependencies & Comments (2/2)** - Full CRUD with disk persistence
-- **Security (8/8 CRUD complete)** - Users, Roles, Groups, RoleMemberships, GroupMemberships, GroupMappings, ColumnPermissions, Policies ✅
-- **Stored Code (5/5 structures)** - Procedures, Parameters, Domains, UDR, Packages
-- **Emulation (3/3 structures)** - Types, Servers, Databases (mysql/postgres/mssql/firebird)
-- **Infrastructure (5/5)** - Tablespaces, Charsets, Statistics, Permissions, **Foreign Keys** ✅
-- **UUID System** - UUIDv7 (RFC 9562) for all object identifiers
-- **32 Object Types** - Complete catalog taxonomy
-
-### Indexes (11/11 = 100%) 🎉
-- B-Tree, Hash, R-Tree, GIN, Bitmap
-- GiST, HNSW, SP-GiST, BRIN
-- Columnstore, LSM-Tree
-- All production-ready with MGA compliance
-
-### Data Types (86/86 = 100%) 🎉
-- Numeric: INT8-INT128, UINT8-UINT64, DECIMAL, FLOAT, MONEY
-- String: CHAR, VARCHAR, TEXT
-- Temporal: DATE, TIME, TIMESTAMP, INTERVAL
-- Binary: BLOB, BYTEA, VARBINARY
-- Special: UUID, JSON/JSONB, XML, BOOLEAN
-- Spatial: POINT, LINESTRING, POLYGON
-- Advanced: ARRAY, RANGE, COMPOSITE, VECTOR, VARIANT
-- Network: INET, CIDR, MACADDR
-- Text Search: TSVECTOR, TSQUERY
-- **Domains** with CHECK constraints
-
-### SQL Execution (23/35 = 66%)
-- ✅ SELECT (WHERE, JOIN, GROUP BY, HAVING, ORDER BY, LIMIT)
-- ✅ INSERT, UPDATE, DELETE
-- ✅ CREATE TABLE, CREATE INDEX, CREATE/ALTER/DROP TABLESPACE
-- ✅ Transactions: BEGIN, COMMIT, ROLLBACK, SAVEPOINT
-- ✅ Window functions: ROW_NUMBER, RANK, LAG, LEAD, etc.
-- ✅ **Security (Phase 1-3.5 COMPLETE)** ✅:
-  - Connection context with user/role tracking
-  - Permission checking (checkPermission via catalog)
-  - SET ROLE / RESET ROLE
-  - Query plan security integration (10-100x speedup)
-  - Column-level permissions (GRANT SELECT (col1, col2) ON table)
-  - **Row-level security (RLS)** - Full DML enforcement:
-    - CREATE POLICY with USING/WITH CHECK expressions
-    - DROP POLICY [IF EXISTS] [CASCADE | RESTRICT]
-    - ALTER TABLE ... {ENABLE|DISABLE|FORCE|NO FORCE} ROW LEVEL SECURITY
-    - Expression storage with TOAST persistence ✅
-    - Runtime evaluation for SELECT (WHERE clause injection) ✅
-    - **INSERT WITH CHECK enforcement** - validates new rows before insert ✅
-    - **UPDATE USING + WITH CHECK** - old row visibility + new row validation ✅
-    - **DELETE USING enforcement** - row visibility filtering ✅
-    - Owner and superuser bypass (unless FORCE RLS) ✅
-    - AND semantics for multiple policies ✅
-  - **SQL Object Permissions**:
-    - GRANT EXECUTE on procedures/functions ✅
-    - SQL SECURITY DEFINER/INVOKER support ✅
-    - Ownership chaining with security context stack ✅
-    - Privilege escalation for DEFINER mode ✅
-- ✅ **DDL Modifications (100%)**:
-  - DROP TABLE [IF EXISTS] [CASCADE | RESTRICT]
-  - DROP INDEX [IF EXISTS] [CASCADE | RESTRICT]
-  - ALTER TABLE ADD COLUMN
-  - ALTER TABLE DROP COLUMN [IF EXISTS] [CASCADE | RESTRICT]
-  - ALTER TABLE RENAME COLUMN old TO new
-  - ALTER TABLE ALTER COLUMN name TYPE type
-
-### Built-in Functions (123/123 = 100%) 🎉 ALL PLANNED FUNCTIONS COMPLETE!
-- ✅ String: 11 functions (LENGTH, SUBSTRING, UPPER, LOWER, TRIM, etc.)
-- ✅ Aggregate: 6 (COUNT, SUM, AVG, MIN, MAX, ARRAY_AGG)
-- ✅ **Statistical: 7 functions** (STDDEV, STDDEV_POP, VARIANCE, VAR_POP, CORR, COVAR_POP) 🎉
-- ✅ Window: 8 functions
-- ✅ JSON: 13 functions
-- ✅ Array: 12 functions
-- ✅ Date/Time: 6 functions
-- ✅ **Mathematical: 29 functions** (SIN, COS, TAN, SQRT, POWER, LN, LOG, etc.) 🎉
-- ✅ **Bit Manipulation: 14 functions** (GET_BYTE, SET_BYTE, BIT_AND, BIT_OR, BIT_XOR, etc.) 🎉
-- ✅ **Cryptographic: 4 functions** (MD5, SHA1, SHA256, SHA512) 🎉
-- ✅ **XML: 9 functions** (XMLPARSE, XMLSERIALIZE, XMLELEMENT, XMLCONCAT, XMLFOREST, XMLCOMMENT, XMLROOT, XPATH, XMLEXISTS) 🎉
-- ✅ Conditional: 3 (COALESCE, NULLIF, CASE)
-
-**Note:** Full XML/XPath 1.0 support via libxml2 (version 2.9.14). XPATH returns JSON array of node contents. XMLEXISTS returns boolean. Build falls back to basic string implementation if libxml2 not available.
-
-## What's Missing ❌
-
-### Catalog CRUD Operations (12 tables pending)
-- Stored code operations (ProcedureParameters, Domains, UDR, Packages)
-- Emulation table operations (EmulationTypes, EmulationServers, EmulatedDatabases)
-- Infrastructure operations (Constraints, Statistics)
-
-### DDL Execution
-- ✅ **Views (80% COMPLETE - Nov 17, 2025)** 🎉:
-  - ✅ CREATE VIEW / CREATE OR REPLACE VIEW
-  - ✅ CREATE MATERIALIZED VIEW / CREATE OR REPLACE MATERIALIZED VIEW
-  - ✅ DROP VIEW [IF EXISTS] [CASCADE | RESTRICT]
-  - ✅ REFRESH [CONCURRENTLY] MATERIALIZED VIEW
-  - ✅ View query expansion (SELECT from views rewrites to underlying tables)
-  - ✅ Column projection with explicit column names
-  - ✅ WITH CHECK OPTION support
-  - ✅ Parser-to-executor pipeline complete for materialized views
-  - ⧗ Physical materialization (table creation + data population) - pending
-  - ⧗ Updatable views (INSERT/UPDATE/DELETE through views) - pending
-- ⧗ Triggers execution (structure exists, execution pending)
-- ⧗ CREATE DOMAIN execution
-
-### Advanced Security Features (Phase 3)
-- ✅ Query plan security integration (10-100x speedup) - COMPLETE Nov 11, 2025
-- ✅ Column-level permissions - COMPLETE Nov 11, 2025
-- ✅ Row-level security (RLS) framework with TOAST persistence - 100% COMPLETE Nov 11, 2025
-- ✅ RLS expression evaluation (WHERE clause injection) - COMPLETE Nov 11, 2025
-- ✅ TOAST persistence for policy expressions - COMPLETE Nov 11, 2025
-- ✅ **Phase 3 Polish** - COMPLETE Nov 14, 2025 🎉:
-  - ✅ PolicyInfo UUID migration (role names → role UUIDs with O(1) hash lookup)
-  - ✅ Transitive role membership (BFS via getEffectiveRoles)
-  - ✅ SQL CREATE POLICY with real SBLR bytecode generation
-  - ✅ IDHash functor for efficient UUID-based unordered containers
-- SQL object permissions (GRANT TO PROCEDURE/FUNCTION/VIEW)
-- ✅ SQL parser integration (GRANT/REVOKE/CREATE USER statements) - COMPLETE Phase 2
-
-### Constraint Enforcement (90% Complete) ✅
-- ✅ **CHECK constraints** - Full parser-to-runtime pipeline COMPLETE Nov 13, 2025
-- ✅ **DEFAULT expressions** - Bytecode evaluation COMPLETE Nov 13, 2025
-- ✅ **NOT NULL enforcement** - Runtime validation COMPLETE
-- ✅ **FOREIGN KEY constraints** - Phase D COMPLETE Nov 14, 2025 🎉:
-  - ✅ Catalog CRUD operations (6 methods)
-  - ✅ Column-level REFERENCES clause (single-column FK)
-  - ✅ **Table-level FOREIGN KEY syntax (composite FK)** - COMPLETE Nov 14, 2025 🎉
-  - ✅ **Composite FK support (2+ columns)** - COMPLETE Nov 14, 2025 🎉
-  - ✅ Bytecode generation (FOREIGN_KEY + TABLE_FK opcodes)
-  - ✅ INSERT/UPDATE/DELETE enforcement with multi-column validation
-  - ✅ NO_ACTION/RESTRICT actions
-  - ✅ CASCADE DELETE/UPDATE actions (multi-column)
-  - ✅ SET NULL/SET DEFAULT actions (multi-column)
-  - ✅ MATCH SIMPLE semantics (NULL in any column satisfies constraint)
-  - ✅ **Disk persistence** - COMPLETE Nov 14, 2025 🎉
-  - ⧗ Index-based lookups for performance (future)
-  - ⧗ ALTER TABLE ADD/DROP FK (future)
-  - ⧗ MATCH FULL/PARTIAL (future)
-- ✅ **UNIQUE constraint** - Parser integration COMPLETE Nov 14, 2025 🎉:
-  - ✅ Column-level UNIQUE (e.g., `email VARCHAR(255) UNIQUE`)
-  - ✅ Table-level UNIQUE (e.g., `UNIQUE (col1, col2)`)
-  - ✅ Composite UNIQUE constraints (multi-column)
-  - ✅ Bytecode generation (UNIQUE_CONSTRAINT opcode)
-  - ✅ Runtime enforcement (INSERT/UPDATE validation) - Pre-existing
-  - ⧗ ALTER TABLE ADD/DROP UNIQUE (future)
-- ✅ **PRIMARY KEY constraint** - Parser integration COMPLETE Nov 14, 2025 🎉:
-  - ✅ Column-level PRIMARY KEY (e.g., `id INT PRIMARY KEY`)
-  - ✅ Table-level PRIMARY KEY (e.g., `PRIMARY KEY (id)` or `PRIMARY KEY (col1, col2)`)
-  - ✅ Composite PRIMARY KEY support (multi-column)
-  - ✅ Automatic NOT NULL + UNIQUE enforcement
-  - ✅ Bytecode generation (PRIMARY_KEY opcode)
-  - ⧗ Single PK per table validation (future)
-  - ⧗ Catalog metadata storage (future)
-  - ⧗ ALTER TABLE ADD/DROP PRIMARY KEY (future)
-
-### Functions - ALL COMPLETE! 🎉
-- All 123 planned SQL functions fully implemented!
-
-### Advanced SQL
-- Common Table Expressions (CTEs)
-- Recursive queries
-- PSQL/stored procedure execution
-
-**Remaining:** ~850-1,350 hours (includes advanced features)
-
 ## MGA Architecture (Firebird Style)
 
-**Critical:** All transaction visibility uses **TIP (Transaction Inventory Pages)**, not PostgreSQL snapshots.
+**CRITICAL:** ScratchBird uses **Firebird MGA**, NOT PostgreSQL MVCC.
 
 ### Key Principles
-- **TIP-based visibility**: `isVersionVisible(xmin, current_xid)` only
-- **In-place updates**: Primary record modified, old data in back versions
-- **Stable TIDs**: Indexes never change unless indexed column changes
-- **No snapshots**: Zero PostgreSQL MVCC contamination
-- **O(1) lookups**: Transaction state in 2 bits per TIP entry
+- **TIP-based visibility** - Transaction Inventory Pages, O(1) state lookups
+- **In-place updates** - Primary record modified, old data in back versions
+- **Stable TIDs** - Indexes never change unless indexed column changes
+- **No snapshots** - Zero PostgreSQL MVCC contamination
 
-### Rules (See MGA_RULES.md)
+**Before ANY transaction/index work:** Read [MGA_RULES.md](MGA_RULES.md)
+
 ```cpp
-// CORRECT - Firebird MGA
+// ✅ CORRECT - Firebird MGA
 if (isVersionVisible(tuple->xmin, current_xid)) { ... }
 
-// WRONG - PostgreSQL MVCC (forbidden)
+// ❌ WRONG - PostgreSQL MVCC (forbidden)
 if (isSnapshotVisible(tuple, snapshot)) { ... }  // NEVER USE
 ```
 
-**Before ANY transaction/index work:** Read `/MGA_RULES.md`
+## Documentation
+
+### Essential Reading
+- **[OFFICIAL_ROADMAP.md](OFFICIAL_ROADMAP.md)** - Complete project scope and development phases
+- **[PROJECT_CONTEXT.md](PROJECT_CONTEXT.md)** - Current work and immediate next steps
+- **[MGA_RULES.md](MGA_RULES.md)** - Mandatory MGA architecture rules
+
+### Specifications
+- **[docs/specifications/](docs/specifications/)** - SQL dialect, DDL, security, indexes, etc.
+- **[docs/planning/](docs/planning/)** - Implementation plans and status
+
+## Development Timeline
+
+**Work Completed:** 5 months (June-November 2025)
+**Current Progress:** ~11% of total project scope
+**Estimated Remaining:** ~3.5-4 years (single developer, evenings/weekends, AI assistance)
+
+This is an **educational/research project with no fixed deadlines**. Each phase completes when ALL defined features are implemented.
 
 ## Project Structure
 
@@ -218,73 +171,34 @@ ScratchBird/
 ├── src/
 │   ├── core/          # Storage engine, indexes, transactions, catalog
 │   ├── parser/        # SQL parser
-│   └── sblr/          # Query executor
+│   └── sblr/          # SBLR bytecode interpreter
 ├── include/           # Public headers
 ├── tests/
 │   ├── unit/          # Unit tests
 │   └── integration/   # Integration tests
-└── docs/
-    ├── planning/      # Implementation plans
-    ├── specifications/# Architecture specs
-    └── status/        # Completion reports
+├── docs/
+│   ├── specifications/ # SQL dialect, DDL, NoSQL models
+│   ├── planning/       # Implementation roadmaps
+│   └── status/         # Completion reports
+├── OFFICIAL_ROADMAP.md # Complete project scope
+├── PROJECT_CONTEXT.md  # Current work status
+└── MGA_RULES.md        # Architecture rules (mandatory)
 ```
 
-## Building
+## The End Goal
 
-```bash
-# Debug build (default)
-mkdir build && cd build
-cmake .. && make -j$(nproc)
+A universal database platform that can:
+- **Replace** 9+ specialized databases in a single deployment
+- **Emulate** PostgreSQL, MySQL, MSSQL, FirebirdSQL, Neo4j, MongoDB, Redis, Cassandra, Elasticsearch
+- **Integrate** with existing databases in heterogeneous clusters
+- **Scale** from embedded use to massive distributed systems
+- **Support** legacy applications with full wire protocol compatibility
+- **Enable** modern applications with NoSQL, streaming, and AI capabilities
+- **Unify** all data models under a single ACID transaction engine
+- **Provide** a stable educational platform for database research
 
-# Release build
-cmake -DCMAKE_BUILD_TYPE=Release ..
-
-# Thread sanitizer
-cmake -DCMAKE_BUILD_TYPE=TSan ..
-
-# Address sanitizer
-cmake -DCMAKE_BUILD_TYPE=ASan ..
-```
-
-## Testing
-
-```bash
-# All tests
-cd build && ctest --output-on-failure
-
-# Specific test
-ctest -R "test_name"
-
-# Verbose
-ctest -V
-```
-
-## Development Workflow
-
-1. **Read first:**
-   - [PROJECT_CONTEXT.md](PROJECT_CONTEXT.md) - Current state
-   - [MGA_RULES.md](MGA_RULES.md) - **MANDATORY** architecture rules
-   - [ALPHA_PHASE1_COMPLETE_IMPLEMENTATION_PLAN.md](docs/planning/ALPHA_PHASE1_COMPLETE_IMPLEMENTATION_PLAN.md) - Work plan
-
-2. **Before transaction/index work:** Read `/MGA_RULES.md` (violations are wrong)
-
-3. **Code standards:** [CODING_STANDARDS.md](docs/development/CODING_STANDARDS.md)
-
-4. **Test frequently:** Run tests after changes
-
-## Documentation
-
-### Essential Reading
-- **[MGA_RULES.md](MGA_RULES.md)** - Firebird MGA architecture (mandatory reading)
-- **[PROJECT_CONTEXT.md](PROJECT_CONTEXT.md)** - Project overview and status
-- **[docs/IMPLEMENTATION_AUDIT.md](docs/IMPLEMENTATION_AUDIT.md)** - AI-optimized implementation reference (function signatures, exact locations)
-
-### Additional Documentation
-- **docs/planning/** - Implementation roadmaps
-- **docs/specifications/** - Technical specifications
-- **docs/status/** - Completion reports
-  - [CATALOG_CORRECTIONS_COMPLETE_2025-11-09.md](docs/status/CATALOG_CORRECTIONS_COMPLETE_2025-11-09.md) - Catalog system completion report
+**This is not just a database—it's a database platform demonstrating what's possible when you combine the best ideas from relational, NoSQL, and distributed systems into a cohesive MGA architecture.**
 
 ## License
 
-See LICENSE file.
+See [LICENSE](LICENSE) file.
