@@ -1,342 +1,211 @@
 # ScratchBird Project Context
 
-**Last Updated**: November 17, 2025
-**Version**: Alpha - 99% Complete (Views Foundation COMPLETE - Materialized Views)
-**Status**: Educational/Development
+**Last Updated:** November 20, 2025
+**Current Phase:** Alpha 1 - Engine Functionality (Local Operations)
+**Progress:** ~87% of Alpha 1 (~11% of total project scope)
+**Project Type:** Educational/Research (no time constraints)
 
-> **MANDATORY**: Read `/MGA_RULES.md` before ANY transaction or index work.
-> **IMPLEMENTATION REFERENCE**: See `/docs/IMPLEMENTATION_AUDIT.md` for complete code locations and function signatures.
+> **MANDATORY:** Read [/MGA_RULES.md](/MGA_RULES.md) before ANY transaction or index work.
+> **COMPLETE ROADMAP:** See [/OFFICIAL_ROADMAP.md](/OFFICIAL_ROADMAP.md) for full project scope.
 
 ---
 
-## Current Status
+## Current Work: Alpha 1 Completion (~13% Remaining)
 
-### Core Engine (100%)
-- **MGA (Multi-Generational Architecture)** - TIP-based visibility, O(1) transaction lookups
-- **Buffer Pool & Pages** - LRU caching, heap pages with back-versioning
-- **TOAST** - Large object storage with MGA compliance
-- **Transactions** - 4 isolation levels, MVCC, deadlock detection
-- **Tablespaces** - Multi-file support with GPID addressing
+**Focus:** Complete all local (non-network) engine functionality
 
-### Catalog System (40 tables = 100% structures, 58% CRUD) ✅
-- **18 Schema Hierarchy** - root → sys/app/users/remote/emulation/public
-- **Core Tables (10/10)** - Schemas, Tables, Columns, Indexes, Sequences, Views, Constraints, Triggers, Timezones, Collations
-- **Dependencies & Comments (2/2)** - Full persistence with disk storage
-- **Security (8/8 structures)** - Users, Roles, Groups, RoleMemberships, GroupMemberships, GroupMappings, ColumnPermissions, Policies ✅
-- **Stored Code (5/5 structures)** - Procedures, Parameters, Domains, UDR, Packages
-- **Emulation (3/3 structures)** - Types, Servers, Databases (mysql/postgres/mssql/firebird)
-- **Infrastructure (5/5)** - Tablespaces, Charsets, Statistics, Permissions, **Foreign Keys** ✅
-- **UUID System** - UUIDv7 (RFC 9562), system UUID: `00000000-0000-7000-8000-737973746d00`
-- **Object Types** - 32 catalog object types defined
+### What's Working ✅
 
-### Indexes (11/11 types, 11/11 production-ready, 11/11 MGA-compliant) 🎉🎉
-- ✅ **Production Ready** (11/11 - 100%): B-Tree, Hash, GIN, HNSW, GiST, SP-GiST, BRIN, Bitmap, LSM-Tree, R-Tree, Columnstore
-- **MGA Compliance**: 11/11 (100%) - All indexes use TIP-based visibility with xmin/xmax ✅
-- **DML Integration**: 11/11 (100%) - All indexes maintained during INSERT/UPDATE/DELETE
-- **Bytecode Support**: 11/11 (100%) - 8 via generic path, 3 via specialized path (GIN, HNSW, Columnstore)
-- **GIN Key Extractors**: Default, Array (with registry for custom extractors)
-- **LSM-Tree**: Memtable-based implementation with compaction and MGA support
-- **Columnstore**: Columnar storage with RLE/Dictionary compression, disk persistence, multi-page segments 🎉
-  - **Nov 20, 2025 Update**: **100% PRODUCTION-READY** (85% → 100%) 🎉🎉
-    - ✅ Phase 1: Full TIP Integration + Schema Integration (correctness)
-    - ✅ Phase 2: Disk Persistence for Scans (scalability - unlimited dataset size)
-    - ✅ Phase 3a: Dictionary Compression (efficiency - 50-70% compression for strings)
-    - ✅ Phase 3b: Multi-Page Segments (capacity - segments can exceed 8KB, no size limits)
-    - Status: **5/6 TODOs complete**, fully production-ready
+- **Core Engine:** 100% (MGA, Buffer Pool, TOAST, Transactions, Tablespaces)
+- **Indexes:** 11/11 types production-ready with MGA compliance
+- **Data Types:** 86/86 complete
+- **Built-in Functions:** 123/123 complete
+- **Security:** 100% (users, roles, table/column/row-level permissions, RLS)
+- **Catalog:** 40 tables (100% structures, 58% CRUD)
+- **Constraints:** 90% (CHECK, DEFAULT, FK, UNIQUE functional)
 
-### Data Types (86/86 = 100%) 🎉
-- Numeric: INT8-INT128, UINT8-UINT64, DECIMAL, FLOAT, MONEY
-- String: CHAR, VARCHAR, TEXT
-- Temporal: DATE, TIME, TIMESTAMP, INTERVAL
-- Binary: BLOB, BYTEA, VARBINARY
-- Special: UUID, JSON/JSONB, XML, BOOLEAN
-- Spatial: POINT, LINESTRING, POLYGON
-- Advanced: ARRAY, RANGE, COMPOSITE, VECTOR, VARIANT
-- Network: INET, CIDR, MACADDR
-- Text Search: TSVECTOR, TSQUERY
-- **Domains** with CHECK constraints
+### What's Missing ❌
 
-### SQL Execution (23/35 = 66%)
-- ✅ SELECT (WHERE, JOIN, GROUP BY, HAVING, ORDER BY, LIMIT)
-- ✅ INSERT, UPDATE, DELETE
-- ✅ CREATE TABLE, CREATE INDEX, CREATE/ALTER/DROP TABLESPACE
-- ✅ Transactions: BEGIN, COMMIT, ROLLBACK, SAVEPOINT
-- ✅ Window functions
-- ✅ **Security (Phase 3.0 COMPLETE - 100%)** ✅:
-  - **Phase 2 (100%)**:
-    - Parser: 13 SQL statements (CREATE/ALTER/DROP USER/ROLE/GROUP, GRANT/REVOKE)
-    - Bytecode: 13 opcodes, full bytecode generation
-    - Executor: 13 executors with catalog integration
-    - Connection context with user/role tracking
-    - Permission checking in SELECT/INSERT/UPDATE/DELETE/DDL
-    - SET ROLE / RESET ROLE (fully functional)
-    - SET SESSION AUTHORIZATION (fully functional)
-  - **Phase 3.0 (100%)**:
-    - Password hashing (BCrypt + OpenSSL secure random)
-    - ALTER USER superuser flag support
-    - Transitive role-to-role permission inheritance (BFS)
-    - CASCADE for DROP USER/ROLE/GROUP operations
-  - **Phase 3.1 (100%)**:
-    - External authentication infrastructure (LocalAuthProvider, LDAP/AD stubs for Beta)
-    - AuthProvider interface with factory pattern
-    - Documentation for Beta implementation
-  - **Phase 3.2.1 (100% - COMPLETE)** ✅:
-    - Query plan security integration - table-level SELECT permission checks
-    - Permission checking moved from executor to planner (10-100x speedup!)
-    - Permission cache for O(1) lookups
-    - Superuser bypass optimization
-    - Early rejection of unauthorized queries (no I/O wasted)
-  - **Phase 3.2.2 (100% - COMPLETE)** ✅:
-    - DML permission checks (INSERT/UPDATE/DELETE) - Already optimal!
-    - Statement-level permission checking (not per-row)
-    - O(1) permission overhead for DML operations
-    - 5 integration tests added
-  - **Phase 3.2.3 (100% - COMPLETE)** ✅:
-    - Global permission cache with LRU eviction (1000 entries, 60s TTL)
-    - Thread-safe with std::shared_mutex (multiple readers, single writer)
-    - Integrated with QueryPlanner::checkTablePermission()
-    - Integrated with Executor::checkPermission()
-    - Cache invalidation on GRANT/REVOKE/DROP operations
-    - Expected 2-5x additional speedup for repeated queries
-    - Statistics tracking (hit rate, evictions, expirations)
-  - **Phase 3.3 (100% - COMPLETE)** ✅:
-    - **Column-Level Permissions** - Fine-grained access control per column
-    - **Catalog Storage** - pg_column_permissions table (Phase 3.3.1)
-    - **CRUD Operations** - grantColumnPermission, revokeColumnPermission, hasColumnPermission, getAccessibleColumns (Phase 3.3.2)
-    - **SQL Syntax** - GRANT/REVOKE with column lists: `GRANT SELECT (col1, col2) ON TABLE t TO user` (Phase 3.3.3)
-    - **Bytecode Integration** - Column list encoding/decoding (Phase 3.3.4)
-    - **Runtime Enforcement** - SELECT filtering, UPDATE/INSERT validation (Phase 3.3.5)
-    - **Performance** - Table-level fast path (~10 μs), column-level fallback (~100-500 μs)
-    - **Testing** - 11 integration tests covering CRUD, parsing, validation, bytecode generation (Phase 3.3.6)
-    - **Total Investment** - ~690 lines production code, ~430 lines tests, ~11 hours, 7 files modified
-  - **Phase 3.4 (100% COMPLETE)** ✅:
-    - **Row-Level Security (RLS)** - PostgreSQL-compatible policy-based row filtering
-    - **Catalog Schema** - PolicyInfo struct, PolicyType enum (Phase 3.4.1) ✅
-    - **CRUD Operations** - createPolicy, dropPolicy, getPolicy, getTablePolicies, setTableRLS (Phase 3.4.2) ✅
-    - **SQL Syntax** - CREATE/DROP POLICY, ALTER TABLE RLS statements (Phase 3.4.3) ✅
-    - **Bytecode Integration** - 3 opcodes (EXT_CREATE_POLICY, EXT_DROP_POLICY, EXT_ALTER_TABLE_RLS) (Phase 3.4.4) ✅
-    - **Query Planner** - Fail-safe enforcement, superuser bypass, forced RLS (Phase 3.4.5) ✅
-    - **Expression Storage** - In-memory cache for USING/WITH CHECK expressions (Phase 3.4.6) ✅
-    - **Runtime Evaluation** - WHERE clause injection, expression parsing, predicate combination (Phase 3.4.7) ✅
-    - **TOAST Persistence** - Disk-based storage for policy expressions, survives restarts (Phase 3.4.8) ✅
-    - **Testing** - 19 integration tests covering DDL, fail-safe, permissions, expression storage, runtime filtering, TOAST persistence ✅
-    - **Total Investment** - ~900 lines production code, ~700 lines tests, ~20 hours, 13 files modified
-  - **Phase 3.5 (100% COMPLETE)** ✅:
-    - **RLS DML Enforcement** - WITH CHECK for INSERT/UPDATE, USING for UPDATE/DELETE
-    - **RLS Helpers** - shouldEnforceRLS (owner/FORCE RLS), checkRLSPolicies (AND semantics), policyAppliesToUser (role resolution), evaluatePolicyExpression (bytecode execution) ✅
-    - **INSERT WITH CHECK** - Full row construction with defaults, policy enforcement before insertTuple (Phase 3.5.1) ✅
-    - **UPDATE USING + WITH CHECK** - Old row visibility (USING), new row validation (WITH CHECK) (Phase 3.5.2) ✅
-    - **DELETE USING** - Row visibility filtering in deletion loop (Phase 3.5.3) ✅
-    - **SQL Object Permissions** - GRANT EXECUTE on procedures/functions, owner_id in catalog (Phase 3.5.4) ✅
-    - **Ownership Chaining** - SQL SECURITY DEFINER/INVOKER, security context stack, privilege escalation (Phase 3.5.5) ✅
-    - **Owner Bypass** - Table owner and superuser bypass RLS (unless FORCE RLS), owner privilege lookup via UUID (Phase 3.5.6) ✅
-    - **Role Resolution** - UUID-based identity, role membership checking for policy targeting (Phase 3.5.7) ✅
-    - **Testing** - 10-test framework created (bytecode generation pending) ✅
-    - **Total Investment** - ~1,500 lines production code, ~530 lines test framework, ~18 hours, 14 files modified
-  - **Phase 3.6 TODOs**: View security (WITH CHECK OPTION), transitive role membership, policy bytecode generation for tests
-- ✅ **DDL Modifications (100%)**:
-  - DROP TABLE [IF EXISTS] [CASCADE | RESTRICT]
-  - DROP INDEX [IF EXISTS] [CASCADE | RESTRICT]
-  - ALTER TABLE ADD COLUMN
-  - ALTER TABLE DROP COLUMN [IF EXISTS] [CASCADE | RESTRICT]
-  - ALTER TABLE RENAME COLUMN
-  - ALTER TABLE ALTER COLUMN TYPE
-- ✅ **Views (80% COMPLETE - Nov 17, 2025)** 🎉:
-  - ✅ CREATE VIEW / CREATE OR REPLACE VIEW with query expansion
-  - ✅ CREATE MATERIALIZED VIEW / CREATE OR REPLACE MATERIALIZED VIEW
-  - ✅ DROP VIEW [IF EXISTS] [CASCADE | RESTRICT]
-  - ✅ REFRESH [CONCURRENTLY] MATERIALIZED VIEW (parser + bytecode + executor)
-  - ✅ View query rewriting (SELECT from views → underlying tables)
-  - ✅ Column projection with explicit column names
-  - ✅ WITH CHECK OPTION support (parser + catalog)
-  - ⧗ Physical materialization (table creation + data population) - 20% remaining
-  - ⧗ Updatable views (INSERT/UPDATE/DELETE through views)
-- ⧗ Triggers (execution), Stored procedures
+**PSQL/Stored Procedures** (~15% of Alpha 1):
+- Bytecode execution (90% stubbed)
+- Trigger firing (CREATE works, execution doesn't)
+- Exception handling (TRY/CATCH)
+- Cursors
 
-### Built-in Functions (123/123 = 100%) 🎉 ALL PLANNED FUNCTIONS COMPLETE!
-- ✅ String (11), Aggregate (6), Window (8)
-- ✅ JSON (13), Array (12), Date/Time (6)
-- ✅ Conditional (3), Regex (4), Spatial (4+)
-- ✅ **Mathematical (29)**: SIN, COS, TAN, ASIN, ACOS, ATAN, ATAN2, DEGREES, RADIANS, PI, ABS, SIGN, ROUND, CEIL, FLOOR, TRUNC, MOD, SQRT, CBRT, POWER, EXP, LN, LOG, LOG10, LOG2
-- ✅ **Bit Manipulation (14)**: GET_BYTE, SET_BYTE, GET_BIT, SET_BIT, BIT_AND, BIT_OR, BIT_XOR, BIT_NOT, BIT_SHIFT_LEFT, BIT_SHIFT_RIGHT, BIT_SHIFT_RIGHT_LOGICAL, BIT_COUNT, BIT_LENGTH, BIT_MASK (Nov 14, 2025)
-- ✅ **Cryptographic (4)**: MD5, SHA1, SHA256, SHA512 (Nov 14, 2025)
-- ✅ **Statistical (7)**: STDDEV/STDDEV_SAMP, STDDEV_POP, VARIANCE/VAR_SAMP, VAR_POP, CORR, COVAR_POP (Nov 14, 2025) 🎉
-- ✅ **XML (9)**: XMLPARSE, XMLSERIALIZE, XMLELEMENT, XMLCONCAT, XMLFOREST, XMLCOMMENT, XMLROOT, XPATH, XMLEXISTS (Nov 14, 2025) 🎉
-  - **Note:** Full XML/XPath 1.0 support via libxml2 2.9.14 with validation, security flags (NONET/NOENT), and proper memory management. XPATH returns JSON arrays, XMLEXISTS returns boolean. Fallback to basic string implementation without libxml2.
+**Advanced SQL** (~20% of Alpha 1):
+- Common Table Expressions (CTEs)
+- Recursive queries (WITH RECURSIVE)
+- MERGE statement
+- RETURNING clause
 
-### Constraints (8/10 = 80%) ✅
-- ✅ NOT NULL, Data type validation
-- ✅ **DEFAULT values** (literals + simple expressions, executor COMPLETE, parser pending)
-- ✅ **UNIQUE** (executor COMPLETE with INSERT/UPDATE enforcement, parser pending)
-- ✅ **CHECK** (executor 100% COMPLETE, parser COMPLETE) 🎉
-- ✅ **FOREIGN KEY** (Phase A + B 100% COMPLETE - Nov 14, 2025) 🎉:
-  - ✅ Catalog CRUD operations (6 methods: create, get, drop, enable/disable)
-  - ✅ REFERENCES clause parsing (parser.cpp:690-794)
-  - ✅ Bytecode generation (FOREIGN_KEY opcode 0x93)
-  - ✅ **INSERT enforcement** (executor.cpp:3735-3774) - ACTIVATED Nov 14 🎉
-  - ✅ **UPDATE enforcement** (executor.cpp:4208-4262) - ACTIVATED Nov 14 🎉
-  - ✅ DELETE enforcement (executor.cpp:15486-15639)
-  - ✅ NO_ACTION/RESTRICT actions
-  - ✅ CASCADE DELETE action
-  - ✅ **CASCADE UPDATE action** (executor.cpp:15726-15774, 15909-15965)
-  - ✅ **SET NULL action** (executor.cpp:15573-15625, 15820-15872)
-  - ✅ **SET DEFAULT action** (executor.cpp:15627-15727, 15966-16066)
-  - ✅ Tuple modification helpers (serializeTupleFromValues, modifyTupleColumns)
-  - ⧗ Disk persistence (Phase C)
-  - ⧗ Composite FKs (Phase C)
-- ❌ PRIMARY KEY (depends on UNIQUE + NOT NULL combination)
-- ❌ EXCLUSION constraints
-- ❌ Deferred constraint checking
+**Constraint Features** (~10% of Alpha 1):
+- GENERATED columns (STORED/VIRTUAL)
+- IDENTITY columns (auto-increment)
+- Deferred constraint checking
 
-**Remaining**: ~800-1,300 hours
+**SQL Engine Commands** (~5% of Alpha 1):
+- SHOW TABLES/DATABASES/COLUMNS
+- DESCRIBE TABLE
+- EXPLAIN query plans
+- System catalog queries (pg_catalog equivalent)
+
+**Command-Line Tools** (~15% of Alpha 1):
+- sb_isql (interactive SQL shell)
+- sb_verify (database integrity checker)
+- sb_backup (backup/restore tool)
+- sb_security (user/role management tool)
+
+**Views** (~5% of Alpha 1):
+- ⧗ Physical materialization (80% complete)
+- Updatable views (INSERT/UPDATE/DELETE through views)
+
+### Immediate Next Steps
+
+1. Complete physical materialization for materialized views
+2. Implement PSQL bytecode execution infrastructure
+3. Add trigger firing mechanism
+4. Implement CTEs and recursive queries
+5. Build sb_isql command-line shell
+
+---
+
+## After Alpha 1: The Full Vision
+
+Alpha 1 represents approximately **11% of the total project scope**.
+
+**For complete details, see [OFFICIAL_ROADMAP.md](/OFFICIAL_ROADMAP.md).**
+
+### Summary of Remaining Phases (~89% of project)
+
+**Alpha 2: Parser Separation**
+- Extract parser into separate library
+- Implement 5 SQL dialect parsers: ScratchBird, PostgreSQL, MySQL, MSSQL, FirebirdSQL
+- All dialects translate to same SBLR bytecode
+
+**Alpha 3: Network Listeners**
+- 4 wire protocols: PostgreSQL, MySQL, TDS/MSSQL, ScratchBird native
+- Client authentication, SSL/TLS
+- Connection pooling
+
+**Beta 1: Cluster Implementation**
+- Distributed architecture with automatic sharding
+- Replication and failover
+- Distributed transactions (2PC)
+
+**Beta 2: Heterogeneous Clusters**
+- Foreign Data Wrappers for PostgreSQL, MySQL, MSSQL, FirebirdSQL
+- Cross-database query federation
+- XA distributed transactions
+
+**Beta 3: Encryption & Advanced Indexes**
+- Field-level and database-level encryption
+- Key management server
+- Advanced indexes (Bloom Filter, ML indexes, Graph indexes, etc.)
+
+**Beta 4: NoSQL Dialects & Integration Tools** (MAJOR PHASE)
+- **9 NoSQL models** with dedicated query dialects:
+  1. Graph Database (Cypher, Gremlin, ScratchBird native)
+  2. Vector Database (k-NN, ANN queries)
+  3. Document Store (MongoDB-compatible)
+  4. Key-Value Store (Redis-compatible)
+  5. Time-Series Database (InfluxDB-style)
+  6. Column-Family Store (Cassandra CQL)
+  7. Full-Text Search (Elasticsearch DSL)
+  8. Stream Processing (continuous queries)
+  9. Object/Blob Store (S3-compatible)
+- Integration tools: Kafka, message queues, AI agents, observability
+
+**RC1: Native Drivers**
+- 12 language drivers: ODBC, JDBC, C++, C, C#, Rust, Pascal, Python, Go, Node.js, Ruby, PHP
+- Beta user testing
+
+**RC2/RC3: Stabilization**
+- Bug fixing, performance optimization
+- Security audits
+
+**Gold: Production Release**
+- Full feature completion
+- All quality criteria met
+
+---
+
+## The Universal Database Vision
+
+**Goal:** A single database platform that can replace:
+- PostgreSQL, MySQL, MSSQL, FirebirdSQL (relational SQL)
+- Neo4j (graph database)
+- MongoDB (document store)
+- Redis (key-value store)
+- Cassandra (column-family store)
+- Elasticsearch (full-text search)
+- InfluxDB (time-series)
+- S3 (object storage)
+- Kafka (stream processing)
+
+**Key Capability:** Existing clients connect using their native protocols without modification. A PostgreSQL client can connect to ScratchBird and see a PostgreSQL database. A Neo4j client can run Cypher queries. A MongoDB client can execute document operations. All on the same underlying MGA engine with unified ACID transactions.
 
 ---
 
 ## MGA Architecture (Firebird Style)
 
-**Critical:** All transaction visibility uses **TIP (Transaction Inventory Pages)**, not PostgreSQL snapshots.
+**CRITICAL:** ScratchBird uses **Firebird MGA**, NOT PostgreSQL MVCC.
 
-### Key Principles
-- **TIP-based visibility**: `isVersionVisible(xmin, current_xid)` only
-- **In-place updates**: Primary record modified, old data in back versions
-- **Stable TIDs**: Indexes never change unless indexed column changes
-- **No snapshots**: Zero PostgreSQL MVCC contamination
-- **O(1) lookups**: Transaction state in 2 bits per TIP entry
+### Mandatory Rules
+- **TIP-based visibility only** - `isVersionVisible(xmin, current_xid)`
+- **In-place updates** - Primary record modified, old data in back versions
+- **Stable TIDs** - Indexes never change unless indexed column changes
+- **No snapshots** - Zero PostgreSQL MVCC contamination
 
-### Rules (See MGA_RULES.md)
 ```cpp
-// CORRECT - Firebird MGA
+// ✅ CORRECT - Firebird MGA
 if (isVersionVisible(tuple->xmin, current_xid)) { ... }
 
-// WRONG - PostgreSQL MVCC (forbidden)
-if (isSnapshotVisible(tuple, snapshot)) { ... }  // NEVER USE
+// ❌ WRONG - PostgreSQL MVCC (NEVER USE)
+if (isSnapshotVisible(tuple, snapshot)) { ... }
 ```
 
-**Before ANY transaction/index work:** Read `/MGA_RULES.md`
+**Read [MGA_RULES.md](/MGA_RULES.md) before ANY transaction or index work.**
 
 ---
 
-## Project Structure
+## Development Timeline
 
-```
-ScratchBird/
-├── src/
-│   ├── core/          # Storage engine, indexes, transactions, catalog
-│   ├── parser/        # SQL parser
-│   └── sblr/          # Query executor
-├── include/           # Public headers
-├── tests/
-│   ├── unit/          # Unit tests
-│   └── integration/   # Integration tests
-└── docs/
-    ├── planning/      # Implementation plans
-    ├── specifications/# Architecture specs
-    └── status/        # Completion reports
-```
+**Work Completed:** 5 months (June-November 2025)
+- Single developer, evenings/weekends
+- AI chatbot assistance (Claude, limited token usage)
 
----
+**Current Progress:** ~11% of total project scope
 
-## Architecture
+**Realistic Projection:**
+- Alpha 1 completion: ~1-2 months
+- Remaining project (Alpha 2 through Gold): ~3.5-4 years
+- **Total estimated timeline:** ~4 years
 
-### 3-Layer Embedded Design
-
-```
-┌──────────────────────────────────────────┐
-│ Layer 3: Client Applications            │
-│  - sb_isql (CLI) or custom apps         │
-└──────────────────────────────────────────┘
-                    ↓
-┌──────────────────────────────────────────┐
-│ Layer 2: Parser Engines                 │
-│  - libsb_parser_scratchbird.so          │
-│  - SQL → AST → SBLR bytecode            │
-└──────────────────────────────────────────┘
-                    ↓
-┌──────────────────────────────────────────┐
-│ Layer 1: Database Engine                │
-│  - SBLR bytecode interpreter            │
-│  - Storage, transactions, indexes        │
-└──────────────────────────────────────────┘
-```
-
-### SBLR (ScratchBird Binary Language Runner)
-**Purpose**: Dialect-agnostic bytecode for database operations (based on Firebird BLR)
-**Location**: `/src/sblr/` and `/include/scratchbird/sblr/`
-
-**Key Files**:
-- `opcodes.h` - Opcode definitions
-- `executor.cpp` - Bytecode interpreter (3,108 lines)
-- `bytecode_generator.cpp` - AST → SBLR compiler (1,162 lines)
-
----
-
-## MGA vs PostgreSQL MVCC
-
-**CRITICAL**: ScratchBird uses **Firebird MGA**, NOT PostgreSQL MVCC
-
-### Detection Rules
-
-**❌ WRONG (PostgreSQL MVCC)**:
-- `Snapshot` structures
-- `isSnapshotVisible()` calls
-- Forward pointers (old → new)
-- Append-only updates
-- Index TID updates on every UPDATE
-
-**✅ CORRECT (Firebird MGA)**:
-- TIP (Transaction Inventory Pages)
-- `getTransactionState(xid)` calls
-- `isVersionVisible(version_xid, reader_xid)`
-- Back pointers (new → old)
-- In-place updates
-- Stable TIDs
-
-### Key Differences
-
-| Aspect | Firebird MGA | PostgreSQL MVCC |
-|--------|--------------|-----------------|
-| Visibility | TIP bitmap (O(1)) | Snapshot array (O(N)) |
-| Updates | In-place + back versions | Append-only |
-| Version Chain | Newest → Oldest (N2O) | Oldest → Newest (O2N) |
-| Index Updates | Only if column changed | Every UPDATE |
-| TID Stability | Stable forever | Changes on UPDATE |
+**Note:** This is an educational/research project with NO fixed deadlines. Each phase completes when ALL defined features are implemented, not based on time estimates.
 
 ---
 
 ## Critical File Locations
+
+### Documentation
+- [/OFFICIAL_ROADMAP.md](/OFFICIAL_ROADMAP.md) - **Complete project scope and all phases**
+- [/MGA_RULES.md](/MGA_RULES.md) - **Mandatory architecture rules**
+- [/docs/IMPLEMENTATION_AUDIT.md](/docs/IMPLEMENTATION_AUDIT.md) - Complete code locations
+- [/docs/planning/ALPHA_PHASE1_COMPLETE_IMPLEMENTATION_PLAN.md](/docs/planning/ALPHA_PHASE1_COMPLETE_IMPLEMENTATION_PLAN.md) - Alpha 1 work plan
+
+### Specifications
+- [/docs/specifications/](/docs/specifications/) - SQL dialect, DDL, NoSQL models, indexes
 
 ### Core Implementation
 ```
 src/core/buffer_pool.cpp            - Buffer management
 src/core/heap_page.cpp               - Record storage with back-versioning
 src/core/toast.cpp                   - Large object storage
-src/core/transaction_manager.cpp    - TIP-based transaction management
-src/core/btree.cpp                   - B-Tree index (~33K lines)
-src/core/hash_index.cpp              - Hash index
-src/core/gin_index.cpp               - GIN index
+src/core/transaction_manager.cpp    - TIP-based transactions
+src/core/btree.cpp                   - B-Tree index
 src/core/catalog_manager.cpp        - System catalog
-```
-
-### Parser & Executor
-```
 src/parser/parser.cpp                - SQL parser
-src/parser/semantic_analyzer.cpp    - Semantic analysis
-src/sblr/bytecode_generator.cpp     - AST → SBLR compiler
-src/sblr/executor.cpp                - SBLR interpreter
-src/sblr/expression_evaluator.cpp   - Expression evaluation
-```
-
-### Documentation
-```
-/MGA_RULES.md                                            - **MANDATORY** MGA architecture rules
-/PROJECT_CONTEXT.md                                      - This file
-/docs/IMPLEMENTATION_AUDIT.md                            - **AI-OPTIMIZED** Complete implementation reference
-/docs/planning/ALPHA_PHASE1_COMPLETE_IMPLEMENTATION_PLAN.md  - Active work plan
-/docs/status/CATALOG_CORRECTIONS_COMPLETE_2025-11-09.md - Catalog system completion report
-/docs/specifications/INDEX_ARCHITECTURE.md               - **NEW** Index architecture and usage guide (Nov 20, 2025)
-/docs/specifications/INDEX_IMPLEMENTATION_GUIDE.md       - **NEW** Developer guide for adding index types (Nov 20, 2025)
-/docs/audit/INDEX_SYSTEM_REMEDIATION_PLAN.md            - Index system remediation roadmap
-/docs/audit/INDEX_SYSTEM_AGENT_TASKS.md                 - Discrete tasks for index remediation
+src/sblr/executor.cpp                - SBLR bytecode interpreter
 ```
 
 ---
@@ -345,209 +214,58 @@ src/sblr/expression_evaluator.cpp   - Expression evaluation
 
 ### For AI Assistants
 
-**MANDATORY READING**:
+**MANDATORY READING:**
 1. Read `/MGA_RULES.md` at session start
 2. Re-read `/MGA_RULES.md` after context compaction
 3. Read `/MGA_RULES.md` BEFORE any transaction or index work
-4. **NEW**: Read `/docs/IMPLEMENTATION_AUDIT.md` for function signatures and exact implementation locations
+4. Refer to `/docs/IMPLEMENTATION_AUDIT.md` for function signatures
 
-**IMPLEMENTATION REFERENCE**:
-- `/docs/IMPLEMENTATION_AUDIT.md` contains ALL function signatures, struct layouts, and exact file:line locations
-- Use this to find existing implementations without searching
-- Context-optimized format (no prose, just facts)
-- Updated: November 9, 2025
-
-**DO**:
+**DO:**
 - ✅ Use Firebird MGA model (TIP-based visibility)
-- ✅ Maintain stable TIDs (no changes on UPDATE)
+- ✅ Maintain stable TIDs
 - ✅ In-place updates with back versions
 - ✅ Follow error handling patterns (Status enum, ErrorContext)
 - ✅ Use RAII for all resources
-- ✅ Check `/docs/IMPLEMENTATION_AUDIT.md` for existing function signatures before implementing
 
-**DON'T**:
-- ❌ Use PostgreSQL MVCC patterns (snapshots, `isSnapshotVisible()`)
-- ❌ Implement `Snapshot` structures
-- ❌ Use forward-versioning (old → new pointers)
+**DON'T:**
+- ❌ Use PostgreSQL MVCC patterns
+- ❌ Implement Snapshot structures
+- ❌ Use forward-versioning
 - ❌ Update index TIDs unless indexed column changes
-- ❌ Skip reading `/MGA_RULES.md` before transaction work
-- ❌ Guess function signatures when `/docs/IMPLEMENTATION_AUDIT.md` has them
+- ❌ Skip reading `/MGA_RULES.md`
 
-**CRITICAL**: Violating `/MGA_RULES.md` means the code is architecturally WRONG and must be rewritten.
-
-### Error Handling
-```cpp
-Status operation(ErrorContext* ctx) {
-    if (error) {
-        SET_ERROR_CONTEXT(ctx, Status::ERROR_CODE, "Error message");
-        return Status::ERROR_CODE;
-    }
-    return Status::OK;
-}
-```
-
-### Memory Management
-- RAII everywhere (smart pointers, lock guards)
-- `std::unique_ptr` for ownership
-- `std::shared_ptr` for shared ownership
-- No manual `new`/`delete`
-
-### Logging
-```cpp
-LOG_DEBUG(Category::STORAGE, "Message %s", var);
-LOG_INFO(Category::TRANSACTION, "Message %d", count);
-LOG_WARN(Category::CATALOG, "Message");
-LOG_ERROR(Category::BUFFER, "Message");
-```
+**CRITICAL:** Violating MGA rules means the code is architecturally WRONG and must be rewritten.
 
 ---
 
-## Building
+## Recent Accomplishments
 
-```bash
-# Debug build (default)
-mkdir build && cd build
-cmake .. && make -j$(nproc)
-
-# Release build
-cmake -DCMAKE_BUILD_TYPE=Release ..
-
-# Thread sanitizer
-cmake -DCMAKE_BUILD_TYPE=TSan ..
-
-# Address sanitizer
-cmake -DCMAKE_BUILD_TYPE=ASan ..
-```
+**November 2025:**
+- ✅ Views foundation (80% - CREATE VIEW, MATERIALIZED VIEW, REFRESH)
+- ✅ Index system documentation (900+ lines)
+- ✅ Columnstore TIP integration
+- ✅ All 123 built-in functions complete (XML, Cryptographic, Statistical, Mathematical, Bit Manipulation)
+- ✅ Security Phase 3.5 complete (RLS DML enforcement, SQL object permissions)
+- ✅ Foreign key Phase C (table-level syntax, composite FKs, disk persistence)
+- ✅ Constraint system (CHECK, DEFAULT, UNIQUE, FK enforcement)
 
 ---
 
-## Testing
+## Summary
 
-```bash
-# All tests
-cd build && ctest --output-on-failure
+**Current Focus:** Complete Alpha 1 (~13% remaining)
 
-# Specific test
-ctest -R "test_name"
+**Next Major Milestones:**
+1. Alpha 1 completion (~1-2 months)
+2. Alpha 2: Multi-dialect parsers
+3. Alpha 3: Network protocols
+4. Beta 1-4: Distributed systems + NoSQL models
+5. RC1-3: Native drivers + stabilization
+6. Gold: Production release
 
-# Verbose
-ctest -V
-```
-
----
-
-## Status Summary
-
-**Version**: Alpha (Engine Phase 1)
-**Completion**: 99% (Views Foundation COMPLETE - Materialized Views Parser/Bytecode/Executor)
-**MGA Compliance**: 100% ✅
-**Catalog System**: 38/38 tables (100% structures, 58% CRUD) ✅
-**Active Plan**: `/docs/planning/ALPHA_PHASE1_COMPLETE_IMPLEMENTATION_PLAN.md`
-**Implementation Audit**: `/docs/IMPLEMENTATION_AUDIT.md` (AI-optimized reference)
-**Timeline**: 4-6 months to completion (with 3 developers)
-
-**Recently Completed** (Nov 20, 2025):
-- ✅ **Index System Documentation - 100% COMPLETE** (~900 lines documentation):
-  - INDEX_ARCHITECTURE.md: Comprehensive guide to all 11 index types
-  - INDEX_IMPLEMENTATION_GUIDE.md: Step-by-step developer guide for adding new indexes
-  - Complete coverage of MGA compliance patterns, DML integration, and bytecode support
-  - Usage recommendations, performance characteristics, and decision matrices
-  - Code templates and testing requirements for new index implementations
-  - Documentation tasks: TASK-DOC-1, TASK-DOC-2, TASK-DOC-3 (100% complete)
-  - Files: docs/specifications/INDEX_ARCHITECTURE.md, docs/specifications/INDEX_IMPLEMENTATION_GUIDE.md
-- ✅ **Columnstore Phase 1 - 90% COMPLETE** (~165 lines production code):
-  - Full TIP Integration: Removed fallback visibility logic
-  - Schema Integration: Added getColumnDataType() helper method
-  - CatalogManager integration for column metadata lookup
-  - Support for all 86 data types (was hardcoded to INT32)
-  - MGA-compliant visibility checks (always uses TIP)
-  - Backward compatible fallbacks for existing tests
-  - Files: src/core/columnstore.cpp, include/scratchbird/core/columnstore.h
-  - Status: Compiled successfully (columnstore.cpp.o: 88KB)
-
-**Recently Completed** (Nov 17, 2025):
-- ✅ **Views Foundation - 80% COMPLETE** (~647 lines production code):
-  - Parser layer: MATERIALIZED, REFRESH, CONCURRENTLY keywords
-  - AST nodes: CreateViewStmt (materialized flag), RefreshMaterializedViewStmt
-  - Bytecode: CREATE_VIEW (0x29), DROP_VIEW (0x2A), REFRESH_MATERIALIZED_VIEW (0x2B)
-  - Executor: executeCreateView (materialized support), executeRefreshMaterializedView
-  - Catalog: createView (materialized param), refreshMaterializedView method
-  - ViewInfo: materialized, materialized_table_id, last_refresh_time fields
-  - Query expansion: SELECT from views rewrites to underlying query
-  - Column projection with explicit column names
-  - 8 parser tests passing (test_materialized_views_parser.cpp)
-  - TODO: Physical table creation, data population, updatable views
-
-**Previously Completed** (Nov 14, 2025):
-- ✅ **Cryptographic Functions - 100% COMPLETE** (~128 lines):
-  - 4 hash functions: MD5, SHA1, SHA256, SHA512
-  - OpenSSL integration with proper NULL handling
-  - Hex-encoded output (lowercase)
-  - Full bytecode generation + executor implementation
-- ✅ **Bit Manipulation Functions + Test Infrastructure - 100% COMPLETE** (~600 lines):
-  - 14 bit manipulation functions (opcodes, bytecode generation, executor handlers)
-  - Byte access: GET_BYTE, SET_BYTE, GET_BIT, SET_BIT
-  - Bitwise operations: BIT_AND, BIT_OR, BIT_XOR, BIT_NOT
-  - Shift operations: BIT_SHIFT_LEFT, BIT_SHIFT_RIGHT, BIT_SHIFT_RIGHT_LOGICAL
-  - Utilities: BIT_COUNT, BIT_LENGTH, BIT_MASK
-  - Test infrastructure fix: Expression parsing-only tests (parser/executor don't support scalar SELECT)
-  - 18 parsing tests passing (tests/integration/test_bit_manipulation.cpp)
-- ⧗ **Statistical Functions - INFRASTRUCTURE READY** (~56 lines bytecode):
-  - 6 functions: STDDEV_SAMP, STDDEV_POP, VAR_SAMP, VAR_POP, CORR, COVAR_POP
-  - Opcodes defined (0xF3-0xF8)
-  - Bytecode generation complete
-  - Executor stubs present (need AggregateAccumulator enhancement)
-- ✅ **Foreign Key Phase C - 100% COMPLETE** (~344 lines production code):
-  - Table-level FOREIGN KEY syntax parser (TableConstraint, ForeignKeyConstraint AST)
-  - Composite FK support (2+ columns) with TABLE_FK opcode (0x94)
-  - Bytecode generation for multi-column FKs (child/parent column vectors)
-  - Executor integration (PendingFK updated to use vectors)
-  - Multi-column validation in checkForeignKeyExists (already supported!)
-  - Multi-column CASCADE/SET NULL/SET DEFAULT actions (already supported!)
-  - MATCH SIMPLE semantics (NULL in any column satisfies constraint)
-  - Named constraint support (CONSTRAINT name FOREIGN KEY ...)
-  - Integration test documentation (test_composite_fk.cpp)
-
-**Previously Completed** (Nov 13, 2025):
-- ✅ **Constraint System COMPLETE** - CHECK, DEFAULT, UNIQUE enforcement (parser to runtime)
-- ✅ **Mathematical Functions COMPLETE** - 29 functions (trigonometric, algebraic, logarithmic)
-
-**Previously Completed** (Nov 12, 2025):
-- ✅ **Security Phase 3.5 COMPLETE** - RLS DML enforcement, SQL Object Permissions, Ownership Chaining
-
-**Previously Completed** (Nov 10-11, 2025):
-- ✅ **Security Phase 3.4 - 71% FRAMEWORK COMPLETE** (~690 lines production, ~600 lines tests):
-  - Row-Level Security (RLS) catalog schema and CRUD operations
-  - CREATE/DROP POLICY and ALTER TABLE RLS SQL syntax
-  - Bytecode generation and executor integration for RLS DDL
-  - Query planner fail-safe enforcement (deny-by-default)
-  - Superuser bypass with forced RLS support
-  - 17 integration tests covering DDL, fail-safe, permissions
-  - Expression evaluation DEFERRED (~11-16 hours, requires TOAST integration)
-- ✅ **Security Phase 3.3 - 100% COMPLETE** (~690 lines):
-  - Column-level permissions with GRANT/REVOKE syntax
-  - Runtime enforcement in SELECT/UPDATE/INSERT
-  - 11 integration tests
-- ✅ **Security Phase 3.2.1-3.2.3** - Query plan security, DML checks, permission cache
-
-**Previously Completed** (Nov 10-11, 2025):
-1. **Security Phase 3.2** - Query plan security integration (10-100x speedup)
-2. **Security Phase 3.1** - External authentication infrastructure
-3. **Security Phase 3.0** - Password hashing, transitive roles, CASCADE
-4. **Security Phase 2** - Full SQL security system (13 statements, 3,321 lines)
-
-**Top Priorities**:
-1. ✅ **Views Foundation - 80% COMPLETE** - Nov 17, 2025 🎉
-2. Complete physical materialization for materialized views (table creation + data population) - **NEXT PRIORITY**
-3. Complete catalog CRUD operations (stored code, emulation tables)
-4. Complete PSQL bytecode execution (procedures, triggers, cursors)
-5. Add CTEs and recursive queries
-6. Constraint enhancements: Single PK validation, catalog metadata storage, ALTER TABLE PK/UNIQUE
-7. FK Phase D (future): Disk persistence, index-based lookups, ALTER TABLE FK, MATCH FULL
-
-**After Phase 1**: Parser separation → embeddable library + standalone SQL application
+**Full Details:** See [OFFICIAL_ROADMAP.md](/OFFICIAL_ROADMAP.md)
 
 ---
 
-**Last Updated**: November 20, 2025
-**Status**: Phase 1 ALPHA - 99% Complete (Views Foundation COMPLETE - Index Documentation COMPLETE)
+**Last Updated:** November 20, 2025
+**Status:** Alpha 1 - ~87% complete (~11% of total project)
