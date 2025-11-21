@@ -19,6 +19,7 @@
 
 #pragma once
 
+#include "scratchbird/core/uuidv7.h"  // For UuidV7Bytes and ID type alias
 #include <memory>
 #include <unordered_map>
 #include <list>
@@ -40,7 +41,6 @@ namespace core {
     class BitmapIndex;
     class ColumnstoreIndex;
     class LSMTree;
-    struct UuidV7Bytes;  // ID is a type alias for UuidV7Bytes, not a class
 }
 }
 
