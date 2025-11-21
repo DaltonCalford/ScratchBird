@@ -1,8 +1,11 @@
 # ScratchBird Official Development Roadmap
 
 **Created:** November 20, 2025
+**Last Updated:** November 20, 2025
 **Status:** AUTHORITATIVE - Official development phases and goals
 **Current Phase:** Alpha 1 (99% Complete)
+
+**Project Nature:** This is an educational/development project with **NO fixed timeframe constraints**. Each stage is complete when ALL defined elements are implemented, not based on time estimates.
 
 ---
 
@@ -47,8 +50,9 @@ PRODUCTION RELEASE
 ## Alpha 1: Engine Functionality (LOCAL OPERATIONS ONLY)
 
 **Status:** 99% Complete
-**Remaining Effort:** 650-1,050 hours (16-26 weeks)
 **Current Document:** `/docs/planning/ALPHA_PHASE1_COMPLETE_IMPLEMENTATION_PLAN.md`
+
+**Completion Policy:** Alpha 1 is NOT complete until ALL local (non-network) functionality is implemented. There are NO "nice to have" deferrals - if a command is local, it MUST be in Alpha 1.
 
 ### Scope Definition
 
@@ -56,7 +60,7 @@ PRODUCTION RELEASE
 - SQL execution (SELECT, INSERT, UPDATE, DELETE, MERGE)
 - DDL operations (CREATE/ALTER/DROP for all object types)
 - Transaction management (BEGIN, COMMIT, ROLLBACK, SAVEPOINT)
-- Constraint enforcement (CHECK, FOREIGN KEY, UNIQUE, PRIMARY KEY, DEFAULT)
+- Constraint enforcement (CHECK, FOREIGN KEY, UNIQUE, PRIMARY KEY, DEFAULT, GENERATED, IDENTITY)
 - Index operations (all 11 index types)
 - Security (users, roles, permissions, RLS)
 - Stored procedures and triggers
@@ -64,6 +68,10 @@ PRODUCTION RELEASE
 - PSQL procedural language
 - Views (regular and materialized)
 - Sequences and generators
+- SQL engine internal commands (SHOW TABLES, SHOW COLUMNS, DESCRIBE, EXPLAIN, etc.)
+- RETURNING clause (INSERT/UPDATE/DELETE with RETURNING)
+- Common Table Expressions (CTEs) and recursive queries
+- Command-line tools (sb_isql, sb_verify, sb_backup, sb_security)
 
 **EXCLUDES** - Network operations:
 - No network listeners
@@ -161,31 +169,34 @@ PRODUCTION RELEASE
 - ❌ Trigger firing (CREATE works, execution doesn't)
 - ❌ Exception handling (TRY/CATCH)
 - ❌ Cursors (result set iteration)
-- **Effort:** 140-180 hours
 
 **Advanced SQL Features**
 - ❌ Common Table Expressions (CTEs) - WITH clause
 - ❌ Recursive queries (WITH RECURSIVE)
 - ❌ MERGE statement (complex upsert)
 - ❌ RETURNING clause (INSERT/UPDATE/DELETE)
-- **Effort:** 140-180 hours
 
 **Missing Constraint Features**
 - ❌ GENERATED columns (STORED/VIRTUAL)
 - ❌ IDENTITY columns (auto-increment)
 - ❌ Deferred constraint checking
-- **Effort:** 80-120 hours
+
+**SQL Engine Internal Commands**
+- ❌ SHOW TABLES / SHOW DATABASES / SHOW COLUMNS
+- ❌ DESCRIBE TABLE
+- ❌ EXPLAIN query plans
+- ❌ System catalog queries (pg_catalog equivalent)
 
 **Command-Line Tools**
 - ❌ sb_isql (interactive SQL shell)
 - ❌ sb_verify (database integrity checker)
 - ❌ sb_backup (backup/restore tool)
 - ❌ sb_security (user/role management tool)
-- **Effort:** 200-300 hours
 
 ### Alpha 1 Completion Criteria
 
-**MUST HAVE** (Blockers):
+**ALL items below MUST be complete before Alpha 1 is considered done:**
+
 1. ✅ All 11 index types functional
 2. ✅ All 86 data types supported
 3. ✅ All 123 built-in functions implemented
@@ -195,15 +206,14 @@ PRODUCTION RELEASE
 7. ❌ PSQL/stored procedure execution
 8. ❌ Trigger firing mechanism
 9. ❌ CTEs and recursive queries
-10. ❌ Basic command-line tools (sb_isql minimum)
+10. ❌ MERGE statement
+11. ❌ RETURNING clause
+12. ❌ GENERATED/IDENTITY columns
+13. ❌ Deferred constraint checking
+14. ❌ SQL engine internal commands (SHOW, DESCRIBE, EXPLAIN)
+15. ❌ Command-line tools (sb_isql, sb_verify, sb_backup, sb_security)
 
-**NICE TO HAVE** (Defer to Alpha 2):
-- MERGE statement
-- RETURNING clause
-- GENERATED/IDENTITY columns
-- Advanced command-line tools
-
-**Estimated Completion:** 650-1,050 hours (16-26 weeks at 40 hrs/week)
+**No deferrals. No "nice to have" items. Alpha 1 complete = ALL local functionality complete.**
 
 ---
 
@@ -212,6 +222,8 @@ PRODUCTION RELEASE
 **Status:** Not Started
 **Dependencies:** Alpha 1 must be 100% complete
 **Goal:** Extract built-in SQL parser into separate library/layer
+
+**Completion Policy:** Alpha 2 is complete when the parser is fully separated and ALL dialect parsers (ScratchBird, PostgreSQL, MySQL, MSSQL, FirebirdSQL) are functional.
 
 ### Architectural Goal
 
@@ -229,6 +241,7 @@ Transform the monolithic embedded engine into a **multi-parser system**:
 │  • PostgreSQL Parser (emulation)            │
 │  • MySQL Parser (emulation)                 │
 │  • MSSQL Parser (emulation)                 │
+│  • FirebirdSQL Parser (emulation)           │
 └─────────────────────────────────────────────┘
                     ↓
            SBLR Bytecode Interface
@@ -281,6 +294,13 @@ Transform the monolithic embedded engine into a **multi-parser system**:
 - Map MSSQL types to ScratchBird types
 - **Note:** IDENTITY → SEQUENCE translation
 
+**FirebirdSQL Parser** (Emulation):
+- FirebirdSQL dialect → SBLR translation
+- This project originated as a FirebirdSQL refactoring
+- Use FirebirdSQL as specification template
+- Map Firebird types to ScratchBird types
+- Handle Firebird-specific features (PSQL procedures, generators, etc.)
+
 **4. Shared Components**
 - Common lexer utilities (where applicable)
 - Shared semantic analysis for type checking
@@ -289,58 +309,64 @@ Transform the monolithic embedded engine into a **multi-parser system**:
 
 ### Implementation Phases
 
-**Phase 2.1: Engine API Refactoring** (80-120 hours)
+**Phase 2.1: Engine API Refactoring**
 - Remove SQL parsing from engine core
 - Define clean SBLR-only API
 - Update all engine internal calls
 - Comprehensive API testing
 
-**Phase 2.2: ScratchBird Parser Extraction** (120-160 hours)
+**Phase 2.2: ScratchBird Parser Extraction**
 - Extract parser into separate library
 - Create `libsb_parser_scratchbird.so`
 - Define parser plugin interface
 - Integration testing with engine
 
-**Phase 2.3: PostgreSQL Parser** (200-300 hours)
+**Phase 2.3: PostgreSQL Parser**
 - Implement PostgreSQL grammar
 - PostgreSQL → SBLR bytecode translation
 - Type mapping layer
 - Function mapping layer
 - Comprehensive testing against PostgreSQL test suite
 
-**Phase 2.4: MySQL Parser** (180-250 hours)
+**Phase 2.4: MySQL Parser**
 - Implement MySQL grammar
 - MySQL → SBLR bytecode translation
 - Type and function mapping
 - Testing against MySQL test suite
 
-**Phase 2.5: MSSQL Parser** (180-250 hours)
+**Phase 2.5: MSSQL Parser**
 - Implement T-SQL grammar
 - MSSQL → SBLR bytecode translation
 - Type and function mapping
 - Testing against MSSQL test suite
 
-**Phase 2.6: Parser Registry & Dynamic Loading** (60-80 hours)
+**Phase 2.6: FirebirdSQL Parser**
+- Implement FirebirdSQL grammar
+- FirebirdSQL → SBLR bytecode translation
+- Type and function mapping
+- PSQL procedure mapping
+- Testing against FirebirdSQL test suite
+
+**Phase 2.7: Parser Registry & Dynamic Loading**
 - Parser factory pattern
 - Dynamic library loading
 - Parser capability negotiation
 - Parser version compatibility
 
-**Total Estimated Effort:** 820-1,160 hours (20-29 weeks)
-
 ### Completion Criteria
 
-**MUST HAVE**:
+**ALL items below MUST be complete before Alpha 2 is considered done:**
+
 1. Engine accepts ONLY SBLR bytecode (no SQL strings)
 2. ScratchBird parser as separate library
-3. At least 2 emulation parsers functional (PostgreSQL + one of MySQL/MSSQL)
+3. ALL emulation parsers functional: PostgreSQL, MySQL, MSSQL, FirebirdSQL
 4. Parser plugin architecture with runtime selection
 5. All Alpha 1 features accessible through all parsers
+6. Parser factory pattern implemented
+7. Dynamic library loading working
+8. Comprehensive testing against native test suites for each dialect
 
-**NICE TO HAVE**:
-- All 4 parsers complete (ScratchBird + PostgreSQL + MySQL + MSSQL)
-- Oracle parser (future)
-- Firebird parser (future)
+**No deferrals. Alpha 2 complete = ALL parsers functional.**
 
 ---
 
@@ -349,6 +375,8 @@ Transform the monolithic embedded engine into a **multi-parser system**:
 **Status:** Not Started
 **Dependencies:** Alpha 2 must be 100% complete
 **Goal:** Add network capability with wire protocol support
+
+**Completion Policy:** Alpha 3 is complete when ALL wire protocols are functional and clients can connect successfully.
 
 ### Architectural Goal
 
@@ -451,72 +479,71 @@ Transform the multi-parser embedded engine into a **networked database server**:
 
 ### Implementation Phases
 
-**Phase 3.1: Network Infrastructure** (100-140 hours)
+**Phase 3.1: Network Infrastructure**
 - Socket management (TCP/IP, Unix domain sockets)
 - Thread pool for connection handling
 - Connection state machine
 - Session management layer
 - **Reference:** `/docs/specifications/NETWORK_LAYER_SPEC.md`
 
-**Phase 3.2: PostgreSQL Wire Protocol** (180-250 hours)
+**Phase 3.2: PostgreSQL Wire Protocol**
 - Protocol decoder/encoder
 - Authentication handlers
 - Query execution integration
 - Result set serialization
 - Comprehensive testing with psql, pgAdmin, etc.
 
-**Phase 3.3: MySQL Wire Protocol** (160-220 hours)
+**Phase 3.3: MySQL Wire Protocol**
 - Protocol decoder/encoder
 - Authentication handlers
 - Query execution integration
 - Result set serialization
 - Testing with mysql client, MySQL Workbench
 
-**Phase 3.4: TDS Wire Protocol (MSSQL)** (180-250 hours)
+**Phase 3.4: TDS Wire Protocol (MSSQL)**
 - Protocol decoder/encoder
 - Authentication handlers
 - Query execution integration
 - Result set serialization
 - Testing with SSMS, Azure Data Studio
 
-**Phase 3.5: ScratchBird Native Protocol** (120-160 hours)
+**Phase 3.5: ScratchBird Native Protocol**
 - Design native protocol
 - Implement decoder/encoder
 - Security features
 - Performance optimizations
 - Client library development
 
-**Phase 3.6: Security & Authentication** (80-120 hours)
+**Phase 3.6: Security & Authentication**
 - SSL/TLS support (OpenSSL)
 - Certificate management
 - Integration with Alpha 1 security system
 - Password encryption in transit
 - **Reference:** `/docs/specifications/AUTH_CERTIFICATE_TLS.md`
 
-**Phase 3.7: Performance & Testing** (100-140 hours)
+**Phase 3.7: Performance & Testing**
 - Load testing
 - Connection storm handling
 - Memory leak detection
 - Protocol compliance testing
 - Interoperability testing
 
-**Total Estimated Effort:** 920-1,280 hours (23-32 weeks)
-
 ### Completion Criteria
 
-**MUST HAVE**:
-1. Functional network listener on all 4 protocols
+**ALL items below MUST be complete before Alpha 3 is considered done:**
+
+1. Functional network listener on all 4 protocols (PostgreSQL, MySQL, TDS/MSSQL, ScratchBird native)
 2. Client authentication working for all protocols
 3. Query execution through network for all dialects
 4. Connection pooling functional
-5. SSL/TLS support
+5. SSL/TLS support implemented
 6. Graceful connection handling (connect, disconnect, errors)
 7. Successfully tested with native clients (psql, mysql, SSMS)
+8. Connection monitoring and statistics
+9. Load testing completed
+10. No memory leaks detected
 
-**NICE TO HAVE**:
-- Advanced features (LISTEN/NOTIFY, async queries)
-- Native ScratchBird client libraries (C++, Python, Node.js)
-- Connection monitoring and statistics
+**No deferrals. Alpha 3 complete = ALL network functionality working.**
 
 ---
 
@@ -531,6 +558,8 @@ Transform the multi-parser embedded engine into a **networked database server**:
 **Status:** Not Started
 **Dependencies:** Alpha 3 must be 100% complete
 **Goal:** Multiple servers acting as single integrated platform
+
+**Completion Policy:** Beta 1 is complete when cluster functionality is fully operational with automatic sharding and failover.
 
 ### Architectural Goal
 
@@ -614,58 +643,57 @@ Transform single-server system into a **distributed cluster**:
 
 ### Implementation Phases
 
-**Phase 1.1: Cluster Membership** (150-200 hours)
+**Phase 1.1: Cluster Membership**
 - Gossip protocol implementation
 - Node discovery and registration
 - Health monitoring
 
-**Phase 1.2: Sharding Infrastructure** (200-280 hours)
+**Phase 1.2: Sharding Infrastructure**
 - Shard mapping catalog
 - Hash and range partitioning
 - Shard assignment algorithms
 - Migration framework
 
-**Phase 1.3: Distributed Transactions** (250-350 hours)
+**Phase 1.3: Distributed Transactions**
 - Two-phase commit implementation
 - Transaction coordinator
 - Distributed deadlock detection
 - Recovery protocols
 
-**Phase 1.4: Query Routing** (200-280 hours)
+**Phase 1.4: Query Routing**
 - Query analyzer (determine affected shards)
 - Multi-shard query execution
 - Result aggregation
 - Distributed query optimization
 
-**Phase 1.5: Replication** (180-250 hours)
+**Phase 1.5: Replication**
 - Write-ahead log (WAL) streaming
 - Replica synchronization
 - Lag monitoring
 - Failover mechanisms
 
-**Phase 1.6: Cluster Tools & Testing** (120-180 hours)
+**Phase 1.6: Cluster Tools & Testing**
 - Management tools
 - Monitoring and observability
 - Chaos testing (network partitions, node failures)
 - Load testing
 
-**Total Estimated Effort:** 1,100-1,540 hours (27-38 weeks)
-
 ### Completion Criteria
 
-**MUST HAVE**:
+**ALL items below MUST be complete before Beta 1 is considered done:**
+
 1. Cluster of 3+ nodes functional
-2. Automatic sharding working
-3. Distributed transactions (2PC)
+2. Automatic sharding working (hash and range-based)
+3. Distributed transactions (2PC) fully operational
 4. Query routing and aggregation
 5. Replication and failover
-6. Cluster management tools
+6. Cluster management tools (sb_cluster_* suite)
 7. No data loss on single node failure
+8. Zero-downtime shard rebalancing
+9. Chaos testing passed (network partitions, node failures)
+10. Load testing completed
 
-**NICE TO HAVE**:
-- Multi-master replication
-- Advanced sharding strategies
-- Zero-downtime shard rebalancing
+**No deferrals. Beta 1 complete = ALL cluster functionality working.**
 
 ---
 
@@ -674,6 +702,8 @@ Transform single-server system into a **distributed cluster**:
 **Status:** Not Started
 **Dependencies:** Beta 1 must be 100% complete
 **Goal:** Add non-ScratchBird servers to cluster
+
+**Completion Policy:** Beta 2 is complete when non-ScratchBird databases can join the cluster and participate in federated queries.
 
 ### Architectural Goal
 
@@ -725,54 +755,59 @@ Enable **mixed database clusters**:
 
 ### Implementation Phases
 
-**Phase 2.1: FDW Framework** (100-140 hours)
+**Phase 2.1: FDW Framework**
 - Abstract FDW interface
 - FDW lifecycle management
 - Capability negotiation
 
-**Phase 2.2: PostgreSQL Integration** (120-160 hours)
+**Phase 2.2: PostgreSQL Integration**
 - PostgreSQL FDW implementation
 - Type mapping
 - Query pushdown
 - Testing with real PostgreSQL instances
 
-**Phase 2.3: MySQL Integration** (100-140 hours)
+**Phase 2.3: MySQL Integration**
 - MySQL FDW implementation
 - Type mapping
 - Query pushdown
 
-**Phase 2.4: MSSQL Integration** (120-160 hours)
+**Phase 2.4: MSSQL Integration**
 - MSSQL FDW implementation (via TDS)
 - Type mapping
 - Query pushdown
 
-**Phase 2.5: Federated Query Engine** (200-280 hours)
+**Phase 2.5: FirebirdSQL Integration**
+- FirebirdSQL FDW implementation
+- Type mapping
+- Query pushdown
+- Testing with real Firebird instances
+
+**Phase 2.6: Federated Query Engine**
 - Cross-database query planner
 - Federated execution engine
 - Result merging and type coercion
 - Cost-based optimization
 
-**Phase 2.6: Distributed Transactions (XA)** (150-200 hours)
+**Phase 2.7: Distributed Transactions (XA)**
 - XA protocol implementation
 - Heterogeneous 2PC
 - SAGA pattern fallback
 - Recovery mechanisms
 
-**Total Estimated Effort:** 790-1,080 hours (20-27 weeks)
-
 ### Completion Criteria
 
-**MUST HAVE**:
-1. ScratchBird can join with PostgreSQL and one of MySQL/MSSQL
-2. FDW for at least 2 external databases
-3. Cross-database transactions (XA or SAGA)
-4. Query federation working
-5. Type mapping complete
+**ALL items below MUST be complete before Beta 2 is considered done:**
 
-**NICE TO HAVE**:
-- All 3 FDWs complete (PostgreSQL + MySQL + MSSQL)
-- Oracle FDW
-- Bi-directional data sync
+1. FDW for ALL supported external databases: PostgreSQL, MySQL, MSSQL, FirebirdSQL
+2. Cross-database transactions (XA and SAGA patterns)
+3. Query federation working across all database types
+4. Type mapping complete for all databases
+5. Bi-directional data sync operational
+6. Conflict resolution strategies implemented
+7. Testing completed with real external database instances
+8. Performance benchmarking across heterogeneous queries
+
+**No deferrals. Beta 2 complete = ALL heterogeneous cluster features working.**
 
 ---
 
@@ -781,6 +816,8 @@ Enable **mixed database clusters**:
 **Status:** Not Started
 **Dependencies:** Beta 2 must be 100% complete
 **Goal:** Enterprise-grade security and advanced indexing
+
+**Completion Policy:** Beta 3 is complete when ALL encryption features and advanced indexes (per specifications) are fully implemented.
 
 ### Part A: Database Encryption & Key Management
 
@@ -856,67 +893,72 @@ Enable **mixed database clusters**:
 
 ### Implementation Phases
 
-**Phase 3.1: Key Management Infrastructure** (150-210 hours)
+**Phase 3.1: Key Management Infrastructure**
 - Key server design and implementation
 - Key rotation mechanism
 - HSM integration framework
 
-**Phase 3.2: Field-Level Encryption** (180-250 hours)
+**Phase 3.2: Field-Level Encryption**
 - Column encryption at rest
 - Encrypted index support
 - Decryption on query
 
-**Phase 3.3: Full Database Encryption** (120-180 hours)
+**Phase 3.3: Full Database Encryption**
 - File-level encryption
 - Encrypted backup/restore
 - Performance optimization
 
-**Phase 3.4: Bloom Filter Index** (80-120 hours)
+**Phase 3.4: Bloom Filter Index**
 - Implementation per specification
 - Integration with query planner
 - Testing and benchmarking
 
-**Phase 3.5: Advanced Full-Text Search** (100-150 hours)
+**Phase 3.5: Advanced Full-Text Search**
 - Multi-language stemming
 - Phrase search optimization
 - Relevance tuning
 
-**Phase 3.6: Advanced Geospatial** (120-180 hours)
+**Phase 3.6: Advanced Geospatial**
 - 3D spatial indexes
 - Temporal-spatial support
 - Testing with real-world GIS data
 
-**Phase 3.7: Time-Series Indexes** (100-150 hours)
+**Phase 3.7: Time-Series Indexes**
 - Index structure optimized for time-series
 - Integration with query planner
 - Performance benchmarking
 
-**Phase 3.8: Additional Advanced Indexes** (As needed)
-- Based on customer demand
-- Machine learning indexes
-- Graph indexes
+**Phase 3.8: Machine Learning Indexes**
+- Learned indexes (replace B-trees with ML models)
+- Adaptive index selection
 
-**Total Estimated Effort:** 850-1,240 hours (21-31 weeks)
+**Phase 3.9: Graph Indexes**
+- For graph database queries
+- Neighbor traversal optimization
 
 ### Completion Criteria
 
-**MUST HAVE (Encryption)**:
+**ALL items below MUST be complete before Beta 3 is considered done:**
+
+**Encryption:**
 1. Key management server operational
 2. Field-level encryption functional
 3. Key rotation working
 4. Full database encryption at rest
 5. Encrypted backups
+6. HSM integration complete
+7. Multi-tenant key isolation
+8. Encrypted index support
 
-**MUST HAVE (Advanced Indexes)**:
-1. Bloom Filter index implemented
-2. Advanced full-text search
-3. Advanced geospatial (3D)
-4. At least 1 time-series optimization
+**Advanced Indexes:**
+1. Bloom Filter index implemented (per specification)
+2. Advanced full-text search (multi-language, phrase search, fuzzy matching)
+3. Advanced geospatial (3D, temporal-spatial)
+4. Time-series indexes fully optimized
+5. Machine learning indexes operational
+6. Graph indexes implemented
 
-**NICE TO HAVE**:
-- Machine learning indexes
-- Graph indexes
-- Additional specialized indexes
+**No deferrals. Beta 3 complete = ALL encryption and advanced index features working.**
 
 ---
 
@@ -1020,8 +1062,6 @@ Enable **mixed database clusters**:
 - No showstopper issues reported
 - Feature requests logged for post-1.0
 
-**Estimated Duration:** 12-16 weeks
-
 ---
 
 ## RC2: Iterative Bug Fixing
@@ -1076,8 +1116,6 @@ Enable **mixed database clusters**:
 - Performance meets or exceeds targets
 - → **Consider for Gold Release** (skip RC3)
 
-**Estimated Duration:** 6-10 weeks
-
 ---
 
 ## RC3: Final Stabilization
@@ -1118,8 +1156,6 @@ Enable **mixed database clusters**:
 - Monitoring and observability complete
 - Support documentation complete
 - **Unanimous agreement from development team that it's ready**
-
-**Estimated Duration:** 4-6 weeks
 
 ---
 
@@ -1219,25 +1255,6 @@ Enable **mixed database clusters**:
 - New major features
 - Advanced analytics capabilities
 - Machine learning integration
-
----
-
-## Effort Summary
-
-| Phase | Estimated Effort | Timeline (40 hrs/week) |
-|-------|------------------|------------------------|
-| **Alpha 1** | 650-1,050 hours | 16-26 weeks |
-| **Alpha 2** | 820-1,160 hours | 20-29 weeks |
-| **Alpha 3** | 920-1,280 hours | 23-32 weeks |
-| **Beta 1** | 1,100-1,540 hours | 27-38 weeks |
-| **Beta 2** | 790-1,080 hours | 20-27 weeks |
-| **Beta 3** | 850-1,240 hours | 21-31 weeks |
-| **RC1** | 12-16 weeks | 12-16 weeks |
-| **RC2** | 6-10 weeks | 6-10 weeks |
-| **RC3** | 4-6 weeks (conditional) | 4-6 weeks |
-| **TOTAL** | 5,130-7,350 hours | 149-215 weeks (2.9-4.1 years) |
-
-**With 3 developers @ 40 hrs/week:** 50-72 weeks (1.0-1.4 years)
 
 ---
 
