@@ -20434,7 +20434,7 @@ namespace scratchbird
 
                 case IndexType::SPGIST:
                 {
-                    auto spgist = getOrOpenIndex<core::SpGistIndex>(index_uuid, type, index_info.idx_root_page, ctx);
+                    auto spgist = getOrOpenIndex<core::SPGiSTIndex>(index_uuid, type, index_info.idx_root_page, ctx);
                     if (spgist)
                     {
                         return spgist->insert(key, tid, xmin, ctx);
@@ -20583,7 +20583,7 @@ namespace scratchbird
 
                 case IndexType::SPGIST:
                 {
-                    auto spgist = getOrOpenIndex<core::SpGistIndex>(index_uuid, type, index_info.idx_root_page, ctx);
+                    auto spgist = getOrOpenIndex<core::SPGiSTIndex>(index_uuid, type, index_info.idx_root_page, ctx);
                     if (spgist)
                     {
                         return spgist->search(key, current_xid, results_out, ctx);
@@ -20719,7 +20719,7 @@ namespace scratchbird
 
                 case IndexType::SPGIST:
                 {
-                    auto spgist = getOrOpenIndex<core::SpGistIndex>(index_uuid, type, index_info.idx_root_page, ctx);
+                    auto spgist = getOrOpenIndex<core::SPGiSTIndex>(index_uuid, type, index_info.idx_root_page, ctx);
                     if (spgist)
                     {
                         return spgist->remove(key, tid, xmax, ctx);
@@ -20887,7 +20887,7 @@ namespace scratchbird
 
                 case IndexType::SPGIST:
                 {
-                    auto spgist = getOrOpenIndex<core::SpGistIndex>(index_uuid, type, index_info.idx_root_page, ctx);
+                    auto spgist = getOrOpenIndex<core::SPGiSTIndex>(index_uuid, type, index_info.idx_root_page, ctx);
                     if (spgist)
                     {
                         // SP-GiST scan
@@ -20975,32 +20975,42 @@ namespace scratchbird
                 }
 
                 case IndexType::HASH:
+                {
                     // Hash indexes don't support range scans
                     core::SET_ERROR_CONTEXT(ctx, core::Status::NOT_SUPPORTED,
                                           "Hash indexes do not support range scans");
                     return core::Status::NOT_SUPPORTED;
+                }
 
                 case IndexType::GIN:
+                {
                     // GIN (Generalized Inverted Index) doesn't support range scans
                     core::SET_ERROR_CONTEXT(ctx, core::Status::NOT_SUPPORTED,
                                           "GIN indexes do not support range scans");
                     return core::Status::NOT_SUPPORTED;
+                }
 
                 case IndexType::HNSW:
+                {
                     // HNSW uses k-NN search, not range scans
                     core::SET_ERROR_CONTEXT(ctx, core::Status::NOT_SUPPORTED,
                                           "HNSW indexes do not support range scans (use k-NN search)");
                     return core::Status::NOT_SUPPORTED;
+                }
 
                 case IndexType::COLUMNSTORE:
+                {
                     // Columnstore uses specialized scan operations
                     core::SET_ERROR_CONTEXT(ctx, core::Status::NOT_SUPPORTED,
                                           "Columnstore uses specialized scan operations");
                     return core::Status::NOT_SUPPORTED;
+                }
 
                 default:
+                {
                     core::SET_ERROR_CONTEXT(ctx, core::Status::INTERNAL_ERROR, "Unknown index type");
                     return core::Status::INTERNAL_ERROR;
+                }
             }
         }
 
