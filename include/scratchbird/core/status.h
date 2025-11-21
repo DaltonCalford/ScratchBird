@@ -25,10 +25,13 @@ namespace scratchbird::core
         PAGE_FULL = 4001,         // No space available in page
         NOT_FOUND = 4002,         // Tuple/item not found
         NOT_IMPLEMENTED = 4003,   // Feature not implemented
+        NOT_SUPPORTED = 4007,     // Operation not supported for this index/feature type
         TYPE_MISMATCH = 4004,     // Type mismatch
         CONSTRAINT_VIOLATION = 4005, // Constraint violation
         OUT_OF_RANGE = 4006,      // Value out of range
         COMPRESSION_ERROR = 5001, // Compression/decompression failed
+        INTERNAL_ERROR = 5002,    // Internal error (unexpected state)
+        INDEX_NOT_FOUND = 5003,   // Index not found in catalog
     };
 
 } // namespace scratchbird::core
