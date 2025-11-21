@@ -975,14 +975,42 @@ Enable **mixed database clusters**:
 
 **Rationale:** The advanced indexes in Beta 3 (Graph, Vector, Time-Series, etc.) enable NoSQL functionality, but require dedicated query dialects beyond SQL.
 
-**1. Graph Query Dialect**
-- Implement graph query language (Cypher-like or Gremlin-like syntax)
+**Note on Multi-Dialect Support:** Since the parser is architecturally separated from the engine (Alpha 2), ScratchBird can support MULTIPLE query dialects for the same underlying data model. For example, graph data can be queried via Cypher, Gremlin, AND a native ScratchBird graph syntax.
+
+**1. Graph Database Query Dialects**
+
+Research and implement MULTIPLE graph query languages leveraging the same underlying graph index infrastructure:
+
+**Cypher Dialect (Neo4j compatibility)**
+- Full Cypher query language implementation
+- Pattern matching syntax: `MATCH (n:Person)-[:KNOWS]->(m:Person)`
+- Path finding: `shortestPath()`, `allShortestPaths()`
+- Graph-specific aggregations
+- Cypher → SBLR bytecode translation
+- Testing with Neo4j compatibility benchmarks
+
+**Gremlin Dialect (Apache TinkerPop compatibility)**
+- Gremlin traversal language implementation
+- Imperative traversal API: `g.V().has('name','alice').out('knows')`
+- Step-based query execution
+- Graph algorithms (PageRank, community detection)
+- Gremlin → SBLR bytecode translation
+- Testing with TinkerPop-compatible applications
+
+**ScratchBird Native Graph Dialect**
+- Custom graph query syntax optimized for ScratchBird
+- SQL-like extensions for graph operations
+- Integration with standard SQL queries (hybrid queries)
+- Performance optimizations specific to MGA architecture
+- May use best ideas from both Cypher and Gremlin
+
+**Graph Infrastructure (shared across all dialects)**
 - Node and edge traversal operations
-- Pattern matching queries
-- Path finding algorithms (shortest path, all paths, etc.)
+- Pattern matching engine
+- Path finding algorithms (Dijkstra, A*, BFS, DFS)
 - Graph-specific aggregations
 - Integration with graph indexes from Beta 3
-- **Reference:** Graph database query specifications (to be created)
+- **Reference:** Graph database query specifications (to be created during research phase)
 
 **2. Vector Similarity Search Extensions**
 - Vector query syntax (k-NN, ANN queries)
@@ -1011,6 +1039,93 @@ Enable **mixed database clusters**:
 - Downsampling and aggregation functions
 - Retention policies
 - Integration with time-series indexes from Beta 3
+- **Use Cases:** IoT data, metrics, monitoring, financial tick data
+
+**6. Column-Family Store Interface**
+
+Research and implement Cassandra/HBase-style wide-column storage:
+
+- **CQL Dialect (Cassandra Query Language compatibility)**
+  - Cassandra-compatible query syntax
+  - Wide-column data model support
+  - Partition keys and clustering columns
+  - CQL → SBLR bytecode translation
+  - Testing with Cassandra-compatible applications
+
+- **Column-Family Operations**
+  - Wide-row storage patterns
+  - Column-oriented retrieval
+  - Super columns and column families
+  - Integration with Columnstore index from Alpha 1
+  - Sparse column support
+
+- **Use Cases:** Wide-column analytics, sparse data, high-write throughput scenarios
+- **Reference:** Column-family store specifications (to be created during research phase)
+
+**7. Full-Text Search Engine Interface**
+
+Research and implement Elasticsearch/Solr-style search capabilities:
+
+- **Search Query DSL**
+  - Query DSL similar to Elasticsearch
+  - Boolean queries (must, should, must_not, filter)
+  - Full-text search with scoring
+  - Fuzzy matching and wildcards
+  - Aggregations and faceting
+  - Search DSL → SBLR bytecode translation
+
+- **Search Infrastructure**
+  - Advanced text analysis and tokenization
+  - Relevance scoring (TF-IDF, BM25)
+  - Multi-field search
+  - Highlighting and snippets
+  - Integration with GIN/GiST indexes and text search types from Alpha 1
+  - Real-time indexing
+
+- **Use Cases:** Log analysis, content search, e-commerce product search, autocomplete
+- **Reference:** Search engine specifications (to be created during research phase)
+
+**8. Stream Processing Interface**
+
+Research and implement stream processing capabilities:
+
+- **Streaming SQL Extensions**
+  - Window functions for streaming data
+  - Event time vs. processing time semantics
+  - Watermarks and late data handling
+  - Continuous queries
+  - Stream joins and aggregations
+
+- **Stream Infrastructure**
+  - In-memory stream buffers
+  - State management for streaming operators
+  - Exactly-once semantics
+  - Integration with Kafka (from Part B)
+  - Integration with time-series indexes
+
+- **Use Cases:** Real-time analytics, event processing, monitoring dashboards
+- **Reference:** Stream processing specifications (to be created during research phase)
+
+**9. Object/Blob Store Interface**
+
+Research and implement object storage capabilities:
+
+- **S3-Compatible API**
+  - Bucket and object operations
+  - Multipart uploads
+  - Object metadata and tagging
+  - Versioning
+  - S3 API → SBLR bytecode translation
+
+- **Blob Storage Operations**
+  - Large binary object storage
+  - Content-addressable storage
+  - Deduplication
+  - Integration with TOAST from Alpha 1
+  - Tiered storage (hot/warm/cold)
+
+- **Use Cases:** Media storage, backups, data lakes
+- **Reference:** Object store specifications (to be created during research phase)
 
 ### Part B: Integration & Messaging Tools
 
@@ -1052,74 +1167,210 @@ Enable **mixed database clusters**:
 
 ### Implementation Phases
 
-**Phase 4.1: Graph Query Dialect**
-- Design graph query language
-- Implement parser for graph queries
-- Graph query → SBLR bytecode translation
-- Integration with graph indexes
-- Testing with graph database benchmarks
+**Phase 4.0: NoSQL Research & Specification**
+- Research each NoSQL model (Graph, Vector, Document, Key-Value, Time-Series, Column-Family, Search, Stream, Object/Blob)
+- Study existing implementations (Neo4j, Cassandra, Elasticsearch, etc.)
+- Create technical specifications for each model
+- Define query language syntax for each dialect
+- Design bytecode mappings (dialect → SBLR)
+- Identify integration points with existing indexes
+- Document use cases and benchmarks
+
+**Phase 4.1: Graph Query Dialects**
+- **Cypher Implementation**
+  - Implement Cypher parser
+  - Pattern matching engine
+  - Cypher → SBLR bytecode translation
+  - Testing with Neo4j compatibility suite
+- **Gremlin Implementation**
+  - Implement Gremlin parser
+  - Traversal execution engine
+  - Gremlin → SBLR bytecode translation
+  - Testing with TinkerPop test suite
+- **ScratchBird Native Graph Dialect**
+  - Design native graph syntax
+  - Hybrid SQL/graph query support
+  - Implementation and testing
+- **Shared Infrastructure**
+  - Integration with graph indexes from Beta 3
+  - Graph algorithm library
+  - Performance optimization
+  - Benchmarking (LDBC Social Network, etc.)
 
 **Phase 4.2: Vector Query Extensions**
 - Vector query syntax design
 - k-NN and ANN query support
 - Integration with HNSW index
-- Hybrid query optimization
+- Hybrid queries (vector + traditional SQL)
+- Similarity functions implementation
 - Testing with embedding datasets
+- Benchmarking (ANN benchmarks)
 
-**Phase 4.3: Document & Key-Value Interfaces**
-- Document query syntax implementation
-- Key-value API implementation
-- Integration with existing types and indexes
-- Testing and benchmarking
+**Phase 4.3: Document Store Interface**
+- MongoDB-compatible query syntax
+- JSON path queries
+- Document validation
+- Integration with JSONB type
+- Collection operations
+- Testing with MongoDB compatibility suite
 
-**Phase 4.4: Time-Series Query Extensions**
+**Phase 4.4: Key-Value Interface**
+- Redis-compatible command set
+- Atomic operations
+- TTL support
+- Pattern scanning
+- Integration with Hash index
+- Testing with Redis protocol
+
+**Phase 4.5: Time-Series Query Extensions**
 - Time-window query syntax
 - Downsampling functions
 - Retention policy engine
-- Testing with time-series workloads
+- Integration with time-series indexes
+- Testing with time-series workloads (InfluxDB benchmarks)
 
-**Phase 4.5: Kafka Integration**
+**Phase 4.6: Column-Family Store Interface**
+- **CQL Implementation**
+  - Cassandra Query Language parser
+  - Wide-column data model
+  - CQL → SBLR bytecode translation
+  - Testing with Cassandra compatibility suite
+- **Column-Family Operations**
+  - Integration with Columnstore index
+  - Sparse column support
+  - Performance optimization
+  - Benchmarking (YCSB)
+
+**Phase 4.7: Full-Text Search Engine Interface**
+- **Search DSL Implementation**
+  - Elasticsearch-compatible query DSL
+  - Boolean queries, scoring
+  - Search DSL → SBLR bytecode translation
+- **Search Infrastructure**
+  - Text analysis and tokenization
+  - Relevance scoring (TF-IDF, BM25)
+  - Real-time indexing
+  - Integration with GIN/GiST indexes
+  - Testing and benchmarking
+
+**Phase 4.8: Stream Processing Interface**
+- Streaming SQL extensions
+- Window functions for streams
+- Event time semantics
+- Watermarks and late data
+- Continuous queries
+- Integration with Kafka
+- Testing with streaming benchmarks
+
+**Phase 4.9: Object/Blob Store Interface**
+- S3-compatible API implementation
+- Bucket and object operations
+- Multipart uploads
+- Integration with TOAST
+- Tiered storage
+- Testing with S3 compatibility suite
+
+**Phase 4.10: Kafka Integration**
 - Kafka client library integration
 - CDC → Kafka pipeline
 - Kafka → ScratchBird ingestion
 - Schema registry support
 - Testing with real Kafka clusters
 
-**Phase 4.6: Message Queue & Agent Support**
+**Phase 4.11: Message Queue & Agent Support**
 - RabbitMQ/Redis integration
-- Agent API implementation
+- Agent API implementation (RESTful)
 - GraphQL endpoint
 - Authentication/authorization
+- Natural language query interface (experimental)
 - Testing and documentation
 
-**Phase 4.7: Storage & Observability**
-- Object storage integration
-- Prometheus/Grafana integration
-- OpenTelemetry implementation
+**Phase 4.12: Observability & Monitoring**
+- Prometheus metrics exporter
+- Grafana dashboard templates
+- OpenTelemetry integration
+- Distributed tracing support
 - Testing and performance validation
 
 ### Completion Criteria
 
 **ALL items below MUST be complete before Beta 4 is considered done:**
 
-**NoSQL Dialects:**
-1. Graph query dialect fully functional
-2. Vector similarity search operations working
-3. Document store query interface operational
-4. Key-value query interface complete
-5. Time-series query extensions implemented
-6. All dialects tested with appropriate benchmarks
+**Research & Specifications:**
+1. Technical specifications created for all 9 NoSQL models
+2. Query language syntax documented for each dialect
+3. Bytecode mappings designed (dialect → SBLR)
+4. Use cases and benchmarks identified
+
+**Graph Database:**
+1. Cypher dialect fully functional (Neo4j compatibility)
+2. Gremlin dialect fully functional (TinkerPop compatibility)
+3. ScratchBird native graph dialect operational
+4. All graph dialects tested with appropriate benchmarks
+5. Graph algorithm library complete
+
+**Vector Database:**
+1. Vector similarity search operations working
+2. k-NN and ANN queries functional
+3. Hybrid vector + SQL queries operational
+4. Tested with embedding datasets
+
+**Document Store:**
+1. MongoDB-compatible query interface operational
+2. JSON path queries working
+3. Document validation functional
+4. Tested with MongoDB compatibility suite
+
+**Key-Value Store:**
+1. Redis-compatible interface complete
+2. Atomic operations functional
+3. TTL support working
+4. Tested with Redis protocol
+
+**Time-Series Database:**
+1. Time-series query extensions implemented
+2. Time-window queries functional
+3. Downsampling and retention policies working
+4. Tested with time-series benchmarks
+
+**Column-Family Store:**
+1. CQL (Cassandra Query Language) dialect functional
+2. Wide-column data model operational
+3. Partition keys and clustering columns working
+4. Tested with Cassandra compatibility suite
+5. Benchmarked with YCSB
+
+**Full-Text Search Engine:**
+1. Elasticsearch-compatible query DSL functional
+2. Boolean queries and scoring working
+3. Text analysis and tokenization complete
+4. Real-time indexing operational
+5. Tested with search benchmarks
+
+**Stream Processing:**
+1. Streaming SQL extensions implemented
+2. Window functions for streams working
+3. Event time semantics and watermarks functional
+4. Continuous queries operational
+5. Tested with streaming benchmarks
+
+**Object/Blob Store:**
+1. S3-compatible API functional
+2. Bucket and object operations working
+3. Multipart uploads operational
+4. Tiered storage implemented
+5. Tested with S3 compatibility suite
 
 **Integration Tools:**
 1. Kafka producer/consumer operational
 2. CDC → Kafka pipeline working
 3. Message queue integrations complete (RabbitMQ, Redis)
-4. Agent API fully functional
+4. Agent API fully functional (RESTful)
 5. GraphQL endpoint operational
-6. Object storage integration working
+6. Natural language query interface (experimental) implemented
 7. Observability stack complete (Prometheus, Grafana, OpenTelemetry)
 
-**No deferrals. Beta 4 complete = ALL multi-model and integration features working.**
+**No deferrals. Beta 4 complete = ALL 9 NoSQL models + ALL integration features working.**
 
 ---
 
@@ -1603,13 +1854,17 @@ ScratchBird is being designed as a **universal multi-model database engine** tha
    - FirebirdSQL emulation (dialect compatibility)
    - Clients can use their native tools without modification
 
-2. **Multi-Model NoSQL Support**
-   - Graph database with dedicated query language
-   - Vector similarity search (semantic search, AI embeddings)
-   - Document store (MongoDB-like operations)
-   - Key-value store (Redis-like operations)
-   - Time-series optimizations
-   - ALL on the same underlying MGA engine
+2. **Multi-Model NoSQL Support (9 Models)**
+   - **Graph Database** - Cypher (Neo4j), Gremlin (TinkerPop), and ScratchBird native dialects
+   - **Vector Database** - Similarity search for AI embeddings and semantic search
+   - **Document Store** - MongoDB-compatible JSON document operations
+   - **Key-Value Store** - Redis-compatible atomic operations
+   - **Time-Series Database** - Optimized for temporal data with retention policies
+   - **Column-Family Store** - Cassandra-compatible wide-column storage (CQL)
+   - **Full-Text Search Engine** - Elasticsearch-compatible search DSL
+   - **Stream Processing** - Continuous queries and event stream processing
+   - **Object/Blob Store** - S3-compatible API for large binary objects
+   - ALL on the same underlying MGA engine with shared transaction semantics
 
 3. **Enterprise Distributed Systems**
    - Horizontal scaling with automatic sharding
@@ -1640,14 +1895,32 @@ ScratchBird is being designed as a **universal multi-model database engine** tha
 **The End Result:**
 
 A database engine that can:
-- **Replace** PostgreSQL, MySQL, MSSQL, MongoDB, Redis, Neo4j in a single deployment
+- **Replace** up to 9+ specialized databases in a single deployment:
+  - PostgreSQL, MySQL, MSSQL, FirebirdSQL (relational SQL)
+  - Neo4j (graph database)
+  - MongoDB (document store)
+  - Redis (key-value store)
+  - Cassandra (column-family store)
+  - Elasticsearch (full-text search)
+  - InfluxDB (time-series)
+  - S3 (object storage)
+  - Kafka (stream processing)
 - **Integrate** with existing databases in heterogeneous clusters
 - **Scale** from embedded use to massive distributed clusters
 - **Support** legacy applications with full protocol compatibility
 - **Enable** modern applications with NoSQL and streaming capabilities
+- **Unify** data models under a single transaction engine (ACID across all models)
 - **Provide** a stable, educational platform for database research and development
 
-This is not just a database—it's a **database platform** that demonstrates what's possible when you combine the best ideas from relational, NoSQL, and distributed systems into a cohesive, principled architecture.
+This is not just a database—it's a **universal data platform** that demonstrates what's possible when you combine the best ideas from relational, NoSQL, distributed systems, and stream processing into a cohesive, principled MGA architecture.
+
+**Research & Educational Value:**
+
+Beta 4 requires deep research into each NoSQL model's technical specifications, query semantics, and implementation strategies. This makes ScratchBird an excellent educational platform for understanding:
+- How different data models map to a unified storage engine
+- How query dialects translate to a common bytecode representation
+- How specialized indexes enable different access patterns
+- How transactional semantics extend across diverse data models
 
 ---
 
