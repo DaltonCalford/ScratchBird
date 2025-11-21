@@ -84,7 +84,7 @@ ScratchBird implements **11 production-ready index types** designed for diverse 
 - Prefix/suffix compression to reduce space
 - Multi-level structure (typical: 3-4 levels for millions of rows)
 
-**File:** `src/core/btree.cpp` (33,000+ lines)
+**File:** `src/core/btree.cpp` (2,836 lines)
 
 **Key Features:**
 - ✅ Full MGA compliance with xmin/xmax tracking

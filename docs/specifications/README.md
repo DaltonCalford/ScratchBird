@@ -66,8 +66,6 @@ See [Unified Interface Specification](unified_interface_spec.md) for the complet
 - FreeTDS 1.0 or later (Linux/Unix)
 - Windows SDK (Windows only)
 
-<<<<<<< HEAD
-=======
 #### Firebird SQL
 - Firebird 3.0 or later
 - IBPP library (optional C++ wrapper)
@@ -82,7 +80,6 @@ See [Unified Interface Specification](unified_interface_spec.md) for the complet
 - Database-specific JDBC drivers (JAR files)
 - JNI headers and libraries
 
->>>>>>> db-interface-docs
 ## Security Considerations
 
 ### Connection Security
@@ -144,12 +141,9 @@ db_interface/
 ├── mysql_mariadb_spec.md             # MySQL/MariaDB detailed specification
 ├── postgresql_spec.md                 # PostgreSQL detailed specification
 ├── mssql_spec.md                     # MSSQL detailed specification
-<<<<<<< HEAD
-=======
 ├── firebird_spec.md                  # Firebird SQL detailed specification
 ├── odbc_generic_spec.md              # Generic ODBC specification
 ├── jdbc_jni_spec.md                  # JDBC/JNI specification
->>>>>>> db-interface-docs
 ├── unified_interface_spec.md         # Unified interface specification
 ├── examples/                          # Complete example implementations
 │   ├── mysql_example.cpp

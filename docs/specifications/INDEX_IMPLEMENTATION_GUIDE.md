@@ -1101,7 +1101,7 @@ if (entry.xmax != 0 && entry.xmax < oit) {
 See existing implementations for reference:
 
 - **Simple Index:** `src/core/hash_index.cpp` (~800 lines)
-- **Complex Index:** `src/core/btree.cpp` (~33,000 lines)
+- **Complex Index:** `src/core/btree.cpp` (~2,836 lines)
 - **Inverted Index:** `src/core/gin_index.cpp` (~1,500 lines)
 - **Vector Index:** `src/core/hnsw_index.cpp` (~1,200 lines)
 
