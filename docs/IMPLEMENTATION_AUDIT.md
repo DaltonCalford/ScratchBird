@@ -1038,7 +1038,7 @@ struct TID {
 
 ## INDEX IMPLEMENTATIONS (11/11) ✅
 
-1. **B-Tree**: `src/core/btree.cpp` (33K lines)
+1. **B-Tree**: `src/core/btree.cpp` (2,836 lines)
 2. **Hash**: `src/core/hash_index.cpp`
 3. **HNSW/Vector**: `src/core/hnsw_index.cpp`
 4. **Full-Text**: `src/core/gin_index.cpp`
