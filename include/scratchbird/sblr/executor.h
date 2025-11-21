@@ -9,6 +9,7 @@
 #include "scratchbird/core/charset.h"
 #include "scratchbird/core/timezone.h"
 #include "scratchbird/core/types.h"
+#include "scratchbird/core/permission_cache.h"  // For PermissionCheckMode
 #include <vector>
 #include <memory>
 #include <variant>
