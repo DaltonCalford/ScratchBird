@@ -49,7 +49,30 @@ auto StorageEngine::removeFromIndexHelper(
 
 ---
 
-## ❌ Pre-Existing Build Errors (Need Fixing)
+## ❌ Additional Build Errors Discovered
+
+### 1. executor.cpp - Scope/Declaration Issue (Line 20799)
+
+**Error:**
+```
+executor.cpp:20799:22: error: 'Executor' has not been declared
+core::Status Executor::routeIndexScan(IndexType type, ...)
+```
+
+**Location:** `src/sblr/executor.cpp:20799`
+
+**Issue:** Compiler cannot resolve `Executor` class at this scope, despite identical functions (routeIndexInsert, routeIndexSearch, routeIndexDelete) compiling successfully just above.
+
+**Likely Cause:**
+- Possible namespace scope issue
+- Braces appear balanced (23 open, 23 close in routeIndexDelete function)
+- May be related to template or macro expansion
+
+**Fix Needed:** Further investigation required - this error was not present in initial build scan
+
+---
+
+## ❌ Pre-Existing Build Errors (Fixed)
 
 ### 1. spgist_index.cpp - Missing Member Variable
 
@@ -138,11 +161,13 @@ storage_engine.cpp:432:65: error: 'class scratchbird::core::ColumnstoreIndex'
 
 | File | Errors | Status | Priority |
 |------|--------|--------|----------|
-| storage_engine.cpp | 2 | ✅ Fixed | - |
-| spgist_index.cpp | 1 | ❌ Not fixed | MEDIUM |
-| toast.cpp | 3 | ❌ Not fixed | HIGH |
-| storage_engine.cpp (new) | 2 | ❌ Not fixed | MEDIUM |
-| **TOTAL** | **8** | **2 fixed, 6 remaining** | |
+| storage_engine.cpp (include) | 1 | ✅ Fixed | - |
+| storage_engine.cpp (signature) | 1 | ✅ Fixed | - |
+| toast.cpp | 3 | ✅ Fixed | - |
+| storage_engine.cpp (columnstore) | 2 | ✅ Fixed | - |
+| spgist_index.cpp | 1 | ✅ Fixed | - |
+| executor.cpp | 1 | ❌ Not fixed | HIGH |
+| **TOTAL** | **9** | **8 fixed, 1 remaining** | |
 
 ---
 
@@ -178,12 +203,15 @@ storage_engine.cpp:432:65: error: 'class scratchbird::core::ColumnstoreIndex'
 
 ## 📈 Progress
 
-**Before Today:** 8 compilation errors
-**After Today:** 6 compilation errors (-2)
-**Remaining:** 6 compilation errors
+**Initial Build Scan:** 8 compilation errors documented
+**After Fixes:** 1 compilation error remaining (-7)
+**Additional Errors Found:** 1 (executor.cpp scope issue)
+**Net Progress:** 8 → 1 errors (-7, 87.5% reduction)
 
-**Estimated Time to Build Success:** 1-2 hours (if stubbing incomplete features)
-                                     or 4-6 hours (if fully implementing)
+**Remaining:** 1 compilation error in executor.cpp
+
+**Status:** Significant progress - 8 of 9 errors fixed
+**Estimated Time to Fix Remaining:** 1-2 hours (scope/namespace debugging)
 
 ---
 

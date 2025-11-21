@@ -114,7 +114,7 @@ std::unique_ptr<SPGiSTIndex> SPGiSTIndex::open(Database* db,
     // Initialize counters - they will be updated as operations occur
     index->entry_count_ = 0;
     index->deleted_count_ = 0;
-    index->height_ = 0;
+    // Note: Tree depth (max_depth) is calculated on-demand via getStats(), not tracked incrementally
 
     return index;
 }
