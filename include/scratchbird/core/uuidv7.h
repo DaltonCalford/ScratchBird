@@ -79,4 +79,7 @@ namespace scratchbird::core
         }
     };
 
+    // ID type alias used throughout the codebase
+    using ID = UuidV7Bytes;
+
 } // namespace scratchbird::core

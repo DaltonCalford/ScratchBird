@@ -3889,7 +3889,7 @@ namespace scratchbird
 
                 // Check type compatibility
                 bool type_compatible = false;
-                switch (col.data_type)
+                switch (static_cast<core::DataType>(col.data_type))
                 {
                     case core::DataType::INT32:
                         type_compatible = (val.type() == core::DataType::INT32 ||
@@ -3915,7 +3915,7 @@ namespace scratchbird
                     // Add more types as needed
                     default:
                         // For other types, require exact match
-                        type_compatible = (val.type() == col.data_type);
+                        type_compatible = (val.type() == static_cast<core::DataType>(col.data_type));
                         break;
                 }
 
@@ -4450,7 +4450,7 @@ namespace scratchbird
 
                     // Check type compatibility
                     bool type_compatible = false;
-                    switch (col.data_type)
+                    switch (static_cast<core::DataType>(col.data_type))
                     {
                         case core::DataType::INT32:
                             type_compatible = (val.type() == core::DataType::INT32 ||
