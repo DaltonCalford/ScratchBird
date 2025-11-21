@@ -33,14 +33,14 @@ namespace core {
     class HashIndex;
     class GinIndex;
     class GistIndex;
-    class SpGistIndex;
+    class SPGiSTIndex;  // Note: SP-GiST uses all-caps naming
     class BrinIndex;
     class RTreeIndex;
     class HnswIndex;
     class BitmapIndex;
     class ColumnstoreIndex;
     class LSMTree;
-    class ID;
+    struct UuidV7Bytes;  // ID is a type alias for UuidV7Bytes, not a class
 }
 }
 
