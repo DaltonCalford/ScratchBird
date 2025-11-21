@@ -41,6 +41,7 @@
 #include "scratchbird/core/columnstore_index.h"
 #include "scratchbird/core/lsm_tree_index.h"
 #include "scratchbird/core/debug.h"
+#include "scratchbird/core/logger.h"  // For LOG_ERROR macro
 #include <nlohmann/json.hpp>
 #include <sstream>
 #include <iomanip>
@@ -946,7 +947,7 @@ namespace scratchbird
                                 catch (const geo::PROJException &e)
                                 {
                                     // SECURITY FIX (HIGH-1): Log detailed error internally, return generic error to client
-                                    LOG_ERROR(EXECUTION, "ST_Transform failed: %s", e.what());
+                                    LOG_ERROR(EXECUTOR, "ST_Transform failed: %s", e.what());
                                     error("Spatial transformation failed");
                                 }
 #else
@@ -4474,7 +4475,7 @@ namespace scratchbird
                             type_compatible = (val.type() == core::DataType::BOOLEAN);
                             break;
                         default:
-                            type_compatible = (val.type() == col.data_type);
+                            type_compatible = (val.type() == static_cast<core::DataType>(col.data_type));
                             break;
                     }
 
@@ -13572,7 +13573,7 @@ namespace scratchbird
             catch (const std::regex_error &e)
             {
                 // SECURITY FIX (HIGH-1): Log detailed error internally, return generic error to client
-                LOG_ERROR(EXECUTION, "Invalid regular expression '%s': %s", pattern.c_str(), e.what());
+                LOG_ERROR(EXECUTOR, "Invalid regular expression '%s': %s", pattern.c_str(), e.what());
                 error("Invalid regular expression");
                 return false;
             }
@@ -13623,7 +13624,7 @@ namespace scratchbird
             catch (const std::regex_error &e)
             {
                 // SECURITY FIX (HIGH-1): Log detailed error internally, return generic error to client
-                LOG_ERROR(EXECUTION, "Invalid regular expression '%s': %s", pattern.c_str(), e.what());
+                LOG_ERROR(EXECUTOR, "Invalid regular expression '%s': %s", pattern.c_str(), e.what());
                 error("Invalid regular expression");
             }
             return results;
@@ -13667,7 +13668,7 @@ namespace scratchbird
             catch (const std::regex_error &e)
             {
                 // SECURITY FIX (HIGH-1): Log detailed error internally, return generic error to client
-                LOG_ERROR(EXECUTION, "Invalid regular expression '%s': %s", pattern.c_str(), e.what());
+                LOG_ERROR(EXECUTOR, "Invalid regular expression '%s': %s", pattern.c_str(), e.what());
                 error("Invalid regular expression");
                 return text;
             }
@@ -13708,7 +13709,7 @@ namespace scratchbird
             catch (const std::regex_error &e)
             {
                 // SECURITY FIX (HIGH-1): Log detailed error internally, return generic error to client
-                LOG_ERROR(EXECUTION, "Invalid regular expression '%s': %s", pattern.c_str(), e.what());
+                LOG_ERROR(EXECUTOR, "Invalid regular expression '%s': %s", pattern.c_str(), e.what());
                 error("Invalid regular expression");
                 results.push_back(text);
             }
@@ -15225,7 +15226,7 @@ namespace scratchbird
                 catch (const std::exception& e)
                 {
                     // SECURITY FIX (HIGH-1): Log detailed error internally, return generic error to client
-                    LOG_ERROR(EXECUTION, "Password hashing failed during CREATE USER: %s", e.what());
+                    LOG_ERROR(EXECUTOR, "Password hashing failed during CREATE USER: %s", e.what());
                     error("Password hashing failed");
                 }
             }
@@ -15288,7 +15289,7 @@ namespace scratchbird
                 catch (const std::exception& e)
                 {
                     // SECURITY FIX (HIGH-1): Log detailed error internally, return generic error to client
-                    LOG_ERROR(EXECUTION, "Password hashing failed during ALTER USER: %s", e.what());
+                    LOG_ERROR(EXECUTOR, "Password hashing failed during ALTER USER: %s", e.what());
                     error("Password hashing failed");
                 }
             }
@@ -16439,7 +16440,7 @@ namespace scratchbird
 
             if (elapsed_ms > static_cast<int64_t>(query_limits_.max_execution_time_ms))
             {
-                LOG_WARNING(EXECUTION, "Query timeout exceeded: %lld ms (limit: %llu ms)",
+                LOG_WARNING(EXECUTOR, "Query timeout exceeded: %lld ms (limit: %llu ms)",
                           elapsed_ms, query_limits_.max_execution_time_ms);
                 error("Query execution timeout exceeded");
             }
@@ -16450,7 +16451,7 @@ namespace scratchbird
             // Check if CTE recursion depth exceeded
             if (cte_recursion_depth_ > query_limits_.max_cte_recursion_depth)
             {
-                LOG_WARNING(EXECUTION, "CTE recursion depth exceeded: %u (limit: %u)",
+                LOG_WARNING(EXECUTOR, "CTE recursion depth exceeded: %u (limit: %u)",
                           cte_recursion_depth_, query_limits_.max_cte_recursion_depth);
                 error("Maximum CTE recursion depth exceeded");
             }
@@ -16477,7 +16478,7 @@ namespace scratchbird
             // Check row limits
             if (rows_processed_ > query_limits_.max_intermediate_rows)
             {
-                LOG_WARNING(EXECUTION, "Intermediate row limit exceeded: %llu (limit: %llu)",
+                LOG_WARNING(EXECUTOR, "Intermediate row limit exceeded: %llu (limit: %llu)",
                           rows_processed_, query_limits_.max_intermediate_rows);
                 error("Maximum intermediate row count exceeded");
             }
@@ -18722,7 +18723,7 @@ namespace scratchbird
                 std::string err_msg = getLastXMLError();
                 xmlResetLastError();
                 // SECURITY FIX (HIGH-1): Log detailed error internally, return generic error to client
-                LOG_ERROR(EXECUTION, "Invalid XML: %s", err_msg.c_str());
+                LOG_ERROR(EXECUTOR, "Invalid XML: %s", err_msg.c_str());
                 error("Invalid XML");
             }
 
@@ -19515,7 +19516,7 @@ namespace scratchbird
             if (status != core::Status::OK)
             {
                 // SECURITY FIX (LOW-7): Log detailed error internally, return generic error to client
-                LOG_ERROR(EXECUTION, "Index insert failed: %s", err_ctx.message.c_str());
+                LOG_ERROR(EXECUTOR, "Index insert failed: %s", err_ctx.message.c_str());
                 error("Index insert failed");
             }
         }
@@ -19580,7 +19581,7 @@ namespace scratchbird
             if (status != core::Status::OK)
             {
                 // SECURITY FIX (LOW-7): Log detailed error internally, return generic error to client
-                LOG_ERROR(EXECUTION, "Index search failed: %s", err_ctx.message.c_str());
+                LOG_ERROR(EXECUTOR, "Index search failed: %s", err_ctx.message.c_str());
                 error("Index search failed");
                 return;
             }
@@ -19784,7 +19785,7 @@ namespace scratchbird
             if (status != core::Status::OK)
             {
                 // SECURITY FIX (LOW-7): Log detailed error internally, return generic error to client
-                LOG_ERROR(EXECUTION, "Index delete failed: %s", err_ctx.message.c_str());
+                LOG_ERROR(EXECUTOR, "Index delete failed: %s", err_ctx.message.c_str());
                 error("Index delete failed");
             }
         }
@@ -20808,7 +20809,10 @@ namespace scratchbird
             auto index_info_opt = db_->catalog_manager()->getIndex(index_uuid, ctx);
             if (!index_info_opt.has_value())
             {
-                core::SET_ERROR_CONTEXT(ctx, core::Status::INDEX_NOT_FOUND, "Index not found");
+                if (ctx) {
+                    ctx->set(core::Status::INDEX_NOT_FOUND, "Index not found",
+                            __FILE__, __LINE__, __func__);
+                }
                 return core::Status::INDEX_NOT_FOUND;
             }
             auto& index_info = index_info_opt.value();
@@ -20827,8 +20831,10 @@ namespace scratchbird
                                                     start_inclusive, end_inclusive, ctx);
                         if (!iter)
                         {
-                            core::SET_ERROR_CONTEXT(ctx, core::Status::INTERNAL_ERROR,
-                                                  "Failed to create B-Tree iterator");
+                            if (ctx) {
+                                ctx->set(core::Status::INTERNAL_ERROR, "Failed to create B-Tree iterator",
+                                        __FILE__, __LINE__, __func__);
+                            }
                             return core::Status::INTERNAL_ERROR;
                         }
 
@@ -20856,8 +20862,10 @@ namespace scratchbird
                         // For R-Tree, start_key and end_key represent the bounding box
                         if (!start_key || !end_key)
                         {
-                            core::SET_ERROR_CONTEXT(ctx, core::Status::INVALID_ARGUMENT,
-                                                  "R-Tree scan requires bounding box (start and end keys)");
+                            if (ctx) {
+                                ctx->set(core::Status::INVALID_ARGUMENT, "R-Tree scan requires bounding box (start and end keys)",
+                                        __FILE__, __LINE__, __func__);
+                            }
                             return core::Status::INVALID_ARGUMENT;
                         }
 
@@ -20875,8 +20883,10 @@ namespace scratchbird
                         // GiST spatial/generalized scan
                         if (!start_key)
                         {
-                            core::SET_ERROR_CONTEXT(ctx, core::Status::INVALID_ARGUMENT,
-                                                  "GiST scan requires search predicate");
+                            if (ctx) {
+                                ctx->set(core::Status::INVALID_ARGUMENT, "GiST scan requires search predicate",
+                                        __FILE__, __LINE__, __func__);
+                            }
                             return core::Status::INVALID_ARGUMENT;
                         }
 
@@ -20893,8 +20903,10 @@ namespace scratchbird
                         // SP-GiST scan
                         if (!start_key)
                         {
-                            core::SET_ERROR_CONTEXT(ctx, core::Status::INVALID_ARGUMENT,
-                                                  "SP-GiST scan requires search predicate");
+                            if (ctx) {
+                                ctx->set(core::Status::INVALID_ARGUMENT, "SP-GiST scan requires search predicate",
+                                        __FILE__, __LINE__, __func__);
+                            }
                             return core::Status::INVALID_ARGUMENT;
                         }
 
@@ -20911,8 +20923,10 @@ namespace scratchbird
                         // BRIN block range scan
                         if (!start_key || !end_key)
                         {
-                            core::SET_ERROR_CONTEXT(ctx, core::Status::INVALID_ARGUMENT,
-                                                  "BRIN scan requires value range");
+                            if (ctx) {
+                                ctx->set(core::Status::INVALID_ARGUMENT, "BRIN scan requires value range",
+                                        __FILE__, __LINE__, __func__);
+                            }
                             return core::Status::INVALID_ARGUMENT;
                         }
 
@@ -20931,8 +20945,10 @@ namespace scratchbird
                         // Bitmap scan for matching bits
                         if (!start_key)
                         {
-                            core::SET_ERROR_CONTEXT(ctx, core::Status::INVALID_ARGUMENT,
-                                                  "Bitmap scan requires value");
+                            if (ctx) {
+                                ctx->set(core::Status::INVALID_ARGUMENT, "Bitmap scan requires value",
+                                        __FILE__, __LINE__, __func__);
+                            }
                             return core::Status::INVALID_ARGUMENT;
                         }
 
@@ -20977,38 +20993,49 @@ namespace scratchbird
                 case IndexType::HASH:
                 {
                     // Hash indexes don't support range scans
-                    core::SET_ERROR_CONTEXT(ctx, core::Status::NOT_SUPPORTED,
-                                          "Hash indexes do not support range scans");
+                    if (ctx) {
+                        ctx->set(core::Status::NOT_SUPPORTED, "Hash indexes do not support range scans",
+                                __FILE__, __LINE__, __func__);
+                    }
                     return core::Status::NOT_SUPPORTED;
                 }
 
                 case IndexType::GIN:
                 {
                     // GIN (Generalized Inverted Index) doesn't support range scans
-                    core::SET_ERROR_CONTEXT(ctx, core::Status::NOT_SUPPORTED,
-                                          "GIN indexes do not support range scans");
+                    if (ctx) {
+                        ctx->set(core::Status::NOT_SUPPORTED, "GIN indexes do not support range scans",
+                                __FILE__, __LINE__, __func__);
+                    }
                     return core::Status::NOT_SUPPORTED;
                 }
 
                 case IndexType::HNSW:
                 {
                     // HNSW uses k-NN search, not range scans
-                    core::SET_ERROR_CONTEXT(ctx, core::Status::NOT_SUPPORTED,
-                                          "HNSW indexes do not support range scans (use k-NN search)");
+                    if (ctx) {
+                        ctx->set(core::Status::NOT_SUPPORTED, "HNSW indexes do not support range scans (use k-NN search)",
+                                __FILE__, __LINE__, __func__);
+                    }
                     return core::Status::NOT_SUPPORTED;
                 }
 
                 case IndexType::COLUMNSTORE:
                 {
                     // Columnstore uses specialized scan operations
-                    core::SET_ERROR_CONTEXT(ctx, core::Status::NOT_SUPPORTED,
-                                          "Columnstore uses specialized scan operations");
+                    if (ctx) {
+                        ctx->set(core::Status::NOT_SUPPORTED, "Columnstore uses specialized scan operations",
+                                __FILE__, __LINE__, __func__);
+                    }
                     return core::Status::NOT_SUPPORTED;
                 }
 
                 default:
                 {
-                    core::SET_ERROR_CONTEXT(ctx, core::Status::INTERNAL_ERROR, "Unknown index type");
+                    if (ctx) {
+                        ctx->set(core::Status::INTERNAL_ERROR, "Unknown index type",
+                                __FILE__, __LINE__, __func__);
+                    }
                     return core::Status::INTERNAL_ERROR;
                 }
             }
