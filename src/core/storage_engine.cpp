@@ -14,6 +14,7 @@
 #include "scratchbird/core/lsm_tree.h"  // LSM Integration Phase 4
 #include "scratchbird/core/rtree_index.h"  // R-Tree DML Integration
 #include "scratchbird/core/bitmap_index.h"  // TASK-DML-8: Bitmap Index DML Integration
+#include "scratchbird/core/columnstore_index.h"  // TASK-DML-7: Columnstore Index DML Integration
 #include "scratchbird/core/toast.h"
 #include "scratchbird/core/garbage_collector.h"
 #include "scratchbird/core/logger.h"
@@ -185,13 +186,15 @@ namespace scratchbird::core
 
     // TASK-DML-2: Public wrapper for removeFromIndex (for executor)
     auto StorageEngine::removeFromIndexHelper(
-        CatalogManager::IndexType index_type,
+        uint8_t index_type_value,
         void *index_ptr,
         const std::vector<uint8_t> &key,
         const TID &tid,
         uint64_t xid,
         ErrorContext *ctx) -> Status
     {
+        // Cast uint8_t to IndexType enum to avoid circular include dependency
+        auto index_type = static_cast<CatalogManager::IndexType>(index_type_value);
         return removeFromIndex(index_type, index_ptr, key, tid, xid, ctx);
     }
 
