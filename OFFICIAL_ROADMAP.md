@@ -25,13 +25,14 @@ ALPHA STAGE (Embedded Engine)
 ├── Alpha 2: Parser Separation (Not Started)
 └── Alpha 3: Network Listeners (Not Started)
 
-BETA STAGE (Distributed Systems)
+BETA STAGE (Distributed & Multi-Model)
 ├── Beta 1: Cluster Implementation (Not Started)
 ├── Beta 2: Heterogeneous Clusters (Not Started)
-└── Beta 3: Encryption & Advanced Indexes (Not Started)
+├── Beta 3: Encryption & Advanced Indexes (Not Started)
+└── Beta 4: NoSQL Dialects & Integration Tools (Not Started)
 
-RELEASE CANDIDATE STAGE (Stabilization)
-├── RC1: Feature Complete + Beta User Testing (Not Started)
+RELEASE CANDIDATE STAGE (Stabilization & Drivers)
+├── RC1: Native Drivers + Beta User Testing (Not Started)
 ├── RC2: Iterative Bug Fixing (Not Started)
 └── RC3: Final Stabilization (Not Started)
 
@@ -547,9 +548,9 @@ Transform the multi-parser embedded engine into a **networked database server**:
 
 ---
 
-# BETA STAGE: Distributed Systems
+# BETA STAGE: Distributed & Multi-Model Database
 
-**Goal:** Enterprise-grade distributed database system
+**Goal:** Enterprise-grade distributed multi-model database with NoSQL capabilities and external system integration
 
 ---
 
@@ -962,25 +963,288 @@ Enable **mixed database clusters**:
 
 ---
 
-# RELEASE CANDIDATE STAGE: Stabilization
-
-**Goal:** Feature-complete, thoroughly tested, ready for production evaluation
-
----
-
-## RC1: Feature Complete + Beta User Testing
+## Beta 4: NoSQL Dialects & Integration Tools
 
 **Status:** Not Started
 **Dependencies:** Beta 3 must be 100% complete
-**Goal:** All planned features implemented, initial testing and debugging
+**Goal:** Multi-model database with NoSQL capabilities and external system integration
+
+**Completion Policy:** Beta 4 is complete when ALL NoSQL dialects are functional and ALL integration tools are operational.
+
+### Part A: NoSQL Dialect Support
+
+**Rationale:** The advanced indexes in Beta 3 (Graph, Vector, Time-Series, etc.) enable NoSQL functionality, but require dedicated query dialects beyond SQL.
+
+**1. Graph Query Dialect**
+- Implement graph query language (Cypher-like or Gremlin-like syntax)
+- Node and edge traversal operations
+- Pattern matching queries
+- Path finding algorithms (shortest path, all paths, etc.)
+- Graph-specific aggregations
+- Integration with graph indexes from Beta 3
+- **Reference:** Graph database query specifications (to be created)
+
+**2. Vector Similarity Search Extensions**
+- Vector query syntax (k-NN, ANN queries)
+- Similarity functions (cosine, euclidean, dot product)
+- Vector algebra operations
+- Integration with HNSW index from Alpha 1
+- Hybrid queries (vector + traditional SQL)
+- **Use Cases:** Semantic search, recommendation systems, ML embeddings
+
+**3. Document Store Query Interface**
+- Document-oriented query syntax (MongoDB-like)
+- JSON path queries and manipulation
+- Document validation and schema enforcement
+- Integration with JSONB type from Alpha 1
+- Collection-based operations
+
+**4. Key-Value Query Interface**
+- Simple key-value GET/SET/DELETE operations
+- Atomic operations (INCR, DECR, etc.)
+- TTL (time-to-live) support
+- Pattern-based key scanning
+- Integration with Hash index from Alpha 1
+
+**5. Time-Series Query Extensions**
+- Time-window queries
+- Downsampling and aggregation functions
+- Retention policies
+- Integration with time-series indexes from Beta 3
+
+### Part B: Integration & Messaging Tools
+
+**1. Apache Kafka Integration**
+- Kafka producer/consumer implementation
+- Change Data Capture (CDC) → Kafka topics
+- Kafka topics → ScratchBird tables (streaming ingestion)
+- Schema registry integration
+- Offset management
+- **Use Cases:** Event streaming, real-time analytics, data pipelines
+
+**2. Message Queue Support**
+- RabbitMQ integration
+- Redis Pub/Sub integration
+- Native message queue tables
+- LISTEN/NOTIFY enhancements
+- **Use Cases:** Task queues, event-driven architecture
+
+**3. AI/Automation Agent Support**
+- RESTful API for agent access
+- GraphQL endpoint
+- Agent authentication and authorization
+- Query result streaming for agents
+- Natural language query interface (experimental)
+- **Use Cases:** AI agents, automation tools, chatbots
+
+**4. Object Storage Integration**
+- S3-compatible object storage integration
+- Large object (LOB) external storage
+- Tiered storage policies
+- **Use Cases:** Storing large files, backups, archival
+
+**5. Observability & Monitoring**
+- Prometheus metrics exporter
+- Grafana dashboard templates
+- OpenTelemetry integration
+- Distributed tracing support
+- **Use Cases:** Production monitoring, performance analysis
+
+### Implementation Phases
+
+**Phase 4.1: Graph Query Dialect**
+- Design graph query language
+- Implement parser for graph queries
+- Graph query → SBLR bytecode translation
+- Integration with graph indexes
+- Testing with graph database benchmarks
+
+**Phase 4.2: Vector Query Extensions**
+- Vector query syntax design
+- k-NN and ANN query support
+- Integration with HNSW index
+- Hybrid query optimization
+- Testing with embedding datasets
+
+**Phase 4.3: Document & Key-Value Interfaces**
+- Document query syntax implementation
+- Key-value API implementation
+- Integration with existing types and indexes
+- Testing and benchmarking
+
+**Phase 4.4: Time-Series Query Extensions**
+- Time-window query syntax
+- Downsampling functions
+- Retention policy engine
+- Testing with time-series workloads
+
+**Phase 4.5: Kafka Integration**
+- Kafka client library integration
+- CDC → Kafka pipeline
+- Kafka → ScratchBird ingestion
+- Schema registry support
+- Testing with real Kafka clusters
+
+**Phase 4.6: Message Queue & Agent Support**
+- RabbitMQ/Redis integration
+- Agent API implementation
+- GraphQL endpoint
+- Authentication/authorization
+- Testing and documentation
+
+**Phase 4.7: Storage & Observability**
+- Object storage integration
+- Prometheus/Grafana integration
+- OpenTelemetry implementation
+- Testing and performance validation
+
+### Completion Criteria
+
+**ALL items below MUST be complete before Beta 4 is considered done:**
+
+**NoSQL Dialects:**
+1. Graph query dialect fully functional
+2. Vector similarity search operations working
+3. Document store query interface operational
+4. Key-value query interface complete
+5. Time-series query extensions implemented
+6. All dialects tested with appropriate benchmarks
+
+**Integration Tools:**
+1. Kafka producer/consumer operational
+2. CDC → Kafka pipeline working
+3. Message queue integrations complete (RabbitMQ, Redis)
+4. Agent API fully functional
+5. GraphQL endpoint operational
+6. Object storage integration working
+7. Observability stack complete (Prometheus, Grafana, OpenTelemetry)
+
+**No deferrals. Beta 4 complete = ALL multi-model and integration features working.**
+
+---
+
+# RELEASE CANDIDATE STAGE: Stabilization
+
+**Goal:** Feature-complete, thoroughly tested, ready for production evaluation, with native drivers for all major languages
+
+---
+
+## RC1: Feature Complete + Native Drivers + Beta User Testing
+
+**Status:** Not Started
+**Dependencies:** Beta 4 must be 100% complete
+**Goal:** All planned features implemented, native drivers for all major languages, initial testing and debugging
 
 ### Scope
 
 **Feature Freeze:**
-- **NO new features** after this point
+- **NO new features** after this point (except native drivers)
 - Only bug fixes and performance improvements
 - Documentation finalization
-- **ALL features from Alpha 1-3 and Beta 1-3 must be complete**
+- **ALL features from Alpha 1-3 and Beta 1-4 must be complete**
+
+**Native Driver Development:**
+
+RC1 includes development of native ScratchBird drivers for all major programming languages and database connectivity standards. Beta users need these drivers to effectively test the database.
+
+**1. Standard Database Connectivity Drivers**
+- **ODBC (Open Database Connectivity)**
+  - Full ODBC 3.8 compliance
+  - Support for all SQL data types
+  - Connection pooling
+  - Driver manager registration
+  - Testing with ODBC applications (Excel, Tableau, Power BI)
+
+- **JDBC (Java Database Connectivity)**
+  - Full JDBC 4.2 compliance
+  - Type 4 (pure Java) driver
+  - Connection pooling support
+  - Prepared statement caching
+  - Testing with Java applications (Spring, Hibernate)
+
+**2. Native Language Drivers**
+
+**C++ Driver**
+- Header-only or compiled library option
+- Modern C++17/20 API
+- Exception safety
+- RAII resource management
+- Async query support
+- Integration with standard library types
+
+**C Driver**
+- Pure C API (C99/C11)
+- Thread-safe
+- Callback-based async support
+- Compatible with C++ via extern "C"
+- Minimal dependencies
+
+**C# / .NET Driver**
+- .NET Standard 2.0+ support
+- ADO.NET provider implementation
+- Entity Framework Core provider
+- Async/await support
+- LINQ query support
+
+**Rust Driver**
+- Idiomatic Rust API
+- tokio async runtime support
+- Type-safe query builder
+- Connection pooling (bb8/deadpool)
+- Compile-time SQL validation (optional)
+
+**Pascal / Delphi Driver**
+- Free Pascal and Delphi compatibility
+- Object Pascal API
+- Component-based architecture
+- VCL/FMX component suite
+- Testing with Lazarus and Delphi IDE
+
+**Python Driver**
+- Python 3.8+ support
+- DB-API 2.0 (PEP 249) compliance
+- Async support (asyncio)
+- SQLAlchemy dialect
+- Pandas integration
+- Type hints (PEP 484)
+
+**Go Driver**
+- database/sql interface implementation
+- Context support
+- Connection pooling
+- Prepared statement caching
+- Testing with popular Go frameworks
+
+**Node.js / JavaScript Driver**
+- Promise-based API
+- TypeScript definitions
+- Async/await support
+- Connection pooling
+- Sequelize adapter
+
+**Ruby Driver**
+- ActiveRecord adapter
+- Connection pooling
+- Prepared statement support
+- Testing with Rails
+
+**PHP Driver**
+- PDO (PHP Data Objects) driver
+- MySQLi-compatible interface
+- Prepared statement support
+- Testing with Laravel, Symfony
+
+**3. Driver Development Infrastructure**
+- Unified test suite for all drivers
+- Compliance testing framework
+- Performance benchmarking
+- Documentation and examples for each driver
+- CI/CD pipeline for driver builds
+
+**4. Client Libraries (Optional)**
+- CLI tools (sbcli - interactive shell)
+- GUI administration tool
+- Migration utilities
 
 **Beta User Program:**
 - Recruit 10-50 beta users/organizations
@@ -1033,11 +1297,13 @@ Enable **mixed database clusters**:
 ### Deliverables
 
 1. **RC1 Build** - Binary releases for Linux, macOS, Windows
-2. **Beta User Documentation** - Installation, configuration, migration guides
-3. **Known Issues List** - Public tracker of known bugs and limitations
-4. **Performance Baselines** - Benchmark results for reference
-5. **Security Audit Report** - External security review findings
-6. **Test Coverage Report** - Code coverage statistics
+2. **Native Drivers Package** - All language drivers (ODBC, JDBC, C++, C, C#, Rust, Pascal, Python, Go, Node.js, Ruby, PHP)
+3. **Beta User Documentation** - Installation, configuration, migration guides
+4. **Driver Documentation** - Installation and usage guides for each driver
+5. **Known Issues List** - Public tracker of known bugs and limitations
+6. **Performance Baselines** - Benchmark results for reference
+7. **Security Audit Report** - External security review findings
+8. **Test Coverage Report** - Code coverage statistics
 
 ### Exit Criteria (Move to RC2)
 
@@ -1052,14 +1318,22 @@ Enable **mixed database clusters**:
 - 100+ GB database tested successfully
 - No memory leaks detected in 72-hour stress test
 
+**Native Drivers:**
+- ALL drivers functional (ODBC, JDBC, C++, C, C#, Rust, Pascal, Python, Go, Node.js, Ruby, PHP)
+- Each driver passes compliance tests
+- Documentation complete for each driver
+- Example applications working for each language
+
 **Documentation:**
 - 100% of features documented
 - Migration guides tested by beta users
 - All examples verified to work
+- Driver documentation complete
 
 **Beta User Feedback:**
 - Positive feedback from majority of beta testers
 - No showstopper issues reported
+- Drivers tested in real applications
 - Feature requests logged for post-1.0
 
 ---
@@ -1174,13 +1448,16 @@ Enable **mixed database clusters**:
 **Technical Criteria:**
 1. ✅ Zero critical bugs
 2. ✅ Zero major bugs
-3. ✅ All planned features complete (Alpha 1-3, Beta 1-3)
-4. ✅ 95%+ test coverage
-5. ✅ No memory leaks in 7-day stress test
-6. ✅ Cluster scales to 10+ nodes with linear performance
-7. ✅ All 4 wire protocols fully compliant
-8. ✅ Security audit passed (no critical/high vulnerabilities)
-9. ✅ Encryption working and audited
+3. ✅ All planned features complete (Alpha 1-3, Beta 1-4)
+4. ✅ All native drivers functional (ODBC, JDBC, C++, C, C#, Rust, Pascal, Python, Go, Node.js, Ruby, PHP)
+5. ✅ 95%+ test coverage
+6. ✅ No memory leaks in 7-day stress test
+7. ✅ Cluster scales to 10+ nodes with linear performance
+8. ✅ All wire protocols fully compliant
+9. ✅ Security audit passed (no critical/high vulnerabilities)
+10. ✅ Encryption working and audited
+11. ✅ NoSQL dialects functional (Graph, Vector, Document, Key-Value, Time-Series)
+12. ✅ Integration tools operational (Kafka, message queues, agents, object storage)
 
 **Documentation Criteria:**
 1. ✅ Complete user documentation
@@ -1309,6 +1586,68 @@ The phrase **"production ready"** should NEVER be used in public-facing document
 - "Production release"
 - "Stable release"
 - "General availability"
+
+---
+
+## Project Vision: The Universal Database Engine
+
+ScratchBird is being designed as a **universal multi-model database engine** that can emulate the full functionality expected by any database client, while providing capabilities far beyond traditional databases.
+
+**Key Differentiators:**
+
+1. **Multi-Dialect SQL Support**
+   - Native ScratchBird SQL
+   - PostgreSQL emulation (complete wire protocol + dialect)
+   - MySQL emulation (complete wire protocol + dialect)
+   - MSSQL emulation (TDS protocol + T-SQL dialect)
+   - FirebirdSQL emulation (dialect compatibility)
+   - Clients can use their native tools without modification
+
+2. **Multi-Model NoSQL Support**
+   - Graph database with dedicated query language
+   - Vector similarity search (semantic search, AI embeddings)
+   - Document store (MongoDB-like operations)
+   - Key-value store (Redis-like operations)
+   - Time-series optimizations
+   - ALL on the same underlying MGA engine
+
+3. **Enterprise Distributed Systems**
+   - Horizontal scaling with automatic sharding
+   - Multi-master replication
+   - Heterogeneous clusters (ScratchBird + PostgreSQL + MySQL + MSSQL + Firebird)
+   - Distributed transactions across database types
+   - Query federation
+
+4. **Modern Integration Ecosystem**
+   - Kafka event streaming integration
+   - Message queue support (RabbitMQ, Redis)
+   - AI/automation agent APIs
+   - Object storage integration (S3-compatible)
+   - Observability stack (Prometheus, Grafana, OpenTelemetry)
+
+5. **Universal Client Support**
+   - Native drivers for 12+ languages
+   - ODBC and JDBC standard compliance
+   - Wire protocol compatibility allows existing clients to connect
+   - GraphQL and REST APIs for modern applications
+
+6. **Firebird MGA Architecture**
+   - Pure Multi-Generational Architecture (not MVCC)
+   - Superior transaction isolation
+   - No PostgreSQL contamination
+   - Battle-tested architecture refined over decades
+
+**The End Result:**
+
+A database engine that can:
+- **Replace** PostgreSQL, MySQL, MSSQL, MongoDB, Redis, Neo4j in a single deployment
+- **Integrate** with existing databases in heterogeneous clusters
+- **Scale** from embedded use to massive distributed clusters
+- **Support** legacy applications with full protocol compatibility
+- **Enable** modern applications with NoSQL and streaming capabilities
+- **Provide** a stable, educational platform for database research and development
+
+This is not just a database—it's a **database platform** that demonstrates what's possible when you combine the best ideas from relational, NoSQL, and distributed systems into a cohesive, principled architecture.
 
 ---
 
