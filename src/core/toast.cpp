@@ -929,7 +929,7 @@ namespace scratchbird::core
 
         // Pin the page containing the chunk
         uint8_t *page_buffer = nullptr;
-        Status status = buffer_pool->pinPage(page_id, &page_buffer, ctx);
+        Status status = buffer_pool->pinPage(page_id, reinterpret_cast<void**>(&page_buffer), ctx);
         if (status != Status::OK)
         {
             return status;
@@ -942,13 +942,13 @@ namespace scratchbird::core
             uint32_t pid;
             ~PageUnpinGuard()
             {
-                pool->unpinPage(pid, nullptr);
+                pool->unpinPage(pid, false);
             }
         };
         PageUnpinGuard guard{buffer_pool, page_id};
 
         // Wrap the page with HeapPage for structured access
-        HeapPage heap_page(page_buffer, buffer_pool->getConfig().page_size);
+        HeapPage heap_page(page_buffer, db_->page_size());
 
         // Get the tuple data to access its header
         const uint8_t *tuple_data;
