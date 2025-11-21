@@ -1,6 +1,6 @@
 # ScratchBird Documentation Index
 
-**Last Updated:** 2025-10-03
+**Last Updated:** 2025-11-21
 
 ## Quick Links
 
@@ -14,7 +14,12 @@
 Current implementation status and completion reports:
 
 - **[Overall Project Status](status/OVERALL_PROJECT_STATUS.md)** - Complete project overview
-- **[B-Tree Implementation Complete](status/BTREE_IMPLEMENTATION_COMPLETE.md)** - Full B-tree implementation (2,256 lines)
+- **[Alpha Engine Readiness Summary](status/ALPHA_ENGINE_READINESS_SUMMARY.md)** - Alpha 1 readiness assessment
+- **[Data Type Implementation Status](status/DATA_TYPE_IMPLEMENTATION_STATUS.md)** - All 86 data types complete
+- **[Functions Exploration Summary](status/FUNCTIONS_EXPLORATION_SUMMARY.md)** - Built-in functions overview
+- **[Function Implementation Analysis](status/FUNCTION_IMPLEMENTATION_ANALYSIS.md)** - All 123 functions complete
+- **[Index Implementation Status](status/INDEX_IMPLEMENTATION_STATUS.md)** - All 11 index types complete
+- **[B-Tree Implementation Complete](status/BTREE_IMPLEMENTATION_COMPLETE.md)** - Full B-tree implementation (2,836 lines)
   - [Phase 3: Range Scan Iterator](status/BTREE_PHASE3_RANGE_SCAN_COMPLETE.md)
   - [Phase 4: Prefix Compression](status/BTREE_PHASE4_COMPRESSION_COMPLETE.md)
   - [Phase 5: Vacuum/Compaction](status/BTREE_PHASE5_VACUUM_COMPLETE.md)
@@ -26,9 +31,25 @@ Current implementation status and completion reports:
   - [Phases 3-4 Complete](status/MGA_PHASES_3_4_COMPLETE.md)
   - [Implementation Status](status/MGA_IMPLEMENTATION_STATUS.md)
 
+#### Session Summaries (November 2025)
+
+- **[Session Summary 2025-11-06](status/SESSION_SUMMARY_2025-11-06.md)** - Work summary
+- **[Progress Update 2025-11-06 Evening](status/PROGRESS_UPDATE_2025-11-06-EVENING.md)** - Evening session progress
+- **[Compilation Success 2025-11-06](status/COMPILATION_SUCCESS_2025-11-06.md)** - Build verification
+
 ### Planning & Roadmaps
 
 Implementation plans and gap analysis:
+
+#### Alpha 1 Completion Plans (November 2025)
+
+- **[Alpha 1 Master Completion Tracker](planning/ALPHA1_MASTER_COMPLETION_TRACKER.md)** - Complete Alpha 1 roadmap (87% → 100%)
+- **[PSQL/Triggers Implementation Plan](planning/ALPHA1_PSQL_TRIGGERS_IMPLEMENTATION_PLAN.md)** - Stored procedures and triggers (~1,950 lines, 60-80 hours)
+- **[Advanced SQL Features Plan](planning/ALPHA1_ADVANCED_SQL_FEATURES_PLAN.md)** - CTEs, MERGE, RETURNING, SAVEPOINT (~2,580 lines, 80-100 hours)
+- **[Constraints & Engine Commands Plan](planning/ALPHA1_CONSTRAINTS_AND_ENGINE_COMMANDS_PLAN.md)** - GENERATED/IDENTITY columns, SHOW/EXPLAIN (~3,450 lines, 90-110 hours)
+- **[CLI Tools & Views Completion Plan](planning/ALPHA1_CLI_TOOLS_AND_VIEWS_COMPLETION_PLAN.md)** - sb_isql, sb_verify, sb_backup, sb_security (~5,100 lines, 120-150 hours)
+
+#### Component Implementation Plans
 
 - **[Alpha Implementation Plan](planning/ALPHA_IMPLEMENTATION_PLAN.md)** - Authoritative Alpha roadmap
 - **[B-Tree Implementation Plan](planning/BTREE_IMPLEMENTATION_PLAN.md)** - Original B-tree design
@@ -36,6 +57,9 @@ Implementation plans and gap analysis:
 - **[MGA Implementation Plan](planning/MGA_IMPLEMENTATION_PLAN.md)** - MVCC system design
 - **[MGA Gap Analysis](planning/MGA_GAP_ANALYSIS.md)** - Feature gaps identified
 - **[Critical Fixes Plan](planning/CRITICAL_FIXES_IMPLEMENTATION_PLAN.md)** - Bug fix roadmap
+- **[Index Completion Roadmap](planning/INDEX_COMPLETION_ROADMAP.md)** - All 11 indexes complete
+- **[Security System Implementation Plan](planning/SECURITY_SYSTEM_IMPLEMENTATION_PLAN.md)** - User/role/permission system
+- **[Views Implementation Plan](planning/VIEWS_IMPLEMENTATION_PLAN.md)** - Regular and materialized views
 
 ### Development Notes
 
@@ -51,18 +75,28 @@ Analysis, audits, and development documentation:
 - **[Documentation Corrections](development/DOCUMENTATION_CORRECTIONS_SUMMARY.md)** - Corrections made
 - **[TODO List](development/TODO.md)** - Development tasks
 
+### Testing
+
+Test reports and testing documentation:
+
+- **[Test Development 2025-11-06](testing/TEST_DEVELOPMENT_2025-11-06.md)** - Test development session
+- **[Test Status 2025-11-06 Evening](testing/TEST_STATUS_2025-11-06_EVENING.md)** - Evening test status
+- **[Test Status 2025-11-06 Final](testing/TEST_STATUS_2025-11-06_FINAL.md)** - Final test results
+
 ### Technical Specifications
 
 Detailed technical specs for all features:
 
-- **[Low-Level B-Tree Spec](specifications/LOW_LEVEL_SPECIFICATION_B-TREE_INDEX.md)**
-- **[Low-Level Hash Index Spec](specifications/LOW_LEVEL_SPECIFICATION_HASH_INDEX.md)**
-- **[On-Disk Format](specifications/ON_DISK_FORMAT.md)**
-- **[Error Handling](specifications/ERROR_HANDLING.md)**
-- **[Index Implementation Spec](specifications/INDEX_IMPLEMENTATION_SPEC.md)**
-- **[Catalog Specification](specifications/CATALOG_SPECIFICATION.md)**
-- **[Storage Engine Spec](specifications/STORAGE_ENGINE_SPEC.md)**
-- **[Transaction Management](specifications/TRANSACTION_MANAGEMENT.md)**
+- **[Index Architecture](specifications/INDEX_ARCHITECTURE.md)** - Complete index system architecture (all 11 types)
+- **[Index Implementation Guide](specifications/INDEX_IMPLEMENTATION_GUIDE.md)** - Guide for implementing new indexes
+- **[Index Implementation Spec](specifications/INDEX_IMPLEMENTATION_SPEC.md)** - Technical specification
+- **[On-Disk Format](specifications/ON_DISK_FORMAT.md)** - Storage format specification
+- **[Error Handling](specifications/ERROR_HANDLING.md)** - Error handling system
+- **[Catalog Specification](specifications/CATALOG_SPECIFICATION.md)** - System catalog design
+- **[Storage Engine Spec](specifications/STORAGE_ENGINE_SPEC.md)** - Storage engine architecture
+- **[Transaction Management](specifications/TRANSACTION_MANAGEMENT.md)** - MGA transaction system
+
+**Note:** Completed index specifications (BITMAP, BRIN, GIST, HNSW, SPGIST) and low-level specs have been archived to `specifications/archive/index_completion_specs_2025/`
 
 ### Design Documents
 
@@ -140,6 +174,21 @@ Historical documentation from legacy `project/` directory:
 - System diagrams
 
 ## Recent Updates
+
+**November 21, 2025:**
+- **Phase 3 Remediation Complete:** Documentation cleanup and Alpha 1 planning
+- Created 5 comprehensive Alpha 1 completion plans (~13,080 lines of implementation guidance)
+  - ALPHA1_MASTER_COMPLETION_TRACKER.md (master roadmap, 87% → 100%)
+  - ALPHA1_PSQL_TRIGGERS_IMPLEMENTATION_PLAN.md (~1,950 lines, 60-80 hours)
+  - ALPHA1_ADVANCED_SQL_FEATURES_PLAN.md (~2,580 lines, 80-100 hours)
+  - ALPHA1_CONSTRAINTS_AND_ENGINE_COMMANDS_PLAN.md (~3,450 lines, 90-110 hours)
+  - ALPHA1_CLI_TOOLS_AND_VIEWS_COMPLETION_PLAN.md (~5,100 lines, 120-150 hours)
+- Moved session reports to docs/status/ (7 files)
+- Moved test reports to docs/testing/ (3 files)
+- Archived completed index specifications to specifications/archive/index_completion_specs_2025/ (9 files)
+- Fixed btree.cpp line count typo (33K → 2,836) in 4 documentation files
+- Resolved git merge conflict in docs/specifications/README.md
+- Updated INDEX.md with all November 2025 additions
 
 **October 3, 2025:**
 - Integrated legacy `project/` directory into `docs/`
