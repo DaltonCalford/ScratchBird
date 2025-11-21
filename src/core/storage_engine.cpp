@@ -426,18 +426,12 @@ namespace scratchbird::core
                                 const void *col_value = is_null ? nullptr : (tuple_data + column_offsets[col_idx]);
                                 size_t col_value_len = column_sizes[col_idx];
 
-                                // Insert into columnstore
-                                // TODO: Columnstore currently uses uint64_t for TID, but we have TID struct
-                                // Using gpid for now (loses slot info, but sufficient for single-tablespace)
-                                Status cs_status = columnstore->insert(
-                                    col_id, tid.gpid, col_value, col_value_len, is_null, ctx);
-
-                                if (cs_status != Status::OK)
-                                {
-                                    LOG_ERROR(STORAGE, "Failed to insert into columnstore index %s: %s",
-                                              index_info.index_name.c_str(),
-                                              ctx ? ctx->message.c_str() : "unknown error");
-                                }
+                                // TODO: Columnstore row-level integration not yet implemented
+                                // ColumnstoreIndex currently only supports batch insertColumn() operations
+                                // Row-by-row insert() method needs to be added for OLTP integration
+                                // For now, columnstore indexes are only updated via explicit batch loads
+                                (void)col_value;      // Suppress unused variable warning
+                                (void)col_value_len;  // Suppress unused variable warning
                             }
 
                             continue; // Columnstore doesn't use key extraction
@@ -1512,18 +1506,12 @@ namespace scratchbird::core
                                 const void *col_value = is_null ? nullptr : (new_tuple_data + new_offsets[col_idx]);
                                 size_t col_value_len = new_sizes[col_idx];
 
-                                // Append new value to columnstore (with same TID)
-                                // TODO: Columnstore currently uses uint64_t for TID, but we have TID struct
-                                // Using gpid for now (loses slot info, but sufficient for single-tablespace)
-                                Status cs_status = columnstore->insert(
-                                    col_id, tid.gpid, col_value, col_value_len, is_null, ctx);
-
-                                if (cs_status != Status::OK)
-                                {
-                                    LOG_ERROR(STORAGE, "Failed to update columnstore index %s: %s",
-                                              index_info.index_name.c_str(),
-                                              ctx ? ctx->message.c_str() : "unknown error");
-                                }
+                                // TODO: Columnstore row-level integration not yet implemented
+                                // ColumnstoreIndex currently only supports batch insertColumn() operations
+                                // Row-by-row insert() method needs to be added for OLTP integration
+                                // For now, columnstore indexes are only updated via explicit batch loads
+                                (void)col_value;      // Suppress unused variable warning
+                                (void)col_value_len;  // Suppress unused variable warning
                             }
 
                             continue; // Columnstore doesn't use key extraction
