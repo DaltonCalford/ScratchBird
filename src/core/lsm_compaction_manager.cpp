@@ -21,6 +21,9 @@
 #include "scratchbird/core/lsm_tree_index.h"
 #include "scratchbird/core/transaction_manager.h"
 #include <algorithm>
+#include <queue>
+#include <cstring>
+#include <ctime>
 #include <sys/stat.h>
 
 namespace scratchbird
@@ -204,24 +207,59 @@ Status LSMCompactionManager::selectCompactionTask(CompactionTask *task_out,
 Status LSMCompactionManager::executeCompaction(const CompactionTask &task,
                                                ErrorContext *ctx)
 {
-    // TODO: Implement full k-way merge compaction
-    //
-    // Algorithm:
-    // 1. Open all source SSTables and overlapping SSTables
-    // 2. Create priority queue for k-way merge
-    // 3. Merge entries in sorted order
-    // 4. Skip duplicate keys (keep newest version)
-    // 5. Apply MGA garbage collection (remove invisible entries)
-    // 6. Write merged entries to new SSTable
-    // 7. Atomically replace old SSTables with new ones
-    // 8. Delete old SSTable files
-    //
-    // For now, this is a stub implementation that just returns OK
+    // Combine source and overlapping SSTables for merge
+    std::vector<std::string> input_sstables;
+    input_sstables.insert(input_sstables.end(),
+                         task.source_sstables.begin(),
+                         task.source_sstables.end());
+    input_sstables.insert(input_sstables.end(),
+                         task.overlapping_sstables.begin(),
+                         task.overlapping_sstables.end());
 
-    std::lock_guard<std::mutex> lock(mutex_);
+    if (input_sstables.empty())
+    {
+        // Nothing to compact
+        return Status::OK;
+    }
 
-    // Stub: Mark task as complete without actually doing anything
-    // This prevents the compaction thread from spinning
+    // Generate output SSTable path
+    // TODO: Use proper path generation based on target level
+    std::string output_sstable = "/tmp/scratchbird/compacted_" +
+                                std::to_string(task.target_level) + "_" +
+                                std::to_string(std::time(nullptr)) + ".sst";
+
+    // Execute k-way merge
+    Status s = kWayMerge(input_sstables, output_sstable, task.oit, ctx);
+    if (s != Status::OK)
+    {
+        return s;
+    }
+
+    // Get size of new SSTable
+    struct stat st;
+    uint64_t new_size = 0;
+    if (stat(output_sstable.c_str(), &st) == 0)
+    {
+        new_size = st.st_size;
+    }
+
+    // Atomically replace old SSTables with new one
+    std::vector<std::string> old_sstables = input_sstables;
+    std::vector<std::string> new_sstables = {output_sstable};
+
+    s = replaceSSTablesAtomic(task.target_level, old_sstables, new_sstables, ctx);
+    if (s != Status::OK)
+    {
+        // Failed to replace - clean up new SSTable
+        std::remove(output_sstable.c_str());
+        return s;
+    }
+
+    // Delete old SSTable files
+    for (const auto &old_path : old_sstables)
+    {
+        std::remove(old_path.c_str());
+    }
 
     return Status::OK;
 }
@@ -277,23 +315,218 @@ void LSMCompactionManager::findOverlappingSSTables(
     *overlapping_out = levels_[level].sstable_paths;
 }
 
+// Merge entry for priority queue
+struct MergeEntry
+{
+    std::vector<uint8_t> key;
+    std::vector<uint8_t> value;
+    uint64_t sequence_number;
+    uint8_t entry_type;
+    uint64_t xmin;
+    uint64_t xmax;
+    SSTableReader::Iterator* iterator;  // Source iterator
+    size_t sstable_index;  // Which SSTable this came from
+
+    // Comparator for priority queue (min-heap: smallest key first)
+    // If keys are equal, higher sequence number comes first (newer version)
+    bool operator>(const MergeEntry& other) const
+    {
+        int cmp = std::memcmp(key.data(), other.key.data(),
+                             std::min(key.size(), other.key.size()));
+        if (cmp != 0) return cmp > 0;
+        if (key.size() != other.key.size()) return key.size() > other.key.size();
+
+        // Same key: newer version (higher sequence number) comes first
+        return sequence_number < other.sequence_number;
+    }
+};
+
 Status LSMCompactionManager::kWayMerge(const std::vector<std::string> &input_sstables,
                                        const std::string &output_sstable,
                                        uint64_t oit,
                                        ErrorContext *ctx)
 {
-    // TODO: Implement k-way merge
-    //
-    // Algorithm:
-    // 1. Open all input SSTables
-    // 2. Create priority queue with one entry per SSTable
-    // 3. Repeatedly pop smallest entry from queue
-    // 4. Skip duplicates (same key, keep newest version)
-    // 5. Apply MGA garbage collection based on OIT
-    // 6. Write to output SSTable
-    // 7. Close all files
-    //
-    // For now, this is a stub
+    if (input_sstables.empty())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "No input SSTables for merge");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    // Step 1: Open all input SSTables and create iterators
+    std::vector<std::unique_ptr<SSTableReader>> readers;
+    std::vector<std::unique_ptr<SSTableReader::Iterator>> iterators;
+
+    for (const auto& path : input_sstables)
+    {
+        auto reader = std::make_unique<SSTableReader>(path);
+        Status s = reader->open(ctx);
+        if (s != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, s, ("Failed to open SSTable: " + path).c_str());
+            return s;
+        }
+
+        auto it = reader->createIterator();
+        if (!it)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INTERNAL_ERROR,
+                ("Failed to create iterator for SSTable: " + path).c_str());
+            return Status::INTERNAL_ERROR;
+        }
+
+        iterators.push_back(std::move(it));
+        readers.push_back(std::move(reader));
+    }
+
+    // Step 2: Create output SSTable writer
+    SSTableWriter writer(output_sstable, 4096);  // TODO: Use configurable block size
+    Status s = writer.open(ctx);
+    if (s != Status::OK)
+    {
+        return s;
+    }
+
+    // Step 3: Initialize priority queue with first entry from each SSTable
+    std::priority_queue<MergeEntry, std::vector<MergeEntry>, std::greater<MergeEntry>> pq;
+
+    for (size_t i = 0; i < iterators.size(); i++)
+    {
+        if (iterators[i]->isValid())
+        {
+            MergeEntry entry;
+            entry.key = iterators[i]->key();
+            entry.value = iterators[i]->value();
+            entry.sequence_number = iterators[i]->sequenceNumber();
+            entry.entry_type = iterators[i]->entryType();
+            entry.xmin = iterators[i]->xmin();
+            entry.xmax = iterators[i]->xmax();
+            entry.iterator = iterators[i].get();
+            entry.sstable_index = i;
+
+            pq.push(entry);
+        }
+    }
+
+    // Step 4: K-way merge with deduplication and garbage collection
+    std::vector<uint8_t> last_key;
+    uint64_t entries_written = 0;
+    uint64_t entries_skipped_duplicate = 0;
+    uint64_t entries_skipped_gc = 0;
+
+    while (!pq.empty())
+    {
+        MergeEntry entry = pq.top();
+        pq.pop();
+
+        // Skip duplicate keys (keep only newest version - first occurrence)
+        if (!last_key.empty() && entry.key == last_key)
+        {
+            entries_skipped_duplicate++;
+
+            // Advance iterator and add next entry from same SSTable
+            entry.iterator->next();
+            if (entry.iterator->isValid())
+            {
+                MergeEntry next_entry;
+                next_entry.key = entry.iterator->key();
+                next_entry.value = entry.iterator->value();
+                next_entry.sequence_number = entry.iterator->sequenceNumber();
+                next_entry.entry_type = entry.iterator->entryType();
+                next_entry.xmin = entry.iterator->xmin();
+                next_entry.xmax = entry.iterator->xmax();
+                next_entry.iterator = entry.iterator;
+                next_entry.sstable_index = entry.sstable_index;
+
+                pq.push(next_entry);
+            }
+            continue;
+        }
+
+        // MGA Garbage Collection: Remove entries invisible to all transactions
+        // An entry is garbage if:
+        // 1. It was created and deleted before OIT (xmin < oit && xmax < oit && xmax != 0)
+        // 2. It's a tombstone for a version that's already been deleted
+        bool is_garbage = false;
+        if (oit > 0)
+        {
+            // Entry was committed and deleted before OIT
+            if (entry.xmin < oit && entry.xmax > 0 && entry.xmax < oit)
+            {
+                is_garbage = true;
+            }
+        }
+
+        if (is_garbage)
+        {
+            entries_skipped_gc++;
+
+            // Advance iterator
+            entry.iterator->next();
+            if (entry.iterator->isValid())
+            {
+                MergeEntry next_entry;
+                next_entry.key = entry.iterator->key();
+                next_entry.value = entry.iterator->value();
+                next_entry.sequence_number = entry.iterator->sequenceNumber();
+                next_entry.entry_type = entry.iterator->entryType();
+                next_entry.xmin = entry.iterator->xmin();
+                next_entry.xmax = entry.iterator->xmax();
+                next_entry.iterator = entry.iterator;
+                next_entry.sstable_index = entry.sstable_index;
+
+                pq.push(next_entry);
+            }
+            continue;
+        }
+
+        // Write entry to output SSTable
+        s = writer.addEntry(entry.key, entry.value, entry.sequence_number,
+                          entry.entry_type, entry.xmin, entry.xmax, ctx);
+        if (s != Status::OK)
+        {
+            writer.close(ctx);
+            return s;
+        }
+
+        entries_written++;
+        last_key = entry.key;
+
+        // Advance iterator and add next entry from same SSTable
+        entry.iterator->next();
+        if (entry.iterator->isValid())
+        {
+            MergeEntry next_entry;
+            next_entry.key = entry.iterator->key();
+            next_entry.value = entry.iterator->value();
+            next_entry.sequence_number = entry.iterator->sequenceNumber();
+            next_entry.entry_type = entry.iterator->entryType();
+            next_entry.xmin = entry.iterator->xmin();
+            next_entry.xmax = entry.iterator->xmax();
+            next_entry.iterator = entry.iterator;
+            next_entry.sstable_index = entry.sstable_index;
+
+            pq.push(next_entry);
+        }
+    }
+
+    // Step 5: Finish writing output SSTable
+    s = writer.finish(ctx);
+    if (s != Status::OK)
+    {
+        writer.close(ctx);
+        return s;
+    }
+
+    s = writer.close(ctx);
+    if (s != Status::OK)
+    {
+        return s;
+    }
+
+    // Log compaction statistics
+    // TODO: Add proper logging
+    // printf("K-way merge complete: %lu entries written, %lu duplicates skipped, %lu GC'd\n",
+    //        entries_written, entries_skipped_duplicate, entries_skipped_gc);
 
     return Status::OK;
 }
