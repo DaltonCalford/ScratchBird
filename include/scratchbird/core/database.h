@@ -500,7 +500,7 @@ namespace scratchbird
             mutable std::mutex tablespace_mutex_;              // Protects tablespace_fds_ access
 
             // Validate database header
-            Status validate_header();
+            Status validate_header(ErrorContext *ctx);
 
             // Create helpers
             static Status init_header_page(int fd, const std::string &path, uint32_t page_size,

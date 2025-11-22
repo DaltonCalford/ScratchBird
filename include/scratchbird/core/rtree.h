@@ -466,17 +466,19 @@ private:
      * Save a node to disk
      *
      * @param node Node to save
+     * @param ctx Error context
      * @return Status
      */
-    Status saveNode(RTreeNode* node);
+    Status saveNode(RTreeNode* node, ErrorContext* ctx);
 
     /**
      * Allocate a new page for a node
      *
      * @param node Node to allocate page for
+     * @param ctx Error context
      * @return Status
      */
-    Status allocatePage(RTreeNode* node);
+    Status allocatePage(RTreeNode* node, ErrorContext* ctx);
 
     /**
      * Check if an entry is visible to the current transaction

@@ -767,7 +767,7 @@ namespace scratchbird::core
         return Status::OK;
     }
 
-    auto TransactionManager::isTransactionVisible(uint64_t xid, uint64_t snapshot_xid) -> bool
+    auto TransactionManager::isTransactionVisible(uint64_t xid, uint64_t current_xid) -> bool
     {
         // VALIDATE XID FIRST - Critical security check
         if (!isXidInRange(xid))
@@ -797,16 +797,16 @@ namespace scratchbird::core
 
         // Simple visibility rules for single connection:
         // - Transaction sees its own changes
-        // - Transaction sees all committed changes with XID < snapshot_xid
+        // - Transaction sees all committed changes with XID < current_xid
         // - Transaction does not see aborted changes
         // - Transaction does not see active changes from other transactions
 
-        if (xid == snapshot_xid)
+        if (xid == current_xid)
         {
             return true; // See own changes
         }
 
-        if (xid > snapshot_xid)
+        if (xid > current_xid)
         {
             return false; // Future transaction
         }
@@ -821,7 +821,7 @@ namespace scratchbird::core
         if (getTransactionState(xid, state, nullptr) != Status::OK)
         {
             // Error getting state, for old transactions assume committed
-            if (xid < snapshot_xid)
+            if (xid < current_xid)
             {
                 return true; // Old transaction, assume committed
             }
