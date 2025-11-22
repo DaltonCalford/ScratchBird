@@ -19,6 +19,7 @@
  */
 
 #include "scratchbird/core/lsm_tree_index.h"
+#include "scratchbird/core/lsm_thread_pool.h"
 #include "scratchbird/core/transaction_manager.h"
 #include <algorithm>
 #include <queue>
@@ -35,8 +36,9 @@ namespace core
 // Constructor / Destructor
 // ============================================================================
 
-LSMCompactionManager::LSMCompactionManager(TransactionManager *txn_mgr)
-    : txn_mgr_(txn_mgr)
+LSMCompactionManager::LSMCompactionManager(TransactionManager *txn_mgr, bool enable_parallel)
+    : txn_mgr_(txn_mgr),
+      parallel_enabled_(enable_parallel)
 {
     // Initialize 4 levels (0-3)
     levels_.resize(4);
@@ -52,11 +54,21 @@ LSMCompactionManager::LSMCompactionManager(TransactionManager *txn_mgr)
 
     // Level 3: 10 GB total (10x Level 2)
     levels_[3] = LevelMetadata(3, 10ULL * 1024 * 1024 * 1024);
+
+    // Create thread pool if parallel compaction is enabled
+    if (parallel_enabled_)
+    {
+        thread_pool_ = std::make_unique<LSMThreadPool>();
+    }
 }
 
 LSMCompactionManager::~LSMCompactionManager()
 {
-    // Cleanup - vectors automatically destructed
+    // Stop thread pool (waits for pending tasks)
+    if (thread_pool_)
+    {
+        thread_pool_->stop(true);
+    }
 }
 
 // ============================================================================
@@ -65,9 +77,31 @@ LSMCompactionManager::~LSMCompactionManager()
 
 Status LSMCompactionManager::initialize(ErrorContext *ctx)
 {
-    // Nothing to initialize for now
-    // Levels are already configured in constructor
+    // Start thread pool if parallel compaction enabled
+    if (thread_pool_)
+    {
+        thread_pool_->start();
+    }
+
     return Status::OK;
+}
+
+void LSMCompactionManager::setParallelCompaction(bool enable)
+{
+    if (enable && !thread_pool_)
+    {
+        // Create and start thread pool
+        thread_pool_ = std::make_unique<LSMThreadPool>();
+        thread_pool_->start();
+        parallel_enabled_ = true;
+    }
+    else if (!enable && thread_pool_)
+    {
+        // Stop and destroy thread pool
+        thread_pool_->stop(true);
+        thread_pool_.reset();
+        parallel_enabled_ = false;
+    }
 }
 
 // ============================================================================
@@ -259,6 +293,35 @@ Status LSMCompactionManager::executeCompaction(const CompactionTask &task,
     for (const auto &old_path : old_sstables)
     {
         std::remove(old_path.c_str());
+    }
+
+    return Status::OK;
+}
+
+Status LSMCompactionManager::executeCompactionParallel(const CompactionTask &task,
+                                                       ErrorContext *ctx)
+{
+    if (!thread_pool_)
+    {
+        // Fall back to single-threaded execution if thread pool not available
+        return executeCompaction(task, ctx);
+    }
+
+    // Create task function that wraps executeCompaction
+    // Note: We capture 'this' and copy the task to avoid lifetime issues
+    auto task_fn = [this](const CompactionTask& t) -> bool {
+        ErrorContext local_ctx;
+        Status s = executeCompaction(t, &local_ctx);
+        return s == Status::OK;
+    };
+
+    // Submit to thread pool (non-blocking)
+    bool submitted = thread_pool_->submit(task, task_fn);
+    if (!submitted)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INTERNAL_ERROR,
+            "Failed to submit compaction task to thread pool");
+        return Status::INTERNAL_ERROR;
     }
 
     return Status::OK;

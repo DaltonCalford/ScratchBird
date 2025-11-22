@@ -109,6 +109,7 @@ private:
 // Forward declarations
 class LSMBloomFilter;
 class Compressor;
+class LSMThreadPool;
 enum class CompressionType : uint8_t;
 
 // ============================================================================
@@ -279,7 +280,7 @@ struct CompactionTask
 class LSMCompactionManager
 {
 public:
-    explicit LSMCompactionManager(TransactionManager *txn_mgr);
+    explicit LSMCompactionManager(TransactionManager *txn_mgr, bool enable_parallel = true);
     ~LSMCompactionManager();
 
     // Initialize
@@ -298,18 +299,30 @@ public:
     Status selectCompactionTask(CompactionTask *task_out,
                                ErrorContext *ctx = nullptr);
 
-    // Execute compaction
+    // Execute compaction (single-threaded)
     Status executeCompaction(const CompactionTask &task,
                             ErrorContext *ctx = nullptr);
+
+    // Execute compaction in parallel (uses thread pool)
+    Status executeCompactionParallel(const CompactionTask &task,
+                                    ErrorContext *ctx = nullptr);
 
     // Get statistics
     void getStatistics(uint64_t *total_sstables_out,
                       uint64_t *total_size_out);
 
+    // Enable/disable parallel compaction
+    void setParallelCompaction(bool enable);
+    bool isParallelEnabled() const { return parallel_enabled_; }
+
 private:
     TransactionManager *txn_mgr_;
     std::vector<LevelMetadata> levels_;
     std::mutex mutex_;
+
+    // Parallel compaction
+    bool parallel_enabled_;
+    std::unique_ptr<LSMThreadPool> thread_pool_;
 
     // Helper methods
     void findOverlappingSSTables(uint32_t level,
