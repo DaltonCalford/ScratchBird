@@ -135,9 +135,9 @@ This section details the remaining work organized by component.
 - Trigger DDL Opcodes (EXT_CREATE_TRIGGER, EXT_DROP_TRIGGER defined)
 
 **❌ MISSING:**
-- Cursor Operations (no CURSOR opcodes exist)
-- Executor implementations for PSQL opcodes (stubs may exist)
+- Executor implementations for some PSQL opcodes (control flow complete, cursors complete)
 - Trigger Firing Mechanism execution logic
+- Parser and bytecode generator integration for cursors (executor infrastructure complete)
 
 ### Tasks
 
@@ -145,7 +145,7 @@ This section details the remaining work organized by component.
 |------|-------------|-------|----------|--------|
 | 1.1 | Variable Scope Management | ~200 | HIGH | ✅ **Infrastructure exists** |
 | 1.2 | Control Flow Execution (IF, LOOP, WHILE, EXIT, RETURN) | ~300 | HIGH | ⧗ **Opcodes defined, executor needed** |
-| 1.3 | Cursor Operations (DECLARE, OPEN, FETCH, CLOSE) | ~400 | HIGH | ❌ **Not Started** |
+| 1.3 | Cursor Operations (DECLARE, OPEN, FETCH, CLOSE) | ~400 | HIGH | ✅ **COMPLETE (Nov 22, 2025)** |
 | 1.4 | Exception Handling (RAISE, TRY/EXCEPT) | ~250 | MEDIUM | ✅ **COMPLETE (Nov 22, 2025)** |
 | 1.5 | Trigger Firing Mechanism | ~500 | HIGH | ⧗ **Opcodes defined, executor needed** |
 | 1.6 | Stored Procedure Invocation | ~300 | HIGH | ⧗ **Infrastructure exists, executor needed** |
