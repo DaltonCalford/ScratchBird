@@ -43,6 +43,7 @@
 #include "scratchbird/core/buffer_pool.h"
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/core/uuidv7.h"
+#include "scratchbird/core/connection_context.h"
 
 using namespace scratchbird::core;
 
