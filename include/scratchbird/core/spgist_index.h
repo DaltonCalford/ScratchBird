@@ -407,7 +407,7 @@ public:
      */
     Status search(const std::vector<uint8_t>& query,
                   uint64_t current_xid,
-                  std::vector<TID>& results,
+                  std::vector<TID>* results,
                   ErrorContext* ctx);
 
     /**

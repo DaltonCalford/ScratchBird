@@ -98,17 +98,45 @@ Status FullTextIndex::insert(const void* tsvector_data, size_t tsvector_len,
                              key_extractor, ctx);
 }
 
-std::vector<TID> FullTextIndex::search(const TSQuery& tsquery,
-                                       uint64_t current_xid,
-                                       ErrorContext* ctx)
+Status FullTextIndex::remove(const void* tsvector_data, size_t tsvector_len,
+                             const TID& tid, uint64_t current_xid,
+                             ErrorContext* ctx)
 {
+    if (!tsvector_data || tsvector_len == 0)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+            "Invalid tsvector data");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    // Use GINTSVectorOps to extract keys from the tsvector
+    auto key_extractor = makeGINTSVectorKeyExtractor();
+
+    // Remove from GIN index
+    return gin_index_->remove(tsvector_data, tsvector_len, tid,
+                             key_extractor, current_xid, ctx);
+}
+
+Status FullTextIndex::search(const TSQuery& tsquery,
+                              uint64_t current_xid,
+                              std::vector<TID>* results,
+                              ErrorContext* ctx)
+{
+    if (!results)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Results vector cannot be null");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    results->clear();
+
     // Extract search keys from the query
     auto query_keys = GINTSVectorOps::extractQueryKeys(tsquery);
 
     if (query_keys.empty())
     {
-        // Empty query matches nothing
-        return {};
+        // Empty query matches nothing - return empty results (OK status)
+        return Status::OK;
     }
 
     // Analyze query structure to determine lookup strategy
@@ -143,7 +171,8 @@ std::vector<TID> FullTextIndex::search(const TSQuery& tsquery,
     // access to the table data, which would be implemented in the
     // executor layer.
 
-    return candidates;
+    *results = std::move(candidates);
+    return Status::OK;
 }
 
 GinIndex::Statistics FullTextIndex::getStatistics()
