@@ -349,7 +349,15 @@ namespace scratchbird
             EXT_CTE_DEF = 0x60,            // CTE definition marker
             EXT_CTE_SCAN = 0x61,           // CTE scan operation
             EXT_WITH_CLAUSE = 0x62,        // WITH clause marker
-            
+
+            // Set operations (UNION, INTERSECT, EXCEPT) - 0x64-0x6F range
+            EXT_UNION = 0x64,              // UNION (removes duplicates)
+            EXT_UNION_ALL = 0x65,          // UNION ALL (keeps duplicates)
+            EXT_INTERSECT = 0x66,          // INTERSECT (removes duplicates)
+            EXT_INTERSECT_ALL = 0x67,      // INTERSECT ALL (keeps duplicates)
+            EXT_EXCEPT = 0x68,             // EXCEPT (removes duplicates)
+            EXT_EXCEPT_ALL = 0x69,         // EXCEPT ALL (keeps duplicates)
+
             // Trigger opcodes (Phase 2 Wave 2 - Agent C) - 0x70-0x72 range
             EXT_CREATE_TRIGGER = 0x70,     // CREATE TRIGGER
             EXT_DROP_TRIGGER = 0x71,       // DROP TRIGGER
@@ -416,7 +424,7 @@ namespace scratchbird
             EXT_RETURN = 0x9B,             // RETURN statement
             EXT_RAISE = 0x9C,              // RAISE exception
             EXT_TRY = 0x9D,                // TRY block
-            EXT_EXCEPT = 0x9E,             // EXCEPT handler
+            EXT_EXCEPT_HANDLER = 0x9E,     // EXCEPT handler (exception handling, not set operation)
             EXT_EXCEPTION_HANDLER = 0x9F,  // Exception handler definition
 
             // Control flow helpers

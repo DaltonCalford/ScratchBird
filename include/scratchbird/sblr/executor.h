@@ -316,6 +316,17 @@ namespace scratchbird
             void executeCommit();           // Phase 2 Task 2.6
             void executeRollback();         // Phase 2 Task 2.6
 
+            // Set operations (UNION, INTERSECT, EXCEPT)
+            void executeUnionAll();         // UNION ALL - concatenate with duplicates
+            void executeUnion();            // UNION - concatenate without duplicates
+            void executeIntersectAll();     // INTERSECT ALL - common rows with duplicates
+            void executeIntersect();        // INTERSECT - common rows without duplicates
+            void executeExceptAll();        // EXCEPT ALL - left minus right with duplicates
+            void executeExcept();           // EXCEPT - left minus right without duplicates
+
+            // Recursive CTE execution
+            void executeRecursiveCTE(const std::string& cte_name, size_t base_pc);
+
             // Trigger execution (Wave 2)
             void executeCreateTrigger();    // CREATE TRIGGER
             void executeDropTrigger();      // DROP TRIGGER
@@ -549,6 +560,10 @@ namespace scratchbird
             bool return_requested_ = false;
             Value return_value_;
 
+            // Current exception state (for re-raise)
+            bool has_current_exception_ = false;
+            std::string current_exception_message_;
+
             // PSQL statement execution methods
             void executeFunction();          // Execute CREATE FUNCTION
             void executeProcedure();         // Execute CREATE PROCEDURE
@@ -561,6 +576,8 @@ namespace scratchbird
             void executeExitStatement();     // Execute EXIT statement
             void executeReturnStatement();   // Execute RETURN statement
             void executeRaiseStatement();    // Execute RAISE exception
+            void executeTryStatement();      // Execute TRY block with exception handlers
+            void executeExceptHandler();     // Execute EXCEPT handler block
 
             // PSQL variable operations
             void executeVarLoad();           // Load variable onto stack
