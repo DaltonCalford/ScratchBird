@@ -20408,7 +20408,8 @@ namespace scratchbird
                     auto hash_idx = getOrOpenIndex<core::HashIndex>(index_uuid, type, index_info.root_page, ctx);
                     if (hash_idx)
                     {
-                        return hash_idx->insert(key, tid, xmin, ctx);
+                        // HashIndex::insert() expects (void*, size_t, TID, uint64_t, ErrorContext*)
+                        return hash_idx->insert(key.data(), key.size(), tid, xmin, ctx);
                     }
                     return core::Status::INTERNAL_ERROR;
                 }
@@ -20448,7 +20449,10 @@ namespace scratchbird
                     auto brin = getOrOpenIndex<core::BrinIndex>(index_uuid, type, index_info.root_page, ctx);
                     if (brin)
                     {
-                        return brin->insert(key, tid, xmin, ctx);
+                        // BRIN indexes work on block ranges, not individual tuples
+                        // Convert TID to block number
+                        uint32_t block_num = static_cast<uint32_t>(core::getPageNumber(tid.gpid));
+                        return brin->insert(key, block_num, ctx);
                     }
                     return core::Status::INTERNAL_ERROR;
                 }
@@ -20458,7 +20462,8 @@ namespace scratchbird
                     auto bitmap = getOrOpenIndex<core::BitmapIndex>(index_uuid, type, index_info.root_page, ctx);
                     if (bitmap)
                     {
-                        return bitmap->insert(key, tid, xmin, ctx);
+                        // BitmapIndex::insert() expects (void*, size_t, TID, ErrorContext*)
+                        return bitmap->insert(key.data(), key.size(), tid, ctx);
                     }
                     return core::Status::INTERNAL_ERROR;
                 }
@@ -20485,10 +20490,18 @@ namespace scratchbird
                     auto gin = getOrOpenIndex<core::GinIndex>(index_uuid, type, index_info.root_page, ctx);
                     if (gin)
                     {
-                        // GIN takes value_data and value_len (not a structured key)
-                        const void* value_data = key.data();
-                        size_t value_len = key.size();
-                        return gin->insert(value_data, value_len, tid, xmin, ctx);
+                        // GIN requires a key_extractor function to decompose values into searchable keys
+                        // Get the default extractor from the registry
+                        auto key_extractor = GinExtractorRegistry::instance().getExtractor(
+                            static_cast<uint16_t>(GinExtractorId::DEFAULT));
+
+                        if (!key_extractor)
+                        {
+                            // Fallback to default extractor
+                            key_extractor = GinExtractorRegistry::defaultExtractor;
+                        }
+
+                        return gin->insert(key.data(), key.size(), tid, key_extractor, ctx);
                     }
                     return core::Status::INTERNAL_ERROR;
                 }
@@ -20557,7 +20570,8 @@ namespace scratchbird
                     auto hash_idx = getOrOpenIndex<core::HashIndex>(index_uuid, type, index_info.root_page, ctx);
                     if (hash_idx)
                     {
-                        return hash_idx->search(key, current_xid, results_out, ctx);
+                        // HashIndex uses find() for point lookups, not search()
+                        return hash_idx->find(key.data(), key.size(), current_xid, results_out, ctx);
                     }
                     return core::Status::INTERNAL_ERROR;
                 }
@@ -20597,7 +20611,22 @@ namespace scratchbird
                     auto brin = getOrOpenIndex<core::BrinIndex>(index_uuid, type, index_info.root_page, ctx);
                     if (brin)
                     {
-                        return brin->search(key, current_xid, results_out, ctx);
+                        // BRIN doesn't have search() - it uses scan() for range queries
+                        // For a point lookup, treat the key as both min and max value
+                        std::vector<uint32_t> block_numbers;
+                        core::Status status = brin->scan(&key, &key, current_xid, &block_numbers, ctx);
+
+                        if (status != core::Status::OK)
+                        {
+                            return status;
+                        }
+
+                        // BRIN returns block numbers, not TIDs
+                        // This is a design limitation - the caller needs to scan the returned blocks
+                        // For now, return NOT_SUPPORTED since we can't return block numbers via TID vector
+                        SET_ERROR_CONTEXT(ctx, core::Status::NOT_SUPPORTED,
+                                         "BRIN point lookup requires block-level scan (use range scan instead)");
+                        return core::Status::NOT_SUPPORTED;
                     }
                     return core::Status::INTERNAL_ERROR;
                 }
@@ -20607,7 +20636,26 @@ namespace scratchbird
                     auto bitmap = getOrOpenIndex<core::BitmapIndex>(index_uuid, type, index_info.root_page, ctx);
                     if (bitmap)
                     {
-                        return bitmap->scan(key, current_xid, results_out, ctx);
+                        // BitmapIndex::scan() expects (void*, size_t, uint64_t, ErrorContext*)
+                        auto scanner = bitmap->scan(key.data(), key.size(), current_xid, ctx);
+                        if (!scanner)
+                        {
+                            return core::Status::INTERNAL_ERROR;
+                        }
+
+                        // Iterate over scanner and collect matching TIDs
+                        results_out->clear();
+                        while (scanner->hasNext())
+                        {
+                            core::TID tid;
+                            core::Status status = scanner->next(&tid, ctx);
+                            if (status != core::Status::OK)
+                            {
+                                return status;
+                            }
+                            results_out->push_back(tid);
+                        }
+                        return core::Status::OK;
                     }
                     return core::Status::INTERNAL_ERROR;
                 }
@@ -20693,7 +20741,8 @@ namespace scratchbird
                     auto hash_idx = getOrOpenIndex<core::HashIndex>(index_uuid, type, index_info.root_page, ctx);
                     if (hash_idx)
                     {
-                        return hash_idx->remove(key, tid, xmax, ctx);
+                        // HashIndex::remove() expects (void*, size_t, TID, uint64_t, ErrorContext*)
+                        return hash_idx->remove(key.data(), key.size(), tid, xmax, ctx);
                     }
                     return core::Status::INTERNAL_ERROR;
                 }
@@ -20744,7 +20793,9 @@ namespace scratchbird
                     auto bitmap = getOrOpenIndex<core::BitmapIndex>(index_uuid, type, index_info.root_page, ctx);
                     if (bitmap)
                     {
-                        return bitmap->remove(key, tid, xmax, ctx);
+                        // BitmapIndex::remove() only takes TID, not key or xmax
+                        // The xmax is handled internally by the index
+                        return bitmap->remove(tid, ctx);
                     }
                     return core::Status::INTERNAL_ERROR;
                 }
@@ -20765,10 +20816,18 @@ namespace scratchbird
                     auto gin = getOrOpenIndex<core::GinIndex>(index_uuid, type, index_info.root_page, ctx);
                     if (gin)
                     {
-                        // GIN takes value_data and value_len
-                        const void* value_data = key.data();
-                        size_t value_len = key.size();
-                        return gin->remove(value_data, value_len, tid, xmax, ctx);
+                        // GIN requires a key_extractor function to decompose values into searchable keys
+                        // Get the default extractor from the registry
+                        auto key_extractor = GinExtractorRegistry::instance().getExtractor(
+                            static_cast<uint16_t>(GinExtractorId::DEFAULT));
+
+                        if (!key_extractor)
+                        {
+                            // Fallback to default extractor
+                            key_extractor = GinExtractorRegistry::defaultExtractor;
+                        }
+
+                        return gin->remove(key.data(), key.size(), tid, key_extractor, xmax, ctx);
                     }
                     return core::Status::INTERNAL_ERROR;
                 }
@@ -20839,10 +20898,16 @@ namespace scratchbird
                         results_out->clear();
                         while (iter->hasNext())
                         {
-                            auto entry = iter->next();
-                            if (entry.has_value())
+                            std::vector<uint8_t> key_result;
+                            core::TID tid_result;
+                            core::Status status = iter->next(&key_result, &tid_result, ctx);
+                            if (status == core::Status::OK)
                             {
-                                results_out->push_back(entry.value().tid);
+                                results_out->push_back(tid_result);
+                            }
+                            else
+                            {
+                                break;
                             }
                         }
                         return core::Status::OK;
@@ -20928,8 +20993,20 @@ namespace scratchbird
                         }
 
                         // BRIN returns block numbers that might contain values in range
-                        // For now, use search() with start_key
-                        return brin->search(*start_key, current_xid, results_out, ctx);
+                        std::vector<uint32_t> block_numbers;
+                        core::Status status = brin->scan(start_key, end_key, current_xid, &block_numbers, ctx);
+
+                        if (status != core::Status::OK)
+                        {
+                            return status;
+                        }
+
+                        // BRIN returns block numbers, not TIDs
+                        // This is a design limitation - the caller needs to scan the returned blocks
+                        // For now, return NOT_SUPPORTED since we can't return block numbers via TID vector
+                        SET_ERROR_CONTEXT(ctx, core::Status::NOT_SUPPORTED,
+                                         "BRIN range scan requires block-level scan (use heap scan on returned blocks)");
+                        return core::Status::NOT_SUPPORTED;
                     }
                     return core::Status::INTERNAL_ERROR;
                 }
