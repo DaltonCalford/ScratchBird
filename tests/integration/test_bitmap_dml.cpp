@@ -176,7 +176,8 @@ TEST_F(BitmapDMLTest, LogicalDeletionWithXmax)
     UuidV7Bytes index_uuid = generateUuidV7();
     uint32_t meta_page = 0;
 
-    BitmapIndex::create(db_.get(), index_uuid, &meta_page, &ctx);
+    Status status = BitmapIndex::create(db_.get(), index_uuid, &meta_page, &ctx);
+    ASSERT_EQ(status, Status::OK);
     auto bitmap = BitmapIndex::open(db_.get(), index_uuid, meta_page, &ctx);
 
     // Begin transaction and insert
@@ -187,7 +188,8 @@ TEST_F(BitmapDMLTest, LogicalDeletionWithXmax)
     std::vector<uint8_t> value = serializeInt32(42);
     TID tid = makeTID(1, 10, 1);
 
-    bitmap->insert(value.data(), value.size(), tid, &ctx);
+    status = bitmap->insert(value.data(), value.size(), tid, &ctx);
+    ASSERT_EQ(status, Status::OK);
     status = tx_manager_->commitTransaction(0, insert_xid, &ctx);
     ASSERT_EQ(status, Status::OK);
 
@@ -195,7 +197,9 @@ TEST_F(BitmapDMLTest, LogicalDeletionWithXmax)
     uint64_t read1_xid;
     status = tx_manager_->beginTransaction(0, read1_xid, &ctx);
     ASSERT_EQ(status, Status::OK);
-    std::vector<TID> results1 = bitmap->find(value.data(), value.size(), read1_xid, &ctx);
+    std::vector<TID> results1;
+    status = bitmap->find(value.data(), value.size(), read1_xid, &results1, &ctx);
+    EXPECT_EQ(status, Status::OK);
     EXPECT_EQ(results1.size(), 1) << "Should find 1 tuple before deletion";
     status = tx_manager_->commitTransaction(0, read1_xid, &ctx);
     ASSERT_EQ(status, Status::OK);
@@ -204,8 +208,8 @@ TEST_F(BitmapDMLTest, LogicalDeletionWithXmax)
     uint64_t delete_xid;
     status = tx_manager_->beginTransaction(0, delete_xid, &ctx);
     ASSERT_EQ(status, Status::OK);
-    Status remove_status = bitmap->remove(tid, &ctx);
-    EXPECT_EQ(remove_status, Status::OK) << "Remove should succeed: " << ctx.message;
+    status = bitmap->remove(tid, &ctx);
+    EXPECT_EQ(status, Status::OK) << "Remove should succeed: " << ctx.message;
     status = tx_manager_->commitTransaction(0, delete_xid, &ctx);
     ASSERT_EQ(status, Status::OK);
 
@@ -213,7 +217,9 @@ TEST_F(BitmapDMLTest, LogicalDeletionWithXmax)
     uint64_t read2_xid;
     status = tx_manager_->beginTransaction(0, read2_xid, &ctx);
     ASSERT_EQ(status, Status::OK);
-    std::vector<TID> results2 = bitmap->find(value.data(), value.size(), read2_xid, &ctx);
+    std::vector<TID> results2;
+    status = bitmap->find(value.data(), value.size(), read2_xid, &results2, &ctx);
+    EXPECT_EQ(status, Status::OK);
 
     // After deletion, the tuple should be filtered out by visibility check
     // NOTE: This depends on proper TIP-based visibility implementation in bitmap->find()
@@ -233,7 +239,8 @@ TEST_F(BitmapDMLTest, LogicalOperations)
     UuidV7Bytes index_uuid = generateUuidV7();
     uint32_t meta_page = 0;
 
-    BitmapIndex::create(db_.get(), index_uuid, &meta_page, &ctx);
+    Status status = BitmapIndex::create(db_.get(), index_uuid, &meta_page, &ctx);
+    ASSERT_EQ(status, Status::OK);
     auto bitmap = BitmapIndex::open(db_.get(), index_uuid, meta_page, &ctx);
 
     uint64_t xid;
@@ -288,7 +295,8 @@ TEST_F(BitmapDMLTest, UpdateScenario)
     UuidV7Bytes index_uuid = generateUuidV7();
     uint32_t meta_page = 0;
 
-    BitmapIndex::create(db_.get(), index_uuid, &meta_page, &ctx);
+    Status status = BitmapIndex::create(db_.get(), index_uuid, &meta_page, &ctx);
+    ASSERT_EQ(status, Status::OK);
     auto bitmap = BitmapIndex::open(db_.get(), index_uuid, meta_page, &ctx);
 
     uint64_t xid;
@@ -323,8 +331,13 @@ TEST_F(BitmapDMLTest, UpdateScenario)
     status = tx_manager_->beginTransaction(0, verify_xid, &ctx);
     ASSERT_EQ(status, Status::OK);
 
-    std::vector<TID> draft_results = bitmap->find(value_draft.data(), value_draft.size(), verify_xid, &ctx);
-    std::vector<TID> published_results = bitmap->find(value_published.data(), value_published.size(), verify_xid, &ctx);
+    std::vector<TID> draft_results;
+    status = bitmap->find(value_draft.data(), value_draft.size(), verify_xid, &draft_results, &ctx);
+    EXPECT_EQ(status, Status::OK);
+
+    std::vector<TID> published_results;
+    status = bitmap->find(value_published.data(), value_published.size(), verify_xid, &published_results, &ctx);
+    EXPECT_EQ(status, Status::OK);
 
     // After update, old value should have 0 results, new value should have 1
     EXPECT_LE(draft_results.size(), 0) << "Old value 'draft' should not be found after update";
