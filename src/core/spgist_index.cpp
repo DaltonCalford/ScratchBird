@@ -208,7 +208,7 @@ Status SPGiSTIndex::initialize(ErrorContext* ctx)
     root->spgist_header.magic = K_MAGIC_SBRD;
     root->spgist_header.version = static_cast<uint16_t>(DB_VERSION_ALPHA_1_0_1);
     root->spgist_header.page_type = static_cast<uint16_t>(PageType::PAGE_TYPE_SPGIST);
-    root->spgist_header.page_size = 8192;
+    root->spgist_header.page_size = db_->page_size();
     root->spgist_header.page_id = static_cast<uint32_t>(root_page_);
     root->spgist_header.checksum = 0;
     root->spgist_header.lsn = 0;
@@ -225,7 +225,7 @@ Status SPGiSTIndex::initialize(ErrorContext* ctx)
     root->spgist_flags = static_cast<uint16_t>(SPGiSTFlags::ROOT);
     root->spgist_node_type = static_cast<uint16_t>(SPGiSTNodeType::LEAF);
     root->spgist_count = 0;
-    root->spgist_free_space = 8192 - sizeof(SBSPGiSTPage);
+    root->spgist_free_space = db_->page_size() - sizeof(SBSPGiSTPage);
     root->spgist_opclass_id = opclass_->getOpClassId();
     root->spgist_xmin = txn_manager_->getCurrentXid();
     root->spgist_total_entries = 0;
@@ -283,7 +283,7 @@ Status SPGiSTIndex::insertRecursive(uint64_t page_num,
         // Add leaf entry
         uint8_t* entry_ptr = reinterpret_cast<uint8_t*>(page) +
                             sizeof(SBSPGiSTPage) +
-                            (8192 - sizeof(SBSPGiSTPage) - page->spgist_free_space);
+                            (db_->page_size() - sizeof(SBSPGiSTPage) - page->spgist_free_space);
 
         SBSPGiSTLeafTuple* leaf = reinterpret_cast<SBSPGiSTLeafTuple*>(entry_ptr);
         leaf->leaf_size = entry_size;
@@ -389,14 +389,14 @@ Status SPGiSTIndex::insertRecursive(uint64_t page_num,
                 new_page->spgist_header.magic = K_MAGIC_SBRD;
                 new_page->spgist_header.version = static_cast<uint16_t>(DB_VERSION_ALPHA_1_0_1);
                 new_page->spgist_header.page_type = static_cast<uint16_t>(PageType::PAGE_TYPE_SPGIST);
-                new_page->spgist_header.page_size = 8192;
+                new_page->spgist_header.page_size = db_->page_size();
                 new_page->spgist_header.page_id = static_cast<uint32_t>(new_leaf_page);
                 new_page->spgist_header.checksum = 0;
                 new_page->spgist_header.lsn = 0;
                 new_page->spgist_header.flags = 0;
                 std::memcpy(new_page->spgist_header.database_uuid, db_->uuid().bytes.data(), 16);
                 new_page->spgist_header.generation = 0;
-                new_page->spgist_header.free_space = 8192 - sizeof(SBSPGiSTPage);
+                new_page->spgist_header.free_space = db_->page_size() - sizeof(SBSPGiSTPage);
                 new_page->spgist_header.item_count = 0;
                 new_page->spgist_header.free_offset = 0;
                 new_page->spgist_header.special_size = 0;
@@ -407,7 +407,7 @@ Status SPGiSTIndex::insertRecursive(uint64_t page_num,
                 new_page->spgist_flags = 0;
                 new_page->spgist_node_type = static_cast<uint16_t>(SPGiSTNodeType::LEAF);
                 new_page->spgist_count = 0;
-                new_page->spgist_free_space = 8192 - sizeof(SBSPGiSTPage);
+                new_page->spgist_free_space = db_->page_size() - sizeof(SBSPGiSTPage);
                 new_page->spgist_opclass_id = opclass_->getOpClassId();
                 new_page->spgist_parent_page = page_num;
                 new_page->spgist_xmin = current_xid;
@@ -512,14 +512,14 @@ Status SPGiSTIndex::insertRecursive(uint64_t page_num,
                     new_child->spgist_header.magic = K_MAGIC_SBRD;
                     new_child->spgist_header.version = static_cast<uint16_t>(DB_VERSION_ALPHA_1_0_1);
                     new_child->spgist_header.page_type = static_cast<uint16_t>(PageType::PAGE_TYPE_SPGIST);
-                    new_child->spgist_header.page_size = 8192;
+                    new_child->spgist_header.page_size = db_->page_size();
                     new_child->spgist_header.page_id = static_cast<uint32_t>(new_page_num);
                     new_child->spgist_header.checksum = 0;
                     new_child->spgist_header.lsn = 0;
                     new_child->spgist_header.flags = 0;
                     std::memcpy(new_child->spgist_header.database_uuid, db_->uuid().bytes.data(), 16);
                     new_child->spgist_header.generation = 0;
-                    new_child->spgist_header.free_space = 8192 - sizeof(SBSPGiSTPage);
+                    new_child->spgist_header.free_space = db_->page_size() - sizeof(SBSPGiSTPage);
                     new_child->spgist_header.item_count = 0;
                     new_child->spgist_header.free_offset = 0;
                     new_child->spgist_header.special_size = 0;
@@ -530,7 +530,7 @@ Status SPGiSTIndex::insertRecursive(uint64_t page_num,
                     new_child->spgist_flags = 0;
                     new_child->spgist_node_type = static_cast<uint16_t>(SPGiSTNodeType::LEAF);
                     new_child->spgist_count = 0;
-                    new_child->spgist_free_space = 8192 - sizeof(SBSPGiSTPage);
+                    new_child->spgist_free_space = db_->page_size() - sizeof(SBSPGiSTPage);
                     new_child->spgist_opclass_id = opclass_->getOpClassId();
                     new_child->spgist_parent_page = page_num;
                     new_child->spgist_xmin = current_xid;
@@ -581,7 +581,7 @@ Status SPGiSTIndex::insertRecursive(uint64_t page_num,
                     label_ptr += sizeof(uint64_t);
                 }
 
-                page->spgist_free_space = 8192 - sizeof(SBSPGiSTPage) - new_data_size;
+                page->spgist_free_space = db_->page_size() - sizeof(SBSPGiSTPage) - new_data_size;
 
                 LOG_DEBUG(CATALOG, "SP-GiST: Split inner node %lu into %lu partitions",
                          page_num, traversal.new_labels.size());
@@ -796,7 +796,7 @@ Status SPGiSTIndex::splitNode(uint64_t page_num, ErrorContext* ctx)
         child_page_ptrs[i]->spgist_header.magic = K_MAGIC_SBRD;
         child_page_ptrs[i]->spgist_header.version = static_cast<uint16_t>(DB_VERSION_ALPHA_1_0_1);
         child_page_ptrs[i]->spgist_header.page_type = static_cast<uint16_t>(PageType::PAGE_TYPE_SPGIST);
-        child_page_ptrs[i]->spgist_header.page_size = 8192;
+        child_page_ptrs[i]->spgist_header.page_size = db_->page_size();
         child_page_ptrs[i]->spgist_header.page_id = static_cast<uint32_t>(child_pages[i]);
         child_page_ptrs[i]->spgist_header.checksum = 0;
         child_page_ptrs[i]->spgist_header.lsn = 0;
@@ -808,7 +808,7 @@ Status SPGiSTIndex::splitNode(uint64_t page_num, ErrorContext* ctx)
         child_page_ptrs[i]->spgist_flags = 0;
         child_page_ptrs[i]->spgist_node_type = static_cast<uint16_t>(SPGiSTNodeType::LEAF);
         child_page_ptrs[i]->spgist_count = 0;
-        child_page_ptrs[i]->spgist_free_space = 8192 - sizeof(SBSPGiSTPage);
+        child_page_ptrs[i]->spgist_free_space = db_->page_size() - sizeof(SBSPGiSTPage);
         child_page_ptrs[i]->spgist_opclass_id = opclass_->getOpClassId();
         child_page_ptrs[i]->spgist_parent_page = page_num;
         child_page_ptrs[i]->spgist_xmin = current_xid;
@@ -827,7 +827,7 @@ Status SPGiSTIndex::splitNode(uint64_t page_num, ErrorContext* ctx)
         // Add entry to child page
         uint8_t* child_entry_ptr = reinterpret_cast<uint8_t*>(child) +
                                    sizeof(SBSPGiSTPage) +
-                                   (8192 - sizeof(SBSPGiSTPage) - child->spgist_free_space);
+                                   (db_->page_size() - sizeof(SBSPGiSTPage) - child->spgist_free_space);
 
         SBSPGiSTLeafTuple* leaf = reinterpret_cast<SBSPGiSTLeafTuple*>(child_entry_ptr);
         leaf->leaf_size = entry_size;
@@ -844,13 +844,13 @@ Status SPGiSTIndex::splitNode(uint64_t page_num, ErrorContext* ctx)
     }
 
     // Convert current page to inner node
-    std::memset(page, 0, 8192);
+    std::memset(page, 0, db_->page_size());
 
     // Re-initialize page header
     page->spgist_header.magic = K_MAGIC_SBRD;
     page->spgist_header.version = static_cast<uint16_t>(DB_VERSION_ALPHA_1_0_1);
     page->spgist_header.page_type = static_cast<uint16_t>(PageType::PAGE_TYPE_SPGIST);
-    page->spgist_header.page_size = 8192;
+    page->spgist_header.page_size = db_->page_size();
     page->spgist_header.page_id = static_cast<uint32_t>(page_num);
     page->spgist_header.checksum = 0;
     page->spgist_header.lsn = 0;
@@ -897,7 +897,7 @@ Status SPGiSTIndex::splitNode(uint64_t page_num, ErrorContext* ctx)
     // Write child page numbers
     std::memcpy(entry_ptr, child_pages.data(), num_partitions * sizeof(uint64_t));
 
-    page->spgist_free_space = 8192 - sizeof(SBSPGiSTPage) - inner->inner_size;
+    page->spgist_free_space = db_->page_size() - sizeof(SBSPGiSTPage) - inner->inner_size;
 
     LOG_DEBUG(CATALOG, "SP-GiST: Split leaf page %lu into %zu partitions (%zu entries distributed)",
              page_num, labels.size(), entries.size());
@@ -1135,7 +1135,7 @@ Status SPGiSTIndex::removeDeadEntriesRecursive(uint64_t page_num,
 
             // Update page metadata
             page->spgist_count = new_count;
-            page->spgist_free_space = 8192 - sizeof(SBSPGiSTPage) - bytes_used;
+            page->spgist_free_space = db_->page_size() - sizeof(SBSPGiSTPage) - bytes_used;
 
             (*pages_modified)++;
         }

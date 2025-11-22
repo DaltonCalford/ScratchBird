@@ -132,7 +132,7 @@ Status HnswIndex::create(Database *db,
     root->hnsw_table_uuid = table_uuid;
     root->hnsw_flags = static_cast<uint16_t>(HnswFlags::ROOT);
     root->hnsw_count = 0;
-    root->hnsw_free_space = 8192 - sizeof(SBHnswPage);
+    root->hnsw_free_space = db_->page_size() - sizeof(SBHnswPage);
     root->hnsw_layer = 0; // Base layer
     root->hnsw_m = m;
     root->hnsw_dimensions = dimensions;
@@ -1051,7 +1051,7 @@ Status HnswIndex::create_node(const VectorValue &vector,
         // Initialize new page
         uint8_t *new_page_data = static_cast<uint8_t*>(new_page_buffer);
         SBHnswPage *new_page = reinterpret_cast<SBHnswPage*>(new_page_data);
-        std::memset(new_page_data, 0, 8192);
+        std::memset(new_page_data, 0, db_->page_size());
 
         // Copy header from root page (need to re-pin root to read it)
         void *root_buffer = nullptr;
@@ -1070,7 +1070,7 @@ Status HnswIndex::create_node(const VectorValue &vector,
         new_page->hnsw_table_uuid = root_page->hnsw_table_uuid;
         new_page->hnsw_flags = 0;
         new_page->hnsw_count = 0;
-        new_page->hnsw_free_space = 8192 - sizeof(SBHnswPage);
+        new_page->hnsw_free_space = db_->page_size() - sizeof(SBHnswPage);
         new_page->hnsw_layer = layer;
         new_page->hnsw_m = root_page->hnsw_m;
         new_page->hnsw_dimensions = root_page->hnsw_dimensions;
@@ -1393,7 +1393,7 @@ Status HnswIndex::prune_connections(uint64_t node_tid, uint16_t layer,
     SBHnswPage *page = reinterpret_cast<SBHnswPage *>(page_data);
     node = nullptr;
     uint8_t *current = page_data + sizeof(SBHnswPage);
-    uint8_t *page_end = page_data + 8192; // PAGE_SIZE = 8192
+    uint8_t *page_end = page_data + db_->page_size();
 
     for (uint16_t i = 0; i < page->hnsw_count; i++)
     {
