@@ -553,6 +553,9 @@ namespace scratchbird
                         {
                             // Phase 2 Wave 2: Handle WITH clause (CTEs)
                             uint16_t cte_count = readInt16();
+                            // Read recursive flag
+                            uint8_t is_recursive = readByte();
+                            cte_is_recursive_ = (is_recursive != 0);
                             // Clear any previous CTE results
                             cte_results_.clear();
                             cte_column_names_.clear();

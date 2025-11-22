@@ -1882,10 +1882,12 @@ namespace scratchbird
             StringPool::StringId name;
             SelectStmt *query;
             std::vector<StringPool::StringId> column_aliases; // Optional column aliases
+            bool recursive; // True if this is a recursive CTE
 
             CTEDefinition(StringPool::StringId n, SelectStmt *q,
-                          std::vector<StringPool::StringId> aliases = {})
-                : name(n), query(q), column_aliases(std::move(aliases))
+                          std::vector<StringPool::StringId> aliases = {},
+                          bool is_recursive = false)
+                : name(n), query(q), column_aliases(std::move(aliases)), recursive(is_recursive)
             {
             }
         };
@@ -1894,8 +1896,8 @@ namespace scratchbird
         class WithClause
         {
         public:
-            WithClause(std::vector<CTEDefinition> ctes)
-                : ctes_(std::move(ctes))
+            WithClause(std::vector<CTEDefinition> ctes, bool is_recursive = false)
+                : ctes_(std::move(ctes)), recursive_(is_recursive)
             {
             }
 
@@ -1904,8 +1906,14 @@ namespace scratchbird
                 return ctes_;
             }
 
+            bool isRecursive() const
+            {
+                return recursive_;
+            }
+
         private:
             std::vector<CTEDefinition> ctes_;
+            bool recursive_;
         };
 
         // Sort direction for ORDER BY (Phase 1 Task 5.1)
