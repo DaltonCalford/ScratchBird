@@ -48,6 +48,7 @@
 #include "scratchbird/core/buffer_pool.h"
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/core/uuidv7.h"
+#include "scratchbird/core/connection_context.h"
 
 using namespace scratchbird::core;
 
@@ -237,7 +238,7 @@ protected:
     }
 
     // Helper: Create TID
-    TID createTID(uint64_t page, uint64_t slot)
+    TID makeTID(uint64_t page, uint64_t slot)
     {
         TID tid;
         tid.page_number = page;
@@ -309,7 +310,7 @@ TEST_F(GiSTMVCCTest, SingleElementMGAVisibility)
 
     // Insert predicate in transaction T1
     GiSTPredicate pred = createPoint(50, 50);
-    TID tid = createTID(1, 0);
+    TID tid = makeTID(1, 0);
     status = gist->insert(pred, tid, xid1, &ctx);
     ASSERT_EQ(status, Status::OK);
 
@@ -361,16 +362,16 @@ TEST_F(GiSTMVCCTest, MultipleElementsOverlapSearch)
     uint64_t xid = txn_mgr_->beginTransaction(IsolationLevel::READ_COMMITTED, &ctx);
 
     // Insert 4 boxes in different quadrants
-    status = gist->insert(createBox(0, 0, 50, 50), createTID(1, 0), xid, &ctx);
+    status = gist->insert(createBox(0, 0, 50, 50), makeTID(1, 0), xid, &ctx);
     EXPECT_EQ(status, Status::OK);
 
-    status = gist->insert(createBox(50, 0, 100, 50), createTID(1, 1), xid, &ctx);
+    status = gist->insert(createBox(50, 0, 100, 50), makeTID(1, 1), xid, &ctx);
     EXPECT_EQ(status, Status::OK);
 
-    status = gist->insert(createBox(0, 50, 50, 100), createTID(1, 2), xid, &ctx);
+    status = gist->insert(createBox(0, 50, 50, 100), makeTID(1, 2), xid, &ctx);
     EXPECT_EQ(status, Status::OK);
 
-    status = gist->insert(createBox(50, 50, 100, 100), createTID(1, 3), xid, &ctx);
+    status = gist->insert(createBox(50, 50, 100, 100), makeTID(1, 3), xid, &ctx);
     EXPECT_EQ(status, Status::OK);
 
     // Search for boxes overlapping (25, 25, 75, 75) - should hit all 4
@@ -408,7 +409,7 @@ TEST_F(GiSTMVCCTest, LogicalDeletionXmax)
     // Insert predicate in T1
     uint64_t xid1 = txn_mgr_->beginTransaction(IsolationLevel::READ_COMMITTED, &ctx);
     GiSTPredicate pred = createPoint(50, 50);
-    TID tid = createTID(1, 0);
+    TID tid = makeTID(1, 0);
     status = gist->insert(pred, tid, xid1, &ctx);
     ASSERT_EQ(status, Status::OK);
     status = txn_mgr_->commitTransaction(xid1, &ctx);
@@ -463,7 +464,7 @@ TEST_F(GiSTMVCCTest, RepeatableReadIsolation)
 
     // Insert initial predicate
     uint64_t xid_setup = txn_mgr_->beginTransaction(IsolationLevel::READ_COMMITTED, &ctx);
-    status = gist->insert(createPoint(50, 50), createTID(1, 0), xid_setup, &ctx);
+    status = gist->insert(createPoint(50, 50), makeTID(1, 0), xid_setup, &ctx);
     ASSERT_EQ(status, Status::OK);
     status = txn_mgr_->commitTransaction(xid_setup, &ctx);
     ASSERT_EQ(status, Status::OK);
@@ -482,7 +483,7 @@ TEST_F(GiSTMVCCTest, RepeatableReadIsolation)
 
     // Another transaction inserts new predicate
     uint64_t xid_other = txn_mgr_->beginTransaction(IsolationLevel::READ_COMMITTED, &ctx);
-    status = gist->insert(createPoint(75, 75), createTID(1, 1), xid_other, &ctx);
+    status = gist->insert(createPoint(75, 75), makeTID(1, 1), xid_other, &ctx);
     ASSERT_EQ(status, Status::OK);
     status = txn_mgr_->commitTransaction(xid_other, &ctx);
     ASSERT_EQ(status, Status::OK);
@@ -523,7 +524,7 @@ TEST_F(GiSTMVCCTest, GarbageCollectionDeadEntries)
     {
         uint64_t xid_insert = txn_mgr_->beginTransaction(IsolationLevel::READ_COMMITTED, &ctx);
         GiSTPredicate pred = createPoint(i * 10, i * 10);
-        TID tid = createTID(1, i);
+        TID tid = makeTID(1, i);
         status = gist->insert(pred, tid, xid_insert, &ctx);
         EXPECT_EQ(status, Status::OK);
         status = txn_mgr_->commitTransaction(xid_insert, &ctx);
@@ -579,7 +580,7 @@ TEST_F(GiSTMVCCTest, TransactionIdParameterValidation)
 
     // Verify API signature uses TransactionId (uint64_t), not Snapshot*
     GiSTPredicate pred = createPoint(50, 50);
-    TID tid = createTID(1, 0);
+    TID tid = makeTID(1, 0);
 
     // This compiles → API uses TransactionId ✅
     status = gist->insert(pred, tid, xid, &ctx);

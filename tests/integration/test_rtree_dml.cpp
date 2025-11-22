@@ -17,6 +17,7 @@
 #include <memory>
 #include <vector>
 #include <cstring>
+#include "scratchbird/core/connection_context.h"
 
 using namespace scratchbird::core;
 
@@ -43,7 +44,7 @@ protected:
         // Create and open database
         db_ = std::make_unique<Database>();
         ErrorContext ctx;
-        Status status = db_->create(test_db_path_, &ctx);
+        Status status = Status status = Database::create(test_db_path_, 8192,  &ctx);
         ASSERT_EQ(status, Status::OK) << "Failed to create database: " << ctx.message;
 
         status = db_->open(test_db_path_, &ctx);
@@ -99,16 +100,18 @@ TEST_F(RTreeDMLTest, DirectInsertViaRTreeIndex)
     ASSERT_NE(rtree, nullptr) << "Failed to open R-Tree: " << ctx.message;
 
     // Begin transaction
-    uint64_t xid = tx_manager_->beginTransaction(IsolationLevel::READ_COMMITTED, false);
+    uint64_t xid;
+    status = tx_manager_->beginTransaction(0, xid, &ctx);
+    ASSERT_EQ(status, Status::OK);
 
     // Insert spatial entries
     std::vector<uint8_t> bbox1 = serializeBoundingBox(0.0, 0.0, 10.0, 10.0);
     std::vector<uint8_t> bbox2 = serializeBoundingBox(5.0, 5.0, 15.0, 15.0);
     std::vector<uint8_t> bbox3 = serializeBoundingBox(20.0, 20.0, 30.0, 30.0);
 
-    TID tid1 = createTID(1, 1, 1);
-    TID tid2 = createTID(1, 2, 1);
-    TID tid3 = createTID(1, 3, 1);
+    TID tid1 = makeTID(1, 1, 1);
+    TID tid2 = makeTID(1, 2, 1);
+    TID tid3 = makeTID(1, 3, 1);
 
     status = rtree->insert(bbox1, tid1, xid, &ctx);
     EXPECT_EQ(status, Status::OK) << "Insert 1 failed: " << ctx.message;
@@ -119,10 +122,13 @@ TEST_F(RTreeDMLTest, DirectInsertViaRTreeIndex)
     status = rtree->insert(bbox3, tid3, xid, &ctx);
     EXPECT_EQ(status, Status::OK) << "Insert 3 failed: " << ctx.message;
 
-    tx_manager_->commitTransaction(xid);
+    status = tx_manager_->commitTransaction(0, xid, &ctx);
+    ASSERT_EQ(status, Status::OK);
 
     // Verify search finds overlapping boxes
-    uint64_t search_xid = tx_manager_->beginTransaction(IsolationLevel::READ_COMMITTED, false);
+    uint64_t search_xid;
+    status = tx_manager_->beginTransaction(0, search_xid, &ctx);
+    ASSERT_EQ(status, Status::OK);
 
     std::vector<uint8_t> query_box = serializeBoundingBox(0.0, 0.0, 20.0, 20.0);
     std::vector<TID> results;
@@ -133,7 +139,8 @@ TEST_F(RTreeDMLTest, DirectInsertViaRTreeIndex)
     // Should find bbox1 and bbox2 (overlap with query), but not bbox3
     EXPECT_GE(results.size(), 1) << "Should find at least one overlapping box";
 
-    tx_manager_->commitTransaction(search_xid);
+    status = tx_manager_->commitTransaction(0, search_xid, &ctx);
+    ASSERT_EQ(status, Status::OK);
 }
 
 // =============================================================================
@@ -151,24 +158,32 @@ TEST_F(RTreeDMLTest, LogicalDeletionWithXmax)
     ASSERT_NE(rtree, nullptr);
 
     // Transaction 1: Insert
-    uint64_t xid1 = tx_manager_->beginTransaction(IsolationLevel::READ_COMMITTED, false);
+    uint64_t xid1;
+    status = tx_manager_->beginTransaction(0, xid1, &ctx);
+    ASSERT_EQ(status, Status::OK);
 
     std::vector<uint8_t> bbox = serializeBoundingBox(10.0, 10.0, 20.0, 20.0);
-    TID tid = createTID(1, 1, 1);
+    TID tid = makeTID(1, 1, 1);
 
     rtree->insert(bbox, tid, xid1, &ctx);
-    tx_manager_->commitTransaction(xid1);
+    status = tx_manager_->commitTransaction(0, xid1, &ctx);
+    ASSERT_EQ(status, Status::OK);
 
     // Transaction 2: Delete (logical - mark with xmax)
-    uint64_t xid2 = tx_manager_->beginTransaction(IsolationLevel::READ_COMMITTED, false);
+    uint64_t xid2;
+    status = tx_manager_->beginTransaction(0, xid2, &ctx);
+    ASSERT_EQ(status, Status::OK);
 
     Status status = rtree->remove(bbox, tid, xid2, &ctx);
     EXPECT_EQ(status, Status::OK) << "Logical deletion failed: " << ctx.message;
 
-    tx_manager_->commitTransaction(xid2);
+    status = tx_manager_->commitTransaction(0, xid2, &ctx);
+    ASSERT_EQ(status, Status::OK);
 
     // Transaction 3: Search after deletion
-    uint64_t xid3 = tx_manager_->beginTransaction(IsolationLevel::READ_COMMITTED, false);
+    uint64_t xid3;
+    status = tx_manager_->beginTransaction(0, xid3, &ctx);
+    ASSERT_EQ(status, Status::OK);
 
     std::vector<TID> results;
     rtree->search(bbox, xid3, &results, &ctx);
@@ -176,7 +191,8 @@ TEST_F(RTreeDMLTest, LogicalDeletionWithXmax)
     // After commit of delete transaction, entry should not be visible
     // (Actual visibility depends on RTree implementation checking xmax)
 
-    tx_manager_->commitTransaction(xid3);
+    status = tx_manager_->commitTransaction(0, xid3, &ctx);
+    ASSERT_EQ(status, Status::OK);
 
     // Test passes if no crash - full visibility validation requires RTree internals
     SUCCEED() << "Logical deletion completed without errors";
@@ -197,14 +213,18 @@ TEST_F(RTreeDMLTest, MGAVisibilityConcurrentTransactions)
     ASSERT_NE(rtree, nullptr);
 
     // Transaction T1: Insert and HOLD (don't commit yet)
-    uint64_t xid_t1 = tx_manager_->beginTransaction(IsolationLevel::READ_COMMITTED, false);
+    uint64_t xid_t1;
+    status = tx_manager_->beginTransaction(0, xid_t1, &ctx);
+    ASSERT_EQ(status, Status::OK);
 
     std::vector<uint8_t> bbox1 = serializeBoundingBox(0.0, 0.0, 5.0, 5.0);
-    TID tid1 = createTID(1, 1, 1);
+    TID tid1 = makeTID(1, 1, 1);
     rtree->insert(bbox1, tid1, xid_t1, &ctx);
 
     // Transaction T2: Search (should NOT see uncommitted T1 data)
-    uint64_t xid_t2 = tx_manager_->beginTransaction(IsolationLevel::READ_COMMITTED, false);
+    uint64_t xid_t2;
+    status = tx_manager_->beginTransaction(0, xid_t2, &ctx);
+    ASSERT_EQ(status, Status::OK);
 
     std::vector<TID> results_before_commit;
     rtree->search(bbox1, xid_t2, &results_before_commit, &ctx);
@@ -213,13 +233,15 @@ TEST_F(RTreeDMLTest, MGAVisibilityConcurrentTransactions)
     // (Exact count depends on RTree visibility implementation)
 
     // Now commit T1
-    tx_manager_->commitTransaction(xid_t1);
+    status = tx_manager_->commitTransaction(0, xid_t1, &ctx);
+    ASSERT_EQ(status, Status::OK);
 
     // T2 (still active) with READ_COMMITTED should now see T1's data
     std::vector<TID> results_after_commit;
     rtree->search(bbox1, xid_t2, &results_after_commit, &ctx);
 
-    tx_manager_->commitTransaction(xid_t2);
+    status = tx_manager_->commitTransaction(0, xid_t2, &ctx);
+    ASSERT_EQ(status, Status::OK);
 
     SUCCEED() << "MGA visibility test completed";
 }
@@ -239,16 +261,21 @@ TEST_F(RTreeDMLTest, UpdateSpatialKey)
     ASSERT_NE(rtree, nullptr);
 
     // Transaction 1: Insert original
-    uint64_t xid1 = tx_manager_->beginTransaction(IsolationLevel::READ_COMMITTED, false);
+    uint64_t xid1;
+    status = tx_manager_->beginTransaction(0, xid1, &ctx);
+    ASSERT_EQ(status, Status::OK);
 
     std::vector<uint8_t> old_bbox = serializeBoundingBox(0.0, 0.0, 10.0, 10.0);
-    TID tid = createTID(1, 1, 1);
+    TID tid = makeTID(1, 1, 1);
 
     rtree->insert(old_bbox, tid, xid1, &ctx);
-    tx_manager_->commitTransaction(xid1);
+    status = tx_manager_->commitTransaction(0, xid1, &ctx);
+    ASSERT_EQ(status, Status::OK);
 
     // Transaction 2: UPDATE (simulated as remove + insert)
-    uint64_t xid2 = tx_manager_->beginTransaction(IsolationLevel::READ_COMMITTED, false);
+    uint64_t xid2;
+    status = tx_manager_->beginTransaction(0, xid2, &ctx);
+    ASSERT_EQ(status, Status::OK);
 
     // Remove old bounding box
     Status remove_status = rtree->remove(old_bbox, tid, xid2, &ctx);
@@ -259,10 +286,13 @@ TEST_F(RTreeDMLTest, UpdateSpatialKey)
     Status insert_status = rtree->insert(new_bbox, tid, xid2, &ctx);
     EXPECT_EQ(insert_status, Status::OK) << "Insert new bbox failed";
 
-    tx_manager_->commitTransaction(xid2);
+    status = tx_manager_->commitTransaction(0, xid2, &ctx);
+    ASSERT_EQ(status, Status::OK);
 
     // Verify: Old location should not be found, new location should be found
-    uint64_t xid3 = tx_manager_->beginTransaction(IsolationLevel::READ_COMMITTED, false);
+    uint64_t xid3;
+    status = tx_manager_->beginTransaction(0, xid3, &ctx);
+    ASSERT_EQ(status, Status::OK);
 
     std::vector<TID> old_results;
     rtree->search(old_bbox, xid3, &old_results, &ctx);
@@ -270,7 +300,8 @@ TEST_F(RTreeDMLTest, UpdateSpatialKey)
     std::vector<TID> new_results;
     rtree->search(new_bbox, xid3, &new_results, &ctx);
 
-    tx_manager_->commitTransaction(xid3);
+    status = tx_manager_->commitTransaction(0, xid3, &ctx);
+    ASSERT_EQ(status, Status::OK);
 
     SUCCEED() << "UPDATE simulation (remove + insert) completed";
 }
@@ -290,23 +321,28 @@ TEST_F(RTreeDMLTest, BulkInsertAndSearch)
     ASSERT_NE(rtree, nullptr);
 
     // Insert 50 spatial entries
-    uint64_t xid = tx_manager_->beginTransaction(IsolationLevel::READ_COMMITTED, false);
+    uint64_t xid;
+    status = tx_manager_->beginTransaction(0, xid, &ctx);
+    ASSERT_EQ(status, Status::OK);
 
     for (int i = 0; i < 50; i++)
     {
         double x = i * 10.0;
         double y = i * 10.0;
         std::vector<uint8_t> bbox = serializeBoundingBox(x, y, x + 5.0, y + 5.0);
-        TID tid = createTID(1, i + 1, 1);
+        TID tid = makeTID(1, i + 1, 1);
 
         Status status = rtree->insert(bbox, tid, xid, &ctx);
         EXPECT_EQ(status, Status::OK) << "Bulk insert " << i << " failed";
     }
 
-    tx_manager_->commitTransaction(xid);
+    status = tx_manager_->commitTransaction(0, xid, &ctx);
+    ASSERT_EQ(status, Status::OK);
 
     // Search a large area
-    uint64_t search_xid = tx_manager_->beginTransaction(IsolationLevel::READ_COMMITTED, false);
+    uint64_t search_xid;
+    status = tx_manager_->beginTransaction(0, search_xid, &ctx);
+    ASSERT_EQ(status, Status::OK);
 
     std::vector<uint8_t> large_query = serializeBoundingBox(0.0, 0.0, 500.0, 500.0);
     std::vector<TID> results;
@@ -317,7 +353,8 @@ TEST_F(RTreeDMLTest, BulkInsertAndSearch)
     // Should find all 50 entries
     EXPECT_GE(results.size(), 1) << "Should find at least some entries in bulk search";
 
-    tx_manager_->commitTransaction(search_xid);
+    status = tx_manager_->commitTransaction(0, search_xid, &ctx);
+    ASSERT_EQ(status, Status::OK);
 }
 
 // =============================================================================
