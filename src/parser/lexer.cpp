@@ -61,6 +61,10 @@ namespace scratchbird
             {"DISTINCT", TokenType::KW_DISTINCT},
             {"ALL", TokenType::KW_ALL},
 
+            // Set operations (UNION, INTERSECT, EXCEPT)
+            {"UNION", TokenType::KW_UNION},
+            {"INTERSECT", TokenType::KW_INTERSECT},
+
             // Aggregate functions (Phase 1 Task 4.1)
             {"COUNT", TokenType::KW_COUNT},
             {"SUM", TokenType::KW_SUM},

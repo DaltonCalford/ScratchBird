@@ -654,6 +654,36 @@ namespace scratchbird
                                 current_result_set_->addRow(row);
                             }
                         }
+                        else if (ext_op == static_cast<uint8_t>(Opcode::EXT_UNION_ALL))
+                        {
+                            // Execute UNION ALL: concatenate results from left and right
+                            executeUnionAll();
+                        }
+                        else if (ext_op == static_cast<uint8_t>(Opcode::EXT_UNION))
+                        {
+                            // Execute UNION: concatenate and remove duplicates
+                            executeUnion();
+                        }
+                        else if (ext_op == static_cast<uint8_t>(Opcode::EXT_INTERSECT_ALL))
+                        {
+                            // Execute INTERSECT ALL: keep common rows with duplicates
+                            executeIntersectAll();
+                        }
+                        else if (ext_op == static_cast<uint8_t>(Opcode::EXT_INTERSECT))
+                        {
+                            // Execute INTERSECT: keep common rows without duplicates
+                            executeIntersect();
+                        }
+                        else if (ext_op == static_cast<uint8_t>(Opcode::EXT_EXCEPT_ALL))
+                        {
+                            // Execute EXCEPT ALL: rows in left but not in right, with duplicates
+                            executeExceptAll();
+                        }
+                        else if (ext_op == static_cast<uint8_t>(Opcode::EXT_EXCEPT))
+                        {
+                            // Execute EXCEPT: rows in left but not in right, without duplicates
+                            executeExcept();
+                        }
                         else if (ext_op == static_cast<uint8_t>(Opcode::EXT_CREATE_TRIGGER))
                         {
                             executeCreateTrigger();

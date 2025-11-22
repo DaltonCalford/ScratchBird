@@ -53,6 +53,7 @@ namespace scratchbird
             DETACH_TABLESPACE,         // Phase 6 Task 6.2
             INSERT,
             SELECT,
+            SET_OPERATION,     // UNION/INTERSECT/EXCEPT set operations
             UPDATE,            // Phase 1 Task 2.1: UPDATE statement
             DELETE_STMT,       // Phase 1 Task 2.2: DELETE statement (DELETE is a keyword)
             ANALYZE,           // Phase 1 Task 1.1.2: Statistics collection
@@ -1951,6 +1952,62 @@ namespace scratchbird
             GroupByClause() : having_clause(nullptr) {}
             explicit GroupByClause(std::vector<Expression *> exprs, Expression *having = nullptr)
                 : grouping_exprs(std::move(exprs)), having_clause(having) {}
+        };
+
+        // Set operation type (UNION, INTERSECT, EXCEPT)
+        enum class SetOperationType : uint8_t
+        {
+            UNION,          // UNION (removes duplicates)
+            UNION_ALL,      // UNION ALL (keeps duplicates)
+            INTERSECT,      // INTERSECT (removes duplicates)
+            INTERSECT_ALL,  // INTERSECT ALL (keeps duplicates)
+            EXCEPT,         // EXCEPT (removes duplicates)
+            EXCEPT_ALL      // EXCEPT ALL (keeps duplicates)
+        };
+
+        // Forward declare SelectStmt for SetOperationStmt
+        class SelectStmt;
+
+        // Set operation statement (UNION/INTERSECT/EXCEPT)
+        class SetOperationStmt : public Statement
+        {
+        public:
+            SetOperationStmt(const SourceSpan &span, SetOperationType op_type,
+                           Statement *left, Statement *right)
+                : Statement(ASTKind::SET_OPERATION, span),
+                  op_type_(op_type), left_(left), right_(right),
+                  limit_count_(-1), offset_count_(-1)
+            {
+            }
+
+            SetOperationType opType() const { return op_type_; }
+            Statement *left() const { return left_; }
+            Statement *right() const { return right_; }
+
+            // ORDER BY accessors (applies to final result)
+            const std::vector<OrderByItem> &orderByClause() const { return order_by_clause_; }
+            void setOrderByClause(std::vector<OrderByItem> clause) { order_by_clause_ = std::move(clause); }
+
+            // LIMIT/OFFSET accessors (applies to final result)
+            bool hasLimit() const { return limit_count_ >= 0; }
+            int64_t limitCount() const { return limit_count_; }
+            void setLimitCount(int64_t count) { limit_count_ = count; }
+
+            bool hasOffset() const { return offset_count_ >= 0; }
+            int64_t offsetCount() const { return offset_count_; }
+            void setOffsetCount(int64_t count) { offset_count_ = count; }
+
+            void accept(ASTVisitor *visitor) override;
+
+        private:
+            SetOperationType op_type_;
+            Statement *left_;   // Left SELECT or SetOperationStmt
+            Statement *right_;  // Right SELECT or SetOperationStmt
+
+            // ORDER BY/LIMIT/OFFSET apply to final result
+            std::vector<OrderByItem> order_by_clause_;
+            int64_t limit_count_;
+            int64_t offset_count_;
         };
 
         // SELECT statement
