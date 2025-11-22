@@ -363,12 +363,12 @@ namespace scratchbird::optimizer
         {
             // Use OpenSSL's cryptographically secure random for seed
             std::memcpy(&seed, seed_bytes, sizeof(seed));
-            LOG_DEBUG(OPTIMIZER, "Using OpenSSL RAND_bytes for statistics sampling seed");
+            LOG_DEBUG(GENERAL, "Using OpenSSL RAND_bytes for statistics sampling seed");
         }
         else
         {
             // OpenSSL failed, fall back to random_device
-            LOG_WARN(OPTIMIZER, "OpenSSL RAND_bytes failed, falling back to random_device");
+            LOG_WARNING(GENERAL, "OpenSSL RAND_bytes failed, falling back to random_device");
             std::random_device rd;
             seed = (static_cast<uint64_t>(rd()) << 32) | rd();
         }
@@ -378,7 +378,7 @@ namespace scratchbird::optimizer
         if (rd.entropy() == 0.0)
         {
             // Fallback to time-based seed if random_device has zero entropy
-            LOG_WARN(OPTIMIZER, "random_device has zero entropy, using time-based seed for statistics sampling");
+            LOG_WARNING(GENERAL, "random_device has zero entropy, using time-based seed for statistics sampling");
             seed = std::chrono::high_resolution_clock::now().time_since_epoch().count();
         }
         else
