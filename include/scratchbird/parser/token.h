@@ -116,6 +116,10 @@ namespace scratchbird
             KW_DISTINCT,
             KW_ALL,
 
+            // Set operations (UNION, INTERSECT, EXCEPT)
+            KW_UNION,
+            KW_INTERSECT,
+
             // Aggregate functions (Phase 1 Task 4.1)
             KW_COUNT,
             KW_SUM,
