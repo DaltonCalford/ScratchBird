@@ -156,10 +156,7 @@ namespace scratchbird
 
             // Dynamic capacity calculations based on page size
             // Replaces the removed compile-time constant
-            uint16_t getMaxEntriesPerBucket() const
-            {
-                return (db_->page_size() - 96) / sizeof(HashEntry);
-            }
+            uint16_t getMaxEntriesPerBucket() const;
 
             // PHASE 2 TASK 2.3: IndexGCInterface implementation
             // Remove index entries pointing to dead tuples

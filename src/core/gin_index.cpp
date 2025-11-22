@@ -30,6 +30,27 @@ namespace scratchbird
         // Destructor
         GinIndex::~GinIndex() = default;
 
+        // Dynamic capacity calculations
+        uint16_t GinIndex::getMaxPendingEntriesPerPage() const
+        {
+            return (db_->page_size() - 128) / sizeof(GinPendingEntry);
+        }
+
+        uint16_t GinIndex::getMaxPostingEntriesPerPage() const
+        {
+            return (db_->page_size() - 80) / sizeof(GinPostingEntry);
+        }
+
+        uint16_t GinIndex::getMaxPostingTreeInternalEntries() const
+        {
+            return (db_->page_size() - 92) / sizeof(GinPostingTreeInternalEntry);
+        }
+
+        uint16_t GinIndex::getMaxPostingTreeLeafTids() const
+        {
+            return (db_->page_size() - 88) / sizeof(GinPostingEntry);
+        }
+
         // Create a new GIN index
         Status GinIndex::create(Database *db, const UuidV7Bytes &index_uuid,
                                 uint32_t *meta_page_out, ErrorContext *ctx)
@@ -742,7 +763,7 @@ namespace scratchbird
                 // Compressed posting list - decompress
                 // NOTE: Compressed format doesn't store xmin/xmax, relies on heap visibility
                 uint16_t compressed_bytes = list_page->gpl_compressed_bytes;
-                const uint8_t *compressed_data = list_page->gpl_data.gpl_compressed_data;
+                const uint8_t *compressed_data = list_page->getCompressedData();
 
                 // Allocate temp buffer for decompressed TIDs
                 std::vector<uint64_t> temp_tids(tid_count);
@@ -770,7 +791,7 @@ namespace scratchbird
                 // Per MGA_RULES.md Rule 3: Use TIP-based visibility, NOT snapshots
                 for (uint16_t i = 0; i < tid_count; i++)
                 {
-                    const GinPostingEntry &entry = list_page->gpl_data.gpl_entries[i];
+                    const GinPostingEntry &entry = list_page->getEntries()[i];
 
                     // Check if entry is visible to current transaction
                     // Entry is visible if:
@@ -877,7 +898,7 @@ namespace scratchbird
             {
                 // Decompress existing TIDs
                 uint16_t compressed_bytes = list_page->gpl_compressed_bytes;
-                const uint8_t *compressed_data = list_page->gpl_data.gpl_compressed_data;
+                const uint8_t *compressed_data = list_page->getCompressedData();
 
                 tids.resize(current_count);
                 size_t decompressed_count = decompress_posting_list(
@@ -897,7 +918,7 @@ namespace scratchbird
                 for (uint16_t i = 0; i < current_count; i++)
                 {
                     // Convert GPID format to legacy uint64_t
-                    tids.push_back(convertTIDtoLegacy(list_page->gpl_data.gpl_entries[i].getTID()));
+                    tids.push_back(convertTIDtoLegacy(list_page->getEntries()[i].getTID()));
                 }
             }
 
@@ -947,7 +968,7 @@ namespace scratchbird
                 list_page->gpl_is_compressed = 1;
                 list_page->gpl_compressed_bytes = compressed_size;
                 list_page->gpl_entry_count = tids.size();
-                std::memcpy(list_page->gpl_data.gpl_compressed_data, temp_compressed, compressed_size);
+                std::memcpy(list_page->getCompressedData(), temp_compressed.data(), compressed_size);
             }
             else
             {
@@ -962,10 +983,10 @@ namespace scratchbird
                 for (size_t i = 0; i < tids.size(); i++)
                 {
                     // Convert legacy uint64_t to GPID format
-                    list_page->gpl_data.gpl_entries[i].setTID(convertLegacyTID(tids[i]));
+                    list_page->getEntries()[i].setTID(convertLegacyTID(tids[i]));
                     // FIREBIRD MGA: Set xmin (transaction that inserted) and xmax (0 = not deleted)
-                    list_page->gpl_data.gpl_entries[i].xmin = current_xid;
-                    list_page->gpl_data.gpl_entries[i].xmax = 0;
+                    list_page->getEntries()[i].xmin = current_xid;
+                    list_page->getEntries()[i].xmax = 0;
                 }
             }
 
@@ -1003,7 +1024,7 @@ namespace scratchbird
             {
                 // Decompress TIDs
                 uint16_t compressed_bytes = list_page->gpl_compressed_bytes;
-                const uint8_t *compressed_data = list_page->gpl_data.gpl_compressed_data;
+                const uint8_t *compressed_data = list_page->getCompressedData();
 
                 tids.resize(tid_count);
                 size_t decompressed_count = decompress_posting_list(
@@ -1024,7 +1045,7 @@ namespace scratchbird
                 for (uint16_t i = 0; i < tid_count; i++)
                 {
                     // Convert GPID format to legacy uint64_t for internal processing
-                    tids.push_back(convertTIDtoLegacy(list_page->gpl_data.gpl_entries[i].getTID()));
+                    tids.push_back(convertTIDtoLegacy(list_page->getEntries()[i].getTID()));
                 }
             }
 
@@ -1662,7 +1683,7 @@ namespace scratchbird
 
             for (uint16_t i = 0; i < posting->gpl_entry_count; i++)
             {
-                GinPostingEntry &entry = posting->gpl_data.gpl_entries[i];
+                GinPostingEntry &entry = posting->getEntries()[i];
                 TID entry_tid = entry.getTID();
 
                 if (entry_tid.gpid == target_tid.gpid && entry_tid.slot == target_tid.slot)
@@ -1684,7 +1705,7 @@ namespace scratchbird
             // DO NOT physically remove the entry - this preserves stable TIDs
             // Per MGA_RULES.md Rule 5: Use back-versioning, not forward-versioning
             uint64_t current_xid = ConnectionContext::getCurrentTransactionId();
-            posting->gpl_data.gpl_entries[found_index].xmax = current_xid;
+            posting->getEntries()[found_index].xmax = current_xid;
 
             // Note: entry_count is NOT decremented - entries remain in place
             // Vacuum will remove entries where xmax < OIT during garbage collection
@@ -4441,13 +4462,13 @@ namespace scratchbird
                     for (uint16_t i = 0; i < entry_count && i < MAX_POSTING_ENTRIES_PER_PAGE; i++)
                     {
                         // Convert GPID to legacy for lookup
-                        uint64_t old_tid = convertTIDtoLegacy(posting_page->gpl_data.gpl_entries[i].getTID());
+                        uint64_t old_tid = convertTIDtoLegacy(posting_page->getEntries()[i].getTID());
 
                         auto it = tid_mapping.find(old_tid);
                         if (it != tid_mapping.end())
                         {
                             uint64_t new_tid = it->second;
-                            posting_page->gpl_data.gpl_entries[i].setTID(convertLegacyTID(new_tid));
+                            posting_page->getEntries()[i].setTID(convertLegacyTID(new_tid));
 
                             total_tids_updated++;
                             page_modified = true;

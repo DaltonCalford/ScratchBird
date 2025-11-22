@@ -48,6 +48,17 @@ namespace scratchbird::core
 
     Clog::Clog(Database *db) : db_(db), buffer_pool_(db->buffer_pool()), clog_root_page_(0) {}
 
+    uint32_t Clog::getXidsPerPage() const
+    {
+        return (db_->page_size() - sizeof(ClogPageHeader)) * 4;
+    }
+
+    uint32_t Clog::getStatusBytesPerPage() const
+    {
+        // Each byte holds 4 XIDs (2 bits per XID)
+        return (db_->page_size() - sizeof(ClogPageHeader)) / 2;
+    }
+
     Clog::~Clog() = default;
 
     auto Clog::initialize(ErrorContext *ctx) -> Status

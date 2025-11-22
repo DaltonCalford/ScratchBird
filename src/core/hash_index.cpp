@@ -22,6 +22,15 @@ namespace scratchbird
         // Destructor
         HashIndex::~HashIndex() = default;
 
+        // Dynamic capacity calculation
+        uint16_t HashIndex::getMaxEntriesPerBucket() const
+        {
+            return (db_->page_size() - 96) / sizeof(HashEntry);
+        }
+
+        // Maximum entries per bucket (approximate, based on 16KB pages)
+        constexpr uint16_t MAX_ENTRIES_PER_BUCKET = 627;  // (16384-96)/26
+
         // Create a new hash index
         Status HashIndex::create(Database *db, const UuidV7Bytes &index_uuid,
                                  uint32_t *meta_page_out, ErrorContext *ctx)
