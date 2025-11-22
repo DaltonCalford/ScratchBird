@@ -422,8 +422,8 @@ Status SSTableWriter::close(ErrorContext *ctx)
 // SSTableReader Implementation
 // ============================================================================
 
-SSTableReader::SSTableReader(const std::string &file_path)
-    : file_path_(file_path), fd_(-1), file_size_(0), num_entries_(0)
+SSTableReader::SSTableReader(const std::string &file_path, size_t block_size)
+    : file_path_(file_path), block_size_(block_size), fd_(-1), file_size_(0), num_entries_(0)
 {
 }
 
@@ -457,9 +457,9 @@ Status SSTableReader::open(ErrorContext *ctx)
     }
     file_size_ = size;
 
-    // Read footer (read last 4KB to accommodate Bloom filter and index)
+    // Read footer (read last block to accommodate Bloom filter and index)
     // Footer format: [min_key][max_key][num_entries][index][bloom_filter_size][bloom_data][magic]
-    const size_t footer_size = 4096;
+    const size_t footer_size = block_size_;
     if (file_size_ < (int64_t)footer_size)
     {
         ::close(fd_);

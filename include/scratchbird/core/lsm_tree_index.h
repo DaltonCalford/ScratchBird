@@ -161,7 +161,7 @@ private:
 class SSTableReader
 {
 public:
-    explicit SSTableReader(const std::string &file_path);
+    SSTableReader(const std::string &file_path, size_t block_size = 4096);
     ~SSTableReader();
 
     // Open file for reading
@@ -198,6 +198,7 @@ public:
 
 private:
     std::string file_path_;
+    size_t block_size_;
     int fd_;
     uint64_t file_size_;
 
@@ -350,11 +351,13 @@ class LSMTreeIndex
 public:
     /**
      * Constructor
+     * @param db Database instance (for page size, etc.)
      * @param index_path Directory to store index files
      * @param txn_mgr Transaction manager for visibility checks
      * @param memtable_size_mb Maximum memtable size in MB (default: 4MB)
      */
-    LSMTreeIndex(const std::string &index_path,
+    LSMTreeIndex(Database *db,
+                 const std::string &index_path,
                  TransactionManager *txn_mgr,
                  size_t memtable_size_mb = 4);
 
@@ -461,9 +464,11 @@ public:
 
 private:
     // Index configuration
+    Database *db_;  // Database reference (for page size, etc.)
     std::string index_path_;
     TransactionManager *txn_mgr_;
     size_t memtable_max_size_;
+    size_t block_size_;  // SSTable block size (typically same as DB page size)
 
     // Memtables
     std::unique_ptr<Memtable> active_memtable_;
