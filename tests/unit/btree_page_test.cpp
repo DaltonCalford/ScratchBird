@@ -43,7 +43,9 @@ TEST_F(BTreePageTest, AddNode)
     std::vector<uint8_t> key = {'k', 'e', 'y', '1'};
     Tuple value = {nullptr, 0, 12345, 0, 0};
 
-    Status s = btree_page_->add_node(key, value);
+    // MGA Phase 3.1: add_node now requires xmin parameter for transaction tracking
+    uint64_t xmin = 100; // Test transaction ID
+    Status s = btree_page_->add_node(key, value, xmin);
     ASSERT_EQ(s, Status::OK);
 
     EXPECT_EQ(btree_page_->get_node_count(), 1);
