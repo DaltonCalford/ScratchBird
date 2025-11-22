@@ -324,6 +324,9 @@ namespace scratchbird
             void executeExceptAll();        // EXCEPT ALL - left minus right with duplicates
             void executeExcept();           // EXCEPT - left minus right without duplicates
 
+            // Recursive CTE execution
+            void executeRecursiveCTE(const std::string& cte_name, size_t base_pc);
+
             // Trigger execution (Wave 2)
             void executeCreateTrigger();    // CREATE TRIGGER
             void executeDropTrigger();      // DROP TRIGGER

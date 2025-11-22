@@ -571,14 +571,31 @@ namespace scratchbird
                             // Save current state
                             auto saved_result_set = std::move(current_result_set_);
                             auto saved_table = current_table_;
+                            size_t saved_pc = pc_;  // Save program counter for recursive execution
 
                             // Execute the CTE query (next opcodes)
                             current_result_set_ = std::make_unique<ResultSet>();
 
-                            // Read and execute the nested SELECT
+                            // Read and execute the nested SELECT or UNION ALL
                             Opcode cte_query_op = static_cast<Opcode>(readByte());
-                            if (cte_query_op == Opcode::SELECT)
+
+                            // Check if this is a recursive CTE with UNION ALL
+                            if (cte_is_recursive_ && cte_query_op == Opcode::EXTENDED_OPCODE)
                             {
+                                uint8_t ext_opcode = readByte();
+                                if (ext_opcode == static_cast<uint8_t>(Opcode::EXT_UNION_ALL))
+                                {
+                                    // Recursive CTE: Execute iteratively
+                                    executeRecursiveCTE(cte_name, saved_pc);
+                                }
+                                else
+                                {
+                                    error("Recursive CTE must use UNION ALL");
+                                }
+                            }
+                            else if (cte_query_op == Opcode::SELECT)
+                            {
+                                // Non-recursive CTE: Execute once
                                 executeSelect();
 
                                 // Store the materialized CTE results
@@ -613,7 +630,7 @@ namespace scratchbird
                             }
                             else
                             {
-                                result = ExecutionResult("CTE query must be a SELECT statement");
+                                result = ExecutionResult("CTE query must be a SELECT statement or UNION ALL");
                                 break;
                             }
 
@@ -7223,6 +7240,157 @@ namespace scratchbird
                     current_result_set_->addRow(row);
                 }
             }
+        }
+
+        void Executor::executeRecursiveCTE(const std::string& cte_name, size_t base_pc)
+        {
+            // Recursive CTE execution with UNION ALL
+            // Format: UNION ALL <base_case_SELECT> <recursive_term_SELECT>
+
+            // Check recursion depth limit
+            if (cte_recursion_depth_ >= query_limits_.max_cte_recursion_depth)
+            {
+                error("CTE recursion depth limit exceeded (" +
+                      std::to_string(query_limits_.max_cte_recursion_depth) + ")");
+            }
+
+            incrementCTEDepth();
+
+            // STEP 1: Execute base case (left side of UNION ALL)
+            Opcode base_op = static_cast<Opcode>(readByte());
+            if (base_op != Opcode::SELECT)
+            {
+                error("Recursive CTE base case must be a SELECT statement");
+            }
+
+            executeSelect();
+
+            // Store base case results in CTE
+            std::vector<std::vector<Value>> all_rows;
+            std::vector<std::string> col_names;
+            std::vector<core::DataType> col_types;
+
+            if (current_result_set_)
+            {
+                // Extract column metadata
+                for (size_t i = 0; i < current_result_set_->columnCount(); ++i)
+                {
+                    col_names.push_back(current_result_set_->columnName(i));
+                    col_types.push_back(current_result_set_->columnType(i));
+                }
+
+                // Extract all rows from base case
+                for (size_t r = 0; r < current_result_set_->rowCount(); ++r)
+                {
+                    std::vector<Value> row;
+                    for (size_t c = 0; c < current_result_set_->columnCount(); ++c)
+                    {
+                        row.push_back(current_result_set_->getValue(r, c));
+                    }
+                    all_rows.push_back(std::move(row));
+                }
+            }
+
+            // Initialize CTE with base case results
+            cte_results_[cte_name] = all_rows;
+            cte_column_names_[cte_name] = col_names;
+            cte_column_types_[cte_name] = col_types;
+
+            // Track working table (new rows from each iteration)
+            std::vector<std::vector<Value>> working_table = all_rows;
+
+            // STEP 2: Iteratively execute recursive term
+            size_t iteration = 0;
+            const size_t max_iterations = 10000;  // Safety limit
+
+            // Save the position of recursive term SELECT
+            size_t recursive_term_pc = pc_;
+
+            while (!working_table.empty() && iteration < max_iterations)
+            {
+                iteration++;
+
+                // Reset PC to recursive term
+                pc_ = recursive_term_pc;
+
+                // Execute recursive term
+                Opcode recursive_op = static_cast<Opcode>(readByte());
+                if (recursive_op != Opcode::SELECT)
+                {
+                    error("Recursive CTE recursive term must be a SELECT statement");
+                }
+
+                executeSelect();
+
+                // Collect new rows
+                std::vector<std::vector<Value>> new_rows;
+                std::set<std::vector<std::string>> existing_row_keys;
+
+                // Build set of existing rows for cycle detection
+                for (const auto& row : all_rows)
+                {
+                    std::vector<std::string> row_key;
+                    for (const auto& val : row)
+                    {
+                        row_key.push_back(val.isNull() ? "\0NULL\0" : val.toString());
+                    }
+                    existing_row_keys.insert(row_key);
+                }
+
+                // Check each result row
+                if (current_result_set_)
+                {
+                    for (size_t r = 0; r < current_result_set_->rowCount(); ++r)
+                    {
+                        std::vector<Value> row;
+                        std::vector<std::string> row_key;
+
+                        for (size_t c = 0; c < current_result_set_->columnCount(); ++c)
+                        {
+                            Value val = current_result_set_->getValue(r, c);
+                            row.push_back(val);
+                            row_key.push_back(val.isNull() ? "\0NULL\0" : val.toString());
+                        }
+
+                        // Only add if not already seen (cycle detection)
+                        if (existing_row_keys.find(row_key) == existing_row_keys.end())
+                        {
+                            new_rows.push_back(std::move(row));
+                            existing_row_keys.insert(row_key);
+                        }
+                    }
+                }
+
+                // If no new rows, we're done
+                if (new_rows.empty())
+                {
+                    break;
+                }
+
+                // Add new rows to CTE and working table
+                for (const auto& row : new_rows)
+                {
+                    all_rows.push_back(row);
+                }
+
+                working_table = std::move(new_rows);
+
+                // Update CTE with accumulated results
+                cte_results_[cte_name] = all_rows;
+
+                // Check query limits
+                checkQueryLimits();
+            }
+
+            if (iteration >= max_iterations)
+            {
+                error("Recursive CTE exceeded maximum iterations (" + std::to_string(max_iterations) + ")");
+            }
+
+            decrementCTEDepth();
+
+            // Final CTE results are in cte_results_[cte_name]
+            // (already updated in the loop)
         }
 
         void Executor::executeSweep()
