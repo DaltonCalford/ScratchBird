@@ -106,8 +106,10 @@ private:
     mutable std::mutex mutex_;
 };
 
-// Forward declaration
+// Forward declarations
 class LSMBloomFilter;
+class Compressor;
+enum class CompressionType : uint8_t;
 
 // ============================================================================
 // SSTableWriter - Writes sorted string table to disk
@@ -116,7 +118,9 @@ class LSMBloomFilter;
 class SSTableWriter
 {
 public:
-    SSTableWriter(const std::string &file_path, size_t block_size = 4096);
+    SSTableWriter(const std::string &file_path,
+                  size_t block_size = 4096,
+                  CompressionType compression = static_cast<CompressionType>(0));
     ~SSTableWriter();
 
     // Open file for writing
@@ -152,6 +156,10 @@ private:
 
     // Bloom filter for read optimization
     std::unique_ptr<LSMBloomFilter> bloom_filter_;
+
+    // Compression
+    CompressionType compression_type_;
+    std::unique_ptr<Compressor> compressor_;
 };
 
 // ============================================================================
@@ -161,7 +169,22 @@ private:
 class SSTableReader
 {
 public:
-    explicit SSTableReader(const std::string &file_path);
+    // Iterator for sequential SSTable scanning (for compaction)
+    class Iterator
+    {
+    public:
+        virtual ~Iterator() = default;
+        virtual bool isValid() const = 0;
+        virtual void next() = 0;
+        virtual const std::vector<uint8_t>& key() const = 0;
+        virtual const std::vector<uint8_t>& value() const = 0;
+        virtual uint64_t sequenceNumber() const = 0;
+        virtual uint8_t entryType() const = 0;
+        virtual uint64_t xmin() const = 0;
+        virtual uint64_t xmax() const = 0;
+    };
+
+    SSTableReader(const std::string &file_path, size_t block_size = 4096);
     ~SSTableReader();
 
     // Open file for reading
@@ -183,12 +206,18 @@ public:
                 std::vector<std::pair<std::vector<uint8_t>, std::vector<uint8_t>>> *entries_out,
                 ErrorContext *ctx = nullptr);
 
+    // Create iterator for sequential scanning (for compaction)
+    std::unique_ptr<Iterator> createIterator();
+
     // Get min/max keys
     std::vector<uint8_t> getMinKey() const { return min_key_; }
     std::vector<uint8_t> getMaxKey() const { return max_key_; }
 
     // Get file size
     uint64_t getFileSize() const { return file_size_; }
+
+    // Get file path
+    const std::string& getFilePath() const { return file_path_; }
 
     // Check if open
     bool isOpen() const { return fd_ >= 0; }
@@ -198,6 +227,7 @@ public:
 
 private:
     std::string file_path_;
+    size_t block_size_;
     int fd_;
     uint64_t file_size_;
 
@@ -210,6 +240,10 @@ private:
 
     // Bloom filter for read optimization (loaded from SSTable footer)
     std::unique_ptr<LSMBloomFilter> bloom_filter_;
+
+    // Compression (loaded from SSTable footer)
+    CompressionType compression_type_;
+    std::unique_ptr<Compressor> compressor_;
 };
 
 // ============================================================================
@@ -350,11 +384,13 @@ class LSMTreeIndex
 public:
     /**
      * Constructor
+     * @param db Database instance (for page size, etc.)
      * @param index_path Directory to store index files
      * @param txn_mgr Transaction manager for visibility checks
      * @param memtable_size_mb Maximum memtable size in MB (default: 4MB)
      */
-    LSMTreeIndex(const std::string &index_path,
+    LSMTreeIndex(Database *db,
+                 const std::string &index_path,
                  TransactionManager *txn_mgr,
                  size_t memtable_size_mb = 4);
 
@@ -461,9 +497,11 @@ public:
 
 private:
     // Index configuration
+    Database *db_;  // Database reference (for page size, etc.)
     std::string index_path_;
     TransactionManager *txn_mgr_;
     size_t memtable_max_size_;
+    size_t block_size_;  // SSTable block size (typically same as DB page size)
 
     // Memtables
     std::unique_ptr<Memtable> active_memtable_;
