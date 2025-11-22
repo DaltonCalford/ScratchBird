@@ -643,6 +643,11 @@ namespace scratchbird
             EXT_INDEX_REINDEX = 0x14,      // Rebuild index
             EXT_INDEX_UPDATE = 0x1C,       // Update index entry (old_key, new_key, tid, xmin - combines delete old + insert new)
 
+            // Cursor Operations (0x1D-0x1F, 0x2E) - PSQL cursor support
+            EXT_CURSOR_DECLARE = 0x1D,     // DECLARE cursor_name CURSOR FOR select_statement
+            EXT_CURSOR_OPEN = 0x1E,        // OPEN cursor_name - Execute query and prepare for fetching
+            EXT_CURSOR_FETCH = 0x1F,       // FETCH [direction] FROM cursor_name INTO variables
+
             // Specialized Index Operations (0x28-0x2F) - For indexes with unique APIs
             //
             // These opcodes handle indexes that require specialized parameters beyond the generic
@@ -696,6 +701,7 @@ namespace scratchbird
             EXT_HNSW_SEARCH = 0x2B,        // HNSW k-NN search (vector, k, current_xid)
             EXT_COLUMNSTORE_INSERT = 0x2C, // Columnstore insert column
             EXT_COLUMNSTORE_SCAN = 0x2D,   // Columnstore scan column
+            EXT_CURSOR_CLOSE = 0x2E,       // CLOSE cursor_name - Close cursor and free resources
 
             // Bit manipulation - Byte/Bit access (0x06-0x09)
             EXT_GET_BYTE = 0x06,           // GET_BYTE(bytes, offset) - extract byte at offset

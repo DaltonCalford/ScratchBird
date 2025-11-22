@@ -811,6 +811,27 @@ namespace scratchbird
                             executeJumpIfFalse();
                             result = ExecutionResult();
                         }
+                        // ===== PSQL Cursor Operations =====
+                        else if (ext_op == static_cast<uint8_t>(Opcode::EXT_CURSOR_DECLARE))
+                        {
+                            executeCursorDeclare();
+                            result = ExecutionResult();
+                        }
+                        else if (ext_op == static_cast<uint8_t>(Opcode::EXT_CURSOR_OPEN))
+                        {
+                            executeCursorOpen();
+                            result = ExecutionResult();
+                        }
+                        else if (ext_op == static_cast<uint8_t>(Opcode::EXT_CURSOR_FETCH))
+                        {
+                            executeCursorFetch();
+                            result = ExecutionResult();
+                        }
+                        else if (ext_op == static_cast<uint8_t>(Opcode::EXT_CURSOR_CLOSE))
+                        {
+                            executeCursorClose();
+                            result = ExecutionResult();
+                        }
                         // ===== Spatial SRID Functions (Phase 2 Task 9.5) =====
                         else if (ext_op == static_cast<uint8_t>(Opcode::EXT_ST_SRID))
                         {
@@ -15842,6 +15863,192 @@ namespace scratchbird
             {
                 pc_ = offset;
             }
+        }
+
+        // ===== PSQL Cursor Operations =====
+
+        void Executor::executeCursorDeclare()
+        {
+            // Read cursor name
+            std::string cursor_name = readString();
+
+            // Read query bytecode length
+            uint32_t bytecode_length = readInt32();
+
+            // Read query bytecode
+            std::vector<uint8_t> query_bytecode(bytecode_length);
+            for (uint32_t i = 0; i < bytecode_length; ++i)
+            {
+                query_bytecode[i] = readByte();
+            }
+
+            // Check if cursor already exists
+            if (cursors_.find(cursor_name) != cursors_.end())
+            {
+                error("Cursor '" + cursor_name + "' already exists");
+            }
+
+            // Create cursor state
+            CursorState cursor(cursor_name);
+            cursor.query_bytecode = std::move(query_bytecode);
+
+            // Store cursor
+            cursors_[cursor_name] = std::move(cursor);
+        }
+
+        void Executor::executeCursorOpen()
+        {
+            // Read cursor name
+            std::string cursor_name = readString();
+
+            // Find cursor
+            auto it = cursors_.find(cursor_name);
+            if (it == cursors_.end())
+            {
+                error("Cursor '" + cursor_name + "' does not exist");
+            }
+
+            CursorState& cursor = it->second;
+
+            // Check if already open
+            if (cursor.is_open)
+            {
+                error("Cursor '" + cursor_name + "' is already open");
+            }
+
+            // Save current execution state
+            size_t saved_pc = pc_;
+            const uint8_t* saved_bytecode = bytecode_;
+            size_t saved_bytecode_size = bytecode_size_;
+
+            try
+            {
+                // Set up cursor query execution context
+                bytecode_ = cursor.query_bytecode.data();
+                bytecode_size_ = cursor.query_bytecode.size();
+                pc_ = 0;
+
+                // Execute the SELECT query
+                // NOTE: This is a simplified implementation. A full implementation would:
+                // 1. Parse and execute the entire SELECT statement
+                // 2. Materialize the results into cursor.result_set
+                // 3. Capture column names and types
+                // For now, we'll just mark the cursor as open with empty results
+                // This allows the basic cursor infrastructure to compile and be tested
+
+                cursor.current_row = 0;
+                cursor.is_open = true;
+
+                // Restore execution state
+                bytecode_ = saved_bytecode;
+                bytecode_size_ = saved_bytecode_size;
+                pc_ = saved_pc;
+            }
+            catch (...)
+            {
+                // Restore execution state on error
+                bytecode_ = saved_bytecode;
+                bytecode_size_ = saved_bytecode_size;
+                pc_ = saved_pc;
+                throw;
+            }
+        }
+
+        void Executor::executeCursorFetch()
+        {
+            // Read cursor name
+            std::string cursor_name = readString();
+
+            // Read number of target variables
+            uint32_t var_count = readInt32();
+
+            // Read variable names
+            std::vector<std::string> var_names;
+            for (uint32_t i = 0; i < var_count; ++i)
+            {
+                var_names.push_back(readString());
+            }
+
+            // Find cursor
+            auto it = cursors_.find(cursor_name);
+            if (it == cursors_.end())
+            {
+                error("Cursor '" + cursor_name + "' does not exist");
+            }
+
+            CursorState& cursor = it->second;
+
+            // Check if cursor is open
+            if (!cursor.is_open)
+            {
+                error("Cursor '" + cursor_name + "' is not open");
+            }
+
+            // Check if there are more rows
+            if (cursor.current_row >= cursor.result_set.size())
+            {
+                // No more rows - set all variables to NULL
+                if (variable_stack_)
+                {
+                    for (const auto& var_name : var_names)
+                    {
+                        variable_stack_->setVariable(var_name, Value());  // NULL value
+                    }
+                }
+                return;
+            }
+
+            // Get current row
+            const std::vector<Value>& row = cursor.result_set[cursor.current_row];
+
+            // Check variable count matches column count
+            if (var_names.size() != row.size())
+            {
+                error("FETCH variable count (" + std::to_string(var_names.size()) +
+                      ") does not match cursor column count (" + std::to_string(row.size()) + ")");
+            }
+
+            // Assign values to variables
+            if (variable_stack_)
+            {
+                for (size_t i = 0; i < var_names.size(); ++i)
+                {
+                    variable_stack_->setVariable(var_names[i], row[i]);
+                }
+            }
+            else
+            {
+                error("No variable stack available for FETCH");
+            }
+
+            // Advance to next row
+            cursor.current_row++;
+        }
+
+        void Executor::executeCursorClose()
+        {
+            // Read cursor name
+            std::string cursor_name = readString();
+
+            // Find cursor
+            auto it = cursors_.find(cursor_name);
+            if (it == cursors_.end())
+            {
+                error("Cursor '" + cursor_name + "' does not exist");
+            }
+
+            CursorState& cursor = it->second;
+
+            // Check if cursor is open
+            if (!cursor.is_open)
+            {
+                error("Cursor '" + cursor_name + "' is not open");
+            }
+
+            // Close cursor - clear result set and reset state
+            cursor.result_set.clear();
+            cursor.current_row = 0;
+            cursor.is_open = false;
         }
 
         // ===== PSQL Exception Handling =====
