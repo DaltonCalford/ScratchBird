@@ -97,12 +97,9 @@ void testBrinInsert()
     uint64_t xid = txn_mgr->getCurrentXid();
 
     // Create BRIN index
-    UuidV7Bytes index_uuid = UuidV7::zero();  // Use zero UUID for testing
-    index_uuid[0] = 0x01;  // Make it non-zero
-    UuidV7Bytes table_uuid = UuidV7::zero();
-    table_uuid[0] = 0x02;
-    std::vector<UuidV7Bytes> column_uuids = {UuidV7::zero()};
-    column_uuids[0][0] = 0x03;
+    UuidV7Bytes index_uuid = generateUuidV7();
+    UuidV7Bytes table_uuid = generateUuidV7();
+    std::vector<UuidV7Bytes> column_uuids = {generateUuidV7()};
 
     uint32_t root_page = 0;
     status = BrinIndex::create(db, index_uuid, table_uuid, column_uuids,
@@ -210,12 +207,9 @@ void testBrinRemove()
     uint64_t xid = txn_mgr->getCurrentXid();
 
     // Create BRIN index
-    UuidV7Bytes index_uuid = UuidV7::zero();
-    index_uuid[0] = 0x11;
-    UuidV7Bytes table_uuid = UuidV7::zero();
-    table_uuid[0] = 0x12;
-    std::vector<UuidV7Bytes> column_uuids = {UuidV7::zero()};
-    column_uuids[0][0] = 0x13;
+    UuidV7Bytes index_uuid = generateUuidV7();
+    UuidV7Bytes table_uuid = generateUuidV7();
+    std::vector<UuidV7Bytes> column_uuids = {generateUuidV7()};
 
     uint32_t root_page = 0;
     status = BrinIndex::create(db, index_uuid, table_uuid, column_uuids,
