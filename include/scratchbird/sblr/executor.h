@@ -836,7 +836,7 @@ namespace scratchbird
             }
 
             // Cache miss - open index
-            auto index_ptr = IndexT::open(db_, index_uuid.bytes, root_page, ctx);
+            auto index_ptr = IndexT::open(db_, index_uuid, root_page, ctx);
             if (!index_ptr)
             {
                 return nullptr;
