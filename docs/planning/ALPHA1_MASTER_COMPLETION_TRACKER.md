@@ -188,9 +188,13 @@ This section details the remaining work organized by component.
 - **Set Operations**: ✅ COMPLETE (100%) - All 6 operations (UNION, UNION ALL, INTERSECT, INTERSECT ALL, EXCEPT, EXCEPT_ALL)
 - **CTE Tests**: Standalone test created (test_cte_standalone.cpp)
 
+**⧗ IN PROGRESS:**
+- **MERGE Statement Opcodes**: ✅ Added (EXT_MERGE_START through EXT_MERGE_END)
+- **RETURNING Clause Opcode**: ✅ Added (EXT_RETURNING)
+
 **❌ MISSING:**
-- MERGE Statement (no opcodes exist)
-- RETURNING Clause (no opcodes exist)
+- MERGE Statement (parser, bytecode generator, executor)
+- RETURNING Clause (parser modifications, bytecode generator, executor)
 
 ### Features
 
@@ -202,11 +206,16 @@ This section details the remaining work organized by component.
 | 2.1.3 | Recursive CTEs Execution | ~200 | HIGH | ✅ **COMPLETE - executeRecursiveCTE()** |
 | 2.1.4 | CTE Scope Management | ~100 | MEDIUM | ✅ **COMPLETE - Depth tracking** |
 | 2.1.5 | Set Operations (UNION, INTERSECT, EXCEPT) | ~400 | HIGH | ✅ **COMPLETE - All 6 operations** |
-| 2.2 | MERGE Statement | ~850 | HIGH | ❌ **Not Started** |
+| 2.2 | MERGE Statement | ~850 | HIGH | ⧗ **In Progress (Opcodes Done)** |
+| 2.2.0 | Opcodes Definition | ~10 | HIGH | ✅ **COMPLETE (Nov 22)** |
 | 2.2.1 | Parser Extension | ~200 | HIGH | ❌ **Not Started** |
 | 2.2.2 | Bytecode Generation | ~250 | HIGH | ❌ **Not Started** |
 | 2.2.3 | Executor Implementation | ~400 | HIGH | ❌ **Not Started** |
-| 2.3 | RETURNING Clause | ~300 | MEDIUM | ❌ **Not Started** |
+| 2.3 | RETURNING Clause | ~300 | MEDIUM | ⧗ **In Progress (Opcode Done)** |
+| 2.3.0 | Opcode Definition | ~2 | MEDIUM | ✅ **COMPLETE (Nov 22)** |
+| 2.3.1 | Parser Modifications | ~50 | MEDIUM | ❌ **Not Started** |
+| 2.3.2 | Bytecode Generator Mods | ~40 | MEDIUM | ❌ **Not Started** |
+| 2.3.3 | Executor Modifications | ~100 | MEDIUM | ❌ **Not Started** |
 | 2.4 | SAVEPOINT (Nested Transactions) | ~530 | **CRITICAL** | ✅ **COMPLETE** |
 | 2.4.1 | Transaction Manager Extension | ~300 | CRITICAL | ✅ **COMPLETE** |
 | 2.4.2 | Parser Extension | ~80 | CRITICAL | ✅ **COMPLETE** |

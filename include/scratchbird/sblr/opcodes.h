@@ -734,6 +734,18 @@ namespace scratchbird
             EXT_XPATH = 0x4C,              // XPATH(xpath_expr, xml) - extract nodes using XPath
             EXT_XMLEXISTS = 0x4D,          // XMLEXISTS(xpath_expr, xml) - check if XPath matches
             EXT_XMLAGG = 0x4E,             // XMLAGG(xml) - aggregate XML values (aggregate function)
+
+            // MERGE statement support (Alpha 1 - Advanced SQL) (0x4F-0x55)
+            EXT_MERGE_START = 0x4F,        // Begin MERGE operation
+            EXT_MERGE_SOURCE = 0x50,       // Source query/table specification
+            EXT_MERGE_ON = 0x51,           // ON condition (join predicate)
+            EXT_MERGE_WHEN_MATCHED = 0x52, // WHEN MATCHED THEN UPDATE
+            EXT_MERGE_WHEN_NOT_MATCHED = 0x53, // WHEN NOT MATCHED THEN INSERT
+            EXT_MERGE_WHEN_NOT_MATCHED_SOURCE = 0x54, // WHEN NOT MATCHED BY SOURCE THEN DELETE
+            EXT_MERGE_END = 0x55,          // End MERGE operation
+
+            // RETURNING clause support (Alpha 1 - Advanced SQL) (0x56)
+            EXT_RETURNING = 0x56,          // RETURNING clause marker (followed by column list or *)
         };
 
         /**
