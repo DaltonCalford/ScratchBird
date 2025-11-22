@@ -70,7 +70,7 @@ namespace sblr {
     {
         std::lock_guard<std::mutex> lock(mutex_);
 
-        auto it = cache_map_.find(index_uuid.bytes);
+        auto it = cache_map_.find(index_uuid.bytes.data());
         if (it == cache_map_.end())
         {
             // Cache miss
@@ -107,7 +107,7 @@ namespace sblr {
         std::lock_guard<std::mutex> lock(mutex_);
 
         // Check if already in cache
-        auto it = cache_map_.find(index_uuid.bytes);
+        auto it = cache_map_.find(index_uuid.bytes.data());
         if (it != cache_map_.end())
         {
             // Already exists - update it
@@ -135,7 +135,7 @@ namespace sblr {
 
         // Allocate UUID copy for storage
         uint8_t* uuid_copy = new uint8_t[16];
-        std::memcpy(uuid_copy, index_uuid.bytes, 16);
+        std::memcpy(uuid_copy, index_uuid.bytes.data(), 16);
 
         // Create entry
         IndexCacheEntry entry(index_ptr, type);
@@ -155,7 +155,7 @@ namespace sblr {
     {
         std::lock_guard<std::mutex> lock(mutex_);
 
-        auto it = cache_map_.find(index_uuid.bytes);
+        auto it = cache_map_.find(index_uuid.bytes.data());
         if (it == cache_map_.end())
         {
             return;  // Not in cache
