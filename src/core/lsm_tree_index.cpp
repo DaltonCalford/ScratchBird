@@ -12,6 +12,7 @@
  */
 
 #include "scratchbird/core/lsm_tree_index.h"
+#include "scratchbird/core/database.h"
 #include "scratchbird/core/logger.h"
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -124,6 +125,45 @@ Status LSMTreeIndex::open(ErrorContext *ctx)
     compaction_thread_ = std::thread(&LSMTreeIndex::compactionThreadFunc, this);
 
     return Status::OK;
+}
+
+std::unique_ptr<LSMTreeIndex> LSMTreeIndex::open(Database* db,
+                                                   const ID& index_uuid,
+                                                   uint32_t root_page,
+                                                   ErrorContext* ctx)
+{
+    (void)root_page;  // Unused parameter - LSM-Tree is file-based, not page-based
+
+    if (!db)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Invalid database pointer");
+        return nullptr;
+    }
+
+    // Construct LSM tree path: <db_directory>/indexes/lsm/<index_uuid>
+    // For now, use a temporary directory pattern since Database doesn't expose its directory
+    // This should be updated when Database provides a getIndexDirectory() method
+    std::string index_path = "/tmp/scratchbird/indexes/lsm/" + index_uuid.toString();
+
+    // Get transaction manager from database
+    TransactionManager* txn_mgr = db->transaction_manager();
+    if (!txn_mgr)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INTERNAL_ERROR, "Transaction manager not available");
+        return nullptr;
+    }
+
+    // Create LSM tree instance (default 4MB memtable size)
+    auto index = std::make_unique<LSMTreeIndex>(index_path, txn_mgr, 4);
+
+    // Open the existing index
+    Status status = index->open(ctx);
+    if (status != Status::OK)
+    {
+        return nullptr;
+    }
+
+    return index;
 }
 
 Status LSMTreeIndex::close(ErrorContext *ctx)
