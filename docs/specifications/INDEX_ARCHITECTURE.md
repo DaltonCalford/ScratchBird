@@ -775,8 +775,8 @@ Status StorageEngine::deleteTuple(...) {
 | LSM-Tree    | ✅     | ✅     | ✅     | Active |
 | GIN         | ❌     | ❌     | ❌     | NOT_IMPLEMENTED |
 | HNSW        | ❌     | ❌     | ❌     | NOT_IMPLEMENTED |
-| GiST        | ❌     | ❌     | ❌     | NOT_IMPLEMENTED |
-| SP-GiST     | ❌     | ❌     | ❌     | NOT_IMPLEMENTED |
+| GiST        | ✅     | ✅     | ✅     | COMPLETE (Nov 2025) |
+| SP-GiST     | ✅     | ✅     | ✅     | COMPLETE (Nov 2025) |
 | BRIN        | ❌     | ❌     | ❌     | NOT_IMPLEMENTED |
 | Bitmap      | ❌     | ❌     | ❌     | NOT_IMPLEMENTED |
 | R-Tree      | ❌     | ❌     | ❌     | NOT_IMPLEMENTED |
