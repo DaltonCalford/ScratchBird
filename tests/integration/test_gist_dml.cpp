@@ -34,6 +34,7 @@
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/core/uuidv7.h"
 #include "scratchbird/core/index_factory.h"
+#include "scratchbird/core/connection_context.h"
 
 using namespace scratchbird::core;
 
