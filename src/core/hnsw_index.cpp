@@ -132,7 +132,7 @@ Status HnswIndex::create(Database *db,
     root->hnsw_table_uuid = table_uuid;
     root->hnsw_flags = static_cast<uint16_t>(HnswFlags::ROOT);
     root->hnsw_count = 0;
-    root->hnsw_free_space = db_->page_size() - sizeof(SBHnswPage);
+    root->hnsw_free_space = db->page_size() - sizeof(SBHnswPage);
     root->hnsw_layer = 0; // Base layer
     root->hnsw_m = m;
     root->hnsw_dimensions = dimensions;

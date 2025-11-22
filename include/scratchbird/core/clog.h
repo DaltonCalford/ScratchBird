@@ -101,16 +101,9 @@ namespace scratchbird::core
         // Dynamic capacity calculations based on page size
         // Each XID uses 2 bits (4 states: ACTIVE, COMMITTED, ABORTED, PREPARED)
         // Formula: XIDS_PER_PAGE = (page_size - header_size) * 8 / 2 = (page_size - header_size) * 4
-        uint32_t getXidsPerPage() const
-        {
-            return (db_->page_size() - sizeof(ClogPageHeader)) * 4;
-        }
+        uint32_t getXidsPerPage() const;
 
-        uint32_t getStatusBytesPerPage() const
-        {
-            // Each byte holds 4 XIDs (2 bits per XID)
-            return (db_->page_size() - sizeof(ClogPageHeader)) / 2;
-        }
+        uint32_t getStatusBytesPerPage() const;
 
         // Calculate which page contains an XID
         uint32_t getPageForXid(uint64_t xid) const

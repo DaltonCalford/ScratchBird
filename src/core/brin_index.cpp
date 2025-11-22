@@ -91,7 +91,7 @@ Status BrinIndex::create(Database *db,
     root->brin_table_uuid = table_uuid;
     root->brin_flags = static_cast<uint16_t>(BrinFlags::ROOT);
     root->brin_count = 0;
-    root->brin_free_space = db_->page_size() - sizeof(SBBrinPage);
+    root->brin_free_space = db->page_size() - sizeof(SBBrinPage);
     root->brin_range_size = range_size;
     root->brin_first_block = 0;
     root->brin_last_block = 0;
