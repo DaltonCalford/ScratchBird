@@ -14,6 +14,7 @@
 
 #include "scratchbird/core/lsm_tree_index.h"
 #include "scratchbird/core/lsm_bloom_filter.h"
+#include "scratchbird/core/lsm_compression.h"
 #include "scratchbird/core/transaction_manager.h"
 #include "scratchbird/core/logger.h"
 #include <fcntl.h>
@@ -222,8 +223,14 @@ Status Memtable::getAllEntries(std::vector<MemtableEntry> *entries_out,
 // SSTableWriter Implementation
 // ============================================================================
 
-SSTableWriter::SSTableWriter(const std::string &file_path, size_t block_size)
-    : file_path_(file_path), block_size_(block_size), fd_(-1), num_entries_(0), data_offset_(0)
+SSTableWriter::SSTableWriter(const std::string &file_path, size_t block_size, CompressionType compression)
+    : file_path_(file_path),
+      block_size_(block_size),
+      fd_(-1),
+      num_entries_(0),
+      data_offset_(0),
+      compression_type_(compression),
+      compressor_(CompressionFactory::create(compression))
 {
 }
 
@@ -380,6 +387,10 @@ Status SSTableWriter::finish(ErrorContext *ctx)
         footer.insert(footer.end(), (uint8_t *)&bloom_size, (uint8_t *)&bloom_size + sizeof(bloom_size));
     }
 
+    // Compression type (1 byte)
+    uint8_t compression_byte = static_cast<uint8_t>(compression_type_);
+    footer.push_back(compression_byte);
+
     // Footer magic number (to verify footer integrity)
     const uint32_t FOOTER_MAGIC = 0x5353544C;  // "SSTL" in hex
     footer.insert(footer.end(), (uint8_t *)&FOOTER_MAGIC, (uint8_t *)&FOOTER_MAGIC + sizeof(FOOTER_MAGIC));
@@ -423,7 +434,12 @@ Status SSTableWriter::close(ErrorContext *ctx)
 // ============================================================================
 
 SSTableReader::SSTableReader(const std::string &file_path, size_t block_size)
-    : file_path_(file_path), block_size_(block_size), fd_(-1), file_size_(0), num_entries_(0)
+    : file_path_(file_path),
+      block_size_(block_size),
+      fd_(-1),
+      file_size_(0),
+      num_entries_(0),
+      compression_type_(CompressionType::NONE)
 {
 }
 
@@ -588,6 +604,23 @@ Status SSTableReader::open(ErrorContext *ctx)
             bloom_filter_.reset(LSMBloomFilter::deserialize(bloom_data));
             pos += bloom_size;
         }
+    }
+
+    // Compression type (1 byte, added November 22, 2025)
+    if (pos + sizeof(uint8_t) <= footer.size())
+    {
+        uint8_t compression_byte;
+        std::memcpy(&compression_byte, footer.data() + pos, sizeof(compression_byte));
+        pos += sizeof(compression_byte);
+
+        compression_type_ = static_cast<CompressionType>(compression_byte);
+        compressor_ = CompressionFactory::create(compression_type_);
+    }
+    else
+    {
+        // Older SSTable without compression info - assume no compression
+        compression_type_ = CompressionType::NONE;
+        compressor_ = CompressionFactory::create(CompressionType::NONE);
     }
 
     // Footer magic (optional verification)
