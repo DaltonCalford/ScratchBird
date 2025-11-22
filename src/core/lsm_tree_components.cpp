@@ -14,6 +14,7 @@
 
 #include "scratchbird/core/lsm_tree_index.h"
 #include "scratchbird/core/lsm_bloom_filter.h"
+#include "scratchbird/core/lsm_compression.h"
 #include "scratchbird/core/transaction_manager.h"
 #include "scratchbird/core/logger.h"
 #include <fcntl.h>
@@ -222,8 +223,14 @@ Status Memtable::getAllEntries(std::vector<MemtableEntry> *entries_out,
 // SSTableWriter Implementation
 // ============================================================================
 
-SSTableWriter::SSTableWriter(const std::string &file_path, size_t block_size)
-    : file_path_(file_path), block_size_(block_size), fd_(-1), num_entries_(0), data_offset_(0)
+SSTableWriter::SSTableWriter(const std::string &file_path, size_t block_size, CompressionType compression)
+    : file_path_(file_path),
+      block_size_(block_size),
+      fd_(-1),
+      num_entries_(0),
+      data_offset_(0),
+      compression_type_(compression),
+      compressor_(CompressionFactory::create(compression))
 {
 }
 
@@ -380,6 +387,10 @@ Status SSTableWriter::finish(ErrorContext *ctx)
         footer.insert(footer.end(), (uint8_t *)&bloom_size, (uint8_t *)&bloom_size + sizeof(bloom_size));
     }
 
+    // Compression type (1 byte)
+    uint8_t compression_byte = static_cast<uint8_t>(compression_type_);
+    footer.push_back(compression_byte);
+
     // Footer magic number (to verify footer integrity)
     const uint32_t FOOTER_MAGIC = 0x5353544C;  // "SSTL" in hex
     footer.insert(footer.end(), (uint8_t *)&FOOTER_MAGIC, (uint8_t *)&FOOTER_MAGIC + sizeof(FOOTER_MAGIC));
@@ -422,8 +433,13 @@ Status SSTableWriter::close(ErrorContext *ctx)
 // SSTableReader Implementation
 // ============================================================================
 
-SSTableReader::SSTableReader(const std::string &file_path)
-    : file_path_(file_path), fd_(-1), file_size_(0), num_entries_(0)
+SSTableReader::SSTableReader(const std::string &file_path, size_t block_size)
+    : file_path_(file_path),
+      block_size_(block_size),
+      fd_(-1),
+      file_size_(0),
+      num_entries_(0),
+      compression_type_(CompressionType::NONE)
 {
 }
 
@@ -457,9 +473,9 @@ Status SSTableReader::open(ErrorContext *ctx)
     }
     file_size_ = size;
 
-    // Read footer (read last 4KB to accommodate Bloom filter and index)
+    // Read footer (read last block to accommodate Bloom filter and index)
     // Footer format: [min_key][max_key][num_entries][index][bloom_filter_size][bloom_data][magic]
-    const size_t footer_size = 4096;
+    const size_t footer_size = block_size_;
     if (file_size_ < (int64_t)footer_size)
     {
         ::close(fd_);
@@ -588,6 +604,23 @@ Status SSTableReader::open(ErrorContext *ctx)
             bloom_filter_.reset(LSMBloomFilter::deserialize(bloom_data));
             pos += bloom_size;
         }
+    }
+
+    // Compression type (1 byte, added November 22, 2025)
+    if (pos + sizeof(uint8_t) <= footer.size())
+    {
+        uint8_t compression_byte;
+        std::memcpy(&compression_byte, footer.data() + pos, sizeof(compression_byte));
+        pos += sizeof(compression_byte);
+
+        compression_type_ = static_cast<CompressionType>(compression_byte);
+        compressor_ = CompressionFactory::create(compression_type_);
+    }
+    else
+    {
+        // Older SSTable without compression info - assume no compression
+        compression_type_ = CompressionType::NONE;
+        compressor_ = CompressionFactory::create(CompressionType::NONE);
     }
 
     // Footer magic (optional verification)
@@ -836,6 +869,175 @@ Status SSTableReader::close(ErrorContext *ctx)
     }
 
     return Status::OK;
+}
+
+// ============================================================================
+// SSTableReader::Iterator Implementation
+// ============================================================================
+
+class SSTableReaderIterator : public SSTableReader::Iterator
+{
+public:
+    SSTableReaderIterator(int fd, uint64_t file_size, size_t block_size)
+        : fd_(fd),
+          file_size_(file_size),
+          block_size_(block_size),
+          current_offset_(0),
+          valid_(false)
+    {
+        // Start reading from beginning of file
+        next();
+    }
+
+    bool isValid() const override
+    {
+        return valid_;
+    }
+
+    void next() override
+    {
+        // Read next entry from SSTable
+        // Entry format: [key_len][key][value_len][value][seq][type][xmin][xmax]
+
+        if (current_offset_ >= file_size_)
+        {
+            valid_ = false;
+            return;
+        }
+
+        // Seek to current offset
+        if (::lseek(fd_, current_offset_, SEEK_SET) != (off_t)current_offset_)
+        {
+            valid_ = false;
+            return;
+        }
+
+        // Read key length
+        uint16_t key_len;
+        if (::read(fd_, &key_len, sizeof(key_len)) != sizeof(key_len))
+        {
+            valid_ = false;
+            return;
+        }
+
+        // Check if we've reached the footer (entries end before footer)
+        // A key_len of 0 or impossibly large indicates end of data
+        if (key_len == 0 || key_len > 65535)
+        {
+            valid_ = false;
+            return;
+        }
+
+        // Read key
+        current_key_.resize(key_len);
+        if (::read(fd_, current_key_.data(), key_len) != (ssize_t)key_len)
+        {
+            valid_ = false;
+            return;
+        }
+
+        // Read value length
+        uint32_t value_len;
+        if (::read(fd_, &value_len, sizeof(value_len)) != sizeof(value_len))
+        {
+            valid_ = false;
+            return;
+        }
+
+        // Read value
+        current_value_.resize(value_len);
+        if (value_len > 0 && ::read(fd_, current_value_.data(), value_len) != (ssize_t)value_len)
+        {
+            valid_ = false;
+            return;
+        }
+
+        // Read metadata
+        if (::read(fd_, &current_sequence_, sizeof(current_sequence_)) != sizeof(current_sequence_))
+        {
+            valid_ = false;
+            return;
+        }
+
+        if (::read(fd_, &current_type_, sizeof(current_type_)) != sizeof(current_type_))
+        {
+            valid_ = false;
+            return;
+        }
+
+        if (::read(fd_, &current_xmin_, sizeof(current_xmin_)) != sizeof(current_xmin_))
+        {
+            valid_ = false;
+            return;
+        }
+
+        if (::read(fd_, &current_xmax_, sizeof(current_xmax_)) != sizeof(current_xmax_))
+        {
+            valid_ = false;
+            return;
+        }
+
+        // Update offset to next entry
+        current_offset_ += sizeof(key_len) + key_len + sizeof(value_len) + value_len +
+                          sizeof(current_sequence_) + sizeof(current_type_) +
+                          sizeof(current_xmin_) + sizeof(current_xmax_);
+
+        valid_ = true;
+    }
+
+    const std::vector<uint8_t>& key() const override
+    {
+        return current_key_;
+    }
+
+    const std::vector<uint8_t>& value() const override
+    {
+        return current_value_;
+    }
+
+    uint64_t sequenceNumber() const override
+    {
+        return current_sequence_;
+    }
+
+    uint8_t entryType() const override
+    {
+        return current_type_;
+    }
+
+    uint64_t xmin() const override
+    {
+        return current_xmin_;
+    }
+
+    uint64_t xmax() const override
+    {
+        return current_xmax_;
+    }
+
+private:
+    int fd_;
+    uint64_t file_size_;
+    size_t block_size_;
+    uint64_t current_offset_;
+    bool valid_;
+
+    std::vector<uint8_t> current_key_;
+    std::vector<uint8_t> current_value_;
+    uint64_t current_sequence_;
+    uint8_t current_type_;
+    uint64_t current_xmin_;
+    uint64_t current_xmax_;
+};
+
+std::unique_ptr<SSTableReader::Iterator> SSTableReader::createIterator()
+{
+    if (fd_ < 0)
+    {
+        return nullptr;
+    }
+
+    return std::make_unique<SSTableReaderIterator>(fd_, file_size_, block_size_);
 }
 
 } // namespace core

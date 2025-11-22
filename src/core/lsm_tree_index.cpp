@@ -33,12 +33,15 @@ namespace core
 // Constructor / Destructor
 // ============================================================================
 
-LSMTreeIndex::LSMTreeIndex(const std::string &index_path,
+LSMTreeIndex::LSMTreeIndex(Database *db,
+                           const std::string &index_path,
                            TransactionManager *txn_mgr,
                            size_t memtable_size_mb)
-    : index_path_(index_path),
+    : db_(db),
+      index_path_(index_path),
       txn_mgr_(txn_mgr),
       memtable_max_size_(memtable_size_mb * 1024 * 1024),
+      block_size_(db ? db->page_size() : 4096),  // Use DB page size, fallback to 4KB
       compaction_shutdown_(false)
 {
     // Initialize 4 levels
@@ -154,7 +157,7 @@ std::unique_ptr<LSMTreeIndex> LSMTreeIndex::open(Database* db,
     }
 
     // Create LSM tree instance (default 4MB memtable size)
-    auto index = std::make_unique<LSMTreeIndex>(index_path, txn_mgr, 4);
+    auto index = std::make_unique<LSMTreeIndex>(db, index_path, txn_mgr, 4);
 
     // Open the existing index
     Status status = index->open(ctx);
@@ -662,7 +665,7 @@ Status LSMTreeIndex::flushImmutableMemtable(ErrorContext *ctx)
     std::string sstable_path = generateSSTablePath(0);
 
     // Create SSTable writer
-    SSTableWriter writer(sstable_path, 4096);
+    SSTableWriter writer(sstable_path, block_size_);
     Status status = writer.open(ctx);
     if (status != Status::OK)
     {
@@ -713,7 +716,7 @@ Status LSMTreeIndex::flushImmutableMemtable(ErrorContext *ctx)
     // Open SSTable reader and add to level 0
     {
         std::lock_guard<std::mutex> lock(sstables_mutex_);
-        auto reader = std::make_unique<SSTableReader>(sstable_path);
+        auto reader = std::make_unique<SSTableReader>(sstable_path, block_size_);
         status = reader->open(ctx);
         if (status != Status::OK)
         {
@@ -814,7 +817,7 @@ Status LSMTreeIndex::loadExistingSSTables(ErrorContext *ctx)
         for (const auto &path : sstable_paths)
         {
             // Open reader
-            auto reader = std::make_unique<SSTableReader>(path);
+            auto reader = std::make_unique<SSTableReader>(path, block_size_);
             Status status = reader->open(ctx);
             if (status != Status::OK)
             {
