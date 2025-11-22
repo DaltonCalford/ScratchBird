@@ -1010,6 +1010,91 @@ namespace scratchbird
             }
         }
 
+        void BytecodeGenerator::visit(parser::SetOperationStmt *node)
+        {
+            // Emit appropriate set operation opcode
+            current_result_->writeOpcode(Opcode::EXTENDED_OPCODE);
+
+            switch (node->opType())
+            {
+                case parser::SetOperationType::UNION:
+                    current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_UNION));
+                    break;
+                case parser::SetOperationType::UNION_ALL:
+                    current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_UNION_ALL));
+                    break;
+                case parser::SetOperationType::INTERSECT:
+                    current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_INTERSECT));
+                    break;
+                case parser::SetOperationType::INTERSECT_ALL:
+                    current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_INTERSECT_ALL));
+                    break;
+                case parser::SetOperationType::EXCEPT:
+                    current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_EXCEPT));
+                    break;
+                case parser::SetOperationType::EXCEPT_ALL:
+                    current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_EXCEPT_ALL));
+                    break;
+            }
+
+            // Generate bytecode for left side
+            node->left()->accept(this);
+
+            // Generate bytecode for right side
+            node->right()->accept(this);
+
+            // Handle ORDER BY (applies to final result)
+            if (!node->orderByClause().empty())
+            {
+                current_result_->writeOpcode(Opcode::ORDER_BY);
+                size_t order_count = node->orderByClause().size();
+                if (order_count > UINT32_MAX)
+                {
+                    current_result_->addError("ORDER BY clause has too many items");
+                    return;
+                }
+                current_result_->writeInt32(static_cast<uint32_t>(order_count));
+
+                for (const auto &item : node->orderByClause())
+                {
+                    generateExpression(item.expr);
+
+                    // Write sort direction
+                    if (item.order == parser::SortOrder::ASC)
+                    {
+                        current_result_->writeOpcode(Opcode::SORT_ASC);
+                    }
+                    else
+                    {
+                        current_result_->writeOpcode(Opcode::SORT_DESC);
+                    }
+
+                    // Write nulls ordering
+                    if (item.nulls_order == parser::NullsOrder::NULLS_FIRST)
+                    {
+                        current_result_->writeOpcode(Opcode::NULLS_FIRST);
+                    }
+                    else if (item.nulls_order == parser::NullsOrder::NULLS_LAST)
+                    {
+                        current_result_->writeOpcode(Opcode::NULLS_LAST);
+                    }
+                }
+            }
+
+            // Handle LIMIT/OFFSET (applies to final result)
+            if (node->hasLimit())
+            {
+                current_result_->writeOpcode(Opcode::LIMIT);
+                current_result_->writeInt64(static_cast<uint64_t>(node->limitCount()));
+            }
+
+            if (node->hasOffset())
+            {
+                current_result_->writeOpcode(Opcode::OFFSET);
+                current_result_->writeInt64(static_cast<uint64_t>(node->offsetCount()));
+            }
+        }
+
         void BytecodeGenerator::visit(parser::UpdateStmt *node)
         {
             // Phase 1 Task 2.1: UPDATE statement bytecode generation

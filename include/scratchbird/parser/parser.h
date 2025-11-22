@@ -125,6 +125,7 @@ namespace scratchbird
             Statement *parseDetachTablespace();      // Phase 6 Task 6.2
             Statement *parseInsert();
             Statement *parseSelect();
+            SelectStmt *parseSelectCore(WithClause *with_clause, const SourceLocation &start_loc);  // Helper for set operations
             Statement *parseUpdate();                // Phase 1 Task 2.1
             Statement *parseDelete();                // Phase 1 Task 2.2
             Statement *parseAnalyze();               // Phase 1 Task 1.1.2
@@ -187,6 +188,7 @@ namespace scratchbird
             GroupByClause parseGroupByClause();
             std::vector<OrderByItem> parseOrderByClause();
             void parseLimitClause(SelectStmt *stmt);
+            void parseLimitClause(SetOperationStmt *stmt);  // Overload for set operations
 
             // Window function helpers (Phase 1 Task 6)
             WindowSpec *parseWindowSpec();
