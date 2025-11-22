@@ -189,12 +189,12 @@ This section details the remaining work organized by component.
 - **CTE Tests**: Standalone test created (test_cte_standalone.cpp)
 
 **⧗ IN PROGRESS:**
-- **MERGE Statement Opcodes**: ✅ Added (EXT_MERGE_START through EXT_MERGE_END)
-- **RETURNING Clause Opcode**: ✅ Added (EXT_RETURNING)
+- **MERGE Statement Infrastructure**: ✅ Opcodes, AST, Tokens complete
+- **RETURNING Clause Infrastructure**: ✅ Opcodes, AST, Tokens complete
 
 **❌ MISSING:**
-- MERGE Statement (parser, bytecode generator, executor)
-- RETURNING Clause (parser modifications, bytecode generator, executor)
+- MERGE Statement (parser ~100 lines, bytecode ~70 lines, executor ~150 lines)
+- RETURNING Clause (parser ~50 lines, bytecode ~40 lines, executor ~100 lines)
 
 ### Features
 
@@ -206,13 +206,13 @@ This section details the remaining work organized by component.
 | 2.1.3 | Recursive CTEs Execution | ~200 | HIGH | ✅ **COMPLETE - executeRecursiveCTE()** |
 | 2.1.4 | CTE Scope Management | ~100 | MEDIUM | ✅ **COMPLETE - Depth tracking** |
 | 2.1.5 | Set Operations (UNION, INTERSECT, EXCEPT) | ~400 | HIGH | ✅ **COMPLETE - All 6 operations** |
-| 2.2 | MERGE Statement | ~850 | HIGH | ⧗ **In Progress (Opcodes Done)** |
-| 2.2.0 | Opcodes Definition | ~10 | HIGH | ✅ **COMPLETE (Nov 22)** |
-| 2.2.1 | Parser Extension | ~200 | HIGH | ❌ **Not Started** |
-| 2.2.2 | Bytecode Generation | ~250 | HIGH | ❌ **Not Started** |
-| 2.2.3 | Executor Implementation | ~400 | HIGH | ❌ **Not Started** |
-| 2.3 | RETURNING Clause | ~300 | MEDIUM | ⧗ **In Progress (Opcode Done)** |
-| 2.3.0 | Opcode Definition | ~2 | MEDIUM | ✅ **COMPLETE (Nov 22)** |
+| 2.2 | MERGE Statement | ~850 | HIGH | ⧗ **In Progress (Infrastructure Done)** |
+| 2.2.0 | Opcodes + AST + Tokens | ~10 | HIGH | ✅ **COMPLETE (Nov 22)** |
+| 2.2.1 | Parser Extension | ~100 | HIGH | ❌ **Not Started** |
+| 2.2.2 | Bytecode Generation | ~70 | HIGH | ❌ **Not Started** |
+| 2.2.3 | Executor Implementation | ~150 | HIGH | ❌ **Not Started** |
+| 2.3 | RETURNING Clause | ~300 | MEDIUM | ⧗ **In Progress (Infrastructure Done)** |
+| 2.3.0 | Opcodes + AST + Tokens | ~2 | MEDIUM | ✅ **COMPLETE (Nov 22)** |
 | 2.3.1 | Parser Modifications | ~50 | MEDIUM | ❌ **Not Started** |
 | 2.3.2 | Bytecode Generator Mods | ~40 | MEDIUM | ❌ **Not Started** |
 | 2.3.3 | Executor Modifications | ~100 | MEDIUM | ❌ **Not Started** |
