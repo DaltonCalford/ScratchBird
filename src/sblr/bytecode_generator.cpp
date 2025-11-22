@@ -884,13 +884,15 @@ namespace scratchbird
             {
                 const auto& ctes = node->withClause()->ctes();
 
-                // Emit WITH_CLAUSE marker with CTE count
+                // Emit WITH_CLAUSE marker with CTE count and recursive flag
                 current_result_->writeOpcode(Opcode::EXTENDED_OPCODE);
                 current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_WITH_CLAUSE));
                 // Write count as 2 bytes (uint16_t)
                 uint16_t cte_count = static_cast<uint16_t>(ctes.size());
                 current_result_->writeByte(static_cast<uint8_t>(cte_count & 0xFF));
                 current_result_->writeByte(static_cast<uint8_t>((cte_count >> 8) & 0xFF));
+                // Write recursive flag (1 byte)
+                current_result_->writeByte(node->withClause()->isRecursive() ? 1 : 0);
 
                 // Process each CTE
                 for (const auto& cte : ctes)
