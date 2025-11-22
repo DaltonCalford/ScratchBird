@@ -270,6 +270,7 @@ namespace scratchbird
             // Timezone
             KW_ZONE,
             KW_WITH,
+            KW_RECURSIVE, // WITH RECURSIVE for recursive CTEs
             KW_WITHOUT,
             KW_AT,
 

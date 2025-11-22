@@ -2495,6 +2495,13 @@ namespace scratchbird
             auto start_loc = current().location;
             advance(); // consume WITH
 
+            // Check for optional RECURSIVE keyword
+            bool is_recursive = false;
+            if (match(TokenType::KW_RECURSIVE))
+            {
+                is_recursive = true;
+            }
+
             std::vector<CTEDefinition> ctes;
 
             // Parse CTEs: cte_name [(col1, col2, ...)] AS (SELECT ...)
@@ -2572,7 +2579,7 @@ namespace scratchbird
                     return nullptr;
                 }
 
-                ctes.emplace_back(cte_name, cte_query, std::move(column_aliases));
+                ctes.emplace_back(cte_name, cte_query, std::move(column_aliases), is_recursive);
 
             } while (match(TokenType::COMMA));
 
@@ -2583,7 +2590,7 @@ namespace scratchbird
                 return nullptr;
             }
 
-            return arena_.make<WithClause>(std::move(ctes));
+            return arena_.make<WithClause>(std::move(ctes), is_recursive);
         }
 
         Statement *Parser::parseUpdate()
