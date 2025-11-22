@@ -238,7 +238,7 @@ Status GiSTIndex::initialize(ErrorContext* ctx)
     root->gist_header.magic = K_MAGIC_SBRD;
     root->gist_header.version = static_cast<uint16_t>(DB_VERSION_ALPHA_1_0_1);
     root->gist_header.page_type = static_cast<uint16_t>(PageType::PAGE_TYPE_GIST);
-    root->gist_header.page_size = 8192;
+    root->gist_header.page_size = db_->page_size();
     root->gist_header.page_id = root_page_;
     root->gist_header.checksum = 0;
     root->gist_header.lsn = 0;
@@ -256,7 +256,7 @@ Status GiSTIndex::initialize(ErrorContext* ctx)
     root->gist_flags = static_cast<uint16_t>(GiSTFlags::ROOT) |
                        static_cast<uint16_t>(GiSTFlags::LEAF);
     root->gist_count = 0;
-    root->gist_free_space = 8192 - sizeof(SBGiSTPage);
+    root->gist_free_space = db_->page_size() - sizeof(SBGiSTPage);
     root->gist_level = 0;
     root->gist_opclass_id = opclass_->getOpClassId();
     root->gist_xmin = txn_manager_->getCurrentXid();
@@ -312,7 +312,7 @@ Status GiSTIndex::insert(const GiSTPredicate& predicate,
         new_root->gist_header.magic = K_MAGIC_SBRD;
         new_root->gist_header.version = static_cast<uint16_t>(DB_VERSION_ALPHA_1_0_1);
         new_root->gist_header.page_type = static_cast<uint16_t>(PageType::PAGE_TYPE_GIST);
-        new_root->gist_header.page_size = 8192;
+        new_root->gist_header.page_size = db_->page_size();
         new_root->gist_header.page_id = root_page_;
         new_root->gist_header.checksum = 0;
         new_root->gist_header.lsn = 0;
@@ -333,7 +333,7 @@ Status GiSTIndex::insert(const GiSTPredicate& predicate,
         new_root->gist_xmin = current_xid;
         new_root->gist_xmax = 0;
         new_root->gist_count = 0;
-        new_root->gist_free_space = 8192 - sizeof(SBGiSTPage);
+        new_root->gist_free_space = db_->page_size() - sizeof(SBGiSTPage);
 
         // We need to get the union predicate for the old_root (left side)
         // Since splitPage was already called on old_root, we need to compute its union
@@ -450,7 +450,7 @@ Status GiSTIndex::insertRecursive(uint64_t page_num,
         // Add entry to leaf
         uint8_t* entry_ptr = reinterpret_cast<uint8_t*>(page) +
                             sizeof(SBGiSTPage) +
-                            (8192 - sizeof(SBGiSTPage) - page->gist_free_space);
+                            (db_->page_size() - sizeof(SBGiSTPage) - page->gist_free_space);
 
         SBGiSTEntry* entry = reinterpret_cast<SBGiSTEntry*>(entry_ptr);
         entry->entry_size = entry_size;
@@ -511,7 +511,7 @@ Status GiSTIndex::insertRecursive(uint64_t page_num,
             // Add entry for new child page
             uint8_t* entry_ptr = reinterpret_cast<uint8_t*>(page) +
                                 sizeof(SBGiSTPage) +
-                                (8192 - sizeof(SBGiSTPage) - page->gist_free_space);
+                                (db_->page_size() - sizeof(SBGiSTPage) - page->gist_free_space);
 
             SBGiSTEntry* entry = reinterpret_cast<SBGiSTEntry*>(entry_ptr);
             entry->entry_size = entry_size;
@@ -898,7 +898,7 @@ Status GiSTIndex::splitPage(uint64_t page_num,
     right_page->gist_table_uuid = page->gist_table_uuid;
     right_page->gist_flags = page->gist_flags & ~static_cast<uint16_t>(GiSTFlags::ROOT);  // Not root
     right_page->gist_count = 0;
-    right_page->gist_free_space = 8192 - sizeof(SBGiSTPage);  // Start with full free space
+    right_page->gist_free_space = db_->page_size() - sizeof(SBGiSTPage);  // Start with full free space
     right_page->gist_level = page->gist_level;
     right_page->gist_opclass_id = page->gist_opclass_id;
     right_page->gist_left_sibling = page_num;
@@ -933,7 +933,7 @@ Status GiSTIndex::splitPage(uint64_t page_num,
 
     // Clear left page (reset to empty)
     page->gist_count = 0;
-    page->gist_free_space = 8192 - sizeof(SBGiSTPage);
+    page->gist_free_space = db_->page_size() - sizeof(SBGiSTPage);
 
     // Write entries to left page based on left_indices
     uint8_t* left_ptr = reinterpret_cast<uint8_t*>(page) + sizeof(SBGiSTPage);
@@ -1178,7 +1178,7 @@ Status GiSTIndex::removeDeadEntriesRecursive(uint64_t page_num,
     {
         // Clear page
         page->gist_count = 0;
-        page->gist_free_space = 8192 - sizeof(SBGiSTPage);
+        page->gist_free_space = db_->page_size() - sizeof(SBGiSTPage);
 
         // Write back live entries
         uint8_t* write_ptr = reinterpret_cast<uint8_t*>(page) + sizeof(SBGiSTPage);

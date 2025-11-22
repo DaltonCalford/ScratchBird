@@ -645,7 +645,7 @@ namespace scratchbird
                 }
 
                 // Read the item pointer to get tuple offset
-                auto *page_special = reinterpret_cast<HeapPageSpecial *>(page_data + 8192 - sizeof(HeapPageSpecial));
+                auto *page_special = reinterpret_cast<HeapPageSpecial *>(page_data + db_->page_size() - sizeof(HeapPageSpecial));
                 uint16_t item_count = page_special->pd_lower / sizeof(struct ItemPointer);
 
                 if (item_id >= item_count)
@@ -654,7 +654,7 @@ namespace scratchbird
                     continue; // Invalid item ID
                 }
 
-                auto *item_pointers = reinterpret_cast<ItemPointer *>(page_data + 8192 - sizeof(HeapPageSpecial) - sizeof(ItemPointer) * (item_id + 1));
+                auto *item_pointers = reinterpret_cast<ItemPointer *>(page_data + db_->page_size() - sizeof(HeapPageSpecial) - sizeof(ItemPointer) * (item_id + 1));
                 ItemPointer item = *item_pointers;
 
                 if (item.offset == 0 || item.length == 0)

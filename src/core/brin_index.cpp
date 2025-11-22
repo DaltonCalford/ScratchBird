@@ -91,7 +91,7 @@ Status BrinIndex::create(Database *db,
     root->brin_table_uuid = table_uuid;
     root->brin_flags = static_cast<uint16_t>(BrinFlags::ROOT);
     root->brin_count = 0;
-    root->brin_free_space = 8192 - sizeof(SBBrinPage);
+    root->brin_free_space = db_->page_size() - sizeof(SBBrinPage);
     root->brin_range_size = range_size;
     root->brin_first_block = 0;
     root->brin_last_block = 0;
@@ -539,11 +539,11 @@ Status BrinIndex::vacuum(VacuumStats *stats_out, ErrorContext *ctx)
 
         // Recalculate free space
         size_t used_space = sizeof(SBBrinPage) + live_ranges_data.size();
-        page->brin_free_space = 8192 - used_space;
+        page->brin_free_space = db_->page_size() - used_space;
 
         LOG_DEBUG(GENERAL, "BRIN vacuum: compacted page, removed %zu ranges, reclaimed %zu bytes",
                  dead_ranges.size(),
-                 dead_ranges.size() > 0 ? (8192 - used_space) - page->brin_free_space : 0);
+                 dead_ranges.size() > 0 ? (db_->page_size() - used_space) - page->brin_free_space : 0);
     }
 
     buffer_pool->unpinPage(index_info_.idx_root_page, ranges_removed > 0, ctx);
@@ -872,7 +872,7 @@ Status BrinIndex::split_page(uint64_t page_num, ErrorContext *ctx)
     new_page->brin_header.magic = K_MAGIC_SBRD;
     new_page->brin_header.version = static_cast<uint16_t>(DB_VERSION_ALPHA_1_0_1);
     new_page->brin_header.page_type = static_cast<uint16_t>(PageType::PAGE_TYPE_BRIN);
-    new_page->brin_header.page_size = 8192;
+    new_page->brin_header.page_size = db_->page_size();
     new_page->brin_header.page_id = new_page_num;
     new_page->brin_header.checksum = 0;
     new_page->brin_header.lsn = 0;
@@ -889,7 +889,7 @@ Status BrinIndex::split_page(uint64_t page_num, ErrorContext *ctx)
     std::memcpy(new_page->brin_table_uuid.bytes.data(), index_info_.idx_table_uuid.bytes.data(), 16);
     new_page->brin_flags = 0;
     new_page->brin_count = 0;
-    new_page->brin_free_space = 8192 - sizeof(SBBrinPage);
+    new_page->brin_free_space = db_->page_size() - sizeof(SBBrinPage);
     new_page->brin_range_size = page->brin_range_size;
     new_page->brin_first_block = 0;  // Will be updated
     new_page->brin_last_block = 0;   // Will be updated
@@ -951,14 +951,14 @@ Status BrinIndex::split_page(uint64_t page_num, ErrorContext *ctx)
 
     // Update new page metadata
     new_page->brin_count = page->brin_count - split_point;
-    new_page->brin_free_space = 8192 - sizeof(SBBrinPage) - bytes_to_move;
+    new_page->brin_free_space = db_->page_size() - sizeof(SBBrinPage) - bytes_to_move;
     new_page->brin_first_block = new_first_block;
     new_page->brin_last_block = new_last_block;
     new_page->brin_ranges_total = page->brin_count - split_point;
 
     // Update original page metadata
     page->brin_count = split_point;
-    page->brin_free_space = 8192 - sizeof(SBBrinPage) - (copy_start - (page_data + sizeof(SBBrinPage)));
+    page->brin_free_space = db_->page_size() - sizeof(SBBrinPage) - (copy_start - (page_data + sizeof(SBBrinPage)));
     page->brin_right_sibling = new_page_num;
 
     // Update last_block for original page
