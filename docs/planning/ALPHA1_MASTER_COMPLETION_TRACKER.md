@@ -142,28 +142,32 @@ This section details the remaining work organized by component.
 **Estimated Lines:** ~2,580
 **Estimated Time:** 80-100 hours
 
-### Current Implementation Status
+### Current Implementation Status (Updated November 22, 2025)
 
 **✅ COMPLETED:**
 - **SAVEPOINT**: Fully implemented in ConnectionContext (createSavepoint, rollbackToSavepoint, releaseSavepoint)
 - **SAVEPOINT Tests**: Comprehensive test suite passes (test_subtransactions.cpp)
-- **CTEs Infrastructure**: Opcodes exist (EXT_WITH_CLAUSE, EXT_CTE_DEF, EXT_CTE_SCAN)
+- **Non-Recursive CTEs**: Parser, bytecode, executor all complete (95%)
+- **CTEs Infrastructure**: All opcodes exist (EXT_WITH_CLAUSE, EXT_CTE_DEF, EXT_CTE_SCAN)
 - **CTE Storage**: Executor has CTE result storage (cte_results_, cte_column_names_, cte_column_types_)
-- **CTE Execution**: Basic CTE execution logic exists in executor
+- **CTE Execution**: CTE execution logic complete for non-recursive CTEs
+- **Recursive CTE Infrastructure**: Parser + bytecode support added (KW_RECURSIVE, recursive flag)
+- **CTE Tests**: Standalone test created (test_cte_standalone.cpp)
 
 **❌ MISSING:**
 - MERGE Statement (no opcodes exist)
 - RETURNING Clause (no opcodes exist)
-- Recursive CTEs execution logic (infrastructure exists)
+- Recursive CTEs execution logic (BLOCKED on UNION ALL implementation)
 
 ### Features
 
 | Feature | Description | Lines | Priority | Status |
 |---------|-------------|-------|----------|--------|
-| 2.1 | Common Table Expressions (CTEs) | ~600 | HIGH | ⧗ **Partially Complete** |
-| 2.1.1 | Non-Recursive CTEs | ~200 | HIGH | ✅ **Opcodes + storage exist, verify execution** |
-| 2.1.2 | Recursive CTEs | ~300 | HIGH | ⧗ **Infrastructure exists, recursion logic needed** |
-| 2.1.3 | CTE Scope Management | ~100 | MEDIUM | ✅ **Depth checking exists** |
+| 2.1 | Common Table Expressions (CTEs) | ~600 | HIGH | ✅ **95% Complete (Nov 22)** |
+| 2.1.1 | Non-Recursive CTEs | ~200 | HIGH | ✅ **COMPLETE - Ready for Alpha 1** |
+| 2.1.2 | Recursive CTEs Infrastructure | ~100 | HIGH | ✅ **Parser + bytecode DONE (Nov 22)** |
+| 2.1.3 | Recursive CTEs Execution | ~200 | HIGH | ❌ **BLOCKED on UNION ALL** |
+| 2.1.4 | CTE Scope Management | ~100 | MEDIUM | ✅ **Depth checking exists** |
 | 2.2 | MERGE Statement | ~850 | HIGH | ❌ **Not Started** |
 | 2.2.1 | Parser Extension | ~200 | HIGH | ❌ **Not Started** |
 | 2.2.2 | Bytecode Generation | ~250 | HIGH | ❌ **Not Started** |
@@ -174,7 +178,9 @@ This section details the remaining work organized by component.
 | 2.4.2 | Parser Extension | ~80 | CRITICAL | ✅ **COMPLETE** |
 | 2.4.3 | Executor Integration | ~150 | CRITICAL | ✅ **COMPLETE** |
 
-### Critical Win: SAVEPOINT ✅
+### Critical Wins ✅
+
+#### 1. SAVEPOINT (COMPLETE)
 
 **SAVEPOINT is FULLY IMPLEMENTED and tested!**
 
@@ -197,6 +203,41 @@ BEGIN;
   -- Continue with transaction
 COMMIT;
 ```
+
+#### 2. Non-Recursive CTEs (COMPLETE - November 22, 2025) ✅
+
+**Non-recursive Common Table Expressions are FULLY IMPLEMENTED!**
+
+**What Was Completed:**
+- ✅ Parser support for `WITH cte_name AS (SELECT ...)`
+- ✅ Support for multiple CTEs
+- ✅ Support for column aliases `WITH cte (col1, col2) AS ...`
+- ✅ Bytecode generation (EXT_WITH_CLAUSE, EXT_CTE_DEF, EXT_CTE_SCAN)
+- ✅ Executor materialization and scanning
+- ✅ Standalone test suite (`tests/manual/test_cte_standalone.cpp`)
+
+**Recursive CTE Infrastructure:**
+- ✅ `WITH RECURSIVE` keyword parsing
+- ✅ AST structures updated with recursive flag
+- ✅ Bytecode generator emits recursive flag
+- ✅ Executor reads and stores recursive flag
+- ❌ **Execution BLOCKED:** Requires UNION ALL (separate Alpha 1 task)
+
+**Usage Example (Working Now):**
+```sql
+WITH
+    eng_employees AS (
+        SELECT id, name, salary FROM employees WHERE department = 'Engineering'
+    ),
+    high_earners AS (
+        SELECT * FROM employees WHERE salary > 100000
+    )
+SELECT * FROM eng_employees
+```
+
+**Documentation:**
+- See `/docs/planning/CTE_IMPLEMENTATION_STATUS.md` for full details
+- Standalone test: `/tests/manual/test_cte_standalone.cpp`
 
 ### Blocking Dependencies
 

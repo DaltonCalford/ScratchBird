@@ -210,6 +210,7 @@ namespace scratchbird
             std::unordered_map<std::string, std::vector<std::vector<Value>>> cte_results_;
             std::unordered_map<std::string, std::vector<std::string>> cte_column_names_;
             std::unordered_map<std::string, std::vector<core::DataType>> cte_column_types_;
+            bool cte_is_recursive_; // True if the current WITH clause is recursive
 
             // Current statement context
             std::string current_table_;

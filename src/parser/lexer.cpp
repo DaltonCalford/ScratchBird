@@ -213,6 +213,7 @@ namespace scratchbird
             // Timezone
             {"ZONE", TokenType::KW_ZONE},
             {"WITH", TokenType::KW_WITH},
+            {"RECURSIVE", TokenType::KW_RECURSIVE}, // WITH RECURSIVE for recursive CTEs
             {"WITHOUT", TokenType::KW_WITHOUT},
             {"AT", TokenType::KW_AT},
 
