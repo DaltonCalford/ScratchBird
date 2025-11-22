@@ -20949,7 +20949,26 @@ namespace scratchbird
                             return core::Status::INVALID_ARGUMENT;
                         }
 
-                        return bitmap->scan(*start_key, current_xid, results_out, ctx);
+                        // Create scanner with proper parameters (data pointer, size, xid, ctx)
+                        auto scanner = bitmap->scan(start_key->data(), start_key->size(), current_xid, ctx);
+                        if (!scanner)
+                        {
+                            return core::Status::INTERNAL_ERROR;
+                        }
+
+                        // Iterate over scanner and collect matching TIDs
+                        while (scanner->hasNext())
+                        {
+                            core::TID tid;
+                            core::Status status = scanner->next(&tid, ctx);
+                            if (status != core::Status::OK)
+                            {
+                                return status;
+                            }
+                            results_out->push_back(tid);
+                        }
+
+                        return core::Status::OK;
                     }
                     return core::Status::INTERNAL_ERROR;
                 }

@@ -10,6 +10,7 @@
 #include "scratchbird/core/gist_index.h"
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/buffer_pool.h"
+#include "scratchbird/core/catalog_manager.h"
 #include "scratchbird/core/transaction_manager.h"
 #include "scratchbird/core/logger.h"
 #include <algorithm>
@@ -148,6 +149,65 @@ std::unique_ptr<GiSTIndex> GiSTIndex::open(Database* db,
     }
 
     return index;
+}
+
+std::unique_ptr<GiSTIndex> GiSTIndex::open(Database* db,
+                                            const ID& index_uuid,
+                                            uint32_t root_page,
+                                            ErrorContext* ctx)
+{
+    if (!db)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Invalid database pointer");
+        return nullptr;
+    }
+
+    // Load index metadata from catalog
+    auto catalog = db->catalog_manager();
+    if (!catalog)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INTERNAL_ERROR, "Catalog manager not available");
+        return nullptr;
+    }
+
+    CatalogManager::IndexInfo index_info;
+    Status status = catalog->getIndex(index_uuid, index_info, ctx);
+    if (status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND,
+                         ("GiST index not found in catalog: " + index_uuid.toString()).c_str());
+        return nullptr;
+    }
+
+    // Load root page to get operator class ID
+    BufferPool* buffer_pool = db->buffer_pool();
+    if (!buffer_pool)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INTERNAL_ERROR, "Buffer pool not available");
+        return nullptr;
+    }
+
+    SBGiSTPage* root = nullptr;
+    Status pin_status = buffer_pool->pinPage(root_page, reinterpret_cast<void**>(&root), ctx);
+    if (pin_status != Status::OK || !root)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to load GiST root page");
+        return nullptr;
+    }
+
+    uint32_t opclass_id = root->gist_opclass_id;
+
+    // Look up operator class from registry
+    auto opclass = GiSTOperatorClassRegistry::instance().getOperatorClass(opclass_id);
+    if (!opclass)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INTERNAL_ERROR,
+                         ("GiST operator class not found in registry: ID " + std::to_string(opclass_id)).c_str());
+        return nullptr;
+    }
+
+    // Call the full open() method with loaded metadata
+    return open(db, index_uuid, index_info.table_id, index_info.column_ids, opclass, root_page, ctx);
 }
 
 Status GiSTIndex::initialize(ErrorContext* ctx)

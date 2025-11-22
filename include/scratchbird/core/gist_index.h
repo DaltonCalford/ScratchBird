@@ -371,6 +371,21 @@ public:
                                            uint32_t root_page,
                                            ErrorContext* ctx = nullptr);
 
+    /**
+     * Open an existing GiST index (minimal interface for executor template)
+     * Loads metadata from catalog and operator class from registry
+     *
+     * @param db Database instance
+     * @param index_uuid Index UUID
+     * @param root_page Root page number
+     * @param ctx Error context
+     * @return Unique pointer to opened index, or nullptr on error
+     */
+    static std::unique_ptr<GiSTIndex> open(Database* db,
+                                           const ID& index_uuid,
+                                           uint32_t root_page,
+                                           ErrorContext* ctx = nullptr);
+
     ~GiSTIndex();
 
     // Disable copy/move

@@ -10,6 +10,10 @@
 #include "scratchbird/core/timezone.h"
 #include "scratchbird/core/types.h"
 #include "scratchbird/core/permission_cache.h"  // For PermissionCheckMode
+// Index headers needed for template implementation
+#include "scratchbird/core/gist_index.h"
+#include "scratchbird/core/spgist_index.h"
+#include "scratchbird/core/lsm_tree_index.h"
 #include <vector>
 #include <memory>
 #include <variant>
