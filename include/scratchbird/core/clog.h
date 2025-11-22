@@ -96,20 +96,32 @@ namespace scratchbird::core
         mutable std::mutex mutex_;
 
         // CLOG constants
-        static constexpr uint32_t XIDS_PER_PAGE = 65536;         // 16KB / 2 bits = 65,536 XIDs
-        static constexpr uint32_t STATUS_BYTES_PER_PAGE = 16384; // 65,536 * 2 bits / 8
         static constexpr uint32_t BITS_PER_XID = 2;
+
+        // Dynamic capacity calculations based on page size
+        // Each XID uses 2 bits (4 states: ACTIVE, COMMITTED, ABORTED, PREPARED)
+        // Formula: XIDS_PER_PAGE = (page_size - header_size) * 8 / 2 = (page_size - header_size) * 4
+        uint32_t getXidsPerPage() const
+        {
+            return (db_->page_size() - sizeof(ClogPageHeader)) * 4;
+        }
+
+        uint32_t getStatusBytesPerPage() const
+        {
+            // Each byte holds 4 XIDs (2 bits per XID)
+            return (db_->page_size() - sizeof(ClogPageHeader)) / 2;
+        }
 
         // Calculate which page contains an XID
         uint32_t getPageForXid(uint64_t xid) const
         {
-            return clog_root_page_ + static_cast<uint32_t>(xid / XIDS_PER_PAGE);
+            return clog_root_page_ + static_cast<uint32_t>(xid / getXidsPerPage());
         }
 
         // Calculate offset within page for an XID
         uint32_t getOffsetInPage(uint64_t xid) const
         {
-            return static_cast<uint32_t>(xid % XIDS_PER_PAGE);
+            return static_cast<uint32_t>(xid % getXidsPerPage());
         }
 
         // Encode/decode 2-bit status in byte array

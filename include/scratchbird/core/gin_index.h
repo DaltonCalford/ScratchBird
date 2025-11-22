@@ -39,10 +39,8 @@ namespace scratchbird
             uint64_t gin_pending_list_count; // Number of entries in pending list (8 bytes)
             uint64_t gin_num_keys;           // Total number of unique keys (8 bytes)
             uint64_t gin_num_tuples;         // Total number of indexed tuples (8 bytes)
-            uint8_t gin_reserved[8064];      // Reserved for future use (8192 - 128 = 8064)
+            uint8_t gin_reserved[];          // Reserved for future use (page_size - 128)
         } __attribute__((packed));
-
-        static_assert(sizeof(SBGinIndexMetaPage) == 8192, "GIN meta page must be exactly 8KB");
 
         // Pending Entry - Single entry in pending list
         struct GinPendingEntry
@@ -68,13 +66,8 @@ namespace scratchbird
             uint64_t gpp_next_page;                      // Next page in chain (0 if last) (8 bytes)
             uint16_t gpp_entry_count;                    // Number of entries (2 bytes)
             uint8_t gpp_reserved[54];                    // Reserved for alignment (54 bytes)
-            GinPendingEntry gpp_entries[(8192 - 128) / 72]; // Pending entries (112 entries)
+            GinPendingEntry gpp_entries[];               // Pending entries (flexible array, capacity depends on page size)
         } __attribute__((packed));
-
-        static_assert(sizeof(SBGinPendingListPage) == 8192, "Pending list page must be exactly 8KB");
-
-        // Maximum entries per pending page
-        constexpr uint16_t MAX_PENDING_ENTRIES_PER_PAGE = (8192 - 128) / 72;
 
         // Posting List Entry - Single TID in a posting list
         // FIREBIRD MGA: Now includes xmin/xmax for logical deletion (MGA compliance)
@@ -113,16 +106,11 @@ namespace scratchbird
             uint8_t gpl_reserved[10];                       // Reserved for alignment (10 bytes)
             union
             {
-                uint8_t gpl_compressed_data[8192 - 80];       // Compressed TID data
-                GinPostingEntry gpl_entries[(8192 - 80) / 26]; // Uncompressed TIDs (311 entries with xmin/xmax)
-                uint64_t gpl_tree_root;                       // Root page of posting B-Tree
+                uint8_t gpl_compressed_data[];       // Compressed TID data (flexible array, size = page_size - 80)
+                GinPostingEntry gpl_entries[];       // Uncompressed TIDs (flexible array, capacity depends on page size)
+                uint64_t gpl_tree_root;              // Root page of posting B-Tree
             } gpl_data;
         } __attribute__((packed));
-
-        static_assert(sizeof(SBGinPostingListPage) == 8192, "Posting list page must be exactly 8KB");
-
-        // Maximum TIDs per posting list page (reduced from 811 to 311 for MGA xmin/xmax fields)
-        constexpr uint16_t MAX_POSTING_ENTRIES_PER_PAGE = (8192 - 80) / 26;
 
         // ===== Posting Tree Structures =====
         // When a posting list exceeds GIN_POSTING_LIST_THRESHOLD (64 TIDs),
@@ -149,13 +137,8 @@ namespace scratchbird
             uint16_t gpt_entry_count;                           // Number of entries (2 bytes)
             uint16_t gpt_is_leaf;                               // 0 for internal nodes (2 bytes)
             uint8_t gpt_reserved[24];                           // Reserved for alignment (24 bytes)
-            GinPostingTreeInternalEntry gpt_entries[(8192 - 92) / 14]; // Internal entries (578 entries)
+            GinPostingTreeInternalEntry gpt_entries[];      // Internal entries (flexible array, capacity depends on page size)
         } __attribute__((packed));
-
-        static_assert(sizeof(SBGinPostingTreeInternal) <= 8192, "Posting tree internal must fit in 8KB");
-
-        // Maximum internal entries per posting tree internal node (reduced from 675 to 578 for GPID)
-        constexpr uint16_t MAX_POSTING_TREE_INTERNAL_ENTRIES = (8192 - 92) / 14;
 
         // Posting Tree Leaf Node
         struct SBGinPostingTreeLeaf
@@ -165,13 +148,8 @@ namespace scratchbird
             uint16_t gpt_is_leaf;                       // 1 for leaf nodes (2 bytes)
             uint64_t gpt_next_leaf;                     // Next leaf page for range scans (8 bytes)
             uint8_t gpt_reserved[12];                   // Reserved for alignment (12 bytes)
-            GinPostingEntry gpt_tids[(8192 - 88) / 26]; // Sorted TID array (311 entries with xmin/xmax)
+            GinPostingEntry gpt_tids[];                 // Sorted TID array (flexible array, capacity depends on page size)
         } __attribute__((packed));
-
-        static_assert(sizeof(SBGinPostingTreeLeaf) <= 8192, "Posting tree leaf must fit in 8KB");
-
-        // Maximum TIDs per posting tree leaf node (reduced from 810 to 311 for MGA xmin/xmax fields)
-        constexpr uint16_t MAX_POSTING_TREE_LEAF_TIDS = (8192 - 88) / 26;
 
         // Entry in the Keys B-Tree
         // The key is the indexed item (e.g., a word, array element)
@@ -448,6 +426,28 @@ namespace scratchbird
             uint32_t getMetaPage() const
             {
                 return meta_page_;
+            }
+
+            // Dynamic capacity calculations based on page size
+            // These replace the removed compile-time constants
+            uint16_t getMaxPendingEntriesPerPage() const
+            {
+                return (db_->page_size() - 128) / sizeof(GinPendingEntry);
+            }
+
+            uint16_t getMaxPostingEntriesPerPage() const
+            {
+                return (db_->page_size() - 80) / sizeof(GinPostingEntry);
+            }
+
+            uint16_t getMaxPostingTreeInternalEntries() const
+            {
+                return (db_->page_size() - 92) / sizeof(GinPostingTreeInternalEntry);
+            }
+
+            uint16_t getMaxPostingTreeLeafTids() const
+            {
+                return (db_->page_size() - 88) / sizeof(GinPostingEntry);
             }
 
             // PHASE 2 TASK 2.4: IndexGCInterface implementation

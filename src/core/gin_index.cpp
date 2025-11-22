@@ -930,17 +930,18 @@ namespace scratchbird
 
             // Step 5: Try to compress the TID list
             size_t compressed_size = 0;
-            uint8_t temp_compressed[8192 - 80];
+            // Use heap allocation for large page sizes to avoid stack overflow
+            std::vector<uint8_t> temp_compressed(db_->page_size() - 80);
 
             if (should_compress(tids.data(), tids.size()))
             {
                 compressed_size = compress_posting_list(
                     tids.data(), tids.size(),
-                    temp_compressed, sizeof(temp_compressed));
+                    temp_compressed.data(), temp_compressed.size());
             }
 
             // Step 6: Store compressed or uncompressed based on what fits
-            if (compressed_size > 0 && compressed_size < sizeof(temp_compressed))
+            if (compressed_size > 0 && compressed_size < temp_compressed.size())
             {
                 // Store compressed
                 list_page->gpl_is_compressed = 1;
@@ -1870,8 +1871,8 @@ namespace scratchbird
                 leaf->get_header.page_id = root_page;
                 leaf->get_is_leaf = 1;
                 leaf->get_entry_count = 0;
-                leaf->get_free_space = 8192 - 1084; // Data area size
-                leaf->get_data_end = 8192;
+                leaf->get_free_space = db_->page_size() - sizeof(SBGinEntryTreeLeaf); // Data area size
+                leaf->get_data_end = db_->page_size();
 
                 buffer_pool_->unpinPage(root_page, true, ctx);
 
@@ -2163,12 +2164,12 @@ namespace scratchbird
             sibling->get_header.page_id = new_sibling;
             sibling->get_is_leaf = 1;
             sibling->get_entry_count = 0;
-            sibling->get_free_space = 8192 - 1084;
-            sibling->get_data_end = 8192;
+            sibling->get_free_space = db_->page_size() - sizeof(SBGinEntryTreeLeaf);
+            sibling->get_data_end = db_->page_size();
 
             // Split point: move second half to sibling
             uint16_t split_point = leaf->get_entry_count / 2;
-            uint16_t sibling_new_data_end = 8192;
+            uint16_t sibling_new_data_end = db_->page_size();
 
             // Copy entries from split_point onwards to sibling
             for (uint16_t i = split_point; i < leaf->get_entry_count; i++)
@@ -2244,8 +2245,8 @@ namespace scratchbird
             root->get_header.page_id = new_root;
             root->get_is_leaf = 0;
             root->get_entry_count = 1;
-            root->get_free_space = 8192 - 1084;
-            root->get_data_end = 8192;
+            root->get_free_space = db_->page_size() - sizeof(SBGinEntryTreeInternal);
+            root->get_data_end = db_->page_size();
             root->get_rightmost_child = right_child;
 
             // Add single entry for left child

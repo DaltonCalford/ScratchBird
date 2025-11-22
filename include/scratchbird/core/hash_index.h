@@ -39,20 +39,16 @@ namespace scratchbird
             uint64_t hip_directory_page; // First directory page number (8 bytes)
             uint64_t hip_num_tuples;     // Total number of indexed tuples (8 bytes)
             uint64_t hip_num_deleted;    // Number of deleted entries (8 bytes)
-            uint8_t hip_reserved[8080];  // Reserved for future use (8192 - 112 = 8080)
+            uint8_t hip_reserved[];      // Reserved for future use (page_size - 112)
         } __attribute__((packed));
-
-        static_assert(sizeof(SBHashIndexMetaPage) == 8192, "Meta page must be exactly 8KB");
 
         // Directory Page - Maps hash values to bucket pages
         struct SBHashDirectoryPage
         {
             PageHeader hdp_header;  // Standard page header (64 bytes)
             uint64_t hdp_next_page; // Next directory page (0 if last) (8 bytes)
-            uint64_t hdp_bucket_pointers[(8192 - 72) / 8]; // Bucket page numbers (1015 pointers)
+            uint64_t hdp_bucket_pointers[]; // Bucket page numbers (flexible array, capacity depends on page size)
         } __attribute__((packed));
-
-        static_assert(sizeof(SBHashDirectoryPage) == 8192, "Directory page must be exactly 8KB");
 
         // Hash Entry - Stores hash, tuple ID, and transaction tracking
         // Firebird MGA: Added xmin/xmax for TIP-based visibility (NOT snapshots)
@@ -82,13 +78,8 @@ namespace scratchbird
             uint32_t hbp_deleted_count;              // Number of deleted entries (4 bytes)
             uint64_t hbp_overflow_page;              // Next overflow page (0 if none) (8 bytes)
             uint8_t hbp_reserved[16];                // Reserved for alignment (16 bytes)
-            HashEntry hbp_entries[(8192 - 96) / 36]; // Hash entries (224 entries with GPID support)
+            HashEntry hbp_entries[];                 // Hash entries (flexible array, capacity depends on page size)
         } __attribute__((packed));
-
-        static_assert(sizeof(SBHashBucketPage) <= 8192, "Bucket page must fit in 8KB");
-
-        // Maximum entries per bucket page (reduced from 253 to 224 for GPID support)
-        constexpr uint16_t MAX_ENTRIES_PER_BUCKET = (8192 - 96) / 36;
 
         // ===== Hash Index Class =====
 
@@ -161,6 +152,13 @@ namespace scratchbird
             uint32_t getMetaPage() const
             {
                 return meta_page_;
+            }
+
+            // Dynamic capacity calculations based on page size
+            // Replaces the removed compile-time constant
+            uint16_t getMaxEntriesPerBucket() const
+            {
+                return (db_->page_size() - 96) / sizeof(HashEntry);
             }
 
             // PHASE 2 TASK 2.3: IndexGCInterface implementation

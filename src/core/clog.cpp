@@ -20,7 +20,7 @@ namespace scratchbird::core
     // If you need more than 4 transaction states, you MUST:
     // 1. Change BITS_PER_XID from 2 to 3 (allows 8 states)
     // 2. Update setStatusBits() and getStatusBits() to use 3 bits
-    // 3. Update XIDS_PER_PAGE calculation (currently 65536 = 16KB*8/2)
+    // 3. Update getXidsPerPage() calculation to use 3 bits instead of 2
     // 4. Implement database version migration for existing CLOG pages
     // ============================================================================
 
@@ -204,7 +204,7 @@ namespace scratchbird::core
 
             // Initialize the new CLOG page
             uint64_t base_xid =
-                static_cast<uint64_t>(next_page_num - clog_root_page_) * XIDS_PER_PAGE;
+                static_cast<uint64_t>(next_page_num - clog_root_page_) * getXidsPerPage();
             status = allocateClogPage(new_page_id, base_xid, ctx);
             if (status != Status::OK)
             {
@@ -343,7 +343,7 @@ namespace scratchbird::core
         }
 
         stats_out->num_pages = num_pages;
-        stats_out->total_transactions = static_cast<uint64_t>(num_pages) * XIDS_PER_PAGE;
+        stats_out->total_transactions = static_cast<uint64_t>(num_pages) * getXidsPerPage();
         stats_out->space_used_bytes = static_cast<uint64_t>(num_pages) * db_->page_size();
 
         // Calculate space saved vs TIP (20 bytes per transaction)
