@@ -21,11 +21,17 @@ namespace scratchbird
         // Forward declarations
         class Database;
 
+        // Forward declaration for iterator friend
+        class LSMTreeIterator;
+
         // LSM-Tree - Log-Structured Merge Tree for write-optimized storage
         // Optimized for high write throughput with eventual compaction
         // November 19, 2025
         class LSMTree : public IndexGCInterface
         {
+            // Friend class for iterator access to private members
+            friend class LSMTreeIterator;
+
         public:
             // LSM entry for iteration
             struct Entry
