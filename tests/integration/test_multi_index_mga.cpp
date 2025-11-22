@@ -63,7 +63,7 @@ TEST_F(MultiIndexMGATest, ConcurrentBTreeAndHashQueries)
     for (int i = 0; i < 100; i++)
     {
         std::vector<uint8_t> key = {static_cast<uint8_t>(i)};
-        TID tid = createTID(1, i, 1);
+        TID tid = makeTID(1, i, 1);
 
         btree->insert(key, tid, writer_xid);
         hash_idx->insert(key.data(), key.size(), tid, writer_xid);
@@ -130,7 +130,7 @@ TEST_F(MultiIndexMGATest, SnapshotIsolationConsistency)
     // Initial data
     uint64_t init_xid = tm_->beginTransaction();
     std::vector<uint8_t> key1 = {1};
-    TID tid1 = createTID(1, 1, 1);
+    TID tid1 = makeTID(1, 1, 1);
     btree->insert(key1, tid1, init_xid);
     gin_idx->insert(key1, tid1);
     tm_->commit(init_xid);
@@ -141,7 +141,7 @@ TEST_F(MultiIndexMGATest, SnapshotIsolationConsistency)
     // Concurrent writer adds more data
     uint64_t writer_xid = tm_->beginTransaction();
     std::vector<uint8_t> key2 = {2};
-    TID tid2 = createTID(1, 2, 1);
+    TID tid2 = makeTID(1, 2, 1);
     btree->insert(key2, tid2, writer_xid);
     gin_idx->insert(key2, tid2);
     tm_->commit(writer_xid);
@@ -178,7 +178,7 @@ TEST_F(MultiIndexMGATest, MultiIndexRollbackVisibility)
     uint64_t xid = tm_->beginTransaction();
 
     std::vector<uint8_t> key = {99};
-    TID tid = createTID(1, 999, 1);
+    TID tid = makeTID(1, 999, 1);
 
     btree->insert(key, tid, xid);
     hash_idx->insert(key.data(), key.size(), tid, xid);
@@ -222,7 +222,7 @@ TEST_F(MultiIndexMGATest, SpatialAndFullTextCombined)
     uint64_t xid = tm_->beginTransaction();
 
     BoundingBox bbox{0.0, 0.0, 10.0, 10.0};
-    TID tid = createTID(1, 100, 1);
+    TID tid = makeTID(1, 100, 1);
 
     rtree->insert(bbox, tid, xid);
 
@@ -266,7 +266,7 @@ TEST_F(MultiIndexMGATest, ReadCommittedAcrossIndexes)
     // Writer commits new data
     uint64_t writer_xid = tm_->beginTransaction();
     std::vector<uint8_t> key = {42};
-    TID tid = createTID(1, 42, 1);
+    TID tid = makeTID(1, 42, 1);
     btree->insert(key, tid, writer_xid);
     tm_->commit(writer_xid);
 

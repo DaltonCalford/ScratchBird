@@ -10,6 +10,7 @@
 #include "scratchbird/core/storage_engine.h"
 #include "scratchbird/core/catalog_manager.h"
 #include "scratchbird/core/transaction_manager.h"
+#include "scratchbird/core/connection_context.h"
 #include "scratchbird/core/bitmap_index.h"
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/core/tid.h"
@@ -42,10 +43,11 @@ protected:
         }
 
         // Create and open database
-        db_ = std::make_unique<Database>();
         ErrorContext ctx;
-        Status status = db_->create(test_db_path_, &ctx);
+        Status status = Database::create(test_db_path_, 8192, &ctx);
         ASSERT_EQ(status, Status::OK) << "Failed to create database: " << ctx.message;
+
+        db_ = std::make_unique<Database>();
 
         status = db_->open(test_db_path_, &ctx);
         ASSERT_EQ(status, Status::OK) << "Failed to open database: " << ctx.message;
@@ -110,17 +112,19 @@ TEST_F(BitmapDMLTest, DirectInsertViaBitmapIndex)
     ASSERT_NE(bitmap, nullptr) << "Failed to open Bitmap index: " << ctx.message;
 
     // Begin transaction
-    uint64_t xid = tx_manager_->beginTransaction(IsolationLevel::READ_COMMITTED, false);
+    uint64_t xid;
+    status = tx_manager_->beginTransaction(0, xid, &ctx);
+    ASSERT_EQ(status, Status::OK);
 
     // Insert low-cardinality values (e.g., status column: 'active', 'inactive', 'pending')
     std::vector<uint8_t> value_active = serializeString("active");
     std::vector<uint8_t> value_inactive = serializeString("inactive");
     std::vector<uint8_t> value_pending = serializeString("pending");
 
-    TID tid1 = createTID(1, 1, 1);
-    TID tid2 = createTID(1, 2, 1);
-    TID tid3 = createTID(1, 3, 1);
-    TID tid4 = createTID(1, 4, 1);
+    TID tid1 = makeTID(1, 1, 1);
+    TID tid2 = makeTID(1, 2, 1);
+    TID tid3 = makeTID(1, 3, 1);
+    TID tid4 = makeTID(1, 4, 1);
 
     // Insert tuples with different values
     status = bitmap->insert(value_active.data(), value_active.size(), tid1, &ctx);
@@ -135,21 +139,31 @@ TEST_F(BitmapDMLTest, DirectInsertViaBitmapIndex)
     status = bitmap->insert(value_pending.data(), value_pending.size(), tid4, &ctx);
     EXPECT_EQ(status, Status::OK) << "Insert 4 (pending) failed: " << ctx.message;
 
-    tx_manager_->commitTransaction(xid);
+    status = tx_manager_->commitTransaction(0, xid, &ctx);
+    ASSERT_EQ(status, Status::OK);
 
     // Verify find returns correct TIDs for each value
-    uint64_t search_xid = tx_manager_->beginTransaction(IsolationLevel::READ_COMMITTED, false);
+    uint64_t search_xid;
+    status = tx_manager_->beginTransaction(0, search_xid, &ctx);
+    ASSERT_EQ(status, Status::OK);
 
-    std::vector<TID> active_results = bitmap->find(value_active.data(), value_active.size(), search_xid, &ctx);
+    std::vector<TID> active_results;
+    status = bitmap->find(value_active.data(), value_active.size(), search_xid, &active_results, &ctx);
+    EXPECT_EQ(status, Status::OK);
     EXPECT_EQ(active_results.size(), 2) << "Should find 2 'active' tuples";
 
-    std::vector<TID> inactive_results = bitmap->find(value_inactive.data(), value_inactive.size(), search_xid, &ctx);
+    std::vector<TID> inactive_results;
+    status = bitmap->find(value_inactive.data(), value_inactive.size(), search_xid, &inactive_results, &ctx);
+    EXPECT_EQ(status, Status::OK);
     EXPECT_EQ(inactive_results.size(), 1) << "Should find 1 'inactive' tuple";
 
-    std::vector<TID> pending_results = bitmap->find(value_pending.data(), value_pending.size(), search_xid, &ctx);
+    std::vector<TID> pending_results;
+    status = bitmap->find(value_pending.data(), value_pending.size(), search_xid, &pending_results, &ctx);
+    EXPECT_EQ(status, Status::OK);
     EXPECT_EQ(pending_results.size(), 1) << "Should find 1 'pending' tuple";
 
-    tx_manager_->commitTransaction(search_xid);
+    status = tx_manager_->commitTransaction(0, search_xid, &ctx);
+    ASSERT_EQ(status, Status::OK);
 }
 
 // =============================================================================
@@ -162,39 +176,57 @@ TEST_F(BitmapDMLTest, LogicalDeletionWithXmax)
     UuidV7Bytes index_uuid = generateUuidV7();
     uint32_t meta_page = 0;
 
-    BitmapIndex::create(db_.get(), index_uuid, &meta_page, &ctx);
+    Status status = BitmapIndex::create(db_.get(), index_uuid, &meta_page, &ctx);
+    ASSERT_EQ(status, Status::OK);
     auto bitmap = BitmapIndex::open(db_.get(), index_uuid, meta_page, &ctx);
 
     // Begin transaction and insert
-    uint64_t insert_xid = tx_manager_->beginTransaction(IsolationLevel::READ_COMMITTED, false);
+    uint64_t insert_xid;
+    status = tx_manager_->beginTransaction(0, insert_xid, &ctx);
+    ASSERT_EQ(status, Status::OK);
 
     std::vector<uint8_t> value = serializeInt32(42);
-    TID tid = createTID(1, 10, 1);
+    TID tid = makeTID(1, 10, 1);
 
-    bitmap->insert(value.data(), value.size(), tid, &ctx);
-    tx_manager_->commitTransaction(insert_xid);
+    status = bitmap->insert(value.data(), value.size(), tid, &ctx);
+    ASSERT_EQ(status, Status::OK);
+    status = tx_manager_->commitTransaction(0, insert_xid, &ctx);
+    ASSERT_EQ(status, Status::OK);
 
     // Verify visible
-    uint64_t read1_xid = tx_manager_->beginTransaction(IsolationLevel::READ_COMMITTED, false);
-    std::vector<TID> results1 = bitmap->find(value.data(), value.size(), read1_xid, &ctx);
+    uint64_t read1_xid;
+    status = tx_manager_->beginTransaction(0, read1_xid, &ctx);
+    ASSERT_EQ(status, Status::OK);
+    std::vector<TID> results1;
+    status = bitmap->find(value.data(), value.size(), read1_xid, &results1, &ctx);
+    EXPECT_EQ(status, Status::OK);
     EXPECT_EQ(results1.size(), 1) << "Should find 1 tuple before deletion";
-    tx_manager_->commitTransaction(read1_xid);
+    status = tx_manager_->commitTransaction(0, read1_xid, &ctx);
+    ASSERT_EQ(status, Status::OK);
 
     // Delete (logical deletion with xmax)
-    uint64_t delete_xid = tx_manager_->beginTransaction(IsolationLevel::READ_COMMITTED, false);
-    Status remove_status = bitmap->remove(tid, &ctx);
-    EXPECT_EQ(remove_status, Status::OK) << "Remove should succeed: " << ctx.message;
-    tx_manager_->commitTransaction(delete_xid);
+    uint64_t delete_xid;
+    status = tx_manager_->beginTransaction(0, delete_xid, &ctx);
+    ASSERT_EQ(status, Status::OK);
+    status = bitmap->remove(tid, &ctx);
+    EXPECT_EQ(status, Status::OK) << "Remove should succeed: " << ctx.message;
+    status = tx_manager_->commitTransaction(0, delete_xid, &ctx);
+    ASSERT_EQ(status, Status::OK);
 
     // Verify not visible after deletion (MGA visibility filtering)
-    uint64_t read2_xid = tx_manager_->beginTransaction(IsolationLevel::READ_COMMITTED, false);
-    std::vector<TID> results2 = bitmap->find(value.data(), value.size(), read2_xid, &ctx);
+    uint64_t read2_xid;
+    status = tx_manager_->beginTransaction(0, read2_xid, &ctx);
+    ASSERT_EQ(status, Status::OK);
+    std::vector<TID> results2;
+    status = bitmap->find(value.data(), value.size(), read2_xid, &results2, &ctx);
+    EXPECT_EQ(status, Status::OK);
 
     // After deletion, the tuple should be filtered out by visibility check
     // NOTE: This depends on proper TIP-based visibility implementation in bitmap->find()
     EXPECT_LE(results2.size(), 1) << "Tuple may still be in bitmap but should be marked deleted";
 
-    tx_manager_->commitTransaction(read2_xid);
+    status = tx_manager_->commitTransaction(0, read2_xid, &ctx);
+    ASSERT_EQ(status, Status::OK);
 }
 
 // =============================================================================
@@ -207,24 +239,30 @@ TEST_F(BitmapDMLTest, LogicalOperations)
     UuidV7Bytes index_uuid = generateUuidV7();
     uint32_t meta_page = 0;
 
-    BitmapIndex::create(db_.get(), index_uuid, &meta_page, &ctx);
+    Status status = BitmapIndex::create(db_.get(), index_uuid, &meta_page, &ctx);
+    ASSERT_EQ(status, Status::OK);
     auto bitmap = BitmapIndex::open(db_.get(), index_uuid, meta_page, &ctx);
 
-    uint64_t xid = tx_manager_->beginTransaction(IsolationLevel::READ_COMMITTED, false);
+    uint64_t xid;
+    status = tx_manager_->beginTransaction(0, xid, &ctx);
+    ASSERT_EQ(status, Status::OK);
 
     // Insert entries with values 1, 2, 3
     std::vector<uint8_t> value1 = serializeInt32(1);
     std::vector<uint8_t> value2 = serializeInt32(2);
     std::vector<uint8_t> value3 = serializeInt32(3);
 
-    bitmap->insert(value1.data(), value1.size(), createTID(1, 1, 1), &ctx);
-    bitmap->insert(value2.data(), value2.size(), createTID(1, 2, 1), &ctx);
-    bitmap->insert(value1.data(), value1.size(), createTID(1, 3, 1), &ctx);
-    bitmap->insert(value3.data(), value3.size(), createTID(1, 4, 1), &ctx);
+    bitmap->insert(value1.data(), value1.size(), makeTID(1, 1, 1), &ctx);
+    bitmap->insert(value2.data(), value2.size(), makeTID(1, 2, 1), &ctx);
+    bitmap->insert(value1.data(), value1.size(), makeTID(1, 3, 1), &ctx);
+    bitmap->insert(value3.data(), value3.size(), makeTID(1, 4, 1), &ctx);
 
-    tx_manager_->commitTransaction(xid);
+    status = tx_manager_->commitTransaction(0, xid, &ctx);
+    ASSERT_EQ(status, Status::OK);
 
-    uint64_t query_xid = tx_manager_->beginTransaction(IsolationLevel::READ_COMMITTED, false);
+    uint64_t query_xid;
+    status = tx_manager_->beginTransaction(0, query_xid, &ctx);
+    ASSERT_EQ(status, Status::OK);
 
     // Test OR operation
     std::vector<const void*> or_values = {value1.data(), value2.data()};
@@ -240,7 +278,8 @@ TEST_F(BitmapDMLTest, LogicalOperations)
     // However, implementation may vary - just check it returns some results
     EXPECT_GE(not_results.size(), 0) << "NOT operation should complete";
 
-    tx_manager_->commitTransaction(query_xid);
+    status = tx_manager_->commitTransaction(0, query_xid, &ctx);
+    ASSERT_EQ(status, Status::OK);
 }
 
 // =============================================================================
@@ -256,20 +295,26 @@ TEST_F(BitmapDMLTest, UpdateScenario)
     UuidV7Bytes index_uuid = generateUuidV7();
     uint32_t meta_page = 0;
 
-    BitmapIndex::create(db_.get(), index_uuid, &meta_page, &ctx);
+    Status status = BitmapIndex::create(db_.get(), index_uuid, &meta_page, &ctx);
+    ASSERT_EQ(status, Status::OK);
     auto bitmap = BitmapIndex::open(db_.get(), index_uuid, meta_page, &ctx);
 
-    uint64_t xid = tx_manager_->beginTransaction(IsolationLevel::READ_COMMITTED, false);
+    uint64_t xid;
+    status = tx_manager_->beginTransaction(0, xid, &ctx);
+    ASSERT_EQ(status, Status::OK);
 
     // Initial insert with value "draft"
     std::vector<uint8_t> value_draft = serializeString("draft");
-    TID tid = createTID(1, 5, 1);
+    TID tid = makeTID(1, 5, 1);
 
     bitmap->insert(value_draft.data(), value_draft.size(), tid, &ctx);
-    tx_manager_->commitTransaction(xid);
+    status = tx_manager_->commitTransaction(0, xid, &ctx);
+    ASSERT_EQ(status, Status::OK);
 
     // Simulate UPDATE: change status from "draft" to "published"
-    uint64_t update_xid = tx_manager_->beginTransaction(IsolationLevel::READ_COMMITTED, false);
+    uint64_t update_xid;
+    status = tx_manager_->beginTransaction(0, update_xid, &ctx);
+    ASSERT_EQ(status, Status::OK);
 
     // Remove old value (marks with xmax)
     bitmap->remove(tid, &ctx);
@@ -278,19 +323,28 @@ TEST_F(BitmapDMLTest, UpdateScenario)
     std::vector<uint8_t> value_published = serializeString("published");
     bitmap->insert(value_published.data(), value_published.size(), tid, &ctx);
 
-    tx_manager_->commitTransaction(update_xid);
+    status = tx_manager_->commitTransaction(0, update_xid, &ctx);
+    ASSERT_EQ(status, Status::OK);
 
     // Verify: old value should not be found, new value should be found
-    uint64_t verify_xid = tx_manager_->beginTransaction(IsolationLevel::READ_COMMITTED, false);
+    uint64_t verify_xid;
+    status = tx_manager_->beginTransaction(0, verify_xid, &ctx);
+    ASSERT_EQ(status, Status::OK);
 
-    std::vector<TID> draft_results = bitmap->find(value_draft.data(), value_draft.size(), verify_xid, &ctx);
-    std::vector<TID> published_results = bitmap->find(value_published.data(), value_published.size(), verify_xid, &ctx);
+    std::vector<TID> draft_results;
+    status = bitmap->find(value_draft.data(), value_draft.size(), verify_xid, &draft_results, &ctx);
+    EXPECT_EQ(status, Status::OK);
+
+    std::vector<TID> published_results;
+    status = bitmap->find(value_published.data(), value_published.size(), verify_xid, &published_results, &ctx);
+    EXPECT_EQ(status, Status::OK);
 
     // After update, old value should have 0 results, new value should have 1
     EXPECT_LE(draft_results.size(), 0) << "Old value 'draft' should not be found after update";
     EXPECT_GE(published_results.size(), 1) << "New value 'published' should be found after update";
 
-    tx_manager_->commitTransaction(verify_xid);
+    status = tx_manager_->commitTransaction(0, verify_xid, &ctx);
+    ASSERT_EQ(status, Status::OK);
 }
 
 int main(int argc, char **argv)
