@@ -6848,6 +6848,383 @@ namespace scratchbird
             }
         }
 
+        // ===== Set Operations (UNION, INTERSECT, EXCEPT) =====
+
+        void Executor::executeUnionAll()
+        {
+            // UNION ALL: Concatenate results from left and right queries (keep duplicates)
+            // Bytecode format: EXT_UNION_ALL <left_query> <right_query> [ORDER BY] [LIMIT]
+
+            // Execute left query (next opcode)
+            Opcode left_op = static_cast<Opcode>(readByte());
+            auto left_result = std::make_unique<ResultSet>();
+
+            if (left_op == Opcode::SELECT)
+            {
+                executeSelect();
+                left_result = std::move(current_result_set_);
+            }
+            else
+            {
+                error("UNION ALL: Left side must be a SELECT statement");
+            }
+
+            // Execute right query
+            Opcode right_op = static_cast<Opcode>(readByte());
+            auto right_result = std::make_unique<ResultSet>();
+
+            if (right_op == Opcode::SELECT)
+            {
+                executeSelect();
+                right_result = std::move(current_result_set_);
+            }
+            else
+            {
+                error("UNION ALL: Right side must be a SELECT statement");
+            }
+
+            // Verify schema compatibility
+            if (left_result->columnCount() != right_result->columnCount())
+            {
+                error("UNION ALL: Column count mismatch between left and right queries");
+            }
+
+            // Create combined result set (use left schema)
+            current_result_set_ = std::make_unique<ResultSet>();
+            for (size_t i = 0; i < left_result->columnCount(); ++i)
+            {
+                current_result_set_->addColumn(
+                    left_result->columnName(i),
+                    left_result->columnType(i)
+                );
+            }
+
+            // Add all rows from left
+            for (size_t r = 0; r < left_result->rowCount(); ++r)
+            {
+                std::vector<Value> row;
+                for (size_t c = 0; c < left_result->columnCount(); ++c)
+                {
+                    row.push_back(left_result->getValue(r, c));
+                }
+                current_result_set_->addRow(row);
+            }
+
+            // Add all rows from right
+            for (size_t r = 0; r < right_result->rowCount(); ++r)
+            {
+                std::vector<Value> row;
+                for (size_t c = 0; c < right_result->columnCount(); ++c)
+                {
+                    row.push_back(right_result->getValue(r, c));
+                }
+                current_result_set_->addRow(row);
+            }
+        }
+
+        void Executor::executeUnion()
+        {
+            // UNION: Concatenate results and remove duplicates
+            // First execute as UNION ALL, then deduplicate
+
+            executeUnionAll(); // Get combined result
+
+            // Deduplicate rows
+            std::set<std::vector<std::string>> unique_rows; // Use string representation for comparison
+            auto original_result = std::move(current_result_set_);
+            current_result_set_ = std::make_unique<ResultSet>();
+
+            // Copy schema
+            for (size_t i = 0; i < original_result->columnCount(); ++i)
+            {
+                current_result_set_->addColumn(
+                    original_result->columnName(i),
+                    original_result->columnType(i)
+                );
+            }
+
+            // Add only unique rows
+            for (size_t r = 0; r < original_result->rowCount(); ++r)
+            {
+                std::vector<Value> row;
+                std::vector<std::string> row_key;
+
+                for (size_t c = 0; c < original_result->columnCount(); ++c)
+                {
+                    Value val = original_result->getValue(r, c);
+                    row.push_back(val);
+                    // Create a comparable key
+                    if (val.isNull())
+                    {
+                        row_key.push_back("\0NULL\0");
+                    }
+                    else
+                    {
+                        row_key.push_back(val.toString());
+                    }
+                }
+
+                // Only add if not seen before
+                if (unique_rows.insert(row_key).second)
+                {
+                    current_result_set_->addRow(row);
+                }
+            }
+        }
+
+        void Executor::executeIntersectAll()
+        {
+            // INTERSECT ALL: Keep only rows that appear in both sides (with duplicates)
+            // For each row in left, if it appears in right, include it (decrement right count)
+
+            // Execute left query
+            Opcode left_op = static_cast<Opcode>(readByte());
+            auto left_result = std::make_unique<ResultSet>();
+
+            if (left_op == Opcode::SELECT)
+            {
+                executeSelect();
+                left_result = std::move(current_result_set_);
+            }
+            else
+            {
+                error("INTERSECT ALL: Left side must be a SELECT statement");
+            }
+
+            // Execute right query
+            Opcode right_op = static_cast<Opcode>(readByte());
+            auto right_result = std::make_unique<ResultSet>();
+
+            if (right_op == Opcode::SELECT)
+            {
+                executeSelect();
+                right_result = std::move(current_result_set_);
+            }
+            else
+            {
+                error("INTERSECT ALL: Right side must be a SELECT statement");
+            }
+
+            // Verify schema compatibility
+            if (left_result->columnCount() != right_result->columnCount())
+            {
+                error("INTERSECT ALL: Column count mismatch");
+            }
+
+            // Build multiset (with counts) from right side
+            std::map<std::vector<std::string>, size_t> right_counts;
+            for (size_t r = 0; r < right_result->rowCount(); ++r)
+            {
+                std::vector<std::string> row_key;
+                for (size_t c = 0; c < right_result->columnCount(); ++c)
+                {
+                    Value val = right_result->getValue(r, c);
+                    row_key.push_back(val.isNull() ? "\0NULL\0" : val.toString());
+                }
+                right_counts[row_key]++;
+            }
+
+            // Create result set
+            current_result_set_ = std::make_unique<ResultSet>();
+            for (size_t i = 0; i < left_result->columnCount(); ++i)
+            {
+                current_result_set_->addColumn(
+                    left_result->columnName(i),
+                    left_result->columnType(i)
+                );
+            }
+
+            // For each row in left, check if it's in right
+            for (size_t r = 0; r < left_result->rowCount(); ++r)
+            {
+                std::vector<Value> row;
+                std::vector<std::string> row_key;
+
+                for (size_t c = 0; c < left_result->columnCount(); ++c)
+                {
+                    Value val = left_result->getValue(r, c);
+                    row.push_back(val);
+                    row_key.push_back(val.isNull() ? "\0NULL\0" : val.toString());
+                }
+
+                // Check if this row exists in right (with count > 0)
+                auto it = right_counts.find(row_key);
+                if (it != right_counts.end() && it->second > 0)
+                {
+                    current_result_set_->addRow(row);
+                    it->second--; // Decrement count for ALL semantics
+                }
+            }
+        }
+
+        void Executor::executeIntersect()
+        {
+            // INTERSECT: Keep only rows that appear in both sides (without duplicates)
+            executeIntersectAll(); // Get intersection with duplicates
+
+            // Deduplicate
+            std::set<std::vector<std::string>> unique_rows;
+            auto original_result = std::move(current_result_set_);
+            current_result_set_ = std::make_unique<ResultSet>();
+
+            // Copy schema
+            for (size_t i = 0; i < original_result->columnCount(); ++i)
+            {
+                current_result_set_->addColumn(
+                    original_result->columnName(i),
+                    original_result->columnType(i)
+                );
+            }
+
+            // Add only unique rows
+            for (size_t r = 0; r < original_result->rowCount(); ++r)
+            {
+                std::vector<Value> row;
+                std::vector<std::string> row_key;
+
+                for (size_t c = 0; c < original_result->columnCount(); ++c)
+                {
+                    Value val = original_result->getValue(r, c);
+                    row.push_back(val);
+                    row_key.push_back(val.isNull() ? "\0NULL\0" : val.toString());
+                }
+
+                if (unique_rows.insert(row_key).second)
+                {
+                    current_result_set_->addRow(row);
+                }
+            }
+        }
+
+        void Executor::executeExceptAll()
+        {
+            // EXCEPT ALL: Rows in left but not in right (with duplicates)
+            // For each row in left, if count in left > count in right, include (count_left - count_right) times
+
+            // Execute left query
+            Opcode left_op = static_cast<Opcode>(readByte());
+            auto left_result = std::make_unique<ResultSet>();
+
+            if (left_op == Opcode::SELECT)
+            {
+                executeSelect();
+                left_result = std::move(current_result_set_);
+            }
+            else
+            {
+                error("EXCEPT ALL: Left side must be a SELECT statement");
+            }
+
+            // Execute right query
+            Opcode right_op = static_cast<Opcode>(readByte());
+            auto right_result = std::make_unique<ResultSet>();
+
+            if (right_op == Opcode::SELECT)
+            {
+                executeSelect();
+                right_result = std::move(current_result_set_);
+            }
+            else
+            {
+                error("EXCEPT ALL: Right side must be a SELECT statement");
+            }
+
+            // Verify schema compatibility
+            if (left_result->columnCount() != right_result->columnCount())
+            {
+                error("EXCEPT ALL: Column count mismatch");
+            }
+
+            // Build multiset from right side
+            std::map<std::vector<std::string>, size_t> right_counts;
+            for (size_t r = 0; r < right_result->rowCount(); ++r)
+            {
+                std::vector<std::string> row_key;
+                for (size_t c = 0; c < right_result->columnCount(); ++c)
+                {
+                    Value val = right_result->getValue(r, c);
+                    row_key.push_back(val.isNull() ? "\0NULL\0" : val.toString());
+                }
+                right_counts[row_key]++;
+            }
+
+            // Create result set
+            current_result_set_ = std::make_unique<ResultSet>();
+            for (size_t i = 0; i < left_result->columnCount(); ++i)
+            {
+                current_result_set_->addColumn(
+                    left_result->columnName(i),
+                    left_result->columnType(i)
+                );
+            }
+
+            // For each row in left, include if not in right (or fewer times in right)
+            for (size_t r = 0; r < left_result->rowCount(); ++r)
+            {
+                std::vector<Value> row;
+                std::vector<std::string> row_key;
+
+                for (size_t c = 0; c < left_result->columnCount(); ++c)
+                {
+                    Value val = left_result->getValue(r, c);
+                    row.push_back(val);
+                    row_key.push_back(val.isNull() ? "\0NULL\0" : val.toString());
+                }
+
+                // Check count in right
+                auto it = right_counts.find(row_key);
+                if (it == right_counts.end() || it->second == 0)
+                {
+                    // Not in right, or already used up all occurrences
+                    current_result_set_->addRow(row);
+                }
+                else
+                {
+                    // In right, decrement count
+                    it->second--;
+                }
+            }
+        }
+
+        void Executor::executeExcept()
+        {
+            // EXCEPT: Rows in left but not in right (without duplicates)
+            executeExceptAll(); // Get difference with duplicates
+
+            // Deduplicate
+            std::set<std::vector<std::string>> unique_rows;
+            auto original_result = std::move(current_result_set_);
+            current_result_set_ = std::make_unique<ResultSet>();
+
+            // Copy schema
+            for (size_t i = 0; i < original_result->columnCount(); ++i)
+            {
+                current_result_set_->addColumn(
+                    original_result->columnName(i),
+                    original_result->columnType(i)
+                );
+            }
+
+            // Add only unique rows
+            for (size_t r = 0; r < original_result->rowCount(); ++r)
+            {
+                std::vector<Value> row;
+                std::vector<std::string> row_key;
+
+                for (size_t c = 0; c < original_result->columnCount(); ++c)
+                {
+                    Value val = original_result->getValue(r, c);
+                    row.push_back(val);
+                    row_key.push_back(val.isNull() ? "\0NULL\0" : val.toString());
+                }
+
+                if (unique_rows.insert(row_key).second)
+                {
+                    current_result_set_->addRow(row);
+                }
+            }
+        }
+
         void Executor::executeSweep()
         {
             // Execute SWEEP DATABASE command (Phase 3 Task 3.3)

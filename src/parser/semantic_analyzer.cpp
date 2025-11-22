@@ -497,6 +497,21 @@ namespace scratchbird
             current_table_ = nullptr;
         }
 
+        void SemanticAnalyzer::visit(SetOperationStmt *node)
+        {
+            // Semantic analysis for set operations (UNION, INTERSECT, EXCEPT)
+            // Both sides must be analyzed and have compatible schemas
+
+            // Analyze left side
+            node->left()->accept(this);
+
+            // Analyze right side
+            node->right()->accept(this);
+
+            // Note: Full schema compatibility checking could be added here
+            // For now, the executor will validate column count matches
+        }
+
         void SemanticAnalyzer::visit(UpdateStmt *node)
         {
             // Phase 1 Task 2.1: UPDATE statement semantic analysis

@@ -3749,6 +3749,7 @@ namespace scratchbird
             virtual void visit(DetachTablespaceStmt *node) = 0;        // Phase 6 Task 6.2
             virtual void visit(InsertStmt *node) = 0;
             virtual void visit(SelectStmt *node) = 0;
+            virtual void visit(SetOperationStmt *node) = 0;     // UNION/INTERSECT/EXCEPT
             virtual void visit(UpdateStmt *node) = 0;           // Phase 1 Task 2.1
             virtual void visit(DeleteStmt *node) = 0;           // Phase 1 Task 2.2
             virtual void visit(AnalyzeStmt *node) = 0;          // Phase 1 Task 1.1.2

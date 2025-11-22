@@ -316,6 +316,14 @@ namespace scratchbird
             void executeCommit();           // Phase 2 Task 2.6
             void executeRollback();         // Phase 2 Task 2.6
 
+            // Set operations (UNION, INTERSECT, EXCEPT)
+            void executeUnionAll();         // UNION ALL - concatenate with duplicates
+            void executeUnion();            // UNION - concatenate without duplicates
+            void executeIntersectAll();     // INTERSECT ALL - common rows with duplicates
+            void executeIntersect();        // INTERSECT - common rows without duplicates
+            void executeExceptAll();        // EXCEPT ALL - left minus right with duplicates
+            void executeExcept();           // EXCEPT - left minus right without duplicates
+
             // Trigger execution (Wave 2)
             void executeCreateTrigger();    // CREATE TRIGGER
             void executeDropTrigger();      // DROP TRIGGER

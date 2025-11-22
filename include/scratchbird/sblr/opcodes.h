@@ -424,7 +424,7 @@ namespace scratchbird
             EXT_RETURN = 0x9B,             // RETURN statement
             EXT_RAISE = 0x9C,              // RAISE exception
             EXT_TRY = 0x9D,                // TRY block
-            EXT_EXCEPT = 0x9E,             // EXCEPT handler
+            EXT_EXCEPT_HANDLER = 0x9E,     // EXCEPT handler (exception handling, not set operation)
             EXT_EXCEPTION_HANDLER = 0x9F,  // Exception handler definition
 
             // Control flow helpers
