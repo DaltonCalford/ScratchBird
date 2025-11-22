@@ -309,22 +309,22 @@ namespace scratchbird
              * Check if index entry is visible using Firebird MGA visibility rules
              *
              * Per MGA_RULES.md Rule 3:
-             * - Entry created by xmin is visible if: xmin == reader_xid OR (xmin is COMMITTED and xmin < reader_xid)
+             * - Entry created by xmin is visible if: xmin == current_xid OR (xmin is COMMITTED and xmin < current_xid)
              * - Entry is deleted if: xmax != 0 AND xmax is visible
              *
              * @param xmin Transaction that created entry
              * @param xmax Transaction that deleted entry (0 if active)
-             * @param reader_xid Transaction ID checking visibility
+             * @param current_xid Transaction ID checking visibility
              * @return true if visible, false otherwise
              */
-            bool isEntryVisible(uint64_t xmin, uint64_t xmax, uint64_t reader_xid) const;
+            bool isEntryVisible(uint64_t xmin, uint64_t xmax, uint64_t current_xid) const;
 
             // Allow iterator to access internal members
             friend class BTreeIterator;
 
             // Vacuum helpers
             Status vacuumPage(uint32_t page_id, VacuumStats &stats, ErrorContext *ctx);
-            Status compactPage(uint8_t *page_data, uint32_t page_size, VacuumStats &stats);
+            Status compactPage(uint8_t *page_data, uint32_t page_size, VacuumStats &stats, ErrorContext *ctx);
             bool shouldMergePages(const SBBTreePage *page1, const SBBTreePage *page2) const;
             Status mergePages(uint32_t left_page, uint32_t right_page, VacuumStats &stats,
                               ErrorContext *ctx);
@@ -352,7 +352,7 @@ namespace scratchbird
                         ErrorContext *ctx = nullptr);
 
             // Get current position
-            Status getCurrentKey(std::vector<uint8_t> *key_out) const;
+            Status getCurrentKey(std::vector<uint8_t> *key_out, ErrorContext *ctx = nullptr) const;
             uint64_t getScannedCount() const
             {
                 return scanned_count_;

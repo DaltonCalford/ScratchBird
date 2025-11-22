@@ -148,7 +148,7 @@ namespace scratchbird::core
         }
 
         // Compact the page to remove deleted nodes
-        status = compactPage(page_data, db_->page_size(), stats);
+        status = compactPage(page_data, db_->page_size(), stats, ctx);
 
         // Clear HAS_GARBAGE flag
         page->btr_flags &= ~static_cast<uint16_t>(BTreeFlags::HAS_GARBAGE);
@@ -161,7 +161,7 @@ namespace scratchbird::core
         return Status::OK;
     }
 
-    auto BTree::compactPage(uint8_t *page_data, uint32_t page_size, VacuumStats &stats) -> Status
+    auto BTree::compactPage(uint8_t *page_data, uint32_t page_size, VacuumStats &stats, ErrorContext *ctx) -> Status
     {
         auto *page = reinterpret_cast<SBBTreePage *>(page_data);
         auto *old_offsets = reinterpret_cast<uint16_t *>(page_data + sizeof(SBBTreePage));
