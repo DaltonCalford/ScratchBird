@@ -401,16 +401,24 @@ namespace scratchbird
         // Find all tuple IDs containing a specific key
         // Firebird MGA: Uses TIP-based visibility filtering (NOT snapshots)
         // PHASE 1.5: Return TID structs instead of uint64_t
-        std::vector<TID> GinIndex::find(const void *key_data, size_t key_len,
-                                             uint64_t current_xid,
-                                             ErrorContext *ctx)
+        Status GinIndex::find(const void *key_data, size_t key_len,
+                              uint64_t current_xid,
+                              std::vector<TID>* results,
+                              ErrorContext *ctx)
         {
-            std::vector<TID> results;
-
             if (!key_data || key_len == 0)
             {
-                return results;
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Invalid key data for GIN index find");
+                return Status::INVALID_ARGUMENT;
             }
+
+            if (!results)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Results vector cannot be null");
+                return Status::INVALID_ARGUMENT;
+            }
+
+            results->clear();
 
             std::vector<uint8_t> key(static_cast<const uint8_t *>(key_data),
                                      static_cast<const uint8_t *>(key_data) + key_len);
@@ -428,7 +436,9 @@ namespace scratchbird
                 status = getPostingListTids(posting_page, &legacy_results, current_xid, ctx);
                 if (status != Status::OK)
                 {
-                    results.clear();
+                    results->clear();
+                    SET_ERROR_CONTEXT(ctx, status, "Failed to get posting list TIDs for GIN index find");
+                    return status;
                 }
                 else
                 {
@@ -439,7 +449,7 @@ namespace scratchbird
                     // PHASE 1.5: Convert legacy uint64_t to TID structs
                     for (uint64_t legacy_tid : legacy_results)
                     {
-                        results.push_back(convertLegacyTID(legacy_tid));
+                        results->push_back(convertLegacyTID(legacy_tid));
                     }
                 }
             }
@@ -485,7 +495,7 @@ namespace scratchbird
                             if (entry_key == key)
                             {
                                 // Get TID from entry (now uses GPID format)
-                                results.push_back(entry.getTID());
+                                results->push_back(entry.getTID());
                             }
                         }
                     }
@@ -496,9 +506,9 @@ namespace scratchbird
             }
 
             // Sort results to ensure consistent ordering
-            std::sort(results.begin(), results.end());
+            std::sort(results->begin(), results->end());
 
-            return results;
+            return Status::OK;
         }
 
         // Merge pending list into main index (Phase 3 implementation)

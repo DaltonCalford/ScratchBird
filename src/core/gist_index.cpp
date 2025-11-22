@@ -487,10 +487,18 @@ Status GiSTIndex::insertRecursive(uint64_t page_num,
 Status GiSTIndex::search(const std::vector<uint8_t>& query,
                         GiSTStrategy strategy,
                         uint64_t current_xid,
-                        std::vector<TID>& results,
+                        std::vector<TID>* results,
                         ErrorContext* ctx)
 {
+    if (!results)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Results vector cannot be null");
+        return Status::INVALID_ARGUMENT;
+    }
+
     std::shared_lock lock(mutex_);
+
+    results->clear();
 
     if (root_page_ == 0)
     {
@@ -498,7 +506,7 @@ Status GiSTIndex::search(const std::vector<uint8_t>& query,
         return Status::OK;
     }
 
-    return searchRecursive(root_page_, query, strategy, current_xid, results, ctx);
+    return searchRecursive(root_page_, query, strategy, current_xid, *results, ctx);
 }
 
 Status GiSTIndex::searchRecursive(uint64_t page_num,

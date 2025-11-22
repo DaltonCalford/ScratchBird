@@ -151,7 +151,7 @@ namespace scratchbird::core
         // CRITICAL FIX (CRITICAL-2 side-effect): Removed const because this calls getTransactionState()
         // which modifies the cache. This is part of the cache consistency fix.
         // LOCKING: Thread-safe. Acquires mutex_ internally via isXidInRange() and getTransactionState().
-        auto isTransactionVisible(uint64_t xid, uint64_t snapshot_xid) -> bool;
+        auto isTransactionVisible(uint64_t xid, uint64_t current_xid) -> bool;
 
         // Validate XID is structurally valid (not INVALID_XID)
         // LOCKING: No locks required (static method, no shared state access).

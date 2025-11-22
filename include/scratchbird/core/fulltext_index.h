@@ -137,6 +137,25 @@ public:
                   const TID& tid, ErrorContext* ctx = nullptr);
 
     /**
+     * @brief Remove a tsvector value from the index
+     *
+     * Extracts lexemes from the tsvector and removes the TID from their
+     * posting lists in the underlying GIN index.
+     *
+     * Firebird MGA: Logical deletion - marks TID as deleted (sets xmax).
+     *
+     * @param tsvector_data Serialized tsvector data
+     * @param tsvector_len Length of serialized data
+     * @param tid Tuple identifier
+     * @param current_xid Current transaction ID for deletion marking
+     * @param ctx Error context
+     * @return Status code
+     */
+    Status remove(const void* tsvector_data, size_t tsvector_len,
+                  const TID& tid, uint64_t current_xid,
+                  ErrorContext* ctx = nullptr);
+
+    /**
      * @brief Search for documents matching a tsquery
      *
      * Evaluates the Boolean expression in tsquery against indexed tsvector
@@ -147,12 +166,14 @@ public:
      *
      * @param tsquery The search query
      * @param current_xid Current transaction ID for visibility checks
+     * @param results Output vector for matching TIDs
      * @param ctx Error context
-     * @return Vector of matching TIDs
+     * @return Status code
      */
-    std::vector<TID> search(const TSQuery& tsquery,
-                           uint64_t current_xid,
-                           ErrorContext* ctx = nullptr);
+    Status search(const TSQuery& tsquery,
+                  uint64_t current_xid,
+                  std::vector<TID>* results,
+                  ErrorContext* ctx = nullptr);
 
     /**
      * @brief Get index statistics

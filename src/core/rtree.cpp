@@ -506,7 +506,7 @@ Status RTree::remove(const BoundingBox& bbox,
     index_info_.idx_deleted_count++;
 
     // Save the modified leaf
-    Status save_status = saveNode(leaf);
+    Status save_status = saveNode(leaf, ctx);
     if (save_status != Status::OK)
     {
         LOG_ERROR(BTREE, "Failed to save leaf node after logical deletion");
@@ -923,7 +923,7 @@ void RTree::condenseTree(RTreeNode* leaf, size_t entry_index, uint64_t current_x
         RTreeEntry& entry = leaf->getEntry(entry_index);
         entry.xmax = current_xid;
         entry.is_deleted = true;
-        saveNode(leaf);
+        saveNode(leaf, nullptr);
     }
 }
 
@@ -990,7 +990,7 @@ std::unique_ptr<RTreeNode> RTree::loadNode(uint64_t page_number)
     return node;
 }
 
-Status RTree::saveNode(RTreeNode* node)
+Status RTree::saveNode(RTreeNode* node, ErrorContext* ctx)
 {
     LOG_DEBUG(BTREE, "Saving R-tree node to page %lu", node->getPageNumber());
 
@@ -998,7 +998,7 @@ Status RTree::saveNode(RTreeNode* node)
     if (page_number == 0)
     {
         // Need to allocate new page
-        Status status = allocatePage(node);
+        Status status = allocatePage(node, ctx);
         if (status != Status::OK)
         {
             return status;
@@ -1007,7 +1007,7 @@ Status RTree::saveNode(RTreeNode* node)
     }
 
     void* page = nullptr;
-    Status status = db_->buffer_pool()->pinPage(page_number, &page, nullptr);
+    Status status = db_->buffer_pool()->pinPage(page_number, &page, ctx);
     if (status != Status::OK)
     {
         LOG_ERROR(BTREE, "Failed to pin page %lu", page_number);
@@ -1064,15 +1064,16 @@ Status RTree::saveNode(RTreeNode* node)
     return Status::OK;
 }
 
-Status RTree::allocatePage(RTreeNode* node)
+Status RTree::allocatePage(RTreeNode* node, ErrorContext* ctx)
 {
     PageManager* page_mgr = db_->page_manager();
     uint32_t new_page = 0;
 
-    Status status = page_mgr->allocatePage(new_page, nullptr);
+    Status status = page_mgr->allocatePage(new_page, ctx);
     if (status != Status::OK)
     {
         LOG_ERROR(BTREE, "Failed to allocate page for R-tree node");
+        SET_ERROR_CONTEXT(ctx, status, "Failed to allocate page for R-tree node");
         return status;
     }
 

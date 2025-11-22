@@ -194,17 +194,17 @@ namespace scratchbird::core
         return Status::NOT_FOUND;
     }
 
-    auto BTreeIterator::getCurrentKey(std::vector<uint8_t> *key_out) const -> Status
+    auto BTreeIterator::getCurrentKey(std::vector<uint8_t> *key_out, ErrorContext *ctx) const -> Status
     {
         if (!initialized_ || exhausted_)
         {
+            SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Iterator not initialized or exhausted");
             return Status::NOT_FOUND;
         }
 
         // Pin current page
         void *page_buffer;
-        ErrorContext ctx;
-        Status status = db_->buffer_pool()->pinPage(current_page_, &page_buffer, &ctx);
+        Status status = db_->buffer_pool()->pinPage(current_page_, &page_buffer, ctx);
         if (status != Status::OK)
         {
             return status;
@@ -216,7 +216,7 @@ namespace scratchbird::core
         std::vector<uint64_t> tuple_ids;
         status = BTreePage::get_node(page_data, db_->page_size(), current_slot_, key, tuple_ids);
 
-        db_->buffer_pool()->unpinPage(current_page_, false, &ctx);
+        db_->buffer_pool()->unpinPage(current_page_, false, ctx);
 
         if (status == Status::OK && key_out)
         {
