@@ -87,7 +87,7 @@ TEST_F(SPGiSTDMLTest, BasicInsertOperation)
     for (int i = 0; i < 10; i++)
     {
         std::vector<uint8_t> value = {static_cast<uint8_t>(i)};
-        TID tid = createTID(1, i, 1);
+        TID tid = makeTID(1, i, 1);
 
         status = spgist->insert(value, tid, xid, &ctx);
         EXPECT_EQ(status, Status::OK) << "Failed to insert value " << i << ": " << ctx.message;
@@ -148,7 +148,7 @@ TEST_F(SPGiSTDMLTest, LogicalDeletionOperation)
     uint64_t insert_xid = tm_->beginTransaction();
 
     std::vector<uint8_t> value = {42};
-    TID tid = createTID(1, 100, 1);
+    TID tid = makeTID(1, 100, 1);
 
     status = spgist->insert(value, tid, insert_xid, &ctx);
     ASSERT_EQ(status, Status::OK);
@@ -211,7 +211,7 @@ TEST_F(SPGiSTDMLTest, UpdateOperation)
     // Insert initial value
     uint64_t insert_xid = tm_->beginTransaction();
     std::vector<uint8_t> old_value = {10};
-    TID tid = createTID(1, 50, 1);
+    TID tid = makeTID(1, 50, 1);
     status = spgist->insert(old_value, tid, insert_xid, &ctx);
     ASSERT_EQ(status, Status::OK);
     tm_->commit(insert_xid);
@@ -286,7 +286,7 @@ TEST_F(SPGiSTDMLTest, MGAVisibilityIsolation)
     // Transaction 1: Insert value
     uint64_t xid1 = tm_->beginTransaction();
     std::vector<uint8_t> value = {99};
-    TID tid = createTID(1, 200, 1);
+    TID tid = makeTID(1, 200, 1);
     status = spgist->insert(value, tid, xid1, &ctx);
     ASSERT_EQ(status, Status::OK);
 
@@ -348,7 +348,7 @@ TEST_F(SPGiSTDMLTest, MultipleDMLOperations)
     for (int i = 0; i < 50; i++)
     {
         std::vector<uint8_t> value = {static_cast<uint8_t>(i)};
-        TID tid = createTID(1, i, 1);
+        TID tid = makeTID(1, i, 1);
         status = spgist->insert(value, tid, insert_xid, &ctx);
         EXPECT_EQ(status, Status::OK);
     }
@@ -359,7 +359,7 @@ TEST_F(SPGiSTDMLTest, MultipleDMLOperations)
     for (int i = 0; i < 50; i += 2)
     {
         std::vector<uint8_t> value = {static_cast<uint8_t>(i)};
-        TID tid = createTID(1, i, 1);
+        TID tid = makeTID(1, i, 1);
         status = spgist->remove(value, tid, delete_xid, &ctx);
         EXPECT_EQ(status, Status::OK);
     }
