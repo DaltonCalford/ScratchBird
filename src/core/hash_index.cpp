@@ -661,16 +661,24 @@ namespace scratchbird
         // Find operation
         // Firebird MGA: Uses TIP-based visibility filtering (NOT snapshots)
         // Per MGA_RULES.md Rule 11: Uses TransactionId for visibility checks
-        std::vector<TID> HashIndex::find(const void *key_data, size_t key_len,
-                                         uint64_t current_xid,
-                                         ErrorContext *ctx)
+        Status HashIndex::find(const void *key_data, size_t key_len,
+                               uint64_t current_xid,
+                               std::vector<TID>* results,
+                               ErrorContext *ctx)
         {
-            std::vector<TID> results;
-
             if (!key_data || key_len == 0)
             {
-                return results;
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Invalid key data for hash index find");
+                return Status::INVALID_ARGUMENT;
             }
+
+            if (!results)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Results vector cannot be null");
+                return Status::INVALID_ARGUMENT;
+            }
+
+            results->clear();
 
             // Calculate hash
             uint64_t hash = MurmurHash64(key_data, key_len);
@@ -679,7 +687,8 @@ namespace scratchbird
             uint64_t bucket_page = findBucketPageForKey(hash, ctx);
             if (bucket_page == 0)
             {
-                return results;
+                // Key not found (bucket doesn't exist yet)
+                return Status::OK;
             }
 
             // Get transaction manager for TIP-based visibility checks
@@ -693,7 +702,8 @@ namespace scratchbird
                 Status status = buffer_pool_->pinPage(current_page, (void **)&page_data, ctx);
                 if (status != Status::OK)
                 {
-                    break;
+                    SET_ERROR_CONTEXT(ctx, status, "Failed to pin hash bucket page during find");
+                    return status;
                 }
 
                 auto *bucket = reinterpret_cast<SBHashBucketPage *>(page_data);
@@ -732,7 +742,7 @@ namespace scratchbird
                         if (visible)
                         {
                             // Get TID from entry (GPID + slot)
-                            results.push_back(entry.getTID());
+                            results->push_back(entry.getTID());
                         }
                     }
                 }
@@ -742,7 +752,7 @@ namespace scratchbird
                 current_page = next_page;
             }
 
-            return results;
+            return Status::OK;
         }
 
         // Remove operation
