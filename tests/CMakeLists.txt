@@ -94,7 +94,6 @@ list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_hnsw_dml\\.cpp$")  # UuidV7::gen
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_rtree_dml\\.cpp$")  # Duplicate Status declarations
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_query_plan_security\\.cpp$")  # ErrorContext.status field removed
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_multi_index_mga\\.cpp$")  # commit() -> commitTransaction() not auto-fixed
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_security_phase.*\\.cpp$")  # Database API changes (open/create signature)
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_spgist_dml\\.cpp$")  # Incomplete transaction API fixes
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_spgist_mvcc\\.cpp$")  # Incomplete transaction API fixes
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_statistical_functions\\.cpp$")  # API compatibility issues
@@ -147,6 +146,7 @@ list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/test_window_functions.cpp$")  # 
 
 
 # Phase 2C: Exclude standalone tests with main() functions
+list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_security_phase.*\.cpp$")  # Database API issues (open/create)
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/manual_test_planner_integration\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_array_functions\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_btree_delete_parent_update\.cpp$")  # Standalone main()
@@ -204,14 +204,9 @@ list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_range_lexer\.cpp$")  # Standalon
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_range_operators\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_range_types\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_rtree\.cpp$")  # Standalone main()
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_security_phase2\.cpp$")  # Standalone main()
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_security_phase3_3\.cpp$")  # Standalone main()
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_security_phase3_4_rls\.cpp$")  # Standalone main()
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_security_phase3_5_rls_dml\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_snapshot_sorted\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_snapshot_xids\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_spgist_dml\.cpp$")  # Standalone main()
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_statistical_functions\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_storage_toast_indexing\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_subquery_parser\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_subtransactions\.cpp$")  # Standalone main()
