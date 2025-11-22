@@ -2025,7 +2025,7 @@ Status ColumnstoreIndex::createSegment(const ID &column_uuid,
 
     // Step 2: Determine if multi-page segment is needed
     const size_t HEADER_SIZE = sizeof(SBColumnstorePage);
-    const size_t PAGE_SIZE = 8192;  // Assuming 8KB pages
+    const size_t PAGE_SIZE = db_->page_size();
     const size_t MAX_DATA_SIZE = PAGE_SIZE - HEADER_SIZE;
 
     const bool is_multipage = (compressed.size() > MAX_DATA_SIZE);
@@ -2214,7 +2214,7 @@ Status ColumnstoreIndex::readSegment(uint32_t segment_page,
         total_pages = 1;
 
     const size_t HEADER_SIZE = sizeof(SBColumnstorePage);
-    const size_t PAGE_SIZE = 8192;
+    const size_t PAGE_SIZE = db_->page_size();
     const size_t MAX_DATA_SIZE = PAGE_SIZE - HEADER_SIZE;
 
     std::vector<uint8_t> compressed;
@@ -2532,7 +2532,7 @@ Status ColumnstoreIndex::createMetadataPage(Database *db,
     meta_page->cs_header.magic = K_MAGIC_SBRD;
     meta_page->cs_header.version = static_cast<uint16_t>(DB_VERSION_ALPHA_1_0_1);
     meta_page->cs_header.page_type = static_cast<uint16_t>(PageType::PAGE_TYPE_COLUMNSTORE);
-    meta_page->cs_header.page_size = 8192;  // Standard page size
+    meta_page->cs_header.page_size = db_->page_size();
 
     // Store index and table UUIDs
     std::memcpy(&meta_page->cs_index_uuid, &index_uuid, sizeof(ID));
@@ -2568,7 +2568,7 @@ Status ColumnstoreIndex::createMetadataPage(Database *db,
     size_t uuid_array_size = column_uuids.size() * sizeof(ID);
 
     // Verify we have space (sanity check)
-    const size_t PAGE_SIZE = 8192;
+    const size_t PAGE_SIZE = db_->page_size();
     if (sizeof(SBColumnstoreMetadataPage) + uuid_array_size > PAGE_SIZE)
     {
         buffer_pool->unpinPage(metadata_page, false, ctx);
