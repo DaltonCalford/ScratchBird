@@ -106,10 +106,15 @@ namespace scratchbird
             uint8_t gpl_reserved[10];                       // Reserved for alignment (10 bytes)
             union
             {
-                uint8_t gpl_compressed_data[];       // Compressed TID data (flexible array, size = page_size - 80)
-                GinPostingEntry gpl_entries[];       // Uncompressed TIDs (flexible array, capacity depends on page size)
                 uint64_t gpl_tree_root;              // Root page of posting B-Tree
+                uint8_t gpl_data_start[1];           // First byte of data area (flexible access point)
             } gpl_data;
+
+            // Helper methods to access the data area with proper types
+            uint8_t* getCompressedData() { return gpl_data.gpl_data_start; }
+            const uint8_t* getCompressedData() const { return gpl_data.gpl_data_start; }
+            GinPostingEntry* getEntries() { return reinterpret_cast<GinPostingEntry*>(gpl_data.gpl_data_start); }
+            const GinPostingEntry* getEntries() const { return reinterpret_cast<const GinPostingEntry*>(gpl_data.gpl_data_start); }
         } __attribute__((packed));
 
         // ===== Posting Tree Structures =====
@@ -150,6 +155,12 @@ namespace scratchbird
             uint8_t gpt_reserved[12];                   // Reserved for alignment (12 bytes)
             GinPostingEntry gpt_tids[];                 // Sorted TID array (flexible array, capacity depends on page size)
         } __attribute__((packed));
+
+        // Maximum entries for various GIN structures (approximate, based on 16KB pages)
+        constexpr uint16_t MAX_PENDING_ENTRIES_PER_PAGE = 225;        // (16384-128)/72
+        constexpr uint16_t MAX_POSTING_TREE_LEAF_TIDS = 626;          // (16384-88)/26
+        constexpr uint16_t MAX_POSTING_TREE_INTERNAL_ENTRIES = 1163;  // (16384-92)/14
+        constexpr uint16_t MAX_POSTING_ENTRIES_PER_PAGE = 626;        // (16384-80)/26
 
         // Entry in the Keys B-Tree
         // The key is the indexed item (e.g., a word, array element)
@@ -430,25 +441,10 @@ namespace scratchbird
 
             // Dynamic capacity calculations based on page size
             // These replace the removed compile-time constants
-            uint16_t getMaxPendingEntriesPerPage() const
-            {
-                return (db_->page_size() - 128) / sizeof(GinPendingEntry);
-            }
-
-            uint16_t getMaxPostingEntriesPerPage() const
-            {
-                return (db_->page_size() - 80) / sizeof(GinPostingEntry);
-            }
-
-            uint16_t getMaxPostingTreeInternalEntries() const
-            {
-                return (db_->page_size() - 92) / sizeof(GinPostingTreeInternalEntry);
-            }
-
-            uint16_t getMaxPostingTreeLeafTids() const
-            {
-                return (db_->page_size() - 88) / sizeof(GinPostingEntry);
-            }
+            uint16_t getMaxPendingEntriesPerPage() const;
+            uint16_t getMaxPostingEntriesPerPage() const;
+            uint16_t getMaxPostingTreeInternalEntries() const;
+            uint16_t getMaxPostingTreeLeafTids() const;
 
             // PHASE 2 TASK 2.4: IndexGCInterface implementation
             // PHASE 1.5 TASK 1.5.2f: Migrated to TID struct API
