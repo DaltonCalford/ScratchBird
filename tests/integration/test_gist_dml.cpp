@@ -568,9 +568,3 @@ TEST_F(GiSTDMLTest, ConsistentAfterCommit)
     txn_mgr_->commitTransaction(new_xid);
 }
 
-// Entry point
-int main(int argc, char** argv)
-{
-    ::testing::InitGoogleTest(&argc, argv);
-    return RUN_ALL_TESTS();
-}
