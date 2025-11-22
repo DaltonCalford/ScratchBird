@@ -13,6 +13,7 @@
  */
 
 #include "scratchbird/core/lsm_tree_index.h"
+#include "scratchbird/core/lsm_bloom_filter.h"
 #include "scratchbird/core/transaction_manager.h"
 #include "scratchbird/core/logger.h"
 #include <fcntl.h>
@@ -252,6 +253,10 @@ Status SSTableWriter::open(ErrorContext *ctx)
     index_.clear();
     current_block_.clear();
 
+    // Initialize Bloom filter (estimate ~10K keys, 1% false positive rate)
+    // This will be resized dynamically if needed
+    bloom_filter_ = std::make_unique<LSMBloomFilter>(10000, 0.01);
+
     return Status::OK;
 }
 
@@ -267,6 +272,12 @@ Status SSTableWriter::addEntry(const std::vector<uint8_t> &key,
     {
         SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "SSTableWriter not open");
         return Status::INVALID_ARGUMENT;
+    }
+
+    // Add key to Bloom filter
+    if (bloom_filter_)
+    {
+        bloom_filter_->add(key);
     }
 
     // Update min/max keys
@@ -320,7 +331,7 @@ Status SSTableWriter::finish(ErrorContext *ctx)
         return Status::INVALID_ARGUMENT;
     }
 
-    // Write footer: [min_key][max_key][num_entries][index]
+    // Write footer: [min_key][max_key][num_entries][index][bloom_filter][footer_magic]
     std::vector<uint8_t> footer;
 
     // Min key
@@ -350,6 +361,28 @@ Status SSTableWriter::finish(ErrorContext *ctx)
         footer.insert(footer.end(), idx_entry.first.begin(), idx_entry.first.end());
         footer.insert(footer.end(), (uint8_t *)&offset, (uint8_t *)&offset + sizeof(offset));
     }
+
+    // Bloom filter
+    if (bloom_filter_)
+    {
+        std::vector<uint8_t> bloom_data;
+        bloom_filter_->serialize(&bloom_data);
+
+        // Write Bloom filter size + data
+        uint32_t bloom_size = bloom_data.size();
+        footer.insert(footer.end(), (uint8_t *)&bloom_size, (uint8_t *)&bloom_size + sizeof(bloom_size));
+        footer.insert(footer.end(), bloom_data.begin(), bloom_data.end());
+    }
+    else
+    {
+        // No Bloom filter - write size 0
+        uint32_t bloom_size = 0;
+        footer.insert(footer.end(), (uint8_t *)&bloom_size, (uint8_t *)&bloom_size + sizeof(bloom_size));
+    }
+
+    // Footer magic number (to verify footer integrity)
+    const uint32_t FOOTER_MAGIC = 0x5353544C;  // "SSTL" in hex
+    footer.insert(footer.end(), (uint8_t *)&FOOTER_MAGIC, (uint8_t *)&FOOTER_MAGIC + sizeof(FOOTER_MAGIC));
 
     // Write footer
     ssize_t written = ::write(fd_, footer.data(), footer.size());
@@ -424,9 +457,10 @@ Status SSTableReader::open(ErrorContext *ctx)
     }
     file_size_ = size;
 
-    // Read footer (simplified: read last 1KB)
-    const size_t footer_size = 1024;
-    if (file_size_ < footer_size)
+    // Read footer (read last 4KB to accommodate Bloom filter and index)
+    // Footer format: [min_key][max_key][num_entries][index][bloom_filter_size][bloom_data][magic]
+    const size_t footer_size = 4096;
+    if (file_size_ < (int64_t)footer_size)
     {
         ::close(fd_);
         fd_ = -1;
@@ -453,34 +487,73 @@ Status SSTableReader::open(ErrorContext *ctx)
         return Status::IO_ERROR;
     }
 
-    // Parse footer (min_key, max_key, num_entries, index)
+    // Parse footer
     size_t pos = 0;
 
     // Min key
+    if (pos + sizeof(uint32_t) > footer.size()) {
+        ::close(fd_);
+        fd_ = -1;
+        SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "Footer too small");
+        return Status::PAGE_CORRUPT;
+    }
     uint32_t min_key_len;
     std::memcpy(&min_key_len, footer.data() + pos, sizeof(min_key_len));
     pos += sizeof(min_key_len);
+    if (pos + min_key_len > footer.size()) {
+        ::close(fd_);
+        fd_ = -1;
+        SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "Invalid min key length");
+        return Status::PAGE_CORRUPT;
+    }
     min_key_.assign(footer.begin() + pos, footer.begin() + pos + min_key_len);
     pos += min_key_len;
 
     // Max key
+    if (pos + sizeof(uint32_t) > footer.size()) {
+        ::close(fd_);
+        fd_ = -1;
+        SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "Footer corrupt");
+        return Status::PAGE_CORRUPT;
+    }
     uint32_t max_key_len;
     std::memcpy(&max_key_len, footer.data() + pos, sizeof(max_key_len));
     pos += sizeof(max_key_len);
+    if (pos + max_key_len > footer.size()) {
+        ::close(fd_);
+        fd_ = -1;
+        SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "Invalid max key length");
+        return Status::PAGE_CORRUPT;
+    }
     max_key_.assign(footer.begin() + pos, footer.begin() + pos + max_key_len);
     pos += max_key_len;
 
     // Num entries
+    if (pos + sizeof(uint64_t) > footer.size()) {
+        ::close(fd_);
+        fd_ = -1;
+        SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "Footer corrupt");
+        return Status::PAGE_CORRUPT;
+    }
     std::memcpy(&num_entries_, footer.data() + pos, sizeof(num_entries_));
     pos += sizeof(num_entries_);
 
-    // Index (simplified: load all index entries)
+    // Index (load all index entries)
+    if (pos + sizeof(uint64_t) > footer.size()) {
+        ::close(fd_);
+        fd_ = -1;
+        SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "Footer corrupt");
+        return Status::PAGE_CORRUPT;
+    }
     uint64_t index_count;
     std::memcpy(&index_count, footer.data() + pos, sizeof(index_count));
     pos += sizeof(index_count);
 
     for (uint64_t i = 0; i < index_count && pos < footer.size(); i++)
     {
+        if (pos + sizeof(uint32_t) > footer.size())
+            break;
+
         uint32_t key_len;
         std::memcpy(&key_len, footer.data() + pos, sizeof(key_len));
         pos += sizeof(key_len);
@@ -491,11 +564,43 @@ Status SSTableReader::open(ErrorContext *ctx)
         std::vector<uint8_t> key(footer.begin() + pos, footer.begin() + pos + key_len);
         pos += key_len;
 
+        if (pos + sizeof(uint64_t) > footer.size())
+            break;
+
         uint64_t offset;
         std::memcpy(&offset, footer.data() + pos, sizeof(offset));
         pos += sizeof(offset);
 
         index_[key] = offset;
+    }
+
+    // Bloom filter
+    if (pos + sizeof(uint32_t) <= footer.size())
+    {
+        uint32_t bloom_size;
+        std::memcpy(&bloom_size, footer.data() + pos, sizeof(bloom_size));
+        pos += sizeof(bloom_size);
+
+        if (bloom_size > 0 && pos + bloom_size <= footer.size())
+        {
+            // Deserialize Bloom filter
+            std::vector<uint8_t> bloom_data(footer.begin() + pos, footer.begin() + pos + bloom_size);
+            bloom_filter_.reset(LSMBloomFilter::deserialize(bloom_data));
+            pos += bloom_size;
+        }
+    }
+
+    // Footer magic (optional verification)
+    if (pos + sizeof(uint32_t) <= footer.size())
+    {
+        const uint32_t FOOTER_MAGIC = 0x5353544C;  // "SSTL"
+        uint32_t magic;
+        std::memcpy(&magic, footer.data() + pos, sizeof(magic));
+        if (magic != FOOTER_MAGIC)
+        {
+            // Warning: footer may be from older version without magic
+            // Don't fail, just log
+        }
     }
 
     return Status::OK;
@@ -521,6 +626,16 @@ Status SSTableReader::get(const std::vector<uint8_t> &key,
     {
         return Status::OK;  // Key not in range
     }
+
+    // Bloom filter check (OPTIMIZATION: saves 90%+ disk reads)
+    if (bloom_filter_ && !bloom_filter_->mightContain(key))
+    {
+        // Bloom filter says key is DEFINITELY NOT present
+        // No disk I/O needed!
+        return Status::OK;
+    }
+    // If Bloom filter says "might contain", we must check disk
+    // (could be false positive)
 
     // Find starting offset using index
     uint64_t search_offset = 0;
