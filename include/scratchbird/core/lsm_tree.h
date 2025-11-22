@@ -6,6 +6,7 @@
 #include "scratchbird/core/uuidv7.h"
 #include "scratchbird/core/index_gc_interface.h"
 #include "scratchbird/core/tid.h"
+#include "scratchbird/core/lsm_bloom_filter.h"
 #include <cstdint>
 #include <vector>
 #include <memory>

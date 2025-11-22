@@ -106,6 +106,9 @@ private:
     mutable std::mutex mutex_;
 };
 
+// Forward declaration
+class LSMBloomFilter;
+
 // ============================================================================
 // SSTableWriter - Writes sorted string table to disk
 // ============================================================================
@@ -146,6 +149,9 @@ private:
 
     std::vector<uint8_t> current_block_;
     std::vector<std::pair<std::vector<uint8_t>, uint64_t>> index_;  // key -> offset
+
+    // Bloom filter for read optimization
+    std::unique_ptr<LSMBloomFilter> bloom_filter_;
 };
 
 // ============================================================================
@@ -201,6 +207,9 @@ private:
 
     // Index: key -> file offset
     std::map<std::vector<uint8_t>, uint64_t> index_;
+
+    // Bloom filter for read optimization (loaded from SSTable footer)
+    std::unique_ptr<LSMBloomFilter> bloom_filter_;
 };
 
 // ============================================================================
