@@ -2193,20 +2193,9 @@ namespace scratchbird
             return arena_.make<InsertStmt>(span, table_name, std::move(columns), std::move(values));
         }
 
-        Statement *Parser::parseSelect()
+        // Helper: Parse SELECT core (without ORDER BY/LIMIT for set operations)
+        SelectStmt *Parser::parseSelectCore(WithClause *with_clause, const SourceLocation &start_loc)
         {
-            auto start_loc = previous().location;
-
-            // Parse optional WITH clause (Phase 2 Wave 2: CTE support)
-            WithClause *with_clause = parseWithClause();
-
-            // If WITH clause was parsed, we already consumed SELECT, use current location
-            // Otherwise, use previous location (SELECT keyword location)
-            if (with_clause == nullptr)
-            {
-                // No WITH clause, start_loc is correct (SELECT keyword)
-            }
-
             std::vector<SelectItem> select_list;
 
             // Parse select list
@@ -2285,7 +2274,95 @@ namespace scratchbird
                 stmt->setGroupByClause(std::move(group_by));
             }
 
-            // Parse ORDER BY clause (Phase 1 Task 5.1)
+            return stmt;
+        }
+
+        Statement *Parser::parseSelect()
+        {
+            auto start_loc = previous().location;
+
+            // Parse optional WITH clause (Phase 2 Wave 2: CTE support)
+            WithClause *with_clause = parseWithClause();
+
+            // If WITH clause was parsed, we already consumed SELECT, use current location
+            // Otherwise, use previous location (SELECT keyword location)
+            if (with_clause == nullptr)
+            {
+                // No WITH clause, start_loc is correct (SELECT keyword)
+            }
+
+            // Parse the first SELECT (or left side of set operation)
+            SelectStmt *left = parseSelectCore(with_clause, start_loc);
+            if (!left)
+                return nullptr;
+
+            Statement *result = left;
+
+            // Check for set operations (UNION, INTERSECT, EXCEPT)
+            while (check(TokenType::KW_UNION) || check(TokenType::KW_INTERSECT) || check(TokenType::KW_EXCEPT))
+            {
+                auto op_loc = current().location;
+                SetOperationType op_type;
+
+                if (match(TokenType::KW_UNION))
+                {
+                    // Check for UNION ALL
+                    if (match(TokenType::KW_ALL))
+                    {
+                        op_type = SetOperationType::UNION_ALL;
+                    }
+                    else
+                    {
+                        op_type = SetOperationType::UNION;
+                    }
+                }
+                else if (match(TokenType::KW_INTERSECT))
+                {
+                    // Check for INTERSECT ALL
+                    if (match(TokenType::KW_ALL))
+                    {
+                        op_type = SetOperationType::INTERSECT_ALL;
+                    }
+                    else
+                    {
+                        op_type = SetOperationType::INTERSECT;
+                    }
+                }
+                else if (match(TokenType::KW_EXCEPT))
+                {
+                    // Check for EXCEPT ALL
+                    if (match(TokenType::KW_ALL))
+                    {
+                        op_type = SetOperationType::EXCEPT_ALL;
+                    }
+                    else
+                    {
+                        op_type = SetOperationType::EXCEPT;
+                    }
+                }
+                else
+                {
+                    break;  // No set operation
+                }
+
+                // Parse the right-hand SELECT
+                if (!consume(TokenType::KW_SELECT, "Expected SELECT after set operation"))
+                {
+                    synchronize();
+                    return nullptr;
+                }
+
+                auto right_loc = previous().location;
+                SelectStmt *right = parseSelectCore(nullptr, right_loc);
+                if (!right)
+                    return nullptr;
+
+                // Create SetOperationStmt (left-associative)
+                auto span = makeSpan(start_loc);
+                result = arena_.make<SetOperationStmt>(span, op_type, result, right);
+            }
+
+            // Parse ORDER BY clause (applies to final result)
             if (match(TokenType::KW_ORDER))
             {
                 if (!consume(TokenType::KW_BY, "Expected BY after ORDER"))
@@ -2295,16 +2372,32 @@ namespace scratchbird
                 }
 
                 std::vector<OrderByItem> order_by = parseOrderByClause();
-                stmt->setOrderByClause(std::move(order_by));
+
+                // Apply ORDER BY to the appropriate statement
+                if (result->kind() == ASTKind::SET_OPERATION)
+                {
+                    static_cast<SetOperationStmt*>(result)->setOrderByClause(std::move(order_by));
+                }
+                else
+                {
+                    static_cast<SelectStmt*>(result)->setOrderByClause(std::move(order_by));
+                }
             }
 
-            // Parse LIMIT clause (Phase 1 Task 5.2)
+            // Parse LIMIT clause (applies to final result)
             if (match(TokenType::KW_LIMIT))
             {
-                parseLimitClause(stmt);
+                if (result->kind() == ASTKind::SET_OPERATION)
+                {
+                    parseLimitClause(static_cast<SetOperationStmt*>(result));
+                }
+                else
+                {
+                    parseLimitClause(static_cast<SelectStmt*>(result));
+                }
             }
 
-            return stmt;
+            return result;
         }
 
         // Parse table reference with optional alias (Phase 1 Task 3.1)
@@ -5387,6 +5480,38 @@ namespace scratchbird
 
         // Parse LIMIT/OFFSET clause
         void Parser::parseLimitClause(SelectStmt *stmt)
+        {
+            // LIMIT count
+            if (!check(TokenType::INTEGER_LITERAL))
+            {
+                error("Expected integer literal after LIMIT");
+                synchronize();
+                return;
+            }
+
+            int64_t limit_count = current().value.int_value;
+            advance();
+
+            stmt->setLimitCount(limit_count);
+
+            // Optional OFFSET
+            if (match(TokenType::KW_OFFSET))
+            {
+                if (!check(TokenType::INTEGER_LITERAL))
+                {
+                    error("Expected integer literal after OFFSET");
+                    synchronize();
+                    return;
+                }
+
+                int64_t offset_count = current().value.int_value;
+                advance();
+
+                stmt->setOffsetCount(offset_count);
+            }
+        }
+
+        void Parser::parseLimitClause(SetOperationStmt *stmt)
         {
             // LIMIT count
             if (!check(TokenType::INTEGER_LITERAL))
