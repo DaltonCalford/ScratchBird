@@ -560,6 +560,10 @@ namespace scratchbird
             bool return_requested_ = false;
             Value return_value_;
 
+            // Current exception state (for re-raise)
+            bool has_current_exception_ = false;
+            std::string current_exception_message_;
+
             // PSQL statement execution methods
             void executeFunction();          // Execute CREATE FUNCTION
             void executeProcedure();         // Execute CREATE PROCEDURE
@@ -572,6 +576,8 @@ namespace scratchbird
             void executeExitStatement();     // Execute EXIT statement
             void executeReturnStatement();   // Execute RETURN statement
             void executeRaiseStatement();    // Execute RAISE exception
+            void executeTryStatement();      // Execute TRY block with exception handlers
+            void executeExceptHandler();     // Execute EXCEPT handler block
 
             // PSQL variable operations
             void executeVarLoad();           // Load variable onto stack
