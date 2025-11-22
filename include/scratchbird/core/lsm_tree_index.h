@@ -19,6 +19,9 @@ namespace core
 
 // Forward declarations
 class TransactionManager;
+class Database;
+struct UuidV7Bytes;  // ID typedef
+using ID = UuidV7Bytes;
 
 // ============================================================================
 // Entry Types
@@ -361,6 +364,21 @@ public:
      * Open existing LSM-Tree index (loads SSTables, starts compaction thread)
      */
     Status open(ErrorContext *ctx = nullptr);
+
+    /**
+     * Open an existing LSM-Tree index (static factory for executor template)
+     * Constructs index path from database and index UUID
+     *
+     * @param db Database instance
+     * @param index_uuid Index UUID
+     * @param root_page Ignored for LSM-Tree (file-based, not page-based)
+     * @param ctx Error context
+     * @return Unique pointer to opened index, or nullptr on error
+     */
+    static std::unique_ptr<LSMTreeIndex> open(Database* db,
+                                               const ID& index_uuid,
+                                               uint32_t root_page,
+                                               ErrorContext* ctx = nullptr);
 
     /**
      * Close index (stops compaction, flushes memtable)
