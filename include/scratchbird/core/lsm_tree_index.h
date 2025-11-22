@@ -106,8 +106,10 @@ private:
     mutable std::mutex mutex_;
 };
 
-// Forward declaration
+// Forward declarations
 class LSMBloomFilter;
+class Compressor;
+enum class CompressionType : uint8_t;
 
 // ============================================================================
 // SSTableWriter - Writes sorted string table to disk
@@ -116,7 +118,9 @@ class LSMBloomFilter;
 class SSTableWriter
 {
 public:
-    SSTableWriter(const std::string &file_path, size_t block_size = 4096);
+    SSTableWriter(const std::string &file_path,
+                  size_t block_size = 4096,
+                  CompressionType compression = static_cast<CompressionType>(0));
     ~SSTableWriter();
 
     // Open file for writing
@@ -152,6 +156,10 @@ private:
 
     // Bloom filter for read optimization
     std::unique_ptr<LSMBloomFilter> bloom_filter_;
+
+    // Compression
+    CompressionType compression_type_;
+    std::unique_ptr<Compressor> compressor_;
 };
 
 // ============================================================================
@@ -232,6 +240,10 @@ private:
 
     // Bloom filter for read optimization (loaded from SSTable footer)
     std::unique_ptr<LSMBloomFilter> bloom_filter_;
+
+    // Compression (loaded from SSTable footer)
+    CompressionType compression_type_;
+    std::unique_ptr<Compressor> compressor_;
 };
 
 // ============================================================================
