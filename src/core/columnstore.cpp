@@ -52,10 +52,6 @@ ColumnstoreIndex::ColumnstoreIndex(Database *db, SBColumnstoreIndex index_info)
 {
 }
 
-ColumnstoreIndex::~ColumnstoreIndex()
-{
-}
-
 // ============================================================================
 // Factory Methods
 // ============================================================================
