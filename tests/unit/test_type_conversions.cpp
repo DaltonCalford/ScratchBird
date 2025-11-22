@@ -798,7 +798,3 @@ TEST_F(TypeConversionTest, Varchar_ToMoney_Invalid) {
     EXPECT_FALSE(money_val.has_value());
 }
 
-int main(int argc, char **argv) {
-    ::testing::InitGoogleTest(&argc, argv);
-    return RUN_ALL_TESTS();
-}
