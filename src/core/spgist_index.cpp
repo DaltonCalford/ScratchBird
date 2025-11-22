@@ -551,17 +551,25 @@ Status SPGiSTIndex::insertRecursive(uint64_t page_num,
 
 Status SPGiSTIndex::search(const std::vector<uint8_t>& query,
                           uint64_t current_xid,
-                          std::vector<TID>& results,
+                          std::vector<TID>* results,
                           ErrorContext* ctx)
 {
+    if (!results)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Results vector cannot be null");
+        return Status::INVALID_ARGUMENT;
+    }
+
     std::shared_lock lock(mutex_);
+
+    results->clear();
 
     if (root_page_ == 0)
     {
         return Status::OK;
     }
 
-    return searchRecursive(root_page_, query, current_xid, results, ctx);
+    return searchRecursive(root_page_, query, current_xid, *results, ctx);
 }
 
 Status SPGiSTIndex::searchRecursive(uint64_t page_num,

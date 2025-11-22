@@ -280,9 +280,10 @@ namespace scratchbird
             // Find all tuple IDs containing a specific key
             // Firebird MGA: Uses TIP-based visibility filtering (NOT snapshots)
             // Per MGA_RULES.md Rule 11: Use TransactionId, NOT Snapshot*
-            std::vector<TID> find(const void *key_data, size_t key_len,
-                                  uint64_t current_xid,
-                                  ErrorContext *ctx = nullptr);
+            Status find(const void *key_data, size_t key_len,
+                        uint64_t current_xid,
+                        std::vector<TID>* results,
+                        ErrorContext *ctx = nullptr);
 
             // Find tuple IDs matching ALL keys (AND operation)
             // Firebird MGA: Uses TIP-based visibility filtering (NOT snapshots)

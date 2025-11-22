@@ -1113,7 +1113,7 @@ namespace scratchbird::core
     }
 
     // Firebird MGA: Check if index entry is visible using TIP-based visibility
-    bool BTree::isEntryVisible(uint64_t xmin, uint64_t xmax, uint64_t reader_xid) const
+    bool BTree::isEntryVisible(uint64_t xmin, uint64_t xmax, uint64_t current_xid) const
     {
         // ===========================================================================================
         // FIREBIRD MGA VISIBILITY - TIP-based, NOT snapshot-based
@@ -1121,7 +1121,7 @@ namespace scratchbird::core
         // ===========================================================================================
 
         // If no transaction specified, entry is always visible (used by VACUUM, etc.)
-        if (reader_xid == 0)
+        if (current_xid == 0)
         {
             return true;
         }
@@ -1140,14 +1140,14 @@ namespace scratchbird::core
         }
 
         // Own changes always visible
-        if (xmin == reader_xid)
+        if (xmin == current_xid)
         {
             return true;
         }
 
         // Check if creating transaction (xmin) is visible using TIP-based visibility
         // This is Firebird MGA: checks if xmin is COMMITTED and older than reader
-        if (!txn_mgr->isVersionVisible(xmin, reader_xid))
+        if (!txn_mgr->isVersionVisible(xmin, current_xid))
         {
             return false; // Entry not created or created by uncommitted/aborted transaction
         }
@@ -1156,7 +1156,7 @@ namespace scratchbird::core
         if (xmax != 0)
         {
             // If deleting transaction is visible, the entry is deleted
-            if (txn_mgr->isVersionVisible(xmax, reader_xid))
+            if (txn_mgr->isVersionVisible(xmax, current_xid))
             {
                 return false; // Entry was deleted
             }
@@ -2036,7 +2036,7 @@ namespace scratchbird::core
         }
 
         // Compact the page
-        status = compactPage(reinterpret_cast<uint8_t *>(page_data_ptr), page_size, stats);
+        status = compactPage(reinterpret_cast<uint8_t *>(page_data_ptr), page_size, stats, ctx);
 
         if (status == Status::OK)
         {
@@ -2052,7 +2052,7 @@ namespace scratchbird::core
         return status;
     }
 
-    auto BTree::compactPage(uint8_t *page_data, uint32_t page_size, VacuumStats &stats) -> Status
+    auto BTree::compactPage(uint8_t *page_data, uint32_t page_size, VacuumStats &stats, ErrorContext *ctx) -> Status
     {
         auto *page = reinterpret_cast<SBBTreePage *>(page_data);
         auto *offsets = reinterpret_cast<uint16_t *>(page_data + sizeof(SBBTreePage));

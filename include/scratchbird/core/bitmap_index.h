@@ -183,10 +183,11 @@ namespace scratchbird
             // Find all tuple IDs matching a value
             // Firebird MGA: Uses TIP-based visibility filtering (NOT snapshots)
             // Per MGA_RULES.md Rule 11: Use TransactionId, NOT Snapshot*
-            std::vector<TID> find(
+            Status find(
                 const void *value_data,
                 size_t value_len,
                 uint64_t current_xid,
+                std::vector<TID>* results,
                 ErrorContext *ctx = nullptr);
 
             // Logical operations on bitmaps

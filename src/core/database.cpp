@@ -587,7 +587,7 @@ namespace scratchbird::core
         }
 
         // Validate header
-        status = validate_header();
+        status = validate_header(ctx);
         if (status != Status::OK)
         {
             close();
@@ -962,40 +962,46 @@ namespace scratchbird::core
         return Status::OK;
     }
 
-    auto Database::validate_header() -> Status
+    auto Database::validate_header(ErrorContext *ctx) -> Status
     {
         if (header_ == nullptr)
         {
+            SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "Database header is null");
             return Status::PAGE_CORRUPT;
         }
 
         // Check magic
         if (header_->page_header.magic != K_MAGIC_SBRD)
         {
+            SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "Invalid magic number in database header");
             return Status::PAGE_CORRUPT;
         }
 
         // Check page type
         if (header_->page_header.page_type != PAGE_TYPE_DATABASE_HEADER)
         {
+            SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "Invalid page type in database header");
             return Status::PAGE_CORRUPT;
         }
 
         // Check page ID
         if (header_->page_header.page_id != 0)
         {
+            SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "Database header page ID must be 0");
             return Status::PAGE_CORRUPT;
         }
 
         // Check block size consistency
         if (header_->block_size != header_->page_header.page_size)
         {
+            SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "Block size inconsistency in database header");
             return Status::PAGE_CORRUPT;
         }
 
         // Validate checksum
         if (!validatePageChecksum(reinterpret_cast<uint8_t *>(header_), page_size_))
         {
+            SET_ERROR_CONTEXT(ctx, Status::CHECKSUM_MISMATCH, "Database header checksum validation failed");
             return Status::CHECKSUM_MISMATCH;
         }
 

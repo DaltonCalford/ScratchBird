@@ -699,26 +699,41 @@ namespace scratchbird
             return visible_tids;
         }
 
-        std::vector<TID> BitmapIndex::find(
+        Status BitmapIndex::find(
             const void *value_data,
             size_t value_len,
             uint64_t current_xid,
+            std::vector<TID>* results,
             ErrorContext *ctx)
         {
-            std::vector<TID> results;
+            if (!value_data || value_len == 0)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Invalid value data for bitmap index find");
+                return Status::INVALID_ARGUMENT;
+            }
+
+            if (!results)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Results vector cannot be null");
+                return Status::INVALID_ARGUMENT;
+            }
+
+            results->clear();
 
             uint32_t bitmap_root = 0;
             uint32_t cardinality = findDictionaryEntry(value_data, value_len, &bitmap_root, ctx);
 
             if (bitmap_root == 0)
             {
-                return results; // Value not found
+                // Value not found - return empty results (OK status)
+                return Status::OK;
             }
 
             auto bitmap = loadBitmap(bitmap_root, ctx);
             if (!bitmap)
             {
-                return results;
+                SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Failed to load bitmap for bitmap index find");
+                return Status::NOT_FOUND;
             }
 
             // TASK-CRITICAL-2: Index-level visibility filtering (no heap access!)
@@ -726,18 +741,18 @@ namespace scratchbird
             // This eliminates the 20-40% overhead from heap-level post-filtering
             TransactionManager *txn_mgr = db_->transaction_manager();
             std::vector<uint64_t> tid_values = bitmap->toVisibleArray(current_xid, txn_mgr, ctx);
-            results.reserve(tid_values.size());
+            results->reserve(tid_values.size());
 
             // Convert 64-bit values to TID structs
             for (uint64_t tid_value : tid_values)
             {
                 TID tid = convertLegacyTID(tid_value);
-                results.push_back(tid);
+                results->push_back(tid);
             }
 
             // Note: No heap-level post-filtering needed - visibility already checked at index level!
 
-            return results;
+            return Status::OK;
         }
 
         std::vector<TID> BitmapIndex::findAnd(
