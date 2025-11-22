@@ -16985,7 +16985,7 @@ namespace scratchbird
             // Use the routeIndexSearch helper to search the appropriate index type
             core::ErrorContext ctx;
             auto status = routeIndexSearch(
-                index_info.index_type,
+                static_cast<IndexType>(index_info.index_type),
                 index_info.index_id,
                 key_bytes,
                 current_xid,
@@ -19448,7 +19448,7 @@ namespace scratchbird
             core::ID index_uuid;
             for (int i = 0; i < 16; i++)
             {
-                if (pc_ >= bytecode_.size())
+                if (pc_ >= bytecode_size_)
                 {
                     error("Incomplete index UUID in EXT_INDEX_INSERT");
                     return;
@@ -19457,7 +19457,7 @@ namespace scratchbird
             }
 
             // Read index type (1 byte)
-            if (pc_ >= bytecode_.size())
+            if (pc_ >= bytecode_size_)
             {
                 error("Missing index type in EXT_INDEX_INSERT");
                 return;
@@ -19465,7 +19465,7 @@ namespace scratchbird
             IndexType index_type = static_cast<IndexType>(bytecode_[pc_++]);
 
             // Read key length (2 bytes, little-endian)
-            if (pc_ + 1 >= bytecode_.size())
+            if (pc_ + 1 >= bytecode_size_)
             {
                 error("Incomplete key length in EXT_INDEX_INSERT");
                 return;
@@ -19474,16 +19474,16 @@ namespace scratchbird
             pc_ += 2;
 
             // Read key data
-            if (pc_ + key_len > bytecode_.size())
+            if (pc_ + key_len > bytecode_size_)
             {
                 error("Incomplete key data in EXT_INDEX_INSERT");
                 return;
             }
-            std::vector<uint8_t> key(bytecode_.begin() + pc_, bytecode_.begin() + pc_ + key_len);
+            std::vector<uint8_t> key(&bytecode_[0] + pc_, &bytecode_[0] + pc_ + key_len);
             pc_ += key_len;
 
             // Read TID (10 bytes: GPID 8 + slot 2)
-            if (pc_ + 10 > bytecode_.size())
+            if (pc_ + 10 > bytecode_size_)
             {
                 error("Incomplete TID in EXT_INDEX_INSERT");
                 return;
@@ -19498,7 +19498,7 @@ namespace scratchbird
             core::TID tid(gpid, slot);
 
             // Read xmin (8 bytes)
-            if (pc_ + 8 > bytecode_.size())
+            if (pc_ + 8 > bytecode_size_)
             {
                 error("Incomplete xmin in EXT_INDEX_INSERT");
                 return;
@@ -19527,7 +19527,7 @@ namespace scratchbird
             core::ID index_uuid;
             for (int i = 0; i < 16; i++)
             {
-                if (pc_ >= bytecode_.size())
+                if (pc_ >= bytecode_size_)
                 {
                     error("Incomplete index UUID in EXT_INDEX_SEARCH");
                     return;
@@ -19536,7 +19536,7 @@ namespace scratchbird
             }
 
             // Read index type (1 byte)
-            if (pc_ >= bytecode_.size())
+            if (pc_ >= bytecode_size_)
             {
                 error("Missing index type in EXT_INDEX_SEARCH");
                 return;
@@ -19544,7 +19544,7 @@ namespace scratchbird
             IndexType index_type = static_cast<IndexType>(bytecode_[pc_++]);
 
             // Read key length (2 bytes)
-            if (pc_ + 1 >= bytecode_.size())
+            if (pc_ + 1 >= bytecode_size_)
             {
                 error("Incomplete key length in EXT_INDEX_SEARCH");
                 return;
@@ -19553,16 +19553,16 @@ namespace scratchbird
             pc_ += 2;
 
             // Read key data
-            if (pc_ + key_len > bytecode_.size())
+            if (pc_ + key_len > bytecode_size_)
             {
                 error("Incomplete key data in EXT_INDEX_SEARCH");
                 return;
             }
-            std::vector<uint8_t> key(bytecode_.begin() + pc_, bytecode_.begin() + pc_ + key_len);
+            std::vector<uint8_t> key(&bytecode_[0] + pc_, &bytecode_[0] + pc_ + key_len);
             pc_ += key_len;
 
             // Read current_xid (8 bytes)
-            if (pc_ + 8 > bytecode_.size())
+            if (pc_ + 8 > bytecode_size_)
             {
                 error("Incomplete current_xid in EXT_INDEX_SEARCH");
                 return;
@@ -19599,7 +19599,7 @@ namespace scratchbird
             core::ID index_uuid;
             for (int i = 0; i < 16; i++)
             {
-                if (pc_ >= bytecode_.size())
+                if (pc_ >= bytecode_size_)
                 {
                     error("Incomplete index UUID in EXT_INDEX_SCAN");
                     return;
@@ -19608,7 +19608,7 @@ namespace scratchbird
             }
 
             // Read index type (1 byte)
-            if (pc_ >= bytecode_.size())
+            if (pc_ >= bytecode_size_)
             {
                 error("Missing index type in EXT_INDEX_SCAN");
                 return;
@@ -19616,7 +19616,7 @@ namespace scratchbird
             IndexType index_type = static_cast<IndexType>(bytecode_[pc_++]);
 
             // Read start key length (2 bytes, little-endian)
-            if (pc_ + 1 >= bytecode_.size())
+            if (pc_ + 1 >= bytecode_size_)
             {
                 error("Incomplete start key length in EXT_INDEX_SCAN");
                 return;
@@ -19629,7 +19629,7 @@ namespace scratchbird
             const std::vector<uint8_t>* start_key_ptr = nullptr;
             if (start_key_len != 0xFFFF)
             {
-                if (pc_ + start_key_len > bytecode_.size())
+                if (pc_ + start_key_len > bytecode_size_)
                 {
                     error("Incomplete start key data in EXT_INDEX_SCAN");
                     return;
@@ -19643,7 +19643,7 @@ namespace scratchbird
             }
 
             // Read end key length (2 bytes, little-endian)
-            if (pc_ + 1 >= bytecode_.size())
+            if (pc_ + 1 >= bytecode_size_)
             {
                 error("Incomplete end key length in EXT_INDEX_SCAN");
                 return;
@@ -19656,7 +19656,7 @@ namespace scratchbird
             const std::vector<uint8_t>* end_key_ptr = nullptr;
             if (end_key_len != 0xFFFF)
             {
-                if (pc_ + end_key_len > bytecode_.size())
+                if (pc_ + end_key_len > bytecode_size_)
                 {
                     error("Incomplete end key data in EXT_INDEX_SCAN");
                     return;
@@ -19670,7 +19670,7 @@ namespace scratchbird
             }
 
             // Read flags (1 byte)
-            if (pc_ >= bytecode_.size())
+            if (pc_ >= bytecode_size_)
             {
                 error("Missing flags in EXT_INDEX_SCAN");
                 return;
@@ -19680,7 +19680,7 @@ namespace scratchbird
             bool end_inclusive = (flags & 0x02) != 0;
 
             // Read current_xid (8 bytes, little-endian)
-            if (pc_ + 7 >= bytecode_.size())
+            if (pc_ + 7 >= bytecode_size_)
             {
                 error("Incomplete current_xid in EXT_INDEX_SCAN");
                 return;
@@ -19717,7 +19717,7 @@ namespace scratchbird
             core::ID index_uuid;
             for (int i = 0; i < 16; i++)
             {
-                if (pc_ >= bytecode_.size())
+                if (pc_ >= bytecode_size_)
                 {
                     error("Incomplete index UUID in EXT_INDEX_DELETE");
                     return;
@@ -19726,7 +19726,7 @@ namespace scratchbird
             }
 
             // Read index type (1 byte)
-            if (pc_ >= bytecode_.size())
+            if (pc_ >= bytecode_size_)
             {
                 error("Missing index type in EXT_INDEX_DELETE");
                 return;
@@ -19734,7 +19734,7 @@ namespace scratchbird
             IndexType index_type = static_cast<IndexType>(bytecode_[pc_++]);
 
             // Read key length (2 bytes)
-            if (pc_ + 1 >= bytecode_.size())
+            if (pc_ + 1 >= bytecode_size_)
             {
                 error("Incomplete key length in EXT_INDEX_DELETE");
                 return;
@@ -19743,16 +19743,16 @@ namespace scratchbird
             pc_ += 2;
 
             // Read key data
-            if (pc_ + key_len > bytecode_.size())
+            if (pc_ + key_len > bytecode_size_)
             {
                 error("Incomplete key data in EXT_INDEX_DELETE");
                 return;
             }
-            std::vector<uint8_t> key(bytecode_.begin() + pc_, bytecode_.begin() + pc_ + key_len);
+            std::vector<uint8_t> key(&bytecode_[0] + pc_, &bytecode_[0] + pc_ + key_len);
             pc_ += key_len;
 
             // Read TID (10 bytes)
-            if (pc_ + 10 > bytecode_.size())
+            if (pc_ + 10 > bytecode_size_)
             {
                 error("Incomplete TID in EXT_INDEX_DELETE");
                 return;
@@ -19767,7 +19767,7 @@ namespace scratchbird
             core::TID tid(gpid, slot);
 
             // Read xmax (8 bytes)
-            if (pc_ + 8 > bytecode_.size())
+            if (pc_ + 8 > bytecode_size_)
             {
                 error("Incomplete xmax in EXT_INDEX_DELETE");
                 return;
@@ -19809,7 +19809,7 @@ namespace scratchbird
             core::ID index_uuid;
             for (int i = 0; i < 16; i++)
             {
-                if (pc_ >= bytecode_.size())
+                if (pc_ >= bytecode_size_)
                 {
                     error("Incomplete index UUID in EXT_GIN_INSERT");
                     return;
@@ -19818,7 +19818,7 @@ namespace scratchbird
             }
 
             // Read value length (2 bytes, little-endian)
-            if (pc_ + 1 >= bytecode_.size())
+            if (pc_ + 1 >= bytecode_size_)
             {
                 error("Incomplete value length in EXT_GIN_INSERT");
                 return;
@@ -19827,16 +19827,16 @@ namespace scratchbird
             value_len |= (static_cast<uint16_t>(bytecode_[pc_++]) << 8);
 
             // Read value data
-            if (pc_ + value_len > bytecode_.size())
+            if (pc_ + value_len > bytecode_size_)
             {
                 error("Incomplete value data in EXT_GIN_INSERT");
                 return;
             }
-            std::vector<uint8_t> value(bytecode_.begin() + pc_, bytecode_.begin() + pc_ + value_len);
+            std::vector<uint8_t> value(&bytecode_[0] + pc_, &bytecode_[0] + pc_ + value_len);
             pc_ += value_len;
 
             // Read TID (10 bytes: GPID 8 + slot 2)
-            if (pc_ + 10 > bytecode_.size())
+            if (pc_ + 10 > bytecode_size_)
             {
                 error("Incomplete TID in EXT_GIN_INSERT");
                 return;
@@ -19851,7 +19851,7 @@ namespace scratchbird
             core::TID tid(gpid, slot);
 
             // Read xmin (8 bytes, little-endian)
-            if (pc_ + 7 >= bytecode_.size())
+            if (pc_ + 7 >= bytecode_size_)
             {
                 error("Incomplete xmin in EXT_GIN_INSERT");
                 return;
@@ -19863,7 +19863,7 @@ namespace scratchbird
             }
 
             // Read extractor ID (2 bytes)
-            if (pc_ + 1 >= bytecode_.size())
+            if (pc_ + 1 >= bytecode_size_)
             {
                 error("Incomplete extractor ID in EXT_GIN_INSERT");
                 return;
@@ -19875,15 +19875,15 @@ namespace scratchbird
             // NOTE: This assumes a key extractor registry exists
             // For now, we'll use a placeholder implementation
             core::ErrorContext err_ctx;
-            auto index_info_opt = db_->catalog_manager()->getIndex(index_uuid, &err_ctx);
-            if (!index_info_opt.has_value())
+            core::CatalogManager::IndexInfo index_info;
+            auto status = db_->catalog_manager()->getIndex(index_uuid, index_info, &err_ctx);
+            if (status != core::Status::OK)
             {
                 error("Index not found: " + std::string(err_ctx.message));
                 return;
             }
-            auto& index_info = index_info_opt.value();
 
-            auto gin = core::GinIndex::open(db_, index_uuid.bytes, index_info.root_page, &err_ctx);
+            auto gin = core::GinIndex::open(db_, index_uuid, index_info.root_page, &err_ctx);
             if (!gin)
             {
                 error("Failed to open GIN index");
@@ -19899,9 +19899,9 @@ namespace scratchbird
 
             // Note: xmin is not used in GIN insert API - GIN handles transaction tracking internally
             (void)xmin; // Suppress unused parameter warning
-            core::Status status = gin->insert(value.data(), value.size(), tid, extractor, &err_ctx);
+            core::Status gin_status = gin->insert(value.data(), value.size(), tid, extractor, &err_ctx);
 
-            if (status != core::Status::OK)
+            if (gin_status != core::Status::OK)
             {
                 error("GIN insert failed: " + std::string(err_ctx.message));
             }
@@ -19920,7 +19920,7 @@ namespace scratchbird
             core::ID index_uuid;
             for (int i = 0; i < 16; i++)
             {
-                if (pc_ >= bytecode_.size())
+                if (pc_ >= bytecode_size_)
                 {
                     error("Incomplete index UUID in EXT_GIN_SEARCH");
                     return;
@@ -19929,7 +19929,7 @@ namespace scratchbird
             }
 
             // Read query length (2 bytes, little-endian)
-            if (pc_ + 1 >= bytecode_.size())
+            if (pc_ + 1 >= bytecode_size_)
             {
                 error("Incomplete query length in EXT_GIN_SEARCH");
                 return;
@@ -19938,16 +19938,16 @@ namespace scratchbird
             query_len |= (static_cast<uint16_t>(bytecode_[pc_++]) << 8);
 
             // Read query data
-            if (pc_ + query_len > bytecode_.size())
+            if (pc_ + query_len > bytecode_size_)
             {
                 error("Incomplete query data in EXT_GIN_SEARCH");
                 return;
             }
-            std::vector<uint8_t> query(bytecode_.begin() + pc_, bytecode_.begin() + pc_ + query_len);
+            std::vector<uint8_t> query(&bytecode_[0] + pc_, &bytecode_[0] + pc_ + query_len);
             pc_ += query_len;
 
             // Read current_xid (8 bytes, little-endian)
-            if (pc_ + 7 >= bytecode_.size())
+            if (pc_ + 7 >= bytecode_size_)
             {
                 error("Incomplete current_xid in EXT_GIN_SEARCH");
                 return;
@@ -19959,7 +19959,7 @@ namespace scratchbird
             }
 
             // Read extractor ID (2 bytes)
-            if (pc_ + 1 >= bytecode_.size())
+            if (pc_ + 1 >= bytecode_size_)
             {
                 error("Incomplete extractor ID in EXT_GIN_SEARCH");
                 return;
@@ -19969,15 +19969,15 @@ namespace scratchbird
 
             // Open GIN index and perform search
             core::ErrorContext err_ctx;
-            auto index_info_opt = db_->catalog_manager()->getIndex(index_uuid, &err_ctx);
-            if (!index_info_opt.has_value())
+            core::CatalogManager::IndexInfo index_info;
+            auto status_get = db_->catalog_manager()->getIndex(index_uuid, index_info, &err_ctx);
+            if (status_get != core::Status::OK)
             {
                 error("Index not found: " + std::string(err_ctx.message));
                 return;
             }
-            auto& index_info = index_info_opt.value();
 
-            auto gin = core::GinIndex::open(db_, index_uuid.bytes, index_info.root_page, &err_ctx);
+            auto gin = core::GinIndex::open(db_, index_uuid, index_info.root_page, &err_ctx);
             if (!gin)
             {
                 error("Failed to open GIN index");
@@ -19985,8 +19985,8 @@ namespace scratchbird
             }
 
             std::vector<core::TID> results;
-            // TODO: Implement key extractor registry
-            core::Status status = gin->search(query, current_xid, &results, nullptr, &err_ctx);
+            // GIN uses find() for searching, not search()
+            core::Status status = gin->find(query.data(), query.size(), current_xid, &results, &err_ctx);
 
             if (status != core::Status::OK)
             {
@@ -20011,7 +20011,7 @@ namespace scratchbird
             core::ID index_uuid;
             for (int i = 0; i < 16; i++)
             {
-                if (pc_ >= bytecode_.size())
+                if (pc_ >= bytecode_size_)
                 {
                     error("Incomplete index UUID in EXT_HNSW_INSERT");
                     return;
@@ -20020,7 +20020,7 @@ namespace scratchbird
             }
 
             // Read vector dimension (2 bytes, little-endian)
-            if (pc_ + 1 >= bytecode_.size())
+            if (pc_ + 1 >= bytecode_size_)
             {
                 error("Incomplete vector dimension in EXT_HNSW_INSERT");
                 return;
@@ -20030,7 +20030,7 @@ namespace scratchbird
 
             // Read vector data (dimension * 4 bytes for float32)
             uint32_t vector_bytes = dimension * 4;
-            if (pc_ + vector_bytes > bytecode_.size())
+            if (pc_ + vector_bytes > bytecode_size_)
             {
                 error("Incomplete vector data in EXT_HNSW_INSERT");
                 return;
@@ -20048,7 +20048,7 @@ namespace scratchbird
             }
 
             // Read TID (10 bytes: GPID 8 + slot 2)
-            if (pc_ + 10 > bytecode_.size())
+            if (pc_ + 10 > bytecode_size_)
             {
                 error("Incomplete TID in EXT_HNSW_INSERT");
                 return;
@@ -20063,7 +20063,7 @@ namespace scratchbird
             core::TID tid(gpid, slot);
 
             // Read xmin (8 bytes, little-endian)
-            if (pc_ + 7 >= bytecode_.size())
+            if (pc_ + 7 >= bytecode_size_)
             {
                 error("Incomplete xmin in EXT_HNSW_INSERT");
                 return;
@@ -20076,25 +20076,26 @@ namespace scratchbird
 
             // Create VectorValue and insert into HNSW index
             core::ErrorContext err_ctx;
-            auto index_info_opt = db_->catalog_manager()->getIndex(index_uuid, &err_ctx);
-            if (!index_info_opt.has_value())
+            core::CatalogManager::IndexInfo index_info;
+            auto status_idx = db_->catalog_manager()->getIndex(index_uuid, index_info, &err_ctx);
+            if (status_idx != core::Status::OK)
             {
                 error("Index not found: " + std::string(err_ctx.message));
                 return;
             }
-            auto& index_info = index_info_opt.value();
 
-            auto hnsw = core::HnswIndex::open(db_, index_uuid.bytes, index_info.root_page, &err_ctx);
+            auto hnsw = core::HnswIndex::open(db_, index_uuid, index_info.root_page, &err_ctx);
             if (!hnsw)
             {
                 error("Failed to open HNSW index");
                 return;
             }
 
-            // Create VectorValue
-            core::VectorValue vec(dimension, core::VectorDataType::FLOAT32, vector_data.data());
+            // Create VectorValue from float vector
+            core::VectorValue vec(vector_data);
 
-            core::Status status = hnsw->insert(vec, tid, xmin, &err_ctx);
+            // HNSW insert doesn't take xmin parameter - it manages versioning internally
+            core::Status status = hnsw->insert(vec, tid, &err_ctx);
 
             if (status != core::Status::OK)
             {
@@ -20115,7 +20116,7 @@ namespace scratchbird
             core::ID index_uuid;
             for (int i = 0; i < 16; i++)
             {
-                if (pc_ >= bytecode_.size())
+                if (pc_ >= bytecode_size_)
                 {
                     error("Incomplete index UUID in EXT_HNSW_SEARCH");
                     return;
@@ -20124,7 +20125,7 @@ namespace scratchbird
             }
 
             // Read vector dimension (2 bytes, little-endian)
-            if (pc_ + 1 >= bytecode_.size())
+            if (pc_ + 1 >= bytecode_size_)
             {
                 error("Incomplete vector dimension in EXT_HNSW_SEARCH");
                 return;
@@ -20134,7 +20135,7 @@ namespace scratchbird
 
             // Read vector data (dimension * 4 bytes for float32)
             uint32_t vector_bytes = dimension * 4;
-            if (pc_ + vector_bytes > bytecode_.size())
+            if (pc_ + vector_bytes > bytecode_size_)
             {
                 error("Incomplete vector data in EXT_HNSW_SEARCH");
                 return;
@@ -20151,7 +20152,7 @@ namespace scratchbird
             }
 
             // Read k (2 bytes, little-endian)
-            if (pc_ + 1 >= bytecode_.size())
+            if (pc_ + 1 >= bytecode_size_)
             {
                 error("Incomplete k in EXT_HNSW_SEARCH");
                 return;
@@ -20160,7 +20161,7 @@ namespace scratchbird
             k |= (static_cast<uint16_t>(bytecode_[pc_++]) << 8);
 
             // Read current_xid (8 bytes, little-endian)
-            if (pc_ + 7 >= bytecode_.size())
+            if (pc_ + 7 >= bytecode_size_)
             {
                 error("Incomplete current_xid in EXT_HNSW_SEARCH");
                 return;
@@ -20173,25 +20174,25 @@ namespace scratchbird
 
             // Open HNSW index and perform k-NN search
             core::ErrorContext err_ctx;
-            auto index_info_opt = db_->catalog_manager()->getIndex(index_uuid, &err_ctx);
-            if (!index_info_opt.has_value())
+            core::CatalogManager::IndexInfo index_info;
+            auto status_hnsw = db_->catalog_manager()->getIndex(index_uuid, index_info, &err_ctx);
+            if (status_hnsw != core::Status::OK)
             {
                 error("Index not found: " + std::string(err_ctx.message));
                 return;
             }
-            auto& index_info = index_info_opt.value();
 
-            auto hnsw = core::HnswIndex::open(db_, index_uuid.bytes, index_info.root_page, &err_ctx);
+            auto hnsw = core::HnswIndex::open(db_, index_uuid, index_info.root_page, &err_ctx);
             if (!hnsw)
             {
                 error("Failed to open HNSW index");
                 return;
             }
 
-            // Create VectorValue for query
-            core::VectorValue query_vec(dimension, core::VectorDataType::FLOAT32, vector_data.data());
+            // Create VectorValue for query from float vector
+            core::VectorValue query_vec(vector_data);
 
-            std::vector<core::TID> results;
+            std::vector<core::HnswSearchResult> results;
             core::Status status = hnsw->search(query_vec, k, current_xid, &results, &err_ctx);
 
             if (status != core::Status::OK)
@@ -20277,16 +20278,16 @@ namespace scratchbird
                 return;
             }
 
-            auto columnstore = core::ColumnstoreIndex::open(db_, index_uuid.bytes, index_info.root_page, &err_ctx);
+            auto columnstore = core::ColumnstoreIndex::open(db_, index_uuid, index_info.root_page, &err_ctx);
             if (!columnstore)
             {
                 error("Failed to open Columnstore index");
                 return;
             }
 
-            core::Status status = columnstore->insertColumn(column_id, row_count, column_data, &err_ctx);
+            core::Status insert_status = columnstore->insertColumn(column_id, row_count, column_data, &err_ctx);
 
-            if (status != core::Status::OK)
+            if (insert_status != core::Status::OK)
             {
                 error("Columnstore insert failed: " + std::string(err_ctx.message));
             }
@@ -20355,7 +20356,7 @@ namespace scratchbird
                 return;
             }
 
-            auto columnstore = core::ColumnstoreIndex::open(db_, index_uuid.bytes, index_info.root_page, &err_ctx);
+            auto columnstore = core::ColumnstoreIndex::open(db_, index_uuid, index_info.root_page, &err_ctx);
             if (!columnstore)
             {
                 error("Failed to open Columnstore index");
@@ -20363,9 +20364,9 @@ namespace scratchbird
             }
 
             std::vector<uint8_t> result_data;
-            core::Status status = columnstore->scanColumn(column_id, start_row, end_row, &result_data, &err_ctx);
+            core::Status scan_status = columnstore->scanColumn(column_id, start_row, end_row, &result_data, &err_ctx);
 
-            if (status != core::Status::OK)
+            if (scan_status != core::Status::OK)
             {
                 error("Columnstore scan failed: " + std::string(err_ctx.message));
                 return;
@@ -20426,12 +20427,11 @@ namespace scratchbird
 
                 case IndexType::GIST:
                 {
-                    auto gist = getOrOpenIndex<core::GistIndex>(index_uuid, type, index_info.root_page, ctx);
-                    if (gist)
-                    {
-                        return gist->insert(key, tid, xmin, ctx);
-                    }
-                    return core::Status::INTERNAL_ERROR;
+                    // GiST index has incomplete type issues - not fully integrated yet
+                    // TODO: Complete GiST index integration
+                    SET_ERROR_CONTEXT(ctx, core::Status::NOT_SUPPORTED,
+                                      "GiST index operations not yet fully supported");
+                    return core::Status::NOT_SUPPORTED;
                 }
 
                 case IndexType::SPGIST:
@@ -20588,12 +20588,11 @@ namespace scratchbird
 
                 case IndexType::GIST:
                 {
-                    auto gist = getOrOpenIndex<core::GistIndex>(index_uuid, type, index_info.root_page, ctx);
-                    if (gist)
-                    {
-                        return gist->search(key, current_xid, results_out, ctx);
-                    }
-                    return core::Status::INTERNAL_ERROR;
+                    // GiST index has incomplete type issues - not fully integrated yet
+                    // TODO: Complete GiST index integration
+                    SET_ERROR_CONTEXT(ctx, core::Status::NOT_SUPPORTED,
+                                      "GiST index operations not yet fully supported");
+                    return core::Status::NOT_SUPPORTED;
                 }
 
                 case IndexType::SPGIST:
@@ -20759,12 +20758,11 @@ namespace scratchbird
 
                 case IndexType::GIST:
                 {
-                    auto gist = getOrOpenIndex<core::GistIndex>(index_uuid, type, index_info.root_page, ctx);
-                    if (gist)
-                    {
-                        return gist->remove(key, tid, xmax, ctx);
-                    }
-                    return core::Status::INTERNAL_ERROR;
+                    // GiST index has incomplete type issues - not fully integrated yet
+                    // TODO: Complete GiST index integration
+                    SET_ERROR_CONTEXT(ctx, core::Status::NOT_SUPPORTED,
+                                      "GiST index operations not yet fully supported");
+                    return core::Status::NOT_SUPPORTED;
                 }
 
                 case IndexType::SPGIST:
@@ -20939,22 +20937,11 @@ namespace scratchbird
 
                 case IndexType::GIST:
                 {
-                    auto gist = getOrOpenIndex<core::GistIndex>(index_uuid, type, index_info.root_page, ctx);
-                    if (gist)
-                    {
-                        // GiST spatial/generalized scan
-                        if (!start_key)
-                        {
-                            if (ctx) {
-                                ctx->set(core::Status::INVALID_ARGUMENT, "GiST scan requires search predicate",
-                                        __FILE__, __LINE__, __func__);
-                            }
-                            return core::Status::INVALID_ARGUMENT;
-                        }
-
-                        return gist->search(*start_key, current_xid, results_out, ctx);
-                    }
-                    return core::Status::INTERNAL_ERROR;
+                    // GiST index has incomplete type issues - not fully integrated yet
+                    // TODO: Complete GiST index integration
+                    SET_ERROR_CONTEXT(ctx, core::Status::NOT_SUPPORTED,
+                                      "GiST index operations not yet fully supported");
+                    return core::Status::NOT_SUPPORTED;
                 }
 
                 case IndexType::SPGIST:
