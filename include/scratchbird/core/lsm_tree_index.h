@@ -161,6 +161,21 @@ private:
 class SSTableReader
 {
 public:
+    // Iterator for sequential SSTable scanning (for compaction)
+    class Iterator
+    {
+    public:
+        virtual ~Iterator() = default;
+        virtual bool isValid() const = 0;
+        virtual void next() = 0;
+        virtual const std::vector<uint8_t>& key() const = 0;
+        virtual const std::vector<uint8_t>& value() const = 0;
+        virtual uint64_t sequenceNumber() const = 0;
+        virtual uint8_t entryType() const = 0;
+        virtual uint64_t xmin() const = 0;
+        virtual uint64_t xmax() const = 0;
+    };
+
     SSTableReader(const std::string &file_path, size_t block_size = 4096);
     ~SSTableReader();
 
@@ -183,12 +198,18 @@ public:
                 std::vector<std::pair<std::vector<uint8_t>, std::vector<uint8_t>>> *entries_out,
                 ErrorContext *ctx = nullptr);
 
+    // Create iterator for sequential scanning (for compaction)
+    std::unique_ptr<Iterator> createIterator();
+
     // Get min/max keys
     std::vector<uint8_t> getMinKey() const { return min_key_; }
     std::vector<uint8_t> getMaxKey() const { return max_key_; }
 
     // Get file size
     uint64_t getFileSize() const { return file_size_; }
+
+    // Get file path
+    const std::string& getFilePath() const { return file_path_; }
 
     // Check if open
     bool isOpen() const { return fd_ >= 0; }

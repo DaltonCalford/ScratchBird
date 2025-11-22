@@ -838,5 +838,174 @@ Status SSTableReader::close(ErrorContext *ctx)
     return Status::OK;
 }
 
+// ============================================================================
+// SSTableReader::Iterator Implementation
+// ============================================================================
+
+class SSTableReaderIterator : public SSTableReader::Iterator
+{
+public:
+    SSTableReaderIterator(int fd, uint64_t file_size, size_t block_size)
+        : fd_(fd),
+          file_size_(file_size),
+          block_size_(block_size),
+          current_offset_(0),
+          valid_(false)
+    {
+        // Start reading from beginning of file
+        next();
+    }
+
+    bool isValid() const override
+    {
+        return valid_;
+    }
+
+    void next() override
+    {
+        // Read next entry from SSTable
+        // Entry format: [key_len][key][value_len][value][seq][type][xmin][xmax]
+
+        if (current_offset_ >= file_size_)
+        {
+            valid_ = false;
+            return;
+        }
+
+        // Seek to current offset
+        if (::lseek(fd_, current_offset_, SEEK_SET) != (off_t)current_offset_)
+        {
+            valid_ = false;
+            return;
+        }
+
+        // Read key length
+        uint16_t key_len;
+        if (::read(fd_, &key_len, sizeof(key_len)) != sizeof(key_len))
+        {
+            valid_ = false;
+            return;
+        }
+
+        // Check if we've reached the footer (entries end before footer)
+        // A key_len of 0 or impossibly large indicates end of data
+        if (key_len == 0 || key_len > 65535)
+        {
+            valid_ = false;
+            return;
+        }
+
+        // Read key
+        current_key_.resize(key_len);
+        if (::read(fd_, current_key_.data(), key_len) != (ssize_t)key_len)
+        {
+            valid_ = false;
+            return;
+        }
+
+        // Read value length
+        uint32_t value_len;
+        if (::read(fd_, &value_len, sizeof(value_len)) != sizeof(value_len))
+        {
+            valid_ = false;
+            return;
+        }
+
+        // Read value
+        current_value_.resize(value_len);
+        if (value_len > 0 && ::read(fd_, current_value_.data(), value_len) != (ssize_t)value_len)
+        {
+            valid_ = false;
+            return;
+        }
+
+        // Read metadata
+        if (::read(fd_, &current_sequence_, sizeof(current_sequence_)) != sizeof(current_sequence_))
+        {
+            valid_ = false;
+            return;
+        }
+
+        if (::read(fd_, &current_type_, sizeof(current_type_)) != sizeof(current_type_))
+        {
+            valid_ = false;
+            return;
+        }
+
+        if (::read(fd_, &current_xmin_, sizeof(current_xmin_)) != sizeof(current_xmin_))
+        {
+            valid_ = false;
+            return;
+        }
+
+        if (::read(fd_, &current_xmax_, sizeof(current_xmax_)) != sizeof(current_xmax_))
+        {
+            valid_ = false;
+            return;
+        }
+
+        // Update offset to next entry
+        current_offset_ += sizeof(key_len) + key_len + sizeof(value_len) + value_len +
+                          sizeof(current_sequence_) + sizeof(current_type_) +
+                          sizeof(current_xmin_) + sizeof(current_xmax_);
+
+        valid_ = true;
+    }
+
+    const std::vector<uint8_t>& key() const override
+    {
+        return current_key_;
+    }
+
+    const std::vector<uint8_t>& value() const override
+    {
+        return current_value_;
+    }
+
+    uint64_t sequenceNumber() const override
+    {
+        return current_sequence_;
+    }
+
+    uint8_t entryType() const override
+    {
+        return current_type_;
+    }
+
+    uint64_t xmin() const override
+    {
+        return current_xmin_;
+    }
+
+    uint64_t xmax() const override
+    {
+        return current_xmax_;
+    }
+
+private:
+    int fd_;
+    uint64_t file_size_;
+    size_t block_size_;
+    uint64_t current_offset_;
+    bool valid_;
+
+    std::vector<uint8_t> current_key_;
+    std::vector<uint8_t> current_value_;
+    uint64_t current_sequence_;
+    uint8_t current_type_;
+    uint64_t current_xmin_;
+    uint64_t current_xmax_;
+};
+
+std::unique_ptr<SSTableReader::Iterator> SSTableReader::createIterator()
+{
+    if (fd_ < 0)
+    {
+        return nullptr;
+    }
+
+    return std::make_unique<SSTableReaderIterator>(fd_, file_size_, block_size_);
+}
+
 } // namespace core
 } // namespace scratchbird
