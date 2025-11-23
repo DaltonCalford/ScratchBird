@@ -101,17 +101,9 @@ list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_.*toast.*\\.cpp$")  # TOAST test
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_subquery_parser\\.cpp$")  # API compatibility issues
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/btree_page_test\\.cpp$")  # Tuple struct initializer mismatch
 
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/test_bitmap_index_gc.cpp$")  # Phase 2C auto-exclusion
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/test_brin_index.cpp$")  # Phase 2C auto-exclusion
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/test_btree_compression.cpp$")  # Phase 2C auto-exclusion
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/test_btree_gc.cpp$")  # Phase 2C auto-exclusion
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/test_btree_iterator.cpp$")  # Phase 2C auto-exclusion
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/test_btree_mga_compliance.cpp$")  # Phase 2C auto-exclusion
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/test_btree_vacuum.cpp$")  # Phase 2C auto-exclusion
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/test_catalog_manager.cpp$")  # Phase 2C auto-exclusion
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/test_catalog_mga_compliance.cpp$")  # Phase 2C auto-exclusion
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/test_connection_context.cpp$")  # Phase 2C auto-exclusion
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/test_cte.cpp$")  # Phase 2C auto-exclusion
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/test_extended_page_sizes.cpp$")  # Phase 2C auto-exclusion
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/test_extended_page_sizes_agent_c_review.cpp$")  # Phase 2C auto-exclusion
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/test_gin_index_gc.cpp$")  # Phase 2C auto-exclusion
@@ -146,6 +138,14 @@ list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/test_window_functions.cpp$")  # 
 
 
 # Phase 2C: Exclude standalone tests with main() functions
+list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/test_brin_index\.cpp$")  # Phase 2C: removeDeadEntries API changed from uint64_t to TID
+list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/test_btree_iterator\.cpp$")  # Phase 2C: nullptr vs uint64_t issue
+list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/test_catalog_manager\.cpp$")  # Phase 2C: createTable API signature
+list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/test_cte\.cpp$")  # Phase 2C: Database constructor API
+list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/test_bitmap_index_gc\.cpp$")  # Phase 2C: removeDeadEntries API mismatch
+list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/test_btree_compression\.cpp$")  # Phase 2C: API signature issues
+list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/test_btree_gc\.cpp$")  # Phase 2C: API issues
+list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/test_btree_vacuum\.cpp$")  # Phase 2C: API issues
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_security_phase.*\.cpp$")  # Database API issues (open/create)
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/manual_test_planner_integration\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_array_functions\.cpp$")  # Standalone main()
