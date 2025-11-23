@@ -1396,6 +1396,8 @@ namespace scratchbird
                 std::vector<std::string> parent_columns;
                 std::string on_delete_action;
                 std::string on_update_action;
+                bool is_deferrable = false;             // ALPHA Phase 1 - Deferred constraints
+                bool initially_deferred = false;        // ALPHA Phase 1 - Deferred constraints
             };
             std::vector<PendingFK> pending_fks;
 
@@ -1540,6 +1542,39 @@ namespace scratchbird
                     nullable = false;
                 }
 
+                // Check for GENERATED column constraint (ALPHA Phase 1 - Constraint Features)
+                core::CatalogManager::GeneratedColumnType generated_type =
+                    core::CatalogManager::GeneratedColumnType::NOT_GENERATED;
+                std::string generation_expr_hex;
+                if (pc_ < bytecode_size_ &&
+                    bytecode_[pc_] == static_cast<uint8_t>(Opcode::GENERATED_COLUMN))
+                {
+                    readByte(); // Consume GENERATED_COLUMN opcode
+
+                    // Read storage type (1 = STORED, 2 = VIRTUAL)
+                    uint8_t storage_type = readByte();
+                    generated_type = static_cast<core::CatalogManager::GeneratedColumnType>(storage_type);
+
+                    // Read bytecode length
+                    uint32_t bytecode_len = readInt32();
+
+                    // Read bytecode and convert to hex string
+                    std::vector<uint8_t> bytecode_data;
+                    bytecode_data.reserve(bytecode_len);
+                    for (uint32_t j = 0; j < bytecode_len; j++)
+                    {
+                        bytecode_data.push_back(readByte());
+                    }
+
+                    // Convert bytecode to hex string for storage
+                    std::stringstream ss;
+                    for (uint8_t byte : bytecode_data)
+                    {
+                        ss << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(byte);
+                    }
+                    generation_expr_hex = ss.str();
+                }
+
                 // Build ColumnInfo (table_id and column_id will be set by catalog)
                 core::CatalogManager::ColumnInfo col_info;
                 col_info.column_name = col_name;
@@ -1551,6 +1586,8 @@ namespace scratchbird
                 col_info.check_expr = check_expr_hex;     // Store CHECK expression hex bytecode
                 col_info.is_identity = is_identity;       // ALPHA Phase 1 - IDENTITY columns
                 col_info.identity_always = identity_always; // ALPHA Phase 1 - IDENTITY columns
+                col_info.generated_type = generated_type;  // ALPHA Phase 1 - GENERATED columns
+                col_info.generation_expression = generation_expr_hex; // ALPHA Phase 1 - GENERATED columns
                 columns.push_back(col_info);
             }
 
@@ -1594,6 +1631,12 @@ namespace scratchbird
                 // Read constraint name (optional)
                 std::string constraint_name = readString();
                 (void)constraint_name; // TODO: Use constraint name instead of auto-generated
+
+                // ALPHA Phase 1 - Deferred constraint checking
+                // Read deferrable flags (bit 0 = is_deferrable, bit 1 = initially_deferred)
+                uint8_t deferrable_flags = readByte();
+                fk.is_deferrable = (deferrable_flags & 0x01) != 0;
+                fk.initially_deferred = (deferrable_flags & 0x02) != 0;
 
                 pending_fks.push_back(fk);
             }
@@ -1718,6 +1761,8 @@ namespace scratchbird
                     on_update,
                     core::CatalogManager::FKMatchType::SIMPLE,
                     fk_id,
+                    fk.is_deferrable,        // ALPHA Phase 1 - Deferred constraints
+                    fk.initially_deferred,   // ALPHA Phase 1 - Deferred constraints
                     nullptr
                 );
 
