@@ -1420,6 +1420,20 @@ namespace scratchbird
             (void)node; // Suppress unused parameter warning
         }
 
+        void BytecodeGenerator::visit(parser::ShowStmt *node)
+        {
+            // SHOW commands - bytecode generation not yet implemented
+            current_result_->addError("SHOW statement bytecode generation not yet implemented");
+            (void)node; // Suppress unused parameter warning
+        }
+
+        void BytecodeGenerator::visit(parser::DescribeStmt *node)
+        {
+            // DESCRIBE command - bytecode generation not yet implemented
+            current_result_->addError("DESCRIBE statement bytecode generation not yet implemented");
+            (void)node; // Suppress unused parameter warning
+        }
+
         void BytecodeGenerator::visit(parser::AnalyzeStmt *node)
         {
             // Generate ANALYZE bytecode (Phase 1 Task 1.1.2)

@@ -100,6 +100,9 @@ namespace scratchbird
             void visit(CommitStmt *node) override;           // Phase 2 Task 2.6
             void visit(RollbackStmt *node) override;         // Phase 2 Task 2.6
             void visit(SweepStmt *node) override;            // Phase 3 Task 3.3
+            void visit(MergeStmt *node) override;            // Alpha 1 - Advanced SQL
+            void visit(ShowStmt *node) override;             // ALPHA Phase 1 - Developer Experience
+            void visit(DescribeStmt *node) override;         // ALPHA Phase 1 - Developer Experience
             void visit(CreateTriggerStmt *node) override;    // Phase 2 Wave 2 Agent C
             void visit(DropTriggerStmt *node) override;      // Phase 2 Wave 2 Agent C
             void visit(CreateFunctionStmt *node) override;   // Phase 2 Task 10.2 - PSQL
